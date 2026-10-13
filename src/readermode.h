@@ -32,9 +32,10 @@ class ReaderBridge;
 class WebView;
 class QWidget;
 
-// READ01: per-view controller for Reader Mode — a clutter-free article
-// view rendered by the vendored Mozilla Readability.js + reader.js
-// driver (src/data/, injected via runJavaScript).
+// READ01/READ05: per-view controller for Reader Mode — a clutter-free
+// article view rendered by the vendored Mozilla Readability.js +
+// reader.js driver (src/data/, injected via runJavaScript into an
+// isolated script world).
 //
 // RDR01: under the Rust core the extraction runs in rustcore
 // (rc_readability_probe/extract over the page's serialized DOM) and
@@ -42,16 +43,25 @@ class QWidget;
 // Qt-widget chrome — no page-side script eval at all, so the feature
 // works identically on a JS-one-way engine and on channel-less tor
 // pages (preferences persist via QSettings directly).  Without the
-// crate this stays the JS shadow-DOM overlay described below.
+// crate this stays the JS overlay described below.
 //
-// The JS reader overlay is Shadow DOM on top of the live document, so
+// READ05 hardened the JS pipeline without changing the UX: the driver
+// runs in a dedicated non-zero script world so page JavaScript cannot
+// see or redefine __aroraReader/Readability; extraction hands the raw
+// article HTML to C++, which sanitizes it (ReaderSanitizer) before it
+// re-enters any document; and the overlay renders the article inside
+// a sandboxed iframe (no scripts) under a trusted chrome bar.
+//
+// The reader overlay still sits on top of the live document, so
 // exiting restores the page exactly (scroll, form state, JS world) —
 // there is no reload.  The in-overlay chrome (font size, light/dark,
-// exit) talks back through the "aroraReader" QWebChannel bridge when
-// the page has one; tor pages (no channel) still get the overlay, the
-// settings just don't persist and C++ is only told about JS-side exits
-// via the next probe.  The Rust overlay preserves the same "page is
-// never touched" contract — it is a sibling widget on top of the view.
+// exit) reports back through "arora:reader:*" CustomEvents that
+// reader-forward.js relays to the "aroraReader" QWebChannel object
+// when the page has a channel; tor pages (no channel) still get the
+// overlay, the settings just don't persist and C++ is only told about
+// JS-side exits via the next probe.  The Rust overlay preserves the
+// same "page is never touched" contract — it is a sibling widget on
+// top of the view.
 //
 // JavascriptEnabled off (JSCTL rules, Safer/Safest tiers): runJavaScript
 // never executes while the attribute is off, so enter()/probe() lift it
@@ -109,8 +119,9 @@ private:
     // markup settles (deferred hydration, lazily injected content).
     void probeFinished(bool available);
     // Runs program (the Readability+driver bundle plus a trailing
-    // call) in the page's main world, working around WebEngine's
-    // refusal to runJavaScript while JavascriptEnabled is off.
+    // call) in the page's dedicated reader world, working around
+    // WebEngine's refusal to runJavaScript while JavascriptEnabled is
+    // off.
     void runDriver(const QString &call,
                    const std::function<void(const QVariant &)> &callback
                        = std::function<void(const QVariant &)>());

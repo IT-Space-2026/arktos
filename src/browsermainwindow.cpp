@@ -130,6 +130,7 @@
 #include <qtoolbutton.h>
 #include <qinputdialog.h>
 #include <qlineedit.h>
+#include <qpainter.h>
 #include <qsplitter.h>
 #include <qtimer.h>
 
@@ -199,6 +200,28 @@ static QString torStatusBarStyleSheet()
         "QProgressBar { background: #3a2a5c; border: none;"
         " border-radius: 3px; }"
         "QProgressBar::chunk { background: #b9aecf; }");
+}
+
+// ICONS06: the app-menu button's bear stays the colored brand mark
+// on the violet bar, but its dark-blue body blends into #4a3372 at
+// 28px.  A soft light disc behind the mark gives the dark parts a
+// surface to read against — deliberately translucent so it reads as
+// a subtle backing plate, not a white sticker.
+static QIcon torAppMenuIcon()
+{
+    const int extent = 28;
+    const QPixmap bear = QIcon(QLatin1String(":/arora.svg"))
+        .pixmap(QSize(extent, extent));
+    QPixmap pixmap(extent, extent);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(0xee, 0xee, 0xee, 150));
+    painter.drawEllipse(QRectF(1.5, 1.5, extent - 3, extent - 3));
+    painter.drawPixmap(0, 0, bear);
+    painter.end();
+    return QIcon(pixmap);
 }
 
 BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
@@ -296,27 +319,45 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
             m_torCircuitButton->setPalette(circuitPalette);
         }
 
-        // ICONS04: the violet bar sits on the application's light
-        // palette, so themed icons resolve their dark-glyph variants —
-        // mud on purple, and the disabled ghosting on the back/forward
-        // buttons paradoxically renders them LIGHTER than the enabled
-        // reload.  Pin the chrome icons to the sets' light-glyph -dark
-        // art so back/forward/reload/stop read as one family on the
-        // dark bar.  The menu actions keep the normal icons — their
-        // popups stay on the platform palette, not the violet bar.
-        m_reloadIcon = AroraIcon::getOnDark(QLatin1String("view-refresh"));
-        m_stopIcon = AroraIcon::getOnDark(QLatin1String("process-stop"));
+        // ICONS04/ICONS06: the violet bar sits on the application's
+        // light palette, so themed icons resolve their dark-glyph
+        // variants — mud on purple — and under "native" (the default
+        // pick) there is no -dark art to pin at all.  Qt's generated
+        // Disabled ghosting then rendered the idle back/forward
+        // arrows paler than the enabled reload.  Tint every nav
+        // glyph flat #eee — the same value the palette-painted
+        // reader/onion buttons take — and seed the Disabled mode
+        // with the tab strip's dimmed #b9aecf so the state stays
+        // deliberate instead of washed.  The menu actions keep the
+        // normal icons — their popups stay on the platform palette,
+        // not the violet bar.
+        const QColor torGlyph(0xee, 0xee, 0xee);
+        const QColor torGlyphDisabled(0xb9, 0xae, 0xcf);
+        m_reloadIcon = AroraIcon::getTinted(
+            QLatin1String("view-refresh"), torGlyph, torGlyphDisabled);
+        m_stopIcon = AroraIcon::getTinted(
+            QLatin1String("process-stop"), torGlyph, torGlyphDisabled);
         m_stopReloadAction->setIcon(m_reloadIcon);
-        m_historyBackAction->setIcon(
-            AroraIcon::getOnDark(QLatin1String("go-previous")));
-        m_historyForwardAction->setIcon(
-            AroraIcon::getOnDark(QLatin1String("go-next")));
+        m_historyBackAction->setIcon(AroraIcon::getTinted(
+            QLatin1String("go-previous"), torGlyph, torGlyphDisabled));
+        m_historyForwardAction->setIcon(AroraIcon::getTinted(
+            QLatin1String("go-next"), torGlyph, torGlyphDisabled));
         // HOME01: same lift for the nav-bar Home button — its History
         // menu entry shows the light glyph too, matching Back/Forward.
-        m_historyHomeAction->setIcon(
-            AroraIcon::getOnDark(QLatin1String("go-home")));
-        m_viewSidebarAction->setIcon(
-            SidebarPanel::icon(m_readerModeButton));
+        m_historyHomeAction->setIcon(AroraIcon::getTinted(
+            QLatin1String("go-home"), torGlyph, torGlyphDisabled));
+        m_viewSidebarAction->setIcon(AroraIcon::tinted(
+            SidebarPanel::icon(m_readerModeButton),
+            torGlyph, torGlyphDisabled));
+
+        // ICONS06: the brand mark keeps its colors but gains a soft
+        // light backing so the dark-blue body does not fade into the
+        // violet; the ButtonText lift reaches the menu-indicator
+        // arrow, which follows the palette, not the stylesheet.
+        m_appMenuButton->setIcon(torAppMenuIcon());
+        QPalette appMenuPalette = m_appMenuButton->palette();
+        appMenuPalette.setColor(QPalette::ButtonText, torGlyph);
+        m_appMenuButton->setPalette(appMenuPalette);
 
         // TOR14: the status bar joins the violet chrome.  The
         // transient message line is painted straight from
@@ -328,8 +369,7 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
                                QColor(0xee, 0xee, 0xee));
         statusBar()->setPalette(statusPalette);
         // The zoom +/- glyphs are themed icons — dark art on the
-        // violet bar.  Pin the light -dark variants like the nav
-        // cluster above.
+        // violet bar.  Tint them to the nav cluster's flat #eee.
         m_zoomControl->useOnDarkIcons();
 
         // TOR04: the live circuit chain — a permanent status-bar
@@ -1707,12 +1747,20 @@ void BrowserMainWindow::setupToolBar()
     m_appMenuButton = new QToolButton(m_navigationBar);
     m_appMenuButton->setObjectName(QLatin1String("appMenuButton"));
     m_appMenuButton->setAutoRaise(true);
-    m_appMenuButton->setIcon(
-        QIcon(QLatin1String(":128x128/arora.png")));
+    // MENU07: the logo is the brand mark, not a nav glyph — render it
+    // bigger than the bar's shared 18px so the button reads as the app
+    // menu anchor on every window type.  The bundled vector art stays
+    // crisp at 28px and fractional scale factors where a resized png
+    // smudges; the text keeps the toolbar font so the growth is
+    // logo-led.
+    m_appMenuButton->setIcon(QIcon(QLatin1String(":/arora.svg")));
     m_appMenuButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     m_appMenuButton->setPopupMode(QToolButton::InstantPopup);
     m_appMenuButton->setMenu(m_appMenu);
     m_navigationBar->addWidget(m_appMenuButton);
+    // Set after addWidget so nothing on the bar's side can clamp it
+    // back to the shared nav-glyph size.
+    m_appMenuButton->setIconSize(QSize(28, 28));
 
     m_historyBackAction->setIcon(AroraIcon::get(QLatin1String("go-previous")));
     m_historyBackMenu = new QMenu(this);

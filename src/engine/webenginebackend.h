@@ -118,10 +118,14 @@ public:
     // The same lift on a raw engine page — escape hatch for callers
     // still holding QWebEnginePage*/QWebEngineView* (the
     // clear-private-data sweep walks views, not WebView tabs).
+    // `worldId` selects the script world to evaluate in — the default
+    // 0 is the page's main world; reader mode drives its pipeline in
+    // an isolated world (READ05).
     static void runJavaScriptLiftedOn(QWebEnginePage *page,
             const QString &source,
             const std::function<void(const QVariant &)> &resultCallback
-                = std::function<void(const QVariant &)>());
+                = std::function<void(const QVariant &)>(),
+            quint32 worldId = 0);
 
     void insertScript(const Engine::Script &script) override;
     void removeScript(const QString &name) override;

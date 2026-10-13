@@ -572,7 +572,8 @@ void WebEnginePageAdapter::runJavaScriptLifted(
 void WebEnginePageAdapter::runJavaScriptLiftedOn(
         QWebEnginePage *page,
         const QString &source,
-        const std::function<void(const QVariant &)> &resultCallback)
+        const std::function<void(const QVariant &)> &resultCallback,
+        quint32 worldId)
 {
     if (!page) {
         if (resultCallback)
@@ -581,7 +582,7 @@ void WebEnginePageAdapter::runJavaScriptLiftedOn(
     }
     if (page->settings()->testAttribute(
             QWebEngineSettings::JavascriptEnabled)) {
-        page->runJavaScript(source, resultCallback);
+        page->runJavaScript(source, worldId, resultCallback);
         return;
     }
     // JSCTL/SECLVL: WebEngine silently drops runJavaScript while
@@ -594,10 +595,11 @@ void WebEnginePageAdapter::runJavaScriptLiftedOn(
     page->settings()->setAttribute(
         QWebEngineSettings::JavascriptEnabled, true);
     QPointer<QWebEnginePage> livePage(page);
-    QTimer::singleShot(700, page, [livePage, source, resultCallback]() {
+    QTimer::singleShot(700, page, [livePage, source, resultCallback,
+                                 worldId]() {
         if (!livePage)
             return;
-        livePage->runJavaScript(source,
+        livePage->runJavaScript(source, worldId,
                 [resultCallback, livePage](const QVariant &result) {
             if (resultCallback)
                 resultCallback(result);

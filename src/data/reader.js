@@ -1,31 +1,47 @@
-// READ01: Reader Mode driver — injected into the page's main world by
-// ReaderMode through QWebEnginePage::runJavaScript.  App-side
-// injection is not a page script, so it is not subject to the page's
-// own script-block rules; ReaderMode lifts JavascriptEnabled for the
-// injection window on JSCTL-blocked pages (WebEngine never runs
-// runJavaScript otherwise).
+// READ01/READ05: Reader Mode driver — injected by ReaderMode through
+// runJavaScript into a dedicated ISOLATED script world (not the
+// page's main world), so page JavaScript can neither see nor
+// redefine __aroraReader/Readability/isProbablyReaderable.  The DOM
+// is shared across worlds, so extraction and overlay construction
+// work on the live document exactly as before.  App-side injection
+// is not a page script, so it is not subject to the page's own
+// script-block rules; ReaderMode lifts JavascriptEnabled for the
+// injection window on JSCTL-blocked pages.
 //
 // The article is extracted by the vendored Mozilla Readability
 // (Apache-2.0, src/data/Readability.js + Readability-readerable.js,
-// release 0.6.0) and rendered into a full-viewport Shadow DOM overlay
-// rather than replacing the document: the original DOM, scroll
-// position and form state all survive exit, and "Exit reader view" is
-// just host.remove().
+// release 0.6.0).  The pipeline is now split at the trust boundary:
 //
-// window.__aroraReader exposes:
-//   probe()          -> bool   heuristic "does this look like an article"
-//   enter(opts)      -> object {ok, title, byline, excerpt, length, already}
-//   exit()           -> bool   removes the overlay, tells C++ via the bridge
-//   setFontSize(px)  -> void   live-apply a base font size
-//   setTheme(name)   -> void   live-apply "light" or "dark"
-//   isActive()       -> bool
+//   probe()    -> bool    "does this look like an article"
+//   extract()  -> object  {ok, title, byline, siteName, excerpt,
+//                          length, content}  — raw Readability output
+//   << C++ sanitizes content (ReaderSanitizer — page JS cannot reach
+//      or rewrite the policy) >>
+//   show(opts) -> object  builds the overlay around the sanitized
+//                          fragment
+//   exit()     -> bool    removes the overlay
+//   setFontSize(px) / setTheme(name)  live-apply + persist
+//   isActive() -> bool
 //
-// The overlay chrome (font size, theme, exit) lives inside the shadow
-// root so it works even without a QWebChannel; when the shared channel
-// bootstrap is available the buttons also report to the "aroraReader"
-// bridge object so preferences persist and C++ learns about JS-side
-// exits (tor pages have no channel — exit then just closes the
-// overlay locally).
+// The overlay is a fixed Shadow-DOM host holding a trusted chrome bar
+// (font size, light/dark, exit) and a full-viewport SANDBOXED IFRAME
+// for the article — sandboxed without allow-scripts, so nothing in
+// the extracted content can execute even if the C++ sanitizer missed
+// it.  allow-same-origin keeps srcdoc same-origin with the page so
+// this driver can live-style the content (font/theme) and tests can
+// read it; allow-top-navigation-by-user-activation + allow-popups
+// keep article links behaving like they did in the old shadow-DOM
+// overlay (a real click navigates the tab / opens a popup through
+// the normal gate).  Page scripts could reach the same-origin frame
+// too, but they could already reach the old overlay DOM — nothing
+// gained there, and they cannot make its scripts run.
+//
+// window.__aroraReader still exits the overlay locally on tor pages
+// (no channel), and the chrome reports preference changes and exits
+// to C++ by dispatching "arora:reader:*" CustomEvents on the shared
+// document — DOM events cross worlds, and reader-forward.js relays
+// them to the "aroraReader" channel object in the main world where
+// the transport actually lives.
 (function () {
     if (window.__aroraReader)
         return;
@@ -34,101 +50,56 @@
     var MIN_FONT = 12;
     var MAX_FONT = 30;
 
+    var state = { fontSize: 19, theme: "light" };
+
     function host() {
         return document.getElementById(HOST_ID);
     }
 
-    function bridge(fn) {
-        if (!window.__aroraChannel)
-            return;
+    function frame() {
+        var el = host();
+        return el ? el.shadowRoot.querySelector("iframe.frame") : null;
+    }
+
+    function frameRoot() {
+        var f = frame();
+        return f && f.contentDocument
+            ? f.contentDocument.documentElement : null;
+    }
+
+    function report(name, detail) {
         try {
-            window.__aroraChannel(function (channel) {
-                var object = channel && channel.objects
-                    && channel.objects.aroraReader;
-                if (object)
-                    fn(object);
-            });
+            document.dispatchEvent(
+                new CustomEvent(name, { detail: detail }));
         } catch (e) {
         }
     }
 
     function savePreference(key, value) {
-        bridge(function (object) { object.setPreference(key, value); });
+        report("arora:reader:pref", { key: key, value: value });
     }
 
-    // Readability output is already cleaned, but the fragment is
-    // inserted into the live document — strip anything interactive or
-    // navigation-capable defensively.
-    function sanitize(html) {
-        var doc = new DOMParser().parseFromString(html, "text/html");
-        // Transparent wrappers: drop the tag but keep the children.  A
-        // <form> can wrap an entire article (Readability only drops
-        // link-dense forms, so a text-heavy one reaches us whole) and
-        // removing the node took every paragraph with it — the
-        // "title but no body" report.  <noscript> is unwrapped rather
-        // than kept because scripting is on in the live document, so
-        // the tag would render as nothing even though its contents
-        // parsed as real elements here.
-        var wrappers = doc.querySelectorAll("form, noscript");
-        for (var u = wrappers.length - 1; u >= 0; --u) {
-            var wrapper = wrappers[u];
-            var parent = wrapper.parentNode;
-            if (!parent)
-                continue;
-            while (wrapper.firstChild)
-                parent.insertBefore(wrapper.firstChild, wrapper);
-            parent.removeChild(wrapper);
-        }
-        var dead = doc.querySelectorAll(
-            "script, iframe, frame, frameset, object, embed, applet," +
-            " input, button, select, textarea, link, meta, base," +
-            " template");
-        for (var i = dead.length - 1; i >= 0; --i)
-            dead[i].remove();
-        var all = doc.body.querySelectorAll("*");
-        for (var j = 0; j < all.length; ++j) {
-            var el = all[j];
-            var attrs = el.attributes;
-            for (var k = attrs.length - 1; k >= 0; --k) {
-                var name = attrs[k].name.toLowerCase();
-                var value = attrs[k].value.trim().toLowerCase();
-                if (name.indexOf("on") === 0
-                    || ((name == "href" || name == "src" || name == "xlink:href")
-                        && value.indexOf("javascript:") === 0))
-                    el.removeAttribute(attrs[k].name);
-            }
-        }
-        return doc.body;
+    // Shared theme palette — the chrome bar consumes the --bar-*
+    // vars, the article the rest.
+    function themeVars() {
+        return "\
+.theme-light { --bg: #f8f6f1; --fg: #23231f; --link: #0b57a4; \
+--bar-bg: #efece4; --bar-fg: #4a463d; --byline: #6d675c; }\
+.theme-dark { --bg: #1c1c1e; --fg: #e6e2da; --link: #8ab4f8; \
+--bar-bg: #262628; --bar-fg: #b9b4aa; --byline: #9a958b; }\
+";
     }
 
-    // An extraction that survives parse() but carries almost no text is
-    // a failure, not an article: Readability falls back to its longest
-    // under-threshold attempt when no pass reaches charThreshold (500),
-    // and sanitize() can shave more off.  Matching that floor here keeps
-    // the reader from putting up a header-only overlay.  Media carries
-    // its own weight — an image essay stays readable with little prose.
-    var MIN_ARTICLE_CHARS = 500;
-
-    function isReadableBody(body) {
-        if (body.textContent.trim().length >= MIN_ARTICLE_CHARS)
-            return true;
-        return body.querySelectorAll(
-            "img, video, audio, svg, table, figure").length > 0;
-    }
-
+    // Styles for the shadow root — the fixed host, the chrome bar and
+    // the frame box.  The article itself styles inside the iframe.
     function css() {
         return "\
 :host { all: initial; display: block; position: fixed; inset: 0; \
 z-index: 2147483647; contain: content; }\
-.wrap { position: absolute; inset: 0; overflow-y: auto; \
-background: var(--bg); color: var(--fg); \
-font-family: Georgia, 'Times New Roman', serif; \
-font-size: var(--fs); line-height: 1.65; }\
-.wrap.theme-light { --bg: #f8f6f1; --fg: #23231f; --link: #0b57a4; \
---bar-bg: #efece4; --bar-fg: #4a463d; --byline: #6d675c; }\
-.wrap.theme-dark { --bg: #1c1c1e; --fg: #e6e2da; --link: #8ab4f8; \
---bar-bg: #262628; --bar-fg: #b9b4aa; --byline: #9a958b; }\
-.bar { position: sticky; top: 0; display: flex; align-items: center; \
+" + themeVars() + "\
+.wrap { position: absolute; inset: 0; display: flex; \
+flex-direction: column; background: var(--bg); color: var(--fg); }\
+.bar { display: flex; align-items: center; \
 gap: 4px; padding: 6px 16px; background: var(--bar-bg); \
 color: var(--bar-fg); \
 font-family: system-ui, sans-serif; font-size: 13px; \
@@ -141,6 +112,20 @@ border-color: rgba(127,127,127,.35); }\
 .bar .spacer { flex: 1; }\
 .bar .title-tag { margin-right: 8px; opacity: .7; \
 white-space: nowrap; }\
+iframe.frame { flex: 1; width: 100%; border: 0; display: block; \
+background: var(--bg); }\
+";
+    }
+
+    // Styles for the iframe document — the same article rules the old
+    // overlay's .content carried, now scoped to the frame's <html>.
+    function frameCss() {
+        return "\
+" + themeVars() + "\
+html { background: var(--bg); }\
+body { margin: 0; background: var(--bg); color: var(--fg); \
+font-family: Georgia, 'Times New Roman', serif; \
+font-size: var(--fs); line-height: 1.65; }\
 article { max-width: 42em; margin: 0 auto; padding: 1.5em 1em 4em; }\
 h1.title { font-size: 1.7em; line-height: 1.25; margin: 0 0 .4em; }\
 .byline { color: var(--byline); font-family: system-ui, sans-serif; \
@@ -162,13 +147,44 @@ color: var(--byline); }\
 ";
     }
 
-    function applyFontSize(root, px) {
-        root.style.setProperty("--fs", px + "px");
+    function applyFontSize(px) {
+        var root = frameRoot();
+        if (root)
+            root.style.setProperty("--fs", px + "px");
     }
 
-    function applyTheme(wrap, theme) {
-        wrap.classList.remove("theme-light", "theme-dark");
-        wrap.classList.add("theme-" + theme);
+    function applyTheme(theme) {
+        var el = host();
+        var wrap = el && el.shadowRoot.querySelector(".wrap");
+        var root = frameRoot();
+        if (wrap) {
+            wrap.classList.remove("theme-light", "theme-dark");
+            wrap.classList.add("theme-" + theme);
+        }
+        if (root) {
+            root.classList.remove("theme-light", "theme-dark");
+            root.classList.add("theme-" + theme);
+        }
+        var themeBtn = el && el.shadowRoot.querySelector("button.theme");
+        if (themeBtn)
+            themeBtn.textContent = theme == "dark" ? "☀" : "☾";
+    }
+
+    // Escape text for interpolation into the srcdoc markup.
+    function esc(text) {
+        return String(text).replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    function frameDoc(bylineHtml) {
+        return "<!DOCTYPE html><html class=\"theme-" + state.theme
+            + "\" style=\"--fs:" + state.fontSize + "px\"><head>"
+            + "<meta charset=\"utf-8\"><style>" + frameCss()
+            + "</style></head><body><article>"
+            + "<h1 class=\"title\">" + esc(state.title) + "</h1>"
+            + bylineHtml
+            + "<div class=\"content\">" + state.content + "</div>"
+            + "</article></body></html>";
     }
 
     function enter(opts) {
@@ -176,50 +192,21 @@ color: var(--byline); }\
         if (existing)
             return { ok: true, already: true };
 
-        if (!document.body || typeof Readability != "function")
+        if (!document.body || !document.documentElement)
             return { ok: false };
 
-        // Readability.parse() itself is lenient and will lift a bare
-        // paragraph or two out of almost anything, so refuse pages the
-        // heuristic does not consider article-like before extracting.
-        if (!window.__aroraReader.probe())
-            return { ok: false };
+        state.fontSize = Math.min(MAX_FONT,
+                                  Math.max(MIN_FONT, opts.fontSize || 19));
+        state.theme = opts.theme == "dark" ? "dark" : "light";
+        state.title = opts.title || "";
+        state.content = opts.content || "";
 
-        var article;
-        try {
-            var clone = document.cloneNode(true);
-            // Cloning plugin elements makes Blink destroy and rebuild
-            // their widgets in the detached document, which has been
-            // seen to take the whole renderer down a beat after the
-            // call returns — the enter() callback then never arrives
-            // and the page is left dead.  Readability strips these
-            // from the article content regardless, so dropping them
-            // from the clone up front loses nothing.
-            var plugins = clone.querySelectorAll(
-                "object, embed, applet, iframe, frame, frameset");
-            for (var i = plugins.length - 1; i >= 0; --i)
-                plugins[i].remove();
-            article = new Readability(clone).parse();
-        } catch (e) {
-            article = null;
-        }
-        if (!article || !article.content)
-            return { ok: false };
-
-        // Sanitize before building the overlay so a degenerate
-        // extraction (or a sanitizer pass that had to discard almost
-        // everything) refuses honestly instead of rendering a title
-        // over an empty column.
-        var cleanBody = sanitize(article.content);
-        if (!isReadableBody(cleanBody))
-            return { ok: false };
-
-        var state = {
-            fontSize: Math.min(MAX_FONT,
-                               Math.max(MIN_FONT, opts.fontSize || 19)),
-            theme: opts.theme == "dark" ? "dark" : "light",
-        };
         var labels = opts.labels || {};
+        var bylineParts = [];
+        if (opts.byline)
+            bylineParts.push(opts.byline);
+        if (opts.siteName)
+            bylineParts.push(opts.siteName);
 
         var hostEl = document.createElement("div");
         hostEl.id = HOST_ID;
@@ -230,7 +217,6 @@ color: var(--byline); }\
 
         var wrap = document.createElement("div");
         wrap.className = "wrap theme-" + state.theme;
-        applyFontSize(wrap, state.fontSize);
 
         var bar = document.createElement("div");
         bar.className = "bar";
@@ -242,7 +228,7 @@ color: var(--byline); }\
 
         var fontDec = document.createElement("button");
         fontDec.className = "font-dec";
-        fontDec.textContent = "A\u2212";
+        fontDec.textContent = "A−";
         fontDec.title = labels.fontDec || "Smaller text";
         var fontInc = document.createElement("button");
         fontInc.className = "font-inc";
@@ -250,7 +236,7 @@ color: var(--byline); }\
         fontInc.title = labels.fontInc || "Larger text";
         var themeBtn = document.createElement("button");
         themeBtn.className = "theme";
-        themeBtn.textContent = state.theme == "dark" ? "\u2600" : "\u263E";
+        themeBtn.textContent = state.theme == "dark" ? "☀" : "☾";
         themeBtn.title = labels.theme || "Toggle light/dark";
         var spacer = document.createElement("span");
         spacer.className = "spacer";
@@ -263,45 +249,48 @@ color: var(--byline); }\
         bar.appendChild(spacer);
         bar.appendChild(exitBtn);
 
-        var body = document.createElement("article");
-        var title = document.createElement("h1");
-        title.className = "title";
-        title.textContent = article.title || "";
-        var byline = document.createElement("div");
-        byline.className = "byline";
-        var bylineParts = [];
-        if (article.byline)
-            bylineParts.push(article.byline);
-        if (article.siteName)
-            bylineParts.push(article.siteName);
-        byline.textContent = bylineParts.join(" \u2014 ");
-        var content = document.createElement("div");
-        content.className = "content";
-        content.innerHTML = cleanBody.innerHTML;
-        body.appendChild(title);
-        if (byline.textContent)
-            body.appendChild(byline);
-        body.appendChild(content);
+        // The article renders in a sandboxed iframe — no scripts for
+        // the content, same-origin so the chrome can restyle it, and
+        // top navigation by real user activation so links behave the
+        // way they did when the content was inline.
+        var frameEl = document.createElement("iframe");
+        frameEl.className = "frame";
+        frameEl.setAttribute(
+            "sandbox",
+            "allow-same-origin"
+            + " allow-top-navigation-by-user-activation"
+            + " allow-popups allow-popups-to-escape-sandbox");
+
+        var bylineHtml = "";
+        if (bylineParts.length)
+            bylineHtml = "<div class=\"byline\">"
+                + esc(bylineParts.join(" — ")) + "</div>";
+        frameEl.srcdoc = frameDoc(bylineHtml);
+        // srcdoc loads asynchronously — a font/theme change fired in
+        // the gap would land on the placeholder document; re-apply
+        // the state once the real document arrives.
+        frameEl.addEventListener("load", function () {
+            applyFontSize(state.fontSize);
+            applyTheme(state.theme);
+        });
 
         wrap.appendChild(bar);
-        wrap.appendChild(body);
+        wrap.appendChild(frameEl);
         shadow.appendChild(wrap);
 
         fontDec.addEventListener("click", function () {
             state.fontSize = Math.max(MIN_FONT, state.fontSize - 1);
-            applyFontSize(wrap, state.fontSize);
+            applyFontSize(state.fontSize);
             savePreference("fontSize", state.fontSize);
         });
         fontInc.addEventListener("click", function () {
             state.fontSize = Math.min(MAX_FONT, state.fontSize + 1);
-            applyFontSize(wrap, state.fontSize);
+            applyFontSize(state.fontSize);
             savePreference("fontSize", state.fontSize);
         });
         themeBtn.addEventListener("click", function () {
             state.theme = state.theme == "dark" ? "light" : "dark";
-            applyTheme(wrap, state.theme);
-            themeBtn.textContent =
-                state.theme == "dark" ? "\u2600" : "\u263E";
+            applyTheme(state.theme);
             savePreference("theme", state.theme);
         });
         exitBtn.addEventListener("click", function () {
@@ -309,14 +298,7 @@ color: var(--byline); }\
         });
 
         document.documentElement.appendChild(hostEl);
-
-        return {
-            ok: true,
-            title: article.title || "",
-            byline: article.byline || "",
-            excerpt: article.excerpt || "",
-            length: article.length || 0,
-        };
+        return { ok: true };
     }
 
     window.__aroraReader = {
@@ -364,6 +346,51 @@ color: var(--byline); }\
             return false;
         },
 
+        // Raw extraction — sanitize happens C++-side so the policy
+        // cannot be tampered with from the page.
+        extract: function () {
+            if (!document.body || typeof Readability != "function")
+                return { ok: false };
+
+            // Readability.parse() itself is lenient and will lift a
+            // bare paragraph or two out of almost anything, so refuse
+            // pages the heuristic does not consider article-like
+            // before extracting.
+            if (!window.__aroraReader.probe())
+                return { ok: false };
+
+            var article;
+            try {
+                var clone = document.cloneNode(true);
+                // Cloning plugin elements makes Blink destroy and
+                // rebuild their widgets in the detached document,
+                // which has been seen to take the whole renderer down
+                // a beat after the call returns.  Readability strips
+                // these from the article content regardless, so
+                // dropping them from the clone up front loses nothing.
+                var plugins = clone.querySelectorAll(
+                    "object, embed, applet, iframe, frame, frameset");
+                for (var i = plugins.length - 1; i >= 0; --i)
+                    plugins[i].remove();
+                article = new Readability(clone).parse();
+            } catch (e) {
+                article = null;
+            }
+            if (!article || !article.content)
+                return { ok: false };
+
+            return {
+                ok: true,
+                title: article.title || "",
+                byline: article.byline || "",
+                siteName: article.siteName || "",
+                excerpt: article.excerpt || "",
+                length: article.length || 0,
+                content: article.content,
+            };
+        },
+
+        // Build the overlay around already-sanitized content.
         enter: enter,
 
         exit: function () {
@@ -371,7 +398,7 @@ color: var(--byline); }\
             if (!el)
                 return false;
             el.remove();
-            bridge(function (object) { object.notifyExited(); });
+            report("arora:reader:exit");
             return true;
         },
 
@@ -379,17 +406,17 @@ color: var(--byline); }\
             var el = host();
             if (!el)
                 return;
-            var wrap = el.shadowRoot.querySelector(".wrap");
-            applyFontSize(wrap,
-                          Math.min(MAX_FONT, Math.max(MIN_FONT, px)));
+            state.fontSize = Math.min(MAX_FONT,
+                                      Math.max(MIN_FONT, px));
+            applyFontSize(state.fontSize);
         },
 
         setTheme: function (theme) {
             var el = host();
             if (!el)
                 return;
-            applyTheme(el.shadowRoot.querySelector(".wrap"),
-                       theme == "dark" ? "dark" : "light");
+            state.theme = theme == "dark" ? "dark" : "light";
+            applyTheme(state.theme);
         },
     };
 }());

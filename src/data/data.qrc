@@ -10,6 +10,7 @@
     <file>Readability.js</file>
     <file>Readability-readerable.js</file>
     <file>reader.js</file>
+    <file>reader-forward.js</file>
     <file>arora-channel.js</file>
     <file>fingerprint.js</file>
     <file>pip.js</file>

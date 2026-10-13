@@ -76,6 +76,7 @@
 #include "tabwidget.h"
 #include "tabbar.h"
 #include "readermode.h"
+#include "readersanitizer.h"
 #include "webview.h"
 #include "webpage.h"
 #include "webviewsearch.h"
@@ -160,6 +161,7 @@ private slots:
     void readerModeButton();
     void readerModeContent_data();
     void readerModeContent();
+    void readerSanitizer();
     void homeButton();
     void statusBarWidgets();
     void statusBarIndicators();
@@ -581,6 +583,11 @@ void tst_BrowserMainWindow::appMenuButton()
     QCOMPARE(button->popupMode(), QToolButton::InstantPopup);
     QCOMPARE(button->text(), QLatin1String("Arora"));
     QVERIFY(!button->icon().isNull());
+    // MENU07: the logo is bigger than the nav bar's shared glyph
+    // size — the growth is icon-led, the text font is untouched.
+    QCOMPARE(button->iconSize(), QSize(28, 28));
+    QVERIFY(button->iconSize().height() > navBar->iconSize().height());
+    QVERIFY(!button->icon().pixmap(button->iconSize()).isNull());
     QVERIFY(!button->toolTip().isEmpty());
     QVERIFY(!button->accessibleName().isEmpty());
 
@@ -665,12 +672,16 @@ void tst_BrowserMainWindow::appMenuButton()
     const bool privateMenuFull = privateButton
         && privateButton->menu()
         && privateButton->menu()->actions().count() >= 8;
+    // MENU07: every window type gets the same bigger button.
+    const bool privateBigIcon = privateButton
+        && privateButton->iconSize() == QSize(28, 28);
     const bool privateBarHidden =
         !privateWindow->menuBar()->isVisible();
     closeWindow(privateWindow);
     BrowserApplication::setPrivate(false);
     QVERIFY(privateButton);
     QVERIFY(privateMenuFull);
+    QVERIFY(privateBigIcon);
     QVERIFY(privateBarHidden);
 
     // Tor window — collect state first so a mid-leg failure cannot
@@ -688,6 +699,8 @@ void tst_BrowserMainWindow::appMenuButton()
     const bool torRowBare = torWindow->menuBar()->actions().isEmpty();
     const int torMenuCount = torWindow->appMenu()
         ? torWindow->appMenu()->actions().count() : -1;
+    const bool torBigIcon = torButton
+        && torButton->iconSize() == QSize(28, 28);
     // Grabbed-pixel proof the "Arora" label reads light on violet.
     int lightPixels = 0;
     if (torButton) {
@@ -711,6 +724,7 @@ void tst_BrowserMainWindow::appMenuButton()
     closeWindow(torWindow);
     BrowserApplication::setTorMode(false);
     QVERIFY(torButton);
+    QVERIFY(torBigIcon);
     QVERIFY(torRowVisible);
     QVERIFY(torRowBare);
     QCOMPARE(torMenuCount, 8);
@@ -1644,16 +1658,21 @@ void tst_BrowserMainWindow::torStatusBarTheme()
     QVERIFY(darkTextLightness > 150);
 }
 
-// ICONS04: the tor window's violet chrome sits on the light
+// ICONS04/ICONS06: the tor window's violet chrome sits on the light
 // application palette, so the nav cluster's themed icons resolved
-// dark-on-dark — and worse, the disabled ghosting made the arrows read
-// LIGHTER than the enabled reload.  Tor windows pin the toolbar icons
-// to the bundled set's -dark (light-glyph) art; menu actions keep the
-// normal icons because their popups stay on the platform palette.
+// dark-on-dark — and worse, "native" (the default pick) has no -dark
+// art to pin at all, while Qt's generated Disabled ghosting made the
+// idle arrows read LIGHTER than the enabled reload.  Tor windows now
+// tint every nav glyph flat #eee with a seeded dimmer Disabled mode;
+// menu actions keep the normal icons because their popups stay on
+// the platform palette.
 void tst_BrowserMainWindow::torNavIconsDarkChrome()
 {
-    const auto luminance = [](const QIcon &icon) -> qlonglong {
-        const QImage image = icon.pixmap(QSize(18, 18)).toImage();
+    const auto luminance = [](const QIcon &icon,
+                              QIcon::Mode mode = QIcon::Normal)
+            -> qlonglong {
+        const QImage image =
+            icon.pixmap(QSize(18, 18), mode).toImage();
         qlonglong lum = 0;
         int opaque = 0;
         for (int y = 0; y < image.height(); ++y)
@@ -1666,10 +1685,17 @@ void tst_BrowserMainWindow::torNavIconsDarkChrome()
             }
         return opaque ? lum / opaque : -1;
     };
+    const auto opaqueCount = [](const QIcon &icon, int extent) -> int {
+        const QImage image =
+            icon.pixmap(QSize(extent, extent)).toImage();
+        int count = 0;
+        for (int y = 0; y < image.height(); ++y)
+            for (int x = 0; x < image.width(); ++x)
+                if (image.pixelColor(x, y).alpha() > 60)
+                    ++count;
+        return count;
+    };
 
-    // getOnDark only differs from get() under a bundled icon theme —
-    // "native" has no -dark art to pin.  Force one; a light palette
-    // keeps the normal-window leg on the dark-glyph variants.
     QSettings settings;
     const QVariant savedTheme =
         settings.value(QLatin1String("MainWindow/iconTheme"));
@@ -1687,67 +1713,117 @@ void tst_BrowserMainWindow::torNavIconsDarkChrome()
         luminance(plainBar->actions().at(1)->icon());
     const qlonglong plainReload =
         luminance(plainBar->actions().at(3)->icon());
+    QToolButton *plainMenuButton = plain->findChild<QToolButton *>(
+        QLatin1String("appMenuButton"));
+    QVERIFY(plainMenuButton);
+    const int plainLogoCoverage =
+        opaqueCount(plainMenuButton->icon(), 28);
     closeWindow(plain);
 
-    BrowserApplication::setTorMode(true);
-    SubWindow *window = new SubWindow;
-    window->resize(1000, 600);
-    window->show();
-    QApplication::processEvents();
-    QToolBar *navBar = window->findChild<QToolBar *>(
-        QLatin1String("NavigationToolBar"));
-    QVERIFY(navBar && navBar->actions().count() >= 5);
-    const qlonglong torBack =
-        luminance(navBar->actions().at(1)->icon());
-    const qlonglong torForward =
-        luminance(navBar->actions().at(2)->icon());
-    const qlonglong torReload =
-        luminance(navBar->actions().at(3)->icon());
-    // HOME01: the Home button sits at index 4 and takes the same
-    // light-glyph lift on the violet bar.
-    const qlonglong torHome =
-        luminance(navBar->actions().at(4)->icon());
-    qlonglong menuReload = -1;
-    // MENU06: a tor window's menubar row is the bare title bar — the
-    // menus live in the app-menu dropdown (same shared QMenu objects).
-    for (QAction *menuAction : window->appMenu()->actions()) {
-        if (!menuAction->menu()
-            || !menuAction->text().contains(QLatin1String("View")))
-            continue;
-        for (QAction *action : menuAction->menu()->actions())
-            if (action->text().remove(QLatin1Char('&'))
-                    == QLatin1String("Reload Page"))
-                menuReload = luminance(action->icon());
-    }
+    // A tor window's nav-icon measurements — run under each theme so
+    // the tint is proven theme-independent.
+    struct TorNavLum {
+        qlonglong back = -1;
+        qlonglong backDisabled = -1;
+        qlonglong forward = -1;
+        qlonglong reload = -1;
+        qlonglong home = -1;
+        qlonglong sidebar = -1;
+        qlonglong menuReload = -1;
+        int logoCoverage = -1;
+        bool barFound = false;
+    };
+    const auto measureTorBar = [&](const char *grabName) -> TorNavLum {
+        TorNavLum out;
+        BrowserApplication::setTorMode(true);
+        SubWindow *window = new SubWindow;
+        window->resize(1000, 600);
+        window->show();
+        QApplication::processEvents();
+        QToolBar *navBar = window->findChild<QToolBar *>(
+            QLatin1String("NavigationToolBar"));
+        if (navBar && navBar->actions().count() >= 5) {
+            out.barFound = true;
+            out.back = luminance(navBar->actions().at(1)->icon());
+            out.backDisabled = luminance(navBar->actions().at(1)->icon(),
+                                         QIcon::Disabled);
+            out.forward = luminance(navBar->actions().at(2)->icon());
+            out.reload = luminance(navBar->actions().at(3)->icon());
+            // HOME01: the Home button sits at index 4.
+            out.home = luminance(navBar->actions().at(4)->icon());
+            for (QAction *action : navBar->actions())
+                if (action->shortcut() == QKeySequence(Qt::Key_F4))
+                    out.sidebar = luminance(action->icon());
+            QToolButton *menuButton = window->findChild<QToolButton *>(
+                QLatin1String("appMenuButton"));
+            if (menuButton)
+                out.logoCoverage =
+                    opaqueCount(menuButton->icon(), 28);
+            // MENU06: a tor window's menubar row is the bare title
+            // bar — the menus live in the app-menu dropdown (same
+            // shared QMenu objects).
+            for (QAction *menuAction : window->appMenu()->actions()) {
+                if (!menuAction->menu()
+                    || !menuAction->text().contains(
+                           QLatin1String("View")))
+                    continue;
+                for (QAction *action : menuAction->menu()->actions())
+                    if (action->text().remove(QLatin1Char('&'))
+                            == QLatin1String("Reload Page"))
+                        out.menuReload = luminance(action->icon());
+            }
+            // Offscreen grab for visual review — set
+            // ARORA_TOR_GRAB_DIR and the tor nav bars land there as
+            // tor-nav-icons-<theme>.png.
+            const QByteArray grabDir = qgetenv("ARORA_TOR_GRAB_DIR");
+            if (grabName && !grabDir.isEmpty()) {
+                QDir().mkpath(QString::fromLocal8Bit(grabDir));
+                navBar->grab().save(
+                    QString::fromLocal8Bit(grabDir)
+                    + QLatin1String("/tor-nav-icons-")
+                    + QString::fromLatin1(grabName)
+                    + QLatin1String(".png"));
+            }
+        }
+        closeWindow(window);
+        BrowserApplication::setTorMode(false);
+        return out;
+    };
 
-    // Offscreen grab for visual review — set ARORA_TOR_GRAB_DIR to a
-    // directory and the tor nav bar lands there as tor-nav-icons.png.
-    const QByteArray grabDir = qgetenv("ARORA_TOR_GRAB_DIR");
-    if (!grabDir.isEmpty()) {
-        QDir().mkpath(QString::fromLocal8Bit(grabDir));
-        navBar->grab().save(QString::fromLocal8Bit(grabDir)
-                            + QLatin1String("/tor-nav-icons.png"));
-    }
+    const TorNavLum bundled = measureTorBar("adwaita");
 
-    closeWindow(window);
-    BrowserApplication::setTorMode(false);
+    // ICONS06: the reported path — "native" has no -dark art for
+    // getOnDark to pin, so the tint must carry the lift alone.
+    settings.remove(QLatin1String("MainWindow/iconTheme"));
+    AroraIcon::applyFromSettings();
+    const TorNavLum nativeTheme = measureTorBar("native");
+
     BrowserTheme::applyColorScheme();
     if (savedTheme.isValid())
         settings.setValue(QLatin1String("MainWindow/iconTheme"),
                           savedTheme);
-    else
-        settings.remove(QLatin1String("MainWindow/iconTheme"));
     AroraIcon::applyFromSettings();
 
     // Light-palette normal window: dark glyphs.  Tor window: light
-    // glyphs — same family, readable on the violet bar.
+    // glyphs — readable on the violet bar under any theme.
     QVERIFY(plainBack >= 0 && plainBack < 140);
     QVERIFY(plainReload >= 0 && plainReload < 140);
-    QVERIFY(torBack > 140);
-    QVERIFY(torForward > 140);
-    QVERIFY(torReload > 140);
-    QVERIFY(torHome > 140);
-    QVERIFY(menuReload >= 0 && menuReload < 140);
+    for (const TorNavLum &lum : { bundled, nativeTheme }) {
+        QVERIFY(lum.barFound);
+        QVERIFY(lum.back > 140);
+        QVERIFY(lum.forward > 140);
+        QVERIFY(lum.reload > 140);
+        QVERIFY(lum.home > 140);
+        QVERIFY(lum.sidebar > 140);
+        // ICONS06: Disabled is seeded, not generated — deliberately
+        // dimmer than Normal yet still clearly light on violet.
+        QVERIFY(lum.backDisabled > 140
+                && lum.backDisabled < lum.back);
+        // The brand mark keeps its colors but gains a light backing
+        // disc — strictly more coverage than the plain window's.
+        QVERIFY(lum.logoCoverage > plainLogoCoverage);
+    }
+    QVERIFY(bundled.menuReload >= 0 && bundled.menuReload < 140);
 }
 
 // ICONS05: the normal window's chrome under a dark palette.  The
@@ -2932,6 +3008,15 @@ void tst_BrowserMainWindow::readerModeButton()
 //              showing a header over an empty column.
 //   /danger  — sanitizer regression: real text renders while script,
 //              on*-attributes and javascript: URLs stay stripped.
+//   /tamper  — READ05: the page main-world-redefines __aroraReader,
+//              Readability and isProbablyReaderable to fake a refusal
+//              and a "PWNED" article.  Extraction runs in an isolated
+//              world, so the real article still renders.
+//   /hostile — READ05: mutation-XSS-shaped payloads (entity-encoded
+//              and whitespace-split javascript: URLs, on* handlers,
+//              script/svg/iframe/srcdoc injection) inside otherwise
+//              good article markup — the C++ sanitizer strips them
+//              and the sandboxed frame would not run them anyway.
 void tst_BrowserMainWindow::readerModeContent_data()
 {
     QTest::addColumn<QByteArray>("path");
@@ -2952,6 +3037,15 @@ void tst_BrowserMainWindow::readerModeContent_data()
         << (QStringList() << QStringLiteral("Reader corpus paragraph"))
         << (QStringList() << QStringLiteral("<script")
             << QStringLiteral("onerror")
+            << QStringLiteral("javascript:"));
+    QTest::newRow("tamper")
+        << QByteArray("/tamper") << true << false
+        << (QStringList() << QStringLiteral("Reader corpus paragraph"))
+        << (QStringList() << QStringLiteral("PWNED"));
+    QTest::newRow("hostile")
+        << QByteArray("/hostile") << true << false
+        << (QStringList() << QStringLiteral("Reader corpus paragraph"))
+        << (QStringList() << QStringLiteral("<script")
             << QStringLiteral("javascript:"));
 }
 
@@ -2982,6 +3076,45 @@ static QHash<QByteArray, QByteArray> readerFixturePages()
         + "<p>keep <a href=\"javascript:window.__pwned=2\">link</a></p>"
         "<img src=\"about:blank\" onerror=\"window.__pwned=3\">"
         "</article></body></html>";
+    // READ05: main-world forgeries of everything the driver used to
+    // define — a refusal __aroraReader, a fake Readability that emits
+    // a PWNED article, a readerable helper that lies.  None of it may
+    // matter: the pipeline runs in a world the page cannot see.
+    pages["/tamper"] = "<html><head><title>Tamper Article</title>"
+        "<script>"
+        "window.__aroraReader={probe:function(){return false},"
+        "enter:function(){return {ok:false}}};"
+        "window.isProbablyReaderable=function(){return false};"
+        "window.Readability=function(){return{parse:function(){"
+        "return {title:'PWNED',content:'<p>PWNED</p>'}}}};"
+        "</script>"
+        "</head><body><article><h1>Tamper Article</h1>" + paragraphs
+        + "</article></body></html>";
+    // READ05: hostile markup inside an otherwise-good article.  Each
+    // payload is a different bypass shape — raw script, an onerror
+    // handler, entity-encoded and whitespace-split javascript: hrefs,
+    // an svg script, a srcdoc iframe, a noscript bomb — and the
+    // C++-side filter must drop every one of them.  The flags write
+    // to the frame's window so a leak is observable from either side.
+    pages["/hostile"] = "<html><head><title>Hostile Article</title>"
+        "</head><body><article><h1>Hostile Article</h1>" + paragraphs
+        + "<script>window.__pwned=1</script>"
+        "<p onclick=\"window.__pwned=2\">onclick body</p>"
+        "<img src=\"broken-img\" onerror=\"window.__pwned=3\">"
+        "<p><a href=\"javascript:window.__pwned=4\">raw js link</a></p>"
+        "<p><a href=\"java&#115;cript:window.__pwned=5\">ent js</a></p>"
+        "<p><a href=\"&#x6a;avascript:window.__pwned=6\">num js</a></p>"
+        "<p><a href=\"java&Tab;script:window.__pwned=7\">tab js</a></p>"
+        "<p><a href=\"data:text/html,<script>window.__pwned=8</script>\">"
+        "data link</a></p>"
+        "<svg><script>window.__pwned=9</script><circle r=\"4\"/></svg>"
+        "<iframe srcdoc=\"<script>window.__pwned=10</script>\"></iframe>"
+        "<noscript><img src=\"n\" onerror=\"window.__pwned=11\">"
+        "</noscript>"
+        "<math><mtext><table><mglyph><style><!--</style>"
+        "<img title=\"--><img src=1 onerror=window.__pwned=12>\">"
+        "</mglyph></table></mtext></math>"
+        + paragraphs + "</article></body></html>";
     return pages;
 }
 
@@ -3067,34 +3200,24 @@ void tst_BrowserMainWindow::readerModeContent()
     QCOMPARE(reader->isActive(), expectActive);
     QCOMPARE(!messageSpy.isEmpty(), expectMessage);
 
-    const QString content = evalJs(QStringLiteral(
-        "(function(){"
-        "var h=document.getElementById('arora-reader-host');"
-        "var c=h&&h.shadowRoot"
-        "?h.shadowRoot.querySelector('.content'):null;"
-        "return c?c.innerHTML:'';"
-        "})()")).toString();
-    // Diagnosis log: what Readability extracted, what the OLD blanket
-    // removal would have left of it, what the overlay actually holds.
-    qInfo() << "readerModeContent" << path << evalJs(QStringLiteral(
-        "(function(){"
-        "var a=null;"
-        "try{var cl=document.cloneNode(true);"
-        "var pl=cl.querySelectorAll('object,embed,applet,iframe,frame,"
-        "frameset');"
-        "for(var i=pl.length-1;i>=0;--i)pl[i].remove();"
-        "a=new Readability(cl).parse();}"
-        "catch(e){}"
-        "var oldText=-1;"
-        "if(a&&a.content){"
-        "var d=new DOMParser().parseFromString(a.content,'text/html');"
-        "var dead=d.querySelectorAll('script,iframe,frame,frameset,"
-        "object,embed,applet,form,input,button,select,textarea,link,"
-        "meta,base,template,noscript');"
-        "for(var i=dead.length-1;i>=0;--i)dead[i].remove();"
-        "oldText=d.body.textContent.trim().length;}"
-        "return 'parse='+(a?a.length:-1)+' oldSan='+oldText;"
-        "})()")).toString();
+    // READ05: the article lives in the overlay's sandboxed iframe —
+    // allow-same-origin keeps it readable here.  The srcdoc parses
+    // asynchronously, so the read polls until it lands.
+    const auto readerContent = [&]() -> QString {
+        return evalJs(QStringLiteral(
+            "(function(){"
+            "var h=document.getElementById('arora-reader-host');"
+            "var f=h&&h.shadowRoot"
+            "?h.shadowRoot.querySelector('iframe.frame'):null;"
+            "var d=f?f.contentDocument:null;"
+            "var c=d?d.querySelector('.content'):null;"
+            "return c?c.innerHTML:'';"
+            "})()")).toString();
+    };
+    QString content = readerContent();
+    if (expectActive)
+        QTRY_VERIFY_WITH_TIMEOUT(
+            !(content = readerContent()).isEmpty(), 10000);
 
     for (const QString &needle : mustContain)
         QVERIFY2(content.contains(needle),
@@ -3107,7 +3230,136 @@ void tst_BrowserMainWindow::readerModeContent()
     else
         QVERIFY(content.isEmpty());
 
+    if (path == QByteArray("/tamper") && expectActive) {
+        // The page's forgeries stay live in the main world — they
+        // simply never mattered.  This also proves the leg is not
+        // vacuous: the fake probe really answers false there.
+        QCOMPARE(evalJs(QStringLiteral(
+            "window.__aroraReader.probe()")).toBool(), false);
+        QCOMPARE(evalJs(QStringLiteral(
+            "new Readability(document).parse().title"))
+            .toString(), QLatin1String("PWNED"));
+    }
+
+    if (path == QByteArray("/hostile") && expectActive) {
+        // The fixture's payloads do fire on the served page itself —
+        // they are live page markup, that is the point — so the flag
+        // that proves reader-content inertness is the SANDBOXED
+        // FRAME's window, where the extracted markup renders.
+        QCOMPARE(evalJs(QStringLiteral(
+            "(function(){"
+            "var h=document.getElementById('arora-reader-host');"
+            "var f=h.shadowRoot.querySelector('iframe.frame');"
+            "return String(f.contentWindow.__pwned);"
+            "})()")), QLatin1String("undefined"));
+
+        // The sandbox itself: even markup pushed straight into the
+        // frame document — bypassing the sanitizer entirely — cannot
+        // run.  allow-same-origin lets the test write it;
+        // no-allow-scripts keeps it inert.
+        QCOMPARE(evalJs(QStringLiteral(
+            "(function(){"
+            "var h=document.getElementById('arora-reader-host');"
+            "var f=h.shadowRoot.querySelector('iframe.frame');"
+            "var d=f.contentDocument;"
+            "d.body.innerHTML='<img src=x onerror=\"window.__pwned=42\">'"
+            "+'<img src=y onload=\"window.__pwned=43\">';"
+            "var s=d.createElement('scr'+'ipt');"
+            "s.textContent='window.__pwned=44';"
+            "d.body.appendChild(s);"
+            "return String(f.contentWindow.__pwned);"
+            "})()")), QLatin1String("undefined"));
+    }
+
     closeWindow(window);
+}
+
+// READ05: the C++ sanitizer's contract — exercised directly so edge
+// cases do not each need a served fixture page.
+void tst_BrowserMainWindow::readerSanitizer()
+{
+    // Transparent wrappers keep their children, with the tag gone.
+    {
+        const ReaderSanitizer::Result r = ReaderSanitizer::sanitize(
+            QStringLiteral("<form><p>kept text</p></form>"
+                           "<noscript><b>also kept</b></noscript>"));
+        QVERIFY(r.html.contains(QLatin1String("kept text")));
+        QVERIFY(r.html.contains(QLatin1String("also kept")));
+        QVERIFY(!r.html.contains(QLatin1String("<form")));
+        QVERIFY(!r.html.contains(QLatin1String("<noscript")));
+        QVERIFY(r.textLength > 0);
+    }
+
+    // Dead elements go out with their contents.
+    {
+        const ReaderSanitizer::Result r = ReaderSanitizer::sanitize(
+            QStringLiteral("<p>text</p><script>alert(1)</script>"
+                           "<style>a{b:c}</style>"
+                           "<iframe src=x><p>inner</p></iframe>"
+                           "<object><p>obj</p></object>"
+                           "<input value=x><select><option>o</select>"
+                           "<textarea>t</textarea><template>t2</template>"));
+        QCOMPARE(r.html, QLatin1String("<p>text</p>"));
+    }
+
+    // Event handlers and dangerous URL schemes are scrubbed;
+    // ordinary links, entities and data images survive.
+    {
+        const ReaderSanitizer::Result r = ReaderSanitizer::sanitize(
+            QStringLiteral(
+                "<p onclick=\"f()\" onmouseover='g()'>t</p>"
+                "<a href=\"javascript:x()\">j</a>"
+                "<a href=\"java&#115;cript:x()\">e</a>"
+                "<a href=\"&#x6a;avascript:x()\">n</a>"
+                "<a href=\"java&Tab;script:x()\">w</a>"
+                "<a href=\" javascript:x()\">s</a>"
+                "<a href=\"data:text/html,<b>x\">d</a>"
+                "<a href=javascript:x()>u</a>"
+                "<a href=\"https://ok.example/p?a=1&amp;b=2\">ok</a>"
+                "<img src=\"data:image/png;base64,AAAA\">"
+                "<img src=\"x.png\" onerror=\"f()\">"
+                "<a ping=\"http://t\" href=\"/y\">p</a>"));
+        QVERIFY(!r.html.contains(QLatin1String("onclick")));
+        QVERIFY(!r.html.contains(QLatin1String("onmouseover")));
+        QVERIFY(!r.html.contains(QLatin1String("onerror")));
+        QVERIFY(!r.html.contains(QLatin1String("javascript:"),
+                                        Qt::CaseInsensitive));
+        QVERIFY(!r.html.contains(QLatin1String("&#115;cript")));
+        QVERIFY(!r.html.contains(QLatin1String("&#x6a")));
+        QVERIFY(!r.html.contains(QLatin1String("data:text/html")));
+        QVERIFY(!r.html.contains(QLatin1String("ping=")));
+        // The kept link keeps its attribute and entity.
+        QVERIFY(r.html.contains(
+            QLatin1String("href=\"https://ok.example/p?a=1&amp;b=2\"")));
+        // data: is fine on resource URLs.
+        QVERIFY(r.html.contains(
+            QLatin1String("src=\"data:image/png;base64,AAAA\"")));
+    }
+
+    // Malformed and mutation-shaped input cannot break out.
+    {
+        const ReaderSanitizer::Result r = ReaderSanitizer::sanitize(
+            QStringLiteral(
+                "<p>one<svg><script>alert(1)</script><circle r=4/>"
+                "</svg><plaintext>gone<script>alert(2)</script>"));
+        QVERIFY(r.html.contains(QLatin1String("one")));
+        QVERIFY(!r.html.contains(QLatin1String("<script")));
+        QVERIFY(!r.html.contains(QLatin1String("alert")));
+        QVERIFY(!r.html.contains(QLatin1String("gone")));
+    }
+
+    // The thin-content floor inputs: text length is decoded text
+    // only; kept media flips hasMedia.
+    {
+        const ReaderSanitizer::Result text = ReaderSanitizer::sanitize(
+            QStringLiteral("<p>hello &amp; bye</p>"));
+        QCOMPARE(text.textLength, 11);
+        QVERIFY(!text.hasMedia);
+        const ReaderSanitizer::Result media =
+            ReaderSanitizer::sanitize(QStringLiteral("<p>x</p>"
+                                                   "<img src=i.png>"));
+        QVERIFY(media.hasMedia);
+    }
 }
 
 // HOME01: the nav bar carries a Home button immediately after

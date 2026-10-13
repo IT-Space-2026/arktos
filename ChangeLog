@@ -323,6 +323,12 @@ UI:
   an honest "Reader view is not available" status-bar message instead
   of an empty column, and embed-heavy pages no longer stall the
   reader (READ03).
+- Reader Mode hardened without changing how it looks or works:
+  article extraction now runs in an isolated script context the page
+  cannot tamper with, the article markup is re-filtered against a
+  safe allowlist before display, and the content renders inside a
+  script-free sandboxed frame — scripts, event handlers, and
+  javascript: links hidden in article markup are inert (READ05).
 - Downloads moved from the Window menu to the Tools menu — the
   Ctrl+Y shortcut and icon are unchanged, and the Window menu now
   holds only tab/window-switching entries (MENU04).
@@ -513,6 +519,11 @@ UI:
   History, Bookmarks, Window, Tools and Help — the classic menubar is
   hidden by default on every window type, and View → Show Menu Bar
   (Ctrl+M) brings it back whenever wanted (MENU06).
+- The Arora app-menu button reads bigger: its logo now renders larger
+  than the surrounding navigation glyphs on every window type
+  (standard, private, container, Tor) — drawn from the bundled vector
+  artwork so it stays crisp at any scale, while the "Arora" label
+  keeps the toolbar font (MENU07).
 - Preferences → Privacy: the Cookies section's right-aligned labels
   floated the accept/keep/session rows off the group's left edge and
   looked ragged next to the checkbox rows; labels are now left-aligned
@@ -547,6 +558,10 @@ UI:
   options: show/hide the panel toggle and close buttons,
   auto-close the panel when it loses focus, folder counters on
   bookmark folders, and lazy loading of panel contents (SIDE09).
+- Preferences → Appearance → Sidebar: the "Panels" checklist and its
+  ▲▼ reorder buttons now sit left-aligned under the label, and the
+  buttons render as real framed arrows — they used to float
+  mid-right as faint, nearly invisible marks (SIDE10).
 - Rename any tab: double-click it (or use the context menu's
   "Rename Tab...") and type a new title inline — Enter commits,
   Escape cancels, and an empty name restores the live page title.
@@ -563,6 +578,14 @@ UI:
   onto another application still hands it a link, private tabs
   refuse to merge into non-private windows, and Tor windows never
   cross-merge (TABS13).
+- Tor window nav buttons are readable now: back/forward/reload/stop/
+  home, the sidebar toggle and the status-bar zoom buttons are
+  painted as flat light glyphs on the violet bar — the same tone as
+  the reader and onion buttons — and a disabled button shows a
+  deliberate dimmer tint instead of a pale ghost. The app-menu logo
+  keeps its colors with a subtle light backing disc so the bear no
+  longer fades into the violet, and its dropdown arrow is light too.
+  Non-Tor windows are unchanged (ICONS06).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
