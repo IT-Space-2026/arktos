@@ -375,6 +375,13 @@ UI:
   options: show/hide the panel toggle and close buttons,
   auto-close the panel when it loses focus, folder counters on
   bookmark folders, and lazy loading of panel contents (SIDE09).
+- Rename any tab: double-click it (or use the context menu's
+  "Rename Tab...") and type a new title inline — Enter commits,
+  Escape cancels, and an empty name restores the live page title.
+  The custom title wins over the page's own title on the strip, the
+  tooltip, the window title and the hover preview, survives pinning,
+  tab groups, container moves and undo-close, and is restored with
+  the session (TABS12).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
