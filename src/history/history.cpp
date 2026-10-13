@@ -62,6 +62,7 @@
 
 #include "history.h"
 
+#include "aroraicon.h"
 #include "autosaver.h"
 #include "browserapplication.h"
 #include "historymanager.h"
@@ -384,6 +385,13 @@ void HistoryMenu::postPopulated()
     QAction *clearAction = new QAction(tr("Clear History..."), this);
     connect(clearAction, &QAction::triggered, this, &HistoryMenu::clearHistoryDialog);
     addAction(clearAction);
+
+#if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
+    // ICONS07: the static tail rows carry icons like the initial
+    // actions above them; the dynamic history entries stay iconless.
+    showAllAction->setIcon(AroraIcon::get(QLatin1String("view-history")));
+    clearAction->setIcon(AroraIcon::get(QLatin1String("edit-clear")));
+#endif
 }
 
 void HistoryMenu::clearHistoryDialog()

@@ -62,6 +62,7 @@
 
 #include "bookmarksmenu.h"
 
+#include "aroraicon.h"
 #include "bookmarknode.h"
 #include "bookmarksmanager.h"
 #include "bookmarksmodel.h"
@@ -116,6 +117,11 @@ void BookmarksMenu::postPopulated()
     QAction *action = addAction(tr("Open in Tabs"));
     connect(action, &QAction::triggered,
             this, &BookmarksMenu::openAll);
+#if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
+    // ICONS07: folder rows carry favicons, so the static "open all"
+    // tail row gets one too — the dynamic bookmark entries stay bare.
+    action->setIcon(AroraIcon::get(QLatin1String("tab-new")));
+#endif
 }
 
 void BookmarksMenu::openAll()

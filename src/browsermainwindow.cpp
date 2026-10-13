@@ -1018,10 +1018,16 @@ void BrowserMainWindow::setupMenu()
 
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
     m_fileNewWindowAction->setIcon(AroraIcon::get(QLatin1String("window-new")));
+    m_fileNewPrivateTabAction->setIcon(AroraIcon::get(QLatin1String("view-private")));
+    m_fileNewTorWindowAction->setIcon(AroraIcon::get(QLatin1String("tor-onion")));
     m_fileOpenFileAction->setIcon(AroraIcon::get(QLatin1String("document-open")));
+    m_fileOpenLocationAction->setIcon(AroraIcon::get(QLatin1String("go-jump")));
+    m_fileSaveAsAction->setIcon(AroraIcon::get(QLatin1String("document-save-as")));
+    m_fileImportBookmarksAction->setIcon(AroraIcon::get(QLatin1String("document-import")));
+    m_fileExportBookmarksAction->setIcon(AroraIcon::get(QLatin1String("document-export")));
     m_filePrintPreviewAction->setIcon(AroraIcon::get(QLatin1String("document-print-preview")));
     m_filePrintAction->setIcon(AroraIcon::get(QLatin1String("document-print")));
-    m_fileSaveAsAction->setIcon(AroraIcon::get(QLatin1String("document-save-as")));
+    m_filePreferencesAction->setIcon(AroraIcon::get(QLatin1String("preferences-system")));
     m_fileCloseWindow->setIcon(AroraIcon::get(QLatin1String("window-close")));
     m_fileQuit->setIcon(AroraIcon::get(QLatin1String("application-exit")));
 #endif
@@ -1080,6 +1086,8 @@ void BrowserMainWindow::setupMenu()
     m_editPasteAction->setIcon(AroraIcon::get(QLatin1String("edit-paste")));
     m_editSelectAllAction->setIcon(AroraIcon::get(QLatin1String("edit-select-all")));
     m_editFindAction->setIcon(AroraIcon::get(QLatin1String("edit-find")));
+    m_editFindNextAction->setIcon(AroraIcon::get(QLatin1String("go-down")));
+    m_editFindPreviousAction->setIcon(AroraIcon::get(QLatin1String("go-up")));
 #endif
 
     // View
@@ -1272,6 +1280,23 @@ void BrowserMainWindow::setupMenu()
     m_viewZoomNormalAction->setIcon(AroraIcon::get(QLatin1String("zoom-original")));
     m_viewZoomOutAction->setIcon(AroraIcon::get(QLatin1String("zoom-out")));
     m_viewFullScreenAction->setIcon(AroraIcon::get(QLatin1String("view-fullscreen")));
+    // ICONS07: the bar-visibility toggles and engine tools get icons
+    // too — names with no bundled-set artwork resolve to the mid-grey
+    // legacy glyphs (SHLD01 convention).
+    m_viewShowMenuBarAction->setIcon(AroraIcon::get(QLatin1String("view-menubar")));
+    m_viewToolbarAction->setIcon(AroraIcon::get(QLatin1String("view-toolbar")));
+    m_viewBookmarkBarAction->setIcon(AroraIcon::get(QLatin1String("user-bookmarks")));
+    viewTabBarAction->setIcon(AroraIcon::get(QLatin1String("view-tabbar")));
+    m_tabWidget->tabBar()->iconOnlyTabsAction()->setIcon(
+        AroraIcon::get(QLatin1String("view-icon")));
+    m_viewStatusbarAction->setIcon(AroraIcon::get(QLatin1String("view-statusbar")));
+    m_viewZoomTextOnlyAction->setIcon(AroraIcon::get(QLatin1String("zoom-text")));
+    m_viewReaderAction->setIcon(AroraIcon::get(QLatin1String("text-x-generic")));
+    m_viewPipAction->setIcon(AroraIcon::get(QLatin1String("view-pip")));
+    m_viewSourceAction->setIcon(AroraIcon::get(QLatin1String("text-html")));
+    m_viewChromiumDevToolAction->setIcon(
+        AroraIcon::get(QLatin1String("utilities-terminal")));
+    m_viewBidiDevToolAction->setIcon(AroraIcon::get(QLatin1String("system-run")));
 #endif
 
     // History
@@ -1363,6 +1388,10 @@ void BrowserMainWindow::setupMenu()
 
     m_bookmarksAddFolderAction->setIcon(AroraIcon::get(QLatin1String("folder-new")));
     m_bookmarksShowAllAction->setIcon(AroraIcon::get(QLatin1String("user-bookmarks")));
+#if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
+    tabWidget()->bookmarkTabsAction()->setIcon(
+        AroraIcon::get(QLatin1String("bookmark-new")));
+#endif
 
     // Window
     m_windowMenu = new QMenu(menuBar());
@@ -1378,6 +1407,9 @@ void BrowserMainWindow::setupMenu()
     connect(m_windowTabSearchAction, &QAction::triggered,
             this, &BrowserMainWindow::showTabSearch);
     addAction(m_windowTabSearchAction);
+#if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
+    m_windowTabSearchAction->setIcon(AroraIcon::get(QLatin1String("edit-find")));
+#endif
 
     connect(m_windowMenu, &QMenu::aboutToShow,
             this, &BrowserMainWindow::aboutToShowWindowMenu);
@@ -1478,6 +1510,15 @@ void BrowserMainWindow::setupMenu()
 
     m_toolsUserAgentMenu = new UserAgentMenu(m_toolsMenu);
     m_toolsMenu->addMenu(m_toolsUserAgentMenu);
+
+#if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
+    m_toolsCommandPaletteAction->setIcon(
+        AroraIcon::get(QLatin1String("system-run")));
+    m_toolsClearPrivateDataAction->setIcon(
+        AroraIcon::get(QLatin1String("edit-clear")));
+    m_toolsLockStoreAction->setIcon(
+        AroraIcon::get(QLatin1String("security-high")));
+#endif
 
     // MENU05: filter management lives on the Preferences Privacy
     // page (Content Blocking > Manage...) — the Tools menu no
@@ -2970,7 +3011,11 @@ void BrowserMainWindow::populateNewContainerTabMenu()
         return;
     }
     ContainerManager *manager = ContainerManager::instance();
-    m_fileNewContainerTabMenu->addAction(tr("&No Container"), this, [this]() {
+    // ICONS07: the container rows all carry color chips, so the static
+    // entries get icons too — a grey chip keeps "No Container" in
+    // column with them.
+    QAction *noContainer = m_fileNewContainerTabMenu->addAction(
+        tr("&No Container"), this, [this]() {
         m_tabWidget->newTabPageInContainer(
             ContainerManager::defaultContainerId());
     });
@@ -2986,14 +3031,21 @@ void BrowserMainWindow::populateNewContainerTabMenu()
         });
     }
     m_fileNewContainerTabMenu->addSeparator();
-    m_fileNewContainerTabMenu->addAction(tr("New &Container..."), this, [this]() {
+    QAction *newContainer = m_fileNewContainerTabMenu->addAction(
+        tr("New &Container..."), this, [this]() {
         const QString id = ContainerManager::instance()
             ->createContainerInteractive(this);
         if (!id.isEmpty())
             m_tabWidget->newTabPageInContainer(id);
     });
-    m_fileNewContainerTabMenu->addAction(tr("&Manage Containers..."),
+    QAction *manageContainers = m_fileNewContainerTabMenu->addAction(
+        tr("&Manage Containers..."),
         m_tabWidget, &TabWidget::manageContainers);
+#if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
+    noContainer->setIcon(ContainerManager::colorIcon(QColor(0x8a, 0x8a, 0x8a)));
+    newContainer->setIcon(AroraIcon::get(QLatin1String("list-add")));
+    manageContainers->setIcon(AroraIcon::get(QLatin1String("preferences-system")));
+#endif
 }
 
 void BrowserMainWindow::aboutToShowBackMenu()

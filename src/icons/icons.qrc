@@ -224,7 +224,26 @@
     <file>arora-tabler-dark/icons/zoom-out.svg</file>
     <file>arora-legacy/index.theme</file>
     <file>arora-legacy/LICENSE</file>
+    <file>arora-legacy/icons/document-export.svg</file>
+    <file>arora-legacy/icons/document-import.svg</file>
+    <file>arora-legacy/icons/go-down.svg</file>
+    <file>arora-legacy/icons/go-jump.svg</file>
+    <file>arora-legacy/icons/go-up.svg</file>
+    <file>arora-legacy/icons/preferences-system.svg</file>
     <file>arora-legacy/icons/security-high.svg</file>
+    <file>arora-legacy/icons/text-html.svg</file>
+    <file>arora-legacy/icons/text-x-generic.svg</file>
+    <file>arora-legacy/icons/tor-onion.svg</file>
+    <file>arora-legacy/icons/utilities-terminal.svg</file>
+    <file>arora-legacy/icons/view-history.svg</file>
+    <file>arora-legacy/icons/view-icon.svg</file>
+    <file>arora-legacy/icons/view-menubar.svg</file>
+    <file>arora-legacy/icons/view-pip.svg</file>
+    <file>arora-legacy/icons/view-private.svg</file>
+    <file>arora-legacy/icons/view-statusbar.svg</file>
+    <file>arora-legacy/icons/view-tabbar.svg</file>
+    <file>arora-legacy/icons/view-toolbar.svg</file>
+    <file>arora-legacy/icons/zoom-text.svg</file>
     <file alias="arora-legacy/icons/tab-new.png">../data/graphics/addtab.png</file>
     <file alias="arora-legacy/icons/window-close.png">../data/graphics/closetab.png</file>
     <file alias="arora-legacy/icons/system-run.png">../data/128x128/run.png</file>

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ICONS07: arrow into a bar — File > Open Location (freedesktop's
+     "jump to" affordance).  Mid-grey stays readable on light and dark
+     palettes (QtSvg does not recolor). -->
+<svg xmlns="http://www.w3.org/2000/svg" height="16" width="16" viewBox="0 0 16 16">
+    <path d="M13 2h1.6v12H13Z" fill="#7a7a7a"/>
+    <path d="M1.5 6.8h7v2.4h-7Z" fill="#7a7a7a"/>
+    <path d="M8.5 4 12.8 8.25 8.5 12.5Z" fill="#7a7a7a"/>
+</svg>
