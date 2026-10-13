@@ -107,7 +107,7 @@ This file is the task queue for the Devin CLI task loop
 
 | TABS12 | Rename tab: dblclick inline edit + context-menu Rename — details below | done | 0 | done — dblclick inline QLineEdit + ctx-menu "Rename Tab..." writes a page-widget-keyed title override (rides pin/group/container/undo-close, session v6 tail); strip/tooltip/window-title/preview follow it, page title can't clobber, empty clears to live title; Verify: tst_TabWidget::renameTab + tst_tabwidget 21/21 + tst_tabbar 14/14 PASS, make check all-green except clean-HEAD flakes (identical via stash+rebuild+rerun: browsermainwindow tor-latch cascade x7, timing flakes pass standalone) |
 | TABS13 | Tab tear-off to new window + cross-window merge drag — details below | done | 0 | done — live drag-session mime (source-bar+page, url kept for foreign drops); drop on another strip moves the real WebViewWithSearch at the drop index, unhandled release tears off into a fresh window; pin/group-id-remap/container-level/title/sleep/thumbnail state ride along; OTR can't land in private/tor context, no-transfer engine tabs refused; Verify: tst_TabWidget::tabTransfer (merge drop, no url-load, stale-mime fallback, OTR guard, real-window tear-off) + make check: check-warnings PASS, all green except 2 documented clean-HEAD flakes (torChromeTheme, colorSchemeApply) |
-| READ03 | Reader mode shows title but no body on some pages — details below | pending | 0 | user report — intermittent empty reader |
+| READ03 | Reader mode shows title but no body on some pages — details below | in_progress | 0 | user report — intermittent empty reader |
 
 ## Task details
 
