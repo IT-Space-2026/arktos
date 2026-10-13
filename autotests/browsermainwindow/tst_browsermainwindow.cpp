@@ -742,18 +742,32 @@ void tst_BrowserMainWindow::appMenuButton()
     QCOMPARE(button->popupMode(), QToolButton::InstantPopup);
     QCOMPARE(button->text(), QLatin1String("Arora"));
     QVERIFY(!button->icon().isNull());
-    // MENU07: the logo is bigger than the nav bar's shared glyph
-    // size — the growth is icon-led, the text font is untouched.
-    QCOMPARE(button->iconSize(), QSize(28, 28));
+    // MENU07/MENU09: the logo is bigger than the nav bar's shared
+    // glyph size — the growth is icon-led, the text font is
+    // untouched.
+    QCOMPARE(button->iconSize(), QSize(36, 36));
     QVERIFY(button->iconSize().height() > navBar->iconSize().height());
     QVERIFY(!button->icon().pixmap(button->iconSize()).isNull());
     QVERIFY(!button->toolTip().isEmpty());
     QVERIFY(!button->accessibleName().isEmpty());
 
-    // First item on the nav bar, ahead of Back.
+    // MENU09: iconSize is only a property — Qt paints toolbar-hosted
+    // tool buttons at the BAR's iconSize, which is why the MENU07
+    // bump never reached the screen.  The button lives in a
+    // margin-less host so its own extent governs; prove it reached
+    // the layout, not just the getter.
+    QVERIFY(button->sizeHint().height()
+            >= button->iconSize().height());
+    QVERIFY(button->size().height()
+            >= button->iconSize().height());
+
+    // First item on the nav bar, ahead of Back — the action carries
+    // the host container, whose only child is the button.
     QVERIFY(!navBar->actions().isEmpty());
-    QCOMPARE(navBar->widgetForAction(navBar->actions().first()),
-             static_cast<QWidget *>(button));
+    QWidget *firstWidget = navBar->widgetForAction(
+        navBar->actions().first());
+    QVERIFY(firstWidget);
+    QCOMPARE(firstWidget, button->parentWidget());
 
     // The dropdown lists the real top-level menus in menubar order —
     // the same QMenu objects the menubar holds, not clones.
@@ -813,6 +827,10 @@ void tst_BrowserMainWindow::appMenuButton()
         appMenu->grab().save(QString::fromLocal8Bit(menuGrabDir)
                              + QLatin1String("/app-menu.png"));
         appMenu->hide();
+        // MENU09: the button itself too — logo-vs-label balance is
+        // the leg this task's reviewers need to see.
+        button->grab().save(QString::fromLocal8Bit(menuGrabDir)
+                            + QLatin1String("/app-menu-button.png"));
         QMenu *fileMenu = appMenu->actions().first()->menu();
         fileMenu->popup(QPoint(80, 80));
         QApplication::processEvents();
@@ -884,7 +902,7 @@ void tst_BrowserMainWindow::appMenuButton()
         && privateButton->menu()->actions().count() >= 8;
     // MENU07: every window type gets the same bigger button.
     const bool privateBigIcon = privateButton
-        && privateButton->iconSize() == QSize(28, 28);
+        && privateButton->iconSize() == QSize(36, 36);
     const bool privateBarHidden =
         !privateWindow->menuBar()->isVisible();
     // MENU08: and the same enlarged menu text.
@@ -915,7 +933,7 @@ void tst_BrowserMainWindow::appMenuButton()
     const int torMenuCount = torWindow->appMenu()
         ? torWindow->appMenu()->actions().count() : -1;
     const bool torBigIcon = torButton
-        && torButton->iconSize() == QSize(28, 28);
+        && torButton->iconSize() == QSize(36, 36);
     // MENU08: the violet window's dropdown is enlarged identically —
     // tor only re-colors the bar, menus stay on the palette + font.
     const QFont torMenuFont = torWindow->appMenu()
@@ -927,6 +945,10 @@ void tst_BrowserMainWindow::appMenuButton()
             QString::fromLocal8Bit(menuGrabDir)
             + QLatin1String("/app-menu-tor.png"));
         torWindow->appMenu()->hide();
+        if (torButton)
+            torButton->grab().save(
+                QString::fromLocal8Bit(menuGrabDir)
+                + QLatin1String("/app-menu-button-tor.png"));
     }
     // Grabbed-pixel proof the "Arora" label reads light on violet.
     int lightPixels = 0;
@@ -2025,7 +2047,7 @@ void tst_BrowserMainWindow::torNavIconsDarkChrome()
         QLatin1String("appMenuButton"));
     QVERIFY(plainMenuButton);
     const int plainLogoCoverage =
-        opaqueCount(plainMenuButton->icon(), 28);
+        opaqueCount(plainMenuButton->icon(), 36);
     closeWindow(plain);
 
     // A tor window's nav-icon measurements — run under each theme so
@@ -2066,7 +2088,7 @@ void tst_BrowserMainWindow::torNavIconsDarkChrome()
                 QLatin1String("appMenuButton"));
             if (menuButton)
                 out.logoCoverage =
-                    opaqueCount(menuButton->icon(), 28);
+                    opaqueCount(menuButton->icon(), 36);
             // MENU06: a tor window's menubar row is the bare title
             // bar — the menus live in the app-menu dropdown (same
             // shared QMenu objects).

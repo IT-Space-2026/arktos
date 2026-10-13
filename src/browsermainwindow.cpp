@@ -206,26 +206,42 @@ static QString torStatusBarStyleSheet()
         "QProgressBar::chunk { background: #b9aecf; }");
 }
 
+// MENU09: one extent drives both the plain icon size and the tor
+// composite below, so the violet window's logo can never drift off
+// the shared construction's size.
+static const int s_appMenuIconExtent = 36;
+
 // ICONS06: the app-menu button's bear stays the colored brand mark
-// on the violet bar, but its dark-blue body blends into #4a3372 at
-// 28px.  A soft light disc behind the mark gives the dark parts a
-// surface to read against — deliberately translucent so it reads as
-// a subtle backing plate, not a white sticker.
+// on the violet bar, but its dark-blue body blends into #4a3372.
+// A soft light disc behind the mark gives the dark parts a surface
+// to read against — deliberately translucent so it reads as a
+// subtle backing plate, not a white sticker.  A 2x variant rides in
+// the same QIcon so fractional/high devicePixelRatio paints stay
+// off the upscale path — the composite is raster, the source is not.
 static QIcon torAppMenuIcon()
 {
-    const int extent = 28;
-    const QPixmap bear = QIcon(QLatin1String(":/arora.svg"))
-        .pixmap(QSize(extent, extent));
-    QPixmap pixmap(extent, extent);
-    pixmap.fill(Qt::transparent);
-    QPainter painter(&pixmap);
-    painter.setRenderHint(QPainter::Antialiasing);
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(QColor(0xee, 0xee, 0xee, 150));
-    painter.drawEllipse(QRectF(1.5, 1.5, extent - 3, extent - 3));
-    painter.drawPixmap(0, 0, bear);
-    painter.end();
-    return QIcon(pixmap);
+    const int extent = s_appMenuIconExtent;
+    QIcon icon;
+    for (int dpr = 1; dpr <= 2; ++dpr) {
+        const int pixels = extent * dpr;
+        const QPixmap bear = QIcon(QLatin1String(":/arora.svg"))
+            .pixmap(QSize(pixels, pixels));
+        QPixmap pixmap(pixels, pixels);
+        pixmap.fill(Qt::transparent);
+        QPainter painter(&pixmap);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(0xee, 0xee, 0xee, 150));
+        const qreal inset = 1.5 * dpr;
+        painter.drawEllipse(QRectF(inset, inset,
+                                   pixels - 2 * inset,
+                                   pixels - 2 * inset));
+        painter.drawPixmap(0, 0, bear);
+        painter.end();
+        pixmap.setDevicePixelRatio(dpr);
+        icon.addPixmap(pixmap);
+    }
+    return icon;
 }
 
 BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
@@ -1823,23 +1839,33 @@ void BrowserMainWindow::setupToolBar()
     for (QMenu *menu : m_topMenus)
         m_appMenu->addMenu(menu);
 
-    m_appMenuButton = new QToolButton(m_navigationBar);
+    // MENU09: a QToolButton parented straight to a QToolBar is laid
+    // out AND painted at the bar's iconSize — Qt's toolbar path
+    // overrides the button's own setIconSize, which is why MENU07's
+    // 28px property bump never actually reached the screen.  Host
+    // the button inside a margin-less container so its parent is not
+    // the toolbar and its own icon size governs.
+    QWidget *appMenuButtonHost = new QWidget(m_navigationBar);
+    QHBoxLayout *appMenuButtonLayout = new QHBoxLayout(appMenuButtonHost);
+    appMenuButtonLayout->setContentsMargins(0, 0, 0, 0);
+    appMenuButtonLayout->setSpacing(0);
+    m_appMenuButton = new QToolButton(appMenuButtonHost);
     m_appMenuButton->setObjectName(QLatin1String("appMenuButton"));
     m_appMenuButton->setAutoRaise(true);
-    // MENU07: the logo is the brand mark, not a nav glyph — render it
-    // bigger than the bar's shared 18px so the button reads as the app
-    // menu anchor on every window type.  The bundled vector art stays
-    // crisp at 28px and fractional scale factors where a resized png
-    // smudges; the text keeps the toolbar font so the growth is
-    // logo-led.
+    // MENU07/MENU09: the logo is the brand mark, not a nav glyph —
+    // render it well past the bar's shared 18px so the button reads
+    // as the app menu anchor on every window type.  The bundled
+    // vector art stays crisp at the grown size and fractional scale
+    // factors where a resized png smudges; the text keeps the
+    // toolbar font so the growth is logo-led.
     m_appMenuButton->setIcon(QIcon(QLatin1String(":/arora.svg")));
     m_appMenuButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     m_appMenuButton->setPopupMode(QToolButton::InstantPopup);
     m_appMenuButton->setMenu(m_appMenu);
-    m_navigationBar->addWidget(m_appMenuButton);
-    // Set after addWidget so nothing on the bar's side can clamp it
-    // back to the shared nav-glyph size.
-    m_appMenuButton->setIconSize(QSize(28, 28));
+    appMenuButtonLayout->addWidget(m_appMenuButton);
+    m_navigationBar->addWidget(appMenuButtonHost);
+    m_appMenuButton->setIconSize(
+        QSize(s_appMenuIconExtent, s_appMenuIconExtent));
 
     m_historyBackAction->setIcon(AroraIcon::get(QLatin1String("go-previous")));
     m_historyBackMenu = new QMenu(this);

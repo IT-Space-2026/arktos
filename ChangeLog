@@ -666,6 +666,12 @@ UI:
   so Bitwarden shows "2026.9.3" while built-in components with no
   manifest on disk show an honest "—". When an update check finds a
   newer package the cell reads "1.0.0 → 2.0.0 available" (EXT09).
+- The Arora app-menu logo is now actually bigger: the previous bump
+  only set a property Qt ignores for toolbar-hosted buttons, so the
+  glyph still painted at the shared nav-icon size. The button now
+  renders its bear at 36px — twice the navigation glyphs and clearly
+  dominant over the "Arora" label — on every window type including
+  Tor, where the light backing disc grew to match (MENU09).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
