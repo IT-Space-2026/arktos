@@ -76,6 +76,11 @@ public:
     ~ServoView() override;
 
     bool isReady() const;
+    // ENG20: the shim caught a panic inside servo and poisoned this
+    // instance — every further export is a no-op and the tab is dead
+    // (swap back to Chromium to keep browsing).  Always false on
+    // artifacts predating se_is_poisoned.
+    bool isPoisoned() const;
     // Whether another ServoView may be constructed — false once the
     // process's single SeInstance slot is claimed or spent (ENG12).
     static bool instanceAvailable();

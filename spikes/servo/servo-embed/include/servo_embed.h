@@ -79,6 +79,14 @@ typedef int (*SeResourceResolver)(void *userdata, const char *url,
 
 void se_set_resource_resolver(void *userdata, SeResourceResolver resolver);
 
+/* ENG20: panic containment. Every export catches unwinding panics at
+ * the ABI boundary; the first caught panic poisons the instance so all
+ * later exports short-circuit to an error/no-op — a panicking webview
+ * degrades to a dead tab instead of aborting the host. This export is
+ * absent on artifacts predating ENG20 — resolve optionally and treat a
+ * missing symbol as "no panic observed" (unverifiable, pre-fix). */
+int se_is_poisoned(SeInstance instance);
+
 void se_destroy(SeInstance instance);
 
 #ifdef __cplusplus

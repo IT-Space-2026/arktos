@@ -6,6 +6,11 @@
  * host must marshal that to its GUI thread and call se_spin() there.
  * Delegate callbacks (frame_ready, url_changed, ...) always fire from
  * inside se_spin() on the GUI thread.
+ *
+ * Panic model (ENG20): EVERY export is panic-contained — catch_unwind
+ * inside the boundary plus a per-instance `poisoned` flag that turns a
+ * panicking webview into a dead tab. A panic may NEVER unwind over the
+ * extern "C" boundary: that aborts the whole host process.
  */
 
 use std::cell::{Cell, RefCell};
@@ -224,7 +229,11 @@ pub extern "C" fn se_set_resource_resolver(
     userdata: *mut c_void,
     resolver: SeResourceResolver,
 ) {
-    let _ = RESOURCE_RESOLVER.set((userdata as usize, resolver));
+    // No SeInstance to poison — catch only so the boundary stays
+    // panic-free (ENG20).
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        let _ = RESOURCE_RESOLVER.set((userdata as usize, resolver));
+    }));
 }
 
 // SeWaker must be Send + Sync (EventLoopWaker bound) — a raw c_void is
@@ -249,6 +258,11 @@ impl EventLoopWaker for SeWaker {
 
 pub struct SeInstance {
     servo: Servo,
+    /// Ownership anchor — the webview holds its own Rc; this keeps
+    /// the context alive through whatever drop order se_destroy sees.
+    /// (ENG20: resizes route through webview.resize(), which runs the
+    /// painter's bookkeeping — never this context directly.)
+    #[allow(dead_code)]
     rendering_context: Rc<SoftwareRenderingContext>,
     webview: WebView,
     shared: Rc<Shared>,
@@ -257,6 +271,41 @@ pub struct SeInstance {
     /// browsing context"). url() reports None until registration lands,
     /// so early loads queue here and se_spin() flushes them.
     pending_load: RefCell<Option<Url>>,
+    /// ENG20: set by ffi_guard the moment ANY export catches a panic.
+    /// Once servo has panicked its internal state can be incoherent, so
+    /// every later export short-circuits to an error/no-op — the tab
+    /// goes dead but the host process survives.
+    poisoned: AtomicBool,
+}
+
+// ENG20: a Rust panic may not unwind across the extern "C" ABI — the
+// unwinding reaches the boundary as "panic in a function that cannot
+// unwind" and the HOST process aborts.  Every export taking an
+// SeInstance funnels through here: the default panic hook still prints
+// the panic + location to stderr for diagnosis, the instance is
+// poisoned, and the caller sees the fallback instead of an abort.
+fn ffi_guard<F, R>(instance: *mut SeInstance, fallback: R, f: F) -> R
+where
+    F: FnOnce(&SeInstance) -> R,
+{
+    if instance.is_null() {
+        return fallback;
+    }
+    let instance = unsafe { &*instance };
+    if instance.poisoned.load(Ordering::SeqCst) {
+        return fallback;
+    }
+    match catch_unwind(AssertUnwindSafe(|| f(instance))) {
+        Ok(result) => result,
+        Err(_) => {
+            instance.poisoned.store(true, Ordering::SeqCst);
+            eprintln!(
+                "servo-embed: caught a panic crossing an export — this \
+                 instance is poisoned and every later call no-ops"
+            );
+            fallback
+        },
+    }
 }
 
 fn cstr(text: &str) -> CString {
@@ -362,6 +411,7 @@ fn se_init_inner(
         webview,
         shared,
         pending_load: RefCell::new(None),
+        poisoned: AtomicBool::new(false),
     }))
 }
 
@@ -369,18 +419,22 @@ fn se_init_inner(
 /// wake callback fires (and to settle queued work).
 #[no_mangle]
 pub extern "C" fn se_spin(instance: *mut SeInstance) {
-    let instance = unsafe { &*instance };
-    instance.servo.spin_event_loop();
-    // borrow_mut() ends with this statement — an if-let scrutinee
-    // temporary would keep the borrow alive through its whole block.
-    let pending = instance.pending_load.borrow_mut().take();
-    if let Some(url) = pending {
-        if instance.webview.url().is_some() {
-            instance.webview.load(url);
-        } else {
-            *instance.pending_load.borrow_mut() = Some(url);
+    ffi_guard(instance, (), |instance| {
+        if std::env::var_os("SE_SELFTEST_PANIC").is_some() {
+            panic!("ENG20 selftest panic");
         }
-    }
+        instance.servo.spin_event_loop();
+        // borrow_mut() ends with this statement — an if-let scrutinee
+        // temporary would keep the borrow alive through its whole block.
+        let pending = instance.pending_load.borrow_mut().take();
+        if let Some(url) = pending {
+            if instance.webview.url().is_some() {
+                instance.webview.load(url);
+            } else {
+                *instance.pending_load.borrow_mut() = Some(url);
+            }
+        }
+    });
 }
 
 /// Navigate the webview. Returns 0 on success, -1 for a bad URL.
@@ -388,27 +442,39 @@ pub extern "C" fn se_spin(instance: *mut SeInstance) {
 /// queued and dispatched by the next se_spin() after registration.
 #[no_mangle]
 pub extern "C" fn se_load(instance: *mut SeInstance, url: *const c_char) -> i32 {
-    let instance = unsafe { &*instance };
-    let url = unsafe { CStr::from_ptr(url) }.to_string_lossy();
-    match Url::parse(&url) {
-        Ok(url) => {
-            if instance.webview.url().is_some() {
-                instance.webview.load(url);
-            } else {
-                *instance.pending_load.borrow_mut() = Some(url);
-            }
-            0
-        },
-        Err(_) => -1,
-    }
+    ffi_guard(instance, -1, |instance| {
+        let url = unsafe { CStr::from_ptr(url) }.to_string_lossy();
+        match Url::parse(&url) {
+            Ok(url) => {
+                if instance.webview.url().is_some() {
+                    instance.webview.load(url);
+                } else {
+                    *instance.pending_load.borrow_mut() = Some(url);
+                }
+                0
+            },
+            Err(_) => -1,
+        }
+    })
 }
 
 #[no_mangle]
 pub extern "C" fn se_resize(instance: *mut SeInstance, width: u32, height: u32) {
-    let instance = unsafe { &*instance };
-    let size = PhysicalSize::new(width.max(1), height.max(1));
-    instance.rendering_context.resize(size);
-    instance.webview.resize(size);
+    ffi_guard(instance, (), |instance| {
+        let size = PhysicalSize::new(width.max(1), height.max(1));
+        // Route through the WebView ALONE — it forwards to
+        // Painter::resize_rendering_context, which resizes the
+        // surfman surface AND pushes the bookkeeping the painter-side
+        // state needs: WebViewRenderer::set_rect, the
+        // set_document_view transaction, a fresh root-pipeline display
+        // list, RepaintReason::Resize.  Resizing the RenderingContext
+        // directly first updates its size cell, so the painter's
+        // same-size early-return then SKIPS all of that — webrender
+        // composites with a stale document view on a resized surface,
+        // which on affected adapters leaves a GL error the next
+        // Painter::render asserts on (ENG20's abort).
+        instance.webview.resize(size);
+    });
 }
 
 fn webview_point(x: f32, y: f32) -> WebViewPoint {
@@ -417,59 +483,63 @@ fn webview_point(x: f32, y: f32) -> WebViewPoint {
 
 #[no_mangle]
 pub extern "C" fn se_mouse_move(instance: *mut SeInstance, x: f32, y: f32) {
-    let instance = unsafe { &*instance };
-    instance
-        .webview
-        .notify_input_event(InputEvent::MouseMove(MouseMoveEvent::new(webview_point(
-            x, y,
-        ))));
+    ffi_guard(instance, (), |instance| {
+        instance
+            .webview
+            .notify_input_event(InputEvent::MouseMove(MouseMoveEvent::new(webview_point(
+                x, y,
+            ))));
+    });
 }
 
 /// button: 0 primary, 1 middle, 2 secondary (w3c button numbering).
 /// down: non-zero for press, 0 for release.
 #[no_mangle]
 pub extern "C" fn se_mouse_button(instance: *mut SeInstance, down: i32, button: i32, x: f32, y: f32) {
-    let instance = unsafe { &*instance };
-    let action = if down != 0 {
-        MouseButtonAction::Down
-    } else {
-        MouseButtonAction::Up
-    };
-    instance.webview.notify_input_event(InputEvent::MouseButton(
-        MouseButtonEvent::new(action, MouseButton::from(button), webview_point(x, y)),
-    ));
+    ffi_guard(instance, (), |instance| {
+        let action = if down != 0 {
+            MouseButtonAction::Down
+        } else {
+            MouseButtonAction::Up
+        };
+        instance.webview.notify_input_event(InputEvent::MouseButton(
+            MouseButtonEvent::new(action, MouseButton::from(button), webview_point(x, y)),
+        ));
+    });
 }
 
 /// Scroll in device pixels.
 #[no_mangle]
 pub extern "C" fn se_wheel(instance: *mut SeInstance, dx: f64, dy: f64, x: f32, y: f32) {
-    let instance = unsafe { &*instance };
-    instance
-        .webview
-        .notify_input_event(InputEvent::Wheel(WheelEvent::new(
-            WheelDelta {
-                x: dx,
-                y: dy,
-                z: 0.0,
-                mode: WheelMode::DeltaPixel,
-            },
-            webview_point(x, y),
-        )));
+    ffi_guard(instance, (), |instance| {
+        instance
+            .webview
+            .notify_input_event(InputEvent::Wheel(WheelEvent::new(
+                WheelDelta {
+                    x: dx,
+                    y: dy,
+                    z: 0.0,
+                    mode: WheelMode::DeltaPixel,
+                },
+                webview_point(x, y),
+            )));
+    });
 }
 
 /// Press+release a text key (spike-grade: Key::Character only).
 #[no_mangle]
 pub extern "C" fn se_key(instance: *mut SeInstance, utf8: *const c_char) {
-    let instance = unsafe { &*instance };
-    let text = unsafe { CStr::from_ptr(utf8) }.to_string_lossy().into_owned();
-    for state in [KeyState::Down, KeyState::Up] {
-        instance
-            .webview
-            .notify_input_event(InputEvent::Keyboard(KeyboardEvent::from_state_and_key(
-                state,
-                Key::Character(text.clone().into()),
-            )));
-    }
+    ffi_guard(instance, (), |instance| {
+        let text = unsafe { CStr::from_ptr(utf8) }.to_string_lossy().into_owned();
+        for state in [KeyState::Down, KeyState::Up] {
+            instance
+                .webview
+                .notify_input_event(InputEvent::Keyboard(KeyboardEvent::from_state_and_key(
+                    state,
+                    Key::Character(text.clone().into()),
+                )));
+        }
+    });
 }
 
 /// Reload the current page (ENG16). Unlike a same-url se_load this
@@ -479,36 +549,40 @@ pub extern "C" fn se_key(instance: *mut SeInstance, utf8: *const c_char) {
 /// fall back to a same-url se_load.
 #[no_mangle]
 pub extern "C" fn se_reload(instance: *mut SeInstance) {
-    let instance = unsafe { &*instance };
-    instance.webview.reload();
+    ffi_guard(instance, (), |instance| {
+        instance.webview.reload();
+    });
 }
 
 #[no_mangle]
 pub extern "C" fn se_go_back(instance: *mut SeInstance) {
-    let instance = unsafe { &*instance };
-    if instance.webview.can_go_back() {
-        instance.webview.go_back(1);
-    }
+    ffi_guard(instance, (), |instance| {
+        if instance.webview.can_go_back() {
+            instance.webview.go_back(1);
+        }
+    });
 }
 
 #[no_mangle]
 pub extern "C" fn se_set_zoom(instance: *mut SeInstance, zoom: f32) {
-    let instance = unsafe { &*instance };
-    instance.webview.set_page_zoom(zoom.max(0.1));
+    ffi_guard(instance, (), |instance| {
+        instance.webview.set_page_zoom(zoom.max(0.1));
+    });
 }
 
 /// Evaluate JavaScript on the current page; result is delivered via the
 /// console callback as a prefixed "SEJS: <result>" line.
 #[no_mangle]
 pub extern "C" fn se_eval_js(instance: *mut SeInstance, script: *const c_char) {
-    let instance = unsafe { &*instance };
-    let script = unsafe { CStr::from_ptr(script) }.to_string_lossy().into_owned();
-    instance
-        .webview
-        .evaluate_javascript(script, move |_result| {
-            // JSValue has no Display; the harness only needs that the
-            // callback fired — full marshaling is out of spike scope.
-        });
+    ffi_guard(instance, (), |instance| {
+        let script = unsafe { CStr::from_ptr(script) }.to_string_lossy().into_owned();
+        instance
+            .webview
+            .evaluate_javascript(script, move |_result| {
+                // JSValue has no Display; the harness only needs that the
+                // callback fired — full marshaling is out of spike scope.
+            });
+    });
 }
 
 /// Copy the last painted RGBA frame into `buf`. Returns bytes written,
@@ -516,17 +590,18 @@ pub extern "C" fn se_eval_js(instance: *mut SeInstance, script: *const c_char) {
 /// Pixel format: RGBA8, width*height*4 bytes; call se_frame_size first.
 #[no_mangle]
 pub extern "C" fn se_frame_size(instance: *mut SeInstance, width: *mut u32, height: *mut u32) -> i32 {
-    let instance = unsafe { &*instance };
-    match instance.shared.frame.borrow().as_ref() {
-        Some(image) => {
-            unsafe {
-                *width = image.width();
-                *height = image.height();
-            }
-            0
-        },
-        None => -1,
-    }
+    ffi_guard(instance, -1, |instance| {
+        match instance.shared.frame.borrow().as_ref() {
+            Some(image) => {
+                unsafe {
+                    *width = image.width();
+                    *height = image.height();
+                }
+                0
+            },
+            None => -1,
+        }
+    })
 }
 
 #[no_mangle]
@@ -535,39 +610,53 @@ pub extern "C" fn se_frame_copy(
     buf: *mut u8,
     buf_len: usize,
 ) -> isize {
-    let instance = unsafe { &*instance };
-    let frame = instance.shared.frame.borrow();
-    let Some(image) = frame.as_ref() else {
-        return -1;
-    };
-    let raw = image.as_raw();
-    if buf_len < raw.len() {
-        return -(raw.len() as isize);
-    }
-    unsafe { std::ptr::copy_nonoverlapping(raw.as_ptr(), buf, raw.len()) };
-    raw.len() as isize
+    ffi_guard(instance, -1, |instance| {
+        let frame = instance.shared.frame.borrow();
+        let Some(image) = frame.as_ref() else {
+            return -1;
+        };
+        let raw = image.as_raw();
+        if buf_len < raw.len() {
+            return -(raw.len() as isize);
+        }
+        unsafe { std::ptr::copy_nonoverlapping(raw.as_ptr(), buf, raw.len()) };
+        raw.len() as isize
+    })
 }
 
 /// Number of web-resource loads that passed through the interception
 /// hook (spike metric for ENG03 question 1: interceptor coverage).
 #[no_mangle]
 pub extern "C" fn se_request_count(instance: *mut SeInstance) -> u64 {
-    let instance = unsafe { &*instance };
-    instance.shared.intercepted.get()
+    ffi_guard(instance, 0, |instance| instance.shared.intercepted.get())
 }
 
 /// Dump the observed request log ("METHOD URL" lines, capped at 2048)
 /// into `buf`; returns bytes written or -needed.
 #[no_mangle]
 pub extern "C" fn se_request_log(instance: *mut SeInstance, buf: *mut c_char, buf_len: usize) -> isize {
-    let instance = unsafe { &*instance };
-    let text = instance.shared.request_log.borrow().join("\n");
-    let bytes = text.as_bytes();
-    if buf_len < bytes.len() {
-        return -(bytes.len() as isize);
+    ffi_guard(instance, -1, |instance| {
+        let text = instance.shared.request_log.borrow().join("\n");
+        let bytes = text.as_bytes();
+        if buf_len < bytes.len() {
+            return -(bytes.len() as isize);
+        }
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf as *mut u8, bytes.len()) };
+        bytes.len() as isize
+    })
+}
+
+/// ENG20: non-zero once a panic caught inside any export has poisoned
+/// this instance (see ffi_guard) — every export then no-ops.  Hosts
+/// may poll this to mark the tab dead and stop calling in; a missing
+/// export on older artifacts means "never observed a panic".
+#[no_mangle]
+pub extern "C" fn se_is_poisoned(instance: *mut SeInstance) -> i32 {
+    if instance.is_null() {
+        return 0;
     }
-    unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf as *mut u8, bytes.len()) };
-    bytes.len() as isize
+    let instance = unsafe { &*instance };
+    instance.poisoned.load(Ordering::SeqCst) as i32
 }
 
 /// ENG11: report the linked libservo version ("0.7.0"), parsed out of
@@ -578,21 +667,35 @@ pub extern "C" fn se_request_log(instance: *mut SeInstance, buf: *mut c_char, bu
 #[no_mangle]
 pub extern "C" fn se_version() -> *const c_char {
     static VERSION: OnceLock<CString> = OnceLock::new();
-    VERSION
-        .get_or_init(|| {
-            let ua = UserAgentPlatform::default().to_user_agent_string();
-            let version = ua
-                .split_whitespace()
-                .find_map(|token| token.strip_prefix("Servo/"))
-                .unwrap_or("unknown");
-            cstr(version)
-        })
-        .as_ptr()
+    static UNKNOWN: &[u8] = b"unknown\0";
+    // No SeInstance to poison here — catch only so an unexpected panic
+    // cannot abort the host over the ABI.
+    catch_unwind(AssertUnwindSafe(|| {
+        VERSION
+            .get_or_init(|| {
+                let ua = UserAgentPlatform::default().to_user_agent_string();
+                let version = ua
+                    .split_whitespace()
+                    .find_map(|token| token.strip_prefix("Servo/"))
+                    .unwrap_or("unknown");
+                cstr(version)
+            })
+            .as_ptr()
+    }))
+    .unwrap_or(UNKNOWN.as_ptr().cast())
 }
 
 #[no_mangle]
 pub extern "C" fn se_destroy(instance: *mut SeInstance) {
-    if !instance.is_null() {
-        drop(unsafe { Box::from_raw(instance) });
+    if instance.is_null() {
+        return;
+    }
+    // Deliberately NOT gated on `poisoned` — the host owns freeing the
+    // instance either way.  The drop itself is catch-wrapped: a panic
+    // inside teardown leaks the box rather than aborting the process.
+    if catch_unwind(AssertUnwindSafe(|| drop(unsafe { Box::from_raw(instance) })))
+        .is_err()
+    {
+        eprintln!("servo-embed: panic during se_destroy — instance leaked");
     }
 }

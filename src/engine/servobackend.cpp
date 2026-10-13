@@ -76,6 +76,10 @@ struct ServoApi {
     // them (the reported "Error loading page" on swapped start-page
     // tabs).  A missing symbol degrades to exactly that old behavior.
     void (*setResourceResolver)(void *, SeResourceResolver) = nullptr;
+    // ENG20: optional — artifacts predating panic containment cannot
+    // report poisoning (they abort instead); a missing symbol reads as
+    // "never observed", which is the honest answer for them.
+    int (*isPoisoned)(SeInstance) = nullptr;
 };
 
 // ENG18: serves the schemes libservo cannot fetch straight out of the
@@ -188,6 +192,11 @@ bool resolve()
     api().setResourceResolver =
         reinterpret_cast<decltype(api().setResourceResolver)>(
             library().resolve("se_set_resource_resolver"));
+    // Optional ENG20 addition — panic containment.  Missing on older
+    // artifacts: the best a host can do there is nothing (a panic
+    // would already have aborted the process).
+    api().isPoisoned = reinterpret_cast<decltype(api().isPoisoned)>(
+        library().resolve("se_is_poisoned"));
     state = ok ? 1 : -1;
     if (!ok)
         qWarning("servo-embed: artifact at %s is missing symbols",
@@ -386,6 +395,16 @@ bool ServoView::isReady() const
     return m_instance != nullptr;
 }
 
+bool ServoView::isPoisoned() const
+{
+    // ENG20: once the shim has caught a panic the instance is dead —
+    // the C side no-ops every call, and the Qt side stops issuing them
+    // (the wake->spin marshal also checks, so a poisoned view stops
+    // pumping).  Pre-ENG20 artifacts lack the export; they can't be
+    // asked and would have aborted instead, so read as not-poisoned.
+    return m_instance && api().isPoisoned && api().isPoisoned(m_instance);
+}
+
 bool ServoView::instanceAvailable()
 {
     QMutexLocker lock(&servoMutex());
@@ -394,19 +413,19 @@ bool ServoView::instanceAvailable()
 
 void ServoView::load(const QUrl &url)
 {
-    if (m_instance)
+    if (m_instance && !isPoisoned())
         api().load(m_instance, url.toEncoded().constData());
 }
 
 void ServoView::spinOnce()
 {
-    if (m_instance)
+    if (m_instance && !isPoisoned())
         api().spin(m_instance);
 }
 
 void ServoView::goBack()
 {
-    if (m_instance)
+    if (m_instance && !isPoisoned())
         api().goBack(m_instance);
 }
 
@@ -414,7 +433,7 @@ void ServoView::reload()
 {
     // Nothing to re-fetch on a tab that never committed a url —
     // pre-registration pending loads flush through se_spin instead.
-    if (!m_instance || m_url.isEmpty())
+    if (!m_instance || m_url.isEmpty() || isPoisoned())
         return;
     if (api().reload) {
         api().reload(m_instance);
@@ -429,19 +448,19 @@ void ServoView::reload()
 
 void ServoView::setZoom(qreal zoom)
 {
-    if (m_instance)
+    if (m_instance && !isPoisoned())
         api().setZoom(m_instance, static_cast<float>(zoom));
 }
 
 void ServoView::evaluateJavaScript(const QString &source)
 {
-    if (m_instance)
+    if (m_instance && !isPoisoned())
         api().evalJs(m_instance, source.toUtf8().constData());
 }
 
 void ServoView::grabFrame()
 {
-    if (!m_instance)
+    if (!m_instance || isPoisoned())
         return;
     unsigned w = 0, h = 0;
     if (api().frameSize(m_instance, &w, &h) != 0 || !w || !h)
@@ -494,18 +513,29 @@ void ServoView::paintEvent(QPaintEvent *event)
                          Qt::AlignTop | Qt::AlignLeft | Qt::TextWordWrap,
                          tr("Servo engine unavailable — the "
                             "servo-embed artifact could not be loaded."));
+    } else if (isPoisoned()) {
+        // ENG20: the shim caught a panic inside servo — the instance
+        // is dead, but the app survived.  Say so on the surface and
+        // point at the one working recovery: swap back to Chromium
+        // (a new servo tab is impossible — the slot stays spent).
+        painter.setPen(palette().color(QPalette::Text));
+        painter.drawText(rect().adjusted(12, 12, -12, -12),
+                         Qt::AlignTop | Qt::AlignLeft | Qt::TextWordWrap,
+                         tr("The Servo engine crashed — this tab is "
+                            "disabled. Switch it back to Chromium to "
+                            "keep browsing."));
     }
 }
 
 void ServoView::resizeEvent(QResizeEvent *)
 {
-    if (m_instance)
+    if (m_instance && !isPoisoned())
         api().resize(m_instance, width(), height());
 }
 
 void ServoView::mouseMoveEvent(QMouseEvent *event)
 {
-    if (m_instance)
+    if (m_instance && !isPoisoned())
         api().mouseMove(m_instance,
                         event->position().x(), event->position().y());
 }
@@ -521,21 +551,21 @@ static int servoButton(Qt::MouseButton button)
 
 void ServoView::mousePressEvent(QMouseEvent *event)
 {
-    if (m_instance)
+    if (m_instance && !isPoisoned())
         api().mouseButton(m_instance, 1, servoButton(event->button()),
                           event->position().x(), event->position().y());
 }
 
 void ServoView::mouseReleaseEvent(QMouseEvent *event)
 {
-    if (m_instance)
+    if (m_instance && !isPoisoned())
         api().mouseButton(m_instance, 0, servoButton(event->button()),
                           event->position().x(), event->position().y());
 }
 
 void ServoView::wheelEvent(QWheelEvent *event)
 {
-    if (!m_instance)
+    if (!m_instance || isPoisoned())
         return;
     const QPoint delta = event->pixelDelta().isNull()
         ? event->angleDelta() / 8
@@ -546,7 +576,7 @@ void ServoView::wheelEvent(QWheelEvent *event)
 
 void ServoView::keyPressEvent(QKeyEvent *event)
 {
-    if (!m_instance) {
+    if (!m_instance || isPoisoned()) {
         QWidget::keyPressEvent(event);
         return;
     }
