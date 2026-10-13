@@ -1003,12 +1003,21 @@ void WebView::mousePressEvent(QMouseEvent *event)
 
 void WebView::dragEnterEvent(QDragEnterEvent *event)
 {
+    // TABS13: a real tab drag never becomes a page navigation —
+    // outside a tab bar it means tear-off, and the refused drop is
+    // what the source bar's exec() reads.
+    if (event->mimeData()->hasFormat(aroraTabMimeType())) {
+        event->ignore();
+        return;
+    }
     event->acceptProposedAction();
 }
 
 void WebView::dragMoveEvent(QDragMoveEvent *event)
 {
     event->ignore();
+    if (event->mimeData()->hasFormat(aroraTabMimeType()))
+        return;
     if (event->source() != this) {
         if (!event->mimeData()->urls().isEmpty()) {
             event->acceptProposedAction();
@@ -1025,6 +1034,12 @@ void WebView::dragMoveEvent(QDragMoveEvent *event)
 
 void WebView::dropEvent(QDropEvent *event)
 {
+    // TABS13: a real tab drag must not load onto the page under the
+    // cursor — the source bar treats the refused drop as a tear-off.
+    if (event->mimeData()->hasFormat(aroraTabMimeType())) {
+        event->ignore();
+        return;
+    }
     QWebEngineView::dropEvent(event);
     if (!event->isAccepted()
         && event->source() != this

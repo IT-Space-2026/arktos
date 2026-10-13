@@ -71,6 +71,7 @@
 #include "tabwidget.h"
 
 class QLineEdit;
+class QMimeData;
 class QTimer;
 class QPainter;
 class TabPreview;
@@ -168,6 +169,22 @@ public:
     // TabWidget::setTabTitleOverride (an empty commit clears the
     // override), Esc cancels.
     void editTabTitle(int index);
+
+    // TABS13: the live in-process tab-drag session — the (bar, page)
+    // pair behind an application/x-arora-tab payload, plus whether a
+    // drop already consumed it.  Static because a drag's endpoints
+    // are two different bars; the mime token is validated against
+    // this pair so a stale or foreign payload can never move a tab.
+    // Exposed for the autotests' synthetic drop events.
+    static void beginTabDragSession(TabBar *source, QWidget *page);
+    static void endTabDragSession();
+
+#ifdef AUTOTESTS
+    // Test seam: drive a synthesized drop through dropEvent() — a
+    // plain QApplication::sendEvent never reaches it because QWidget
+    // ignores non-spontaneous Drop events.
+    void testDropEvent(QDropEvent *event) { dropEvent(event); }
+#endif
 
     // CONT06: the level-1 container-header band painted along the
     // strip's top edge when the TabWidget's two-level mode has more
@@ -269,6 +286,13 @@ private:
     void paintContainerStrip(QPainter *painter);
     void shiftChildrenBelowStrip();
     void updateAccessibleStrip();
+    // TABS13: the insert slot a strip drop maps to (past the hovered
+    // tab's midpoint targets the far side; over the void it appends),
+    // and the payload decode — it only yields a bar+page that match
+    // the live drag session.
+    int insertIndexForDrop(const QPoint &stripPos) const;
+    static bool decodeAroraTabDrag(const QMimeData *mimeData,
+                                   TabBar *&source, QWidget *&page);
     friend class TabWidget;
 
     QPoint m_dragStartPos;

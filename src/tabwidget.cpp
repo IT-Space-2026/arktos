@@ -952,6 +952,41 @@ void TabWidget::wireLocationBar(QLineEdit *bar)
     connect(bar, &QLineEdit::returnPressed, this, &TabWidget::lineEditReturnPressed);
 }
 
+// The engine-page/webview signal set every hosted view needs — shared
+// by makeNewTabOnProfile() and adoptTransferredTab(): a view arriving
+// from another window is still connected to its old TabWidget.
+void TabWidget::wireWebView(WebView *webView)
+{
+    Engine::Page *enginePage = webView->enginePage();
+    connect(enginePage, &Engine::Page::loadStarted,
+            this, &TabWidget::webViewLoadStarted);
+    connect(enginePage, &Engine::Page::loadProgress,
+            this, &TabWidget::webViewLoadProgress);
+    connect(enginePage, &Engine::Page::loadFinished,
+            this, &TabWidget::webViewLoadFinished);
+    connect(enginePage, &Engine::Page::iconChanged,
+            this, [this]() { webViewIconChanged(); });
+    connect(enginePage, &Engine::Page::titleChanged,
+            this, &TabWidget::webViewTitleChanged);
+    connect(enginePage, &Engine::Page::urlChanged,
+            this, &TabWidget::webViewUrlChanged);
+    connect(webView, &WebView::search,
+            this, [this](const QUrl &url, TabWidget::OpenUrlIn tab) { loadUrl(url, tab); });
+    connect(enginePage, &Engine::Page::windowCloseRequested,
+            this, &TabWidget::windowCloseRequested);
+    connect(enginePage, &Engine::Page::printRequested,
+            this, [this, webView]() { emit printRequested(webView); });
+    // Qt WebEngine does not surface WebKit's window-feature requests
+    // (geometryChangeRequested / *VisibilityChangeRequested); window.open
+    // chrome handling is internal to Chromium.
+
+    // webview actions
+    for (int i = 0; i < m_actions.count(); ++i) {
+        WebActionMapper *mapper = m_actions[i];
+        mapper->addChild(webView->enginePage()->action(mapper->webAction()));
+    }
+}
+
 WebView *TabWidget::makeNewTabOnProfile(Engine::Profile *profile, bool makeCurrent)
 {
     // line edit
@@ -986,28 +1021,7 @@ WebView *TabWidget::makeNewTabOnProfile(Engine::Profile *profile, bool makeCurre
 
     WebView *webView = new WebView(profile);
     locationBar->setWebView(webView);
-    Engine::Page *enginePage = webView->enginePage();
-    connect(enginePage, &Engine::Page::loadStarted,
-            this, &TabWidget::webViewLoadStarted);
-    connect(enginePage, &Engine::Page::loadProgress,
-            this, &TabWidget::webViewLoadProgress);
-    connect(enginePage, &Engine::Page::loadFinished,
-            this, &TabWidget::webViewLoadFinished);
-    connect(enginePage, &Engine::Page::iconChanged,
-            this, [this]() { webViewIconChanged(); });
-    connect(enginePage, &Engine::Page::titleChanged,
-            this, &TabWidget::webViewTitleChanged);
-    connect(enginePage, &Engine::Page::urlChanged,
-            this, &TabWidget::webViewUrlChanged);
-    connect(webView, &WebView::search,
-            this, [this](const QUrl &url, TabWidget::OpenUrlIn tab) { loadUrl(url, tab); });
-    connect(enginePage, &Engine::Page::windowCloseRequested,
-            this, &TabWidget::windowCloseRequested);
-    connect(enginePage, &Engine::Page::printRequested,
-            this, [this, webView]() { emit printRequested(webView); });
-    // Qt WebEngine does not surface WebKit's window-feature requests
-    // (geometryChangeRequested / *VisibilityChangeRequested); window.open
-    // chrome handling is internal to Chromium.
+    wireWebView(webView);
 
     WebViewWithSearch *webViewWithSearch = new WebViewWithSearch(webView, this);
     insertTab(insertPos, webViewWithSearch, tr("Untitled"));
@@ -1048,12 +1062,6 @@ WebView *TabWidget::makeNewTabOnProfile(Engine::Profile *profile, bool makeCurre
     }
     if (makeCurrent)
         setCurrentWidget(webViewWithSearch);
-
-    // webview actions
-    for (int i = 0; i < m_actions.count(); ++i) {
-        WebActionMapper *mapper = m_actions[i];
-        mapper->addChild(webView->enginePage()->action(mapper->webAction()));
-    }
 
     if (count() == 1)
         currentChanged(currentIndex());
@@ -2864,6 +2872,339 @@ void TabWidget::closeTab(int index)
         currentWebView()->setFocus();
     if (count() == 0)
         emit lastTabClosed();
+}
+
+// TABS13 — the take half of a cross-window move.  Unlike closeTab the
+// widgets are never deleted and nothing is queued for reopen: the tab
+// is leaving, not closing.  Same strip mechanics as the
+// collapsed-group/container-store detaches — transient tab buttons are
+// dropped (tabInserted re-creates them) and every record keyed on the
+// page is lifted into the carrier.
+bool TabWidget::moveTabTo(int index, TabWidget *target, int targetIndex)
+{
+    if (!target || target == this || index < 0 || index >= count())
+        return false;
+    QWidget *page = widget(index);
+    if (!page)
+        return false;
+
+    // TABS13(d) — the transfer constraints.
+    //
+    // Engine tabs: the movable web tab is a WebViewWithSearch (page,
+    // history and engine state all ride inside); a widget tab is a
+    // bare QWidget that moves whole.  A backend that cannot transfer
+    // (the servo spike's host) must mark its page so the drop refuses
+    // instead of tearing a foreign view off its window.
+    if (page->property("aroraNoTabTransfer").toBool())
+        return false;
+    // Privacy boundary: private browsing is per-tab (PTAB01) — the
+    // OTR bit lives on the page's profile and moves with the widget,
+    // and every persistence path (SEC07 session save, the
+    // recently-closed stack) filters per page, so an OTR tab stays
+    // non-recording wherever it lands.  The reverse is a leak: a
+    // persistent page inside a private/tor window would keep writing
+    // history where the user reads every tab as throwaway.  The modes
+    // are process-global today — a pointer-validated same-process
+    // drag can never cross them — but the guard pins the invariant
+    // to the code instead of assuming it.  Container pages are
+    // non-OTR by construction (containers are refused under
+    // private/tor at creation), so the same check covers them.
+    WebView *guardView = webView(index);
+    const bool pageIsPrivate = guardView && guardView->enginePage()
+        && guardView->enginePage()->isOffTheRecord();
+    if (!pageIsPrivate && BrowserApplication::isPrivate())
+        return false;
+
+    // The chip is the only visible member of a collapsed group —
+    // expand first so only the dragged tab leaves, the same rule
+    // closeTab() applies.
+    const QString gid = tabGroupId(index);
+    if (!gid.isEmpty() && m_tabGroupInfo.value(gid).collapsed)
+        setTabGroupCollapsed(gid, false);
+    index = indexOf(page);
+    if (index < 0)
+        return false;
+
+    WebView *view = webView(index);
+    TransferredTab tab;
+    tab.page = page;
+    tab.bar = m_locationBars->widget(index);
+    tab.icon = m_tabBar->tabIcon(index);
+    tab.text = tabText(index);
+    tab.toolTip = tabToolTip(index);
+    tab.data = m_tabBar->tabData(index);
+    tab.pinned = m_pinnedTabs.contains(page);
+    tab.customTitle = m_customTitles.value(page);
+    tab.widgetTabBaseTitle = m_widgetTabBaseTitles.value(page);
+    tab.wasGrouped = !gid.isEmpty();
+    tab.groupName = tabGroupName(gid);
+    tab.groupColor = tabGroupColor(gid);
+    tab.containerId = view ? view->containerId() : QString();
+    if (view) {
+        auto sleep = m_sleepStates.constFind(view);
+        if (sleep != m_sleepStates.constEnd()) {
+            tab.hasSleepState = true;
+            tab.sleepState = sleep.value();
+        }
+        auto pending = m_pendingRestores.constFind(view);
+        if (pending != m_pendingRestores.constEnd()) {
+            tab.hasPendingRestore = true;
+            tab.pendingRestore = pending.value();
+        }
+        auto scroll = m_pendingScrollRestore.constFind(view);
+        if (scroll != m_pendingScrollRestore.constEnd()) {
+            tab.hasPendingScroll = true;
+            tab.pendingScroll = scroll.value();
+        }
+        auto thumb = m_tabThumbnails.constFind(view);
+        if (thumb != m_tabThumbnails.constEnd()) {
+            tab.hasThumbnail = true;
+            tab.thumbnail = thumb.value();
+        }
+    }
+
+    // Sever this widget's bindings before the strip slot goes — the
+    // page's signals and the bar's editing signal must stop landing
+    // here.  Other receivers (managers, the bar's own view link) are
+    // untouched, and the view's Qt-level parentage moves with the
+    // page widget.
+    if (view && view->enginePage()) {
+        Engine::Page *enginePage = view->enginePage();
+        disconnect(enginePage, nullptr, this, nullptr);
+        for (WebActionMapper *mapper : std::as_const(m_actions)) {
+            if (QAction *child = enginePage->action(mapper->webAction()))
+                disconnect(child, nullptr, mapper, nullptr);
+        }
+    }
+    if (view)
+        disconnect(view, nullptr, this, nullptr);
+    if (tab.bar) {
+        disconnect(tab.bar, nullptr, this, nullptr);
+        if (m_omniboxSuggestions)
+            disconnect(tab.bar, nullptr, m_omniboxSuggestions, nullptr);
+    }
+
+    const QTabBar::ButtonPosition sides[2] = { QTabBar::LeftSide,
+                                               QTabBar::RightSide };
+    for (const QTabBar::ButtonPosition side : sides) {
+        if (QWidget *button = m_tabBar->tabButton(index, side)) {
+            m_tabBar->setTabButton(index, side, nullptr);
+            button->deleteLater();
+        }
+    }
+    m_locationBars->removeWidget(tab.bar);
+    removeTab(index);
+    m_pinnedTabs.remove(page);
+    m_customTitles.remove(page);
+    m_widgetTabBaseTitles.remove(page);
+    if (view) {
+        m_tabGroups.remove(view);
+        m_sleepStates.remove(view);
+        m_tabThumbnails.remove(view);
+        m_pendingScrollRestore.remove(view);
+        m_pendingRestores.remove(view);
+        for (auto it = m_lastActiveInHeader.begin();
+             it != m_lastActiveInHeader.end();) {
+            if (it.value() == view)
+                it = m_lastActiveInHeader.erase(it);
+            else
+                ++it;
+        }
+    }
+    forgetTabGroupIfEmpty(gid);
+
+    // The widgets join the target's tree before the emptied-strip
+    // bookkeeping runs — a lastTabClosed that closes this window must
+    // never take the moved tab with it.
+    page->setParent(target);
+    if (tab.bar)
+        tab.bar->setParent(target->m_locationBars);
+
+    syncContainerStrip();
+    emit tabsChanged();
+
+    const int adopted = target->adoptTransferredTab(tab, targetIndex);
+    // Nothing may follow the lastTabClosed emit — it can close (and
+    // delete) the window this widget lives in.
+    if (count() == 0)
+        emit lastTabClosed();
+    return adopted >= 0;
+}
+
+// The adopt half — the tab lands in this strip at index (-1 appends)
+// with its carried state re-keyed onto the same widgets.
+int TabWidget::adoptTransferredTab(const TransferredTab &tab, int index)
+{
+    QWidget *page = tab.page;
+    if (!page)
+        return -1;
+    WebViewWithSearch *withSearch = qobject_cast<WebViewWithSearch*>(page);
+    WebView *view = withSearch ? withSearch->m_webView : nullptr;
+
+    const int dst = index < 0 ? count() : qBound(0, index, count());
+    if (tab.bar)
+        m_locationBars->insertWidget(dst, tab.bar);
+    const int idx = insertTab(dst, page, tab.icon,
+        tab.text.isEmpty() ? tr("Untitled") : tab.text);
+    setTabToolTip(idx, tab.toolTip);
+    m_tabBar->setTabData(idx, tab.data);
+
+    if (view) {
+        // The page's signals still point at the widget it left —
+        // bind this side's handlers and action children.
+        wireWebView(view);
+        if (LocationBar *bar = qobject_cast<LocationBar*>(tab.bar))
+            wireLocationBar(bar);
+    }
+
+#if !defined(Q_OS_MACOS)
+    // Rebuild the favicon label — the icon is URL-derived so it is
+    // re-resolved rather than snapshotted, with the private badge for
+    // off-the-record pages.
+    if (view) {
+        if (QLabel *label = animationLabel(idx, false)) {
+            const QIcon icon = BrowserApplication::icon(view->url());
+            label->setPixmap(isTabPrivate(idx)
+                ? privateBadgedPixmap(icon) : icon.pixmap(16, 16));
+        }
+    }
+#endif
+
+    // TABS04's drop-position pin rule, same as moveTab(): landing
+    // inside the pinned block pins, past its edge unpins — the
+    // carried flag holds only at the boundary itself.
+    setPinFlag(page, tab.pinned);
+    {
+        const bool pinned = m_pinnedTabs.contains(page);
+        int others = 0;
+        for (int i = 0; i < count(); ++i) {
+            if (i != idx && isTabPinned(i))
+                ++others;
+        }
+        if (pinned ? idx > others : idx < others)
+            setPinFlag(page, !pinned);
+    }
+
+    if (!tab.customTitle.isEmpty())
+        m_customTitles.insert(page, tab.customTitle);
+    if (!tab.widgetTabBaseTitle.isEmpty())
+        m_widgetTabBaseTitles.insert(page, tab.widgetTabBaseTitle);
+    if (m_customTitles.contains(page))
+        applyTabTitle(idx);
+
+    // Group binding — a drop between two members of one target group
+    // joins it (the in-bar normalize rule); otherwise the carried
+    // binding re-materializes as a fresh group id (group ids are
+    // per-window) keeping the name and color.
+    if (view) {
+        const QString left = tabGroupId(idx - 1);
+        const QString right = tabGroupId(idx + 1);
+        if (!left.isEmpty() && left == right) {
+            assignTabGroup(view, left);
+        } else if (tab.wasGrouped) {
+            const QString newGid = nextTabGroupId();
+            TabGroup group;
+            group.id = newGid;
+            group.name = tab.groupName;
+            group.color = tab.groupColor;
+            m_tabGroupInfo.insert(newGid, group);
+            assignTabGroup(view, newGid);
+        }
+    }
+
+    if (view) {
+        if (tab.hasSleepState) {
+            TabSleepState state = tab.sleepState;
+            state.lastActiveMs = QDateTime::currentMSecsSinceEpoch();
+            m_sleepStates.insert(view, state);
+            if (state.sleeping)
+                applySleepVisuals(idx, true);
+        } else {
+            m_sleepStates.insert(view, TabSleepState());
+            markTabActivity(view);
+        }
+        if (tab.hasPendingRestore)
+            m_pendingRestores.insert(view, tab.pendingRestore);
+        if (tab.hasPendingScroll)
+            m_pendingScrollRestore.insert(view, tab.pendingScroll);
+        if (tab.hasThumbnail)
+            m_tabThumbnails.insert(view, tab.thumbnail);
+    }
+
+    // CONT06: a merged tab bound to a filtered-out level joins that
+    // level's hidden store — the strip keeps showing the active
+    // header, and the level registers so the header row can pick it
+    // back up.  Widget tabs belong to the default level the same way
+    // addWidgetTab() files them.
+    int visibleIndex = idx;
+    if (m_twoLevelStrip && !m_containerFilterAdjust) {
+        const QString cid = tab.containerId;
+        if (!cid.isEmpty() && !m_containerHeaderOrder.contains(cid))
+            m_containerHeaderOrder.append(cid);
+        if (cid != m_activeContainerHeader) {
+            detachTabIntoContainerStore(idx);
+            visibleIndex = -1;
+        }
+        syncContainerStrip();
+    }
+
+    // Raise the moved tab in its new window — the drop was an
+    // explicit "put it here", not a background open.  A tab filed
+    // into a filtered-out level leaves the current tab alone.
+    if (visibleIndex >= 0)
+        setCurrentIndex(indexOf(page));
+    if (count() == 1)
+        currentChanged(currentIndex());
+    m_tabBar->setIconSize(m_tabBar->iconSize());
+    m_tabBar->updateGeometry();
+    m_tabBar->update();
+    emit tabsChanged();
+    return idx;
+}
+
+// The tear-off: the drag ended unhandled, so the tab leaves for a
+// fresh window — the real page moves (history, scroll and an
+// in-flight load all ride along), and the usual lastTabClosed path
+// decides whether the emptied window closes.
+void TabWidget::tearTabToNewWindow(int index)
+{
+    QWidget *page = widget(index);
+    if (!page)
+        return;
+    // instance() is null when qApp is not a BrowserApplication
+    // (autotests) — a bare window keeps the path drivable there.
+    BrowserApplication *application = BrowserApplication::instance();
+    BrowserMainWindow *window = application
+        ? application->newMainWindow()
+        : new BrowserMainWindow();
+    if (!window)
+        return;
+    if (!application)
+        window->show();
+    TabWidget *target = window->tabWidget();
+    WebView *placeholder = target->webView(0);
+    if (!moveTabTo(index, target, 0))
+        return;
+    if (target->count() > 1) {
+        // The window ctor seeded a blank first tab — close it now
+        // that the moved tab sits ahead of it.
+        target->closeTab(1);
+        return;
+    }
+    if (target->indexOf(page) >= 0)
+        return;
+    // CONT06: a two-level strip (the default) can file the moved tab
+    // under its own container level — the window would open on the
+    // placeholder instead.  Activate the tab's level so it is what
+    // shows, then drop the never-loaded placeholder out of the
+    // hidden store.
+    if (WebViewWithSearch *withSearch =
+            qobject_cast<WebViewWithSearch*>(page)) {
+        target->setActiveContainerHeader(
+            withSearch->m_webView->containerId());
+        if (placeholder)
+            target->closeHiddenTab(placeholder);
+    }
 }
 
 QLabel *TabWidget::animationLabel(int index, bool addMovie)

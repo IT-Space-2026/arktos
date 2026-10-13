@@ -65,12 +65,16 @@
 
 #include <qtabwidget.h>
 
+#include <qbytearray.h>
 #include <qcolor.h>
 #include <qhash.h>
 #include <qicon.h>
+#include <qpixmap.h>
 #include <qpoint.h>
+#include <qpointer.h>
 #include <qset.h>
 #include <qurl.h>
+#include <qvariant.h>
 
 QT_BEGIN_NAMESPACE
 class QCompleter;
@@ -92,6 +96,16 @@ class WebView;
 class WebActionMapper;
 class WebViewSearch;
 class QToolButton;
+
+// TABS13: the mime type a real tab drag is tagged with — the payload
+// is a "<source bar>:<page widget>" pointer pair, validated against a
+// live in-process drag session in TabBar so stale or foreign data can
+// never move a tab.  Shared by the strip, the page view and the
+// location bar so every drop surface recognizes it.
+inline QLatin1String aroraTabMimeType()
+{
+    return QLatin1String("application/x-arora-tab");
+}
 
 /*!
     TabWidget that contains WebViews and a stack widget of associated line edits.
@@ -350,6 +364,30 @@ public slots:
     // the page and restores the scroll position.
     void sleepTab(int index = -1);
     void wakeTab(int index = -1);
+    // TABS13: move the tab at index into target's strip at
+    // targetIndex (-1 appends) — the tear-off and cross-window-merge
+    // back end of the bar's arora-tab drags.  The page widget itself
+    // moves, so history, scroll position and in-flight loads ride
+    // along untouched; every record keyed on it (pin flag, rename
+    // override, group binding, sleep/pending-restore state,
+    // thumbnail) transfers too.  Group bindings re-materialize under
+    // a fresh id in the target (group ids are per-window), and an
+    // off-the-record page stays off-the-record wherever it lands —
+    // the move can never leak a private tab onto a persistent
+    // profile.  Returns false when the index has no tab or target is
+    // this widget (a same-strip drop is a plain reorder — the bar
+    // handles that itself).  When the move empties this widget the
+    // usual lastTabClosed path runs (close the window or open a
+    // fresh tab, per the setting).
+    bool moveTabTo(int index, TabWidget *target, int targetIndex = -1);
+    // The tear-off driver: moveTabTo() into a fresh BrowserMainWindow
+    // (the TabBar calls this when a drag ended unhandled).  The
+    // window ctor's blank placeholder tab is closed behind the moved
+    // one — or discarded from the hidden container store when
+    // two-level filtering filed the moved tab under its own level,
+    // which the window then opens on.
+    void tearTabToNewWindow(int index);
+
     // TABS05: undo closed tab (Ctrl+Shift+T) — pops the newest
     // memory-only record and rebuilds the tab at its old slot.  The
     // stack is never written to disk: a persisted undo stack would
@@ -660,9 +698,6 @@ private:
         QByteArray historyState;
     };
     QHash<WebView *, PendingRestore> m_pendingRestores;
-    bool m_lazyRestoreTabs = false;
-    bool m_lazyRestorePinnedTabs = true;
-    void restorePendingTab(int index);
     // POL02/TPREV02: per-view thumbnail cache for the hover preview —
     // keyed on the view like the sleep bookkeeping so drags never
     // lose it.  The stored url is the frame's page identity: an entry
@@ -674,6 +709,45 @@ private:
         QUrl url;
     };
     QHash<WebView *, CachedThumbnail> m_tabThumbnails;
+
+    // TABS13 internals — the carrier between the take/adopt halves of
+    // moveTabTo(): the page widget and its location-bar companion
+    // move whole, plus every record keyed on the page.
+    struct TransferredTab {
+        QPointer<QWidget> page;
+        QPointer<QWidget> bar;
+        QIcon icon;
+        QString text;
+        QString toolTip;
+        QVariant data;
+        bool pinned = false;
+        QString customTitle;
+        QString widgetTabBaseTitle;
+        bool wasGrouped = false;
+        QString groupName;
+        QColor groupColor;
+        QString containerId;
+        bool hasSleepState = false;
+        TabSleepState sleepState;
+        bool hasPendingRestore = false;
+        PendingRestore pendingRestore;
+        bool hasPendingScroll = false;
+        QPointF pendingScroll;
+        bool hasThumbnail = false;
+        CachedThumbnail thumbnail;
+    };
+    int adoptTransferredTab(const TransferredTab &tab, int index);
+    // The completer/suggestion stack plus the per-bar signal wiring —
+    // and for wireWebView the engine-page/webview signal set plus the
+    // web-action children — every hosted bar/view needs.  Both are
+    // shared by makeNewTabOnProfile() and adoptTransferredTab(): a
+    // tab arriving from another window is still bound to its old
+    // TabWidget.  (wireLocationBar is declared with the completer
+    // stack above.)
+    void wireWebView(WebView *webView);
+    bool m_lazyRestoreTabs = false;
+    bool m_lazyRestorePinnedTabs = true;
+    void restorePendingTab(int index);
 };
 
 #endif // TABWIDGET_H
