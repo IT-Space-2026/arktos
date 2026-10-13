@@ -189,10 +189,12 @@ public:
     // key on the page profile, not the window-global private flag.
     bool isTabPrivate(int index) const;
 
-    // TABS04: pinned tabs — a contiguous prefix of the strip rendered
-    // icon-only (favicon + tooltip, no title).  The flag is keyed on
-    // the tab's page widget so it survives drags, group collapse and
-    // container-level filtering; it works on widget tabs too.
+    // TABS04: pinned tabs — a contiguous prefix of the strip.
+    // TABS14: a pinned tab keeps its favicon + title like any tab —
+    // the block position and missing close button mark the pin.  The
+    // flag is keyed on the tab's page widget so it survives drags,
+    // group collapse and container-level filtering; it works on
+    // widget tabs too.
     bool isTabPinned(int index) const;
     // The leading run of pinned tabs — also the slot new tabs insert
     // at so the pinned block stays a prefix.

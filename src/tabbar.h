@@ -141,8 +141,8 @@ public:
     void reloadTabHoverPreviews();
 
     // TABS09: tabs/iconOnlyTabs — a user-toggleable icon-only view
-    // mode.  Every tab renders at the pinned tile geometry (favicon
-    // only, the title stays on the tooltip); a strip-level view
+    // mode.  Every tab renders at the compact favicon tile geometry
+    // (icon only, the title stays on the tooltip); a strip-level view
     // mode, so collapsed group chips keep their label and nothing
     // on the tabs themselves changes.  iconOnlyTabsAction() is the
     // shared checkable toggle (tab context menu + View menu); the

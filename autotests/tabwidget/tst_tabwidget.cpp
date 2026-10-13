@@ -1424,10 +1424,12 @@ void tst_TabWidget::tabGroups()
     }
 }
 
-// TABS04: pinned tabs — a contiguous icon-only prefix that survives
-// "Close Other Tabs", ignores middle-click, exempts the idle-sleep
-// sweep, converts on a drag across the boundary, seats new tabs right
-// after it, and round-trips through the v5 session tail.
+// TABS04: pinned tabs — a contiguous leading prefix that keeps its
+// titles (TABS14: favicon + title like any tab, never the old
+// icon-only tile), survives "Close Other Tabs", ignores middle-click,
+// exempts the idle-sleep sweep, converts on a drag across the
+// boundary, seats new tabs right after it, and round-trips through
+// the v5 session tail.
 void tst_TabWidget::pinnedTabs()
 {
     SubTabWidget widget;
@@ -1466,15 +1468,75 @@ void tst_TabWidget::pinnedTabs()
     QCOMPARE(widget.webViewIndex(fresh), 2);
     QCOMPARE(widget.count(), 5);
 
-    // Icon-only rendering: the pinned tab's rect collapses to the
-    // favicon width while unpinned tabs keep their title extent.
+    // TABS14: the pinned tab keeps its title — the same titled
+    // geometry as an unpinned tab carrying the same text, never the
+    // icon tile.
     TabBar *bar = widget.bar();
     widget.resize(720, 480);
     widget.show();
     QApplication::processEvents();
+    QCOMPARE(bar->tabText(0), QLatin1String("Untitled"));
     const int pinnedWidth = bar->tabRect(0).width();
-    QVERIFY(pinnedWidth > 0 && pinnedWidth <= 60);
-    QVERIFY(bar->tabRect(2).width() > pinnedWidth);
+    const int iconTile = bar->iconSize().width() + 20;
+    QVERIFY2(pinnedWidth > iconTile + 8,
+             qPrintable(QStringLiteral(
+                 "pinned tab collapsed to %1px (icon tile %2)")
+                 .arg(pinnedWidth).arg(iconTile)));
+    QVERIFY(qAbs(pinnedWidth - bar->tabRect(2).width()) <= 4);
+
+    // The title really paints — ink inside the tab's rect, right of
+    // the favicon tile, well past what an icon-only tile could hold.
+    const auto titleInk = [](TabBar *b, int index) -> int {
+        const QImage image = b->grab().toImage();
+        const QRect inside = b->tabRect(index)
+            .translated(0, b->containerStripHeight())
+            .adjusted(28, 4, -8, -4);
+        if (inside.isEmpty())
+            return -1;
+        QHash<QRgb, int> frequency;
+        for (int y = 0; y < inside.height(); ++y)
+            for (int x = 0; x < inside.width(); ++x)
+                ++frequency[image.pixel(inside.topLeft() + QPoint(x, y))];
+        QRgb background = 0;
+        int most = 0;
+        for (auto it = frequency.constBegin();
+             it != frequency.constEnd(); ++it) {
+            if (it.value() > most) {
+                most = it.value();
+                background = it.key();
+            }
+        }
+        const int bgGray = qGray(background);
+        int ink = 0;
+        for (int y = 0; y < inside.height(); ++y)
+            for (int x = 0; x < inside.width(); ++x)
+                if (qAbs(qGray(image.pixel(inside.topLeft()
+                                           + QPoint(x, y)))
+                         - bgGray) > 60)
+                    ++ink;
+        return ink;
+    };
+    QVERIFY2(titleInk(bar, 0) > 20,
+             "no title text painted inside the pinned tab");
+    QVERIFY2(titleInk(bar, 2) > 20,
+             "no title text painted inside a plain tab (baseline)");
+
+    // A renamed pinned tab wears the override on the strip — the
+    // same display title an unpinned tab would show.
+    widget.setTabTitleOverride(
+        0, QLatin1String("A Much Longer Pinned Title"));
+    QApplication::processEvents();
+    QCOMPARE(bar->tabText(0),
+             QLatin1String("A Much Longer Pinned Title"));
+    QVERIFY(bar->tabRect(0).width() > pinnedWidth);
+    widget.setTabTitleOverride(0, QString());
+    QApplication::processEvents();
+
+    if (qEnvironmentVariableIsSet("ARORA_STRIP_GRAB_DIR")) {
+        const QString dir =
+            qEnvironmentVariable("ARORA_STRIP_GRAB_DIR");
+        bar->grab().save(dir + QLatin1String("/strip-pinned.png"));
+    }
 
     // Pinned tabs hide their per-tab close button entirely.
     bar->setPerTabCloseButtons(true);
@@ -1603,6 +1665,20 @@ void tst_TabWidget::pinnedTabs()
         QVERIFY(vbar->tabRect(0).top() < vbar->tabRect(1).top());
         WebView *nv = wv.makeNewTab(false);
         QCOMPARE(wv.webViewIndex(nv), 1);
+        // TABS14: the pinned vertical row keeps its painted title —
+        // same strip-width titled row as any other.
+        QApplication::processEvents();
+        QCOMPARE(vbar->tabRect(0).width(), vbar->tabRect(1).width());
+        QVERIFY2(titleInk(vbar, 0) > 20,
+                 "no title text painted inside the pinned row");
+        QVERIFY2(titleInk(vbar, 1) > 20,
+                 "no title text painted inside a plain row");
+        if (qEnvironmentVariableIsSet("ARORA_STRIP_GRAB_DIR")) {
+            const QString dir =
+                qEnvironmentVariable("ARORA_STRIP_GRAB_DIR");
+            vbar->grab().save(
+                dir + QLatin1String("/strip-pinned-vertical.png"));
+        }
         settings.remove(QLatin1String("tabBarPosition"));
         settings.endGroup();
     }

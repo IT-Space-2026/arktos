@@ -551,14 +551,17 @@ bool TabWidget::isTabPrivate(int index) const
 
 // TABS04 — pinned tabs ------------------------------------------------
 //
-// A pinned tab renders icon-only (favicon + tooltip, no title, no
-// close button) and holds a slot in the strip's leading pinned block.
-// The flag is keyed on the tab's page widget — the same pointer the
-// collapsed-group and container-level hidden stores keep — so pin
-// state survives every detach/re-insert cycle untouched.  Pinning is
-// deliberately a strip-only concept: private tabs can be pinned for
-// the session but are never serialized (SEC07), and a group or
-// container membership is unaffected by the flag.
+// A pinned tab holds a slot in the strip's leading pinned block and
+// carries no close button — unpinning is the way to make it closable
+// again.  TABS14: it keeps its favicon and title like any other tab —
+// the leading position and missing close affordance mark the pin, not
+// an icon-only collapse.  The flag is keyed on the tab's page widget —
+// the same pointer the collapsed-group and container-level hidden
+// stores keep — so pin state survives every detach/re-insert cycle
+// untouched.  Pinning is deliberately a strip-only concept: private
+// tabs can be pinned for the session but are never serialized
+// (SEC07), and a group or container membership is unaffected by the
+// flag.
 
 bool TabWidget::isTabPinned(int index) const
 {
@@ -574,10 +577,11 @@ int TabWidget::pinnedTabCount() const
     return pinned;
 }
 
-// Flag-only update — no repositioning.  The size hint flips between
-// icon-only and titled, so callers follow with the bar's layout
-// re-arm (setIconSize(iconSize()), same trick setVerticalTabWidth
-// uses).
+// Flag-only update — no repositioning.  TABS14: pin no longer flips
+// the tab's size hint (titled geometry both ways) but it does flip
+// the close button's visibility, so callers still follow with the
+// bar's layout re-arm (setIconSize(iconSize()), same trick
+// setVerticalTabWidth uses).
 void TabWidget::setPinFlag(QWidget *page, bool pinned)
 {
     if (!page)
@@ -2997,8 +3001,8 @@ void TabWidget::pushRecentlyClosedTab(WebView *view, int index,
         return;
     RecentlyClosedTab closed;
     closed.url = closedUrl;
-    // The page title outlives the strip text — a pinned tab's label is
-    // blank by design.
+    // The page title outlives the strip text — reopen restores the
+    // full title, not whatever elided text the tab last painted.
     closed.title = view->title().isEmpty()
         ? QString::fromUtf8(closedUrl.toEncoded()) : view->title();
     closed.icon = BrowserApplication::icon(closedUrl);
