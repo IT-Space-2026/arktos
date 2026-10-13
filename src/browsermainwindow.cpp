@@ -1023,6 +1023,10 @@ void BrowserMainWindow::setupMenu()
     m_fileNewWindowAction->setIcon(AroraIcon::get(QLatin1String("window-new")));
     m_fileNewPrivateTabAction->setIcon(AroraIcon::get(QLatin1String("view-private")));
     m_fileNewTorWindowAction->setIcon(AroraIcon::get(QLatin1String("tor-onion")));
+    // ICONS08: submenu headers that sit among iconed leaf rows carry
+    // an icon too — the crate glyph marks the container flyout.
+    m_fileNewContainerTabMenu->setIcon(
+        AroraIcon::get(QLatin1String("container-tab")));
     m_fileOpenFileAction->setIcon(AroraIcon::get(QLatin1String("document-open")));
     m_fileOpenLocationAction->setIcon(AroraIcon::get(QLatin1String("go-jump")));
     m_fileSaveAsAction->setIcon(AroraIcon::get(QLatin1String("document-save-as")));
@@ -1318,6 +1322,12 @@ void BrowserMainWindow::setupMenu()
     m_viewChromiumDevToolAction->setIcon(
         AroraIcon::get(QLatin1String("utilities-terminal")));
     m_viewBidiDevToolAction->setIcon(AroraIcon::get(QLatin1String("system-run")));
+    // ICONS08: the View submenu headers sit among iconed leaf rows —
+    // they get icons from the same family.
+    m_viewDevToolsMenu->setIcon(
+        AroraIcon::get(QLatin1String("applications-development")));
+    m_viewTextEncodingAction->setIcon(
+        AroraIcon::get(QLatin1String("accessories-character-map")));
 #endif
 
     // History
@@ -1370,6 +1380,9 @@ void BrowserMainWindow::setupMenu()
     m_historyMenu->setInitialActions(historyActions);
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
     m_historyRestoreLastSessionAction->setIcon(AroraIcon::get(QLatin1String("document-revert")));
+    // ICONS08: a static submenu header among iconed rows.
+    m_tabWidget->recentlyClosedTabsAction()->setIcon(
+        AroraIcon::get(QLatin1String("view-restore")));
 #endif
 
     // Bookmarks
@@ -1500,6 +1513,9 @@ void BrowserMainWindow::setupMenu()
         AroraIcon::get(QLatin1String("edit-clear")));
     m_toolsLockStoreAction->setIcon(
         AroraIcon::get(QLatin1String("security-high")));
+    // ICONS08: a static submenu header among iconed rows.
+    m_toolsUserAgentMenu->setIcon(
+        AroraIcon::get(QLatin1String("avatar-default")));
 #endif
 
     // MENU05: filter management lives on the Preferences Privacy
