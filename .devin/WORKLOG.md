@@ -733,3 +733,4 @@
 - 2026-10-13 MERGEWATCH NOTE: commit 6d38e69 accidentally also captured the agent's STAGED servo WIP (servo_embed.h, lib.rs, servobackend.{cpp,h}) because git commit includes the whole index — worktree content unchanged, servobackend.o already built from this content; do not revert, agent continues on top
 - 2026-10-13 MERGEWATCH: ui-work merged — no conflicts (Arora-Task-UI.md only), build ok
 - 2026-10-13 MERGEWATCH: ui-work merged — no conflicts (Arora-Task-UI.md task queue rows READ03/TABS12/TABS13); rust-work skipped (0 ahead); build ok
+- 2026-10-13 MERGEWATCH: rust-work SKIPPED (0 ahead); ui-work SKIPPED (1 ahead, NAVB01 stop/reload lifecycle) — merge refused: dirty ChangeLog in master worktree (+3 lines uncommitted, agent mid-run) would be overwritten; no merges, build n/a
