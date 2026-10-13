@@ -25,6 +25,7 @@
 #include "privacyindicator.h"
 #include "searchlineedit.h"
 #include "siteshield.h"
+#include "stopreloadbutton.h"
 #include "twoleveldomains_p.h"
 #include "webview.h"
 
@@ -46,6 +47,7 @@ LocationBar::LocationBar(QWidget *parent)
     , m_shield(nullptr)
     , m_popupBlockerButton(nullptr)
     , m_privacyIndicator(nullptr)
+    , m_stopReloadButton(nullptr)
 {
     // Urls are always LeftToRight
     setLayoutDirection(Qt::LeftToRight);
@@ -64,6 +66,12 @@ LocationBar::LocationBar(QWidget *parent)
     // site icon on the left, next to the shield
     m_siteIcon = new LocationBarSiteIcon(this);
     addWidget(m_siteIcon, LeftSide);
+
+    // NAVB01: combined stop/reload page action — added first so it
+    // lands furthest right (widgets are inserted at index 1), the
+    // Chrome-style spot for the url bar's load chrome.
+    m_stopReloadButton = new StopReloadButton(this);
+    addWidget(m_stopReloadButton, RightSide);
 
     // POPUP01: blocked pop-up indicator — rightmost of the right-side
     // cluster (widgets are inserted at index 1, so the first added
@@ -97,10 +105,25 @@ void LocationBar::setWebView(WebView *webView)
     m_shield->setWebView(webView);
     m_popupBlockerButton->setWebView(webView);
     m_privacyIndicator->setWebView(webView);
+    m_stopReloadButton->setWebView(webView);
     connect(webView, &QWebEngineView::urlChanged,
             this, &LocationBar::webViewUrlChanged);
     connect(webView, &QWebEngineView::loadProgress,
             this, [this]() { update(); });
+    // NAVB01: bracket each load — Qt 6.12 emits progress only as 0
+    // and 100, so the bar's loading surface (button face + the
+    // indeterminate strip in paintEvent) must key on the lifecycle
+    // edges, not on mid-flight values that never arrive.
+    connect(webView, &QWebEngineView::loadStarted,
+            this, [this]() {
+                m_stopReloadButton->setLoading(true);
+                update();
+            });
+    connect(webView, &QWebEngineView::loadFinished,
+            this, [this](bool) {
+                m_stopReloadButton->setLoading(false);
+                update();
+            });
 }
 
 WebView *LocationBar::webView() const
@@ -282,6 +305,20 @@ void LocationBar::paintEvent(QPaintEvent *event)
     }
 
     LineEdit::paintEvent(event);
+
+    // NAVB01: indeterminate loading cue — Qt 6.12 reports progress 0
+    // for the whole in-flight load, so while the page loads with no
+    // real progress value a thin loading-colored strip rides the
+    // field's bottom edge (the affordance the dead 0<progress<100
+    // gradient used to provide mid-load).
+    if (m_webView && m_webView->isLoading()) {
+        QColor stripColor(116, 192, 250);
+        if (p.color(QPalette::Text).value() >= 128)
+            stripColor = defaultBaseColor.darker(200);
+        QPainter stripPainter(this);
+        stripPainter.fillRect(QRect(1, height() - 3, width() - 2, 2),
+                              stripColor);
+    }
 
     // SAFE03: with the url on display (not being edited), repaint the
     // text dimmed except the registrable domain so the site's real

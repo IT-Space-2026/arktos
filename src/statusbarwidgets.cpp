@@ -91,8 +91,9 @@ void LoadingIndicator::setWebView(WebView *view)
             this, &LoadingIndicator::pageLoadFinished);
     // Attaching mid-load (tab switch during a load) — the elapsed
     // timer can only start from here, so that page under-reports.
-    const int progress = m_view->progress();
-    if (progress > 0 && progress < 100)
+    // NAVB01: Qt 6.12 never emits a mid-flight progress value, so
+    // this can no longer key on 0<progress<100 — ask the engine.
+    if (m_view->enginePage() && m_view->enginePage()->isLoading())
         pageLoadStarted();
 }
 

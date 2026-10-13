@@ -120,6 +120,10 @@ public:
 
     QString lastStatusBarText() const;
     inline int progress() const { return m_progress; }
+    // NAVB01: m_progress only stores loadProgress values (Qt 6.12
+    // emits just 0 and 100) — chrome that needs "is a load in
+    // flight" must ask the engine, not the value.
+    bool isLoading() const;
     inline int currentZoom() const { return m_currentZoom; }
     TabWidget *tabWidget() const;
     // CONT02: the container this view's page is bound to — the empty

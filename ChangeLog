@@ -789,6 +789,13 @@ Tor:
   private tabs still vanish from the list when they finish — that is
   the intended privacy behavior — while normal downloads stay until
   explicitly cleared (DOWN04).
+- Stop/reload now actually flips while a page loads: the combined
+  toolbar button shows Stop during a load and really stops it, and
+  returns to Reload on finish or failure — Qt 6 no longer reports
+  intermediate load progress, so the state is driven by the load's
+  start/finish edges instead.  The location bar gains the same
+  stop/reload button at its right end plus a thin loading strip along
+  its bottom edge while a load is in flight (NAVB01).
 
 AdBlock:
 - uBO-tier rules: $removeparam, $redirect stubs, cosmetic +js subset

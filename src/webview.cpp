@@ -924,6 +924,11 @@ QString WebView::lastStatusBarText() const
     return m_statusBarText;
 }
 
+bool WebView::isLoading() const
+{
+    return m_page && m_page->isLoading();
+}
+
 QUrl WebView::url() const
 {
     QUrl url = QWebEngineView::url();
