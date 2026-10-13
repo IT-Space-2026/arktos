@@ -78,6 +78,7 @@ private slots:
     void iconOnlyTabs();
     void containerBandEvents();
     void newTabButton();
+    void verticalRowHeight();
 };
 
 // Subclass that exposes the protected functions.
@@ -1755,6 +1756,82 @@ void tst_TabBar::newTabButton()
         QApplication::processEvents();
         bar.grab().save(base + QLatin1String("/plus-right.png"));
     }
+}
+
+// TABS17: a Left/Right rail's rows never render shorter than the
+// horizontal automatic path's text line + padding — and a dragged-in
+// strip height (tabs/horizontalTabHeight, clamped 20-64 by the
+// setter) feeds the rows only down to that same floor, so a
+// too-small persisted value can't crop the title under the row's
+// clip rect.  Icon-only tiles keep their favicon sizing either way.
+void tst_TabBar::verticalRowHeight()
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("tabs"));
+    settings.remove(QLatin1String("horizontalTabHeight"));
+
+    for (const QTabBar::Shape shape :
+         { QTabBar::RoundedWest, QTabBar::RoundedEast }) {
+        SubTabBar bar;
+        bar.setShape(shape);
+        bar.setExpanding(false);
+        bar.show();
+        bar.addTab(QLatin1String("one"));
+        bar.addTab(QLatin1String("two"));
+        bar.resize(200, 300);
+        QApplication::processEvents();
+
+        const int floor = bar.fontMetrics().height() + 8;
+        QCOMPARE(bar.call_tabSizeHint(0).height(), floor);
+        for (int i = 0; i < bar.count(); ++i) {
+            QVERIFY(bar.tabRect(i).height() >= floor);
+            QCOMPARE(bar.call_tabSizeHint(i).height(), floor);
+        }
+
+        // A persisted height below the floor clamps up instead of
+        // producing an unreadable row.
+        bar.setTabStripHeight(20);
+        QApplication::processEvents();
+        for (int i = 0; i < bar.count(); ++i) {
+            QVERIFY(bar.call_tabSizeHint(i).height() >= floor);
+            QVERIFY(bar.tabRect(i).height() >= floor);
+        }
+
+        // A taller configured height is honored on the rows.
+        bar.setTabStripHeight(40);
+        QApplication::processEvents();
+        QCOMPARE(bar.call_tabSizeHint(0).height(), 40);
+        QCOMPARE(bar.tabRect(0).height(), 40);
+
+        // Automatic restores the text-line floor.
+        bar.setTabStripHeight(0);
+        QApplication::processEvents();
+        QCOMPARE(bar.call_tabSizeHint(0).height(), floor);
+
+        // Icon-only collapses the row's width axis only — its height
+        // follows the same floor/configured contract as titled rows.
+        settings.setValue(QLatin1String("iconOnlyTabs"), true);
+        SubTabBar rail;
+        rail.setShape(shape);
+        rail.addTab(QLatin1String("x"));
+        QCOMPARE(rail.call_tabSizeHint(0).height(), floor);
+        rail.setTabStripHeight(40);
+        QCOMPARE(rail.call_tabSizeHint(0).height(), 40);
+        settings.remove(QLatin1String("iconOnlyTabs"));
+    }
+
+    // The horizontal strip keeps its own contract — Automatic bounds
+    // and the configured override both untouched by the row floor.
+    SubTabBar hbar;
+    hbar.setShape(QTabBar::RoundedNorth);
+    hbar.addTab(QLatin1String("one"));
+    const int natural = hbar.call_tabSizeHint(0).height();
+    hbar.setTabStripHeight(20);
+    QCOMPARE(hbar.call_tabSizeHint(0).height(), 20);
+    hbar.setTabStripHeight(0);
+    QCOMPARE(hbar.call_tabSizeHint(0).height(), natural);
+
+    settings.endGroup();
 }
 
 QTEST_MAIN(tst_TabBar)

@@ -1805,6 +1805,27 @@ QString TabBar::groupChipLabel(int index) const
         : tr("%1 (%2)").arg(name).arg(size);
 }
 
+// TABS17: the readable band a vertical row's label and side widgets
+// share — the row's rect minus the name pill band a group run's
+// first member reserves on top (tabSizeHint grew the row by the
+// same extent).  Centering the title on the whole rect would push
+// its baseline against the row's clipped bottom edge and slide it
+// under the pill.
+QRect TabBar::rowLabelRect(const QRect &rowRect, int index) const
+{
+    const QString gid = groupIdForTab(index);
+    if (gid.isEmpty() || m_iconOnlyTabs || !isFirstInGroupRun(index))
+        return rowRect;
+    const TabWidget *tabWidget =
+        qobject_cast<TabWidget*>(parentWidget());
+    if (!tabWidget || tabWidget->tabGroupName(gid).isEmpty())
+        return rowRect;
+    QRect rect = rowRect;
+    rect.setTop(rect.top()
+                + QFontMetrics(containerChipFont()).height() + 6);
+    return rect;
+}
+
 // CONT02: after the style paints the tab, container tabs get their
 // accent — a strip on the tab's outer edge (top for a horizontal bar,
 // the free side for a vertical one) plus a name chip just inside it.
@@ -1875,8 +1896,26 @@ void TabBar::paintEvent(QPaintEvent *event)
             }
             if (!(option.state & QStyle::State_Enabled))
                 option.palette.setCurrentColorGroup(QPalette::Disabled);
-            style()->drawControl(QStyle::CE_TabBarTab, &option,
+            // TABS17: the title belongs on the readable band — the
+            // row's rect minus the reserved group-pill top — not the
+            // full row.  Shrinking the option's rect cannot move the
+            // text: the styles anchor the label layout to it (the
+            // sheet style even re-queries tabRect()), so the painter
+            // is translated instead — every style's centered text
+            // then lands centered on the band.  The clip was set in
+            // device space above, so the shifted draw still cannot
+            // leave the row.
+            const int labelShift =
+                rowLabelRect(option.rect, index).center().y()
+                - option.rect.center().y();
+            style()->drawControl(QStyle::CE_TabBarTabShape, &option,
                                  &painter, this);
+            painter.save();
+            if (labelShift)
+                painter.translate(0, labelShift);
+            style()->drawControl(QStyle::CE_TabBarTabLabel, &option,
+                                 &painter, this);
+            painter.restore();
             painter.setClipping(false);
         }
         // The tab under a move drag floats with the cursor; Qt's own
@@ -1906,8 +1945,19 @@ void TabBar::paintEvent(QPaintEvent *event)
                     Qt::TextShowMnemonic);
             }
             painter.setClipRect(option.rect);
-            style()->drawControl(QStyle::CE_TabBarTab, &option,
+            // TABS17: same painter-shifted band label as the docked
+            // rows above.
+            const int labelShift =
+                rowLabelRect(option.rect, m_pressedTabIndex)
+                    .center().y() - option.rect.center().y();
+            style()->drawControl(QStyle::CE_TabBarTabShape, &option,
                                  &painter, this);
+            painter.save();
+            if (labelShift)
+                painter.translate(0, labelShift);
+            style()->drawControl(QStyle::CE_TabBarTabLabel, &option,
+                                 &painter, this);
+            painter.restore();
             painter.setClipping(false);
         }
     } else if (band > 0) {
@@ -2235,8 +2285,13 @@ QSize TabBar::tabSizeHint(int index) const
         // is meaningless here since sizeHint.height() is the
         // transposed row width for vertical shapes.  TABS09: the
         // icon-only mode drops the group pill's extra band — the pill
-        // is suppressed while the mode is on.
-        int rowHeight = minThickness;
+        // is suppressed while the mode is on.  TABS17: a dragged-in
+        // strip height (horizontalTabHeight > 0) feeds the rows too,
+        // floored at the text line — a too-small persisted value
+        // can't crop the title under the row's clip rect.
+        int rowHeight = m_tabStripHeight > 0
+            ? qMax(minThickness, m_tabStripHeight)
+            : minThickness;
         if (!gid.isEmpty() && !m_iconOnlyTabs) {
             TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
             if (tabWidget && isFirstInGroupRun(index)
@@ -2489,6 +2544,9 @@ void TabBar::layoutRowTabButtons()
         if (m_moveDragActive && m_moveDragVertical
             && index == m_pressedTabIndex)
             option.rect.moveTop(m_moveDragMouseY - m_moveDragGrabOffset);
+        // TABS17: the widgets center on the row's label band — a
+        // group pill's reserved top is not theirs to sit under.
+        option.rect = rowLabelRect(option.rect, index);
         const QTabBar::ButtonPosition sides[2] = {
             QTabBar::LeftSide, QTabBar::RightSide };
         for (const QTabBar::ButtonPosition side : sides) {

@@ -630,6 +630,13 @@ UI:
   widths that still hold a past default migrate forward, a width you
   dragged to yourself is kept, and the edge drag and double-click
   reset work as before (TABS16).
+- Vertical tab rows no longer clip their titles: rows can never
+  render shorter than a full text line plus the standard padding (a
+  too-small saved strip height now clamps up instead of cropping the
+  title), and a grouped row's title centers below the group-name pill
+  instead of landing on the row's clipped bottom edge — favicons and
+  close buttons ride the same band.  Both Left and Right rails, and
+  Tor-violet and dark themes, render the full title (TABS17).
 - Bigger text in the Arora app menu: the dropdown and its whole
   submenu tree — File, Edit, View, History, Bookmarks, Window, Tools,
   Help, including nested flyouts and the dynamic History/Bookmarks
@@ -646,6 +653,19 @@ UI:
   where the names are standard. Separators, submenu headers and the
   dynamic rows (history/bookmark entries, window list, encodings,
   user agents) stay iconless by design (ICONS07).
+- Enabled extensions finally get a toolbar face: every loaded
+  extension that declares an action popup shows its own manifest icon
+  in a strip right after the address bar — Bitwarden's shield
+  included — and clicking it opens the extension's real popup UI in a
+  small anchored bubble that sizes itself to the page, never a new
+  tab. Turning an extension off or unloading it removes the button
+  immediately; extensions without popups stay out of the bar, and
+  private or Tor windows never show the strip (EXT08).
+- The Preferences > Extensions list now shows each extension's
+  version next to its name — read from the extension's own manifest,
+  so Bitwarden shows "2026.9.3" while built-in components with no
+  manifest on disk show an honest "—". When an update check finds a
+  newer package the cell reads "1.0.0 → 2.0.0 available" (EXT09).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

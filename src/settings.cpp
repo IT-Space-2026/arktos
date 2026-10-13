@@ -2849,7 +2849,10 @@ void SettingsDialog::extensionUpdateCheckFinished(
 {
     if (ExtensionManager::isSupported())
         extensionUpdateButton->setEnabled(true);
-    extensionSelectionChanged();
+    // EXT09: results carry availableVersion — rebuild so the Version
+    // column picks them up (refreshExtensions ends in
+    // extensionSelectionChanged).
+    refreshExtensions();
     if (!m_manualExtensionCheck)
         return;
     m_manualExtensionCheck = false;
@@ -3024,6 +3027,21 @@ void SettingsDialog::refreshExtensions()
         QTreeWidgetItem *item = new QTreeWidgetItem(extensionsTree);
         item->setText(0, info.name.isEmpty() ? info.id : info.name);
         item->setCheckState(0, info.enabled ? Qt::Checked : Qt::Unchecked);
+        // EXT09: QWebEngineExtensionInfo exposes no version, so the
+        // cell is read from the manifest on disk — built-in
+        // components carry no path and get an honest em-dash.  A
+        // finished update check surfaces as "1.0.0 → 2.0.0
+        // available" in the same cell.
+        QString version;
+        if (!info.path.isEmpty())
+            version = ExtensionManager::inspectManifest(info.path).version;
+        if (version.isEmpty())
+            version = QStringLiteral("—");
+        const QString available = ExtensionManager::instance()
+            ->updateResultFor(info.id).availableVersion;
+        if (!available.isEmpty())
+            version += tr(" → %1 available").arg(available);
+        item->setText(1, version);
         QString status;
         if (!info.error.isEmpty())
             status = tr("Error");
@@ -3031,8 +3049,8 @@ void SettingsDialog::refreshExtensions()
             status = tr("Not loaded");
         else
             status = info.enabled ? tr("Enabled") : tr("Disabled");
-        item->setText(1, status);
-        item->setText(2, info.builtin ? tr("Built-in")
+        item->setText(2, status);
+        item->setText(3, info.builtin ? tr("Built-in")
                                     : (info.installed ? tr("Installed")
                                                       : tr("Session")));
         // EXT06: manifest description in its own column.  Built-in

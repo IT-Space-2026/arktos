@@ -71,6 +71,7 @@ class BookmarksToolBar;
 class BidiPanel;
 class CommandPalette;
 class EngineIndicator;
+class ExtensionActionBar;
 class QDockWidget;
 class QHBoxLayout;
 class QLabel;
@@ -376,6 +377,11 @@ private:
     // TOR08: circuit dropdown next to the reader button — tor windows
     // only, never constructed otherwise.
     TorCircuitButton *m_torCircuitButton;
+    // EXT08: extension action strip in the navigation splitter cell
+    // right after the location bar — normal windows only; private and
+    // tor windows never construct it (no usable profile may load
+    // extensions there).
+    ExtensionActionBar *m_extensionActionBar = nullptr;
     ToolbarSearch *m_toolbarSearch;
 #if defined(Q_OS_MACOS)
     QFrame *m_bookmarksToolbarFrame;

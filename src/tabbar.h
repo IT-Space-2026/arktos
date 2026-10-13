@@ -284,6 +284,7 @@ private:
     bool inResizeGrip(const QPoint &pos) const;
     void paintResizeGrip(QPainter *painter);
     void persistStripSize();
+    QRect rowLabelRect(const QRect &rowRect, int index) const;
     void layoutRowTabButtons();
     void hideNativeMovingTab();
     // CONT06: level-1 band helpers — header geometry and painting

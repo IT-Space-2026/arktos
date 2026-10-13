@@ -23,6 +23,7 @@
 
 #include <browserapplication.h>
 #include <browsermainwindow.h>
+#include <browsertheme.h>
 #include <engineinterface.h>
 #include <engineregistry.h>
 #include <enginetab.h>
@@ -45,6 +46,7 @@
 #include <qcompleter.h>
 #include <qdir.h>
 #include <qfile.h>
+#include <qlabel.h>
 #include <qlineedit.h>
 #include <qmenu.h>
 #include <qtoolbutton.h>
@@ -120,6 +122,7 @@ private slots:
     void renameTab();
     void tabTransfer();
     void newTabButton();
+    void verticalTabRowTextBounds();
 };
 
 // Subclass that exposes the protected functions.
@@ -3101,6 +3104,222 @@ void tst_TabWidget::newTabButton()
 
     settings.remove(QLatin1String("tabBarPosition"));
     settings.endGroup();
+}
+
+// TABS17: on a Left/Right rail every row's title paints fully inside
+// the row's readable band — the rect minus the name-pill top a group
+// run's first member reserves.  A production-mix rail (favicon side
+// widgets, close buttons, a real icon on the History widget tab, a
+// pinned tab, a renamed tab, a named group) is the repro that used
+// to center the grouped title on the whole rect — its baseline fell
+// against the row's clipped bottom edge while the pill floated over
+// dead space.  Legs run on both rails, on the dark palette, and on
+// the tor window's violet stylesheet chrome.
+void tst_TabWidget::verticalTabRowTextBounds()
+{
+    // Build the production-mix rail and return its bar.
+    const auto buildRail = [](SubTabWidget &widget) -> TabBar * {
+        for (int i = 0; i < 3; ++i)
+            widget.newTab();
+        TabBar *bar = widget.bar();
+        // Production favicon labels on freeSide.
+        for (int i = 0; i < widget.count(); ++i) {
+            QLabel *label = new QLabel(&widget);
+            label->setFixedSize(16, 16);
+            QPixmap pm(16, 16);
+            pm.fill(QColor(40 + i * 60, 90, 200 - i * 50));
+            label->setPixmap(pm);
+            bar->setTabButton(i, bar->freeSide(), label);
+        }
+        // The History widget tab — real strip icon, no favicon label.
+        QWidget *historyPage = new QWidget(&widget);
+        widget.addWidgetTab(
+            historyPage, tr("History"),
+            QIcon(QLatin1String(":graphics/history.png")));
+        widget.setTabPinned(0, true);
+        widget.setTabTitleOverride(
+            1, tr("Renamed tab — gypq descenders"));
+        const QString gid = widget.createTabGroup(2);
+        widget.renameTabGroup(gid, tr("Group"));
+        widget.addTabToGroup(3, gid);
+        widget.resize(720, 480);
+        widget.show();
+        QApplication::processEvents();
+        widget.loadSettings();
+        QApplication::processEvents();
+        return bar;
+    };
+
+    // Ink = pixels whose luminance sits far from the row's dominant
+    // background — one detector serves light text on violet, dark
+    // text on light, and the dark palette's light-on-dark titles.
+    const auto inkBounds = [](const QImage &image, const QRect &lane,
+                              int bandTop, int bandBottom,
+                              int &inkTop, int &inkBottom) {
+        inkTop = inkBottom = -1;
+        QHash<QRgb, int> frequency;
+        for (int y = bandTop; y <= bandBottom && y < image.height(); ++y)
+            for (int x = lane.left();
+                 x <= lane.right() && x < image.width(); ++x)
+                ++frequency[image.pixel(x, y)];
+        int bgLum = 0, most = 0;
+        for (auto it = frequency.constBegin();
+             it != frequency.constEnd(); ++it) {
+            if (it.value() > most) {
+                most = it.value();
+                bgLum = qGray(it.key());
+            }
+        }
+        // A scanline where almost every lane pixel carries ink is a
+        // border/separator, not text — glyph strokes never fill the
+        // lane.  Skip those so the bounds measure the title alone.
+        const int laneWidth = lane.width();
+        for (int y = bandTop; y <= bandBottom && y < image.height(); ++y) {
+            int ink = 0;
+            for (int x = lane.left();
+                 x <= lane.right() && x < image.width(); ++x) {
+                if (qAbs(qGray(image.pixel(x, y)) - bgLum) > 60)
+                    ++ink;
+            }
+            if (ink >= 2 && ink < laneWidth * 7 / 10) {
+                if (inkTop < 0)
+                    inkTop = y;
+                inkBottom = y;
+            }
+        }
+    };
+
+    const auto verifyRail = [&inkBounds](TabBar *bar, const QString &leg,
+                                         QImage &image) {
+        image = bar->grab().toImage();
+        const int bandFloor = bar->fontMetrics().height() + 8;
+        for (int i = 0; i < bar->count(); ++i) {
+            const QRect row = bar->tabRect(i);
+            QVERIFY2(row.height() >= bandFloor,
+                     qPrintable(QStringLiteral(
+                         "%1: tab %2 row %3 shorter than the %4px "
+                         "floor")
+                         .arg(leg).arg(i).arg(row.height())
+                         .arg(bandFloor)));
+            // A group run's first member reserves its top for the
+            // name pill; the label band sits below it.
+            const int reserve = qMax(0, row.height() - bandFloor);
+            const int bandTop = row.top() + reserve;
+            // Title ink: inside the text lane — clear of the favicon's
+            // leading zone and the close button's trailing one.
+            const QRect lane(40, 0, qMax(1, row.width() - 76), 0);
+            int inkTop, inkBottom;
+            inkBounds(image, lane, bandTop, row.bottom(),
+                      inkTop, inkBottom);
+            QVERIFY2(inkTop >= 0,
+                     qPrintable(QStringLiteral(
+                         "%1: tab %2 (%3) painted no title ink")
+                         .arg(leg).arg(i).arg(bar->tabText(i))));
+            QVERIFY2(inkTop > bandTop,
+                     qPrintable(QStringLiteral(
+                         "%1: tab %2 title ink starts on the band's "
+                         "top edge — the reserve overlaps or the "
+                         "baseline is high (top %3, band %4)")
+                         .arg(leg).arg(i).arg(inkTop).arg(bandTop)));
+            QVERIFY2(inkBottom < row.bottom(),
+                     qPrintable(QStringLiteral(
+                         "%1: tab %2 title ink reaches the row's "
+                         "bottom edge — clipped descenders "
+                         "(bottom %3, row %4)")
+                         .arg(leg).arg(i).arg(inkBottom)
+                         .arg(row.bottom())));
+            // Centered in the band, within the style's selected-tab
+            // nudge — symmetric padding is the readable outcome.
+            const int bandCenter = (bandTop + row.bottom()) / 2;
+            const int inkCenter = (inkTop + inkBottom) / 2;
+            QVERIFY2(qAbs(inkCenter - bandCenter) <= 4,
+                     qPrintable(QStringLiteral(
+                         "%1: tab %2 title center %3 drifts from "
+                         "the band's center %4")
+                         .arg(leg).arg(i).arg(inkCenter)
+                         .arg(bandCenter)));
+
+            // Side widgets ride the same band — a group pill's
+            // reserve is not theirs to sit under.
+            QWidget *favicon = bar->tabButton(i, bar->freeSide());
+            if (favicon) {
+                QVERIFY2(favicon->geometry().center().y() > bandTop
+                         && favicon->geometry().center().y()
+                                < row.bottom(),
+                         qPrintable(QStringLiteral(
+                             "%1: tab %2 side widget centers outside "
+                             "the label band").arg(leg).arg(i)));
+            }
+        }
+    };
+
+    for (const int position : { 2, 3 }) {   // Left rail, Right rail
+        QSettings settings;
+        settings.beginGroup(QLatin1String("tabs"));
+        settings.setValue(QLatin1String("tabBarPosition"), position);
+        settings.remove(QLatin1String("verticalTabWidth"));
+
+        SubTabWidget widget;
+        TabBar *bar = buildRail(widget);
+        QImage light;
+        verifyRail(bar, QStringLiteral("rail %1").arg(position),
+                   light);
+
+        // The tor window's violet chrome is a per-bar stylesheet —
+        // QStyleSheetStyle's own box model lays the label out, so the
+        // band contract gets a second, independent exercise.  The CSS
+        // mirrors torTabBarStyleSheet() in browsermainwindow.cpp.
+        bar->setStyleSheet(QLatin1String(
+            "QTabBar { background: #4a3372; }"
+            "QTabBar::tab { background: #5d4491; color: #eee;"
+            " border: 1px solid #3a2a5c; padding: 6px 8px; }"
+            "QTabBar::tab:left { border-right: none;"
+            " border-top-left-radius: 4px;"
+            " border-bottom-left-radius: 4px; }"
+            "QTabBar::tab:right { border-left: none;"
+            " border-top-right-radius: 4px;"
+            " border-bottom-right-radius: 4px; }"
+            "QTabBar::tab:selected { background: #ffffff;"
+            " color: #202020; }"
+            "QTabBar::tab:!selected:hover { background: #6b4fa3; }"));
+        QApplication::processEvents();
+        QImage violet;
+        verifyRail(bar, QStringLiteral("violet %1").arg(position),
+                   violet);
+
+        const QByteArray grabDir = qgetenv("ARORA_TABWIDGET_GRAB_DIR");
+        if (!grabDir.isEmpty()) {
+            const QString base = QString::fromLocal8Bit(grabDir)
+                + (position == 2 ? QLatin1String("/rows-left")
+                                 : QLatin1String("/rows-right"));
+            light.save(base + QLatin1String(".png"));
+            violet.save(base + QLatin1String("-violet.png"));
+        }
+
+        settings.remove(QLatin1String("tabBarPosition"));
+        settings.endGroup();
+    }
+
+    // The forced-dark palette — the same text-on-dark contract the
+    // violet leg exercises through a different paint path.
+    const QPalette appPalette = QApplication::palette();
+    QApplication::setPalette(BrowserTheme::darkPalette());
+    {
+        QSettings settings;
+        settings.beginGroup(QLatin1String("tabs"));
+        settings.setValue(QLatin1String("tabBarPosition"), 2);
+        SubTabWidget widget;
+        TabBar *bar = buildRail(widget);
+        QImage dark;
+        verifyRail(bar, QStringLiteral("dark"), dark);
+        const QByteArray grabDir = qgetenv("ARORA_TABWIDGET_GRAB_DIR");
+        if (!grabDir.isEmpty())
+            dark.save(QString::fromLocal8Bit(grabDir)
+                      + QLatin1String("/rows-dark.png"));
+        settings.remove(QLatin1String("tabBarPosition"));
+        settings.endGroup();
+    }
+    QApplication::setPalette(appPalette);
 }
 
 QTEST_MAIN(tst_TabWidget)
