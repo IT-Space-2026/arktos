@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ICONS07: onion bulb — File > New Tor Window.  Same outline the
+     tor circuit button paints (TorCircuitButton::makeIcon), recolored
+     to the legacy mid-grey so it reads on light and dark palettes. -->
+<svg xmlns="http://www.w3.org/2000/svg" height="16" width="16" viewBox="0 0 16 16">
+    <path d="M8 5Q2.2 7 2.2 10.8q0 3.8 5.8 3.8 5.8 0 5.8-3.8Q13.8 7 8 5Z" fill="none" stroke="#7a7a7a" stroke-width="1.15"/>
+    <path d="M8 7Q4.6 8.8 5 12.8" fill="none" stroke="#7a7a7a" stroke-width="1.15"/>
+    <path d="M8 4.6V1.8M7.5 4.8 5.4 2.6M8.5 4.8l2.1-2.2" fill="none" stroke="#7a7a7a" stroke-width="1.15"/>
+</svg>

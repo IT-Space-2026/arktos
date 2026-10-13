@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ICONS07: up arrow — Edit > Find Previous.  Mid-grey stays readable
+     on light and dark palettes (QtSvg does not recolor). -->
+<svg xmlns="http://www.w3.org/2000/svg" height="16" width="16" viewBox="0 0 16 16">
+    <path d="M8 2.5 13.5 8.5H10v5H6v-5H2.5Z" fill="#7a7a7a"/>
+</svg>

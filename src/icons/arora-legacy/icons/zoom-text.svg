@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ICONS07: letterform under a loupe — View > Zoom Text Only.
+     Mid-grey stays readable on light and dark palettes. -->
+<svg xmlns="http://www.w3.org/2000/svg" height="16" width="16" viewBox="0 0 16 16">
+    <path d="M1.5 13 5.5 3l4 10" fill="none" stroke="#7a7a7a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M3.4 9.6h4.2" fill="none" stroke="#7a7a7a" stroke-width="1.5" stroke-linecap="round"/>
+    <circle cx="11" cy="10.5" r="2.7" fill="none" stroke="#7a7a7a" stroke-width="1.4"/>
+    <path d="m13 12.7 2 2" fill="none" stroke="#7a7a7a" stroke-width="1.4" stroke-linecap="round"/>
+</svg>

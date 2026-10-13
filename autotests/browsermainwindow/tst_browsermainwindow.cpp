@@ -126,6 +126,7 @@ private slots:
     void toolsMenuDedup();
     void fileMenuOrder();
     void appMenuButton();
+    void menuIcons();
     void downloadsMenuHome();
     void devToolsSubmenu();
     void iconOnlyTabsMenu();
@@ -547,6 +548,151 @@ void tst_BrowserMainWindow::fileMenuOrder()
     closeWindow(window);
 }
 
+// ICONS07: every static leaf action in the shared top-level menus
+// carries an icon — the app-menu dropdown reads as one uniform icon
+// column.  Documented exceptions, asserted here too: separators,
+// submenu headers (kept clean — the flyout carries the rows), and the
+// dynamic entries (history/bookmark rows, window list, encodings,
+// user agents) which legitimately have none.
+void tst_BrowserMainWindow::menuIcons()
+{
+#if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
+    SubWindow *window = new SubWindow;
+    window->show();
+
+    QHash<QString, QMenu *> menus;
+    for (QAction *menuAction : window->menuBar()->actions()) {
+        if (menuAction->menu())
+            menus.insert(menuAction->text().remove(QLatin1Char('&')),
+                         menuAction->menu());
+    }
+    QCOMPARE(menus.count(), 8);
+
+    // aboutToShow-built rows only exist once the menu has popped —
+    // cycle every top-level menu plus the File > New Container Tab
+    // flyout so the audit sees the real layout.
+    for (QMenu *menu : std::as_const(menus)) {
+        menu->popup(QPoint(60, 60));
+        QApplication::processEvents();
+        menu->hide();
+    }
+    QMenu *containerMenu = nullptr;
+    QMenu *devToolsMenu = nullptr;
+    for (QAction *action : menus.value(QLatin1String("File"))->actions()) {
+        if (action->menu()
+                && action->menu()->title().remove(QLatin1Char('&'))
+                       == QLatin1String("New Container Tab"))
+            containerMenu = action->menu();
+    }
+    if (containerMenu) {
+        containerMenu->popup(QPoint(120, 80));
+        QApplication::processEvents();
+        containerMenu->hide();
+    }
+    for (QAction *action : menus.value(QLatin1String("View"))->actions()) {
+        if (action->menu()
+                && action->menu()->title().remove(QLatin1Char('&'))
+                       == QLatin1String("Development Tools"))
+            devToolsMenu = action->menu();
+    }
+
+    // Fully-static menus: no leaf row may be iconless, and submenu
+    // headers stay clean.
+    for (QLatin1String title : { QLatin1String("File"),
+                                 QLatin1String("Edit"),
+                                 QLatin1String("View"),
+                                 QLatin1String("Tools"),
+                                 QLatin1String("Help") }) {
+        QMenu *menu = menus.value(title);
+        QVERIFY(menu);
+        for (QAction *action : menu->actions()) {
+            if (action->isSeparator())
+                continue;
+            const QString row = title + QLatin1String(" > ")
+                + action->text();
+            if (action->menu()) {
+                QVERIFY2(action->icon().isNull(), qPrintable(row));
+                continue;
+            }
+            QVERIFY2(!action->icon().isNull(), qPrintable(row));
+            QVERIFY2(!action->icon().pixmap(QSize(16, 16)).isNull(),
+                     qPrintable(row));
+        }
+    }
+
+    // The container flyout mixes colored chips with static tail rows —
+    // every leaf carries an icon so no row reads naked next to them.
+    QVERIFY(containerMenu);
+    for (QAction *action : containerMenu->actions()) {
+        if (!action->isSeparator())
+            QVERIFY2(!action->icon().isNull(), qPrintable(action->text()));
+    }
+
+    // View > Development Tools is a static submenu.
+    QVERIFY(devToolsMenu);
+    for (QAction *action : devToolsMenu->actions()) {
+        if (!action->isSeparator())
+            QVERIFY2(!action->icon().isNull(), qPrintable(action->text()));
+    }
+
+    // The mixed menus: dynamic entries stay bare, the static rows all
+    // carry icons.
+    const QHash<QString, QStringList> required = {
+        { QLatin1String("History"),
+          { QLatin1String("Back"), QLatin1String("Forward"),
+            QLatin1String("Home"), QLatin1String("Restore Last Session"),
+            QLatin1String("Show All History"),
+            QLatin1String("Clear History...") } },
+        { QLatin1String("Bookmarks"),
+          { QLatin1String("Show All Bookmarks..."),
+            QLatin1String("Add Bookmark..."),
+            QLatin1String("Bookmark All Tabs"),
+            QLatin1String("Add Folder...") } },
+        { QLatin1String("Window"),
+          { QLatin1String("Show Next Tab"),
+            QLatin1String("Show Previous Tab"),
+            QLatin1String("Search Tabs...") } },
+    };
+    for (auto it = required.constBegin(); it != required.constEnd(); ++it) {
+        QMenu *menu = menus.value(it.key());
+        QVERIFY(menu);
+        for (const QString &text : it.value()) {
+            QAction *hit = nullptr;
+            for (QAction *action : menu->actions()) {
+                if (action->text().remove(QLatin1Char('&')) == text)
+                    hit = action;
+            }
+            QVERIFY2(hit, qPrintable(it.key() + QLatin1String(" > ") + text));
+            QVERIFY2(!hit->icon().isNull(),
+                     qPrintable(it.key() + QLatin1String(" > ") + text));
+        }
+    }
+
+    // The tor window rides the same menus — icons survive there too.
+    BrowserApplication::setTorMode(true);
+    SubWindow *torWindow = new SubWindow;
+    torWindow->show();
+    QMenu *torFile = torWindow->menuBar()->actions().isEmpty()
+        ? (torWindow->appMenu()
+               ? torWindow->appMenu()->actions().first()->menu()
+               : nullptr)
+        : torWindow->menuBar()->actions().first()->menu();
+    QVERIFY(torFile);
+    int torMissing = 0;
+    for (QAction *action : torFile->actions()) {
+        if (!action->isSeparator() && !action->menu()
+                && (action->icon().isNull()
+                    || action->icon().pixmap(QSize(16, 16)).isNull()))
+            ++torMissing;
+    }
+    closeWindow(torWindow);
+    BrowserApplication::setTorMode(false);
+    QCOMPARE(torMissing, 0);
+
+    closeWindow(window);
+#endif
+}
+
 // MENU06: Vivaldi-style application menu — an Arora logo + name
 // button leads the navigation bar and drops down every real
 // top-level menu (shared QMenu objects in menubar order, so dynamic
@@ -647,6 +793,12 @@ void tst_BrowserMainWindow::appMenuButton()
         fileMenu->grab().save(QString::fromLocal8Bit(menuGrabDir)
                               + QLatin1String("/app-menu-file.png"));
         fileMenu->hide();
+        QMenu *viewMenu = appMenu->actions().at(2)->menu();
+        viewMenu->popup(QPoint(80, 80));
+        QApplication::processEvents();
+        viewMenu->grab().save(QString::fromLocal8Bit(menuGrabDir)
+                              + QLatin1String("/app-menu-view.png"));
+        viewMenu->hide();
     }
 
     // The menubar is hidden by default; the toggle rides in the

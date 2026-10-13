@@ -444,6 +444,16 @@ UI:
   entries — now render at ~120% of the platform menu font on every
   window type (standard, private, Tor). If you bring back the classic
   menubar it shows the same enlarged items (MENU08).
+- Every static row in the application menus now carries an icon — the
+  File/Edit/View/History/Bookmarks/Window/Tools/Help entries plus the
+  static rows inside the container and DevTools flyouts, so the icon
+  column reads uniform instead of ragged. 19 new mid-grey glyphs in
+  the bundled fallback set cover the freedesktop-name gaps (panel
+  toggles, import/export, private mask, Tor onion, reader, PiP, page
+  source, terminal); native icon themes substitute their own artwork
+  where the names are standard. Separators, submenu headers and the
+  dynamic rows (history/bookmark entries, window list, encodings,
+  user agents) stay iconless by design (ICONS07).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
