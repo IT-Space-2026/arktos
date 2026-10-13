@@ -74,6 +74,7 @@ class QLineEdit;
 class QMimeData;
 class QTimer;
 class QPainter;
+class QToolButton;
 class TabPreview;
 
 /*
@@ -117,11 +118,12 @@ public:
     TabPreview *tabPreview() const;
 
     // TABS02: the drag-resizable width of a Left/Right tab strip
-    // (tabs/verticalTabWidth, clamped 120-400, default 140; a stored
-    // legacy 180 migrates to the default since it means the grip was
-    // never dragged — TABS10).  reloadVerticalTabWidth() re-reads the
-    // persisted value — the settings-save path calls it so a drag on
-    // one window (or a later edit of the key) lands on every window.
+    // (tabs/verticalTabWidth, clamped 120-400, default 180; a stored
+    // past default — TABS10's compact 140 — migrates since it means
+    // the grip was never dragged to a pick — TABS16).
+    // reloadVerticalTabWidth() re-reads the persisted value — the
+    // settings-save path calls it so a drag on one window (or a
+    // later edit of the key) lands on every window.
     int verticalTabWidth() const;
     void setVerticalTabWidth(int width);
     void reloadVerticalTabWidth();
@@ -170,6 +172,13 @@ public:
     // override), Esc cancels.
     void editTabTitle(int index);
 
+    // TABS15: the strip's own '+' button — a real widget docked
+    // right after the last tab in every orientation (the old corner
+    // widget never laid out on vertical rails and read as far-edge
+    // chrome on horizontal ones).  Clicking it emits newTab(), the
+    // same signal a double-click on the empty strip fires.
+    QToolButton *newTabButton() const;
+
     // TABS13: the live in-process tab-drag session — the (bar, page)
     // pair behind an application/x-arora-tab payload, plus whether a
     // drop already consumed it.  Static because a drag's endpoints
@@ -208,6 +217,7 @@ protected:
     void dragLeaveEvent(QDragLeaveEvent *event) override;
     void dropEvent(QDropEvent *event) override;
     void paintEvent(QPaintEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -286,6 +296,11 @@ private:
     void paintContainerStrip(QPainter *painter);
     void shiftChildrenBelowStrip();
     void updateAccessibleStrip();
+    // TABS15: places the '+' widget right after the last tab —
+    // trailing the row on horizontal strips, a full-width appended
+    // row on vertical ones, parked inside Qt's scroll buttons when
+    // the strip overflows so it never disappears.
+    void layoutNewTabButton();
     // TABS13: the insert slot a strip drop maps to (past the hovered
     // tab's midpoint targets the far side; over the void it appends),
     // and the payload decode — it only yields a bar+page that match
@@ -351,6 +366,8 @@ private:
     // TABS12: the live rename editor + the page widget it renames.
     QPointer<QLineEdit> m_titleEditor;
     QPointer<QWidget> m_editPage;
+    // TABS15: the in-strip new-tab button — see layoutNewTabButton().
+    QToolButton *m_newTabButton;
 };
 
 

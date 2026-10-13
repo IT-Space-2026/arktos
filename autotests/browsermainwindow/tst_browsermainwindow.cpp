@@ -1424,8 +1424,11 @@ void tst_BrowserMainWindow::torChromeTheme()
         window, QPoint(window->menuBar()->width() - 10,
                        window->menuBar()->height() / 2)));
     const QRect tabRect = bar->tabRect(0);
+    // TABS15: the strip's own '+' button docks right after the last
+    // tab — sample past its footprint so the pixel is bare violet
+    // chrome, not the tinted glyph.
     const QColor stripColor = image.pixelColor(bar->mapTo(
-        window, QPoint(qMin(tabRect.right() + 8, bar->width() - 4),
+        window, QPoint(qMin(tabRect.right() + 40, bar->width() - 4),
                        tabRect.center().y())));
     // Bottom-of-tab pixels dodge the favicon label and the title.
     const QColor selectedTabColor = image.pixelColor(bar->mapTo(
@@ -5034,7 +5037,7 @@ void tst_BrowserMainWindow::tabStripCompactHeight()
                  "vertical row height %1 exceeds one text line (%2)")
                  .arg(bar->tabRect(0).height())
                  .arg(bar->fontMetrics().height() + 12)));
-    QVERIFY(bar->width() >= 140 && bar->width() <= 150);
+    QVERIFY(bar->width() >= 180 && bar->width() <= 190);
 
     // TABS11: the selected row must not paint below its rect —
     // Fusion's selected-tab fillRect is sized by the rect's bottom

@@ -671,7 +671,6 @@ private:
     OmniboxSuggestions *m_omniboxSuggestions;
     QStackedWidget *m_locationBars;
     TabBar *m_tabBar;
-    QToolButton *addTabButton;
     QToolButton *closeTabButton;
 
     // SLEEP01: per-tab suspend bookkeeping, keyed on the view so tab

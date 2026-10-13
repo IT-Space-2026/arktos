@@ -592,6 +592,18 @@ UI:
   any other tab (renames included) on both horizontal and vertical
   strips, shrinking only toward a favicon-plus-short-title minimum
   when the strip overflows — never back to icon-only (TABS14).
+- Vivaldi-style '+' new-tab button on the tab strip in every
+  orientation: it sits right after the last tab on Top/Bottom bars
+  (instead of the far-edge corner widget) and rides as an appended row
+  under the last tab on Left/Right rails, where the corner widget
+  never rendered at all.  It stays visible when the strip overflows,
+  tucked just inside the scroll buttons (TABS15).
+- Vertical tab rail widened again: Left/Right strips now default to
+  ~180px so typical tab titles show ~18-22 characters before eliding
+  — the TABS10 compact ~140px default clipped them at ~10-12.  Saved
+  widths that still hold a past default migrate forward, a width you
+  dragged to yourself is kept, and the edge drag and double-click
+  reset work as before (TABS16).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

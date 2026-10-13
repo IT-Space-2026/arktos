@@ -196,6 +196,8 @@ browsing profile:
 
 - **Tab bar positions** — Top/Bottom/Left/Right, live-applied per
   window and picked from clickable preview tiles in Preferences.
+  A Vivaldi-style **'+' button** sits right after the last tab in
+  every orientation (an appended row on vertical rails).
 - **Tab groups** — named, color-coded groups on the strip.
 - **Sidebar dock** — optional Vivaldi-style side panel (bookmarks,
   history, downloads, notes), lazily built and off by default; the
