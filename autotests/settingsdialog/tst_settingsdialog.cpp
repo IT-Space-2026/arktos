@@ -1057,6 +1057,37 @@ void tst_SettingsDialog::sidebarPanelsListGeometry()
     QVERIFY(list->width() <= list->sizeHint().width() + 1);
     QVERIFY(list->width() < dialog.sidebarGroupBox->width() / 2);
 
+    // SIDE10: the list hugs the left of its column directly under the
+    // 'Panels:' label — same left edge as the row-1 picker, same top
+    // as the label — instead of floating centered in its (previously
+    // surplus-fed) cell.
+    QVERIFY(qAbs(list->x() - dialog.sidebarDockArea->x()) <= 2);
+    QVERIFY(qAbs(list->y() - dialog.sidebarPanelsLabel->y()) <= 4);
+
+    // ...and the ▲▼ buttons are real framed arrow tool buttons parked
+    // immediately right of the list, top-aligned with it — visible,
+    // not the autoRaise ghosts rendered at the cell's far edge.  The
+    // button column's wrapper shares the list's coordinate space; the
+    // buttons themselves are wrapper-relative.
+    QToolButton *up = dialog.sidebarPanelUpButton;
+    QToolButton *down = dialog.sidebarPanelDownButton;
+    QVERIFY(up->isVisible() && down->isVisible());
+    QVERIFY(up->width() > 0 && up->height() > 0);
+    QVERIFY(!up->autoRaise() && !down->autoRaise());
+    QCOMPARE(up->arrowType(), Qt::UpArrow);
+    QCOMPARE(down->arrowType(), Qt::DownArrow);
+    const QRect column = dialog.sidebarPanelOrderButtons->geometry();
+    const int hspace = list->style()->pixelMetric(
+        QStyle::PM_LayoutHorizontalSpacing);
+    QVERIFY(column.left() >= list->geometry().right());
+    QVERIFY(column.left() - list->geometry().right() <= 2 * hspace);
+    QVERIFY(qAbs(column.top() - list->y()) <= 8);
+    QVERIFY(down->y() >= up->geometry().bottom() - 1);
+    // Trailing stretch keeps the row left-anchored: the button column
+    // can't hug the group's right edge (it did pre-fix).
+    QVERIFY(column.right()
+            < dialog.sidebarGroupBox->contentsRect().right() - hspace);
+
     dialog.close();
 }
 
