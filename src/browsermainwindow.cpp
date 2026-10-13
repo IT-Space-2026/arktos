@@ -1662,12 +1662,20 @@ void BrowserMainWindow::setupToolBar()
     m_appMenuButton = new QToolButton(m_navigationBar);
     m_appMenuButton->setObjectName(QLatin1String("appMenuButton"));
     m_appMenuButton->setAutoRaise(true);
-    m_appMenuButton->setIcon(
-        QIcon(QLatin1String(":128x128/arora.png")));
+    // MENU07: the logo is the brand mark, not a nav glyph — render it
+    // bigger than the bar's shared 18px so the button reads as the app
+    // menu anchor on every window type.  The bundled vector art stays
+    // crisp at 28px and fractional scale factors where a resized png
+    // smudges; the text keeps the toolbar font so the growth is
+    // logo-led.
+    m_appMenuButton->setIcon(QIcon(QLatin1String(":/arora.svg")));
     m_appMenuButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     m_appMenuButton->setPopupMode(QToolButton::InstantPopup);
     m_appMenuButton->setMenu(m_appMenu);
     m_navigationBar->addWidget(m_appMenuButton);
+    // Set after addWidget so nothing on the bar's side can clamp it
+    // back to the shared nav-glyph size.
+    m_appMenuButton->setIconSize(QSize(28, 28));
 
     m_historyBackAction->setIcon(AroraIcon::get(QLatin1String("go-previous")));
     m_historyBackMenu = new QMenu(this);

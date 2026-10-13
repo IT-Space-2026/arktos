@@ -363,6 +363,11 @@ UI:
   History, Bookmarks, Window, Tools and Help — the classic menubar is
   hidden by default on every window type, and View → Show Menu Bar
   (Ctrl+M) brings it back whenever wanted (MENU06).
+- The Arora app-menu button reads bigger: its logo now renders larger
+  than the surrounding navigation glyphs on every window type
+  (standard, private, container, Tor) — drawn from the bundled vector
+  artwork so it stays crisp at any scale, while the "Arora" label
+  keeps the toolbar font (MENU07).
 - Preferences → Privacy: the Cookies section's right-aligned labels
   floated the accept/keep/session rows off the group's left edge and
   looked ragged next to the checkbox rows; labels are now left-aligned

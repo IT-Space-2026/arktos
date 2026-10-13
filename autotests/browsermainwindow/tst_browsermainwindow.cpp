@@ -571,6 +571,11 @@ void tst_BrowserMainWindow::appMenuButton()
     QCOMPARE(button->popupMode(), QToolButton::InstantPopup);
     QCOMPARE(button->text(), QLatin1String("Arora"));
     QVERIFY(!button->icon().isNull());
+    // MENU07: the logo is bigger than the nav bar's shared glyph
+    // size — the growth is icon-led, the text font is untouched.
+    QCOMPARE(button->iconSize(), QSize(28, 28));
+    QVERIFY(button->iconSize().height() > navBar->iconSize().height());
+    QVERIFY(!button->icon().pixmap(button->iconSize()).isNull());
     QVERIFY(!button->toolTip().isEmpty());
     QVERIFY(!button->accessibleName().isEmpty());
 
@@ -655,12 +660,16 @@ void tst_BrowserMainWindow::appMenuButton()
     const bool privateMenuFull = privateButton
         && privateButton->menu()
         && privateButton->menu()->actions().count() >= 8;
+    // MENU07: every window type gets the same bigger button.
+    const bool privateBigIcon = privateButton
+        && privateButton->iconSize() == QSize(28, 28);
     const bool privateBarHidden =
         !privateWindow->menuBar()->isVisible();
     closeWindow(privateWindow);
     BrowserApplication::setPrivate(false);
     QVERIFY(privateButton);
     QVERIFY(privateMenuFull);
+    QVERIFY(privateBigIcon);
     QVERIFY(privateBarHidden);
 
     // Tor window — collect state first so a mid-leg failure cannot
@@ -678,6 +687,8 @@ void tst_BrowserMainWindow::appMenuButton()
     const bool torRowBare = torWindow->menuBar()->actions().isEmpty();
     const int torMenuCount = torWindow->appMenu()
         ? torWindow->appMenu()->actions().count() : -1;
+    const bool torBigIcon = torButton
+        && torButton->iconSize() == QSize(28, 28);
     // Grabbed-pixel proof the "Arora" label reads light on violet.
     int lightPixels = 0;
     if (torButton) {
@@ -701,6 +712,7 @@ void tst_BrowserMainWindow::appMenuButton()
     closeWindow(torWindow);
     BrowserApplication::setTorMode(false);
     QVERIFY(torButton);
+    QVERIFY(torBigIcon);
     QVERIFY(torRowVisible);
     QVERIFY(torRowBare);
     QCOMPARE(torMenuCount, 8);
