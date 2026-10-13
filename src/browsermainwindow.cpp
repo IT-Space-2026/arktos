@@ -1488,25 +1488,33 @@ void BrowserMainWindow::setupMenu()
     });
     m_toolsDevToolsMenu->addAction(m_toolsChromiumDevToolAction);
 
-    // DEVT03/DEVT05: engine-neutral dev tools dock — the dock's own
-    // toggleViewAction sits inside the submenu next to the Chromium
-    // inspector entry, so its check state stays synced with the
-    // dock's close button and there is exactly one BiDi surface.
-    // No-rust builds have no BiDi backend at all — the entry stays
-    // out of the menu there; a tor window keeps it visible but
-    // disabled since its process never arms the debug channel.
+    // DEVT03/DEVT05/DEVT08: engine-neutral dev tools dock — the BiDi
+    // entry is a plain action like the Chromium inspector one, not
+    // the dock's checkable toggleViewAction: devtools rows are
+    // open/close commands, not persistent states like sidebar
+    // visibility, so nothing in this submenu carries a tick.  The
+    // dock's own visibility is the only truth — triggering flips it,
+    // its close button needs no menu state to stay honest.  No-rust
+    // builds have no BiDi backend at all — the entry stays out of
+    // the menu there; a tor window keeps it visible but disabled
+    // since its process never arms the debug channel.
 #ifdef ARORA_RUSTCORE
-    QAction *bidiAction = m_bidiPanelDock->toggleViewAction();
-    bidiAction->setText(tr("BiDi Dev &Tools"));
+    m_toolsBidiDevToolAction = new QAction(m_toolsDevToolsMenu);
+    connect(m_toolsBidiDevToolAction, &QAction::triggered,
+            this, [this]() {
+        m_bidiPanelDock->setVisible(!m_bidiPanelDock->isVisible());
+    });
+    m_toolsBidiDevToolAction->setText(tr("BiDi Dev &Tools"));
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
-    bidiAction->setIcon(AroraIcon::get(QLatin1String("system-run")));
+    m_toolsBidiDevToolAction->setIcon(
+        AroraIcon::get(QLatin1String("system-run")));
 #endif
     if (BrowserApplication::isTorMode()) {
-        bidiAction->setEnabled(false);
-        bidiAction->setToolTip(
+        m_toolsBidiDevToolAction->setEnabled(false);
+        m_toolsBidiDevToolAction->setToolTip(
             tr("The debug channel is never armed in Tor windows."));
     }
-    m_toolsDevToolsMenu->addAction(bidiAction);
+    m_toolsDevToolsMenu->addAction(m_toolsBidiDevToolAction);
 #endif
 
     m_toolsUserAgentMenu = new UserAgentMenu(m_toolsMenu);
@@ -1715,10 +1723,7 @@ void BrowserMainWindow::retranslate()
     // reads distinctly next to "Chromium Dev Tool".
     m_bidiPanelDock->setWindowTitle(tr("Development Tools"));
 #ifdef ARORA_RUSTCORE
-    // toggleViewAction's text follows the dock's window title — the
-    // setWindowTitle above just overwrote the menu label, so stamp
-    // it back on every retranslate.
-    m_bidiPanelDock->toggleViewAction()->setText(tr("BiDi Dev &Tools"));
+    m_toolsBidiDevToolAction->setText(tr("BiDi Dev &Tools"));
 #endif
     m_viewSidebarAction->setText(tr("Sidebar"));
     m_viewSourceAction->setText(tr("Page S&ource"));

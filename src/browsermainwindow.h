@@ -341,6 +341,9 @@ private:
     // DEVT04: engine-facing tools under Tools > Development Tools.
     QMenu *m_toolsDevToolsMenu;
     QAction *m_toolsChromiumDevToolAction;
+    // DEVT08: the BiDi entry is a plain open/close command like its
+    // sibling — no checkable tick (rustcore builds only).
+    QAction *m_toolsBidiDevToolAction = nullptr;
     UserAgentMenu *m_toolsUserAgentMenu;
 
     QMenu *m_helpMenu;
