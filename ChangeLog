@@ -648,6 +648,13 @@ Search & location bar:
   for Startpage or "e arora" for Ecosia. The defaults only claim free
   keyword slots: a nickname you bound or unbound yourself always
   wins (SENG02).
+- One reload button, not two: the duplicate stop/reload button at the
+  right end of the address bar is gone.  The toolbar's combined
+  stop/reload button — left of the address bar — is the single
+  control and still flips to Stop while a page loads; the address bar
+  keeps its thin loading strip along the bottom edge as the load cue
+  (NAVB02).
+- Search suggestions off by default, opt-in per engine (SEC11).
 
 Security:
 - HTTPS-First upgrades and HTTPS-Only interstitial; real-TLS-failure
@@ -900,9 +907,9 @@ Tor:
   toolbar button shows Stop during a load and really stops it, and
   returns to Reload on finish or failure — Qt 6 no longer reports
   intermediate load progress, so the state is driven by the load's
-  start/finish edges instead.  The location bar gains the same
-  stop/reload button at its right end plus a thin loading strip along
-  its bottom edge while a load is in flight (NAVB01).
+  start/finish edges instead.  The location bar paints a thin loading
+  strip along its bottom edge while a load is in flight (NAVB01; the
+  in-bar duplicate stop/reload button was removed again — NAVB02).
 
 AdBlock:
 - uBO-tier rules: $removeparam, $redirect stubs, cosmetic +js subset

@@ -81,7 +81,6 @@
 #include "webpage.h"
 #include "webviewsearch.h"
 #include "locationbar.h"
-#include "stopreloadbutton.h"
 #include "toolbarsearch.h"
 #include "torcircuitbutton.h"
 #include "torcircuitpanel.h"
@@ -5133,16 +5132,18 @@ void tst_BrowserMainWindow::tabStripCompactHeight()
     closeWindow(window);
 }
 
-// NAVB01: the toolbar's combined Stop/Reload action (and the url
-// bar's own stop/reload surface) must follow the engine page's load
-// lifecycle — a held-open response keeps progress at 0 forever under
-// Qt 6.12, yet the faces must still flip to Stop on loadStarted and
-// back to Reload on finish or abort.  The chain —
+// NAVB01: the toolbar's combined Stop/Reload action must follow the
+// engine page's load lifecycle — a held-open response keeps progress
+// at 0 forever under Qt 6.12, yet the face must still flip to Stop on
+// loadStarted and back to Reload on finish or abort.  The chain —
 // Engine::Page::loadStarted/loadFinished -> TabWidget ->
 // BrowserMainWindow::updateStopReloadState — is exercised end-to-end,
 // including across a tab switch away from and back to a loading tab.
-// The same page-action binding keeps Back enabled and live after
-// navigations (the "sometimes dead" report).
+// NAVB02: the url bar's duplicate stop/reload button is gone — its
+// only remaining load surface is the painted strip, asserted here
+// alongside the toolbar face.  The same page-action binding keeps
+// Back enabled and live after navigations (the "sometimes dead"
+// report).
 void tst_BrowserMainWindow::stopReloadState()
 {
     SubWindow *window = new SubWindow;
@@ -5205,16 +5206,35 @@ void tst_BrowserMainWindow::stopReloadState()
 
     WebView *view = window->currentTab();
     QVERIFY(view);
-    // The url bar's own stop/reload surface for this view.
-    StopReloadButton *barButton = nullptr;
+    // NAVB02: the toolbar action is the single stop/reload control —
+    // the url bar carries no second button, only the painted loading
+    // strip on its bottom edge while WebView::isLoading().
+    LocationBar *bar = nullptr;
     const QList<LocationBar *> bars =
         window->findChildren<LocationBar *>();
-    for (LocationBar *bar : bars) {
-        if (bar->webView() == view)
-            barButton = bar->findChild<StopReloadButton *>();
+    for (LocationBar *candidate : bars) {
+        if (candidate->webView() == view)
+            bar = candidate;
     }
-    QVERIFY2(barButton, "no StopReloadButton in the current url bar");
-    QVERIFY(!barButton->loading());
+    QVERIFY2(bar, "no url bar bound to the current view");
+    QVERIFY(!bar->findChild<QToolButton *>(
+        QLatin1String("stopReloadButton")));
+
+    // Strip detection: LocationBar::paintEvent fills the field's
+    // bottom edge with the loading color (116,192,250) — light
+    // palettes — while a load is in flight.
+    auto stripPainted = [bar]() {
+        const QImage grab = bar->grab().toImage();
+        const int y = grab.height() - 2;
+        for (int x = 2; x < grab.width() - 2; ++x) {
+            const QColor pixel = grab.pixelColor(x, y);
+            if (qAbs(pixel.red() - 116) < 24
+                && qAbs(pixel.green() - 192) < 24
+                && qAbs(pixel.blue() - 250) < 24)
+                return true;
+        }
+        return false;
+    };
 
     QSignalSpy progressSpy(view->enginePage(), &Engine::Page::loadProgress);
     QVERIFY2(progressSpy.isValid(), "Engine::Page::loadProgress not a signal");
@@ -5225,14 +5245,14 @@ void tst_BrowserMainWindow::stopReloadState()
     const QUrl base(QStringLiteral("http://127.0.0.1:%1")
                         .arg(server.serverPort()));
 
-    // Load in flight -> Stop face on BOTH the toolbar action and the
-    // url-bar button.  Qt 6.12 emits progress only as 0 then 100, so
-    // this must hold while every progress value stays at 0 — the
-    // whole point of keying on loadStarted/loadFinished.
+    // Load in flight -> Stop face on the toolbar action and the
+    // loading strip on the url bar.  Qt 6.12 emits progress only as 0
+    // then 100, so this must hold while every progress value stays at
+    // 0 — the whole point of keying on loadStarted/loadFinished.
     view->loadUrl(base.resolved(QUrl(QLatin1String("/held"))));
     QTRY_VERIFY_WITH_TIMEOUT(
         stopReload->toolTip().contains(QLatin1String("Stop")), 15000);
-    QTRY_VERIFY_WITH_TIMEOUT(barButton->loading(), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(stripPainted(), 5000);
     QVERIFY(view->page()->isLoading());
     for (const QList<QVariant> &args : progressSpy) {
         const int p = args.value(0).toInt();
@@ -5246,7 +5266,7 @@ void tst_BrowserMainWindow::stopReloadState()
     QTRY_VERIFY_WITH_TIMEOUT(!view->page()->isLoading(), 10000);
     QTRY_VERIFY_WITH_TIMEOUT(
         stopReload->toolTip().contains(QLatin1String("Reload")), 5000);
-    QTRY_VERIFY_WITH_TIMEOUT(!barButton->loading(), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!stripPainted(), 5000);
 
     // A finished load leaves the reload face, and the reload face
     // really reloads — a fresh load begins on trigger.
@@ -5261,7 +5281,7 @@ void tst_BrowserMainWindow::stopReloadState()
     QTRY_VERIFY_WITH_TIMEOUT(startedSpy.count() > 0, 10000);
     QTRY_VERIFY_WITH_TIMEOUT(finishSpy.count() > done, 20000);
     QTRY_VERIFY_WITH_TIMEOUT(!view->page()->isLoading(), 20000);
-    QVERIFY(!barButton->loading());
+    QVERIFY(!stripPainted());
 
     // A failed load restores the reload face the same way.
     done = finishSpy.count();
@@ -5271,7 +5291,7 @@ void tst_BrowserMainWindow::stopReloadState()
         !view->page()->isLoading()
         && stopReload->toolTip().contains(QLatin1String("Reload")),
         20000);
-    QVERIFY(!barButton->loading());
+    QVERIFY(!stripPainted());
 
     // Back binding: two clean navigations leave the toolbar Back
     // enabled and live — a trigger walks exactly one history step.

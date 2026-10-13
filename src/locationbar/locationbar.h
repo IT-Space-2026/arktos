@@ -30,7 +30,6 @@ class LocationBarSiteIcon;
 class PrivacyIndicator;
 class SiteShieldButton;
 class PopupBlockerButton;
-class StopReloadButton;
 class LocationBar : public LineEdit
 {
     Q_OBJECT
@@ -78,7 +77,6 @@ private:
     SiteShieldButton *m_shield;
     PopupBlockerButton *m_popupBlockerButton;
     PrivacyIndicator *m_privacyIndicator;
-    StopReloadButton *m_stopReloadButton;
 };
 
 #endif // LOCATIONBAR_H
