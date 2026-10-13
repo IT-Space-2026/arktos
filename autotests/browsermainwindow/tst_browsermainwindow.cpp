@@ -576,10 +576,15 @@ void tst_BrowserMainWindow::fileMenuOrder()
 
 // ICONS07: every static leaf action in the shared top-level menus
 // carries an icon — the app-menu dropdown reads as one uniform icon
-// column.  Documented exceptions, asserted here too: separators,
-// submenu headers (kept clean — the flyout carries the rows), and the
-// dynamic entries (history/bookmark rows, window list, encodings,
-// user agents) which legitimately have none.
+// column.  ICONS08: the STATIC submenu headers that sit among those
+// leafs carry icons too (File > New Container Tab, Tools >
+// Development Tools, View > Text Encoding, Tools > User Agent,
+// History > Recently Closed Tabs).  Documented exceptions, asserted here too:
+// separators and the dynamic entries (history/bookmark rows, window
+// list, encoding and user-agent pickers, model-driven flyouts like
+// bookmark folders) which legitimately have none.  Context menus and
+// the app-menu's own top-level rows read consistently bare — no leaf
+// in them carries an icon — so their headers stay clean as well.
 void tst_BrowserMainWindow::menuIcons()
 {
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
@@ -622,8 +627,8 @@ void tst_BrowserMainWindow::menuIcons()
             devToolsMenu = action->menu();
     }
 
-    // Fully-static menus: no leaf row may be iconless, and submenu
-    // headers stay clean.
+    // Fully-static menus: no row may be iconless — ICONS08 iconed
+    // the submenu headers that stood naked among the leaf rows.
     for (QLatin1String title : { QLatin1String("File"),
                                  QLatin1String("Edit"),
                                  QLatin1String("View"),
@@ -636,10 +641,6 @@ void tst_BrowserMainWindow::menuIcons()
                 continue;
             const QString row = title + QLatin1String(" > ")
                 + action->text();
-            if (action->menu()) {
-                QVERIFY2(action->icon().isNull(), qPrintable(row));
-                continue;
-            }
             QVERIFY2(!action->icon().isNull(), qPrintable(row));
             QVERIFY2(!action->icon().pixmap(QSize(16, 16)).isNull(),
                      qPrintable(row));
@@ -666,7 +667,8 @@ void tst_BrowserMainWindow::menuIcons()
     const QHash<QString, QStringList> required = {
         { QLatin1String("History"),
           { QLatin1String("Back"), QLatin1String("Forward"),
-            QLatin1String("Home"), QLatin1String("Restore Last Session"),
+            QLatin1String("Home"), QLatin1String("Recently Closed Tabs"),
+            QLatin1String("Restore Last Session"),
             QLatin1String("Show All History"),
             QLatin1String("Clear History...") } },
         { QLatin1String("Bookmarks"),
@@ -706,7 +708,9 @@ void tst_BrowserMainWindow::menuIcons()
     QVERIFY(torFile);
     int torMissing = 0;
     for (QAction *action : torFile->actions()) {
-        if (!action->isSeparator() && !action->menu()
+        // Headers count too since ICONS08 — the hidden container
+        // submenu still carries its icon.
+        if (!action->isSeparator()
                 && (action->icon().isNull()
                     || action->icon().pixmap(QSize(16, 16)).isNull()))
             ++torMissing;

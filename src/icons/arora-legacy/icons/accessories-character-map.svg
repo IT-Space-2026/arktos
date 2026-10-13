@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ICONS08: letter "A" — View > Text Encoding submenu header.
+     Standard freedesktop name (character map), so native themes
+     substitute real artwork; this is the bundled fallback.  Mid-grey
+     stays readable on light and dark palettes. -->
+<svg xmlns="http://www.w3.org/2000/svg" height="16" width="16" viewBox="0 0 16 16">
+    <path d="M4.4 12.8 8 3.2l3.6 9.6M5.7 9.9h4.6" fill="none" stroke="#7a7a7a" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

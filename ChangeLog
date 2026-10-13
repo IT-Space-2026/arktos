@@ -650,9 +650,9 @@ UI:
   the bundled fallback set cover the freedesktop-name gaps (panel
   toggles, import/export, private mask, Tor onion, reader, PiP, page
   source, terminal); native icon themes substitute their own artwork
-  where the names are standard. Separators, submenu headers and the
-  dynamic rows (history/bookmark entries, window list, encodings,
-  user agents) stay iconless by design (ICONS07).
+  where the names are standard. Separators and the dynamic rows
+  (history/bookmark entries, window list, encodings, user agents)
+  stay iconless by design (ICONS07).
 - Enabled extensions finally get a toolbar face: every loaded
   extension that declares an action popup shows its own manifest icon
   in a strip right after the address bar — Bitwarden's shield
@@ -672,6 +672,14 @@ UI:
   renders its bear at 36px — twice the navigation glyphs and clearly
   dominant over the "Arora" label — on every window type including
   Tor, where the light backing disc grew to match (MENU09).
+- Menu flyout headers that sit among iconed rows now carry an icon
+  too: File → "New Container Tab" shows a crate glyph, Tools →
+  "Development Tools" code brackets, View → "Text Encoding" a
+  letterform, Tools → "User Agent" a person bust, and History →
+  "Recently Closed Tabs" a restore-windows glyph — so no static row
+  reads naked in the icon column. Standard freedesktop names let
+  native themes substitute their own artwork; five new mid-grey
+  glyphs cover the bundled fallback set (ICONS08).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
