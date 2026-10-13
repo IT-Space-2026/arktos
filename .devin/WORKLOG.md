@@ -728,3 +728,4 @@
 - 2026-10-13 MERGEWATCH: rust-work merged — conflicts: union-resolved include + slot decl in src/main.cpp & autotests/tabbar/tst_tabbar.cpp (kept both iconOnlyTabs and containerBandEvents); build ok
 - 2026-10-13 MERGEWATCH: ui-work merged — conflicts: union members in browsermainwindow.h (m_bidiPanelDock + m_sidebarAutoClose); sidebarpanel.cpp union (SidebarBookmarksModel + m_bookmarksPage, showPanel/showDownloads refactor kept, showBookmarks = showPanel + focus, bookmark-remove methods kept); tst_browsermainwindow.cpp union (sidebarResize + sidebarPanelOrder/Options, startPageSingleSurface + READ02/04 comment); build ok
 - 2026-10-13 MERGEWATCH NOTE: orphaned dirty-tree work (uncommitted DOWN04/servo/testcerts edits + log tails, taskloop all-done, no agents running) preserved in stash@{0} — restore with 'git stash apply'
+- 2026-10-13 MERGEWATCH: ui-work merged — no conflicts (single-line task-table update in .devin/Arora-Task-UI.md); build ok
