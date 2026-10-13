@@ -96,7 +96,7 @@ private slots:
     void loadStringFromUntrustedSource();
     void tabBarPositionSetting();
     void verticalTabStripWidth();
-    void verticalTabCompactDefault();
+    void verticalTabDefaultWidth();
     void tabHoverPreviews();
     void tabThumbnailStaleness();
     void omnibox();
@@ -921,11 +921,12 @@ void tst_TabWidget::verticalTabStripWidth()
     settings.endGroup();
 }
 
-// TABS10: a fresh profile gets the compact 140px Left/Right rail and
-// a stored legacy 180 migrates forward through the real widget (it
-// means the grip was never dragged); a user-dragged width survives
-// the same construction path untouched.
-void tst_TabWidget::verticalTabCompactDefault()
+// TABS16: a fresh profile gets the roomier 180px Left/Right rail —
+// TABS10's compact 140 clipped typical titles at ~10-12 chars — and
+// a stored past default migrates forward through the real widget
+// (it means the grip was never dragged to a pick); a user-dragged
+// width survives the same construction path untouched.
+void tst_TabWidget::verticalTabDefaultWidth()
 {
     QSettings settings;
     settings.beginGroup(QLatin1String("tabs"));
@@ -939,19 +940,26 @@ void tst_TabWidget::verticalTabCompactDefault()
         widget.show();
         QApplication::processEvents();
         TabBar *bar = widget.bar();
-        QCOMPARE(bar->verticalTabWidth(), 140);
-        QVERIFY(bar->width() >= 140 && bar->width() <= 150);
-        QCOMPARE(bar->tabRect(0).width(), 140);
+        QCOMPARE(bar->verticalTabWidth(), 180);
+        QVERIFY(bar->width() >= 180 && bar->width() <= 190);
+        QCOMPARE(bar->tabRect(0).width(), 180);
         // A plain row is a single text line tall.
         QVERIFY(bar->tabRect(0).height()
                 <= bar->fontMetrics().height() + 12);
     }
 
-    // A stored legacy default migrates.
+    // Stored past defaults migrate — TABS10's compact 140, and the
+    // pre-TABS10 180 (already the new default) both mean the grip
+    // was never dragged to a pick.
+    settings.setValue(QLatin1String("verticalTabWidth"), 140);
+    {
+        SubTabWidget widget;
+        QCOMPARE(widget.bar()->verticalTabWidth(), 180);
+    }
     settings.setValue(QLatin1String("verticalTabWidth"), 180);
     {
         SubTabWidget widget;
-        QCOMPARE(widget.bar()->verticalTabWidth(), 140);
+        QCOMPARE(widget.bar()->verticalTabWidth(), 180);
     }
 
     // A user-set width stays.

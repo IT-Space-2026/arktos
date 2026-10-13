@@ -118,11 +118,12 @@ public:
     TabPreview *tabPreview() const;
 
     // TABS02: the drag-resizable width of a Left/Right tab strip
-    // (tabs/verticalTabWidth, clamped 120-400, default 140; a stored
-    // legacy 180 migrates to the default since it means the grip was
-    // never dragged — TABS10).  reloadVerticalTabWidth() re-reads the
-    // persisted value — the settings-save path calls it so a drag on
-    // one window (or a later edit of the key) lands on every window.
+    // (tabs/verticalTabWidth, clamped 120-400, default 180; a stored
+    // past default — TABS10's compact 140 — migrates since it means
+    // the grip was never dragged to a pick — TABS16).
+    // reloadVerticalTabWidth() re-reads the persisted value — the
+    // settings-save path calls it so a drag on one window (or a
+    // later edit of the key) lands on every window.
     int verticalTabWidth() const;
     void setVerticalTabWidth(int width);
     void reloadVerticalTabWidth();

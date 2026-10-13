@@ -432,6 +432,12 @@ UI:
   under the last tab on Left/Right rails, where the corner widget
   never rendered at all.  It stays visible when the strip overflows,
   tucked just inside the scroll buttons (TABS15).
+- Vertical tab rail widened again: Left/Right strips now default to
+  ~180px so typical tab titles show ~18-22 characters before eliding
+  — the TABS10 compact ~140px default clipped them at ~10-12.  Saved
+  widths that still hold a past default migrate forward, a width you
+  dragged to yourself is kept, and the edge drag and double-click
+  reset work as before (TABS16).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

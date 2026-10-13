@@ -4407,7 +4407,7 @@ void tst_BrowserMainWindow::tabStripCompactHeight()
                  "vertical row height %1 exceeds one text line (%2)")
                  .arg(bar->tabRect(0).height())
                  .arg(bar->fontMetrics().height() + 12)));
-    QVERIFY(bar->width() >= 140 && bar->width() <= 150);
+    QVERIFY(bar->width() >= 180 && bar->width() <= 190);
 
     // TABS11: the selected row must not paint below its rect —
     // Fusion's selected-tab fillRect is sized by the rect's bottom

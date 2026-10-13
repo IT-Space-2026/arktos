@@ -92,13 +92,16 @@
 
 #include <qdebug.h>
 
-// TABS10: the Left/Right strip's default width — favicon + close
-// button + room for a ~12-char elided title.  180 was the pre-TABS10
-// default: a stored 180 means the grip was never dragged (a drag
-// persists its own width), so reloadVerticalTabWidth() migrates it
-// forward; any other stored value is a deliberate pick and stays.
-static const int defaultVerticalTabWidth = 140;
-static const int legacyVerticalTabWidth = 180;
+// TABS16: the Left/Right strip's default width — favicon + close
+// button + room for ~18-22 title chars.  TABS10's compact 140
+// clipped typical titles at ~10-12 chars, so the default is back
+// at the roomier pre-TABS10 180.  A stored past default means the
+// grip was never dragged to a pick (a drag persists its own width),
+// so reloadVerticalTabWidth() migrates it forward; any other stored
+// value is a deliberate pick and stays.  The pre-TABS10 180 needs
+// no sentinel — it IS the default again.
+static const int defaultVerticalTabWidth = 180;
+static const int compactVerticalTabWidth = 140;
 
 // Defined further down — the TABGRP01 drop-zone check in
 // mouseReleaseEvent needs it too.
@@ -2513,11 +2516,12 @@ void TabBar::reloadVerticalTabWidth()
     settings.beginGroup(QLatin1String("tabs"));
     const QVariant stored =
         settings.value(QLatin1String("verticalTabWidth"));
-    // TABS10: an absent key or a stored legacy 180 means the grip
-    // was never dragged — migrate to the compact default; a
+    // TABS16: an absent key or a stored past default (TABS10's
+    // compact 140 — the pre-TABS10 180 IS the default again) means
+    // the grip was never dragged to a pick — migrate forward; a
     // user-dragged width stays.
     setVerticalTabWidth(!stored.isValid()
-                            || stored.toInt() == legacyVerticalTabWidth
+                            || stored.toInt() == compactVerticalTabWidth
                         ? defaultVerticalTabWidth
                         : stored.toInt());
 }
