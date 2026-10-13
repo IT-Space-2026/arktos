@@ -76,6 +76,7 @@
 #include "cookiedialog.h"
 #include "cookieexceptionsdialog.h"
 #include "cookiejar.h"
+#include "domainblocklist.h"
 #include "downloadmanager.h"
 #include "energysaver.h"
 #include "engineinterface.h"
@@ -96,6 +97,7 @@
 #include "sidebarpanel.h"
 #include "tabwidget.h"
 #include "toolbarsearch.h"
+#include "trancolist.h"
 #include "webpermissionmanager.h"
 #include "webview.h"
 
@@ -561,6 +563,20 @@ SettingsDialog::SettingsDialog(QWidget *parent)
             this, &SettingsDialog::credentialStoreLock);
     refreshCredentialUi();
 
+    // TRUST13: the Site Trust group's "Update Now" row — one click
+    // refreshes both remote trust lists in parallel; the status label
+    // mirrors the in-flight state and the persisted last-updated
+    // stamps.  A fetch already running (the consent-gated weekly
+    // refresh) reports through the same signal, so the label catches
+    // it too.
+    connect(siteTrustUpdateButton, &QPushButton::clicked,
+            this, &SettingsDialog::updateSiteTrustLists);
+    connect(TrancoList::instance(), &TrancoList::updateFinished,
+            this, &SettingsDialog::siteTrustListUpdateFinished);
+    connect(DomainBlocklist::instance(), &DomainBlocklist::updateFinished,
+            this, &SettingsDialog::siteTrustListUpdateFinished);
+    refreshSiteTrustListStatus();
+
     // CONT03: the Containers page mirrors the ContainerManager
     // registry.  Container names are user-chosen but still render
     // literal — a markup-looking name must not mark up the list.
@@ -831,6 +847,7 @@ void SettingsDialog::retranslate()
     updateSecurityLevelHint();
     updateContentBlockerStatus();
     updateEnergySaverStatus();
+    refreshSiteTrustListStatus();
     if (BrowserApplication::isTorMode()) {
         extensionsHintLabel->setText(
             tr("Extensions never run in a Tor window."));
@@ -3192,6 +3209,67 @@ void SettingsDialog::updateContentBlockerStatus()
                  ? tr("Brave adblock-rust") : tr("Built-in"));
     }
     adblockEngineStatus->setText(text);
+}
+
+// TRUST13: bits for m_siteTrustUpdatesPending — which of the two
+// list singletons an Update Now click is still waiting on.
+enum {
+    TrancoListPending = 1,
+    DomainBlocklistPending = 2
+};
+
+void SettingsDialog::updateSiteTrustLists()
+{
+    // Both fetches run in parallel.  The mask is armed before the
+    // calls because updateNow() can report synchronously (every
+    // source refused, a no-rustcore build); a fetch already in flight
+    // simply keeps the bit set until its own updateFinished lands.
+    m_siteTrustUpdatesPending = TrancoListPending | DomainBlocklistPending;
+    m_siteTrustUpdateFailed = false;
+    refreshSiteTrustListStatus();
+    TrancoList::instance()->updateNow();
+    DomainBlocklist::instance()->updateNow();
+}
+
+void SettingsDialog::siteTrustListUpdateFinished(bool ok)
+{
+    if (!ok)
+        m_siteTrustUpdateFailed = true;
+    if (sender() == TrancoList::instance())
+        m_siteTrustUpdatesPending &= ~TrancoListPending;
+    else if (sender() == DomainBlocklist::instance())
+        m_siteTrustUpdatesPending &= ~DomainBlocklistPending;
+    refreshSiteTrustListStatus();
+}
+
+void SettingsDialog::refreshSiteTrustListStatus()
+{
+    const bool allowed = AdBlockManager::remoteListsAllowed();
+    const bool inFlight = m_siteTrustUpdatesPending != 0;
+    siteTrustUpdateButton->setEnabled(allowed && !inFlight);
+    siteTrustUpdateButton->setToolTip(allowed
+        ? tr("Download the latest site-rank and threat-list updates.")
+        : tr("Remote list downloads need your consent — enable them "
+             "under Content Blocking to fetch site-trust updates."));
+    if (inFlight) {
+        siteTrustUpdateLabel->setText(tr("Updating..."));
+        return;
+    }
+
+    // The label reports the older of the two stamps — the lists move
+    // together, so the stale one is the honest answer; a list that
+    // never fetched is older than any date.
+    const QDateTime tranco = TrancoList::instance()->lastUpdate();
+    const QDateTime blocklist = DomainBlocklist::instance()->lastUpdate();
+    QDateTime oldest;
+    if (tranco.isValid() && blocklist.isValid())
+        oldest = qMin(tranco, blocklist);
+    const QString stamp = oldest.isValid()
+        ? QLocale().toString(oldest, QLocale::ShortFormat)
+        : tr("never");
+    siteTrustUpdateLabel->setText(m_siteTrustUpdateFailed
+        ? tr("Update failed — last updated: %1").arg(stamp)
+        : tr("Last updated: %1").arg(stamp));
 }
 
 // Prompts for a new master passphrase — entered twice — and returns

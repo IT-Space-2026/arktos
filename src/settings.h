@@ -239,6 +239,13 @@ private slots:
     // staged for OK like the other fields).
     void applyLanguagePick(int row);
 
+    // TRUST13: the Site Trust group's "Update Now" row — one click
+    // fires updateNow() on both remote trust lists; the status label
+    // tracks the fetches through updateFinished.
+    void updateSiteTrustLists();
+    void siteTrustListUpdateFinished(bool ok);
+    void refreshSiteTrustListStatus();
+
 private:
     // ADB06: the Content Blocking status line mirrors the engine that
     // is actually answering requests (effective pick, not the combo's
@@ -279,6 +286,10 @@ private:
     // THEME02: a combo-driven preview flipped the palette and has not
     // been committed or reverted yet.
     bool m_themePreviewed = false;
+    // TRUST13: which list fetches an Update Now click is still
+    // waiting on — the mask empties when every singleton reported.
+    int m_siteTrustUpdatesPending = 0;
+    bool m_siteTrustUpdateFailed = false;
 };
 
 #endif // SETTINGS_H

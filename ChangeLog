@@ -710,6 +710,12 @@ Security:
   all on by default; turning the master off hides the trust
   badge and skips the lookups, and each signal can be disabled
   individually, applied without a restart (TRUST06, TRUST02).
+- The Site Trust group also gains an "Update Now" button with a
+  last-updated label: one click refreshes both remote trust lists
+  (the Tranco rank table and the threat blocklist), shows progress
+  while the downloads run and reports failures honestly; the button
+  is disabled with an explanation until remote list downloads are
+  consented to (TRUST13).
 
 Containers:
 - Isolated container profiles (CONT01).

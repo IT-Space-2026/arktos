@@ -59,7 +59,10 @@ browsing profile:
   lock/shield popover carries a Trust section with one line per real
   signal from the verdict — known/little-known site (Tranco rank),
   "resembles <domain>" lookalike hits, threat-list hits and first
-  visits — refreshed per navigation.
+  visits — refreshed per navigation. The group also has an "Update
+  Now" button that refreshes both remote trust lists (Tranco ranks,
+  threat blocklist) on demand, with a last-updated status line; it
+  stays disabled until remote list downloads are consented to.
 - **Per-site JavaScript control** — allow/block rules by host with a
   shield-panel toggle, a blocked-scripts bar with "Allow once"/"Always
   allow", and three Mullvad-style security tiers (Standard / Safer /

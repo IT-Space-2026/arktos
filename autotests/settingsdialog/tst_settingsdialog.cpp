@@ -33,10 +33,13 @@
 #include <qframe.h>
 #include <qgridlayout.h>
 #include <qgroupbox.h>
+#include <qhostaddress.h>
 #include <qscrollarea.h>
 #include <qscrollbar.h>
 #include <qstandarditemmodel.h>
 #include <qstyle.h>
+#include <qtcpserver.h>
+#include <qtcpsocket.h>
 #include <qtemporarydir.h>
 #include <qwebengineprofile.h>
 
@@ -53,9 +56,11 @@
 #include "browserprofile.h"
 #include "containermanager.h"
 #include "cookiejar.h"
+#include "domainblocklist.h"
 #include "downloadmanager.h"
 #include "energysaver.h"
 #include "languagemanager.h"
+#include "networkaccessmanager.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
 #include "popupblocker.h"
@@ -65,6 +70,7 @@
 
 #if defined(ARORA_RUSTCORE)
 #include "sitedecisionstore.h"
+#include <rustcore.h>
 #endif
 #include "scopeshortcuts.h"
 #include "sidebarpanel.h"
@@ -72,6 +78,7 @@
 #include "tabpositionpicker.h"
 #include "tabwidget.h"
 #include "toolbarsearch.h"
+#include "trancolist.h"
 #include "webview.h"
 #include "qtest_arora.h"
 #include "qtry.h"
@@ -129,6 +136,7 @@ private slots:
     void fieldWidthCaps();
     void siteTrustToggle();
     void siteTrustSignalToggles();
+    void siteTrustUpdateControls();
     void languageSelector();
     void privacyGroupAlignment();
     void appearanceFieldBounds();
@@ -3596,6 +3604,227 @@ void tst_SettingsDialog::siteTrustSignalToggles()
 
     settings.remove(QLatin1String("trust/lookalike"));
     settings.remove(QLatin1String("trust/threatlist"));
+}
+
+// TRUST13: a minimal stored-method zip — the upstream
+// top-1m.csv.zip container shape without needing a compressor
+// (same builder tst_trancolist uses).
+static QByteArray storedZip(const QByteArray &name, const QByteArray &body)
+{
+    QByteArray zip;
+    const auto u16 = [&zip](quint16 v) {
+        zip.append(char(v & 0xff));
+        zip.append(char(v >> 8));
+    };
+    const auto u32 = [&zip](quint32 v) {
+        zip.append(char(v & 0xff));
+        zip.append(char((v >> 8) & 0xff));
+        zip.append(char((v >> 16) & 0xff));
+        zip.append(char((v >> 24) & 0xff));
+    };
+    const quint32 size = quint32(body.size());
+    zip.append("PK\x03\x04", 4);
+    u16(20); u16(0); u16(0); u16(0); u16(0);
+    u32(0); u32(size); u32(size);
+    u16(quint16(name.size())); u16(0);
+    zip.append(name);
+    zip.append(body);
+    const quint32 cdOff = quint32(zip.size());
+    zip.append("PK\x01\x02", 4);
+    u16(20); u16(20); u16(0); u16(0); u16(0); u16(0);
+    u32(0); u32(size); u32(size);
+    u16(quint16(name.size())); u16(0); u16(0); u16(0); u16(0);
+    u32(0); u32(0);
+    zip.append(name);
+    const quint32 cdSize = quint32(zip.size()) - cdOff;
+    zip.append("PK\x05\x06", 4);
+    u16(0); u16(0); u16(1); u16(1);
+    u32(cdSize); u32(cdOff); u16(0);
+    return zip;
+}
+
+// Loopback list host — the updaters' https rule exempts loopback
+// sources, so a fixture can serve plain http.
+class SiteTrustListServer : public QObject
+{
+public:
+    int hits = 0;
+    QByteArray body;
+
+    bool start()
+    {
+        if (!m_server.listen(QHostAddress::LocalHost))
+            return false;
+        connect(&m_server, &QTcpServer::newConnection, this, [this]() {
+            while (QTcpSocket *client = m_server.nextPendingConnection()) {
+                ++hits;
+                connect(client, &QTcpSocket::readyRead, this,
+                        [this, client]() {
+                    const QByteArray reply =
+                        "HTTP/1.1 200 OK\r\nContent-Length: "
+                        + QByteArray::number(body.size())
+                        + "\r\nConnection: close\r\n\r\n" + body;
+                    client->write(reply);
+                    client->disconnectFromHost();
+                });
+            }
+        });
+        return true;
+    }
+
+    QUrl url() const
+    {
+        return QUrl(QStringLiteral("http://127.0.0.1:%1/list")
+                    .arg(m_server.serverPort()));
+    }
+
+private:
+    QTcpServer m_server;
+};
+
+// TRUST13: the Site Trust group's 'Update Now' row — the consent
+// gate, the parallel fetch on both list singletons, the in-flight
+// label, and honest failure reporting.
+void tst_SettingsDialog::siteTrustUpdateControls()
+{
+    QSettings settings;
+    const QVariant savedConsent = settings.value(
+        QLatin1String("AdBlock/remoteListsConsent"));
+    const QVariant savedTranco = settings.value(
+        QLatin1String("privacy/trancoListUpdated"));
+    const QVariant savedBlock = settings.value(
+        QLatin1String("privacy/domainBlocklistUpdated"));
+    const auto restore = [&settings, savedConsent,
+                          savedTranco, savedBlock]() {
+        const auto restoreKey = [&settings](const QString &key,
+                                            const QVariant &saved) {
+            if (saved.isValid())
+                settings.setValue(key, saved);
+            else
+                settings.remove(key);
+        };
+        restoreKey(QLatin1String("AdBlock/remoteListsConsent"),
+                   savedConsent);
+        restoreKey(QLatin1String("privacy/trancoListUpdated"),
+                   savedTranco);
+        restoreKey(QLatin1String("privacy/domainBlocklistUpdated"),
+                   savedBlock);
+    };
+    settings.remove(QLatin1String("privacy/trancoListUpdated"));
+    settings.remove(QLatin1String("privacy/domainBlocklistUpdated"));
+
+    // A stored proxy (saveAndReload leaves localhost:8080 enabled)
+    // would route the loopback fixture through a dead proxy — the
+    // app-side NAM reads proxy/enabled once per loadSettings(), so
+    // drop it and rebuild the factory for the fetch legs.
+    const QVariant savedProxy = settings.value(
+        QLatin1String("proxy/enabled"));
+    settings.setValue(QLatin1String("proxy/enabled"), false);
+    NetworkAccessManager::instance()->loadSettings();
+
+    // Consent off -> the button explains instead of fetching.
+    AdBlockManager::setRemoteListsConsent(AdBlockManager::RemoteListsDeclined);
+    {
+        SettingsDialog dialog;
+        QVERIFY(dialog.siteTrustUpdateButton);
+        QVERIFY(dialog.siteTrustUpdateLabel);
+        QCOMPARE(dialog.siteTrustUpdateButton->parentWidget(),
+                 dialog.siteTrustGroupBox);
+        QCOMPARE(dialog.siteTrustUpdateLabel->parentWidget(),
+                 dialog.siteTrustGroupBox);
+        QCOMPARE(dialog.siteTrustUpdateButton->sizePolicy()
+                     .horizontalPolicy(),
+                 QSizePolicy::Maximum);
+        QVERIFY(!dialog.siteTrustUpdateButton->isEnabled());
+        QVERIFY2(dialog.siteTrustUpdateButton->toolTip().contains(
+                     QLatin1String("consent"), Qt::CaseInsensitive),
+                 qPrintable(dialog.siteTrustUpdateButton->toolTip()));
+        QCOMPARE(dialog.siteTrustUpdateLabel->text(),
+                 QLatin1String("Last updated: never"));
+    }
+
+    // Consent on -> the click fetches both lists and lands the stamps.
+    AdBlockManager::setRemoteListsConsent(AdBlockManager::RemoteListsGranted);
+    SiteTrustListServer trancoServer;
+    trancoServer.body = storedZip("top-1m.csv",
+                                  "1,sitetrust-fixture.test\n");
+    QVERIFY(trancoServer.start());
+    SiteTrustListServer blockServer;
+    blockServer.body = "sitetrust-blocked.test\n";
+    QVERIFY(blockServer.start());
+    TrancoList *tranco = TrancoList::instance();
+    DomainBlocklist *blocklist = DomainBlocklist::instance();
+    tranco->setSourcesForTest({ trancoServer.url() });
+    blocklist->setSourcesForTest({ blockServer.url() });
+    QFile::remove(TrancoList::listFilePath());
+    QFile::remove(DomainBlocklist::listFilePath());
+
+    {
+        SettingsDialog dialog;
+        QVERIFY(dialog.siteTrustUpdateButton->isEnabled());
+        QSignalSpy trancoSpy(tranco, SIGNAL(updateFinished(bool)));
+        QSignalSpy blockSpy(blocklist, SIGNAL(updateFinished(bool)));
+
+        dialog.siteTrustUpdateButton->click();
+        // The row flips to in-flight synchronously — both fetches
+        // report only through the event loop.
+        QCOMPARE(dialog.siteTrustUpdateLabel->text(),
+                 QLatin1String("Updating..."));
+        QVERIFY(!dialog.siteTrustUpdateButton->isEnabled());
+
+        QTRY_VERIFY_WITH_TIMEOUT(trancoSpy.count() == 1, 15000);
+        QTRY_VERIFY_WITH_TIMEOUT(blockSpy.count() == 1, 15000);
+        QVERIFY(trancoSpy.at(0).at(0).toBool());
+        QVERIFY(blockSpy.at(0).at(0).toBool());
+        QCOMPARE(trancoServer.hits, 1);
+        QCOMPARE(blockServer.hits, 1);
+        QTRY_VERIFY(dialog.siteTrustUpdateButton->isEnabled());
+        QVERIFY(dialog.siteTrustUpdateLabel->text().startsWith(
+                    QLatin1String("Last updated:")));
+        QVERIFY(!dialog.siteTrustUpdateLabel->text().contains(
+                    QLatin1String("never")));
+    }
+    QVERIFY(settings.value(QLatin1String("privacy/trancoListUpdated"))
+                .toDateTime().isValid());
+    QVERIFY(settings.value(QLatin1String("privacy/domainBlocklistUpdated"))
+                .toDateTime().isValid());
+
+    // A refused fetch reports failure honestly — the button comes
+    // back and the previous stamp stays on the label.
+    tranco->setSourcesForTest(
+        { QUrl(QLatin1String("http://192.0.2.1/not-https")) });
+    blocklist->setSourcesForTest(
+        { QUrl(QLatin1String("http://192.0.2.1/not-https")) });
+    {
+        SettingsDialog dialog;
+        QVERIFY(dialog.siteTrustUpdateButton->isEnabled());
+        QSignalSpy trancoSpy(tranco, SIGNAL(updateFinished(bool)));
+        dialog.siteTrustUpdateButton->click();
+        // Both sources are refused synchronously — the final state is
+        // already on the label when click() returns.
+        QTRY_VERIFY_WITH_TIMEOUT(trancoSpy.count() == 1, 5000);
+        QVERIFY(!trancoSpy.at(0).at(0).toBool());
+        QVERIFY(dialog.siteTrustUpdateLabel->text().startsWith(
+                    QLatin1String("Update failed")));
+        QVERIFY(!dialog.siteTrustUpdateLabel->text().contains(
+                    QLatin1String("never")));
+        QVERIFY(dialog.siteTrustUpdateButton->isEnabled());
+    }
+
+    tranco->setSourcesForTest(TrancoList::defaultSources());
+    blocklist->setSourcesForTest(DomainBlocklist::defaultSources());
+    QFile::remove(TrancoList::listFilePath());
+    QFile::remove(DomainBlocklist::listFilePath());
+#if defined(ARORA_RUSTCORE)
+    rc_tranco_reload();
+    rc_blocklist_reload();
+#endif
+    if (savedProxy.isValid())
+        settings.setValue(QLatin1String("proxy/enabled"), savedProxy);
+    else
+        settings.remove(QLatin1String("proxy/enabled"));
+    NetworkAccessManager::instance()->loadSettings();
+    restore();
 }
 
 // LANG01: the General page's Language combo mirrors the
