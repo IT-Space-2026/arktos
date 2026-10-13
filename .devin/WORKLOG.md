@@ -749,3 +749,4 @@
 - 2026-10-13 READ03: reader title-only fix — sanitize() unwraps form+noscript (was deleting the whole subtree), plugin elements stripped pre-parse (cloneNode plugin teardown wedged the renderer), sub-500-char/no-media extractions refuse via the status-bar message; tst readerModeContent 3/3, make check green except documented flakes (torChromeTheme, colorSchemeApply) + downloadmanager modelAccessors standalone-PASS flake
 - 2026-10-13 MERGEWATCH: ui-work merged — no conflicts (ort auto-merge: WORKLOG.md, ChangeLog, tst_browsermainwindow.cpp, reader.js); rust-work skipped (0 ahead); build ok
 - 2026-10-13 MERGEWATCH: ui-work merged — no conflicts (Arora-Task-UI.md queue row only); rust-work skipped (0 ahead); build ok
+- 2026-10-13 MERGEWATCH: ui-work merged — no conflicts (Arora-Task-UI.md only); rust-work skipped (0 ahead); build ok
