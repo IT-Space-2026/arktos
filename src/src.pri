@@ -106,6 +106,7 @@ HEADERS += \
     $$PWD/qrcodedialog.h \
     $$PWD/qrcodegen.hpp \
     $$PWD/readermode.h \
+    $$PWD/readersanitizer.h \
     $$PWD/scriptblockinfobar.h \
     $$PWD/scriptcontrolmanager.h \
     $$PWD/searchbar.h \
@@ -174,6 +175,7 @@ SOURCES += \
     $$PWD/qrcodedialog.cpp \
     $$PWD/qrcodegen.cpp \
     $$PWD/readermode.cpp \
+    $$PWD/readersanitizer.cpp \
     $$PWD/scriptblockinfobar.cpp \
     $$PWD/scriptcontrolmanager.cpp \
     $$PWD/searchbar.cpp \

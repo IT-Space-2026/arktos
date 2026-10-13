@@ -21,6 +21,8 @@
 
 #include "browserapplication.h"
 #include "engineinterface.h"
+#include "readersanitizer.h"
+#include "webenginebackend.h"
 #include "webview.h"
 
 #include <qapplication.h>
@@ -34,7 +36,16 @@
 #include <qwebchannel.h>
 #include <qwebenginepage.h>
 #include <qwebengineprofile.h>
+#include <qwebenginescript.h>
+#include <qwebenginescriptcollection.h>
 #include <qwebenginesettings.h>
+
+// The script world the reader driver runs in — non-zero, so page
+// JavaScript can neither see nor tamper with __aroraReader,
+// Readability, or the extraction pipeline (READ05).  The DOM is
+// shared across worlds, so probing, cloning, and overlay
+// construction behave exactly as they did in the main world.
+static const quint32 ReaderWorldId = QWebEngineScript::UserWorld + 100;
 
 void ReaderBridge::notifyExited()
 {
@@ -64,6 +75,22 @@ ReaderMode::ReaderMode(WebView *view)
     if (!BrowserApplication::isTorMode()) {
         if (QWebChannel *channel = m_view->page()->webChannel())
             channel->registerObject(QLatin1String("aroraReader"), m_bridge);
+
+        // READ05: the driver lives in an isolated world that has no
+        // channel transport, so its chrome reports through DOM
+        // CustomEvents; reader-forward.js relays them to the bridge
+        // in the main world.
+        QFile forwardFile(QLatin1String(":reader-forward.js"));
+        if (forwardFile.open(QIODevice::ReadOnly)) {
+            QWebEngineScript forward;
+            forward.setName(QLatin1String("arora:reader-forward"));
+            forward.setInjectionPoint(QWebEngineScript::DocumentCreation);
+            forward.setWorldId(QWebEngineScript::MainWorld);
+            forward.setRunsOnSubFrames(false);
+            forward.setSourceCode(
+                QString::fromUtf8(forwardFile.readAll()));
+            m_view->page()->scripts().insert(forward);
+        }
     }
 
     connect(m_view->page(), &QWebEnginePage::loadStarted,
@@ -170,7 +197,7 @@ void ReaderMode::runDriver(
         const QString &call,
         const std::function<void(const QVariant &)> &callback)
 {
-    Engine::Page *page = m_view ? m_view->enginePage() : nullptr;
+    QWebEnginePage *page = m_view ? m_view->page() : nullptr;
     if (!page) {
         if (callback)
             callback(QVariant());
@@ -178,9 +205,11 @@ void ReaderMode::runDriver(
     }
     const QString program = scriptBundle() + call;
     // JSCTL/SECLVL: the lift keeps the driver reaching pages whose
-    // scripts are blocked — Engine::Page::runJavaScriptLifted owns
-    // the JavascriptEnabled gate juggling.
-    page->runJavaScriptLifted(program, callback);
+    // scripts are blocked — runJavaScriptLiftedOn owns the
+    // JavascriptEnabled gate juggling, and the worldId lands every
+    // call in the reader's isolated world.
+    WebEnginePageAdapter::runJavaScriptLiftedOn(page, program, callback,
+                                              ReaderWorldId);
 }
 
 void ReaderMode::probe()
@@ -213,34 +242,72 @@ void ReaderMode::enter()
         setActive(false);
     }
 
-    QJsonObject labels;
-    labels[QLatin1String("tag")] = tr("Reader");
-    labels[QLatin1String("fontDec")] = tr("Smaller text");
-    labels[QLatin1String("fontInc")] = tr("Larger text");
-    labels[QLatin1String("theme")] = tr("Switch between light and dark");
-    labels[QLatin1String("exit")] = tr("Exit reader view");
-    QJsonObject opts;
-    opts[QLatin1String("fontSize")] = fontSize();
-    opts[QLatin1String("theme")] = theme();
-    opts[QLatin1String("labels")] = labels;
-    const QString call = QLatin1String("window.__aroraReader.enter(")
-        + QString::fromUtf8(
-            QJsonDocument(opts).toJson(QJsonDocument::Compact))
-        + QLatin1String(");");
-
     m_busy = true;
     QPointer<ReaderMode> self(this);
-    runDriver(call, [self](const QVariant &result) {
+    // Phase one: extract() in the isolated world returns the raw
+    // Readability fragment.  Nothing it produced is trusted yet.
+    runDriver(QLatin1String("window.__aroraReader.extract();"),
+            [self](const QVariant &result) {
         if (!self)
             return;
-        self->m_busy = false;
         const QVariantMap map = result.toMap();
-        if (map.value(QLatin1String("ok")).toBool()) {
-            self->setActive(true);
-        } else {
+        if (!map.value(QLatin1String("ok")).toBool()) {
+            self->m_busy = false;
             emit self->message(
                 tr("Reader view is not available on this page."));
+            return;
         }
+
+        // Phase two: sanitize the fragment in C++ — the policy cannot
+        // be reached or rewritten by page JavaScript — then hand the
+        // safe markup back to the overlay builder.  The READ03
+        // thin-content floor moved with the sanitizer: a body that
+        // comes out under the character threshold with no media is a
+        // degenerate extraction, refused honestly.
+        const ReaderSanitizer::Result sanitized =
+            ReaderSanitizer::sanitize(
+                map.value(QLatin1String("content")).toString());
+        if (sanitized.textLength < 500 && !sanitized.hasMedia) {
+            self->m_busy = false;
+            emit self->message(
+                tr("Reader view is not available on this page."));
+            return;
+        }
+
+        QJsonObject labels;
+        labels[QLatin1String("tag")] = tr("Reader");
+        labels[QLatin1String("fontDec")] = tr("Smaller text");
+        labels[QLatin1String("fontInc")] = tr("Larger text");
+        labels[QLatin1String("theme")] =
+            tr("Switch between light and dark");
+        labels[QLatin1String("exit")] = tr("Exit reader view");
+        QJsonObject opts;
+        opts[QLatin1String("fontSize")] = fontSize();
+        opts[QLatin1String("theme")] = theme();
+        opts[QLatin1String("labels")] = labels;
+        opts[QLatin1String("title")] =
+            map.value(QLatin1String("title")).toString();
+        opts[QLatin1String("byline")] =
+            map.value(QLatin1String("byline")).toString();
+        opts[QLatin1String("siteName")] =
+            map.value(QLatin1String("siteName")).toString();
+        opts[QLatin1String("content")] = sanitized.html;
+        const QString call = QLatin1String("window.__aroraReader.enter(")
+            + QString::fromUtf8(
+                QJsonDocument(opts).toJson(QJsonDocument::Compact))
+            + QLatin1String(");");
+
+        self->runDriver(call, [self](const QVariant &showResult) {
+            if (!self)
+                return;
+            self->m_busy = false;
+            if (showResult.toMap().value(QLatin1String("ok")).toBool()) {
+                self->setActive(true);
+            } else {
+                emit self->message(
+                    tr("Reader view is not available on this page."));
+            }
+        });
     });
 }
 

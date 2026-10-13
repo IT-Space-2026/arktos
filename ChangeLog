@@ -171,6 +171,12 @@ UI:
   an honest "Reader view is not available" status-bar message instead
   of an empty column, and embed-heavy pages no longer stall the
   reader (READ03).
+- Reader Mode hardened without changing how it looks or works:
+  article extraction now runs in an isolated script context the page
+  cannot tamper with, the article markup is re-filtered against a
+  safe allowlist before display, and the content renders inside a
+  script-free sandboxed frame — scripts, event handlers, and
+  javascript: links hidden in article markup are inert (READ05).
 - Downloads moved from the Window menu to the Tools menu — the
   Ctrl+Y shortcut and icon are unchanged, and the Window menu now
   holds only tab/window-switching entries (MENU04).

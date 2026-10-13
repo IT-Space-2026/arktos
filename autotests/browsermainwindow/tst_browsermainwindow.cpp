@@ -70,6 +70,7 @@
 #include "tabwidget.h"
 #include "tabbar.h"
 #include "readermode.h"
+#include "readersanitizer.h"
 #include "webview.h"
 #include "webpage.h"
 #include "webviewsearch.h"
@@ -151,6 +152,7 @@ private slots:
     void readerModeButton();
     void readerModeContent_data();
     void readerModeContent();
+    void readerSanitizer();
     void homeButton();
     void statusBarWidgets();
     void statusBarIndicators();
@@ -2691,6 +2693,15 @@ void tst_BrowserMainWindow::readerModeButton()
 //              showing a header over an empty column.
 //   /danger  — sanitizer regression: real text renders while script,
 //              on*-attributes and javascript: URLs stay stripped.
+//   /tamper  — READ05: the page main-world-redefines __aroraReader,
+//              Readability and isProbablyReaderable to fake a refusal
+//              and a "PWNED" article.  Extraction runs in an isolated
+//              world, so the real article still renders.
+//   /hostile — READ05: mutation-XSS-shaped payloads (entity-encoded
+//              and whitespace-split javascript: URLs, on* handlers,
+//              script/svg/iframe/srcdoc injection) inside otherwise
+//              good article markup — the C++ sanitizer strips them
+//              and the sandboxed frame would not run them anyway.
 void tst_BrowserMainWindow::readerModeContent_data()
 {
     QTest::addColumn<QByteArray>("path");
@@ -2711,6 +2722,15 @@ void tst_BrowserMainWindow::readerModeContent_data()
         << (QStringList() << QStringLiteral("Reader corpus paragraph"))
         << (QStringList() << QStringLiteral("<script")
             << QStringLiteral("onerror")
+            << QStringLiteral("javascript:"));
+    QTest::newRow("tamper")
+        << QByteArray("/tamper") << true << false
+        << (QStringList() << QStringLiteral("Reader corpus paragraph"))
+        << (QStringList() << QStringLiteral("PWNED"));
+    QTest::newRow("hostile")
+        << QByteArray("/hostile") << true << false
+        << (QStringList() << QStringLiteral("Reader corpus paragraph"))
+        << (QStringList() << QStringLiteral("<script")
             << QStringLiteral("javascript:"));
 }
 
@@ -2741,6 +2761,45 @@ static QHash<QByteArray, QByteArray> readerFixturePages()
         + "<p>keep <a href=\"javascript:window.__pwned=2\">link</a></p>"
         "<img src=\"about:blank\" onerror=\"window.__pwned=3\">"
         "</article></body></html>";
+    // READ05: main-world forgeries of everything the driver used to
+    // define — a refusal __aroraReader, a fake Readability that emits
+    // a PWNED article, a readerable helper that lies.  None of it may
+    // matter: the pipeline runs in a world the page cannot see.
+    pages["/tamper"] = "<html><head><title>Tamper Article</title>"
+        "<script>"
+        "window.__aroraReader={probe:function(){return false},"
+        "enter:function(){return {ok:false}}};"
+        "window.isProbablyReaderable=function(){return false};"
+        "window.Readability=function(){return{parse:function(){"
+        "return {title:'PWNED',content:'<p>PWNED</p>'}}}};"
+        "</script>"
+        "</head><body><article><h1>Tamper Article</h1>" + paragraphs
+        + "</article></body></html>";
+    // READ05: hostile markup inside an otherwise-good article.  Each
+    // payload is a different bypass shape — raw script, an onerror
+    // handler, entity-encoded and whitespace-split javascript: hrefs,
+    // an svg script, a srcdoc iframe, a noscript bomb — and the
+    // C++-side filter must drop every one of them.  The flags write
+    // to the frame's window so a leak is observable from either side.
+    pages["/hostile"] = "<html><head><title>Hostile Article</title>"
+        "</head><body><article><h1>Hostile Article</h1>" + paragraphs
+        + "<script>window.__pwned=1</script>"
+        "<p onclick=\"window.__pwned=2\">onclick body</p>"
+        "<img src=\"broken-img\" onerror=\"window.__pwned=3\">"
+        "<p><a href=\"javascript:window.__pwned=4\">raw js link</a></p>"
+        "<p><a href=\"java&#115;cript:window.__pwned=5\">ent js</a></p>"
+        "<p><a href=\"&#x6a;avascript:window.__pwned=6\">num js</a></p>"
+        "<p><a href=\"java&Tab;script:window.__pwned=7\">tab js</a></p>"
+        "<p><a href=\"data:text/html,<script>window.__pwned=8</script>\">"
+        "data link</a></p>"
+        "<svg><script>window.__pwned=9</script><circle r=\"4\"/></svg>"
+        "<iframe srcdoc=\"<script>window.__pwned=10</script>\"></iframe>"
+        "<noscript><img src=\"n\" onerror=\"window.__pwned=11\">"
+        "</noscript>"
+        "<math><mtext><table><mglyph><style><!--</style>"
+        "<img title=\"--><img src=1 onerror=window.__pwned=12>\">"
+        "</mglyph></table></mtext></math>"
+        + paragraphs + "</article></body></html>";
     return pages;
 }
 
@@ -2826,34 +2885,24 @@ void tst_BrowserMainWindow::readerModeContent()
     QCOMPARE(reader->isActive(), expectActive);
     QCOMPARE(!messageSpy.isEmpty(), expectMessage);
 
-    const QString content = evalJs(QStringLiteral(
-        "(function(){"
-        "var h=document.getElementById('arora-reader-host');"
-        "var c=h&&h.shadowRoot"
-        "?h.shadowRoot.querySelector('.content'):null;"
-        "return c?c.innerHTML:'';"
-        "})()")).toString();
-    // Diagnosis log: what Readability extracted, what the OLD blanket
-    // removal would have left of it, what the overlay actually holds.
-    qInfo() << "readerModeContent" << path << evalJs(QStringLiteral(
-        "(function(){"
-        "var a=null;"
-        "try{var cl=document.cloneNode(true);"
-        "var pl=cl.querySelectorAll('object,embed,applet,iframe,frame,"
-        "frameset');"
-        "for(var i=pl.length-1;i>=0;--i)pl[i].remove();"
-        "a=new Readability(cl).parse();}"
-        "catch(e){}"
-        "var oldText=-1;"
-        "if(a&&a.content){"
-        "var d=new DOMParser().parseFromString(a.content,'text/html');"
-        "var dead=d.querySelectorAll('script,iframe,frame,frameset,"
-        "object,embed,applet,form,input,button,select,textarea,link,"
-        "meta,base,template,noscript');"
-        "for(var i=dead.length-1;i>=0;--i)dead[i].remove();"
-        "oldText=d.body.textContent.trim().length;}"
-        "return 'parse='+(a?a.length:-1)+' oldSan='+oldText;"
-        "})()")).toString();
+    // READ05: the article lives in the overlay's sandboxed iframe —
+    // allow-same-origin keeps it readable here.  The srcdoc parses
+    // asynchronously, so the read polls until it lands.
+    const auto readerContent = [&]() -> QString {
+        return evalJs(QStringLiteral(
+            "(function(){"
+            "var h=document.getElementById('arora-reader-host');"
+            "var f=h&&h.shadowRoot"
+            "?h.shadowRoot.querySelector('iframe.frame'):null;"
+            "var d=f?f.contentDocument:null;"
+            "var c=d?d.querySelector('.content'):null;"
+            "return c?c.innerHTML:'';"
+            "})()")).toString();
+    };
+    QString content = readerContent();
+    if (expectActive)
+        QTRY_VERIFY_WITH_TIMEOUT(
+            !(content = readerContent()).isEmpty(), 10000);
 
     for (const QString &needle : mustContain)
         QVERIFY2(content.contains(needle),
@@ -2866,7 +2915,136 @@ void tst_BrowserMainWindow::readerModeContent()
     else
         QVERIFY(content.isEmpty());
 
+    if (path == QByteArray("/tamper") && expectActive) {
+        // The page's forgeries stay live in the main world — they
+        // simply never mattered.  This also proves the leg is not
+        // vacuous: the fake probe really answers false there.
+        QCOMPARE(evalJs(QStringLiteral(
+            "window.__aroraReader.probe()")).toBool(), false);
+        QCOMPARE(evalJs(QStringLiteral(
+            "new Readability(document).parse().title"))
+            .toString(), QLatin1String("PWNED"));
+    }
+
+    if (path == QByteArray("/hostile") && expectActive) {
+        // The fixture's payloads do fire on the served page itself —
+        // they are live page markup, that is the point — so the flag
+        // that proves reader-content inertness is the SANDBOXED
+        // FRAME's window, where the extracted markup renders.
+        QCOMPARE(evalJs(QStringLiteral(
+            "(function(){"
+            "var h=document.getElementById('arora-reader-host');"
+            "var f=h.shadowRoot.querySelector('iframe.frame');"
+            "return String(f.contentWindow.__pwned);"
+            "})()")), QLatin1String("undefined"));
+
+        // The sandbox itself: even markup pushed straight into the
+        // frame document — bypassing the sanitizer entirely — cannot
+        // run.  allow-same-origin lets the test write it;
+        // no-allow-scripts keeps it inert.
+        QCOMPARE(evalJs(QStringLiteral(
+            "(function(){"
+            "var h=document.getElementById('arora-reader-host');"
+            "var f=h.shadowRoot.querySelector('iframe.frame');"
+            "var d=f.contentDocument;"
+            "d.body.innerHTML='<img src=x onerror=\"window.__pwned=42\">'"
+            "+'<img src=y onload=\"window.__pwned=43\">';"
+            "var s=d.createElement('scr'+'ipt');"
+            "s.textContent='window.__pwned=44';"
+            "d.body.appendChild(s);"
+            "return String(f.contentWindow.__pwned);"
+            "})()")), QLatin1String("undefined"));
+    }
+
     closeWindow(window);
+}
+
+// READ05: the C++ sanitizer's contract — exercised directly so edge
+// cases do not each need a served fixture page.
+void tst_BrowserMainWindow::readerSanitizer()
+{
+    // Transparent wrappers keep their children, with the tag gone.
+    {
+        const ReaderSanitizer::Result r = ReaderSanitizer::sanitize(
+            QStringLiteral("<form><p>kept text</p></form>"
+                           "<noscript><b>also kept</b></noscript>"));
+        QVERIFY(r.html.contains(QLatin1String("kept text")));
+        QVERIFY(r.html.contains(QLatin1String("also kept")));
+        QVERIFY(!r.html.contains(QLatin1String("<form")));
+        QVERIFY(!r.html.contains(QLatin1String("<noscript")));
+        QVERIFY(r.textLength > 0);
+    }
+
+    // Dead elements go out with their contents.
+    {
+        const ReaderSanitizer::Result r = ReaderSanitizer::sanitize(
+            QStringLiteral("<p>text</p><script>alert(1)</script>"
+                           "<style>a{b:c}</style>"
+                           "<iframe src=x><p>inner</p></iframe>"
+                           "<object><p>obj</p></object>"
+                           "<input value=x><select><option>o</select>"
+                           "<textarea>t</textarea><template>t2</template>"));
+        QCOMPARE(r.html, QLatin1String("<p>text</p>"));
+    }
+
+    // Event handlers and dangerous URL schemes are scrubbed;
+    // ordinary links, entities and data images survive.
+    {
+        const ReaderSanitizer::Result r = ReaderSanitizer::sanitize(
+            QStringLiteral(
+                "<p onclick=\"f()\" onmouseover='g()'>t</p>"
+                "<a href=\"javascript:x()\">j</a>"
+                "<a href=\"java&#115;cript:x()\">e</a>"
+                "<a href=\"&#x6a;avascript:x()\">n</a>"
+                "<a href=\"java&Tab;script:x()\">w</a>"
+                "<a href=\" javascript:x()\">s</a>"
+                "<a href=\"data:text/html,<b>x\">d</a>"
+                "<a href=javascript:x()>u</a>"
+                "<a href=\"https://ok.example/p?a=1&amp;b=2\">ok</a>"
+                "<img src=\"data:image/png;base64,AAAA\">"
+                "<img src=\"x.png\" onerror=\"f()\">"
+                "<a ping=\"http://t\" href=\"/y\">p</a>"));
+        QVERIFY(!r.html.contains(QLatin1String("onclick")));
+        QVERIFY(!r.html.contains(QLatin1String("onmouseover")));
+        QVERIFY(!r.html.contains(QLatin1String("onerror")));
+        QVERIFY(!r.html.contains(QLatin1String("javascript:"),
+                                        Qt::CaseInsensitive));
+        QVERIFY(!r.html.contains(QLatin1String("&#115;cript")));
+        QVERIFY(!r.html.contains(QLatin1String("&#x6a")));
+        QVERIFY(!r.html.contains(QLatin1String("data:text/html")));
+        QVERIFY(!r.html.contains(QLatin1String("ping=")));
+        // The kept link keeps its attribute and entity.
+        QVERIFY(r.html.contains(
+            QLatin1String("href=\"https://ok.example/p?a=1&amp;b=2\"")));
+        // data: is fine on resource URLs.
+        QVERIFY(r.html.contains(
+            QLatin1String("src=\"data:image/png;base64,AAAA\"")));
+    }
+
+    // Malformed and mutation-shaped input cannot break out.
+    {
+        const ReaderSanitizer::Result r = ReaderSanitizer::sanitize(
+            QStringLiteral(
+                "<p>one<svg><script>alert(1)</script><circle r=4/>"
+                "</svg><plaintext>gone<script>alert(2)</script>"));
+        QVERIFY(r.html.contains(QLatin1String("one")));
+        QVERIFY(!r.html.contains(QLatin1String("<script")));
+        QVERIFY(!r.html.contains(QLatin1String("alert")));
+        QVERIFY(!r.html.contains(QLatin1String("gone")));
+    }
+
+    // The thin-content floor inputs: text length is decoded text
+    // only; kept media flips hasMedia.
+    {
+        const ReaderSanitizer::Result text = ReaderSanitizer::sanitize(
+            QStringLiteral("<p>hello &amp; bye</p>"));
+        QCOMPARE(text.textLength, 11);
+        QVERIFY(!text.hasMedia);
+        const ReaderSanitizer::Result media =
+            ReaderSanitizer::sanitize(QStringLiteral("<p>x</p>"
+                                                   "<img src=i.png>"));
+        QVERIFY(media.hasMedia);
+    }
 }
 
 // HOME01: the nav bar carries a Home button immediately after
