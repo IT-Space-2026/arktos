@@ -69,7 +69,11 @@
 #include "bookmarksmodel.h"
 #include "edittreeview.h"
 #include "enginetab.h"
+#include "engineregistry.h"
+#include "fakeengine.h"
 #include "history.h"
+#include "pdfview.h"
+#include "printpreviewdialog.h"
 #include "sidebargrip.h"
 #include "sidebarpanel.h"
 #include "statusbarwidgets.h"
@@ -188,6 +192,11 @@ void tst_BrowserMainWindow::initTestCase()
     // Keep close() free of the multi-tab confirmation prompt; the
     // prompt's two branches get explicit coverage in closeConfirm().
     settings.setValue(QLatin1String("tabs/confirmClosingMultipleTabs"), false);
+    // PRINT01: the preview's PdfDocumentClient must stay in-process
+    // here — the bwrap worker spawns "<self> --pdf-worker", and self
+    // is a qtest binary: that would rerun the whole suite as a child
+    // (and recurse through this leg).
+    qputenv("ARORA_PDF_INPROC", "1");
     qRegisterMetaType<QWebEnginePage *>("QWebEnginePage*");
     qRegisterMetaType<QAction *>("QAction*");
 }
@@ -1309,13 +1318,84 @@ void tst_BrowserMainWindow::printPaths()
         QVERIFY(sawWarning);
     }
 
-    // filePrintPreview drives the borrowed-printer path; the generic
-    // QDialog accept above closes it mid-print — exactly the case
-    // that used to paint into a dead printer.
+    // filePrintPreview drives the generated-document path; the
+    // generic QDialog accept above closes it while printToPdf may
+    // still be in flight — exactly the mid-generation close case.
     QVERIFY(QMetaObject::invokeMethod(window, "filePrintPreview"));
 
     modal.stop();
+
+    // PRINT01: hold the preview open until the generated document
+    // actually lands — the stock QPrintPreviewDialog starved to
+    // "1 / 0" pages, so the regression assertion is that real pages
+    // arrive (about:blank produces a one-page document).
+    int previewedPages = 0;
+    bool sawPreview = false;
+    int pumpTicks = 0;
+    QString previewFailure;
+    QTimer pump;
+    pump.setInterval(100);
+    QObject::connect(&pump, &QTimer::timeout, qApp, [&]() {
+        auto *dialog = qobject_cast<PrintPreviewDialog *>(
+            QApplication::activeModalWidget());
+        if (!dialog)
+            return;
+        sawPreview = true;
+        ++pumpTicks;
+        if (dialog->hasFailed()) {
+            previewFailure = dialog->failureMessage();
+            qInfo() << "printPaths: previewFailed:" << previewFailure;
+            dialog->accept();
+            return;
+        }
+        if (dialog->isReady() && dialog->pdfView()
+                && dialog->pdfView()->client()
+                && dialog->pdfView()->client()->pageCount() > 0)
+            previewedPages = dialog->pdfView()->client()->pageCount();
+        if (previewedPages > 0 || pumpTicks > 600)
+            dialog->accept();
+    });
+    pump.start();
+    QVERIFY(QMetaObject::invokeMethod(window, "filePrintPreview"));
+    pump.stop();
+    QVERIFY(sawPreview);
+    QVERIFY2(previewedPages >= 1,
+             qPrintable(QStringLiteral("preview never produced pages")
+                        + (previewFailure.isEmpty() ? QString()
+                           : QLatin1String(": ") + previewFailure)));
+
+    // PRINT01: an engine tab has no printToPdf — preview and print
+    // must refuse honestly rather than open a dead dialog or do
+    // nothing at all.
+    FakeEngineBackend backend;
+    EngineRegistry::registerBackend(&backend);
+    QVERIFY(window->tabWidget()->reloadTabInEngine(
+        0, QStringLiteral("fake")));
+    QVERIFY(window->tabWidget()->engineTab(0));
+    QVERIFY(!window->currentTab());
+
+    bool sawRefusal = false;
+    QTimer refusalPump;
+    refusalPump.setInterval(50);
+    QObject::connect(&refusalPump, &QTimer::timeout, qApp, [&]() {
+        QWidget *widget = QApplication::activeModalWidget();
+        if (QMessageBox *box = qobject_cast<QMessageBox *>(widget)) {
+            sawRefusal = true;
+            box->accept();
+        } else if (QDialog *dialog = qobject_cast<QDialog *>(widget)) {
+            dialog->reject();
+        }
+    });
+    refusalPump.start();
+    QVERIFY(QMetaObject::invokeMethod(window, "filePrintPreview"));
+    QVERIFY(sawRefusal);
+    sawRefusal = false;
+    QVERIFY(QMetaObject::invokeMethod(window, "filePrint"));
+    QVERIFY(sawRefusal);
+    refusalPump.stop();
+
     closeWindow(window);
+    EngineRegistry::unregisterBackend(&backend);
 }
 
 // With confirmClosingMultipleTabs on, closeEvent() raises a Yes/No

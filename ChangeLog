@@ -45,6 +45,16 @@ Core / Qt 6 port:
   reporter writes a marker + backtrace to stderr and
   crashreport.log on SIGSEGV/SIGABRT and uncaught exceptions
   (CRASH02).
+- Print Preview shows the real document again instead of a blank
+  gray "1 / 0" pane: the stock preview dialog needed synchronous
+  painting into its printer, which engine printing can't do, so the
+  preview now asks the page to produce its actual print PDF
+  asynchronously and renders that in the shell's own PDF view —
+  true pagination, margins and orientation (Page Setup regenerates),
+  plus Save as PDF; Print hands the generated document to a real
+  printer through the existing PDF print path. Tabs already showing
+  a PDF preview that document, and engines without print support
+  (Servo) say so instead of opening an empty dialog (PRINT01).
 
 UI:
 - Light/dark follows the desktop scheme; ARORA_COLOR_SCHEME override

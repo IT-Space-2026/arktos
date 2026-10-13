@@ -61,6 +61,7 @@
 #include "pictureinpicture.h"
 #include "pipwindow.h"
 #include "plaintexteditsearch.h"
+#include "printpreviewdialog.h"
 #include "navigationpolicy.h"
 #include "privacyrequestinterceptor.h"
 #include "readermode.h"
@@ -139,6 +140,7 @@
 #include <QtGui/QIcon>
 #include <QtGui/QImage>
 #include <QtGui/QMouseEvent>
+#include <QtGui/QPageLayout>
 #include <QtGui/QPixmap>
 #include <QtGui/QWheelEvent>
 #include <QtGui/QStandardItemModel>
@@ -3914,7 +3916,7 @@ int main(int argc, char **argv)
         "sleep-smoke", "palette-smoke", "pip-smoke", "tabstrip-smoke",
         "startpage-smoke", "crash-smoke",
         "sandbox-smoke", "write-sandbox-launcher",
-        "bidi-smoke", "pdf-smoke", "pdfview-smoke",
+        "bidi-smoke", "pdf-smoke", "pdfview-smoke", "printpreview-smoke",
         "parallel-download-smoke", "parallel-download-off-smoke",
         "ingress-smoke",
         "engine-list", "engine-smoke", "servo-smoke",
@@ -14234,6 +14236,187 @@ int main(int argc, char **argv)
         poll->start(300);
         view->loadUrl(pdfUrl);
         return application.exec();
+    }
+
+    // PRINT01: the print preview renders the page's real printToPdf
+    // output through the shell PDF stack — the stock
+    // QPrintPreviewDialog's synchronous paint contract starved it to
+    // "1 / 0" pages.  Covers: generation (page count, rasterized
+    // content), layout regen (portrait -> landscape changes the page
+    // geometry, proving the dialog's setup path feeds real
+    // pagination), and the print handoff producing a PDF file.
+    // The engine-tab refusal arm lives in tst_browsermainwindow —
+    // the standalone harness has no EngineTab host.
+    // Exits 0 on PASS.
+    if (args.contains(QLatin1String("--printpreview-smoke"))) {
+        bool ok = true;
+        const auto check = [&ok](const QString &what, bool pass) {
+            qInfo() << "printpreview-smoke:" << (pass ? "PASS" : "FAIL")
+                    << what;
+            ok = ok && pass;
+        };
+
+        // Enough text to span pages at A4 — repeat paragraphs rather
+        // than trusting the engine's minimum-page heuristics.
+        QString body;
+        for (int i = 0; i < 80; ++i)
+            body += QStringLiteral(
+                "<p>print preview fixture paragraph %1 — "
+                "the quick brown fox jumps over the lazy dog</p>")
+                    .arg(i);
+        const QString fixturePath = QDir::temp().filePath(
+            QLatin1String("arora-printpreview-smoke.html"));
+        {
+            QFile fixture(fixturePath);
+            if (!fixture.open(QIODevice::WriteOnly)) {
+                qInfo() << "printpreview-smoke: FAIL (fixture write)";
+                return 1;
+            }
+            fixture.write(QStringLiteral(
+                "<html><body><h1>print preview fixture</h1>%1</body>"
+                "</html>").arg(body).toUtf8());
+        }
+
+        // The smoke data store is shared under ~/.qttest — ambient
+        // subscriptions there (including stale custom rules) run
+        // their cosmetic pass on the fixture, and printToPdf
+        // faithfully prints what the adblock-hid page looks like.
+        // Print-preview coverage has nothing to do with filtering.
+        AdBlockManager::instance()->setEnabled(false);
+
+        // Match the other smokes — show the stub window before the
+        // fixture navigation so the page is never treated as hidden.
+        view->window()->show();
+
+        const QUrl fixtureUrl = QUrl::fromLocalFile(fixturePath);
+        bool loaded = false;
+        {
+            QEventLoop loop;
+            QTimer timeout;
+            timeout.setSingleShot(true);
+            QObject::connect(&timeout, &QTimer::timeout,
+                             &loop, &QEventLoop::quit);
+            QObject::connect(view, &QWebEngineView::loadFinished,
+                             &loop, [&](bool success) {
+                // The harness's own initial navigation may finish
+                // inside this loop — only the fixture's commit counts.
+                if (view->url() != fixtureUrl)
+                    return;
+                loaded = success;
+                loop.quit();
+            });
+            view->loadUrl(fixtureUrl);
+            timeout.start(30000);
+            loop.exec();
+        }
+        check(QStringLiteral("fixture page loads"), loaded);
+        qInfo() << "printpreview-smoke: url:" << view->url();
+
+        PrintPreviewDialog dialog;
+        dialog.resize(900, 700);
+        dialog.show();
+
+        // Armed before setPage — a synchronous failure (no scratch
+        // dir, dead page) must not slip past the wait.
+        int readyCount = 0;
+        QString previewError;
+        QObject::connect(&dialog, &PrintPreviewDialog::previewReady,
+                         &dialog, [&]() { ++readyCount; });
+        QObject::connect(&dialog, &PrintPreviewDialog::previewFailed,
+                         &dialog, [&](const QString &msg) {
+            previewError = msg;
+            qInfo() << "printpreview-smoke: previewFailed:" << msg;
+        });
+        const auto awaitPreview = [&]() -> bool {
+            QEventLoop loop;
+            QTimer timeout;
+            timeout.setSingleShot(true);
+            const int target = readyCount + 1;
+            QObject::connect(&timeout, &QTimer::timeout,
+                             &loop, &QEventLoop::quit);
+            QTimer poll;
+            poll.setInterval(50);
+            QObject::connect(&poll, &QTimer::timeout, &loop, [&]() {
+                if (readyCount >= target || !previewError.isEmpty())
+                    loop.quit();
+            });
+            poll.start();
+            timeout.start(60000);
+            loop.exec();
+            return readyCount >= target;
+        };
+
+        dialog.setPage(view->page(), view->url());
+        check(QStringLiteral("preview generates"),
+              awaitPreview() && dialog.isReady());
+        PdfDocumentClient *client =
+            dialog.pdfView() ? dialog.pdfView()->client() : nullptr;
+        check(QStringLiteral("real page count"),
+              client && client->pageCount() >= 1);
+        qInfo() << "printpreview-smoke: pages:"
+                << (client ? client->pageCount() : -1)
+                << "backend:"
+                << (dialog.pdfView() ? dialog.pdfView()->backendName()
+                                     : QString());
+        if (client && client->pageCount() >= 1) {
+            const QImage page = client->renderPageSync(0, 1.0);
+            check(QStringLiteral("page rasters"), !page.isNull());
+            // The fixture's text must land as ink — an all-white
+            // raster would mean the same empty preview the user saw.
+            bool hasInk = false;
+            if (!page.isNull()) {
+                for (int y = 0; y < page.height() && !hasInk; ++y)
+                    for (int x = 0; x < page.width(); ++x)
+                        if (qGray(page.pixel(x, y)) < 200) {
+                            hasInk = true;
+                            break;
+                        }
+            }
+            check(QStringLiteral("page raster carries content"),
+                  hasInk);
+        }
+
+        // Page Setup -> regenerate under landscape: the new document
+        // must report the landscape geometry, proving the preview
+        // tracks the dialog's page layout rather than re-rendering a
+        // fixed approximation.
+        dialog.applyPageLayout(QPageLayout(
+            QPageSize(QPageSize::A4), QPageLayout::Landscape,
+            QMarginsF(10, 10, 10, 10), QPageLayout::Millimeter));
+        check(QStringLiteral("landscape regen"),
+              awaitPreview() && dialog.isReady());
+        client = dialog.pdfView() ? dialog.pdfView()->client()
+                                : nullptr;
+        check(QStringLiteral("landscape page geometry"),
+              client && client->pageCount() >= 1
+                  && client->pageSize(0).width()
+                         > client->pageSize(0).height());
+
+        // The print handoff: pages painted through the client into a
+        // real QPrinter — the preview's Print button path.
+        const QString printPath = QDir::temp().filePath(
+            QStringLiteral("arora-printpreview-print-%1.pdf")
+                .arg(QCoreApplication::applicationPid()));
+        QPrinter printer;
+        printer.setOutputFormat(QPrinter::PdfFormat);
+        printer.setOutputFileName(printPath);
+        QString printError;
+        check(QStringLiteral("print handoff paints"),
+              dialog.pdfView()
+                  && dialog.pdfView()->canvas()->printPages(
+                      &printer, &printError));
+        QFile printed(printPath);
+        check(QStringLiteral("print output is a pdf"),
+              printed.open(QIODevice::ReadOnly)
+                  && printed.read(5) == "%PDF-"
+                  && printed.size() > 200);
+        printed.close();
+        QFile::remove(printPath);
+        QFile::remove(fixturePath);
+
+        dialog.close();
+        qInfo() << "printpreview-smoke:" << (ok ? "PASS" : "FAIL");
+        return ok ? 0 : 1;
     }
 #endif
 

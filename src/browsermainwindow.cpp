@@ -81,11 +81,13 @@
 #include "downloadmanager.h"
 #include "engineindicator.h"
 #include "engineinterface.h"
+#include "enginetab.h"
 #include "history.h"
 #include "languagemanager.h"
 #include "networkaccessmanager.h"
 #include "pdfview.h"
 #include "pictureinpicture.h"
+#include "printpreviewdialog.h"
 #include "readerbutton.h"
 #include "readermode.h"
 #include "safetext.h"
@@ -117,7 +119,6 @@
 #include <qlabel.h>
 #include <qpointer.h>
 #include <qprintdialog.h>
-#include <qprintpreviewdialog.h>
 #include <qprinter.h>
 #include <qprinterinfo.h>
 #include <qscreen.h>
@@ -2626,52 +2627,83 @@ void BrowserMainWindow::fileOpen()
     tabWidget()->loadUrl(QUrl::fromLocalFile(file));
 }
 
+// PRINT01: a tab showing the shell document view previews/prints the
+// staged PDF itself; other engine tabs have no printToPdf so they get
+// the honest refusal instead of a silent dead menu entry.
+bool BrowserMainWindow::previewEngineTabDocument()
+{
+    EngineTab *foreign =
+        m_tabWidget->engineTab(m_tabWidget->currentIndex());
+    if (!foreign)
+        return false;
+    if (PdfView *pdfView = foreign->pdfView();
+            pdfView && pdfView->isReady()) {
+        PrintPreviewDialog dialog(this);
+        dialog.setDocumentFile(pdfView->localPath(),
+                               pdfView->documentTitle());
+        dialog.exec();
+        return true;
+    }
+    const QString engine = foreign->backend()
+        ? foreign->backend()->displayName()
+        : tr("This engine");
+    QMessageBox::information(this, tr("Print Preview"),
+        tr("%1 cannot produce print output — there is nothing to "
+           "preview for this tab.").arg(engine));
+    return true;
+}
+
 void BrowserMainWindow::filePrintPreview()
 {
     QPointer<WebView> view = currentTab();
-    if (!view)
+    if (!view) {
+        previewEngineTabDocument();
         return;
-    QPrintPreviewDialog dialog(this);
-    // The engine view's print runs asynchronously while the preview
-    // dialog owns the printer — a mid-print close used to leave the
-    // engine painting into a dead printer (reproduced SIGSEGV).  Track
-    // in-flight jobs and drain them before the dialog can unwind.
-    int printsInFlight = 0;
-    connect(&dialog, &QPrintPreviewDialog::paintRequested, &dialog,
-            [view, &printsInFlight](QPrinter *printer) {
-        if (!view)
-            return;
-        ++printsInFlight;
-        view->print(printer);
-    });
-    connect(view, &WebView::printFinished, &dialog,
-            [&printsInFlight](bool) {
-        if (printsInFlight > 0)
-            --printsInFlight;
-    });
-    dialog.exec();
-    // exec() can return while a job is still queued inside the engine;
-    // the dialog's printer must outlive the last printFinished.
-    while (printsInFlight > 0 && view) {
-        QEventLoop drain;
-        QTimer timeout;
-        timeout.setSingleShot(true);
-        connect(&timeout, &QTimer::timeout,
-                &drain, &QEventLoop::quit);
-        connect(view, &WebView::printFinished,
-                &drain, &QEventLoop::quit);
-        timeout.start(15000);
-        drain.exec();
-        if (!timeout.isActive())
-            break;
     }
+    // A tab hosting the shell document view previews the staged
+    // document — the engine page under it has nothing to print.
+    if (PdfView *pdfView = view->pdfView();
+            pdfView && pdfView->isReady()) {
+        PrintPreviewDialog dialog(this);
+        dialog.setDocumentFile(pdfView->localPath(),
+                               pdfView->documentTitle());
+        dialog.exec();
+        return;
+    }
+    // The stock QPrintPreviewDialog's paintRequested expects a
+    // synchronous paint into a QPrinter while engine printing is
+    // async — the preview rendered zero pages.  PrintPreviewDialog
+    // renders the page's printToPdf output instead: real pagination,
+    // real margins, no borrowed printer to outlive.
+    PrintPreviewDialog dialog(this);
+    dialog.setPage(view->page(), view->url());
+    dialog.exec();
 }
 
 void BrowserMainWindow::filePrint()
 {
-    if (!currentTab())
+    WebView *view = currentTab();
+    if (view) {
+        printRequested(view);
         return;
-    printRequested(currentTab());
+    }
+    // Engine tabs can't printToPdf, but one hosting the shell
+    // document view still prints its staged PDF; anything else gets
+    // the honest refusal rather than a dead Ctrl+P.
+    if (EngineTab *foreign =
+            m_tabWidget->engineTab(m_tabWidget->currentIndex())) {
+        if (PdfView *pdfView = foreign->pdfView();
+                pdfView && pdfView->isReady()) {
+            pdfView->printDocument();
+            return;
+        }
+        const QString engine = foreign->backend()
+            ? foreign->backend()->displayName()
+            : tr("This engine");
+        QMessageBox::information(this, tr("Print Document"),
+            tr("%1 cannot produce print output — there is nothing to "
+               "print for this tab.").arg(engine));
+    }
 }
 
 void BrowserMainWindow::printRequested(WebView *view)

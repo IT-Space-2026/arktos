@@ -222,6 +222,10 @@ private slots:
     void printRequested(WebView *view);
 
 private:
+    // PRINT01: engine-tab half of filePrintPreview/filePrint — hosts
+    // the staged-PDF preview or returns the honest refusal.  True when
+    // the current tab is an engine tab (handled either way).
+    bool previewEngineTabDocument();
     void retranslate();
     void loadDefaultState();
     void setupMenu();

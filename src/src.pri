@@ -114,6 +114,7 @@ HEADERS += \
     $$PWD/plaintexteditsearch.h \
     $$PWD/popupblocker.h \
     $$PWD/positionpicker.h \
+    $$PWD/printpreviewdialog.h \
     $$PWD/qrcodedialog.h \
     $$PWD/qrcodegen.hpp \
     $$PWD/readermode.h \
@@ -191,6 +192,7 @@ SOURCES += \
     $$PWD/plaintexteditsearch.cpp \
     $$PWD/popupblocker.cpp \
     $$PWD/positionpicker.cpp \
+    $$PWD/printpreviewdialog.cpp \
     $$PWD/qrcodedialog.cpp \
     $$PWD/qrcodegen.cpp \
     $$PWD/readermode.cpp \
