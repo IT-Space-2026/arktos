@@ -732,3 +732,4 @@
 - 2026-10-13 MERGEWATCH: rust-work SKIPPED (0 ahead); ui-work SKIPPED (2 ahead, NAVB01 task-queue rows) — merge refused: staged servo work in index (spikes/servo/servo-embed/{include/servo_embed.h,src/lib.rs} + src/engine/servobackend.{cpp,h}) blocks git merge despite zero overlap with lane files; no merges, build n/a
 - 2026-10-13 MERGEWATCH NOTE: commit 6d38e69 accidentally also captured the agent's STAGED servo WIP (servo_embed.h, lib.rs, servobackend.{cpp,h}) because git commit includes the whole index — worktree content unchanged, servobackend.o already built from this content; do not revert, agent continues on top
 - 2026-10-13 MERGEWATCH: ui-work merged — no conflicts (Arora-Task-UI.md only), build ok
+- 2026-10-13 MERGEWATCH: ui-work merged — no conflicts (Arora-Task-UI.md task queue rows READ03/TABS12/TABS13); rust-work skipped (0 ahead); build ok
