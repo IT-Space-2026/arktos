@@ -27,6 +27,7 @@
 #include <qapplication.h>
 #include <qcoreapplication.h>
 #include <qfileinfo.h>
+#include <qstandardpaths.h>
 #include <qabstractbutton.h>
 #include <qdialog.h>
 #include <qmessagebox.h>
@@ -98,6 +99,17 @@ int main(int argc, char *argv[]) \
 { \
     Q_INIT_RESOURCE(htmls); \
     Q_INIT_RESOURCE(data); \
+    /* EXT06: the BrowserApplication ctor brings up the real named \
+       "arora" profile before any test leg can run — services wired \
+       in prepareProfile() (extensions, cookies, history) then write \
+       into the user's live profile.  runTests.sh already sandboxes \
+       HOME for `make check`, but a test binary run standalone \
+       leaked its installs into ~/.local/share/Arora (the \
+       tst-upd/tst-old/tst-noext extensions came from exactly this). \
+       QStandardPaths test mode moves every app data/config location \
+       under a qttest/ subdir, and must be enabled before the app \
+       constructs the profile below. */ \
+    QStandardPaths::setTestModeEnabled(true); \
     BrowserApplication app(argc, argv); \
     /* SRCH09/SRCH11: the BrowserApplication ctor resets the \
        application name to "Arora", so a test that never calls \

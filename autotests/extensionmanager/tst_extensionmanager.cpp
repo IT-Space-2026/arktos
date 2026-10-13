@@ -47,6 +47,7 @@ private slots:
     void inspectManifest();
     void consentGate();
     void storePaths();
+    void profileIsolation();
     void updateCheckLoopback();
 
 private:
@@ -419,6 +420,34 @@ void tst_ExtensionManager::storePaths()
     QCOMPARE(ExtensionManager::updateCheckEnabled(), !saved);
     ExtensionManager::setUpdateCheckEnabled(saved);
     QCOMPARE(ExtensionManager::updateCheckEnabled(), saved);
+}
+
+// EXT06: earlier legs of this test installed into the user's real
+// "arora" profile when the binary ran outside runTests.sh (which
+// sandboxes HOME) — the fixtures showed up in the live Extensions
+// list as tst-upd/tst-old/tst-noext.  QTEST_MAIN now enables
+// QStandardPaths test mode before BrowserApplication builds the
+// profile; pin the redirect so a regression is loud here instead of
+// leaking into the user's extension store again.
+void tst_ExtensionManager::profileIsolation()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+    const QString installPath = ExtensionManager::instance()->installPath();
+    QVERIFY(!installPath.isEmpty());
+    // Qt 6.12's test mode roots app data under ~/.qttest — the exact
+    // layout is Qt's business; what matters is that the store is on
+    // the test-mode path and NOT under the real profile's data dir.
+    QVERIFY2(installPath.contains(QLatin1String("qttest")),
+             qPrintable(QStringLiteral(
+                 "extension install path must be sandboxed, got %1")
+                 .arg(installPath)));
+    QVERIFY2(!installPath.startsWith(
+                 QDir::homePath()
+                     + QLatin1String("/.local/share/Arora")),
+             qPrintable(QStringLiteral(
+                 "extension install path leaked into the real profile: %1")
+                 .arg(installPath)));
 }
 
 // EXT03 end-to-end: a loopback gupdate feed offers a newer package —

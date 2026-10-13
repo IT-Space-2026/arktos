@@ -3495,6 +3495,9 @@
          <property name="itemsExpandable">
           <bool>false</bool>
          </property>
+         <property name="sortingEnabled">
+          <bool>true</bool>
+         </property>
          <column>
           <property name="text">
            <string>Name</string>
@@ -3508,6 +3511,11 @@
          <column>
           <property name="text">
            <string>Source</string>
+          </property>
+         </column>
+         <column>
+          <property name="text">
+           <string>Description</string>
           </property>
          </column>
         </widget>

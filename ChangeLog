@@ -896,6 +896,12 @@ Extensions:
   tightened to 0600 with a warning. CRX3 signatures are
   structure-checked only; Chrome Web Store verification is out of
   scope.
+- Extensions settings page gains a sortable Description column fed
+  from each extension's manifest, and the details pane reports the
+  on-disk install location so stale entries can be cleaned by hand
+  (EXT06). Autotest binaries no longer leak installs into the real
+  browsing profile — QStandardPaths test mode is enabled before the
+  shared test main constructs the profile.
 
 Downloads:
 - QtWebEngine download manager: progress, Try Again, safe names

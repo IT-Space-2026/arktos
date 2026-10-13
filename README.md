@@ -363,7 +363,13 @@ downloaded packages are hash/structure-verified before they touch
 disk, and applying an update is opt-in: nothing replaces installed
 extension code without a fresh review. CRX3 signature blocks are
 structure-checked only; there is no Chrome Web Store signature
-verification.
+verification. The Settings → Extensions page lists each extension's
+manifest description and, for installed ones, the on-disk folder —
+installed extensions live under the browsing profile's
+`QtWebEngine/arora/Extensions/` directory (inside the Arora data
+location, e.g. `~/.local/share/Arora/Arora/` on Linux) and can be
+removed with the page's Remove button or by deleting their folder
+while Arora is closed.
 
 ### Credentials & autofill
 

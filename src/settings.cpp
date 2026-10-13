@@ -441,6 +441,12 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     // from filenames — markup-looking text stays literal.
     extensionsTree->setItemDelegate(new PlainTextItemDelegate(extensionsTree));
     userScriptsList->setItemDelegate(new PlainTextItemDelegate(userScriptsList));
+    // EXT06: the Description column is the long free-text one — it
+    // takes the leftover width while Name/Status/Source keep their
+    // interactive (user-resizable) sizing.
+    extensionsTree->header()->setStretchLastSection(false);
+    extensionsTree->header()->setSectionResizeMode(
+        3, QHeaderView::Stretch);
 
     ExtensionManager *extensions = ExtensionManager::instance();
     connect(extensions, &ExtensionManager::changed, this, &SettingsDialog::refreshExtensions);
@@ -2926,6 +2932,15 @@ void SettingsDialog::extensionSelectionChanged()
             lines << tr("Built-in component extension.");
         if (!info.path.isEmpty())
             lines << tr("Source: %1").arg(info.path);
+        // EXT06: document where installed extensions live on disk so
+        // stale ones can be cleaned out by hand (Remove uninstalls
+        // through the profile while Arora is running).
+        if (info.installed && !info.builtin) {
+            const QString installPath =
+                ExtensionManager::instance()->installPath();
+            if (!installPath.isEmpty())
+                lines << tr("Installed under: %1").arg(installPath);
+        }
         if (info.actionPopupUrl.isValid())
             lines << tr("Declares a toolbar action — Qt WebEngine has no "
                         "extension toolbar, so its popup will not appear.");
@@ -3020,6 +3035,13 @@ void SettingsDialog::refreshExtensions()
         item->setText(2, info.builtin ? tr("Built-in")
                                     : (info.installed ? tr("Installed")
                                                       : tr("Session")));
+        // EXT06: manifest description in its own column.  Built-in
+        // component extensions and terse manifests may carry no
+        // description — say so rather than leaving the cell blank.
+        item->setText(3, !info.description.isEmpty()
+            ? info.description
+            : (info.builtin ? tr("Built-in component")
+                            : tr("(no description)")));
         item->setData(0, Qt::UserRole, info.id);
         item->setToolTip(0, SafeText::escaped(info.path));
         if (info.id == selectedId)

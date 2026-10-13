@@ -2836,6 +2836,16 @@ void tst_SettingsDialog::extensionPage()
     }
     QVERIFY(row);
     dialog.extensionsTree->setCurrentItem(row);
+
+    // EXT06: the Description column shows the manifest text, and
+    // every row carries something — empty descriptions fall back to
+    // "Built-in component" / "(no description)", never a blank cell.
+    QCOMPARE(dialog.extensionsTree->columnCount(), 4);
+    QCOMPARE(row->text(3), QLatin1String("coverage extension"));
+    for (int i = 0; i < dialog.extensionsTree->topLevelItemCount(); ++i)
+        QVERIFY(!dialog.extensionsTree->topLevelItem(i)
+                     ->text(3).isEmpty());
+
     const QString details = dialog.extensionDetailsLabel->text();
     QVERIFY(details.contains(QLatin1String("coverage extension")));
     QVERIFY(details.contains(QLatin1String("Version 1.0.0")));
