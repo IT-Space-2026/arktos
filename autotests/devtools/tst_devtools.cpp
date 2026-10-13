@@ -47,9 +47,11 @@
 #include <qbuttongroup.h>
 #include <qcheckbox.h>
 #include <qcombobox.h>
+#include <qheaderview.h>
 #include <qlabel.h>
 #include <qlineedit.h>
 #include <qplaintextedit.h>
+#include <qscrollbar.h>
 #include <qsortfilterproxymodel.h>
 #include <qstackedwidget.h>
 #include <qtableview.h>
@@ -500,6 +502,17 @@ void tst_DevTools::bidiPanel()
     QCOMPARE(net->rowCount(), 5);
     QCOMPARE(netProxy->rowCount(), 5);
 
+    // DEVT07: Chrome's footer line — count, transferred bytes, and
+    // the Finish span track the visible (filtered) rows.  Only r1
+    // carries a real byte count (2048); r4's end (1150) is the last
+    // completion after r1's start (1000).
+    QVERIFY(panel.m_networkSummary);
+    QCOMPARE(panel.m_networkSummary->objectName(),
+             QStringLiteral("bidiNetworkSummary"));
+    QCOMPARE(panel.m_networkSummary->text(),
+             QStringLiteral("5 requests · 2.0 kB transferred "
+                            "· Finish: 150 ms"));
+
     // Chips are an exclusive filtered view over the same rows.
     const auto chip = [&panel](const QString &label) -> QAbstractButton * {
         for (QAbstractButton *button : panel.m_typeChips->buttons()) {
@@ -511,6 +524,11 @@ void tst_DevTools::bidiPanel()
     QCOMPARE(panel.m_typeChips->buttons().count(), 12);
     chip(QStringLiteral("Doc"))->click();
     QCOMPARE(netProxy->rowCount(), 1);
+    // The footer re-slices with the filter — r1 alone finished in 42ms
+    // (and gets the singular noun, like Chrome).
+    QCOMPARE(panel.m_networkSummary->text(),
+             QStringLiteral("1 request · 2.0 kB transferred "
+                            "· Finish: 42 ms"));
     chip(QStringLiteral("Fetch/XHR"))->click();
     QCOMPARE(netProxy->rowCount(), 1);
     chip(QStringLiteral("Img"))->click();
@@ -584,6 +602,57 @@ void tst_DevTools::bidiPanel()
     QCOMPARE(netProxy->data(netProxy->index(1, 4)).toString(),
              QStringLiteral("4.0 kB"));
 
+    // DEVT07: cache provenance stays honest — memory/disk hits show
+    // Chrome's "(...cache)" label instead of a bogus byte count, and
+    // the TTFB split rides along for the two-tone waterfall bar.
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.beforeRequestSent\",\"params\":{"
+        "\"timestamp\":300.0,\"request\":{\"request\":\"c1\","
+        "\"method\":\"GET\",\"url\":\"http://a/style.css\","
+        "\"type\":\"Stylesheet\"}}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.requestServedFromCache\",\"params\":{"
+        "\"request\":{\"request\":\"c1\"}}}"));
+    QCOMPARE(net->data(net->index(2, 4)).toString(),
+             QStringLiteral("(memory cache)"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.beforeRequestSent\",\"params\":{"
+        "\"timestamp\":310.0,\"request\":{\"request\":\"c2\","
+        "\"method\":\"GET\",\"url\":\"http://a/app.js\","
+        "\"type\":\"Script\"}}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.responseStarted\",\"params\":{"
+        "\"timestamp\":315.0,\"type\":\"Script\",\"request\":{"
+        "\"request\":\"c2\"},\"response\":{\"status\":200,"
+        "\"fromDiskCache\":true,"
+        "\"timing\":{\"receiveHeadersEnd\":2.0}}}}"));
+    QCOMPARE(net->data(net->index(3, 4)).toString(),
+             QStringLiteral("(disk cache)"));
+    // TtfbRole = Qt::UserRole + 9 (mirrors bidipanel.cpp's enum).
+    QCOMPARE(net->data(net->index(3, 0), Qt::UserRole + 9).toDouble(),
+             2.0);
+
+    // DEVT07: page-load milestones feed the footer relative to the
+    // recording window's start (s1 @100 — the earliest start).
+    // Milestones for another context are ignored.
+    panel.onEvent(QByteArray(
+        "{\"method\":\"browsingContext.domContentLoaded\",\"params\":{"
+        "\"context\":\"elsewhere\",\"timestamp\":330.0}}"));
+    QVERIFY(!panel.m_networkSummary->text().contains(
+        QStringLiteral("DOMContentLoaded")));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"browsingContext.domContentLoaded\",\"params\":{"
+        "\"context\":\"ctx1\",\"timestamp\":340.0}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"browsingContext.load\",\"params\":{"
+        "\"context\":\"ctx1\",\"timestamp\":350.0}}"));
+    QVERIFY(panel.m_networkSummary->text().contains(
+        QStringLiteral("4 requests")));
+    QVERIFY(panel.m_networkSummary->text().contains(
+        QStringLiteral("DOMContentLoaded: 240 ms")));
+    QVERIFY(panel.m_networkSummary->text().contains(
+        QStringLiteral("Load: 250 ms")));
+
     // The offscreen grab renders the red failed row — smoke for the
     // Chrome look (palette-safe red pixels present in the view).
     panel.clearNetworkLog();
@@ -605,6 +674,28 @@ void tst_DevTools::bidiPanel()
         "{\"method\":\"network.fetchError\",\"params\":{\"request\":"
         "{\"request\":\"f1\"},\"errorText\":\"net::ERR_X\","
         "\"timestamp\":150.0}}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.beforeRequestSent\",\"params\":{"
+        "\"timestamp\":120.0,\"request\":{\"request\":\"f2\","
+        "\"method\":\"GET\",\"url\":\"http://a/logo.png\","
+        "\"type\":\"Image\"}}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.responseStarted\",\"params\":{"
+        "\"timestamp\":160.0,\"type\":\"Image\",\"request\":{"
+        "\"request\":\"f2\"},\"response\":{\"status\":200,"
+        "\"timing\":{\"receiveHeadersEnd\":25.0}}}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.responseCompleted\",\"params\":{"
+        "\"timestamp\":210.0,\"request\":{\"request\":\"f2\"},"
+        "\"response\":{\"encodedDataLength\":5120}}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.beforeRequestSent\",\"params\":{"
+        "\"timestamp\":130.0,\"request\":{\"request\":\"f3\","
+        "\"method\":\"GET\",\"url\":\"http://a/fonts.css\","
+        "\"type\":\"Stylesheet\"}}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.requestServedFromCache\",\"params\":{"
+        "\"request\":{\"request\":\"f3\"}}}"));
     panel.resize(700, 300);
     panel.show();
     if (QTabWidget *tabs = panel.findChild<QTabWidget *>())
@@ -625,6 +716,24 @@ void tst_DevTools::bidiPanel()
         }
     }
     QVERIFY(sawRed);
+
+    // DEVT07: column floors — squeezing the dock pins every column at
+    // its minimum instead of losing Size/Time/Waterfall, and the
+    // overflow becomes a horizontal scrollbar.
+    QHeaderView *netHead = panel.m_networkView->horizontalHeader();
+    QVERIFY(netHead->sectionSize(6) >= 130); // Waterfall at 700px
+    QVERIFY(netHead->sectionSize(4) >= 64);  // Size
+    QVERIFY(netHead->sectionSize(5) >= 56);  // Time
+    panel.resize(430, 300);
+    QCoreApplication::processEvents();
+    QTRY_VERIFY(netHead->sectionSize(0) >= 90);  // Name floor
+    QVERIFY(netHead->sectionSize(6) >= 130);
+    QVERIFY(netHead->sectionSize(4) >= 64);
+    QVERIFY(netHead->sectionSize(1) >= 48);
+    QTRY_VERIFY(panel.m_networkView->horizontalScrollBar()
+                    ->maximum() > 0);
+    panel.resize(700, 300);
+    QCoreApplication::processEvents();
 
     // Unknown request ids and unknown network methods are ignored.
     panel.onEvent(QByteArray(

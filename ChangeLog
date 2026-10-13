@@ -550,6 +550,22 @@ UI:
   "Preserve log" keeps the list across navigations, and "Disable
   cache" is a real browser-wide toggle the engine honors for every
   tab, including ones opened later (DEVT06).
+- BiDi Dev Tools → Network tab now reads like Chrome's at realistic
+  widths: the Name column stretches while Size, Time and Waterfall
+  keep minimum widths (and a horizontal scrollbar at extreme widths)
+  instead of being squeezed invisible, the Size column labels
+  cache-served responses "(memory cache)"/"(disk cache)" rather than
+  showing misleading byte counts, and a Chrome-style summary footer
+  reports the filtered request count, bytes transferred, Finish time
+  and the page's DOMContentLoaded/Load milestones. Waterfall bars
+  paint for every completed request and split into waiting/download
+  segments when the engine reports time-to-first-byte (DEVT07).
+- A crashed Servo engine tab is no longer dead for the rest of the
+  session: the crash notice now offers "Try Servo Again", which
+  tears the dead web view down and builds a fresh one on the
+  still-running engine — switching the tab to Chromium and back
+  recovers the same way — so one engine crash no longer disables
+  Servo until the whole browser is restarted (ENG24).
 - The start page no longer shows faint horizontal bands: its
   background gradient was painted in repeating content-height stripes
   — invisible in the light theme, banded in the dark theme — and now

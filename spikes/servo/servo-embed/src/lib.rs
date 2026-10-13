@@ -11,10 +11,19 @@
  * inside the boundary plus a per-instance `poisoned` flag that turns a
  * panicking webview into a dead tab. A panic may NEVER unwind over the
  * extern "C" boundary: that aborts the whole host process.
+ *
+ * Instance model (ENG24): the Servo engine is built once and kept for
+ * the process lifetime — libservo's Opts is a process-global OnceLock
+ * so a second ServoBuilder::build would panic. But a SeInstance is
+ * only a WebView + delegate + rendering context over that engine, and
+ * those CAN be recreated: after se_destroy frees the slot, se_init
+ * builds a fresh instance on the surviving engine — the crash-
+ * recovery path, one live instance at a time.
  */
 
 use std::cell::{Cell, RefCell};
 use std::ffi::{c_char, c_void, CStr, CString};
+use std::mem::ManuallyDrop;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -352,13 +361,33 @@ fn drain_gl_error(rc: &Rc<dyn RenderingContext>, tag: &str) {
     }
 }
 
-// ENG12: libservo v0.7.0 parks Opts in a process-global OnceCell —
-// the first Servo build wins, every later init panics "Already
-// initialized" (components/config/opts.rs), and a panic may not
-// unwind across an extern "C" boundary so the host process aborts.
-// One instance per process lifetime, ever — the Qt side enforces the
-// same contract so this gate is the last line of defense.
-static INITIALIZED: AtomicBool = AtomicBool::new(false);
+// ENG12/ENG24: libservo v0.7.0 parks Opts in a process-global
+// OnceLock — the first Servo build wins, every later
+// ServoBuilder::build panics "Already initialized"
+// (components/config/opts.rs).  The ENGINE therefore can never be
+// rebuilt in-process; it is constructed on the first se_init and held
+// for the rest of the process lifetime.  Everything else about a
+// SeInstance — the WebView, its delegate, the rendering context, the
+// poison flag — is per-instance and CAN be recreated: se_destroy
+// frees the slot and the next se_init creates a fresh webview on the
+// surviving engine (ENG24 recovery — the same shape as Chromium
+// respawning a crashed renderer on the surviving browser process).
+//
+// All se_* calls are contracted to the host GUI thread, which is also
+// the only thread allowed to touch the Rc graph — a thread_local is
+// the honest home for the engine handle.  ManuallyDrop keeps the TLS
+// destructor from running Servo's graceful-shutdown spin during
+// thread teardown (its own TLS may already be gone there — a panic
+// inside a TLS dtor aborts); the explicit se_shutdown export is the
+// clean teardown the host calls while the GUI thread is intact.
+thread_local! {
+    static ENGINE: RefCell<Option<ManuallyDrop<Servo>>> =
+        const { RefCell::new(None) };
+    /// True while a SeInstance is live — se_init claims the slot,
+    /// se_destroy hands it back.  Sequential instances (crash
+    /// recovery) are legal; concurrent ones remain refused.
+    static INSTANCE_ACTIVE: Cell<bool> = const { Cell::new(false) };
+}
 
 // ENG23 — pin Servo's painter to Mesa's software rasterizer.
 //
@@ -571,12 +600,14 @@ fn try_rendering_context(size: PhysicalSize<u32>) -> Option<Rc<SoftwareRendering
     }
 }
 
-/// Create a Servo instance with one WebView sized `width`x`height`
+/// Create an embed instance — one WebView sized `width`x`height`
 /// (device px) on a software rendering context. Returns nullptr on
-/// failure — including a second call, which libservo cannot serve
-/// (process-global Opts). `config_dir` may be nullptr (Servo's
-/// default) or a writable directory used for the cookie db / storage
-/// threads.
+/// failure. The FIRST call also builds the Servo engine (consuming
+/// the process-global Opts and `config_dir`); a later call is legal
+/// once the previous SeInstance was se_destroy'd and creates a FRESH
+/// WebView + delegate + context on the surviving engine — the ENG24
+/// crash-recovery path. A call while another instance is still live
+/// is refused: one embed instance at a time.
 #[no_mangle]
 pub extern "C" fn se_init(
     callbacks: SeCallbacks,
@@ -584,18 +615,26 @@ pub extern "C" fn se_init(
     height: u32,
     config_dir: *const c_char,
 ) -> *mut SeInstance {
-    if INITIALIZED.swap(true, Ordering::SeqCst) {
-        eprintln!("servo-embed: se_init called more than once — \
-                   libservo Opts is process-global, refusing");
+    // Claim the instance slot up front — claimed, not spent: a failed
+    // or panicking init hands it back so a retry (or the host's
+    // crash-recovery attempt) still gets a real chance.
+    let claimed = INSTANCE_ACTIVE.with(|slot| !slot.replace(true));
+    if !claimed {
+        eprintln!("servo-embed: se_init while a live SeInstance exists \
+                   — one embed instance at a time, refusing");
         return std::ptr::null_mut();
     }
     // catch_unwind keeps any residual init panic (context failure,
     // missing resource dir, ...) from aborting the host — panics do
     // not unwind across extern "C".
-    catch_unwind(AssertUnwindSafe(|| {
+    let instance = catch_unwind(AssertUnwindSafe(|| {
         se_init_inner(callbacks, width, height, config_dir)
     }))
-    .unwrap_or(std::ptr::null_mut())
+    .unwrap_or(std::ptr::null_mut());
+    if instance.is_null() {
+        INSTANCE_ACTIVE.with(|slot| slot.set(false));
+    }
+    instance
 }
 
 fn se_init_inner(
@@ -611,18 +650,6 @@ fn se_init_inner(
     // Everything later reuses that already-initialized connection.
     let env = ScopedSoftwareGlEnv::new();
 
-    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-
-    let mut opts = Opts::default();
-    opts.multiprocess = false; // single-process: no re-exec needed for the spike
-    opts.sandbox = false;
-    if !config_dir.is_null() {
-        let dir = unsafe { CStr::from_ptr(config_dir) }
-            .to_string_lossy()
-            .into_owned();
-        opts.config_dir = Some(dir.into());
-    }
-
     let shared = Rc::new(Shared {
         cbs: callbacks,
         frame: RefCell::new(None),
@@ -630,14 +657,49 @@ fn se_init_inner(
         request_log: RefCell::new(Vec::new()),
     });
 
-    let servo = ServoBuilder::default()
-        .opts(opts)
-        .event_loop_waker(Box::new(SeWaker {
-            userdata: callbacks.userdata as usize,
-            wake: callbacks.wake,
-        }))
-        .build();
-    servo.setup_logging();
+    // ENG24: the engine is a once-per-process build kept in the
+    // thread_local slot — a second se_init only manufactures a fresh
+    // webview on it (the recovered instance shares the surviving
+    // engine, never the poisoned webview graph).  Only the first init
+    // touches Opts/config_dir and installs the event-loop waker —
+    // that waker holds the FIRST instance's userdata for the engine's
+    // lifetime, so the host must pass a stable indirection cell it
+    // keeps pointed at whichever view is live (see servobackend.cpp).
+    let servo = match ENGINE.with(|engine| {
+        engine
+            .borrow()
+            .as_ref()
+            .map(|engine| (**engine).clone())
+    }) {
+        Some(servo) => servo,
+        None => {
+            let _ = rustls::crypto::aws_lc_rs::default_provider()
+                .install_default();
+
+            let mut opts = Opts::default();
+            opts.multiprocess = false; // single-process: no re-exec needed
+            opts.sandbox = false;
+            if !config_dir.is_null() {
+                let dir = unsafe { CStr::from_ptr(config_dir) }
+                    .to_string_lossy()
+                    .into_owned();
+                opts.config_dir = Some(dir.into());
+            }
+
+            let servo = ServoBuilder::default()
+                .opts(opts)
+                .event_loop_waker(Box::new(SeWaker {
+                    userdata: callbacks.userdata as usize,
+                    wake: callbacks.wake,
+                }))
+                .build();
+            servo.setup_logging();
+            ENGINE.with(|engine| {
+                *engine.borrow_mut() = Some(ManuallyDrop::new(servo.clone()));
+            });
+            servo
+        },
+    };
 
     let size = PhysicalSize::new(width.max(1), height.max(1));
     // ENG23: the thread must be free of foreign GL ownership before
@@ -1005,6 +1067,11 @@ pub extern "C" fn se_destroy(instance: *mut SeInstance) {
     if instance.is_null() {
         return;
     }
+    // ENG24: hand the instance slot back FIRST — the drop below is
+    // catch-wrapped, and a panic inside teardown must not strand the
+    // slot (the host's pointer is dead either way; a leaked box only
+    // wastes memory, a stuck slot makes engine recovery impossible).
+    INSTANCE_ACTIVE.with(|slot| slot.set(false));
     // Deliberately NOT gated on `poisoned` — the host owns freeing the
     // instance either way.  The drop itself is catch-wrapped: a panic
     // inside teardown leaks the box rather than aborting the process.
@@ -1021,5 +1088,25 @@ pub extern "C" fn se_destroy(instance: *mut SeInstance) {
     }
     // ENG23: teardown made the painter's context current — release it
     // for the host's GL work (see release_current_gl_context).
+    unsafe { release_current_gl_context() };
+}
+
+/// ENG24: shut the shared engine down. Optional and once-only —
+/// dropping the last Servo handle sends the constellation Exit and
+/// spins the event loop until shutdown completes, so the host calls
+/// this from application teardown while the GUI thread is still
+/// intact (engine TLS is ManuallyDrop precisely so an unshut-down
+/// engine leaks harmlessly at thread exit instead of spinning inside
+/// a TLS destructor). No-op when no engine was ever built or after a
+/// previous se_shutdown; a live SeInstance is NOT destroyed — hosts
+/// must se_destroy first.
+#[no_mangle]
+pub extern "C" fn se_shutdown() {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        let engine = ENGINE.with(|engine| engine.borrow_mut().take());
+        if let Some(engine) = engine {
+            drop(ManuallyDrop::into_inner(engine));
+        }
+    }));
     unsafe { release_current_gl_context() };
 }

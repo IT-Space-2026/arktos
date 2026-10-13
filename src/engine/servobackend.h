@@ -42,16 +42,19 @@
 // surface handoff, so the QOpenGLWidget/surfman upgrade needs a shim
 // extension first (noted in the spike doc).
 //
-// ENG12: exactly ONE ServoView may exist per process lifetime.
-// libservo v0.7.0 parks Opts in a process-global OnceCell — the first
-// Servo build wins, every later se_init panics ("Already initialized"
-// in components/config/opts.rs), and a Rust panic cannot unwind
-// across the extern "C" boundary so the host process aborts.  The
-// backend refuses a second page/view rather than manufacturing the
-// abort; a spent slot is never handed back (even a failed se_init may
-// have consumed Opts).  Upstream fix (init-once + catch_unwind) lives
-// in spikes/servo/servo-embed/src/lib.rs — the pinned artifact
-// predates it.
+// ENG12/ENG24: one LIVE ServoView at a time — never two instances
+// concurrently.  libservo v0.7.0 parks Opts in a process-global
+// OnceLock, so the ENGINE is built once on the first se_init and kept
+// for the process lifetime; but a SeInstance is only a webview +
+// delegate + rendering context over that engine and CAN be replaced
+// (ENG24 — the shim keeps the engine in a thread_local and creates a
+// fresh instance on se_init once the old one is se_destroy'd, the
+// same shape as Chromium respawning a crashed renderer on the
+// surviving browser process).  The Qt slot below therefore has no
+// terminal state for a destroyed view — Exhausted is only reached
+// when se_init itself fails (a pre-ENG24 artifact refuses every
+// second init the same way, so the failure is declared permanent for
+// the session rather than retried on every swap).
 
 #include "engineinterface.h"
 
@@ -61,6 +64,7 @@
 #include <qurl.h>
 #include <qwidget.h>
 
+class QPushButton;
 class ServoPage;
 
 // QWidget hosting one libservo WebView through the servo-embed C ABI
@@ -78,16 +82,21 @@ public:
     bool isReady() const;
     // ENG20: the shim caught a panic inside servo and poisoned this
     // instance — every further export is a no-op and the tab is dead
-    // (swap back to Chromium to keep browsing).  Always false on
-    // artifacts predating se_is_poisoned.
+    // (retry in place via restartRequested, or swap back to Chromium
+    // to keep browsing).  Always false on artifacts predating
+    // se_is_poisoned.
     bool isPoisoned() const;
     // ENG23: GL_RENDERER of the painter's context — names the software
     // rasterizer once the shim pins it, empty on artifacts predating
     // se_gl_renderer.
     QString glRenderer() const;
-    // Whether another ServoView may be constructed — false once the
-    // process's single SeInstance slot is claimed or spent (ENG12).
+    // Whether another ServoView may be constructed — false while a
+    // live instance holds the slot or after a failed se_init (ENG12).
     static bool instanceAvailable();
+    // ENG24: a live instance currently holds the slot — false while
+    // Free and after a failed-init Exhausted (the two refused states
+    // report different reasons in pageUnavailableReason()).
+    static bool instanceInUse();
     void load(const QUrl &url);
     void spinOnce();              // one se_spin — GUI thread
     void goBack();
@@ -109,6 +118,10 @@ signals:
     void loadProgress(int progress);
     void loadFinished(bool ok);
     void statusChanged(const QString &status);
+    // ENG24: the crashed-view surface's "Try Servo again" affordance —
+    // the host (EngineTab) recreates page+view on a fresh SeInstance;
+    // the dead object graph is torn down first, never resurrected.
+    void restartRequested();
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -124,6 +137,8 @@ private:
     void setUrl(const QUrl &url);
     void setTitle(const QString &title);
     void onLoadStatus(int status);
+    // ENG24: lazily create/position the poisoned view's retry button.
+    void ensureCrashUi();
 
     // SeCallbacks trampolines — static members so the C ABI reaches
     // private state without friend pollution.
@@ -141,6 +156,7 @@ private:
     QUrl m_url;
     QString m_title;
     bool m_loading;
+    QPushButton *m_retryButton = nullptr;
 
     friend class ServoPage;
 };
@@ -270,6 +286,12 @@ public:
     // Filesystem+symbol resolution only; does not start servo.
     static bool artifactAvailable();
     static QString artifactPath();
+    // ENG24: drive the engine's graceful shutdown while the GUI
+    // thread is intact — no-op when the artifact predates
+    // se_shutdown (the engine then dies with the process, as it
+    // always has).  Wired to aboutToQuit automatically; harnesses
+    // that exit without exec() call it explicitly.
+    static void shutdownEngine();
 
     QString id() const override;
     QString displayName() const override;

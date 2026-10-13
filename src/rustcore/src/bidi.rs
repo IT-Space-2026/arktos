@@ -21,10 +21,16 @@
 //!     late attaches (maps to CDP Network.setCacheDisabled)
 //!   Events out: browsingContext.*, log.entryAdded (console+log),
 //!     network.beforeRequestSent / responseStarted / responseCompleted
-//!     / fetchError — the network events carry the CDP extras the
-//!     panel's Chrome-style view needs: timestamp (ms), request.type,
-//!     params.initiator, params.redirectResponse, response.mimeType /
-//!     statusText / encodedDataLength (DEVT06).
+//!     / fetchError / requestServedFromCache — the network events carry
+//!     the CDP extras the panel's Chrome-style view needs: timestamp
+//!     (ms), request.type, params.initiator, params.redirectResponse,
+//!     response.mimeType / statusText / encodedDataLength (DEVT06),
+//!     and — DEVT07 — response.fromDiskCache / fromServiceWorker /
+//!     fromPrefetchCache + response.timing (raw, the waterfall reads
+//!     receiveHeadersEnd), plus browsingContext.domContentLoaded /
+//!     .load translated from Page.domContentEventFired / loadEventFired
+//!     so the summary footer can show Chrome's DOMContentLoaded/Load
+//!     milestone times.
 //!
 //! Transport: RFC 6455 client over a blocking TcpStream — Chromium's
 //! devtools endpoint is loopback-only and gated by a per-session
@@ -513,6 +519,15 @@ impl Core {
         if st.subscriptions.contains("log") {
             v.push("Log.enable");
             v.push("Runtime.enable");
+        }
+        if st.subscriptions.contains("browsingContext") {
+            // DEVT07: Page.enable so frame lifecycle milestones
+            // (domContentEventFired / loadEventFired) reach the
+            // session — they map to browsingContext.domContentLoaded /
+            // .load for the Network tab's summary footer.  If the
+            // engine's CDP lacks the Page domain the enable just
+            // errors quietly and the footer omits the milestones.
+            v.push("Page.enable");
         }
         v
     }
@@ -1013,6 +1028,15 @@ impl Core {
                             "statusText": resp["statusText"],
                             "mimeType": resp["mimeType"],
                             "encodedDataLength": resp["encodedDataLength"],
+                            // DEVT07: cache provenance (the panel's
+                            // Size column shows "(memory cache)" etc.
+                            // instead of a bogus byte count) and the
+                            // raw resource-timing block — the waterfall
+                            // splits its bar at receiveHeadersEnd.
+                            "fromDiskCache": resp["fromDiskCache"],
+                            "fromServiceWorker": resp["fromServiceWorker"],
+                            "fromPrefetchCache": resp["fromPrefetchCache"],
+                            "timing": resp["timing"],
                         },
                     }),
                 );
@@ -1033,6 +1057,21 @@ impl Core {
                     }),
                 );
             }
+            "Network.requestServedFromCache" => {
+                // DEVT07: memory-cache hits report through this event
+                // rather than a response flag — the panel marks the
+                // row "(memory cache)" like Chrome.
+                if !subscribed("network") {
+                    return;
+                }
+                self.event(
+                    "network.requestServedFromCache",
+                    json!({
+                        "context": self.context_for_session(session),
+                        "request": { "request": params["requestId"] },
+                    }),
+                );
+            }
             "Network.loadingFailed" => {
                 if !subscribed("network") {
                     return;
@@ -1045,6 +1084,25 @@ impl Core {
                         "type": params["type"],
                         "request": { "request": params["requestId"] },
                         "errorText": params["errorText"],
+                    }),
+                );
+            }
+            "Page.domContentEventFired" | "Page.loadEventFired" => {
+                // DEVT07: BiDi carries these as browsingContext
+                // milestones — the panel's summary footer shows
+                // Chrome's DOMContentLoaded / Load times.
+                if !subscribed("browsingContext") {
+                    return;
+                }
+                self.event(
+                    if name == "Page.domContentEventFired" {
+                        "browsingContext.domContentLoaded"
+                    } else {
+                        "browsingContext.load"
+                    },
+                    json!({
+                        "context": self.context_for_session(session),
+                        "timestamp": millis(&params["timestamp"]),
                     }),
                 );
             }
@@ -1900,8 +1958,10 @@ mod tests {
             .insert("CTX".into(), "S1".into());
         core.dispatch(4, "session.subscribe", json!({"events": ["network"]}))
             .unwrap();
+        // Wire frames: setDiscoverTargets + one enable per subscribed
+        // domain group (network, log, browsingContext->Page).
         let mut methods = Vec::new();
-        for _ in 0..4 {
+        for _ in 0..5 {
             methods.push(
                 read_wire(&mut peer)["method"].as_str().unwrap().to_string(),
             );
@@ -1911,6 +1971,7 @@ mod tests {
             "Network.enable",
             "Log.enable",
             "Runtime.enable",
+            "Page.enable",
         ] {
             assert!(methods.iter().any(|m| m == want), "{methods:?}");
         }
@@ -1952,7 +2013,7 @@ mod tests {
         // On attach the session gains domain enables first (subscribed),
         // then the two queued commands in order.
         let mut seen = Vec::new();
-        for _ in 0..5 {
+        for _ in 0..6 {
             seen.push(read_wire(&mut peer));
         }
         let methods: Vec<&str> = seen
@@ -1962,7 +2023,8 @@ mod tests {
         assert!(
             methods.contains(&"Network.enable")
                 && methods.contains(&"Log.enable")
-                && methods.contains(&"Runtime.enable"),
+                && methods.contains(&"Runtime.enable")
+                && methods.contains(&"Page.enable"),
             "{methods:?}"
         );
         let nav = seen
@@ -2032,7 +2094,7 @@ mod tests {
         );
         let mut cache_off = false;
         let mut saw_eval = false;
-        for _ in 0..5 {
+        for _ in 0..6 {
             let m = read_wire(&mut peer);
             if m["method"] == "Network.setCacheDisabled" {
                 assert_eq!(m["sessionId"], "SLATE");
@@ -2246,13 +2308,43 @@ mod tests {
             "params": {"requestId": "r1", "timestamp": 12.6, "type": "Document",
                 "response": {"url": "http://r/", "status": 200,
                     "statusText": "OK", "mimeType": "text/html",
-                    "encodedDataLength": 64}}
+                    "encodedDataLength": 64, "fromDiskCache": true,
+                    "timing": {"receiveHeadersEnd": 18.0}}}
         }));
         let e = events_named(&got, "network.responseStarted");
         assert!(e[0].contains("\"status\":200"), "{e:?}");
         assert!(e[0].contains("\"timestamp\":12600.0")
             && e[0].contains("\"mimeType\":\"text/html\"")
             && e[0].contains("\"type\":\"Document\""), "{e:?}");
+        // DEVT07: cache provenance + raw timing ride through for the
+        // Size column and the two-tone waterfall bar.
+        assert!(e[0].contains("\"fromDiskCache\":true")
+            && e[0].contains("\"receiveHeadersEnd\":18.0"), "{e:?}");
+
+        // DEVT07: memory-cache hits and page-load milestones translate.
+        core.on_message(&json!({
+            "method": "Network.requestServedFromCache", "sessionId": "S2",
+            "params": {"requestId": "r1"}
+        }));
+        let e = events_named(&got, "network.requestServedFromCache");
+        assert_eq!(e.len(), 1);
+        assert!(e[0].contains("\"context\":\"T2\"")
+            && e[0].contains("\"request\":\"r1\""), "{e:?}");
+        core.on_message(&json!({
+            "method": "Page.domContentEventFired", "sessionId": "S2",
+            "params": {"timestamp": 12.7}
+        }));
+        let e = events_named(&got, "browsingContext.domContentLoaded");
+        assert_eq!(e.len(), 1);
+        assert!(e[0].contains("\"context\":\"T2\"")
+            && e[0].contains("\"timestamp\":12700.0"), "{e:?}");
+        core.on_message(&json!({
+            "method": "Page.loadEventFired", "sessionId": "S2",
+            "params": {"timestamp": 12.95}
+        }));
+        let e = events_named(&got, "browsingContext.load");
+        assert_eq!(e.len(), 1);
+        assert!(e[0].contains("\"timestamp\":12950.0"), "{e:?}");
         core.on_message(&json!({
             "method": "Network.loadingFinished", "sessionId": "S2",
             "params": {"requestId": "r1", "timestamp": 12.9,
@@ -2340,6 +2432,12 @@ mod tests {
                 "params": {"entry": {}}}),
             json!({"method": "Runtime.exceptionThrown", "sessionId": "S",
                 "params": {"exceptionDetails": {}}}),
+            json!({"method": "Network.requestServedFromCache", "sessionId": "S",
+                "params": {"requestId": "r"}}),
+            json!({"method": "Page.domContentEventFired", "sessionId": "S",
+                "params": {"timestamp": 1.0}}),
+            json!({"method": "Page.loadEventFired", "sessionId": "S",
+                "params": {"timestamp": 1.0}}),
         ] {
             core.on_message(&msg);
         }

@@ -1299,6 +1299,21 @@ EngineTab *TabWidget::addEngineTab(Engine::Backend *backend, bool makeCurrent)
         mapper->addChild(tab->page()->action(mapper->webAction()));
     }
 
+    // ENG24: an engine restart swaps the Engine::Page object in place
+    // (the crashed Servo view's "Try Servo Again" path) — the dead
+    // page's actions die with it, so the new page's action() children
+    // join the mappers and the current-tab binding re-points.
+    connect(tab, &EngineTab::pageRecreated, this, [this, tab]() {
+        Engine::Page *fresh = tab->page();
+        for (int i = 0; i < m_actions.count(); ++i) {
+            WebActionMapper *mapper = m_actions[i];
+            mapper->addChild(fresh ? fresh->action(mapper->webAction())
+                                   : nullptr);
+            if (indexOf(tab) == currentIndex() && indexOf(tab) >= 0)
+                mapper->updateCurrent(fresh);
+        }
+    });
+
     // ENG15: one favicon surface per tab.  WebView tabs carry theirs
     // in the free-side animationLabel and pass no tab icon — an
     // engine tab that did both (the addTab icon plus the label's
