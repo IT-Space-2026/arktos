@@ -1,16 +1,17 @@
 // READ05: reader-mode event relay — armed once per page by ReaderMode
-// as a QWebEngineScript at DocumentCreation (main world, name
-// "arora:reader-forward").
+// as a QWebEngineScript at DocumentCreation in the channel world
+// (Engine::AroraChannelWorld, name "arora:reader-forward") — SEC24
+// moved the transport there, so this relay must live there too.
 //
-// The reader driver runs in an isolated world where the shared
-// QWebChannel transport does not exist, so its overlay chrome reports
-// back by dispatching "arora:reader:*" CustomEvents on the document —
-// DOM events cross worlds.  This relay forwards them to the lazy
-// shared channel client (arora-channel.js's window.__aroraChannel)
-// and the "aroraReader" bridge object.  The bridge has always been
-// page-reachable (SEC08), so a page forging these events gains
-// nothing it did not already have: notifyExited is a cosmetic state
-// hint and setPreference writes two clamped settings.
+// The reader driver runs in its own isolated world (ReaderWorldId)
+// where the shared QWebChannel transport does not exist, so its
+// overlay chrome reports back by dispatching "arora:reader:*"
+// CustomEvents on the document — DOM events cross worlds.  This relay
+// forwards them to the lazy shared channel client (arora-channel.js's
+// window.__aroraChannel, armed in this world) and the "aroraReader"
+// bridge object.  A page forging these events gains nothing:
+// notifyExited is a cosmetic state hint and setPreference writes two
+// clamped settings.
 (function () {
     if (window.__aroraReaderForward)
         return;

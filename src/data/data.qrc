@@ -12,6 +12,7 @@
     <file>reader.js</file>
     <file>reader-forward.js</file>
     <file>arora-channel.js</file>
+    <file>arora-mainworld.js</file>
     <file>fingerprint.js</file>
     <file>pip.js</file>
     <file>pip-shim.js</file>

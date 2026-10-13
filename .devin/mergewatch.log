@@ -2156,3 +2156,126 @@ I'll start by checking the current state of this checkout and fetching from orig
 
 WORKLOG line appended and pushed (`42e8fa4`). Untouched dirty files left for the concurrent agent: `settings.*`, `tst_settingsdialog.cpp`, `Arora-Task.md`, and the watchdog logs.
 [2026-10-13 09:23:57] merge run exited rc=0
+[2026-10-13 10:14:01] merge due: ui-work(2) — spawning devin merge run
+I'll start by checking the repository state and fetching from origin.Tree has two dirty log files (watchdog logs — unlikely to conflict). Checking lane divergence:`rust-work` is at 0 — skipping. `ui-work` has 2 commits. Checking what they touch:One conflict in `src/tabwidget.cpp`. Examining it:Master refactored the completer setup into `ensureLineEditCompleter()` + `wireLocationBar()`, with a rust conditional block. The lane kept the old monolithic `wireLocationBar` but made it shared with a new `adoptTransferredTab()`. Let me check the lane's version to see the full structure:Now let me see the lane's `adoptTransferredTab` and how it uses `wireLocationBar`/`wireWebView`:The lane's intent — `wireLocationBar`/`wireWebView` as shared helpers callable from its new `adoptTransferredTab()` — is already satisfied by master's refactored structure (`ensureLineEditCompleter()` + shared `wireLocationBar()`). Master's side also carries the `ARORA_RUSTCORE` completer path the lane lacks. Resolution: keep HEAD's side of this hunk (the post-conflict `#ifndef AUTOTESTS` block correctly closes master's `makeNewTabOnProfile`).Conflict resolved with master's structure preserved. Verifying no other markers remain and that the lane's new symbols resolve:Header merged cleanly. Quick check that lane helpers referenced by `adoptTransferredTab` exist in the merged tree:All symbols resolve. Staging the resolution and sanity-checking the auto-merged log files before building:Merge staged — logs merged cleanly (union preserved). Now building:Header auto-merge duplicated `wireLocationBar` (master already declared it at line 485; the lane added it again in its new block at 746). Checking for other duplicates:Removing the duplicate declaration — the comment stays accurate since it describes the pair of helpers even though `wireLocationBar` is declared up at line 485:The auto-merge split `makeNewTabOnProfile` — duplicated definition at 1023. Let me inspect the merged region and compare with master's original:The merge matched master's `#ifndef AUTOTESTS` tab-order block (inside its `makeNewTabOnProfile`) with the lane's version (tail of its `wireLocationBar`), splitting the function. Let me see the rest of the second definition:Now I understand: the merge produced a truncated `makeNewTabOnProfile` (955–986, master's head + the `}` that closed the lane's `wireLocationBar`), the lane's new `wireWebView` (988–1021), then the lane's full `makeNewTabOnProfile` (1023+). 
+
+The correct union: one `makeNewTabOnProfile` = master's head (including the ENG08 tab-order block) + lane's `wireWebView(webView)` call in place of master's inline connects + shared tail. Fixing:Structure is now clean: master's `ensureLineEditCompleter`/`wireLocationBar` → lane's `wireWebView` → single unified `makeNewTabOnProfile`. Rebuilding:The filter hid everything — need to confirm the build completed. Re-running for the final status:Build is complete — the earlier run finished the link (grep's exit 1 just meant no error lines). Verifying the binary:Binary built fresh at 10:18 — build OK. Re-staging `tabwidget.cpp` (edited after initial stage) and committing the merge:Merge committed. Appending the WORKLOG entry and pushing:Done. Summary of this merge run:
+
+- **rust-work**: skipped (0 commits ahead)
+- **ui-work**: merged (2 commits — TABS13 tab tear-off/cross-window merge + READ03 task flip)
+- **Conflicts**: `src/tabwidget.cpp` — the auto-merge matched master's `#ifndef AUTOTESTS` tab-order block inside `makeNewTabOnProfile` with the lane's similar tail inside its monolithic `wireLocationBar`, splitting the function in two. Resolved to master's structure: `ensureLineEditCompleter()` (keeps the `ARORA_RUSTCORE` completer path) + shared `wireLocationBar()` + the lane's new `wireWebView()` helper, with a single unified `makeNewTabOnProfile` calling `wireWebView` — the lane's shared-wiring intent for `adoptTransferredTab` preserved. Also deduped a double `wireLocationBar` declaration the auto-merge left in `tabwidget.h`.
+- **WORKLOG.md / ChangeLog / task tables**: auto-merged cleanly, both sides' lines kept.
+- **Build**: `make -C src -j2` clean, `arora` binary linked fresh.
+- **Pushed**: `43ad69c..f83691d master -> master`; WORKLOG entry appended.
+- Pre-existing dirty files (`.devin/mergewatch.log`, `.devin/taskloop.log`) left untouched and unstaged.
+[2026-10-13 10:18:38] merge run exited rc=0
+[2026-10-13 11:18:44] merge due: ui-work(1) — spawning devin merge run
+I'll start by checking the repo state and fetching.Working tree has dirty log files (watchdog logs, unrelated to merges). Now check how far ahead each lane is.Only `ui-work` is ahead (1 commit). Let me see what it contains, then merge.Clean merge — only the UI task queue file changed. Now verify the build.Build is fine (docs-only merge, nothing to compile). Now append the worklog line and push.Now commit the worklog line (matching prior commit style) and push master.Merge run complete:
+
+- **rust-work**: 0 ahead — skipped.
+- **ui-work**: 1 commit ahead (`tasks: queue READ05`). Merged cleanly — only `.devin/Arora-Task-UI.md` touched, no conflicts.
+- **Build**: `make -C src -j2` — ok (docs-only merge, nothing to compile).
+- **Worklog**: appended MERGEWATCH line, committed as `e413c3d`, pushed `master` to origin.
+- Pre-existing dirty watchdog logs (`mergewatch.log`, `taskloop.log`, `taskloop-launch.log`) left untouched.
+[2026-10-13 11:19:08] merge run exited rc=0
+[2026-10-13 11:29:09] merge due: ui-work(1) — spawning devin merge run
+I'll start by checking the current state of the repository and fetching origin.Pushed. Now appending the MERGEWATCH line to `.devin/WORKLOG.md` — checking its format first.Only `WORKLOG.md` staged; watchdog logs left untouched. Committing and pushing.Pass complete. Summary:
+
+- **rust-work**: 0 ahead — skipped
+- **ui-work**: 1 ahead (`8b66d20` READ03 reader-mode fix) — merged cleanly via ort, no conflicts. Files auto-merged: `WORKLOG.md`, `ChangeLog`, `tst_browsermainwindow.cpp`, `reader.js`, task table, lane log
+- **Build**: `make -C src -j2` succeeded — `arora` binary linked
+- **Pushed**: `f9ee2ef` (merge) + `a5cc900` (worklog entry)
+- **Logged**: `- 2026-10-13 MERGEWATCH: ui-work merged — no conflicts …; build ok`
+
+The dirty watchdog logs (`.devin/mergewatch.log`, `.devin/taskloop.log`) were left unstaged and untouched. Stopping after this one pass.
+[2026-10-13 11:29:55] merge run exited rc=0
+[2026-10-13 11:44:56] merge due: ui-work(1) — spawning devin merge run
+Starting merge run. First, checking the tree state and fetching.Working tree is dirty (taskloop agent mid-run). Checking lane ahead counts.`ui-work` only touches `.devin/Arora-Task-UI.md`, which is clean locally. Merging.Clean merge. Verifying the build.Build is running. Waiting for completion.Build succeeded. Pushing master and logging the merge.Merge run complete:
+
+- **rust-work**: 0 commits ahead — skipped.
+- **ui-work**: 1 commit ahead (`cd342f1`, queued MENU07). Merged cleanly via ort — only `.devin/Arora-Task-UI.md` touched, no conflicts with the dirty working tree.
+- **Build**: `make -C src -j2` succeeded (`arora` binary linked).
+- **Push**: merge commit `5bd1936` pushed; WORKLOG entry appended, committed (`270bcfe`), and pushed.
+- **Log**: `- 2026-10-13 MERGEWATCH: ui-work merged — no conflicts (Arora-Task-UI.md queue row only); rust-work skipped (0 ahead); build ok`
+
+The dirty taskloop files were left untouched. Stopping after this one pass.
+[2026-10-13 11:47:50] merge run exited rc=0
+[2026-10-13 11:52:51] merge due: ui-work(3) — spawning devin merge run
+Starting merge run. First, check the working tree state and fetch.Working tree is dirty (likely an agent mid-run). Fetching and checking lane divergence.Clean merge. Now verifying the build.Build is fine (merge touched only docs). Pushing master.Pushed. Now appending the WORKLOG entry — first check the existing format.Merge run complete — one pass, done.
+
+- **rust-work**: 0 commits ahead of master — skipped
+- **ui-work**: 3 commits ahead — merged cleanly via ort; only `.devin/Arora-Task-UI.md` changed, no conflicts, and it didn't collide with the dirty working-tree files (agent mid-run in `src/` untouched)
+- **Build**: `make -C src -j2` → nothing to rebuild, ok
+- **Pushed**: merge commit `44bb730` + worklog commit `e57652e` to origin master
+- **WORKLOG**: appended `MERGEWATCH: ui-work merged — no conflicts …, build ok`
+
+Stopping here; the watchdog will launch the next run.
+[2026-10-13 11:58:40] merge run exited rc=0
+[2026-10-13 12:03:40] merge due: ui-work(3) — spawning devin merge run
+I'll start by checking the repo state and fetching updates.Tree has unrelated dirty files (logs + an untracked data file) — I'll leave those alone and watch for merge collisions with them. Now checking lane status.`rust-work` is at 0 (skip). `ui-work` is 3 ahead — let me see what it touches before merging.Only `.devin/Arora-Task-UI.md` changed on the lane. Let me check if master also touched it since the merge base.Master didn't touch that file since the merge base — should merge cleanly. Proceeding.Clean merge, markdown-only change. Per instructions I'll still verify the build. Checking the env setup first.Build is clean (nothing to rebuild — markdown-only merge). Pushing master, then logging.Push succeeded. Appending the MERGEWATCH line in the established format.Merge pass complete.
+
+- **rust-work**: 0 ahead of master — skipped.
+- **ui-work**: 3 commits ahead, merged cleanly via ort (`eb29f77`). Only `.devin/Arora-Task-UI.md` changed (+15 lines queuing TABS14/15/16); master hadn't touched that file since the merge base, so no conflict resolution needed.
+- **Build**: `source .devin/qt-env.sh && make -C src -j2` → up to date, exit 0 (markdown-only merge, nothing to rebuild).
+- **Push**: `0bdac1a..eb29f77 master -> master`.
+- **Log**: appended MERGEWATCH line to `.devin/WORKLOG.md`.
+
+Pre-existing dirty files (`.devin/mergewatch.log`, `taskloop.log`, `taskloop-launch.log`, `src/data/arora-mainworld.js`) were left untouched. Stopping after this one pass.
+[2026-10-13 12:05:53] merge run exited rc=0
+[2026-10-13 12:10:54] merge due: ui-work(4) — spawning devin merge run
+Starting merge run. First, let me check the repo state and fetch.The working tree has uncommitted changes (likely an agent mid-run). Let me check lane ahead counts.`ui-work` is 4 commits ahead, but its diff touches many files that are dirty in this tree (WORKLOG.md, data.qrc, reader.js, webenginebackend.*, readermode.cpp) — the merge would be blocked by the mid-run agent's uncommitted changes. Let me check the log formats before recording the skip.The overlap is substantial — 6 files are both dirty here and modified by the lane. Git will refuse the merge; let me confirm with a clean attempt (the preflight check aborts before touching anything if dirty files block it).[2026-10-13 12:13:24] merge run exited rc=0
+[2026-10-13 12:18:24] merge due: ui-work(4) — spawning devin merge run
+I'll start by checking the current state of the repo and fetching.The working tree is dirty (agent mid-run, possibly). Now let me check how far ahead each lane branch is.`rust-work` is at 0 (skip). `ui-work` is 4 ahead. Let me check which files ui-work touched to see if they'd collide with the dirty working tree.`ui-work` touched 6 files that are dirty in this working tree (`WORKLOG.md`, `data.qrc`, `reader.js`, `webenginebackend.cpp/.h`, `readermode.cpp`) — likely an agent mid-run. Let me confirm git refuses the merge rather than assuming.[2026-10-13 12:19:20] merge run exited rc=0
+[2026-10-13 12:24:21] merge due: ui-work(4) — spawning devin merge run
+Starting the merge run. First, checking the state of this tree and fetching.Working tree is dirty — likely another agent mid-run. I'll check which files each lane touches before merging, so I can detect conflicts with dirty files.rust-work has nothing to merge. ui-work is 4 ahead — checking which files it touched.ui-work touches several files that are dirty in this tree (WORKLOG.md, data.qrc, reader.js, webenginebackend.\*, readermode.cpp) — an agent appears mid-run here. Attempting the merge to confirm git's behavior (it will refuse safely without touching anything if dirty files would be overwritten):[2026-10-13 12:25:05] merge run exited rc=0
+[2026-10-13 12:30:06] merge due: ui-work(5) — spawning devin merge run
+I'll start by checking the current state of the repository and fetching from origin.The tree is dirty (an agent appears mid-run). Let me check lane ahead-counts.Only `ui-work` is ahead (5 commits). Let me check which files it touches vs. the dirty files in this tree.`ui-work` touches 6 files that are dirty in this tree (`WORKLOG.md`, `data.qrc`, `reader.js`, `webenginebackend.{cpp,h}`, `readermode.cpp`). Git will refuse the merge — let me confirm.[2026-10-13 12:30:43] merge run exited rc=0
+[2026-10-13 12:35:44] merge due: ui-work(5) — spawning devin merge run
+I'll start by checking the current state of the repo and fetching from origin.The working tree is dirty (many modified files — likely an agent mid-run in this checkout). I'll check how far ahead each lane is first.`rust-work` is at 0 — skipping. `ui-work` is 5 commits ahead. Let me see which files it touches and whether they overlap with the dirty working tree.ui-work touches several files that are currently dirty in this tree (`reader.js`, `readermode.cpp`, `webenginebackend.*`, `data.qrc`, `WORKLOG.md`). Per the rules, a lane whose merge would collide with dirty files gets skipped. Let me confirm the merge would be refused, and check log formats.[2026-10-13 12:36:35] merge run exited rc=0
+[2026-10-13 12:41:36] merge due: ui-work(5) — spawning devin merge run
+I'll start by checking the state of this checkout and fetching origin.[2026-10-13 12:42:21] merge run exited rc=0
+[2026-10-13 12:47:22] merge due: ui-work(6) — spawning devin merge run
+I'll start by checking the current state of the repo and fetching.Working tree is dirty (many modified files — likely an agent mid-run). I'll check lane ahead counts next.rust-work is at 0 (skip). ui-work is 6 ahead. Checking whether ui-work's changed files overlap with the dirty files in this tree — that would block the merge.ui-work touched 7 files that are dirty in this tree (WORKLOG.md, ChangeLog, data.qrc, reader.js, webenginebackend.cpp/.h, readermode.cpp). Per the rules, if dirty files block the merge I skip the lane — but the merge may still be able to proceed if it doesn't need to rewrite those paths. Let me attempt it.[2026-10-13 12:48:19] merge run exited rc=0
+[2026-10-13 12:53:19] merge due: ui-work(6) — spawning devin merge run
+I'll start by checking the working tree state and fetching.The working tree has many modified files — likely an agent mid-run. Let me check lane commit counts.ui-work touches several files that are dirty in this tree (WORKLOG.md, ChangeLog, data.qrc, reader.js, webenginebackend.*, readermode.cpp). Let me check the merge-runner conventions before deciding.Precedent is established — previous runs skipped ui-work for the same reason. I'll attempt the merge anyway to confirm git's refusal (it aborts cleanly before touching anything if dirty files block it).[2026-10-13 12:54:09] merge run exited rc=0
+[2026-10-13 12:59:09] merge due: ui-work(6) — spawning devin merge run
+I'll start by checking the current state of the repository.The working tree is dirty (many modified files — likely an agent mid-run). I'll proceed and skip lanes whose merges collide with dirty files. First, fetch and check lane progress.Only `ui-work` is ahead (6 commits). Let me check which files it touches vs. the dirty files here.`ui-work` is 6 ahead and touches several files that are dirty in this tree (WORKLOG.md, ChangeLog, data.qrc, reader.js, webenginebackend.*, readermode.cpp). Let me attempt the merge — git will cleanly refuse if dirty files would be overwritten.[2026-10-13 13:00:31] merge run exited rc=0
+[2026-10-13 13:05:32] merge due: ui-work(6) — spawning devin merge run
+I'll start by checking the current repo state and fetching.Working tree has uncommitted changes (likely an agent mid-run). Now checking lane counts.The diff is large since it includes both branches' divergent work. Let me check what ui-work actually changed relative to the merge base, and whether those files overlap with the dirty working-tree files.[2026-10-13 13:06:35] merge run exited rc=0
+[2026-10-13 13:11:36] merge due: ui-work(7) — spawning devin merge run
+I'll start by checking the repo state and fetching.Working tree is dirty (an agent is likely mid-run). I'll keep that in mind — any lane whose merge touches dirty files gets skipped. Now checking how far ahead each lane is.`rust-work` is even with master — skipping. `ui-work` is 7 ahead. Let me see which files it changes and whether they overlap with the dirty working tree.`ui-work` modifies several files that are dirty in this tree (`WORKLOG.md`, `ChangeLog`, `data.qrc`, `reader.js`, `webenginebackend.*`, `readermode.cpp`), so git will likely refuse the merge. Let me attempt it to confirm.[2026-10-13 13:12:14] merge run exited rc=0
+[2026-10-13 13:17:15] merge due: ui-work(7) — spawning devin merge run
+I'll start by checking the repo state and fetching.The working tree has uncommitted changes (likely an agent mid-run). I'll be careful not to disturb them. Now checking how far ahead each lane is.`rust-work` is even with master — skip. `ui-work` is 7 ahead. Let me check which files the merge touches vs. which files are dirty here.`ui-work` is 7 ahead, but the merge would touch several files that are dirty in this tree (`WORKLOG.md`, `ChangeLog`, `src/data/data.qrc`, `src/data/reader.js`, `src/engine/webenginebackend.{cpp,h}`, `src/readermode.cpp`) — indicating an agent mid-run here. Per the rules I should confirm the merge is actually blocked, then skip rather than disturb the working tree.[2026-10-13 13:18:06] merge run exited rc=0
+[2026-10-13 13:23:07] merge due: ui-work(7) — spawning devin merge run
+Working tree is dirty (another agent mid-run, likely). Checking lane counts:rust-work is 0 ahead (skip). ui-work is 7 ahead. Before merging, I need to check if ui-work touches any of the dirty files in this tree (which would block the merge):Several dirty files overlap with files ui-work touches (`ChangeLog`, `WORKLOG.md`, `data.qrc`, `reader.js`, `webenginebackend.*`, `readermode.cpp`). Git will refuse to merge over them — let me confirm:[2026-10-13 13:23:37] merge run exited rc=0
+[2026-10-13 13:28:37] merge due: ui-work(7) — spawning devin merge run
+I'll start by checking the current state of the repo and fetching.[2026-10-13 13:30:28] merge run exited rc=0
+[2026-10-13 13:50:21] merge due: ui-work(1) — spawning devin merge run
+I'll start by checking the current state of the repo and fetching.The working tree is dirty with unmerged conflicts — a merge appears to already be in progress in this checkout. Let me inspect.No `MERGE_HEAD` — a prior merge was left half-resolved in the index (staged changes + unmerged entries remain, but the merge state was reset). Let me check the logs to understand what happened.Clear picture now: a SEC24 task agent is mid-run in this tree (restarted at 13:13), which explains the dirty tree and leftover UU index entries — previous merge runs skipped for the same reason. Let me check lane ahead-counts and whether merges would collide with the dirty files.ui-work is 1 commit ahead (TOR16), but its merge would write `WORKLOG.md` and `ChangeLog` — both dirty here (staged by the mid-run SEC24 agent), and the index still has unmerged entries. Let me attempt the merge to confirm git refuses cleanly.Git refused cleanly — nothing touched. Quick sanity check that the tree is unchanged, then I'm done.No merges performed this pass. Summary:
+
+- **rust-work**: 0 commits ahead of master — skipped.
+- **ui-work**: 1 commit ahead (`1ab511f TOR16: grow the Tor circuit popup…`), but the merge was refused: this tree has unmerged index entries (`reader.js`, `webenginebackend.cpp`, `readermode.cpp`) plus dirty/staged files — including `WORKLOG.md` and `ChangeLog`, which the lane also touches — left by the SEC24 task agent mid-run (taskloop restarted it at 13:13). Per the rules I skipped the lane rather than disturb the working tree; git aborted before modifying anything.
+- No merges → no build verification or push needed. HEAD unchanged at `602c103`.
+
+A later run can merge ui-work once the SEC24 agent commits its work.
+[2026-10-13 13:51:15] merge run exited rc=0
+[2026-10-13 13:56:15] merge due: ui-work(1) — spawning devin merge run
+I'll start by checking the current state of this repository and fetching from origin.Git refused cleanly (unmerged files in index) — nothing was touched. Now I'll append the skip line to `.devin/WORKLOG.md`, matching the established convention.Line appended. No merge commits were created, so there's nothing new to push — let me verify master is still in sync with origin and the tree state is undisturbed.Pass complete — no merges performed. Summary:
+
+- **rust-work**: 0 commits ahead of master — skipped.
+- **ui-work**: 1 commit ahead (`1ab511f TOR16: grow the Tor circuit popup…`), but skipped per the dirty-tree rule: the index still has unmerged entries (`src/data/reader.js`, `src/engine/webenginebackend.cpp`, `src/readermode.cpp`) left by the SEC24 task agent mid-run in this tree, and the merge would also overwrite dirty `WORKLOG.md`/`ChangeLog`. `git merge ui-work` refused cleanly (rc=128) without touching anything.
+- Logged the skip in `.devin/WORKLOG.md` following the established MERGEWATCH convention. No commits made — staging would have swept up the SEC24 agent's in-progress staged work.
+- No merges → no build verification needed; master unchanged at `602c103`, already in sync with `origin/master`, nothing to push.
+
+A later watchdog run can merge ui-work once the SEC24 agent commits and clears the index.
+[2026-10-13 13:57:21] merge run exited rc=0
+[2026-10-13 14:02:22] merge due: ui-work(1) — spawning devin merge run
+Starting merge runner pass. First, check the tree state and fetch.The working tree is dirty and has unresolved conflict markers (`UU` files). Let me check whether a merge is in progress.No merge in progress, but there are unmerged paths. Let me see the full status tail.There are leftover unmerged index entries but no `MERGE_HEAD` — a previous merge was interrupted. Let me check the reflog and lane divergence.The log is clear: previous runs skipped ui-work because an SEC24 task agent is mid-run in this tree, leaving unmerged index entries and dirty files. Let me check if that agent is still alive and which files the ui-work commit touches.The taskloop's SEC24 agent left this tree with unmerged index entries and staged work. The ui-work commit touches `WORKLOG.md` and `ChangeLog` — both dirty here. Let me attempt the merge to confirm git refuses cleanly.Git refused cleanly — nothing touched. Let me check the WORKLOG tail format and append the skip note.Same situation as the prior run: ui-work is 1 ahead (TOR16) but the merge is refused — unmerged index entries left by the SEC24 agent plus dirty files the lane would overwrite. Appending the skip line per convention.Pass complete — no merges performed.
+
+- **rust-work**: 0 commits ahead — skipped.
+- **ui-work**: 1 commit ahead (`1ab511f TOR16: Tor circuit popup sizing`), but merge refused (rc=128): this tree has unmerged index entries (`src/data/reader.js`, `src/engine/webenginebackend.cpp`, `src/readermode.cpp`) plus dirty/staged `WORKLOG.md` and `ChangeLog` that the lane would overwrite — all left by the SEC24 task agent mid-run. Per the dirty-tree rule I skipped rather than disturb it; git aborted before modifying anything.
+- Logged the skip in `.devin/WORKLOG.md` (no commit — staging would sweep up the agent's staged work).
+- No merges → no build verification; master unchanged at `602c103`, already in sync with `origin/master`, nothing to push.
+[2026-10-13 14:03:14] merge run exited rc=0
+[2026-10-13 14:08:14] merge due: ui-work(1) — spawning devin merge run
+Starting the merge run. First, check the working tree state and fetch.The tree shows unresolved conflicts (`UU` files) — a merge appears to be in progress. Let me check the state.A merge is already in progress with 3 unresolved files. Let me check which lane is mid-merge and inspect the state.No MERGE_HEAD output but unmerged index entries exist. Let me check the git state files directly.The unmerged state doesn't match ui-work's pending commit (TOR16 only touches tor files). Let me check the reflog to see what operation left this state.The reflog reveals stash activity ("index on master", "On master: sec24-wip-baseline-check"). An agent likely stashed WIP, the merge runner merged ui-work, then the agent's `stash pop` conflicted — leaving unmerged index entries without MERGE_HEAD. Let me verify.

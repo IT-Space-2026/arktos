@@ -203,6 +203,19 @@ struct Script {
     bool runsOnSubFrames = false;
 };
 
+// SEC24: Arora's private script world.  WebPage binds the page's
+// QWebChannel to this world so page script in the main world never
+// sees qt.webChannelTransport and cannot enumerate or invoke the
+// registered bridge objects (autofill, arora, reader, pip).  Every
+// channel-side consumer — the __aroraChannel bootstrap + whitelisted
+// postMessage forwarder (arora-channel.js), the autofill bundle, and
+// the reader event relay (reader-forward.js) — runs in this world
+// instead; the reader driver itself stays in its own ReaderWorldId
+// and only speaks DOM CustomEvents, which cross worlds.  The main
+// world reaches only the deliberately page-callable surface
+// (external.AddSearchProvider, aroraPip) through the forwarder.
+inline constexpr quint32 AroraChannelWorld = 0xa0;
+
 // ---- find-in-page ------------------------------------------------------------
 
 enum FindFlag {
@@ -457,9 +470,13 @@ public:
     // its script gate for the injection window only — page scripts
     // refused at parse time do not retro-run while the gate is up.
     // A backend with no script gate just runs runJavaScript.
+    // `worldId` selects the script world (0 = the page's main world);
+    // the reader driver passes its own isolated ReaderWorldId so its
+    // code never lands where page script can observe or redefine it.
     virtual void runJavaScriptLifted(const QString &source,
             const std::function<void(const QVariant &)> &resultCallback
-                = std::function<void(const QVariant &)>()) = 0;
+                = std::function<void(const QVariant &)>(),
+            quint32 worldId = 0) = 0;
 
     // Per-page user-script collection (adblock cosmetic, autofill) —
     // the same Script triple Profile carries, scoped to one document.

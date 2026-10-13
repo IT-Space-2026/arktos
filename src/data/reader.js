@@ -1,12 +1,17 @@
 // READ01/READ05: Reader Mode driver — injected by ReaderMode through
-// runJavaScript into a dedicated ISOLATED script world (not the
-// page's main world), so page JavaScript can neither see nor
-// redefine __aroraReader/Readability/isProbablyReaderable.  The DOM
-// is shared across worlds, so extraction and overlay construction
-// work on the live document exactly as before.  App-side injection
-// is not a page script, so it is not subject to the page's own
-// script-block rules; ReaderMode lifts JavascriptEnabled for the
-// injection window on JSCTL-blocked pages.
+// runJavaScript into a dedicated ISOLATED script world (ReaderWorldId,
+// not the page's main world), so page JavaScript can neither see nor
+// redefine __aroraReader/Readability/isProbablyReaderable.  The DOM is
+// shared across worlds, so extraction and overlay construction work on
+// the live document exactly as before.  SEC24 moved the page's
+// QWebChannel into a different isolated world (AroraChannelWorld) —
+// the driver needs no channel access at all: its chrome reports through
+// DOM CustomEvents on the shared document, and reader-forward.js —
+// running in AroraChannelWorld where the transport lives — relays them
+// to the "aroraReader" bridge object.  App-side injection is not a page
+// script, so it is not subject to the page's own script-block rules;
+// ReaderMode lifts JavascriptEnabled for the injection window on
+// JSCTL-blocked pages.
 //
 // The article is extracted by the vendored Mozilla Readability
 // (Apache-2.0, src/data/Readability.js + Readability-readerable.js,
@@ -37,11 +42,11 @@
 // gained there, and they cannot make its scripts run.
 //
 // window.__aroraReader still exits the overlay locally on tor pages
-// (no channel), and the chrome reports preference changes and exits
-// to C++ by dispatching "arora:reader:*" CustomEvents on the shared
-// document — DOM events cross worlds, and reader-forward.js relays
-// them to the "aroraReader" channel object in the main world where
-// the transport actually lives.
+// (no forwarder is installed there), and the chrome reports preference
+// changes and exits to C++ by dispatching "arora:reader:*" CustomEvents
+// on the shared document — DOM events cross worlds, and
+// reader-forward.js relays them to the "aroraReader" channel object in
+// AroraChannelWorld, where SEC24 put the transport.
 (function () {
     if (window.__aroraReader)
         return;

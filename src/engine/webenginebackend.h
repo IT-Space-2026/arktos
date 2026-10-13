@@ -114,7 +114,8 @@ public:
 
     void runJavaScriptLifted(const QString &source,
             const std::function<void(const QVariant &)> &resultCallback
-                = std::function<void(const QVariant &)>()) override;
+                = std::function<void(const QVariant &)>(),
+            quint32 worldId = 0) override;
     // The same lift on a raw engine page — escape hatch for callers
     // still holding QWebEnginePage*/QWebEngineView* (the
     // clear-private-data sweep walks views, not WebView tabs).

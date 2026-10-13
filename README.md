@@ -387,8 +387,9 @@ that swap means in practice:
   WebEngine's own `PluginsEnabled`.
 - **Autofill reimplemented** — WebKit's frame-level form hooks have no
   WebEngine equivalent, so form detection, fill and capture are done
-  by an injected script reporting over a hardened, token-gated
-  WebChannel bridge. Honest deltas: only JS-observable submits are
+  by an injected script reporting over a token-gated WebChannel
+  bridge that lives in a script world page code cannot enter.
+  Honest deltas: only JS-observable submits are
   captured (the app cannot see POST bodies), iframe forms are not
   captured, and a submit racing an immediate navigation can be missed.
   The store moved from plaintext `autofill.dat` to AES-256-GCM sealed

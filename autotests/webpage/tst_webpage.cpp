@@ -34,6 +34,7 @@
 #include <addressdialog.h>
 #include <autofillmanager.h>
 #include <browserprofile.h>
+#include <engineinterface.h>
 #include <opensearchmanager.h>
 #include <popupblocker.h>
 #include <privacyrequestinterceptor.h>
@@ -94,7 +95,8 @@ private slots:
     void insecureFormRealSubmit();
 
 private:
-    QVariant evalSync(QWebEnginePage *page, const QString &js);
+    QVariant evalSync(QWebEnginePage *page, const QString &js,
+                      quint32 worldId = 0);
     void pinPrivacy(bool httpsOnly, bool httpsFirst);
     QList<QUrl> m_openedUrls;
     QVariant m_savedHttpsOnly;
@@ -159,11 +161,13 @@ private:
     QTcpServer m_server;
 };
 
-QVariant tst_WebPage::evalSync(QWebEnginePage *page, const QString &js)
+QVariant tst_WebPage::evalSync(QWebEnginePage *page, const QString &js,
+                               quint32 worldId)
 {
     QVariant result;
     bool done = false;
-    page->runJavaScript(js, [&](const QVariant &v) { result = v; done = true; });
+    page->runJavaScript(js, worldId,
+                        [&](const QVariant &v) { result = v; done = true; });
     for (int waited = 0; !done && waited < 10000; waited += 50)
         QTest::qWait(50);
     return result;
@@ -844,7 +848,9 @@ void tst_WebPage::javaScriptObjects()
 }
 
 // SEC08: the "arora" object appears on the channel only for internal
-// qrc pages, and the start page's async bootstrap actually reaches it.
+// qrc pages, and the start page's bridge hop actually reaches it.
+// SEC24: the channel transport lives in AroraChannelWorld — the main
+// world sees neither it nor the bootstrap's helpers.
 void tst_WebPage::webChannelStartPage()
 {
     SubWebPage page;
@@ -857,9 +863,9 @@ void tst_WebPage::webChannelStartPage()
                 .contains(QLatin1String("arora")),
              "arora object must be registered for qrc pages");
 
-    // The channel bootstrap translates the chrome text and reports the
-    // current engine name — proving the round trip works for the one
-    // page that is meant to have the object.
+    // The start page's bridge client translates the chrome text and
+    // reports the current engine name — proving the whitelisted
+    // forwarder round-trips for the one page meant to have the object.
     QTRY_COMPARE_WITH_TIMEOUT(
         evalSync(&page, QLatin1String("document.title")).toString(),
         QStringLiteral("Welcome to Arora!"), 15000);
@@ -872,61 +878,69 @@ void tst_WebPage::webChannelStartPage()
 
     // currentEngineName is a plain string now — the channel must never
     // hand a live QObject* (with writable properties/slots) to script.
+    // Read it in the channel world, where the __aroraChannel bootstrap
+    // lives; the main world gets no transport to verify against.
     QVERIFY(evalSync(&page, QLatin1String(
-        "new QWebChannel(qt.webChannelTransport, function (c) {"
-        "  window.__engineType = typeof c.objects.arora.currentEngineName;"
-        "}); 'ok'")).toBool());
+        "window.__aroraChannel(function (c) {"
+        "  window.__engineType ="
+        "    typeof c.objects.arora.currentEngineName;"
+        "}); 'armed'"), Engine::AroraChannelWorld)
+            .toString() == QLatin1String("armed"));
     QTRY_COMPARE_WITH_TIMEOUT(
-        evalSync(&page, QLatin1String("window.__engineType")).toString(),
+        evalSync(&page, QLatin1String("window.__engineType"),
+                 Engine::AroraChannelWorld).toString(),
         QStringLiteral("string"), 15000);
 
-    // CHAN01: the page's own channel client coexists with the armed
-    // autofill bundle — neither may steal the other's transport
-    // messages.
+    // The main world stays clean: no transport, no bootstrap, no
+    // channel client constructor.
+    QCOMPARE(evalSync(&page, QLatin1String(
+        "[typeof window.qt, typeof window.__aroraChannel,"
+        " typeof window.QWebChannel].join(',')")).toString(),
+             QStringLiteral("undefined,undefined,undefined"));
+
     QTest::qWait(300);
     QVERIFY2(page.execCallbackErrors() == 0,
              qPrintable(page.consoleMessages.join(QLatin1Char('\n'))));
 }
 
-// SEC08: a hostile page can open its own QWebChannel client — the
-// transport is injected into every page and qwebchannel.js is public —
-// and reach aroraAutofill.submitForm directly.  Reports without the
-// per-load token only the injected autofill.js holds must be dropped:
-// no write to the store, not even a save prompt.  CHAN01: with the
-// transport demux armed (arora-channel.js) the forged-call exercise
-// also proves two clients coexist on one transport — any misrouted
-// response would surface as an execCallbacks console error.
+// SEC24: a hostile page used to be able to open its own QWebChannel
+// client — the transport was injected into the main world and
+// qwebchannel.js is public — and reach aroraAutofill.submitForm
+// directly.  The channel now lives in AroraChannelWorld: the page
+// gets no transport and no channel constructor, so enumeration is
+// impossible outright; the ONLY reachable calls are the forwarder's
+// whitelist, which refuses aroraAutofill/arora/'aroraReader' calls
+// before they can touch a bridge object.
 void tst_WebPage::webChannelForgedAutofillReport()
 {
-    QFile channelFile(QLatin1String(":/qtwebchannel/qwebchannel.js"));
-    QVERIFY2(channelFile.open(QIODevice::ReadOnly),
-             "bundled qwebchannel.js required");
-
     LocalHttpServer server;
     QVERIFY(server.start());
-    server.pageBody = QByteArrayLiteral("<html><head><script>")
-        + channelFile.readAll()
-        + QByteArrayLiteral("</script></head><body>"
+    server.pageBody = QByteArrayLiteral(
+        "<html><body>"
         "<form name='login' onsubmit='return false'>"
         "<input id='u' name='user' type='text'>"
         "<input id='p' name='pw' type='password'></form>"
         "<script>"
-        "window.__state='connecting';"
-        "new QWebChannel(qt.webChannelTransport, function (channel) {"
-        "  window.__channel=channel;"
-        "  window.__objects=Object.keys(channel.objects).sort().join(',');"
-        "  var b=channel.objects.aroraAutofill;"
-        "  if (b) {"
-        "    b.submitForm('forged', String(location.href),"
-        "      {name:'login',hasPassword:true,elements:["
-        "       {name:'user',value:'forgeduser'},"
-        "       {name:'pw',value:'forgedpass'}]});"
-        "    b.submitForm(String(location.href),"
-        "      {name:'login',hasPassword:true,"
-        "       elements:[{name:'user',value:'forged2'}]});"
-        "  }"
-        "  window.__state='done';"
-        "});"
+        "window.__probe=[typeof window.qt,"
+        " typeof window.QWebChannel,"
+        " typeof window.__aroraChannel].join(',');"
+        "window.__forged='pending';"
+        "window.__arora='pending';"
+        "window.__reader='pending';"
+        "var forged={name:'login',hasPassword:true,elements:["
+        " {name:'user',value:'forgeduser'},"
+        " {name:'pw',value:'forgedpass'}]};"
+        "window.__aroraMainCall('aroraAutofill','submitForm',"
+        " 'forged',String(location.href),forged)"
+        " .then(function(){window.__forged='accepted'},"
+        "       function(){window.__forged='refused'});"
+        "window.__aroraMainCall('arora','translate','x')"
+        " .then(function(){window.__arora='accepted'},"
+        "       function(){window.__arora='refused'});"
+        "window.__aroraMainCall('aroraReader','notifyExited')"
+        " .then(function(){window.__reader='accepted'},"
+        "       function(){window.__reader='refused'});"
+        "window.__state='done';"
         "</script></body></html>");
 
     AutoFillManager *autoFill = AutoFillManager::instance();
@@ -934,7 +948,7 @@ void tst_WebPage::webChannelForgedAutofillReport()
     autoFill->setForms(QList<AutoFillManager::Form>());
 
     // A named (non-off-the-record) profile so capture is actually
-    // armed — the token is the only thing stopping the forged write.
+    // armed — if anything were reachable, the write would land.
     QWebEngineProfile profile(QStringLiteral("tst_webpage_channel"));
     WebView view(&profile);
     view.resize(800, 600);
@@ -948,28 +962,31 @@ void tst_WebPage::webChannelForgedAutofillReport()
         evalSync(page, QLatin1String("window.__state")).toString(),
         QStringLiteral("done"), 15000);
 
-    // The web-facing object set: aroraAutofill + aroraReader (READ01)
-    // + aroraPip (PIP01 — ferries opaque nonces only) are deliberately
-    // reachable, nothing more.
-    QCOMPARE(evalSync(page, QLatin1String("window.__objects")).toString(),
-             QStringLiteral("aroraAutofill,aroraPip,aroraReader,external"));
+    // The enumeration probe: no transport, no client constructor, no
+    // bootstrap — nothing to hang a channel.objects off.
+    QCOMPARE(evalSync(page, QLatin1String("window.__probe")).toString(),
+             QStringLiteral("undefined,undefined,undefined"));
 
-    // Wait until the injected capture hook is armed (the DocumentReady
-    // bundle wraps the prototype submit), then fire one more forged
-    // call against the armed bridge.
+    // Every non-whitelisted object is refused by the forwarder.
+    QTRY_COMPARE_WITH_TIMEOUT(
+        evalSync(page, QLatin1String(
+            "[window.__forged, window.__arora, window.__reader]"
+            ".join(',')")).toString(),
+        QStringLiteral("refused,refused,refused"), 15000);
+
+    // The capture shim itself still arms in the main world — it is
+    // the legitimate submit relay, not a privileged surface (a forged
+    // arora:formsubmit only reports values from the page's own DOM
+    // through the real consent path, same as a genuine submit).
     QTRY_VERIFY_WITH_TIMEOUT(evalSync(page, QLatin1String(
         "HTMLFormElement.prototype.submit.toString()"
         ".indexOf('nativeSubmit')>=0")).toBool(), 15000);
-    // Fire-and-forget: if a broken implementation did raise the save
-    // prompt, a synchronous evalSync would hang inside the modal's
-    // exec() — poll for a modal instead and reject it.
-    page->runJavaScript(QLatin1String(
-        "window.__channel.objects.aroraAutofill.submitForm("
-        "'still-forged', String(location.href),"
-        "{name:'login',hasPassword:true,"
-        " elements:[{name:'user',value:'forged3'}]});"));
+
+    // Brief modal poll — the refused calls must not have queued any
+    // report.  (No synchronous evalSync here: a stray modal would
+    // wedge it inside exec().)
     bool modalSeen = false;
-    for (int i = 0; i < 14; ++i) {
+    for (int i = 0; i < 6; ++i) {
         if (QApplication::activeModalWidget()) {
             modalSeen = true;
             rejectModal(0);
@@ -987,13 +1004,11 @@ void tst_WebPage::webChannelForgedAutofillReport()
 // SEC08: external.AddSearchProvider is callable by any page, but the
 // descriptor fetch is consent-gated — declining means the url is never
 // even requested; accepting fetches it and still runs the install
-// confirmation naming the parsed engine.
+// confirmation naming the parsed engine.  SEC24: the page now reaches
+// it through the whitelisted bridge — window.external.AddSearchProvider
+// is the historical web-compat surface the shim republishes.
 void tst_WebPage::webChannelAddSearchProviderConsent()
 {
-    QFile channelFile(QLatin1String(":/qtwebchannel/qwebchannel.js"));
-    QVERIFY2(channelFile.open(QIODevice::ReadOnly),
-             "bundled qwebchannel.js required");
-
     LocalHttpServer server;
     QVERIFY(server.start());
     server.engineBody = QByteArrayLiteral(
@@ -1005,12 +1020,11 @@ void tst_WebPage::webChannelAddSearchProviderConsent()
         "<Url method=\"get\" type=\"text/html\" "
         "template=\"http://127.0.0.1/search?q={searchTerms}\"/>"
         "</OpenSearchDescription>");
-    server.pageBody = QByteArrayLiteral("<html><head><script>")
-        + channelFile.readAll()
-        + QByteArrayLiteral("</script></head><body><script>"
-        "window.__state='connecting';"
-        "new QWebChannel(qt.webChannelTransport, function (channel) {"
-        "  window.__channel=channel; window.__state='done'; });"
+    server.pageBody = QByteArrayLiteral(
+        "<html><body><script>"
+        "window.__state=(window.external"
+        " && typeof window.external.AddSearchProvider==='function')"
+        " ?'done':'missing';"
         "</script></body></html>");
 
     OpenSearchManager *manager = ToolbarSearch::openSearchManager();
@@ -1033,7 +1047,7 @@ void tst_WebPage::webChannelAddSearchProviderConsent()
     // modal's exec() — answerModal's repeating timer must already be
     // armed when it opens.
     const QString call = QStringLiteral(
-        "window.__channel.objects.external.AddSearchProvider('%1');")
+        "window.external.AddSearchProvider('%1');")
             .arg(server.url().toString() + QLatin1String("engine.xml"));
 
     // Decline: no fetch, no install.
@@ -1055,8 +1069,7 @@ void tst_WebPage::webChannelAddSearchProviderConsent()
 
     // A non-web scheme must be rejected before any prompt or fetch.
     page->runJavaScript(QLatin1String(
-        "window.__channel.objects.external.AddSearchProvider("
-        "'file:///etc/passwd');"));
+        "window.external.AddSearchProvider('file:///etc/passwd');"));
     QTest::qWait(400);
     QVERIFY(!QApplication::activeModalWidget());
     QCOMPARE(server.engineHits, 1);
@@ -1119,33 +1132,22 @@ void tst_WebPage::webChannelAutofillCapture()
     autoFill->setForms(baseline);
 }
 
-// CHAN01: qt.webChannelTransport is a single per-frame object with
-// one onmessage slot — the injected autofill client and a page-side
-// QWebChannel client used to fight over it, and responses addressed
-// to one landed in the other's execCallbacks table
-// ("channel.execCallbacks[message.id] is not a function" on every
-// load).  arora-channel.js now demultiplexes the slot across clients,
-// so a live page-side channel plus a submit report must coexist: the
-// report arrives, the page's own channel keeps round-tripping, and
-// the console stays clean.
+// CHAN01/SEC24: the bridge traffic and the autofill report ride the
+// same page<->channel-world postMessage hop — a live whitelisted call
+// must coexist with a submit report in flight: the report arrives,
+// the page's own call round-trips, and the console stays clean.
 void tst_WebPage::webChannelAutofillIsolation()
 {
-    QFile channelFile(QLatin1String(":/qtwebchannel/qwebchannel.js"));
-    QVERIFY2(channelFile.open(QIODevice::ReadOnly),
-             "bundled qwebchannel.js required");
-
     LocalHttpServer server;
     QVERIFY(server.start());
-    server.pageBody = QByteArrayLiteral("<html><head><script>")
-        + channelFile.readAll()
-        + QByteArrayLiteral("</script></head><body>"
+    server.pageBody = QByteArrayLiteral(
+        "<html><body>"
         "<form name='login' onsubmit='return false'>"
         "<input id='u' name='user' type='text'>"
         "<input id='p' name='pw' type='password'></form>"
         "<script>"
-        "window.__state='connecting';"
-        "new QWebChannel(qt.webChannelTransport, function (channel) {"
-        "  window.__channel=channel; window.__state='done'; });"
+        "window.__state=(typeof window.__aroraMainCall==='function')"
+        " ?'done':'missing';"
         "</script></body></html>");
 
     AutoFillManager *autoFill = AutoFillManager::instance();
@@ -1167,12 +1169,11 @@ void tst_WebPage::webChannelAutofillIsolation()
         QStringLiteral("done"), 15000);
 
     // Wait for the capture hook, then submit and immediately exercise
-    // the page's own channel — the report spins up the shared client
-    // while the page's invoke round-trips in flight, the interleaving
-    // that produced the execCallbacks errors on the shared transport.
+    // a page-side whitelisted call — the report and the bridge request
+    // interleave on the same postMessage hop.
     // (AddSearchProvider on a file: url is refused before prompting;
-    // a void slot still answers a callback, so __pageCall proves the
-    // page's own client is fully functional alongside ours.)
+    // the slot still answers a result, so __pageCall proves the
+    // page's own call is fully functional alongside ours.)
     QTRY_VERIFY_WITH_TIMEOUT(evalSync(page, QLatin1String(
         "HTMLFormElement.prototype.submit.toString()"
         ".indexOf('nativeSubmit')>=0")).toBool(), 15000);
@@ -1182,9 +1183,10 @@ void tst_WebPage::webChannelAutofillIsolation()
         "document.getElementById('p').value='isolatedpw';"
         "document.forms[0].dispatchEvent("
         "  new Event('submit', {bubbles:true, cancelable:true}));"
-        "window.__channel.objects.external.AddSearchProvider("
-        "  'file:///etc/passwd', function () {"
-        "    window.__pageCall='done'; });"));
+        "window.__aroraMainCall('external','AddSearchProvider',"
+        "  'file:///etc/passwd')"
+        "  .then(function () { window.__pageCall='done'; },"
+        "        function () { window.__pageCall='refused'; });"));
 
     QVERIFY(answerModal(QMessageBox::Yes));
     QTRY_VERIFY_WITH_TIMEOUT(autoFill->forms().count() == 1, 5000);

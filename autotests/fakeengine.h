@@ -109,8 +109,10 @@ public:
 
     void runJavaScriptLifted(const QString &source,
                        const std::function<void(const QVariant &)> &resultCallback
-                           = std::function<void(const QVariant &)>()) override
+                           = std::function<void(const QVariant &)>(),
+                       quint32 worldId = 0) override
     {
+        Q_UNUSED(worldId);
         ++liftedCalls;
         lastScript = source;
         if (resultCallback)

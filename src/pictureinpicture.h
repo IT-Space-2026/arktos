@@ -108,9 +108,11 @@ private:
 };
 
 // Channel object registered as "aroraPip" on the page's existing
-// QWebChannel (WebPage::init).  Reachable from arbitrary page script
-// (SEC08), so it only ferries an opaque nonce — the C++ side re-finds
-// the tagged element itself and the gesture gate lives in the shim
+// QWebChannel (WebPage::init).  It is one of the two deliberately
+// page-callable surfaces — the requestPictureInPicture backend —
+// whitelisted through arora-channel.js's forwarder (SEC24), so it
+// only ferries an opaque nonce — the C++ side re-finds the tagged
+// element itself and the gesture gate lives in the shim
 // (navigator.userActivation.isActive before the call).
 class PipRequestBridge : public QObject
 {

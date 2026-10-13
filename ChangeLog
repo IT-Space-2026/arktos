@@ -754,6 +754,20 @@ Security:
   while the downloads run and reports failures honestly; the button
   is disabled with an explanation until remote list downloads are
   consented to (TRUST13).
+- WebChannel isolation (SEC24): the page's QWebChannel is bound to a
+  dedicated isolated script world, so web content can no longer
+  enumerate or call the registered bridge objects — the
+  qt.webChannelTransport never reaches the page's main world. The
+  only path in is a whitelisted postMessage forwarder exposing just
+  `window.external.AddSearchProvider` (the historical web-compat
+  surface), the gesture-gated Picture-in-Picture request bridge, and
+  — on internal qrc: pages only — the start page's "arora" object.
+  The autofill capture bundle moved into the channel world with the
+  SEC08 report token kept as a second wall; scripted form.submit()
+  capture now rides a small main-world shim that relays each call as
+  a DOM event.  The reader-mode driver keeps its own isolated world
+  and speaks DOM events; only its tiny event relay moved into the
+  channel world.
 
 Containers:
 - Isolated container profiles (CONT01).

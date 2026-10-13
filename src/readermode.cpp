@@ -199,14 +199,16 @@ ReaderMode::ReaderMode(WebView *view)
 
         // READ05: the driver lives in an isolated world that has no
         // channel transport, so its chrome reports through DOM
-        // CustomEvents; reader-forward.js relays them to the bridge
-        // in the main world.
+        // CustomEvents; reader-forward.js relays them to the bridge.
+        // SEC24: the relay itself must run in AroraChannelWorld — the
+        // channel bootstrap exists only there now, and DOM events
+        // cross worlds on the shared document.
         QFile forwardFile(QLatin1String(":reader-forward.js"));
         if (forwardFile.open(QIODevice::ReadOnly)) {
             QWebEngineScript forward;
             forward.setName(QLatin1String("arora:reader-forward"));
             forward.setInjectionPoint(QWebEngineScript::DocumentCreation);
-            forward.setWorldId(QWebEngineScript::MainWorld);
+            forward.setWorldId(Engine::AroraChannelWorld);
             forward.setRunsOnSubFrames(false);
             forward.setSourceCode(
                 QString::fromUtf8(forwardFile.readAll()));
@@ -379,7 +381,11 @@ void ReaderMode::runDriver(
     // JSCTL/SECLVL: the lift keeps the driver reaching pages whose
     // scripts are blocked — runJavaScriptLiftedOn owns the
     // JavascriptEnabled gate juggling, and the worldId lands every
-    // call in the reader's isolated world.
+    // call in the reader's isolated world.  SEC24: the driver stays
+    // at ReaderWorldId even though the channel moved — it never
+    // touches the channel itself; its chrome events cross worlds on
+    // the shared document and reader-forward.js (running in
+    // AroraChannelWorld) relays them to the "aroraReader" bridge.
     WebEnginePageAdapter::runJavaScriptLiftedOn(page, program, callback,
                                               ReaderWorldId);
 }

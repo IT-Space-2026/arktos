@@ -2429,7 +2429,7 @@ static int startPageSmoke(BrowserApplication &application, WebView *view)
         "          window.__spUrl = String(u); });"
         "  }"
         "  return [(ready ? 1 : 0),"
-        "      (typeof window.__aroraChannel),"
+        "      (typeof window.__aroraMainCall),"
         "      (arora === null ? 'null' : typeof arora),"
         "      document.title,"
         "      (s ? s.value : 'MISSING'),"
@@ -8042,7 +8042,12 @@ int main(int argc, char **argv)
                     }
                     nonArticleEnter();
 #else
-                    evalJs(QLatin1String("window.__aroraReader.probe();"),
+                    // SEC24+READ05: __aroraReader lives in the
+                    // reader's isolated world — a main-world eval
+                    // cannot see it, so this probe goes through the
+                    // driver's own entry point.
+                    reader->runDriver(
+                        QLatin1String("window.__aroraReader.probe();"),
                         [&](const QVariant &probe) {
                         const bool probePass = probe.isValid()
                             && !probe.toBool()
@@ -8453,7 +8458,7 @@ int main(int argc, char **argv)
                     if (!active) {
                         evalJs(QLatin1String(
                             "({promise:window.__pipPromise,"
-                            "chan:typeof window.__aroraChannel,"
+                            "chan:typeof window.__aroraMainCall,"
                             "uaAtClick:window.__uaAtClick,"
                             "tagged:document.querySelectorAll("
                             "'video[data-arora-pip]').length});"),

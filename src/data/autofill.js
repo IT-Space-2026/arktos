@@ -1,10 +1,12 @@
 // Armed per navigation by AutoFillManager::scheduleOnPage() as a
-// per-page QWebEngineScript at DocumentReady in the page's main
-// world.  Fills stored form data immediately, and — when CAPTURE_FLAG
-// is true — reports submitted forms back through the "aroraAutofill"
-// QWebChannel object.  FORMS_JSON, CAPTURE_FLAG and REPORT_TOKEN are
-// substituted C++-side; all three stay inside this closure, so page
-// script cannot read the token that authenticates a report (SEC08).
+// per-page QWebEngineScript at DocumentReady in the channel world
+// (SEC24 — AroraChannelWorld, the isolated world the page's
+// QWebChannel is bound to).  Fills stored form data immediately, and
+// — when CAPTURE_FLAG is true — reports submitted forms back through
+// the "aroraAutofill" QWebChannel object.  FORMS_JSON, CAPTURE_FLAG
+// and REPORT_TOKEN are substituted C++-side; all three stay inside
+// this closure in a world page script cannot enter, so the token
+// that authenticates a report is doubly unreachable (SEC08).
 //
 // The client is opened lazily and shared: qt.webChannelTransport has
 // a single onmessage slot per frame and every `new QWebChannel`
@@ -12,10 +14,10 @@
 // responses — the recurring "execCallbacks[message.id] is not a
 // function" errors (CHAN01) came from an autofill client colliding
 // with page-side channel users such as the start page.  WebPage arms
-// arora-channel.js at DocumentCreation, which owns the transport's
-// dispatch and hands out one shared client via __aroraChannel(); the
-// fallback below keeps the attachToPage path working on pages that
-// never ran the bootstrap.
+// arora-channel.js at DocumentCreation in the same world, which owns
+// the transport's dispatch and hands out one shared client via
+// __aroraChannel(); the fallback below keeps the attachToPage path
+// working on pages that never ran the bootstrap.
 (function () {
     var savedForms = FORMS_JSON;
     var savedAddress = ADDRESS_JSON;
@@ -307,16 +309,24 @@
                     connectChannel();
             }
         };
+        // DOM events dispatch to listeners in every world on the
+        // shared document, so both real submits and the synthetic
+        // 'arora:formsubmit' reach us from here.
         document.addEventListener('submit', function (event) {
             report(event.target);
         }, true);
-        // form.submit() bypasses the submit event entirely; wrap it so
-        // scripted submissions are captured too.
-        var nativeSubmit = HTMLFormElement.prototype.submit;
-        HTMLFormElement.prototype.submit = function () {
-            report(this);
-            return nativeSubmit.call(this);
-        };
+        // form.submit() bypasses the submit event entirely — the
+        // 'arora:autofill-submit' main-world shim wraps the page's
+        // HTMLFormElement.prototype.submit (a prototype patch only
+        // sticks in the world that installs it, so it cannot live in
+        // this isolated one) and re-dispatches each call as this
+        // event.  A forged event merely triggers serialization of a
+        // form already in the page's DOM — the attacker owns that
+        // DOM anyway, so nothing is gained that a real submit
+        // wouldn't give them.
+        document.addEventListener('arora:formsubmit', function (event) {
+            report(event.target);
+        }, true);
     }
 
     function start() {

@@ -564,9 +564,10 @@ void WebEnginePageAdapter::setCreateWindowHandler(
 
 void WebEnginePageAdapter::runJavaScriptLifted(
         const QString &source,
-        const std::function<void(const QVariant &)> &resultCallback)
+        const std::function<void(const QVariant &)> &resultCallback,
+        quint32 worldId)
 {
-    runJavaScriptLiftedOn(m_page, source, resultCallback);
+    runJavaScriptLiftedOn(m_page, source, resultCallback, worldId);
 }
 
 void WebEnginePageAdapter::runJavaScriptLiftedOn(

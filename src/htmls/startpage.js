@@ -2,6 +2,89 @@
 // The "arora" channel object is only registered for qrc pages
 // (webpage.cpp); every call is asynchronous — results come
 // back through callbacks.
+//
+// SEC24: the page's QWebChannel lives in an isolated script world —
+// no transport is reachable here — so 'arora' is called through the
+// whitelisted postMessage forwarder arora-channel.js arms in the
+// channel world (its whitelist admits 'arora' only on qrc: pages).
+// This file carries its own tiny copy of the request/response client
+// rather than leaning on arora-mainworld.js: the tor profile arms no
+// main-world shim at all, and the start page must work there too.
+var aroraBridge = (function () {
+    var seq = 0;
+    var pending = {};     // id -> {resolve, reject}
+    var signalSubs = {};  // 'object.signal' -> [handlers]
+
+    window.addEventListener('message', function (event) {
+        if (event.source !== window)
+            return;
+        var data = event.data;
+        if (!data)
+            return;
+        if (data.aroraBridge == 'result') {
+            var entry = pending[data.id];
+            if (!entry)
+                return;
+            delete pending[data.id];
+            if (data.ok)
+                entry.resolve(data.value);
+            else
+                entry.reject(new Error('arora bridge refused'));
+            return;
+        }
+        if (data.aroraBridge == 'signal') {
+            var handlers = signalSubs[data.object + '.' + data.signal]
+                || [];
+            var args = data.args || [];
+            for (var i = 0; i < handlers.length; ++i) {
+                try { handlers[i].apply(null, args); } catch (e) {}
+            }
+        }
+    });
+
+    function send(kind, object, member, args) {
+        return new Promise(function (resolve, reject) {
+            var id = ++seq;
+            pending[id] = { resolve: resolve, reject: reject };
+            try {
+                window.postMessage({
+                    aroraBridge: 'call',
+                    id: id,
+                    kind: kind,
+                    object: object,
+                    member: member,
+                    args: args || []
+                }, '*');
+            } catch (e) {
+                delete pending[id];
+                reject(e);
+                return;
+            }
+            setTimeout(function () {
+                if (pending[id]) {
+                    delete pending[id];
+                    reject(new Error('arora bridge unreachable'));
+                }
+            }, 10000);
+        });
+    }
+
+    return {
+        call: function (object, method) {
+            return send('method', object, method,
+                        Array.prototype.slice.call(arguments, 2));
+        },
+        get: function (object, property) {
+            return send('property', object, property);
+        },
+        signal: function (object, signal, handler) {
+            var key = object + '.' + signal;
+            (signalSubs[key] = signalSubs[key] || []).push(handler);
+            return send('subscribe', object, signal);
+        }
+    };
+}());
+
 var arora = null;
 
 function update()
@@ -47,41 +130,82 @@ function formSubmitted()
         return;
 
     arora.searchUrl(string, function (url) {
-        window.location.href = url;
+        if (url)
+            window.location.href = url;
     });
 }
 
 function init()
 {
     document.forms[0].lineEdit.select();
-    // CHAN01: share the page's one channel client via the
-    // bootstrap WebPage arms at DocumentCreation — a second
-    // client would steal qt.webChannelTransport's single
-    // onmessage slot from in-flight calls.  (Tor pages skip the
-    // bootstrap — no co-tenant — so the direct client below is
-    // their normal path, not a fallback.)
-    var connect = window.__aroraChannel;
-    if (!connect) {
-        if (typeof QWebChannel == 'undefined' || !window.qt
-            || !qt.webChannelTransport)
-            return;
-        connect = function (ready) {
-            new QWebChannel(qt.webChannelTransport, ready);
+    // Fetch the two properties before publishing the facade — the
+    // page reads arora.currentEngineName synchronously once `arora`
+    // is non-null.  A refused hop leaves arora null and the page in
+    // its untranslated fallback state, same as a missing channel.
+    Promise.all([
+        aroraBridge.get('arora', 'currentEngineName'),
+        aroraBridge.get('arora', 'darkChrome')
+    ]).then(function (values) {
+        arora = {
+            currentEngineName: values[0] || '',
+            darkChrome: !!values[1],
+            translate: function (string, ready) {
+                aroraBridge.call('arora', 'translate', string)
+                    .then(function (translated) { ready(translated); },
+                          function () { ready(string); });
+            },
+            searchUrl: function (string, ready) {
+                aroraBridge.call('arora', 'searchUrl', string)
+                    .then(ready, function () { ready(''); });
+            },
+            // Mirror the QWebChannel object shape callers (and
+            // --startpage-smoke's probe) expect: signal objects with
+            // a connect() method.
+            darkChromeChanged: {
+                connect: function (handler) {
+                    aroraBridge.signal('arora', 'darkChromeChanged',
+                                       handler);
+                }
+            },
+            currentEngineNameChanged: {
+                connect: function (handler) {
+                    aroraBridge.signal('arora',
+                                       'currentEngineNameChanged',
+                                       handler);
+                }
+            }
         };
-    }
-    connect(function (channel) {
-        arora = channel.objects.arora;
-        // THEME01: prefers-color-scheme tracks the OS, not
-        // the app's forced palette — the channel carries the
-        // chrome scheme instead, live via darkChromeChanged.
-        if (arora) {
-            var applyScheme = function (dark) {
-                document.documentElement.classList
-                    .toggle('arora-dark', !!dark);
-            };
-            applyScheme(arora.darkChrome);
-            arora.darkChromeChanged.connect(applyScheme);
-        }
+
+        // THEME01: prefers-color-scheme tracks the OS, not the app's
+        // forced palette — the channel carries the chrome scheme
+        // instead, live via darkChromeChanged.
+        var applyScheme = function (dark) {
+            document.documentElement.classList
+                .toggle('arora-dark', !!dark);
+        };
+        applyScheme(arora.darkChrome);
+        // darkChromeChanged carries no value — re-read the property
+        // when it fires.
+        arora.darkChromeChanged.connect(function () {
+            aroraBridge.get('arora', 'darkChrome')
+                .then(function (dark) {
+                    arora.darkChrome = !!dark;
+                    applyScheme(arora.darkChrome);
+                }, function () {});
+        });
+
+        // The engine can switch under a live start page — re-read the
+        // property and refresh the labels when it changes.
+        arora.currentEngineNameChanged.connect(function () {
+            aroraBridge.get('arora', 'currentEngineName')
+                .then(function (name) {
+                    arora.currentEngineName = name || '';
+                    update();
+                }, function () {});
+        });
+
         update();
+    }, function () {
+        // No forwarder — keep the untranslated page.
     });
 }

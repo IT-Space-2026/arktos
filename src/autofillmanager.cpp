@@ -694,13 +694,36 @@ static void replacePageScript(Engine::Page *page, const QString &name,
     page->removeScript(name);
     if (source.isEmpty())
         return;
-    // worldId 0 is the main world — NOT the QWebEngineScript default
-    // (ApplicationWorld): the bundle must run where the page's
-    // HTMLFormElement.prototype and the __aroraChannel bootstrap live.
+    // SEC24: the bundle runs in AroraChannelWorld — the isolated
+    // world the page's QWebChannel is bound to — where the
+    // __aroraChannel bootstrap lives and page script cannot follow.
     page->insertScript(Engine::Script{
         name, source, Engine::InjectionPoint::DocumentReady,
-        0 /* main world */, false });
+        Engine::AroraChannelWorld, false });
 }
+
+// form.submit() bypasses the 'submit' DOM event, so scripted
+// submissions need the page's own HTMLFormElement.prototype wrapped
+// — and a prototype patch only sticks in the world that installs it.
+// autofill.js lives in the isolated channel world (SEC24), so the
+// wrapper is armed as a separate main-world script that relays each
+// call as an 'arora:formsubmit' event; the isolated-side listener
+// serializes the real form.  Page script can forge that event, but
+// the forged trigger only re-serializes DOM the attacker already
+// owns — the token never leaves the channel world.
+static const char s_submitShimSource[] =
+    "(function () {"
+    "    if (window.__aroraAutofillSubmitShim) return;"
+    "    window.__aroraAutofillSubmitShim = true;"
+    "    var nativeSubmit = HTMLFormElement.prototype.submit;"
+    "    HTMLFormElement.prototype.submit = function () {"
+    "        try {"
+    "            this.dispatchEvent(new Event('arora:formsubmit',"
+    "                {bubbles: true}));"
+    "        } catch (e) {}"
+    "        return nativeSubmit.call(this);"
+    "    };"
+    "}())";
 
 void AutoFillManager::scheduleOnPage(Engine::Page *page,
         const QUrl &url)
@@ -709,6 +732,18 @@ void AutoFillManager::scheduleOnPage(Engine::Page *page,
         return;
     const QString source = scriptForPage(page, url);
     replacePageScript(page, QLatin1String("arora:autofill"), source);
+
+    const bool capture = !source.isEmpty()
+        && captureEnabledForPage(page);
+    if (capture) {
+        page->insertScript(Engine::Script{
+            QLatin1String("arora:autofill-submit"),
+            QString::fromLatin1(s_submitShimSource),
+            Engine::InjectionPoint::DocumentReady, 0 /* main world */,
+            false });
+    } else {
+        page->removeScript(QLatin1String("arora:autofill-submit"));
+    }
 }
 
 QString AutoFillManager::autoFillScript(const QList<Form> &forms,

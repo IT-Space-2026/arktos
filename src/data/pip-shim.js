@@ -1,7 +1,10 @@
 // PIP01: page-side Picture-in-Picture shim, armed per page by
 // WebPage::init() as a QWebEngineScript at DocumentCreation (main
-// world, name "arora:pip-shim"), next to the "arora:channel"
-// bootstrap it talks through.
+// world, name "arora:pip-shim").  It must live here — a prototype
+// patch only sticks in the world that installs it — so SEC24 it
+// talks to the channel through arora-mainworld.js's helpers, whose
+// requests the channel-world forwarder relays to the whitelisted
+// "aroraPip" object.
 //
 // Qt WebEngine surfaces no PiP negotiation: QWebEnginePermission's
 // PermissionType has no PiP entry and Chromium's PiP window manager
@@ -9,13 +12,13 @@
 // so a video's requestPictureInPicture() would otherwise die
 // unimplemented.  This shim keeps the page-side contract working:
 // the call is gated on transient user activation like Chromium's,
-// then routed over the shared channel to the C++ PictureInPicture
+// then routed over the bridge to the C++ PictureInPicture
 // controller, which pops the video into an app-owned floating window.
 //
-// No channel (tor pages carry none, SEC08): the shim still installs
+// No bridge (tor pages carry none, SEC08): the shim still installs
 // but rejects with NotSupportedError, the same failure a browser
 // without PiP produces — the manual pop-out paths don't need the
-// channel at all.
+// bridge at all.
 (function () {
     if (!window.HTMLVideoElement || window.__aroraPipShim)
         return;
@@ -47,29 +50,38 @@
         };
     }
 
-    function wire(bridge) {
-        if (!bridge)
-            return null;
-        if (!wired) {
-            wired = true;
-            bridge.popOutResolved.connect(
-                function (nonce, ok, reason) {
-                    var p = pending[nonce];
-                    if (!p)
-                        return;
-                    delete pending[nonce];
-                    if (ok) {
-                        // detach() in pip.js already dispatched
-                        // enterpictureinpicture on the element.
-                        p.resolve(fakePipWindow());
-                    } else {
-                        p.video.removeAttribute(TAG);
-                        p.reject(new DOMException(
-                            reason || 'Picture-in-Picture failed',
-                            'NotSupportedError'));
-                    }
-                });
-            bridge.popOutClosed.connect(function (nonce) {
+    // cb(true) once both result signals are wired — a refused
+    // subscription means the aroraPip object is not reachable
+    // (unregistered: tor, or the forwarder is not armed), so the
+    // shim degrades to NotSupportedError.
+    function withBridge(cb) {
+        if (wired) {
+            cb(true);
+            return;
+        }
+        if (!window.__aroraMainCall || !window.__aroraMainSignal) {
+            cb(false);
+            return;
+        }
+        var resolved = window.__aroraMainSignal('aroraPip',
+            'popOutResolved', function (nonce, ok, reason) {
+                var p = pending[nonce];
+                if (!p)
+                    return;
+                delete pending[nonce];
+                if (ok) {
+                    // detach() in pip.js already dispatched
+                    // enterpictureinpicture on the element.
+                    p.resolve(fakePipWindow());
+                } else {
+                    p.video.removeAttribute(TAG);
+                    p.reject(new DOMException(
+                        reason || 'Picture-in-Picture failed',
+                        'NotSupportedError'));
+                }
+            });
+        var closed = window.__aroraMainSignal('aroraPip',
+            'popOutClosed', function (nonce) {
                 // restore() in pip.js already dispatched
                 // leavepictureinpicture and cleared the tag; this
                 // resolves any pending exitPictureInPicture().
@@ -78,18 +90,12 @@
                 for (var i = 0; i < r.length; ++i)
                     r[i]();
             });
-        }
-        return bridge;
-    }
-
-    function withBridge(cb) {
-        if (window.__aroraChannel) {
-            window.__aroraChannel(function (channel) {
-                cb(wire(channel.objects.aroraPip));
-            });
-        } else {
-            cb(null);
-        }
+        Promise.all([resolved, closed]).then(function () {
+            wired = true;
+            cb(true);
+        }, function () {
+            cb(false);
+        });
     }
 
     try {
@@ -133,8 +139,8 @@
             video.setAttribute(TAG, nonce);
             pending[nonce] = { resolve: resolve, reject: reject,
                                video: video };
-            withBridge(function (bridge) {
-                if (!bridge) {
+            withBridge(function (reachable) {
+                if (!reachable) {
                     delete pending[nonce];
                     video.removeAttribute(TAG);
                     reject(new DOMException(
@@ -142,7 +148,8 @@
                         'NotSupportedError'));
                     return;
                 }
-                bridge.requestPopOut(nonce);
+                window.__aroraMainCall('aroraPip', 'requestPopOut',
+                                       nonce);
             });
         });
     };
@@ -162,15 +169,16 @@
                 return;
             }
             exitResolvers.push(resolve);
-            withBridge(function (bridge) {
-                if (!bridge) {
+            withBridge(function (reachable) {
+                if (!reachable) {
                     exitResolvers.pop();
                     reject(new DOMException(
                         'Picture-in-Picture is not available',
                         'NotSupportedError'));
                     return;
                 }
-                bridge.exitPopOut(video.getAttribute(TAG));
+                window.__aroraMainCall('aroraPip', 'exitPopOut',
+                                       video.getAttribute(TAG));
             });
         });
     };

@@ -44,10 +44,10 @@ namespace Engine { class Page; }
 // autofill.js reports submitted forms through submitForm(); the bridge
 // tags each report with the url the page had when the hook was
 // installed so a page cannot forge form data for a different origin.
-// SEC08: the channel object is reachable from any page script that
-// loads qwebchannel.js, so reports additionally carry a per-load token
-// that lives only inside the injected script's closure — calls without
-// it (the page's own channel client has no way to learn it) are dropped.
+// SEC24: the channel lives in AroraChannelWorld — page script cannot
+// reach this object at all.  The SEC08 per-load token stays as the
+// second wall: it lives only inside the injected script's closure in
+// that world, so a report without it is still dropped.
 class AutoFillBridge : public QObject
 {
     Q_OBJECT

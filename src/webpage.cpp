@@ -233,43 +233,51 @@ void WebPage::init()
     // go through Chromium's network stack and the profile's cookie store.
     //
     // The old per-frame addToJavaScriptWindowObject() binding is replaced by
-    // a QWebChannel.  qwebchannel.js is a public file and the transport is
-    // injected into every page, so ANY web content can reach the registered
-    // objects (SEC08) — everything exposed here is hardened accordingly:
+    // a QWebChannel.  SEC24: the channel is bound to AroraChannelWorld —
+    // an isolated script world page code never enters — so the main
+    // world has no qt.webChannelTransport at all and page script cannot
+    // enumerate channel.objects or invoke the registered bridges.
+    // What the page CAN reach is only what arora-channel.js's forwarder
+    // re-exposes through a whitelisted postMessage hop:
     //
-    //  * aroraAutofill.submitForm requires the per-load token that only
-    //    the C++-injected autofill.js holds in a closure; forged calls
-    //    are dropped (autofillmanager.cpp).
-    //  * external.AddSearchProvider validates the descriptor url and
-    //    asks for consent before any fetch happens.
-    // TOR02: those two bridge objects stay unregistered in tor mode —
-    // autofill capture and search-provider install are surface a tor
-    // session does not need and must not offer.  The bare channel
-    // itself is armed there too (TOR09): the tor start page is a qrc
-    // page that needs the "arora" object, which only ever registers on
-    // qrc commits — web content still sees an empty object table.
+    //  * external.AddSearchProvider — the window.external web-compat
+    //    API, page-callable by design; it validates the descriptor url
+    //    and asks for consent before any fetch happens.
+    //  * aroraPip — the page-callable backend of the
+    //    requestPictureInPicture shim (gesture-gated).
+    //  * "arora" — translate/searchUrl/properties, forwarded only on
+    //    qrc: pages where it is the object's sole legitimate consumer.
+    //
+    // Everything else stays internal to the channel world:
+    //  * aroraAutofill.submitForm is called only by the autofill bundle
+    //    which now runs in the channel world too; the per-load token
+    //    it passes stays there as a second wall (SEC08).
+    //  * aroraReader is reached by reader.js, which the driver now
+    //    evaluates in the channel world.
+    // TOR02: the web-facing bridge objects stay unregistered in tor
+    // mode — autofill capture and search-provider install are surface
+    // a tor session does not need and must not offer.  The bare
+    // channel itself is armed there too (TOR09): the tor start page is
+    // a qrc page that needs the "arora" object, which only ever
+    // registers on qrc commits — web content still sees an empty
+    // object table.
     if (!BrowserApplication::isTorMode()) {
         m_webChannel->registerObject(QLatin1String("external"), m_javaScriptExternalObject);
         m_webChannel->registerObject(QLatin1String("aroraAutofill"), m_autoFillBridge);
     }
-    setWebChannel(m_webChannel);
+    setWebChannel(m_webChannel, Engine::AroraChannelWorld);
 
-    if (!BrowserApplication::isTorMode()) {
-        // CHAN01: arm the shared-channel bootstrap at DocumentCreation.
-        // qt.webChannelTransport is one object per frame with a single
-        // onmessage slot — every new QWebChannel replaces it and the
-        // displaced client's in-flight responses then crash the new
-        // owner's execCallbacks dispatch (the recurring console noise).
-        // The bootstrap demultiplexes that slot across clients and
-        // hands Arora's features one shared lazy client through
-        // window.__aroraChannel, so our own code never runs two clients
-        // and a page-side client can coexist instead of corrupting
-        // either side.  The demux has to be installed before page
-        // script can construct a channel client of its own — hence
-        // DocumentCreation, once per page rather than per navigation.
-        // Tor mode skips it: with no co-tenant on the transport the
-        // page's own direct-QWebChannel fallback is uncontended, and
-        // the smaller injected-script surface is worth keeping.
+    // CHAN01/SEC24: arm the channel bootstrap at DocumentCreation in
+    // the channel world.  qt.webChannelTransport is one object per
+    // frame per world with a single onmessage slot — the bootstrap
+    // demultiplexes that slot across clients and hands Arora's
+    // features one shared lazy client through window.__aroraChannel.
+    // It also owns the whitelisted postMessage forwarder that is now
+    // the ONLY path main-world script has to any channel object, so
+    // it runs in tor mode too (the tor start page's 'arora' calls
+    // depend on it); living in the isolated world, the bootstrap adds
+    // nothing to the page-visible script surface.
+    {
         QString bootstrapSource;
         QFile channelClientFile(
             QLatin1String(":/qtwebchannel/qwebchannel.js"));
@@ -284,16 +292,36 @@ void WebPage::init()
             bootstrap.setName(QLatin1String("arora:channel"));
             bootstrap.setInjectionPoint(
                 QWebEngineScript::DocumentCreation);
-            bootstrap.setWorldId(QWebEngineScript::MainWorld);
+            bootstrap.setWorldId(Engine::AroraChannelWorld);
             bootstrap.setRunsOnSubFrames(false);
             bootstrap.setSourceCode(bootstrapSource);
             scripts().insert(bootstrap);
+        }
+    }
+
+    if (!BrowserApplication::isTorMode()) {
+        // SEC24: the main-world half of the bridge — the whitelisted
+        // surface only.  __aroraMainCall/__aroraMainGet/
+        // __aroraMainSignal serialize calls into the postMessage hop
+        // the channel-world forwarder answers, and window.external
+        // gets its AddSearchProvider back (Chromium's own stub calls
+        // into embedder plumbing Qt does not implement).
+        QFile mainWorldFile(QLatin1String(":arora-mainworld.js"));
+        if (mainWorldFile.open(QIODevice::ReadOnly)) {
+            QWebEngineScript shim;
+            shim.setName(QLatin1String("arora:mainworld"));
+            shim.setInjectionPoint(QWebEngineScript::DocumentCreation);
+            shim.setWorldId(QWebEngineScript::MainWorld);
+            shim.setRunsOnSubFrames(false);
+            shim.setSourceCode(QString::fromUtf8(
+                mainWorldFile.readAll()));
+            scripts().insert(shim);
         }
 
         // PIP01: the requestPictureInPicture shim.  QtWebEngine ships
         // no PiP delegate, so pages calling it would hit an
         // unimplemented path; the shim routes the request over the
-        // channel (gesture-gated) to PictureInPicture's pop-out.
+        // bridge (gesture-gated) to PictureInPicture's pop-out.
         QFile shimFile(QLatin1String(":pip-shim.js"));
         if (shimFile.open(QIODevice::ReadOnly)) {
             QWebEngineScript shim;

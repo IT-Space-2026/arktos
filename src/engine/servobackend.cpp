@@ -772,8 +772,12 @@ void ServoPage::runJavaScript(const QString &source,
 }
 
 void ServoPage::runJavaScriptLifted(const QString &source,
-                       const std::function<void(const QVariant &)> &resultCallback)
+                       const std::function<void(const QVariant &)> &resultCallback,
+                       quint32 worldId)
 {
+    // Servo has a single script world — the isolated-world split is
+    // meaningless there, so the id is accepted and ignored.
+    Q_UNUSED(worldId);
     runJavaScript(source, resultCallback);
 }
 
