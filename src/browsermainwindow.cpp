@@ -468,6 +468,10 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
             statusBar(), [this](const QString &link) { statusBar()->showMessage(link); });
     connect(m_tabWidget, &TabWidget::loadProgress,
             this, &BrowserMainWindow::loadProgress);
+    connect(m_tabWidget, &TabWidget::loadStarted,
+            this, [this]() { updateStopReloadState(true); });
+    connect(m_tabWidget, &TabWidget::loadFinished,
+            this, [this](bool) { updateStopReloadState(false); });
     connect(m_tabWidget, &TabWidget::tabsChanged,
             m_autoSaver, &AutoSaver::changeOccurred);
     connect(m_tabWidget, &TabWidget::printRequested,
@@ -2588,15 +2592,29 @@ void BrowserMainWindow::updateStopReloadActionText(bool loading)
 
 void BrowserMainWindow::loadProgress(int progress)
 {
-    if (progress < 100 && progress > 0) {
+    // NAVB01: Qt 6.12 emits page progress only as 0 and 100, so the
+    // value alone can never select the stop face — consult the
+    // page's real loading state too (mid-flight backends still get
+    // their interim values honored).
+    WebView *view = currentTab();
+    updateStopReloadState(
+        (progress > 0 && progress < 100)
+        || (view && view->enginePage() && view->enginePage()->isLoading()));
+}
+
+void BrowserMainWindow::updateStopReloadState(bool loading)
+{
+    if (loading) {
         disconnect(m_stopReloadAction, &QAction::triggered, m_viewReloadAction, &QAction::trigger);
         m_stopReloadAction->setIcon(m_stopIcon);
-        connect(m_stopReloadAction, &QAction::triggered, m_viewStopAction, &QAction::trigger);
+        connect(m_stopReloadAction, &QAction::triggered, m_viewStopAction, &QAction::trigger,
+                Qt::UniqueConnection);
         updateStopReloadActionText(true);
     } else {
         disconnect(m_stopReloadAction, &QAction::triggered, m_viewStopAction, &QAction::trigger);
         m_stopReloadAction->setIcon(m_reloadIcon);
-        connect(m_stopReloadAction, &QAction::triggered, m_viewReloadAction, &QAction::trigger);
+        connect(m_stopReloadAction, &QAction::triggered, m_viewReloadAction, &QAction::trigger,
+                Qt::UniqueConnection);
         updateStopReloadActionText(false);
     }
 }

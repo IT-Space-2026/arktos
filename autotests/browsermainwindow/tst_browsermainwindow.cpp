@@ -73,6 +73,7 @@
 #include "webpage.h"
 #include "webviewsearch.h"
 #include "locationbar.h"
+#include "stopreloadbutton.h"
 #include "toolbarsearch.h"
 #include "torcircuitbutton.h"
 #include "torcircuitpanel.h"
@@ -159,6 +160,7 @@ private slots:
     void downloadsSidebarMinWidth();
     void widgetTabBookmarksSafety();
     void tabStripCompactHeight();
+    void stopReloadState();
 };
 
 void tst_BrowserMainWindow::initTestCase()
@@ -193,9 +195,10 @@ void tst_BrowserMainWindow::statusAndTitle()
     QVERIFY(QMetaObject::invokeMethod(window, "updateStatusbar", Q_ARG(QString, QLatin1String("hovering"))));
     QVERIFY(QMetaObject::invokeMethod(window, "updateWindowTitle", Q_ARG(QString, QLatin1String("A Title"))));
     QVERIFY(window->windowTitle().contains(QLatin1String("A Title")));
-    // loadProgress() calls the private updateStopReloadActionText()
-    // helper — progress < 100 takes the "Stop" branch, >= 100 the
-    // "Reload" branch.
+    // loadProgress() calls the private updateStopReloadState()
+    // helper — a real mid-flight value takes the "Stop" branch,
+    // 100 the "Reload" branch; the current page's isLoading() can
+    // still force Stop for a 0/100-only engine.
     QVERIFY(QMetaObject::invokeMethod(window, "loadProgress", Q_ARG(int, 42)));
     QVERIFY(QMetaObject::invokeMethod(window, "loadProgress", Q_ARG(int, 100)));
     closeWindow(window);
@@ -3982,6 +3985,255 @@ void tst_BrowserMainWindow::tabStripCompactHeight()
 
     settings.remove(QLatin1String("tabs/containerDisplay"));
     closeWindow(window);
+}
+
+// NAVB01: the toolbar's combined Stop/Reload action (and the url
+// bar's own stop/reload surface) must follow the engine page's load
+// lifecycle — a held-open response keeps progress at 0 forever under
+// Qt 6.12, yet the faces must still flip to Stop on loadStarted and
+// back to Reload on finish or abort.  The chain —
+// Engine::Page::loadStarted/loadFinished -> TabWidget ->
+// BrowserMainWindow::updateStopReloadState — is exercised end-to-end,
+// including across a tab switch away from and back to a loading tab.
+// The same page-action binding keeps Back enabled and live after
+// navigations (the "sometimes dead" report).
+void tst_BrowserMainWindow::stopReloadState()
+{
+    SubWindow *window = new SubWindow;
+    window->resize(1000, 600);
+    window->show();
+    QApplication::processEvents();
+
+    QToolBar *navBar = window->findChild<QToolBar *>(
+        QLatin1String("NavigationToolBar"));
+    QVERIFY(navBar);
+    // Action order: app menu, Back, Forward, Stop/Reload, Home — the
+    // HOME01 leg locks Home at index 4.
+    QAction *back = navBar->actions().value(1);
+    QAction *stopReload = navBar->actions().value(3);
+    QVERIFY(back);
+    QVERIFY(stopReload);
+    QVERIFY2(stopReload->toolTip().contains(QLatin1String("Reload")),
+             qPrintable(stopReload->toolTip()));
+
+    // "/held" answers headers + an unterminated body and stays open —
+    // the navigation commits but progress never completes; "/abort"
+    // dies mid-request so the load fails; everything else finishes.
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    QObject::connect(&server, &QTcpServer::newConnection, &server,
+                     [&server]() {
+        QTcpSocket *socket = server.nextPendingConnection();
+        socket->setParent(&server);
+        QByteArray *request = new QByteArray;
+        QObject::connect(socket, &QTcpSocket::readyRead, socket,
+                         [socket, request]() {
+            request->append(socket->readAll());
+            if (!request->contains("\r\n\r\n"))
+                return;
+            if (request->contains("GET /held")) {
+                socket->write(QByteArray(
+                    "HTTP/1.1 200 OK\r\n"
+                    "Content-Type: text/html\r\n"
+                    "\r\n"
+                    "<html><body><p>loading"));
+                socket->flush();
+                return;
+            }
+            if (request->contains("GET /abort")) {
+                socket->abort();
+                return;
+            }
+            const QByteArray body =
+                "<html><head><title>Done</title></head>"
+                "<body><p>done</p></body></html>";
+            socket->write(QByteArray("HTTP/1.1 200 OK\r\n"
+                                     "Content-Type: text/html\r\n"
+                                     "Content-Length: ")
+                          + QByteArray::number(body.size())
+                          + "\r\n\r\n" + body);
+            socket->flush();
+            socket->disconnectFromHost();
+        });
+    });
+
+    WebView *view = window->currentTab();
+    QVERIFY(view);
+    // The url bar's own stop/reload surface for this view.
+    StopReloadButton *barButton = nullptr;
+    const QList<LocationBar *> bars =
+        window->findChildren<LocationBar *>();
+    for (LocationBar *bar : bars) {
+        if (bar->webView() == view)
+            barButton = bar->findChild<StopReloadButton *>();
+    }
+    QVERIFY2(barButton, "no StopReloadButton in the current url bar");
+    QVERIFY(!barButton->loading());
+
+    QSignalSpy progressSpy(view->enginePage(), &Engine::Page::loadProgress);
+    QVERIFY2(progressSpy.isValid(), "Engine::Page::loadProgress not a signal");
+    // isLoading alone can pass in the gap before loadStarted lands —
+    // every completed leg waits on a loadFinished edge instead.
+    QSignalSpy finishSpy(view->page(), &QWebEnginePage::loadFinished);
+
+    const QUrl base(QStringLiteral("http://127.0.0.1:%1")
+                        .arg(server.serverPort()));
+
+    // Load in flight -> Stop face on BOTH the toolbar action and the
+    // url-bar button.  Qt 6.12 emits progress only as 0 then 100, so
+    // this must hold while every progress value stays at 0 — the
+    // whole point of keying on loadStarted/loadFinished.
+    view->loadUrl(base.resolved(QUrl(QLatin1String("/held"))));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        stopReload->toolTip().contains(QLatin1String("Stop")), 15000);
+    QTRY_VERIFY_WITH_TIMEOUT(barButton->loading(), 5000);
+    QVERIFY(view->page()->isLoading());
+    for (const QList<QVariant> &args : progressSpy) {
+        const int p = args.value(0).toInt();
+        QVERIFY2(p == 0 || p == 100, qPrintable(
+            QStringLiteral("unexpected mid-flight progress %1").arg(p)));
+    }
+
+    // The stop face must really stop: the toolbar action dispatches
+    // through m_viewStopAction's mapper to the page's Stop action.
+    stopReload->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(!view->page()->isLoading(), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        stopReload->toolTip().contains(QLatin1String("Reload")), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!barButton->loading(), 5000);
+
+    // A finished load leaves the reload face, and the reload face
+    // really reloads — a fresh load begins on trigger.
+    int done = finishSpy.count();
+    view->loadUrl(base.resolved(QUrl(QLatin1String("/one"))));
+    QTRY_VERIFY_WITH_TIMEOUT(finishSpy.count() > done, 20000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        stopReload->toolTip().contains(QLatin1String("Reload")), 5000);
+    QSignalSpy startedSpy(view->enginePage(), &Engine::Page::loadStarted);
+    done = finishSpy.count();
+    stopReload->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(startedSpy.count() > 0, 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(finishSpy.count() > done, 20000);
+    QTRY_VERIFY_WITH_TIMEOUT(!view->page()->isLoading(), 20000);
+    QVERIFY(!barButton->loading());
+
+    // A failed load restores the reload face the same way.
+    done = finishSpy.count();
+    view->loadUrl(base.resolved(QUrl(QLatin1String("/abort"))));
+    QTRY_VERIFY_WITH_TIMEOUT(finishSpy.count() > done, 20000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !view->page()->isLoading()
+        && stopReload->toolTip().contains(QLatin1String("Reload")),
+        20000);
+    QVERIFY(!barButton->loading());
+
+    // Back binding: two clean navigations leave the toolbar Back
+    // enabled and live — a trigger walks exactly one history step.
+    done = finishSpy.count();
+    view->loadUrl(base.resolved(QUrl(QLatin1String("/first"))));
+    QTRY_VERIFY_WITH_TIMEOUT(finishSpy.count() > done, 20000);
+    done = finishSpy.count();
+    view->loadUrl(base.resolved(QUrl(QLatin1String("/second"))));
+    QTRY_VERIFY_WITH_TIMEOUT(finishSpy.count() > done, 20000);
+    QTRY_VERIFY_WITH_TIMEOUT(back->isEnabled(), 10000);
+    done = finishSpy.count();
+    back->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(finishSpy.count() > done, 20000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        view->url().path().endsWith(QLatin1String("/first")), 20000);
+    QTRY_VERIFY_WITH_TIMEOUT(!view->page()->isLoading(), 20000);
+
+    // Tab switching: the shared chrome tracks the CURRENT tab's load
+    // state — a background tab mid-load must not pin the stop face,
+    // and switching back must restore it even though its progress
+    // value stayed 0 the whole time.
+    WebView *second = window->tabWidget()->makeNewTab(true);
+    QVERIFY(second);
+    second->loadUrl(base.resolved(QUrl(QLatin1String("/held"))));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        stopReload->toolTip().contains(QLatin1String("Stop")), 15000);
+
+    int firstIndex = -1;
+    int secondIndex = -1;
+    for (int i = 0; i < window->tabWidget()->count(); ++i) {
+        if (window->tabWidget()->webView(i) == view)
+            firstIndex = i;
+        else if (window->tabWidget()->webView(i) == second)
+            secondIndex = i;
+    }
+    QVERIFY(firstIndex >= 0 && secondIndex >= 0);
+    window->tabWidget()->setCurrentIndex(firstIndex);
+    // Switching to the first tab may kick off an engine reload (a
+    // discarded background WebContents reloads when shown again) —
+    // while that load runs the Stop face is the CORRECT state for the
+    // current tab, so wait for it to settle before pinning Reload.
+    QTRY_VERIFY_WITH_TIMEOUT(!view->page()->isLoading(), 20000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        stopReload->toolTip().contains(QLatin1String("Reload")), 5000);
+    // The background tab's held load is untouched either way.
+    QVERIFY(second->page()->isLoading());
+
+    window->tabWidget()->setCurrentIndex(secondIndex);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        stopReload->toolTip().contains(QLatin1String("Stop")), 5000);
+
+    // Stop the background load and put the selection back so nothing
+    // is in flight during teardown.
+    second->page()->triggerAction(QWebEnginePage::Stop);
+    QTRY_VERIFY_WITH_TIMEOUT(!second->page()->isLoading(), 10000);
+    window->tabWidget()->setCurrentIndex(firstIndex);
+
+    closeWindow(window);
+
+    // Private window — the same chrome path on the off-the-record
+    // profile: load -> stop face -> finish -> reload face.
+    BrowserApplication::setPrivate(true);
+    SubWindow *privateWindow = new SubWindow;
+    privateWindow->resize(1000, 600);
+    privateWindow->show();
+    QApplication::processEvents();
+    WebView *privateView = privateWindow->currentTab();
+    QVERIFY(privateView);
+    QVERIFY(privateView->enginePage()->isOffTheRecord());
+    QAction *privateStopReload = privateWindow
+        ->findChild<QToolBar *>(QLatin1String("NavigationToolBar"))
+        ->actions().value(3);
+    QVERIFY(privateStopReload);
+    privateView->loadUrl(base.resolved(QUrl(QLatin1String("/held"))));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        privateStopReload->toolTip().contains(QLatin1String("Stop")),
+        15000);
+    privateStopReload->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(!privateView->page()->isLoading(), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        privateStopReload->toolTip().contains(QLatin1String("Reload")),
+        5000);
+    closeWindow(privateWindow);
+    BrowserApplication::setPrivate(false);
+
+    // Tor window — no tor daemon is up, so the navigation fails
+    // (slowly, on the SOCKS connect timeout); the faces still
+    // bracket the attempt through the same path.
+    BrowserApplication::setTorMode(true);
+    SubWindow *torWindow = new SubWindow;
+    torWindow->resize(1000, 600);
+    torWindow->show();
+    QApplication::processEvents();
+    WebView *torView = torWindow->currentTab();
+    QVERIFY(torView);
+    QAction *torStopReload = torWindow
+        ->findChild<QToolBar *>(QLatin1String("NavigationToolBar"))
+        ->actions().value(3);
+    QVERIFY(torStopReload);
+    QSignalSpy torFinish(torView->page(), &QWebEnginePage::loadFinished);
+    torView->loadUrl(base.resolved(QUrl(QLatin1String("/done"))));
+    QTRY_VERIFY_WITH_TIMEOUT(torFinish.count() > 0, 60000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !torView->page()->isLoading()
+        && torStopReload->toolTip().contains(QLatin1String("Reload")),
+        20000);
+    closeWindow(torWindow);
+    BrowserApplication::setTorMode(false);
 }
 
 QTEST_MAIN(tst_BrowserMainWindow)

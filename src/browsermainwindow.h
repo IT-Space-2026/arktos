@@ -157,6 +157,12 @@ private slots:
     void lastTabClosed();
 
     void loadProgress(int);
+    // NAVB01: the combined toolbar action's face — Stop while the
+    // current page loads, Reload otherwise.  Driven by
+    // TabWidget::loadStarted/loadFinished (Qt 6.12 emits no
+    // mid-flight loadProgress values) with loadProgress kept as the
+    // real-progress input for backends that provide it.
+    void updateStopReloadState(bool loading);
     void updateStatusbar(const QString &string);
     void updateWindowTitle(const QString &title = QString());
     // TOR04: re-renders the tor window's status-bar circuit label

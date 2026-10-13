@@ -111,6 +111,11 @@ signals:
     void showStatusBarMessage(const QString &message);
     void linkHovered(const QString &link);
     void loadProgress(int progress);
+    // NAVB01: load START/END of the current tab — Qt 6.12 emits
+    // loadProgress only as 0 then 100, so chrome keyed on mid-flight
+    // values is dead; these bracket every load instead.
+    void loadStarted();
+    void loadFinished(bool ok);
     void printRequested(WebView *view);
 
 public:

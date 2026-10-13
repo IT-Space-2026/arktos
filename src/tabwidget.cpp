@@ -336,6 +336,10 @@ void TabWidget::currentChanged(int index)
                    this, &TabWidget::linkHovered);
         disconnect(oldWebView->enginePage(), &Engine::Page::loadProgress,
                    this, &TabWidget::loadProgress);
+        disconnect(oldWebView->enginePage(), &Engine::Page::loadStarted,
+                   this, &TabWidget::loadStarted);
+        disconnect(oldWebView->enginePage(), &Engine::Page::loadFinished,
+                   this, &TabWidget::loadFinished);
     }
     // SLEEP01: the outgoing tab's idle clock starts now.
     markTabActivity(oldWebView);
@@ -364,6 +368,10 @@ void TabWidget::currentChanged(int index)
             this, &TabWidget::linkHovered);
     connect(webView->enginePage(), &Engine::Page::loadProgress,
             this, &TabWidget::loadProgress);
+    connect(webView->enginePage(), &Engine::Page::loadStarted,
+            this, &TabWidget::loadStarted);
+    connect(webView->enginePage(), &Engine::Page::loadFinished,
+            this, &TabWidget::loadFinished);
 
     for (int i = 0; i < m_actions.count(); ++i) {
         WebActionMapper *mapper = m_actions[i];

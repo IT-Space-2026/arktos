@@ -9,7 +9,8 @@ HEADERS += \
   $$PWD/privacyindicator.h \
   $$PWD/readerbutton.h \
   $$PWD/sitepanel.h \
-  $$PWD/siteshield.h
+  $$PWD/siteshield.h \
+  $$PWD/stopreloadbutton.h
 
 SOURCES += \
   $$PWD/locationbar.cpp \
@@ -19,4 +20,5 @@ SOURCES += \
   $$PWD/privacyindicator.cpp \
   $$PWD/readerbutton.cpp \
   $$PWD/sitepanel.cpp \
-  $$PWD/siteshield.cpp
+  $$PWD/siteshield.cpp \
+  $$PWD/stopreloadbutton.cpp
