@@ -294,6 +294,10 @@ TorCircuitButton::TorCircuitButton(TorManager *manager, QWidget *parent)
     setCursor(Qt::ArrowCursor);
     setFocusPolicy(Qt::ClickFocus);
     setPopupMode(QToolButton::InstantPopup);
+    // TOR16: the button read cramped next to its nav-row siblings —
+    // pin a deliberate 20px glyph (bar icons are 18px) rendered from
+    // a high-resolution pixmap so it stays crisp.
+    setIconSize(QSize(20, 20));
     setAccessibleName(tr("Tor Circuit"));
     setAccessibleDescription(
         tr("Shows the relays in the current Tor circuit."));
@@ -510,6 +514,28 @@ void TorCircuitButton::applyPanelContent()
     m_panel->setNewCircuitEnabled(content.canNewCircuit);
     m_panel->setStatusText(content.status);
     m_menuSignature = panelContentSignature(content);
+    growMenuToFit();
+}
+
+// TOR16: a shown QMenu does not resize itself when a hosted widget's
+// sizeHint grows — content that lands while the popup is open (the
+// first circuit snapshot, async country resolutions, the NEWNYM
+// status line) stayed squeezed into the open-time footprint and
+// rendered as an unreadable flag sliver.  Worse, QMenu::sizeHint()
+// caches the open-time footprint outright (widget-action size
+// changes never re-mark its action rects), so the target size is
+// computed from the panel's own hint plus the chrome around it.
+// Grow only, never shrink — shrinking a popup under the cursor is
+// the "creeping" relayout TOR13 removed.
+void TorCircuitButton::growMenuToFit()
+{
+    if (!m_menu->isVisible())
+        return;
+    const QSize chrome = m_menu->size() - m_panel->size();
+    const QSize grow = (m_panel->sizeHint() + chrome)
+        .expandedTo(m_menu->size());
+    if (grow != m_menu->size())
+        m_menu->resize(grow);
 }
 
 void TorCircuitButton::populateMenu()
@@ -548,6 +574,7 @@ void TorCircuitButton::syncOpenMenu()
     m_panel->setNewCircuitEnabled(content.canNewCircuit);
     m_panel->setStatusText(content.status);
     m_menuSignature = signature;
+    growMenuToFit();
 }
 
 void TorCircuitButton::onNewCircuit()
@@ -555,10 +582,12 @@ void TorCircuitButton::onNewCircuit()
     if (!m_tor || !m_tor->controlConnected()) {
         m_statusText = tr("Tor control connection unavailable");
         m_panel->setStatusText(m_statusText);
+        growMenuToFit();
         return;
     }
     m_statusText = tr("Requesting a new circuit...");
     m_panel->setStatusText(m_statusText);
+    growMenuToFit();
     QPointer<TorCircuitButton> self(this);
     m_tor->signalNewNym([self](int code, const QStringList &) {
         if (!self)
@@ -567,6 +596,7 @@ void TorCircuitButton::onNewCircuit()
             ? tr("New circuit requested")
             : tr("New circuit request failed (code %1)").arg(code);
         self->m_panel->setStatusText(self->m_statusText);
+        self->growMenuToFit();
         if (code == 250) {
             // The replacement circuit lands through CIRC events;
             // kick one refresh as well so the chain updates even if
@@ -625,10 +655,15 @@ QIcon TorCircuitButton::makeIcon() const
 {
     // A small onion glyph, painted so no icon theme is required — the
     // tor toolbar's ButtonText resolves to #eee on the violet bar.
-    QPixmap pixmap(16, 16);
+    // Drawn at 4x the logical 16px grid so the pinned 20px iconSize
+    // (and any larger toolbar size) downscales a detailed source
+    // instead of upscaling a 16px bitmap.
+    const qreal scale = 4.0;
+    QPixmap pixmap(16 * int(scale), 16 * int(scale));
     pixmap.fill(Qt::transparent);
     QPainter painter(&pixmap);
     painter.setRenderHint(QPainter::Antialiasing);
+    painter.scale(scale, scale);
     painter.setPen(QPen(palette().color(QPalette::ButtonText), 1.15));
     painter.setBrush(Qt::NoBrush);
     QPainterPath bulb;

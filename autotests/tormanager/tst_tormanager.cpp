@@ -29,6 +29,7 @@
 #include <QtNetwork/QtNetwork>
 #include <qaction.h>
 #include <qapplication.h>
+#include <qlabel.h>
 #include <qmenu.h>
 #include <qpushbutton.h>
 #include <qstandardpaths.h>
@@ -38,6 +39,7 @@
 #include "torcontrol.h"
 #include "tormanager.h"
 #include "torsocks5.h"
+#include "torstatusbanner.h"
 #include "qtry.h"
 
 class tst_TorManager : public QObject
@@ -59,8 +61,12 @@ private slots:
     void circuitMenuNoRequeryLoop();
     void newNymSignal();
     void circuitPanelNewCircuit();
+    void circuitPanelGrowsToFit();
     void circuitCountries();
     void circuitCountriesNoGeoip();
+    void retryOnEarlyExit();
+    void retryRecovers();
+    void statusBanner();
     void realDaemonLifecycle();
 
 private:
@@ -612,6 +618,99 @@ void tst_TorManager::circuitPanelNewCircuit()
     QCOMPARE(manager.state(), TorManager::Stopped);
 }
 
+// TOR16: user report — the dropdown intermittently rendered only
+// the flag column: opened before the circuit snapshot existed, the
+// popup took the small info-state footprint and a shown menu never
+// resized when the chain landed, so every painted row squeezed into
+// a sliver.  The chain view now reserves the standard five-node
+// chain and the button grows (never shrinks) the open popup to fit
+// new content.  This test opens the popup during bootstrap, waits
+// for the chain to land, and requires the popup + chain widget to
+// have grown to their full hints, the paint to leave ink in both
+// the connector gutter and the text column, and a reopen to come up
+// full-size — every open, not intermittently.
+void tst_TorManager::circuitPanelGrowsToFit()
+{
+    const QString fake = fakeTorPath();
+    if (!QFileInfo(fake).isExecutable()
+        || QStandardPaths::findExecutable(QStringLiteral("python3"))
+               .isEmpty())
+        QSKIP("faketor.py fixture needs an executable python3");
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    TorManager manager;
+    manager.setBinaryPath(fake);
+    manager.setDataDirectory(dir.path());
+
+    TorCircuitButton button(&manager);
+    QCOMPARE(button.iconSize(), QSize(20, 20));
+    QMenu *menu = button.menu();
+    TorCircuitPanel *panel = button.findChild<TorCircuitPanel *>();
+    QVERIFY(panel);
+
+    manager.start();
+    // Open while the daemon is still bootstrapping — the info state
+    // is much smaller than the chain that lands later.
+    menu->popup(QPoint(80, 80));
+    QTRY_VERIFY_WITH_TIMEOUT(menu->isVisible(), 5000);
+    const QSize openedAt = menu->size();
+
+    QTRY_VERIFY_WITH_TIMEOUT(manager.state() == TorManager::Ready,
+                             30000);
+    QTRY_VERIFY_WITH_TIMEOUT(panel->hopCount() == 3, 15000);
+
+    // The popup must have grown to fit the landed chain.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        menu->size().expandedTo(panel->sizeHint()) == menu->size(),
+        5000);
+    QVERIFY(menu->size().height() > openedAt.height());
+    QWidget *chain = panel->findChild<QWidget *>(
+        QLatin1String("torChainView"));
+    QVERIFY(chain);
+    QVERIFY(chain->size().expandedTo(chain->sizeHint())
+            == chain->size());
+
+    QPushButton *newCircuit = panel->findChild<QPushButton *>(
+        QLatin1String("newCircuitButton"));
+    QVERIFY(newCircuit);
+    QVERIFY(newCircuit->minimumHeight() >= 30);
+
+    // The paint must leave ink in the connector gutter AND the text
+    // column — the reported symptom was flag pixmaps with nothing
+    // else.  grab() on the un-backed widget yields a transparent
+    // canvas, so "ink" means any non-transparent pixel.
+    const QImage img = chain->grab().toImage()
+        .convertToFormat(QImage::Format_ARGB32);
+    int gutterInk = 0, textInk = 0;
+    for (int y = 0; y < img.height(); ++y) {
+        for (int x = 8; x < qMin(13, img.width()); ++x) {
+            if (img.pixelColor(x, y).alpha() > 30)
+                ++gutterInk;
+        }
+        for (int x = 50; x < qMin(90, img.width()); ++x) {
+            if (img.pixelColor(x, y).alpha() > 30)
+                ++textInk;
+        }
+    }
+    QVERIFY2(gutterInk > 8, "connector/dots column unpainted");
+    QVERIFY2(textInk > 40, "text column unpainted");
+
+    // Every open must come up full-size — hide and reopen twice.
+    for (int i = 0; i < 2; ++i) {
+        menu->hide();
+        menu->popup(QPoint(80, 80));
+        QTRY_VERIFY_WITH_TIMEOUT(menu->isVisible(), 5000);
+        QVERIFY(panel->hopCount() == 3);
+        QVERIFY(menu->size().expandedTo(panel->sizeHint())
+                == menu->size());
+    }
+
+    menu->hide();
+    manager.stop();
+    QCOMPARE(manager.state(), TorManager::Stopped);
+}
+
 // TOR05: the displayed circuit's hops get their countries resolved
 // over the control connection (ns/id -> ip-to-country), cached per
 // fingerprint so a second refresh issues no new queries, and only
@@ -796,6 +895,153 @@ void tst_TorManager::fakeDaemonLifecycle()
     manager.stop();
     QCOMPARE(manager.state(), TorManager::Stopped);
     QVERIFY(!manager.isRunning());
+}
+
+// TOR17: a daemon that dies before bootstrap used to strand the
+// window on the fail-closed proxy at the first exit — the manager now
+// respawns a bounded number of times before declaring failure.  A
+// guaranteed-dying "binary" (/bin/false exits 1 at exec) must consume
+// exactly the retry budget and then fail honestly.
+void tst_TorManager::retryOnEarlyExit()
+{
+#ifdef Q_OS_UNIX
+    const QString binary = QLatin1String("/bin/false");
+#else
+    const QString binary;
+#endif
+    if (binary.isEmpty() || !QFileInfo(binary).isExecutable())
+        QSKIP("early-exit probe needs a unix-style exit-1 binary");
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    TorManager manager;
+    manager.setBinaryPath(binary);
+    manager.setDataDirectory(dir.path());
+
+    QSignalSpy failedSpy(&manager, &TorManager::failed);
+    QSignalSpy logSpy(&manager, &TorManager::logLine);
+    manager.start();
+
+    QTRY_VERIFY_WITH_TIMEOUT(failedSpy.count() == 1, 30000);
+    QCOMPARE(manager.state(), TorManager::Failed);
+    QVERIFY(manager.errorString().contains(
+        QLatin1String("exited before bootstrap")));
+    // 1 initial spawn + 2 respawns — the log carries one
+    // "restarting" line per respawn.
+    int restarts = 0;
+    for (int i = 0; i < logSpy.count(); ++i) {
+        if (logSpy.at(i).first().toString().contains(
+                QLatin1String("restarting tor")))
+            ++restarts;
+    }
+    QCOMPARE(restarts, 2);
+}
+
+// TOR17: the same bounded respawn must actually recover when the
+// early exit was transient — a wrapper that dies once then delegates
+// to faketor reaches Ready on the second attempt.
+void tst_TorManager::retryRecovers()
+{
+    const QString fake = fakeTorPath();
+    if (!QFileInfo(fake).isExecutable()
+        || QStandardPaths::findExecutable(QStringLiteral("python3"))
+               .isEmpty()
+        || !QFileInfo(QStringLiteral("/bin/sh")).exists())
+        QSKIP("needs an executable python3 + /bin/sh");
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    // First invocation: exit 1 (after dropping a marker).  Later
+    // invocations: exec faketor.
+    const QString marker = dir.path() + QLatin1String("/spawned-once");
+    const QString wrapperPath =
+        dir.path() + QLatin1String("/flakytor.sh");
+    QFile wrapper(wrapperPath);
+    QVERIFY(wrapper.open(QIODevice::WriteOnly | QIODevice::Text));
+    wrapper.write(QByteArray("#!/bin/sh\n")
+        + "if [ ! -f '" + marker.toUtf8() + "' ]; then "
+          "touch '" + marker.toUtf8() + "'; exit 1; fi\n"
+        + "exec python3 '" + fake.toUtf8() + "' \"$@\"\n");
+    wrapper.close();
+    QVERIFY(QFile::setPermissions(wrapperPath,
+        QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+
+    TorManager manager;
+    manager.setBinaryPath(wrapperPath);
+    manager.setDataDirectory(dir.path());
+    QSignalSpy logSpy(&manager, &TorManager::logLine);
+    manager.start();
+
+    QTRY_VERIFY_WITH_TIMEOUT(manager.state() == TorManager::Ready,
+                             30000);
+    int restarts = 0;
+    for (int i = 0; i < logSpy.count(); ++i) {
+        if (logSpy.at(i).first().toString().contains(
+                QLatin1String("restarting tor")))
+            ++restarts;
+    }
+    QCOMPARE(restarts, 1);
+
+    manager.stop();
+    QCOMPARE(manager.state(), TorManager::Stopped);
+}
+
+// TOR17: the tor window's honest-state strip — hidden while a daemon
+// is ready, announcing bootstrap while it comes up, and carrying the
+// failure reason + a working Retry action when launch fails.
+void tst_TorManager::statusBanner()
+{
+    const QString fake = fakeTorPath();
+    if (!QFileInfo(fake).isExecutable()
+        || QStandardPaths::findExecutable(QStringLiteral("python3"))
+               .isEmpty())
+        QSKIP("faketor.py fixture needs an executable python3");
+
+    // Unbound: nothing to report, stays hidden.
+    TorStatusBanner banner;
+    QVERIFY(!banner.isVisible());
+    banner.bind(nullptr);
+    QVERIFY(!banner.isVisible());
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    TorManager manager;
+    manager.setBinaryPath(QLatin1String("/nonexistent/tor-binary"));
+    manager.setDataDirectory(dir.path());
+    banner.bind(&manager);
+
+    QLabel *label = banner.findChild<QLabel *>(
+        QLatin1String("torStatusBannerLabel"));
+    QPushButton *retry = banner.findChild<QPushButton *>(
+        QLatin1String("torStatusBannerRetry"));
+    QVERIFY(label);
+    QVERIFY(retry);
+
+    // A not-yet-started daemon is honest too — strip visible, retry
+    // offered (it calls start()).
+    QVERIFY(banner.isVisible());
+    QVERIFY(label->text().contains(QLatin1String("not running")));
+    QVERIFY(retry->isVisible());
+
+    // A launch failure lands on the strip with the reason — not a
+    // silent raw-proxy-error window.
+    manager.start();
+    QCOMPARE(manager.state(), TorManager::Failed);
+    QVERIFY(label->text().contains(QLatin1String("unavailable")));
+    QVERIFY(label->text().contains(manager.errorString()));
+
+    // Retry after pointing at a working daemon: the strip goes back
+    // to "connecting" immediately and disappears once Ready.
+    manager.setBinaryPath(fake);
+    retry->click();
+    QCOMPARE(manager.state(), TorManager::Starting);
+    QVERIFY(label->text().contains(QLatin1String("Connecting")));
+    QTRY_VERIFY_WITH_TIMEOUT(manager.state() == TorManager::Ready,
+                             30000);
+    QTRY_VERIFY_WITH_TIMEOUT(!banner.isVisible(), 5000);
+
+    manager.stop();
+    QCOMPARE(manager.state(), TorManager::Stopped);
 }
 
 // Same lifecycle against a real tor daemon — skipped when no binary

@@ -101,6 +101,7 @@
 #include "toolbarsearch.h"
 #include "torcircuitbutton.h"
 #include "tormanager.h"
+#include "torstatusbanner.h"
 #include "tortitlebar.h"
 #include "useragentmenu.h"
 #include "webenginebackend.h"
@@ -501,6 +502,15 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
                 tabBar, [tabBar]() {
             tabBar->setStyleSheet(torTabBarStyleSheet());
         });
+
+        // TOR17: until the daemon's SOCKS listener is live every page
+        // would just die at the fail-closed proxy — the banner says
+        // what is happening (connecting % / failure + Retry) instead
+        // of leaving a raw ERR_PROXY_CONNECTION_FAILED on every tab.
+        m_torBanner = new TorStatusBanner(this);
+        layout->insertWidget(layout->indexOf(m_tabWidget), m_torBanner);
+        BrowserApplication *app = BrowserApplication::instance();
+        m_torBanner->bind(app ? app->torManager() : nullptr);
     }
 
     // The dock was created in setupMenu() (its toggle action lives in

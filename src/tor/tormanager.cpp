@@ -47,6 +47,8 @@ TorManager::TorManager(QObject *parent)
     , m_process(nullptr)
     , m_control(nullptr)
     , m_portFileTimer(nullptr)
+    , m_startRetries(0)
+    , m_retryTimer(nullptr)
 {
     // Needed by QSignalSpy/queued consumers of circuitsChanged.
     qRegisterMetaType<TorCircuit>("TorCircuit");
@@ -455,8 +457,12 @@ void TorManager::setState(State state)
         return;
     m_state = state;
     emit stateChanged(state);
-    if (state == Ready)
+    if (state == Ready) {
+        // A finished launch series — the retry budget is whole again
+        // for any later restart.
+        m_startRetries = 0;
         requestCircuitInfo();
+    }
 }
 
 void TorManager::fail(const QString &reason)
@@ -466,10 +472,52 @@ void TorManager::fail(const QString &reason)
     emit failed(reason);
 }
 
+// Plus the initial attempt — three spawns in total before the
+// failure is declared.
+static const int kMaxStartRetries = 2;
+
+void TorManager::retryOrFail(const QString &reason)
+{
+    if (m_startRetries < kMaxStartRetries
+        && m_state != Stopped && m_state != Stopping) {
+        ++m_startRetries;
+        emit logLine(reason + QStringLiteral(
+            " — restarting tor (attempt %1 of %2)")
+                .arg(m_startRetries + 1).arg(kMaxStartRetries + 1));
+        if (m_portFileTimer)
+            m_portFileTimer->stop();
+        if (m_circuitRefreshTimer)
+            m_circuitRefreshTimer->stop();
+        if (m_control) {
+            m_control->deleteLater();
+            m_control = nullptr;
+        }
+        setState(Stopped);
+        if (!m_retryTimer) {
+            m_retryTimer = new QTimer(this);
+            m_retryTimer->setSingleShot(true);
+            connect(m_retryTimer, &QTimer::timeout,
+                    this, [this]() {
+                if (m_state == Stopped)
+                    start();
+            });
+        }
+        m_retryTimer->start(1500);
+        return;
+    }
+    fail(reason);
+}
+
 void TorManager::start()
 {
     if (m_state != Stopped && m_state != Failed)
         return;
+    // An explicit restart after a settled failure is a fresh launch
+    // series — the bounded respawn budget is whole again (the
+    // internal retry path goes Stopped -> start() and keeps its
+    // count).
+    if (m_state == Failed)
+        m_startRetries = 0;
     m_errorString.clear();
     m_bootstrapProgress = -1;
     m_bootstrapSummary.clear();
@@ -529,16 +577,17 @@ void TorManager::start()
         connect(m_process, &QProcess::errorOccurred,
                 this, [this](QProcess::ProcessError) {
             if (m_state != Stopped && m_state != Stopping)
-                fail(QLatin1String("failed to launch tor: ")
-                     + m_process->errorString());
+                retryOrFail(QLatin1String("failed to launch tor: ")
+                            + m_process->errorString());
         });
         connect(m_process,
                 QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
                 this, [this](int exitCode, QProcess::ExitStatus) {
             if (m_state == Starting || m_state == Connecting
                 || m_state == Bootstrapping) {
-                fail(QStringLiteral("tor exited before bootstrap "
-                                    "(exit code %1)").arg(exitCode));
+                retryOrFail(QStringLiteral("tor exited before bootstrap "
+                                           "(exit code %1)")
+                                .arg(exitCode));
             } else if (m_state != Stopping) {
                 setState(Stopped);
                 emit stopped();
@@ -592,6 +641,29 @@ void TorManager::start()
 
     m_process->setProgram(binary);
     m_process->setArguments(args);
+#if defined(Q_OS_UNIX)
+    // TOR17: the expert-bundle tor carries no RPATH — its libssl/
+    // libcrypto/libevent sit beside the binary — so under an
+    // inherited loader path (a bundle wrapper's LD_LIBRARY_PATH, a
+    // flatpak-style runtime) the daemon can bind incompatible copies
+    // and die at exec with no diagnostics.  Prepending the binary's
+    // own directory makes the shipped libs win; for a system tor the
+    // extra entry is harmless.
+    if (!binaryDir.isEmpty()) {
+        QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+#if defined(Q_OS_MACOS)
+        const QString libraryPathVar =
+            QStringLiteral("DYLD_FALLBACK_LIBRARY_PATH");
+#else
+        const QString libraryPathVar =
+            QStringLiteral("LD_LIBRARY_PATH");
+#endif
+        const QString existing = env.value(libraryPathVar);
+        env.insert(libraryPathVar, existing.isEmpty()
+            ? binaryDir : binaryDir + QLatin1Char(':') + existing);
+        m_process->setProcessEnvironment(env);
+    }
+#endif
     setState(Starting);
     m_process->start();
 
@@ -751,6 +823,11 @@ void TorManager::querySocksListener()
 
 void TorManager::stop()
 {
+    // A pending respawn must not fire after stop() — cancel it even
+    // when the state already reads Stopped (the retry gap).
+    if (m_retryTimer)
+        m_retryTimer->stop();
+    m_startRetries = 0;
     if (m_state == Stopped)
         return;
     setState(Stopping);

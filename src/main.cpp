@@ -81,6 +81,7 @@
 #include "torcircuitpanel.h"
 #include "torcontrol.h"
 #include "tormanager.h"
+#include "torstatusbanner.h"
 #include "torsocks5.h"
 #include "engineregistry.h"
 #include "webenginebackend.h"
@@ -11469,6 +11470,25 @@ int main(int argc, char **argv)
         }
         qInfo() << "tor-window-smoke: circuit label present:" 
                 << circuitLabel->text();
+
+        // TOR17: the honest-state banner sits above the tabs — while
+        // the daemon is not Ready it announces bootstrap progress (or
+        // the failure reason + Retry) instead of leaving every tab at
+        // a raw proxy error with no explanation.
+        TorStatusBanner *torBanner =
+            torWindow->findChild<TorStatusBanner *>(
+                QLatin1String("torStatusBanner"));
+        QLabel *torBannerLabel = torBanner
+            ? torBanner->findChild<QLabel *>(
+                  QLatin1String("torStatusBannerLabel"))
+            : nullptr;
+        if (!torBanner || !torBannerLabel) {
+            torWinFail(QLatin1String(
+                "tor window missing the status banner"));
+            return application.exec();
+        }
+        qInfo() << "tor-window-smoke: status banner present:"
+                << torBannerLabel->text();
 
         // TOR07: the whole header block shares the violet chrome —
         // no default-palette menu row or tab strip survives.
