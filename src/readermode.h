@@ -118,13 +118,17 @@ private:
     // number of times since loadFinished can fire before the article
     // markup settles (deferred hydration, lazily injected content).
     void probeFinished(bool available);
+
+public:
     // Runs program (the Readability+driver bundle plus a trailing
     // call) in the page's dedicated reader world, working around
     // WebEngine's refusal to runJavaScript while JavascriptEnabled is
-    // off.
+    // off.  Public so smoke probes can re-run driver calls directly.
     void runDriver(const QString &call,
                    const std::function<void(const QVariant &)> &callback
                        = std::function<void(const QVariant &)>());
+
+private:
     QString scriptBundle() const;
     bool eventFilter(QObject *watched, QEvent *event) override;
 

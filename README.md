@@ -371,6 +371,20 @@ location, e.g. `~/.local/share/Arora/Arora/` on Linux) and can be
 removed with the page's Remove button or by deleting their folder
 while Arora is closed.
 
+Arora bundles the **Bitwarden password-manager extension** (official
+Chrome build, `src/data/extensions/` — provenance and checksums in
+`PROVENANCE.txt` there). On the first run of a profile that has no
+extensions yet it is installed and enabled by default; on a profile
+that already carries extensions it is installed but left disabled —
+flip it on from Settings → Extensions. It installs exactly once:
+uninstalling is never undone, and it is never loaded into private
+or Tor profiles. The bundled build cannot self-update (no
+`update_url`); updates arrive with Arora releases. Qt WebEngine's
+extension API is a tech preview — a few chrome.* calls the Bitwarden
+popup uses (`chrome.tabs.getCurrent`, `getBackgroundPage`) are not
+yet implemented by the engine and are logged as console warnings;
+the core autofill content scripts work.
+
 ### Credentials & autofill
 
 Saved-password prompts, per-site "never" rules and a form-passwords
@@ -600,6 +614,7 @@ below are the user-facing summary.
 | qrcodegen — QR generator (Nayuki, C++ and Rust crate) | MIT | `src/qrcodegen.*`, crate `qrcodegen` |
 | Arora icon artwork (Jens Bache-Wiig, 2008) | GPL-2.0 | `src/data/arora.svg` + renderings |
 | OpenSearch descriptors (service names are their owners' marks) | GPL-2.0+ (Arora-authored XML) | `src/data/searchengines/` |
+| Bitwarden password-manager extension 2026.9.3 (bundled default) | GPL-3.0 | `src/data/extensions/` |
 | Community translations | GPL-2.0+ (project license) | `src/locale/` |
 | modeltest + browser-export fixtures | GPL-2.0 / test data — never shipped | `autotests/`, `tools/htmlToXBel/tests/` |
 

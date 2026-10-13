@@ -926,6 +926,14 @@ Extensions:
   (EXT06). Autotest binaries no longer leak installs into the real
   browsing profile — QStandardPaths test mode is enabled before the
   shared test main constructs the profile.
+- Ships the Bitwarden password-manager extension (official MV3 Chrome
+  build 2026.9.3, GPL-3.0 — see src/data/extensions/PROVENANCE.txt)
+  as a bundled default (EXT07). It is installed once per profile:
+  enabled by default when the profile has no extensions yet,
+  installed-but-disabled on profiles that already do (opt in via
+  Settings → Extensions), and never again after uninstall. It is
+  never loaded into private or Tor profiles, and it cannot
+  self-update — updates arrive with Arora releases.
 
 Downloads:
 - QtWebEngine download manager: progress, Try Again, safe names

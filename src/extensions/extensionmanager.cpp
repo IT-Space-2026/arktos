@@ -300,7 +300,9 @@ void ExtensionManager::installOnProfile(QWebEngineProfile *profile)
             this, relay(&ExtensionManager::extensionLoaded));
     connect(extensions, &QWebEngineExtensionManager::installFinished,
             this, [this](const QWebEngineExtensionInfo &info) {
-        emit extensionInstalled(infoFrom(info));
+        const ExtensionInfo plain = infoFrom(info);
+        finishBundledInstall(plain);
+        emit extensionInstalled(plain);
         emit changed();
     });
     connect(extensions, &QWebEngineExtensionManager::unloadFinished,
@@ -309,6 +311,9 @@ void ExtensionManager::installOnProfile(QWebEngineProfile *profile)
             this, relay(&ExtensionManager::extensionUninstalled));
 
     scheduleAutoUpdateCheck();
+
+    // EXT07: default-installed bundle lands once per profile.
+    installBundledExtensions(profile);
 #endif
 }
 
@@ -444,6 +449,172 @@ void ExtensionManager::setExtensionEnabled(const QString &id, bool enabled)
     }
 #endif
     emit errorOccurred(tr("Extension support is not available in this build of Qt WebEngine."));
+}
+
+QString ExtensionManager::bundledExtensionsPath()
+{
+    const QString overrideDir = QString::fromLocal8Bit(
+        qgetenv("ARORA_BUNDLED_EXTENSIONS_DIR"));
+    if (!overrideDir.isEmpty())
+        return overrideDir;
+    const QString installed = BrowserApplication::installedDataDirectory()
+        + QLatin1String("/extensions");
+    if (QFileInfo(installed).isDir())
+        return installed;
+    // Uninstalled build: the binary links into either src/ or the
+    // repository root depending on the qmake target layout.
+    const QString appDir = QCoreApplication::applicationDirPath();
+    for (const QString &rel : {QStringLiteral("/data/extensions"),
+                               QStringLiteral("/src/data/extensions")}) {
+        const QString candidate = appDir + rel;
+        if (QFileInfo(candidate).isDir())
+            return candidate;
+    }
+    return QString();
+}
+
+#if QT_CONFIG(webengine_extensions)
+// "bitwarden-2026.9.3.zip" -> "bitwarden" — the loose product-name
+// stem used to correlate a bundled file with the extension Chromium
+// reports back (manifest "name" localizes, so the raw package base
+// name is the stable side of the match).
+static QString bundledStem(const QString &fileName)
+{
+    QString stem = fileName;
+    if (stem.endsWith(QLatin1String(".zip"), Qt::CaseInsensitive))
+        stem.chop(4);
+    stem.remove(QRegularExpression(
+        QStringLiteral("[-_][0-9][0-9.]*(-[A-Za-z0-9.]+)?$")));
+    return stem;
+}
+#endif
+
+void ExtensionManager::installBundledExtensions(QWebEngineProfile *profile)
+{
+#if QT_CONFIG(webengine_extensions)
+    if (!profile || profile->isOffTheRecord())
+        return;
+    QWebEngineExtensionManager *extensions = profile->extensionManager();
+    if (!extensions)
+        return;
+    const QString dirPath = bundledExtensionsPath();
+    if (dirPath.isEmpty())
+        return;
+    const QDir dir(dirPath);
+    QStringList names = dir.entryList(
+        QStringList() << QLatin1String("*.zip"), QDir::Files, QDir::Name);
+    const QFileInfoList subdirs = dir.entryInfoList(
+        QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+    for (const QFileInfo &sub : subdirs) {
+        if (QFileInfo::exists(sub.absoluteFilePath()
+                + QLatin1String("/manifest.json")))
+            names.append(sub.fileName());
+    }
+    if (names.isEmpty())
+        return;
+
+    // The consumed marker is one-shot per profile: once a bundled
+    // file has installed (or been satisfied by a same-named existing
+    // extension) it never installs again — a user's uninstall or
+    // disable is a decision, not a state to repair.
+    const QString settingsKey = QLatin1String("extensions/bundled/")
+        + (profile->storageName().isEmpty()
+           ? QStringLiteral("default") : profile->storageName());
+    QSettings settings;
+    const QStringList consumed = settings.value(settingsKey).toStringList();
+    QStringList satisfied;
+
+    for (const QString &name : names) {
+        if (consumed.contains(name))
+            continue;
+        const QString stem = bundledStem(name);
+        if (!stem.isEmpty()) {
+            const QList<QWebEngineExtensionInfo> existing =
+                extensions->extensions();
+            for (const QWebEngineExtensionInfo &info : existing) {
+                if (info.isInstalled()
+                        && info.name().contains(stem, Qt::CaseInsensitive)) {
+                    satisfied.append(name);
+                    break;
+                }
+            }
+            if (satisfied.contains(name))
+                continue;
+        }
+
+        // "Extension-fresh" = the profile's installPath holds nothing
+        // yet.  Fresh profiles get the bundle enabled as part of the
+        // default install — that is the "installed by default" the
+        // user asked for.  Profiles that already curated extensions
+        // get the bundle installed-but-disabled so the choice to
+        // enable stays theirs; nothing already installed is ever
+        // force-enabled retroactively (EXT07).
+        const QString installDir = extensions->installPath();
+        const bool fresh = installDir.isEmpty()
+            || !QDir(installDir).exists()
+            || QDir(installDir).entryList(
+                QDir::AllEntries | QDir::NoDotAndDotDot).isEmpty();
+
+        PendingBundle pending;
+        pending.engine = extensions;
+        pending.settingsKey = settingsKey;
+        pending.fileName = name;
+        pending.stem = stem;
+        pending.enable = fresh;
+        m_bundledPending.append(pending);
+
+        // Consent: bundling IS Arora's approval — the grant is made
+        // programmatically on this internal path but still flows
+        // through the one-shot gate (consumed by this install), so a
+        // manual retry of the same path later needs a real review.
+        const QString path = dir.absoluteFilePath(name);
+        grantConsent(path);
+        installExtension(path);
+    }
+    if (!satisfied.isEmpty())
+        settings.setValue(settingsKey, consumed + satisfied);
+#endif
+}
+
+void ExtensionManager::finishBundledInstall(const ExtensionInfo &info)
+{
+#if QT_CONFIG(webengine_extensions)
+    for (int i = 0; i < m_bundledPending.size(); ++i) {
+        const PendingBundle pending = m_bundledPending.at(i);
+        if (pending.engine.isNull()) {
+            m_bundledPending.removeAt(i--);
+            continue;
+        }
+        // Correlate loosely by name stem; on an install error the
+        // reported name can be empty, so fall back to the oldest
+        // pending entry (bundled installs issue serially at startup,
+        // before anything else could reasonably race in).
+        const bool stemMatch = !pending.stem.isEmpty()
+            && info.name.contains(pending.stem, Qt::CaseInsensitive);
+        const bool errorFallback = !info.error.isEmpty() && i == 0;
+        if (!stemMatch && !errorFallback)
+            continue;
+        m_bundledPending.removeAt(i);
+        if (!info.error.isEmpty() || !info.installed)
+            return;
+        QSettings settings;
+        QStringList consumed =
+            settings.value(pending.settingsKey).toStringList();
+        if (!consumed.contains(pending.fileName)) {
+            consumed.append(pending.fileName);
+            settings.setValue(pending.settingsKey, consumed);
+        }
+        if (pending.enable) {
+            const QWebEngineExtensionInfo ext =
+                findById(pending.engine, info.id);
+            if (!ext.id().isEmpty())
+                pending.engine->setExtensionEnabled(ext, true);
+        }
+        return;
+    }
+#else
+    Q_UNUSED(info);
+#endif
 }
 
 ExtensionManager::Manifest ExtensionManager::inspectManifest(const QString &path)

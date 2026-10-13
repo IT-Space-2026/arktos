@@ -108,7 +108,7 @@ SMOKE_FLAGS="--quit-after-load --app-smoke --browser-smoke --nam-smoke
 --cookie-smoke --history-smoke --bookmarks-smoke --search-smoke
 --search-guess-smoke --settings-smoke --autofill-smoke --find-smoke --source-smoke
 --adblock-smoke --adblock-list-smoke --adblock-rust-smoke --extension-smoke
---extension-otr-smoke --extension-update-smoke --ua-smoke
+--extension-otr-smoke --extension-update-smoke --bitwarden-smoke --ua-smoke
 --container-smoke --palette-smoke --pip-smoke --tabstrip-smoke
 --icons-smoke --fingerprint-smoke --fingerprint-child-smoke --ping-smoke
 --httpsonly-smoke --telemetry-smoke --telemetry-browse-smoke

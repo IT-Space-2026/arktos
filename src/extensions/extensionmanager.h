@@ -30,6 +30,7 @@
 #include <qstringlist.h>
 #include <qurl.h>
 
+class QWebEngineExtensionManager;
 class QWebEngineProfile;
 class QNetworkReply;
 
@@ -172,6 +173,31 @@ public:
     void removeExtension(const QString &id);     // unload or uninstall, per state
     void setExtensionEnabled(const QString &id, bool enabled);
 
+    // EXT07 default-installed bundle: every *.zip package (and every
+    // unpacked subdir carrying manifest.json) in
+    // bundledExtensionsPath() is installed onto each prepared
+    // non-off-the-record profile exactly once.  The per-profile
+    // QSettings list "extensions/bundled/<storageName>" records the
+    // basenames already consumed — a user uninstall is never
+    // resurrected, and a same-named extension already present
+    // (manual install or an older bundle) counts as satisfied.
+    // On an extension-fresh profile (nothing in installPath yet)
+    // the bundle is enabled as part of the install; profiles that
+    // already carry extensions get it installed-but-disabled —
+    // opting in is a Preferences checkbox away, and an existing
+    // install is never force-enabled retroactively.  Consent is
+    // programmatic on this internal path (bundling IS Arora's
+    // approval) but still flows through the same one-shot
+    // grant/consume accounting, so a later manual install of the
+    // same path needs a real review like any other.
+    void installBundledExtensions(QWebEngineProfile *profile);
+    // Directory scanned by installBundledExtensions():
+    // ARORA_BUNDLED_EXTENSIONS_DIR wins (tests/dev overrides), then
+    // <installedDataDirectory>/extensions, then the in-tree
+    // data/extensions for uninstalled builds (the binary links into
+    // src/ or the repository root).  Empty when none exists.
+    static QString bundledExtensionsPath();
+
     // Reads <extensionDir>/manifest.json; path may point at the
     // manifest file itself.  valid==false for .zip packages (not
     // inspected — Qt's installer handles them).
@@ -254,6 +280,7 @@ signals:
 private:
     explicit ExtensionManager(QObject *parent = nullptr);
 
+    void finishBundledInstall(const ExtensionInfo &info);
     void reloadUserScripts(QWebEngineProfile *profile);
     void scheduleAutoUpdateCheck();
     void maybeAutoUpdateCheck();
@@ -267,6 +294,20 @@ private:
     // One-shot consent grants keyed by the exact path string the
     // review approved; consumed by the load/install they authorize.
     QSet<QString> m_consentedPaths;
+
+    // EXT07: bundled installs in flight, correlated to their
+    // installFinished by the package-name stem so the per-profile
+    // consumed marker and the fresh-profile enable land on the right
+    // extension.  Entries for installs that never finish simply leak
+    // out of the list (bounded — a handful of bundled files).
+    struct PendingBundle {
+        QPointer<QWebEngineExtensionManager> engine;
+        QString settingsKey;    // "extensions/bundled/<storageName>"
+        QString fileName;       // basename — the consumed marker
+        QString stem;           // name stem for loose correlation
+        bool enable = false;    // extension-fresh profile → enable
+    };
+    QList<PendingBundle> m_bundledPending;
 
     // In-flight update jobs keyed by the reply currently active for
     // the extension (manifest fetch, then package download).

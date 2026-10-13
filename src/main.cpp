@@ -3875,7 +3875,7 @@ int main(int argc, char **argv)
         "adblock-list-smoke", "adblock-rust-smoke", "autofill-smoke",
         "settings-smoke", "find-smoke", "source-smoke", "browser-smoke",
         "app-smoke", "extension-smoke", "extension-otr-smoke",
-        "extension-update-smoke",
+        "extension-update-smoke", "bitwarden-smoke",
         "ua-smoke", "perf-smoke",
         "session-smoke", "restore-smoke", "tor-smoke", "privacy-smoke",
         "sigterm-smoke", "sigterm-child-smoke",
@@ -10004,6 +10004,317 @@ int main(int argc, char **argv)
         QDir(otrExtDir).removeRecursively();
         return 0;
 #endif
+    }
+
+    // Headless verification for EXT07: the bundled default
+    // extension.  installBundledExtensions() ran inside
+    // installOnProfile() at startup, so the vendored Bitwarden zip
+    // (src/data/extensions, or <datadir>/extensions installed)
+    // should already be landing on the named profile — the smoke
+    // waits for the Installed+Enabled row, verifies the one-shot
+    // consent/marker accounting, proves the extension functions
+    // (action popup resource resolves over chrome-extension:// and
+    // a real content script answers Bitwarden's own
+    // "checkIfBWExtensionInstalled" window handshake on a loopback
+    // page), and pins the OTR profile as untouched.  Idempotent —
+    // the consumed marker means a second run verifies the same row
+    // without reinstalling.  Exits 0 on PASS.
+    int bwFailures = 0;
+    QString bwZipPath;
+    QTimer *bwPoll = nullptr;
+    std::shared_ptr<int> bwTicks;
+    QTcpServer *bwServer = nullptr;
+    QWebEngineView *bwPopupView = nullptr;
+    std::shared_ptr<bool> bwConsentRefused;
+    QString bwExtId;
+    QString bwPopupUrl;
+    QUrl bwFixture;
+    if (args.contains(QLatin1String("--bitwarden-smoke"))) {
+        const auto check = [&bwFailures](bool ok, const QString &what) {
+            qInfo() << "bitwarden-smoke:" << what
+                    << (ok ? "PASS" : "FAIL");
+            if (!ok)
+                ++bwFailures;
+        };
+        const auto die = [&application](const QString &why) {
+            qInfo() << "bitwarden-smoke: FAIL" << why;
+            fflush(nullptr);
+            std::quick_exit(1);
+        };
+
+        ExtensionManager *bwManager = ExtensionManager::instance();
+        const QString bwDir = ExtensionManager::bundledExtensionsPath();
+        check(!bwDir.isEmpty(), QStringLiteral("bundled extensions dir resolves"));
+        if (!bwDir.isEmpty()) {
+            const QStringList zips = QDir(bwDir).entryList(
+                QStringList() << QLatin1String("*.zip"), QDir::Files);
+            for (const QString &zip : zips) {
+                if (zip.startsWith(QLatin1String("bitwarden")))
+                    bwZipPath = QDir(bwDir).absoluteFilePath(zip);
+            }
+        }
+        check(!bwZipPath.isEmpty(),
+              QStringLiteral("bitwarden package vendored in %1")
+                  .arg(bwDir));
+
+#if defined(ARORA_RUSTCORE)
+        if (!bwZipPath.isEmpty()) {
+            // rustcore verifies the archive structure and classifies
+            // the embedded manifest.
+            const ExtensionManager::Manifest bwManifest =
+                ExtensionManager::inspectManifest(bwZipPath);
+            check(bwManifest.valid && bwManifest.manifestVersion == 3,
+                  QStringLiteral("package verifies, manifest V3 (%1)")
+                      .arg(bwManifest.error));
+            check(bwManifest.hasBackground
+                  && bwManifest.contentScriptCount > 0,
+                  QStringLiteral("background worker + content scripts declared"));
+            qInfo() << "bitwarden-smoke: manifest"
+                    << bwManifest.name << bwManifest.version
+                    << "permissions:" << bwManifest.permissions
+                    << "host:" << bwManifest.hostPermissions;
+        }
+#endif
+
+        // The OTR profile must stay extension-free —
+        // installBundledExtensions() hard-returns on it.
+        QWebEngineProfile *bwOtr = BrowserProfile::privateProfile();
+        bwManager->installBundledExtensions(bwOtr);
+        bool otrClean = true;
+#if QT_CONFIG(webengine_extensions)
+        if (QWebEngineExtensionManager *bwOtrExt =
+                bwOtr->extensionManager()) {
+            const QList<QWebEngineExtensionInfo> otrList =
+                bwOtrExt->extensions();
+            for (const QWebEngineExtensionInfo &entry : otrList) {
+                if (entry.name().contains(QLatin1String("bitwarden"),
+                                          Qt::CaseInsensitive))
+                    otrClean = false;
+            }
+        }
+#endif
+        check(otrClean, QStringLiteral("OTR profile untouched by bundled install"));
+
+        // The startup install lands asynchronously — poll for the
+        // row.  The remaining checks chain inside once it appears.
+        bwPoll = new QTimer(&application);
+        bwTicks = std::make_shared<int>(0);
+        QObject::connect(bwPoll, &QTimer::timeout, &application, [&]() {
+            ExtensionManager::ExtensionInfo row;
+            const QList<ExtensionManager::ExtensionInfo> listed =
+                bwManager->extensions();
+            for (const ExtensionManager::ExtensionInfo &info : listed) {
+                if (info.name.contains(QLatin1String("bitwarden"),
+                                       Qt::CaseInsensitive))
+                    row = info;
+            }
+            if (row.id.isEmpty() || !row.installed) {
+                if (++*bwTicks > 300) {
+                    bwPoll->stop();
+                    check(false,
+                          QStringLiteral("bundled bitwarden installed on profile"));
+                    die(QStringLiteral(
+                            "install never landed on the profile"));
+                }
+                return;
+            }
+            bwPoll->stop();
+            check(true, QStringLiteral("bundled bitwarden installed on profile"));
+
+            // Enabled exactly when the profile was extension-fresh:
+            // our install is then the only entry under installPath.
+            const QString installDir = bwManager->installPath();
+            const int siblings = QDir(installDir).entryList(
+                QDir::AllEntries | QDir::NoDotAndDotDot).size();
+            check(row.enabled == (siblings <= 1),
+                  QStringLiteral("enabled iff extension-fresh "
+                                 "profile (installPath entries=%1)")
+                      .arg(siblings));
+            check(!row.description.isEmpty(),
+                  QStringLiteral("description populated for settings column"));
+            check(row.actionPopupUrl.isValid()
+                  && row.actionPopupUrl.scheme()
+                      == QLatin1String("chrome-extension"),
+                  QStringLiteral("action popup url: %1")
+                      .arg(row.actionPopupUrl.toString()));
+            check(!bwManager->hasConsent(bwZipPath),
+                  QStringLiteral("internal consent grant consumed"));
+            const QStringList marker = QSettings().value(
+                QLatin1String("extensions/bundled/")
+                + profile->storageName()).toStringList();
+            check(marker.contains(QFileInfo(bwZipPath).fileName()),
+                  QStringLiteral("one-shot consumed marker recorded"));
+
+            // The gate still guards the raw path: a second install
+            // of the same package with no fresh consent is refused.
+            bwConsentRefused = std::make_shared<bool>(false);
+            QObject::connect(bwManager, &ExtensionManager::errorOccurred,
+                             &application,
+                             [bwConsentRefused](const QString &message) {
+                if (message.contains(QLatin1String("consent")))
+                    *bwConsentRefused = true;
+            });
+            bwManager->installExtension(bwZipPath);
+            bwExtId = row.id;
+            bwPopupUrl = row.actionPopupUrl.toString();
+
+            // Loopback fixture for the content-script handshake.
+            bwServer = new QTcpServer(&application);
+            if (!bwServer->listen(QHostAddress::LocalHost)) {
+                die(QStringLiteral("cannot listen on loopback"));
+                return;
+            }
+            QObject::connect(bwServer, &QTcpServer::newConnection,
+                             &application, [bwServer]() {
+                QTcpSocket *socket = bwServer->nextPendingConnection();
+                QObject::connect(socket, &QTcpSocket::readyRead,
+                                 socket, [socket]() {
+                    socket->readAll();
+                    const QByteArray body = "<html><body>bw</body></html>";
+                    socket->write("HTTP/1.1 200 OK\r\n"
+                                  "Content-Type: text/html\r\n"
+                                  "Content-Length: "
+                        + QByteArray::number(body.size())
+                        + "\r\nConnection: close\r\n\r\n" + body);
+                    socket->disconnectFromHost();
+                });
+            });
+            bwFixture = QUrl(QStringLiteral("http://127.0.0.1:%1/")
+                .arg(bwServer->serverPort()));
+
+            // Content scripts only inject while the extension is
+            // enabled — on an extension-fresh profile the default
+            // install already enabled it; on a curated profile it
+            // landed disabled (the opt-in semantics verified above),
+            // so enable it the same way a user would before the
+            // function checks.
+            if (!row.enabled)
+                bwManager->setExtensionEnabled(row.id, true);
+            auto *enableWait = new QTimer(&application);
+            auto *enableTries = new int(0);
+            QObject::connect(enableWait, &QTimer::timeout,
+                             &application,
+                             [&, check, enableWait, enableTries]() {
+                bool enabled = false;
+                const QList<ExtensionManager::ExtensionInfo> now =
+                    bwManager->extensions();
+                for (const ExtensionManager::ExtensionInfo &info : now) {
+                    if (info.id == bwExtId && info.enabled)
+                        enabled = true;
+                }
+                if (!enabled && ++*enableTries <= 60)
+                    return;
+                enableWait->stop();
+                enableWait->deleteLater();
+                delete enableTries;
+                if (!enabled) {
+                    check(false, QStringLiteral(
+                              "extension enabled for function checks"));
+                    die(QStringLiteral("enable never settled"));
+                    return;
+                }
+
+            // Phase 1: the action popup must resolve over
+            // chrome-extension://.
+            bwPopupView = new QWebEngineView;
+            QWebEnginePage *popupPage =
+                new QWebEnginePage(profile, bwPopupView);
+            bwPopupView->setPage(popupPage);
+            QObject::connect(popupPage, &QWebEnginePage::loadFinished,
+                             &application, [&, check](bool ok) {
+                check(ok, QStringLiteral(
+                          "action popup chrome-extension:// loads"));
+                bwPopupView->deleteLater();
+                bwPopupView = nullptr;
+
+                // Phase 2: a real content script runs — Bitwarden's
+                // content-message-handler answers the page's
+                // checkIfBWExtensionInstalled post with
+                // hasBwInstalled.
+                auto armed = std::make_shared<QString>();
+                QObject::connect(view->webPage(),
+                                 &QWebEnginePage::loadingChanged,
+                                 &application,
+                                 [&, check, armed](
+                                     QWebEngineLoadingInfo info) {
+                    if (info.status()
+                            != QWebEngineLoadingInfo::LoadSucceededStatus
+                        || info.url() != bwFixture)
+                        return;
+                    view->webPage()->disconnect(&application);
+                    view->enginePage()->runJavaScript(QStringLiteral(
+                        "(function(){"
+                        "window.__bwResult=null;"
+                        "window.addEventListener('message',function(e){"
+                        "if(e.data&&e.data.command==='hasBwInstalled')"
+                        "window.__bwResult=true;});"
+                        "window.postMessage("
+                        "{command:'checkIfBWExtensionInstalled'},'*');"
+                        "setTimeout(function(){"
+                        "if(window.__bwResult===null)"
+                        "window.__bwResult=false;},5000);"
+                        "return 'armed';})()"),
+                        [armed](const QVariant &result) {
+                            *armed = result.toString();
+                        });
+                    auto *handshake = new QTimer(&application);
+                    auto *tries = new int(0);
+                    QObject::connect(handshake, &QTimer::timeout,
+                                     &application,
+                                     [&, check, handshake, tries]() {
+                        ++*tries;
+                        view->enginePage()->runJavaScript(
+                            QStringLiteral("window.__bwResult"),
+                            [&, check, handshake, tries](
+                                const QVariant &result) {
+                            const QVariant value = result;
+                            if (!value.isValid()
+                                    || value.isNull()) {
+                                if (*tries > 40) {
+                                    handshake->stop();
+                                    handshake->deleteLater();
+                                    delete tries;
+                                    check(false, QStringLiteral(
+                                          "content script "
+                                          "hasBwInstalled handshake"));
+                                    die(QStringLiteral(
+                                        "handshake probe stuck"));
+                                }
+                                return;
+                            }
+                            handshake->stop();
+                            handshake->deleteLater();
+                            delete tries;
+                            check(value.toBool(), QStringLiteral(
+                                  "content script hasBwInstalled "
+                                  "handshake"));
+                            check(*bwConsentRefused, QStringLiteral(
+                                  "ungranted reinstall refused "
+                                  "(consent gate)"));
+                            qInfo() << "bitwarden-smoke:"
+                                    << (bwFailures == 0
+                                        ? "PASS" : "FAIL")
+                                    << "failures:" << bwFailures;
+                            fflush(nullptr);
+                            std::quick_exit(
+                                bwFailures == 0 ? 0 : 1);
+                        });
+                    });
+                    handshake->start(250);
+                });
+                view->loadUrl(bwFixture);
+            });
+            popupPage->load(QUrl(bwPopupUrl));
+            });
+            enableWait->start(100);
+
+        });
+        bwPoll->start(200);
+
+        QTimer::singleShot(120000, &application, [die]() {
+            die(QStringLiteral("timeout"));
+        });
+        return application.exec();
     }
 
     // Headless verification for EXT03: update_url self-update checks.

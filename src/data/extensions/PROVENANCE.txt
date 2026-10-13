@@ -1,0 +1,47 @@
+Bundled default extensions (EXT07)
+==================================
+
+bitwarden-2026.9.3.zip
+----------------------
+Product : Bitwarden Password Manager (browser extension)
+Version : 2026.9.3  (release tag: browser-v2026.9.3)
+Upstream: https://github.com/bitwarden/clients
+License : GPL-3.0 (bitwarden-LICENSE*.txt in this dir; see
+          THIRD-PARTY-NOTICES section 15)
+Source  : https://github.com/bitwarden/clients/releases/download/
+          browser-v2026.9.3/dist-chrome-2026.9.3.zip
+Manifest: manifest_version 3, default_locale en, no "key", no
+          "update_url" — updates ship with Arora releases, the
+          extension cannot self-update.
+Permissions declared: activeTab, alarms, clipboardRead,
+  clipboardWrite, contextMenus, idle, offscreen, scripting,
+  sidePanel, storage, tabs, unlimitedStorage, webNavigation,
+  webRequest, webRequestAuthProvider, notifications
+Host permissions    : https://*/*, http://*/*
+Optional permissions: nativeMessaging, privacy
+  (nativeMessaging = desktop-app bridge — declared optional and NOT
+  granted by Arora; out of scope.)
+
+Integrity
+---------
+The vendored archive is the official dist-chrome zip repacked with
+the nine source-map (*.js.map) members removed — they are developer
+artifacts unused at runtime and accounted for ~8 MB of the package.
+No other member was touched.
+
+upstream dist-chrome-2026.9.3.zip:
+  sha256  7185bad74d44b1d7e81b3dc9858a206bf9debff272d7e5bfc7f56a4b9d942ca0
+  size    24073465
+vendored repack (this file's sibling):
+  sha256  0b0e8f07991fa965c3a4a96fe5262d2a5099f697022231d5e0f4bfc87cb3c0aa
+  size    15747018
+
+Install semantics
+-----------------
+Installed once per non-off-the-record profile by
+ExtensionManager::installBundledExtensions().  On an extension-fresh
+profile it is enabled as part of the install; on a profile that
+already carries installed extensions it lands installed-but-disabled
+(opt-in via Preferences -> Extensions).  Removing it is never
+reinstalled — the per-profile marker in QSettings
+("extensions/bundled/<storageName>") is one-shot.

@@ -22,7 +22,7 @@ include(locale/locale.pri)
 
 !mac {
 unix {
-    INSTALLS += translations desktop iconxpm iconsvg icon16 icon32 icon128 icon512 man man-compress useragentdata sandboxlauncher
+    INSTALLS += translations desktop iconxpm iconsvg icon16 icon32 icon128 icon512 man man-compress useragentdata bundledext sandboxlauncher
 
     translations.path = $$PKGDATADIR
     translations.files += .qm/locale
@@ -52,6 +52,14 @@ unix {
     # UserAgentMenu prefers it over the compiled-in resource.
     useragentdata.path = $$PKGDATADIR
     useragentdata.files += useragent/useragents.xml
+
+    # EXT07: bundled default extensions (Bitwarden — see
+    # data/extensions/PROVENANCE.txt for version/pinning) install
+    # onto each extension-fresh profile on first run.
+    bundledext.path = $$PKGDATADIR/extensions
+    bundledext.files += data/extensions/bitwarden-*.zip \
+                        data/extensions/bitwarden-LICENSE*.txt \
+                        data/extensions/PROVENANCE.txt
 
     man.path = $$DATADIR/man/man1
     man.files += data/arora.1

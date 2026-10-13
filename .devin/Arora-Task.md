@@ -283,8 +283,8 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | LIC02 | README third-party table out of sync w/ THIRD-PARTY-NOTICES + post-LIC01 additions — details below | done | 1 | Notices renumbered to 19 sections — NEW: Readability.js (Arc90 Apache-2.0, §6), rustcore+rustdl full crate trees incl AWS-LC/ring/webpki-root-certs/Servo-MPL crates (§8-9), URLhaus/OpenPhish/Tranco + vendored ClearURLs json (§12), servo spike (§15); §2 extended w/ Gegesy adblockrule + Witt useragentmenu BSD files; §11 broadened to Fanboy/regional/uAssets presets. README table now lists every notices component: new "Bundled & derived" group (Qt-demo heritage, networkcookiejar tri-license, Readability, qrcodegen, BSD files, icon artwork, descriptors, translations, fixtures) + OpenSSL + missing crates (dom_smoothie/dom_query/x509-parser/aws-lc-rs/html5ever/cssparser/…) + adblock subscription feeds. Verified: scripted copyright sweep — every distinct foreign holder in tree maps to a notices section + README row; deny.tomls untouched (git diff empty); README tables column-validated |
 | SEC24 | Split shared main-world QWebChannel — privileged objects reachable by page JS — details below | done | 3 | Channel bound to isolated Engine::AroraChannelWorld (0xa0); main world gets no transport/bootstrap — enumeration impossible, whitelisted postMessage forwarder keeps external.AddSearchProvider + gesture-gated PiP + qrc-only 'arora' surface; tst_webpage webChannel* legs PASS, make check suite green |
 | EXT06 | Extensions list: add Description column + purge leaked test fixtures — details below | done | 2 | sortable Description column w/ manifest text + honest fallbacks; leak root-caused to QTEST_MAIN building real profile pre-isolation → QStandardPaths test mode in shared macro; tst-upd/tst-old/tst-noext purged; tst_extensionmanager 16/16 standalone (real Extensions dir stays empty, installs land in ~/.qttest), tst_settingsdialog::extensionPage PASS |
-| EXT07 | Ship Bitwarden as a default installed extension — details below | pending | 0 | user request — bitwarden bundled + enabled by default |
-| ENG23 | Servo tab still panics at painter.rs:416 on real desktop (containment works, engine dies) — details below | pending | 0 | user repro — GL assert on wayland/GPU |
+| EXT07 | Ship Bitwarden as a default installed extension — details below | done | 1 | bundled bitwarden-2026.9.3.zip installs once per profile, enabled iff extension-fresh; --bitwarden-smoke PASS (popup loads, content-script handshake, consent+marker honest), tst bundledInstall PASS |
+| ENG23 | Servo tab still panics at painter.rs:416 on real desktop (containment works, engine dies) — details below | in_progress | 0 | user repro — GL assert on wayland/GPU |
 | PRINT01 | Print Preview empty (1/0 pages) — async engine print can't feed QPrintPreviewDialog — details below | pending | 0 | user screenshot — blank gray preview |
 | DEVT07 | BiDi Network tab still lacking vs Chrome: waterfall/size/time visibility + summary footer — details below | pending | 0 | user side-by-side vs Chromium devtools |
 | ENG24 | Servo: poisoned engine can't be re-enabled — no restart path after crash — details below | pending | 0 | user report — servo dead for the session after one crash |
@@ -1303,6 +1303,51 @@ Done note (2026-10-13, run 2): settings.ui extensionsTree gains a 4th 'Descripti
 ### EXT07
 
 Ship Bitwarden as a default-installed extension — user request: 'add bitwarden as a installed plugin as default.' Spec: (a) ACQUIRE — vendor an unpacked MV3 Bitwarden browser-extension build into the tree (pin a released version — bitwarden/clients publishes browser builds; verify manifest_version 3 + capture the manifest's permissions list); if the zip/folder install path (installExtension) accepts packaged archives, ship the official archive; otherwise unpack into a data/ (or dist) dir — document provenance + version in the commit; (b) LICENSE — Bitwarden is GPL-3.0 — add it to THIRD-PARTY-NOTICES + README third-party table (LIC02's structure); (c) DEFAULT-INSTALL — on first run / new profile creation, install the bundled folder onto the profile so it appears Installed+Enabled by default; EXT05's consent gate (grantConsent per-path) must be handled honestly — a bundled default probably gets programmatic consent on the internal path, but existing installs should NOT be force-enabled retroactively — new profiles + opt-in enable for existing, document choice; (d) CONSTRAINTS — extensions can't load on OTR profiles (documented EXT04 behavior — keep that); tor profile never wired (existing rule); the row shows as removable like other installed extensions; (e) VERIFY the extension actually functions — it needs its popup (chrome-extension:// action popup) to open and its content scripts to run; native-messaging desktop-app bridge is out of scope (document it). Verify: fresh profile gets Bitwarden installed+enabled, extension row shows name+description (EXT06 column lands cleanly next to it), OTR/tor unaffected, manifest MV3 enforced, consent semantics honest, tst leg (fixture profile), make check PASS.
+
+Landed 2026-10-13:
+- Vendored `src/data/extensions/bitwarden-2026.9.3.zip` — official
+  `dist-chrome-2026.9.3.zip` (release browser-v2026.9.3, MV3) repacked
+  without source maps (24.0 MB → 15.7 MB); upstream + repack SHA-256
+  and manifest permission list in PROVENANCE.txt; upstream
+  `bitwarden-LICENSE{,_GPL}.txt` vendored alongside; THIRD-PARTY-
+  NOTICES section 15 added (later sections renumbered) + README
+  third-party table row.
+- `ExtensionManager::bundledExtensionsPath()` resolves
+  ARORA_BUNDLED_EXTENSIONS_DIR → installed data dir/extensions →
+  appDir/data/extensions or ../src/data/extensions (source-tree
+  layouts). `installBundledExtensions(profile)` runs from
+  prepareProfile for non-OTR/non-Tor profiles; each candidate (.zip
+  or unpacked dir with manifest.json) installs through
+  `installExtension` behind a programmatic one-shot consent grant
+  (Arora-shipped, user-visible in the panel).
+- Enable policy: extension-fresh profile (empty installPath) →
+  enabled; profile already carrying extensions → installed-but-
+  disabled; per-profile QSettings marker
+  `extensions/bundled/<storageName>` records consumed basenames so a
+  reinstall or a user-uninstalled bundle never returns; a same-named
+  existing install counts as satisfied. Qt 6.12 rejects extension
+  loads on OTR profiles outright — skipped before attempt; Tor
+  profile never wired (unchanged).
+- `--bitwarden-smoke` (added to check-coverage SMOKE_FLAGS) verifies:
+  bundled dir resolves, package verifies as MV3, worker + content
+  scripts declared, OTR untouched, install lands, enabled iff
+  fresh, description reaches the settings model, action popup URL
+  generated + loads over chrome-extension://, consent grant consumed,
+  one-shot marker persisted, page→content-script
+  `checkIfBWExtensionInstalled`→`hasBwInstalled` handshake on a
+  loopback page, unconsented reinstall refused. PASS 0 failures on
+  both reused (installPath=9 → disabled) and fresh-HOME
+  (installPath=1 → enabled) test profiles; real profile confirmed
+  installed under ~/.local/share/Arora/Arora/QtWebEngine/arora/
+  Extensions with the marker in arora.conf.
+- `tst_ExtensionManager::bundledInstall` drives a fixture bundled dir
+  (dir + zip candidates) through the same path: install-once,
+  enabled-iff-fresh, consumed markers, grant consumed, second call
+  no-op, OTR refusal.
+- Known limit (QtWebEngine tech preview): the Bitwarden popup calls
+  `chrome.tabs.getCurrent`/`getBackgroundPage` which Qt 6.12 doesn't
+  implement — console warnings logged, popup still renders; core
+  content scripts work. nativeMessaging stays optional/ungranted.
 
 ### ENG23
 

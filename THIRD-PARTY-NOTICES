@@ -429,7 +429,24 @@ directory carries its own LICENSE file; summary:
     fallback for names the newer sets do not cover.
 
 ----------------------------------------------------------------------
-15. Servo embedding spike — spikes/servo (experimental, NOT shipped)
+15. Bitwarden browser extension — src/data/extensions/ (SHIPPED)
+----------------------------------------------------------------------
+
+`bitwarden-2026.9.3.zip` is the official Chrome-channel build of the
+Bitwarden Password Manager web extension, release `browser-v2026.9.3`,
+repacked without source maps. It is installed once per profile as a
+default bundled extension (disabled unless the profile had no prior
+extensions, never in off-the-record or Tor profiles) and appears in
+the Extensions settings panel like any other add-on, where it can be
+disabled or uninstalled. The extension is GPL-3.0-only; the upstream
+license texts are vendored beside the archive as
+`bitwarden-LICENSE.txt` and `bitwarden-LICENSE_GPL.txt`, and
+src/data/extensions/PROVENANCE.txt records the download URL and
+SHA-256 checksums. Source: github.com/bitwarden/clients. Bitwarden is
+a trademark of Bitwarden Inc.; bundling does not imply endorsement.
+
+----------------------------------------------------------------------
+16. Servo embedding spike — spikes/servo (experimental, NOT shipped)
 ----------------------------------------------------------------------
 
 spikes/servo builds a thin C ABI over libservo (git-pinned servo v0.7.0)
@@ -446,7 +463,7 @@ Ubuntu-font-1.0, Unicode-3.0, Unicode-DFS-2016, Zlib and
 GPL-2.0-or-later. Full lockfile: spikes/servo/servo-embed/Cargo.lock.
 
 ----------------------------------------------------------------------
-16. Runtime dependencies (NOT vendored into this repository)
+17. Runtime dependencies (NOT vendored into this repository)
 ----------------------------------------------------------------------
 
   * Qt 6 — GNU LGPL v3 / GPL v3 / commercial (The Qt Company). Arora is
@@ -465,14 +482,14 @@ GPL-2.0-or-later. Full lockfile: spikes/servo/servo-embed/Cargo.lock.
     sections 8-9.)
 
 ----------------------------------------------------------------------
-17. Translations — src/locale/
+18. Translations — src/locale/
 ----------------------------------------------------------------------
 
 The .ts/.qm translations are community contributions under the project
 license; per-language maintainers are listed in src/locale/maintainers.
 
 ----------------------------------------------------------------------
-18. Test fixtures
+19. Test fixtures
 ----------------------------------------------------------------------
 
 tools/htmlToXBel/tests/{firefox3,opera9,ie7}-bookmarks.html are bookmark
@@ -482,7 +499,7 @@ fuzz/ seed corpus entries derived from it are XBEL test data. None ship
 in installed or bundled builds.
 
 ----------------------------------------------------------------------
-19. Everything else
+20. Everything else
 ----------------------------------------------------------------------
 
 All remaining source, .ui files, src/htmls/ pages, the Arora-authored

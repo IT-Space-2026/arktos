@@ -30,6 +30,8 @@
 
 #include <memory>
 
+#include "browserapplication.h"
+#include "browserprofile.h"
 #include "extensionmanager.h"
 #include "qtest_arora.h"
 #include "qtry.h"
@@ -48,6 +50,7 @@ private slots:
     void consentGate();
     void storePaths();
     void profileIsolation();
+    void bundledInstall();
     void updateCheckLoopback();
 
 private:
@@ -448,6 +451,128 @@ void tst_ExtensionManager::profileIsolation()
              qPrintable(QStringLiteral(
                  "extension install path leaked into the real profile: %1")
                  .arg(installPath)));
+}
+
+// EXT07: the bundled-default installer must land every candidate in
+// the bundled dir onto a non-OTR profile exactly once, enabled only
+// when the profile was extension-fresh, with the per-profile marker
+// recording each consumed file so nothing reinstalls.
+void tst_ExtensionManager::bundledInstall()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    // Fixture bundled dir: an unpacked dir carrying manifest.json and
+    // a packaged .zip are both candidates.
+    const QString root = QDir::temp().filePath(
+        QStringLiteral("tst-extbundle-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(root));
+    const QString dir = writeExtension(root, QStringLiteral("tst-bundle"),
+                                       QStringLiteral("1.0.0"));
+    QVERIFY(!dir.isEmpty());
+    const QByteArray package = makeZip({
+        {QByteArray("manifest.json"), QByteArray(
+            "{\"manifest_version\":3,\"name\":\"tst-bundle-zip\","
+            "\"version\":\"1.0.0\",\"background\":{\"service_worker\":"
+            "\"sw.js\"}}")},
+        {QByteArray("sw.js"), QByteArray(
+            "chrome.runtime.onInstalled.addListener(function(){});\n")},
+    });
+    QFile zipFile(root + QLatin1String("/tst-bundle-zip.zip"));
+    QVERIFY(zipFile.open(QIODevice::WriteOnly));
+    QCOMPARE(zipFile.write(package), qint64(package.size()));
+    zipFile.close();
+
+    qputenv("ARORA_BUNDLED_EXTENSIONS_DIR", root.toUtf8());
+    QCOMPARE(ExtensionManager::bundledExtensionsPath(), root);
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    QWebEngineProfile *profile = BrowserApplication::webEngineProfile();
+
+    // The enable expectation mirrors installBundledExtensions(): the
+    // bundle enables exactly when installPath held nothing before.
+    const QString installDir = manager->installPath();
+    const bool expectEnabled = installDir.isEmpty()
+        || !QDir(installDir).exists()
+        || QDir(installDir).entryList(
+            QDir::AllEntries | QDir::NoDotAndDotDot).isEmpty();
+
+    auto installed = std::make_shared<QSet<QString>>();
+    auto finished = std::make_shared<int>(0);
+    QObject::connect(manager, &ExtensionManager::extensionInstalled,
+                     this, [installed, finished](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.error.isEmpty()
+                && (info.name == QLatin1String("tst-bundle")
+                    || info.name == QLatin1String("tst-bundle-zip"))) {
+            installed->insert(info.name);
+            ++*finished;
+        }
+    });
+    manager->installBundledExtensions(profile);
+
+    QTRY_VERIFY_WITH_TIMEOUT(installed->size() == 2, 30000);
+
+    // Both rows: installed; enabled iff the profile was
+    // extension-fresh at install time (the post-install enable is
+    // asynchronous — poll until the reported state settles).
+    QList<ExtensionManager::ExtensionInfo> rows;
+    bool settled = false;
+    int seen = 0;
+    for (int i = 0; i < 200 && !settled; ++i) {
+        rows = manager->extensions();
+        settled = true;
+        seen = 0;
+        for (const ExtensionManager::ExtensionInfo &info : rows) {
+            if (installed->contains(info.name)) {
+                ++seen;
+                if (!info.installed || info.enabled != expectEnabled)
+                    settled = false;
+            }
+        }
+        if (!settled || seen != 2)
+            QTest::qWait(50);
+    }
+    QVERIFY2(settled && seen == 2,
+             qPrintable(QStringLiteral(
+                 "bundled rows installed + enabled=%1, seen=%2")
+                 .arg(expectEnabled).arg(seen)));
+
+    // Both basenames recorded as consumed; a second run is a no-op.
+    const QStringList consumed = QSettings().value(
+        QStringLiteral("extensions/bundled/") + profile->storageName())
+        .toStringList();
+    QVERIFY(consumed.contains(QLatin1String("tst-bundle")));
+    QVERIFY(consumed.contains(QLatin1String("tst-bundle-zip.zip")));
+
+    // The internal grant was consumed — the raw path is guarded
+    // again for manual installs.
+    QVERIFY(!manager->hasConsent(dir));
+    QVERIFY(!manager->hasConsent(zipFile.fileName()));
+
+    // A second call must not reinstall or re-enable anything.
+    const int listedBefore = rows.size();
+    manager->installBundledExtensions(profile);
+    QTest::qWait(500);
+    QCOMPARE(manager->extensions().size(), listedBefore);
+
+    // The off-the-record profile refuses bundled installs outright.
+    QWebEngineProfile *otr = BrowserProfile::privateProfile();
+    QVERIFY(otr->isOffTheRecord());
+    manager->installBundledExtensions(otr);
+
+    // Leave the fixture profile clean for later legs — uninstall is
+    // async, give it a beat to land.
+    for (const ExtensionManager::ExtensionInfo &info
+         : manager->extensions()) {
+        if (installed->contains(info.name))
+            manager->removeExtension(info.id);
+    }
+    QTest::qWait(500);
+
+    qputenv("ARORA_BUNDLED_EXTENSIONS_DIR", QByteArray());
+    QDir(root).removeRecursively();
 }
 
 // EXT03 end-to-end: a loopback gupdate feed offers a newer package —
