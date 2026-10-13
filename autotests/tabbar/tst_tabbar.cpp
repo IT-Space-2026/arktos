@@ -22,6 +22,7 @@
 #include <qabstractbutton.h>
 #include <qlabel.h>
 #include <qstyleoption.h>
+#include <qtoolbutton.h>
 #include <tabbar.h>
 
 class tst_TabBar : public QObject
@@ -56,6 +57,7 @@ private slots:
     void horizontalTabResize();
     void verticalTabButtons();
     void iconOnlyTabs();
+    void newTabButton();
 };
 
 // Subclass that exposes the protected functions.
@@ -773,6 +775,95 @@ void tst_TabBar::iconOnlyTabs()
 
     settings.remove(QLatin1String("iconOnlyTabs"));
     settings.endGroup();
+}
+
+// TABS15: the '+' is a real button docked inside the strip right
+// after the last tab in every orientation — trailing the row on
+// Top/Bottom, a full-width appended row on Left/Right — and it
+// fires the same newTab() a double-click on the empty strip does.
+void tst_TabBar::newTabButton()
+{
+    SubTabBar bar;
+    // Non-expanding so tab rects land at their size hints and free
+    // strip space follows the last tab.
+    bar.setExpanding(false);
+    bar.show();
+    bar.addTab(QLatin1String("one"));
+    bar.addTab(QLatin1String("two"));
+    bar.resize(400, bar.sizeHint().height());
+    QApplication::processEvents();
+
+    QToolButton *button = bar.newTabButton();
+    QVERIFY(button);
+    QVERIFY(button->isVisible());
+    QVERIFY(!button->toolTip().isEmpty());
+    QSignalSpy spy(&bar, &TabBar::newTab);
+
+    // Top strip: anchored just after the last tab's rect, inside
+    // the widget vertically.
+    const QRect last = bar.tabRect(bar.count() - 1);
+    QVERIFY(button->x() >= last.right());
+    QVERIFY(button->x() <= last.right() + 8);
+    QVERIFY(button->y() >= 0 && button->y() + button->height()
+            <= bar.height());
+    button->click();
+    QCOMPARE(spy.count(), 1);
+
+    // Bottom strip keeps the same after-last-tab anchor.
+    bar.setShape(QTabBar::RoundedSouth);
+    bar.resize(400, bar.sizeHint().height());
+    QApplication::processEvents();
+    QVERIFY(button->isVisible());
+    const QRect slast = bar.tabRect(bar.count() - 1);
+    QVERIFY(button->x() >= slast.right());
+    QVERIFY(button->x() <= slast.right() + 8);
+    button->click();
+    QCOMPARE(spy.count(), 2);
+
+    // Left rail: an appended row under the last tab, spanning the
+    // strip's width.
+    bar.setShape(QTabBar::RoundedWest);
+    bar.resize(160, 300);
+    QApplication::processEvents();
+    QVERIFY(button->isVisible());
+    const QRect wlast = bar.tabRect(bar.count() - 1);
+    QVERIFY(button->y() >= wlast.bottom());
+    QVERIFY(button->y() <= wlast.bottom() + 8);
+    QVERIFY(button->width() >= bar.width() - 8);
+    button->click();
+    QCOMPARE(spy.count(), 3);
+
+    // Right rail mirrors it.
+    bar.setShape(QTabBar::RoundedEast);
+    bar.resize(160, 300);
+    QApplication::processEvents();
+    QVERIFY(button->isVisible());
+    const QRect elast = bar.tabRect(bar.count() - 1);
+    QVERIFY(button->y() >= elast.bottom());
+    QVERIFY(button->y() <= elast.bottom() + 8);
+    QVERIFY(button->width() >= bar.width() - 8);
+    button->click();
+    QCOMPARE(spy.count(), 4);
+
+    // Offscreen grabs for visual review — set ARORA_TABBAR_GRAB_DIR.
+    const QByteArray grabDir = qgetenv("ARORA_TABBAR_GRAB_DIR");
+    if (!grabDir.isEmpty()) {
+        const QString base = QString::fromLocal8Bit(grabDir);
+        bar.setShape(QTabBar::RoundedNorth);
+        bar.resize(400, bar.sizeHint().height());
+        QApplication::processEvents();
+        bar.grab().save(base + QLatin1String("/plus-top.png"));
+        bar.setShape(QTabBar::RoundedSouth);
+        QApplication::processEvents();
+        bar.grab().save(base + QLatin1String("/plus-bottom.png"));
+        bar.setShape(QTabBar::RoundedWest);
+        bar.resize(160, 300);
+        QApplication::processEvents();
+        bar.grab().save(base + QLatin1String("/plus-left.png"));
+        bar.setShape(QTabBar::RoundedEast);
+        QApplication::processEvents();
+        bar.grab().save(base + QLatin1String("/plus-right.png"));
+    }
 }
 
 QTEST_MAIN(tst_TabBar)

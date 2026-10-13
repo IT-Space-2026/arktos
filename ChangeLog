@@ -426,6 +426,12 @@ UI:
   any other tab (renames included) on both horizontal and vertical
   strips, shrinking only toward a favicon-plus-short-title minimum
   when the strip overflows — never back to icon-only (TABS14).
+- Vivaldi-style '+' new-tab button on the tab strip in every
+  orientation: it sits right after the last tab on Top/Bottom bars
+  (instead of the far-edge corner widget) and rides as an appended row
+  under the last tab on Left/Right rails, where the corner widget
+  never rendered at all.  It stays visible when the strip overflows,
+  tucked just inside the scroll buttons (TABS15).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

@@ -138,7 +138,6 @@ TabWidget::TabWidget(QWidget *parent)
     , m_omniboxSuggestions(nullptr)
     , m_locationBars(nullptr)
     , m_tabBar(new TabBar(this))
-    , addTabButton(nullptr)
     , closeTabButton(nullptr)
 {
     setElideMode(Qt::ElideRight);
@@ -203,13 +202,6 @@ TabWidget::TabWidget(QWidget *parent)
     m_recentlyClosedTabsAction = new QAction(this);
     m_recentlyClosedTabsAction->setMenu(m_recentlyClosedTabsMenu);
     m_recentlyClosedTabsAction->setEnabled(false);
-
-#ifndef Q_OS_MACOS // can't seem to figure out the background color :(
-    addTabButton = new QToolButton(this);
-    addTabButton->setDefaultAction(m_newTabAction);
-    addTabButton->setAutoRaise(true);
-    addTabButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
-#endif
 
     connect(m_tabBar, &QTabBar::tabCloseRequested,
             this, &TabWidget::closeTab);
@@ -3326,10 +3318,11 @@ void TabWidget::loadSettings()
     settings.beginGroup(QLatin1String("tabs"));
 
     // Tab bar position — the settings combo indexes North/South/
-    // West/East in order.  QTabWidget only lays corner widgets out for
-    // North/South (on a vertical bar they get zero-size geometry), so
-    // the corner buttons hide while the bar is vertical; New Tab stays
-    // reachable through the action's shortcut and menus.
+    // West/East in order.  The '+' is no longer a corner widget —
+    // TABS15's in-strip button anchors right after the last tab in
+    // every orientation; the single close button is the only corner
+    // resident left (and it still hides while the bar is vertical —
+    // QTabWidget gives corner widgets zero-size geometry there).
     QTabWidget::TabPosition position = North;
     switch (settings.value(QLatin1String("tabBarPosition"), 0).toInt()) {
     case 1: position = South; break;
@@ -3351,11 +3344,10 @@ void TabWidget::loadSettings()
     m_tabBar->reloadIconOnlyTabs();
 
     bool newTabButtonInRightCorner = settings.value(QLatin1String("newTabButtonInRightCorner"), true).toBool();
-#ifndef Q_OS_MACOS
-    setCornerWidget(horizontal ? static_cast<QWidget*>(addTabButton) : nullptr,
+    // TABS15: the strip's own '+' keeps this corner clear — the key
+    // survives only to pick the single close button's corner.
+    setCornerWidget(nullptr,
                     newTabButtonInRightCorner ? Qt::TopRightCorner : Qt::TopLeftCorner);
-    addTabButton->setVisible(horizontal);
-#endif
 
     const Qt::Corner closeCorner = newTabButtonInRightCorner ? Qt::TopLeftCorner : Qt::TopRightCorner;
     bool oneCloseButton = settings.value(QLatin1String("oneCloseButton"), false).toBool();

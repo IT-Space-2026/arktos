@@ -200,6 +200,7 @@ TabBar::TabBar(QWidget *parent)
     , m_moveDragVertical(false)
     , m_moveDragMouseY(0)
     , m_moveDragGrabOffset(0)
+    , m_newTabButton(nullptr)
 {
     setContextMenuPolicy(Qt::CustomContextMenu);
     setAcceptDrops(true);
@@ -282,6 +283,34 @@ TabBar::TabBar(QWidget *parent)
             ++m_pressedTabIndex;
     });
 
+    // TABS15: the Vivaldi-style '+' — a real button docked right
+    // after the last tab in every orientation.  The corner widget it
+    // replaces never laid out on vertical rails and read as far-edge
+    // chrome on horizontal strips; a click emits the same newTab()
+    // a double-click on the empty strip fires.
+    m_newTabButton = new QToolButton(this);
+    m_newTabButton->setAutoRaise(true);
+    m_newTabButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    m_newTabButton->setToolTip(tr("New Tab"));
+    m_newTabButton->setAccessibleName(tr("New Tab"));
+    // The tor strip's violet chrome sits on the app's light palette
+    // — the themed dark glyph would be mud, so tint it to the nav
+    // cluster's flat #eee the way ICONS06 does, and give the
+    // hover/pressed states the violet bar's own shades.
+    if (BrowserApplication::isTorMode()) {
+        m_newTabButton->setIcon(AroraIcon::getTinted(
+            QLatin1String("tab-new"), QColor(0xee, 0xee, 0xee),
+            QColor(0xb9, 0xae, 0xcf)));
+        m_newTabButton->setStyleSheet(QLatin1String(
+            "QToolButton { background: transparent; }"
+            "QToolButton:hover { background: #5d4491; }"
+            "QToolButton:pressed { background: #3a2a5c; }"));
+    } else {
+        m_newTabButton->setIcon(AroraIcon::get(QLatin1String("tab-new")));
+    }
+    connect(m_newTabButton, &QAbstractButton::clicked,
+            this, &TabBar::newTab);
+
     // TABS02: persisted Left/Right strip width.
     reloadVerticalTabWidth();
     // RSZ02: persisted Top/Bottom strip height (0 = Automatic).
@@ -290,6 +319,11 @@ TabBar::TabBar(QWidget *parent)
     reloadTabHoverPreviews();
     // TABS09: the persisted icon-only view mode.
     reloadIconOnlyTabs();
+}
+
+QToolButton *TabBar::newTabButton() const
+{
+    return m_newTabButton;
 }
 
 bool TabBar::showTabBarWhenOneTab() const
@@ -1750,6 +1784,10 @@ QString TabBar::groupChipLabel(int index) const
 // pixels lower and the band paints above it in physical space.
 void TabBar::paintEvent(QPaintEvent *event)
 {
+    // TABS15: tab rects can slide without a tabLayoutChange (wheel
+    // scrolls, live move drags) — keep the '+' anchored on the last
+    // tab.
+    layoutNewTabButton();
     const int band = containerStripHeight();
     if (band > 0) {
         QPainter bandPainter(this);
@@ -2187,6 +2225,17 @@ void TabBar::tabLayoutChange()
     // CONT06: Qt just re-placed every child in strip space — move
     // them below the header band.
     shiftChildrenBelowStrip();
+    // TABS15: the '+' trails the last tab — re-anchor it to the new
+    // layout (and back below the band shiftChildren just applied).
+    layoutNewTabButton();
+}
+
+void TabBar::resizeEvent(QResizeEvent *event)
+{
+    QTabBar::resizeEvent(event);
+    // TABS15: a strip resize does not always dirty Qt's tab layout —
+    // re-anchor the '+' defensively.
+    layoutNewTabButton();
 }
 
 // TABS02/RSZ02: ~8px along the strip's content-facing edge is the
@@ -2349,6 +2398,88 @@ void TabBar::hideNativeMovingTab()
             return;
         }
     }
+}
+
+// TABS15: the '+' rides inside the strip, right after the last tab
+// in every orientation — trailing the row on Top/Bottom bars, a
+// full-width appended row under the last tab on Left/Right rails.
+// When the tabs overflow and Qt's scroll buttons appear the button
+// parks just inside them so it never disappears.  Runs on every
+// layout change / resize / paint so tab moves, scrolls and strip
+// resizes all re-anchor it.  Physical widget coordinates — the
+// CONT06 band offset lands in the vertical cases.
+void TabBar::layoutNewTabButton()
+{
+    if (!m_newTabButton)
+        return;
+    const int band = containerStripHeight();
+    const bool vertical = verticalTabShape(shape());
+    // The strip's free run along the tab axis — Qt's scroll buttons
+    // are the only non-tab QAbstractButton children, so whatever
+    // ends they take clip the space the '+' may use.
+    int leading = vertical ? band : 0;
+    int trailing = vertical ? height() : width();
+    const QTabBar::ButtonPosition sides[2] = { QTabBar::LeftSide,
+                                               QTabBar::RightSide };
+    const QObjectList kids = children();
+    for (QObject *kid : kids) {
+        QAbstractButton *child = qobject_cast<QAbstractButton*>(kid);
+        if (!child || !child->isVisible() || child == m_newTabButton)
+            continue;
+        bool isTabButton = false;
+        for (int i = 0; i < count() && !isTabButton; ++i) {
+            for (const QTabBar::ButtonPosition side : sides) {
+                if (tabButton(i, side) == child) {
+                    isTabButton = true;
+                    break;
+                }
+            }
+        }
+        if (isTabButton)
+            continue;
+        const QRect geo = child->geometry();
+        if (vertical) {
+            const int mid = (band + height()) / 2;
+            if (geo.center().y() > mid)
+                trailing = qMin(trailing, geo.top() - 2);
+            else
+                leading = qMax(leading, geo.bottom() + 3);
+        } else {
+            const int mid = width() / 2;
+            if (geo.center().x() > mid)
+                trailing = qMin(trailing, geo.left() - 2);
+            else
+                leading = qMax(leading, geo.right() + 3);
+        }
+    }
+    const QRect last = count() ? tabRect(count() - 1) : QRect();
+    QRect rect;
+    if (vertical) {
+        const int extent =
+            qBound(20, m_newTabButton->sizeHint().height(), 30);
+        const int anchor = count() ? band + last.bottom() + 3
+                                   : band + 3;
+        rect = QRect(2, qBound(leading, anchor,
+                               qMax(leading, trailing - extent)),
+                     qMax(16, width() - 4), extent);
+    } else {
+        const int strip = height() - band;
+        const int extent = qBound(18, strip - 6, 30);
+        const bool rtl = isRightToLeft();
+        const int anchor = count()
+            ? (rtl ? last.left() - 4 - extent : last.right() + 4)
+            : (rtl ? trailing - extent - 3 : leading + 3);
+        rect = QRect(qBound(leading, anchor,
+                            qMax(leading, trailing - extent)),
+                     band + qMax(0, (strip - extent) / 2),
+                     extent, extent);
+    }
+    if (m_newTabButton->geometry() != rect)
+        m_newTabButton->setGeometry(rect);
+    // Overlap is legal geometry (an overflowing strip leaves no
+    // sliver) — keep the '+' above the tab buttons it may cover.
+    m_newTabButton->raise();
+    m_newTabButton->show();
 }
 
 int TabBar::verticalTabWidth() const

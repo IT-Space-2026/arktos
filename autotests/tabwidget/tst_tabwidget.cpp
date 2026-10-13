@@ -43,6 +43,7 @@
 #include <qfile.h>
 #include <qlineedit.h>
 #include <qmenu.h>
+#include <qtoolbutton.h>
 #include <qwebenginehistory.h>
 #include <qsettings.h>
 
@@ -107,6 +108,7 @@ private slots:
     void lazySessionRestore();
     void renameTab();
     void tabTransfer();
+    void newTabButton();
 };
 
 // Subclass that exposes the protected functions.
@@ -2501,6 +2503,67 @@ void tst_TabWidget::tabTransfer()
         source.closeTab(source.count() - 1);
     while (target.count() > 0)
         target.closeTab(target.count() - 1);
+}
+
+// TABS15: the strip's own '+' opens a real tab — the bar's newTab
+// signal routes through the same slot as the Ctrl+T action — and
+// it stays docked under the last row when the bar goes vertical
+// (the corner widget it replaced never rendered there at all).
+void tst_TabWidget::newTabButton()
+{
+    SubTabWidget widget;
+    widget.newTab();
+    widget.newTab();
+    widget.resize(640, 480);
+    widget.show();
+    QApplication::processEvents();
+
+    TabBar *bar = widget.bar();
+    QToolButton *button = bar->newTabButton();
+    QVERIFY(button);
+    QVERIFY(button->isVisible());
+    // The horizontal anchor: right after the last tab, not at the
+    // strip's far edge.
+    const QRect last = bar->tabRect(bar->count() - 1);
+    QVERIFY(button->x() >= last.right());
+    QVERIFY(button->x() <= last.right() + 8);
+
+    QCOMPARE(widget.count(), 2);
+    button->click();
+    QApplication::processEvents();
+    QCOMPARE(widget.count(), 3);
+
+    // Left rail — an appended row under the last tab.
+    QSettings settings;
+    settings.beginGroup(QLatin1String("tabs"));
+    settings.setValue(QLatin1String("tabBarPosition"), 2);
+    widget.loadSettings();
+    QApplication::processEvents();
+    QCOMPARE(int(widget.tabPosition()), int(QTabWidget::West));
+    QVERIFY(button->isVisible());
+    const QRect vlast = bar->tabRect(bar->count() - 1);
+    QVERIFY(button->y() >= vlast.bottom());
+
+    // The click still opens a tab from the rail too.
+    const int count = widget.count();
+    button->click();
+    QApplication::processEvents();
+    QCOMPARE(widget.count(), count + 1);
+
+    // Offscreen grabs of the real chrome for visual review — set
+    // ARORA_TABWIDGET_GRAB_DIR.
+    const QByteArray grabDir = qgetenv("ARORA_TABWIDGET_GRAB_DIR");
+    if (!grabDir.isEmpty()) {
+        const QString base = QString::fromLocal8Bit(grabDir);
+        bar->grab().save(base + QLatin1String("/plus-rail.png"));
+        settings.setValue(QLatin1String("tabBarPosition"), 0);
+        widget.loadSettings();
+        QApplication::processEvents();
+        bar->grab().save(base + QLatin1String("/plus-strip.png"));
+    }
+
+    settings.remove(QLatin1String("tabBarPosition"));
+    settings.endGroup();
 }
 
 QTEST_MAIN(tst_TabWidget)

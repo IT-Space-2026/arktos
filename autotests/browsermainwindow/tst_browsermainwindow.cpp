@@ -1257,8 +1257,11 @@ void tst_BrowserMainWindow::torChromeTheme()
         window, QPoint(window->menuBar()->width() - 10,
                        window->menuBar()->height() / 2)));
     const QRect tabRect = bar->tabRect(0);
+    // TABS15: the strip's own '+' button docks right after the last
+    // tab — sample past its footprint so the pixel is bare violet
+    // chrome, not the tinted glyph.
     const QColor stripColor = image.pixelColor(bar->mapTo(
-        window, QPoint(qMin(tabRect.right() + 8, bar->width() - 4),
+        window, QPoint(qMin(tabRect.right() + 40, bar->width() - 4),
                        tabRect.center().y())));
     // Bottom-of-tab pixels dodge the favicon label and the title.
     const QColor selectedTabColor = image.pixelColor(bar->mapTo(
