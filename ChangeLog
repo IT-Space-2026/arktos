@@ -165,6 +165,12 @@ UI:
   reload/stop button — it appears only on article-like pages, shows
   a filled icon while the reader overlay is up, and stays in sync
   with View → Reader Mode (Ctrl+Alt+R) (READ02).
+- Reader Mode no longer shows a title-only overlay: article text
+  wrapped in a form element renders in full instead of being stripped
+  with the form, extractions that yield almost no readable text show
+  an honest "Reader view is not available" status-bar message instead
+  of an empty column, and embed-heavy pages no longer stall the
+  reader (READ03).
 - Downloads moved from the Window menu to the Tools menu — the
   Ctrl+Y shortcut and icon are unchanged, and the Window menu now
   holds only tab/window-switching entries (MENU04).

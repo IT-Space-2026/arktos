@@ -61,10 +61,28 @@
     // navigation-capable defensively.
     function sanitize(html) {
         var doc = new DOMParser().parseFromString(html, "text/html");
+        // Transparent wrappers: drop the tag but keep the children.  A
+        // <form> can wrap an entire article (Readability only drops
+        // link-dense forms, so a text-heavy one reaches us whole) and
+        // removing the node took every paragraph with it — the
+        // "title but no body" report.  <noscript> is unwrapped rather
+        // than kept because scripting is on in the live document, so
+        // the tag would render as nothing even though its contents
+        // parsed as real elements here.
+        var wrappers = doc.querySelectorAll("form, noscript");
+        for (var u = wrappers.length - 1; u >= 0; --u) {
+            var wrapper = wrappers[u];
+            var parent = wrapper.parentNode;
+            if (!parent)
+                continue;
+            while (wrapper.firstChild)
+                parent.insertBefore(wrapper.firstChild, wrapper);
+            parent.removeChild(wrapper);
+        }
         var dead = doc.querySelectorAll(
             "script, iframe, frame, frameset, object, embed, applet," +
-            " form, input, button, select, textarea, link, meta, base," +
-            " template, noscript");
+            " input, button, select, textarea, link, meta, base," +
+            " template");
         for (var i = dead.length - 1; i >= 0; --i)
             dead[i].remove();
         var all = doc.body.querySelectorAll("*");
@@ -80,7 +98,22 @@
                     el.removeAttribute(attrs[k].name);
             }
         }
-        return doc.body.innerHTML;
+        return doc.body;
+    }
+
+    // An extraction that survives parse() but carries almost no text is
+    // a failure, not an article: Readability falls back to its longest
+    // under-threshold attempt when no pass reaches charThreshold (500),
+    // and sanitize() can shave more off.  Matching that floor here keeps
+    // the reader from putting up a header-only overlay.  Media carries
+    // its own weight — an image essay stays readable with little prose.
+    var MIN_ARTICLE_CHARS = 500;
+
+    function isReadableBody(body) {
+        if (body.textContent.trim().length >= MIN_ARTICLE_CHARS)
+            return true;
+        return body.querySelectorAll(
+            "img, video, audio, svg, table, figure").length > 0;
     }
 
     function css() {
@@ -154,11 +187,31 @@ color: var(--byline); }\
 
         var article;
         try {
-            article = new Readability(document.cloneNode(true)).parse();
+            var clone = document.cloneNode(true);
+            // Cloning plugin elements makes Blink destroy and rebuild
+            // their widgets in the detached document, which has been
+            // seen to take the whole renderer down a beat after the
+            // call returns — the enter() callback then never arrives
+            // and the page is left dead.  Readability strips these
+            // from the article content regardless, so dropping them
+            // from the clone up front loses nothing.
+            var plugins = clone.querySelectorAll(
+                "object, embed, applet, iframe, frame, frameset");
+            for (var i = plugins.length - 1; i >= 0; --i)
+                plugins[i].remove();
+            article = new Readability(clone).parse();
         } catch (e) {
             article = null;
         }
         if (!article || !article.content)
+            return { ok: false };
+
+        // Sanitize before building the overlay so a degenerate
+        // extraction (or a sanitizer pass that had to discard almost
+        // everything) refuses honestly instead of rendering a title
+        // over an empty column.
+        var cleanBody = sanitize(article.content);
+        if (!isReadableBody(cleanBody))
             return { ok: false };
 
         var state = {
@@ -224,7 +277,7 @@ color: var(--byline); }\
         byline.textContent = bylineParts.join(" \u2014 ");
         var content = document.createElement("div");
         content.className = "content";
-        content.innerHTML = sanitize(article.content);
+        content.innerHTML = cleanBody.innerHTML;
         body.appendChild(title);
         if (byline.textContent)
             body.appendChild(byline);

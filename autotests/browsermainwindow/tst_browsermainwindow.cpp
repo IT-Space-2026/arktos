@@ -33,6 +33,7 @@
 #include <qcombobox.h>
 #include <qdockwidget.h>
 #include <qframe.h>
+#include <qhash.h>
 #include <qheaderview.h>
 #include <qlabel.h>
 #include <qlineedit.h>
@@ -148,6 +149,8 @@ private slots:
     void privateStartPage();
     void startPageSingleSurface();
     void readerModeButton();
+    void readerModeContent_data();
+    void readerModeContent();
     void homeButton();
     void statusBarWidgets();
     void statusBarIndicators();
@@ -2667,6 +2670,201 @@ void tst_BrowserMainWindow::readerModeButton()
     QTRY_VERIFY_WITH_TIMEOUT(reader->isHidden(), 10000);
     window->tabWidget()->setCurrentIndex(0);
     QTRY_VERIFY_WITH_TIMEOUT(!reader->isHidden(), 10000);
+
+    closeWindow(window);
+}
+
+// READ03: user report — reader intermittently showed only the page
+// title, no body.  Each data row is one corpus leg (one window each —
+// the legs stay isolated and independently timed):
+//
+//   /form    — sanitizer over-strip.  Readability's conditional cleaner
+//              keeps a text-heavy <form>, then the old sanitize()
+//              deleted the node WITH its children -> title-only
+//              overlay.  The wrapper is now unwrapped so the text
+//              survives.
+//   /thin    — degenerate extraction.  The body text lives in an
+//              <aside>, which Readability's _prepArticle cleans
+//              unconditionally; parse() still returns an article (its
+//              last-ditch longest-attempt fallback), heading-only.
+//              The thin-content guard refuses honestly instead of
+//              showing a header over an empty column.
+//   /danger  — sanitizer regression: real text renders while script,
+//              on*-attributes and javascript: URLs stay stripped.
+void tst_BrowserMainWindow::readerModeContent_data()
+{
+    QTest::addColumn<QByteArray>("path");
+    QTest::addColumn<bool>("expectActive");
+    QTest::addColumn<bool>("expectMessage");
+    QTest::addColumn<QStringList>("mustContain");
+    QTest::addColumn<QStringList>("mustNotContain");
+
+    QTest::newRow("form")
+        << QByteArray("/form") << true << false
+        << (QStringList() << QStringLiteral("Reader corpus paragraph"))
+        << (QStringList() << QStringLiteral("<form"));
+    QTest::newRow("thin")
+        << QByteArray("/thin") << false << true << QStringList()
+        << QStringList();
+    QTest::newRow("danger")
+        << QByteArray("/danger") << true << false
+        << (QStringList() << QStringLiteral("Reader corpus paragraph"))
+        << (QStringList() << QStringLiteral("<script")
+            << QStringLiteral("onerror")
+            << QStringLiteral("javascript:"));
+}
+
+static QHash<QByteArray, QByteArray> readerFixturePages()
+{
+    const QByteArray paragraph =
+        QByteArray("Reader corpus paragraph. The quick brown fox jumps "
+                   "over the lazy dog while a sentence of plain article "
+                   "copy carries enough weight to look like body text. ")
+            .repeated(2);
+    QByteArray paragraphs;
+    for (int i = 0; i < 6; ++i)
+        paragraphs += "<p>" + paragraph + "</p>";
+
+    QHash<QByteArray, QByteArray> pages;
+    pages["/form"] = "<html><head><title>Form Article</title></head>"
+        "<body><article><form><h1>Form Article</h1>" + paragraphs
+        + "</form></article></body></html>";
+    pages["/thin"] = "<html><head><title>Thin Article</title></head>"
+        "<body><article><h1>Thin Article</h1><aside>" + paragraphs
+        + "</aside></article></body></html>";
+    // The payloads write a flag rather than alert(): a modal JS alert
+    // pauses the renderer's world, and the driver's runJavaScript would
+    // never return — the test itself would wedge before asserting.
+    pages["/danger"] = "<html><head><title>Danger Article</title>"
+        "<script>window.__pwned=1</script>"
+        "</head><body><article><h1>Danger Article</h1>" + paragraphs
+        + "<p>keep <a href=\"javascript:window.__pwned=2\">link</a></p>"
+        "<img src=\"about:blank\" onerror=\"window.__pwned=3\">"
+        "</article></body></html>";
+    return pages;
+}
+
+void tst_BrowserMainWindow::readerModeContent()
+{
+    QFETCH(QByteArray, path);
+    QFETCH(bool, expectActive);
+    QFETCH(bool, expectMessage);
+    QFETCH(QStringList, mustContain);
+    QFETCH(QStringList, mustNotContain);
+
+    const QHash<QByteArray, QByteArray> pages = readerFixturePages();
+    QVERIFY(pages.contains(path));
+
+    SubWindow *window = new SubWindow;
+    window->resize(1400, 700);
+    window->show();
+    QApplication::processEvents();
+
+    WebView *view = window->currentTab();
+    QVERIFY(view);
+    ReaderMode *reader = view->readerMode();
+    QVERIFY(reader);
+    QSignalSpy messageSpy(reader, &ReaderMode::message);
+
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    QObject::connect(&server, &QTcpServer::newConnection, &server,
+                     [&server, &pages]() {
+        QTcpSocket *socket = server.nextPendingConnection();
+        socket->setParent(&server);
+        QByteArray *request = new QByteArray;
+        QObject::connect(socket, &QTcpSocket::readyRead, socket,
+                         [socket, request, &pages]() {
+            request->append(socket->readAll());
+            const int lineEnd = request->indexOf("\r\n");
+            if (lineEnd < 0)
+                return;
+            const QByteArray line = request->left(lineEnd);
+            const int firstSpace = line.indexOf(' ');
+            const QByteArray path = line.mid(
+                firstSpace + 1,
+                line.indexOf(' ', firstSpace + 1) - firstSpace - 1);
+            const QByteArray body =
+                pages.value(path, QByteArray("not found"));
+            socket->write(QByteArray("HTTP/1.1 200 OK\r\n"
+                                     "Content-Type: text/html\r\n"
+                                     "Connection: close\r\n"
+                                     "Content-Length: ")
+                          + QByteArray::number(body.size())
+                          + "\r\n\r\n" + body);
+            socket->disconnectFromHost();
+            delete request;
+        });
+    });
+
+    const auto evalJs = [&](const QString &script) -> QVariant {
+        // Heap state — a callback that lands after the wait window must
+        // not scribble on this frame.
+        auto state = std::make_shared<QPair<QVariant, bool>>(
+            QVariant(), false);
+        view->enginePage()->runJavaScript(
+            script, [state](const QVariant &v) {
+                state->first = v;
+                state->second = true;
+            });
+        for (int waited = 0; !state->second && waited < 8000;
+             waited += 50)
+            QTest::qWait(50);
+        return state->first;
+    };
+
+    view->loadUrl(QUrl(QStringLiteral("http://127.0.0.1:%1%2")
+                       .arg(server.serverPort())
+                       .arg(QString::fromLatin1(path))));
+    QTRY_VERIFY_WITH_TIMEOUT(!view->page()->isLoading(), 20000);
+    QTRY_VERIFY_WITH_TIMEOUT(reader->isAvailable(), 20000);
+
+    reader->enter();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        reader->isActive() || !messageSpy.isEmpty(), 20000);
+
+    QCOMPARE(reader->isActive(), expectActive);
+    QCOMPARE(!messageSpy.isEmpty(), expectMessage);
+
+    const QString content = evalJs(QStringLiteral(
+        "(function(){"
+        "var h=document.getElementById('arora-reader-host');"
+        "var c=h&&h.shadowRoot"
+        "?h.shadowRoot.querySelector('.content'):null;"
+        "return c?c.innerHTML:'';"
+        "})()")).toString();
+    // Diagnosis log: what Readability extracted, what the OLD blanket
+    // removal would have left of it, what the overlay actually holds.
+    qInfo() << "readerModeContent" << path << evalJs(QStringLiteral(
+        "(function(){"
+        "var a=null;"
+        "try{var cl=document.cloneNode(true);"
+        "var pl=cl.querySelectorAll('object,embed,applet,iframe,frame,"
+        "frameset');"
+        "for(var i=pl.length-1;i>=0;--i)pl[i].remove();"
+        "a=new Readability(cl).parse();}"
+        "catch(e){}"
+        "var oldText=-1;"
+        "if(a&&a.content){"
+        "var d=new DOMParser().parseFromString(a.content,'text/html');"
+        "var dead=d.querySelectorAll('script,iframe,frame,frameset,"
+        "object,embed,applet,form,input,button,select,textarea,link,"
+        "meta,base,template,noscript');"
+        "for(var i=dead.length-1;i>=0;--i)dead[i].remove();"
+        "oldText=d.body.textContent.trim().length;}"
+        "return 'parse='+(a?a.length:-1)+' oldSan='+oldText;"
+        "})()")).toString();
+
+    for (const QString &needle : mustContain)
+        QVERIFY2(content.contains(needle),
+                 qPrintable(QLatin1String("missing: ") + needle));
+    for (const QString &needle : mustNotContain)
+        QVERIFY2(!content.contains(needle, Qt::CaseInsensitive),
+                 qPrintable(QLatin1String("survived: ") + needle));
+    if (expectActive)
+        QVERIFY(!content.isEmpty());
+    else
+        QVERIFY(content.isEmpty());
 
     closeWindow(window);
 }
