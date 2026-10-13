@@ -204,10 +204,20 @@ private:
     QHostAddress m_socksHost;
     quint16 m_socksPort;
 
+    // TOR17: an early daemon exit (or a failed exec) before
+    // bootstrap strands the window on the fail-closed proxy — every
+    // tab dies at a raw proxy error with nothing behind it.  A
+    // transient loader/exec race is worth a bounded self-heal:
+    // retryOrFail respawns up to a few times, 1.5s apart, before the
+    // failure is declared.
+    void retryOrFail(const QString &reason);
+
     QList<TorCircuit> m_circuits;
     int m_streamCircuitId;          // busiest attached circuit, -1
     bool m_circuitQueryInFlight;
     QTimer *m_circuitRefreshTimer;  // debounces bursts of 650 CIRC lines
+    int m_startRetries;             // respawns used in this launch series
+    QTimer *m_retryTimer;           // spaces the respawns
 
     // TOR05: fingerprint -> ISO country code (a cached empty value is
     // a known-unresolvable hop — it is not re-queried).  Circuits

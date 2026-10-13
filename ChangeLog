@@ -554,6 +554,16 @@ Tor:
   connector line stays visible on every theme, and both the panel's
   "New Tor circuit" button and the nav-bar onion button got proper
   sizes (TOR16).
+- Tor windows are usable by default again: the bundled tor daemon now
+  launches with its own library directory on the child loader path
+  (the expert-bundle binary has no RPATH, so an inherited
+  LD_LIBRARY_PATH could kill it at exec), an early exit retries the
+  spawn instead of giving up, and a status banner above the tabs
+  shows "Connecting to the Tor network…" with bootstrap progress —
+  or "Tor daemon unavailable" with the reason and a Retry button —
+  instead of every page dying at a raw proxy error.  The fail-closed
+  proxy is never bypassed: no page ever falls back to clearnet
+  (TOR17).
 - A Servo-branded start page variant appears when the default engine
   pick is Servo: the same Arora header, search box and default
   coloring, with the official Servo logo centered under the search

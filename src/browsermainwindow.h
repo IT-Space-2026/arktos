@@ -80,6 +80,7 @@ class TabWidget;
 class ToolbarSearch;
 class QToolButton;
 class TorCircuitButton;
+class TorStatusBanner;
 class WebView;
 class QSplitter;
 class QFrame;
@@ -364,6 +365,10 @@ private:
     NetIndicator *m_netIndicator;
     // TOR04: permanent status-bar circuit chain — tor windows only.
     QLabel *m_torCircuitLabel = nullptr;
+    // TOR17: honest daemon-state strip above the tabs — tor windows
+    // only, visible until the SOCKS listener is live or when launch
+    // fails (with a Retry action).
+    TorStatusBanner *m_torBanner = nullptr;
 
     AutoSaver *m_autoSaver;
     QPointer<CommandPalette> m_commandPalette;

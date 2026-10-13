@@ -308,6 +308,13 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
                 window->statusBar()->showMessage(
                     tr("Tor connection failed: %1").arg(reason));
         });
+        // TOR17: surface the daemon's own notice-level output on the
+        // real window path too — without it a launch failure is only
+        // visible as dead tabs on a stderr-attached run.
+        connect(m_torManager, &TorManager::logLine,
+                this, [](const QString &line) {
+            qWarning().noquote() << "tor:" << line;
+        });
         m_torManager->start();
     }
 
@@ -1167,8 +1174,14 @@ void BrowserApplication::openTorWindow(const QUrl &url)
     // tor process manages its own daemon (TAKEOWNERSHIP binds its
     // lifetime to the process), so several tor windows coexist
     // independently.
-    QProcess::startDetached(QCoreApplication::applicationFilePath(),
-                          torWindowArguments(url));
+    if (!QProcess::startDetached(
+            QCoreApplication::applicationFilePath(),
+            torWindowArguments(url))) {
+        // A failed spawn is otherwise invisible — the detached
+        // process has no channel back to this one.
+        qWarning() << "tor: failed to spawn"
+                   << QCoreApplication::applicationFilePath();
+    }
 }
 
 Qt::MouseButtons BrowserApplication::eventMouseButtons() const
