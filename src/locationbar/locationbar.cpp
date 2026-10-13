@@ -425,6 +425,12 @@ void LocationBar::keyPressEvent(QKeyEvent *event)
 void LocationBar::dragEnterEvent(QDragEnterEvent *event)
 {
     const QMimeData *mimeData = event->mimeData();
+    // TABS13: a real tab drag must not become an address load —
+    // outside a tab bar it means tear-off.
+    if (mimeData->hasFormat(aroraTabMimeType())) {
+        event->ignore();
+        return;
+    }
     if (mimeData->hasUrls() || mimeData->hasText())
         event->acceptProposedAction();
 
@@ -434,6 +440,11 @@ void LocationBar::dragEnterEvent(QDragEnterEvent *event)
 void LocationBar::dropEvent(QDropEvent *event)
 {
     const QMimeData *mimeData = event->mimeData();
+
+    if (mimeData->hasFormat(aroraTabMimeType())) {
+        event->ignore();
+        return;
+    }
 
     QUrl url;
     if (mimeData->hasUrls())

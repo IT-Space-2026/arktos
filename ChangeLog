@@ -382,6 +382,15 @@ UI:
   tooltip, the window title and the hover preview, survives pinning,
   tab groups, container moves and undo-close, and is restored with
   the session (TABS12).
+- Tabs move between windows for real: drag a tab off the strip and
+  release it anywhere else and it opens as a new window with the
+  live page — history, scroll, in-flight loads, pinned/group/
+  container state and any custom title all come along. Dragging a
+  tab onto another window's tab strip inserts it at that spot
+  instead of loading its URL over the hovered tab. Dropping a tab
+  onto another application still hands it a link, private tabs
+  refuse to merge into non-private windows, and Tor windows never
+  cross-merge (TABS13).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

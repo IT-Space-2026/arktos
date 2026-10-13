@@ -109,6 +109,60 @@ static bool verticalTabShape(QTabBar::Shape shape);
 static QMouseEvent shiftedMouseEvent(const QMouseEvent *event,
                                      const QPointF &delta);
 
+// TABS13: the live in-process tab drag — the bar the drag left and
+// the page widget being moved.  The mime token is only trusted when
+// it names this pair, so stale or foreign application/x-arora-tab
+// data can never reach a tab.
+static QPointer<TabBar> s_tabDragSource;
+static QPointer<QWidget> s_tabDragPage;
+// Set by a dropEvent that consumed the tab — merge into another
+// strip, a reorder back on this one, a refused header drop.  After
+// exec() returns, an unhandled drop (released outside every tab bar)
+// means "tear off into a new window".
+static bool s_tabDropHandled = false;
+
+void TabBar::beginTabDragSession(TabBar *source, QWidget *page)
+{
+    s_tabDragSource = source;
+    s_tabDragPage = page;
+    s_tabDropHandled = false;
+}
+
+void TabBar::endTabDragSession()
+{
+    s_tabDragSource.clear();
+    s_tabDragPage.clear();
+    s_tabDropHandled = false;
+}
+
+// The mime payload is "<source bar>:<page widget>" — it only yields a
+// pair when it matches the live session, which foreign data can never
+// name.
+bool TabBar::decodeAroraTabDrag(const QMimeData *mimeData,
+                                TabBar *&source, QWidget *&page)
+{
+    source = nullptr;
+    page = nullptr;
+    if (!mimeData || !mimeData->hasFormat(aroraTabMimeType()))
+        return false;
+    const QList<QByteArray> parts =
+        mimeData->data(aroraTabMimeType()).split(':');
+    if (parts.size() != 2)
+        return false;
+    bool okBar = false, okPage = false;
+    TabBar *bar = reinterpret_cast<TabBar *>(
+        parts.at(0).toULongLong(&okBar));
+    QWidget *candidate = reinterpret_cast<QWidget *>(
+        parts.at(1).toULongLong(&okPage));
+    if (!okBar || !okPage || !bar || !candidate)
+        return false;
+    if (s_tabDragSource != bar || s_tabDragPage != candidate)
+        return false;
+    source = bar;
+    page = candidate;
+    return true;
+}
+
 TabShortcut::TabShortcut(int tab, const QKeySequence &key, QWidget *parent)
     : QShortcut(key, parent)
     , m_tab(tab)
@@ -1038,6 +1092,19 @@ void TabBar::mouseMoveEvent(QMouseEvent *event)
             mimeData->setUrls(urls);
             mimeData->setText(tabText(index));
             mimeData->setData(QLatin1String("action"), "tab-reordering");
+            // TABS13: tag the drag as a real tab — the page widget is
+            // its identity.  The url/text payload stays so dropping a
+            // tab into a foreign app still hands it the link.
+            TabWidget *tabWidget =
+                qobject_cast<TabWidget*>(parentWidget());
+            QPointer<QWidget> page = (tabWidget && index >= 0)
+                ? tabWidget->widget(index) : nullptr;
+            if (page) {
+                mimeData->setData(aroraTabMimeType(),
+                    QByteArray::number(quintptr(this)) + ':'
+                        + QByteArray::number(quintptr(page.data())));
+                beginTabDragSession(this, page);
+            }
             drag->setMimeData(mimeData);
             // TABGRP01: a tear-off leaves the bar — the in-bar
             // drop-stack tracking stops here.
@@ -1046,7 +1113,20 @@ void TabBar::mouseMoveEvent(QMouseEvent *event)
             // about to spend the drag inside QDrag::exec().
             m_moveDragActive = false;
             m_pressedTabIndex = -1;
-            drag->exec();
+            // The drop can merge the window's last tab into another
+            // strip — closing this window mid-drag — so guard this
+            // bar across exec()'s nested event loop.
+            QPointer<TabBar> guard(this);
+            const Qt::DropAction action = drag->exec();
+            // TABS13: released where nothing accepted the drop —
+            // over the desktop, a window's page body, foreign chrome —
+            // the tab tears off into a new window.  A consumed drop
+            // (a merge, a reorder back here, a foreign url drop) or a
+            // dead source bar leaves it put.
+            if (guard && page && !s_tabDropHandled
+                && action == Qt::IgnoreAction && tabWidget)
+                tabWidget->tearTabToNewWindow(tabWidget->indexOf(page));
+            endTabDragSession();
         }
     }
     if (band > 0) {
@@ -1115,6 +1195,55 @@ void TabBar::dropEvent(QDropEvent *event)
         update();
     }
     const QMimeData *mimeData = event->mimeData();
+
+    // TABS13: a real in-process tab drag takes precedence over the
+    // legacy url payload — the page itself moves (or reorders back on
+    // its own strip), never loads onto the tab under the cursor.
+    // Only a payload matching the live drag session gets here; stale
+    // or foreign x-arora-tab data falls through to the url path.
+    TabBar *sourceBar = nullptr;
+    QWidget *page = nullptr;
+    if (decodeAroraTabDrag(mimeData, sourceBar, page)) {
+        TabWidget *source = sourceBar
+            ? qobject_cast<TabWidget*>(sourceBar->parentWidget())
+            : nullptr;
+        TabWidget *target = qobject_cast<TabWidget*>(parentWidget());
+        if (!source || !target) {
+            event->ignore();
+            return;
+        }
+        // Consumed either way — an unhandled drop would tear the tab
+        // off into a new window once exec() returns.
+        s_tabDropHandled = true;
+        event->acceptProposedAction();
+        const int band = containerStripHeight();
+        const QPoint pos = event->position().toPoint();
+        const bool onBand = band > 0 && pos.y() >= 0 && pos.y() < band;
+        const int from = source->indexOf(page);
+        if (from < 0)
+            return;   // the tab vanished mid-drag — nothing to move
+        if (source == target) {
+            // Back on its own strip: today's reorder (over the header
+            // band the tab simply stays put).
+            if (!onBand) {
+                int to = insertIndexForDrop(stripPos(pos));
+                if (to > from)
+                    --to;
+                if (to != from)
+                    moveTab(from, to);
+            }
+            return;
+        }
+        // A different window's strip — the real tab moves at the drop
+        // slot.  Over the header band it lands at the end of the
+        // strip; a live page's container binding can't be rebound the
+        // way a bare url can.
+        const int to = onBand ? target->count()
+                              : insertIndexForDrop(stripPos(pos));
+        source->moveTabTo(from, target, to);
+        return;
+    }
+
     QUrl url;
     if (mimeData->hasUrls())
         url = mimeData->urls().at(0);
@@ -1149,6 +1278,21 @@ void TabBar::dropEvent(QDropEvent *event)
     }
 
     QTabBar::dropEvent(event);
+}
+
+// TABS13: the strip slot a drop maps to — insert before the hovered
+// tab, or behind it when the pointer sits past the midpoint; over the
+// void after the last tab it appends.
+int TabBar::insertIndexForDrop(const QPoint &pos) const
+{
+    const int over = tabAt(pos);
+    if (over < 0)
+        return count();
+    const QRect rect = tabRect(over);
+    const bool vertical = verticalTabShape(shape());
+    const int mid = vertical ? rect.center().y() : rect.center().x();
+    const int at = vertical ? pos.y() : pos.x();
+    return at > mid ? over + 1 : over;
 }
 
 void TabBar::wheelEvent(QWheelEvent *event)

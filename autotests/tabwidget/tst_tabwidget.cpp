@@ -21,6 +21,8 @@
 #include <QtGui/QtGui>
 #include "qtest_arora.h"
 
+#include <browserapplication.h>
+#include <browsermainwindow.h>
 #include <engineinterface.h>
 #include <tabwidget.h>
 #include <tabbar.h>
@@ -104,6 +106,7 @@ private slots:
     void reopenClosedTab();
     void lazySessionRestore();
     void renameTab();
+    void tabTransfer();
 };
 
 // Subclass that exposes the protected functions.
@@ -159,6 +162,9 @@ void tst_TabWidget::cleanup()
     // Same guard for the icon-only mode (TABS09) — a leaked key would
     // pin every later test's strip to the icon tile width.
     settings.remove(QLatin1String("tabs/iconOnlyTabs"));
+    // TABS13: same guard for the process-private flag — a mid-test
+    // exit would leave every later transfer refused.
+    BrowserApplication::setPrivate(false);
 }
 
 void tst_TabWidget::tabwidget_data()
@@ -2232,6 +2238,193 @@ void tst_TabWidget::renameTab()
 
     while (widget.count() > 0)
         widget.closeTab(widget.count() - 1);
+}
+
+// TABS13: cross-window tab transfer — moveTabTo() carries the live
+// page widget (history/scroll/engine state ride along), the carried
+// pin/rename/group metadata re-keys in the target, the privacy
+// boundary refuses a persistent page into a private-mode window, and
+// a synthesized drop on the target bar drives the full merge path
+// including the mime/session handshake.
+void tst_TabWidget::tabTransfer()
+{
+    SubTabWidget source;
+    for (int i = 0; i < 3; ++i)
+        source.newTab();
+    SubTabWidget target;
+    for (int i = 0; i < 2; ++i)
+        target.newTab();
+    QCOMPARE(source.count(), 3);
+    QCOMPARE(target.count(), 2);
+    WebView *s0 = source.webView(0);
+    WebView *s1 = source.webView(1);
+    WebView *s2 = source.webView(2);
+    WebView *t0 = target.webView(0);
+    WebView *t1 = target.webView(1);
+    QVERIFY(s0 && s1 && s2 && t0 && t1);
+
+    // The drop slot is honored — the same page widget lands at the
+    // drop index (move, not clone) and raises current.
+    QWidget *movedPage = source.widget(1);
+    QVERIFY(source.moveTabTo(1, &target, 1));
+    QCOMPARE(source.count(), 2);
+    QCOMPARE(source.webView(0), s0);
+    QCOMPARE(source.webView(1), s2);
+    QCOMPARE(target.count(), 3);
+    QCOMPARE(target.webView(0), t0);
+    QCOMPARE(target.webView(1), s1);
+    QCOMPARE(target.webView(2), t1);
+    QCOMPARE(target.widget(1), movedPage);
+    QCOMPARE(target.currentIndex(), 1);
+    // The strip/location-bar stacks stay paired.
+    QVERIFY(target.locationBar(1));
+    QCOMPARE(target.count(), 3);
+
+    // The moved view's signals land on the new owner — the override
+    // path repaints the target strip.
+    target.setTabTitleOverride(1, QLatin1String("Moved"));
+    QCOMPARE(target.tabTitleOverride(1), QLatin1String("Moved"));
+
+    // Metadata rides the carrier: pin + rename + group binding.
+    source.setTabPinned(0, true);
+    source.setTabTitleOverride(0, QLatin1String("Carried"));
+    const QString gid = source.createTabGroup(0);
+    source.renameTabGroup(gid, QLatin1String("Convoy"));
+    source.setTabGroupColor(gid, QColor(Qt::blue));
+    QCOMPARE(source.tabGroupId(0), gid);
+    const QUrl markerUrl(QStringLiteral("data:text/plain,carried"));
+    s0->loadUrl(markerUrl);
+    QTRY_COMPARE_WITH_TIMEOUT(s0->url(), markerUrl, 15000);
+    QVERIFY(source.moveTabTo(0, &target, 0));
+    QCOMPARE(source.count(), 1);
+    QCOMPARE(source.webView(0), s2);
+    QCOMPARE(target.count(), 4);
+    QCOMPARE(target.webView(0), s0);
+    QVERIFY(target.isTabPinned(0));
+    QCOMPARE(target.tabTitleOverride(0), QLatin1String("Carried"));
+    QCOMPARE(target.tabDisplayTitle(0), QLatin1String("Carried"));
+    QCOMPARE(target.webView(0)->url(), markerUrl);
+    // Group ids are per-window: the carried binding lands under a
+    // fresh id but keeps the name and color.
+    const QString newGid = target.tabGroupId(0);
+    QVERIFY(!newGid.isEmpty());
+    QCOMPARE(target.tabGroupName(newGid), QLatin1String("Convoy"));
+    QCOMPARE(target.tabGroupColor(newGid), QColor(Qt::blue));
+    // The emptied source group is gone.
+    QVERIFY(!source.tabGroupIds().contains(gid));
+
+    // Refusals: a marked no-transfer page (a future engine backend's
+    // host widget) stays put.
+    QWidget *marked = source.widget(0);
+    marked->setProperty("aroraNoTabTransfer", true);
+    QVERIFY(!source.moveTabTo(0, &target));
+    QCOMPARE(source.count(), 1);
+    QCOMPARE(target.count(), 4);
+    marked->setProperty("aroraNoTabTransfer", QVariant());
+
+    // OTR boundary: a private page keeps its off-the-record profile
+    // through the move; a persistent page is refused while the
+    // process runs private (the window it would land in is treated
+    // as throwaway).
+    WebView *priv = source.makeNewPrivateTab(true);
+    QVERIFY(priv);
+    QVERIFY(priv->enginePage()->isOffTheRecord());
+    const int privIndex = source.webViewIndex(priv);
+    QVERIFY(source.moveTabTo(privIndex, &target, -1));
+    QCOMPARE(target.webView(target.count() - 1), priv);
+    QVERIFY(target.webView(target.count() - 1)->enginePage()
+            ->isOffTheRecord());
+
+    BrowserApplication::setPrivate(true);
+    QVERIFY(!source.moveTabTo(0, &target));
+    QCOMPARE(source.count(), 1);
+    BrowserApplication::setPrivate(false);
+
+    // Same-widget move is a no-op — reorder is the bar's job.
+    QVERIFY(!source.moveTabTo(0, &source));
+    QVERIFY(!source.moveTabTo(0, nullptr));
+    QVERIFY(!source.moveTabTo(-1, &target));
+    QVERIFY(!source.moveTabTo(9, &target));
+
+    // The full drop path: a live drag session + arora-tab mime over
+    // the target bar inserts at the drop slot instead of loading the
+    // url into the hovered tab.
+    source.newTab();
+    QCOMPARE(source.count(), 2);
+    WebView *d0 = source.webView(0);
+    WebView *d1 = source.webView(1);
+    target.resize(720, 480);
+    target.show();
+    QApplication::processEvents();
+    TabBar *sourceBar = source.bar();
+    TabBar *targetBar = target.bar();
+    QWidget *dragged = source.widget(0);
+    TabBar::beginTabDragSession(sourceBar, dragged);
+    QMimeData mime;
+    mime.setUrls(QList<QUrl>() << QUrl(QStringLiteral("https://a.example/")));
+    mime.setText(QStringLiteral("https://a.example/"));
+    mime.setData(QLatin1String(aroraTabMimeType()),
+                 QByteArray::number(quintptr(sourceBar)) + ':'
+                 + QByteArray::number(quintptr(dragged)));
+    // A drop on the tab-2 midpoint inserts there.
+    const QPoint dropPos = targetBar->tabRect(2).center()
+        + QPoint(0, targetBar->containerStripHeight());
+    QSignalSpy mergeLoadSpy(targetBar,
+        QOverload<const QUrl &, TabWidget::OpenUrlIn>::of(&TabBar::loadUrl));
+    QDropEvent drop(QPointF(dropPos), Qt::MoveAction, &mime,
+                    Qt::LeftButton, Qt::NoModifier);
+    targetBar->testDropEvent(&drop);
+    QCOMPARE(drop.isAccepted(), true);
+    QCOMPARE(mergeLoadSpy.count(), 0);
+    TabBar::endTabDragSession();
+    // The tab landed at the drop slot — the hovered tab's url is
+    // untouched, the source lost the page, and the url payload was
+    // not turned into a navigation.
+    QCOMPARE(target.count(), 6);
+    QCOMPARE(source.count(), 1);
+    QCOMPARE(source.webView(0), d1);
+    QCOMPARE(target.widget(2), dragged);
+    QCOMPARE(target.webView(2), d0);
+    QCOMPARE(target.webView(3), s1);
+    QVERIFY(target.webView(3)->url()
+            != QUrl(QStringLiteral("https://a.example/")));
+
+    // A stale payload (no live session) falls back to the legacy url
+    // drop — foreign drops still open the link.
+    QSignalSpy loadSpy(targetBar,
+        QOverload<const QUrl &, TabWidget::OpenUrlIn>::of(&TabBar::loadUrl));
+    QMimeData foreign;
+    foreign.setUrls(QList<QUrl>() << QUrl(QStringLiteral("https://b.example/")));
+    foreign.setData(QLatin1String(aroraTabMimeType()),
+                    QByteArrayLiteral("1234:5678"));
+    QDropEvent staleDrop(QPointF(dropPos), Qt::MoveAction, &foreign,
+                         Qt::LeftButton, Qt::NoModifier);
+    targetBar->testDropEvent(&staleDrop);
+    QCOMPARE(loadSpy.count(), 1);
+    QCOMPARE(target.count(), 6);          // nothing moved
+
+    // Tear-off: the driver behind an unhandled release — the page
+    // lands live in a fresh BrowserMainWindow, and the ctor's blank
+    // placeholder tab is closed behind it.
+    source.newTab();
+    QCOMPARE(source.count(), 2);
+    WebView *torn = source.webView(1);
+    source.tearTabToNewWindow(1);
+    QCOMPARE(source.count(), 1);
+    BrowserMainWindow *tornWindow = nullptr;
+    for (QWidget *top : QApplication::topLevelWidgets())
+        if (BrowserMainWindow *mw =
+                qobject_cast<BrowserMainWindow*>(top))
+            tornWindow = mw;
+    QVERIFY(tornWindow);
+    QCOMPARE(tornWindow->tabWidget()->count(), 1);
+    QCOMPARE(tornWindow->tabWidget()->webView(0), torn);
+    delete tornWindow;
+
+    while (source.count() > 0)
+        source.closeTab(source.count() - 1);
+    while (target.count() > 0)
+        target.closeTab(target.count() - 1);
 }
 
 QTEST_MAIN(tst_TabWidget)
