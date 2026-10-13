@@ -1491,16 +1491,21 @@ void tst_BrowserMainWindow::torStatusBarTheme()
     QVERIFY(darkTextLightness > 150);
 }
 
-// ICONS04: the tor window's violet chrome sits on the light
+// ICONS04/ICONS06: the tor window's violet chrome sits on the light
 // application palette, so the nav cluster's themed icons resolved
-// dark-on-dark — and worse, the disabled ghosting made the arrows read
-// LIGHTER than the enabled reload.  Tor windows pin the toolbar icons
-// to the bundled set's -dark (light-glyph) art; menu actions keep the
-// normal icons because their popups stay on the platform palette.
+// dark-on-dark — and worse, "native" (the default pick) has no -dark
+// art to pin at all, while Qt's generated Disabled ghosting made the
+// idle arrows read LIGHTER than the enabled reload.  Tor windows now
+// tint every nav glyph flat #eee with a seeded dimmer Disabled mode;
+// menu actions keep the normal icons because their popups stay on
+// the platform palette.
 void tst_BrowserMainWindow::torNavIconsDarkChrome()
 {
-    const auto luminance = [](const QIcon &icon) -> qlonglong {
-        const QImage image = icon.pixmap(QSize(18, 18)).toImage();
+    const auto luminance = [](const QIcon &icon,
+                              QIcon::Mode mode = QIcon::Normal)
+            -> qlonglong {
+        const QImage image =
+            icon.pixmap(QSize(18, 18), mode).toImage();
         qlonglong lum = 0;
         int opaque = 0;
         for (int y = 0; y < image.height(); ++y)
@@ -1513,10 +1518,17 @@ void tst_BrowserMainWindow::torNavIconsDarkChrome()
             }
         return opaque ? lum / opaque : -1;
     };
+    const auto opaqueCount = [](const QIcon &icon, int extent) -> int {
+        const QImage image =
+            icon.pixmap(QSize(extent, extent)).toImage();
+        int count = 0;
+        for (int y = 0; y < image.height(); ++y)
+            for (int x = 0; x < image.width(); ++x)
+                if (image.pixelColor(x, y).alpha() > 60)
+                    ++count;
+        return count;
+    };
 
-    // getOnDark only differs from get() under a bundled icon theme —
-    // "native" has no -dark art to pin.  Force one; a light palette
-    // keeps the normal-window leg on the dark-glyph variants.
     QSettings settings;
     const QVariant savedTheme =
         settings.value(QLatin1String("MainWindow/iconTheme"));
@@ -1534,67 +1546,117 @@ void tst_BrowserMainWindow::torNavIconsDarkChrome()
         luminance(plainBar->actions().at(1)->icon());
     const qlonglong plainReload =
         luminance(plainBar->actions().at(3)->icon());
+    QToolButton *plainMenuButton = plain->findChild<QToolButton *>(
+        QLatin1String("appMenuButton"));
+    QVERIFY(plainMenuButton);
+    const int plainLogoCoverage =
+        opaqueCount(plainMenuButton->icon(), 28);
     closeWindow(plain);
 
-    BrowserApplication::setTorMode(true);
-    SubWindow *window = new SubWindow;
-    window->resize(1000, 600);
-    window->show();
-    QApplication::processEvents();
-    QToolBar *navBar = window->findChild<QToolBar *>(
-        QLatin1String("NavigationToolBar"));
-    QVERIFY(navBar && navBar->actions().count() >= 5);
-    const qlonglong torBack =
-        luminance(navBar->actions().at(1)->icon());
-    const qlonglong torForward =
-        luminance(navBar->actions().at(2)->icon());
-    const qlonglong torReload =
-        luminance(navBar->actions().at(3)->icon());
-    // HOME01: the Home button sits at index 4 and takes the same
-    // light-glyph lift on the violet bar.
-    const qlonglong torHome =
-        luminance(navBar->actions().at(4)->icon());
-    qlonglong menuReload = -1;
-    // MENU06: a tor window's menubar row is the bare title bar — the
-    // menus live in the app-menu dropdown (same shared QMenu objects).
-    for (QAction *menuAction : window->appMenu()->actions()) {
-        if (!menuAction->menu()
-            || !menuAction->text().contains(QLatin1String("View")))
-            continue;
-        for (QAction *action : menuAction->menu()->actions())
-            if (action->text().remove(QLatin1Char('&'))
-                    == QLatin1String("Reload Page"))
-                menuReload = luminance(action->icon());
-    }
+    // A tor window's nav-icon measurements — run under each theme so
+    // the tint is proven theme-independent.
+    struct TorNavLum {
+        qlonglong back = -1;
+        qlonglong backDisabled = -1;
+        qlonglong forward = -1;
+        qlonglong reload = -1;
+        qlonglong home = -1;
+        qlonglong sidebar = -1;
+        qlonglong menuReload = -1;
+        int logoCoverage = -1;
+        bool barFound = false;
+    };
+    const auto measureTorBar = [&](const char *grabName) -> TorNavLum {
+        TorNavLum out;
+        BrowserApplication::setTorMode(true);
+        SubWindow *window = new SubWindow;
+        window->resize(1000, 600);
+        window->show();
+        QApplication::processEvents();
+        QToolBar *navBar = window->findChild<QToolBar *>(
+            QLatin1String("NavigationToolBar"));
+        if (navBar && navBar->actions().count() >= 5) {
+            out.barFound = true;
+            out.back = luminance(navBar->actions().at(1)->icon());
+            out.backDisabled = luminance(navBar->actions().at(1)->icon(),
+                                         QIcon::Disabled);
+            out.forward = luminance(navBar->actions().at(2)->icon());
+            out.reload = luminance(navBar->actions().at(3)->icon());
+            // HOME01: the Home button sits at index 4.
+            out.home = luminance(navBar->actions().at(4)->icon());
+            for (QAction *action : navBar->actions())
+                if (action->shortcut() == QKeySequence(Qt::Key_F4))
+                    out.sidebar = luminance(action->icon());
+            QToolButton *menuButton = window->findChild<QToolButton *>(
+                QLatin1String("appMenuButton"));
+            if (menuButton)
+                out.logoCoverage =
+                    opaqueCount(menuButton->icon(), 28);
+            // MENU06: a tor window's menubar row is the bare title
+            // bar — the menus live in the app-menu dropdown (same
+            // shared QMenu objects).
+            for (QAction *menuAction : window->appMenu()->actions()) {
+                if (!menuAction->menu()
+                    || !menuAction->text().contains(
+                           QLatin1String("View")))
+                    continue;
+                for (QAction *action : menuAction->menu()->actions())
+                    if (action->text().remove(QLatin1Char('&'))
+                            == QLatin1String("Reload Page"))
+                        out.menuReload = luminance(action->icon());
+            }
+            // Offscreen grab for visual review — set
+            // ARORA_TOR_GRAB_DIR and the tor nav bars land there as
+            // tor-nav-icons-<theme>.png.
+            const QByteArray grabDir = qgetenv("ARORA_TOR_GRAB_DIR");
+            if (grabName && !grabDir.isEmpty()) {
+                QDir().mkpath(QString::fromLocal8Bit(grabDir));
+                navBar->grab().save(
+                    QString::fromLocal8Bit(grabDir)
+                    + QLatin1String("/tor-nav-icons-")
+                    + QString::fromLatin1(grabName)
+                    + QLatin1String(".png"));
+            }
+        }
+        closeWindow(window);
+        BrowserApplication::setTorMode(false);
+        return out;
+    };
 
-    // Offscreen grab for visual review — set ARORA_TOR_GRAB_DIR to a
-    // directory and the tor nav bar lands there as tor-nav-icons.png.
-    const QByteArray grabDir = qgetenv("ARORA_TOR_GRAB_DIR");
-    if (!grabDir.isEmpty()) {
-        QDir().mkpath(QString::fromLocal8Bit(grabDir));
-        navBar->grab().save(QString::fromLocal8Bit(grabDir)
-                            + QLatin1String("/tor-nav-icons.png"));
-    }
+    const TorNavLum bundled = measureTorBar("adwaita");
 
-    closeWindow(window);
-    BrowserApplication::setTorMode(false);
+    // ICONS06: the reported path — "native" has no -dark art for
+    // getOnDark to pin, so the tint must carry the lift alone.
+    settings.remove(QLatin1String("MainWindow/iconTheme"));
+    AroraIcon::applyFromSettings();
+    const TorNavLum nativeTheme = measureTorBar("native");
+
     BrowserTheme::applyColorScheme();
     if (savedTheme.isValid())
         settings.setValue(QLatin1String("MainWindow/iconTheme"),
                           savedTheme);
-    else
-        settings.remove(QLatin1String("MainWindow/iconTheme"));
     AroraIcon::applyFromSettings();
 
     // Light-palette normal window: dark glyphs.  Tor window: light
-    // glyphs — same family, readable on the violet bar.
+    // glyphs — readable on the violet bar under any theme.
     QVERIFY(plainBack >= 0 && plainBack < 140);
     QVERIFY(plainReload >= 0 && plainReload < 140);
-    QVERIFY(torBack > 140);
-    QVERIFY(torForward > 140);
-    QVERIFY(torReload > 140);
-    QVERIFY(torHome > 140);
-    QVERIFY(menuReload >= 0 && menuReload < 140);
+    for (const TorNavLum &lum : { bundled, nativeTheme }) {
+        QVERIFY(lum.barFound);
+        QVERIFY(lum.back > 140);
+        QVERIFY(lum.forward > 140);
+        QVERIFY(lum.reload > 140);
+        QVERIFY(lum.home > 140);
+        QVERIFY(lum.sidebar > 140);
+        // ICONS06: Disabled is seeded, not generated — deliberately
+        // dimmer than Normal yet still clearly light on violet.
+        QVERIFY(lum.backDisabled > 140
+                && lum.backDisabled < lum.back);
+        // The brand mark keeps its colors but gains a light backing
+        // disc — strictly more coverage than the plain window's.
+        QVERIFY(lum.logoCoverage > plainLogoCoverage);
+    }
+    QVERIFY(bundled.menuReload >= 0 && bundled.menuReload < 140);
 }
 
 // ICONS05: the normal window's chrome under a dark palette.  The

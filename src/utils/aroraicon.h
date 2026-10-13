@@ -19,6 +19,7 @@
 #ifndef ARORAICON_H
 #define ARORAICON_H
 
+#include <qcolor.h>
 #include <qicon.h>
 #include <qstringlist.h>
 
@@ -63,6 +64,24 @@ QIcon get(const QString &name);
 // application palette is light, e.g. the tor window's violet toolbar.
 // "native" and names with no bundled -dark file fall back to get().
 QIcon getOnDark(const QString &name);
+
+// ICONS06: a flat `color` glyph for dark chrome — the shape comes
+// from `icon` (getTinted resolves `name` through getOnDark's light
+// art first), then every opaque pixel is re-tinted with the alpha
+// preserved, so the result matches the palette-painted reader/onion
+// buttons exactly whatever theme served the base art — including
+// "native", which has no -dark variant for getOnDark to pin.  The
+// Disabled mode is seeded with `disabledColor` rather than left to
+// Qt's generated ghosting, which is what washed the idle
+// back/forward arrows out on the violet bar.  The default pair is
+// the tor chrome's glyph colors (enabled #eee, disabled #b9aecf —
+// the tab strip's dimmed text tone).
+QIcon tinted(const QIcon &icon,
+             const QColor &color = QColor(0xee, 0xee, 0xee),
+             const QColor &disabledColor = QColor(0xb9, 0xae, 0xcf));
+QIcon getTinted(const QString &name,
+                const QColor &color = QColor(0xee, 0xee, 0xee),
+                const QColor &disabledColor = QColor(0xb9, 0xae, 0xcf));
 
 // Selectable sets: "native" first, then the bundled ids.
 QStringList themeIds();

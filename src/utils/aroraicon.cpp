@@ -26,6 +26,7 @@
 #include <qevent.h>
 #include <qfile.h>
 #include <qimage.h>
+#include <qpainter.h>
 #include <qpixmap.h>
 #include <qsettings.h>
 #include <qstylehints.h>
@@ -121,6 +122,25 @@ bool systemThemeIsDarkAware()
     return aware == 1;
 }
 
+// ICONS06: repaint `source` as a flat `color` glyph — every pixel
+// keeps its alpha and takes the new color (SourceIn compositing),
+// so themed art of any palette resolves to the same light glyph the
+// painted reader/onion buttons draw on dark chrome.
+QPixmap tintedPixmap(const QPixmap &source, const QColor &color)
+{
+    if (source.isNull())
+        return source;
+    QImage image = source.toImage()
+        .convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    QPainter painter(&image);
+    painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+    painter.fillRect(image.rect(), color);
+    painter.end();
+    QPixmap out = QPixmap::fromImage(image);
+    out.setDevicePixelRatio(source.devicePixelRatio());
+    return out;
+}
+
 // The bundled -dark set closest to the captured system theme —
 // where "native" resolves under a dark palette when the real system
 // theme cannot serve light glyphs.  An empty/unknown system theme
@@ -164,6 +184,31 @@ QIcon AroraIcon::getOnDark(const QString &name)
         }
     }
     return get(name);
+}
+
+QIcon AroraIcon::tinted(const QIcon &icon, const QColor &color,
+                        const QColor &disabledColor)
+{
+    QIcon out;
+    // Cover the sizes chrome buttons actually request so QIcon never
+    // has to rescale a tinted pixmap (or fall back to generating the
+    // Disabled mode itself — that ghosting was the wash-out).
+    static const int sizes[] = { 16, 18, 20, 22, 24, 28, 32, 48 };
+    for (int size : sizes) {
+        const QPixmap normal = icon.pixmap(QSize(size, size));
+        if (normal.isNull())
+            continue;
+        out.addPixmap(tintedPixmap(normal, color), QIcon::Normal);
+        out.addPixmap(tintedPixmap(normal, disabledColor),
+                      QIcon::Disabled);
+    }
+    return out;
+}
+
+QIcon AroraIcon::getTinted(const QString &name, const QColor &color,
+                           const QColor &disabledColor)
+{
+    return tinted(getOnDark(name), color, disabledColor);
 }
 
 QStringList AroraIcon::themeIds()

@@ -412,6 +412,14 @@ UI:
   onto another application still hands it a link, private tabs
   refuse to merge into non-private windows, and Tor windows never
   cross-merge (TABS13).
+- Tor window nav buttons are readable now: back/forward/reload/stop/
+  home, the sidebar toggle and the status-bar zoom buttons are
+  painted as flat light glyphs on the violet bar — the same tone as
+  the reader and onion buttons — and a disabled button shows a
+  deliberate dimmer tint instead of a pale ghost. The app-menu logo
+  keeps its colors with a subtle light backing disc so the bear no
+  longer fades into the violet, and its dropdown arrow is light too.
+  Non-Tor windows are unchanged (ICONS06).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
