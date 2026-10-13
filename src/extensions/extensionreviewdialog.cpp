@@ -27,6 +27,7 @@
 #include <qlabel.h>
 #include <qlistwidget.h>
 #include <qpushbutton.h>
+#include <qstyle.h>
 
 // Everything fed from manifest.json is attacker-influenced text —
 // every label that shows it is forced Qt::PlainText so markup-looking
@@ -43,7 +44,8 @@ ExtensionReviewDialog::ExtensionReviewDialog(
         const ExtensionManager::Manifest &manifest,
         const QString &sourcePath,
         Mode mode,
-        QWidget *parent)
+        QWidget *parent,
+        const ExtensionManager::Manifest *installed)
     : QDialog(parent)
 {
     setWindowTitle(mode == Install ? tr("Install Extension")
@@ -92,10 +94,20 @@ ExtensionReviewDialog::ExtensionReviewDialog(
             describePermission(permission), m_permissionsList);
         item->setToolTip(permission);
     }
+    const QIcon warningIcon =
+        style()->standardIcon(QStyle::SP_MessageBoxWarning);
+    QStringList broad;
     for (const QString &pattern : manifest.hostPermissions) {
         QListWidgetItem *item = new QListWidgetItem(
             describeHostPermission(pattern), m_permissionsList);
         item->setToolTip(pattern);
+        // SEC25: whole-scheme host access gets the warning icon on
+        // its row — "Read and change your data on *" alone reads like
+        // any other site grant.
+        if (ExtensionManager::isBroadHostPattern(pattern)) {
+            item->setIcon(warningIcon);
+            broad.append(pattern);
+        }
     }
     if (m_permissionsList->count() == 0) {
         QListWidgetItem *item = new QListWidgetItem(
@@ -121,6 +133,53 @@ ExtensionReviewDialog::ExtensionReviewDialog(
             tr("Qt WebEngine will reject this package — installation "
                "cannot proceed."),
             m_warningsList);
+    // SEC25: broad host permissions get a distinct escalation row
+    // above the support caveats — a plain permission line understates
+    // "every website".
+    if (!broad.isEmpty()) {
+        QListWidgetItem *item = new QListWidgetItem(
+            tr("Broad host access requested: %1 — the extension can "
+               "read and change data on every website this covers.")
+                .arg(broad.join(QLatin1String(", "))),
+            m_warningsList);
+        item->setIcon(warningIcon);
+    }
+    // SEC25 update drift: the consent the user gave the installed
+    // version never covers grants that grew since — list every added
+    // permission and host pattern explicitly.
+    if (installed && installed->valid && manifest.valid) {
+        const auto added = [](const QStringList &next,
+                              const QStringList &have) {
+            QStringList diff;
+            for (const QString &entry : next)
+                if (!have.contains(entry))
+                    diff.append(entry);
+            return diff;
+        };
+        const QString since = installed->version.isEmpty()
+            ? tr("the installed version")
+            : tr("installed version %1").arg(installed->version);
+        const QStringList grown =
+            added(manifest.permissions, installed->permissions)
+            + added(manifest.hostPermissions, installed->hostPermissions);
+        if (!grown.isEmpty()) {
+            QListWidgetItem *item = new QListWidgetItem(
+                tr("New since %1: %2")
+                    .arg(since, grown.join(QLatin1String(", "))),
+                m_warningsList);
+            item->setIcon(warningIcon);
+        }
+        const QStringList newDangerous =
+            added(manifest.dangerous, installed->dangerous);
+        if (!newDangerous.isEmpty()) {
+            QListWidgetItem *item = new QListWidgetItem(
+                tr("New high-risk access since %1: %2 — each must be "
+                   "allowed explicitly below.")
+                    .arg(since, newDangerous.join(QLatin1String(", "))),
+                m_warningsList);
+            item->setIcon(warningIcon);
+        }
+    }
     if (!manifest.unsupported.isEmpty())
         new QListWidgetItem(
             tr("Declares APIs unavailable in Qt WebEngine — these "
@@ -205,9 +264,11 @@ bool ExtensionReviewDialog::approveAllowed() const
 bool ExtensionReviewDialog::review(const ExtensionManager::Manifest &manifest,
                                    const QString &sourcePath,
                                    Mode mode,
-                                   QWidget *parent)
+                                   QWidget *parent,
+                                   const ExtensionManager::Manifest *installed)
 {
-    ExtensionReviewDialog dialog(manifest, sourcePath, mode, parent);
+    ExtensionReviewDialog dialog(manifest, sourcePath, mode, parent,
+                                 installed);
     if (dialog.exec() != QDialog::Accepted)
         return false;
     // EXT05: approval is the consent the manager's gate consumes —

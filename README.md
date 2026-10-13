@@ -367,7 +367,13 @@ downloaded packages are hash/structure-verified before they touch
 disk, and applying an update is opt-in: nothing replaces installed
 extension code without a fresh review. CRX3 signature blocks are
 structure-checked only; there is no Chrome Web Store signature
-verification. The Settings → Extensions page lists each extension's
+verification. Each install records an integrity pin — a SHA-256 over
+the extension's on-disk files — re-verified at every startup: files
+changed outside the engine mark the row **Tampered** rather than
+loading silently. Update reviews call out permissions and host
+patterns the installed version never declared, and whole-scheme host
+grants (`<all_urls>`, `*://*/*`, `http://*/*` …) get a warning row of
+their own. The Settings → Extensions page lists each extension's
 manifest description and, for installed ones, the on-disk folder —
 installed extensions live under the browsing profile's
 `QtWebEngine/arora/Extensions/` directory (inside the Arora data

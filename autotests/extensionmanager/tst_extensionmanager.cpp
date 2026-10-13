@@ -30,9 +30,14 @@
 
 #include <memory>
 
+#include <qcheckbox.h>
+#include <qlistwidget.h>
+#include <qpushbutton.h>
+
 #include "browserapplication.h"
 #include "browserprofile.h"
 #include "extensionmanager.h"
+#include "extensionreviewdialog.h"
 #include "qtest_arora.h"
 #include "qtry.h"
 
@@ -52,6 +57,9 @@ private slots:
     void profileIsolation();
     void bundledInstall();
     void updateCheckLoopback();
+    void integrityPin();
+    void broadHostWarning();
+    void updateDriftReview();
 
 private:
     // Minimal PK zip writer (store-only) — enough for the update
@@ -710,6 +718,219 @@ void tst_ExtensionManager::updateCheckLoopback()
     QVERIFY(!manager->updateCheckInProgress());
 
     QDir(root).removeRecursively();
+}
+
+// SEC25 (a): every successful install pins a sha256 of its on-disk
+// tree; the startup sweep re-hashes and flags a mismatch instead of
+// silently loading — "files changed since install".
+void tst_ExtensionManager::integrityPin()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString root = QDir::temp().filePath(
+        QStringLiteral("tst-extpin-%1")
+            .arg(QCoreApplication::applicationPid()));
+    const QString dir = writeExtension(root, QStringLiteral("tst-pin"),
+                                       QStringLiteral("1.0.0"));
+    QVERIFY(!dir.isEmpty());
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    QWebEngineProfile *profile = BrowserApplication::webEngineProfile();
+
+    // Sweep earlier leftovers by manifest name (pid-rooted ids differ
+    // per run, the manifest name survives into the installed copy).
+    for (const ExtensionManager::ExtensionInfo &info
+         : manager->extensions()) {
+        if (!info.builtin && info.name == QLatin1String("tst-pin"))
+            manager->removeExtension(info.id);
+    }
+    QTest::qWait(300);
+
+    const QString id = installFixture(dir);
+    QVERIFY2(!id.isEmpty(), "fixture extension must install");
+
+    const auto infoFor = [manager](const QString &extId) {
+        const QList<ExtensionManager::ExtensionInfo> list =
+            manager->extensions();
+        for (const ExtensionManager::ExtensionInfo &info : list)
+            if (info.id == extId)
+                return info;
+        return ExtensionManager::ExtensionInfo();
+    };
+
+    // The install pinned the tree — a sweep right after is clean.
+    auto tampered = std::make_shared<QStringList>();
+    QObject::connect(manager, &ExtensionManager::extensionTampered,
+                     this, [tampered](
+                         const ExtensionManager::ExtensionInfo &info) {
+        tampered->append(info.id);
+    });
+    manager->verifyInstalledIntegrity(profile);
+    QVERIFY(tampered->isEmpty());
+    QVERIFY(!infoFor(id).tampered);
+
+    // Tamper a file in the installed dir -> the next sweep flags it.
+    const QString installedDir = infoFor(id).path;
+    QVERIFY(!installedDir.isEmpty());
+    QFile victim(installedDir + QLatin1String("/sw.js"));
+    QVERIFY(victim.open(QIODevice::Append));
+    victim.write("// tampered\n");
+    victim.close();
+
+    manager->verifyInstalledIntegrity(profile);
+    QVERIFY(tampered->contains(id));
+    QVERIFY(infoFor(id).tampered);
+
+    // The hash itself: deterministic over a tree, sensitive to a new
+    // file, empty for a missing dir.
+    const QByteArray h1 = ExtensionManager::extensionTreeHash(dir);
+    QVERIFY(!h1.isEmpty());
+    QCOMPARE(ExtensionManager::extensionTreeHash(dir), h1);
+    QFile extra(dir + QLatin1String("/extra.js"));
+    QVERIFY(extra.open(QIODevice::WriteOnly));
+    extra.write("x");
+    extra.close();
+    QVERIFY(ExtensionManager::extensionTreeHash(dir) != h1);
+    QVERIFY(ExtensionManager::extensionTreeHash(
+                QStringLiteral("/nonexistent/ext-dir")).isEmpty());
+
+    // Removing clears the flag with the extension.
+    manager->removeExtension(id);
+    QTest::qWait(500);
+    QVERIFY(!infoFor(id).tampered);   // row gone -> default info
+
+    QDir(root).removeRecursively();
+}
+
+// SEC25 (c): whole-scheme host permissions (<all_urls>, *://*/*,
+// http/https wildcard roots) are visually escalated in the review
+// dialog — a warning icon on the permission row plus a dedicated
+// warnings row — while scoped wildcards stay plain.
+void tst_ExtensionManager::broadHostWarning()
+{
+    QVERIFY(ExtensionManager::isBroadHostPattern(
+                QLatin1String("<all_urls>")));
+    QVERIFY(ExtensionManager::isBroadHostPattern(
+                QLatin1String("*://*/*")));
+    QVERIFY(ExtensionManager::isBroadHostPattern(
+                QLatin1String("http://*/*")));
+    QVERIFY(ExtensionManager::isBroadHostPattern(
+                QLatin1String("https://*/*")));
+    QVERIFY(!ExtensionManager::isBroadHostPattern(
+                QLatin1String("*://*.example.com/*")));
+    QVERIFY(!ExtensionManager::isBroadHostPattern(
+                QLatin1String("https://example.com/*")));
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    {
+        QFile file(dir.path() + QLatin1String("/manifest.json"));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("{\"manifest_version\":3,\"name\":\"Broad\","
+                   "\"version\":\"1.0\",\"host_permissions\":"
+                   "[\"https://*/*\",\"*://*.example.com/*\"]}");
+    }
+    const ExtensionManager::Manifest manifest =
+        ExtensionManager::inspectManifest(dir.path());
+    QVERIFY(manifest.valid);
+
+    ExtensionReviewDialog dialog(manifest, dir.path(),
+                                 ExtensionReviewDialog::Install);
+    QListWidget *warnings = dialog.findChild<QListWidget *>(
+        QLatin1String("warningsList"));
+    QVERIFY(warnings);
+    QString warningText;
+    for (int i = 0; i < warnings->count(); ++i)
+        warningText += warnings->item(i)->text() + QLatin1Char('\n');
+    QVERIFY(warningText.contains(QLatin1String("Broad host access")));
+    QVERIFY(warningText.contains(QLatin1String("https://*/*")));
+    // The scoped subdomain wildcard is not escalated.
+    QVERIFY(!warningText.contains(QLatin1String("example.com")));
+
+    // The broad row carries the warning icon; the scoped row none.
+    QListWidget *perms = dialog.findChild<QListWidget *>(
+        QLatin1String("permissionsList"));
+    QVERIFY(perms);
+    bool broadHasIcon = false;
+    bool scopedPlain = false;
+    for (int i = 0; i < perms->count(); ++i) {
+        QListWidgetItem *item = perms->item(i);
+        if (item->toolTip() == QLatin1String("https://*/*"))
+            broadHasIcon = !item->icon().isNull();
+        if (item->toolTip() == QLatin1String("*://*.example.com/*"))
+            scopedPlain = item->icon().isNull();
+    }
+    QVERIFY(broadHasIcon);
+    QVERIFY(scopedPlain);
+}
+
+// SEC25 (b): applying an update re-presents grants the installed
+// version never had — added permissions and host patterns listed as
+// "new since installed version", escalated dangerous access called
+// out and still gated on the per-item consent checkboxes.
+void tst_ExtensionManager::updateDriftReview()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    {
+        QFile file(dir.path() + QLatin1String("/manifest.json"));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("{\"manifest_version\":3,\"name\":\"Grown\","
+                   "\"version\":\"2.0\",\"permissions\":"
+                   "[\"tabs\",\"cookies\"],"
+                   "\"host_permissions\":[\"<all_urls>\"]}");
+    }
+    const ExtensionManager::Manifest next =
+        ExtensionManager::inspectManifest(dir.path());
+    QVERIFY(next.valid);
+
+    // The installed version declared "tabs" only, no host access.
+    ExtensionManager::Manifest installed;
+    installed.valid = true;
+    installed.manifestVersion = 3;
+    installed.name = QLatin1String("Grown");
+    installed.version = QLatin1String("1.0");
+    installed.permissions = {QStringLiteral("tabs")};
+
+    ExtensionReviewDialog dialog(next, dir.path(),
+                                 ExtensionReviewDialog::Install,
+                                 nullptr, &installed);
+    QListWidget *warnings = dialog.findChild<QListWidget *>(
+        QLatin1String("warningsList"));
+    QVERIFY(warnings);
+    QString warningText;
+    for (int i = 0; i < warnings->count(); ++i)
+        warningText += warnings->item(i)->text() + QLatin1Char('\n');
+    QVERIFY(warningText.contains(QLatin1String("New since")));
+    QVERIFY(warningText.contains(QLatin1String("1.0")));
+    QVERIFY(warningText.contains(QLatin1String("cookies")));
+    QVERIFY(warningText.contains(QLatin1String("<all_urls>")));
+    QVERIFY(warningText.contains(QLatin1String("high-risk")));
+    // Pre-existing grants are not re-listed as new.
+    QVERIFY(!warningText.contains(
+                QRegularExpression(QStringLiteral("New since.*tabs"))));
+
+    // Escalated dangerous grants still need explicit per-item consent.
+    QPushButton *approve = dialog.findChild<QPushButton *>(
+        QLatin1String("approveButton"));
+    QVERIFY(approve);
+    QVERIFY(!approve->isEnabled());
+    const QList<QCheckBox *> consents =
+        dialog.findChildren<QCheckBox *>(
+            QLatin1String("dangerousConsent"));
+    QCOMPARE(consents.size(), next.dangerous.size());
+
+    // No installed baseline (initial install) -> no drift rows.
+    ExtensionReviewDialog fresh(next, dir.path(),
+                                ExtensionReviewDialog::Install);
+    QListWidget *freshWarnings = fresh.findChild<QListWidget *>(
+        QLatin1String("warningsList"));
+    QVERIFY(freshWarnings);
+    QString freshText;
+    for (int i = 0; i < freshWarnings->count(); ++i)
+        freshText += freshWarnings->item(i)->text() + QLatin1Char('\n');
+    QVERIFY(!freshText.contains(QLatin1String("New since")));
 }
 
 QTEST_MAIN(tst_ExtensionManager)

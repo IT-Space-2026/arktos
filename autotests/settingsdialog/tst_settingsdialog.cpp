@@ -2841,11 +2841,12 @@ void tst_SettingsDialog::extensionPage()
     // EXT06: the Description column shows the manifest text, and
     // every row carries something — empty descriptions fall back to
     // "Built-in component" / "(no description)", never a blank cell.
-    QCOMPARE(dialog.extensionsTree->columnCount(), 4);
-    QCOMPARE(row->text(3), QLatin1String("coverage extension"));
+    // (ui-work merge: Name/Version/Status/Source/Description = 5.)
+    QCOMPARE(dialog.extensionsTree->columnCount(), 5);
+    QCOMPARE(row->text(4), QLatin1String("coverage extension"));
     for (int i = 0; i < dialog.extensionsTree->topLevelItemCount(); ++i)
         QVERIFY(!dialog.extensionsTree->topLevelItem(i)
-                     ->text(3).isEmpty());
+                     ->text(4).isEmpty());
 
     const QString details = dialog.extensionDetailsLabel->text();
     QVERIFY(details.contains(QLatin1String("coverage extension")));
@@ -3056,13 +3057,18 @@ void tst_SettingsDialog::extensionVersionColumn()
         QSKIP("Qt built without webengine_extensions");
 
     SettingsDialog dialog;
-    QCOMPARE(dialog.extensionsTree->columnCount(), 4);
+    // Union with EXT06's Description column: 5 columns.
+    QCOMPARE(dialog.extensionsTree->columnCount(), 5);
     QCOMPARE(dialog.extensionsTree->headerItem()->text(0),
              QLatin1String("Name"));
     QCOMPARE(dialog.extensionsTree->headerItem()->text(1),
              QLatin1String("Version"));
     QCOMPARE(dialog.extensionsTree->headerItem()->text(2),
              QLatin1String("Status"));
+    QCOMPARE(dialog.extensionsTree->headerItem()->text(3),
+             QLatin1String("Source"));
+    QCOMPARE(dialog.extensionsTree->headerItem()->text(4),
+             QLatin1String("Description"));
 
     // Built-in component rows carry no path — Version stays "—".
     bool sawBuiltin = false;
@@ -3138,6 +3144,9 @@ void tst_SettingsDialog::extensionVersionColumn()
     }
 
     ExtensionManager *extensions = ExtensionManager::instance();
+    // EXT05 consent gate: simulate the approved review — loadExtension
+    // refuses (and errorOccurred raises a modal warning) without it.
+    extensions->grantConsent(fixture.path());
     extensions->loadExtension(fixture.path());
     const auto findRow = [&dialog]() -> QTreeWidgetItem * {
         for (int i = 0; i < dialog.extensionsTree->topLevelItemCount();

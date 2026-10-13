@@ -2466,3 +2466,29 @@ I'll start by checking the current state of this checkout and fetching.Working t
 - `autotests/browsermainwindow/tst_browsermainwindow.cpp` — dirty here, touched by ui-work
 
 Per the hard rules, a merge that would overwrite dirty files means I **skip that lane**. Let me check the log format before noting the skip.This exact situation has repeated across prior runs — ui-work's 2 commits (EXT08/EXT09) are blocked by the same dirty files. WORKLOG.md itself is clean, and prior runs committed skip-lines there. Let me verify the merge refusal is real and check push state vs origin.[2026-10-13 23:03:38] merge run exited rc=0
+[2026-10-13 23:08:39] merge due: ui-work(3) — spawning devin merge run
+I'll start by checking the repo state and fetching.Working tree has only log file modifications (watchdog logs). Now checking which lanes are ahead of master.rust-work is at 0 (skip). ui-work is 3 ahead — checking what it touches before merging.Heavy divergence but overlapping files are identifiable. The dirty files (mergewatch.log, taskloop.log) aren't touched by the lane, so it's safe to merge ui-work.5 conflicts to resolve. Let me examine each.ENGINE.md: lane added an extensionactionbar row; master updated the two interceptor rows. Union = lane's new row + master's updated rows.ENGINE.md resolved. Now examining the C++ conflicts.Both features need to coexist in the splitter. Checking what merged cleanly in the header and the member declarations.All members merged cleanly — only forward-decl/include and the splitter block conflicted. Resolving: keep both features, indicator at index 1, action bar appended at index 2.Splitter resolution looks consistent. Let me verify the lane's other integration points for the action bar (signals, updates) merged properly.Now the test file conflicts.First two test conflicts are simple unions. Checking the big conflict's lane side.The conflict is two complete function blocks sharing one closing `}`. Checking which functions are in master's side.Master's side holds 5 functions, last one unclosed; lane's is one unclosed function sharing the closing `}`. Union: close master's function, keep lane's after it.Checking for any remaining conflict markers.Two opener markers remain — removing them.Markers cleared. Verifying auto-merged files look sane — WORKLOG, ChangeLog, and checking whether tor windows also satisfy `isPrivate()`.`isPrivate()` covers tor mode too (`s_isPrivate || s_torMode`), so the lane's guard is correct. WORKLOG/ChangeLog auto-merged cleanly. Staging resolutions and committing.Merge committed. Now verifying the build.Build running — extensionactionbar.o and friends compiled cleanly. Waiting for completion.Build linked successfully. Appending the MERGEWATCH line to WORKLOG, then committing and pushing.Merge run complete — one pass, pushed.
+
+**Results:**
+- **rust-work**: 0 ahead — skipped.
+- **ui-work**: 3 ahead (EXT08 action strip, EXT09 Version column, TABS17 vertical-tab fix) — merged as `c30c989`, pushed to `origin/master` (`eff0000`).
+
+**Conflicts resolved (union, both features kept):**
+- `src/browsermainwindow.{cpp,h}` — the real one: master's ENG08 `EngineIndicator` host and the lane's EXT08 `ExtensionActionBar` both wanted nav-splitter cell 1. Kept the indicator at index 1 untouched, moved the action bar to index 2 (`setCollapsible(2,false)`/`setStretchFactor(2,0)` adjusted), and merged the splitter `sizes` list to account for both. The lane's `!isPrivate()` guard already covers tor windows (`s_isPrivate || s_torMode`). Includes/forward-decls unioned.
+- `.devin/ENGINE.md` — kept lane's new `extensionactionbar` row plus master's updated ENG02 interceptor rows.
+- `autotests/settingsdialog/tst_settingsdialog.cpp` — unioned slot declarations; the bodies conflict shared one closing brace, so closed master's `containerSiteRows` and kept lane's `extensionVersionColumn` after it.
+- `autotests/browsermainwindow/tst_browsermainwindow.cpp` — include union.
+- `.devin/WORKLOG.md`, `ChangeLog`, `Arora-Task-UI.md` — auto-merged cleanly.
+
+**Build:** `make -C src -j2` — clean link, no merge-caused breakage. WORKLOG line appended and pushed.
+[2026-10-13 23:11:34] merge run exited rc=0
+[2026-10-13 23:26:36] merge due: ui-work(1) — spawning devin merge run
+I'll start by checking the repo state and fetching.Working tree has uncommitted changes (likely an agent mid-run). Let me check lane positions.No overlap between dirty files and the merge's touched files. Merging ui-work.Clean merge, no conflicts. Now verifying the build.Build succeeded. Now let me check the WORKLOG tail format and append the merge line.Appending the merge line to WORKLOG and committing just that file.Merge pass complete.
+
+- **rust-work**: 0 ahead of master — skipped.
+- **ui-work**: 1 ahead (`MENU09: make the app-menu logo really render at 36px`) — merged cleanly, no conflicts. `ort` auto-merged `WORKLOG.md`, `ChangeLog`, `src/browsermainwindow.cpp`, and the test file.
+- **Build**: `make -C src -j2` succeeded, `arora` binary linked.
+- **Push**: `master` pushed (`eff0000..5410698`), including the merge commit and the WORKLOG line.
+
+The dirty files in this tree (`.devin/Arora-Task.md`, `src/extensions/*`, `src/settings.cpp`, etc. — an agent mid-run) didn't overlap the merge, so they were left untouched and unstaged. Stopping after this one pass per spec.
+[2026-10-13 23:27:04] merge run exited rc=0

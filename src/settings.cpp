@@ -2899,10 +2899,28 @@ void SettingsDialog::extensionUpdateCheckFinished(
     for (const ExtensionManager::UpdateResult &result : results) {
         if (!result.installable || result.savedTo.isEmpty())
             continue;
+        // SEC25: diff the new package's grants against the installed
+        // version — permissions and host patterns it did not declare
+        // are listed in the review as new-since-installed, so the
+        // original consent never silently covers escalations.
+        QString installedPath;
+        const QList<ExtensionManager::ExtensionInfo> current =
+            ExtensionManager::instance()->extensions();
+        for (const ExtensionManager::ExtensionInfo &info : current) {
+            if (info.id == result.id) {
+                installedPath = info.path;
+                break;
+            }
+        }
+        const ExtensionManager::Manifest installed =
+            installedPath.isEmpty()
+                ? ExtensionManager::Manifest()
+                : ExtensionManager::inspectManifest(installedPath);
         if (!ExtensionReviewDialog::review(
                 ExtensionManager::inspectManifest(result.savedTo),
                 result.savedTo,
-                ExtensionReviewDialog::Install, this))
+                ExtensionReviewDialog::Install, this,
+                installed.valid ? &installed : nullptr))
             continue;
         // review() recorded the consent this call consumes.
         ExtensionManager::instance()->installExtension(result.savedTo);
@@ -2929,6 +2947,11 @@ void SettingsDialog::extensionSelectionChanged()
         QStringList lines;
         if (!info.description.isEmpty())
             lines << info.description;
+        // SEC25: the integrity sweep flagged this extension's files —
+        // say so honestly rather than describing a normal install.
+        if (info.tampered)
+            lines << tr("Warning: files changed since install — "
+                        "review or remove this extension.");
         if (!info.error.isEmpty())
             lines << tr("Error: %1").arg(info.error);
         if (info.builtin)
@@ -3043,7 +3066,11 @@ void SettingsDialog::refreshExtensions()
             version += tr(" → %1 available").arg(available);
         item->setText(1, version);
         QString status;
-        if (!info.error.isEmpty())
+        if (info.tampered)
+            // SEC25: the integrity sweep flagged this tree — a row
+            // that reads "Enabled" would hide it.
+            status = tr("Tampered");
+        else if (!info.error.isEmpty())
             status = tr("Error");
         else if (!info.loaded)
             status = tr("Not loaded");
@@ -3056,7 +3083,7 @@ void SettingsDialog::refreshExtensions()
         // EXT06: manifest description in its own column.  Built-in
         // component extensions and terse manifests may carry no
         // description — say so rather than leaving the cell blank.
-        item->setText(3, !info.description.isEmpty()
+        item->setText(4, !info.description.isEmpty()
             ? info.description
             : (info.builtin ? tr("Built-in component")
                             : tr("(no description)")));

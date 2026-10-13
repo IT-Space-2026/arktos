@@ -33,6 +33,7 @@
 #include <qdatetime.h>
 #include <qdebug.h>
 #include <qdir.h>
+#include <qdiriterator.h>
 #include <qfile.h>
 #include <qfileinfo.h>
 #include <qjsonarray.h>
@@ -299,16 +300,33 @@ void ExtensionManager::installOnProfile(QWebEngineProfile *profile)
     connect(extensions, &QWebEngineExtensionManager::loadFinished,
             this, relay(&ExtensionManager::extensionLoaded));
     connect(extensions, &QWebEngineExtensionManager::installFinished,
-            this, [this](const QWebEngineExtensionInfo &info) {
+            this, [this, profile](const QWebEngineExtensionInfo &info) {
         const ExtensionInfo plain = infoFrom(info);
         finishBundledInstall(plain);
+        // SEC25: pin the installed tree.  An applied update lands here
+        // too, re-pinning its new files as the baseline the next
+        // integrity sweep compares against.
+        pinInstalledExtension(profile, plain);
         emit extensionInstalled(plain);
         emit changed();
     });
     connect(extensions, &QWebEngineExtensionManager::unloadFinished,
             this, relay(&ExtensionManager::extensionUnloaded));
     connect(extensions, &QWebEngineExtensionManager::uninstallFinished,
-            this, relay(&ExtensionManager::extensionUninstalled));
+            this, [this, profile](const QWebEngineExtensionInfo &info) {
+        const ExtensionInfo plain = infoFrom(info);
+        // SEC25: the pin and any tamper flag die with the extension.
+        QSettings().remove(integritySettingsKey(
+            profile->storageName(), plain.id));
+        m_tamperedIds.remove(plain.id);
+        emit extensionUninstalled(plain);
+        emit changed();
+    });
+
+    // SEC25: once the engine finishes enumerating the profile's
+    // installed extensions, compare each on-disk tree against its
+    // install-time pin and flag anything that changed underneath us.
+    scheduleIntegritySweep(profile, 0);
 
     scheduleAutoUpdateCheck();
 
@@ -330,8 +348,11 @@ QList<ExtensionManager::ExtensionInfo> ExtensionManager::extensions() const
     if (!extensions)
         return list;
     const QList<QWebEngineExtensionInfo> loaded = extensions->extensions();
-    for (const QWebEngineExtensionInfo &info : loaded)
-        list.append(infoFrom(info));
+    for (const QWebEngineExtensionInfo &info : loaded) {
+        ExtensionInfo plain = infoFrom(info);
+        plain.tampered = m_tamperedIds.contains(info.id());
+        list.append(plain);
+    }
 #endif
     return list;
 }
@@ -841,6 +862,166 @@ QStringList ExtensionManager::dangerousHostPatterns()
         QStringLiteral("*://*/*"),
     };
     return dangerous;
+}
+
+bool ExtensionManager::isBroadHostPattern(const QString &pattern)
+{
+    if (pattern == QLatin1String("<all_urls>"))
+        return true;
+    // "scheme://host/path" — a bare "*" host grants the extension the
+    // whole scheme, covering "*://*/*" plus the http/https (and any
+    // other scheme's) wildcard roots.  "*.host" subdomain wildcards
+    // stay scoped to one site and are not broad.
+    const int schemeSep = pattern.indexOf(QLatin1String("://"));
+    if (schemeSep < 0)
+        return false;
+    const int slash = pattern.indexOf(QLatin1Char('/'), schemeSep + 3);
+    const QString host = slash < 0
+        ? pattern.mid(schemeSep + 3)
+        : pattern.mid(schemeSep + 3, slash - schemeSep - 3);
+    return host == QLatin1String("*");
+}
+
+// -- SEC25: install-integrity pin -----------------------------------------
+//
+// Every successful install records a sha256 over the extension's
+// on-disk file tree (manifest.json, service workers, content scripts,
+// resources — everything Chromium executes or serves).  The sweep
+// that runs right after a profile is wired re-hashes each installed
+// dir and compares: a mismatch means something outside the engine
+// changed the files, so the extension is flagged — ExtensionInfo::
+// tampered plus the extensionTampered signal — with the honest
+// "files changed since install — review or remove" wording instead
+// of silently loading.  It is not unloaded or disabled: the engine
+// still owns that decision and the user makes it.  Uninstall clears
+// the pin; an applied update re-pins through installFinished.
+
+QString ExtensionManager::integritySettingsKey(const QString &storageName,
+                                               const QString &id)
+{
+    return QLatin1String("extensions/integrity/")
+        + (storageName.isEmpty()
+           ? QStringLiteral("default") : storageName)
+        + QLatin1Char('/') + id;
+}
+
+QByteArray ExtensionManager::extensionTreeHash(const QString &dirPath)
+{
+    const QDir dir(dirPath);
+    if (!dir.exists())
+        return QByteArray();
+    // Deterministic: "<relpath>\0<contents>\0" per file in sorted
+    // path order, so identical trees hash identically across runs.
+    QDirIterator it(dirPath,
+        QDir::Files | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System,
+        QDirIterator::Subdirectories);
+    QStringList relPaths;
+    while (it.hasNext())
+        relPaths.append(dir.relativeFilePath(it.next()));
+    relPaths.sort();
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    for (const QString &rel : relPaths) {
+        hash.addData(rel.toUtf8());
+        hash.addData(QByteArrayView("\0", 1));
+        QFile file(dir.absoluteFilePath(rel));
+        if (file.open(QIODevice::ReadOnly)) {
+            while (!file.atEnd())
+                hash.addData(file.read(64 * 1024));
+        }
+        // An unreadable file still contributes its name — a file
+        // readable at pin time that no longer is changes the hash.
+        hash.addData(QByteArrayView("\0", 1));
+    }
+    return hash.result().toHex();
+}
+
+void ExtensionManager::pinInstalledExtension(QWebEngineProfile *profile,
+                                             const ExtensionInfo &info)
+{
+    if (!profile || !info.installed || info.builtin
+            || info.path.isEmpty() || !info.error.isEmpty())
+        return;
+    const QByteArray hash = extensionTreeHash(info.path);
+    if (hash.isEmpty())
+        return;
+    QSettings().setValue(
+        integritySettingsKey(profile->storageName(), info.id),
+        QString::fromLatin1(hash));
+}
+
+void ExtensionManager::scheduleIntegritySweep(QWebEngineProfile *profile,
+                                              int attempt)
+{
+    const QPointer<QWebEngineProfile> guard(profile);
+    QTimer::singleShot(attempt ? 250 : 0, this,
+                       [this, guard, attempt]() {
+        if (!guard)
+            return;
+#if QT_CONFIG(webengine_extensions)
+        QWebEngineExtensionManager *extensions =
+            guard->extensionManager();
+        // Chromium's installed-extension registry fills in
+        // asynchronously — when the install dir holds entries the
+        // list will catch up, so retry briefly instead of sweeping a
+        // not-yet-populated view and calling a tampered tree clean.
+        if (attempt < 20 && extensions
+                && extensions->extensions().isEmpty()
+                && !QDir(extensions->installPath()).entryList(
+                        QDir::Dirs | QDir::NoDotAndDotDot).isEmpty()) {
+            scheduleIntegritySweep(guard, attempt + 1);
+            return;
+        }
+#endif
+        verifyInstalledIntegrity(guard);
+    });
+}
+
+void ExtensionManager::verifyInstalledIntegrity(QWebEngineProfile *profile)
+{
+#if QT_CONFIG(webengine_extensions)
+    if (!profile || profile->isOffTheRecord())
+        return;
+    QWebEngineExtensionManager *extensions = profile->extensionManager();
+    if (!extensions)
+        return;
+    const QString storage = profile->storageName();
+    const QList<QWebEngineExtensionInfo> list = extensions->extensions();
+    for (const QWebEngineExtensionInfo &info : list) {
+        if (!info.isInstalled() || info.path().isEmpty()
+                || !info.error().isEmpty())
+            continue;
+        ExtensionInfo plain = infoFrom(info);
+        if (plain.builtin)
+            continue;
+        const QString key = integritySettingsKey(storage, info.id());
+        QSettings settings;
+        const QString pinned = settings.value(key).toString();
+        const QString current =
+            QString::fromLatin1(extensionTreeHash(info.path()));
+        if (pinned.isEmpty()) {
+            // Baseline adoption: this install predates pinning (or
+            // arrived before installFinished ran), so there is no
+            // older truth to compare against — the current tree
+            // becomes the baseline the next sweep checks.
+            if (!current.isEmpty())
+                settings.setValue(key, current);
+            continue;
+        }
+        if (!current.isEmpty() && current != pinned
+                && !m_tamperedIds.contains(plain.id)) {
+            m_tamperedIds.insert(plain.id);
+            plain.tampered = true;
+            emit errorOccurred(tr(
+                "Extension \"%1\": files changed since install — "
+                "review or remove.")
+                .arg(plain.name.isEmpty() ? plain.id : plain.name));
+            emit extensionTampered(plain);
+            emit changed();
+        }
+    }
+#else
+    Q_UNUSED(profile);
+#endif
 }
 
 QString ExtensionManager::userScriptsPath()

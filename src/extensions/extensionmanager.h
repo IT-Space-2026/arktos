@@ -64,6 +64,20 @@ class QNetworkReply;
 // with no UI must grant explicitly.  Consent is one-shot: the next
 // load/install of the same path needs a fresh review.  The tor
 // profile is never wired at all (isInstalledOnProfile() stays false).
+//
+// SEC25 hardening on top of that base:
+//   - Integrity pin: each successful install records a sha256 of the
+//     extension's on-disk file tree (QSettings, per profile).  A
+//     startup sweep re-hashes and compares — a mismatch flags the
+//     extension (ExtensionInfo::tampered, extensionTampered signal)
+//     instead of silently loading it.  Installs that predate pinning
+//     adopt their current tree as the baseline.
+//   - Update drift: applying a downloaded update re-runs the manifest
+//     check on the new package and the review dialog lists grants the
+//     installed version did not have — original consent never covers
+//     escalated permissions.
+//   - Broad host access (<all_urls>, "*://*/*", http/https wildcard
+//     roots) is visually escalated in the review dialog.
 class ExtensionManager : public QObject
 {
     Q_OBJECT
@@ -84,6 +98,8 @@ public:
         bool installed = false; // persisted under the profile's installPath
         bool enabled = false;
         bool builtin = false;   // shipped component extension
+        bool tampered = false;  // SEC25: on-disk files differ from the
+                                // install-time integrity pin
     };
 
     // Result of reading an unpacked extension's manifest.json — used to
@@ -258,6 +274,27 @@ public:
     static QStringList dangerousPermissions();
     static QStringList dangerousHostPatterns();
 
+    // SEC25: broad host access — "<all_urls>" or a whole-scheme host
+    // wildcard ("*://*/*", "http://*/*", "https://*/*", "file:///*"
+    // …): the extension can read and change data on every site the
+    // scheme covers.  The review dialog escalates these visually;
+    // subdomain wildcards like "*://*.example.com/*" are not broad.
+    static bool isBroadHostPattern(const QString &pattern);
+
+    // SEC25 install-integrity pin: hex sha256 over an unpacked
+    // extension's whole file tree — every file's relative path and
+    // contents, hashed in sorted order.  Empty when the directory
+    // cannot be enumerated.
+    static QByteArray extensionTreeHash(const QString &dirPath);
+    // Re-runs the startup integrity sweep for one profile: every
+    // installed extension's on-disk tree is hashed and compared
+    // against the pin recorded when it installed.  A mismatch flags
+    // the extension (ExtensionInfo::tampered + extensionTampered)
+    // and stays loaded — "files changed since install" is the user's
+    // decision to review or remove, not a silent block.  Installs
+    // that predate pinning adopt their current tree as the baseline.
+    void verifyInstalledIntegrity(QWebEngineProfile *profile);
+
     // User scripts: every *.js file in this directory is injected at
     // DocumentReady in the ApplicationWorld on each prepared profile.
     static QString userScriptsPath();
@@ -270,6 +307,7 @@ signals:
     void extensionInstalled(const ExtensionManager::ExtensionInfo &info);
     void extensionUnloaded(const ExtensionManager::ExtensionInfo &info);
     void extensionUninstalled(const ExtensionManager::ExtensionInfo &info);
+    void extensionTampered(const ExtensionManager::ExtensionInfo &info); // SEC25
     void errorOccurred(const QString &message);       // unsupported build, bad call
     void userScriptsChanged();
 
@@ -281,6 +319,11 @@ private:
     explicit ExtensionManager(QObject *parent = nullptr);
 
     void finishBundledInstall(const ExtensionInfo &info);
+    void scheduleIntegritySweep(QWebEngineProfile *profile, int attempt);
+    void pinInstalledExtension(QWebEngineProfile *profile,
+                               const ExtensionInfo &info);
+    static QString integritySettingsKey(const QString &storageName,
+                                        const QString &id);
     void reloadUserScripts(QWebEngineProfile *profile);
     void scheduleAutoUpdateCheck();
     void maybeAutoUpdateCheck();
@@ -294,6 +337,10 @@ private:
     // One-shot consent grants keyed by the exact path string the
     // review approved; consumed by the load/install they authorize.
     QSet<QString> m_consentedPaths;
+
+    // SEC25: extension ids whose installed tree failed the integrity
+    // sweep this session; cleared on uninstall and re-pin.
+    QSet<QString> m_tamperedIds;
 
     // EXT07: bundled installs in flight, correlated to their
     // installFinished by the package-name stem so the per-profile
