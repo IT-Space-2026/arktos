@@ -81,6 +81,7 @@
 #include "locationbar.h"
 #include "toolbarsearch.h"
 #include "torcircuitbutton.h"
+#include "torcircuitpanel.h"
 #include "tormanager.h"
 #include "tortitlebar.h"
 #include "downloadmanager.h"
@@ -153,11 +154,15 @@ private slots:
     void torTitleBarTitle();
     void servoStartPage();
     void privateStartPage();
+    void startPageSingleSurface();
     void readerModeButton();
+    void homeButton();
     void statusBarWidgets();
     void statusBarIndicators();
     void sidebarPanel();
     void sidebarResize();
+    void sidebarPanelOrder();
+    void sidebarPanelOptions();
     void sidebarGripResize();
     void downloadsSidebarPanel();
     void downloadsSidebarFinishedRows();
@@ -1685,13 +1690,17 @@ void tst_BrowserMainWindow::torNavIconsDarkChrome()
     QApplication::processEvents();
     QToolBar *navBar = window->findChild<QToolBar *>(
         QLatin1String("NavigationToolBar"));
-    QVERIFY(navBar && navBar->actions().count() >= 4);
+    QVERIFY(navBar && navBar->actions().count() >= 5);
     const qlonglong torBack =
         luminance(navBar->actions().at(1)->icon());
     const qlonglong torForward =
         luminance(navBar->actions().at(2)->icon());
     const qlonglong torReload =
         luminance(navBar->actions().at(3)->icon());
+    // HOME01: the Home button sits at index 4 and takes the same
+    // light-glyph lift on the violet bar.
+    const qlonglong torHome =
+        luminance(navBar->actions().at(4)->icon());
     qlonglong menuReload = -1;
     // MENU06: a tor window's menubar row is the bare title bar — the
     // menus live in the app-menu dropdown (same shared QMenu objects).
@@ -1731,6 +1740,7 @@ void tst_BrowserMainWindow::torNavIconsDarkChrome()
     QVERIFY(torBack > 140);
     QVERIFY(torForward > 140);
     QVERIFY(torReload > 140);
+    QVERIFY(torHome > 140);
     QVERIFY(menuReload >= 0 && menuReload < 140);
 }
 
@@ -1852,8 +1862,17 @@ void tst_BrowserMainWindow::torCircuitDropdown()
     QVERIFY(TorCircuitButton::countryName(QString()).isEmpty());
     QVERIFY(!TorCircuitButton::flagIcon(QLatin1String("de")).isNull());
     QVERIFY(!TorCircuitButton::flagIcon(QString()).isNull());
-    QCOMPARE(TorCircuitButton::hopText(TorCircuitHop(), 1, 3),
-             QStringLiteral("Middle:  — Unknown"));
+
+    // TOR15: the chain node model — Tor-Browser-style
+    // "Country (role)" titles with OR-address and abbreviated
+    // fingerprint detail lines.
+    QCOMPARE(TorCircuitPanel::roleName(0, 3), QLatin1String("guard"));
+    QCOMPARE(TorCircuitPanel::roleName(1, 3), QLatin1String("middle"));
+    QCOMPARE(TorCircuitPanel::roleName(2, 3), QLatin1String("exit"));
+    QCOMPARE(TorCircuitPanel::roleName(1, 4), QLatin1String("hop 2"));
+    QCOMPARE(TorCircuitPanel::shortFingerprint(
+                 QStringLiteral("AAAABBBBCCCCDDDDEEEEFFFF0000111122223333")),
+             QStringLiteral("AAAABBBB…22223333"));
 
     TorCircuit circuit;
     circuit.id = 7;
@@ -1874,29 +1893,27 @@ void tst_BrowserMainWindow::torCircuitDropdown()
     exit.country = QLatin1String("AT");
     circuit.hops << guard << middle << exit;
 
-    QMenu menu;
-    QVERIFY(TorCircuitButton::addCircuitRows(&menu,
-                                             QList<TorCircuit>() << circuit,
-                                             7));
-    const QList<QAction *> rows = menu.actions();
-    QCOMPARE(rows.count(), 4);            // header section + 3 hops
-    QCOMPARE(rows.at(1)->text(),
-             QStringLiteral("Guard: ElToro — United Kingdom"));
-    QCOMPARE(rows.at(2)->text(),
-             QStringLiteral("Middle: Nightingali — Germany"));
-    QCOMPARE(rows.at(3)->text(),
-             QStringLiteral("Exit: elefant — Austria"));
-    for (int i = 1; i < rows.count(); ++i) {
-        QVERIFY(!rows.at(i)->icon().isNull());
-        QVERIFY(rows.at(i)->isEnabled());
-    }
-    QVERIFY(rows.at(1)->toolTip().contains(QLatin1String("1.2.3.4")));
-    QVERIFY(rows.at(1)->toolTip().contains(guard.fingerprint));
-    // A display id with no matching circuit yields no rows.
-    QMenu emptyMenu;
-    QVERIFY(!TorCircuitButton::addCircuitRows(&emptyMenu,
-                                            QList<TorCircuit>() << circuit,
-                                            99));
+    const QList<TorCircuitPanel::Node> nodes =
+        TorCircuitPanel::nodesForCircuit(
+            circuit, QLatin1String("example.com"));
+    QCOMPARE(nodes.count(), 5);           // browser + 3 hops + site
+    QCOMPARE(nodes.at(0).title, QStringLiteral("This browser"));
+    QCOMPARE(nodes.at(1).title,
+             QStringLiteral("United Kingdom (guard)"));
+    QCOMPARE(nodes.at(2).title, QStringLiteral("Germany (middle)"));
+    QCOMPARE(nodes.at(3).title, QStringLiteral("Austria (exit)"));
+    QCOMPARE(nodes.at(4).title, QStringLiteral("example.com"));
+    QCOMPARE(nodes.at(1).kind, TorCircuitPanel::Node::Hop);
+    QVERIFY(nodes.at(1).details.contains(
+        QStringLiteral("1.2.3.4 — ElToro")));
+    QVERIFY(nodes.at(1).details.contains(
+        QStringLiteral("AAAABBBB…22223333")));
+    QCOMPARE(nodes.at(1).countryCode, QLatin1String("GB"));
+    // A hop without geoip/address still renders honestly.
+    const TorCircuitPanel::Node bare =
+        TorCircuitPanel::hopNode(TorCircuitHop(), 1, 3);
+    QCOMPARE(bare.title, QStringLiteral("Unknown (middle)"));
+    QVERIFY(bare.details.isEmpty());
 
     // Normal window: no button at all.
     SubWindow *plain = new SubWindow;
@@ -1931,19 +1948,22 @@ void tst_BrowserMainWindow::torCircuitDropdown()
         }
     }
     // No TorManager in the autotest — the button greys out and its
-    // menu reports the missing control connection.
+    // panel reports the missing control connection.
     const bool greyed = button && !button->isEnabled();
     QMenu *dropMenu = button ? button->menu() : nullptr;
+    TorCircuitPanel *dropPanel = dropMenu
+        ? dropMenu->findChild<TorCircuitPanel *>(
+              QLatin1String("torCircuitPanel"))
+        : nullptr;
     QStringList stateTexts;
-    if (dropMenu
+    if (dropPanel
             && QMetaObject::invokeMethod(button, "populateMenu")) {
-        for (QAction *action : dropMenu->actions())
-            stateTexts << action->text();
+        stateTexts = dropPanel->contentLines();
     }
 
     // Offscreen grabs for visual review — set ARORA_TOR_GRAB_DIR to a
     // directory and the nav bar, flag glyphs and a fabricated circuit
-    // menu land there.
+    // panel land there.
     const QByteArray grabDir = qgetenv("ARORA_TOR_GRAB_DIR");
     if (!grabDir.isEmpty()) {
         const QString dir = QString::fromLocal8Bit(grabDir);
@@ -1960,10 +1980,11 @@ void tst_BrowserMainWindow::torCircuitDropdown()
         TorCircuitButton::flagIcon(QString())
             .pixmap(QSize(64, 64)).save(dir + QLatin1String(
                 "/flag-unknown.png"));
-        menu.popup(window->geometry().center());
-        QApplication::processEvents();
-        menu.grab().save(dir + QLatin1String("/circuit-menu.png"));
-        menu.hide();
+        TorCircuitPanel demo;
+        demo.setCircuit(QLatin1String("example.com"), nodes);
+        demo.setNewCircuitEnabled(true);
+        demo.resize(demo.sizeHint());
+        demo.grab().save(dir + QLatin1String("/circuit-menu.png"));
     }
 
     closeWindow(window);
@@ -1971,13 +1992,14 @@ void tst_BrowserMainWindow::torCircuitDropdown()
 
     QVERIFY(button);
     QVERIFY(dropMenu);
+    QVERIFY(dropPanel);
     // MENU06: the app-menu button leads the bar — the nav cluster
-    // shifts one slot right.
-    QCOMPARE(readerIndex, 4);             // app menu, back, forward, reload, reader
-    QCOMPARE(circuitIndex, 5);            // onion right next to it
+    // shifts one slot right.  HOME01 adds Home between reload and the
+    // reader button.
+    QCOMPARE(readerIndex, 5);             // app menu, back, forward, reload, home, reader
+    QCOMPARE(circuitIndex, 6);            // onion right next to it
     QVERIFY(greyed);
-    QCOMPARE(stateTexts.count(), 1);
-    QVERIFY(stateTexts.at(0).contains(
+    QVERIFY(stateTexts.join(QLatin1Char('\n')).contains(
         QLatin1String("unavailable"), Qt::CaseInsensitive));
 }
 
@@ -2691,6 +2713,63 @@ void tst_BrowserMainWindow::privateStartPage()
     QCOMPARE(dom, QStringLiteral("P|S|H"));
 }
 
+// SPAGE01: every start-page variant keeps its page gradient on a
+// viewport-height <html>.  A <body> background propagates to the
+// canvas sized to the body box and tiles down the window — the
+// horizontal bands the user reported.  Computed style is the pin:
+// documentElement carries the gradient at min-height:100% while the
+// body paints no background image of its own.
+void tst_BrowserMainWindow::startPageSingleSurface()
+{
+    static const char *pages[] = {
+        "qrc:/startpage.html",
+        "qrc:/startpage-private.html",
+        "qrc:/startpage-tor.html",
+        "qrc:/startpage-servo.html",
+    };
+    const QString probe = QStringLiteral(
+        "(function(){"
+        "var h=getComputedStyle(document.documentElement);"
+        "var b=getComputedStyle(document.body);"
+        "return (h.backgroundImage.indexOf('gradient')>=0?'G':'-')+'|'"
+        "+(b.backgroundImage==='none'?'b':'-')+'|'"
+        "+((h.minHeight==='100%'||"
+        "parseFloat(h.minHeight)>=innerHeight)?'m':'-');})()");
+
+    SubWindow *window = new SubWindow;
+    window->show();
+    QApplication::processEvents();
+    WebView *tab = window->currentTab();
+    QVERIFY(tab);
+
+    QStringList results;
+    for (const char *page : pages) {
+        tab->loadUrl(QUrl(QString::fromLatin1(page)));
+        QString dom;
+        QElapsedTimer timer;
+        timer.start();
+        while (dom != QLatin1String("G|b|m") && timer.elapsed() < 10000) {
+            bool jsDone = false;
+            tab->enginePage()->runJavaScript(probe,
+                [&jsDone, &dom](const QVariant &v) {
+                    dom = v.toString();
+                    jsDone = true;
+                });
+            for (int waited = 0; !jsDone && waited < 5000; waited += 50)
+                QTest::qWait(50);
+        }
+        results << QString::fromLatin1("%1=%2")
+                       .arg(QLatin1String(page), dom);
+    }
+
+    closeWindow(window);
+    QCOMPARE(results, QStringList() << QStringLiteral(
+        "qrc:/startpage.html=G|b|m")
+        << QStringLiteral("qrc:/startpage-private.html=G|b|m")
+        << QStringLiteral("qrc:/startpage-tor.html=G|b|m")
+        << QStringLiteral("qrc:/startpage-servo.html=G|b|m"));
+}
+
 // READ02/READ04: the navigation toolbar carries a reader-mode toggle
 // between stop/reload and the location bar — always present on engine
 // tabs (the article heuristic only sets the "suggested" accent),
@@ -2720,8 +2799,8 @@ void tst_BrowserMainWindow::readerModeButton()
     QVERIFY(reader->toolTip().contains(QLatin1String("Ctrl+Alt+R")));
 
     // Slot order in the toolbar's action list: the MENU06 app-menu
-    // button leads, then Back, Forward, Stop/Reload, the reader
-    // button, then the location-bar splitter.
+    // button leads, then Back, Forward, Stop/Reload, the HOME01 Home
+    // button, the reader button, then the location-bar splitter.
     const QList<QAction *> barActions = navBar->actions();
     int readerIndex = -1;
     int splitterIndex = -1;
@@ -2732,7 +2811,7 @@ void tst_BrowserMainWindow::readerModeButton()
         else if (widget && qobject_cast<QSplitter *>(widget))
             splitterIndex = i;
     }
-    QCOMPARE(readerIndex, 4);
+    QCOMPARE(readerIndex, 5);
     QCOMPARE(splitterIndex, readerIndex + 1);
 
     // The View-menu action shares the same ReaderMode state.
@@ -2828,6 +2907,112 @@ void tst_BrowserMainWindow::readerModeButton()
     QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
 
     closeWindow(window);
+}
+
+// HOME01: the nav bar carries a Home button immediately after
+// Stop/Reload.  It IS the History menu's Home action (Ctrl+Shift+H),
+// so button, menu entry and shortcut are one path — click or trigger
+// loads the context-appropriate start page in the current tab on
+// normal, private and tor windows.
+void tst_BrowserMainWindow::homeButton()
+{
+    const auto homeActionFor = [](QToolBar *bar) -> QAction * {
+        const QList<QAction *> actions = bar->actions();
+        for (QAction *action : actions) {
+            if (action->shortcut()
+                == QKeySequence(Qt::ControlModifier | Qt::ShiftModifier
+                                | Qt::Key_H))
+                return action;
+        }
+        return nullptr;
+    };
+
+    SubWindow *window = new SubWindow;
+    window->resize(1000, 600);
+    window->show();
+    QApplication::processEvents();
+
+    QToolBar *navBar = window->findChild<QToolBar *>(
+        QLatin1String("NavigationToolBar"));
+    QVERIFY(navBar);
+    QAction *home = homeActionFor(navBar);
+    QVERIFY(home);
+    // Slot order: app-menu, Back, Forward, Stop/Reload, then Home —
+    // directly beside reload, ahead of the reader button + url bar.
+    QCOMPARE(navBar->actions().indexOf(home), 4);
+    QToolButton *homeButton = qobject_cast<QToolButton *>(
+        navBar->widgetForAction(home));
+    QVERIFY(homeButton);
+    QVERIFY(homeButton->autoRaise());
+    QVERIFY(!home->icon().isNull());
+    QVERIFY(home->toolTip().contains(QLatin1String("Home")));
+    QVERIFY(home->toolTip().contains(QLatin1String("Ctrl+Shift+H")));
+
+    // The History menu entry is the same QAction object — no parallel
+    // code path between button, menu and shortcut.
+    bool inMenu = false;
+    for (QAction *menuAction : window->menuBar()->actions()) {
+        if (menuAction->menu()
+            && menuAction->menu()->actions().contains(home))
+            inMenu = true;
+    }
+    QVERIFY(inMenu);
+
+    // Normal tab: click loads the standard start page in place.
+    WebView *view = window->currentTab();
+    QVERIFY(view);
+    QTest::mouseClick(homeButton, Qt::LeftButton);
+    QTRY_VERIFY(view->url()
+                == QUrl(QLatin1String("qrc:/startpage.html"))
+                && view->page() && !view->page()->isLoading());
+
+    // The action's own trigger (the menu/shortcut path) does the same.
+    view->loadUrl(QUrl(QLatin1String("about:blank")));
+    QTRY_VERIFY(view->url() == QUrl(QLatin1String("about:blank")));
+    home->trigger();
+    QTRY_VERIFY(view->url()
+                == QUrl(QLatin1String("qrc:/startpage.html"))
+                && !view->page()->isLoading());
+
+    // A private tab in the same window resolves the private variant.
+    window->tabWidget()->newPrivateTab();
+    WebView *privTab = window->currentTab();
+    QVERIFY(privTab && privTab != view);
+    privTab->loadUrl(QUrl(QLatin1String("about:blank")));
+    QTRY_VERIFY(privTab->url() == QUrl(QLatin1String("about:blank")));
+    QTest::mouseClick(homeButton, Qt::LeftButton);
+    QTRY_VERIFY(privTab->url()
+                == QUrl(QLatin1String("qrc:/startpage-private.html"))
+                && privTab->page() && !privTab->page()->isLoading());
+    closeWindow(window);
+
+    // Tor window: same button, tor start page.
+    BrowserApplication::setTorMode(true);
+    SubWindow *torWindow = new SubWindow;
+    torWindow->resize(1000, 600);
+    torWindow->show();
+    QApplication::processEvents();
+    QToolBar *torBar = torWindow->findChild<QToolBar *>(
+        QLatin1String("NavigationToolBar"));
+    QVERIFY(torBar);
+    QAction *torHome = homeActionFor(torBar);
+    QVERIFY(torHome);
+    QCOMPARE(torBar->actions().indexOf(torHome), 4);
+    QToolButton *torHomeButton = qobject_cast<QToolButton *>(
+        torBar->widgetForAction(torHome));
+    QVERIFY(torHomeButton);
+    WebView *torTab = torWindow->currentTab();
+    QVERIFY(torTab);
+    // The first tab already shows the tor start page — move it off so
+    // the click is observable.
+    torTab->loadUrl(QUrl(QLatin1String("about:blank")));
+    QTRY_VERIFY(torTab->url() == QUrl(QLatin1String("about:blank")));
+    QTest::mouseClick(torHomeButton, Qt::LeftButton);
+    QTRY_VERIFY(torTab->url()
+                == QUrl(QLatin1String("qrc:/startpage-tor.html"))
+                && torTab->page() && !torTab->page()->isLoading());
+    closeWindow(torWindow);
+    BrowserApplication::setTorMode(false);
 }
 
 // UIP04: permanent status-bar widgets — a load-time indicator and a
@@ -3327,6 +3512,224 @@ void tst_BrowserMainWindow::sidebarResize()
 
     settings.remove(QLatin1String("MainWindow/sidebarWidth"));
     settings.remove(QLatin1String("MainWindow/sidebarDockArea"));
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+    closeWindow(window);
+}
+
+// SIDE09: the rail follows sidebar/panelOrder — written by the prefs
+// ▲▼ buttons — applied live by applySidebarSettings (no rebuild),
+// composed with per-panel visibility, and carried into a fresh
+// window.  Ids the key doesn't mention append in registry order.
+void tst_BrowserMainWindow::sidebarPanelOrder()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+    settings.remove(QLatin1String("sidebar/panelOrder"));
+    settings.remove(QLatin1String("sidebar/panels"));
+
+    settings.setValue(QLatin1String("MainWindow/showSidebar"), true);
+    SubWindow *window = new SubWindow;
+    window->show();
+    SidebarPanel *panel = window->sidebarPanel();
+    QVERIFY(panel);
+    QCOMPARE(panel->tabs()->count(), 4);
+    QCOMPARE(panel->tabs()->tabText(0), QLatin1String("Bookmarks"));
+
+    // A full reorder re-sequences the rail live.
+    SidebarPanel::setPanelOrder(
+        QStringList{ QLatin1String("notes"), QLatin1String("bookmarks"),
+                     QLatin1String("history"),
+                     QLatin1String("downloads") });
+    window->applySidebarSettings();
+    QCOMPARE(panel->tabs()->count(), 4);
+    QCOMPARE(panel->tabs()->tabText(0), QLatin1String("Notes"));
+    QCOMPARE(panel->tabs()->tabText(1), QLatin1String("Bookmarks"));
+    QCOMPARE(panel->tabs()->tabText(3), QLatin1String("Downloads"));
+
+    // A partial order keeps the named ids up front and appends the
+    // rest in registry order.
+    SidebarPanel::setPanelOrder(
+        QStringList{ QLatin1String("downloads"),
+                     QLatin1String("bookmarks") });
+    window->applySidebarSettings();
+    QCOMPARE(panel->tabs()->tabText(0), QLatin1String("Downloads"));
+    QCOMPARE(panel->tabs()->tabText(1), QLatin1String("Bookmarks"));
+    QCOMPARE(panel->tabs()->tabText(2), QLatin1String("History"));
+    QCOMPARE(panel->tabs()->tabText(3), QLatin1String("Notes"));
+
+    // Order and visibility compose — hiding the front entry pulls the
+    // next one up, restoring lands it back in its ordered slot.
+    SidebarPanel::setPanelVisible("downloads", false);
+    window->applySidebarSettings();
+    QCOMPARE(panel->tabs()->count(), 3);
+    QCOMPARE(panel->tabs()->tabText(0), QLatin1String("Bookmarks"));
+    SidebarPanel::setPanelVisible("downloads", true);
+    window->applySidebarSettings();
+    QCOMPARE(panel->tabs()->count(), 4);
+    QCOMPARE(panel->tabs()->tabText(0), QLatin1String("Downloads"));
+
+    // The order survives a fresh window's construction.
+    SubWindow *window2 = new SubWindow;
+    window2->show();
+    QVERIFY(window2->sidebarPanel());
+    QCOMPARE(window2->sidebarPanel()->tabs()->tabText(0),
+             QLatin1String("Downloads"));
+    QCOMPARE(window2->sidebarPanel()->tabs()->tabText(1),
+             QLatin1String("Bookmarks"));
+    closeWindow(window2);
+
+    settings.remove(QLatin1String("sidebar/panelOrder"));
+    settings.remove(QLatin1String("sidebar/panels"));
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+    closeWindow(window);
+}
+
+// SIDE09: every option rendered in the prefs Sidebar group does
+// something real — the rail's fold button, the close-button pair,
+// focus-loss auto-close, lazy panel construction and bookmark folder
+// counters all flip live through applySidebarSettings.
+void tst_BrowserMainWindow::sidebarPanelOptions()
+{
+    QSettings settings;
+    const char *const optionKeys[] = {
+        "sidebar/showPanelToggle", "sidebar/showCloseButton",
+        "sidebar/autoCloseInactive", "sidebar/folderCounters",
+        "sidebar/lazyLoad"
+    };
+    for (const char *key : optionKeys)
+        settings.remove(QLatin1String(key));
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+    settings.remove(QLatin1String("sidebar/panels"));
+    settings.remove(QLatin1String("sidebar/panelOrder"));
+    settings.setValue(QLatin1String("MainWindow/showSidebar"), true);
+
+    SubWindow *window = new SubWindow;
+    window->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+    window->activateWindow();
+    QDockWidget *dock = window->sidebarDock();
+    QTRY_VERIFY(dock->isVisible());
+    SidebarPanel *panel = window->sidebarPanel();
+    QVERIFY(panel);
+
+    // 'Show Panel Toggle' — the fold button at the rail's foot hides
+    // the dock like the page-header X.
+    QToolButton *toggle = panel->findChild<QToolButton *>(
+        QLatin1String("sidebarPanelToggle"));
+    QVERIFY(toggle);
+    QVERIFY(toggle->isVisible());
+    toggle->click();
+    QTRY_VERIFY(!dock->isVisible());
+    dock->setVisible(true);
+    QTRY_VERIFY(dock->isVisible());
+    settings.setValue(QLatin1String("sidebar/showPanelToggle"), false);
+    window->applySidebarSettings();
+    QVERIFY(toggle->isHidden());
+    settings.setValue(QLatin1String("sidebar/showPanelToggle"), true);
+    window->applySidebarSettings();
+    QVERIFY(toggle->isVisible());
+
+    // 'Show Close Button' — the dock's title-bar X and the Downloads
+    // header X share the switch.
+    QVERIFY(dock->features() & QDockWidget::DockWidgetClosable);
+    QWidget *headerX = panel->findChild<QWidget *>(
+        QLatin1String("sidebarCloseButton"));
+    QVERIFY(headerX);
+    // The Downloads page isn't current, so assert the flag the option
+    // drives (isHidden), not isVisible() which also needs a shown tab.
+    QVERIFY(!headerX->isHidden());
+    settings.setValue(QLatin1String("sidebar/showCloseButton"), false);
+    window->applySidebarSettings();
+    QVERIFY(!(dock->features() & QDockWidget::DockWidgetClosable));
+    QVERIFY(headerX->isHidden());
+    settings.setValue(QLatin1String("sidebar/showCloseButton"), true);
+    window->applySidebarSettings();
+    QVERIFY(dock->features() & QDockWidget::DockWidgetClosable);
+    QVERIFY(!headerX->isHidden());
+
+    // 'Auto-Close Inactive Panel' — focus inside the dock keeps it
+    // up; focus landing on a window widget outside it folds it.
+    settings.setValue(QLatin1String("sidebar/autoCloseInactive"), true);
+    window->applySidebarSettings();
+    QVERIFY(dock->isVisible());
+    QVERIFY(QTest::qWaitForWindowActive(window));
+    panel->tabs()->tabBar()->setFocus();
+    QVERIFY(QApplication::focusWidget()
+            && dock->isAncestorOf(QApplication::focusWidget()));
+    QVERIFY(dock->isVisible());
+    window->tabWidget()->currentLocationBar()->setFocus();
+    QTRY_VERIFY(!dock->isVisible());
+    settings.setValue(QLatin1String("sidebar/autoCloseInactive"), false);
+    window->applySidebarSettings();
+    dock->setVisible(true);
+    QTRY_VERIFY(dock->isVisible());
+
+    // 'Lazy Load' — the rail keeps its entries but the unopened pages
+    // stay placeholders until selected; showDownloads materializes
+    // its page on the way through.
+    settings.setValue(QLatin1String("sidebar/lazyLoad"), true);
+    SubWindow *lazyWindow = new SubWindow;
+    lazyWindow->show();
+    QVERIFY(lazyWindow->sidebarPanel());
+    SidebarPanel *lazyPanel = lazyWindow->sidebarPanel();
+    QCOMPARE(lazyPanel->tabs()->count(), 4);
+    QVERIFY(!lazyPanel->findChild<QWidget *>(
+                QLatin1String("sidebarDownloadsView")));
+    lazyPanel->showDownloads();
+    QVERIFY(lazyPanel->findChild<QWidget *>(
+                QLatin1String("sidebarDownloadsView")));
+    QCOMPARE(lazyPanel->tabs()->currentWidget(),
+             static_cast<QWidget *>(lazyPanel->downloadsPage()));
+    // Turning the option back off materializes every pending page.
+    settings.setValue(QLatin1String("sidebar/lazyLoad"), false);
+    lazyWindow->applySidebarSettings();
+    QVERIFY(lazyPanel->findChild<QWidget *>(
+                QLatin1String("sidebarHistoryView")));
+    closeWindow(lazyWindow);
+
+    // 'Show Folder Counters' — bookmark folders carry a " (n)"
+    // suffix on the display text while the switch is on.
+    QTreeView *bookmarksView = panel->findChild<QTreeView *>(
+        QLatin1String("sidebarBookmarksView"));
+    QVERIFY(bookmarksView);
+    BookmarksManager *bookmarksManager = BookmarksManager::instance();
+    BookmarkNode *folder = new BookmarkNode(BookmarkNode::Folder);
+    folder->title = QLatin1String("Counted Folder");
+    bookmarksManager->addBookmark(bookmarksManager->menu(), folder);
+    BookmarkNode *childA = new BookmarkNode(BookmarkNode::Bookmark);
+    childA->title = QLatin1String("child-a");
+    childA->url = QLatin1String("https://example.com/a");
+    bookmarksManager->addBookmark(folder, childA);
+    BookmarkNode *childB = new BookmarkNode(BookmarkNode::Bookmark);
+    childB->title = QLatin1String("child-b");
+    childB->url = QLatin1String("https://example.com/b");
+    bookmarksManager->addBookmark(folder, childB);
+    QAbstractItemModel *bmModel = bookmarksView->model();
+    QModelIndex menuIndex;
+    for (int row = 0; row < bmModel->rowCount(); ++row) {
+        const QModelIndex candidate = bmModel->index(row, 0);
+        if (candidate.data(Qt::DisplayRole).toString()
+            == bookmarksManager->menu()->title) {
+            menuIndex = candidate;
+            break;
+        }
+    }
+    QVERIFY(menuIndex.isValid());
+    const QModelIndex folderIndex =
+        bmModel->index(bmModel->rowCount(menuIndex) - 1, 0, menuIndex);
+    QVERIFY(folderIndex.isValid());
+    QCOMPARE(folderIndex.data(Qt::DisplayRole).toString(),
+             QLatin1String("Counted Folder (2)"));
+    settings.setValue(QLatin1String("sidebar/folderCounters"), false);
+    window->applySidebarSettings();
+    QCOMPARE(folderIndex.data(Qt::DisplayRole).toString(),
+             QLatin1String("Counted Folder"));
+    bmModel->removeRow(folderIndex.row(), menuIndex);
+
+    for (const char *key : optionKeys)
+        settings.remove(QLatin1String(key));
+    settings.remove(QLatin1String("sidebar/panels"));
+    settings.remove(QLatin1String("sidebar/panelOrder"));
     settings.remove(QLatin1String("MainWindow/showSidebar"));
     closeWindow(window);
 }
@@ -4179,6 +4582,27 @@ void tst_BrowserMainWindow::tabStripCompactHeight()
                  .arg(bar->tabRect(0).height())
                  .arg(bar->fontMetrics().height() + 12)));
     QVERIFY(bar->width() >= 140 && bar->width() <= 150);
+
+    // TABS11: the selected row must not paint below its rect —
+    // Fusion's selected-tab fillRect is sized by the rect's bottom
+    // coordinate, so on a tall rail a ghost band (bottom-1)px deep
+    // appeared under the selected row and read as "the row is too
+    // tall".  Needs the real TabWidget parent — the tab-frame color
+    // (vs plain window color) only applies to HasFrame tabs.
+    bar->setCurrentIndex(bar->count() - 1);
+    QApplication::processEvents();
+    {
+        const QImage image = bar->grab().toImage();
+        const QRect last = bar->tabRect(bar->count() - 1);
+        const int probeY = qMin(last.bottom() + 6, bar->height() - 1);
+        const QRgb below = image.pixel(bar->width() / 2, probeY);
+        const QRgb tail = image.pixel(bar->width() / 2,
+                                      bar->height() - 4);
+        QVERIFY2(qAbs(qGray(below) - qGray(tail)) <= 2,
+                 qPrintable(QStringLiteral(
+                     "ghost fill below the selected row: pixel %1 vs "
+                     "strip tail %2").arg(below, 0, 16).arg(tail, 0, 16)));
+    }
     if (qEnvironmentVariableIsSet("ARORA_STRIP_GRAB_DIR")) {
         const QString dir =
             qEnvironmentVariable("ARORA_STRIP_GRAB_DIR");

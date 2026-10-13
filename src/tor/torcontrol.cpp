@@ -145,6 +145,11 @@ void TorControl::signalShutdown(const ReplyCallback &callback)
     sendCommand(QByteArrayLiteral("SIGNAL SHUTDOWN"), callback);
 }
 
+void TorControl::signalNewNym(const ReplyCallback &callback)
+{
+    sendCommand(QByteArrayLiteral("SIGNAL NEWNYM"), callback);
+}
+
 void TorControl::sendNext()
 {
     if (m_waitingForReply || m_queue.empty() || !isConnected())

@@ -82,6 +82,9 @@ public:
                  const ReplyCallback &callback = ReplyCallback());
     // Graceful shutdown — tor catches SIGTERM and exits cleanly.
     void signalShutdown(const ReplyCallback &callback = ReplyCallback());
+    // TOR15: SIGNAL NEWNYM — tor marks live circuits dirty and builds
+    // clean ones (the entry guard persists; middle+exit rotate).
+    void signalNewNym(const ReplyCallback &callback = ReplyCallback());
 
 signals:
     void connected();

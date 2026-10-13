@@ -208,6 +208,7 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     , m_sidebarWidthTimer(new QTimer(this))
     , m_applyingSidebarWidth(false)
     , m_sidebarWidthApplied(false)
+    , m_sidebarAutoClose(false)
     , m_navigationBar(nullptr)
     , m_navigationSplitter(nullptr)
     , m_engineIndicatorHost(nullptr)
@@ -310,6 +311,10 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
             AroraIcon::getOnDark(QLatin1String("go-previous")));
         m_historyForwardAction->setIcon(
             AroraIcon::getOnDark(QLatin1String("go-next")));
+        // HOME01: same lift for the nav-bar Home button — its History
+        // menu entry shows the light glyph too, matching Back/Forward.
+        m_historyHomeAction->setIcon(
+            AroraIcon::getOnDark(QLatin1String("go-home")));
         m_viewSidebarAction->setIcon(
             SidebarPanel::icon(m_readerModeButton));
 
@@ -529,6 +534,21 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     // the grip hides while it floats.
     connect(m_sidebarDock, &QDockWidget::topLevelChanged,
             this, [this](bool) { updateSidebarGripPlacement(); });
+    // SIDE09: 'Auto-Close Inactive Panel' — fold the dock when focus
+    // lands on a widget in this window outside the sidebar (the page,
+    // the location bar, a menu's parent...).  Menus/popups raised
+    // from the panel itself don't count, focus leaving the window
+    // entirely keeps the dock up, and a floating dock never folds.
+    connect(qApp, &QApplication::focusChanged,
+            this, [this](QWidget *, QWidget *now) {
+        if (!m_sidebarAutoClose || !m_sidebarDock->isVisible()
+            || m_sidebarDock->isFloating() || !now
+            || now->window() != this || m_sidebarDock->isAncestorOf(now)
+            || QApplication::activePopupWidget()
+            || QApplication::activeModalWidget())
+            return;
+        m_sidebarDock->hide();
+    });
     // RSZ02: debounce for dock width persistence — a native edge
     // drag emits a Resize per pixel; the write lands once the drag
     // ends.
@@ -1225,6 +1245,12 @@ void BrowserMainWindow::setupMenu()
     m_historyHomeAction = new QAction(this);
     connect(m_historyHomeAction, &QAction::triggered, this, &BrowserMainWindow::goHome);
     m_historyHomeAction->setShortcut(QKeySequence(Qt::ControlModifier | Qt::ShiftModifier | Qt::Key_H));
+    // HOME01: the nav-bar Home button reuses this action, so the icon
+    // is unconditional — platform convention only hides it in menus.
+    m_historyHomeAction->setIcon(AroraIcon::get(QLatin1String("go-home")));
+#if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
+    m_historyHomeAction->setIconVisibleInMenu(false);
+#endif
 
     m_historyRestoreLastSessionAction = new QAction(this);
     if (BrowserApplication *app = BrowserApplication::instance()) {
@@ -1243,7 +1269,6 @@ void BrowserMainWindow::setupMenu()
     m_historyMenu->setInitialActions(historyActions);
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
     m_historyRestoreLastSessionAction->setIcon(AroraIcon::get(QLatin1String("document-revert")));
-    m_historyHomeAction->setIcon(AroraIcon::get(QLatin1String("go-home")));
 #endif
 
     // Bookmarks
@@ -1605,6 +1630,9 @@ void BrowserMainWindow::retranslate()
     m_historyBackAction->setText(tr("Back"));
     m_historyForwardAction->setText(tr("Forward"));
     m_historyHomeAction->setText(tr("Home"));
+    m_historyHomeAction->setToolTip(
+        tr("Home (%1)").arg(m_historyHomeAction->shortcut().toString(
+            QKeySequence::NativeText)));
     m_historyRestoreLastSessionAction->setText(tr("Restore Last Session"));
 
     m_bookmarksMenu->setTitle(tr("&Bookmarks"));
@@ -1704,6 +1732,12 @@ void BrowserMainWindow::setupToolBar()
     m_stopReloadAction->setIcon(m_reloadIcon);
     m_navigationBar->addAction(m_stopReloadAction);
 
+    // HOME01: a Home button immediately after Stop/Reload — the same
+    // QAction the History menu and Ctrl+Shift+H drive, so the button
+    // can never diverge from the goHome() path.  Shared setup covers
+    // normal/private/tor/container windows alike.
+    m_navigationBar->addAction(m_historyHomeAction);
+
     // READ02: reader-mode toggle in the nav row — after stop/reload,
     // before the location bar starts.  READ03: the only reader
     // control — the in-bar duplicate is gone.  Palette-painted glyph
@@ -1734,6 +1768,12 @@ void BrowserMainWindow::setupToolBar()
             app ? app->torManager() : nullptr, m_navigationBar);
         m_torCircuitButton->setObjectName(
             QLatin1String("torCircuitButton"));
+        // TOR15: the popup's "Circuit for <host>" header and the site
+        // node at the chain's end read the current tab's host.
+        m_torCircuitButton->setSiteHostProvider([this]() {
+            WebView *tab = currentTab();
+            return tab ? tab->url().host() : QString();
+        });
         m_navigationBar->addWidget(m_torCircuitButton);
     }
 
@@ -1958,7 +1998,23 @@ void BrowserMainWindow::applySidebarSettings()
         // SIDE06: keep the rail on the outer edge after a
         // settings-driven dock move.
         m_sidebarPanel->setDockSide(area);
+        // SIDE09: the working panel options (rail toggle, page-header
+        // X, folder counters, lazy load) re-read their keys here.
+        m_sidebarPanel->applyOptions();
     }
+    // SIDE09: 'Auto-Close Inactive Panel' — the focusChanged hook.
+    m_sidebarAutoClose = settings.value(
+        QLatin1String("sidebar/autoCloseInactive"), false).toBool();
+    // SIDE09: 'Show Close Button' — the dock's title-bar X joins the
+    // per-panel header X the panel itself gates.
+    QDockWidget::DockWidgetFeatures features = m_sidebarDock->features();
+    if (settings.value(QLatin1String("sidebar/showCloseButton"), true)
+            .toBool())
+        features |= QDockWidget::DockWidgetClosable;
+    else
+        features &= ~QDockWidget::DockWidgetClosable;
+    if (features != m_sidebarDock->features())
+        m_sidebarDock->setFeatures(features);
     // RSZ02: the stored width lands before the dock shows; the
     // dock's first Show re-applies it via the event filter.
     applySidebarWidth();

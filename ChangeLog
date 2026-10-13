@@ -485,6 +485,11 @@ UI:
   180px. A saved width that still holds the old default migrates to
   the new one, while a width you dragged to yourself is kept — and
   the edge drag and double-click reset work as before (TABS10).
+- Vertical tab rows are compact again: on a Left/Right strip the
+  selected row painted a ghost block several times its own height
+  below itself (a Qt 6.12 style quirk that only shows on a tall
+  strip), making the row look oversized. The draw is now clipped to
+  the row's real height, matching the horizontal strip (TABS11).
 - Dark theme readability: toolbar, menu, tab-strip, location-bar,
   status-bar and Preferences sidebar icons now switch to the bundled
   light-glyph variants when the app theme is Dark — previously the
@@ -517,6 +522,25 @@ UI:
   "Preserve log" keeps the list across navigations, and "Disable
   cache" is a real browser-wide toggle the engine honors for every
   tab, including ones opened later (DEVT06).
+- The start page no longer shows faint horizontal bands: its
+  background gradient was painted in repeating content-height stripes
+  — invisible in the light theme, banded in the dark theme — and now
+  covers the window as one continuous surface on all four start pages
+  (standard, private, Tor, Servo) (SPAGE01).
+- Home button on the navigation toolbar, right after the reload/stop
+  button — clicking it loads your configured home page (the Arora
+  start page by default) in the current tab, same as History → Home
+  or Ctrl+Shift+H (HOME01).
+- Preferences → Appearance → Sidebar: the "Panels" checklist now
+  shows all its entries without scrolling and only takes the width
+  its rows need — it used to render as a cramped box with a
+  scrollbar while stretching the full page width (SIDE08).
+- Preferences → Appearance → Sidebar: ▲▼ buttons next to the
+  "Panels" checklist reorder the sidebar rail, and the order is
+  remembered across restarts.  The section also gains working
+  options: show/hide the panel toggle and close buttons,
+  auto-close the panel when it loses focus, folder counters on
+  bookmark folders, and lazy loading of panel contents (SIDE09).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
@@ -740,6 +764,14 @@ Tor:
   chain, memory/network/load/zoom indicators, the size grip and
   transient messages (like hovered links) now render light-on-violet
   instead of near-invisible dark text on purple (TOR14).
+- The Tor circuit button now opens a Tor-Browser-style panel instead
+  of a flat hop list: a vertical chain from "This browser" through
+  each relay — flag, country and role, OR address, short fingerprint —
+  to the destination site, joined by a connector line, plus a "New
+  Tor circuit for this site" button (SIGNAL NEWNYM — rotates the
+  middle/exit hops, guard may persist, says so underneath) and honest
+  status when the daemon is gone. The chain shown is the shared
+  busiest circuit, not a per-site one (TOR15).
 - A Servo-branded start page variant appears when the default engine
   pick is Servo: the same Arora header, search box and default
   coloring, with the official Servo logo centered under the search

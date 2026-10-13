@@ -26,6 +26,7 @@
 #include <qlist.h>
 #include <QModelIndex>
 #include <qpointer.h>
+#include <qstringlist.h>
 #include <qwidget.h>
 
 class AutoSaver;
@@ -72,8 +73,18 @@ public:
 
     static QList<Panel> panels();
     static void registerPanel(const Panel &panel);
+    // SIDE09: the rail order — persisted under sidebar/panelOrder as
+    // a list of panel ids.  orderedPanels() re-sequences the registry
+    // by it; ids the key doesn't mention (fresh registrations) append
+    // in registry order, and stale ids in the key are ignored.
+    static QStringList panelOrder();
+    static void setPanelOrder(const QStringList &order);
+    static QList<Panel> orderedPanels();
     static bool isPanelVisible(const QByteArray &id);
     static void setPanelVisible(const QByteArray &id, bool visible);
+    // 'Show Folder Counters' (sidebar/folderCounters) — read live by
+    // the bookmarks list model; applyOptions() syncs it.
+    static bool showsFolderCounters();
 
     explicit SidebarPanel(QWidget *parent = nullptr);
 
@@ -104,6 +115,11 @@ public slots:
     // SIDE06: mirrors the icon rail onto the dock's outer edge —
     // left rail when docked left, right rail when docked right.
     void setDockSide(Qt::DockWidgetArea area);
+    // SIDE09: re-reads the sidebar/* option keys (panel toggle, close
+    // button, folder counters, lazy load) and applies them live —
+    // called by BrowserMainWindow::applySidebarSettings, once in the
+    // ctor, and on every settings save.
+    void applyOptions();
 
 private slots:
     void openBookmark(const QModelIndex &index, TabWidget::OpenUrlIn tab);
@@ -121,6 +137,14 @@ private slots:
 
 private:
     static QList<Panel> &registry();
+
+    // SIDE09: selects a rail entry by registered id, materializing a
+    // lazy placeholder first if needed (a panel unchecked in
+    // Preferences simply isn't there — the dock still raises).
+    void showPanel(const QByteArray &id);
+    // SIDE09 lazy load: swaps a placeholder page for the real one the
+    // first time its tab is selected.  No-op on a built page.
+    void buildPendingTab(int index);
 
     // Registered factories — each builds its page on demand and fills
     // in the matching members (they stay null while the panel is
@@ -148,6 +172,12 @@ private:
     QPointer<QWidget> m_detailItem;
     QPointer<QPlainTextEdit> m_notes;
     AutoSaver *m_autoSaver;
+    // SIDE09: sidebar/lazyLoad — visible panels sit behind a
+    // placeholder page until first selected.
+    bool m_lazyLoad;
+    // sidebar/folderCounters — consulted by the bookmarks model at
+    // paint/fetch time; applyOptions() keeps it in sync.
+    static bool s_folderCounters;
 };
 
 #endif // SIDEBARPANEL_H
