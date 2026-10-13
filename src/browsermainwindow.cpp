@@ -1294,9 +1294,6 @@ void BrowserMainWindow::setupMenu()
     m_viewReaderAction->setIcon(AroraIcon::get(QLatin1String("text-x-generic")));
     m_viewPipAction->setIcon(AroraIcon::get(QLatin1String("view-pip")));
     m_viewSourceAction->setIcon(AroraIcon::get(QLatin1String("text-html")));
-    m_viewChromiumDevToolAction->setIcon(
-        AroraIcon::get(QLatin1String("utilities-terminal")));
-    m_viewBidiDevToolAction->setIcon(AroraIcon::get(QLatin1String("system-run")));
 #endif
 
     // History
@@ -1500,6 +1497,9 @@ void BrowserMainWindow::setupMenu()
 #ifdef ARORA_RUSTCORE
     QAction *bidiAction = m_bidiPanelDock->toggleViewAction();
     bidiAction->setText(tr("BiDi Dev &Tools"));
+#if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
+    bidiAction->setIcon(AroraIcon::get(QLatin1String("system-run")));
+#endif
     if (BrowserApplication::isTorMode()) {
         bidiAction->setEnabled(false);
         bidiAction->setToolTip(
@@ -1512,6 +1512,9 @@ void BrowserMainWindow::setupMenu()
     m_toolsMenu->addMenu(m_toolsUserAgentMenu);
 
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
+    // ICONS07: the dev-tools rows get icons too.
+    m_toolsChromiumDevToolAction->setIcon(
+        AroraIcon::get(QLatin1String("utilities-terminal")));
     m_toolsCommandPaletteAction->setIcon(
         AroraIcon::get(QLatin1String("system-run")));
     m_toolsClearPrivateDataAction->setIcon(
