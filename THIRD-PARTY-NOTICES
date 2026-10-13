@@ -33,7 +33,7 @@ canonical text ships inside Qt 4.x source packages as
 GPL_EXCEPTION.txt.
 
 ----------------------------------------------------------------------
-2. src/utils/ utility classes — BSD 3-clause
+2. BSD 3-clause utility code — src/utils/ and assorted files
 ----------------------------------------------------------------------
 
 Copyright (c) 2008-2010 Benjamin C. Meyer, Jakub Wieczorek,
@@ -45,6 +45,14 @@ treesortfilterproxymodel, languagemanager and safetext are BSD-licensed
 src/utils/README: the utils classes are intentionally BSD or public
 domain so they can be reused outside Arora. The full notice text is in
 each file header.
+
+The same BSD 3-clause terms apply to these non-utils files, which carry
+third-party co-copyright lines:
+
+  * src/adblock/adblockrule.{h,cpp} — also Copyright (c) 2009
+    Zsombor Gegesy <gzsombor@gmail.com>.
+  * src/useragent/useragentmenu.{h,cpp} — also Copyright (c) 2010
+    William C. Witt.
 
 ----------------------------------------------------------------------
 3. src/network/cookiejar/networkcookiejar/ — MPL/GPL/LGPL tri-license
@@ -77,7 +85,21 @@ closetab, defaulticon, history, private, loading.gif) were committed by
 the Arora project and are covered by the project license.
 
 ----------------------------------------------------------------------
-6. Optional Rust adblock engine (CONFIG+=adblock_rust)
+6. Mozilla/Arc90 Readability — Apache License 2.0
+----------------------------------------------------------------------
+
+Copyright (c) 2010 Arc90 Inc.
+
+src/data/Readability.js and src/data/Readability-readerable.js are the
+Mozilla Readability library, release 0.6.0 ("heavily based on Arc90's
+readability.js 1.7.1"), vendored unmodified for Reader Mode. Licensed
+under the Apache License, Version 2.0 — the license header is preserved
+in each file. src/data/reader.js is Arora-authored glue; the engine is
+also consumed inside src/rustcore via the dom_smoothie crate (see
+section 8).
+
+----------------------------------------------------------------------
+7. Optional Rust adblock engine (CONFIG+=adblock_rust)
 ----------------------------------------------------------------------
 
 Not part of the default build. When enabled, src/adblock/rust builds a
@@ -119,7 +141,218 @@ GPL-2+ distribution; the adblock crate is file-level copyleft (MPL-2.0),
 satisfied by shipping this source tree.
 
 ----------------------------------------------------------------------
-7. src/qrcodegen.{hpp,cpp} — MIT
+8. Rust core library — src/rustcore (linked into every build)
+----------------------------------------------------------------------
+
+The arora-rustcore static/cdylib links the following crates (licenses
+read from each crate's Cargo.toml; full lockfile at
+src/rustcore/Cargo.lock; allowlist policy in src/rustcore/deny.toml).
+Direct dependencies: aes-gcm, argon2, zeroize, getrandom, serde_json,
+quick-xml, rusqlite (bundled SQLite — public domain), lopdf, libc,
+rustls, rustls-native-certs, rustls-webpki, x509-parser, sha2,
+miniz_oxide, dom_smoothie (a Rust port of Mozilla Readability — see
+section 6), dom_query, qrcodegen, hayro.
+
+  MPL-2.0 (Servo project crates pulled in by dom_smoothie/dom_query):
+      cssparser, cssparser-macros, dtoa-short, selectors
+
+  MIT:
+      data-encoding, derive_more(+_impl), dom_query, dom_smoothie,
+      generic-array, gjson, html-escape, libsqlite3-sys, lopdf,
+      new_debug_unreachable, nom, phf(+_codegen/+_generator/+_macros/
+      +_shared), precomputed-hash, qrcodegen, quick-xml, redox_syscall,
+      rusqlite, schannel, simd-adler32, slab, synstructure, zmij
+
+  MIT OR Apache-2.0 (incl. the RustCrypto, Linebender/fontations and
+  Servo-adjacent transitive tree):
+      aead, aes, android_system_properties, argon2, arrayvec, asn1-rs
+      (+_derive), bitflags, blake2, block-buffer, block-padding,
+      bumpalo, cbc, cc, cfg-if, chacha20, chrono, cipher,
+      core-foundation(+_sys), cpubits, cpufeatures, crc32fast,
+      crossbeam-deque, crossbeam-epoch, crossbeam-utils, crypto-common,
+      ctr, der-parser, deranged, digest, displaydoc, dtoa, ecb, either,
+      euclid, fdeflate, find-msvc-tools, flate2, font-types,
+      futures-core, futures-task, futures-util, getrandom, hashbrown,
+      hashlink, html5ever, hybrid-array, iana-time-zone(+_haiku),
+      image, inout, itoa, js-sys, lazy_static, libc, lock_api, log,
+      markup5ever, md-5, num-bigint, num-conv, num-integer, num-traits,
+      oid-registry, once_cell, opaque-debug, openssl-probe,
+      parking_lot, parking_lot_core, password-hash, pkg-config, png,
+      polycool, powerfmt, proc-macro2, quote, rand, rand_core, rayon,
+      rayon-core, read-fonts, rustc_version, rustls-pki-types,
+      rustversion, scopeguard, security-framework(+_sys), semver,
+      serde, serde_core, serde_derive, serde_json, servo_arc, sha2,
+      shlex, simdutf8, siphasher, skrifa, smallvec,
+      stable_deref_trait, string_cache(+_codegen), syn, tendril,
+      thiserror, thiserror-impl, time, time-core, time-macros, typenum,
+      unicode-bidi, unicode-normalization, unicode-segmentation,
+      universal-hash, wasm-bindgen(+_macro/+_macro-support/+_shared),
+      web_atoms, weezl, windows-*, x509-parser
+
+  Apache-2.0 OR MIT:
+      aes-gcm, autocfg, base64ct, bit-set, bit-vec, color, const-oid,
+      equivalent, fastrand, fearless_simd, ghash, glifo, hayro(+_ccitt/
+      +_cmap/+_interpret/+_jbig2/+_jpeg2000/+_postscript/+_syntax),
+      indexmap, kurbo, linebender_resource_handle, multiversion_no_op,
+      peniko, pin-project-lite, polyval, rustc-hash, vello_common,
+      vello_cpu, zeroize
+
+  Apache-2.0 AND ISC:
+      ring
+
+  Apache-2.0 OR ISC OR MIT:
+      rustls, rustls-native-certs
+
+  ISC:
+      rustls-webpki, untrusted
+
+  BSD-3-Clause:
+      alloc-no-stdlib, alloc-stdlib, subtle
+
+  BSD-3-Clause AND MIT:
+      brotli
+
+  BSD-3-Clause/MIT and BSD-3-Clause OR Apache-2.0:
+      brotli-decompressor, moxcms, pic-scale, pxfm
+
+  (Apache-2.0 OR MIT) AND BSD-3-Clause:
+      encoding_rs
+
+  MIT/Apache-2.0:
+      asn1-rs-impl, core_detect, fallible-iterator,
+      fallible-streaming-iterator, guillotiere, minimal-lexical,
+      rangemap, rusticata-macros, stringprep, unicode-properties,
+      vcpkg, version_check
+
+  Unicode-3.0 (ICU4X crates):
+      yoke(+_derive), zerofrom(+_derive)
+
+  (MIT OR Apache-2.0) AND Unicode-3.0:
+      unicode-ident
+
+  Unlicense OR MIT:
+      byteorder-lite, memchr
+
+  Zlib:
+      foldhash, zlib-rs
+
+  Zlib OR Apache-2.0 OR MIT:
+      bytemuck(+_derive), tinyvec
+
+  0BSD OR MIT OR Apache-2.0:
+      adler2
+
+  Apache-2.0:
+      flagset
+
+  Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT:
+      wasi
+
+  MIT OR Apache-2.0 OR Zlib:
+      zune-core, zune-jpeg
+
+  MIT OR Zlib OR Apache-2.0:
+      miniz_oxide
+
+  MIT OR Apache-2.0 OR LGPL-2.1-or-later:
+      r-efi
+
+All of the above are permissive or MPL-2.0/BSD-compatible and
+combinable with Arora's GPL-2+ distribution.
+
+----------------------------------------------------------------------
+9. Rust download engine — src/rustdl
+----------------------------------------------------------------------
+
+The arora-rustdl static/cdylib (segmented HTTP(S) downloads) links
+reqwest on rustls plus the following crates (licenses read from each
+crate's Cargo.toml; full lockfile at src/rustdl/Cargo.lock; allowlist
+policy in src/rustdl/deny.toml). Direct dependencies: reqwest,
+serde_json (+ tempfile, dev-only).
+
+  ISC AND (Apache-2.0 OR ISC):
+      aws-lc-rs          (AWS-LC crypto provider inside rustls)
+  ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause
+  AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0):
+      aws-lc-sys         (AWS-LC C sources: AWS, Google BoringSSL,
+                         OpenSSL-derived code under its composite license)
+
+  CDLA-Permissive-2.0:
+      webpki-root-certs  (Mozilla CA root store, via rustls-platform-verifier)
+
+  MIT:
+      bytes, cfg_aliases, combine, fs_extra, http-body(+_util), hyper,
+      hyper-util, mio, schannel, slab, synstructure, tokio, tower,
+      tower-http, tower-layer, tower-service, tracing, tracing-core,
+      try-lock, want, zmij
+
+  MIT OR Apache-2.0:
+      base64, bitflags, bumpalo, cc, cfg-if, chacha20, cmake,
+      core-foundation(+_sys), cpufeatures, displaydoc, errno,
+      find-msvc-tools, form_urlencoded, futures-channel, futures-core,
+      futures-io, futures-sink, futures-task, futures-util, getrandom,
+      http, httparse, idna, ipnet, itoa, jni(+_macros), jni-sys(+_macros),
+      jobserver, js-sys, libc, log, once_cell, openssl-probe,
+      percent-encoding, pkg-config, proc-macro2, quinn, quinn-proto,
+      quinn-udp, quote, rand, rand_core, rand_pcg, reqwest,
+      rustc_version, rustls-pki-types, rustls-platform-verifier(+_android),
+      rustversion, security-framework(+_sys), semver, serde, serde_core,
+      serde_derive, serde_json, shlex, simdutf8, smallvec, socket2,
+      stable_deref_trait, syn, tempfile, thiserror, thiserror-impl,
+      tokio-rustls, url, wasm-bindgen(+_futures/+_macro/+_macro-support/
+      +_shared), web-sys, web-time, windows-*
+
+  Apache-2.0 OR MIT:
+      atomic-waker, fastrand, idna_adapter, pin-project-lite,
+      rustc-hash, simd_cesu8, utf8_iter, zeroize
+
+  Apache-2.0 AND ISC:
+      ring
+
+  Apache-2.0 OR ISC OR MIT:
+      hyper-rustls, rustls, rustls-native-certs
+
+  ISC:
+      rustls-webpki, untrusted
+
+  BSD-3-Clause:
+      subtle
+
+  Apache-2.0:
+      sync_wrapper
+
+  Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT:
+      linux-raw-sys, rustix, wasi
+
+  Unicode-3.0 (ICU4X crates):
+      icu_collections, icu_locale_core, icu_normalizer(+_data),
+      icu_properties(+_data), icu_provider, litemap, potential_utf,
+      tinystr, writeable, yoke(+_derive), zerofrom(+_derive),
+      zerotrie, zerovec(+_derive)
+
+  (MIT OR Apache-2.0) AND Unicode-3.0:
+      unicode-ident
+
+  Unlicense OR MIT and Unlicense/MIT:
+      memchr, winapi-util, same-file, walkdir
+
+  CC0-1.0 OR MIT-0 OR Apache-2.0:
+      dunce
+
+  Zlib OR Apache-2.0 OR MIT:
+      tinyvec
+
+  MIT OR Apache-2.0 OR Zlib:
+      lru-slab
+
+  MIT OR Apache-2.0 OR LGPL-2.1-or-later:
+      r-efi
+
+All of the above are permissive and compatible with Arora's GPL-2+
+distribution.
+
+----------------------------------------------------------------------
+10. src/qrcodegen.{hpp,cpp} — MIT
 ----------------------------------------------------------------------
 
 Copyright (c) Project Nayuki. MIT License.
@@ -127,24 +360,46 @@ Copyright (c) Project Nayuki. MIT License.
 QR Code generator library, vendored unmodified from
 github.com/nayuki/QR-Code-generator (the C++ implementation). Used by
 QrCodeDialog for "Show QR Code for This Page". The full MIT permission
-notice is preserved in each file's header.
+notice is preserved in each file's header. The Rust port of the same
+Nayuki library is also linked via the qrcodegen crate (see section 8).
 
 ----------------------------------------------------------------------
-8. Adblock filter subscriptions — fetched at runtime, NOT bundled
+11. Adblock filter subscriptions — fetched at runtime, NOT bundled
 ----------------------------------------------------------------------
 
 The default subscription list (src/adblock/adblockmanager.cpp) points at
-EasyList, EasyPrivacy and uBlock filters. These lists are downloaded by
-the user's browser at runtime; no rules are shipped in this repository.
+EasyList, EasyPrivacy and uBlock filters; the optional presets in
+src/adblock/adblockpresets.cpp additionally offer the Fanboy annoyance
+lists, regional lists (EasyList Germany, Liste FR, RUAdList, EasyList
+Czech & Slovak, EasyList Lithuania) and the uAssets annoyance/badware/
+resource-abuse/link-shortener lists. These lists are downloaded by the
+user's browser at runtime; no rules are shipped in this repository.
 
-  * EasyList / EasyPrivacy: dual-licensed GNU GPLv3 and
-    Creative Commons Attribution-ShareAlike 3.0
-    (https://easylist.to/pages/licence.html)
+  * EasyList / EasyPrivacy / Fanboy & regional EasyList family lists:
+    dual-licensed GNU GPLv3 and Creative Commons
+    Attribution-ShareAlike 3.0 (https://easylist.to/pages/licence.html)
   * uBlock filters (uAssets): GNU GPLv3
     (https://github.com/uBlockOrigin/uAssets)
 
 ----------------------------------------------------------------------
-9. Search engine descriptors — src/data/searchengines/
+12. Blocklists, top-site list and URL-strip rules — runtime data
+----------------------------------------------------------------------
+
+The Site Trust / privacy features consume third-party data sets:
+
+  * URLhaus domain blocklist (abuse.ch) — fetched at runtime under the
+    abuse.ch usage terms (https://urlhaus.abuse.ch).
+  * OpenPhish phishing feed — fetched at runtime under the OpenPhish
+    community feed terms (https://openphish.com).
+  * Tranco top-1M site list — fetched at runtime under the Tranco list
+    terms (https://tranco-list.eu).
+  * src/rustcore/data/urlstrip-rules.json — tracking-parameter strip
+    rules derived from the ClearURLs ruleset
+    (https://github.com/ClearURLs/Addon), vendored; the ClearURLs
+    project is licensed GNU LGPL v3.
+
+----------------------------------------------------------------------
+13. Search engine descriptors — src/data/searchengines/
 ----------------------------------------------------------------------
 
 OpenSearch 1.1 XML descriptors for Google, Google I'm Feeling Lucky,
@@ -154,7 +409,7 @@ any favicons fetched via their <Image> URLs at runtime are trademarks /
 assets of their respective owners.
 
 ----------------------------------------------------------------------
-10. Bundled icon themes — src/icons/
+14. Bundled icon themes — src/icons/
 ----------------------------------------------------------------------
 
 Curated subsets (35 freedesktop-named icons each, plus mechanically
@@ -174,7 +429,24 @@ directory carries its own LICENSE file; summary:
     fallback for names the newer sets do not cover.
 
 ----------------------------------------------------------------------
-11. Runtime dependencies (NOT vendored into this repository)
+15. Servo embedding spike — spikes/servo (experimental, NOT shipped)
+----------------------------------------------------------------------
+
+spikes/servo builds a thin C ABI over libservo (git-pinned servo v0.7.0)
+plus a Qt harness. It is not part of the qmake build and nothing from
+it ships in released binaries; it exists to validate a future
+alternate-engine backend.
+
+Servo itself is MPL-2.0 (https://servo.org); its ~700-crate transitive
+tree (including mozjs/SpiderMonkey, WebRender and bundled fonts) is
+gated by spikes/servo/servo-embed/deny.toml, which allowlists MIT,
+Apache-2.0 (incl. WITH LLVM-exception), BSD-2/3-Clause, BSL-1.0,
+CC0-1.0, CDLA-Permissive-2.0, ISC, MPL-2.0, OFL-1.1, OpenSSL,
+Ubuntu-font-1.0, Unicode-3.0, Unicode-DFS-2016, Zlib and
+GPL-2.0-or-later. Full lockfile: spikes/servo/servo-embed/Cargo.lock.
+
+----------------------------------------------------------------------
+16. Runtime dependencies (NOT vendored into this repository)
 ----------------------------------------------------------------------
 
   * Qt 6 — GNU LGPL v3 / GPL v3 / commercial (The Qt Company). Arora is
@@ -189,16 +461,18 @@ directory carries its own LICENSE file; summary:
   * OpenSSL libcrypto — Apache License 2.0 (OpenSSL 3.x) / OpenSSL+SSLeay
     (1.x). src/securestore.cpp resolves EVP symbols at runtime via
     QLibrary for AES-256-GCM; Arora does not link or ship OpenSSL.
+    (The Rust TLS stack uses rustls with ring/AWS-LC instead — see
+    sections 8-9.)
 
 ----------------------------------------------------------------------
-12. Translations — src/locale/
+17. Translations — src/locale/
 ----------------------------------------------------------------------
 
 The .ts/.qm translations are community contributions under the project
 license; per-language maintainers are listed in src/locale/maintainers.
 
 ----------------------------------------------------------------------
-13. Test fixtures
+18. Test fixtures
 ----------------------------------------------------------------------
 
 tools/htmlToXBel/tests/{firefox3,opera9,ie7}-bookmarks.html are bookmark
@@ -208,11 +482,14 @@ fuzz/ seed corpus entries derived from it are XBEL test data. None ship
 in installed or bundled builds.
 
 ----------------------------------------------------------------------
-14. Everything else
+19. Everything else
 ----------------------------------------------------------------------
 
-All remaining source, .ui files, src/htmls/ pages, src/data/autofill.js
-and fetchLinks.js, useragents.xml, bundled adblock stub resources
-(generated byte arrays in adblockresourcehandler.cpp), tools/, fuzz
-harnesses, BuildProcess/ and .devin/ scripts are Arora-authored and
-covered by GPL-2+ (2026 additions marked "The Arora Authors").
+All remaining source, .ui files, src/htmls/ pages, the Arora-authored
+src/data/*.js helpers (autofill.js, fetchLinks.js, arora-channel.js,
+contextimage.js, fingerprint.js, pip*.js, reader.js — everything except
+the Readability files of section 6), useragents.xml, bundled adblock
+stub resources (generated byte arrays in adblockresourcehandler.cpp),
+tools/, fuzz harnesses, BuildProcess/ and .devin/ scripts are
+Arora-authored and covered by GPL-2+ (2026 additions marked "The Arora
+Authors").

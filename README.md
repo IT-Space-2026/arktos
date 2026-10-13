@@ -567,7 +567,9 @@ with the dev Qt hidden.
 ## Third-party components
 
 Arora is built on, bundles, or talks to these projects — thank you to
-their authors:
+their authors. `THIRD-PARTY-NOTICES` is the authoritative, complete
+inventory (including the full transitive Rust crate list); the tables
+below are the user-facing summary.
 
 **Framework & engine**
 
@@ -575,39 +577,63 @@ their authors:
 |---|---|---|
 | Qt 6 (toolkit) | LGPL-3.0 / GPL-3.0 | https://www.qt.io |
 | QtWebEngine → Chromium (Blink/V8) | BSD-3-Clause (and others — see `about:credits`) | https://www.chromium.org |
+| OpenSSL libcrypto (runtime-resolved by `securestore`, not vendored) | Apache-2.0 (3.x) / OpenSSL+SSLeay (1.x) | https://openssl-library.org |
 | Tabler icons (bundled) | MIT | https://github.com/tabler/tabler-icons |
 | KDE Breeze icons (bundled) | LGPL-3.0 | https://github.com/KDE/breeze-icons |
 | GNOME Adwaita icons (bundled) | CC-BY-SA-3.0 / LGPL-3.0 | https://gitlab.gnome.org/GNOME/adwaita-icon-theme |
 
+**Bundled & derived code**
+
+| Component | License | Where |
+|---|---|---|
+| Qt "demo browser" heritage — ~50 core files | GPL-2.0 / GPL-3.0 + GPL Exception 1.2 | core of `src/` (© Trolltech) |
+| Mozilla/Arc90 Readability 0.6.0 (Reader Mode) | Apache-2.0 | `src/data/Readability*.js` |
+| networkcookiejar (Torch Mobile/Linden) | MPL-1.1 / GPL-2.0 / LGPL-2.1 | `src/network/cookiejar/networkcookiejar/` |
+| BSD utility code (utils, adblockrule, useragentmenu) | BSD-3-Clause | `src/utils/` + named files |
+| qrcodegen — QR generator (Nayuki, C++ and Rust crate) | MIT | `src/qrcodegen.*`, crate `qrcodegen` |
+| Arora icon artwork (Jens Bache-Wiig, 2008) | GPL-2.0 | `src/data/arora.svg` + renderings |
+| OpenSearch descriptors (service names are their owners' marks) | GPL-2.0+ (Arora-authored XML) | `src/data/searchengines/` |
+| Community translations | GPL-2.0+ (project license) | `src/locale/` |
+| modeltest + browser-export fixtures | GPL-2.0 / test data — never shipped | `autotests/`, `tools/htmlToXBel/tests/` |
+
 **Rust crates** (`src/rustcore`, `src/rustdl`, `src/adblock/rust` — all
-versions pinned, vetted by `cargo deny` per `src/rustcore/deny.toml`)
+versions pinned, vetted by `cargo deny` per `src/rustcore/deny.toml`;
+the full transitive list lives in `THIRD-PARTY-NOTICES` §7–9)
 
 | Crate | License | Home |
 |---|---|---|
-| aes-gcm, argon2, zeroize, getrandom | MIT / Apache-2.0 | https://github.com/RustCrypto |
+| aes-gcm, argon2, sha2, blake2 and friends (RustCrypto) | MIT / Apache-2.0 | https://github.com/RustCrypto |
+| zeroize, getrandom, libc, tempfile, base64, miniz_oxide | MIT / Apache-2.0 (+Zlib for miniz_oxide) | crates.io |
 | quick-xml | MIT | https://github.com/tafia/quick-xml |
 | serde_json | MIT / Apache-2.0 | https://github.com/serde-rs/json |
 | rusqlite | MIT | https://github.com/rusqlite/rusqlite |
 | SQLite (bundled via rusqlite) | Public domain | https://sqlite.org |
-| reqwest | MIT / Apache-2.0 | https://github.com/seanmonstar/reqwest |
-| rustls (TLS inside reqwest) | Apache-2.0 / MIT / ISC | https://github.com/rustls/rustls |
-| tempfile | MIT / Apache-2.0 | https://github.com/Stebalien/tempfile |
-| base64 | MIT / Apache-2.0 | https://github.com/marshallpierce/rust-base64 |
+| reqwest, hyper, tokio, quinn (HTTP/1.1–3 download engine) | MIT / Apache-2.0 | https://github.com/seanmonstar/reqwest |
+| rustls + rustls-native-certs + rustls-webpki | Apache-2.0 / ISC / MIT | https://github.com/rustls |
+| ring | Apache-2.0 / ISC | https://github.com/briansmith/ring |
+| aws-lc-rs / aws-lc-sys (TLS crypto inside reqwest) | ISC / Apache-2.0 / MIT / BSD-3-Clause | https://github.com/aws/aws-lc-rs |
+| webpki-root-certs (Mozilla CA store) | CDLA-Permissive-2.0 | https://github.com/rustls/webpki-roots |
+| x509-parser (Rusticata) | MIT / Apache-2.0 | https://github.com/rusticata/x509-parser |
+| dom_smoothie + dom_query (reader-mode extraction) | MIT | https://github.com/niklak/dom_smoothie |
+| html5ever, markup5ever; cssparser, selectors (Servo) | MIT / Apache-2.0; MPL-2.0 | https://github.com/servo |
 | adblock — Brave adblock-rust (optional matcher) | MPL-2.0 | https://github.com/brave/adblock-rust |
 | hayro (PDF rasterizer for the shell document view) | Apache-2.0 / MIT | https://github.com/LaurenzV/hayro |
 | lopdf (PDF rewrite/text extraction) | MIT | https://github.com/J-F-Liu/lopdf |
 
-**Data feeds** (fetched at runtime, consent-gated)
+**Data feeds** (fetched at runtime, consent-gated — nothing ships in the repo)
 
 | Feed | Terms | Home |
 |---|---|---|
+| EasyList / EasyPrivacy / Fanboy & regional EasyList lists (adblock defaults + presets) | GPL-3.0 / CC-BY-SA-3.0 | https://easylist.to |
+| uBlock filters (uAssets) | GPL-3.0 | https://github.com/uBlockOrigin/uAssets |
 | URLhaus domain blocklist | abuse.ch usage terms | https://urlhaus.abuse.ch |
 | OpenPhish feed | OpenPhish community feed terms | https://openphish.com |
 | Tranco top-site list (top-1M) | Tranco list terms | https://tranco-list.eu |
 | ClearURLs-derived tracking-param rules (`urlstrip-rules.json`, vendored) | LGPL-3.0 | https://github.com/ClearURLs/Addon |
 
-**Planned** (queued tasks, not shipped): libservo (MPL-2.0 —
-https://servo.org) as the selectable engine.
+**Experimental** (in-tree, not shipped): libservo (MPL-2.0 —
+https://servo.org) behind the spikes/servo embedding harness and the
+planned selectable engine.
 
 ## License
 
