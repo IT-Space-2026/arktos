@@ -119,6 +119,7 @@ This file is the task queue for the Devin CLI task loop
 | TABS16 | Vertical tabs too narrow — titles truncate (bump default width) — details below | pending | 0 | user screenshot — 'Telex: Ujra lesz Fo…' clipped |
 | MENU08 | App-menu dropdown: larger menu text size — details below | pending | 0 | user request — bigger text under the Arora button |
 | NAVB02 | Remove the URL-bar stop/reload button (dupe — toolbar's stays) — details below | pending | 0 | user request — two reload buttons is one too many |
+| ICONS07 | Menu items lack icons — inconsistent rows in the app menus — details below | pending | 0 | user report — not every menu function has an icon |
 
 ## Task details
 
@@ -704,3 +705,7 @@ Larger text in the Arora app-menu dropdown — user: 'under the main Arora butto
 ### NAVB02
 
 Remove the duplicated reload affordance — user: 'we have 2 reload button now. Remove the right side reload button which is left to the engine change.' NAVB01 added an in-location-bar StopReloadButton (left of the engine indicator) because the original report was 'url bar icon not changing' — but with the toolbar flip now working the in-bar widget is redundant. Spec: (a) remove the in-bar StopReloadButton widget entirely (locationbar member, construction, setWebView wiring, include, .pro entries if it's its own file — keep or remove the file per repo convention, remove only dead code, don't leave unreachable files); (b) KEEP the loadStarted/loadFinished-driven lifecycle flip on the toolbar's combined stop/reload action (that's the actual NAVB01 fix — do NOT regress it); the URL bar still shows progress via the location-bar fill (that was the pre-existing 'url bar' surface); (c) toolbar stop/reload remains the single reload control — keyboard/menu paths unchanged. Update any tst legs that asserted the in-bar button (NAVB01's suite) — adjust to assert toolbar-only + progress fill still works. Verify: exactly one reload/stop button on the bar (left side), it still flips stop<->reload correctly mid-load, back/forward intact, tst legs updated, make check PASS.
+
+### ICONS07
+
+Menu entries missing icons — user: 'not every function have icon within the menus.' Some actions carry AroraIcon::get() icons (filePrint etc ~957+) while neighboring entries have none — the app-menu dropdown reads ragged. Spec: (a) AUDIT every top-level menu (File/Edit/View/History/Bookmarks/Window/Tools/Help + context submenus the app button exposes) listing which actions lack icons; (b) give each action an icon from the unified family (ICONS04's set — Tabler glyphs via AroraIcon::get, fall back per its convention) — every menu row gets an icon or a deliberate documented exception (plain-text rows like dynamic history/bookmark entries are exempt — only STATIC actions); (c) icons must respect the same palette/tor rules as the rest of the chrome (tor menu items render on violet — the lifted-fg treatment); (d) don't icon things that shouldn't be (separators, dynamic lists, submenu headers keep clean). Verify: grab each menu open — uniform icon column, no naked static rows, tor window legible, tst legs if menu structure is asserted, make check PASS.
