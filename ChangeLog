@@ -438,6 +438,13 @@ UI:
   widths that still hold a past default migrate forward, a width you
   dragged to yourself is kept, and the edge drag and double-click
   reset work as before (TABS16).
+- Vertical tab rows no longer clip their titles: rows can never
+  render shorter than a full text line plus the standard padding (a
+  too-small saved strip height now clamps up instead of cropping the
+  title), and a grouped row's title centers below the group-name pill
+  instead of landing on the row's clipped bottom edge — favicons and
+  close buttons ride the same band.  Both Left and Right rails, and
+  Tor-violet and dark themes, render the full title (TABS17).
 - Bigger text in the Arora app menu: the dropdown and its whole
   submenu tree — File, Edit, View, History, Bookmarks, Window, Tools,
   Help, including nested flyouts and the dynamic History/Bookmarks
