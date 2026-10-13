@@ -2127,3 +2127,16 @@ Stopping here per the one-pass rule.
 [2026-10-13 08:13:03] merge run exited rc=0
 [2026-10-13 08:38:06] merge due: ui-work(1) — spawning devin merge run
 Starting merge run. First, checking repo state and fetching.Working tree has uncommitted changes — I'll be careful to stage only merge-resolution files. Checking lane status:`ui-work` is ahead by 1 commit. Inspecting what it touches before merging:`ui-work` touches `ChangeLog`, which is dirty in this tree. I'll attempt the merge — git will abort if the dirty state blocks it, in which case I skip this lane per the rules.[2026-10-13 08:38:59] merge run exited rc=0
+[2026-10-13 08:44:00] merge due: ui-work(1) — spawning devin merge run
+rust-work is even with master (skip). ui-work is 1 commit ahead — merging.Clear picture: master moved `ReaderButton` out of the location bar into the navigation toolbar (browsermainwindow), while ui-work (branched earlier) added `StopReloadButton` alongside the old reader button. Resolution: keep master's reader-button removal, keep ui-work's stop/reload button.Now verify no remaining conflict markers and check the merged cpp doesn't reference the removed reader button:Conflicts resolved. Staging the resolved files and completing the merge:Merge committed. Now building to verify:Build is running. Waiting for it to finish:Build succeeded (`arora` linked cleanly). Now appending the MERGEWATCH line and checking how previous runs handled it:Build ok. Following the established convention, I'll append the MERGEWATCH line to WORKLOG.md, commit it separately, then push:Merge run complete:
+
+- **rust-work**: 0 commits ahead — skipped.
+- **ui-work**: 1 commit ahead (`a02d366 NAVB01: drive stop/reload chrome off load lifecycle`) — merged as `49122c3`.
+  - Conflicts in `src/locationbar/locationbar.{h,cpp}`: master had removed `ReaderButton` from the bar (it now lives in the nav toolbar via `browsermainwindow`); resolved by keeping master's reader-button removal and keeping ui-work's new `m_stopReloadButton` member, initializer, and `setWebView` call.
+  - ChangeLog, WORKLOG, task tables auto-merged cleanly (union).
+- **Build**: `make -C src -j2` — clean, `arora` linked.
+- **Pushed**: `5d8083d..97d86b5 master -> master` (merge + worklog log-commit).
+- Dirty `mergewatch.log`/`taskloop.log` left untouched per rules.
+[2026-10-13 08:48:02] merge run exited rc=0
+[2026-10-13 09:13:04] merge due: ui-work(1) — spawning devin merge run
+Starting merge run. First, check the local tree state and fetch.Tree has dirty files (possible agent mid-run). Checking lane distances.Only `ui-work` is ahead (1 commit). Checking what it touches.The lane touches `ChangeLog`, which is dirty in this tree. Let me check the local changes before deciding.The lane modifies `ChangeLog`, which has uncommitted changes in this tree (agent mid-run). Trying the merge to confirm git refuses.[2026-10-13 09:13:43] merge run exited rc=0

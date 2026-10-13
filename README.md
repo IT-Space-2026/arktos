@@ -209,7 +209,9 @@ browsing profile:
   degraded co-engine — Tor windows stay Chromium-locked and private
   tabs refuse the swap. libservo currently supports one web view per
   process, so only one Servo tab can exist at a time; further swaps
-  are refused instead of crashing.
+  are refused instead of crashing, and a crash inside the engine
+  degrades that tab to an inert crash notice instead of taking the
+  browser down.
 - **Reader mode** (Ctrl+Alt+R) and **Picture-in-Picture** on videos.
 - **Command palette** — Ctrl+Shift+P fuzzy search over browser
   commands.

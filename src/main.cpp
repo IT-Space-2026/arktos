@@ -102,6 +102,12 @@
 // in no-rust builds too (ENG12).
 #include "enginetab.h"
 
+#ifdef ARORA_SERVO
+// ENG22: the panic-injection leg drives ServoView::spinOnce/isPoisoned
+// directly — Engine::Page has no such surface.
+#include "servobackend.h"
+#endif
+
 #include <QtCore/QBuffer>
 #include <QtCore/QCommandLineParser>
 #include <QtCore/QCryptographicHash>
@@ -3350,6 +3356,41 @@ static int servoLifecycleSmoke()
                        && tabs.engineTab(0) == engineTab);
             }
         }
+#ifdef ARORA_SERVO
+        // ENG20: panic containment — the reported abort was a Servo
+        // painter panic unwinding across the se_* extern boundary.
+        // ffi_guard now catches every export and poisons the instance;
+        // SE_SELFTEST_PANIC forces a panic inside se_spin so the real
+        // path is exercised: caught -> poisoned -> every later call a
+        // no-op, the app degrades to a dead tab instead of dying.  The
+        // leg runs last on the live instance — poisoning is permanent
+        // and a process only ever gets one SeInstance.
+        ServoView *servoView = engineTab && engineTab->page()
+            ? qobject_cast<ServoView *>(engineTab->page()->view())
+            : nullptr;
+        if (servoView) {
+            report(QStringLiteral("panic-pre-live"),
+                   servoView->isReady() && !servoView->isPoisoned());
+            qputenv("SE_SELFTEST_PANIC", "1");
+            servoView->spinOnce();  // panics in the shim — ffi_guard catches
+            qunsetenv("SE_SELFTEST_PANIC");
+            report(QStringLiteral("panic-contained"),
+                   servoView->isPoisoned());
+            // Every post-poison entry point must no-op instead of
+            // reaching incoherent servo state; the dead tab also paints
+            // its crash notice (grab drives paintEvent through the
+            // poisoned branch).  Reaching the report is the assert.
+            Engine::Page *page = engineTab->page();
+            engineTab->reload();
+            page->load(probe);
+            page->back();
+            page->setZoomFactor(1.3);
+            page->runJavaScript(QStringLiteral("1+1"));
+            pumpUntil([]() { return false; }, 500);
+            servoView->grab();
+            report(QStringLiteral("panic-survived"), true);
+        }
+#endif
         // (c) mid-tab backend switching stays stable: back to
         // webengine destroys the only ServoView, and a second
         // servo tab must be refused — not manufactured into an abort.
