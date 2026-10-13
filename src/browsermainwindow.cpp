@@ -121,6 +121,7 @@
 #include <qprinter.h>
 #include <qprinterinfo.h>
 #include <qscreen.h>
+#include <qset.h>
 #include <qsettings.h>
 #include <qstringconverter.h>
 #include <qmenubar.h>
@@ -1728,6 +1729,23 @@ void BrowserMainWindow::retranslate()
     updateStopReloadActionText(false);
 }
 
+// MENU08: sets `font` on `menu` and every submenu reachable through
+// its actions.  Popup windows never inherit a parent widget's font,
+// so styling a top-level menu leaves its flyouts on the default size
+// without the walk; `seen` keeps the shared QMenu objects (MENU06)
+// from being revisited.
+static void growMenuTreeFont(QMenu *menu, const QFont &font,
+                             QSet<QMenu *> *seen)
+{
+    if (!menu || seen->contains(menu))
+        return;
+    seen->insert(menu);
+    menu->setFont(font);
+    const QList<QAction *> actions = menu->actions();
+    for (QAction *action : actions)
+        growMenuTreeFont(action->menu(), font, seen);
+}
+
 void BrowserMainWindow::setupToolBar()
 {
     setUnifiedTitleAndToolBarOnMac(true);
@@ -1908,6 +1926,23 @@ void BrowserMainWindow::setupToolBar()
           << m_engineIndicatorHost->sizeHint().width()
           << (int)((double)splitterWidth * .20);
     m_navigationSplitter->setSizes(sizes);
+
+    // MENU08: bigger text under the Arora button — the dropdown and
+    // its whole submenu tree paint at ~120% of the platform menu font
+    // (MENU07's larger button pairs with a proportionally larger
+    // menu).  The QMenus are shared with the menubar, so an unhidden
+    // classic bar shows the same enlarged items — consistent either
+    // way — while the menubar row itself keeps the default size.
+    // Applied this late so the back/forward history flyouts created
+    // above are covered too; the flyouts ModelMenu builds lazily at
+    // aboutToShow copy their parent menu's font at creation.
+    QFont menuFont = m_appMenu->font();
+    if (menuFont.pointSizeF() > 0)
+        menuFont.setPointSizeF(menuFont.pointSizeF() * 1.2);
+    else if (menuFont.pixelSize() > 0)
+        menuFont.setPixelSize(qRound(menuFont.pixelSize() * 1.2));
+    QSet<QMenu *> menuTreeSeen;
+    growMenuTreeFont(m_appMenu, menuFont, &menuTreeSeen);
 
     applySearchBoxVisibility();
 }

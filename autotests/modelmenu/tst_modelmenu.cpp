@@ -249,6 +249,34 @@ void tst_ModelMenu::subMenus()
     QCOMPARE(sub->title(), QLatin1String("parent"));
     emit static_cast<QMenu *>(sub)->aboutToShow();
     QCOMPARE(sub->actions().count(), 2);
+
+    // MENU08: a submenu built lazily at aboutToShow copies the font
+    // of the menu it hangs off — popups never inherit it on their
+    // own, so the app menu's enlarged text would shed one level down.
+    // The chain propagates at every depth: the grandchild copies the
+    // submenu's font, not the app default.
+    QStandardItemModel deepModel;
+    QStandardItem *outer = new QStandardItem(QLatin1String("outer"));
+    QStandardItem *inner = new QStandardItem(QLatin1String("inner"));
+    inner->appendRow(new QStandardItem(QLatin1String("leaf")));
+    outer->appendRow(inner);
+    deepModel.appendRow(outer);
+    ModelMenu styled;
+    styled.setModel(&deepModel);
+    QFont bigFont = styled.font();
+    if (bigFont.pointSizeF() > 0)
+        bigFont.setPointSizeF(bigFont.pointSizeF() + 3);
+    else
+        bigFont.setPixelSize(bigFont.pixelSize() + 4);
+    styled.setFont(bigFont);
+    emit static_cast<QMenu *>(&styled)->aboutToShow();
+    QMenu *styledSub = styled.actions().first()->menu();
+    QVERIFY(styledSub);
+    QCOMPARE(styledSub->font(), bigFont);
+    emit static_cast<QMenu *>(styledSub)->aboutToShow();
+    QMenu *grandSub = styledSub->actions().first()->menu();
+    QVERIFY(grandSub);
+    QCOMPARE(grandSub->font(), bigFont);
 }
 
 // Triggering a generated action re-emits activated() with the index.

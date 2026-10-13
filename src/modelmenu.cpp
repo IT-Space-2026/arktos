@@ -254,6 +254,11 @@ void ModelMenu::createMenu(const QModelIndex &parent, int max, QMenu *parentMenu
 
         QString title = parent.data().toString();
         ModelMenu *modelMenu = createBaseMenu();
+        // MENU08: popup windows never inherit a parent widget's font,
+        // so a styled (e.g. enlarged) menu would shed its text size
+        // one level down — copy the font of the menu the submenu
+        // hangs off.
+        modelMenu->setFont(parentMenu->font());
         // triggered goes all the way up the menu structure
         disconnect(modelMenu, &QMenu::triggered,
                    modelMenu, &ModelMenu::actionTriggered);

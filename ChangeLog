@@ -604,6 +604,12 @@ UI:
   widths that still hold a past default migrate forward, a width you
   dragged to yourself is kept, and the edge drag and double-click
   reset work as before (TABS16).
+- Bigger text in the Arora app menu: the dropdown and its whole
+  submenu tree — File, Edit, View, History, Bookmarks, Window, Tools,
+  Help, including nested flyouts and the dynamic History/Bookmarks
+  entries — now render at ~120% of the platform menu font on every
+  window type (standard, private, Tor). If you bring back the classic
+  menubar it shows the same enlarged items (MENU08).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

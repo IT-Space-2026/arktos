@@ -617,6 +617,51 @@ void tst_BrowserMainWindow::appMenuButton()
         QCOMPARE(barMenus.at(i)->menu(),
                  appMenu->actions().at(i)->menu());
 
+    // MENU08: the dropdown paints ~120% of the platform menu font,
+    // and the growth reaches every shared top-level menu plus the
+    // nested flyouts already built at construction (File > New
+    // Container Tab, View > Text Encoding, History > Back's flyout).
+    // The menubar row itself keeps the default size.
+    QMenu plainMenu;
+    const QFont menuFont = appMenu->font();
+    if (menuFont.pointSizeF() > 0
+            && plainMenu.font().pointSizeF() > 0)
+        QVERIFY(menuFont.pointSizeF()
+                >= plainMenu.font().pointSizeF() * 1.15);
+    else
+        QVERIFY(menuFont.pixelSize() > plainMenu.font().pixelSize());
+    for (QAction *menuAction : appMenu->actions()) {
+        QMenu *sub = menuAction->menu();
+        QCOMPARE(sub->font(), menuFont);
+        for (QAction *innerAction : sub->actions())
+            if (QMenu *nested = innerAction->menu())
+                QCOMPARE(nested->font(), menuFont);
+    }
+    if (menuFont.pointSizeF() > 0
+            && window->menuBar()->font().pointSizeF() > 0)
+        QVERIFY(window->menuBar()->font().pointSizeF()
+                < menuFont.pointSizeF());
+
+    // Offscreen grabs for visual review — set ARORA_MENU_GRAB_DIR to
+    // a directory and the open dropdown + File submenu land there;
+    // the tor leg below adds app-menu-tor.png.
+    const QByteArray menuGrabDir = qgetenv("ARORA_MENU_GRAB_DIR");
+    if (!menuGrabDir.isEmpty()) {
+        QDir().mkpath(QString::fromLocal8Bit(menuGrabDir));
+        appMenu->popup(button->mapToGlobal(
+            QPoint(0, button->height())));
+        QApplication::processEvents();
+        appMenu->grab().save(QString::fromLocal8Bit(menuGrabDir)
+                             + QLatin1String("/app-menu.png"));
+        appMenu->hide();
+        QMenu *fileMenu = appMenu->actions().first()->menu();
+        fileMenu->popup(QPoint(80, 80));
+        QApplication::processEvents();
+        fileMenu->grab().save(QString::fromLocal8Bit(menuGrabDir)
+                              + QLatin1String("/app-menu-file.png"));
+        fileMenu->hide();
+    }
+
     // The menubar is hidden by default; the toggle rides in the
     // dropdown's View submenu and restores the classic bar.
     QVERIFY(!window->menuBar()->isVisible());
@@ -677,12 +722,17 @@ void tst_BrowserMainWindow::appMenuButton()
         && privateButton->iconSize() == QSize(28, 28);
     const bool privateBarHidden =
         !privateWindow->menuBar()->isVisible();
+    // MENU08: and the same enlarged menu text.
+    const bool privateMenuFont = privateButton
+        && privateButton->menu()
+        && privateButton->menu()->font() == menuFont;
     closeWindow(privateWindow);
     BrowserApplication::setPrivate(false);
     QVERIFY(privateButton);
     QVERIFY(privateMenuFull);
     QVERIFY(privateBigIcon);
     QVERIFY(privateBarHidden);
+    QVERIFY(privateMenuFont);
 
     // Tor window — collect state first so a mid-leg failure cannot
     // leave tor mode armed.  The violet menu row is the drawn
@@ -701,6 +751,18 @@ void tst_BrowserMainWindow::appMenuButton()
         ? torWindow->appMenu()->actions().count() : -1;
     const bool torBigIcon = torButton
         && torButton->iconSize() == QSize(28, 28);
+    // MENU08: the violet window's dropdown is enlarged identically —
+    // tor only re-colors the bar, menus stay on the palette + font.
+    const QFont torMenuFont = torWindow->appMenu()
+        ? torWindow->appMenu()->font() : QFont();
+    if (!menuGrabDir.isEmpty() && torWindow->appMenu()) {
+        torWindow->appMenu()->popup(QPoint(120, 120));
+        QApplication::processEvents();
+        torWindow->appMenu()->grab().save(
+            QString::fromLocal8Bit(menuGrabDir)
+            + QLatin1String("/app-menu-tor.png"));
+        torWindow->appMenu()->hide();
+    }
     // Grabbed-pixel proof the "Arora" label reads light on violet.
     int lightPixels = 0;
     if (torButton) {
@@ -725,6 +787,7 @@ void tst_BrowserMainWindow::appMenuButton()
     BrowserApplication::setTorMode(false);
     QVERIFY(torButton);
     QVERIFY(torBigIcon);
+    QCOMPARE(torMenuFont, menuFont);
     QVERIFY(torRowVisible);
     QVERIFY(torRowBare);
     QCOMPARE(torMenuCount, 8);
