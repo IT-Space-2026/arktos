@@ -27,10 +27,13 @@
 //!     response.mimeType / statusText / encodedDataLength (DEVT06),
 //!     and — DEVT07 — response.fromDiskCache / fromServiceWorker /
 //!     fromPrefetchCache + response.timing (raw, the waterfall reads
-//!     receiveHeadersEnd), plus browsingContext.domContentLoaded /
-//!     .load translated from Page.domContentEventFired / loadEventFired
-//!     so the summary footer can show Chrome's DOMContentLoaded/Load
-//!     milestone times.
+//!     receiveHeadersEnd), responseCompleted.decodedDataLength
+//!     (uncompressed body bytes summed from Network.dataReceived chunks
+//!     bridge-side — the per-chunk events never reach the panel), plus
+//!     browsingContext.domContentLoaded / .load translated from
+//!     Page.domContentEventFired / loadEventFired so the summary footer
+//!     can show Chrome's DOMContentLoaded/Load milestone times
+//!     (Page.enable rides the browsingContext subscription).
 //!
 //! Transport: RFC 6455 client over a blocking TcpStream — Chromium's
 //! devtools endpoint is loopback-only and gated by a per-session
@@ -398,6 +401,10 @@ struct State {
     attaching: HashMap<String, Vec<FollowUp>>,
     /// Global "Disable cache" — re-applied to every session on attach.
     cache_disabled: bool,
+    /// requestId -> decoded body bytes seen so far (DEVT07).  The sum
+    /// rides loadingFinished as decodedDataLength; per-chunk
+    /// Network.dataReceived events never reach the panel.
+    decoded_bytes: HashMap<String, i64>,
 }
 
 impl Core {
@@ -1041,10 +1048,38 @@ impl Core {
                     }),
                 );
             }
+            "Network.dataReceived" => {
+                // Per-chunk events stay bridge-side — the panel only
+                // needs the decoded-byte total once, attached to the
+                // completion (DEVT07's "resources" footer figure).
+                if !subscribed("network") {
+                    return;
+                }
+                if let Some(id) = params["requestId"].as_str() {
+                    let n = params["dataLength"].as_i64().unwrap_or(0);
+                    if n > 0 {
+                        let mut st =
+                            self.state.lock().unwrap_or_else(|e| e.into_inner());
+                        if st.decoded_bytes.len() < 8192
+                            || st.decoded_bytes.contains_key(id)
+                        {
+                            *st.decoded_bytes.entry(id.to_string()).or_insert(0) +=
+                                n;
+                        }
+                    }
+                }
+            }
             "Network.loadingFinished" => {
                 if !subscribed("network") {
                     return;
                 }
+                let decoded = params["requestId"].as_str().and_then(|id| {
+                    self.state
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .decoded_bytes
+                        .remove(id)
+                });
                 self.event(
                     "network.responseCompleted",
                     json!({
@@ -1053,6 +1088,7 @@ impl Core {
                         "request": { "request": params["requestId"] },
                         "response": {
                             "encodedDataLength": params["encodedDataLength"],
+                            "decodedDataLength": decoded,
                         },
                     }),
                 );
@@ -1076,6 +1112,13 @@ impl Core {
                 if !subscribed("network") {
                     return;
                 }
+                if let Some(id) = params["requestId"].as_str() {
+                    self.state
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .decoded_bytes
+                        .remove(id);
+                }
                 self.event(
                     "network.fetchError",
                     json!({
@@ -1090,7 +1133,9 @@ impl Core {
             "Page.domContentEventFired" | "Page.loadEventFired" => {
                 // DEVT07: BiDi carries these as browsingContext
                 // milestones — the panel's summary footer shows
-                // Chrome's DOMContentLoaded / Load times.
+                // Chrome's DOMContentLoaded / Load times.  Same CDP
+                // MonotonicTime clock as the network events, so they
+                // subtract cleanly off the waterfall's window start.
                 if !subscribed("browsingContext") {
                     return;
                 }
@@ -1971,6 +2016,8 @@ mod tests {
             "Network.enable",
             "Log.enable",
             "Runtime.enable",
+            // DEVT07: the browsingContext group also arms Page for the
+            // footer's DOMContentLoaded/Load timings.
             "Page.enable",
         ] {
             assert!(methods.iter().any(|m| m == want), "{methods:?}");
@@ -2369,6 +2416,72 @@ mod tests {
         }));
         let e = events_named(&got, "network.beforeRequestSent");
         assert!(e[1].contains("\"context\":null"), "{e:?}");
+
+        // DEVT07: decoded body bytes accumulate bridge-side per
+        // requestId and ride the completion once — the per-chunk
+        // dataReceived events never reach the panel.
+        core.on_message(&json!({
+            "method": "Network.dataReceived", "sessionId": "S2",
+            "params": {"requestId": "r1", "dataLength": 3000,
+                "encodedDataLength": 1900}
+        }));
+        core.on_message(&json!({
+            "method": "Network.dataReceived", "sessionId": "S2",
+            "params": {"requestId": "r1", "dataLength": 2500}
+        }));
+        assert!(events_named(&got, "network.dataReceived").is_empty());
+        core.on_message(&json!({
+            "method": "Network.loadingFinished", "sessionId": "S2",
+            "params": {"requestId": "r1", "timestamp": 13.1,
+                "encodedDataLength": 4096}
+        }));
+        let e = events_named(&got, "network.responseCompleted");
+        assert!(e[1].contains("\"decodedDataLength\":5500"), "{e:?}");
+        // A request with no chunks reports null, and a failed request
+        // drops its accumulated bytes.
+        core.on_message(&json!({
+            "method": "Network.dataReceived", "sessionId": "S2",
+            "params": {"requestId": "r2", "dataLength": 999}
+        }));
+        core.on_message(&json!({
+            "method": "Network.loadingFailed", "sessionId": "S2",
+            "params": {"requestId": "r2", "errorText": "x", "timestamp": 13.2}
+        }));
+        core.on_message(&json!({
+            "method": "Network.loadingFinished", "sessionId": "S2",
+            "params": {"requestId": "r2", "timestamp": 13.3}
+        }));
+        let e = events_named(&got, "network.responseCompleted");
+        assert!(e[2].contains("\"decodedDataLength\":null"), "{e:?}");
+
+        // Page lifecycle timings ride the browsingContext group on the
+        // same monotonic clock as the network events.
+        core.on_message(&json!({
+            "method": "Page.domContentEventFired", "sessionId": "S2",
+            "params": {"timestamp": 12.8}
+        }));
+        let e = events_named(&got, "browsingContext.domContentLoaded");
+        assert_eq!(e.len(), 1);
+        assert!(e[0].contains("\"timestamp\":12800.0")
+            && e[0].contains("\"context\":\"T2\""), "{e:?}");
+        core.on_message(&json!({
+            "method": "Page.loadEventFired", "sessionId": "S2",
+            "params": {"timestamp": 13.4}
+        }));
+        let e = events_named(&got, "browsingContext.load");
+        assert_eq!(e.len(), 1);
+        assert!(e[0].contains("\"timestamp\":13400.0"), "{e:?}");
+
+        // Cache flags ride responseStarted so the Size column can mark
+        // cache-served rows honestly.
+        core.on_message(&json!({
+            "method": "Network.responseReceived", "sessionId": "S2",
+            "params": {"requestId": "r1c", "timestamp": 13.5, "type": "Image",
+                "response": {"url": "http://c/p.png", "status": 200,
+                    "fromDiskCache": true}}
+        }));
+        let e = events_named(&got, "network.responseStarted");
+        assert!(e.last().unwrap().contains("\"fromDiskCache\":true"), "{e:?}");
 
         // console args prefer .value, then .description, then the type
         // name; non-string values serialize.

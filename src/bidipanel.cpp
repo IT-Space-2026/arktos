@@ -224,7 +224,8 @@ public:
         StateRole,
         UrlRole,
         CacheRole,
-        TtfbRole
+        TtfbRole,
+        DecodedRole
     };
     struct Row {
         QString requestId, url, name, type, initiator, errorText;
@@ -233,6 +234,11 @@ public:
         int state = Pending;
         int cacheKind = CacheNone;
         qint64 size = -1;
+        // DEVT07: uncompressed body bytes (the footer's "resources"
+        // figure) and the cache-served flag the Size column marks
+        // "(cached)" for instead of a misleading "0 B".
+        qint64 decodedSize = -1;
+        bool cached = false;
         double startMs = -1.0;
         double endMs = -1.0;
         // Time-to-first-byte as an offset from startMs (CDP
@@ -303,6 +309,10 @@ public:
                 case CachePrefetch: return tr("(prefetch cache)");
                 default: break;
                 }
+                // Cache-served rows report 0 wire bytes — show the
+                // honest marker like Chrome instead of "0 B".
+                if (row.cached && row.size <= 0)
+                    return tr("(cached)");
                 return formatBytes(row.size);
             case TimeColumn:
                 return row.endMs >= 0.0 && row.startMs >= 0.0
@@ -347,6 +357,7 @@ public:
         case UrlRole: return row.url;
         case CacheRole: return row.cacheKind;
         case TtfbRole: return row.ttfbMs;
+        case DecodedRole: return row.decodedSize;
         }
         return QVariant();
     }
@@ -593,6 +604,7 @@ BidiPanel::BidiPanel(QWidget *parent)
     : QWidget(parent)
     , m_client(new BidiClient(this))
     , m_nextTag(10)
+    , m_loadMs(-1.0)
 {
     // SIDE05: plain dock content — the surrounding m_bidiPanelDock
     // owns the "bidiPanelDock" objectName, the title bar, and the
@@ -735,6 +747,7 @@ BidiPanel::BidiPanel(QWidget *parent)
     for (int c = 0; c < BidiNetworkModel::ColumnCount; ++c)
         netHead->resizeSection(c, kNetColumnWidth[c]);
     netHead->setStretchLastSection(false);
+    netHead->setMinimumSectionSize(50);
     m_networkView->setHorizontalScrollMode(
         QAbstractItemView::ScrollPerPixel);
     m_networkView->viewport()->installEventFilter(this);
@@ -756,10 +769,9 @@ BidiPanel::BidiPanel(QWidget *parent)
             static_cast<BidiNetworkModel *>(m_networkModel),
             m_networkView));
     nv->addWidget(m_networkView);
-
     // DEVT07: Chrome's bottom line — "N requests · X kB transferred ·
-    // Finish: T · DOMContentLoaded: T · Load: T", tracking the
-    // filtered row set.
+    // X kB resources · Finish: T · DOMContentLoaded: T · Load: T",
+    // tracking the filtered row set.
     m_networkSummary = new QLabel;
     m_networkSummary->setObjectName(QLatin1String("bidiNetworkSummary"));
     m_networkSummary->setStyleSheet(QStringLiteral(
@@ -843,7 +855,9 @@ BidiPanel::BidiPanel(QWidget *parent)
     connect(m_disableCache, &QCheckBox::toggled,
             this, [this](bool) { sendCacheBehavior(); });
     // The footer follows the FILTERED row set — proxy signals already
-    // aggregate model inserts/removes/resets/edits and re-slices.
+    // aggregate model inserts/removes/resets/edits and re-slices;
+    // layoutChanged covers proxy re-slices and the source model's
+    // dataChanged catches in-place value edits.
     connect(m_networkProxy, &QAbstractItemModel::rowsInserted,
             this, [this] { updateNetworkSummary(); });
     connect(m_networkProxy, &QAbstractItemModel::rowsRemoved,
@@ -851,6 +865,10 @@ BidiPanel::BidiPanel(QWidget *parent)
     connect(m_networkProxy, &QAbstractItemModel::modelReset,
             this, [this] { updateNetworkSummary(); });
     connect(m_networkProxy, &QAbstractItemModel::dataChanged,
+            this, [this] { updateNetworkSummary(); });
+    connect(m_networkProxy, &QAbstractItemModel::layoutChanged,
+            this, [this] { updateNetworkSummary(); });
+    connect(m_networkModel, &QAbstractItemModel::dataChanged,
             this, [this] { updateNetworkSummary(); });
     updateNetworkSummary();
     // The model trims at 1000 rows — rebase requestId -> row so late
@@ -1005,11 +1023,14 @@ void BidiPanel::fitNetworkColumns()
 // DEVT07: Chrome's summary line — counts and bytes track the filtered
 // (visible) rows; Finish is the last completion of that set, and
 // DOMContentLoaded/Load ride the Page-domain milestones when the
-// engine emits them.
+// engine emits them.  The "resources" figure sums the bridge's
+// decoded (uncompressed) byte totals, falling back to wire size for
+// rows that never reported chunks.
 void BidiPanel::updateNetworkSummary()
 {
     const int rows = m_networkProxy->rowCount();
     qint64 bytes = 0;
+    qint64 resources = 0;
     double firstStart = -1.0;
     double lastEnd = -1.0;
     for (int r = 0; r < rows; ++r) {
@@ -1017,8 +1038,11 @@ void BidiPanel::updateNetworkSummary()
             m_networkProxy->index(r, BidiNetworkModel::NameColumn);
         const qint64 size = cell.data(BidiNetworkModel::SizeRole)
                                 .toLongLong();
+        const qint64 decoded = cell.data(BidiNetworkModel::DecodedRole)
+                                   .toLongLong();
         if (size > 0)
             bytes += size;
+        resources += decoded >= 0 ? decoded : qMax<qint64>(size, 0);
         const double s = cell.data(BidiNetworkModel::StartRole)
                              .toDouble();
         const double e = cell.data(BidiNetworkModel::EndRole)
@@ -1033,7 +1057,9 @@ void BidiPanel::updateNetworkSummary()
     QString text = (rows == 1 ? tr("1 request")
                               : tr("%1 requests").arg(rows))
         + QStringLiteral(" · ")
-        + tr("%1 transferred").arg(formatBytes(bytes));
+        + tr("%1 transferred").arg(formatBytes(bytes))
+        + QStringLiteral(" · ")
+        + tr("%1 resources").arg(formatBytes(resources));
     if (firstStart >= 0.0 && lastEnd >= firstStart)
         text += tr(" · Finish: %1")
                     .arg(formatMillis(lastEnd - firstStart));
@@ -1041,10 +1067,10 @@ void BidiPanel::updateNetworkSummary()
     // (navigation), matching how Chrome reports them.
     const double epoch = static_cast<BidiNetworkModel *>(m_networkModel)
         ->windowStart();
-    if (m_dclMs >= 0.0 && epoch >= 0.0)
+    if (m_dclMs >= 0.0 && epoch >= 0.0 && m_dclMs >= epoch)
         text += tr(" · DOMContentLoaded: %1")
                     .arg(formatMillis(m_dclMs - epoch));
-    if (m_loadMs >= 0.0 && epoch >= 0.0)
+    if (m_loadMs >= 0.0 && epoch >= 0.0 && m_loadMs >= epoch)
         text += tr(" · Load: %1").arg(formatMillis(m_loadMs - epoch));
     m_networkSummary->setText(text);
 }
@@ -1296,13 +1322,14 @@ void BidiPanel::onEvent(const QByteArray &json)
     if (method == QLatin1String("browsingContext.navigationStarted")) {
         if (params[QStringLiteral("context")].toString()
             == currentContext()) {
+            // The footer's DOMContentLoaded/Load milestones belong to
+            // the page that just navigated away — a fresh load owns
+            // fresh timings regardless of Preserve log keeping rows.
+            m_dclMs = m_loadMs = -1.0;
             // Chrome clears the request log on navigation unless
             // Preserve log is ticked.
             if (!m_preserveLog->isChecked())
                 clearNetworkLog();
-            // The footer's DOMContentLoaded/Load milestones belong to
-            // the page that just navigated away.
-            m_dclMs = m_loadMs = -1.0;
             refreshDom();
             updateNetworkSummary();
         }
@@ -1398,6 +1425,16 @@ void BidiPanel::onEvent(const QByteArray &json)
             data->type = type;
             data->bucket = netBucketFor(type);
         }
+        // DEVT07: the response's own encodedDataLength is the wire
+        // bytes so far — an honest interim Size while the body loads.
+        const double partial =
+            resp[QStringLiteral("encodedDataLength")].toDouble(-1.0);
+        if (partial >= 0.0)
+            data->size = qint64(partial);
+        if (resp[QStringLiteral("fromDiskCache")].toBool()
+            || resp[QStringLiteral("fromPrefetchCache")].toBool()
+            || resp[QStringLiteral("fromServiceWorker")].toBool())
+            data->cached = true;
         model->rowChanged(row);
     } else if (method
                == QLatin1String("network.requestServedFromCache")) {
@@ -1407,11 +1444,16 @@ void BidiPanel::onEvent(const QByteArray &json)
     } else if (method == QLatin1String("network.responseCompleted")) {
         data->state = BidiNetworkModel::Finished;
         data->endMs = ts;
-        const double size = params[QStringLiteral("response")]
-                                .toObject()[QStringLiteral("encodedDataLength")]
+        const QJsonObject resp =
+            params[QStringLiteral("response")].toObject();
+        const double size = resp[QStringLiteral("encodedDataLength")]
                                 .toDouble(-1.0);
         if (size >= 0.0)
             data->size = qint64(size);
+        const double decoded =
+            resp[QStringLiteral("decodedDataLength")].toDouble(-1.0);
+        if (decoded >= 0.0)
+            data->decodedSize = qint64(decoded);
         model->rowChanged(row);
     } else if (method == QLatin1String("network.fetchError")) {
         data->state = BidiNetworkModel::Failed;
