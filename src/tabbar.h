@@ -65,9 +65,12 @@
 
 #include <qtabbar.h>
 
+#include <qpointer.h>
+
 #include "containermanager.h"
 #include "tabwidget.h"
 
+class QLineEdit;
 class QTimer;
 class QPainter;
 class TabPreview;
@@ -159,6 +162,13 @@ public:
     void reloadIconOnlyTabs();
     QAction *iconOnlyTabsAction() const;
 
+    // TABS12: the inline rename editor — a QLineEdit laid over the
+    // tab's rect.  Double-click on a row or the context menu's
+    // "Rename Tab..." opens it; Enter/focus-out commits through
+    // TabWidget::setTabTitleOverride (an empty commit clears the
+    // override), Esc cancels.
+    void editTabTitle(int index);
+
     // CONT06: the level-1 container-header band painted along the
     // strip's top edge when the TabWidget's two-level mode has more
     // than one container owning tabs.  The band is real height on the
@@ -183,6 +193,7 @@ protected:
     void paintEvent(QPaintEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
     void initStyleOption(QStyleOptionTab *option, int tabIndex) const override;
     QSize tabSizeHint(int index) const override;
     QSize minimumTabSizeHint(int index) const override;
@@ -203,6 +214,10 @@ private slots:
 
 private:
     void updateVisibility();
+    // TABS12: one editor at a time — finishTabTitleEdit() commits or
+    // drops it; m_editPage carries the tab's page widget so a mid-edit
+    // strip shuffle still lands the rename on the right tab.
+    void finishTabTitleEdit(bool commit);
     QTabBar::ButtonPosition closeButtonSide() const;
     void installCloseButton(int index);
     void updateHoveredTab(const QPoint &pos);
@@ -309,6 +324,9 @@ private:
     int m_bandFocusHeader = -1;
     int m_moveDragMouseX = 0;
     int m_moveDragGrabOffsetX = 0;
+    // TABS12: the live rename editor + the page widget it renames.
+    QPointer<QLineEdit> m_titleEditor;
+    QPointer<QWidget> m_editPage;
 };
 
 

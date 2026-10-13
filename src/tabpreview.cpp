@@ -104,9 +104,9 @@ void TabPreview::previewTab(int index)
 
     WebView *view = tabWidget->webView(index);
     const QString url = view ? view->url().toString() : QString();
-    QString title = view ? view->title() : QString();
-    if (title.isEmpty())
-        title = m_bar->tabText(index);
+    // TABS12: the display title is override-aware — a renamed tab's
+    // card header shows the custom title like the strip does.
+    QString title = tabWidget->tabDisplayTitle(index);
     if (title.isEmpty())
         title = url.isEmpty() ? tr("New Tab") : url;
 

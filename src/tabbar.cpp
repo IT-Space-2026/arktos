@@ -451,6 +451,12 @@ void TabBar::contextMenuRequested(const QPoint &position)
                                     !tabWidget->isTabPinned(index));
         });
 
+        // TABS12: rename — the same inline editor double-click opens;
+        // committing empty text clears the override and the live page
+        // title returns.
+        menu.addAction(tr("Re&name Tab..."), this,
+                       [this, index]() { editTabTitle(index); });
+
         // CONT02: "Reopen in Container" moves the tab's page onto
         // another container's profile.  Off-the-record tabs hide the
         // submenu — a private tab (window-global or PTAB01's per-tab
@@ -716,8 +722,14 @@ void TabBar::mouseDoubleClickEvent(QMouseEvent *event)
         persistStripSize();
         return;
     }
-    if (event->button() == Qt::LeftButton
-        && tabAt(stripPos(event->position().toPoint())) == -1) {
+    if (event->button() == Qt::LeftButton) {
+        const int index = tabAt(stripPos(event->position().toPoint()));
+        // TABS12: double-click on a tab row opens the inline rename
+        // editor; the empty strip keeps its new-tab shortcut.
+        if (index >= 0) {
+            editTabTitle(index);
+            return;
+        }
         // CONT06: double-clicking the header band is not "empty
         // strip" — a click there does not spawn a tab.
         if (containerStripHeight() <= 0
@@ -2493,6 +2505,69 @@ void TabBar::reloadTab()
     }
 }
 
+// TABS12: the inline rename editor — a QLineEdit parented to the bar
+// and laid over the tab's rect.  tabRect() is strip space: when the
+// CONT06 level-1 band is up the tab rows sit containerStripHeight()
+// pixels lower in the widget, so the editor shifts by the same amount.
+void TabBar::editTabTitle(int index)
+{
+    TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
+    if (!tabWidget || index < 0 || index >= count())
+        return;
+    finishTabTitleEdit(false);   // one editor at a time
+    QLineEdit *editor = new QLineEdit(this);
+    editor->setObjectName(QLatin1String("tabTitleEditor"));
+    editor->setText(tabWidget->tabDisplayTitle(index));
+    editor->selectAll();
+    QRect rect = tabRect(index).adjusted(2, 0, -2, 0);
+    rect.translate(0, containerStripHeight());
+    editor->setGeometry(rect);
+    m_titleEditor = editor;
+    m_editPage = tabWidget->widget(index);
+    editor->installEventFilter(this);
+    // editingFinished fires on Enter AND on focus-out — both commit.
+    connect(editor, &QLineEdit::editingFinished,
+            this, [this]() { finishTabTitleEdit(true); });
+    editor->show();
+    editor->setFocus(Qt::OtherFocusReason);
+}
+
+void TabBar::finishTabTitleEdit(bool commit)
+{
+    QLineEdit *editor = m_titleEditor;
+    if (!editor)
+        return;
+    m_titleEditor = nullptr;
+    QWidget *page = m_editPage;
+    m_editPage = nullptr;
+    const QString text = editor->text();
+    editor->removeEventFilter(this);
+    editor->deleteLater();
+    if (!commit)
+        return;
+    TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
+    if (!tabWidget || !page)
+        return;
+    // Resolve the slot at commit time — a mid-edit drag or reorder
+    // may have moved the tab.
+    const int index = tabWidget->indexOf(page);
+    if (index >= 0)
+        tabWidget->setTabTitleOverride(index, text);
+}
+
+bool TabBar::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == m_titleEditor
+        && event->type() == QEvent::KeyPress) {
+        QKeyEvent *keyEvent = static_cast<QKeyEvent*>(event);
+        if (keyEvent->key() == Qt::Key_Escape) {
+            finishTabTitleEdit(false);
+            return true;
+        }
+    }
+    return QTabBar::eventFilter(watched, event);
+}
+
 void TabBar::tabInserted(int position)
 {
     if (m_perTabCloseButtons)
@@ -2509,6 +2584,9 @@ void TabBar::tabRemoved(int position)
     // over now that the tab under it may be a different one.
     m_hoveredTab = -1;
     updateHoveredTab(stripPos(mapFromGlobal(QCursor::pos())));
+    // TABS12: the strip re-lays out after a removal — drop a live
+    // rename editor rather than leave it floating over the wrong row.
+    finishTabTitleEdit(false);
     updateAccessibleStrip();
     updateCloseButtonVisibility();
     updateVisibility();

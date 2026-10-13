@@ -114,6 +114,7 @@ private slots:
     void tabSlotDrive();
     void newTabStartPage();
     void lazySessionRestore();
+    void renameTab();
 };
 
 // Subclass that exposes the protected functions.
@@ -2484,6 +2485,282 @@ void tst_TabWidget::lazySessionRestore()
 
     settings.remove(QLatin1String("performance/lazyRestoreTabs"));
     settings.remove(QLatin1String("performance/alwaysLoadPinnedTabs"));
+}
+
+// TABS12: rename — a per-tab custom title that replaces the page
+// title on the strip, tooltip, window-title emit and hover preview;
+// survives pin/group/container/undo-close churn; round-trips through
+// the v6 session tail; the dblclick inline editor + context-menu
+// entry commit on Enter (focus-out shares the same signal) and cancel
+// on Esc; an empty commit clears the override.
+void tst_TabWidget::renameTab()
+{
+    SubTabWidget widget;
+    widget.newTab();
+    widget.newTab();
+    QCOMPARE(widget.count(), 2);
+    WebView *v0 = widget.webView(0);
+    WebView *v1 = widget.webView(1);
+    QVERIFY(v0 && v1);
+
+    const QUrl u1("data:text/html,<title>Page One</title>");
+    widget.setCurrentIndex(0);          // newTab() selects each tab
+    widget.loadUrl(u1, TabWidget::CurrentTab);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        v0->title() == QLatin1String("Page One"), 15000);
+    QCOMPARE(widget.tabText(0), QLatin1String("Page One"));
+    QCOMPARE(widget.tabTitleOverride(0), QString());
+    QCOMPARE(widget.tabDisplayTitle(0), QLatin1String("Page One"));
+
+    // The override replaces the page title; the stored value is raw
+    // while the strip text is mnemonic-escaped like any page title.
+    widget.setTabTitleOverride(0, QLatin1String("My & Tab"));
+    QCOMPARE(widget.tabTitleOverride(0), QLatin1String("My & Tab"));
+    QCOMPARE(widget.tabDisplayTitle(0), QLatin1String("My & Tab"));
+    QCOMPARE(widget.tabText(0), QLatin1String("My && Tab"));
+    QVERIFY(widget.tabToolTip(0).contains(QLatin1String("&amp;")));
+
+    // A later page title must not clobber the override — the page's
+    // titleChanged lands on the same applyTabTitle path the rename
+    // used, and the override wins there.
+    const QUrl u2("data:text/html,<title>Page Two</title>");
+    widget.loadUrl(u2, TabWidget::CurrentTab);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        v0->title() == QLatin1String("Page Two"), 15000);
+    QCOMPARE(widget.tabText(0), QLatin1String("My && Tab"));
+
+    // Whitespace/empty clears the override and the live title returns.
+    widget.setTabTitleOverride(0, QLatin1String("   "));
+    QCOMPARE(widget.tabTitleOverride(0), QString());
+    QCOMPARE(widget.tabText(0), QLatin1String("Page Two"));
+
+    // Group collapse detaches the tab's page widget; expand reinserts
+    // it — the keyed override rides both ways.
+    widget.setTabTitleOverride(1, QLatin1String("Hide Me"));
+    const QString gid = widget.createTabGroup(0);
+    widget.addTabToGroup(1, gid);
+    widget.setTabGroupCollapsed(gid, true);
+    QCOMPARE(widget.count(), 1);
+    widget.setTabGroupCollapsed(gid, false);
+    QCOMPARE(widget.count(), 2);
+    QCOMPARE(widget.webView(1), v1);
+    QCOMPARE(widget.tabTitleOverride(1), QLatin1String("Hide Me"));
+    QCOMPARE(widget.tabText(1), QLatin1String("Hide Me"));
+    widget.ungroupTabs(gid);
+
+    // Pin/unpin keeps it too (the override is page-widget keyed, the
+    // same identity the pin flag uses).
+    widget.setTabTitleOverride(0, QLatin1String("My & Tab"));
+    widget.setTabPinned(0, true);
+    QCOMPARE(widget.tabTitleOverride(0), QLatin1String("My & Tab"));
+    widget.setTabPinned(0, false);
+
+    // Undo-close carries the rename — the record snapshots it and the
+    // restore re-keys it onto the replacement page.
+    const QUrl undoUrl("data:text/plain,renamed-second");
+    v1->loadUrl(undoUrl);
+    QTRY_COMPARE_WITH_TIMEOUT(v1->url(), undoUrl, 15000);
+    widget.closeTab(1);
+    widget.openLastTab();
+    int reopened = -1;
+    for (int i = 0; i < widget.count(); ++i) {
+        if (widget.tabTitleOverride(i) == QLatin1String("Hide Me"))
+            reopened = i;
+    }
+    QVERIFY(reopened >= 0);
+    QCOMPARE(widget.tabText(reopened), QLatin1String("Hide Me"));
+
+    // Reopen-in-container swaps the page widget — the override
+    // re-keys onto the replacement.
+    ContainerManager *manager = ContainerManager::instance();
+    const QString cid = manager->createContainer(
+        QLatin1String("RenameTest"), QColor(Qt::green)).id;
+    QVERIFY(!cid.isEmpty());
+    widget.reopenTabInContainer(reopened, cid);
+    int containerIdx = -1;
+    for (int i = 0; i < widget.count(); ++i) {
+        if (widget.containerIdForTab(i) == cid)
+            containerIdx = i;
+    }
+    QVERIFY(containerIdx >= 0);
+    QCOMPARE(widget.tabTitleOverride(containerIdx),
+             QLatin1String("Hide Me"));
+    QCOMPARE(widget.tabText(containerIdx), QLatin1String("Hide Me"));
+
+    // Close the container tab and delete the container (the deferred
+    // view teardown must land before the one-shot deleteContainer).
+    {
+        QSignalSpy viewDied(widget.webView(containerIdx),
+                            &QObject::destroyed);
+        widget.closeTab(containerIdx);
+        QTRY_VERIFY_WITH_TIMEOUT(viewDied.count() == 1, 5000);
+    }
+    QVERIFY(manager->deleteContainer(cid));
+
+    // Session v6: the title tail round-trips the override, and the
+    // restored page's own title never clobbers it.
+    widget.setTabTitleOverride(0, QLatin1String("Saved Name"));
+    const QByteArray state = widget.saveState();
+    {
+        SubTabWidget w2;
+        QVERIFY(w2.restoreState(state));
+        int saved = -1;
+        for (int i = 0; i < w2.count(); ++i) {
+            if (w2.tabTitleOverride(i) == QLatin1String("Saved Name"))
+                saved = i;
+        }
+        QVERIFY(saved >= 0);
+        QCOMPARE(w2.tabText(saved), QLatin1String("Saved Name"));
+        QTRY_VERIFY_WITH_TIMEOUT(
+            w2.webView(saved)->title() == QLatin1String("Page Two"),
+            15000);
+        QCOMPARE(w2.tabText(saved), QLatin1String("Saved Name"));
+        while (w2.count() > 0)
+            w2.closeTab(w2.count() - 1);
+    }
+    // A v5-era blob (no title tail) restores without overrides.
+    {
+        QByteArray v5blob;
+        QDataStream out(&v5blob, QIODevice::WriteOnly);
+        out << qint32(0xaa) << qint32(5)
+            << (QStringList() << QStringLiteral("data:text/plain,v5"))
+            << qint32(0)
+            << (QList<QByteArray>() << QByteArray())
+            << (QStringList() << QString())
+            << (QStringList() << QString())
+            << qint32(0)
+            << QString()
+            << (QList<qint32>() << 0);
+        SubTabWidget w3;
+        QVERIFY(w3.restoreState(v5blob));
+        QCOMPARE(w3.count(), 1);
+        QCOMPARE(w3.tabTitleOverride(0), QString());
+        while (w3.count() > 0)
+            w3.closeTab(w3.count() - 1);
+    }
+
+    // Inline editor: double-click on a row opens a QLineEdit over the
+    // tab rect — Enter commits, Esc cancels.  (Focus-out commits too:
+    // it shares QLineEdit::editingFinished with Enter.)  The prefill
+    // is the current display title — set one up front so it is not
+    // racing the start page's own title load.
+    widget.newTab();
+    QCOMPARE(widget.count(), 2);
+    widget.setTabTitleOverride(1, QLatin1String("Before Edit"));
+    widget.resize(720, 480);
+    widget.show();
+    QApplication::processEvents();
+    TabBar *bar = widget.bar();
+    const QPoint rowPos = bar->tabRect(1).center()
+        + QPoint(0, bar->containerStripHeight());
+    QTest::mouseDClick(bar, Qt::LeftButton, Qt::NoModifier, rowPos);
+    QLineEdit *editor =
+        bar->findChild<QLineEdit*>(QLatin1String("tabTitleEditor"));
+    QVERIFY(editor);
+    QVERIFY(editor->isVisible());
+    QCOMPARE(editor->text(), QLatin1String("Before Edit"));
+    // The editor overlays the tab row (band-shifted in strip space).
+    QVERIFY(editor->geometry().intersects(
+        bar->tabRect(1).translated(0, bar->containerStripHeight())));
+    QTest::keyClicks(editor, QLatin1String("Typed Name"));
+    QTest::keyClick(editor, Qt::Key_Return);
+    QCOMPARE(widget.tabTitleOverride(1), QLatin1String("Typed Name"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !bar->findChild<QLineEdit*>(QLatin1String("tabTitleEditor")),
+        5000);
+
+    // Esc drops the edit — the committed override stays.
+    QTest::mouseDClick(bar, Qt::LeftButton, Qt::NoModifier, rowPos);
+    editor = bar->findChild<QLineEdit*>(QLatin1String("tabTitleEditor"));
+    QVERIFY(editor);
+    QCOMPARE(editor->text(), QLatin1String("Typed Name"));
+    editor->setText(QLatin1String("Discard Me"));
+    QTest::keyClick(editor, Qt::Key_Escape);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !bar->findChild<QLineEdit*>(QLatin1String("tabTitleEditor")),
+        5000);
+    QCOMPARE(widget.tabTitleOverride(1), QLatin1String("Typed Name"));
+
+    // The context menu's "Rename Tab..." opens the same editor.  The
+    // menu is a popup exec()'d on the stack — it shows up via
+    // activePopupWidget(), not the modal stack.
+    QAction *renameAction = nullptr;
+    QTimer::singleShot(50, &widget, [&renameAction]() {
+        QMenu *menu =
+            qobject_cast<QMenu*>(QApplication::activePopupWidget());
+        if (!menu) {
+            const auto tops = QApplication::topLevelWidgets();
+            for (QWidget *w : tops) {
+                if (QMenu *m = qobject_cast<QMenu*>(w);
+                    m && m->isVisible()) {
+                    menu = m;
+                    break;
+                }
+            }
+        }
+        if (!menu)
+            return;
+        const auto acts = menu->actions();
+        for (QAction *action : acts) {
+            if (action->text().contains(QLatin1String("name Tab")))
+                renameAction = action;
+        }
+        if (renameAction)
+            renameAction->trigger();
+        else
+            menu->close();
+    });
+    // Belt & braces: never let the exec() outlive this leg.
+    QTimer::singleShot(5000, &widget, []() {
+        const auto tops = QApplication::topLevelWidgets();
+        for (QWidget *w : tops) {
+            if (QMenu *m = qobject_cast<QMenu*>(w); m && m->isVisible())
+                m->close();
+        }
+    });
+    QMetaObject::invokeMethod(bar, "contextMenuRequested",
+                              Q_ARG(QPoint, rowPos));
+    QVERIFY(renameAction);
+    editor = bar->findChild<QLineEdit*>(QLatin1String("tabTitleEditor"));
+    QVERIFY(editor);
+    editor->setText(QLatin1String("Menu Named"));
+    QTest::keyClick(editor, Qt::Key_Return);
+    QCOMPARE(widget.tabTitleOverride(1), QLatin1String("Menu Named"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !bar->findChild<QLineEdit*>(QLatin1String("tabTitleEditor")),
+        5000);
+
+    // Same gesture on a vertical (West) strip.
+    {
+        QSettings settings;
+        settings.beginGroup(QLatin1String("tabs"));
+        settings.setValue(QLatin1String("tabBarPosition"), 2);   // Left
+        SubTabWidget wv;
+        wv.newTab();
+        wv.newTab();
+        wv.resize(400, 480);
+        wv.show();
+        QApplication::processEvents();
+        TabBar *vbar = wv.bar();
+        const QPoint vpos = vbar->tabRect(0).center()
+            + QPoint(0, vbar->containerStripHeight());
+        QTest::mouseDClick(vbar, Qt::LeftButton, Qt::NoModifier, vpos);
+        QLineEdit *veditor = vbar->findChild<QLineEdit*>(
+            QLatin1String("tabTitleEditor"));
+        QVERIFY(veditor);
+        veditor->setText(QLatin1String("Vertical Name"));
+        QTest::keyClick(veditor, Qt::Key_Return);
+        QCOMPARE(wv.tabTitleOverride(0),
+                 QLatin1String("Vertical Name"));
+        QCOMPARE(wv.tabText(0), QLatin1String("Vertical Name"));
+        while (wv.count() > 0)
+            wv.closeTab(wv.count() - 1);
+        settings.remove(QLatin1String("tabBarPosition"));
+        settings.endGroup();
+    }
+
+    while (widget.count() > 0)
+        widget.closeTab(widget.count() - 1);
 }
 
 QTEST_MAIN(tst_TabWidget)

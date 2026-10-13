@@ -186,6 +186,17 @@ public:
     // at so the pinned block stays a prefix.
     int pinnedTabCount() const;
 
+    // TABS12: per-tab rename — a custom-title override keyed on the
+    // tab's page widget (the same identity the pin flag uses, so it
+    // survives drags, group collapse, container-level filtering and
+    // the session v6 tail).  tabTitleOverride() is the stored
+    // override ("" when unset); tabDisplayTitle() is the raw,
+    // unescaped text the strip shows — the override when set, else
+    // the live page title (url fallback) — which the inline editor
+    // prefills and the window-title emit reads.
+    QString tabTitleOverride(int index) const;
+    QString tabDisplayTitle(int index) const;
+
     // CONT06 — two-level container strip.  When enabled (the
     // tabs/containerDisplay setting) and more than one container has
     // tabs, the strip shows the ACTIVE header's tabs only; the rest
@@ -390,6 +401,10 @@ public slots:
     // TABS04: pin/unpin — the tab slides to the edge of the pinned
     // block so the strip keeps pinned tabs as a contiguous prefix.
     void setTabPinned(int index, bool pinned);
+    // TABS12: set or clear (an empty/whitespace title) the tab's
+    // rename override — the strip, tooltip and window title switch
+    // between it and the live page title.
+    void setTabTitleOverride(int index, const QString &title);
     void reloadTab(int index = -1);
     void reloadAllTabs();
     void nextTab();
@@ -479,6 +494,13 @@ private:
     void setPinFlag(QWidget *page, bool pinned);
     void normalizePinnedBlock();
 
+    // TABS12 internals — applyTabTitle() is the strip label + tooltip
+    // + window-title emit that a page titleChanged and a rename
+    // commit/clear share; setCustomTitleForPage() is the keyed map
+    // write the container swap, undo-close and session restore use.
+    void applyTabTitle(int index);
+    void setCustomTitleForPage(QWidget *page, const QString &title);
+
     // CONT06 internals — see the public accessors above.  The filter
     // pass detaches every tab not bound to m_activeContainerHeader
     // into its own container's list and re-inserts the active
@@ -504,6 +526,8 @@ private:
         QString containerId;
         QString groupId;
         bool pinned = false;
+        // TABS12: the rename override, so undo-close renames back.
+        QString customTitle;
         bool scrollValid = false;
         double scrollX = 0.0;
         double scrollY = 0.0;
@@ -544,6 +568,7 @@ private:
         QStringList containers;        // parallel: container binding
         QStringList groupIds;          // parallel: "" = ungrouped
         QList<qint32> pinned;          // parallel: TABS04 pin flag, 0/1
+        QStringList titles;            // parallel: TABS12 rename override
         QList<TabGroup> groups;        // group table, first-appearance order
         QString activeContainerHeader; // CONT06: window's level-1 selection
     };
@@ -577,6 +602,12 @@ private:
     // untouched.  m_sessionRestore switches new-tab insertion back to
     // append while restoreState() recreates the saved order.
     QSet<QWidget*> m_pinnedTabs;
+    // TABS12: the rename override — same page-widget keying as the
+    // pinned set.  m_widgetTabBaseTitles remembers a non-web tab's
+    // displaced title: a widget tab has no live title() to fall back
+    // to when its override clears.
+    QHash<QWidget*, QString> m_customTitles;
+    QHash<QWidget*, QString> m_widgetTabBaseTitles;
     bool m_sessionRestore = false;
 
     QAction *m_recentlyClosedTabsAction;

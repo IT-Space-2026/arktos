@@ -387,7 +387,8 @@ void TabWidget::currentChanged(int index)
             WebActionMapper *mapper = m_actions[i];
             mapper->updateCurrent(foreign ? foreign->page() : nullptr);
         }
-        emit setCurrentTitle(tabText(index));
+        // TABS12: the window title follows the rename override too.
+        emit setCurrentTitle(tabDisplayTitle(index));
         if (foreign)
             emit loadProgress(foreign->progress());
         else
@@ -421,7 +422,8 @@ void TabWidget::currentChanged(int index)
     restorePendingTab(index);
     if (isTabSleeping(index))
         wakeTab(index);
-    emit setCurrentTitle(webView->title());
+    // TABS12: the override wins over the live page title here too.
+    emit setCurrentTitle(tabDisplayTitle(index));
     emit loadProgress(webView->progress());
     emit showStatusBarMessage(webView->lastStatusBarText());
     if (webView->url().isEmpty() && webView->hasFocus()) {
@@ -711,6 +713,111 @@ void TabWidget::normalizePinnedBlock()
         }
         ++boundary;
     }
+}
+
+// TABS12: the stored rename override ("" when the tab shows its live
+// title).  Keyed on the page widget like m_pinnedTabs — drags, group
+// collapse and container-level filtering all keep the same widget, so
+// the override rides along untouched.
+QString TabWidget::tabTitleOverride(int index) const
+{
+    if (index < 0 || index >= count())
+        return QString();
+    return m_customTitles.value(const_cast<TabWidget*>(this)->widget(index));
+}
+
+// The raw, unescaped text the strip shows — the inline editor's
+// prefill, the window-title emit and the hover preview all read this
+// instead of tabText() (which is SafeText::menu-escaped).
+QString TabWidget::tabDisplayTitle(int index) const
+{
+    if (index < 0 || index >= count())
+        return QString();
+    QWidget *page = const_cast<TabWidget*>(this)->widget(index);
+    const QString custom = m_customTitles.value(page);
+    if (!custom.isEmpty())
+        return custom;
+    if (WebView *view = const_cast<TabWidget*>(this)->webView(index)) {
+        if (!view->title().isEmpty())
+            return view->title();
+        const QString url = QString::fromUtf8(view->url().toEncoded());
+        if (!url.isEmpty())
+            return url;
+    }
+    // A widget tab keeps the title it displaced when the override
+    // landed; never-renamed ones read their (unescaped) insert text.
+    const QString base = m_widgetTabBaseTitles.value(page);
+    if (!base.isEmpty())
+        return base;
+    QString text = const_cast<TabWidget*>(this)->tabText(index);
+    text.replace(QLatin1String("&&"), QLatin1String("&"));
+    return text;
+}
+
+void TabWidget::setTabTitleOverride(int index, const QString &title)
+{
+    if (index < 0 || index >= count())
+        return;
+    QWidget *page = widget(index);
+    if (!page)
+        return;
+    const QString cleaned = title.trimmed();
+    if (cleaned.isEmpty()) {
+        if (!m_customTitles.remove(page))
+            return;
+    } else {
+        // A widget tab's live title exists only on the strip — stash
+        // the displaced original once so clearing restores it.
+        if (!webView(index) && !m_widgetTabBaseTitles.contains(page))
+            m_widgetTabBaseTitles.insert(page, tabDisplayTitle(index));
+        m_customTitles.insert(page, cleaned);
+    }
+    applyTabTitle(index);
+    emit tabsChanged();
+}
+
+// The map write + strip refresh the container swap, undo-close and
+// session restore share — the override re-keys onto a replacement or
+// recreated page widget.  Tabs currently detached (a filtered-out
+// container level) only get the map write; the hidden store's saved
+// text already carries the title.
+void TabWidget::setCustomTitleForPage(QWidget *page, const QString &title)
+{
+    if (!page || title.isEmpty())
+        return;
+    m_customTitles.insert(page, title);
+    const int index = indexOf(page);
+    if (index >= 0)
+        applyTabTitle(index);
+}
+
+// The strip label + tooltip + window-title emit — recomputed whenever
+// the effective title may have changed: a page titleChanged, a rename
+// commit or an override clear.  The rename override replaces the page
+// title on every user-facing surface; the container/private
+// decorations still wrap it.
+void TabWidget::applyTabTitle(int index)
+{
+    const QString tabTitle = tabDisplayTitle(index);
+    // The title is page/user-controlled: '&' would become a mnemonic
+    // on the tab label and markup would render in the tooltip
+    // (tooltips are always rich-text capable).
+    setTabText(index, SafeText::menu(tabTitle));
+    // CONT02: a container tab's tooltip names its container.
+    QString toolTip = tabTitle;
+    const QString containerId = containerIdForTab(index);
+    if (!containerId.isEmpty()) {
+        const QString name = ContainerManager::instance()
+            ->containerForId(containerId).name;
+        if (!name.isEmpty())
+            toolTip = QStringLiteral("[%1] %2").arg(name, tabTitle);
+    }
+    // PTAB01: the tooltip also names the private context.
+    if (isTabPrivate(index))
+        toolTip = QStringLiteral("[%1] %2").arg(tr("Private"), toolTip);
+    setTabToolTip(index, SafeText::escaped(toolTip));
+    if (currentIndex() == index)
+        emit setCurrentTitle(tabTitle);
 }
 
 WebView *TabWidget::makeNewPrivateTab(bool makeCurrent)
@@ -1330,9 +1437,12 @@ void TabWidget::reopenTabInContainer(int index, const QString &containerId)
     // TABGRP01: the replacement keeps the old tab's group — a
     // container swap is a re-home, not an ungroup.
     const QString gid = tabGroupId(index);
+    // TABS12: the rename override re-keys onto the replacement page.
+    const QString customTitle = tabTitleOverride(index);
     WebView *newTab = makeNewTabInContainer(containerId, true);
     if (!newTab)
         return;
+    setCustomTitleForPage(tabPageWidget(newTab), customTitle);
     if (m_twoLevelStrip) {
         // CONT06: raising the replacement pulled the strip to the
         // target level — the old tab already detached into its own
@@ -1725,6 +1835,10 @@ void TabWidget::expandTabGroup(const QString &groupId)
                 withSearch->m_webView->url()).pixmap(16, 16));
         }
 #endif
+        // TABS12: a rename that landed while the tab was detached only
+        // reached the keyed map — reassert it on the strip now.
+        if (m_customTitles.contains(entry.tab))
+            applyTabTitle(idx);
         ++insertPos;
     }
     // TABS04: a pinned member can resurface past the pinned block —
@@ -2035,6 +2149,10 @@ void TabWidget::restoreHiddenContainerTabs(const QString &containerId)
                     .pixmap(16, 16));
         }
 #endif
+        // TABS12: same reassert as the group expand — a rename stored
+        // while the tab sat filtered off-strip reaches it here.
+        if (m_customTitles.contains(entry.tab))
+            applyTabTitle(idx);
         ++insertPos;
     }
     // TABS04: a level's pinned tabs re-insert at the end of the row —
@@ -2137,6 +2255,8 @@ void TabWidget::closeHiddenTab(WebView *view)
             hidden.bar->deleteLater();
             m_tabGroups.remove(view);
             m_pinnedTabs.remove(hidden.tab);
+            m_customTitles.remove(hidden.tab);
+            m_widgetTabBaseTitles.remove(hidden.tab);
             hidden.tab->deleteLater();
             m_sleepStates.remove(view);
             m_tabThumbnails.remove(view);
@@ -2727,6 +2847,9 @@ void TabWidget::closeTab(int index)
     // its last member.
     m_tabGroups.remove(tab);
     m_pinnedTabs.remove(webViewWithSearch);
+    // TABS12: the rename override dies with its page widget.
+    m_customTitles.remove(webViewWithSearch);
+    m_widgetTabBaseTitles.remove(webViewWithSearch);
     forgetTabGroupIfEmpty(closingGroup);
     webViewWithSearch->setParent(nullptr);
     webViewWithSearch->deleteLater();
@@ -2923,33 +3046,15 @@ void TabWidget::webViewIconChanged()
 
 void TabWidget::webViewTitleChanged(const QString &title)
 {
+    Q_UNUSED(title);
     WebView *webView = webViewForSender(sender());
     int index = webViewIndex(webView);
     markTabActivity(webView);
     if (-1 == index)
         return;
-    QString tabTitle = title;
-    if (title.isEmpty())
-        tabTitle = QString::fromUtf8(webView->url().toEncoded());
-    // The title is page-controlled: '&' would become a mnemonic on the
-    // tab label and markup would render in the tooltip (tooltips are
-    // always rich-text capable).
-    setTabText(index, SafeText::menu(tabTitle));
-    // CONT02: a container tab's tooltip names its container.
-    QString toolTip = tabTitle;
-    const QString containerId = containerIdForTab(index);
-    if (!containerId.isEmpty()) {
-        const QString name = ContainerManager::instance()
-            ->containerForId(containerId).name;
-        if (!name.isEmpty())
-            toolTip = QStringLiteral("[%1] %2").arg(name, tabTitle);
-    }
-    // PTAB01: the tooltip also names the private context.
-    if (isTabPrivate(index))
-        toolTip = QStringLiteral("[%1] %2").arg(tr("Private"), toolTip);
-    setTabToolTip(index, SafeText::escaped(toolTip));
-    if (currentIndex() == index)
-        emit setCurrentTitle(title);
+    // TABS12: applyTabTitle resolves the override first — a renamed
+    // tab ignores the page's title stream.
+    applyTabTitle(index);
     // History title updates are handled by WebPage::init (MIG06).
 }
 
@@ -3000,8 +3105,9 @@ void TabWidget::pushRecentlyClosedTab(WebView *view, int index,
     closed.groupId = groupId;
     // TABS04: the pin flag keys on the page widget — the view's
     // WebViewWithSearch parent — so it reads the same on and off the
-    // strip.
+    // strip.  TABS12: the rename override keys on it the same way.
     closed.pinned = m_pinnedTabs.contains(tabPageWidget(view));
+    closed.customTitle = m_customTitles.value(tabPageWidget(view));
     if (view->enginePage()) {
         const QPointF scroll = view->enginePage()->scrollPosition();
         closed.scrollValid = true;
@@ -3061,6 +3167,8 @@ void TabWidget::restoreClosedTab(const RecentlyClosedTab &closed)
     if (closed.scrollValid && (closed.scrollX != 0 || closed.scrollY != 0))
         m_pendingScrollRestore.insert(
             view, QPointF(closed.scrollX, closed.scrollY));
+    // TABS12: a renamed tab reopens renamed.
+    setCustomTitleForPage(tabPageWidget(view), closed.customTitle);
 }
 
 void TabWidget::openLastTab()
@@ -3770,6 +3878,8 @@ TabWidget::TabSessionSnapshot TabWidget::collectSessionSnapshot() const
         // the hidden stores hold.
         snap.pinned.append(m_pinnedTabs.contains(tabPageWidget(tab))
                            ? 1 : 0);
+        // TABS12: the rename override keys on the same page widget.
+        snap.titles.append(m_customTitles.value(tabPageWidget(tab)));
     }
 
     // TABGRP01: the group table — one record per group that still has a
@@ -3800,7 +3910,7 @@ TabWidget::TabSessionSnapshot TabWidget::collectSessionSnapshot() const
 
 QByteArray TabWidget::saveState() const
 {
-    int version = 5; // TABS04: v5 tails with each tab's pinned flag
+    int version = 6; // TABS12: v6 tails with each tab's rename override
     QByteArray data;
     QDataStream stream(&data, QIODevice::WriteOnly);
 
@@ -3825,6 +3935,9 @@ QByteArray TabWidget::saveState() const
     // TABS04: the per-tab pinned flags — read back under v>=5.
     stream << snap.pinned;
 
+    // TABS12: the per-tab rename overrides — read back under v>=6.
+    stream << snap.titles;
+
     return data;
 }
 
@@ -3839,7 +3952,7 @@ bool TabWidget::restoreState(const QByteArray &state)
     qint32 v;
     stream >> marker;
     stream >> v;
-    if (marker != TabWidgetMagic || v < 1 || v > 5)
+    if (marker != TabWidgetMagic || v < 1 || v > 6)
         return false;
 
     TabSessionSnapshot snap;
@@ -3876,6 +3989,11 @@ bool TabWidget::restoreState(const QByteArray &state)
     // defensive floor the earlier tails established.
     if (v >= 5)
         StreamingUtils::readBoundedList(stream, snap.pinned);
+    // TABS12: v6 tails with each tab's rename override — a missing or
+    // truncated tail restores every tab on its live page title, the
+    // same defensive floor the earlier tails established.
+    if (v >= 6)
+        StreamingUtils::readBoundedList(stream, snap.titles);
     if (stream.status() != QDataStream::Ok)
         return false;
 
@@ -3891,6 +4009,7 @@ bool TabWidget::restoreSessionSnapshot(const TabSessionSnapshot &snap)
     const QStringList &savedGroupIds = snap.groupIds;
     const QList<TabGroup> &savedGroups = snap.groups;
     const QList<qint32> &savedPinned = snap.pinned;
+    const QStringList &savedTitles = snap.titles;
 
     // The empty placeholder tab a fresh window comes with is only a
     // fit for the first saved tab when its container matches — reusing
@@ -3975,6 +4094,12 @@ bool TabWidget::restoreSessionSnapshot(const TabSessionSnapshot &snap)
             } else {
                 webView->loadUrl(url);
             }
+            // TABS12: the saved rename override lands last so it wins
+            // over the restored-from-history title above; a tab that
+            // detached into a filtered level at creation only gets
+            // the map write — the level's reinsert path reapplies it.
+            setCustomTitleForPage(tabPageWidget(webView),
+                                  savedTitles.value(i));
         }
     }
     m_sessionRestore = false;
