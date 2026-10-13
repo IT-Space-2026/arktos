@@ -2054,3 +2054,6 @@ C++ coverage: mid-tier lifted to 85.5% (COV11):
 
 C++ coverage gate now enforces 85% (COV12):
     `make check-coverage`'s ARORA_COVERAGE_MIN default is 85 (raised from the original 80 gate set when the baseline stood at 80.5%) against an honestly measured 85.50% src/ line baseline, so coverage regressions now fail the check instead of drifting. The regenerated .devin/COVERAGE.md header records the COV01->COV05/COV08 gate lineage.
+
+Servo tabs render real page pixels again (ENG21):
+    A tab swapped onto Servo showed only empty space — the pinned libservo_embed.so artifact predated the panic-containment source's se_resize fix, which routes resizes through WebView::resize so the painter's bookkeeping (document view, repaint, pipeline display list) actually runs; the stale document view left WebRender compositing nothing (and asserting on GL state under a debug artifact, which then poisoned the instance into a permanently blank tab). The rebuilt artifact renders loaded pages correctly — the start page, internal qrc pages and real files all land pixels in the tab widget — and --servo-smoke now guards the regression with a servo-renders-pixels leg that grabs the engine view and fails on a solid-color frame rather than settling for "no crash".

@@ -38,7 +38,7 @@ int main(int argc, char *argv[])
         qWarning("FAIL servo init");
         return 1;
     }
-    view.resize(800, 600);
+    view.resize(801, 601);
     view.show();
     view.load(url);
 
@@ -68,11 +68,35 @@ int main(int argc, char *argv[])
     while (!complete && elapsed.elapsed() < timeoutMs)
         app.processEvents(QEventLoop::WaitForMoreEvents, 40);
 
+    // ENG21: content frames trail LoadStatus::Complete by a beat —
+    // settle-pump so the sampled frame below actually carries the
+    // page (about:blank stays legitimately solid, that's reported
+    // not failed).
+    if (complete) {
+        QElapsedTimer settle;
+        settle.start();
+        while (settle.elapsed() < 2000)
+            app.processEvents(QEventLoop::WaitForMoreEvents, 40);
+    }
+
     const QImage frame = view.frame();
     qInfo("requests observed through interceptor hook: %lu", view.requestCount());
     qInfo("final url=%s title=%s frame=%dx%d",
           qPrintable(view.url().toString()), qPrintable(view.title()),
           frame.width(), frame.height());
+    if (!frame.isNull()) {
+        int distinct = 0;
+        QRgb last = 0;
+        for (int y = 0; y < frame.height(); y += 16) {
+            for (int x = 0; x < frame.width(); x += 16) {
+                const QRgb p = frame.pixel(x, y);
+                if (p != last) { ++distinct; last = p; }
+            }
+        }
+        qInfo("frame center=#%06x distinct-sampled-colors=%d",
+              frame.pixel(frame.width() / 2, frame.height() / 2) & 0xffffff,
+              distinct);
+    }
     const QString log = view.requestLog();
     if (!log.isEmpty())
         qInfo("request log:\n%s", qPrintable(log));

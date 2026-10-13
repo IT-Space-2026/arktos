@@ -734,3 +734,4 @@
 - 2026-10-13 MERGEWATCH: ui-work merged — no conflicts (Arora-Task-UI.md only), build ok
 - 2026-10-13 MERGEWATCH: ui-work merged — no conflicts (Arora-Task-UI.md task queue rows READ03/TABS12/TABS13); rust-work skipped (0 ahead); build ok
 - 2026-10-13 MERGEWATCH: rust-work SKIPPED (0 ahead); ui-work SKIPPED (1 ahead, NAVB01 stop/reload lifecycle) — merge refused: dirty ChangeLog in master worktree (+3 lines uncommitted, agent mid-run) would be overwritten; no merges, build n/a
+- 2026-10-13 ENG21: servo empty-space fix — rebuilt pinned libservo_embed.so so se_resize reaches WebView::resize() (surfman+doc-view update); added --servo-smoke servo-renders-pixels leg and harness pixel-sampling guard — smoke PASS (real pixels through app path; #cc3333 fixture frame); make check green except 4 pre-existing ui-lane browsermainwindow legs

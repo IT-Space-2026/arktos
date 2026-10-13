@@ -26,6 +26,11 @@ src/rustcore/target/
 src/rustdl/target/
 spikes/servo/servo-embed/target/
 
+# servo spike harness build outputs (qmake in-tree artifacts)
+spikes/servo/harness/*.o
+spikes/servo/harness/moc_*.cpp
+spikes/servo/harness/servospike
+
 # check-leaks.sh raw gate output — the curated report is .devin/MEM02-report.md
 .devin/LEAKS.md
 

@@ -3223,6 +3223,25 @@ static int servoLifecycleSmoke()
                    engineTab->title()
                        == QLatin1String("Welcome to Arora!"));
 
+            // ENG21: the 'empty space' regression — a committed url
+            // is not enough, the servo tab must land rendered PIXELS.
+            // The ServoView blits the shim's RGBA frame in paintEvent,
+            // so a widget grab that comes back one solid color is the
+            // reported bug even when every commit assert passes.  The
+            // pump gives the post-commit frame a beat to arrive.
+            pumpUntil([]() { return false; }, 2000);
+            if (QWidget *engineView = page->view()) {
+                const QImage grab = engineView->grab().toImage();
+                const QRgb base = grab.pixel(0, 0);
+                int distinct = 0;
+                for (int y = 0; y < grab.height(); y += 8)
+                    for (int x = 0; x < grab.width(); x += 8)
+                        if (grab.pixel(x, y) != base)
+                            ++distinct;
+                report(QStringLiteral("servo-renders-pixels"),
+                       distinct > 100);
+            }
+
             for (int i = 0; i < 10; ++i) {
                 engineTab->reload();
                 // Chrome path (ENG16): reaches the engine page — on
