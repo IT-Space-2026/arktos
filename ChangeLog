@@ -317,6 +317,12 @@ UI:
   on client-side SPA navigations (e.g. telex.hu), and accepts
   short-lead paragraphs and article/main containers carrying
   substantial copy (READ04).
+- Reader Mode no longer shows a title-only overlay: article text
+  wrapped in a form element renders in full instead of being stripped
+  with the form, extractions that yield almost no readable text show
+  an honest "Reader view is not available" status-bar message instead
+  of an empty column, and embed-heavy pages no longer stall the
+  reader (READ03).
 - Downloads moved from the Window menu to the Tools menu — the
   Ctrl+Y shortcut and icon are unchanged, and the Window menu now
   holds only tab/window-switching entries (MENU04).
