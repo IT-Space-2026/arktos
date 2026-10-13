@@ -17,6 +17,7 @@
 #include <qbuttongroup.h>
 #include <qcheckbox.h>
 #include <qcombobox.h>
+#include <qevent.h>
 #include <qheaderview.h>
 #include <qjsonarray.h>
 #include <qjsondocument.h>
@@ -212,7 +213,8 @@ public:
         StatusRole,
         BucketRole,
         StateRole,
-        UrlRole
+        UrlRole,
+        DecodedRole
     };
     struct Row {
         QString requestId, url, name, type, initiator, errorText;
@@ -220,6 +222,11 @@ public:
         int status = -1;
         int state = Pending;
         qint64 size = -1;
+        // DEVT07: uncompressed body bytes (the footer's "resources"
+        // figure) and the cache-served flag the Size column marks
+        // "(cached)" for instead of a misleading "0 B".
+        qint64 decodedSize = -1;
+        bool cached = false;
         double startMs = -1.0;
         double endMs = -1.0;
     };
@@ -278,6 +285,10 @@ public:
             case InitiatorColumn:
                 return row.initiator;
             case SizeColumn:
+                // Cache-served rows report 0 wire bytes — show the
+                // honest marker like Chrome instead of "0 B".
+                if (row.cached && row.size <= 0)
+                    return tr("(cached)");
                 return formatBytes(row.size);
             case TimeColumn:
                 return row.endMs >= 0.0 && row.startMs >= 0.0
@@ -308,6 +319,7 @@ public:
         case BucketRole: return row.bucket;
         case StateRole: return row.state;
         case UrlRole: return row.url;
+        case DecodedRole: return row.decodedSize;
         }
         return QVariant();
     }
@@ -382,22 +394,25 @@ public:
     {
         if (m_needle == needle)
             return;
+        beginFilterChange();
         m_needle = needle;
-        invalidateFilter();
+        endFilterChange();
     }
     void setInverted(bool inverted)
     {
         if (m_inverted == inverted)
             return;
+        beginFilterChange();
         m_inverted = inverted;
-        invalidateFilter();
+        endFilterChange();
     }
     void setBucket(int bucket)
     {
         if (m_bucket == bucket)
             return;
+        beginFilterChange();
         m_bucket = bucket;
-        invalidateFilter();
+        endFilterChange();
     }
 
 protected:
@@ -505,10 +520,65 @@ private:
     BidiNetworkModel *m_model;
 };
 
+/*
+ * DEVT07 — Chrome's column discipline.  Name and Waterfall share the
+ * flex space with real minimums while the numeric columns keep fixed
+ * widths; below the floors the table scrolls horizontally instead of
+ * squeezing Size/Time/Waterfall to nothing.  A bare Stretch column
+ * can't do this — it ratchets (grows into slack, never shrinks) and
+ * the header's global minimumSectionSize can't floor just the
+ * waterfall — so the view lays the two flex columns out on resize.
+ */
+class BidiNetworkView : public QTableView
+{
+public:
+    explicit BidiNetworkView(QWidget *parent = nullptr)
+        : QTableView(parent)
+    {
+    }
+
+    // Chrome-ish floors: Name stays readable, the waterfall chart
+    // keeps enough width to see a bar.
+    static const int NameFloor = 160;
+    static const int WaterfallFloor = 140;
+
+protected:
+    void resizeEvent(QResizeEvent *event) override
+    {
+        QTableView::resizeEvent(event);
+        if (m_layingOut)
+            return;
+        m_layingOut = true;
+        QHeaderView *head = horizontalHeader();
+        int fixed = 0;
+        for (int c = BidiNetworkModel::StatusColumn;
+             c <= BidiNetworkModel::TimeColumn; ++c) {
+            fixed += head->sectionSize(c);
+        }
+        const int slack = viewport()->width() - fixed;
+        // Waterfall takes the larger share once both floors are met;
+        // negative slack lands both on their floors -> h-scrollbar.
+        int name = qMax(NameFloor, slack * 2 / 5);
+        int fall = slack - name;
+        if (fall < WaterfallFloor) {
+            fall = WaterfallFloor;
+            name = qMax(NameFloor, slack - WaterfallFloor);
+        }
+        head->resizeSection(BidiNetworkModel::NameColumn, name);
+        head->resizeSection(BidiNetworkModel::WaterfallColumn, fall);
+        m_layingOut = false;
+    }
+
+private:
+    bool m_layingOut = false;
+};
+
 BidiPanel::BidiPanel(QWidget *parent)
     : QWidget(parent)
     , m_client(new BidiClient(this))
     , m_nextTag(10)
+    , m_domContentLoadedMs(-1.0)
+    , m_loadMs(-1.0)
 {
     // SIDE05: plain dock content — the surrounding m_bidiPanelDock
     // owns the "bidiPanelDock" objectName, the title bar, and the
@@ -627,7 +697,7 @@ BidiPanel::BidiPanel(QWidget *parent)
     m_networkModel = new BidiNetworkModel(this);
     m_networkProxy = new BidiNetworkProxy(this);
     m_networkProxy->setSourceModel(m_networkModel);
-    m_networkView = new QTableView;
+    m_networkView = new BidiNetworkView;
     m_networkView->setObjectName(QLatin1String("bidiNetworkView"));
     m_networkView->setModel(m_networkProxy);
     m_networkView->setShowGrid(false);
@@ -639,15 +709,32 @@ BidiPanel::BidiPanel(QWidget *parent)
         m_networkView->fontMetrics().height() + 8);
     QHeaderView *netHead = m_networkView->horizontalHeader();
     netHead->setSectionResizeMode(QHeaderView::Interactive);
-    netHead->setStretchLastSection(true); // Waterfall soaks the width
+    // DEVT07: no stretch column — BidiNetworkView::resizeEvent shares
+    // the slack between Name and Waterfall with real floors, so these
+    // fixed-fit widths are all the middle columns ever take and the
+    // waterfall can no longer be squeezed away.
+    netHead->setStretchLastSection(false);
+    netHead->setMinimumSectionSize(50);
+    netHead->resizeSection(BidiNetworkModel::StatusColumn, 64);
+    netHead->resizeSection(BidiNetworkModel::TypeColumn, 72);
+    netHead->resizeSection(BidiNetworkModel::InitiatorColumn, 150);
+    netHead->resizeSection(BidiNetworkModel::SizeColumn, 84);
+    netHead->resizeSection(BidiNetworkModel::TimeColumn, 84);
     netHead->resizeSection(BidiNetworkModel::NameColumn, 220);
-    netHead->resizeSection(BidiNetworkModel::InitiatorColumn, 140);
+    netHead->resizeSection(BidiNetworkModel::WaterfallColumn, 260);
     m_networkView->setItemDelegateForColumn(
         BidiNetworkModel::WaterfallColumn,
         new BidiWaterfallDelegate(
             static_cast<BidiNetworkModel *>(m_networkModel),
             m_networkView));
     nv->addWidget(m_networkView);
+    // DEVT07: Chrome's status line — request count, wire and decoded
+    // byte totals, and the Finish/DOMContentLoaded/Load timings.
+    m_networkSummary = new QLabel;
+    m_networkSummary->setObjectName(
+        QLatin1String("bidiNetworkSummary"));
+    m_networkSummary->setContentsMargins(4, 1, 4, 2);
+    nv->addWidget(m_networkSummary);
     tabs->addTab(networkPage, tr("Network"));
 
     // Storage: cookies + localStorage side by side
@@ -735,6 +822,22 @@ BidiPanel::BidiPanel(QWidget *parent)
         }
     });
 
+    // DEVT07: the status-line footer recounts whenever the visible
+    // rows or their values change — inserts/removals/resets and
+    // layout changes ride the proxy (filters included), value edits
+    // ride the source model's dataChanged.
+    connect(m_networkProxy, &QAbstractItemModel::rowsInserted,
+            this, [this] { updateNetworkSummary(); });
+    connect(m_networkProxy, &QAbstractItemModel::rowsRemoved,
+            this, [this] { updateNetworkSummary(); });
+    connect(m_networkProxy, &QAbstractItemModel::modelReset,
+            this, [this] { updateNetworkSummary(); });
+    connect(m_networkProxy, &QAbstractItemModel::layoutChanged,
+            this, [this] { updateNetworkSummary(); });
+    connect(m_networkModel, &QAbstractItemModel::dataChanged,
+            this, [this] { updateNetworkSummary(); });
+    updateNetworkSummary();
+
     m_stack->setCurrentIndex(0);
     m_unavailableLabel->setText(tr("Debug channel not connected."));
 }
@@ -815,6 +918,47 @@ void BidiPanel::clearNetworkLog()
 {
     static_cast<BidiNetworkModel *>(m_networkModel)->clear();
     m_requestRows.clear();
+}
+
+// DEVT07: Chrome's status line.  Counts and byte sums follow the
+// filtered rows; Finish is the recording window's last-complete
+// minus first-start, and the load timings subtract the same start
+// (they share the CDP monotonic clock).
+void BidiPanel::updateNetworkSummary()
+{
+    BidiNetworkModel *model =
+        static_cast<BidiNetworkModel *>(m_networkModel);
+    const int rows = m_networkProxy->rowCount();
+    qint64 transferred = 0, resources = 0;
+    for (int r = 0; r < rows; ++r) {
+        const QModelIndex i =
+            m_networkProxy->index(r, BidiNetworkModel::SizeColumn);
+        const qint64 size =
+            i.data(BidiNetworkModel::SizeRole).toLongLong();
+        const qint64 decoded =
+            i.data(BidiNetworkModel::DecodedRole).toLongLong();
+        if (size > 0)
+            transferred += size;
+        // Rows the bridge never got chunks for contribute their wire
+        // size as the best honest approximation of decoded bytes.
+        resources += decoded >= 0 ? decoded : qMax<qint64>(size, 0);
+    }
+    QStringList parts;
+    parts << tr("%1 requests").arg(rows);
+    parts << tr("%1 transferred").arg(formatBytes(transferred));
+    parts << tr("%1 resources").arg(formatBytes(resources));
+    const double start = model->windowStart();
+    const double end = model->windowEnd();
+    if (start >= 0.0 && end > start) {
+        parts << tr("Finish: %1").arg(formatMillis(end - start));
+        if (m_domContentLoadedMs >= start)
+            parts << tr("DOMContentLoaded: %1")
+                         .arg(formatMillis(m_domContentLoadedMs - start));
+        if (m_loadMs >= start)
+            parts << tr("Load: %1")
+                         .arg(formatMillis(m_loadMs - start));
+    }
+    m_networkSummary->setText(parts.join(QStringLiteral("  ·  ")));
 }
 
 void BidiPanel::sendCacheBehavior()
@@ -1064,11 +1208,32 @@ void BidiPanel::onEvent(const QByteArray &json)
     if (method == QLatin1String("browsingContext.navigationStarted")) {
         if (params[QStringLiteral("context")].toString()
             == currentContext()) {
+            // A fresh load owns fresh footer timings regardless of
+            // Preserve log keeping the old request rows.
+            m_domContentLoadedMs = -1.0;
+            m_loadMs = -1.0;
             // Chrome clears the request log on navigation unless
             // Preserve log is ticked.
             if (!m_preserveLog->isChecked())
                 clearNetworkLog();
             refreshDom();
+            updateNetworkSummary();
+        }
+        return;
+    }
+    // DEVT07: the Page domain's lifecycle timings, remapped by the
+    // bridge onto the same monotonic-ms clock as the request rows.
+    if (method == QLatin1String("browsingContext.domContentLoaded")
+        || method == QLatin1String("browsingContext.load")) {
+        if (params[QStringLiteral("context")].toString()
+            == currentContext()) {
+            const double ts =
+                params[QStringLiteral("timestamp")].toDouble(-1.0);
+            if (method.endsWith(QLatin1String("domContentLoaded")))
+                m_domContentLoadedMs = ts;
+            else
+                m_loadMs = ts;
+            updateNetworkSummary();
         }
         return;
     }
@@ -1127,15 +1292,30 @@ void BidiPanel::onEvent(const QByteArray &json)
             data->type = type;
             data->bucket = netBucketFor(type);
         }
+        // DEVT07: the response's own encodedDataLength is the wire
+        // bytes so far — an honest interim Size while the body loads.
+        const double partial =
+            resp[QStringLiteral("encodedDataLength")].toDouble(-1.0);
+        if (partial >= 0.0)
+            data->size = qint64(partial);
+        if (resp[QStringLiteral("fromDiskCache")].toBool()
+            || resp[QStringLiteral("fromPrefetchCache")].toBool()
+            || resp[QStringLiteral("fromServiceWorker")].toBool())
+            data->cached = true;
         model->rowChanged(row);
     } else if (method == QLatin1String("network.responseCompleted")) {
         data->state = BidiNetworkModel::Finished;
         data->endMs = ts;
-        const double size = params[QStringLiteral("response")]
-                                .toObject()[QStringLiteral("encodedDataLength")]
+        const QJsonObject resp =
+            params[QStringLiteral("response")].toObject();
+        const double size = resp[QStringLiteral("encodedDataLength")]
                                 .toDouble(-1.0);
         if (size >= 0.0)
             data->size = qint64(size);
+        const double decoded =
+            resp[QStringLiteral("decodedDataLength")].toDouble(-1.0);
+        if (decoded >= 0.0)
+            data->decodedSize = qint64(decoded);
         model->rowChanged(row);
     } else if (method == QLatin1String("network.fetchError")) {
         data->state = BidiNetworkModel::Failed;

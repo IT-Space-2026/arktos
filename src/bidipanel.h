@@ -90,6 +90,7 @@ private:
                   quint64 tag);
     void clearNetworkLog();
     void sendCacheBehavior();
+    void updateNetworkSummary();
 
     BidiClient *m_client;
     QStackedWidget *m_stack;
@@ -109,6 +110,7 @@ private:
     QCheckBox *m_disableCache;
     QToolButton *m_clearRequests;
     QButtonGroup *m_typeChips;
+    QLabel *m_networkSummary;
     QTableWidget *m_cookieTable;
     QTableWidget *m_localStorageTable;
 
@@ -117,6 +119,10 @@ private:
     quint64 m_nextTag;
     QString m_domHelperContext;
     QHash<QString, int> m_requestRows; // requestId -> network row
+    // DEVT07: page-load timings for the footer's DOMContentLoaded/Load
+    // — CDP monotonic ms on the same clock as the request rows; -1 unset.
+    double m_domContentLoadedMs;
+    double m_loadMs;
     QHash<quint64, QTreeWidgetItem *> m_pendingDomItem;
 };
 

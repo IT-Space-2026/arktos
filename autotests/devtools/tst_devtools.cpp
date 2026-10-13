@@ -47,9 +47,11 @@
 #include <qbuttongroup.h>
 #include <qcheckbox.h>
 #include <qcombobox.h>
+#include <qheaderview.h>
 #include <qlabel.h>
 #include <qlineedit.h>
 #include <qplaintextedit.h>
+#include <qscrollbar.h>
 #include <qsortfilterproxymodel.h>
 #include <qstackedwidget.h>
 #include <qtableview.h>
@@ -625,6 +627,112 @@ void tst_DevTools::bidiPanel()
         }
     }
     QVERIFY(sawRed);
+
+    // DEVT07: Chrome's status line — the two rows above already fed
+    // it (18 kB wire, 80 ms recording window).
+    QVERIFY(panel.m_networkSummary);
+    QVERIFY(panel.m_networkSummary->text().contains(
+        QStringLiteral("2 requests")));
+    QVERIFY(panel.m_networkSummary->text().contains(
+        QStringLiteral("18.0 kB transferred")));
+    QVERIFY(panel.m_networkSummary->text().contains(
+        QStringLiteral("Finish: 80 ms")));
+
+    // The response's own encodedDataLength is the interim Size while
+    // a body still loads; the completion overrides it.
+    panel.clearNetworkLog();
+    QVERIFY(panel.m_networkSummary->text().contains(
+        QStringLiteral("0 requests")));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.beforeRequestSent\",\"params\":{"
+        "\"timestamp\":1000.0,\"request\":{\"request\":\"n1\","
+        "\"method\":\"GET\",\"url\":\"http://s/page\","
+        "\"type\":\"Document\"}}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.responseStarted\",\"params\":{"
+        "\"timestamp\":1100.0,\"request\":{\"request\":\"n1\"},"
+        "\"response\":{\"status\":200,\"encodedDataLength\":64}}}"));
+    QCOMPARE(net->data(net->index(0, 4)).toString(),
+             QStringLiteral("64 B"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.responseCompleted\",\"params\":{"
+        "\"timestamp\":1500.0,\"request\":{\"request\":\"n1\"},"
+        "\"response\":{\"encodedDataLength\":2048,"
+        "\"decodedDataLength\":6000}}}"));
+    QCOMPARE(net->data(net->index(0, 4)).toString(),
+             QStringLiteral("2.0 kB"));
+    QVERIFY(panel.m_networkSummary->text().contains(
+        QStringLiteral("1 requests")));
+    QVERIFY(panel.m_networkSummary->text().contains(
+        QStringLiteral("2.0 kB transferred")));
+    QVERIFY(panel.m_networkSummary->text().contains(
+        QStringLiteral("5.9 kB resources")));
+    QVERIFY(panel.m_networkSummary->text().contains(
+        QStringLiteral("Finish: 500 ms")));
+
+    // A disk-cached row marks honestly instead of showing "0 B".
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.beforeRequestSent\",\"params\":{"
+        "\"timestamp\":1600.0,\"request\":{\"request\":\"n2\","
+        "\"method\":\"GET\",\"url\":\"http://s/app.js\","
+        "\"type\":\"Script\"}}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.responseStarted\",\"params\":{"
+        "\"timestamp\":1610.0,\"request\":{\"request\":\"n2\"},"
+        "\"response\":{\"status\":200,\"fromDiskCache\":true}}}"));
+    QCOMPARE(net->data(net->index(1, 4)).toString(),
+             QStringLiteral("(cached)"));
+
+    // Page-load timings land on the footer for the current context
+    // (window start is n1's 1000 ms) and are ignored for others.
+    panel.onEvent(QByteArray(
+        "{\"method\":\"browsingContext.domContentLoaded\",\"params\":"
+        "{\"context\":\"ctx1\",\"timestamp\":1400.0}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"browsingContext.load\",\"params\":"
+        "{\"context\":\"ctx1\",\"timestamp\":1800.0}}"));
+    QVERIFY(panel.m_networkSummary->text().contains(
+        QStringLiteral("DOMContentLoaded: 400 ms")));
+    QVERIFY(panel.m_networkSummary->text().contains(
+        QStringLiteral("Load: 800 ms")));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"browsingContext.load\",\"params\":"
+        "{\"context\":\"elsewhere\",\"timestamp\":9999.0}}"));
+    QVERIFY(!panel.m_networkSummary->text().contains(
+        QStringLiteral("9999")));
+
+    // Navigation of the current context resets the markers — with
+    // Preserve log the rows stay but the times go.
+    panel.m_preserveLog->setChecked(true);
+    panel.onEvent(QByteArray(
+        "{\"method\":\"browsingContext.navigationStarted\",\"params\":"
+        "{\"context\":\"ctx1\"}}"));
+    QCOMPARE(net->rowCount(), 2);
+    QVERIFY(!panel.m_networkSummary->text().contains(
+        QStringLiteral("DOMContentLoaded")));
+    QVERIFY(!panel.m_networkSummary->text().contains(
+        QStringLiteral("Load:")));
+    panel.m_preserveLog->setChecked(false);
+
+    // Column discipline: the waterfall keeps a real floor at every
+    // width; extreme narrowness scrolls horizontally instead of
+    // squeezing Size/Time/Waterfall to nothing.
+    QHeaderView *nh = panel.m_networkView->horizontalHeader();
+    QVERIFY(!nh->stretchLastSection());
+    panel.resize(1200, 320);
+    QCoreApplication::processEvents();
+    QVERIFY(nh->sectionSize(6) >= 140);
+    QVERIFY(nh->sectionSize(0) >= 160);
+    panel.resize(360, 320);
+    QCoreApplication::processEvents();
+    QCOMPARE(nh->sectionSize(6), 140);
+    QCOMPARE(nh->sectionSize(0), 160);
+    QVERIFY(nh->sectionSize(4) > 0);
+    QVERIFY(nh->sectionSize(5) > 0);
+    QTRY_VERIFY(
+        panel.m_networkView->horizontalScrollBar()->isVisible());
+    panel.resize(700, 300);
+    QCoreApplication::processEvents();
 
     // Unknown request ids and unknown network methods are ignored.
     panel.onEvent(QByteArray(
