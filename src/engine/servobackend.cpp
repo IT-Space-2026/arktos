@@ -80,6 +80,10 @@ struct ServoApi {
     // report poisoning (they abort instead); a missing symbol reads as
     // "never observed", which is the honest answer for them.
     int (*isPoisoned)(SeInstance) = nullptr;
+    // ENG23: optional — artifacts predating the software-rasterizer
+    // pin cannot report the painter's GL_RENDERER; a missing symbol
+    // reads as "unverifiable".
+    const char *(*glRenderer)(SeInstance) = nullptr;
 };
 
 // ENG18: serves the schemes libservo cannot fetch straight out of the
@@ -197,6 +201,11 @@ bool resolve()
     // would already have aborted the process).
     api().isPoisoned = reinterpret_cast<decltype(api().isPoisoned)>(
         library().resolve("se_is_poisoned"));
+    // Optional ENG23 addition — reports which rasterizer the painter's
+    // context actually got so a check can verify the software pin
+    // engaged rather than trust the env override took.
+    api().glRenderer = reinterpret_cast<decltype(api().glRenderer)>(
+        library().resolve("se_gl_renderer"));
     state = ok ? 1 : -1;
     if (!ok)
         qWarning("servo-embed: artifact at %s is missing symbols",
@@ -403,6 +412,17 @@ bool ServoView::isPoisoned() const
     // pumping).  Pre-ENG20 artifacts lack the export; they can't be
     // asked and would have aborted instead, so read as not-poisoned.
     return m_instance && api().isPoisoned && api().isPoisoned(m_instance);
+}
+
+QString ServoView::glRenderer() const
+{
+    // ENG23: the rasterizer string the shim sampled at se_init —
+    // "llvmpipe" on the pinned software path, empty when the artifact
+    // predates se_gl_renderer (the pin is then absent anyway).
+    if (!m_instance || !api().glRenderer)
+        return QString();
+    const char *renderer = api().glRenderer(m_instance);
+    return renderer ? QString::fromUtf8(renderer) : QString();
 }
 
 bool ServoView::instanceAvailable()

@@ -3370,6 +3370,23 @@ static int servoLifecycleSmoke()
             ? qobject_cast<ServoView *>(engineTab->page()->view())
             : nullptr;
         if (servoView) {
+            // ENG23: the desktop panic fix — servo-embed pins the
+            // painter to the software rasterizer: the model is
+            // render+readback (frames go to a QImage, never to a
+            // window), so the display-bound hardware EGL context whose
+            // sticky GL_INVALID_OPERATION tripped painter.rs:416 is no
+            // longer created at all.  Verify, don't assume: the shim
+            // sampled GL_RENDERER at se_init and reports it through
+            // se_gl_renderer; an artifact predating the export reads
+            // empty and fails — the pin is absent there anyway.
+            const QString renderer = servoView->glRenderer();
+            qInfo() << "servo-smoke: GL renderer:" << renderer;
+            const QString lower = renderer.toLower();
+            report(QStringLiteral("servo-software-renderer"),
+                   lower.contains(QLatin1String("llvmpipe"))
+                   || lower.contains(QLatin1String("swrast"))
+                   || lower.contains(QLatin1String("softpipe"))
+                   || lower.contains(QLatin1String("software")));
             report(QStringLiteral("panic-pre-live"),
                    servoView->isReady() && !servoView->isPoisoned());
             qputenv("SE_SELFTEST_PANIC", "1");

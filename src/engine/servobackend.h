@@ -81,6 +81,10 @@ public:
     // (swap back to Chromium to keep browsing).  Always false on
     // artifacts predating se_is_poisoned.
     bool isPoisoned() const;
+    // ENG23: GL_RENDERER of the painter's context — names the software
+    // rasterizer once the shim pins it, empty on artifacts predating
+    // se_gl_renderer.
+    QString glRenderer() const;
     // Whether another ServoView may be constructed — false once the
     // process's single SeInstance slot is claimed or spent (ENG12).
     static bool instanceAvailable();

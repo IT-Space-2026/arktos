@@ -5177,6 +5177,8 @@ version = "0.1.0"
 dependencies = [
  "dpi",
  "euclid",
+ "gleam",
+ "glow",
  "http",
  "keyboard-types",
  "log",

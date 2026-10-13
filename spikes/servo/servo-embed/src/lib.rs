@@ -21,6 +21,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
 use dpi::PhysicalSize;
+use glow::HasContext;
 use http::{header, HeaderValue, StatusCode};
 use servo::{
     opts::Opts, ConsoleLogLevel, DeviceIntRect, DevicePoint, EventLoopWaker, InputEvent, Key,
@@ -76,8 +77,15 @@ struct SeDelegate {
 
 impl WebViewDelegate for SeDelegate {
     fn notify_new_frame_ready(&self, webview: WebView) {
-        webview.paint();
         let rc = webview.rendering_context();
+        // ENG23: Painter::render asserts a clean error flag at the TOP
+        // of this paint (painter.rs debug_assert on get_error()) —
+        // drain-and-report on BOTH sides of paint() so a stray
+        // driver-side error, wherever it was left, degrades to a log
+        // line instead of tripping the assert and poisoning the tab.
+        drain_gl_error(&rc, "pre-paint");
+        webview.paint();
+        drain_gl_error(&rc, "post-paint");
         let rect = DeviceIntRect::from_size(rc.size2d().cast());
         if let Some(image) = rc.read_to_image(rect) {
             *self.shared.frame.borrow_mut() = Some(image);
@@ -276,6 +284,10 @@ pub struct SeInstance {
     /// every later export short-circuits to an error/no-op — the tab
     /// goes dead but the host process survives.
     poisoned: AtomicBool,
+    /// ENG23: GL_RENDERER of the painter's context, read once at init —
+    /// the host's handle on "did the software rasterizer actually
+    /// engage" (se_gl_renderer).
+    gl_renderer: CString,
 }
 
 // ENG20: a Rust panic may not unwind across the extern "C" ABI — the
@@ -295,7 +307,7 @@ where
     if instance.poisoned.load(Ordering::SeqCst) {
         return fallback;
     }
-    match catch_unwind(AssertUnwindSafe(|| f(instance))) {
+    let result = match catch_unwind(AssertUnwindSafe(|| f(instance))) {
         Ok(result) => result,
         Err(_) => {
             instance.poisoned.store(true, Ordering::SeqCst);
@@ -305,11 +317,39 @@ where
             );
             fallback
         },
-    }
+    };
+    // ENG23: never hand the GUI thread back to Qt with our EGL
+    // context still current — the host's next make-current would
+    // fail on it (see release_current_gl_context).  Cheap no-op for
+    // exports that ran no GL work.
+    unsafe { release_current_gl_context() };
+    result
 }
 
 fn cstr(text: &str) -> CString {
     CString::new(text.as_bytes()).unwrap_or_else(|_| CString::new("<invalid>").unwrap())
+}
+
+/// ENG23: make the painter's context current, then drain-and-report
+/// any pending GL error.  Painter::render debug-asserts a clean error
+/// flag at the TOP of every paint — but surfman swap-chain resize and
+/// other non-paint GL work leave sticky driver errors on the context
+/// (llvmpipe raises GL_INVALID_OPERATION on the xcb resize path —
+/// the same panic the user hit on iris/wayland) that have nothing to
+/// do with the paint about to run.  Draining at every entry into
+/// engine GL work keeps a driver hiccup a log line instead of a
+/// poisoned instance; errors generated inside the paint itself are
+/// still webrender's own to check.
+fn drain_gl_error(rc: &Rc<dyn RenderingContext>, tag: &str) {
+    // get_error() reports the CURRENT context's flag — without a
+    // make_current here a foreign (Qt) context would answer instead.
+    if rc.make_current().is_err() {
+        return;
+    }
+    let gl_error = rc.gleam_gl_api().get_error();
+    if gl_error != gleam::gl::NO_ERROR {
+        eprintln!("servo-embed: GL error 0x{gl_error:x} pending at {tag} — drained");
+    }
 }
 
 // ENG12: libservo v0.7.0 parks Opts in a process-global OnceCell —
@@ -319,6 +359,217 @@ fn cstr(text: &str) -> CString {
 // One instance per process lifetime, ever — the Qt side enforces the
 // same contract so this gate is the last line of defense.
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
+
+// ENG23 — pin Servo's painter to Mesa's software rasterizer.
+//
+// `SoftwareRenderingContext` is a readback context — every frame goes
+// through `read_to_image` into a QImage and is never presented to a
+// window — but surfman still builds a real EGL context bound to the
+// session display.  On a desktop session `Connection::new()` picks the
+// wayland/x11 HARDWARE adapter (iris on the reporter's box), and any
+// stray driver-side error stays sticky on that context until
+// `Painter::render`'s `debug_assert_eq!(get_error(), NO_ERROR)`
+// (painter.rs:416) trips — the `GL_INVALID_OPERATION` panic seen on
+// the user's Wayland session while every headless run stayed clean.
+//
+// The fix is to not create the display-bound context at all:
+// render+readback is this shim's whole contract, and a surfaceless
+// llvmpipe context is exactly the path every headless run already
+// exercises.  Two env adjustments make surfman land there:
+//  * `LIBGL_ALWAYS_SOFTWARE=1` must be set BEFORE Mesa's eglInitialize
+//    picks a driver — surfman sets it itself, but too late (inside
+//    context-descriptor creation, after dri device enumeration, so a
+//    display-bound connection still ends up on iris);
+//  * WAYLAND_DISPLAY must be poisoned, not merely hidden:
+//    wl_display_connect(nullptr) falls back to the "wayland-0"
+//    default socket, so REMOVING the variable still connects on a
+//    live session — and a wayland connection whose context then
+//    fails make_current dies inside surfman's Drop ("Contexts must
+//    be destroyed explicitly"), crashing se_init outright.  Pointing
+//    the variable at a nonexistent socket makes the wayland AND x11
+//    backends genuinely fail so the multi-backend Connection::new()
+//    falls through to `mesa_surfaceless`, which needs no compositor
+//    connection at all.
+// Both are restored when this guard drops — it is constructed at the
+// top of se_init_inner, before ServoBuilder spawns any engine threads,
+// so the env writes cannot race a getenv inside servo (Rust 2021
+// keeps set_var a safe call; host Qt threads never read these vars).
+// Where the surfaceless EGL platform is missing entirely (non-Mesa
+// stacks) init retries once on the real display connection — still
+// software where Mesa honors the variable.
+struct ScopedSoftwareGlEnv {
+    libgl: Option<std::ffi::OsString>,
+    wayland: Option<std::ffi::OsString>,
+    display: Option<std::ffi::OsString>,
+    egl_platform: Option<std::ffi::OsString>,
+}
+
+fn restore_env(name: &str, value: &Option<std::ffi::OsString>) {
+    match value {
+        Some(v) => std::env::set_var(name, v),
+        None => std::env::remove_var(name),
+    }
+}
+
+impl ScopedSoftwareGlEnv {
+    fn new() -> Self {
+        let saved = Self {
+            libgl: std::env::var_os("LIBGL_ALWAYS_SOFTWARE"),
+            wayland: std::env::var_os("WAYLAND_DISPLAY"),
+            display: std::env::var_os("DISPLAY"),
+            egl_platform: std::env::var_os("EGL_PLATFORM"),
+        };
+        std::env::set_var("LIBGL_ALWAYS_SOFTWARE", "1");
+        // Poison, not hide — wl_display_connect(nullptr) silently
+        // falls back to the "wayland-0" default socket when the
+        // variable is absent, so a removed var still yields a live
+        // compositor connection on desktop sessions.  A nonexistent
+        // name makes the wayland backend fail outright, and with
+        // DISPLAY gone XOpenDisplay fails too, leaving surfman only
+        // the mesa_surfaceless backend.
+        std::env::set_var("WAYLAND_DISPLAY", "arora-servo-surfaceless");
+        std::env::remove_var("DISPLAY");
+        std::env::remove_var("EGL_PLATFORM");
+        saved
+    }
+
+    /// Bring the session display vars back while keeping
+    /// LIBGL_ALWAYS_SOFTWARE — the non-Mesa fallback path.
+    fn restore_display(&self) {
+        restore_env("WAYLAND_DISPLAY", &self.wayland);
+        restore_env("DISPLAY", &self.display);
+        restore_env("EGL_PLATFORM", &self.egl_platform);
+    }
+}
+
+impl Drop for ScopedSoftwareGlEnv {
+    fn drop(&mut self) {
+        self.restore_display();
+        restore_env("LIBGL_ALWAYS_SOFTWARE", &self.libgl);
+    }
+}
+
+/// ENG23: unbind whatever GL context (EGL or GLX) is current on this
+/// thread.  Two call sites, one mechanism — Mesa owns at most one
+/// current context per thread across APIs:
+///  * before surfman init — the Qt host can leave a foreign context
+///    current on the GUI thread (QRhi under xcb holds a GLX context
+///    across compositing), and eglMakeCurrent fails while one owns
+///    the thread; surfman's make_current failing mid-init used to
+///    drop-panic inside SoftwareRenderingContext::new, killing se_init.
+///  * after every export that ran engine GL work — leaving OUR
+///    surfaceless EGL context current breaks the host symmetrically:
+///    Qt's next QRhi make-current fails ('QRhiGles2: Failed to make
+///    context current') and the whole window stops compositing.
+/// Releasing is safe both ways: the painter re-binds inside
+/// Painter::render (and drain_gl_error re-binds to sample), and Qt
+/// re-makes its contexts current before painting — it does not rely
+/// on currency persisting between frames.  Resolved via RTLD_NOLOAD
+/// so an absent GL stack (pure headless) is a no-op, never a load.
+/// Returns true when a context was actually released — callers that
+/// run before surfman init use it to report a foreign context (worth
+/// an eprintln); routine post-export releases stay debug-level.
+#[cfg(target_family = "unix")]
+unsafe fn release_current_gl_context() -> bool {
+    let mut released = false;
+    const RTLD_NOW: i32 = 2;
+    const RTLD_NOLOAD: i32 = 4;
+    extern "C" {
+        fn dlopen(name: *const c_char, flags: i32) -> *mut c_void;
+        fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+    }
+    type GetPtr = unsafe extern "C" fn() -> *mut c_void;
+    type EglMakeCurrent =
+        unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void, *mut c_void) -> i32;
+    type GlxMakeCurrent = unsafe extern "C" fn(*mut c_void, usize, *mut c_void) -> i32;
+
+    unsafe fn dlsym_or_null(lib: *mut c_void, name: *const c_char) -> *mut c_void {
+        if lib.is_null() {
+            std::ptr::null_mut()
+        } else {
+            dlsym(lib, name)
+        }
+    }
+    unsafe fn load_sym<T>(lib: *mut c_void, name: *const c_char) -> Option<T> {
+        let ptr = dlsym_or_null(lib, name);
+        if ptr.is_null() {
+            None
+        } else {
+            Some(std::mem::transmute_copy(&ptr))
+        }
+    }
+
+    let egl = dlopen(c"libEGL.so.1".as_ptr(), RTLD_NOW | RTLD_NOLOAD);
+    if !egl.is_null() {
+        let get_context: Option<GetPtr> =
+            load_sym(egl, c"eglGetCurrentContext".as_ptr());
+        let get_display: Option<GetPtr> =
+            load_sym(egl, c"eglGetCurrentDisplay".as_ptr());
+        let make_current: Option<EglMakeCurrent> =
+            load_sym(egl, c"eglMakeCurrent".as_ptr());
+        if let (Some(get_context), Some(get_display), Some(make_current)) =
+            (get_context, get_display, make_current)
+        {
+            let context = get_context();
+            if !context.is_null() {
+                log::debug!("releasing EGL context {context:?} current on this thread");
+                make_current(
+                    get_display(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                );
+                released = true;
+            }
+        }
+    }
+
+    let gl = dlopen(c"libGL.so.1".as_ptr(), RTLD_NOW | RTLD_NOLOAD);
+    if !gl.is_null() {
+        let get_context: Option<GetPtr> =
+            load_sym(gl, c"glXGetCurrentContext".as_ptr());
+        let get_display: Option<GetPtr> =
+            load_sym(gl, c"glXGetCurrentDisplay".as_ptr());
+        let make_current: Option<GlxMakeCurrent> =
+            load_sym(gl, c"glXMakeCurrent".as_ptr());
+        if let (Some(get_context), Some(get_display), Some(make_current)) =
+            (get_context, get_display, make_current)
+        {
+            let context = get_context();
+            if !context.is_null() {
+                log::debug!("releasing GLX context {context:?} current on this thread");
+                make_current(get_display(), 0, std::ptr::null_mut());
+                released = true;
+            }
+        }
+    }
+
+    released
+}
+
+#[cfg(not(target_family = "unix"))]
+unsafe fn release_current_gl_context() -> bool {
+    false
+}
+
+/// ENG23 helper: surfman can panic mid-init (a created EGL context
+/// dropped without destroy_context when a later step fails) instead
+/// of returning Err — contain that per-attempt so the fallback retry
+/// still runs, and so a poisoned artifact degrades to init failure
+/// rather than an abort-level panic across the FFI boundary.
+fn try_rendering_context(size: PhysicalSize<u32>) -> Option<Rc<SoftwareRenderingContext>> {
+    match catch_unwind(AssertUnwindSafe(|| SoftwareRenderingContext::new(size))) {
+        Ok(Ok(rc)) => Some(Rc::new(rc)),
+        Ok(Err(error)) => {
+            log::error!("SoftwareRenderingContext::new failed: {error:?}");
+            None
+        },
+        Err(_) => {
+            log::error!("SoftwareRenderingContext::new panicked");
+            None
+        },
+    }
+}
 
 /// Create a Servo instance with one WebView sized `width`x`height`
 /// (device px) on a software rendering context. Returns nullptr on
@@ -353,6 +604,13 @@ fn se_init_inner(
     height: u32,
     config_dir: *const c_char,
 ) -> *mut SeInstance {
+    // ENG23: pin the whole init to the software rasterizer — the guard
+    // must exist before ServoBuilder::build spawns engine threads and
+    // must cover SoftwareRenderingContext::new (surfman's
+    // Connection::new, the only place display/driver is chosen).
+    // Everything later reuses that already-initialized connection.
+    let env = ScopedSoftwareGlEnv::new();
+
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     let mut opts = Opts::default();
@@ -382,17 +640,50 @@ fn se_init_inner(
     servo.setup_logging();
 
     let size = PhysicalSize::new(width.max(1), height.max(1));
-    let rendering_context = match SoftwareRenderingContext::new(size) {
-        Ok(rc) => Rc::new(rc),
-        Err(error) => {
-            log::error!("SoftwareRenderingContext::new failed: {error:?}");
-            return std::ptr::null_mut();
+    // ENG23: the thread must be free of foreign GL ownership before
+    // surfman makes its context current — a host GLX/EGL context
+    // still current here makes Mesa's eglMakeCurrent fail (see
+    // release_current_gl_context).  Anything current this early is
+    // genuinely foreign (our context does not exist yet) — worth a
+    // real log line, unlike the routine post-export releases.
+    if unsafe { release_current_gl_context() } {
+        eprintln!(
+            "servo-embed: released a foreign GL context that was \
+             current on the servo init thread"
+        );
+    }
+    let rendering_context = match try_rendering_context(size) {
+        Some(rc) => rc,
+        None => {
+            // No surfaceless EGL platform on this stack (e.g. non-Mesa
+            // EGL) — retry once on the real display connection; Mesa
+            // still honors LIBGL_ALWAYS_SOFTWARE there.
+            env.restore_display();
+            match try_rendering_context(size) {
+                Some(rc) => rc,
+                None => {
+                    // A partially-constructed surfman context can
+                    // still be current — leave the thread clean.
+                    unsafe { release_current_gl_context() };
+                    return std::ptr::null_mut();
+                },
+            }
         },
     };
 
     // Tests call make_current() on the context up front — the software
     // backend is inert either way, but keep the ordering identical.
     let _ = rendering_context.make_current();
+
+    // ENG23: verify — never assume — which rasterizer the painter got.
+    // Logged unconditionally and exported via se_gl_renderer so the
+    // smoke leg can assert the software path actually engaged.
+    let gl_renderer = unsafe {
+        rendering_context
+            .glow_gl_api()
+            .get_parameter_string(glow::RENDERER)
+    };
+    eprintln!("servo-embed: GL renderer: {gl_renderer}");
 
     let webview = WebViewBuilder::new(&servo, rendering_context.clone())
         .delegate(Rc::new(SeDelegate {
@@ -405,14 +696,20 @@ fn se_init_inner(
     // for a visible view inside its RenderingContext.
     webview.show();
 
-    Box::into_raw(Box::new(SeInstance {
+    let instance = Box::into_raw(Box::new(SeInstance {
         servo,
         rendering_context,
         webview,
         shared,
         pending_load: RefCell::new(None),
         poisoned: AtomicBool::new(false),
-    }))
+        gl_renderer: CString::new(gl_renderer.as_str())
+            .unwrap_or_else(|_| CString::new("unknown").unwrap()),
+    }));
+    // ENG23: init leaves the painter's EGL context current on this
+    // thread — release it so the host's own GL work re-binds cleanly.
+    unsafe { release_current_gl_context() };
+    instance
 }
 
 /// Pump Servo's event loop once. Call on the GUI thread whenever the
@@ -473,7 +770,14 @@ pub extern "C" fn se_resize(instance: *mut SeInstance, width: u32, height: u32) 
         // composites with a stale document view on a resized surface,
         // which on affected adapters leaves a GL error the next
         // Painter::render asserts on (ENG20's abort).
+        // ENG23: the swap-chain resize runs GL work — make the
+        // painter's context current first (exports release it on the
+        // way out) and drain anything it leaves so the next paint's
+        // assert sees a clean flag.
+        let rc = instance.webview.rendering_context();
+        let _ = rc.make_current();
         instance.webview.resize(size);
+        drain_gl_error(&rc, "post-resize");
     });
 }
 
@@ -659,6 +963,17 @@ pub extern "C" fn se_is_poisoned(instance: *mut SeInstance) -> i32 {
     instance.poisoned.load(Ordering::SeqCst) as i32
 }
 
+/// ENG23: GL_RENDERER string of the painter's context, sampled once at
+/// se_init — lets the host verify the software rasterizer actually
+/// engaged instead of assuming the env override took.  The pointer
+/// borrows the instance; nullptr on a null/poisoned instance.
+#[no_mangle]
+pub extern "C" fn se_gl_renderer(instance: *mut SeInstance) -> *const c_char {
+    ffi_guard(instance, std::ptr::null(), |instance| {
+        instance.gl_renderer.as_ptr()
+    })
+}
+
 /// ENG11: report the linked libservo version ("0.7.0"), parsed out of
 /// the engine's own user-agent product token so the string always
 /// tracks the pinned `servo` dependency — never nullptr, an
@@ -693,9 +1008,18 @@ pub extern "C" fn se_destroy(instance: *mut SeInstance) {
     // Deliberately NOT gated on `poisoned` — the host owns freeing the
     // instance either way.  The drop itself is catch-wrapped: a panic
     // inside teardown leaks the box rather than aborting the process.
-    if catch_unwind(AssertUnwindSafe(|| drop(unsafe { Box::from_raw(instance) })))
-        .is_err()
+    if catch_unwind(AssertUnwindSafe(|| {
+        // ENG23: webrender runs its own debug GL checks inside drop —
+        // a residual error on the painter's context would turn a clean
+        // teardown into a panic + leaked box; drain first.
+        drain_gl_error(&unsafe { &*instance }.webview.rendering_context(), "pre-destroy");
+        drop(unsafe { Box::from_raw(instance) });
+    }))
+    .is_err()
     {
         eprintln!("servo-embed: panic during se_destroy — instance leaked");
     }
+    // ENG23: teardown made the painter's context current — release it
+    // for the host's GL work (see release_current_gl_context).
+    unsafe { release_current_gl_context() };
 }

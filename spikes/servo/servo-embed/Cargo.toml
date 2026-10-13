@@ -24,6 +24,12 @@ euclid = "=0.22.14"
 keyboard-types = "=0.8.3"
 rustls = { version = "=0.23.45", features = ["aws_lc_rs"] }
 log = "0.4"
+# ENG23: pinned to the versions servo's own lockfile resolves so the
+# FFI shim shares gleam/glow types with the engine — used to verify
+# the painter's rasterizer (GL_RENDERER) and to drain a sticky GL
+# error paint() left behind.
+gleam = "=0.15.1"
+glow = "=0.17.0"
 # ENG18: headers/status for WebResourceResponse built by the host
 # resource resolver — mirrors servo's own lockfile entry.
 http = "=1.5.0"

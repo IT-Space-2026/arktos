@@ -87,6 +87,13 @@ void se_set_resource_resolver(void *userdata, SeResourceResolver resolver);
  * missing symbol as "no panic observed" (unverifiable, pre-fix). */
 int se_is_poisoned(SeInstance instance);
 
+/* ENG23: GL_RENDERER of the painter's context, sampled once at
+ * se_init — the host's handle on "did the software rasterizer actually
+ * engage" rather than assuming the env override took. Pointer borrows
+ * the instance (never free); NULL on a null/poisoned instance and on
+ * artifacts predating ENG23 — resolve optionally. */
+const char *se_gl_renderer(SeInstance instance);
+
 void se_destroy(SeInstance instance);
 
 #ifdef __cplusplus
