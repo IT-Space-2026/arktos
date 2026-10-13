@@ -117,6 +117,7 @@ This file is the task queue for the Devin CLI task loop
 | TABS14 | Pinned tab loses its title (icon-only collapse) — keep title visible — details below | pending | 0 | user report — pinned tab title disappears |
 | TABS15 | '+' new-tab button on tab bar in all 4 positions (top/bottom/left/right) — details below | pending | 0 | user request — vivaldi-style always-visible + |
 | TABS16 | Vertical tabs too narrow — titles truncate (bump default width) — details below | pending | 0 | user screenshot — 'Telex: Ujra lesz Fo…' clipped |
+| MENU08 | App-menu dropdown: larger menu text size — details below | pending | 0 | user request — bigger text under the Arora button |
 
 ## Task details
 
@@ -694,3 +695,7 @@ Pinned tab title disappears — user report with screenshot: pinning a tab colla
 ### TABS16
 
 Vertical tab rail too narrow — user: 'the tab vertical size could be a little bigger as the History text is truncated' — screenshot shows titles clipping at ~10-12 chars ('Telex: Ujra lesz Fo…'). TABS10 set the default verticalTabWidth 180->140 for compactness; user wants a bit more room. Spec: (a) bump the default vertical tab width so a typical title gets ~18-22 chars (try ~180px — the pre-TABS10 default — or 170; the migration story: TABS10's migration moved users off stored-180 to 140, so a stored value may exist — respect explicit user-set widths, migrate absent/stored-default values to the new default like TABS10 did); (b) title eliding still applies past the width (no overflow); close/pin/group chrome keeps fitting at the new width; (c) the rail stays user-resizable (grip dblclick reset follows new default); horizontal bars unaffected. Verify: real grab shows noticeably longer titles at default, stored-custom widths untouched, migration leg updated (TABS10's tst asserted 140 — update expectations), tst_tabbar + make check PASS.
+
+### MENU08
+
+Larger text in the Arora app-menu dropdown — user: 'under the main Arora button the sub menus should be bigger, like bigger text size.' Spec: (a) the app menu's dropdown (m_appMenu + its shared submenus — File/Edit/View/History/Bookmarks/Window/Tools/Help and their nested items) renders at a larger font size than the default menu font — bump ~+2pt or ~115-125% (taste-check; MENU07's bigger button pairs with a proportionally bigger menu); apply via palette/font on the menu widgets or a stylesheet targeting the app-menu tree — remember the QMenus are SHARED with the menubar (MENU06 design), so if the menubar ever shows they get the bigger font too — that's acceptable/desirable, document; (b) checkmarks, icons, separators, item height all scale cleanly — no clipped text or cramped accelerator column; disabled items and dynamic menus (History/Bookmarks entries built at aboutToShow) inherit the size; (c) tor violet menu styling: the tor stylesheet's menu colors stay, bigger text still legible; (d) the hidden-menubar toggle and keyboard nav unaffected. Verify: dropdown visibly larger text vs before grab (normal + tor window), nested submenus same size, no clipped items at longest entries, tst appMenuButton legs, make check PASS.
