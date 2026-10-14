@@ -46,6 +46,7 @@ dist/
 
 # PKG01 dpkg staging artifacts
 debian/arora/
+rpm/buildroot/
 debian/files
 debian/substvars
 *.deb

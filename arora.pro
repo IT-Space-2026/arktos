@@ -53,6 +53,15 @@ pkg-flatpak.target = pkg-flatpak
 pkg-flatpak.commands = ./.devin/pkg-flatpak.sh
 QMAKE_EXTRA_TARGETS += pkg-flatpak
 
+# `make pkg-rpm` builds the RPM via rpm/arora.spec (driver:
+# ./.devin/pkg-rpm.sh) — same bundled-runtime payload as the deb, laid
+# out on the FHS under /usr/bin + /usr/lib/arora. Needs rpmbuild for
+# the pack step (openSUSE container path otherwise — see the driver);
+# the spec + staged payload are verified either way.
+pkg-rpm.target = pkg-rpm
+pkg-rpm.commands = ./.devin/pkg-rpm.sh
+QMAKE_EXTRA_TARGETS += pkg-rpm
+
 # `make check-warnings` is the WRN01 zero-warning gate — it builds a
 # throwaway copy of the tree in /tmp (never polluting the in-tree
 # build) and fails if compiling the shipping code (src/ + tools/)

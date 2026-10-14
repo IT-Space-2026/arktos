@@ -814,6 +814,10 @@ Build, tests & tools:
   pinned vendored crates, bundles the Tor expert bundle, and
   produces `dist/io.arora.Arora_0.2_x86_64.flatpak` with honest
   minimal sandbox permissions and store metainfo (PKG02).
+- openSUSE RPM: `make pkg-rpm` (or `.devin/pkg-rpm.sh`) builds
+  `dist/arora_0.2-0.*.rpm` from rpm/arora.spec — the same bundled
+  Qt/WebEngine payload and /usr/bin launcher as the deb, with an
+  explicit SONAME-capability Requires list (PKG03).
 - THIRD-PARTY-NOTICES audit (LIC01); post-migration cleanup (AUD01).
 - Managed task queue + task loops under .devin/.
 
