@@ -162,7 +162,7 @@ ZoomControl::ZoomControl(QWidget *parent)
     layout->addWidget(m_valueButton);
     layout->addWidget(m_inButton);
 
-    m_outButton->setIcon(AroraIcon::get(QLatin1String("zoom-out")));
+    m_outButton->setIcon(AroraIcon::getChrome(QLatin1String("zoom-out")));
     m_outButton->setAutoRaise(true);
     m_outButton->setIconSize(QSize(14, 14));
     m_outButton->setToolTip(tr("Zoom Out"));
@@ -173,7 +173,7 @@ ZoomControl::ZoomControl(QWidget *parent)
     // not jitter the status bar on every zoom step.
     m_valueButton->setMinimumWidth(
         fontMetrics().horizontalAdvance(QLatin1String("300%")) + 12);
-    m_inButton->setIcon(AroraIcon::get(QLatin1String("zoom-in")));
+    m_inButton->setIcon(AroraIcon::getChrome(QLatin1String("zoom-in")));
     m_inButton->setAutoRaise(true);
     m_inButton->setIconSize(QSize(14, 14));
     m_inButton->setToolTip(tr("Zoom In"));

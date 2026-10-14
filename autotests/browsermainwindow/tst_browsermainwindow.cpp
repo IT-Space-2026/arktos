@@ -118,6 +118,34 @@ public:
         { mousePressEvent(event); }
 };
 
+// ICONS09: count pixels that survived with a color other than the
+// palette tint — the chrome engine flattens all art to ButtonText,
+// so a raw-color glyph (or a set's own recolor) shows up as off-tint
+// pixels.  A 2-per-channel tolerance covers the premultiplied
+// round-trip's ±1 rounding on anti-aliased edges; brand art differs
+// by far more.  Returns -1 when the icon rendered nothing at all.
+static int offTintPixels(const QIcon &icon, int extent,
+                         const QColor &tint)
+{
+    const QImage image = icon.pixmap(QSize(extent, extent)).toImage();
+    if (image.isNull())
+        return -1;
+    int off = 0;
+    int opaque = 0;
+    for (int y = 0; y < image.height(); ++y)
+        for (int x = 0; x < image.width(); ++x) {
+            const QColor color = image.pixelColor(x, y);
+            if (color.alpha() > 100) {
+                ++opaque;
+                if (qAbs(color.red() - tint.red()) > 2
+                        || qAbs(color.green() - tint.green()) > 2
+                        || qAbs(color.blue() - tint.blue()) > 2)
+                    ++off;
+            }
+        }
+    return opaque ? off : -1;
+}
+
 // WA_DeleteOnClose turns close() into deleteLater(); pump the deferred
 // deletes so the window is gone before the test function returns.
 static void closeWindow(QWidget *window)
@@ -146,6 +174,7 @@ private slots:
     void fileMenuOrder();
     void appMenuButton();
     void menuIcons();
+    void chromeIconsTinted();
     void downloadsMenuHome();
     void devToolsSubmenu();
     void iconOnlyTabsMenu();
@@ -725,6 +754,189 @@ void tst_BrowserMainWindow::menuIcons()
     closeWindow(torWindow);
     BrowserApplication::setTorMode(false);
     QCOMPARE(torMissing, 0);
+
+    closeWindow(window);
+#endif
+}
+
+// ICONS09: the house-icon rule on the real surfaces — every chrome
+// glyph renders 100% in the palette's ButtonText (flat monochrome,
+// whichever theme served the base art), and the documented identity
+// exceptions keep their own colors: the Qt mark on About Qt, the
+// Arora mark on About <app>, and the container flyout's color chips.
+void tst_BrowserMainWindow::chromeIconsTinted()
+{
+#if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
+    const QColor tint = qApp->palette()
+        .color(QPalette::Normal, QPalette::ButtonText);
+
+    // All iconed leaf actions in a menu must be on-tint; brand rows
+    // and submenu flyouts with identity art are checked separately.
+    const auto checkMenu = [&](QMenu *menu, const QString &title,
+                               const QStringList &brandRows) {
+        QVERIFY2(menu, qPrintable(title));
+        for (QAction *action : menu->actions()) {
+            if (action->isSeparator() || action->icon().isNull())
+                continue;
+            const QString row = title + QLatin1String(" > ")
+                + action->text();
+            const int off = offTintPixels(action->icon(), 16, tint);
+            QVERIFY2(off >= 0, qPrintable(row + " rendered nothing"));
+            if (brandRows.contains(
+                        action->text().remove(QLatin1Char('&')))) {
+                QVERIFY2(off > 0,
+                         qPrintable(row + " lost its brand colors"));
+            } else {
+                QVERIFY2(off == 0, qPrintable(
+                    row + QStringLiteral(" (%1 off-tint px)")
+                            .arg(off)));
+            }
+        }
+    };
+
+    const QStringList brandRows = {
+        QLatin1String("About Qt"),
+        // "About <app>" — the window icon, i.e. the Arora mark.
+        QCoreApplication::applicationName().isEmpty()
+            ? QLatin1String("About")
+            : QStringLiteral("About %1")
+                  .arg(QCoreApplication::applicationName()),
+    };
+
+    const auto menuTitles = [&]() {
+        return QList<QLatin1String>({ QLatin1String("File"),
+                                      QLatin1String("Edit"),
+                                      QLatin1String("View"),
+                                      QLatin1String("Tools"),
+                                      QLatin1String("Help") });
+    };
+
+    SubWindow *window = new SubWindow;
+    window->show();
+    QApplication::processEvents();
+    QHash<QString, QMenu *> menus;
+    for (QAction *menuAction : window->menuBar()->actions()) {
+        if (menuAction->menu())
+            menus.insert(menuAction->text().remove(QLatin1Char('&')),
+                         menuAction->menu());
+    }
+    QCOMPARE(menus.count(), 8);
+    // Populate the aboutToShow-built rows the audit must see.
+    for (QMenu *menu : std::as_const(menus)) {
+        menu->popup(QPoint(60, 60));
+        QApplication::processEvents();
+        menu->hide();
+    }
+    for (QLatin1String title : menuTitles())
+        checkMenu(menus.value(title), QString::fromLatin1(title),
+                  title == QLatin1String("Help") ? brandRows
+                                                 : QStringList());
+
+    // The container flyout mixes identity chips with chrome rows:
+    // chips stay colored, the static tail rows are tinted.
+    for (QAction *action : menus.value(QLatin1String("File"))->actions()) {
+        if (!action->menu()
+                || action->menu()->title().remove(QLatin1Char('&'))
+                       != QLatin1String("New Container Tab"))
+            continue;
+        action->menu()->popup(QPoint(120, 80));
+        QApplication::processEvents();
+        action->menu()->hide();
+        int chips = 0;
+        for (QAction *row : action->menu()->actions()) {
+            if (row->isSeparator() || row->icon().isNull())
+                continue;
+            const QString label = row->text().remove(QLatin1Char('&'));
+            if (label == QLatin1String("New Container...")
+                    || label == QLatin1String("Manage Containers...")) {
+                QCOMPARE(offTintPixels(row->icon(), 16, tint), 0);
+            } else {
+                QVERIFY2(offTintPixels(row->icon(), 16, tint) > 0,
+                         qPrintable(label + " chip lost its color"));
+                ++chips;
+            }
+        }
+        QVERIFY(chips > 0);
+    }
+
+    // Nav-bar glyph actions ride the same palette tint.
+    QToolBar *navBar = window->findChild<QToolBar *>(
+        QLatin1String("NavigationToolBar"));
+    QVERIFY(navBar);
+    int navIcons = 0;
+    for (QAction *action : navBar->actions()) {
+        if (action->icon().isNull())
+            continue;
+        QVERIFY2(offTintPixels(action->icon(), 16, tint) == 0,
+                 qPrintable(action->text()));
+        ++navIcons;
+    }
+    QVERIFY(navIcons >= 4);
+
+    // An installed menu icon re-tints live across a palette flip —
+    // nothing re-sets it.
+    const QImage before = menus.value(QLatin1String("File"))
+        ->actions().first()->icon().pixmap(QSize(16, 16)).toImage();
+    BrowserTheme::previewColorScheme(Qt::ColorScheme::Dark);
+    QApplication::processEvents();
+    const QColor darkTint = BrowserTheme::darkPalette()
+        .color(QPalette::ButtonText);
+    QCOMPARE(offTintPixels(menus.value(QLatin1String("File"))
+                           ->actions().first()->icon(), 16, darkTint),
+             0);
+    BrowserTheme::applyColorScheme();
+    QApplication::processEvents();
+    QCOMPARE(menus.value(QLatin1String("File"))->actions().first()
+                 ->icon().pixmap(QSize(16, 16)).toImage(), before);
+
+    // Private window: same surfaces, same rule.
+    BrowserApplication::setPrivate(true);
+    SubWindow *privateWindow = new SubWindow;
+    privateWindow->show();
+    QApplication::processEvents();
+    int privateIcons = 0;
+    for (QAction *action :
+         privateWindow->menuBar()->actions()) {
+        if (!action->menu()
+                || action->text().remove(QLatin1Char('&'))
+                       != QLatin1String("File"))
+            continue;
+        for (QAction *leaf : action->menu()->actions()) {
+            if (leaf->isSeparator() || leaf->icon().isNull())
+                continue;
+            QVERIFY2(offTintPixels(leaf->icon(), 16, tint) == 0,
+                     qPrintable(leaf->text()));
+            ++privateIcons;
+        }
+    }
+    closeWindow(privateWindow);
+    BrowserApplication::setPrivate(false);
+    QVERIFY(privateIcons > 0);
+
+    // Tor window: menu popups stay on the platform palette, so the
+    // same dark-on-light tint applies — the violet nav cluster's
+    // explicit lift is covered by torNavIconsDarkChrome.
+    BrowserApplication::setTorMode(true);
+    SubWindow *torWindow = new SubWindow;
+    torWindow->show();
+    QApplication::processEvents();
+    QMenu *torFile = torWindow->menuBar()->actions().isEmpty()
+        ? (torWindow->appMenu()
+               ? torWindow->appMenu()->actions().first()->menu()
+               : nullptr)
+        : torWindow->menuBar()->actions().first()->menu();
+    QVERIFY(torFile);
+    int torIcons = 0;
+    for (QAction *action : torFile->actions()) {
+        if (action->isSeparator() || action->icon().isNull())
+            continue;
+        QVERIFY2(offTintPixels(action->icon(), 16, tint) == 0,
+                 qPrintable(action->text()));
+        ++torIcons;
+    }
+    closeWindow(torWindow);
+    BrowserApplication::setTorMode(false);
+    QVERIFY(torIcons > 0);
 
     closeWindow(window);
 #endif

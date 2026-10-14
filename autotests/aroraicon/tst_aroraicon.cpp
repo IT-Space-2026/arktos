@@ -46,7 +46,25 @@ private slots:
     void nativeDarkVariant();
     void legacyFallback();
     void iconForTheme();
+    void chromeIcon();
 };
+
+// Opaque pixels whose color strays more than rounding noise from the
+// palette tint — a getChrome glyph must be perfectly monochrome.
+static int offTintPixels(const QImage &image, const QColor &tint)
+{
+    int off = 0;
+    for (int y = 0; y < image.height(); ++y)
+        for (int x = 0; x < image.width(); ++x) {
+            const QColor c = image.pixelColor(x, y);
+            if (c.alpha() > 128
+                    && (qAbs(c.red() - tint.red()) > 2
+                        || qAbs(c.green() - tint.green()) > 2
+                        || qAbs(c.blue() - tint.blue()) > 2))
+                ++off;
+        }
+    return off;
+}
 
 static int opaquePixels(const QImage &image)
 {
@@ -261,6 +279,55 @@ void tst_AroraIcon::iconForTheme()
     }
     QVERIFY(previews.value(QLatin1String("adwaita"))
             != previews.value(QLatin1String("tabler")));
+}
+
+// ICONS09: the chrome contract — getChrome flattens the themed art
+// to the palette's ButtonText (whichever set serves the shape),
+// Disabled takes the palette's own disabled tone, and the tint is
+// resolved per pixmap() request so a live palette flip restyles an
+// already-constructed icon while a theme swap still moves the shape.
+void tst_AroraIcon::chromeIcon()
+{
+    const QPalette saved = qApp->palette();
+    const QColor tint = saved.color(QPalette::Normal,
+                                    QPalette::ButtonText);
+    const QColor disabledTint = saved.color(QPalette::Disabled,
+                                            QPalette::ButtonText);
+
+    const QIcon icon =
+        AroraIcon::getChrome(QLatin1String("go-previous"));
+
+    const QImage image = icon.pixmap(QSize(24, 24)).toImage();
+    QVERIFY(opaquePixels(image) > 0);
+    QCOMPARE(offTintPixels(image, tint), 0);
+
+    const QImage disabled =
+        icon.pixmap(QSize(24, 24), QIcon::Disabled).toImage();
+    QVERIFY(opaquePixels(disabled) > 0);
+    QCOMPARE(offTintPixels(disabled, disabledTint), 0);
+    QVERIFY(disabled != image);
+
+    // The same QIcon re-tints across a palette flip — nothing
+    // re-set it; that is the whole point of the lazy engine.
+    qApp->setPalette(BrowserTheme::darkPalette());
+    const QImage dark = icon.pixmap(QSize(24, 24)).toImage();
+    QCOMPARE(offTintPixels(dark, BrowserTheme::darkPalette()
+                           .color(QPalette::ButtonText)),
+             0);
+    QVERIFY(dark != image);
+    qApp->setPalette(saved);
+    QCOMPARE(icon.pixmap(QSize(24, 24)).toImage(), image);
+
+    // Theme swap still changes the shape under the fixed tint.
+    AroraIcon::setTheme(QLatin1String("adwaita"));
+    const QImage adwaita = icon.pixmap(QSize(24, 24)).toImage();
+    QCOMPARE(offTintPixels(adwaita, tint), 0);
+    AroraIcon::setTheme(QLatin1String("tabler"));
+    const QImage tabler = icon.pixmap(QSize(24, 24)).toImage();
+    QCOMPARE(offTintPixels(tabler, tint), 0);
+    QVERIFY(adwaita != tabler);
+
+    AroraIcon::setTheme(QLatin1String("native"));
 }
 
 QTEST_MAIN(tst_AroraIcon)

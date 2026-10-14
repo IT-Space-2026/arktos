@@ -1114,23 +1114,23 @@ void BrowserMainWindow::setupMenu()
     m_fileMenu->addAction(m_fileQuit);
 
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
-    m_fileNewWindowAction->setIcon(AroraIcon::get(QLatin1String("window-new")));
-    m_fileNewPrivateTabAction->setIcon(AroraIcon::get(QLatin1String("view-private")));
-    m_fileNewTorWindowAction->setIcon(AroraIcon::get(QLatin1String("tor-onion")));
+    m_fileNewWindowAction->setIcon(AroraIcon::getChrome(QLatin1String("window-new")));
+    m_fileNewPrivateTabAction->setIcon(AroraIcon::getChrome(QLatin1String("view-private")));
+    m_fileNewTorWindowAction->setIcon(AroraIcon::getChrome(QLatin1String("tor-onion")));
     // ICONS08: submenu headers that sit among iconed leaf rows carry
     // an icon too — the crate glyph marks the container flyout.
     m_fileNewContainerTabMenu->setIcon(
-        AroraIcon::get(QLatin1String("container-tab")));
-    m_fileOpenFileAction->setIcon(AroraIcon::get(QLatin1String("document-open")));
-    m_fileOpenLocationAction->setIcon(AroraIcon::get(QLatin1String("go-jump")));
-    m_fileSaveAsAction->setIcon(AroraIcon::get(QLatin1String("document-save-as")));
-    m_fileImportBookmarksAction->setIcon(AroraIcon::get(QLatin1String("document-import")));
-    m_fileExportBookmarksAction->setIcon(AroraIcon::get(QLatin1String("document-export")));
-    m_filePrintPreviewAction->setIcon(AroraIcon::get(QLatin1String("document-print-preview")));
-    m_filePrintAction->setIcon(AroraIcon::get(QLatin1String("document-print")));
-    m_filePreferencesAction->setIcon(AroraIcon::get(QLatin1String("preferences-system")));
-    m_fileCloseWindow->setIcon(AroraIcon::get(QLatin1String("window-close")));
-    m_fileQuit->setIcon(AroraIcon::get(QLatin1String("application-exit")));
+        AroraIcon::getChrome(QLatin1String("container-tab")));
+    m_fileOpenFileAction->setIcon(AroraIcon::getChrome(QLatin1String("document-open")));
+    m_fileOpenLocationAction->setIcon(AroraIcon::getChrome(QLatin1String("go-jump")));
+    m_fileSaveAsAction->setIcon(AroraIcon::getChrome(QLatin1String("document-save-as")));
+    m_fileImportBookmarksAction->setIcon(AroraIcon::getChrome(QLatin1String("document-import")));
+    m_fileExportBookmarksAction->setIcon(AroraIcon::getChrome(QLatin1String("document-export")));
+    m_filePrintPreviewAction->setIcon(AroraIcon::getChrome(QLatin1String("document-print-preview")));
+    m_filePrintAction->setIcon(AroraIcon::getChrome(QLatin1String("document-print")));
+    m_filePreferencesAction->setIcon(AroraIcon::getChrome(QLatin1String("preferences-system")));
+    m_fileCloseWindow->setIcon(AroraIcon::getChrome(QLatin1String("window-close")));
+    m_fileQuit->setIcon(AroraIcon::getChrome(QLatin1String("application-exit")));
 #endif
 
     // Edit
@@ -1180,15 +1180,15 @@ void BrowserMainWindow::setupMenu()
     m_editMenu->addAction(m_editFindPreviousAction);
 
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
-    m_editUndoAction->setIcon(AroraIcon::get(QLatin1String("edit-undo")));
-    m_editRedoAction->setIcon(AroraIcon::get(QLatin1String("edit-redo")));
-    m_editCutAction->setIcon(AroraIcon::get(QLatin1String("edit-cut")));
-    m_editCopyAction->setIcon(AroraIcon::get(QLatin1String("edit-copy")));
-    m_editPasteAction->setIcon(AroraIcon::get(QLatin1String("edit-paste")));
-    m_editSelectAllAction->setIcon(AroraIcon::get(QLatin1String("edit-select-all")));
-    m_editFindAction->setIcon(AroraIcon::get(QLatin1String("edit-find")));
-    m_editFindNextAction->setIcon(AroraIcon::get(QLatin1String("go-down")));
-    m_editFindPreviousAction->setIcon(AroraIcon::get(QLatin1String("go-up")));
+    m_editUndoAction->setIcon(AroraIcon::getChrome(QLatin1String("edit-undo")));
+    m_editRedoAction->setIcon(AroraIcon::getChrome(QLatin1String("edit-redo")));
+    m_editCutAction->setIcon(AroraIcon::getChrome(QLatin1String("edit-cut")));
+    m_editCopyAction->setIcon(AroraIcon::getChrome(QLatin1String("edit-copy")));
+    m_editPasteAction->setIcon(AroraIcon::getChrome(QLatin1String("edit-paste")));
+    m_editSelectAllAction->setIcon(AroraIcon::getChrome(QLatin1String("edit-select-all")));
+    m_editFindAction->setIcon(AroraIcon::getChrome(QLatin1String("edit-find")));
+    m_editFindNextAction->setIcon(AroraIcon::getChrome(QLatin1String("go-down")));
+    m_editFindPreviousAction->setIcon(AroraIcon::getChrome(QLatin1String("go-up")));
 #endif
 
     // View
@@ -1372,33 +1372,33 @@ void BrowserMainWindow::setupMenu()
     connect(m_viewTextEncodingMenu, &QMenu::triggered,
             this, &BrowserMainWindow::viewTextEncoding);
 
-    m_stopIcon = AroraIcon::get(QLatin1String("process-stop"));
-    m_reloadIcon = AroraIcon::get(QLatin1String("view-refresh"));
+    m_stopIcon = AroraIcon::getChrome(QLatin1String("process-stop"));
+    m_reloadIcon = AroraIcon::getChrome(QLatin1String("view-refresh"));
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
     m_viewStopAction->setIcon(m_stopIcon);
     m_viewReloadAction->setIcon(m_reloadIcon);
-    m_viewZoomInAction->setIcon(AroraIcon::get(QLatin1String("zoom-in")));
-    m_viewZoomNormalAction->setIcon(AroraIcon::get(QLatin1String("zoom-original")));
-    m_viewZoomOutAction->setIcon(AroraIcon::get(QLatin1String("zoom-out")));
-    m_viewFullScreenAction->setIcon(AroraIcon::get(QLatin1String("view-fullscreen")));
+    m_viewZoomInAction->setIcon(AroraIcon::getChrome(QLatin1String("zoom-in")));
+    m_viewZoomNormalAction->setIcon(AroraIcon::getChrome(QLatin1String("zoom-original")));
+    m_viewZoomOutAction->setIcon(AroraIcon::getChrome(QLatin1String("zoom-out")));
+    m_viewFullScreenAction->setIcon(AroraIcon::getChrome(QLatin1String("view-fullscreen")));
     // ICONS07: the bar-visibility toggles and engine tools get icons
     // too — names with no bundled-set artwork resolve to the mid-grey
     // legacy glyphs (SHLD01 convention).
-    m_viewShowMenuBarAction->setIcon(AroraIcon::get(QLatin1String("view-menubar")));
-    m_viewToolbarAction->setIcon(AroraIcon::get(QLatin1String("view-toolbar")));
-    m_viewBookmarkBarAction->setIcon(AroraIcon::get(QLatin1String("user-bookmarks")));
-    viewTabBarAction->setIcon(AroraIcon::get(QLatin1String("view-tabbar")));
+    m_viewShowMenuBarAction->setIcon(AroraIcon::getChrome(QLatin1String("view-menubar")));
+    m_viewToolbarAction->setIcon(AroraIcon::getChrome(QLatin1String("view-toolbar")));
+    m_viewBookmarkBarAction->setIcon(AroraIcon::getChrome(QLatin1String("user-bookmarks")));
+    viewTabBarAction->setIcon(AroraIcon::getChrome(QLatin1String("view-tabbar")));
     m_tabWidget->tabBar()->iconOnlyTabsAction()->setIcon(
-        AroraIcon::get(QLatin1String("view-icon")));
-    m_viewStatusbarAction->setIcon(AroraIcon::get(QLatin1String("view-statusbar")));
-    m_viewZoomTextOnlyAction->setIcon(AroraIcon::get(QLatin1String("zoom-text")));
-    m_viewReaderAction->setIcon(AroraIcon::get(QLatin1String("text-x-generic")));
-    m_viewPipAction->setIcon(AroraIcon::get(QLatin1String("view-pip")));
-    m_viewSourceAction->setIcon(AroraIcon::get(QLatin1String("text-html")));
+        AroraIcon::getChrome(QLatin1String("view-icon")));
+    m_viewStatusbarAction->setIcon(AroraIcon::getChrome(QLatin1String("view-statusbar")));
+    m_viewZoomTextOnlyAction->setIcon(AroraIcon::getChrome(QLatin1String("zoom-text")));
+    m_viewReaderAction->setIcon(AroraIcon::getChrome(QLatin1String("text-x-generic")));
+    m_viewPipAction->setIcon(AroraIcon::getChrome(QLatin1String("view-pip")));
+    m_viewSourceAction->setIcon(AroraIcon::getChrome(QLatin1String("text-html")));
     // ICONS08: the View submenu headers sit among iconed leaf rows —
     // they get icons from the same family.
     m_viewTextEncodingAction->setIcon(
-        AroraIcon::get(QLatin1String("accessories-character-map")));
+        AroraIcon::getChrome(QLatin1String("accessories-character-map")));
 #endif
 
     // History
@@ -1429,7 +1429,7 @@ void BrowserMainWindow::setupMenu()
     m_historyHomeAction->setShortcut(QKeySequence(Qt::ControlModifier | Qt::ShiftModifier | Qt::Key_H));
     // HOME01: the nav-bar Home button reuses this action, so the icon
     // is unconditional — platform convention only hides it in menus.
-    m_historyHomeAction->setIcon(AroraIcon::get(QLatin1String("go-home")));
+    m_historyHomeAction->setIcon(AroraIcon::getChrome(QLatin1String("go-home")));
 #if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
     m_historyHomeAction->setIconVisibleInMenu(false);
 #endif
@@ -1450,10 +1450,10 @@ void BrowserMainWindow::setupMenu()
     historyActions.append(m_historyRestoreLastSessionAction);
     m_historyMenu->setInitialActions(historyActions);
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
-    m_historyRestoreLastSessionAction->setIcon(AroraIcon::get(QLatin1String("document-revert")));
+    m_historyRestoreLastSessionAction->setIcon(AroraIcon::getChrome(QLatin1String("document-revert")));
     // ICONS08: a static submenu header among iconed rows.
     m_tabWidget->recentlyClosedTabsAction()->setIcon(
-        AroraIcon::get(QLatin1String("view-restore")));
+        AroraIcon::getChrome(QLatin1String("view-restore")));
 #endif
 
     // Bookmarks
@@ -1472,7 +1472,7 @@ void BrowserMainWindow::setupMenu()
             this, &BrowserMainWindow::showBookmarksDialog);
 
     m_bookmarksAddAction = new QAction(this);
-    m_bookmarksAddAction->setIcon(AroraIcon::get(QLatin1String("bookmark-new")));
+    m_bookmarksAddAction->setIcon(AroraIcon::getChrome(QLatin1String("bookmark-new")));
 #if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
     m_bookmarksAddAction->setIconVisibleInMenu(false);
 #endif
@@ -1491,11 +1491,11 @@ void BrowserMainWindow::setupMenu()
     bookmarksActions.append(m_bookmarksAddFolderAction);
     m_bookmarksMenu->setInitialActions(bookmarksActions);
 
-    m_bookmarksAddFolderAction->setIcon(AroraIcon::get(QLatin1String("folder-new")));
-    m_bookmarksShowAllAction->setIcon(AroraIcon::get(QLatin1String("user-bookmarks")));
+    m_bookmarksAddFolderAction->setIcon(AroraIcon::getChrome(QLatin1String("folder-new")));
+    m_bookmarksShowAllAction->setIcon(AroraIcon::getChrome(QLatin1String("user-bookmarks")));
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
     tabWidget()->bookmarkTabsAction()->setIcon(
-        AroraIcon::get(QLatin1String("bookmark-new")));
+        AroraIcon::getChrome(QLatin1String("bookmark-new")));
 #endif
 
     // Window
@@ -1513,7 +1513,7 @@ void BrowserMainWindow::setupMenu()
             this, &BrowserMainWindow::showTabSearch);
     addAction(m_windowTabSearchAction);
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
-    m_windowTabSearchAction->setIcon(AroraIcon::get(QLatin1String("edit-find")));
+    m_windowTabSearchAction->setIcon(AroraIcon::getChrome(QLatin1String("edit-find")));
 #endif
 
     connect(m_windowMenu, &QMenu::aboutToShow,
@@ -1538,7 +1538,7 @@ void BrowserMainWindow::setupMenu()
     // Window menu keeps only tab/window-management entries.
     m_toolsDownloadsAction = new QAction(m_toolsMenu);
     m_toolsDownloadsAction->setIcon(
-        AroraIcon::get(QLatin1String("emblem-downloads")));
+        AroraIcon::getChrome(QLatin1String("emblem-downloads")));
     connect(m_toolsDownloadsAction, &QAction::triggered,
             this, &BrowserMainWindow::downloadManager);
     m_toolsMenu->addAction(m_toolsDownloadsAction);
@@ -1614,7 +1614,7 @@ void BrowserMainWindow::setupMenu()
     m_toolsBidiDevToolAction->setText(tr("BiDi Dev &Tools"));
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
     m_toolsBidiDevToolAction->setIcon(
-        AroraIcon::get(QLatin1String("system-run")));
+        AroraIcon::getChrome(QLatin1String("system-run")));
 #endif
     if (BrowserApplication::isTorMode()) {
         m_toolsBidiDevToolAction->setEnabled(false);
@@ -1630,18 +1630,18 @@ void BrowserMainWindow::setupMenu()
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
     // ICONS07: the dev-tools rows get icons too.
     m_toolsChromiumDevToolAction->setIcon(
-        AroraIcon::get(QLatin1String("utilities-terminal")));
+        AroraIcon::getChrome(QLatin1String("utilities-terminal")));
     m_toolsCommandPaletteAction->setIcon(
-        AroraIcon::get(QLatin1String("system-run")));
+        AroraIcon::getChrome(QLatin1String("system-run")));
     m_toolsClearPrivateDataAction->setIcon(
-        AroraIcon::get(QLatin1String("edit-clear")));
+        AroraIcon::getChrome(QLatin1String("edit-clear")));
     m_toolsLockStoreAction->setIcon(
-        AroraIcon::get(QLatin1String("security-high")));
+        AroraIcon::getChrome(QLatin1String("security-high")));
     // ICONS08: static submenu headers among iconed rows.
     m_toolsUserAgentMenu->setIcon(
-        AroraIcon::get(QLatin1String("avatar-default")));
+        AroraIcon::getChrome(QLatin1String("avatar-default")));
     m_toolsDevToolsMenu->setIcon(
-        AroraIcon::get(QLatin1String("applications-development")));
+        AroraIcon::getChrome(QLatin1String("applications-development")));
 #endif
 
     // MENU05: filter management lives on the Preferences Privacy
@@ -1669,7 +1669,9 @@ void BrowserMainWindow::setupMenu()
     m_helpMenu->addAction(m_helpAboutApplicationAction);
 
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
-    m_helpChangeLanguageAction->setIcon(AroraIcon::get(QLatin1String("preferences-desktop-locale")));
+    m_helpChangeLanguageAction->setIcon(AroraIcon::getChrome(QLatin1String("preferences-desktop-locale")));
+    // ICONS09 identity exceptions: the Qt mark and the app mark keep
+    // their brand colors — chrome glyphs go through getChrome.
     m_helpAboutQtAction->setIcon(QPixmap(QLatin1String(":/qt-project.org/qmessagebox/images/qtlogo-64.png")));
     m_helpAboutApplicationAction->setIcon(windowIcon());
 #endif
@@ -1974,7 +1976,7 @@ void BrowserMainWindow::setupToolBar()
     m_appMenuButton->setIconSize(
         QSize(s_appMenuIconExtent, s_appMenuIconExtent));
 
-    m_historyBackAction->setIcon(AroraIcon::get(QLatin1String("go-previous")));
+    m_historyBackAction->setIcon(AroraIcon::getChrome(QLatin1String("go-previous")));
     m_historyBackMenu = new QMenu(this);
     m_historyBackAction->setMenu(m_historyBackMenu);
     connect(m_historyBackMenu, &QMenu::aboutToShow,
@@ -1985,7 +1987,7 @@ void BrowserMainWindow::setupToolBar()
     m_historyBackAction->setProperty(kNavBarItemIdProperty,
                                      QLatin1String("back"));
 
-    m_historyForwardAction->setIcon(AroraIcon::get(QLatin1String("go-next")));
+    m_historyForwardAction->setIcon(AroraIcon::getChrome(QLatin1String("go-next")));
     m_historyForwardMenu = new QMenu(this);
     connect(m_historyForwardMenu, &QMenu::aboutToShow,
             this, &BrowserMainWindow::aboutToShowForwardMenu);
@@ -3008,7 +3010,7 @@ void BrowserMainWindow::showSettingsPage(int page)
                 m_tabWidget->closeTab(index);
         });
         m_tabWidget->addWidgetTab(settings, tr("Preferences"),
-                                  AroraIcon::get(QLatin1String("preferences-system")));
+                                  AroraIcon::getChrome(QLatin1String("preferences-system")));
     }
     if (page >= 0)
         settings->openAtPage(SettingsDialog::Page(page));
@@ -3045,7 +3047,7 @@ void BrowserMainWindow::showHistoryPage()
                 title);
         });
         m_tabWidget->addWidgetTab(history, tr("History"),
-                                  QIcon(QLatin1String(":graphics/history.png")));
+            AroraIcon::getChrome(QLatin1String("view-history")));
     }
     m_tabWidget->setCurrentWidget(history);
     history->setFocus();
@@ -3620,7 +3622,8 @@ void BrowserMainWindow::populateNewContainerTabMenu()
     ContainerManager *manager = ContainerManager::instance();
     // ICONS07: the container rows all carry color chips, so the static
     // entries get icons too — a grey chip keeps "No Container" in
-    // column with them.
+    // column with them.  ICONS09: the chips are identity art, not
+    // chrome — the color IS the container, so they stay colored.
     QAction *noContainer = m_fileNewContainerTabMenu->addAction(
         tr("&No Container"), this, [this]() {
         m_tabWidget->newTabPageInContainer(
@@ -3650,8 +3653,8 @@ void BrowserMainWindow::populateNewContainerTabMenu()
         m_tabWidget, &TabWidget::manageContainers);
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
     noContainer->setIcon(ContainerManager::colorIcon(QColor(0x8a, 0x8a, 0x8a)));
-    newContainer->setIcon(AroraIcon::get(QLatin1String("list-add")));
-    manageContainers->setIcon(AroraIcon::get(QLatin1String("preferences-system")));
+    newContainer->setIcon(AroraIcon::getChrome(QLatin1String("list-add")));
+    manageContainers->setIcon(AroraIcon::getChrome(QLatin1String("preferences-system")));
 #endif
 }
 

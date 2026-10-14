@@ -311,7 +311,7 @@ TabBar::TabBar(QWidget *parent)
             "QToolButton:hover { background: #5d4491; }"
             "QToolButton:pressed { background: #3a2a5c; }"));
     } else {
-        m_newTabButton->setIcon(AroraIcon::get(QLatin1String("tab-new")));
+        m_newTabButton->setIcon(AroraIcon::getChrome(QLatin1String("tab-new")));
     }
     connect(m_newTabButton, &QAbstractButton::clicked,
             this, &TabBar::newTab);
@@ -397,7 +397,7 @@ void TabBar::installCloseButton(int index)
     // Resolves through AroraIcon: the active icon theme first, the
     // bundled sets' dark variants when the palette is dark, and the
     // original closetab.png as the last-resort fallback.
-    button->setIcon(AroraIcon::get(QLatin1String("window-close")));
+    button->setIcon(AroraIcon::getChrome(QLatin1String("window-close")));
     button->setIconSize(QSize(12, 12));
     // TABS07: an uncapped QToolButton hints ~19px tall, and QTabBar
     // stretches the strip to max(text, widget) + padding — the button

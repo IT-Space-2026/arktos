@@ -713,6 +713,16 @@ UI:
   while the long free-text column takes the leftover space, so the
   description sits immediately right of Source instead of stranded
   at the far right (EXT10).
+- Every chrome icon now shares one house style: menus, the navigation
+  bar, tab-strip controls, the sidebar, location-bar indicators,
+  dialogs and the Preferences lists all paint the themed glyph in a
+  single palette-tinted monochrome — no more colorful artwork mixed
+  among grey peers — and the tint follows light/dark flips and icon-
+  theme changes automatically. Brand and page icons deliberately keep
+  their own colors: the Arora and Qt logos, container-color chips,
+  favicons and site/search icons, extension artwork, and the private-
+  browsing badge; the Tor window keeps its light-on-violet glyphs
+  (ICONS09).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

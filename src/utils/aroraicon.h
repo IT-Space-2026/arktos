@@ -53,6 +53,28 @@
 // window icon, the private-browsing badge, the default page icon,
 // the history-item icon and the throbber keep their fixed bundled
 // artwork, and favicons/mime-type icons keep their dynamic sources.
+//
+// ICONS09 — the house-icon rule.  Chrome surfaces (menus, the nav
+// bar, tab-strip controls, sidebar rail/panels, location-bar
+// indicators, status-bar buttons, dialog chrome, the Preferences
+// nav/panels lists) paint in one style: monochrome, tinted with the
+// palette's ButtonText at paint time — getChrome().  Everything that
+// is identity rather than chrome keeps its own colors and does NOT
+// go through getChrome; the exceptions list, deliberately:
+//   - the Arora mark (app-menu button, window icon, About, error
+//     pages) — brand;
+//   - the Qt logo on Help > About Qt — Qt's brand;
+//   - container color chips — the color IS the container's identity;
+//   - favicons, site/search-engine icons, the default page icon —
+//     page content;
+//   - extension action icons — manifest artwork;
+//   - the private-browsing badge — state art, not a button glyph;
+//   - the tor window's nav cluster — sits on a violet bar that is
+//     not in the palette, so it keeps its explicit #eee getTinted
+//     lift instead (the File > New Tor Window onion IS menu chrome
+//     and follows getChrome like every other menu row).
+// If a new icon is chrome, use getChrome; if it is identity, leave
+// it raw — do not "unify" brand art into monochrome.
 namespace AroraIcon {
 
 // Themed icon for a freedesktop-style name (go-previous,
@@ -82,6 +104,15 @@ QIcon tinted(const QIcon &icon,
 QIcon getTinted(const QString &name,
                 const QColor &color = QColor(0xee, 0xee, 0xee),
                 const QColor &disabledColor = QColor(0xb9, 0xae, 0xcf));
+
+// ICONS09: the house icon for chrome surfaces — the themed shape
+// re-tinted to the palette's ButtonText, resolved lazily so an
+// icon-theme swap or a live light<->dark flip restyles icons that
+// are already installed on actions.  Menus, toolbars, tabs, panels
+// and dialogs all take this path so no surface mixes a theme's raw
+// colors with monochrome peers; the identity exceptions are listed
+// in the file comment above.
+QIcon getChrome(const QString &name);
 
 // Selectable sets: "native" first, then the bundled ids.
 QStringList themeIds();

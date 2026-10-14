@@ -531,7 +531,7 @@ void SidebarPanel::applyPanelVisibility()
                     ++position;
             }
             const int at = m_tabs->insertTab(position, page,
-                AroraIcon::get(QLatin1String(panel.iconName)),
+                AroraIcon::getChrome(QLatin1String(panel.iconName)),
                 panel.title);
             m_tabs->setTabToolTip(at, panel.title);
         } else if (index >= 0) {
@@ -786,8 +786,10 @@ QWidget *SidebarPanel::buildDownloadsPage()
     closeButton->setAccessibleName(tr("Close sidebar"));
     closeButton->setToolTip(tr("Close sidebar"));
     closeButton->setAutoRaise(true);
+    // ICONS09: house close glyph — palette-tinted chrome like every
+    // other in-panel button instead of a style-pixmap outlier.
     closeButton->setIcon(
-        m_downloadsPage->style()->standardIcon(QStyle::SP_TitleBarCloseButton));
+        AroraIcon::getChrome(QLatin1String("window-close")));
     connect(closeButton, &QToolButton::clicked,
             this, &SidebarPanel::closeRequested);
     downloadsHeader->addWidget(closeButton);

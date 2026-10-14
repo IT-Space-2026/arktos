@@ -178,7 +178,7 @@ QIcon SiteShieldButton::tintedBadge(const QIcon &base,
 
 void SiteShieldButton::refreshIcon()
 {
-    const QIcon shield = AroraIcon::get(QLatin1String("security-high"));
+    const QIcon shield = AroraIcon::getChrome(QLatin1String("security-high"));
 
     m_trustLevel.clear();
     if (!m_webView) {

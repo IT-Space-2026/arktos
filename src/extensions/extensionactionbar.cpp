@@ -115,7 +115,9 @@ QIcon extensionIcon(const ExtensionManager::ExtensionInfo &info, int edge)
                                        Qt::SmoothTransformation));
     }
     if (icon.isNull())
-        icon = AroraIcon::get(QLatin1String("application-x-addon"));
+        // A chrome stand-in, not identity art — tinted house style
+        // so it does not render a raw theme glyph beside chrome peers.
+        icon = AroraIcon::getChrome(QLatin1String("application-x-addon"));
 
     // The cache is a per-session convenience, not a registry — bound
     // it so a pathological load/unload loop cannot grow it forever.

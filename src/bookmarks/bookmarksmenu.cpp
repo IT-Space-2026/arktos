@@ -120,7 +120,7 @@ void BookmarksMenu::postPopulated()
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
     // ICONS07: folder rows carry favicons, so the static "open all"
     // tail row gets one too — the dynamic bookmark entries stay bare.
-    action->setIcon(AroraIcon::get(QLatin1String("tab-new")));
+    action->setIcon(AroraIcon::getChrome(QLatin1String("tab-new")));
 #endif
 }
 

@@ -19,6 +19,8 @@
 
 #include "pipwindow.h"
 
+#include "aroraicon.h"
+
 #include <qapplication.h>
 #include <qboxlayout.h>
 #include <qcursor.h>
@@ -76,7 +78,8 @@ PipWindow::PipWindow(QWebEngineProfile *profile, const QVariantMap &video,
     setMinimumSize(200, 112);
 
     // Title strip: drag handle plus the two PiP affordances — return
-    // to tab and close.  Standard style icons keep this theme-free.
+    // to tab and close.  House chrome glyphs (ICONS09): tinted,
+    // palette-following, theme-settable.
     QWidget *strip = new QWidget(this);
     strip->setAutoFillBackground(true);
     QPalette stripPalette = strip->palette();
@@ -88,16 +91,16 @@ PipWindow::PipWindow(QWebEngineProfile *profile, const QVariantMap &video,
     title->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 
     m_returnButton = new QToolButton(strip);
-    m_returnButton->setIcon(style()->standardIcon(
-            QStyle::SP_TitleBarNormalButton));
+    m_returnButton->setIcon(AroraIcon::getChrome(
+            QLatin1String("view-restore")));
     m_returnButton->setToolTip(tr("Return video to tab"));
     m_returnButton->setAutoRaise(true);
     connect(m_returnButton, &QToolButton::clicked,
             this, [this]() { emit returnToTab(m_lastState); });
 
     QToolButton *closeButton = new QToolButton(strip);
-    closeButton->setIcon(style()->standardIcon(
-            QStyle::SP_TitleBarCloseButton));
+    closeButton->setIcon(AroraIcon::getChrome(
+            QLatin1String("window-close")));
     closeButton->setToolTip(tr("Close"));
     closeButton->setAutoRaise(true);
     connect(closeButton, &QToolButton::clicked,
