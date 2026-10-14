@@ -222,7 +222,9 @@ browsing profile:
   notice instead of taking the browser down, and the notice offers
   "Try Servo Again" — the crashed web view is torn down and a fresh
   one is created on the still-running engine (switching the tab to
-  Chromium and back recovers the same way).
+  Chromium and back recovers the same way). Servo renders in-process,
+  so its status-bar memory readout shows the shared whole-app figure
+  marked "(shared)" rather than a per-tab number.
 - **Reader mode** (Ctrl+Alt+R) and **Picture-in-Picture** on videos.
 - **Command palette** — Ctrl+Shift+P fuzzy search over browser
   commands.

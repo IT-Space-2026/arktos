@@ -145,6 +145,16 @@ public:
     qint64 renderProcessId() const override { return m_pid; }
     void setRenderProcessId(qint64 pid) { m_pid = pid; }
 
+    // ENG26: -1 defers to the base (renderProcessId -> /proc);
+    // a staged value models an in-process engine reporting the
+    // shared host figure.
+    qint64 residentMemoryKb() const override
+    {
+        return m_residentKb >= 0 ? m_residentKb
+                               : Engine::Page::residentMemoryKb();
+    }
+    bool memoryIsShared() const override { return m_memoryShared; }
+
     Engine::Page *createWindow(Engine::WebWindowType type) override
     {
         lastWindowType = type;
@@ -174,6 +184,8 @@ public:
     int lastGoTo = -1;
     LifecycleState m_lifecycle = LifecycleState::Active;
     qint64 m_pid = -1;
+    qint64 m_residentKb = -1;
+    bool m_memoryShared = false;
     QString lastFind;
     Engine::FindFlags lastFindFlags;
     QString lastScript;

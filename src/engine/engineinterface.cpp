@@ -22,3 +22,38 @@
 // handles the QObject signals) while nothing in the app references it
 // yet.  ENG04 wires the real adapters onto it.
 #include "engineinterface.h"
+
+#include <qfile.h>
+
+qint64 Engine::Page::processMemoryKb(qint64 pid)
+{
+#if defined(Q_OS_LINUX)
+    if (pid <= 0)
+        return -1;
+    QFile file(QStringLiteral("/proc/%1/status").arg(pid));
+    if (!file.open(QIODevice::ReadOnly))
+        return -1;
+    const QByteArray status = file.readAll();
+    const int line = status.indexOf("VmRSS:");
+    if (line == -1)
+        return -1;
+    const int end = status.indexOf('\n', line);
+    const QList<QByteArray> fields = status
+        .mid(line, end == -1 ? -1 : end - line)
+        .simplified().split(' ');
+    // "VmRSS:   238000 kB"
+    if (fields.count() < 2)
+        return -1;
+    bool ok = false;
+    const qint64 kb = fields.at(1).toLongLong(&ok);
+    return ok ? kb : -1;
+#else
+    Q_UNUSED(pid);
+    return -1;
+#endif
+}
+
+qint64 Engine::Page::residentMemoryKb() const
+{
+    return processMemoryKb(renderProcessId());
+}

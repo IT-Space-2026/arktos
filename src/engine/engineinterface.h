@@ -459,6 +459,21 @@ public:
     // without per-page processes returns -1 and the widget shows '—'.
     virtual qint64 renderProcessId() const = 0;
 
+    // ENG26: the status-bar memory figure for this page, in kB, or
+    // -1 when unavailable.  The default resolves renderProcessId()
+    // through processMemoryKb() — the per-tab renderer reading on a
+    // multi-process engine.  An in-process engine (Servo) has no
+    // per-tab process at all; it reports the HOST process figure
+    // instead, and memoryIsShared() returns true so the UI labels
+    // the number rather than presenting a fake per-tab reading.
+    virtual qint64 residentMemoryKb() const;
+    virtual bool memoryIsShared() const { return false; }
+
+    // VmRSS of `pid` out of /proc/<pid>/status, in kB — -1 when
+    // unreadable (dead process, bogus pid, non-Linux).  Shared so
+    // no backend has to carry its own procfs parse.
+    static qint64 processMemoryKb(qint64 pid);
+
     // POPUP01/tab creation — the engine asks the app for a new page.
     // Returning nullptr refuses the window.
     virtual Page *createWindow(WebWindowType type) = 0;

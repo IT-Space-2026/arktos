@@ -3318,6 +3318,18 @@ static int servoLifecycleSmoke()
                            engineTab->title()
                                == QLatin1String(internal.title));
             }
+
+            // ENG26: servo renders in-process — renderProcessId is
+            // -1 by contract, but residentMemoryKb() must report the
+            // SHARED host figure flagged memoryIsShared() so the
+            // status bar shows a real "MEM <n> (shared)" instead of
+            // the '—' placeholder.
+            report(QStringLiteral("memory-no-pid"),
+                   page->renderProcessId() == -1);
+            report(QStringLiteral("memory-shared-flag"),
+                   page->memoryIsShared());
+            report(QStringLiteral("memory-host-rss"),
+                   page->residentMemoryKb() > 0);
         }
         // ENG14: the typed-navigation repro — the engine tab's
         // location bar used to be a read-only echo, so Enter died

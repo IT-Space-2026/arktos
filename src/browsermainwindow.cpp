@@ -628,7 +628,15 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
             this, [this](int) {
         m_loadingIndicator->setWebView(currentTab());
         m_zoomControl->setWebView(currentTab());
-        m_memIndicator->setWebView(currentTab());
+        // ENG26: a foreign-engine tab hosts its Engine::Page without
+        // a WebView — bind the tab itself so the indicator follows
+        // whichever page object is live (engine restarts swap it in
+        // place); plain tabs keep the WebView path.
+        if (EngineTab *foreign =
+                m_tabWidget->engineTab(m_tabWidget->currentIndex()))
+            m_memIndicator->setEngineTab(foreign);
+        else
+            m_memIndicator->setWebView(currentTab());
         updateReaderState();
     });
 

@@ -28,6 +28,7 @@
 #include <qlabel.h>
 
 #include <engineinterface.h>
+#include <enginetab.h>
 #include <statusbarwidgets.h>
 #include <webenginebackend.h>
 #include <webview.h>
@@ -290,6 +291,9 @@ void tst_EngineAdapter::fakeDownloadSurface()
 // process-identity contract, on both backend shapes:
 //  * a page reporting -1 ("engine has no per-page process") must
 //    yield the '—' placeholder, not a bogus reading;
+//  * ENG26: an in-process page bound via EngineTab reports the
+//    shared host figure flagged memoryIsShared() — the label shows
+//    it with an honest "(shared)" tag, never a fake per-tab number;
 //  * a real WebEngine page reports a live renderer pid and the
 //    label shows an actual "MEM <size>" reading.
 void tst_EngineAdapter::memIndicatorContract()
@@ -312,9 +316,7 @@ void tst_EngineAdapter::memIndicatorContract()
 
     // Fake backend: renderProcessId() == -1 is the documented
     // "no per-page process" answer — MemIndicator::refresh() turns it
-    // into the placeholder.  The widget only binds WebView* (foreign
-    // EngineTab pages carry no WebView), so the contract leg is the
-    // pid -> label mapping itself.
+    // into the placeholder.
     FakeEnginePage fakePage;
     QCOMPARE(fakePage.renderProcessId(), qint64(-1));
     QCOMPARE(MemIndicator::residentMemoryKb(fakePage.renderProcessId()),
@@ -332,6 +334,44 @@ void tst_EngineAdapter::memIndicatorContract()
     QCOMPARE(label->text(), QStringLiteral("MEM —"));
     QCOMPARE(indicator.webView(), static_cast<WebView*>(nullptr));
 
+    // ENG26: a foreign-engine tab hosts its page without a WebView,
+    // so the indicator binds the EngineTab and re-resolves page() on
+    // every poll.  An in-process page reports the shared host figure
+    // flagged memoryIsShared() — the label carries the honest
+    // "(shared)" tag instead of a fake per-tab reading.
+    FakeEngineBackend sharedBackend;
+    Engine::Profile *sharedProfile = sharedBackend.createProfile(
+        Engine::ProfileOptions(), &sharedBackend);
+    EngineTab foreignTab(&sharedBackend, sharedProfile);
+    auto *inProcessPage =
+        static_cast<FakeEnginePage *>(foreignTab.page());
+    QVERIFY(inProcessPage);
+    inProcessPage->m_memoryShared = true;
+    inProcessPage->m_residentKb = 238 * 1024;
+
+    MemIndicator sharedIndicator;
+    sharedIndicator.setEngineTab(&foreignTab);
+    QCOMPARE(sharedIndicator.engineTab(), &foreignTab);
+    QCOMPARE(sharedIndicator.webView(), static_cast<WebView*>(nullptr));
+    QLabel *sharedLabel = sharedIndicator.findChild<QLabel *>(
+        QStringLiteral("memLabel"));
+    QVERIFY(sharedLabel);
+    QCOMPARE(sharedLabel->text(),
+             QStringLiteral("MEM 238 MB (shared)"));
+    QVERIFY(sharedLabel->toolTip().contains(
+        QStringLiteral("in-process")));
+
+    // ENG28 path: an engine restart swaps the page object in place —
+    // the bound indicator picks the fresh page up on pageRecreated,
+    // not a dangling pointer.  The replacement fake reports no
+    // memory surface, so the label falls back to '—'.  (A new page
+    // object is proven via the backend's bookkeeping — the allocator
+    // may hand the just-freed address back.)
+    QVERIFY(foreignTab.restartEngine());
+    QCOMPARE(sharedBackend.pages.count(), 2);
+    QVERIFY(sharedBackend.pages.at(0).isNull());
+    QCOMPARE(sharedLabel->text(), QStringLiteral("MEM —"));
+
     // Real backend: a loaded WebEngine page reports a live renderer
     // pid through enginePage(), and the widget shows the reading.
     WebView view;
@@ -347,6 +387,21 @@ void tst_EngineAdapter::memIndicatorContract()
     QCOMPARE(indicator.webView(), &view);
     QVERIFY(label->text() != QStringLiteral("MEM —"));
     QVERIFY(label->text().startsWith(QLatin1String("MEM ")));
+
+    // Switching engines rebinds cleanly both ways: WebView off the
+    // shared tab drops the "(shared)" tag, and binding the tab again
+    // restores it.
+    sharedIndicator.setWebView(&view);
+    QCOMPARE(sharedIndicator.webView(), &view);
+    QCOMPARE(sharedIndicator.engineTab(),
+             static_cast<EngineTab *>(nullptr));
+    QVERIFY(sharedLabel->text().startsWith(QLatin1String("MEM ")));
+    QVERIFY(!sharedLabel->text().contains(
+        QStringLiteral("(shared)")));
+    sharedIndicator.setEngineTab(&foreignTab);
+    QCOMPARE(sharedIndicator.engineTab(), &foreignTab);
+    // The restarted page reports no memory surface at all.
+    QCOMPARE(sharedLabel->text(), QStringLiteral("MEM —"));
 #else
     Q_UNUSED(indicator);
     QSKIP("/proc-based widget is Linux-only");
