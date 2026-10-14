@@ -825,3 +825,4 @@
 - 2026-10-13 MERGEWATCH: ui-work merged — conflict in src/browsermainwindow.cpp (master DEVT04 moved DevTools View→Tools; re-applied ICONS08 header icon to m_toolsDevToolsMenu, kept View Text Encoding icon); stale 'View → Dev Tools' refs fixed in ChangeLog + tst comment; build ok
 - 2026-10-14 MERGEWATCH: ui-work merged — no conflicts (1 commit: TOR18 queue-tor-navigations task queued in .devin/Arora-Task-UI.md), build ok
 - 2026-10-14 MERGEWATCH: ui-work merged — no conflicts (.devin/Arora-Task-UI.md append-only), build ok
+- 2026-10-14 MERGEWATCH: ui-work merged — no conflicts (3 commits: NAVB03/EXT10/TABS18 queued in .devin/Arora-Task-UI.md), build ok
