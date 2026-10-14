@@ -146,6 +146,7 @@ This file is the task queue for the Devin CLI task loop
 | PKG03 | openSUSE RPM — .spec + build flow, consistent artifact policy with deb — details below | done | 0 | rpm/arora.spec + .devin/pkg-rpm.sh; deb-identical staged payload via shared pkg-deb stage; AutoReqProv off + explicit SONAME-capability Requires regenerated/diffed by verify; openSUSE BuildRequires names + %{qtdir} relocatable-Qt policy + %suse_update_desktop_file; make pkg-rpm target; verify PASS locally (spec sanity, %files+Requires coverage vs staged tree); no rpm tooling on host → binary-rpm build deferred to documented openSUSE-container command |
 | MENU12 | Remove File > Preferences entry — app menu has direct Preferences since MENU11 — details below | pending | 0 | |
 | MENU13 | App-menu button icon-only; Arora wordmark moves to right end of nav bar — details below | pending | 0 | |
+| MENU14 | Remove File > Open Location entry + action/dialog — details below | pending | 0 | |
 
 ## Task details
 
@@ -914,3 +915,7 @@ Remove the File > Preferences menu item — user: 'remove the file-preferences m
 ### MENU13
 
 Arora wordmark off the button — user: 'remove the Arora text from the top big button, and move it to the right side.' Currently m_appMenuButton is ToolButtonTextBesideIcon (browsermainwindow.cpp ~1823-1830: logo + 'Arora' text). Spec: (a) the button becomes icon-only (ToolButtonIconOnly — logo stays at its MENU09/MENU10 size, square + unstretched per MENU10's engine); (b) the 'Arora' wordmark moves to the RIGHT END of the navigation bar — a text label/brand mark docked after the last nav item (right side, vertically centered, subtle — toolbar font, maybe slight letter-spacing; palette text color, NOT a button); (c) keep it honest on every window type incl. tor (violet palette legible) and private; (d) the label must coexist with NAVB03's edit mode — it's a fixed trailing element, NOT draggable (or it is a movable item like everything else — pick one, document; recommend fixed since it's brand, not a control); (e) button accessibility: setText/toolTip still says Arora/menu for screen readers even though the glyph is icon-only. Verify: grab the bar — logo-only button left, 'Arora' wordmark at right edge, normal+tor+private all legible; NAVB03 drag mode unaffected; tst legs if bar-structure asserts exist; make check PASS.
+
+### MENU14
+
+Remove File > Open Location — user: 'file - open location should be removed, not needed.' The menu entry (m_fileOpenLocationAction ~browsermainwindow.cpp:1031, document-open-location/go-jump icon) + its action + the Open Location dialog should go. Spec: (a) remove the menu entry and the action — check what the action's slot opens (an AddressDialog or inline prompt — whatever it is, if nothing else uses it, remove the dialog/wiring too; if the dialog class serves another caller, keep the class); (b) check for a keyboard shortcut bound to it — removing the action removes the shortcut cleanly; (c) Open File, Open in New Window etc. stay — only 'Open Location' goes. Verify: File menu has no Open Location; build clean; tst menu-structure legs updated if they enumerate File entries; make check PASS.
