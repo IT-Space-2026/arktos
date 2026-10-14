@@ -74,6 +74,7 @@ Rules for the agent working this file:
 
 | DEVT09 | BiDi waterfall bars invisible — collapse to hairlines on any real timeline — details below | in_progress | 0 | |
 | ENG25 | Servo scroll too slow — measure input-delta vs paint-path, fix the real bottleneck — details below | pending | 0 | |
+| ENG27 | Servo restart still dead — se_init refuses 2nd call, se_destroy panics, painter assert back — details below | pending | 0 | |
 
 ## Task details
 
