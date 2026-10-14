@@ -746,6 +746,22 @@ driver verifies the bundle by installing it and running the offscreen
 `--quit-after-load` + `--tor --tor-window-smoke` paths inside the
 sandbox.
 
+`make pkg-rpm` (driver: `./.devin/pkg-rpm.sh`, spec: `rpm/arora.spec`)
+builds an **openSUSE-compatible RPM** at `dist/arora_0.2-0.*.rpm`.
+Same artifact policy as the deb — identical staged payload
+(`/usr/bin/arora` + private Qt/QtWebEngine under `/usr/lib/arora`,
+statically-linked rust crates), so the spec disables `AutoReqProv` and
+carries an explicit `Requires:` list in SONAME-capability form that the
+driver regenerates and diffs against the staged tree. The `%{qtdir}`
+macro selects the relocatable Qt the payload bundles (defaults to
+`$QTDIR`, then `~/Qt/6.12.0/gcc_64`). Building the rpm itself needs
+`rpmbuild`; on a host without rpm tooling `./.devin/pkg-rpm.sh
+container` prints the openSUSE container command. The driver's verify
+leg checks spec sanity, `%files` coverage and the `Requires` surface
+locally, and — given a built .rpm plus rpm tooling — extracts it and
+runs the same masked-Qt `ldd` + headless `--quit-after-load` checks as
+the deb verifier.
+
 ## License
 
 Arora is **free software under the GNU General Public License,
