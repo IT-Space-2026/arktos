@@ -147,6 +147,7 @@ This file is the task queue for the Devin CLI task loop
 | MENU12 | Remove File > Preferences entry — app menu has direct Preferences since MENU11 — details below | pending | 0 | |
 | MENU13 | App-menu button icon-only; Arora wordmark moves to right end of nav bar — details below | pending | 0 | |
 | MENU14 | Remove File > Open Location entry + action/dialog — details below | pending | 0 | |
+| MENU15 | Move File > Quit to bottom of app menu after Help — details below | pending | 0 | |
 
 ## Task details
 
@@ -919,3 +920,7 @@ Arora wordmark off the button — user: 'remove the Arora text from the top big 
 ### MENU14
 
 Remove File > Open Location — user: 'file - open location should be removed, not needed.' The menu entry (m_fileOpenLocationAction ~browsermainwindow.cpp:1031, document-open-location/go-jump icon) + its action + the Open Location dialog should go. Spec: (a) remove the menu entry and the action — check what the action's slot opens (an AddressDialog or inline prompt — whatever it is, if nothing else uses it, remove the dialog/wiring too; if the dialog class serves another caller, keep the class); (b) check for a keyboard shortcut bound to it — removing the action removes the shortcut cleanly; (c) Open File, Open in New Window etc. stay — only 'Open Location' goes. Verify: File menu has no Open Location; build clean; tst menu-structure legs updated if they enumerate File entries; make check PASS.
+
+### MENU15
+
+Move File > Quit to the bottom of the Arora app menu — user: 'file-quit should be moved to the main menu under the help menu' — the app menu's last submenu is Help; Quit becomes a direct app-menu entry AFTER it (bottom item, likely with a separator above — same treatment as MENU11's Preferences entry, mirroring how the app-menu-level items were added). Spec: (a) the action moves OUT of File (remove its addAction from m_fileMenu) and becomes a direct entry in m_appMenu after the last submenu; same QAction caveat as MENU11 — if the action can't safely live in the app menu AND nowhere else, re-home it fully; (b) the Quit shortcut must keep working (action registered on the window via the app-menu path or addAction); (c) ordering inside m_appMenu: the shared top-level submenus (File…Help) keep their order, then direct entries — MENU11's Preferences sits after Tools; Quit goes LAST after Help; (d) works on tor/private windows (app menu is the source). Verify: app menu bottom shows …Help, (sep), Quit; File no longer has Quit; Ctrl+Q still quits; tst legs updated; make check PASS.
