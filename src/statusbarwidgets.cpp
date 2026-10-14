@@ -18,6 +18,7 @@
  */
 #include "statusbarwidgets.h"
 
+#include "arorastyle.h"
 #include "downloadmanager.h"
 #include "engineinterface.h"
 #include "webview.h"
@@ -47,7 +48,7 @@ LoadingIndicator::LoadingIndicator(QWidget *parent)
 
     QHBoxLayout *layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(4);
+    layout->setSpacing(AroraStyle::Spacing::Small);
     m_bar->setRange(0, 100);
     m_bar->setTextVisible(false);
     m_bar->setFixedSize(72, 10);

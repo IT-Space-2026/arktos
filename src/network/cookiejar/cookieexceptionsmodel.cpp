@@ -64,6 +64,7 @@
 
 #include "cookiejar.h"
 
+#include <qapplication.h>
 #include <qfontmetrics.h>
 
 CookieExceptionsModel::CookieExceptionsModel(CookieJar *cookiejar, QObject *parent)
@@ -78,9 +79,9 @@ CookieExceptionsModel::CookieExceptionsModel(CookieJar *cookiejar, QObject *pare
 QVariant CookieExceptionsModel::headerData(int section, Qt::Orientation orientation, int role) const
 {
     if (role == Qt::SizeHintRole) {
-        QFont font;
-        font.setPointSize(10);
-        QFontMetrics fm(font);
+        // THEME01: rows follow the application font — the Qt4-era
+        // 10pt pin overrode it.
+        QFontMetrics fm(QApplication::font());
         int height = fm.height() + fm.height() / 3;
         int width = fm.horizontalAdvance(headerData(section, orientation, Qt::DisplayRole).toString());
         return QSize(width, height);
@@ -135,11 +136,8 @@ QVariant CookieExceptionsModel::data(const QModelIndex &index, int role) const
         }
     }
     Q_FALLTHROUGH();
-    case Qt::FontRole: {
-        QFont font;
-        font.setPointSize(10);
-        return font;
-    }
+    case Qt::FontRole:
+        return QApplication::font();
     }
     return QVariant();
 }

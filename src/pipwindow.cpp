@@ -20,6 +20,7 @@
 #include "pipwindow.h"
 
 #include "aroraicon.h"
+#include "arorastyle.h"
 
 #include <qapplication.h>
 #include <qboxlayout.h>
@@ -107,7 +108,10 @@ PipWindow::PipWindow(QWebEngineProfile *profile, const QVariantMap &video,
             this, [this]() { close(); });
 
     QHBoxLayout *stripLayout = new QHBoxLayout(strip);
-    stripLayout->setContentsMargins(8, 2, 4, 2);
+    stripLayout->setContentsMargins(AroraStyle::Spacing::Medium,
+                                    AroraStyle::Spacing::Small,
+                                    AroraStyle::Spacing::Small,
+                                    AroraStyle::Spacing::Small);
     stripLayout->addWidget(title);
     stripLayout->addWidget(m_returnButton);
     stripLayout->addWidget(closeButton);

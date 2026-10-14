@@ -19,6 +19,8 @@
 
 #include "browsertheme.h"
 
+#include "arorastyle.h"
+
 #include <qapplication.h>
 #include <qdialog.h>
 #include <qevent.h>
@@ -143,7 +145,10 @@ static void applyScheme(Qt::ColorScheme scheme)
     if (darkWanted) {
         if (!s_forced) {
             s_savedPalette = QApplication::palette();
-            s_savedStyleName = QApplication::style()->name();
+            // THEME01: the app style may be AroraStyle's polish proxy
+            // — capture the name of the real style underneath so the
+            // restore path recreates something QStyleFactory knows.
+            s_savedStyleName = AroraStyle::baseStyleName();
         }
         // windowsvista/macos ignore palettes; a stylesheet style has no
         // name and already owns the look — leave those alone style-wise

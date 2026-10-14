@@ -102,9 +102,9 @@ CookieExceptionsDialog::CookieExceptionsDialog(CookieJar *cookieJar, QWidget *pa
     connect(allowButton, &QPushButton::clicked, this, &CookieExceptionsDialog::allow);
     connect(allowForSessionButton, &QPushButton::clicked, this, &CookieExceptionsDialog::allowForSession);
 
-    QFont f = font();
-    f.setPointSize(10);
-    QFontMetrics fm(f);
+    // THEME01: row height follows the widget font — the Qt4-era 10pt
+    // pin overrode it.
+    QFontMetrics fm(font());
     int height = fm.height() + fm.height() / 3;
     exceptionTable->verticalHeader()->setDefaultSectionSize(height);
     exceptionTable->verticalHeader()->setMinimumSectionSize(-1);

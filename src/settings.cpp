@@ -65,6 +65,7 @@
 #include "acceptlanguagedialog.h"
 #include "adblockmanager.h"
 #include "aroraicon.h"
+#include "arorastyle.h"
 #include "addressdialog.h"
 #include "autofilldialog.h"
 #include "autofillmanager.h"
@@ -235,7 +236,8 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     // measured after the font bump so the width reflects the larger
     // text.
     pagesList->setFixedWidth(pagesList->sizeHintForColumn(0)
-                             + 2 * pagesList->frameWidth() + 8);
+                             + 2 * pagesList->frameWidth()
+                             + AroraStyle::Spacing::Medium);
 
     // UIP06: the stack's sizeHint is the tallest page, which can
     // exceed the screen and push the button box out of reach.
@@ -256,22 +258,29 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     // defaults (an 11px shell inset plus 9px on each page and inside
     // every group box), which stacks into uneven bands — most visibly
     // the extra 9px under each group-box title the frame already
-    // clears.  Pin one compact rhythm instead: a 9px shell inset,
-    // 8px page insets, and 9/6/9/9 inside group boxes, so padding is
+    // clears.  Pin the chrome spacing scale instead (THEME01): a
+    // Medium shell inset, Medium page insets, and Medium sides with
+    // a Small step under each group-box title, so padding is
     // identical on every page and pages pack tighter (most no longer
     // need their scroll area at a sane window size).
-    layout()->setContentsMargins(9, 9, 9, 9);
+    layout()->setContentsMargins(
+        AroraStyle::Spacing::Medium, AroraStyle::Spacing::Medium,
+        AroraStyle::Spacing::Medium, AroraStyle::Spacing::Medium);
     for (int i = 0; i < tabWidget->count(); ++i) {
         QWidget *surface = tabWidget->widget(i);
         if (QScrollArea *area = qobject_cast<QScrollArea *>(surface))
             surface = area->widget();
         if (surface && surface->layout())
-            surface->layout()->setContentsMargins(8, 8, 8, 8);
+            surface->layout()->setContentsMargins(
+                AroraStyle::Spacing::Medium, AroraStyle::Spacing::Medium,
+                AroraStyle::Spacing::Medium, AroraStyle::Spacing::Medium);
     }
     const QList<QGroupBox *> groups = findChildren<QGroupBox *>();
     for (QGroupBox *box : groups) {
         if (QLayout *boxLayout = box->layout())
-            boxLayout->setContentsMargins(9, 6, 9, 9);
+            boxLayout->setContentsMargins(
+                AroraStyle::Spacing::Medium, AroraStyle::Spacing::Small,
+                AroraStyle::Spacing::Medium, AroraStyle::Spacing::Medium);
     }
 
     connect(exceptionsButton, &QPushButton::clicked, this, &SettingsDialog::showExceptions);

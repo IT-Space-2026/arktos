@@ -5,6 +5,7 @@ SUBDIRS  = \
     adblock \
     addbookmarkdialog \
     aroraicon \
+    arorastyle \
     autosaver \
     bookmarknode \
     bookmarksmodel \

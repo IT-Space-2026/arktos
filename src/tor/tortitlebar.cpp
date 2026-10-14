@@ -19,6 +19,8 @@
 
 #include "tortitlebar.h"
 
+#include "arorastyle.h"
+
 #include <qapplication.h>
 #include <qboxlayout.h>
 #include <qevent.h>
@@ -105,8 +107,8 @@ enum TitleGlyph { GlyphMinimize, GlyphMaximize, GlyphRestore, GlyphClose };
 
 // The window controls are painted, not themed — the bundled icon sets
 // ship no window-* art and a themed pixmap cannot be relied on to
-// read correctly on the violet bar.  Light glyphs in the same #eee as
-// the rest of the tor chrome text.
+// read correctly on the violet bar.  Light glyphs in the chrome's
+// text color like the rest of the tor chrome text.
 QIcon titleGlyphIcon(TitleGlyph glyph, const QWidget *widget)
 {
     const int extent = 16;
@@ -117,7 +119,7 @@ QIcon titleGlyphIcon(TitleGlyph glyph, const QWidget *widget)
 
     QPainter painter(&pixmap);
     painter.setRenderHint(QPainter::Antialiasing);
-    QPen pen(QColor(0xee, 0xee, 0xee));
+    QPen pen(AroraStyle::torTextColor());
     pen.setWidthF(1.3);
     painter.setPen(pen);
     painter.setBrush(Qt::NoBrush);
@@ -133,7 +135,7 @@ QIcon titleGlyphIcon(TitleGlyph glyph, const QWidget *widget)
         painter.drawLine(QPointF(6.0, 3.5), QPointF(12.5, 3.5));
         painter.drawLine(QPointF(12.5, 3.5), QPointF(12.5, 10.0));
         painter.fillRect(QRectF(3.5, 6.0, 7.5, 7.5),
-                         QColor(0x4a, 0x33, 0x72));
+                         AroraStyle::torChromeColor());
         painter.drawRect(QRectF(3.5, 6.0, 7.5, 7.5));
         break;
     case GlyphClose:
@@ -172,20 +174,15 @@ TorTitleBar::TorTitleBar(QWidget *window)
     m_titleLabel->setMaximumWidth(420);
 
     QHBoxLayout *layout = new QHBoxLayout(this);
-    layout->setContentsMargins(8, 0, 6, 0);
-    layout->setSpacing(6);
+    layout->setContentsMargins(AroraStyle::Spacing::Medium, 0,
+                               AroraStyle::Spacing::Medium, 0);
+    layout->setSpacing(AroraStyle::Spacing::Medium);
     layout->addWidget(badge);
     layout->addWidget(m_titleLabel);
 
-    // The title is the headline element on the violet chrome — pure
-    // white, the maximum contrast against #4a3372 (~12:1); the badge
-    // and glyph family stay at the chrome's #eee.
-    setStyleSheet(QLatin1String(
-        "TorTitleBar { background: transparent; }"
-        "QLabel { color: #eee; background: transparent; }"
-        "QLabel#torTitleText { color: white; }"
-        "QLabel#torTitleBadge { color: white; background: #6b4fa3;"
-        " border-radius: 5px; padding: 0px 6px; font-weight: bold; }"));
+    // The violet headline/badge styling lives in the central style
+    // source (THEME01) — palette-quoted tor family only.
+    setStyleSheet(AroraStyle::torTitleBarStyleSheet());
 
     // The right corner carries the window controls — painted glyphs in
     // the same violet hover family as the rest of the tor chrome.
@@ -222,16 +219,14 @@ TorTitleBar::TorTitleBar(QWidget *window)
             m_window, &QWidget::close);
 
     QHBoxLayout *controlsLayout = new QHBoxLayout(m_controls);
-    controlsLayout->setContentsMargins(0, 0, 6, 0);
-    controlsLayout->setSpacing(2);
+    controlsLayout->setContentsMargins(0, 0,
+                                       AroraStyle::Spacing::Medium, 0);
+    controlsLayout->setSpacing(AroraStyle::Spacing::Small);
     controlsLayout->addWidget(m_minimizeButton);
     controlsLayout->addWidget(m_maximizeButton);
     controlsLayout->addWidget(m_closeButton);
-    m_controls->setStyleSheet(QLatin1String(
-        "QWidget#torTitleControls { background: transparent; }"
-        "QToolButton { background: transparent; border-radius: 4px; }"
-        "QToolButton:hover { background: #5d4491; }"
-        "QToolButton:pressed { background: #3a2a5c; }"));
+    m_controls->setStyleSheet(
+        AroraStyle::torTitleControlsStyleSheet());
 
     if (m_menuBar) {
         m_menuBar->setCornerWidget(this, Qt::TopLeftCorner);
@@ -244,8 +239,7 @@ TorTitleBar::TorTitleBar(QWidget *window)
     // grab zone.  Scoped by objectName so nothing else picks the rule
     // up.
     m_window->setObjectName(QLatin1String("torMainWindow"));
-    m_window->setStyleSheet(QLatin1String(
-        "#torMainWindow { background: #4a3372; }"));
+    m_window->setStyleSheet(AroraStyle::torWindowStyleSheet());
     m_window->setMouseTracking(true);
     m_window->installEventFilter(this);
     syncFrameMargins();

@@ -65,6 +65,7 @@
 #include "cookiejar.h"
 #include "autosaver.h"
 
+#include <qapplication.h>
 #include <qdatetime.h>
 #include <qfontmetrics.h>
 
@@ -80,9 +81,9 @@ CookieModel::CookieModel(CookieJar *cookieJar, QObject *parent)
 QVariant CookieModel::headerData(int section, Qt::Orientation orientation, int role) const
 {
     if (role == Qt::SizeHintRole) {
-        QFont font;
-        font.setPointSize(10);
-        QFontMetrics fm(font);
+        // THEME01: rows follow the application font — the Qt4-era
+        // 10pt pin overrode it.
+        QFontMetrics fm(QApplication::font());
         int height = fm.height() + fm.height() / 3;
         int width = fm.horizontalAdvance(headerData(section, orientation, Qt::DisplayRole).toString());
         return QSize(width, height);
@@ -156,11 +157,8 @@ QVariant CookieModel::data(const QModelIndex &index, int role) const
         }
     }
     Q_FALLTHROUGH();
-    case Qt::FontRole: {
-        QFont font;
-        font.setPointSize(10);
-        return font;
-    }
+    case Qt::FontRole:
+        return QApplication::font();
     }
 
     return QVariant();

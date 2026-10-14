@@ -19,6 +19,7 @@
 
 #include "commandpalette.h"
 
+#include "arorastyle.h"
 #include "bookmarknode.h"
 #include "bookmarksmanager.h"
 #include "browserapplication.h"
@@ -143,7 +144,7 @@ CommandPalette::CommandPalette(BrowserMainWindow *window)
     , m_list(new QListWidget(this))
 {
     setFrameShape(QFrame::StyledPanel);
-    setFrameShadow(QFrame::Raised);
+    setFrameShadow(QFrame::Plain);
 
     m_edit->setPlaceholderText(tr("Type a command, tab or bookmark name..."));
     m_edit->installEventFilter(this);
@@ -153,8 +154,11 @@ CommandPalette::CommandPalette(BrowserMainWindow *window)
     m_list->setItemDelegate(new PaletteDelegate(m_list));
 
     QVBoxLayout *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(4, 4, 4, 4);
-    layout->setSpacing(4);
+    layout->setContentsMargins(AroraStyle::Spacing::Small,
+                               AroraStyle::Spacing::Small,
+                               AroraStyle::Spacing::Small,
+                               AroraStyle::Spacing::Small);
+    layout->setSpacing(AroraStyle::Spacing::Small);
     layout->addWidget(m_edit);
     layout->addWidget(m_list);
 

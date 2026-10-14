@@ -155,9 +155,9 @@ AutoFillDialog::AutoFillDialog(QWidget *parent, Qt::WindowFlags flags)
     m_proxyModel->setSourceModel(model);
     tableView->setModel(m_proxyModel);
 
-    QFont f = font();
-    f.setPointSize(10);
-    QFontMetrics fm(f);
+    // THEME01: row height follows the widget font — the Qt4-era 10pt
+    // pin overrode it.
+    QFontMetrics fm(font());
     int height = fm.height() + fm.height() / 3;
     tableView->verticalHeader()->setDefaultSectionSize(height);
     tableView->verticalHeader()->setMinimumSectionSize(-1);

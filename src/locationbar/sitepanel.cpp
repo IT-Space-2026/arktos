@@ -20,6 +20,7 @@
 #include "sitepanel.h"
 
 #include "adblockmanager.h"
+#include "arorastyle.h"
 #include "adblockrequestinterceptor.h"
 #include "cookiejar.h"
 #include "engineinterface.h"
@@ -52,12 +53,15 @@ SitePanel::SitePanel(QWidget *parent)
     , m_blockedBaseline(0)
     , m_refreshing(false)
 {
-    setFrameStyle(QFrame::StyledPanel | QFrame::Raised);
+    setFrameStyle(QFrame::StyledPanel | QFrame::Plain);
     setMinimumWidth(280);
 
     QVBoxLayout *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(10, 8, 10, 8);
-    layout->setSpacing(6);
+    layout->setContentsMargins(AroraStyle::Spacing::Medium,
+                               AroraStyle::Spacing::Medium,
+                               AroraStyle::Spacing::Medium,
+                               AroraStyle::Spacing::Medium);
+    layout->setSpacing(AroraStyle::Spacing::Medium);
 
     m_hostLabel = plainLabel(QString(), this);
     m_hostLabel->setObjectName(QLatin1String("sitePanelHost"));
@@ -72,7 +76,7 @@ SitePanel::SitePanel(QWidget *parent)
 
     QFrame *line = new QFrame(this);
     line->setFrameShape(QFrame::HLine);
-    line->setFrameShadow(QFrame::Sunken);
+    line->setFrameShadow(QFrame::Plain);
     layout->addWidget(line);
 
     QHBoxLayout *cookieRow = new QHBoxLayout();
@@ -166,7 +170,7 @@ SitePanel::SitePanel(QWidget *parent)
 
     QFrame *line2 = new QFrame(this);
     line2->setFrameShape(QFrame::HLine);
-    line2->setFrameShadow(QFrame::Sunken);
+    line2->setFrameShadow(QFrame::Plain);
     layout->addWidget(line2);
 
     layout->addWidget(plainLabel(tr("Permissions"), this));
@@ -174,12 +178,12 @@ SitePanel::SitePanel(QWidget *parent)
     m_permissionsBox->setObjectName(QLatin1String("sitePermissions"));
     m_permissionsLayout = new QVBoxLayout(m_permissionsBox);
     m_permissionsLayout->setContentsMargins(0, 0, 0, 0);
-    m_permissionsLayout->setSpacing(2);
+    m_permissionsLayout->setSpacing(AroraStyle::Spacing::Small);
     layout->addWidget(m_permissionsBox);
 
     QFrame *line3 = new QFrame(this);
     line3->setFrameShape(QFrame::HLine);
-    line3->setFrameShadow(QFrame::Sunken);
+    line3->setFrameShadow(QFrame::Plain);
     layout->addWidget(line3);
 
     QHBoxLayout *buttons = new QHBoxLayout();

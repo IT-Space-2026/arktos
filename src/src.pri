@@ -80,6 +80,7 @@ HEADERS += \
     $$PWD/acceptlanguagedialog.h \
     $$PWD/addressdialog.h \
     $$PWD/argon2id.h \
+    $$PWD/arorastyle.h \
     $$PWD/autofilldialog.h \
     $$PWD/autofillmanager.h \
     $$PWD/autosaver.h \
@@ -150,6 +151,7 @@ SOURCES += \
     $$PWD/acceptlanguagedialog.cpp \
     $$PWD/addressdialog.cpp \
     $$PWD/argon2id.c \
+    $$PWD/arorastyle.cpp \
     $$PWD/autofilldialog.cpp \
     $$PWD/autofillmanager.cpp \
     $$PWD/autosaver.cpp \

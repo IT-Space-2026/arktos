@@ -19,6 +19,7 @@
 
 #include "torcircuitpanel.h"
 
+#include "arorastyle.h"
 #include "torcircuitbutton.h"
 
 #include <qboxlayout.h>
@@ -214,8 +215,11 @@ TorCircuitPanel::TorCircuitPanel(QWidget *parent)
         tr("The relays in the current Tor circuit."));
 
     QVBoxLayout *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(12, 10, 12, 10);
-    layout->setSpacing(6);
+    layout->setContentsMargins(AroraStyle::Spacing::Large,
+                               AroraStyle::Spacing::Medium,
+                               AroraStyle::Spacing::Large,
+                               AroraStyle::Spacing::Medium);
+    layout->setSpacing(AroraStyle::Spacing::Medium);
 
     m_title = new QLabel(this);
     QFont titleFont = m_title->font();
