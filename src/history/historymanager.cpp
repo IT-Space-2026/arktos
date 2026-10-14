@@ -421,7 +421,12 @@ void HistoryManager::save()
     QFile historyFile(BrowserPaths::dataFilePath(QLatin1String("history")));
 
     // When saving everything use a temporary file to prevent possible data loss.
-    QTemporaryFile tempFile;
+    // The temp file must live in the target's directory: a default
+    // QTemporaryFile lands on /tmp and /tmp -> data dir is a cross-device
+    // rename (EXDEV) inside flatpak (and on any tmpfs-/tmp host), which
+    // silently drops the whole history save.
+    QTemporaryFile tempFile(historyFile.fileName()
+                            + QLatin1String(".XXXXXX"));
     tempFile.setAutoRemove(false);
     bool open = false;
     if (saveAll) {

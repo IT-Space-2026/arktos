@@ -102,6 +102,7 @@
 #include <QtCore/QJsonObject>
 #include <QtCore/QProcess>
 #include <QtGui/QAbstractTextDocumentLayout>
+#include <QtGui/QGuiApplication>
 #include <QtGui/QIcon>
 #include <QtGui/QImage>
 #include <QtGui/QMouseEvent>
@@ -2197,6 +2198,11 @@ int main(int argc, char **argv)
     // BrowserApplication constructor sets the same values again.
     QCoreApplication::setOrganizationName(QLatin1String("Arora"));
     QCoreApplication::setApplicationName(QLatin1String("Arora"));
+    // PKG02: inside flatpak the desktop entry is the app id — set it so
+    // the Wayland app_id / taskbar association matches
+    // io.arora.Arora.desktop instead of a bare "arora".
+    if (QFileInfo::exists(QLatin1String("/.flatpak-info")))
+        QGuiApplication::setDesktopFileName(QLatin1String("io.arora.Arora"));
 
     // DOH01: --doh-smoke seeds the strict custom-DoH mode with a dead
     // loopback endpoint BEFORE applyChromiumFlags reads the keys, so

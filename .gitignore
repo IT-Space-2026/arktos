@@ -53,3 +53,6 @@ debian/substvars
 # crash dumps from debugged smoke runs
 core
 core.*
+
+# flatpak build state (PKG02)
+flatpak/.build/
