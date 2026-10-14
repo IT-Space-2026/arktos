@@ -42,6 +42,7 @@ private slots:
     void namesList();
     void bundledCoverage_data();
     void bundledCoverage();
+    void defaultCoverage();
     void liveSwitch();
     void darkVariant();
     void nativeDarkVariant();
@@ -150,6 +151,23 @@ void tst_AroraIcon::bundledCoverage()
         const QImage image = icon.pixmap(QSize(24, 24)).toImage();
         QVERIFY2(!image.isNull(), qPrintable(id + '/' + name));
         QVERIFY2(opaquePixels(image) > 0, qPrintable(id + '/' + name));
+    }
+}
+
+// ICONS10: the default pick is the bundled Tabler set, and every
+// chrome name the code can ask for ships inside it — a name absent
+// from the set's own directory falls through the Inherits chain to
+// arora-legacy's 2009 art, the mixed-style regression the audit
+// exists to prevent.  The -dark variant must cover the same surface.
+void tst_AroraIcon::defaultCoverage()
+{
+    QCOMPARE(AroraIcon::theme(), QLatin1String("tabler"));
+    const QDir light(QLatin1String(":/icons/arora-tabler/icons"));
+    const QDir dark(QLatin1String(":/icons/arora-tabler-dark/icons"));
+    for (const QString &name : AroraIcon::names()) {
+        const QString file = name + QLatin1String(".svg");
+        QVERIFY2(light.exists(file), qPrintable(name));
+        QVERIFY2(dark.exists(file), qPrintable(name));
     }
 }
 

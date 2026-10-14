@@ -600,6 +600,15 @@ void tst_BrowserMainWindow::fileMenuOrder()
 void tst_BrowserMainWindow::menuIcons()
 {
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
+    // ICONS10: pin the bundled default — the duplicate-glyph audit
+    // below is about what a fresh profile actually renders.
+    QSettings iconSettings;
+    const QVariant savedIconTheme =
+        iconSettings.value(QLatin1String("MainWindow/iconTheme"));
+    iconSettings.setValue(QLatin1String("MainWindow/iconTheme"),
+                          QLatin1String("tabler"));
+    AroraIcon::applyFromSettings();
+
     SubWindow *window = new SubWindow;
     window->show();
 
@@ -674,6 +683,38 @@ void tst_BrowserMainWindow::menuIcons()
             QVERIFY2(!action->icon().isNull(), qPrintable(action->text()));
     }
 
+    // ICONS10: "some icons look the same" — no two rows in one static
+    // menu may render an identical glyph.  The mixed menus are exempt:
+    // their model-driven rows carry identity art (site favicons,
+    // container-color chips) where sharing a glyph is legitimate.
+    QList<QMenu *> staticMenus;
+    for (QLatin1String title : { QLatin1String("File"),
+                                 QLatin1String("Edit"),
+                                 QLatin1String("View"),
+                                 QLatin1String("Tools"),
+                                 QLatin1String("Help") })
+        staticMenus.append(menus.value(title));
+    staticMenus.append(devToolsMenu);
+    for (QMenu *menu : std::as_const(staticMenus)) {
+        QVERIFY(menu);
+        QList<QPair<QImage, QString>> glyphs;
+        for (QAction *action : menu->actions()) {
+            if (action->isSeparator() || action->icon().isNull())
+                continue;
+            const QImage image = action->icon()
+                .pixmap(QSize(16, 16)).toImage()
+                .convertToFormat(QImage::Format_ARGB32);
+            for (const QPair<QImage, QString> &prev : glyphs)
+                QVERIFY2(image != prev.first,
+                         qPrintable(menu->title() + QLatin1String(" > ")
+                             + action->text()
+                             + QLatin1String(" shares ")
+                             + prev.second
+                             + QLatin1String("'s glyph")));
+            glyphs.append(qMakePair(image, action->text()));
+        }
+    }
+
     // The mixed menus: dynamic entries stay bare, the static rows all
     // carry icons.
     const QHash<QString, QStringList> required = {
@@ -732,6 +773,12 @@ void tst_BrowserMainWindow::menuIcons()
     QCOMPARE(torMissing, 0);
 
     closeWindow(window);
+    if (savedIconTheme.isValid())
+        iconSettings.setValue(QLatin1String("MainWindow/iconTheme"),
+                              savedIconTheme);
+    else
+        iconSettings.remove(QLatin1String("MainWindow/iconTheme"));
+    AroraIcon::applyFromSettings();
 #endif
 }
 
@@ -2175,7 +2222,9 @@ void tst_BrowserMainWindow::torNavIconsDarkChrome()
 
     // ICONS06: the reported path — "native" has no -dark art for
     // getOnDark to pin, so the tint must carry the lift alone.
-    settings.remove(QLatin1String("MainWindow/iconTheme"));
+    // ICONS10: set explicitly — the default pick is now "tabler".
+    settings.setValue(QLatin1String("MainWindow/iconTheme"),
+                      QLatin1String("native"));
     AroraIcon::applyFromSettings();
     const TorNavLum nativeTheme = measureTorBar("native");
 
@@ -2231,12 +2280,14 @@ void tst_BrowserMainWindow::darkChromeIcons()
         return opaque ? lum / opaque : -1;
     };
 
-    // Force the default "native" icon theme — that is the path the
-    // bug report hit (a bundled pick already flipped to -dark).
+    // Force the "native" icon theme — that is the path the bug
+    // report hit (a bundled pick already flipped to -dark; ICONS10
+    // made bundled the default, so native is pinned explicitly).
     QSettings settings;
     const QVariant savedTheme =
         settings.value(QLatin1String("MainWindow/iconTheme"));
-    settings.remove(QLatin1String("MainWindow/iconTheme"));
+    settings.setValue(QLatin1String("MainWindow/iconTheme"),
+                      QLatin1String("native"));
     AroraIcon::applyFromSettings();
 
     SubWindow *window = new SubWindow;

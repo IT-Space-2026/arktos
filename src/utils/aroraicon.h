@@ -123,7 +123,9 @@ QIcon getChrome(const QString &name);
 QStringList themeIds();
 QString themeDisplayName(const QString &id);
 
-// The persisted choice ("MainWindow/iconTheme", default "native").
+// The persisted choice ("MainWindow/iconTheme", default "tabler" —
+// ICONS10: bundled so every chrome name resolves to distinct art;
+// "native" stays selectable for the OS look).
 QString theme();
 
 // Applies an id immediately — existing icons refresh.  Persisting

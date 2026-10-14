@@ -1,8 +1,19 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<!-- ICONS04: plain X matching the arrow stroke weight — the stock
-     square-x boxed the glyph and carried ~3x the arrows' ink. -->
-<svg height="24" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"
-    fill="none" stroke="#3d3d3d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M18 6l-12 12" />
-    <path d="M6 6l12 12" />
+<!--
+tags: [music, song, playlist, melody, device, voice, silence, break, player, stop]
+category: Media
+version: "1.28"
+unicode: "ed4a"
+-->
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="#3d3d3d"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M5 7a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v10a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2l0 -10" />
 </svg>
