@@ -389,8 +389,8 @@ void HistoryMenu::postPopulated()
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
     // ICONS07: the static tail rows carry icons like the initial
     // actions above them; the dynamic history entries stay iconless.
-    showAllAction->setIcon(AroraIcon::get(QLatin1String("view-history")));
-    clearAction->setIcon(AroraIcon::get(QLatin1String("edit-clear")));
+    showAllAction->setIcon(AroraIcon::getChrome(QLatin1String("view-history")));
+    clearAction->setIcon(AroraIcon::getChrome(QLatin1String("edit-clear")));
 #endif
 }
 
@@ -774,7 +774,9 @@ QVariant HistoryTreeModel::data(const QModelIndex &index, int role) const
     }
     case Qt::DecorationRole: {
         if (index.column() == 0 && !index.parent().isValid())
-            return QIcon(QLatin1String(":graphics/history.png"));
+            // ICONS09: the day-group header is chrome — the themed
+            // monochrome glyph, not the colorful legacy pixmap.
+            return AroraIcon::getChrome(QLatin1String("view-history"));
         Q_FALLTHROUGH();
     }
     case HistoryModel::DateRole: {

@@ -103,7 +103,7 @@ AdBlockDialog::AdBlockDialog(QWidget *parent)
     connect(menu, &QMenu::aboutToShow,
             this, &AdBlockDialog::aboutToShowActionMenu);
     actionToolButton->setMenu(menu);
-    actionToolButton->setIcon(AroraIcon::get(QLatin1String("system-run")));
+    actionToolButton->setIcon(AroraIcon::getChrome(QLatin1String("system-run")));
     actionToolButton->setPopupMode(QToolButton::InstantPopup);
 
     m_customCommitTimer = new QTimer(this);

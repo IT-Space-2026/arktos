@@ -46,7 +46,7 @@ ClearButton::ClearButton(QWidget *parent)
     // First check for a themed icon, current KDE provides one.
     // Resolved live in paintEvent so an icon-theme switch (the
     // Settings Icons combo) reaches already-constructed buttons.
-    m_styleIcon = AroraIcon::get((layoutDirection() == Qt::RightToLeft)
+    m_styleIcon = AroraIcon::getChrome((layoutDirection() == Qt::RightToLeft)
         ? QLatin1String("edit-clear-locationbar-ltr")
         : QLatin1String("edit-clear-locationbar-rtl"));
 }

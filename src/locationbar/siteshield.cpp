@@ -100,7 +100,7 @@ void SiteShieldButton::setWebView(WebView *webView)
 
 void SiteShieldButton::refreshIcon()
 {
-    const QIcon shield = AroraIcon::get(QLatin1String("security-high"));
+    const QIcon shield = AroraIcon::getChrome(QLatin1String("security-high"));
 
     if (!m_webView) {
         setIcon(shield);

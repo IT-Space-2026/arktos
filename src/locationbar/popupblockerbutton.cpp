@@ -98,7 +98,7 @@ void PopupBlockerButton::refresh()
     if (count <= 0)
         return;
 
-    QPixmap pixmap = AroraIcon::get(QLatin1String("window-new"))
+    QPixmap pixmap = AroraIcon::getChrome(QLatin1String("window-new"))
         .pixmap(QSize(16, 16));
     // Count badge at the bottom-right corner — same uBO-style
     // treatment the ad-block button uses.

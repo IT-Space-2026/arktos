@@ -63,7 +63,7 @@ ScriptBlockInfoBar::ScriptBlockInfoBar(QWidget *parent)
     QToolButton *close = new QToolButton(this);
     close->setObjectName(QLatin1String("scriptBlockInfoBarClose"));
     close->setAutoRaise(true);
-    close->setIcon(AroraIcon::get(QLatin1String("window-close")));
+    close->setIcon(AroraIcon::getChrome(QLatin1String("window-close")));
     close->setAccessibleName(tr("Close"));
     close->setToolTip(tr("Hide this notice"));
     connect(close, &QToolButton::clicked, this, &QFrame::hide);

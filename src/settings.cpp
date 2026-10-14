@@ -204,7 +204,7 @@ SettingsDialog::SettingsDialog(QWidget *parent)
          i < pagesList->count()
          && i < int(sizeof(pageIcons) / sizeof(pageIcons[0])); ++i) {
         if (QListWidgetItem *item = pagesList->item(i))
-            item->setIcon(AroraIcon::get(QLatin1String(pageIcons[i])));
+            item->setIcon(AroraIcon::getChrome(QLatin1String(pageIcons[i])));
     }
     // ICONS02: with no explicit iconSize the view paints each icon at
     // whatever nominal size the resolved asset carries — themes ship
@@ -332,7 +332,7 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     // loadFromSettings.
     for (const SidebarPanel::Panel &panel : SidebarPanel::orderedPanels()) {
         QListWidgetItem *item = new QListWidgetItem(
-            AroraIcon::get(QLatin1String(panel.iconName)), panel.title,
+            AroraIcon::getChrome(QLatin1String(panel.iconName)), panel.title,
             sidebarPanelsList);
         item->setData(Qt::UserRole, panel.id);
         item->setFlags(item->flags() | Qt::ItemIsUserCheckable);

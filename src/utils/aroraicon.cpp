@@ -25,8 +25,10 @@
 #include <qdir.h>
 #include <qevent.h>
 #include <qfile.h>
+#include <qiconengine.h>
 #include <qimage.h>
 #include <qpainter.h>
+#include <qpalette.h>
 #include <qpixmap.h>
 #include <qsettings.h>
 #include <qstylehints.h>
@@ -141,6 +143,63 @@ QPixmap tintedPixmap(const QPixmap &source, const QColor &color)
     return out;
 }
 
+// ICONS09: chrome icon engine — the themed art serves shape+alpha
+// only; every opaque pixel is re-tinted to the palette's ButtonText
+// (Disabled mode takes the palette's disabled tone rather than Qt's
+// generated ghosting, same lesson as ICONS06).  The tint is resolved
+// per pixmap() request — not baked at setIcon() — so a runtime
+// light<->dark flip (THEME01 preview, desktop scheme change) or an
+// icon-theme swap reaches already-installed icons without any widget
+// having to listen for it.
+class ChromeIconEngine : public QIconEngine
+{
+public:
+    explicit ChromeIconEngine(const QString &name)
+        : m_name(name)
+    {
+    }
+
+    QIconEngine *clone() const override
+    {
+        return new ChromeIconEngine(m_name);
+    }
+
+    void paint(QPainter *painter, const QRect &rect, QIcon::Mode mode,
+               QIcon::State state) override
+    {
+        const qreal scale = painter->device()
+            ? painter->device()->devicePixelRatioF() : 1.0;
+        painter->drawPixmap(rect.topLeft(),
+                            scaledPixmap(rect.size(), mode, state, scale));
+    }
+
+    QPixmap pixmap(const QSize &size, QIcon::Mode mode,
+                   QIcon::State state) override
+    {
+        return scaledPixmap(size, mode, state, 1.0);
+    }
+
+    QPixmap scaledPixmap(const QSize &size, QIcon::Mode mode,
+                         QIcon::State state, qreal scale) override
+    {
+        // Always Normal art from the theme — a set's own Disabled
+        // rendering would double-dim under our disabled tint.
+        QPixmap base = AroraIcon::get(m_name).pixmap(size * scale,
+                                                   QIcon::Normal, state);
+        if (base.isNull())
+            return base;
+        base.setDevicePixelRatio(scale);
+        const QPalette palette = qApp ? qApp->palette() : QPalette();
+        return tintedPixmap(base, palette.color(
+            mode == QIcon::Disabled ? QPalette::Disabled
+                                    : QPalette::Normal,
+            QPalette::ButtonText));
+    }
+
+private:
+    const QString m_name;
+};
+
 // The bundled -dark set closest to the captured system theme —
 // where "native" resolves under a dark palette when the real system
 // theme cannot serve light glyphs.  An empty/unknown system theme
@@ -209,6 +268,12 @@ QIcon AroraIcon::getTinted(const QString &name, const QColor &color,
                            const QColor &disabledColor)
 {
     return tinted(getOnDark(name), color, disabledColor);
+}
+
+QIcon AroraIcon::getChrome(const QString &name)
+{
+    init();
+    return QIcon(new ChromeIconEngine(name));
 }
 
 QStringList AroraIcon::themeIds()
