@@ -360,6 +360,23 @@ fn drain_gl_error(rc: &Rc<dyn RenderingContext>, tag: &str) {
 // same contract so this gate is the last line of defense.
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
 
+// ENG27: the instance slot, tracked apart from INITIALIZED.
+// INITIALIZED records "the engine was built (Opts consumed)"; the
+// slot records "a SeInstance is live right now" and holds its
+// pointer — se_init claims it, se_destroy hands it back BEFORE the
+// fallible teardown, so a panic inside webrender's GL teardown (the
+// gl.rs get_integer_v GL_INVALID_OPERATION seen on the desktop) can
+// never strand it.  Holding the pointer also lets se_destroy reject
+// a stale/double-destroyed instance instead of re-dropping freed
+// memory.  "Slot free" is the state the ENG28 re-init recovers into;
+// se_instance_active()/se_can_init() report it to the host.  All
+// se_* calls are contracted to the host GUI thread, so a Cell behind
+// thread_local is the honest home (Rc-adjacent bookkeeping, no
+// cross-thread readers).
+thread_local! {
+    static INSTANCE_ACTIVE: Cell<usize> = const { Cell::new(0) };
+}
+
 // ENG23 — pin Servo's painter to Mesa's software rasterizer.
 //
 // `SoftwareRenderingContext` is a readback context — every frame goes
@@ -589,13 +606,23 @@ pub extern "C" fn se_init(
                    libservo Opts is process-global, refusing");
         return std::ptr::null_mut();
     }
+    // ENG27: claim the instance slot up front — claimed, not spent:
+    // a failed or panicking init hands it back so the host's retry
+    // (or a later crash-recovery slice) still gets a real chance.
+    // usize::MAX marks "claimed, pointer not minted yet"; the real
+    // pointer lands below once init succeeds.
+    INSTANCE_ACTIVE.with(|slot| slot.set(usize::MAX));
     // catch_unwind keeps any residual init panic (context failure,
     // missing resource dir, ...) from aborting the host — panics do
     // not unwind across extern "C".
-    catch_unwind(AssertUnwindSafe(|| {
+    let instance = catch_unwind(AssertUnwindSafe(|| {
         se_init_inner(callbacks, width, height, config_dir)
     }))
-    .unwrap_or(std::ptr::null_mut())
+    .unwrap_or(std::ptr::null_mut());
+    INSTANCE_ACTIVE.with(|slot| {
+        slot.set(if instance.is_null() { 0 } else { instance as usize });
+    });
+    instance
 }
 
 fn se_init_inner(
@@ -1000,26 +1027,177 @@ pub extern "C" fn se_version() -> *const c_char {
     .unwrap_or(UNKNOWN.as_ptr().cast())
 }
 
+/// ENG27: non-zero while the instance slot is occupied — se_init
+/// claims it on entry, se_destroy hands it back FIRST (before the
+/// fallible teardown, so even a panicking drop frees it).  This is
+/// the host-side readback for "the slot is free": on a crashed +
+/// destroyed instance it must read 0, or no recovery path has
+/// anything to recover into.  Absent on pre-ENG27 artifacts —
+/// resolve optionally.
+#[no_mangle]
+pub extern "C" fn se_instance_active() -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        INSTANCE_ACTIVE.with(|slot| (slot.get() != 0) as i32)
+    }))
+    .unwrap_or(0)
+}
+
+/// ENG27: non-zero when an se_init issued right now would produce a
+/// live instance.  Today that is only "never initialized" — the
+/// engine is once-per-process, so a spent slot still reports 0 until
+/// ENG28's re-init lands (then a live engine + free slot flips the
+/// answer).  The Qt gate consults this so a spent slot stops being a
+/// hard-forever refusal the moment the artifact can serve one.
+#[no_mangle]
+pub extern "C" fn se_can_init() -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        let live = INSTANCE_ACTIVE.with(|slot| slot.get() != 0);
+        (!INITIALIZED.load(Ordering::SeqCst) && !live) as i32
+    }))
+    .unwrap_or(0)
+}
+
 #[no_mangle]
 pub extern "C" fn se_destroy(instance: *mut SeInstance) {
     if instance.is_null() {
         return;
     }
+    // ENG27: hand the instance slot back FIRST — the teardown below
+    // is catch-wrapped, and a panic inside webrender's GL teardown
+    // (the gl.rs get_integer_v GL_INVALID_OPERATION the desktop log
+    // showed) must not strand the slot: a leaked box wastes memory,
+    // a stuck slot makes any later recovery impossible.  Only the
+    // pointer that claimed the slot can release it — a stale or
+    // double-destroyed pointer reads "not the live instance" and
+    // returns harmlessly instead of re-dropping freed memory.
+    let claimed = INSTANCE_ACTIVE.with(|slot| {
+        let held = slot.get() == instance as usize;
+        if held {
+            slot.set(0);
+        }
+        held
+    });
+    if !claimed {
+        return;
+    }
+    // Poison up front too: any export re-entered from inside teardown
+    // (a delegate callback driving nested work) no-ops instead of
+    // touching half-dropped fields.
+    unsafe { &*instance }.poisoned.store(true, Ordering::SeqCst);
     // Deliberately NOT gated on `poisoned` — the host owns freeing the
-    // instance either way.  The drop itself is catch-wrapped: a panic
-    // inside teardown leaks the box rather than aborting the process.
+    // instance either way.  The teardown is staged under two catches:
+    // a panic in the drain (a dead GL context may panic make_current)
+    // must not skip the drop attempt, and a panic inside the drop
+    // leaks the box rather than aborting the process — the contained
+    // alternative now that the slot is already free.
     if catch_unwind(AssertUnwindSafe(|| {
         // ENG23: webrender runs its own debug GL checks inside drop —
         // a residual error on the painter's context would turn a clean
         // teardown into a panic + leaked box; drain first.
         drain_gl_error(&unsafe { &*instance }.webview.rendering_context(), "pre-destroy");
+        // ENG27 selftest hook — injects the panic INSIDE the catch-
+        // wrapped teardown region the real GL panic surfaced in.
+        if std::env::var_os("SE_SELFTEST_DESTROY_PANIC").is_some() {
+            panic!("ENG27 selftest destroy panic");
+        }
+    }))
+    .is_err()
+    {
+        eprintln!("servo-embed: panic during se_destroy pre-teardown — \
+                   attempting the drop anyway");
+    }
+    if catch_unwind(AssertUnwindSafe(|| {
         drop(unsafe { Box::from_raw(instance) });
     }))
     .is_err()
     {
-        eprintln!("servo-embed: panic during se_destroy — instance leaked");
+        eprintln!("servo-embed: panic during se_destroy — instance \
+                   leaked, slot already released");
     }
     // ENG23: teardown made the painter's context current — release it
     // for the host's GL work (see release_current_gl_context).
     unsafe { release_current_gl_context() };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    extern "C" fn noop_void(_: *mut c_void) {}
+    extern "C" fn noop_str(_: *mut c_void, _: *const c_char) {}
+    extern "C" fn noop_status(_: *mut c_void, _: i32) {}
+    extern "C" fn noop_console(_: *mut c_void, _: i32, _: *const c_char) {}
+
+    fn test_callbacks() -> SeCallbacks {
+        SeCallbacks {
+            userdata: std::ptr::null_mut(),
+            wake: noop_void,
+            frame_ready: noop_void,
+            url_changed: noop_str,
+            title_changed: noop_str,
+            load_status_changed: noop_status,
+            console_message: noop_console,
+            navigation_request: noop_str,
+            resource_load: noop_str,
+        }
+    }
+
+    #[test]
+    fn slot_and_init_gates_report_clean() {
+        // A fresh thread-local slot reads free; the engine was never
+        // built on this thread's view of the world.
+        assert_eq!(se_instance_active(), 0);
+    }
+
+    #[test]
+    fn null_instance_calls_are_noops() {
+        // ffi_guard's null fallback: no dereference, no panic.
+        se_spin(std::ptr::null_mut());
+        assert_eq!(se_is_poisoned(std::ptr::null_mut()), 0);
+        assert_eq!(se_request_count(std::ptr::null_mut()), 0);
+        let mut w = 0u32;
+        let mut h = 0u32;
+        assert_eq!(se_frame_size(std::ptr::null_mut(), &mut w, &mut h), -1);
+        se_destroy(std::ptr::null_mut());
+    }
+
+    #[test]
+    fn destroy_unclaimed_pointer_is_a_noop() {
+        // ENG27: the slot holds the live pointer — a destroy on a
+        // pointer that never claimed it (stale/double-destroy) must
+        // bail BEFORE touching it.  A dangling address is sufficient:
+        // the early return means it is never dereferenced.
+        let bogus = 0xdeadbeefusize as *mut SeInstance;
+        se_destroy(bogus);           // slot reads 0 -> early return
+        assert_eq!(se_instance_active(), 0);
+    }
+
+    #[test]
+    fn destroy_releases_slot_when_teardown_panics() {
+        // The ENG27 scenario end-to-end: a live instance whose
+        // se_destroy hits a panic inside the catch-wrapped teardown
+        // (the webrender GL shape) still hands the slot back.  Needs
+        // a real engine — skip cleanly when init cannot run in this
+        // environment (the app-level --servo-smoke drives the same
+        // legs on the desktop path).
+        let config_dir = c"/tmp/arora-se-test";
+        std::fs::create_dir_all("/tmp/arora-se-test").ok();
+        let instance = se_init(test_callbacks(), 64, 64, config_dir.as_ptr());
+        if instance.is_null() {
+            eprintln!("servo-embed: se_init unavailable here — skipping");
+            return;
+        }
+        assert_eq!(se_instance_active(), 1);
+        assert_eq!(se_can_init(), 0); // slot held
+        std::env::set_var("SE_SELFTEST_DESTROY_PANIC", "1");
+        se_destroy(instance); // panics inside the catch — must not abort
+        std::env::remove_var("SE_SELFTEST_DESTROY_PANIC");
+        assert_eq!(se_instance_active(), 0);
+        // Once-per-process engine: a second se_init stays refused on
+        // this slice — the refusal itself must leave the slot free.
+        let second = se_init(test_callbacks(), 64, 64, config_dir.as_ptr());
+        assert!(second.is_null());
+        assert_eq!(se_instance_active(), 0);
+        se_destroy(instance); // stale pointer after real destroy: no-op
+    }
 }

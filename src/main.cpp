@@ -3556,6 +3556,19 @@ static int servoLifecycleSmoke()
             servoView->grab();
             report(QStringLiteral("panic-survived"), true);
         }
+
+        // ENG27: the crashed+destroyed instance must release the
+        // shim's slot — while the view lives it reads occupied, and
+        // after the swap-back destroys it the slot must read free
+        // EVEN THOUGH teardown itself panics (SE_SELFTEST_DESTROY_
+        // PANIC injects the panic inside se_destroy's catch-wrapped
+        // teardown — the desktop log's webrender-GL-during-drop
+        // shape).  The readback is se_instance_active through
+        // ServoView::instanceActive(); artifacts predating the export
+        // fail the held-leg loudly.
+        report(QStringLiteral("instance-slot-held"),
+               ServoView::instanceActive());
+        qputenv("SE_SELFTEST_DESTROY_PANIC", "1");
 #endif
         // (c) mid-tab backend switching stays stable: back to
         // webengine destroys the only ServoView, and a second
@@ -3563,6 +3576,16 @@ static int servoLifecycleSmoke()
         report(QStringLiteral("swap-back"),
                tabs.reloadTabInEngine(0, QStringLiteral("webengine")));
         pumpDeletes();
+#ifdef ARORA_SERVO
+        // ENG27: the destroy above ran with the panic injection armed
+        // — the shim caught it AND still released the slot.  A second
+        // se_init stays refused on this slice's once-per-process
+        // engine (se_can_init reads 0); ENG28's re-init flips that.
+        qunsetenv("SE_SELFTEST_DESTROY_PANIC");
+        // servoView itself is gone — only the slot readback survives.
+        report(QStringLiteral("destroy-panic-slot-freed"),
+               !ServoView::instanceActive());
+#endif
         report(QStringLiteral("reswap-refused"),
                !tabs.reloadTabInEngine(0, QStringLiteral("servo")));
         report(QStringLiteral("original-kept"),

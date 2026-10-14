@@ -86,6 +86,12 @@ struct ServoApi {
     // pin cannot report the painter's GL_RENDERER; a missing symbol
     // reads as "unverifiable".
     const char *(*glRenderer)(SeInstance) = nullptr;
+    // ENG27: optional — crash-recovery introspection.  Missing on
+    // pre-ENG27 artifacts: the instance slot then reads occupied while
+    // a view lives (the old spend-once contract) and a spent slot
+    // stays terminal.
+    int (*instanceActive)() = nullptr;
+    int (*canInit)() = nullptr;
 };
 
 // ENG18: serves the schemes libservo cannot fetch straight out of the
@@ -208,6 +214,14 @@ bool resolve()
     // engaged rather than trust the env override took.
     api().glRenderer = reinterpret_cast<decltype(api().glRenderer)>(
         library().resolve("se_gl_renderer"));
+    // Optional ENG27 additions — instance-slot introspection for the
+    // crash-recovery path.  Missing on older artifacts: the slot
+    // keeps behaving as a one-way spend, exactly as before.
+    api().instanceActive =
+        reinterpret_cast<decltype(api().instanceActive)>(
+            library().resolve("se_instance_active"));
+    api().canInit = reinterpret_cast<decltype(api().canInit)>(
+        library().resolve("se_can_init"));
     state = ok ? 1 : -1;
     if (!ok)
         qWarning("servo-embed: artifact at %s is missing symbols",
@@ -221,18 +235,23 @@ bool resolve()
 
 } // namespace
 
-// ---- one SeInstance per process (ENG12) ------------------------------
+// ---- one SeInstance at a time (ENG12/ENG27) --------------------------
 //
 // libservo v0.7.0 parks its Opts in a process-global OnceCell — the
 // first Servo build wins and EVERY later se_init panics ("Already
 // initialized", components/config/opts.rs).  Rust panics cannot
-// unwind across the extern "C" ABI, so the second ServoView is not a
-// degraded tab, it is a guaranteed process abort.  The slot below is
-// the honest guard: Free -> InUse on se_init, -> Exhausted when the
-// view dies or init fails — a spent slot is never handed back.
-// ServoBackend::createPage refuses once the slot is gone so the
-// swap/new-tab paths fail the whole engine tab instead of
-// manufacturing the abort.
+// unwind across the extern "C" ABI, so a second CONCURRENT ServoView
+// is not a degraded tab, it is a guaranteed process abort.  The slot
+// below is the honest guard: Free -> InUse on se_init, -> Exhausted
+// when the view dies or init fails.
+//
+// ENG27: Exhausted is no longer hard-forever.  The shim's se_destroy
+// hands its instance slot back even when teardown panics (the
+// webrender gl.rs panic used to leak the box AND strand the slot),
+// so whether a spent slot can host a fresh instance is the artifact's
+// call: se_can_init answers it — 0 on the once-per-process engine
+// (this slice) and nonzero once ENG28's re-init lands.  Missing on
+// old artifacts: the slot stays terminal, exactly as before.
 
 namespace {
 
@@ -394,6 +413,10 @@ ServoView::~ServoView()
             g_liveView = nullptr;
         // Only the view that held the claim spends the slot — an
         // inert never-initialized view must not downgrade a live one.
+        // ENG27: Exhausted means "spent" not "forever" — the shim
+        // released its instance slot in se_destroy (panic-safe), and
+        // instanceAvailable() consults the artifact's se_can_init to
+        // reopen it once the re-init path exists.
         if (m_instance)
             g_servoSlot = ServoSlot::Exhausted;
     }
@@ -430,7 +453,22 @@ QString ServoView::glRenderer() const
 bool ServoView::instanceAvailable()
 {
     QMutexLocker lock(&servoMutex());
-    return g_servoSlot == ServoSlot::Free;
+    if (g_servoSlot == ServoSlot::Free)
+        return true;
+    if (g_servoSlot == ServoSlot::InUse)
+        return false;
+    // Exhausted: the shim alone knows whether a fresh se_init would
+    // take — "engine alive, slot free" once the re-init path exists,
+    // "Opts consumed" on artifacts that still refuse a second init.
+    // A missing export keeps the old terminal answer.
+    return api().canInit && api().canInit();
+}
+
+bool ServoView::instanceActive()
+{
+    // ENG27: the shim's instance slot — the readback proving
+    // se_destroy released it even when teardown panicked.
+    return api().instanceActive && api().instanceActive();
 }
 
 void ServoView::load(const QUrl &url)

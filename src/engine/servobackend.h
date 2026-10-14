@@ -42,16 +42,21 @@
 // surface handoff, so the QOpenGLWidget/surfman upgrade needs a shim
 // extension first (noted in the spike doc).
 //
-// ENG12: exactly ONE ServoView may exist per process lifetime.
+// ENG12: exactly ONE LIVE ServoView at a time.
 // libservo v0.7.0 parks Opts in a process-global OnceCell — the first
 // Servo build wins, every later se_init panics ("Already initialized"
 // in components/config/opts.rs), and a Rust panic cannot unwind
 // across the extern "C" boundary so the host process aborts.  The
 // backend refuses a second page/view rather than manufacturing the
-// abort; a spent slot is never handed back (even a failed se_init may
-// have consumed Opts).  Upstream fix (init-once + catch_unwind) lives
-// in spikes/servo/servo-embed/src/lib.rs — the pinned artifact
-// predates it.
+// abort; a spent slot is only handed back when the artifact says a
+// fresh init can serve it (se_can_init — ENG27).
+//
+// ENG27: the shim's instance slot is no longer a one-way spend —
+// se_destroy releases it FIRST, before the catch-wrapped teardown,
+// so a panicking drop (the desktop log's webrender GL panic) cannot
+// strand the slot anymore.  A spent slot recovers the moment the
+// artifact can mint a fresh instance on the surviving engine —
+// ENG28's re-init — and reads terminal until then.
 
 #include "engineinterface.h"
 
@@ -87,9 +92,14 @@ public:
     // rasterizer once the shim pins it, empty on artifacts predating
     // se_gl_renderer.
     QString glRenderer() const;
-    // Whether another ServoView may be constructed — false once the
-    // process's single SeInstance slot is claimed or spent (ENG12).
+    // Whether another ServoView may be constructed — false while the
+    // process's single SeInstance slot is claimed; a spent slot
+    // answers through the artifact's se_can_init (ENG27).
     static bool instanceAvailable();
+    // ENG27: the shim-side instance slot — true while a SeInstance is
+    // live, false once se_destroy released it (even when teardown
+    // panicked).  false on artifacts predating se_instance_active.
+    static bool instanceActive();
     void load(const QUrl &url);
     void spinOnce();              // one se_spin — GUI thread
     void goBack();
