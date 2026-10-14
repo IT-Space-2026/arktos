@@ -112,6 +112,7 @@ private slots:
     void tabTransfer();
     void newTabButton();
     void verticalTabRowTextBounds();
+    void verticalRailRowOverlap();
 };
 
 // Subclass that exposes the protected functions.
@@ -2791,6 +2792,215 @@ void tst_TabWidget::verticalTabRowTextBounds()
         settings.endGroup();
     }
     QApplication::setPalette(appPalette);
+}
+
+// TABS18: a vertical rail whose rows fill the strip left the '+'
+// no free run — it clamped onto the row the rail was scrolled to
+// and read as a truncated tab (the user's clipped "History" row).
+// The button now lives inside the trailing scroll chrome instead:
+// stacked arrows share the band's first row and the '+' takes the
+// row below.  Every row keeps its full painted height on both
+// rails, no bar chrome covers a row, and the '+' still opens tabs.
+void tst_TabWidget::verticalRailRowOverlap()
+{
+    const auto buildOverflowedRail =
+        [](SubTabWidget &widget) -> TabBar * {
+        for (int i = 0; i < 40; ++i)
+            widget.newTab();
+        TabBar *bar = widget.bar();
+        bar->setPerTabCloseButtons(true);
+        // Favicon labels like production installs.
+        for (int i = 0; i < widget.count(); ++i) {
+            QLabel *label = new QLabel(&widget);
+            label->setFixedSize(16, 16);
+            QPixmap pm(16, 16);
+            pm.fill(QColor(40 + i * 60 % 220, 90,
+                           200 - i * 40 % 150));
+            label->setPixmap(pm);
+            bar->setTabButton(i, bar->freeSide(), label);
+        }
+        widget.setTabPinned(0, true);
+        widget.setTabTitleOverride(1, tr("Renamed tab — gypq"));
+        const QString gid = widget.createTabGroup(2);
+        widget.renameTabGroup(gid, tr("Group"));
+        widget.addTabToGroup(3, gid);
+        // The user's clipped row — a History widget tab appended
+        // last: real strip icon, no favicon label.
+        QWidget *historyPage = new QWidget(&widget);
+        widget.addWidgetTab(
+            historyPage, tr("History"),
+            QIcon(QLatin1String(":graphics/history.png")));
+        widget.resize(720, 480);
+        widget.show();
+        QApplication::processEvents();
+        widget.loadSettings();
+        QApplication::processEvents();
+        return bar;
+    };
+
+    for (const int position : { 2, 3 }) {   // Left rail, Right rail
+        QSettings settings;
+        settings.beginGroup(QLatin1String("tabs"));
+        settings.setValue(QLatin1String("tabBarPosition"), position);
+        settings.remove(QLatin1String("verticalTabWidth"));
+
+        SubTabWidget widget;
+        TabBar *bar = buildOverflowedRail(widget);
+        const int band = bar->containerStripHeight();
+        // Overflowed — Qt's scroll chrome is up.
+        QList<QAbstractButton*> chrome;
+        const QObjectList kids = bar->children();
+        for (QObject *kid : kids) {
+            QAbstractButton *child =
+                qobject_cast<QAbstractButton*>(kid);
+            if (!child || !child->isVisible()
+                || child == bar->newTabButton())
+                continue;
+            bool isTabButton = false;
+            for (int i = 0; i < bar->count() && !isTabButton; ++i) {
+                if (bar->tabButton(i, QTabBar::LeftSide) == child
+                    || bar->tabButton(i, QTabBar::RightSide) == child)
+                    isTabButton = true;
+            }
+            if (!isTabButton)
+                chrome.append(child);
+        }
+        QVERIFY2(!chrome.isEmpty(),
+                 "overflowed rail did not raise the scroll chrome");
+
+        // Every visible row shares one height — group runs carry
+        // their pill reserve only on the first member.
+        const int bandFloor = bar->fontMetrics().height() + 8;
+        int plainHeight = -1;
+        for (int i = 0; i < bar->count(); ++i) {
+            const QRect row = bar->tabRect(i);
+            if (row.bottom() < band || row.top() > bar->height())
+                continue;   // scrolled out
+            QVERIFY2(row.height() >= bandFloor,
+                     qPrintable(QStringLiteral(
+                         "rail %1: tab %2 row %3px under the %4px "
+                         "floor")
+                         .arg(position).arg(i).arg(row.height())
+                         .arg(bandFloor)));
+            const QString gid = widget.tabGroupId(i);
+            const bool reserves =
+                !gid.isEmpty()
+                && !widget.tabGroupName(gid).isEmpty()
+                && widget.tabGroupId(i - 1) != gid;
+            if (!reserves) {
+                if (plainHeight < 0)
+                    plainHeight = row.height();
+                QVERIFY2(row.height() == plainHeight,
+                         qPrintable(QStringLiteral(
+                             "rail %1: tab %2 row %3px vs rail "
+                             "height %4px")
+                             .arg(position).arg(i).arg(row.height())
+                             .arg(plainHeight)));
+            }
+        }
+
+        // No strip chrome covers the visible part of a row — the
+        // '+' and the scroll buttons are the TABS18 offenders.  Qt
+        // lets a scrolled row's tail flow under the chrome band, so
+        // only the part above the band's top must stay uncovered.
+        QToolButton *plus = bar->newTabButton();
+        QVERIFY(plus->isVisible());
+        QVERIFY(bar->rect().contains(plus->geometry()));
+        int chromeTop = bar->height();
+        for (QAbstractButton *child : std::as_const(chrome))
+            chromeTop = qMin(chromeTop, child->geometry().top());
+        const QRect visibleArea(0, band, bar->width(),
+                                chromeTop - band);
+        QList<QWidget*> overlays;
+        for (QAbstractButton *child : std::as_const(chrome))
+            overlays.append(child);
+        overlays.append(plus);
+        for (int i = 0; i < bar->count(); ++i) {
+            const QRect row = bar->tabRect(i)
+                .translated(0, band).intersected(visibleArea);
+            if (row.isEmpty())
+                continue;
+            for (QWidget *overlay : std::as_const(overlays)) {
+                QVERIFY2(!overlay->geometry().intersects(row),
+                         qPrintable(QStringLiteral(
+                             "rail %1: %2 %3 covers tab %4's row %5")
+                             .arg(position)
+                             .arg(QLatin1String(
+                                 overlay->metaObject()->className()))
+                             .arg(QLatin1String(QTest::toString(
+                                 overlay->geometry())))
+                             .arg(i).arg(QLatin1String(
+                                 QTest::toString(row)))));
+            }
+        }
+        // The '+' lives inside the chrome band it borrowed — never
+        // floating over the rows' painted area.
+        QVERIFY(plus->geometry().top() >= chromeTop);
+
+        // The reflowed chrome still scrolls — the down arrow drives
+        // the strip — and the '+' still opens a real tab.
+        const int count = widget.count();
+        plus->click();
+        QApplication::processEvents();
+        QCOMPARE(widget.count(), count + 1);
+
+        if (qEnvironmentVariableIsSet("ARORA_TABWIDGET_GRAB_DIR")) {
+            const QString dir =
+                qEnvironmentVariable("ARORA_TABWIDGET_GRAB_DIR");
+            bar->grab().save(dir + (position == 2
+                ? QLatin1String("/rail-overlap-left.png")
+                : QLatin1String("/rail-overlap-right.png")));
+        }
+
+        settings.remove(QLatin1String("tabBarPosition"));
+        settings.endGroup();
+    }
+
+    // A rail exactly full — the rows reach the strip's end but no
+    // scroll chrome ever engaged: the '+' hides rather than cover
+    // the last row.
+    {
+        QSettings settings;
+        settings.beginGroup(QLatin1String("tabs"));
+        settings.setValue(QLatin1String("tabBarPosition"), 2);
+        settings.remove(QLatin1String("verticalTabWidth"));
+
+        SubTabWidget widget;
+        widget.newTab();
+        TabBar *bar = widget.bar();
+        widget.resize(720, 480);
+        widget.show();
+        QApplication::processEvents();
+        widget.loadSettings();
+        QApplication::processEvents();
+        const int rowHeight = bar->tabRect(0).height();
+        const int rows = bar->height() / rowHeight;
+        while (widget.count() < rows)
+            widget.newTab();
+        QApplication::processEvents();
+        QTRY_VERIFY_WITH_TIMEOUT(
+            bar->tabRect(widget.count() - 1).bottom()
+                >= bar->height() - rowHeight,
+            5000);
+        for (int i = 0; i < bar->count(); ++i) {
+            const QRect row = bar->tabRect(i)
+                .translated(0, bar->containerStripHeight());
+            if (!row.isValid())
+                continue;
+            QVERIFY2(!bar->newTabButton()->isVisible()
+                         || !bar->newTabButton()->geometry()
+                                .intersects(row),
+                     qPrintable(QStringLiteral(
+                         "exactly-full rail: '+' %1 covers tab %2 "
+                         "row %3")
+                         .arg(QLatin1String(QTest::toString(
+                             bar->newTabButton()->geometry())))
+                         .arg(i)
+                         .arg(QLatin1String(QTest::toString(row)))));
+        }
+        settings.remove(QLatin1String("tabBarPosition"));
+        settings.endGroup();
+    }
 }
 
 QTEST_MAIN(tst_TabWidget)
