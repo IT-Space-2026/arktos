@@ -34,6 +34,18 @@ check-bundle.target = check-bundle
 check-bundle.commands = ./.devin/check-bundle.sh
 QMAKE_EXTRA_TARGETS += check-bundle
 
+# `make pkg-deb` builds the Debian package (dist/arora_*_*.deb) — the
+# bundled-runtime payload laid out under /usr/bin + /usr/lib/arora.
+# `make check-deb` rebuilds it and runs the verify pass (ldd clean with
+# the dev Qt masked, offscreen launch from the installed layout).
+pkg-deb.target = pkg-deb
+pkg-deb.commands = ./.devin/pkg-deb.sh
+QMAKE_EXTRA_TARGETS += pkg-deb
+
+check-deb.target = check-deb
+check-deb.commands = ./.devin/pkg-deb.sh
+QMAKE_EXTRA_TARGETS += check-deb
+
 # `make check-warnings` is the WRN01 zero-warning gate — it builds a
 # throwaway copy of the tree in /tmp (never polluting the in-tree
 # build) and fails if compiling the shipping code (src/ + tools/)
