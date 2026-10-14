@@ -62,3 +62,4 @@ core.*
 
 # flatpak build state (PKG02)
 flatpak/.build/
+flatpak/.build.log
