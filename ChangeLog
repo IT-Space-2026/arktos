@@ -488,6 +488,14 @@ UI:
   reads naked in the icon column. Standard freedesktop names let
   native themes substitute their own artwork; five new mid-grey
   glyphs cover the bundled fallback set (ICONS08).
+- The app-menu Arora logo can no longer paint stretched: the
+  bear-globe mark now renders into a centered square of whatever
+  space the widget style offers, so it stays round at every scale —
+  including fractional display factors and the Tor window's styled
+  bar, where the light backing disc stays a perfect circle too. The
+  rest of the navigation row also centers against the taller app
+  button instead of riding the top edge, so the bar reads as one
+  intentional row (MENU10).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

@@ -814,6 +814,11 @@ void tst_BrowserMainWindow::appMenuButton()
         // the leg this task's reviewers need to see.
         button->grab().save(QString::fromLocal8Bit(menuGrabDir)
                             + QLatin1String("/app-menu-button.png"));
+        // MENU10: and the whole nav row — the logo's grown height vs
+        // the 18px nav buttons is judged at row level, not in
+        // isolation.
+        navBar->grab().save(QString::fromLocal8Bit(menuGrabDir)
+                            + QLatin1String("/app-menu-navbar.png"));
         QMenu *fileMenu = appMenu->actions().first()->menu();
         fileMenu->popup(QPoint(80, 80));
         QApplication::processEvents();
@@ -932,6 +937,12 @@ void tst_BrowserMainWindow::appMenuButton()
             torButton->grab().save(
                 QString::fromLocal8Bit(menuGrabDir)
                 + QLatin1String("/app-menu-button-tor.png"));
+        // MENU10: the violet nav row as a whole too.
+        if (QToolBar *torBar = torWindow->findChild<QToolBar *>(
+                QLatin1String("NavigationToolBar")))
+            torBar->grab().save(
+                QString::fromLocal8Bit(menuGrabDir)
+                + QLatin1String("/app-menu-navbar-tor.png"));
     }
     // Grabbed-pixel proof the "Arora" label reads light on violet.
     int lightPixels = 0;
@@ -1226,9 +1237,16 @@ void tst_BrowserMainWindow::chromeMetrics()
         QLatin1String("NavigationToolBar"));
     QVERIFY(navBar);
     const QMargins margins = navBar->contentsMargins();
-    QVERIFY(margins.top() >= 4 && margins.bottom() >= 4);
     QVERIFY(margins.left() >= 4 && margins.right() >= 4);
     QVERIFY(navBar->layout() && navBar->layout()->spacing() >= 4);
+    // MENU10: the widget's vertical margins are zero now — stacking
+    // them on the layout's own PM_ToolBar padding is what pinned the
+    // row high against the grown app-menu button.  The breathing
+    // room contract survives, sourced from the toolbar layout's
+    // margins, so assert the effective padding instead.
+    const QMargins layoutMargins = navBar->layout()->contentsMargins();
+    QVERIFY(margins.top() + layoutMargins.top() >= 4);
+    QVERIFY(margins.bottom() + layoutMargins.bottom() >= 4);
 
     // UIP02: consistent chrome metrics — the nav bar pins one icon
     // size on every platform, the bookmarks bar follows at favicon
