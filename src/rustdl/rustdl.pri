@@ -24,7 +24,14 @@ rustdl:!no-rust {
     RUSTDL_LIB = $$PWD/target/release/libarora_rustdl.a
 
     cargo_rustdl.target = $$RUSTDL_LIB
-    cargo_rustdl.commands = cd $$PWD && $$CARGO build --release
+    # Scrub the parent build system's flag env vars: make re-exports
+    # env-origin CFLAGS/CXXFLAGS/CPPFLAGS/LDFLAGS with their qmake
+    # overrides (e.g. -O2 -DQT_* under flatpak-builder), and cc-built
+    # crates (aws-lc-sys's jitterentropy requires -O0) break on them.
+    # Cargo/rustc do not consume those vars anyway.
+    cargo_rustdl.commands = cd $$PWD && \
+        env -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS \
+        $$CARGO build --release
     cargo_rustdl.depends = $$PWD/Cargo.toml $$PWD/Cargo.lock \
         $$files($$PWD/src/*.rs, true)
     QMAKE_EXTRA_TARGETS += cargo_rustdl

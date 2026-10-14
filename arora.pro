@@ -89,6 +89,13 @@ check-deb.target = check-deb
 check-deb.commands = ./.devin/pkg-deb.sh
 QMAKE_EXTRA_TARGETS += check-deb
 
+# `make pkg-flatpak` builds + installs + verifies the flatpak
+# (dist/io.arora.Arora_*.flatpak) — builds against the KDE 6.11
+# runtime/SDK with the qtwebengine baseapp via org.flatpak.Builder.
+pkg-flatpak.target = pkg-flatpak
+pkg-flatpak.commands = ./.devin/pkg-flatpak.sh
+QMAKE_EXTRA_TARGETS += pkg-flatpak
+
 # `make check-warnings` is the WRN01 zero-warning gate — it builds a
 # throwaway copy of the tree in /tmp (never polluting the in-tree
 # build) and fails if compiling the shipping code (src/ + tools/)

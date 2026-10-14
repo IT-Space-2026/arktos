@@ -727,6 +727,24 @@ verifies the package after building: a real `dpkg -i` into a scratch
 instdir, `ldd` clean with the dev Qt masked, and a headless
 `--quit-after-load` launch from the installed layout.
 
+`make pkg-flatpak` (driver: `./.devin/pkg-flatpak.sh`, manifest:
+`io.arora.Arora.yaml`) builds an **installable flatpak** at
+`dist/io.arora.Arora_0.2_x86_64.flatpak` and installs it into the user
+flatpak. The app compiles inside the org.kde 6.11 SDK (newest Qt 6
+runtime on flathub) with QtWebEngine provided by the
+`io.qt.qtwebengine.BaseApp` and cargo by the rust-stable SDK extension —
+both rust crates build in-sandbox from the vendored, sha256-pinned crate
+set in `flatpak/cargo-sources.json` (regenerate it with
+`flatpak/gen-cargo-sources.py` after touching a Cargo.lock). The tor
+expert bundle ships under `/app/lib/tor` so tor windows bootstrap inside
+the sandbox (no host tor needed). Permissions stay honest: ipc, network,
+wayland + fallback-x11, dri, pulseaudio, cups, xdg-download — no session
+bus, no host filesystem, no flatpak-spawn host access. Building needs
+flatpak plus `org.flatpak.Builder` installed `--user` (no root); the
+driver verifies the bundle by installing it and running the offscreen
+`--quit-after-load` + `--tor --tor-window-smoke` paths inside the
+sandbox.
+
 ## License
 
 Arora is **free software under the GNU General Public License,
