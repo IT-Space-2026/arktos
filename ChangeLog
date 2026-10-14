@@ -1006,6 +1006,11 @@ Tor:
   itself once a circuit is usable — no manual reload needed.  A
   genuinely failed daemon keeps the honest error page and the
   banner's Retry (TOR18).
+- The Tor circuit popover now opens at the right size on the very
+  first click: the menu was measured from the panel's previous
+  content before the open-time refresh ran, so the first click could
+  show a clipped or mostly empty popup and only the second click
+  looked right (TOR19).
 - A Servo-branded start page variant appears when the default engine
   pick is Servo: the same Arora header, search box and default
   coloring, with the official Servo logo centered under the search

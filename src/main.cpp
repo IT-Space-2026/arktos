@@ -13691,10 +13691,13 @@ int main(int argc, char **argv)
         int *deadBeats = new int(0);
         int *phase = new int(0);
         int *phaseBeat = new int(0);
+        bool *firstOpenChecked = new bool(false);
+        bool *firstReadyChecked = new bool(false);
         QTimer *pacer = new QTimer(&application);
         pacer->setSingleShot(true);
         QObject::connect(pacer, &QTimer::timeout, &application,
-                         [&, beat, deadBeats, phase, phaseBeat]() mutable {
+                         [&, beat, deadBeats, phase, phaseBeat,
+                          firstOpenChecked, firstReadyChecked]() mutable {
             // Phase 0: bootstrap/connecting states.
             // Phase 1: Ready — rows + live repopulate.
             // Phase 2: dead control connection — honest state, no crash.
@@ -13707,6 +13710,50 @@ int main(int argc, char **argv)
                               "click pacer never finished — tor state %1")
                           .arg(int(torManager->state())));
                 return;
+            }
+            // TOR19: probe the popup mid-open on the very first click
+            // (still-connecting state) and on the first click after
+            // Ready (full chain) — InstantPopup's pre-show sizeHint()
+            // flush used to leave the menu at the pre-populate rect,
+            // so the panel was squeezed/clipped until the second
+            // click.  The shown panel must fill its live sizeHint.
+            const bool probeFirstOpen = !*firstOpenChecked;
+            const bool probeFirstReady = *phase == 1
+                && *beat == *phaseBeat + 1 && !*firstReadyChecked;
+            if (probeFirstOpen)
+                *firstOpenChecked = true;
+            if (probeFirstReady)
+                *firstReadyChecked = true;
+            if (probeFirstOpen || probeFirstReady) {
+                const QString label = probeFirstReady
+                    ? QStringLiteral("first-ready-open")
+                    : QStringLiteral("first-open");
+                QTimer::singleShot(20, menu, [&, label]() {
+                    if (!menu->isVisible())
+                        return;   // platforms that refuse the popup
+                    if (panel->size() != panel->sizeHint()) {
+                        clickFail(label
+                            + QLatin1String(" opened at a stale rect — panel ")
+                            + QString::number(panel->size().width())
+                            + QLatin1Char('x')
+                            + QString::number(panel->size().height())
+                            + QLatin1String(" vs sizeHint ")
+                            + QString::number(panel->sizeHint().width())
+                            + QLatin1Char('x')
+                            + QString::number(panel->sizeHint().height()));
+                        return;
+                    }
+                    const QByteArray grabDir =
+                        qgetenv("ARORA_TOR_GRAB_DIR");
+                    if (!grabDir.isEmpty()) {
+                        const QString dir =
+                            QString::fromLocal8Bit(grabDir);
+                        QDir().mkpath(dir);
+                        menu->grab().save(dir + QLatin1String(
+                            "/tor-circuit-") + label
+                            + QLatin1String(".png"));
+                    }
+                });
             }
             const int dwell = (*beat % 4 == 0) ? 400 : 60;
             QTimer::singleShot(dwell, menu, &QMenu::close);

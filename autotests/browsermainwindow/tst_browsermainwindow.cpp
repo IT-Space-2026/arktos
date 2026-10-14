@@ -163,6 +163,7 @@ private slots:
     void torNavIconsDarkChrome();
     void darkChromeIcons();
     void torCircuitDropdown();
+    void torCircuitPopupFirstShow();
     void torStartPage();
     void torTitleBar();
     void torTitleBarTitle();
@@ -2441,6 +2442,56 @@ void tst_BrowserMainWindow::torCircuitDropdown()
     QVERIFY(greyed);
     QVERIFY(stateTexts.join(QLatin1Char('\n')).contains(
         QLatin1String("unavailable"), Qt::CaseInsensitive));
+}
+
+// TOR19: the first click on the circuit button must open the popup at
+// the populated size, not the stale rect.  QToolButton's InstantPopup
+// path queries menu->sizeHint() BEFORE aboutToShow to position the
+// popup — that call resolves the action rect from whatever the panel
+// last rendered, and QMenu::popup re-runs its layout pass only when
+// an item changed since.  Replicated here by calling sizeHint()
+// before popup(); the shown panel's geometry must match its live
+// sizeHint in both the grow and shrink directions.
+void tst_BrowserMainWindow::torCircuitPopupFirstShow()
+{
+    TorCircuitButton button(nullptr);
+    QMenu *menu = button.menu();
+    QVERIFY(menu);
+    TorCircuitPanel *panel = menu->findChild<TorCircuitPanel *>(
+        QLatin1String("torCircuitPanel"));
+    QVERIFY(panel);
+
+    // Grow leg: the site-host provider widens the panel at populate
+    // time — the stale flush measured the narrower render.
+    button.setSiteHostProvider([]() {
+        return QStringLiteral(
+            "a-very-long-hostname-for-width-check.example.com");
+    });
+    menu->sizeHint();               // the tool button's pre-popup flush
+    menu->popup(QPoint(80, 80));
+    QTRY_VERIFY_WITH_TIMEOUT(menu->isVisible(), 5000);
+    QCOMPARE(panel->size(), panel->sizeHint());
+    QVERIFY(panel->contentLines().first().contains(
+        QLatin1String("a-very-long-hostname-for-width-check")));
+    const QSize firstShowSize = menu->size();
+
+    // Async content while open: the NEWNYM feedback line lands and
+    // the popup grows to fit it (TOR16).
+    QVERIFY(QMetaObject::invokeMethod(&button, "onNewCircuit"));
+    QTRY_VERIFY_WITH_TIMEOUT(menu->size() != firstShowSize, 5000);
+    QCOMPARE(panel->size(), panel->sizeHint());
+    menu->hide();
+
+    // Shrink leg: reopening clears the lingering status line — the
+    // stale flush measured the taller render.  The re-dirty on
+    // populate makes the shown rect match the cleared panel, back to
+    // the first-show size: a repeat open is identical.
+    menu->sizeHint();
+    menu->popup(QPoint(80, 80));
+    QTRY_VERIFY_WITH_TIMEOUT(menu->isVisible(), 5000);
+    QCOMPARE(panel->size(), panel->sizeHint());
+    QCOMPARE(menu->size(), firstShowSize);
+    menu->hide();
 }
 
 // TOR09: the tor window's bundled start page — a violet-branded qrc

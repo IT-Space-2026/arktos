@@ -457,6 +457,10 @@ void tst_TorManager::circuitMenuNoRequeryLoop()
 
     TorCircuitButton button(&manager);
     QMenu *menu = button.menu();
+    // TOR19: flush the menu's action rects before the popup, exactly
+    // like QToolButton's InstantPopup position query — the first click
+    // must still open at the populated size, not the stale rect.
+    menu->sizeHint();
     menu->popup(QPoint(80, 80));
     QTRY_VERIFY_WITH_TIMEOUT(menu->isVisible(), 5000);
 
@@ -466,6 +470,9 @@ void tst_TorManager::circuitMenuNoRequeryLoop()
     TorCircuitPanel *panel = button.findChild<TorCircuitPanel *>();
     QVERIFY(panel);
     QTRY_VERIFY_WITH_TIMEOUT(panel->hopCount() == 3, 10000);
+    // TOR19: the shown panel fills its action rect — a stale-rect
+    // popup would leave it sized to the pre-populate render instead.
+    QCOMPARE(panel->size(), panel->sizeHint());
     QVERIFY(panel->contentLines().contains(
         QStringLiteral("Germany (guard)")));
     QVERIFY(panel->contentLines().contains(
