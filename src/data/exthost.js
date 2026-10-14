@@ -117,7 +117,7 @@
                 host.bridge = bridge;
                 bridge.handshake(
                     { id: cfg.id, url: String(location.href),
-                      shimVersion: 2 },
+                      shimVersion: 3 },
                     function (reply) {
                         host.bridgeReply = reply;
                         host.bridgeUp = true;

@@ -21,6 +21,7 @@
 
 #include "browserapplication.h"
 #include "browserprofile.h"
+#include "extensioneventhub.h"
 #include "extensionmanager.h"
 #include "extensionshimbackend.h"
 
@@ -32,6 +33,7 @@
 #include <qjsonarray.h>
 #include <qjsondocument.h>
 #include <qjsonobject.h>
+#include <qregularexpression.h>
 #include <qtimer.h>
 
 #include <qwebchannel.h>
@@ -654,6 +656,17 @@ void ExtensionBackgroundRuntime::syncNow()
         if (!desired.contains(id))
             m_noBackground.remove(id);
     }
+    const QStringList gated = m_extPermissions.keys();
+    for (const QString &id : gated) {
+        if (!desired.contains(id)) {
+            m_extPermissions.remove(id);
+            m_extHostPermissions.remove(id);
+        }
+    }
+
+    // EXT16 — the browser-wide event hub tracks tabs/windows only
+    // while an extension exists to consume events.
+    ExtensionEventHub::instance()->setTracking(!desired.isEmpty());
 
     for (auto it = desired.constBegin(); it != desired.constEnd(); ++it) {
         const QString &id = it.key();
@@ -669,6 +682,10 @@ void ExtensionBackgroundRuntime::syncNow()
             m_noBackground.insert(id);
             continue;
         }
+        // EXT16 gate snapshot — the fan-out filters events by the
+        // manifest's declared permissions.
+        m_extPermissions.insert(id, manifest.permissions);
+        m_extHostPermissions.insert(id, manifest.hostPermissions);
         if (!want.profile)
             continue;
         auto *host = new ExtensionBackgroundHost(
@@ -929,4 +946,215 @@ void ExtensionBackgroundRuntime::relayPortDisconnect(
                              end.localPortId}});
         }
     }
+}
+
+// -------------------------------------------------------------------
+// EXT16 event pushes — browser-originated events produced by
+// ExtensionEventHub.  Chrome permission parity:
+//   webNavigation.* / contextMenus.* — the whole namespace needs the
+//     manifest permission; without it Chrome exposes no API surface
+//     at all, so the event never reaches the context.
+//   tabs.* / windows.* — the events themselves are ungated, but the
+//     url-bearing fields (tab.url/title/favIconUrl, changeInfo.url…)
+//     are scrubbed unless the extension holds 'tabs' or a host
+//     permission covering the tab's URL.
+// Host-internal pushes (__arora.*, alarms) keep their ungated path.
+// -------------------------------------------------------------------
+
+namespace {
+
+// The manifest permission a host event family is gated on; empty for
+// ungated events.
+QString eventGate(const QString &name)
+{
+    const QString ns = name.section(QLatin1Char('.'), 0, 0);
+    if (ns == QLatin1String("webNavigation"))
+        return QStringLiteral("webNavigation");
+    if (ns == QLatin1String("contextMenus"))
+        return QStringLiteral("contextMenus");
+    return QString();
+}
+
+// Chrome match-pattern check for the tabs/url gate — a host
+// permission covering the tab's URL unhides url/title the same way
+// the 'tabs' permission does.
+bool hostCovers(const QString &pattern, const QUrl &url)
+{
+    const QString scheme = url.scheme();
+    if (pattern == QLatin1String("<all_urls>")) {
+        return scheme == QLatin1String("http")
+            || scheme == QLatin1String("https")
+            || scheme == QLatin1String("file")
+            || scheme == QLatin1String("ftp");
+    }
+    const int sep = pattern.indexOf(QLatin1String("://"));
+    if (sep < 0)
+        return false;
+    const QString pscheme = pattern.left(sep);
+    const QString rest = pattern.mid(sep + 3);
+    const int slash = rest.indexOf(QLatin1Char('/'));
+    const QString phost = slash < 0 ? rest : rest.left(slash);
+    const QString ppath =
+        slash < 0 ? QStringLiteral("/*") : rest.mid(slash);
+    if (pscheme == QLatin1String("*")) {
+        // '*://' covers http + https only (Chrome semantics).
+        if (scheme != QLatin1String("http")
+                && scheme != QLatin1String("https"))
+            return false;
+    } else if (pscheme != scheme) {
+        return false;
+    }
+    const QString host = url.host();
+    if (phost == QLatin1String("*")) {
+        // any host
+    } else if (phost.startsWith(QLatin1String("*."))) {
+        const QString base = phost.mid(2);
+        if (host != base && !host.endsWith(QLatin1Char('.') + base))
+            return false;
+    } else if (phost != host) {
+        return false;
+    }
+    QString path = url.path(QUrl::FullyEncoded);
+    if (url.hasQuery())
+        path += QLatin1Char('?') + url.query(QUrl::FullyEncoded);
+    const QRegularExpression re(
+        QRegularExpression::wildcardToRegularExpression(ppath));
+    return re.match(path).hasMatch();
+}
+
+// url-bearing fields hidden without 'tabs'/host access — Chrome
+// omits them entirely rather than emptying them.  Applied to tab
+// objects, changeInfo, and window.tab lists alike — every shape the
+// hub's payloads carry them in.
+void scrubObject(QJsonObject &object)
+{
+    object.remove(QStringLiteral("url"));
+    object.remove(QStringLiteral("title"));
+    object.remove(QStringLiteral("favIconUrl"));
+    object.remove(QStringLiteral("pendingUrl"));
+    if (object.contains(QLatin1String("tabs"))) {
+        QJsonArray tabs =
+            object.value(QLatin1String("tabs")).toArray();
+        for (int i = 0; i < tabs.size(); ++i) {
+            QJsonObject tab = tabs.at(i).toObject();
+            scrubObject(tab);
+            tabs[i] = tab;
+        }
+        object.insert(QStringLiteral("tabs"), tabs);
+    }
+}
+
+} // namespace
+
+bool ExtensionBackgroundRuntime::seesUrls(const QString &extensionId,
+                                          const QString &url) const
+{
+    if (m_extPermissions.value(extensionId)
+            .contains(QLatin1String("tabs")))
+        return true;
+    const QUrl qurl(QString::fromUtf8(url.toUtf8()));
+    for (const QString &pattern : m_extHostPermissions.value(extensionId)) {
+        if (hostCovers(pattern, qurl))
+            return true;
+    }
+    return false;
+}
+
+QJsonObject ExtensionBackgroundRuntime::shapedPayload(
+        const QString &extensionId, const QString &name,
+        const QJsonObject &payload) const
+{
+    const QString ns = name.section(QLatin1Char('.'), 0, 0);
+    if (ns != QLatin1String("tabs")
+            && ns != QLatin1String("windows")
+            && ns != QLatin1String("contextMenus"))
+        return payload;
+    // The URL the host-permission fallback matches against — the
+    // first url field the payload carries: a named 'tab'/'info'
+    // field, else the first url-bearing object inside the __args
+    // multi-arg envelope.
+    QString url = payload.value(QLatin1String("tab")).toObject()
+        .value(QLatin1String("url")).toString();
+    if (url.isEmpty()) {
+        url = payload.value(QLatin1String("info")).toObject()
+            .value(QLatin1String("pageUrl")).toString();
+    }
+    const QJsonArray argList =
+        payload.value(QLatin1String("__args")).toArray();
+    for (const QJsonValue &v : argList) {
+        if (!url.isEmpty())
+            break;
+        url = v.toObject().value(QLatin1String("url")).toString();
+    }
+    if (seesUrls(extensionId, url))
+        return payload;
+    QJsonObject shaped = payload;
+    for (const QString &key : {QStringLiteral("tab"),
+                               QStringLiteral("changeInfo"),
+                               QStringLiteral("window"),
+                               QStringLiteral("info")}) {
+        if (!shaped.contains(key))
+            continue;
+        QJsonObject o = shaped.value(key).toObject();
+        scrubObject(o);
+        shaped.insert(key, o);
+    }
+    if (!argList.isEmpty()) {
+        // Tab objects travel inside the __args array — scrub each
+        // object argument's url-bearing fields.
+        QJsonArray scrubbed = argList;
+        for (int i = 0; i < scrubbed.size(); ++i) {
+            if (!scrubbed.at(i).isObject())
+                continue;
+            QJsonObject o = scrubbed.at(i).toObject();
+            scrubObject(o);
+            scrubbed[i] = o;
+        }
+        shaped.insert(QStringLiteral("__args"), scrubbed);
+    }
+    return shaped;
+}
+
+int ExtensionBackgroundRuntime::fanOut(
+        const QString &name, const QJsonObject &payload,
+        const QString &onlyExtensionId)
+{
+    const QString gate = eventGate(name);
+    int delivered = 0;
+    QSet<QString> nudged;
+    for (const RelayContext &ctx : m_relayContexts) {
+        ChromeBridge *bridge = ctx.bridge;
+        if (!bridge)
+            continue;
+        const QString extId = bridge->extensionId();
+        if (!onlyExtensionId.isEmpty() && extId != onlyExtensionId)
+            continue;
+        if (!gate.isEmpty()
+                && !m_extPermissions.value(extId).contains(gate))
+            continue;
+        emit bridge->hostEvent(name, shapedPayload(extId, name, payload));
+        ++delivered;
+        // Push-then-wake — a throttled hidden page drains the
+        // delivery promptly instead of waiting for its own nudge
+        // timer's next tick.
+        if (!nudged.contains(extId)) {
+            nudged.insert(extId);
+            if (ExtensionBackgroundHost *host = m_hosts.value(extId))
+                host->nudge();
+        }
+    }
+    return delivered;
+}
+
+int ExtensionBackgroundRuntime::broadcastEvent(
+        const QString &name, const QJsonObject &payload)
+{
+    return fanOut(name, payload, QString());
+}
+
+int ExtensionBackgroundRuntime::deliverEvent(
+        const QString &extensionId, const QString &name,
+        const QJsonObject &payload)
+{
+    return fanOut(name, payload, extensionId);
 }

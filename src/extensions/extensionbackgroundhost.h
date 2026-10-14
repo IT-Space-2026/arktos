@@ -177,6 +177,11 @@ public:
     static QUrl hostUrl(const QString &extensionId);
     static QString injectionName(const QString &extensionId);
 
+    // One bounded wake eval — the runtime calls it after pushing a
+    // hostEvent so the delivery drains even while the hidden page's
+    // own nudge timer is between ticks (throttled contexts).
+    void nudge();
+
 signals:
     void stateChanged();
 
@@ -184,7 +189,6 @@ private:
     void setState(State state);
     void fail(const QString &why);
     void poll();
-    void nudge();
 
     QPointer<QWebEngineProfile> m_profile;
     QString m_extensionId;
@@ -252,6 +256,22 @@ public:
     void relayPortDisconnect(ChromeBridge *from, const QString &chan,
                              const QString &portId);
 
+    // EXT16 event pushes — browser-originated events (tabs,
+    // webNavigation, contextMenus, windows) fan out through every
+    // registered shim context's hostEvent signal.  broadcastEvent
+    // reaches all contexts; deliverEvent targets one extension's
+    // contexts (contextMenus.onClicked goes only to the item's
+    // owner).  Chrome permission parity: webNavigation/contextMenus
+    // events reach only extensions declaring the namespace's
+    // permission, and url-bearing fields in tabs/windows payloads
+    // are scrubbed unless the extension holds 'tabs' or a matching
+    // host permission; host-internal pushes (relay, ports, alarms)
+    // are ungated.
+    int broadcastEvent(const QString &name,
+                       const QJsonObject &payload);
+    int deliverEvent(const QString &extensionId, const QString &name,
+                     const QJsonObject &payload);
+
 signals:
     void hostChanged(const QString &extensionId);
 
@@ -264,7 +284,20 @@ private:
     // Ids whose manifest carries no background scripts — cached so a
     // sync does not re-read the manifest on every pass.
     QSet<QString> m_noBackground;
+    // EXT16: manifest permission snapshots per extension id — the
+    // event fan-out gates on these so delivery never re-reads the
+    // manifest from disk.
+    QHash<QString, QStringList> m_extPermissions;
+    QHash<QString, QStringList> m_extHostPermissions;
     QTimer *m_heartbeat = nullptr;
+
+    int fanOut(const QString &name, const QJsonObject &payload,
+               const QString &onlyExtensionId);
+    QJsonObject shapedPayload(const QString &extensionId,
+                              const QString &name,
+                              const QJsonObject &payload) const;
+    bool seesUrls(const QString &extensionId,
+                  const QString &url) const;
 
     // Relay: live shimmed contexts and in-flight deliveries
     // (mid -> the sending bridge; entries expire on a timer so a

@@ -99,6 +99,29 @@ public:
     static int tabIdFor(const QObject *view);
     static int windowIdFor(const QObject *window);
 
+    // The chrome.tabs object shape — shared by invokeTabs,
+    // EXT16 event payloads and contextMenus.onClicked's tab arg.
+    static QJsonObject tabObject(class WebView *view, int index,
+                                 int windowId);
+
+    // EXT16: the page context menu reads this shared registry — an
+    // ordered item list per extension plus the display name its
+    // submenu shows.  Owned by whichever live backend holds the id:
+    // a respawned host inherits the registry slot and the stale
+    // backend's destructor cannot clear the new owner's items.
+    struct ContextMenuEntry {
+        QString extensionId;
+        QString extensionName;
+        QString itemId;
+        QJsonObject props;
+    };
+    static QList<ContextMenuEntry> contextMenuEntries();
+    static QJsonObject contextMenuItem(const QString &extensionId,
+                                     const QString &itemId);
+    static void setContextMenuChecked(const QString &extensionId,
+                                    const QString &itemId,
+                                    bool checked);
+
 signals:
     // Pushed into the hosted page's hostEvent handler — the shim
     // fans it out to registered event listeners ('alarms.onAlarm',
@@ -146,8 +169,6 @@ private:
                                  const QStringList &keys) const;
 
     QString extensionPath() const { return m_extensionPath; }
-    QJsonObject tabObject(class WebView *view, int index,
-                        int windowId) const;
     void fireAlarm(const QString &name);
 
     QString m_extensionId;
@@ -168,7 +189,6 @@ private:
     QHash<QString, Alarm> m_alarms;
     static QJsonObject alarmJson(const Alarm &alarm);
 
-    QHash<QString, QJsonObject> m_menuItems;
     QJsonObject m_sidePanelOptions;
     QJsonObject m_sidePanelBehavior;
 
