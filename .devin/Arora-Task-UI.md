@@ -143,6 +143,10 @@ This file is the task queue for the Devin CLI task loop
 | PREF05 | General tab slice B — Lazy Load Restored Tabs (deferred restore machinery) — details below | pending | 0 | |
 | PREF06 | General tab slice C — Always Load Pinned Tabs + pinned tab serialization — details below | pending | 0 | |
 | MENU11 | Preferences as direct app-menu entry after Tools (keep File > Preferences too) — details below | pending | 0 | |
+| THEM01 | Chrome polish 1/4 — central style source, spacing scale, flat toolbars/panels, base typography — details below | pending | 0 | |
+| THEM02 | Chrome polish 2/4 — rounded tabs + active/hover contrast both orientations (needs THEM01) — details below | pending | 0 | |
+| THEM03 | Chrome polish 3/4 — Preferences/sidebar/menus dialog polish (needs THEM01) — details below | pending | 0 | |
+| THEM04 | Chrome polish 4/4 — central palette, kill hardcoded colors, contrast + review pass — details below | pending | 0 | |
 
 ## Task details
 
@@ -873,3 +877,19 @@ Notes slice B — the rest of the reference flow, on top of NOTE02's model: (a) 
 ### NAVB04
 
 Nav-bar slice B — persistence on top of NAVB03's edit mode: (a) the dragged order writes to QSettings (stable item ids); (b) EVERY window + new windows + session restore apply it — one shared global order across normal/private/tor; (c) stale/unknown ids degrade gracefully (append-unknown, drop-removed — never a broken bar); (d) 'Reset to default' affordance (context-menu entry or edit-mode control) restores stock order; (e) tor chrome keeps its styling under reordered items. Verify: reorder -> restart -> order held in all window types; reset restores; corrupt-order values don't break the bar; tst round-trip legs; make check PASS.
+
+### THEM01
+
+Chrome polish slice 1/4 — theme foundation. User: 'the UI looks like early 2000; keep the simplicity but make it more beautiful.' Root cause is finishing, not layout: stock Qt chrome everywhere — sunken frames, hard 1px borders, 2-4px ad-hoc margins, no spacing rhythm. Spec: (a) one central style source — a stylesheet/palette helper (new small header or an AroraStyle namespace — implementer's call, but ONE place, not per-widget setStyleSheet scattered); (b) spacing constants — a named 4/8/12px scale applied to toolbar/panel layouts (kill the per-widget magic margins); (c) flat chrome — QToolBar/dock/sidebar lose sunken frames and hard borders, get a subtle 1px separator color from the palette instead; (d) base typography — consistent base font size + semibold weight for group headers only; (e) must work under BOTH palettes (light + dark incl. tor's dark purple) — all colors palette-derived, zero hardcoded hex except in the central file. Verify: grabs of main window + prefs + a tor window before/after — flatter, consistent spacing; no visual regression in any window type; make check PASS.
+
+### THEM02
+
+Chrome polish slice 2/4 — tab strip (needs THEM01's constants/palette source). Squared tabs with hard borders read dated. Spec: (a) rounded tab shapes on BOTH orientations (horizontal top strip + vertical rails) — modest radius, not pills; (b) softer active/inactive contrast — active tab clearly lifted, inactive receded, hover state between; (c) close/pin/mute controls get consistent hover treatment + hit areas; (d) group bands, container chips, private/tor badges stay legible on the new shapes; (e) keep tab sizes/resizing identical — style only. Verify: grabs both orientations incl. grouped+pinned+private variants; active tab obviously active; tst legs for painted pixels if existing tab tests assert geometry; make check PASS.
+
+### THEM03
+
+Chrome polish slice 3/4 — dialogs & panels (needs THEM01). Preferences + sidebar panels + context menus look default-styled. Spec: (a) Preferences pages — consistent section headers (semibold, spacing above/below), aligned form rows, kill sunken group frames for flat section separators, pagesList/icon chrome consistent; (b) sidebar panels — header rows, search fields, buttons all on the spacing scale + palette colors; (c) context menus & popovers — padding, separator color, hover highlight consistent app-wide; (d) tor variants follow. Verify: grabs of Preferences pages, every sidebar panel, tab/url/context menus, tor window — coherent flat modern look; make check PASS.
+
+### THEM04
+
+Chrome polish slice 4/4 — palette unification + review pass (needs THEM01-03). Hardcoded colors are scattered (e.g. purple tor QToolBar '#4a3372', ad-hoc panel colors). Spec: (a) one palette source — normal/private/tor variants defined centrally; every hardcoded hex in chrome code routes through it; (b) contrast audit — text/icons on all surfaces meet readable contrast in every variant; (c) full-window review pass — main window, prefs, sidebar, menus, popovers, all three window types; fix stragglers. Verify: grep finds no stray hex colors in chrome code outside the palette source; grab set reviewed; make check PASS.
