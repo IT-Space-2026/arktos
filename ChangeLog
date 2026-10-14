@@ -541,6 +541,12 @@ UI:
   plus a new "Show Exit Confirmation Dialog" that prompts before the
   whole app quits. Saved preferences from older versions migrate
   automatically (PREF04).
+- "Lazy Load Restored Tabs" moved to Preferences → General under
+  "Startup with", next to the session-restore setting it modifies —
+  the "Always Load Pinned Tabs" opt-out moved with it and now sits
+  properly indented beneath its parent checkbox. Background session
+  tabs still restore their title and icon without loading until
+  first activated; saved picks carry over (PREF05).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

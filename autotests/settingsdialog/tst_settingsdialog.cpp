@@ -416,6 +416,23 @@ void tst_SettingsDialog::generalPageModes()
         dialog.reject();
     }
 
+    // PREF05: the lazy-restore rows live in the General page's Startup
+    // with group (moved off the Performance page — one home; the
+    // performance/* keys keep their paths so saved picks carry over).
+    {
+        SettingsDialog dialog;
+        QCOMPARE(dialog.lazyRestoreTabs->parentWidget(),
+                 dialog.startupGroupBox);
+        QCOMPARE(dialog.alwaysLoadPinnedTabs->parentWidget(),
+                 dialog.startupGroupBox);
+        dialog.pagesFilter->setText(QStringLiteral("lazy"));
+        QVERIFY(!dialog.pagesList->item(
+                     int(SettingsDialog::GeneralPage))->isHidden());
+        QVERIFY(dialog.pagesList->item(
+                     int(SettingsDialog::PerformancePage))->isHidden());
+        dialog.reject();
+    }
+
     // Tidy up for later legs.
     settings.remove(QLatin1String("MainWindow/startupMode"));
     settings.remove(QLatin1String("MainWindow/startupPages"));

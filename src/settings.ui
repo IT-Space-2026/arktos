@@ -297,8 +297,65 @@
             </item>
            </layout>
           </item>
-          <!-- PREF05/PREF06: the Lazy Load / Always Load Pinned rows
-               slot into this group under the startup radios. -->
+          <!-- PREF05/PREF06: the lazy-restore rows live here under the
+               startup radios (moved off the Performance page — one
+               home per setting; the keys stay performance/*). -->
+          <item>
+           <widget class="QCheckBox" name="lazyRestoreTabs">
+            <property name="toolTip">
+             <string>Wait to load restored session content until the tab is activated.</string>
+            </property>
+            <property name="text">
+             <string>Lazy Load Restored Tabs</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="alwaysLoadPinnedTabsLayout">
+            <item>
+             <spacer name="alwaysLoadPinnedTabsIndent">
+              <property name="orientation">
+               <enum>Qt::Horizontal</enum>
+              </property>
+              <property name="sizeType">
+               <enum>QSizePolicy::Fixed</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size>
+                <width>20</width>
+                <height>20</height>
+               </size>
+              </property>
+             </spacer>
+            </item>
+            <item>
+             <widget class="QCheckBox" name="alwaysLoadPinnedTabs">
+              <property name="enabled">
+               <bool>false</bool>
+              </property>
+              <property name="toolTip">
+               <string>Pinned restored tabs load right away instead of waiting for activation.</string>
+              </property>
+              <property name="text">
+               <string>Always Load Pinned Tabs</string>
+              </property>
+              <property name="checked">
+               <bool>true</bool>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <widget class="QLabel" name="lazyRestoreNote">
+            <property name="text">
+             <string>Wait to load restored session content until the tab is activated.</string>
+            </property>
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
          </layout>
         </widget>
        </item>
@@ -4092,62 +4149,6 @@
         </layout>
        </item>
        <item>
-        <widget class="QGroupBox" name="startupRestoreGroupBox">
-         <property name="title">
-          <string>Startup with</string>
-         </property>
-         <layout class="QVBoxLayout" name="startupRestoreLayout">
-          <item>
-           <widget class="QCheckBox" name="lazyRestoreTabs">
-            <property name="text">
-             <string>Lazy Load Restored Tabs</string>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <layout class="QHBoxLayout" name="alwaysLoadPinnedTabsLayout">
-            <item>
-             <spacer name="alwaysLoadPinnedTabsIndent">
-              <property name="orientation">
-               <enum>Qt::Horizontal</enum>
-              </property>
-              <property name="sizeHint" stdset="0">
-               <size>
-                <width>20</width>
-                <height>20</height>
-               </size>
-              </property>
-             </spacer>
-            </item>
-            <item>
-             <widget class="QCheckBox" name="alwaysLoadPinnedTabs">
-              <property name="enabled">
-               <bool>false</bool>
-              </property>
-              <property name="text">
-               <string>Always Load Pinned Tabs</string>
-              </property>
-              <property name="checked">
-               <bool>true</bool>
-              </property>
-             </widget>
-            </item>
-           </layout>
-          </item>
-          <item>
-           <widget class="QLabel" name="lazyRestoreNote">
-            <property name="text">
-             <string>Wait to load restored session content until the tab is activated.</string>
-            </property>
-            <property name="wordWrap">
-             <bool>true</bool>
-            </property>
-           </widget>
-          </item>
-         </layout>
-        </widget>
-       </item>
-       <item>
         <widget class="QGroupBox" name="networkPerfGroupBox">
          <property name="title">
           <string>Network Performance</string>
@@ -4257,6 +4258,8 @@
   <tabstop>startupStartPageRadio</tabstop>
   <tabstop>startupSpecificPagesRadio</tabstop>
   <tabstop>startupPagesEdit</tabstop>
+  <tabstop>lazyRestoreTabs</tabstop>
+  <tabstop>alwaysLoadPinnedTabs</tabstop>
   <tabstop>confirmExitCheck</tabstop>
   <tabstop>expireHistory</tabstop>
   <tabstop>downloadAsk</tabstop>
@@ -4358,8 +4361,6 @@
   <tabstop>removeAllAddressesButton</tabstop>
   <tabstop>hardwareAccel</tabstop>
   <tabstop>memorySaverNever</tabstop>
-  <tabstop>lazyRestoreTabs</tabstop>
-  <tabstop>alwaysLoadPinnedTabs</tabstop>
   <tabstop>prefetchResources</tabstop>
   <tabstop>resetPerformanceButton</tabstop>
   <tabstop>buttonBox</tabstop>
