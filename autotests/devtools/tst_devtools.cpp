@@ -75,6 +75,7 @@ private slots:
     void closeReleasesBinding();
     void inspectedPageDestroyedClosesWindow();
     void bidiPanel();
+    void bidiWaterfallLegibility();
 };
 
 void tst_DevTools::initTestCase()
@@ -750,6 +751,242 @@ void tst_DevTools::bidiPanel()
             + QByteArray("\",\"method\":\"GET\",\"url\":\"http://c/\"}}}"));
     }
     QVERIFY(net->rowCount() <= 1000);
+}
+
+// DEVT09 helpers — pixel-level checks on the painted waterfall.
+static bool colorClose(const QColor &a, const QColor &b, int tol = 10)
+{
+    return qAbs(a.red() - b.red()) <= tol
+        && qAbs(a.green() - b.green()) <= tol
+        && qAbs(a.blue() - b.blue()) <= tol;
+}
+
+// bidipanel.cpp's failColor() — palette-lightness dependent.
+static QColor waterfallFailColor()
+{
+    return qApp->palette().color(QPalette::Base).lightness() < 128
+        ? QColor(0xff, 0x8a, 0x80) : QColor(0xc6, 0x28, 0x28);
+}
+
+// The delegate paints Highlight swatches with a darker(140) edge;
+// failed rows use the same shape in the fail color.  Anything close
+// to one of those four counts as bar ink.
+static bool isBarPixel(const QColor &c)
+{
+    const QColor hi = qApp->palette().color(QPalette::Highlight);
+    const QColor fail = waterfallFailColor();
+    return colorClose(c, hi) || colorClose(c, hi.darker(140))
+        || colorClose(c, fail) || colorClose(c, fail.darker(140));
+}
+
+// visualRect is in viewport coordinates; a widget grab() paints the
+// whole widget, so cells land viewport()->pos() into the image.
+static QRect cellInGrab(QTableView *view,
+                        QSortFilterProxyModel *proxy, int proxyRow)
+{
+    return view->visualRect(proxy->index(proxyRow, 6))
+        .adjusted(0, 0, -1, -1)
+        .translated(view->viewport()->pos());
+}
+
+// Leftmost/rightmost bar-ink pixel on the proxy row's waterfall cell
+// center line; {-1,-1} when the row paints no bar.
+static QPair<int, int> barRunAt(QTableView *view,
+                                QSortFilterProxyModel *proxy,
+                                int proxyRow, const QImage &img)
+{
+    const QRect cell = cellInGrab(view, proxy, proxyRow);
+    const int y = cell.center().y();
+    int minX = -1, maxX = -1;
+    if (y < 0 || y >= img.height())
+        return qMakePair(-1, -1);
+    for (int x = cell.left(); x <= cell.right(); ++x) {
+        if (x < 0 || x >= img.width())
+            continue;
+        const QColor c = img.pixelColor(x, y);
+        if (isBarPixel(c)) {
+            if (minX < 0)
+                minX = x;
+            maxX = x;
+        }
+    }
+    return qMakePair(minX, maxX);
+}
+
+// DEVT09: the waterfall must read like Chrome's — a dense-zoomed
+// axis, a real minimum bar width, an overflow notch on clipped bars,
+// and DCL/Load marker lines.
+void tst_DevTools::bidiWaterfallLegibility()
+{
+    BidiPanel panel;
+    panel.onConnectionChanged(BidiClient::Connected);
+    panel.onResponse(7777, QByteArray(
+        "{\"result\":{\"contexts\":["
+        "{\"context\":\"ctx1\",\"url\":\"http://a/\"}]}}"));
+    QTabWidget *tabs = panel.findChild<QTabWidget *>();
+    QVERIFY(tabs);
+    tabs->setCurrentWidget(panel.m_networkView->parentWidget());
+    panel.resize(1100, 460);
+    panel.show();
+    QCoreApplication::processEvents();
+
+    // Empty log: no window, nothing to paint — no phantom bars.
+    QCOMPARE(panel.testWaterfallFullEnd(), -1.0);
+    QCOMPARE(panel.testWaterfallDisplayEnd(), -1.0);
+
+    const auto feed = [&panel](const QByteArray &id, double start,
+                               double end) {
+        panel.onEvent(QByteArray(
+            "{\"method\":\"network.beforeRequestSent\",\"params\":{"
+            "\"timestamp\":") + QByteArray::number(start)
+            + QByteArray(",\"request\":{\"request\":\"") + id
+            + QByteArray("\",\"method\":\"GET\",\"url\":\"http://a/")
+            + id + QByteArray("\",\"type\":\"Image\"}}}"));
+        if (end >= 0.0)
+            panel.onEvent(QByteArray(
+                "{\"method\":\"network.responseCompleted\",\"params\":{"
+                "\"timestamp\":") + QByteArray::number(end)
+                + QByteArray(",\"request\":{\"request\":\"") + id
+                + QByteArray("\"},\"response\":{\"encodedDataLength\":128}}}"));
+    };
+    QSortFilterProxyModel *proxy = panel.m_networkProxy;
+    // Proxy row for a request id (name = url tail).  Row order runs
+    // through the proxy, so the suite finds rows by name.
+    const auto rowFor = [proxy](const QByteArray &id) -> int {
+        for (int r = 0; r < proxy->rowCount(); ++r) {
+            if (proxy->index(r, 0).data().toString()
+                == QString::fromLatin1(id))
+                return r;
+        }
+        return -1;
+    };
+    QImage shot;
+    const auto regrab = [&]() {
+        QCoreApplication::processEvents();
+        shot = panel.m_networkView->grab().toImage();
+    };
+
+    // --- dense-window zoom: ten fast requests + one 18 s outlier.
+    for (int i = 0; i < 10; ++i)
+        feed("z" + QByteArray::number(i), 0.0, 100.0 + 10 * i);
+    feed("zs", 0.0, 18000.0);
+    // The true window keeps the outlier (the footer's Finish uses
+    // it); the paint window caps at the p90 end (190 ms) because the
+    // full span is way past 2x the dense span.
+    QCOMPARE(panel.testWaterfallFullEnd(), 18000.0);
+    QCOMPARE(panel.testWaterfallDisplayEnd(), 190.0);
+    regrab();
+    QVERIFY(rowFor("z0") >= 0);
+    QVERIFY(rowFor("zs") >= 0);
+    const QRect fallCell = cellInGrab(panel.m_networkView, proxy, 0);
+    // A 100 ms bar is ~53% of the zoomed 190 ms axis — dozens of
+    // pixels, not the 1 px hairline the raw 18 s window gave.
+    const QPair<int, int> fast = barRunAt(
+        panel.m_networkView, proxy, rowFor("z0"), shot);
+    QVERIFY(fast.first >= 0);
+    QVERIFY(fast.second - fast.first + 1 > 40);
+    // The outlier bar is clipped at the cell's right edge (its
+    // overflow notch rides the same x).
+    const QPair<int, int> slow = barRunAt(
+        panel.m_networkView, proxy, rowFor("zs"), shot);
+    QVERIFY(slow.first >= 0);
+    QVERIFY(slow.second >= fallCell.right() - 5);
+
+    // Offscreen grab for visual review — set ARORA_DEVTOOLS_GRAB_DIR
+    // to a directory; the zoomed waterfall is saved there.
+    const QByteArray grabDir = qgetenv("ARORA_DEVTOOLS_GRAB_DIR");
+    if (!grabDir.isEmpty())
+        panel.m_networkView->grab().save(
+            QString::fromLocal8Bit(grabDir)
+            + QLatin1String("/bidi-waterfall-zoom.png"));
+
+    // --- minimum readable bar: a 1 ms request in a 400 ms window
+    // maps to 0 px unscaled — the 5 px floor keeps it a swatch.
+    // (400 == exactly 2x the 200 ms dense end: NOT capped — the zoom
+    // only bites when the tail is past twice the dense span.)
+    panel.clearNetworkLog();
+    feed("m1", 0.0, 1.0);
+    feed("m2", 0.0, 200.0);
+    feed("m3", 0.0, 400.0);
+    QCOMPARE(panel.testWaterfallDisplayEnd(), 400.0);
+    regrab();
+    const QPair<int, int> tiny = barRunAt(
+        panel.m_networkView, proxy, rowFor("m1"), shot);
+    QVERIFY(tiny.first >= 0);
+    QVERIFY(tiny.second - tiny.first + 1 >= 5);
+    QVERIFY(tiny.second - tiny.first + 1 <= 14); // floor, not real width
+
+    // --- even spread keeps the honest full axis (no zoom): ten ends
+    // spaced 100..1000 ms leave display == full.
+    panel.clearNetworkLog();
+    for (int i = 1; i <= 10; ++i)
+        feed("e" + QByteArray::number(i), 0.0, 100.0 * i);
+    QCOMPARE(panel.testWaterfallFullEnd(), 1000.0);
+    QCOMPARE(panel.testWaterfallDisplayEnd(), 1000.0);
+
+    // --- a window with no completed requests paints no bars at all.
+    panel.clearNetworkLog();
+    feed("p1", 50.0, -1.0);
+    QCOMPARE(panel.testWaterfallDisplayEnd(), 50.0); // w1 == w0
+    regrab();
+    const QPair<int, int> none = barRunAt(
+        panel.m_networkView, proxy, rowFor("p1"), shot);
+    QCOMPARE(none.first, -1);
+
+    // --- pending beside a completed row still paints, translucent:
+    // its ink is Highlight alpha-120 composited over Base.
+    feed("p2", 100.0, -1.0);
+    feed("c1", 0.0, 300.0);
+    QVERIFY(rowFor("p2") >= 0);
+    regrab();
+    const QRect pCell = cellInGrab(
+        panel.m_networkView, proxy, rowFor("p2"));
+    const QColor hi = qApp->palette().color(QPalette::Highlight);
+    const QColor base = qApp->palette().color(QPalette::Base);
+    const QColor blended(
+        (120 * hi.red() + 135 * base.red()) / 255,
+        (120 * hi.green() + 135 * base.green()) / 255,
+        (120 * hi.blue() + 135 * base.blue()) / 255);
+    bool sawPending = false;
+    for (int x = pCell.left() + 2; x <= pCell.right() - 2 && !sawPending;
+         ++x) {
+        if (colorClose(shot.pixelColor(x, pCell.center().y()),
+                       blended, 14))
+            sawPending = true;
+    }
+    QVERIFY(sawPending);
+
+    // --- DCL/Load markers land as Link/fail-colored vertical lines
+    // inside the column; a marker outside the window does not paint.
+    feed("c2", 0.0, 300.0);
+    panel.onEvent(QByteArray(
+        "{\"method\":\"browsingContext.domContentLoaded\",\"params\":"
+        "{\"context\":\"ctx1\",\"timestamp\":100.0}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"browsingContext.load\",\"params\":"
+        "{\"context\":\"ctx1\",\"timestamp\":250.0}}"));
+    regrab();
+    if (!grabDir.isEmpty())
+        panel.m_networkView->grab().save(
+            QString::fromLocal8Bit(grabDir)
+            + QLatin1String("/bidi-waterfall-markers.png"));
+    const QColor link = qApp->palette().color(QPalette::Link);
+    bool sawDcl = false, sawLoad = false;
+    const QRect anyCell = cellInGrab(panel.m_networkView, proxy, 0);
+    const QColor fail = waterfallFailColor();
+    for (int x = anyCell.left(); x <= anyCell.right(); ++x) {
+        for (int y = anyCell.top(); y <= anyCell.bottom(); ++y) {
+            const QColor c = shot.pixelColor(x, y);
+            if (!sawDcl && colorClose(c, link, 8))
+                sawDcl = true;
+            // Only the marker paints the fail color here — no failed
+            // rows in this log.
+            if (!sawLoad && colorClose(c, fail, 8))
+                sawLoad = true;
+        }
+    }
+    QVERIFY(sawDcl);
+    QVERIFY(sawLoad);
 }
 
 QTEST_MAIN(tst_DevTools)

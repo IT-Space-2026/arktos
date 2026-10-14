@@ -26,6 +26,7 @@
 #include <qlineedit.h>
 #include <qpainter.h>
 #include <qplaintextedit.h>
+#include <qpolygon.h>
 #include <qpushbutton.h>
 #include <qsortfilterproxymodel.h>
 #include <qsplitter.h>
@@ -39,6 +40,8 @@
 #include <qtreewidget.h>
 #include <qurl.h>
 #include <qvector.h>
+
+#include <algorithm>
 
 // eval tags
 static const quint64 TagConsole = 1;
@@ -377,9 +380,59 @@ public:
             v = qMax(v, row.endMs >= 0.0 ? row.endMs : row.startMs);
         return v;
     }
+    // DEVT09: the paint axis zooms into the dense part of the
+    // recording.  The true window still drives the footer's Finish,
+    // but the delegate scales to roughly the p90 completed end —
+    // applied only when the true window is more than twice the dense
+    // span, so an even spread keeps the honest full axis while a lone
+    // slow request can no longer shrink every other bar to a
+    // hairline.  (The spec's alternative — a fit-dense toggle — would
+    // add a toolbar control; the percentile cap gives Chrome's
+    // "readable by default" behavior with no UI and no state.)
+    double displayWindowEnd() const
+    {
+        const double w0 = windowStart();
+        const double full = windowEnd();
+        if (w0 < 0.0 || full <= w0)
+            return full;
+        QVector<double> ends;
+        ends.reserve(m_rows.size());
+        for (const Row &row : m_rows) {
+            if (row.endMs >= 0.0)
+                ends.append(row.endMs);
+        }
+        if (ends.size() < 2)
+            return full;
+        std::sort(ends.begin(), ends.end());
+        // Lower-rank p90: for tiny sets this deliberately lands below
+        // the max so a single slow request still reads as an outlier.
+        const double dense = ends.at((ends.size() - 1) * 9 / 10);
+        if (dense > w0 && full - w0 > 2.0 * (dense - w0))
+            return dense;
+        return full;
+    }
+
+    // DEVT09: page-lifecycle markers on the request clock — the
+    // delegate draws them as column-wide DCL/Load lines.  -1 unset.
+    // They deliberately survive clear() like the panel's own fields
+    // (the Clear button wipes rows, not the page's load timings).
+    void setPageTimings(double dclMs, double loadMs)
+    {
+        if (m_dclMs == dclMs && m_loadMs == loadMs)
+            return;
+        m_dclMs = dclMs;
+        m_loadMs = loadMs;
+        if (!m_rows.isEmpty())
+            emit dataChanged(index(0, WaterfallColumn),
+                             index(m_rows.size() - 1, WaterfallColumn));
+    }
+    double domContentLoadedMs() const { return m_dclMs; }
+    double loadMs() const { return m_loadMs; }
 
 private:
     QVector<Row> m_rows;
+    double m_dclMs = -1.0;
+    double m_loadMs = -1.0;
 };
 
 class BidiNetworkProxy : public QSortFilterProxyModel
@@ -466,11 +519,18 @@ private:
     int m_bucket = NetAll;
 };
 
-// Paints the Chrome-style start+duration bar scaled to the whole
-// recording window; pending rows run to the window end, translucent.
+// Paints the Chrome-style start+duration bar scaled to the dense
+// display window (DEVT09 — one outlier request can no longer flatten
+// every bar to a hairline); pending rows run to the window end,
+// translucent, and bars clipped by the zoomed axis carry an overflow
+// notch at the cell edge.
 class BidiWaterfallDelegate : public QStyledItemDelegate
 {
 public:
+    // DEVT09: sub-pixel durations still get a readable swatch — the
+    // bar may honestly overlap its neighbors like Chrome's does.
+    static const int MinBarWidth = 5;
+
     explicit BidiWaterfallDelegate(BidiNetworkModel *model,
                                    QObject *parent = nullptr)
         : QStyledItemDelegate(parent)
@@ -482,38 +542,82 @@ public:
                const QModelIndex &index) const override
     {
         QStyledItemDelegate::paint(painter, option, index);
-        const double start =
-            index.data(BidiNetworkModel::StartRole).toDouble();
-        if (!m_model || start < 0.0)
+        if (!m_model)
             return;
         const double w0 = m_model->windowStart();
-        const double w1 = m_model->windowEnd();
+        const double w1 = m_model->displayWindowEnd();
         if (w0 < 0.0 || w1 <= w0)
             return;
-        double end = index.data(BidiNetworkModel::EndRole).toDouble();
-        const bool pending = end < 0.0;
-        if (pending)
-            end = w1;
 
         const QRect area = option.rect.adjusted(2, 3, -2, -3);
-        const double span = qMax(1.0, w1 - w0);
-        const int x = area.x()
-            + int((start - w0) / span * (area.width() - 1));
-        const int width = qMin(
-            qMax(2, int((end - start) / span * (area.width() - 1))),
-            area.right() - x + 1);
-        if (width <= 0)
-            return;
+        const double span = w1 - w0;
+        const int axisW = area.width() - 1;
 
-        const bool failed =
-            index.data(BidiNetworkModel::StateRole).toInt()
-            == BidiNetworkModel::Failed;
-        QColor bar = failed
-            ? failColor()
-            : option.palette.color(QPalette::Highlight);
-        if (pending)
-            bar.setAlpha(120);
-        painter->fillRect(QRect(x, area.y(), width, area.height()), bar);
+        // The bar.  A start mapped past the dense window's edge means
+        // the request lives entirely outside the zoomed axis — paint
+        // nothing rather than a phantom sliver at x 0.
+        const double start =
+            index.data(BidiNetworkModel::StartRole).toDouble();
+        if (start >= w0 && start <= w1) {
+            double end =
+                index.data(BidiNetworkModel::EndRole).toDouble();
+            const bool pending = end < 0.0;
+            if (pending)
+                end = w1;
+            const bool clipped = !pending && end > w1;
+
+            const int x = area.x()
+                + int((start - w0) / span * axisW);
+            const int width = qMin(
+                qMax(MinBarWidth, int((end - start) / span * axisW)),
+                area.right() - x + 1);
+            if (width > 0) {
+                const bool failed =
+                    index.data(BidiNetworkModel::StateRole).toInt()
+                    == BidiNetworkModel::Failed;
+                QColor bar = failed
+                    ? failColor()
+                    : option.palette.color(QPalette::Highlight);
+                if (pending)
+                    bar.setAlpha(120);
+                const QRect barRect(x, area.y(), width, area.height());
+                painter->fillRect(barRect, bar);
+                // A 1px darker edge keeps the swatch legible on light
+                // themes where Highlight sits close to Base.
+                const QColor edge = bar.darker(140);
+                painter->setPen(edge);
+                painter->drawRect(barRect.adjusted(0, 0, -1, -1));
+                if (clipped) {
+                    // Overflow notch: a right-pointing tick at the
+                    // cell edge — the request continues past the
+                    // zoomed window (the footer's Finish still
+                    // reports the true full span).
+                    const int cy = area.center().y();
+                    QPolygonF notch;
+                    notch << QPointF(area.right() - 5, cy - 4)
+                          << QPointF(area.right(), cy)
+                          << QPointF(area.right() - 5, cy + 4);
+                    painter->setPen(Qt::NoPen);
+                    painter->setBrush(edge);
+                    painter->drawPolygon(notch);
+                }
+            }
+        }
+
+        // DEVT09: page-lifecycle markers — every cell draws its slice
+        // of the line so they read as Chrome's column-wide
+        // DOMContentLoaded/Load rules, without a second paint pass.
+        const auto markerAt = [&](double ms, const QColor &color) {
+            if (ms < w0 || ms > w1)
+                return;
+            const int mx =
+                area.x() + int((ms - w0) / span * axisW);
+            painter->fillRect(QRect(mx, area.y(), 1, area.height()),
+                              color);
+        };
+        markerAt(m_model->domContentLoadedMs(),
+                 option.palette.color(QPalette::Link));
+        markerAt(m_model->loadMs(), failColor());
     }
 
 private:
@@ -1209,9 +1313,12 @@ void BidiPanel::onEvent(const QByteArray &json)
         if (params[QStringLiteral("context")].toString()
             == currentContext()) {
             // A fresh load owns fresh footer timings regardless of
-            // Preserve log keeping the old request rows.
+            // Preserve log keeping the old request rows — and fresh
+            // waterfall marker lines (DEVT09).
             m_domContentLoadedMs = -1.0;
             m_loadMs = -1.0;
+            static_cast<BidiNetworkModel *>(m_networkModel)
+                ->setPageTimings(-1.0, -1.0);
             // Chrome clears the request log on navigation unless
             // Preserve log is ticked.
             if (!m_preserveLog->isChecked())
@@ -1233,6 +1340,8 @@ void BidiPanel::onEvent(const QByteArray &json)
                 m_domContentLoadedMs = ts;
             else
                 m_loadMs = ts;
+            static_cast<BidiNetworkModel *>(m_networkModel)
+                ->setPageTimings(m_domContentLoadedMs, m_loadMs);
             updateNetworkSummary();
         }
         return;
@@ -1345,5 +1454,16 @@ quint64 BidiPanel::testDomExpand(QTreeWidgetItem *item)
     m_evalTags.insert(id, TagDomChildren);
     m_pendingDomItem.insert(id, item);
     return id;
+}
+
+double BidiPanel::testWaterfallFullEnd()
+{
+    return static_cast<BidiNetworkModel *>(m_networkModel)->windowEnd();
+}
+
+double BidiPanel::testWaterfallDisplayEnd()
+{
+    return static_cast<BidiNetworkModel *>(m_networkModel)
+        ->displayWindowEnd();
 }
 #endif

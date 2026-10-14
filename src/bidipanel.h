@@ -72,6 +72,11 @@ public:
     // debug channel (sendCommand answers 0 when disconnected).
     quint64 testRegisterTag(quint64 tag);
     quint64 testDomExpand(QTreeWidgetItem *item);
+    // DEVT09: waterfall window seams — the true recording end vs the
+    // dense-capped paint end, so the suite can pin the zoom math
+    // without scraping pixels.
+    double testWaterfallFullEnd();
+    double testWaterfallDisplayEnd();
 #else
 private:
 #endif
