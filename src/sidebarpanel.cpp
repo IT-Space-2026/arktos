@@ -29,6 +29,7 @@
 #include "settings.h"
 #include "utils/aroraicon.h"
 #include "utils/edittreeview.h"
+#include "utils/flowlayout.h"
 #include "utils/treesortfilterproxymodel.h"
 
 #include <qapplication.h>
@@ -402,6 +403,19 @@ SidebarPanel::SidebarPanel(QWidget *parent)
     applyOptions();
 }
 
+SidebarPanel::~SidebarPanel()
+{
+    // A hosted download card is only BORROWED from DownloadManager —
+    // its row pointer in m_downloads must never dangle, so the card
+    // goes back before this widget tree deletes it (window close with
+    // a row selected).
+    if (m_detailItem) {
+        m_detailItem->setParent(DownloadManager::instance());
+        m_detailItem->hide();
+        m_detailItem.clear();
+    }
+}
+
 // The registered rail entries, in display order.  Built-ins resolve
 // lazily so registerPanel() calls made before the first panel (or
 // without one, e.g. the Preferences checklist) still append to the
@@ -694,7 +708,9 @@ QWidget *SidebarPanel::buildBookmarksPage()
     // dialog's Add/Remove actions on a compact row under the tree.
     // Add is handled by the window (it owns the current tab); Remove
     // works on the shared model straight from here.
-    QHBoxLayout *bookmarksActions = new QHBoxLayout;
+    // DOWN04: a wrapping row — at the dock's floor the buttons stack
+    // instead of holding the whole panel above ~180px.
+    FlowLayout *bookmarksActions = new FlowLayout(0, -1, 2);
     QPushButton *addButton = new QPushButton(tr("Add..."), m_bookmarksPage);
     addButton->setObjectName(QLatin1String("sidebarAddBookmark"));
     addButton->setAccessibleName(tr("Add bookmark"));
@@ -762,6 +778,26 @@ QWidget *SidebarPanel::buildHistoryPage()
             this, &SidebarPanel::historyContextMenu);
     historyLayout->addWidget(m_historyView);
     return historyPage;
+}
+
+// DOWN04: no bundled set ships a pause glyph (media-playback-pause
+// isn't covered) — paint two bars in ButtonText like the rail icon so
+// the action row stays monochrome under every palette, dark included.
+static QIcon downloadPauseIcon(const QWidget *forPalette)
+{
+    const qreal dpr = forPalette ? forPalette->devicePixelRatioF() : 1.0;
+    QPixmap pixmap(16 * dpr, 16 * dpr);
+    pixmap.setDevicePixelRatio(dpr);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(forPalette
+        ? forPalette->palette().color(QPalette::ButtonText)
+        : QColor(Qt::black));
+    painter.drawRoundedRect(QRectF(4.4, 3.4, 3.0, 9.2), 1.0, 1.0);
+    painter.drawRoundedRect(QRectF(9.0, 3.4, 3.0, 9.2), 1.0, 1.0);
+    return QIcon(pixmap);
 }
 
 // DOWN02: downloads — the standalone manager window is gone; this
@@ -905,6 +941,62 @@ QWidget *SidebarPanel::buildDownloadsPage()
         }
     });
 
+    // DOWN04: the action row the user's reference grab shows —
+    // pause/resume, retry, remove and show-in-folder on icon-sized
+    // buttons, plus a details toggle for the card's speed graph.
+    // Every button acts on the SELECTED list row and mirrors the
+    // hosted card's own enablement (can't pause a finished download,
+    // can't retry a running one, can't remove an in-flight row), so
+    // the row and the card never disagree.  Glyphs come through
+    // AroraIcon::getChrome — the same palette-tinted monochrome chrome
+    // as the header X — staying legible on dark and tor palettes.
+    // A FlowLayout keeps the dock's 160px floor reachable — the
+    // buttons reflow onto a second row instead of forcing a ~180px
+    // minimum width (same treatment as the card's own button rows).
+    FlowLayout *actionsRow = new FlowLayout(0, 2, 2);
+    const auto actionButton = [this, actionsRow](const char *objectName,
+                                                 const QString &toolTip) {
+        QToolButton *button = new QToolButton(m_downloadsPage);
+        button->setObjectName(QLatin1String(objectName));
+        button->setAutoRaise(true);
+        button->setToolTip(toolTip);
+        button->setAccessibleName(toolTip);
+        button->setEnabled(false);
+        actionsRow->addWidget(button);
+        return button;
+    };
+    m_downloadPauseButton = actionButton("sidebarDownloadPause",
+                                         tr("Pause download"));
+    m_downloadPauseButton->setIcon(downloadPauseIcon(m_downloadsPage));
+    connect(m_downloadPauseButton, &QToolButton::clicked,
+            this, &SidebarPanel::pauseSelectedDownload);
+    m_downloadRetryButton = actionButton("sidebarDownloadRetry",
+                                         tr("Restart download"));
+    m_downloadRetryButton->setIcon(
+        AroraIcon::getChrome(QLatin1String("view-refresh")));
+    connect(m_downloadRetryButton, &QToolButton::clicked,
+            this, &SidebarPanel::retrySelectedDownload);
+    m_downloadRemoveButton = actionButton("sidebarDownloadRemove",
+                                          tr("Remove from list"));
+    m_downloadRemoveButton->setIcon(
+        AroraIcon::getChrome(QLatin1String("edit-clear")));
+    connect(m_downloadRemoveButton, &QToolButton::clicked,
+            this, &SidebarPanel::removeSelectedDownload);
+    m_downloadFolderButton = actionButton("sidebarDownloadFolder",
+                                          tr("Show in File Manager"));
+    m_downloadFolderButton->setIcon(
+        AroraIcon::getChrome(QLatin1String("document-open")));
+    connect(m_downloadFolderButton, &QToolButton::clicked,
+            this, &SidebarPanel::revealSelectedDownload);
+    m_downloadDetailsButton = actionButton("sidebarDownloadDetails",
+                                           tr("Show download details"));
+    m_downloadDetailsButton->setCheckable(true);
+    m_downloadDetailsButton->setIcon(
+        AroraIcon::getChrome(QLatin1String("go-down")));
+    connect(m_downloadDetailsButton, &QToolButton::toggled,
+            this, &SidebarPanel::setSelectedDownloadExpanded);
+    downloadsLayout->addLayout(actionsRow);
+
     QPushButton *settingsButton = new QPushButton(tr("Download Settings..."),
                                                 m_downloadsPage);
     settingsButton->setObjectName(QLatin1String("sidebarDownloadSettings"));
@@ -916,6 +1008,10 @@ QWidget *SidebarPanel::buildDownloadsPage()
         SettingsDialog::openPage(this, SettingsDialog::DownloadsPage);
     });
     downloadsLayout->addWidget(settingsButton);
+    // A row may already be selected (the view auto-selects on a
+    // pre-populated model) — bring the action row in sync now that
+    // the buttons exist.
+    updateDownloadActions();
     return m_downloadsPage;
 }
 
@@ -1217,13 +1313,118 @@ void SidebarPanel::downloadSelectionChanged(const QModelIndex &current,
     if (item) {
         item->setParent(m_downloadDetail);
         m_downloadDetail->layout()->addWidget(item);
-        item->setExpanded(true);
+        // DOWN04: a hosted card must never auto-collapse — the pane's
+        // only content IS the card, so the finish/stop fold would hide
+        // every action the pane exists for (the reported "buttons
+        // entirely absent" grab).
+        item->pinExpanded();
+        // The action row tracks the card's live state: statusChanged
+        // covers state flips and pause/resume, the card's own chevron
+        // keeps the details toggle honest when the user folds the
+        // card inline.
+        connect(item, &DownloadItem::statusChanged,
+                this, &SidebarPanel::updateDownloadActions,
+                Qt::UniqueConnection);
+        connect(item, &DownloadItem::expandedChanged,
+                this, &SidebarPanel::updateDownloadActions,
+                Qt::UniqueConnection);
         // The card's cached size hint predates the expansion — refresh
         // it so the pane's layout allocates the card's full height.
         item->adjustSize();
         item->show();
     }
     m_downloadDetail->setVisible(item != nullptr);
+    updateDownloadActions();
+}
+
+// DOWN04: the compact action row.  selectedDownloadItem() re-reads the
+// list's current row on every call so the buttons can never act on a
+// stale card after a re-sort or a removal.
+DownloadItem *SidebarPanel::selectedDownloadItem() const
+{
+    if (!m_downloadsView || !m_downloadsProxy)
+        return nullptr;
+    const QModelIndex source = m_downloadsProxy->mapToSource(
+        m_downloadsView->currentIndex());
+    return source.isValid()
+        ? DownloadManager::instance()->itemAt(source.row())
+        : nullptr;
+}
+
+void SidebarPanel::updateDownloadActions()
+{
+    if (!m_downloadPauseButton)
+        return;
+    DownloadItem *item = selectedDownloadItem();
+    const bool paused = item && item->isPaused();
+    m_downloadPauseButton->setEnabled(item && item->canPause()
+                                      && item->downloading());
+    m_downloadPauseButton->setIcon(paused
+        ? AroraIcon::getChrome(QLatin1String("system-run"))
+        : downloadPauseIcon(m_downloadsPage));
+    const QString pauseLabel = paused ? tr("Resume download")
+                                      : tr("Pause download");
+    m_downloadPauseButton->setToolTip(pauseLabel);
+    m_downloadPauseButton->setAccessibleName(pauseLabel);
+
+    // One button covers both card verbs — Try Again (failed/stopped)
+    // and Restart (finished) run the same restartDownload() path.
+    m_downloadRetryButton->setEnabled(item && item->canRestart());
+    const QString retryLabel = item && !item->downloadedSuccessfully()
+        ? tr("Try Again") : tr("Restart download");
+    m_downloadRetryButton->setToolTip(retryLabel);
+    m_downloadRetryButton->setAccessibleName(retryLabel);
+
+    m_downloadRemoveButton->setEnabled(item && item->isRemovable());
+    m_downloadFolderButton->setEnabled(item
+                                       && !item->m_outputFileName.isEmpty());
+
+    const bool expanded = item && item->isExpanded();
+    m_downloadDetailsButton->setEnabled(item != nullptr);
+    m_downloadDetailsButton->setChecked(expanded);
+    m_downloadDetailsButton->setIcon(AroraIcon::getChrome(
+        expanded ? QLatin1String("go-up") : QLatin1String("go-down")));
+    const QString detailsLabel = expanded ? tr("Hide download details")
+                                          : tr("Show download details");
+    m_downloadDetailsButton->setToolTip(detailsLabel);
+    m_downloadDetailsButton->setAccessibleName(detailsLabel);
+}
+
+void SidebarPanel::pauseSelectedDownload()
+{
+    if (DownloadItem *item = selectedDownloadItem())
+        QMetaObject::invokeMethod(item, "pauseOrResume");
+    updateDownloadActions();
+}
+
+void SidebarPanel::retrySelectedDownload()
+{
+    if (DownloadItem *item = selectedDownloadItem())
+        QMetaObject::invokeMethod(item, "restart");
+    updateDownloadActions();
+}
+
+void SidebarPanel::removeSelectedDownload()
+{
+    if (!m_downloadsView || !m_downloadsProxy)
+        return;
+    const QModelIndex source = m_downloadsProxy->mapToSource(
+        m_downloadsView->currentIndex());
+    if (source.isValid())
+        m_downloadsProxy->sourceModel()->removeRow(source.row());
+    updateDownloadActions();
+}
+
+void SidebarPanel::revealSelectedDownload()
+{
+    if (DownloadItem *item = selectedDownloadItem())
+        QMetaObject::invokeMethod(item, "showInFolder");
+}
+
+void SidebarPanel::setSelectedDownloadExpanded(bool expanded)
+{
+    if (DownloadItem *item = selectedDownloadItem())
+        item->setExpanded(expanded);
 }
 
 void SidebarPanel::downloadsContextMenu(const QPoint &pos)

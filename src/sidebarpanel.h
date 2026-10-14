@@ -39,6 +39,7 @@ class QPlainTextEdit;
 class QPushButton;
 class QSortFilterProxyModel;
 class QTabWidget;
+class QToolButton;
 class TreeSortFilterProxyModel;
 
 // SIDE01: the content widget of the optional Vivaldi-style sidebar
@@ -87,6 +88,7 @@ public:
     static bool showsFolderCounters();
 
     explicit SidebarPanel(QWidget *parent = nullptr);
+    ~SidebarPanel() override;
 
     // Palette-following toggle glyph — the bundled icon themes ship no
     // sidebar pictogram and new artwork files stay out per the
@@ -134,6 +136,15 @@ private slots:
     void downloadSelectionChanged(const QModelIndex &current,
                                   const QModelIndex &previous);
     void applyDownloadSort();
+    // DOWN04: the compact per-download action row — pause/resume,
+    // retry, remove, show-in-folder and the details (speed graph)
+    // toggle all act on the selected list row.
+    void updateDownloadActions();
+    void pauseSelectedDownload();
+    void retrySelectedDownload();
+    void removeSelectedDownload();
+    void revealSelectedDownload();
+    void setSelectedDownloadExpanded(bool expanded);
 
 private:
     static QList<Panel> &registry();
@@ -155,6 +166,9 @@ private:
     QWidget *buildNotesPage();
     int indexOfPanel(const QByteArray &id) const;
     QModelIndex selectedBookmarkFolder() const;
+    // DOWN04: the item behind the list's current row (nullptr when
+    // nothing is selected) — the action row's target.
+    DownloadItem *selectedDownloadItem() const;
 
     QTabWidget *m_tabs;
     QPointer<QWidget> m_bookmarksPage;
@@ -168,6 +182,13 @@ private:
     QPointer<QWidget> m_downloadsPage;
     QPointer<QComboBox> m_downloadsSort;
     QPointer<QFrame> m_downloadDetail;
+    // DOWN04: the compact action row under the detail pane — every
+    // button's enablement mirrors the hosted card's own logic.
+    QPointer<QToolButton> m_downloadPauseButton;
+    QPointer<QToolButton> m_downloadRetryButton;
+    QPointer<QToolButton> m_downloadRemoveButton;
+    QPointer<QToolButton> m_downloadFolderButton;
+    QPointer<QToolButton> m_downloadDetailsButton;
     // The DownloadItem card currently hosted in the detail pane.
     QPointer<QWidget> m_detailItem;
     QPointer<QPlainTextEdit> m_notes;

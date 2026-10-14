@@ -159,6 +159,7 @@ public:
     void cancel() override;
     void pause() override;
     void resume() override;
+    bool isPaused() const override;
     qint64 receivedBytes() const override;
     qint64 totalBytes() const override;
     State state() const override;

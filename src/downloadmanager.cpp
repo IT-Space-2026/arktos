@@ -785,6 +785,54 @@ void DownloadItem::showInFolder()
         showInFolderButton->setEnabled(false);
 }
 
+bool DownloadItem::canPause() const
+{
+    // Only a live Chromium request pauses — the rustdl crate's ABI has
+    // no pause primitive (dl_start/poll/cancel only) and a restored
+    // card has no backend at all.
+    return m_download != nullptr;
+}
+
+bool DownloadItem::isPaused() const
+{
+    return m_download && m_download->isPaused();
+}
+
+bool DownloadItem::canRestart() const
+{
+    // Same gate the card's Restart button uses in updateDetails().
+    return !m_url.isEmpty() && !downloading();
+}
+
+bool DownloadItem::isRemovable() const
+{
+    // Same gate DownloadModel::removeRows applies — finished or
+    // retryable (stopped/interrupted) rows only, never in-flight.
+    return downloadedSuccessfully() || tryAgainButton->isEnabled();
+}
+
+void DownloadItem::pinExpanded()
+{
+    m_expandUserOverride = true;
+    setExpanded(true);
+}
+
+void DownloadItem::pauseOrResume()
+{
+    if (!canPause() || !downloading())
+        return;
+    if (m_download->isPaused())
+        m_download->resume();
+    else
+        m_download->pause();
+    downloadInfoLabel->setText(m_download->isPaused()
+        ? tr("Paused — %1").arg(DownloadManager::dataString(m_bytesReceived))
+        : QString());
+    // No state change accompanies pause/resume — notify the views so
+    // the sidebar's action row re-reads isPaused() and flips its icon.
+    emit statusChanged();
+}
+
 void DownloadItem::expandButtonClicked()
 {
     // A real click is an explicit choice — the automatic expand on
@@ -806,6 +854,7 @@ void DownloadItem::setExpanded(bool expanded)
         ? tr("Hide download details") : tr("Show download details"));
     detailsWidget->setVisible(expanded);
     updateGeometry();
+    emit expandedChanged();
 }
 
 // DLUX03: the card skin once lived in downloaditem.ui as
@@ -1105,7 +1154,7 @@ void DownloadItem::updateDetails()
         speedLabel->setText(QLatin1String("-"));
     }
 
-    restartButton->setEnabled(!m_url.isEmpty() && !downloading());
+    restartButton->setEnabled(canRestart());
     showInFolderButton->setEnabled(!m_outputFileName.isEmpty());
 }
 
@@ -1523,7 +1572,10 @@ void DownloadManager::updateRow(DownloadItem *item)
     QIcon icon = m_iconProvider->icon(QFileInfo(item->m_outputFileName));
     if (icon.isNull())
         icon = style()->standardIcon(QStyle::SP_FileIcon);
-    item->fileIcon->setPixmap(icon.pixmap(48, 48));
+    // DOWN04: the card is compact — the icon lives inline in the
+    // name row at a fixed 24px (scaledContents downscales the
+    // provider's pixmap; request it at native size anyway).
+    item->fileIcon->setPixmap(icon.pixmap(24, 24));
 
     bool remove = false;
     if (!item->downloading() && item->m_offTheRecord)
@@ -1663,9 +1715,7 @@ void DownloadManager::cleanupOffTheRecord()
         DownloadItem *item = m_downloads[i];
         // Same removability rule as DownloadModel::removeRows —
         // finished or retryable rows only, never an in-flight one.
-        if (item->m_offTheRecord
-            && (item->downloadedSuccessfully()
-                || item->tryAgainButton->isEnabled())) {
+        if (item->m_offTheRecord && item->isRemovable()) {
             m_model->removeRow(i);
             removed = true;
         }
@@ -1807,8 +1857,7 @@ bool DownloadModel::removeRows(int row, int count, const QModelIndex &parent)
     int lastRow = row + count - 1;
     for (int i = lastRow; i >= row; --i) {
         DownloadItem *item = m_downloadManager->m_downloads.at(i);
-        if (item->downloadedSuccessfully()
-            || item->tryAgainButton->isEnabled()) {
+        if (item->isRemovable()) {
             // Removing the row also deletes the half-written file an
             // interrupted or cancelled download left behind (SEC01).
             if (!item->downloadedSuccessfully())

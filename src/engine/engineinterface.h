@@ -298,6 +298,10 @@ public:
     virtual void cancel() = 0;
     virtual void pause() = 0;
     virtual void resume() = 0;
+    // DOWN04: the sidebar pause/resume toggle reads the backend's own
+    // pause state — an InProgress request may be paused, which state()
+    // alone cannot express.
+    virtual bool isPaused() const = 0;
     virtual qint64 receivedBytes() const = 0;
     virtual qint64 totalBytes() const = 0;
     virtual State state() const = 0;

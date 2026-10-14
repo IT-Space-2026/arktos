@@ -86,6 +86,12 @@ signals:
     void statusChanged();
     void progress(qint64 bytesReceived = 0, qint64 bytesTotal = 0);
     void downloadFinished();
+    // DOWN04: fires whenever the detail card's expansion flips,
+    // however it happened (chevron click, programmatic setExpanded,
+    // auto-expand on start).  The sidebar's details toggle syncs off
+    // this — expandButton::toggled fires BEFORE expandButtonClicked
+    // runs setExpanded, so it would read the stale m_expanded.
+    void expandedChanged();
 
 public:
     DownloadItem(Engine::DownloadRequest *download = nullptr, bool requestFileName = false, QWidget *parent = nullptr);
@@ -121,6 +127,24 @@ public:
     // download through the page, which produces a new request object.
     void attach(Engine::DownloadRequest *download);
 
+    // DOWN04: the sidebar's compact action row drives pause/resume
+    // through the item — the card's own buttons keep their dialog-era
+    // Stop/Try Again wording.  canPause() is the backend capability
+    // gate (a live Chromium request pauses; the rustdl crate's ABI
+    // exposes no pause, and a restored card has no backend at all);
+    // canRestart() mirrors the card's Restart enablement and
+    // isRemovable() mirrors DownloadModel::removeRows' gate.
+    bool canPause() const;
+    bool isPaused() const;
+    bool canRestart() const;
+    bool isRemovable() const;
+    // While the card is the sidebar detail pane's whole content the
+    // automatic collapse-on-finish must not fold it — that hid every
+    // action (the reported "buttons entirely absent").  pinExpanded()
+    // latches the expanded state as if the user had chosen it; a
+    // retry's init() clears the latch and auto-expands again.
+    void pinExpanded();
+
     // SEC01 hardening helpers — static so autotests can drive them
     // without a live download.
     [[nodiscard]] static QString sanitizeFileName(const QString &suggestedName);
@@ -150,6 +174,9 @@ private slots:
     // failed download; Show in Folder reveals the folder.
     void restart();
     void showInFolder();
+    // DOWN04: pause/resume toggle for the sidebar action row — a real
+    // engine pause, not a cancel; no-op when the backend can't pause.
+    void pauseOrResume();
 
     void downloadProgressUpdate();
     void downloadStateChanged(Engine::DownloadRequest::State state);

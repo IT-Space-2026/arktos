@@ -215,6 +215,7 @@ private slots:
     void downloadsSidebarPanel();
     void downloadsSidebarFinishedRows();
     void downloadsSidebarMinWidth();
+    void downloadsSidebarActions();
     void bookmarksSidebarPanel();
     void chromeSlots();
     void widgetTabBookmarksSafety();
@@ -5713,6 +5714,166 @@ void tst_BrowserMainWindow::downloadsSidebarMinWidth()
 
     settings.remove(QLatin1String("MainWindow/showSidebar"));
     view->setCurrentIndex(QModelIndex());
+    closeWindow(window);
+
+    DownloadManager::instance()->cleanup();
+    DownloadManager::instance()->deleteLater();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+}
+
+// DOWN04: the compact per-download action row — pause/resume, retry,
+// remove, show-in-folder and the details (speed graph) toggle all act
+// on the selected row, with enablement mirroring the card's own gates:
+// no pausing a finished download, no retrying a running one, no
+// removing an in-flight row.
+void tst_BrowserMainWindow::downloadsSidebarActions()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+    // The fake requests below carry http urls — keep the rustdl
+    // takeover and the external handler from claiming them.
+    settings.setValue(QLatin1String("downloadmanager/engine"),
+                      QLatin1String("builtin"));
+    settings.setValue(QLatin1String("downloadmanager/external"), false);
+
+    QTemporaryDir downloadDir;
+    QVERIFY(downloadDir.isValid());
+    DownloadManager::instance()->setDownloadDirectory(
+        downloadDir.path() + QLatin1Char('/'));
+
+    SubWindow *window = new SubWindow;
+    window->show();
+    QVERIFY(QMetaObject::invokeMethod(window, "downloadManager"));
+    SidebarPanel *panel = window->sidebarPanel();
+    QVERIFY(panel);
+    QListView *view = panel->findChild<QListView *>(
+        QLatin1String("sidebarDownloadsView"));
+    QVERIFY(view);
+    QSortFilterProxyModel *proxy =
+        qobject_cast<QSortFilterProxyModel *>(view->model());
+    QVERIFY(proxy);
+    DownloadManager::instance()->cleanup();
+    QCOMPARE(proxy->rowCount(), 0);
+
+    QToolButton *pauseButton = panel->findChild<QToolButton *>(
+        QLatin1String("sidebarDownloadPause"));
+    QToolButton *retryButton = panel->findChild<QToolButton *>(
+        QLatin1String("sidebarDownloadRetry"));
+    QToolButton *removeButton = panel->findChild<QToolButton *>(
+        QLatin1String("sidebarDownloadRemove"));
+    QToolButton *folderButton = panel->findChild<QToolButton *>(
+        QLatin1String("sidebarDownloadFolder"));
+    QToolButton *detailsButton = panel->findChild<QToolButton *>(
+        QLatin1String("sidebarDownloadDetails"));
+    QVERIFY(pauseButton);
+    QVERIFY(retryButton);
+    QVERIFY(removeButton);
+    QVERIFY(folderButton);
+    QVERIFY(detailsButton);
+    // Icon-sized row — no dialog-era text buttons.
+    QVERIFY(pauseButton->text().isEmpty());
+    QVERIFY(!pauseButton->icon().isNull());
+
+    // Nothing selected -> the whole row sits disabled.
+    const QList<QToolButton *> row = { pauseButton, retryButton,
+        removeButton, folderButton, detailsButton };
+    for (QToolButton *button : row)
+        QVERIFY(!button->isEnabled());
+
+    // A deterministic in-flight row through the fake engine — no
+    // network, no engine-claim gate, and the pause/resume counters are
+    // directly observable.
+    FakeEngineDownloadRequest *live = new FakeEngineDownloadRequest(this);
+    live->m_url = QUrl(QLatin1String("http://example.com/live.bin"));
+    live->m_name = QLatin1String("live.bin");
+    DownloadManager::instance()->handleDownloadRequested(live);
+    QTRY_COMPARE(proxy->rowCount(), 1);
+    DownloadItem *liveItem = DownloadManager::instance()->itemAt(0);
+    QVERIFY(liveItem);
+    QVERIFY(liveItem->downloading());
+    // itemAdded auto-selects the fresh row (DLUX01) and hosts the card.
+    QCOMPARE(proxy->mapToSource(view->currentIndex()).row(), 0);
+    QFrame *detail = panel->findChild<QFrame *>(
+        QLatin1String("sidebarDownloadDetail"));
+    QVERIFY(detail);
+    QVERIFY(detail->isVisibleTo(detail->parentWidget()));
+
+    // In-flight: pause on, retry/remove off (a running row is neither
+    // restartable nor removable), folder on once the name is picked.
+    QTRY_VERIFY(pauseButton->isEnabled());
+    QVERIFY(!retryButton->isEnabled());
+    QVERIFY(!removeButton->isEnabled());
+    QVERIFY(folderButton->isEnabled());
+    QVERIFY(detailsButton->isEnabled());
+    QVERIFY(detailsButton->isChecked());
+
+    // Pause flips the request's paused flag and the toggle's wording.
+    pauseButton->click();
+    QCOMPARE(live->pauses, 1);
+    QVERIFY(liveItem->isPaused());
+    QVERIFY(pauseButton->isEnabled());
+    QVERIFY(pauseButton->toolTip().contains(QLatin1String("Resume")));
+    pauseButton->click();
+    QCOMPARE(live->resumes, 1);
+    QVERIFY(!liveItem->isPaused());
+    QVERIFY(pauseButton->toolTip().contains(QLatin1String("Pause")));
+
+    // The details toggle folds the hosted card's speed graph away and
+    // back — the row stays in sync with the card's own chevron state.
+    detailsButton->click();
+    QVERIFY(!liveItem->isExpanded());
+    QVERIFY(!detailsButton->isChecked());
+    detailsButton->click();
+    QVERIFY(liveItem->isExpanded());
+    QVERIFY(detailsButton->isChecked());
+    // The card's chevron drives the toggle's check state in return.
+    QToolButton *chevron = liveItem->findChild<QToolButton *>(
+        QLatin1String("expandButton"));
+    QVERIFY(chevron);
+    chevron->click();
+    QVERIFY(!liveItem->isExpanded());
+    QVERIFY(!detailsButton->isChecked());
+    detailsButton->click();
+    QVERIFY(liveItem->isExpanded());
+
+    // Interrupting the row turns pause off and retry + remove on —
+    // the hosted card must NOT fold shut on the terminal transition
+    // (pinExpanded: the pane's only content is the card).
+    live->setState(Engine::DownloadRequest::State::Interrupted);
+    QTRY_VERIFY(!pauseButton->isEnabled());
+    QVERIFY(retryButton->isEnabled());
+    QVERIFY(removeButton->isEnabled());
+    QVERIFY(folderButton->isEnabled());
+    QVERIFY(liveItem->isExpanded());
+    QVERIFY(detailsButton->isChecked());
+
+    // Remove deletes the row and folds every action back off.
+    removeButton->click();
+    QTRY_COMPARE(proxy->rowCount(), 0);
+    for (QToolButton *button : row)
+        QVERIFY(!button->isEnabled());
+
+    // A completed row: retry + remove + folder valid, pause off — and
+    // the hosted card stays expanded through the finish transition.
+    FakeEngineDownloadRequest *done = new FakeEngineDownloadRequest(this);
+    done->m_url = QUrl(QLatin1String("http://example.com/done.txt"));
+    done->m_name = QLatin1String("done.txt");
+    DownloadManager::instance()->handleDownloadRequested(done);
+    QTRY_COMPARE(proxy->rowCount(), 1);
+    DownloadItem *doneItem = DownloadManager::instance()->itemAt(0);
+    QVERIFY(doneItem);
+    done->setState(Engine::DownloadRequest::State::Completed);
+    QTRY_VERIFY(doneItem->downloadedSuccessfully());
+    QTRY_VERIFY(retryButton->isEnabled());
+    QVERIFY(!pauseButton->isEnabled());
+    QVERIFY(removeButton->isEnabled());
+    QVERIFY(folderButton->isEnabled());
+    QVERIFY(doneItem->isExpanded());
+    QVERIFY(detailsButton->isChecked());
+
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+    settings.remove(QLatin1String("downloadmanager/engine"));
+    settings.remove(QLatin1String("downloadmanager/external"));
     closeWindow(window);
 
     DownloadManager::instance()->cleanup();

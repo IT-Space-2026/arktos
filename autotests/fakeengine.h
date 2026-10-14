@@ -219,8 +219,9 @@ public:
         setState(State::InProgress);
     }
     void cancel() override { setState(State::Cancelled); }
-    void pause() override { ++pauses; }
-    void resume() override { ++resumes; }
+    void pause() override { ++pauses; m_paused = true; }
+    void resume() override { ++resumes; m_paused = false; }
+    bool isPaused() const override { return m_paused; }
     qint64 receivedBytes() const override { return m_received; }
     qint64 totalBytes() const override { return m_total; }
     State state() const override { return m_state; }
@@ -268,6 +269,7 @@ public:
     QString acceptedPath;
     int pauses = 0;
     int resumes = 0;
+    bool m_paused = false;
     Engine::Page *m_page = nullptr;
 };
 

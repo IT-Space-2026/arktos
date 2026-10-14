@@ -314,8 +314,10 @@ page), reveal-in-file-manager (with the file selected where the DE
 supports it) and open-with actions, server-suggested names sanitized
 and de-duplicated, and an external download-program handoff. Downloads
 surface in the sidebar's Downloads panel (Ctrl+Y or Tools →
-Downloads) — filterable, sortable, and each selected row expands into a
-detail card in the panel's bottom pane. Preferences → Downloads hosts
+Downloads) — filterable, sortable, each selected row expands into a
+detail card in the panel's bottom pane, and a compact action row
+offers pause/resume, retry, remove and show-in-folder for the
+selected download. Preferences → Downloads hosts
 a download-engine selector — Built-in (Chromium) or Accelerated (Rust,
 compiled in by default and the default engine — a saved Built-in
 pick is honored) — a connections-per-download

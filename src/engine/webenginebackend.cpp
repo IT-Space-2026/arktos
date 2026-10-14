@@ -711,6 +711,11 @@ void WebEngineDownloadRequest::resume()
     m_request->resume();
 }
 
+bool WebEngineDownloadRequest::isPaused() const
+{
+    return m_request->isPaused();
+}
+
 qint64 WebEngineDownloadRequest::receivedBytes() const
 {
     return m_request->receivedBytes();
