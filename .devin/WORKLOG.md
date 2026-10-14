@@ -932,3 +932,4 @@
 - 2026-10-14 PKG03: openSUSE rpm/arora.spec + .devin/pkg-rpm.sh (deb-identical payload, SONAME-capability Requires, container runbook) — verify PASS: spec sanity + %files/Requires coverage vs staged tree; rpmbuild absent locally (container path documented)
 - 2026-10-14 MERGEWATCH: rust-work 0 commits ahead; ui-work merged (d9512a8, PKG03 openSUSE RPM spec + driver) — no conflicts (clean ort; union auto-merged in WORKLOG.md, .gitignore, ChangeLog, README.md, arora.pro), build ok
 - 2026-10-14 MERGEWATCH: ui-work merged (f6b938c, queued MENU14 remove Open Location + MENU15 Quit-to-bottom task rows) — no conflicts (clean ort; .devin/Arora-Task-UI.md only), build ok; rust-work 0 commits ahead, skipped
+- 2026-10-14 MERGEWATCH: ui-work merged (3211550, queued TABS19 Firefox-matching tab size task row) — no conflicts (clean ort; .devin/Arora-Task-UI.md only), build ok; rust-work 0 commits ahead, skipped
