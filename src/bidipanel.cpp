@@ -207,6 +207,15 @@ public:
         ColumnCount
     };
     enum RowState { Pending = 0, Receiving, Finished, Failed };
+    // DEVT07: how a response was served — the Size column shows the
+    // "(disk cache)"-style label instead of a bogus 0-byte count.
+    enum CacheKind {
+        CacheNone = 0,
+        CacheDisk,
+        CacheMemory,
+        CacheServiceWorker,
+        CachePrefetch
+    };
     // Raw-value roles — the proxy sorts/filters on these and the
     // waterfall delegate reads the timings.
     enum Role {
@@ -217,6 +226,8 @@ public:
         BucketRole,
         StateRole,
         UrlRole,
+        CacheRole,
+        TtfbRole,
         DecodedRole
     };
     struct Row {
@@ -224,6 +235,7 @@ public:
         int bucket = NetOther;
         int status = -1;
         int state = Pending;
+        int cacheKind = CacheNone;
         qint64 size = -1;
         // DEVT07: uncompressed body bytes (the footer's "resources"
         // figure) and the cache-served flag the Size column marks
@@ -232,6 +244,11 @@ public:
         bool cached = false;
         double startMs = -1.0;
         double endMs = -1.0;
+        // Time-to-first-byte as an offset from startMs (CDP
+        // timing.receiveHeadersEnd) — splits the waterfall bar into
+        // waiting/receiving segments; -1 when the engine didn't send
+        // timing for the request.
+        double ttfbMs = -1.0;
     };
 
     explicit BidiNetworkModel(QObject *parent = nullptr)
@@ -288,6 +305,13 @@ public:
             case InitiatorColumn:
                 return row.initiator;
             case SizeColumn:
+                switch (row.cacheKind) {
+                case CacheDisk: return tr("(disk cache)");
+                case CacheMemory: return tr("(memory cache)");
+                case CacheServiceWorker: return tr("(service worker)");
+                case CachePrefetch: return tr("(prefetch cache)");
+                default: break;
+                }
                 // Cache-served rows report 0 wire bytes — show the
                 // honest marker like Chrome instead of "0 B".
                 if (row.cached && row.size <= 0)
@@ -304,6 +328,18 @@ public:
                 return row.url;
             if (index.column() == StatusColumn && row.state == Failed)
                 return row.errorText;
+            if (index.column() == SizeColumn && row.size >= 0)
+                return tr("%1 transferred over network")
+                    .arg(formatBytes(row.size));
+            if (index.column() == WaterfallColumn
+                && row.startMs >= 0.0 && row.endMs >= 0.0) {
+                const double total = row.endMs - row.startMs;
+                if (row.ttfbMs >= 0.0 && row.ttfbMs < total)
+                    return tr("Wait %1 · Download %2")
+                        .arg(formatMillis(row.ttfbMs),
+                             formatMillis(total - row.ttfbMs));
+                return formatMillis(total);
+            }
             return QVariant();
         case Qt::ForegroundRole:
             if (row.state == Failed || row.status >= 400)
@@ -322,6 +358,8 @@ public:
         case BucketRole: return row.bucket;
         case StateRole: return row.state;
         case UrlRole: return row.url;
+        case CacheRole: return row.cacheKind;
+        case TtfbRole: return row.ttfbMs;
         case DecodedRole: return row.decodedSize;
         }
         return QVariant();
@@ -355,6 +393,7 @@ public:
 
     void clear()
     {
+        m_lastTs = -1.0;
         if (m_rows.isEmpty())
             return;
         beginRemoveRows(QModelIndex(), 0, m_rows.size() - 1);
@@ -362,8 +401,17 @@ public:
         endRemoveRows();
     }
 
+    // Freshest CDP timestamp seen — lets a still-pending row's
+    // waterfall bar keep growing as later events arrive (DEVT07).
+    void noteTimestamp(double ts)
+    {
+        if (ts > m_lastTs)
+            m_lastTs = ts;
+    }
+
     // Waterfall window: earliest start .. latest end (pending rows
-    // count at their start so the scale never runs backwards).
+    // count at their start so the scale never runs backwards; the
+    // latest event timestamp keeps in-flight bars honest).
     double windowStart() const
     {
         double v = -1.0;
@@ -375,7 +423,7 @@ public:
     }
     double windowEnd() const
     {
-        double v = -1.0;
+        double v = m_lastTs;
         for (const Row &row : m_rows)
             v = qMax(v, row.endMs >= 0.0 ? row.endMs : row.startMs);
         return v;
@@ -431,8 +479,22 @@ public:
 
 private:
     QVector<Row> m_rows;
+    double m_lastTs = -1.0;
     double m_dclMs = -1.0;
     double m_loadMs = -1.0;
+};
+
+// DEVT07 — per-column floors: a narrow dock squeezes the elastic
+// Name/Waterfall split but can never crush a column to zero; below
+// the floors the table scrolls horizontally instead.
+static const int kNetColumnMin[BidiNetworkModel::ColumnCount] = {
+    90,   // Name
+    48,   // Status
+    56,   // Type
+    80,   // Initiator
+    64,   // Size
+    56,   // Time
+    130,  // Waterfall
 };
 
 class BidiNetworkProxy : public QSortFilterProxyModel
@@ -524,6 +586,8 @@ private:
 // every bar to a hairline); pending rows run to the window end,
 // translucent, and bars clipped by the zoomed axis carry an overflow
 // notch at the cell edge.
+// DEVT07: when the response timing arrived the bar splits at
+// time-to-first-byte — light segment waiting, solid receiving.
 class BidiWaterfallDelegate : public QStyledItemDelegate
 {
 public:
@@ -580,13 +644,35 @@ public:
                     : option.palette.color(QPalette::Highlight);
                 if (pending)
                     bar.setAlpha(120);
-                const QRect barRect(x, area.y(), width, area.height());
-                painter->fillRect(barRect, bar);
+
+                // Wait/receive split at TTFB, as a fraction of the
+                // bar (DEVT07).
+                const double ttfb =
+                    index.data(BidiNetworkModel::TtfbRole).toDouble();
+                int waitW = 0;
+                if (ttfb > 0.0 && end - start > 0.0
+                    && ttfb < end - start)
+                    waitW = qMin(width - 1,
+                                 qMax(1, int(ttfb / (end - start)
+                                                 * width)));
+                if (waitW > 0) {
+                    QColor wait = bar;
+                    wait.setAlpha(pending ? 60 : 80);
+                    painter->fillRect(
+                        QRect(x, area.y(), waitW, area.height()),
+                        wait);
+                }
+                painter->fillRect(
+                    QRect(x + waitW, area.y(), width - waitW,
+                          area.height()),
+                    bar);
                 // A 1px darker edge keeps the swatch legible on light
                 // themes where Highlight sits close to Base.
                 const QColor edge = bar.darker(140);
                 painter->setPen(edge);
-                painter->drawRect(barRect.adjusted(0, 0, -1, -1));
+                painter->drawRect(
+                    QRect(x, area.y(), width, area.height())
+                        .adjusted(0, 0, -1, -1));
                 if (clipped) {
                     // Overflow notch: a right-pointing tick at the
                     // cell edge — the request continues past the
@@ -624,64 +710,10 @@ private:
     BidiNetworkModel *m_model;
 };
 
-/*
- * DEVT07 — Chrome's column discipline.  Name and Waterfall share the
- * flex space with real minimums while the numeric columns keep fixed
- * widths; below the floors the table scrolls horizontally instead of
- * squeezing Size/Time/Waterfall to nothing.  A bare Stretch column
- * can't do this — it ratchets (grows into slack, never shrinks) and
- * the header's global minimumSectionSize can't floor just the
- * waterfall — so the view lays the two flex columns out on resize.
- */
-class BidiNetworkView : public QTableView
-{
-public:
-    explicit BidiNetworkView(QWidget *parent = nullptr)
-        : QTableView(parent)
-    {
-    }
-
-    // Chrome-ish floors: Name stays readable, the waterfall chart
-    // keeps enough width to see a bar.
-    static const int NameFloor = 160;
-    static const int WaterfallFloor = 140;
-
-protected:
-    void resizeEvent(QResizeEvent *event) override
-    {
-        QTableView::resizeEvent(event);
-        if (m_layingOut)
-            return;
-        m_layingOut = true;
-        QHeaderView *head = horizontalHeader();
-        int fixed = 0;
-        for (int c = BidiNetworkModel::StatusColumn;
-             c <= BidiNetworkModel::TimeColumn; ++c) {
-            fixed += head->sectionSize(c);
-        }
-        const int slack = viewport()->width() - fixed;
-        // Waterfall takes the larger share once both floors are met;
-        // negative slack lands both on their floors -> h-scrollbar.
-        int name = qMax(NameFloor, slack * 2 / 5);
-        int fall = slack - name;
-        if (fall < WaterfallFloor) {
-            fall = WaterfallFloor;
-            name = qMax(NameFloor, slack - WaterfallFloor);
-        }
-        head->resizeSection(BidiNetworkModel::NameColumn, name);
-        head->resizeSection(BidiNetworkModel::WaterfallColumn, fall);
-        m_layingOut = false;
-    }
-
-private:
-    bool m_layingOut = false;
-};
-
 BidiPanel::BidiPanel(QWidget *parent)
     : QWidget(parent)
     , m_client(new BidiClient(this))
     , m_nextTag(10)
-    , m_domContentLoadedMs(-1.0)
     , m_loadMs(-1.0)
 {
     // SIDE05: plain dock content — the surrounding m_bidiPanelDock
@@ -801,7 +833,7 @@ BidiPanel::BidiPanel(QWidget *parent)
     m_networkModel = new BidiNetworkModel(this);
     m_networkProxy = new BidiNetworkProxy(this);
     m_networkProxy->setSourceModel(m_networkModel);
-    m_networkView = new BidiNetworkView;
+    m_networkView = new QTableView;
     m_networkView->setObjectName(QLatin1String("bidiNetworkView"));
     m_networkView->setModel(m_networkProxy);
     m_networkView->setShowGrid(false);
@@ -813,31 +845,48 @@ BidiPanel::BidiPanel(QWidget *parent)
         m_networkView->fontMetrics().height() + 8);
     QHeaderView *netHead = m_networkView->horizontalHeader();
     netHead->setSectionResizeMode(QHeaderView::Interactive);
-    // DEVT07: no stretch column — BidiNetworkView::resizeEvent shares
-    // the slack between Name and Waterfall with real floors, so these
-    // fixed-fit widths are all the middle columns ever take and the
-    // waterfall can no longer be squeezed away.
+    // DEVT07: every column stays Interactive (user-resizable) with a
+    // real floor — see kNetColumnMin.  Name and Waterfall split the
+    // elastic space on each viewport resize (fitNetworkColumns); the
+    // numeric columns keep their fixed-fit widths and below the
+    // floors the table scrolls horizontally rather than losing a
+    // column outright.
+    static const int kNetColumnWidth[BidiNetworkModel::ColumnCount] = {
+        240, 64, 80, 140, 88, 80, 220
+    };
+    for (int c = 0; c < BidiNetworkModel::ColumnCount; ++c)
+        netHead->resizeSection(c, kNetColumnWidth[c]);
     netHead->setStretchLastSection(false);
     netHead->setMinimumSectionSize(50);
-    netHead->resizeSection(BidiNetworkModel::StatusColumn, 64);
-    netHead->resizeSection(BidiNetworkModel::TypeColumn, 72);
-    netHead->resizeSection(BidiNetworkModel::InitiatorColumn, 150);
-    netHead->resizeSection(BidiNetworkModel::SizeColumn, 84);
-    netHead->resizeSection(BidiNetworkModel::TimeColumn, 84);
-    netHead->resizeSection(BidiNetworkModel::NameColumn, 220);
-    netHead->resizeSection(BidiNetworkModel::WaterfallColumn, 260);
+    m_networkView->setHorizontalScrollMode(
+        QAbstractItemView::ScrollPerPixel);
+    m_networkView->viewport()->installEventFilter(this);
+    connect(netHead, &QHeaderView::sectionResized,
+            this, [this](int logical, int, int newSize) {
+        if (m_fittingColumns || logical < 0
+            || logical >= BidiNetworkModel::ColumnCount
+            || newSize >= kNetColumnMin[logical])
+            return;
+        // A user drag can't push a column under its floor.
+        m_fittingColumns = true;
+        m_networkView->horizontalHeader()
+            ->resizeSection(logical, kNetColumnMin[logical]);
+        m_fittingColumns = false;
+    });
     m_networkView->setItemDelegateForColumn(
         BidiNetworkModel::WaterfallColumn,
         new BidiWaterfallDelegate(
             static_cast<BidiNetworkModel *>(m_networkModel),
             m_networkView));
     nv->addWidget(m_networkView);
-    // DEVT07: Chrome's status line — request count, wire and decoded
-    // byte totals, and the Finish/DOMContentLoaded/Load timings.
+    // DEVT07: Chrome's bottom line — "N requests · X kB transferred ·
+    // X kB resources · Finish: T · DOMContentLoaded: T · Load: T",
+    // tracking the filtered row set.
     m_networkSummary = new QLabel;
-    m_networkSummary->setObjectName(
-        QLatin1String("bidiNetworkSummary"));
-    m_networkSummary->setContentsMargins(4, 1, 4, 2);
+    m_networkSummary->setObjectName(QLatin1String("bidiNetworkSummary"));
+    m_networkSummary->setStyleSheet(QStringLiteral(
+        "border-top: 1px solid palette(mid); padding: 2px 6px;"));
+    m_networkSummary->setTextInteractionFlags(Qt::TextSelectableByMouse);
     nv->addWidget(m_networkSummary);
     tabs->addTab(networkPage, tr("Network"));
 
@@ -886,7 +935,13 @@ BidiPanel::BidiPanel(QWidget *parent)
     connect(m_client, &BidiClient::connectionChanged,
             this, &BidiPanel::onConnectionChanged);
     connect(m_contextCombo, &QComboBox::currentIndexChanged,
-            this, [this](int) { refreshDom(); });
+            this, [this](int) {
+        // Milestones belong to the page that fired them — a context
+        // switch starts a fresh clock.
+        m_dclMs = m_loadMs = -1.0;
+        refreshDom();
+        updateNetworkSummary();
+    });
 
     // Network toolbar + chips drive the proxy; the view just follows.
     connect(m_networkFilter, &QLineEdit::textChanged,
@@ -909,6 +964,23 @@ BidiPanel::BidiPanel(QWidget *parent)
             this, &BidiPanel::clearNetworkLog);
     connect(m_disableCache, &QCheckBox::toggled,
             this, [this](bool) { sendCacheBehavior(); });
+    // The footer follows the FILTERED row set — proxy signals already
+    // aggregate model inserts/removes/resets/edits and re-slices;
+    // layoutChanged covers proxy re-slices and the source model's
+    // dataChanged catches in-place value edits.
+    connect(m_networkProxy, &QAbstractItemModel::rowsInserted,
+            this, [this] { updateNetworkSummary(); });
+    connect(m_networkProxy, &QAbstractItemModel::rowsRemoved,
+            this, [this] { updateNetworkSummary(); });
+    connect(m_networkProxy, &QAbstractItemModel::modelReset,
+            this, [this] { updateNetworkSummary(); });
+    connect(m_networkProxy, &QAbstractItemModel::dataChanged,
+            this, [this] { updateNetworkSummary(); });
+    connect(m_networkProxy, &QAbstractItemModel::layoutChanged,
+            this, [this] { updateNetworkSummary(); });
+    connect(m_networkModel, &QAbstractItemModel::dataChanged,
+            this, [this] { updateNetworkSummary(); });
+    updateNetworkSummary();
     // The model trims at 1000 rows — rebase requestId -> row so late
     // events still patch the right line.
     connect(m_networkModel, &QAbstractItemModel::rowsRemoved,
@@ -925,22 +997,6 @@ BidiPanel::BidiPanel(QWidget *parent)
             }
         }
     });
-
-    // DEVT07: the status-line footer recounts whenever the visible
-    // rows or their values change — inserts/removals/resets and
-    // layout changes ride the proxy (filters included), value edits
-    // ride the source model's dataChanged.
-    connect(m_networkProxy, &QAbstractItemModel::rowsInserted,
-            this, [this] { updateNetworkSummary(); });
-    connect(m_networkProxy, &QAbstractItemModel::rowsRemoved,
-            this, [this] { updateNetworkSummary(); });
-    connect(m_networkProxy, &QAbstractItemModel::modelReset,
-            this, [this] { updateNetworkSummary(); });
-    connect(m_networkProxy, &QAbstractItemModel::layoutChanged,
-            this, [this] { updateNetworkSummary(); });
-    connect(m_networkModel, &QAbstractItemModel::dataChanged,
-            this, [this] { updateNetworkSummary(); });
-    updateNetworkSummary();
 
     m_stack->setCurrentIndex(0);
     m_unavailableLabel->setText(tr("Debug channel not connected."));
@@ -1024,45 +1080,109 @@ void BidiPanel::clearNetworkLog()
     m_requestRows.clear();
 }
 
-// DEVT07: Chrome's status line.  Counts and byte sums follow the
-// filtered rows; Finish is the recording window's last-complete
-// minus first-start, and the load timings subtract the same start
-// (they share the CDP monotonic clock).
+bool BidiPanel::eventFilter(QObject *watched, QEvent *event)
+{
+    if (m_networkView && watched == m_networkView->viewport()
+        && event->type() == QEvent::Resize)
+        fitNetworkColumns();
+    return QWidget::eventFilter(watched, event);
+}
+
+// DEVT07: split the viewport's elastic space between Name and
+// Waterfall, keeping the user's width ratio and every column's floor.
+// Numeric columns keep their widths; when the floors alone don't fit
+// the table shows a horizontal scrollbar instead of hiding columns.
+void BidiPanel::fitNetworkColumns()
+{
+    if (m_fittingColumns)
+        return;
+    QHeaderView *head = m_networkView->horizontalHeader();
+    const int avail = m_networkView->viewport()->width();
+    if (avail <= 0)
+        return;
+    int fixed = 0;
+    for (int c = BidiNetworkModel::StatusColumn;
+         c <= BidiNetworkModel::TimeColumn; ++c)
+        fixed += head->sectionSize(c);
+    const int nameMin = kNetColumnMin[BidiNetworkModel::NameColumn];
+    const int fallMin = kNetColumnMin[BidiNetworkModel::WaterfallColumn];
+    const int elastic = avail - fixed;
+    int name, fall;
+    if (elastic < nameMin + fallMin) {
+        name = nameMin;
+        fall = fallMin;
+    } else {
+        const int cur = qMax(1, head->sectionSize(
+                                 BidiNetworkModel::NameColumn)
+                            + head->sectionSize(
+                                  BidiNetworkModel::WaterfallColumn));
+        name = qBound(nameMin,
+                      elastic * head->sectionSize(
+                                    BidiNetworkModel::NameColumn) / cur,
+                      elastic - fallMin);
+        fall = elastic - name;
+    }
+    m_fittingColumns = true;
+    if (head->sectionSize(BidiNetworkModel::NameColumn) != name)
+        head->resizeSection(BidiNetworkModel::NameColumn, name);
+    if (head->sectionSize(BidiNetworkModel::WaterfallColumn) != fall)
+        head->resizeSection(BidiNetworkModel::WaterfallColumn, fall);
+    m_fittingColumns = false;
+}
+
+// DEVT07: Chrome's summary line — counts and bytes track the filtered
+// (visible) rows; Finish is the last completion of that set, and
+// DOMContentLoaded/Load ride the Page-domain milestones when the
+// engine emits them.  The "resources" figure sums the bridge's
+// decoded (uncompressed) byte totals, falling back to wire size for
+// rows that never reported chunks.
 void BidiPanel::updateNetworkSummary()
 {
-    BidiNetworkModel *model =
-        static_cast<BidiNetworkModel *>(m_networkModel);
     const int rows = m_networkProxy->rowCount();
-    qint64 transferred = 0, resources = 0;
+    qint64 bytes = 0;
+    qint64 resources = 0;
+    double firstStart = -1.0;
+    double lastEnd = -1.0;
     for (int r = 0; r < rows; ++r) {
-        const QModelIndex i =
-            m_networkProxy->index(r, BidiNetworkModel::SizeColumn);
-        const qint64 size =
-            i.data(BidiNetworkModel::SizeRole).toLongLong();
-        const qint64 decoded =
-            i.data(BidiNetworkModel::DecodedRole).toLongLong();
+        const QModelIndex cell =
+            m_networkProxy->index(r, BidiNetworkModel::NameColumn);
+        const qint64 size = cell.data(BidiNetworkModel::SizeRole)
+                                .toLongLong();
+        const qint64 decoded = cell.data(BidiNetworkModel::DecodedRole)
+                                   .toLongLong();
         if (size > 0)
-            transferred += size;
-        // Rows the bridge never got chunks for contribute their wire
-        // size as the best honest approximation of decoded bytes.
+            bytes += size;
         resources += decoded >= 0 ? decoded : qMax<qint64>(size, 0);
+        const double s = cell.data(BidiNetworkModel::StartRole)
+                             .toDouble();
+        const double e = cell.data(BidiNetworkModel::EndRole)
+                             .toDouble();
+        if (s >= 0.0 && (firstStart < 0.0 || s < firstStart))
+            firstStart = s;
+        if (e > lastEnd)
+            lastEnd = e;
     }
-    QStringList parts;
-    parts << tr("%1 requests").arg(rows);
-    parts << tr("%1 transferred").arg(formatBytes(transferred));
-    parts << tr("%1 resources").arg(formatBytes(resources));
-    const double start = model->windowStart();
-    const double end = model->windowEnd();
-    if (start >= 0.0 && end > start) {
-        parts << tr("Finish: %1").arg(formatMillis(end - start));
-        if (m_domContentLoadedMs >= start)
-            parts << tr("DOMContentLoaded: %1")
-                         .arg(formatMillis(m_domContentLoadedMs - start));
-        if (m_loadMs >= start)
-            parts << tr("Load: %1")
-                         .arg(formatMillis(m_loadMs - start));
-    }
-    m_networkSummary->setText(parts.join(QStringLiteral("  ·  ")));
+    // Singular/plural is spelled out — an untranslated "%n" would
+    // render the literal "request(s)".
+    QString text = (rows == 1 ? tr("1 request")
+                              : tr("%1 requests").arg(rows))
+        + QStringLiteral(" · ")
+        + tr("%1 transferred").arg(formatBytes(bytes))
+        + QStringLiteral(" · ")
+        + tr("%1 resources").arg(formatBytes(resources));
+    if (firstStart >= 0.0 && lastEnd >= firstStart)
+        text += tr(" · Finish: %1")
+                    .arg(formatMillis(lastEnd - firstStart));
+    // Milestone times are relative to the recording window's start
+    // (navigation), matching how Chrome reports them.
+    const double epoch = static_cast<BidiNetworkModel *>(m_networkModel)
+        ->windowStart();
+    if (m_dclMs >= 0.0 && epoch >= 0.0 && m_dclMs >= epoch)
+        text += tr(" · DOMContentLoaded: %1")
+                    .arg(formatMillis(m_dclMs - epoch));
+    if (m_loadMs >= 0.0 && epoch >= 0.0 && m_loadMs >= epoch)
+        text += tr(" · Load: %1").arg(formatMillis(m_loadMs - epoch));
+    m_networkSummary->setText(text);
 }
 
 void BidiPanel::sendCacheBehavior()
@@ -1315,8 +1435,7 @@ void BidiPanel::onEvent(const QByteArray &json)
             // A fresh load owns fresh footer timings regardless of
             // Preserve log keeping the old request rows — and fresh
             // waterfall marker lines (DEVT09).
-            m_domContentLoadedMs = -1.0;
-            m_loadMs = -1.0;
+            m_dclMs = m_loadMs = -1.0;
             static_cast<BidiNetworkModel *>(m_networkModel)
                 ->setPageTimings(-1.0, -1.0);
             // Chrome clears the request log on navigation unless
@@ -1328,20 +1447,22 @@ void BidiPanel::onEvent(const QByteArray &json)
         }
         return;
     }
-    // DEVT07: the Page domain's lifecycle timings, remapped by the
-    // bridge onto the same monotonic-ms clock as the request rows.
+    // DEVT07: page-load milestones (the bridge maps CDP
+    // Page.domContentEventFired/loadEventFired onto these BiDi names)
+    // — they feed the footer's DOMContentLoaded/Load times.
     if (method == QLatin1String("browsingContext.domContentLoaded")
         || method == QLatin1String("browsingContext.load")) {
-        if (params[QStringLiteral("context")].toString()
-            == currentContext()) {
-            const double ts =
-                params[QStringLiteral("timestamp")].toDouble(-1.0);
-            if (method.endsWith(QLatin1String("domContentLoaded")))
-                m_domContentLoadedMs = ts;
+        const QString ctx = params[QStringLiteral("context")].toString();
+        const double ts =
+            params[QStringLiteral("timestamp")].toDouble(-1.0);
+        if (ts >= 0.0
+            && (ctx.isEmpty() || ctx == currentContext())) {
+            if (method == QLatin1String("browsingContext.domContentLoaded"))
+                m_dclMs = ts;
             else
                 m_loadMs = ts;
             static_cast<BidiNetworkModel *>(m_networkModel)
-                ->setPageTimings(m_domContentLoadedMs, m_loadMs);
+                ->setPageTimings(m_dclMs, m_loadMs);
             updateNetworkSummary();
         }
         return;
@@ -1357,6 +1478,8 @@ void BidiPanel::onEvent(const QByteArray &json)
                                   .toVariant().toString();
     // CDP MonotonicTime passed through as ms — waterfall + Time.
     const double ts = params[QStringLiteral("timestamp")].toDouble(-1.0);
+    if (ts >= 0.0)
+        model->noteTimestamp(ts);
     int row = m_requestRows.value(requestId, -1);
     if (method == QLatin1String("network.beforeRequestSent")) {
         const QJsonObject req = params[QStringLiteral("request")].toObject();
@@ -1396,6 +1519,21 @@ void BidiPanel::onEvent(const QByteArray &json)
         data->status = resp[QStringLiteral("status")].toInt(-1);
         if (data->state < BidiNetworkModel::Receiving)
             data->state = BidiNetworkModel::Receiving;
+        // DEVT07: cache provenance → "(disk cache)" etc. in the Size
+        // column; receiveHeadersEnd → the waterfall's wait/download
+        // split.
+        if (resp[QStringLiteral("fromServiceWorker")].toBool())
+            data->cacheKind = BidiNetworkModel::CacheServiceWorker;
+        else if (resp[QStringLiteral("fromPrefetchCache")].toBool())
+            data->cacheKind = BidiNetworkModel::CachePrefetch;
+        else if (resp[QStringLiteral("fromDiskCache")].toBool())
+            data->cacheKind = BidiNetworkModel::CacheDisk;
+        const double ttfb = resp[QStringLiteral("timing")]
+                                .toObject()[QStringLiteral(
+                                    "receiveHeadersEnd")]
+                                .toDouble(-1.0);
+        if (ttfb >= 0.0)
+            data->ttfbMs = ttfb;
         const QString type = params[QStringLiteral("type")].toString();
         if (!type.isEmpty()) {
             data->type = type;
@@ -1411,6 +1549,11 @@ void BidiPanel::onEvent(const QByteArray &json)
             || resp[QStringLiteral("fromPrefetchCache")].toBool()
             || resp[QStringLiteral("fromServiceWorker")].toBool())
             data->cached = true;
+        model->rowChanged(row);
+    } else if (method
+               == QLatin1String("network.requestServedFromCache")) {
+        // DEVT07: memory-cache hits arrive on their own event.
+        data->cacheKind = BidiNetworkModel::CacheMemory;
         model->rowChanged(row);
     } else if (method == QLatin1String("network.responseCompleted")) {
         data->state = BidiNetworkModel::Finished;

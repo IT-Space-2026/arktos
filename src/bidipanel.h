@@ -19,9 +19,13 @@
  *            evaluate round-trip keeps this engine-neutral)
  *   Network  Chrome-DevTools-style request table (DEVT06): filter
  *            field, type-filter chips, Preserve log / Disable cache
- *            toggles, and a Name/Status/Type/Initiator/Size/Time/
- *            Waterfall model fed by the network.* event stream
- *            (bodies intentionally out of scope)
+ *            toggles, a Name/Status/Type/Initiator/Size/Time/
+ *            Waterfall model fed by the network.* event stream, and
+ *            (DEVT07) per-column minimum widths so narrow docks keep
+ *            every column, a two-tone waterfall bar split at
+ *            time-to-first-byte, and a Chrome-style summary footer
+ *            (requests / transferred / Finish / DOMContentLoaded /
+ *            Load).  Bodies intentionally out of scope.
  *   Storage  cookies via storage.getCookies plus per-context
  *            localStorage via script.evaluate
  *
@@ -62,6 +66,9 @@ public:
 
 protected:
     void showEvent(QShowEvent *event) override;
+    // The Network view's viewport Resize drives the Name/Waterfall
+    // elastic column split (DEVT07).
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 #ifdef AUTOTESTS
 public:
@@ -95,6 +102,7 @@ private:
                   quint64 tag);
     void clearNetworkLog();
     void sendCacheBehavior();
+    void fitNetworkColumns();
     void updateNetworkSummary();
 
     BidiClient *m_client;
@@ -124,11 +132,14 @@ private:
     quint64 m_nextTag;
     QString m_domHelperContext;
     QHash<QString, int> m_requestRows; // requestId -> network row
-    // DEVT07: page-load timings for the footer's DOMContentLoaded/Load
-    // — CDP monotonic ms on the same clock as the request rows; -1 unset.
-    double m_domContentLoadedMs;
-    double m_loadMs;
     QHash<quint64, QTreeWidgetItem *> m_pendingDomItem;
+    // DEVT07: page-load milestones for the summary footer (CDP
+    // monotonic ms), reset on navigation/context switch.
+    double m_dclMs = -1.0;
+    double m_loadMs = -1.0;
+    // Reentrancy guard while fitNetworkColumns / the minimum-width
+    // clamp call resizeSection() inside sectionResized().
+    bool m_fittingColumns = false;
 };
 
 #endif // BIDIPANEL_H
