@@ -51,6 +51,7 @@ private slots:
 
     void binaryResolution();
     void failsWithoutBinary();
+    void readyElapsed();
     void controlProtocol();
     void circuitStatusParsing();
     void nsAddressParsing();
@@ -117,6 +118,22 @@ void tst_TorManager::failsWithoutBinary()
     QCOMPARE(failedSpy.count(), 1);
     QVERIFY(!manager.errorString().isEmpty());
     QVERIFY(!manager.isRunning());
+}
+
+// TOR18: readyElapsed() is the post-ready warm-up clock — it runs
+// only while the state machine sits in Ready and reports -1
+// everywhere else, so an armed error-page retry can bound how long
+// 'freshly ready' lasts.
+void tst_TorManager::readyElapsed()
+{
+    TorManager manager;
+    QCOMPARE(manager.readyElapsed(), qint64(-1));
+    manager.setStateForTesting(TorManager::Bootstrapping);
+    QCOMPARE(manager.readyElapsed(), qint64(-1));
+    manager.setStateForTesting(TorManager::Ready);
+    QVERIFY(manager.readyElapsed() >= 0);
+    manager.setStateForTesting(TorManager::Stopped);
+    QCOMPARE(manager.readyElapsed(), qint64(-1));
 }
 
 // TorControl line protocol against an in-process fake control server:

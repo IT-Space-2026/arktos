@@ -913,6 +913,68 @@ bool WebView::isUrlAllowedFromPageLink(const QUrl &url)
         && scheme != QLatin1String("blob");
 }
 
+// TOR18: the managed daemon — null outside tor mode (and in the
+// autotest process until one is injected).
+TorManager *WebView::torManager() const
+{
+    BrowserApplication *app = BrowserApplication::instance();
+    return app ? app->torManager() : nullptr;
+}
+
+// Whether a loadUrl() must hold for the daemon.  Only schemes that
+// ride the SOCKS listener are queued — qrc:/about:/data:/file: pages
+// resolve locally and must never stall behind bootstrap (the tor
+// start page itself is qrc:).  A missing manager (autotest runs
+// without an injected daemon) leaves the gate open.
+bool WebView::torMustQueue(const QUrl &url) const
+{
+    if (!BrowserApplication::isTorMode())
+        return false;
+    const QString scheme = url.scheme();
+    if (scheme != QLatin1String("http")
+        && scheme != QLatin1String("https")
+        && scheme != QLatin1String("ws")
+        && scheme != QLatin1String("wss")
+        && scheme != QLatin1String("ftp"))
+        return false;
+    TorManager *tor = torManager();
+    return tor && !tor->isReady();
+}
+
+// The only wake-up the queue needs — `ready` is the first moment a
+// remote dispatch can succeed.  The connection is armed lazily on the
+// first queued load.
+void WebView::torArmWakeup()
+{
+    if (m_torWakeupArmed)
+        return;
+    TorManager *tor = torManager();
+    if (!tor)
+        return;
+    m_torWakeupArmed = true;
+    connect(tor, &TorManager::ready, this,
+            [this](const QNetworkProxy &) { torFlushQueuedLoad(); });
+    // A replaced manager (the autotest seam swaps the pointer) must
+    // earn a fresh wakeup — the armed flag tracks the object it was
+    // connected to.
+    connect(tor, &QObject::destroyed, this,
+            [this]() { m_torWakeupArmed = false; });
+}
+
+void WebView::torFlushQueuedLoad()
+{
+    if (m_torQueuedUrl.isEmpty())
+        return;
+    const QUrl url = m_torQueuedUrl;
+    const QString title = m_torQueuedTitle;
+    m_torQueuedUrl.clear();
+    m_torQueuedTitle.clear();
+    // Back through loadUrl() — a daemon that somehow is still not
+    // ready re-queues instead of dispatching into the fail-closed
+    // proxy.
+    loadUrl(url, title);
+}
+
 void WebView::loadUrl(const QUrl &url, const QString &title)
 {
     if (url.scheme() == QLatin1String("javascript")) {
@@ -925,6 +987,19 @@ void WebView::loadUrl(const QUrl &url, const QString &title)
         emit titleChanged(tr("Loading..."));
     else
         emit titleChanged(title);
+    // TOR18: a remote navigation issued while the daemon is still
+    // bootstrapping would die at the fail-closed proxy and just sit
+    // on the error page — hold it in the view until `ready` instead.
+    // The location bar already shows the url (TabWidget writes it
+    // before calling here) and TOR17's banner explains the wait.
+    if (torMustQueue(url)) {
+        m_torQueuedUrl = url;
+        m_torQueuedTitle = title;
+        torArmWakeup();
+        return;
+    }
+    m_torQueuedUrl.clear();
+    m_torQueuedTitle.clear();
     load(url);
 }
 

@@ -9676,6 +9676,64 @@ int main(int argc, char **argv)
             return application.exec();
         }
 
+        // TOR18: a user-kicked navigation issued while the daemon is
+        // still bootstrapping must not die at the fail-closed proxy —
+        // WebView::loadUrl holds the newest remote url and dispatches
+        // it when `ready` lands.  The leg drives one on a background
+        // tab so the running start-page and api/ip probes keep their
+        // own tabs; its commit is attributed to the queue flush
+        // alone.  When the daemon is already ready the leg is vacuous
+        // (nothing would ever queue) and pre-set to skip the gate.
+        bool *queuedCommitted = new bool(false);
+        if (!torManager->isReady()) {
+            WebView *bootstrapTab = torWindow->tabWidget()->makeNewTab(false);
+            const QUrl queuedUrl(
+                QStringLiteral("https://check.torproject.org/"));
+            bootstrapTab->loadUrl(queuedUrl);
+            // Held means exactly that: nothing dispatched, no load
+            // started.  A queue miss would kick a real nav and flip
+            // isLoading() right here.
+            if (bootstrapTab->isLoading()) {
+                torWinFail(QLatin1String(
+                    "bootstrap nav was not held for ready"));
+                return application.exec();
+            }
+            qInfo() << "tor-window-smoke: bootstrap nav held for"
+                    << queuedUrl;
+            QObject::connect(
+                bootstrapTab, &QWebEngineView::loadStarted,
+                &application, []() {
+                qInfo() << "tor-window-smoke: bootstrap nav dispatched";
+            });
+            QObject::connect(
+                bootstrapTab, &QWebEngineView::loadFinished,
+                &application,
+                [bootstrapTab, queuedUrl, queuedCommitted](bool ok) {
+                qInfo() << "tor-window-smoke: bootstrap nav finished"
+                        << ok << bootstrapTab->url();
+                if (!ok || bootstrapTab->url() != queuedUrl)
+                    return;
+                // A committed error page reports ok under the failed
+                // url too — only real content flips the flag.  The
+                // probe reads textContent, not innerText: a never-
+                // raised background tab has no layout, so innerText
+                // comes back empty even for a real commit.
+                bootstrapTab->enginePage()->runJavaScript(
+                    QStringLiteral("document.documentElement.textContent"),
+                    [queuedCommitted](const QVariant &result) {
+                    const QString text = result.toString();
+                    qInfo() << "tor-window-smoke: bootstrap nav content:"
+                            << text.left(120);
+                    if (text.contains(
+                            QLatin1String("configured to use Tor"),
+                            Qt::CaseInsensitive))
+                        *queuedCommitted = true;
+                });
+            });
+        } else {
+            *queuedCommitted = true;
+        }
+
         const QUrl probeUrl(QStringLiteral("https://check.torproject.org/api/ip"));
         QObject::connect(torManager, &TorManager::failed,
                          &application, torWinFail);
@@ -9684,7 +9742,7 @@ int main(int argc, char **argv)
             qInfo() << "tor:" << line;
         });
         auto onReady = [torManager, &application, networkAccessManager,
-                        view, probeUrl, torWinFail,
+                        view, probeUrl, torWinFail, queuedCommitted,
                         circuitLabel, torWindow](const QNetworkProxy &) {
             const QNetworkProxy applied = QNetworkProxy::applicationProxy();
             if (applied.type() != QNetworkProxy::Socks5Proxy
@@ -9700,7 +9758,8 @@ int main(int argc, char **argv)
                 QNetworkRequest(probeUrl));
             QObject::connect(reply, &QNetworkReply::finished, &application,
                              [&application, reply, view, probeUrl,
-                              torWinFail, circuitLabel, torWindow]() {
+                              torWinFail, queuedCommitted,
+                              circuitLabel, torWindow]() {
                 const QByteArray body = reply->readAll();
                 qInfo() << "tor-window-smoke: api/ip via NAM:"
                         << reply->error() << body.left(120);
@@ -9722,7 +9781,8 @@ int main(int argc, char **argv)
                 QObject::connect(view, &QWebEngineView::loadFinished,
                                  &application,
                                  [&application, view, pageUrl, probeUrl,
-                                  torWinFail, circuitLabel, torWindow](bool ok) {
+                                  torWinFail, queuedCommitted,
+                                  circuitLabel, torWindow](bool ok) {
                     if (!ok || view->url() != pageUrl)
                         return;
                     view->enginePage()->runJavaScript(
@@ -9735,7 +9795,7 @@ int main(int argc, char **argv)
                             "+document.documentElement.innerText"
                             ".slice(0,300);}})()"),
                         [&application, pageUrl, probeUrl, torWinFail,
-                         circuitLabel, torWindow](
+                         queuedCommitted, circuitLabel, torWindow](
                             const QVariant &result) {
                         const QString body = result.toString();
                         qInfo() << "tor-window-smoke: api/ip via WebEngine:"
@@ -9841,7 +9901,7 @@ int main(int argc, char **argv)
                                 "+'|'+(s?'S':'-')+'|'"
                                 "+(h&&h.textContent.length?'H':'-')"
                                 "+'|'+document.title;})()"),
-                            [&application, torWinFail](
+                            [&application, torWinFail, queuedCommitted](
                                     const QVariant &result) {
                             const QString probe = result.toString();
                             qInfo() << "tor-window-smoke: tor start page:"
@@ -9858,11 +9918,37 @@ int main(int argc, char **argv)
                                     "(logo/search/channel/title)"));
                                 return;
                             }
-                            qInfo() << "tor-window-smoke: PASS"
-                                    << "(IsTor:true, OTR profile,"
-                                    << " fail-closed arm,"
-                                    << " tor start page)";
-                            application.exit(0);
+                            // TOR18: the queued bootstrap nav flushed
+                            // at `ready` — give it a short grace past
+                            // this chain to commit real content before
+                            // the gate closes.
+                            int *queuePollTicks = new int(0);
+                            QTimer *queuePoll = new QTimer(&application);
+                            queuePoll->setInterval(500);
+                            QObject::connect(
+                                queuePoll, &QTimer::timeout,
+                                &application,
+                                [&application, torWinFail,
+                                 queuedCommitted, queuePoll,
+                                 queuePollTicks]() {
+                                if (!*queuedCommitted) {
+                                    if (++*queuePollTicks <= 60)
+                                        return;
+                                    queuePoll->stop();
+                                    torWinFail(QLatin1String(
+                                        "queued bootstrap nav never "
+                                        "committed"));
+                                    return;
+                                }
+                                queuePoll->stop();
+                                qInfo() << "tor-window-smoke: PASS"
+                                        << "(IsTor:true, OTR profile,"
+                                        << " fail-closed arm,"
+                                        << " tor start page,"
+                                        << " queued nav committed)";
+                                application.exit(0);
+                            });
+                            queuePoll->start();
                         });
                     });
                 });

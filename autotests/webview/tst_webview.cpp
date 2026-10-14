@@ -229,6 +229,7 @@ private slots:
     void zoom();
     void wheelZoom();
     void loadUrl();
+    void torQueuedNavigation();
     void statusBarText();
     void mouseButtons();
     void dropUrl();
@@ -477,6 +478,67 @@ void tst_WebView::loadUrl()
     view.loadUrl(QUrl(QLatin1String("javascript:void(0)")));
     QTest::qWait(250);
     QCOMPARE(view.url(), before);
+}
+
+// TOR18: a remote loadUrl() issued before the daemon is ready is
+// held in the view — newest url wins — and dispatched when `ready`
+// lands, instead of dying at the fail-closed proxy.  Local schemes
+// never queue: they resolve without the SOCKS listener at all.
+void tst_WebView::torQueuedNavigation()
+{
+    PrivacyFlagGuard flags;
+    BrowserApplication::setTorMode(true);
+
+    // An inert manager — the ctor spawns nothing until start(), so
+    // the test drives the state machine by hand.  The injection is
+    // guarded back to nullptr: a dangling pointer in
+    // m_torManager would poison every later case.
+    TorManager tor;
+    struct TorManagerGuard {
+        ~TorManagerGuard()
+        {
+            if (BrowserApplication *app = BrowserApplication::instance())
+                app->setTorManagerForTesting(nullptr);
+        }
+    } injected;
+    BrowserApplication::instance()->setTorManagerForTesting(&tor);
+    tor.setStateForTesting(TorManager::Bootstrapping);
+
+    TestWebView view;
+    const QUrl queued(QStringLiteral("https://queued.example/"));
+    view.loadUrl(queued);
+    QCOMPARE(view.torQueuedUrlForTesting(), queued);
+    QVERIFY(!view.isLoading());
+
+    // A second kick while still bootstrapping replaces the held url —
+    // the newest user intent wins.
+    const QUrl newer(QStringLiteral("https://newer.example/"));
+    view.loadUrl(newer);
+    QCOMPARE(view.torQueuedUrlForTesting(), newer);
+
+    // data:/qrc:/about:/file: never queue.
+    const QUrl local(QStringLiteral("data:text/html,<p>local</p>"));
+    view.loadUrl(local);
+    QVERIFY(view.torQueuedUrlForTesting().isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        view.url().toString().startsWith(QLatin1String("data:")),
+        15000);
+
+    // Re-queue, drive the daemon to Ready, emit `ready` — the held
+    // url flushes into a real load on its own.
+    view.loadUrl(queued);
+    QCOMPARE(view.torQueuedUrlForTesting(), queued);
+    QSignalSpy startedSpy(&view, &QWebEngineView::loadStarted);
+    tor.setStateForTesting(TorManager::Ready);
+    tor.ready(QNetworkProxy());
+    QVERIFY(view.torQueuedUrlForTesting().isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(startedSpy.count() >= 1, 15000);
+
+    // A Failed daemon still holds the kick — the banner's Retry
+    // restarts it and the queued nav lands when that ready fires.
+    tor.setStateForTesting(TorManager::Failed);
+    view.loadUrl(newer);
+    QCOMPARE(view.torQueuedUrlForTesting(), newer);
 }
 
 void tst_WebView::statusBarText()

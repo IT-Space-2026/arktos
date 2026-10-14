@@ -20,6 +20,7 @@
 #ifndef TORMANAGER_H
 #define TORMANAGER_H
 
+#include <qelapsedtimer.h>
 #include <qhash.h>
 #include <qhostaddress.h>
 #include <qnetworkproxy.h>
@@ -120,6 +121,11 @@ public:
 
     State state() const;
     bool isReady() const;
+    // TOR18: ms since the SOCKS listener went live (state Ready), -1
+    // otherwise.  PROGRESS=100 only means the listener answers — the
+    // first exit circuits are still being built for a stretch after
+    // it, so navigations inside this window still race cold circuits.
+    qint64 readyElapsed() const;
     bool isRunning() const;                    // daemon process alive
     QString errorString() const;
     int bootstrapProgress() const;             // -1 until reported
@@ -168,6 +174,13 @@ public slots:
     // connection); coalesced while a query is in flight.
     void requestCircuitInfo();
 
+#ifdef AUTOTESTS
+    // Test seam: drives the state machine without a live daemon —
+    // the bootstrap navigation-gate tests flip Ready/Bootstrapping to
+    // exercise the queue and warm-up retry paths.
+    void setStateForTesting(State state) { setState(state); }
+#endif
+
 signals:
     void stateChanged(TorManager::State state);
     void bootstrapProgressChanged(int progress, const QString &summary);
@@ -203,6 +216,7 @@ private:
     QString m_bootstrapSummary;
     QHostAddress m_socksHost;
     quint16 m_socksPort;
+    QElapsedTimer m_readyClock;   // TOR18: running only while Ready
 
     // TOR17: an early daemon exit (or a failed exec) before
     // bootstrap strands the window on the fail-closed proxy — every
