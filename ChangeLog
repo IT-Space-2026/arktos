@@ -688,6 +688,15 @@ UI:
   rest of the navigation row also centers against the taller app
   button instead of riding the top edge, so the bar reads as one
   intentional row (MENU10).
+- The navigation bar is customizable: right-click it for a menu with
+  New Tab and New Private Tab up top plus a checkable "Edit
+  Navigation Bar" — while it's on, the bar shows a dashed frame and
+  every item (app menu, history buttons, reader/onion buttons, the
+  address bar itself, the sidebar toggle) can be dragged to a new
+  spot behind a highlighted drop line. Exit by toggling the entry
+  again, pressing Esc, or clicking anywhere off the bar; the order
+  stays for the window and saving it between sessions comes next
+  (NAVB03).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
