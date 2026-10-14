@@ -556,20 +556,13 @@ void tst_BrowserMainWindow::fileMenuOrder()
     QCOMPARE(privateBrowsing, -1);
     QVERIFY(newTor < closeWindowIndex);
 
-    // MENU03: Preferences sits directly above Close Window in the
-    // File menu's bottom group, keeping the Ctrl+, shortcut and the
-    // PreferencesRole platform hint.
-    QCOMPARE(preferencesIndex, closeWindowIndex - 1);
-    QAction *prefsAction = nullptr;
-    for (QAction *action : fileMenu->actions()) {
-        if (action->text().remove(QLatin1Char('&'))
-                == QLatin1String("Preferences..."))
-            prefsAction = action;
-    }
-    QVERIFY(prefsAction);
-    QCOMPARE(prefsAction->shortcut(),
-             QKeySequence(QStringLiteral("Ctrl+,")));
-    QCOMPARE(prefsAction->menuRole(), QAction::PreferencesRole);
+    // MENU12: Preferences left the File menu entirely — it is a
+    // direct app-menu leaf now (asserted in appMenuButton) — so the
+    // bottom group is just Close Window + Quit.
+    QCOMPARE(preferencesIndex, -1);
+    QCOMPARE(entries.at(entries.count() - 2),
+             QLatin1String("Close Window"));
+    QCOMPARE(entries.constLast(), QLatin1String("Quit"));
 
     // The action fires the tab widget's private-tab slot and carries
     // the incognito-style shortcut (Ctrl+Shift+P is the palette).
@@ -1152,19 +1145,15 @@ void tst_BrowserMainWindow::appMenuButton()
     newTab->trigger();
     QCOMPARE(window->tabWidget()->count(), tabs + 1);
 
-    // MENU11: the app-menu leaf IS the File > Preferences QAction —
-    // one object in both menus — and triggering it opens the
-    // settings tab.
-    QAction *filePrefs = nullptr;
-    for (QAction *action : fileMenu->actions()) {
-        if (action->text().remove(QLatin1Char('&'))
-                == QLatin1String("Preferences..."))
-            filePrefs = action;
-    }
-    QVERIFY(filePrefs);
-    QCOMPARE(appPrefs, filePrefs);
+    // MENU12: the app-menu leaf is the action's only menu home —
+    // File carries no copy — and the window registration keeps the
+    // Ctrl+, shortcut live with no menubar row.  Triggering it opens
+    // the settings tab.
+    QVERIFY(!fileMenu->actions().contains(appPrefs));
+    QVERIFY(window->actions().contains(appPrefs));
     QCOMPARE(appPrefs->shortcut(),
              QKeySequence(QStringLiteral("Ctrl+,")));
+    QCOMPARE(appPrefs->menuRole(), QAction::PreferencesRole);
     appPrefs->trigger();
     int prefsTab = -1;
     for (int i = 0; i < window->tabWidget()->count(); ++i)

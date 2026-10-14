@@ -1003,14 +1003,16 @@ void BrowserMainWindow::setupMenu()
     m_fileMenu->addAction(m_filePrintAction);
     m_fileMenu->addSeparator();
 
-    // MENU03: Preferences lives in the File menu's bottom group,
-    // directly above Close Window (cross-browser convention).
-    m_filePreferencesAction = new QAction(m_fileMenu);
-    m_filePreferencesAction->setMenuRole(QAction::PreferencesRole);
-    connect(m_filePreferencesAction, &QAction::triggered,
+    // MENU12: Preferences is a direct app-menu leaf (MENU11) — the
+    // File-menu copy was dropped as a duplicate.  The action stays
+    // registered on the window (like the Ctrl+K webSearch carrier;
+    // MENU06's app-menu addAction loop covers it too) so Ctrl+,
+    // keeps firing with no menubar row to carry it.
+    m_preferencesAction = new QAction(this);
+    m_preferencesAction->setMenuRole(QAction::PreferencesRole);
+    connect(m_preferencesAction, &QAction::triggered,
             this, &BrowserMainWindow::preferences);
-    m_fileMenu->addAction(m_filePreferencesAction);
-    m_fileMenu->addSeparator();
+    addAction(m_preferencesAction);
 
     m_fileCloseWindow = new QAction(m_fileMenu);
     connect(m_fileCloseWindow, &QAction::triggered, this, &QWidget::close);
@@ -1042,7 +1044,7 @@ void BrowserMainWindow::setupMenu()
     m_fileExportBookmarksAction->setIcon(AroraIcon::getChrome(QLatin1String("document-export")));
     m_filePrintPreviewAction->setIcon(AroraIcon::getChrome(QLatin1String("document-print-preview")));
     m_filePrintAction->setIcon(AroraIcon::getChrome(QLatin1String("document-print")));
-    m_filePreferencesAction->setIcon(AroraIcon::getChrome(QLatin1String("preferences-system")));
+    m_preferencesAction->setIcon(AroraIcon::getChrome(QLatin1String("preferences-system")));
     m_fileCloseWindow->setIcon(AroraIcon::getChrome(QLatin1String("window-close")));
     m_fileQuit->setIcon(AroraIcon::getChrome(QLatin1String("application-exit")));
 #endif
@@ -1681,8 +1683,8 @@ void BrowserMainWindow::retranslate()
     m_filePrintAction->setText(tr("&Print..."));
     m_fileNewPrivateTabAction->setText(tr("New &Private Tab"));
     m_fileNewTorWindowAction->setText(tr("New &Tor Window"));
-    m_filePreferencesAction->setText(tr("Preferences..."));
-    m_filePreferencesAction->setShortcut(tr("Ctrl+,"));
+    m_preferencesAction->setText(tr("Preferences..."));
+    m_preferencesAction->setShortcut(tr("Ctrl+,"));
     m_fileCloseWindow->setText(tr("Close Window"));
     m_fileQuit->setText(tr("&Quit"));
 
@@ -1820,13 +1822,13 @@ void BrowserMainWindow::setupToolBar()
     m_appMenu = new QMenu(this);
     for (QMenu *menu : m_topMenus) {
         m_appMenu->addMenu(menu);
-        // MENU11: Preferences is also a direct app-menu entry right
-        // after Tools — the same QAction object as File > Preferences
-        // (a QAction can live in several menus; each still fires
-        // preferences()), so text, shortcut and icon cannot drift.
+        // MENU11/MENU12: Preferences is a direct app-menu leaf right
+        // after Tools — the window-owned action's single menu home
+        // (File no longer carries a copy); it still fires
+        // preferences() with the same text, shortcut and icon.
         if (menu == m_toolsMenu) {
             m_appMenu->addSeparator();
-            m_appMenu->addAction(m_filePreferencesAction);
+            m_appMenu->addAction(m_preferencesAction);
             m_appMenu->addSeparator();
         }
     }

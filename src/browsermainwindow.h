@@ -282,7 +282,6 @@ private:
     QAction *m_filePrintAction;
     QAction *m_fileNewPrivateTabAction;
     QAction *m_fileNewTorWindowAction;
-    QAction *m_filePreferencesAction;
     QAction *m_fileCloseWindow;
     QAction *m_fileQuit;
 
@@ -371,6 +370,9 @@ private:
     // itself can hide while every menu stays reachable.
     QToolButton *m_appMenuButton = nullptr;
     QMenu *m_appMenu = nullptr;
+    // MENU12: the app-menu's direct Preferences... leaf — window-owned,
+    // no longer doubled in the File menu.
+    QAction *m_preferencesAction = nullptr;
     QList<QMenu *> m_topMenus;
     QMenu *m_historyBackMenu;
     QMenu *m_historyForwardMenu;
