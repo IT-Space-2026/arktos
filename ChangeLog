@@ -694,9 +694,11 @@ UI:
   every item (app menu, history buttons, reader/onion buttons, the
   address bar itself, the sidebar toggle) can be dragged to a new
   spot behind a highlighted drop line. Exit by toggling the entry
-  again, pressing Esc, or clicking anywhere off the bar; the order
-  stays for the window and saving it between sessions comes next
-  (NAVB03).
+  again, pressing Esc, or clicking anywhere off the bar. The dragged
+  order persists across restarts and is shared live by every open
+  and new window — normal, private and tor alike (tor keeps its
+  violet chrome) — and the menu's "Reset Navigation Bar" restores
+  the stock layout (NAVB03, NAVB04).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

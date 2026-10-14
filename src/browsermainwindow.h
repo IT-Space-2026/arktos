@@ -133,6 +133,10 @@ public:
     // lives in the bar's context menu.
     bool isNavBarEditMode() const;
     QAction *navBarEditAction() const;
+    // NAVB04: the reset entry sharing that menu, and the bar's order
+    // as the stable-id list QSettings persists — exposed for tests.
+    QAction *navBarResetAction() const;
+    QStringList navBarOrder() const;
     // CMD01: lazily created Ctrl+Shift+P command palette bound to this
     // window.
     CommandPalette *commandPalette();
@@ -265,6 +269,17 @@ private:
     void updateNavBarDropIndicator(const QPoint &barPos);
     void commitNavBarDrag();
     void endNavBarDrag();
+    // NAVB04: persisted-order machinery on top of the NAVB03 drag.
+    // Every bar item carries a stable id (a dynamic property on its
+    // QAction); the id list round-trips through QSettings
+    // "navbar/order", is applied at construction so every window type
+    // — normal, private, tor, session-restored — shares it, and each
+    // committed drag pushes it to the other open windows.
+    void applyNavBarOrder(const QStringList &order);
+    void applyStoredNavBarOrder();
+    void saveNavBarOrder();
+    void resetNavBarOrder();
+    void syncNavBarOrderToWindows();
     // MENU06: applies m_menuBarVisible — a plain visibility flip on
     // normal windows, but on tor windows the menu row doubles as the
     // drawn title bar (TOR11) so it stays put and the top-level menu
@@ -407,12 +422,15 @@ private:
     // extensions there).
     ExtensionActionBar *m_extensionActionBar = nullptr;
     ToolbarSearch *m_toolbarSearch;
-    // NAVB03: in-place nav-bar customization.  The checkable context
-    // menu entry toggles edit mode; while on, every bar item — the
-    // location-bar splitter included — can be dragged to a new slot
-    // (m_navBarDropIndicator marks the gap).  The order is per-window
-    // in-memory; persisted order + Reset land in NAVB04.
+    // NAVB03/NAVB04: in-place nav-bar customization.  The checkable
+    // context-menu entry toggles edit mode; while on, every bar item —
+    // the location-bar splitter included — can be dragged to a new
+    // slot (m_navBarDropIndicator marks the gap).  Committed drags
+    // persist to QSettings and sync to the other windows; the reset
+    // entry restores m_navBarDefaultOrder (the order the window was
+    // built with, captured before the stored order is applied).
     QAction *m_navBarEditAction = nullptr;
+    QAction *m_navBarResetAction = nullptr;
     bool m_navBarEditMode = false;
     bool m_navBarDragging = false;
     QPointer<QAction> m_navBarDragAction;
@@ -420,6 +438,7 @@ private:
     QPoint m_navBarDragStart;
     QWidget *m_navBarDropIndicator = nullptr;
     QString m_navBarSavedStyleSheet;
+    QStringList m_navBarDefaultOrder;
 #if defined(Q_OS_MACOS)
     QFrame *m_bookmarksToolbarFrame;
 #endif

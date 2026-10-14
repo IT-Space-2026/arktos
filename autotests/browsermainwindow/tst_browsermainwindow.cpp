@@ -192,6 +192,7 @@ private slots:
     void extensionActionButtons();
     void navShieldPadlock();
     void navBarEditMode();
+    void navBarOrderPersistence();
 };
 
 void tst_BrowserMainWindow::initTestCase()
@@ -5990,6 +5991,14 @@ void tst_BrowserMainWindow::navShieldPadlock()
 // drop-gap line and exits via the toggle, Esc or an outside click.
 void tst_BrowserMainWindow::navBarEditMode()
 {
+    // NAVB04: drags persist through the shared settings store —
+    // start from a clean key so both legs see the stock order.
+    {
+        QSettings settings;
+        settings.remove(QLatin1String("navbar/order"));
+        settings.sync();
+    }
+
     SubWindow *window = new SubWindow;
     window->resize(1400, 700);
     window->show();
@@ -6061,7 +6070,12 @@ void tst_BrowserMainWindow::navBarEditMode()
     QCOMPARE(labels.at(1), QLatin1String("New Private Tab"));
     QCOMPARE(labels.at(2), QLatin1String("|"));
     QCOMPARE(labels.at(3), QLatin1String("Edit Navigation Bar"));
-    QCOMPARE(labels.at(4), QLatin1String("|"));
+    // NAVB04: the reset entry rides with the toggle — greyed while
+    // the bar already sits at stock.
+    QCOMPARE(labels.at(4), QLatin1String("Reset Navigation Bar"));
+    QCOMPARE(menuActions.at(4), window->navBarResetAction());
+    QVERIFY(!menuActions.at(4)->isEnabled());
+    QCOMPARE(labels.at(5), QLatin1String("|"));
     // Same QAction objects the File menu drives.
     QCOMPARE(menuActions.at(0), window->tabWidget()->newTabAction());
     QCOMPARE(menuActions.at(1), filePrivate);
@@ -6171,7 +6185,14 @@ void tst_BrowserMainWindow::navBarEditMode()
 
     // Tor window: the violet sheet survives entering/leaving edit
     // mode byte-identically, the private entry stays hidden like in
-    // the File menu, and reorder works under the tor chrome.
+    // the File menu, and reorder works under the tor chrome.  The
+    // first window's drags wrote the shared order — clear it so this
+    // leg exercises stock positions like the assertions assume.
+    {
+        QSettings settings;
+        settings.remove(QLatin1String("navbar/order"));
+        settings.sync();
+    }
     BrowserApplication::setTorMode(true);
     SubWindow *torWindow = new SubWindow;
     torWindow->resize(1200, 700);
@@ -6230,6 +6251,200 @@ void tst_BrowserMainWindow::navBarEditMode()
     QCOMPARE(torBar->styleSheet(), torSheet);
     closeWindow(torWindow);
     BrowserApplication::setTorMode(false);
+}
+
+// NAVB04: the dragged order is one shared persisted sequence —
+// written on every committed drop, applied by every new window (the
+// session-restore path too: restored windows are freshly
+// constructed), synced to already-open windows, resettable to stock
+// through the context menu, and tolerant of stale or corrupt stored
+// values.  Item ids ride as a QAction property; navBarOrder() reads
+// the live bar back.
+void tst_BrowserMainWindow::navBarOrderPersistence()
+{
+    const QLatin1String key("navbar/order");
+    {
+        QSettings settings;
+        settings.remove(key);
+        settings.sync();
+    }
+    const QStringList stockOrder{
+        QStringLiteral("appMenu"), QStringLiteral("back"),
+        QStringLiteral("forward"), QStringLiteral("stopReload"),
+        QStringLiteral("home"), QStringLiteral("reader"),
+        QStringLiteral("locationBar"), QStringLiteral("sidebar")};
+
+    SubWindow *window = new SubWindow;
+    window->resize(1400, 700);
+    window->show();
+    QApplication::processEvents();
+    QToolBar *navBar = window->findChild<QToolBar *>(
+        QLatin1String("NavigationToolBar"));
+    QVERIFY(navBar);
+    QVERIFY(window->navBarResetAction());
+    QCOMPARE(window->navBarOrder(), stockOrder);
+
+    // A real edit-mode drag — Stop/Reload ahead of Back — lands in
+    // QSettings on release, not on edit-mode exit or window close.
+    window->navBarEditAction()->setChecked(true);
+    QVERIFY(window->isNavBarEditMode());
+    const QList<QAction *> actions = navBar->actions();
+    QAction *back = actions.at(1);
+    QAction *stopReload = actions.at(3);
+    QWidget *stopButton = navBar->widgetForAction(stopReload);
+    QVERIFY(stopButton);
+    QTest::mousePress(stopButton, Qt::LeftButton, Qt::NoModifier,
+                      stopButton->rect().center());
+    const QPoint dropPos = stopButton->mapFrom(
+        navBar, QPoint(navBar->actionGeometry(back).left()
+                       + navBar->actionGeometry(back).width() / 4,
+                       navBar->actionGeometry(back).center().y()));
+    QTest::mouseMove(stopButton, dropPos);
+    QTest::mouseRelease(stopButton, Qt::LeftButton, Qt::NoModifier,
+                        dropPos);
+    const QStringList draggedOrder{
+        QStringLiteral("appMenu"), QStringLiteral("stopReload"),
+        QStringLiteral("back"), QStringLiteral("forward"),
+        QStringLiteral("home"), QStringLiteral("reader"),
+        QStringLiteral("locationBar"), QStringLiteral("sidebar")};
+    QCOMPARE(window->navBarOrder(), draggedOrder);
+    {
+        QSettings settings;
+        QCOMPARE(settings.value(key).toStringList(), draggedOrder);
+    }
+    window->navBarEditAction()->setChecked(false);
+    QVERIFY(!window->isNavBarEditMode());
+
+    // New windows pick the shared order up at construction — this is
+    // also the session-restore path.
+    SubWindow *second = new SubWindow;
+    second->resize(1200, 700);
+    second->show();
+    QApplication::processEvents();
+    QToolBar *secondBar = second->findChild<QToolBar *>(
+        QLatin1String("NavigationToolBar"));
+    QVERIFY(secondBar);
+    QCOMPARE(second->navBarOrder(), draggedOrder);
+
+    // Live sync — a drag in the first window lands on the open
+    // second window without a restart: pull Back to the very front.
+    window->navBarEditAction()->setChecked(true);
+    const QList<QAction *> dragged = navBar->actions();
+    QAction *appMenuItem = dragged.first();
+    QWidget *backButton = navBar->widgetForAction(back);
+    QVERIFY(backButton);
+    QTest::mousePress(backButton, Qt::LeftButton, Qt::NoModifier,
+                      backButton->rect().center());
+    const QPoint frontDrop = backButton->mapFrom(
+        navBar, QPoint(navBar->actionGeometry(appMenuItem).left()
+                       + navBar->actionGeometry(appMenuItem).width() / 4,
+                       navBar->actionGeometry(appMenuItem).center().y()));
+    QTest::mouseMove(backButton, frontDrop);
+    QTest::mouseRelease(backButton, Qt::LeftButton, Qt::NoModifier,
+                        frontDrop);
+    const QStringList resyncedOrder{
+        QStringLiteral("back"), QStringLiteral("appMenu"),
+        QStringLiteral("stopReload"), QStringLiteral("forward"),
+        QStringLiteral("home"), QStringLiteral("reader"),
+        QStringLiteral("locationBar"), QStringLiteral("sidebar")};
+    QCOMPARE(window->navBarOrder(), resyncedOrder);
+    QCOMPARE(second->navBarOrder(), resyncedOrder);
+    {
+        QSettings settings;
+        QCOMPARE(settings.value(key).toStringList(), resyncedOrder);
+    }
+    window->navBarEditAction()->setChecked(false);
+    // Exiting edit mode resyncs against the store — already equal,
+    // so the order stands.
+    QCOMPARE(window->navBarOrder(), resyncedOrder);
+
+    // Reset restores stock on every open window and drops the key.
+    window->navBarResetAction()->trigger();
+    QCOMPARE(window->navBarOrder(), stockOrder);
+    QCOMPARE(second->navBarOrder(), stockOrder);
+    {
+        QSettings settings;
+        QVERIFY(!settings.value(key).isValid());
+    }
+
+    // Stale/partial stored orders degrade gracefully: unknown ids
+    // (including ones only another window type carries, like
+    // torBadge) drop, and items the list doesn't name keep their
+    // stock sequence at the end — the bar can never corrupt.
+    {
+        QSettings settings;
+        settings.setValue(key, QStringList{
+            QStringLiteral("bogus"), QStringLiteral("torBadge"),
+            QStringLiteral("back"), QStringLiteral("sidebar")});
+        settings.sync();
+    }
+    SubWindow *third = new SubWindow;
+    third->show();
+    QApplication::processEvents();
+    QCOMPARE(third->navBarOrder(),
+             (QStringList{QStringLiteral("back"),
+                          QStringLiteral("sidebar"),
+                          QStringLiteral("appMenu"),
+                          QStringLiteral("forward"),
+                          QStringLiteral("stopReload"),
+                          QStringLiteral("home"),
+                          QStringLiteral("reader"),
+                          QStringLiteral("locationBar")}));
+    closeWindow(third);
+
+    // A corrupt non-list value falls back to stock entirely.
+    {
+        QSettings settings;
+        settings.setValue(key, 42);
+        settings.sync();
+    }
+    SubWindow *fourth = new SubWindow;
+    fourth->show();
+    QApplication::processEvents();
+    QCOMPARE(fourth->navBarOrder(), stockOrder);
+    closeWindow(fourth);
+
+    // Tor window: the same shared order drives the violet bar —
+    // tor-only ids resolve only there — and the chrome sheet is
+    // untouched by the rebuild.
+    {
+        QSettings settings;
+        settings.setValue(key, QStringList{
+            QStringLiteral("torBadge"), QStringLiteral("appMenu"),
+            QStringLiteral("sidebar"), QStringLiteral("back")});
+        settings.sync();
+    }
+    BrowserApplication::setTorMode(true);
+    SubWindow *torWindow = new SubWindow;
+    torWindow->resize(1200, 700);
+    torWindow->show();
+    QApplication::processEvents();
+    QToolBar *torBar = torWindow->findChild<QToolBar *>(
+        QLatin1String("NavigationToolBar"));
+    QVERIFY(torBar);
+    QCOMPARE(torWindow->navBarOrder(),
+             (QStringList{QStringLiteral("torBadge"),
+                          QStringLiteral("appMenu"),
+                          QStringLiteral("sidebar"),
+                          QStringLiteral("back"),
+                          QStringLiteral("forward"),
+                          QStringLiteral("stopReload"),
+                          QStringLiteral("home"),
+                          QStringLiteral("reader"),
+                          QStringLiteral("torCircuit"),
+                          QStringLiteral("locationBar")}));
+    QVERIFY(torBar->styleSheet().contains(QLatin1String("#4a3372")));
+    closeWindow(torWindow);
+    BrowserApplication::setTorMode(false);
+
+    closeWindow(second);
+    closeWindow(window);
+    // Leave the store clean for whatever runs next.
+    {
+        QSettings settings;
+        settings.remove(key);
+        settings.sync();
+    }
 }
 
 QTEST_MAIN(tst_BrowserMainWindow)

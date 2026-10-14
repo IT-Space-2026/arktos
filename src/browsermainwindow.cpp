@@ -214,6 +214,13 @@ static QString torStatusBarStyleSheet()
 // the shared construction's size.
 static const int s_appMenuIconExtent = 36;
 
+// NAVB04: a bar item's stable id rides as a dynamic property on its
+// QAction, so the tag survives the remove/insert shuffle reordering
+// performs.  The id strings persist inside QSettings "navbar/order" —
+// once shipped an id must never be renamed, or a saved order stops
+// resolving its item (which would then silently append at the end).
+static const char kNavBarItemIdProperty[] = "navBarItemId";
+
 // MENU10: the style hands a tool button's icon whatever rect its
 // label layout computes — and under the stylesheet path (or any
 // foreign style that asks for the label cell instead of the icon
@@ -366,7 +373,9 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
             "QLabel { color: white; background: #6b4fa3;"
             " border-radius: 6px; padding: 1px 8px; font-weight: bold; }"));
         badge->setToolTip(tr("This window browses through the Tor network"));
-        m_navigationBar->addWidget(badge);
+        m_navigationBar->addWidget(badge)
+            ->setProperty(kNavBarItemIdProperty,
+                          QLatin1String("torBadge"));
 
         // READ02: the reader button paints its glyph from
         // ButtonText — dark on the violet tor bar.  Lift it to the
@@ -708,6 +717,18 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
     setWindowRole(QLatin1String("browser"));
 #endif
+
+    // NAVB04: whatever the builder just laid out IS the stock order
+    // for this window type (tor badge and circuit button included) —
+    // captured before the persisted order rewrites the bar so Reset
+    // can always return here.  Applying at construction is what puts
+    // the shared order on every window: new windows and
+    // session-restored ones alike (restore constructs fresh windows;
+    // QMainWindow::restoreState only tracks bar area/visibility, not
+    // item order).
+    m_navBarDefaultOrder = navBarOrder();
+    applyStoredNavBarOrder();
+
     retranslate();
 }
 
@@ -1859,6 +1880,7 @@ void BrowserMainWindow::retranslate()
     m_appMenuButton->setAccessibleName(tr("Arora menu"));
 
     m_navBarEditAction->setText(tr("Edit Navigation Bar"));
+    m_navBarResetAction->setText(tr("Reset Navigation Bar"));
 
     m_stopReloadAction->setText(tr("Reload / Stop"));
     updateStopReloadActionText(false);
@@ -1939,7 +1961,8 @@ void BrowserMainWindow::setupToolBar()
     m_appMenuButton->setPopupMode(QToolButton::InstantPopup);
     m_appMenuButton->setMenu(m_appMenu);
     appMenuButtonLayout->addWidget(m_appMenuButton);
-    m_navigationBar->addWidget(appMenuButtonHost);
+    m_navigationBar->addWidget(appMenuButtonHost)
+        ->setProperty(kNavBarItemIdProperty, QLatin1String("appMenu"));
     m_appMenuButton->setIconSize(
         QSize(s_appMenuIconExtent, s_appMenuIconExtent));
 
@@ -1951,6 +1974,8 @@ void BrowserMainWindow::setupToolBar()
     connect(m_historyBackMenu, &QMenu::triggered,
             this, &BrowserMainWindow::openActionUrl);
     m_navigationBar->addAction(m_historyBackAction);
+    m_historyBackAction->setProperty(kNavBarItemIdProperty,
+                                     QLatin1String("back"));
 
     m_historyForwardAction->setIcon(AroraIcon::get(QLatin1String("go-next")));
     m_historyForwardMenu = new QMenu(this);
@@ -1960,16 +1985,22 @@ void BrowserMainWindow::setupToolBar()
             this, &BrowserMainWindow::openActionUrl);
     m_historyForwardAction->setMenu(m_historyForwardMenu);
     m_navigationBar->addAction(m_historyForwardAction);
+    m_historyForwardAction->setProperty(kNavBarItemIdProperty,
+                                        QLatin1String("forward"));
 
     m_stopReloadAction = new QAction(this);
     m_stopReloadAction->setIcon(m_reloadIcon);
     m_navigationBar->addAction(m_stopReloadAction);
+    m_stopReloadAction->setProperty(kNavBarItemIdProperty,
+                                    QLatin1String("stopReload"));
 
     // HOME01: a Home button immediately after Stop/Reload — the same
     // QAction the History menu and Ctrl+Shift+H drive, so the button
     // can never diverge from the goHome() path.  Shared setup covers
     // normal/private/tor/container windows alike.
     m_navigationBar->addAction(m_historyHomeAction);
+    m_historyHomeAction->setProperty(kNavBarItemIdProperty,
+                                     QLatin1String("home"));
 
     // READ02: reader-mode toggle in the nav row — after stop/reload,
     // before the location bar starts.  READ03: the only reader
@@ -1987,6 +2018,8 @@ void BrowserMainWindow::setupToolBar()
     // updateReaderState() toggles that (the widget's own hidden flag
     // alone leaves the item latched off).
     m_navReaderAction = m_navigationBar->addWidget(m_readerModeButton);
+    m_navReaderAction->setProperty(kNavBarItemIdProperty,
+                                   QLatin1String("reader"));
     m_navReaderAction->setVisible(false);
     m_navReaderAction->setEnabled(true);
 
@@ -2007,7 +2040,9 @@ void BrowserMainWindow::setupToolBar()
             WebView *tab = currentTab();
             return tab ? tab->url().host() : QString();
         });
-        m_navigationBar->addWidget(m_torCircuitButton);
+        m_navigationBar->addWidget(m_torCircuitButton)
+            ->setProperty(kNavBarItemIdProperty,
+                          QLatin1String("torCircuit"));
     }
 
     m_navigationSplitter = new QSplitter(m_navigationBar);
@@ -2084,6 +2119,8 @@ void BrowserMainWindow::setupToolBar()
     m_navigationSplitter->setCollapsible(0, false);
     QAction *splitterAction =
         m_navigationBar->addWidget(m_navigationSplitter);
+    splitterAction->setProperty(kNavBarItemIdProperty,
+                                QLatin1String("locationBar"));
 
     // TRUST14: the site shield moved out of the location bar onto the
     // nav row — one shared button immediately left of the url field.
@@ -2094,7 +2131,8 @@ void BrowserMainWindow::setupToolBar()
     // or new window binds its own button's tab).
     m_siteShield = new SiteShieldButton(m_navigationBar);
     m_siteShield->setObjectName(QLatin1String("navSiteShield"));
-    m_navigationBar->insertWidget(splitterAction, m_siteShield);
+    m_navigationBar->insertWidget(splitterAction, m_siteShield)
+        ->setProperty(kNavBarItemIdProperty, QLatin1String("siteShield"));
     const auto rebindTrust = [this]() {
         m_siteShield->setWebView(currentTab());
         // The padlock is per-tab (it lives in each bar), but the front
@@ -2113,6 +2151,8 @@ void BrowserMainWindow::setupToolBar()
     // SIDE01: sidebar toggle at the far right of the navigation bar —
     // same checkable action as View > Sidebar (F4).
     m_navigationBar->addAction(m_viewSidebarAction);
+    m_viewSidebarAction->setProperty(kNavBarItemIdProperty,
+                                     QLatin1String("sidebar"));
     int splitterWidth = m_navigationSplitter->width();
     QList<int> sizes;
     sizes << (int)((double)splitterWidth * .80)
@@ -2132,6 +2172,12 @@ void BrowserMainWindow::setupToolBar()
     m_navBarEditAction->setCheckable(true);
     connect(m_navBarEditAction, &QAction::toggled,
             this, &BrowserMainWindow::setNavBarEditMode);
+    // NAVB04: the same menu also resets the order to stock — a plain
+    // trigger, greyed out while the bar already sits at default.
+    m_navBarResetAction = new QAction(this);
+    m_navBarResetAction->setObjectName(QLatin1String("navBarResetAction"));
+    connect(m_navBarResetAction, &QAction::triggered,
+            this, &BrowserMainWindow::resetNavBarOrder);
     m_navigationBar->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_navigationBar, &QWidget::customContextMenuRequested,
             this, &BrowserMainWindow::showNavigationBarContextMenu);
@@ -2416,6 +2462,10 @@ void BrowserMainWindow::showNavigationBarContextMenu(
     menu->insertAction(first, m_fileNewPrivateTabAction);
     menu->insertSeparator(first);
     menu->insertAction(first, m_navBarEditAction);
+    menu->insertAction(first, m_navBarResetAction);
+    // NAVB04: reset greys out while the bar already sits at stock —
+    // the entry stays visible so the affordance is discoverable.
+    m_navBarResetAction->setEnabled(navBarOrder() != m_navBarDefaultOrder);
     if (hadStockEntries)
         menu->insertSeparator(first);
     menu->exec(m_navigationBar->mapToGlobal(position));
@@ -2430,6 +2480,106 @@ bool BrowserMainWindow::isNavBarEditMode() const
 QAction *BrowserMainWindow::navBarEditAction() const
 {
     return m_navBarEditAction;
+}
+
+QAction *BrowserMainWindow::navBarResetAction() const
+{
+    return m_navBarResetAction;
+}
+
+// NAVB04: the bar's order as a list of stable item ids — this is the
+// exact shape QSettings stores and applyNavBarOrder consumes.
+QStringList BrowserMainWindow::navBarOrder() const
+{
+    QStringList order;
+    const QList<QAction *> actions = m_navigationBar->actions();
+    for (QAction *action : actions) {
+        const QString id =
+            action->property(kNavBarItemIdProperty).toString();
+        if (!id.isEmpty())
+            order.append(id);
+    }
+    return order;
+}
+
+// Rebuilds the bar to match `order`: each stored id resolves to a bar
+// item; ids this window doesn't carry (a normal window meeting a tor
+// badge, or chrome removed since the write) drop cleanly, and items
+// the list doesn't name keep their stock sequence at the end — a
+// stale or partial order can never break the bar.  A resolved order
+// identical to the live one early-outs, so resync paths stay free.
+void BrowserMainWindow::applyNavBarOrder(const QStringList &order)
+{
+    const QList<QAction *> current = m_navigationBar->actions();
+    QHash<QString, QAction *> byId;
+    for (QAction *action : current) {
+        const QString id =
+            action->property(kNavBarItemIdProperty).toString();
+        if (!id.isEmpty())
+            byId.insert(id, action);
+    }
+    QList<QAction *> arranged;
+    for (const QString &id : order) {
+        QAction *action = byId.value(id);
+        if (action && !arranged.contains(action))
+            arranged.append(action);
+    }
+    for (QAction *action : current) {
+        if (!arranged.contains(action))
+            arranged.append(action);
+    }
+    if (arranged == current)
+        return;
+    for (QAction *action : current)
+        m_navigationBar->removeAction(action);
+    for (QAction *action : arranged)
+        m_navigationBar->addAction(action);
+    m_navigationBar->layout()->activate();
+}
+
+void BrowserMainWindow::applyStoredNavBarOrder()
+{
+    QSettings settings;
+    const QStringList order = settings.value(
+        QLatin1String("navbar/order")).toStringList();
+    applyNavBarOrder(order.isEmpty() ? m_navBarDefaultOrder : order);
+}
+
+// Every committed drag writes the one shared order and pushes it to
+// the other open windows — normal, private and tor chrome all carry
+// the same sequence.  A window mid-edit is skipped so its drag is
+// never yanked mid-gesture; it resyncs when edit mode exits.
+void BrowserMainWindow::saveNavBarOrder()
+{
+    QSettings settings;
+    settings.setValue(QLatin1String("navbar/order"), navBarOrder());
+    syncNavBarOrderToWindows();
+}
+
+void BrowserMainWindow::syncNavBarOrderToWindows()
+{
+    const QList<QWidget *> tops = QApplication::topLevelWidgets();
+    for (QWidget *top : tops) {
+        BrowserMainWindow *window =
+            qobject_cast<BrowserMainWindow *>(top);
+        // m_navigationBar nulls out only while the window is still
+        // inside its constructor — leave it to its own apply.
+        if (window && window != this && window->m_navigationBar
+            && !window->m_navBarEditMode)
+            window->applyStoredNavBarOrder();
+    }
+}
+
+// Context-menu reset — drops the stored order so every window falls
+// back to its own stock layout.  Each type resets against the order
+// it was built with: the tor badge and circuit button only exist on
+// tor windows, so a single literal default list couldn't serve both.
+void BrowserMainWindow::resetNavBarOrder()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("navbar/order"));
+    applyNavBarOrder(m_navBarDefaultOrder);
+    syncNavBarOrderToWindows();
 }
 
 // NAVB03: edit mode — every bar item (the location-bar splitter
@@ -2476,6 +2626,11 @@ void BrowserMainWindow::setNavBarEditMode(bool enabled)
         m_navBarSavedStyleSheet.clear();
         m_navigationBar->unsetCursor();
         endNavBarDrag();
+        // NAVB04: the shared order may have moved under this window
+        // while it was editing (the live sync skips editing windows,
+        // so a drag is never yanked mid-gesture) — resync on exit.
+        // An identical stored order early-outs inside the apply.
+        applyStoredNavBarOrder();
     }
 }
 
@@ -2553,6 +2708,11 @@ void BrowserMainWindow::commitNavBarDrag()
     // stays stale until the next relayout.  Activate now so a second
     // drag (and any index/geometry probe) sees the new order.
     m_navigationBar->layout()->activate();
+    // NAVB04: a committed drop is the write — the order is shared
+    // across every window, so it persists now (not on edit-mode exit,
+    // which a window may never reach before a crash) and lands on the
+    // other open windows immediately.
+    saveNavBarOrder();
 }
 
 void BrowserMainWindow::endNavBarDrag()
