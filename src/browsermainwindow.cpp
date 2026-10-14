@@ -119,6 +119,7 @@
 #include <qeventloop.h>
 #include <qfiledialog.h>
 #include <qfileinfo.h>
+#include <qiconengine.h>
 #include <qlabel.h>
 #include <qpointer.h>
 #include <qprintdialog.h>
@@ -213,37 +214,80 @@ static QString torStatusBarStyleSheet()
 // the shared construction's size.
 static const int s_appMenuIconExtent = 36;
 
-// ICONS06: the app-menu button's bear stays the colored brand mark
-// on the violet bar, but its dark-blue body blends into #4a3372.
-// A soft light disc behind the mark gives the dark parts a surface
-// to read against — deliberately translucent so it reads as a
-// subtle backing plate, not a white sticker.  A 2x variant rides in
-// the same QIcon so fractional/high devicePixelRatio paints stay
-// off the upscale path — the composite is raster, the source is not.
-static QIcon torAppMenuIcon()
+// MENU10: the style hands a tool button's icon whatever rect its
+// label layout computes — and under the stylesheet path (or any
+// foreign style that asks for the label cell instead of the icon
+// size) that target is not square.  QIcon::paint/QPixmapIconEngine
+// fill the rect outright and arora.svg reports
+// Qt::IgnoreAspectRatio, so a non-square request stretches the
+// bear-globe mark into an ellipse.  This engine renders the mark
+// into the centered square of whatever is asked — the logo can
+// letterbox but can never deform, on every style and scale factor.
+class AroraLogoEngine : public QIconEngine
 {
-    const int extent = s_appMenuIconExtent;
-    QIcon icon;
-    for (int dpr = 1; dpr <= 2; ++dpr) {
-        const int pixels = extent * dpr;
-        const QPixmap bear = QIcon(QLatin1String(":/arora.svg"))
-            .pixmap(QSize(pixels, pixels));
-        QPixmap pixmap(pixels, pixels);
+public:
+    // lightDisc: ICONS06's translucent backing plate for the violet
+    // tor bar — painted inside the same square, so it stays a circle.
+    explicit AroraLogoEngine(bool lightDisc)
+        : m_disc(lightDisc)
+    {
+    }
+
+    QIconEngine *clone() const override
+    {
+        return new AroraLogoEngine(m_disc);
+    }
+
+    void paint(QPainter *painter, const QRect &rect, QIcon::Mode,
+               QIcon::State) override
+    {
+        paintMark(painter, QRectF(rect));
+    }
+
+    QPixmap pixmap(const QSize &size, QIcon::Mode mode,
+                   QIcon::State state) override
+    {
+        return scaledPixmap(size, mode, state, 1.0);
+    }
+
+    QPixmap scaledPixmap(const QSize &size, QIcon::Mode,
+                         QIcon::State, qreal scale) override
+    {
+        const QSize pixels = size * scale;
+        QPixmap pixmap(pixels);
         pixmap.fill(Qt::transparent);
         QPainter painter(&pixmap);
-        painter.setRenderHint(QPainter::Antialiasing);
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(QColor(0xee, 0xee, 0xee, 150));
-        const qreal inset = 1.5 * dpr;
-        painter.drawEllipse(QRectF(inset, inset,
-                                   pixels - 2 * inset,
-                                   pixels - 2 * inset));
-        painter.drawPixmap(0, 0, bear);
-        painter.end();
-        pixmap.setDevicePixelRatio(dpr);
-        icon.addPixmap(pixmap);
+        paintMark(&painter, QRectF(QPointF(0, 0), QSizeF(pixels)));
+        return pixmap;
     }
-    return icon;
+
+private:
+    void paintMark(QPainter *painter, const QRectF &rect) const
+    {
+        const qreal side = qMin(rect.width(), rect.height());
+        const QRectF target(rect.x() + (rect.width() - side) / 2.0,
+                            rect.y() + (rect.height() - side) / 2.0,
+                            side, side);
+        if (m_disc) {
+            painter->save();
+            painter->setRenderHint(QPainter::Antialiasing);
+            painter->setPen(Qt::NoPen);
+            painter->setBrush(QColor(0xee, 0xee, 0xee, 150));
+            const qreal inset = side / 24.0; // 1.5px at the 36px baseline
+            painter->drawEllipse(
+                target.adjusted(inset, inset, -inset, -inset));
+            painter->restore();
+        }
+        m_icon.paint(painter, target.toRect());
+    }
+
+    const bool m_disc;
+    const QIcon m_icon = QIcon(QLatin1String(":/arora.svg"));
+};
+
+static QIcon torAppMenuIcon()
+{
+    return QIcon(new AroraLogoEngine(true));
 }
 
 BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
@@ -1839,7 +1883,13 @@ void BrowserMainWindow::setupToolBar()
     // UIP01: breathing room on the navigation row — the Qt4-era
     // default item density reads cramped on modern displays.  Widget
     // contents margins forward to the toolbar's internal layout.
-    m_navigationBar->setContentsMargins(6, 4, 6, 4);
+    // MENU10: the vertical margins used to double the layout's own
+    // top/bottom padding (widget margin + PM_ToolBarItemMargin), so
+    // the tall app-menu button anchored the row high and left a dead
+    // band under the nav items.  Zero them — the layout's own margin
+    // still pads the row, and the whole row now centers against the
+    // app button instead of riding the top edge.
+    m_navigationBar->setContentsMargins(6, 0, 6, 0);
     m_navigationBar->layout()->setSpacing(6);
     // UIP02: one icon size for the nav buttons on every platform —
     // was macOS-only, so Linux/Windows fell back to the style's
@@ -1875,8 +1925,10 @@ void BrowserMainWindow::setupToolBar()
     // as the app menu anchor on every window type.  The bundled
     // vector art stays crisp at the grown size and fractional scale
     // factors where a resized png smudges; the text keeps the
-    // toolbar font so the growth is logo-led.
-    m_appMenuButton->setIcon(QIcon(QLatin1String(":/arora.svg")));
+    // toolbar font so the growth is logo-led.  MENU10: the engine
+    // pins the paint to a square — a non-square icon cell under a
+    // stylesheet or foreign style can no longer stretch the mark.
+    m_appMenuButton->setIcon(QIcon(new AroraLogoEngine(false)));
     m_appMenuButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     m_appMenuButton->setPopupMode(QToolButton::InstantPopup);
     m_appMenuButton->setMenu(m_appMenu);
