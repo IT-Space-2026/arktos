@@ -1,0 +1,14 @@
+# EXT13 Arch-B engine host: deno_core (V8).  Heavyweight — rusty_v8
+# fetches a ~150MB prebuilt static archive at build time.  NOT in the
+# qmake build.
+[package]
+name = "deno-host"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+publish = false
+
+[dependencies]
+deno_core = "0.363"
+serde_json = "1"
+libc = "0.2"

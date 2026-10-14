@@ -1,0 +1,6 @@
+jshost: engine=mozjs shim=ok
+jshost: payload bitwarden-bg {"ok":true,"label":"bitwarden-bg","parseOnly":true}
+jshost: fireMessage -> []
+jshost: timersDrained=0
+jshost: fireResponses(post-drain) -> []
+jshost: report={"apiLog":[],"errors":[],"listeners":{"onMessage":0}}

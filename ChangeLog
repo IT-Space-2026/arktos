@@ -979,6 +979,17 @@ Extensions:
   Settings → Extensions), and never again after uninstall. It is
   never loaded into private or Tor profiles, and it cannot
   self-update — updates arrive with Arora releases.
+- WebExtensions compatibility spike (EXT13): a hidden QWebEngineView
+  on the extension's own profile can host a real MV3 extension's
+  background script — profile script-collection injection reaches
+  chrome-extension:// pages without rewriting the package, popup and
+  content-script messaging route natively, and the bundled Bitwarden
+  background script evaluates cleanly under a small gapfill shim.
+  Rust-native JS hosts (mozjs, deno_core, rquickjs, boa) were
+  evaluated as an alternative runtime: deno_core and boa can execute
+  the real bundle for offline compat measurement, but practical
+  extension hosting stays inside QtWebEngine. Findings and the probe
+  matrix live in .devin/EXT13-spike.md.
 
 Downloads:
 - QtWebEngine download manager: progress, Try Again, safe names

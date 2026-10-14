@@ -1,0 +1,6 @@
+jshost: engine=deno shim=ok
+jshost: payload fixture {"ok":true,"label":"fixture"}
+jshost: fireMessage -> []
+jshost: timersDrained=1
+jshost: fireResponses(post-drain) -> [{"pong":true,"from":"real-sw","via":"rust-host"}]
+jshost: report={"apiLog":["call:chrome.runtime.onInstalled.addListener","call:chrome.runtime.onMessage.addListener"],"errors":[],"listeners":{"onMessage":1}}

@@ -1,0 +1,2 @@
+jshost: engine=mozjs script=fixture-real/background.js bytes=3411665
+jshost: engine=mozjs shim=ok

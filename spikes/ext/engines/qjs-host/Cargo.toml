@@ -1,0 +1,13 @@
+# EXT13 Arch-B engine host: rquickjs (QuickJS-NG).  Lightest option —
+# small C compile, no JIT by default.  NOT in the qmake build.
+[package]
+name = "qjs-host"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+publish = false
+
+[dependencies]
+rquickjs = "0.10"
+serde_json = "1"
+libc = "0.2"

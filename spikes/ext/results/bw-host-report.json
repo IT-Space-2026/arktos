@@ -1,0 +1,43 @@
+{
+    "outer": {
+        "bwErrors": [
+        ],
+        "report": "{\"apiLog\":[\"get:chrome.tabs.getCurrent\",\"get:chrome.notifications.onButtonClicked\",\"get:chrome.notifications.onClicked\",\"get:chrome.permissions.onAdded x2\",\"call:chrome.permissions.onAdded.addListener fn\",\"get:chrome.webNavigation.onCommitted x2\",\"get:chrome.webNavigation.onErrorOccurred\",\"get:chrome.tabs.onActivated x3\",\"get:chrome.tabs.onUpdated x2\",\"call:chrome.notifications.onButtonClicked.addListener fn\",\"call:chrome.notifications.onClicked.addListener fn\",\"get:chrome.permissions.contains\",\"call:chrome.permissions.contains 2args\",\"call:chrome.tabs.onActivated.addListener x2\",\"get:chrome.tabs.onRemoved x5\",\"call:chrome.tabs.onRemoved.addListener x5\",\"get:chrome.tabs.onCreated\",\"call:chrome.tabs.onCreated.addListener\",\"get:chrome.tabs.query\",\"call:chrome.tabs.query 2args\",\"call:chrome.tabs.onUpdated.addListener\",\"get:chrome.commands.onCommand\",\"call:chrome.commands.onCommand.addListener fn\",\"get:chrome.contextMenus.onClicked\",\"call:chrome.contextMenus.onClicked.addListener fn\",\"get:chrome.sidePanel.setOptions\",\"call:chrome.sidePanel.setOptions 1args\"],\"errors\":[],\"listeners\":{\"onMessage\":-1}}"
+    },
+    "report": {
+        "apiLog": [
+            "get:chrome.tabs.getCurrent",
+            "get:chrome.notifications.onButtonClicked",
+            "get:chrome.notifications.onClicked",
+            "get:chrome.permissions.onAdded x2",
+            "call:chrome.permissions.onAdded.addListener fn",
+            "get:chrome.webNavigation.onCommitted x2",
+            "get:chrome.webNavigation.onErrorOccurred",
+            "get:chrome.tabs.onActivated x3",
+            "get:chrome.tabs.onUpdated x2",
+            "call:chrome.notifications.onButtonClicked.addListener fn",
+            "call:chrome.notifications.onClicked.addListener fn",
+            "get:chrome.permissions.contains",
+            "call:chrome.permissions.contains 2args",
+            "call:chrome.tabs.onActivated.addListener x2",
+            "get:chrome.tabs.onRemoved x5",
+            "call:chrome.tabs.onRemoved.addListener x5",
+            "get:chrome.tabs.onCreated",
+            "call:chrome.tabs.onCreated.addListener",
+            "get:chrome.tabs.query",
+            "call:chrome.tabs.query 2args",
+            "call:chrome.tabs.onUpdated.addListener",
+            "get:chrome.commands.onCommand",
+            "call:chrome.commands.onCommand.addListener fn",
+            "get:chrome.contextMenus.onClicked",
+            "call:chrome.contextMenus.onClicked.addListener fn",
+            "get:chrome.sidePanel.setOptions",
+            "call:chrome.sidePanel.setOptions 1args"
+        ],
+        "errors": [
+        ],
+        "listeners": {
+            "onMessage": -1
+        }
+    }
+}

@@ -1,0 +1,14 @@
+# EXT13 Arch-B engine host: mozjs (SpiderMonkey).  "=0.26.4" matches
+# the servo-embed lockfile so CARGO_TARGET_DIR=../../../servo/servo-embed/target
+# reuses the already-built mozjs_sys C++ archive.  NOT in the qmake build.
+[package]
+name = "mozjs-host"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+publish = false
+
+[dependencies]
+mozjs = "=0.26.4"
+serde_json = "1"
+libc = "0.2"
