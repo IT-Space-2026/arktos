@@ -774,6 +774,9 @@ UI:
   shortcut and behavior are identical — on every window type,
   including Tor windows where the menu button is the only menu
   (MENU11).
+- The duplicate File > "Preferences..." entry is removed — the app
+  menu's direct entry is the single menu home and Ctrl+, still
+  opens the settings tab (MENU12).
 - Flatter, more modern chrome from one central style source: sunken
   toolbar/dock/panel frames and hard borders are replaced by subtle
   palette-derived hairlines, toolbars and panels share a consistent
