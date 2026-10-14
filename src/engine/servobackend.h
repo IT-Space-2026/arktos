@@ -55,9 +55,11 @@
 
 #include "engineinterface.h"
 
+#include <qbasictimer.h>
 #include <qhash.h>
 #include <qimage.h>
 #include <qpointer.h>
+#include <qpoint.h>
 #include <qurl.h>
 #include <qwidget.h>
 
@@ -101,6 +103,10 @@ public:
     QUrl url() const { return m_url; }
     QString title() const { return m_title; }
     bool isLoading() const { return m_loading; }
+    // ENG25: frames blitted from the shim since construction — the
+    // smoke's scroll bench uses it to split paint cost (frames/s)
+    // from input pace (px/notch) without intercepting events.
+    int frameCount() const { return m_frameCount; }
 
 signals:
     void urlChanged(const QUrl &url);
@@ -118,9 +124,11 @@ protected:
     void mouseReleaseEvent(QMouseEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
+    void timerEvent(QTimerEvent *event) override;
 
 private:
     void grabFrame();
+    void flushWheelDelta();
     void setUrl(const QUrl &url);
     void setTitle(const QString &title);
     void onLoadStatus(int status);
@@ -141,6 +149,15 @@ private:
     QUrl m_url;
     QString m_title;
     bool m_loading;
+    // ENG25: wheel events coalesce into one se_wheel per ~frame —
+    // every notify_input_event ends in a full-viewport software
+    // raster + readback on this display path, so raw 1:1 forwarding
+    // of a notch burst outruns the rasterizer and reads as molasses.
+    QPointF m_pendingWheelDelta;
+    QPointF m_pendingWheelPos;
+    Qt::KeyboardModifiers m_pendingWheelMods = Qt::NoModifier;
+    QBasicTimer m_wheelTimer;
+    int m_frameCount = 0;
 
     friend class ServoPage;
 };

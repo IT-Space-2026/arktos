@@ -25,6 +25,7 @@
 #include "engineregistry.h"
 
 #include <qaction.h>
+#include <qapplication.h>
 #include <qcoreapplication.h>
 #include <qdir.h>
 #include <qevent.h>
@@ -35,6 +36,7 @@
 #include <qmimedatabase.h>
 #include <qmutex.h>
 #include <qpainter.h>
+#include <qstylehints.h>
 
 #include <cstring>
 
@@ -485,10 +487,17 @@ void ServoView::grabFrame()
     unsigned w = 0, h = 0;
     if (api().frameSize(m_instance, &w, &h) != 0 || !w || !h)
         return;
-    QImage image(w, h, QImage::Format_RGBA8888);
-    if (api().frameCopy(m_instance, image.bits(), image.sizeInBytes()) < 0)
+    // ENG25: reuse the backing store — a fresh QImage per frame cost a
+    // multi-MB alloc on every scroll tick.  Same-size frames refill in
+    // place; a resize reallocates once.
+    if (m_image.width() != int(w) || m_image.height() != int(h)
+            || m_image.format() != QImage::Format_RGBA8888) {
+        m_image = QImage(int(w), int(h), QImage::Format_RGBA8888);
+    }
+    if (api().frameCopy(m_instance, m_image.bits(),
+                        m_image.sizeInBytes()) < 0)
         return;
-    m_image = image;
+    ++m_frameCount;
 }
 
 void ServoView::setUrl(const QUrl &url)
@@ -583,15 +592,73 @@ void ServoView::mouseReleaseEvent(QMouseEvent *event)
                           event->position().x(), event->position().y());
 }
 
+// ENG25: wheel delta -> device pixels.  Servo v0.7.0's painter never
+// consults WheelDelta::mode on the scroll path — the delta is applied
+// as raw device pixels (paint/webview_renderer.rs folds -delta into
+// Scroll::Delta; mode only mirrors into the DOM event's deltaMode),
+// so the embedder owns the units.  angleDelta()/8 was 15px per wheel
+// notch — ~10x under the ~150-300px Chrome/Firefox produce (3 lines x
+// ~53px).  Scale notches to wheelScrollLines() x kLineStepPx;
+// pixelDelta (trackpads, hi-res wheels) is already device px and
+// passes through untouched.
+static constexpr qreal kServoWheelLineStepPx = 53.0;
+
+static QPointF servoWheelPixels(const QWheelEvent &event)
+{
+    if (!event.pixelDelta().isNull())
+        return QPointF(event.pixelDelta());
+    const int scrollLines =
+        qMax(1, QApplication::styleHints()->wheelScrollLines());
+    return QPointF(event.angleDelta())
+        * (scrollLines * kServoWheelLineStepPx / 120.0);
+}
+
 void ServoView::wheelEvent(QWheelEvent *event)
 {
     if (!m_instance || isPoisoned())
         return;
-    const QPoint delta = event->pixelDelta().isNull()
-        ? event->angleDelta() / 8
-        : event->pixelDelta();
-    api().wheel(m_instance, delta.x(), delta.y(),
-                event->position().x(), event->position().y());
+    // Coalesce a wheel burst into one se_wheel per ~frame.  Each
+    // notify_input_event ends in a full-viewport software raster +
+    // readback (this shim's display contract), so forwarding raw
+    // notches 1:1 outruns llvmpipe — measured ~46ms/frame at 900x600
+    // in the debug artifact — and reads as molasses regardless of the
+    // delta size.  The first event of a burst goes out immediately
+    // (a lone notch stays low-latency); later deltas accumulate and
+    // flush on a 16ms cadence.  Servo already sums same-mode pending
+    // wheel deltas internally (document_event_handler.rs), so merging
+    // here bounds IPC without changing scroll semantics.
+    const QPointF delta = servoWheelPixels(*event);
+    if (!m_pendingWheelDelta.isNull()
+            && event->modifiers() != m_pendingWheelMods)
+        flushWheelDelta();  // modifier change ends the burst
+    m_pendingWheelDelta += delta;
+    m_pendingWheelPos = event->position();
+    m_pendingWheelMods = event->modifiers();
+    if (!m_wheelTimer.isActive()) {
+        flushWheelDelta();
+        m_wheelTimer.start(16, this);
+    }
+}
+
+void ServoView::flushWheelDelta()
+{
+    if (m_pendingWheelDelta.isNull() || !m_instance || isPoisoned())
+        return;
+    api().wheel(m_instance,
+                m_pendingWheelDelta.x(), m_pendingWheelDelta.y(),
+                m_pendingWheelPos.x(), m_pendingWheelPos.y());
+    m_pendingWheelDelta = QPointF();
+}
+
+void ServoView::timerEvent(QTimerEvent *event)
+{
+    if (event->timerId() == m_wheelTimer.timerId()) {
+        flushWheelDelta();
+        if (m_pendingWheelDelta.isNull())
+            m_wheelTimer.stop();
+        return;
+    }
+    QWidget::timerEvent(event);
 }
 
 void ServoView::keyPressEvent(QKeyEvent *event)
