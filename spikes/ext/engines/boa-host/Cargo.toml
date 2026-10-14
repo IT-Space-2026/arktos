@@ -1,0 +1,14 @@
+# EXT13 Arch-B engine host: boa_engine (pure-Rust JS).  No C toolchain
+# at all — the lightest supply-chain footprint of the four.  NOT in the
+# qmake build.
+[package]
+name = "boa-host"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+publish = false
+
+[dependencies]
+boa_engine = "0.22"
+serde_json = "1"
+libc = "0.2"

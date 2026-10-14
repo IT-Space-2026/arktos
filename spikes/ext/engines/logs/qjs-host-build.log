@@ -1,0 +1,16 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+   Compiling qjs-host v0.1.0 (/home/szefi/Documents/arora-rust/spikes/ext/engines/qjs-host)
+warning: field `rt` is never read
+ --> src/main.rs:8:5
+  |
+7 | struct QjsEngine {
+  |        --------- field in this struct
+8 |     rt: Runtime,
+  |     ^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `qjs-host` (bin "qjs-host") generated 1 warning
+    Finished `release` profile [optimized] target(s) in 0.44s

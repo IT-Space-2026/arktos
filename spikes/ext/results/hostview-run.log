@@ -1,0 +1,83 @@
+This plugin does not support createPlatformVulkanInstance
+QVulkanInstance: Failed to initialize Vulkan
+GLX: No XCB Connection.
+hostview: loopback INFO port=46311
+hostview: === stage 0 ===
+hostview: load-fixture PASS
+hostview: ext-id INFO ddngcodbmeofhejhcgmjlapofiifmgcd
+GPUInfo not initialized on GpuInfoUpdate
+hostview: enable-fixture PASS
+hostview: === stage 1 ===
+hostview: popup-on-own-profile PASS
+hostview: popup-context INFO {"inj":42,"chrome":"object","runtime":"object"}
+hostview: popup-pre-host PASS {"pong":true,"from":"real-sw","via":"popup"}
+hostview: === stage 2 ===
+Fontconfig error: Cannot load default config file: No such file: (null)
+hostview: foreign-profile PASS loadOk=0 ctx={"chrome":"object","title":"chrome-extension://ddngcodbmeofhejhcgmjlapofiifmgcd/popup.html"}
+hostview: === stage 3 ===
+Cannot install a URL scheme handler overriding internal scheme: chrome-extension
+Fontconfig error: Cannot load default config file: No such file: (null)
+hostview: scheme-intercept FAIL requestStarted fired=0 loadOk=0
+hostview: === stage 4 ===
+hostview: host-page-load PASS
+hostview: host-page PASS sw.js-loaded
+hostview: host-context INFO {"evalProbe":"eval-blocked:EvalError: Refused to evaluate a string as JavaScript because 'unsafe-eval' is not an allowed source of script in the following Content Security Policy directive: \"script-src 'self'\".\n","swRan":"hosted-page","vis":"hidden","onMsg":"object","storage":"object"}
+hostview: host-onMessage-present PASS
+hostview: host-storage-present PASS
+hostview: eval-csp INFO {"evalProbe":"eval-blocked:EvalError: Refused to evaluate a string as JavaScript because 'unsafe-eval' is not an allowed source of script in the following Content Security Policy directive: \"script-src 'self'\".\n","swRan":"hosted-page","vis":"hidden","onMsg":"object","storage":"object"}
+hostview: === stage 5 ===
+hostview: msg-popup->host PASS {"r":{"pong":true,"from":"hosted-page","via":"popup2"},"err":null}
+hostview: msg-attr-hosted-page PASS {"r":{"pong":true,"from":"hosted-page","via":"popup2"},"err":null}
+hostview: === stage 6 ===
+hostview: cs-page-load PASS
+hostview: msg-cs->host PASS reply:hosted-page
+hostview: === stage 7 ===
+hostview: fetch+storage PASS storage:1,fetch:200
+hostview: === stage 8 ===
+hostview: aliveness INFO {"ticks":2,"vis":"hidden","focus":false}
+hostview: aliveness PASS {"ticks":2,"vis":"hidden","focus":false}
+hostview: === stage 9 ===
+hostview: inj-host-page-load PASS
+hostview: inj-boot-no-rewrite PASS hosted-page
+hostview: === stage 10 ===
+hostview: bw-load PASS
+hostview: bw-id INFO igecmclnipcflndbgcgjceggapicmoli
+hostview: bw-enable PASS
+js: Uncaught (in promise) TypeError: Cannot read properties of undefined (reading 'call')
+js: Uncaught (in promise) Error: SDK loading failed: TypeError: Cannot read properties of undefined (reading 'call')
+hostview: bw-host-page-load PASS
+hostview: bw-boot INFO all-loaded
+hostview: bw-background-eval PASS all-loaded
+hostview: bw-report-bytes INFO 1201
+hostview: bw-apiLog-count INFO 27
+hostview: bw-errors INFO 0 uncaught:0
+hostview: bw-report-file INFO /home/szefi/Documents/arora-rust/spikes/ext/results/bw-host-report.json
+hostview: === stage 11 ===
+[2556098:2556098:1014/144312.179833:ERROR:./../../../qtwebengine/src/3rdparty/chromium/extensions/browser/extensions_browser_client.cc:72] Extension Error:
+  OTR:     false
+  Level:   2
+  Source:  chrome-extension://igecmclnipcflndbgcgjceggapicmoli/background.js
+  Message: Uncaught TypeError: Cannot read properties of undefined (reading 'onCommitted')
+  ID:      igecmclnipcflndbgcgjceggapicmoli
+  Type:    RuntimeError
+  Context: chrome-extension://igecmclnipcflndbgcgjceggapicmoli/background.js
+  Stack Trace: 
+    {
+      Line:     2
+      Column:   1
+      URL:      chrome-extension://igecmclnipcflndbgcgjceggapicmoli/background.js
+      Function: (anonymous function)
+    }
+[2556098:2556098:1014/144312.180431:ERROR:./../../../qtwebengine/src/3rdparty/chromium/extensions/browser/extensions_browser_client.cc:72] Extension Error:
+  OTR:     false
+  Level:   1
+  Source:  manifest.json
+  Message: Service worker registration failed. Status code: 15
+  ID:      igecmclnipcflndbgcgjceggapicmoli
+  Type:    ManifestError
+js: Unhandled error in angular TypeError: Cannot read properties of undefined (reading 'getBackgroundPage')
+js: TypeError: Cannot read properties of undefined (reading 'getBackgroundPage')
+js: TypeError: chrome.tabs.getCurrent is not a function
+hostview: bw-second-page INFO loadOk=1
+hostview: bw-msg INFO no reply (pending 15s)
+hostview: all stages ran, failures: 1

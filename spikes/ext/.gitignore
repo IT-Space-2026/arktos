@@ -1,0 +1,12 @@
+# cargo build output — rebuild with `cargo build --release` per host
+engines/*/target/
+
+# extracted from src/data/extensions/bitwarden-2026.9.3.zip — regenerate:
+#   unzip -o ../../../src/data/extensions/bitwarden-2026.9.3.zip -d fixture-real
+fixture-real/
+
+# qmake in-tree build artifacts for hostview
+hostview/hostview
+hostview/*.o
+hostview/Makefile*
+hostview/.qmake.stash

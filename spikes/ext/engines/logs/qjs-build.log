@@ -1,0 +1,37 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+   Compiling qjs-host v0.1.0 (/home/szefi/Documents/arora-rust/spikes/ext/engines/qjs-host)
+error: expected one of `)`, `,`, `.`, `?`, or an operator, found `"catch(e){String(globalThis.__ext13_ret)}"`
+  --> src/main.rs:45:29
+   |
+44 | ...                   "try{JSON.stringify(globalThis.__ext13_ret)}"
+   |                                                                    -
+   |                                                                    |
+   |                                                                    expected one of `)`, `,`, `.`, `?`, or an operator
+   |                                                                    help: missing `,`
+45 | ...                   "catch(e){String(globalThis.__ext13_ret)}",
+   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unexpected token
+
+error[E0061]: this method takes 1 argument but 2 arguments were supplied
+   --> src/main.rs:43:29
+    |
+ 43 |                         ctx.eval::<String, _>(
+    |                             ^^^^^^^^^^^^^^^^^
+ 44 |                             "try{JSON.stringify(globalThis.__ext13_ret)}"
+ 45 |                             "catch(e){String(globalThis.__ext13_ret)}",
+    |                             ------------------------------------------ unexpected argument #2 of type `&'static str`
+    |
+note: method defined here
+   --> /home/szefi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rquickjs-core-0.10.0/src/context/ctx.rs:156:12
+    |
+156 |     pub fn eval<V: FromJs<'js>, S: Into<Vec<u8>>>(&self, source: S) -> Result<V> {
+    |            ^^^^
+help: remove the extra argument
+    |
+ 44 -                             "try{JSON.stringify(globalThis.__ext13_ret)}"
+ 45 -                             "catch(e){String(globalThis.__ext13_ret)}",
+ 44 +                             "try{JSON.stringify(globalThis.__ext13_ret)}",
+    |
+
+For more information about this error, try `rustc --explain E0061`.
+error: could not compile `qjs-host` (bin "qjs-host") due to 2 previous errors
