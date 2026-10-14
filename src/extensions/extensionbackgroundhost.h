@@ -69,9 +69,14 @@ class QWebEngineView;
 // when they merge, a Ready host is the 'Hosted' tier outranking
 // Limited/NotSupported.
 
+class ExtensionShimBackend;
+
 // The channel object the hosted page's shim talks to.  EXT14 lands
-// the handshake + error reporting only; EXT15 adds the API surface
-// behind invoke().  Everything the extension sends is scoped to its
+// the handshake + error reporting; EXT15 routes invoke() through
+// ExtensionShimBackend (storage/alarms/tabs/action/i18n/permissions/
+// contextMenus/sidePanel/notifications/runtime/shim) and handles the
+// 'relay' namespace itself against ExtensionBackgroundRuntime's
+// context registry.  Everything the extension sends is scoped to its
 // own id — the bridge never crosses extension boundaries.
 class ChromeBridge : public QObject
 {
@@ -80,10 +85,12 @@ class ChromeBridge : public QObject
 public:
     explicit ChromeBridge(const QString &extensionId,
                           const QString &extensionName,
+                          const QString &extensionPath,
                           QObject *parent = nullptr);
 
     // First call the shim makes — answers the extension's identity
-    // so the preamble can finish chrome.runtime.id-style fields.
+    // plus the raw manifest.json so synchronous chrome.* lookups
+    // (permissions/commands/getManifest fallback) never block.
     Q_INVOKABLE QJsonObject handshake(const QJsonObject &hello);
 
     // Hosted-side error forwarding: window error/unhandledrejection
@@ -91,24 +98,34 @@ public:
     // through the health surface instead of vanishing into stderr.
     Q_INVOKABLE void reportError(const QString &message);
 
-    // Generic op dispatch stub for EXT15 — every call answers a
-    // typed error ({ok:false, error:"unimplemented"}) until the real
-    // surface lands, so a shim call never hangs on a void.
+    // EXT15 generic op dispatch — backend namespaces answer real
+    // results or typed errors; 'relay' is the messaging fan-out.
     Q_INVOKABLE QJsonObject invoke(const QString &ns,
                                    const QString &method,
                                    const QJsonObject &args);
 
     QString extensionId() const { return m_extensionId; }
     bool handshakeDone() const { return m_handshakeDone; }
+    ExtensionShimBackend *backend() const { return m_backend; }
 
 signals:
     void handshook();
     void errorReported(const QString &message);
+    // EXT15 health diagnostics — a shimmed API answered a typed
+    // error (the extension touched something that cannot work).
+    void gapReported(const QString &api, const QString &error);
+    // Host->page push channel: relay envelopes/responses and the
+    // EXT16 event deliveries the shim fans out to listeners.
+    void hostEvent(const QString &name, const QJsonObject &payload);
 
 private:
+    QJsonObject invokeRelay(const QString &method,
+                            const QJsonObject &args);
+
     QString m_extensionId;
     QString m_extensionName;
     bool m_handshakeDone = false;
+    ExtensionShimBackend *m_backend = nullptr;
 };
 
 // One hidden hosted view for one extension.  Owns the view, page,
@@ -132,6 +149,7 @@ public:
     ExtensionBackgroundHost(QWebEngineProfile *profile,
                             const QString &extensionId,
                             const QString &extensionName,
+                            const QString &extensionPath,
                             const QStringList &backgroundScripts,
                             QObject *parent = nullptr);
     ~ExtensionBackgroundHost() override;
@@ -140,6 +158,11 @@ public:
     State state() const { return m_state; }
     QString lastError() const { return m_error; }
     QStringList errors() const { return m_errors; }
+    // EXT15 diagnostics: benign shim notes and the typed-error gap
+    // list the hosted page has surfaced so far.
+    QStringList shimNotes() const;
+    QStringList shimGaps() const;
+    ChromeBridge *bridge() const { return m_bridge; }
 
     // Diagnostics + test seam: the hidden view/page actually hosting
     // the background scripts.
@@ -199,6 +222,36 @@ public:
     ExtensionBackgroundHost *host(const QString &extensionId) const;
     QStringList hostedIds() const;
 
+    // EXT15 messaging relay — shimmed contexts (the hosted
+    // background page now, action popups once EXT17 injects them)
+    // register here keyed by extension id; relaySend() fans a
+    // wrapped message out to the sender's sibling contexts via each
+    // bridge's hostEvent push, and relayRespond() routes the
+    // answering context's sendResponse back to the sender.  The
+    // registry never crosses extension boundaries.
+    QString registerRelayContext(ChromeBridge *bridge,
+                                 const QString &kind);
+    void unregisterRelayContext(ChromeBridge *bridge);
+    int relaySend(ChromeBridge *from, const QString &mid,
+                  const QJsonObject &envelope);
+    bool relayRespond(ChromeBridge *responder, const QString &mid,
+                      const QJsonValue &response);
+
+    // EXT15 port routing — chrome.runtime.connect() links two
+    // shimmed contexts over addressed channels ('chan').  Each end
+    // registers its own local port id; postMessage is re-addressed
+    // to the remote end's local id so both halves of a self-connect
+    // can live in one context without colliding.
+    int relayPortConnect(ChromeBridge *from, const QString &chan,
+                         const QString &portId, const QString &name);
+    void relayPortAccept(ChromeBridge *accepter, const QString &chan,
+                         const QString &portId);
+    int relayPortMessage(ChromeBridge *from, const QString &chan,
+                         const QString &portId,
+                         const QJsonValue &msg);
+    void relayPortDisconnect(ChromeBridge *from, const QString &chan,
+                             const QString &portId);
+
 signals:
     void hostChanged(const QString &extensionId);
 
@@ -212,6 +265,32 @@ private:
     // sync does not re-read the manifest on every pass.
     QSet<QString> m_noBackground;
     QTimer *m_heartbeat = nullptr;
+
+    // Relay: live shimmed contexts and in-flight deliveries
+    // (mid -> the sending bridge; entries expire on a timer so a
+    // dead peer cannot pin the slot forever).
+    struct RelayContext {
+        QPointer<ChromeBridge> bridge;
+        QString kind;           // "background" | "popup" | ...
+        QString contextId;
+    };
+    QList<RelayContext> m_relayContexts;
+    struct PendingRelay {
+        QPointer<ChromeBridge> origin;
+        int peers = 0;
+        int replies = 0;
+    };
+    QHash<QString, PendingRelay> m_relayPending;
+    QHash<QString, QTimer *> m_relayPendingTimers;
+
+    // Port channels: chan -> the registered ends.  An end owns its
+    // local port id; messages arrive addressed by the sender's id
+    // and leave re-addressed to each remote end's own id.
+    struct PortEnd {
+        QPointer<ChromeBridge> bridge;
+        QString localPortId;
+    };
+    QHash<QString, QList<PortEnd>> m_portEnds;
 };
 
 #endif // EXTENSIONBACKGROUNDHOST_H

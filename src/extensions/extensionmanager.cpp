@@ -21,6 +21,7 @@
 
 #include "browserapplication.h"
 #include "extensionbackgroundhost.h"
+#include "extensionshimbackend.h"
 #include "browserpaths.h"
 #include "browserprofile.h"
 #include "networkaccessmanager.h"
@@ -370,6 +371,18 @@ QList<ExtensionManager::ExtensionInfo> ExtensionManager::extensions() const
             break;
         }
         info.hostError = host->lastError();
+        info.shimGaps = host->shimGaps();
+    }
+    // EXT15: fold in chrome.action state set through the hosted
+    // shim — the EXT08 action strip consumes these on merge.
+    for (ExtensionInfo &info : list) {
+        const ExtensionShimBackend::ActionState action =
+            ExtensionShimBackend::actionState(info.id);
+        info.actionTitle = action.title;
+        info.actionBadgeText = action.badgeText;
+        info.actionBadgeColor = action.badgeColor;
+        info.actionPopup = action.popup;
+        info.actionEnabled = action.enabled;
     }
 #endif
     return list;

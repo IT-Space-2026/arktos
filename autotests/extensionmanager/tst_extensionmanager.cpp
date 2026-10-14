@@ -32,9 +32,11 @@
 #include <memory>
 
 #include "browserapplication.h"
+#include "browserpaths.h"
 #include "browserprofile.h"
 #include "extensionbackgroundhost.h"
 #include "extensionmanager.h"
+#include "extensionshimbackend.h"
 #include "qtest_arora.h"
 #include "qtry.h"
 
@@ -55,6 +57,8 @@ private slots:
     void bundledInstall();
     void updateCheckLoopback();
     void hostedBackgroundRuntime();
+    void extensionShimBackend();
+    void extensionMessageRelay();
 
 private:
     // Minimal PK zip writer (store-only) — enough for the update
@@ -850,6 +854,106 @@ void tst_ExtensionManager::hostedBackgroundRuntime()
     }
     QVERIFY(sawHosted);
 
+    // EXT15: drive the chrome.* gapfill shim end to end inside the
+    // hosted page — bridge-backed storage round trip + onChanged,
+    // a real host-timer alarm firing onAlarm, action setters landing
+    // in the C++ state registry, permissions/getURL answered from the
+    // handshake manifest, sendMessage resolving through the relay
+    // path, and a typed 'unsupported' error surfacing as a gap.
+    runtime->host(id)->page()->runJavaScript(QStringLiteral(
+        "self.__probe = {done:false};"
+        "(async function(){"
+        " var out={};"
+        " var area=__aroraShim.storageArea('session');"
+        " await area.set({k:'v'});"
+        " var got=await area.get('k');"
+        " out.stored=(got&&got.k==='v');"
+        " var fired=false;"
+        " area.onChanged.addListener(function(ch,a){"
+        "   if(a==='session'&&ch.k2&&ch.k2.newValue===42)fired=true;});"
+        " await area.set({k2:42});"
+        " out.onChanged=fired;"
+        " var listedP=chrome.alarms.create('t',"
+        "   {delayInMinutes:0.002})"
+        "   .then(function(){return chrome.alarms.get('t');})"
+        "   .then(function(v){out.alarmListed=!!(v&&v.name==='t');});"
+        " await new Promise(function(r){"
+        "   var done=false;"
+        "   chrome.alarms.onAlarm.addListener(function(a){"
+        "     if(!done&&a.name==='t'){done=true;"
+        "       out.alarmFired=true;r();}});"
+        "   setTimeout(function(){if(!done){done=true;r();}},20000);"
+        " });"
+        " await listedP;"
+        " await chrome.alarms.clearAll();"
+        " await chrome.action.setTitle({title:'Shim Title'});"
+        " await chrome.action.setBadgeText({text:'7'});"
+        " out.title=await chrome.action.getTitle({});"
+        " out.badge=await chrome.action.getBadgeText({});"
+        " out.url=chrome.runtime.getURL('x.html')"
+        "   ===('chrome-extension://'+chrome.runtime.id+'/x.html');"
+        " out.perm=await chrome.permissions.contains("
+        "   {permissions:['storage']});"
+        " var caught='';"
+        " try{await chrome.notifications.create("
+        "   {type:'basic',title:'x',message:'y'});"
+        "   caught='resolved';"
+        " }catch(e){caught=e.code||String(e);}"
+        " out.notifError=caught;"
+        " var msgReplied=false;"
+        " await new Promise(function(r){"
+        "   try{chrome.runtime.sendMessage({probe:1},function(){"
+        "         msgReplied=true;r();});"
+        "   }catch(e){r();}"
+        "   setTimeout(r,8000);});"
+        " out.msgCallback=msgReplied;"
+        " __probe.out=out;__probe.done=true;"
+        "})().catch(function(e){"
+        "  __probe.err=String(e&&e.stack||e);__probe.done=true;});"),
+        [](const QVariant &) {});
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(runtime->host(id)->page(),
+             QStringLiteral("self.__probe&&self.__probe.done"))
+            .toBool(), 30000);
+    const QJsonObject probe = QJsonDocument::fromJson(
+        eval(runtime->host(id)->page(), QStringLiteral(
+            "JSON.stringify({out:self.__probe.out||{},"
+            "err:self.__probe.err||null,gaps:__aroraShim.gaps})"))
+            .toString().toUtf8()).object();
+    QVERIFY2(probe.value(QLatin1String("err")).toString().isEmpty(),
+             qPrintable(QStringLiteral("probe threw: %1")
+                 .arg(probe.value(QLatin1String("err")).toString())));
+    const QJsonObject out = probe.value(QLatin1String("out")).toObject();
+    QVERIFY2(out.value(QLatin1String("stored")).toBool(),
+             "bridge storage set/get round trip");
+    QVERIFY2(out.value(QLatin1String("onChanged")).toBool(),
+             "storage onChanged delivered");
+    QVERIFY2(out.value(QLatin1String("alarmListed")).toBool(),
+             "alarms.get returns the created alarm");
+    QVERIFY2(out.value(QLatin1String("alarmFired")).toBool(),
+             "host timer fired alarms.onAlarm");
+    QCOMPARE(out.value(QLatin1String("title")).toString(),
+             QStringLiteral("Shim Title"));
+    QCOMPARE(out.value(QLatin1String("badge")).toString(),
+             QStringLiteral("7"));
+    QVERIFY(out.value(QLatin1String("url")).toBool());
+    QVERIFY(out.value(QLatin1String("perm")).toBool());
+    QCOMPARE(out.value(QLatin1String("notifError")).toString(),
+             QStringLiteral("unsupported"));
+    QVERIFY(out.value(QLatin1String("msgCallback")).toBool());
+
+    // Action state flows into the C++ registry EXT08's button strip
+    // reads; the typed notifications error reached the host's gap
+    // list instead of silently no-oping.
+    const ExtensionShimBackend::ActionState action =
+        ExtensionShimBackend::actionState(id);
+    QCOMPARE(action.title, QStringLiteral("Shim Title"));
+    QCOMPARE(action.badgeText, QStringLiteral("7"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(id)->shimGaps().contains(
+            QStringLiteral("chrome.notifications.create: unsupported")),
+        10000);
+
     // Disable -> the hosted view is torn down; re-enable -> respawn.
     manager->setExtensionEnabled(id, false);
     QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 15000);
@@ -863,6 +967,401 @@ void tst_ExtensionManager::hostedBackgroundRuntime()
     // Unload -> host gone, no stray state.
     manager->removeExtension(id);
     QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 15000);
+
+    QDir(dir).removeRecursively();
+}
+
+// EXT15: the host-side backend behind ChromeBridge::invoke() —
+// per-extension storage namespaces (local persisted, session
+// in-memory), QTimer-backed alarms, the action-state registry, i18n
+// locale files, manifest-derived permissions, and the diagnostics
+// channel.  Every call answers {ok,result} or {ok:false,error} —
+// no silent no-ops.
+void tst_ExtensionManager::extensionShimBackend()
+{
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extshim-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir + QLatin1String("/_locales/en")));
+    {
+        QFile manifestFile(dir + QLatin1String("/manifest.json"));
+        QVERIFY(manifestFile.open(QIODevice::WriteOnly));
+        manifestFile.write(
+            "{\"manifest_version\":3,\"name\":\"tst-shim\","
+            "\"version\":\"2.0\",\"default_locale\":\"en\","
+            "\"permissions\":[\"storage\",\"alarms\"],"
+            "\"host_permissions\":[\"https://*.example.com/*\"]}");
+        manifestFile.close();
+        QFile msgs(dir
+            + QLatin1String("/_locales/en/messages.json"));
+        QVERIFY(msgs.open(QIODevice::WriteOnly));
+        msgs.write("{\"hello\":{\"message\":\"Hello $1\"},"
+                   "\"bye\":{\"message\":\"Bye\"}}");
+        msgs.close();
+    }
+    const QString id = QStringLiteral("tstmockextensionid0001");
+
+    ExtensionShimBackend backend(id, QStringLiteral("tst-shim"), dir);
+
+    // --- storage.local round trip + change records ----------------
+    QJsonObject reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("local.set"),
+        QJsonObject{{QStringLiteral("items"),
+                     QJsonObject{{QStringLiteral("a"), 1},
+                                 {QStringLiteral("b"),
+                                  QStringLiteral("x")}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    const QJsonObject changes = reply.value(QLatin1String("result"))
+        .toObject().value(QLatin1String("changes")).toObject();
+    QVERIFY(changes.value(QLatin1String("a")).toObject()
+            .value(QLatin1String("newValue")).toInt() == 1);
+
+    reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("local.get"),
+        QJsonObject{{QStringLiteral("keys"),
+                     QStringLiteral("a")}});
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+             .value(QLatin1String("a")).toInt(), 1);
+
+    // get(null) returns the whole store; object keys merge defaults.
+    reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("local.get"),
+        QJsonObject{{QStringLiteral("keys"), QJsonValue::Null}});
+    QCOMPARE(reply.value(QLatin1String("result")).toObject().size(), 2);
+    reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("local.get"),
+        QJsonObject{{QStringLiteral("keys"),
+                     QJsonObject{{QStringLiteral("missing"),
+                                  QStringLiteral("dflt")}}}});
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+             .value(QLatin1String("missing")).toString(),
+             QStringLiteral("dflt"));
+
+    // local persists for the extension id across backend instances.
+    {
+        ExtensionShimBackend again(id, QStringLiteral("tst-shim"),
+                                   dir);
+        reply = again.invoke(
+            QStringLiteral("storage"), QStringLiteral("local.get"),
+            QJsonObject{{QStringLiteral("keys"),
+                         QStringLiteral("b")}});
+        QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("b")).toString(),
+                 QStringLiteral("x"));
+    }
+
+    // remove + clear emit oldValue change records.
+    reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("local.remove"),
+        QJsonObject{{QStringLiteral("keys"),
+                     QStringLiteral("a")}});
+    QVERIFY(reply.value(QLatin1String("result")).toObject()
+            .value(QLatin1String("changes")).toObject()
+            .value(QLatin1String("a")).toObject()
+            .contains(QLatin1String("oldValue")));
+    reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("local.clear"),
+        QJsonObject());
+    QVERIFY(reply.value(QLatin1String("result")).toObject()
+            .value(QLatin1String("changes")).toObject()
+            .contains(QLatin1String("b")));
+
+    // --- storage.session is a separate in-memory area -------------
+    QVERIFY(backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("session.set"),
+        QJsonObject{{QStringLiteral("items"),
+                     QJsonObject{{QStringLiteral("s"), true}}}})
+        .value(QLatin1String("ok")).toBool());
+    reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("local.get"),
+        QJsonObject{{QStringLiteral("keys"),
+                     QStringLiteral("s")}});
+    QVERIFY(!reply.value(QLatin1String("result")).toObject()
+            .contains(QLatin1String("s")));
+    reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("session.get"),
+        QJsonObject{{QStringLiteral("keys"),
+                     QStringLiteral("s")}});
+    QVERIFY(reply.value(QLatin1String("result")).toObject()
+            .value(QLatin1String("s")).toBool());
+    // Invalid areas and managed writes are typed errors, not no-ops.
+    QVERIFY(!backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("bogus.get"),
+        QJsonObject()).value(QLatin1String("ok")).toBool());
+    reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("managed.set"),
+        QJsonObject{{QStringLiteral("items"), QJsonObject()}});
+    QCOMPARE(reply.value(QLatin1String("error")).toString(),
+             QStringLiteral("read-only"));
+
+    // --- alarms ---------------------------------------------------
+    QSignalSpy alarmSpy(&backend,
+                        &ExtensionShimBackend::pushEvent);
+    QVERIFY(backend.invoke(
+        QStringLiteral("alarms"), QStringLiteral("create"),
+        QJsonObject{{QStringLiteral("name"), QStringLiteral("al")},
+                    {QStringLiteral("info"),
+                     QJsonObject{{QStringLiteral("delayInMinutes"),
+                                  0.002}}}})
+        .value(QLatin1String("ok")).toBool());
+    reply = backend.invoke(QStringLiteral("alarms"),
+                           QStringLiteral("get"),
+                           QJsonObject{{QStringLiteral("name"),
+                                        QStringLiteral("al")}});
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+             .value(QLatin1String("name")).toString(),
+             QStringLiteral("al"));
+    // The timer is real — onAlarm actually fires (~120ms).
+    QTRY_VERIFY_WITH_TIMEOUT(alarmSpy.size() >= 1, 10000);
+    QCOMPARE(alarmSpy.first().at(0).toString(),
+             QStringLiteral("alarms.onAlarm"));
+    QCOMPARE(alarmSpy.first().at(1).toJsonObject()
+             .value(QLatin1String("name")).toString(),
+             QStringLiteral("al"));
+
+    // A cleared alarm never fires.
+    QVERIFY(backend.invoke(
+        QStringLiteral("alarms"), QStringLiteral("create"),
+        QJsonObject{{QStringLiteral("name"), QStringLiteral("dead")},
+                    {QStringLiteral("info"),
+                     QJsonObject{{QStringLiteral("delayInMinutes"),
+                                  0.002}}}})
+        .value(QLatin1String("ok")).toBool());
+    reply = backend.invoke(
+        QStringLiteral("alarms"), QStringLiteral("clear"),
+        QJsonObject{{QStringLiteral("name"),
+                     QStringLiteral("dead")}});
+    QCOMPARE(reply.value(QLatin1String("result")).toBool(), true);
+    const int fired = alarmSpy.size();
+    QTest::qWait(400);
+    QCOMPARE(alarmSpy.size(), fired);
+
+    // --- action state -----------------------------------------------
+    QVERIFY(backend.invoke(
+        QStringLiteral("action"), QStringLiteral("set"),
+        QJsonObject{{QStringLiteral("key"), QStringLiteral("title")},
+                    {QStringLiteral("value"),
+                     QStringLiteral("T")}}).value("ok").toBool());
+    QVERIFY(backend.invoke(
+        QStringLiteral("browserAction"), QStringLiteral("set"),
+        QJsonObject{{QStringLiteral("key"),
+                     QStringLiteral("badgeText")},
+                    {QStringLiteral("value"),
+                     QStringLiteral("3")}}).value("ok").toBool());
+    QVERIFY(backend.invoke(
+        QStringLiteral("action"), QStringLiteral("set"),
+        QJsonObject{{QStringLiteral("key"),
+                     QStringLiteral("badgeColor")},
+                    {QStringLiteral("value"),
+                     QJsonArray{10, 20, 30, 128}}})
+        .value(QLatin1String("ok")).toBool());
+    const ExtensionShimBackend::ActionState state =
+        ExtensionShimBackend::actionState(id);
+    QCOMPARE(state.title, QStringLiteral("T"));
+    QCOMPARE(state.badgeText, QStringLiteral("3"));
+    QCOMPARE(state.badgeColor,
+             QStringLiteral("rgba(10,20,30,%1)")
+                 .arg(128.0 / 255.0, 0, 'f'));
+    reply = backend.invoke(
+        QStringLiteral("action"), QStringLiteral("get"),
+        QJsonObject{{QStringLiteral("key"),
+                     QStringLiteral("badgeColor")}});
+    const QJsonArray rgba = reply.value(QLatin1String("result"))
+        .toArray();
+    QCOMPARE(rgba.at(0).toInt(), 10);
+    QCOMPARE(rgba.at(3).toInt(), 128);
+    // ExtensionInfo carries the action fields for the button strip.
+    bool sawAction = false;
+    for (const ExtensionManager::ExtensionInfo &info
+         : ExtensionManager::instance()->extensions()) {
+        if (info.id == id) {
+            sawAction = info.actionTitle == QLatin1String("T")
+                && info.actionBadgeText == QLatin1String("3");
+        }
+    }
+    // The fixture was never loaded as a real extension — the info
+    // row only exists when it is; the static registry check above is
+    // the real assertion, this just must not crash.
+    Q_UNUSED(sawAction);
+
+    // --- i18n / permissions -----------------------------------------
+    reply = backend.invoke(QStringLiteral("i18n"),
+                           QStringLiteral("messages"),
+                           QJsonObject());
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+             .value(QLatin1String("hello")).toString(),
+             QStringLiteral("Hello $1"));
+
+    reply = backend.invoke(
+        QStringLiteral("permissions"), QStringLiteral("contains"),
+        QJsonObject{{QStringLiteral("permissions"),
+                     QJsonArray{QStringLiteral("storage")}}});
+    QCOMPARE(reply.value(QLatin1String("result")).toBool(), true);
+    reply = backend.invoke(
+        QStringLiteral("permissions"), QStringLiteral("contains"),
+        QJsonObject{{QStringLiteral("permissions"),
+                     QJsonArray{QStringLiteral("tabs")}}});
+    QCOMPARE(reply.value(QLatin1String("result")).toBool(), false);
+    reply = backend.invoke(QStringLiteral("permissions"),
+                           QStringLiteral("request"),
+                           QJsonObject());
+    QCOMPARE(reply.value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+
+    // --- honest typed errors -----------------------------------------
+    reply = backend.invoke(QStringLiteral("notifications"),
+                           QStringLiteral("create"),
+                           QJsonObject());
+    QVERIFY(!reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(reply.value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    QVERIFY(backend.invoke(
+        QStringLiteral("notifications"), QStringLiteral("getAll"),
+        QJsonObject()).value(QLatin1String("ok")).toBool());
+    reply = backend.invoke(QStringLiteral("bogus_ns"),
+                           QStringLiteral("x"), QJsonObject());
+    QCOMPARE(reply.value(QLatin1String("error")).toString(),
+             QStringLiteral("unimplemented"));
+
+    // --- diagnostics channel ------------------------------------------
+    QSignalSpy gapSpy(&backend, &ExtensionShimBackend::gapReported);
+    QVERIFY(backend.invoke(
+        QStringLiteral("shim"), QStringLiteral("gap"),
+        QJsonObject{{QStringLiteral("api"),
+                     QStringLiteral("chrome.test.x")},
+                    {QStringLiteral("error"),
+                     QStringLiteral("unsupported")}})
+        .value(QLatin1String("ok")).toBool());
+    QCOMPARE(gapSpy.size(), 1);
+    QVERIFY(backend.gaps().contains(
+        QStringLiteral("chrome.test.x: unsupported")));
+    QVERIFY(backend.invoke(
+        QStringLiteral("shim"), QStringLiteral("note"),
+        QJsonObject{{QStringLiteral("message"),
+                     QStringLiteral("hello")}})
+        .value(QLatin1String("ok")).toBool());
+    QVERIFY(backend.notes().contains(QStringLiteral("hello")));
+
+    // --- contextMenus / sidePanel registries --------------------------
+    reply = backend.invoke(
+        QStringLiteral("contextMenus"), QStringLiteral("create"),
+        QJsonObject{{QStringLiteral("props"),
+                     QJsonObject{{QStringLiteral("id"),
+                                  QStringLiteral("mi")},
+                                 {QStringLiteral("title"),
+                                  QStringLiteral("Item")}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+             .value(QLatin1String("id")).toString(),
+             QStringLiteral("mi"));
+    QVERIFY(!backend.invoke(
+        QStringLiteral("contextMenus"), QStringLiteral("remove"),
+        QJsonObject{{QStringLiteral("id"),
+                     QStringLiteral("nope")}})
+        .value(QLatin1String("ok")).toBool());
+
+    // Clean the persisted store dir for the test id.
+    QDir(BrowserPaths::dataFilePath(
+        QStringLiteral("extstorage")) + QLatin1Char('/') + id)
+        .removeRecursively();
+    QDir(dir).removeRecursively();
+}
+
+// EXT15: the runtime relay — shimmed contexts register by extension
+// id, send fan-out only reaches same-extension peers, and the first
+// defined response routes back to the origin.  A peer that answers
+// with nothing still resolves the send once all peers replied.
+void tst_ExtensionManager::extensionMessageRelay()
+{
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extrelay-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile manifestFile(dir + QLatin1String("/manifest.json"));
+        QVERIFY(manifestFile.open(QIODevice::WriteOnly));
+        manifestFile.write(
+            "{\"manifest_version\":3,\"name\":\"tst-relay\","
+            "\"version\":\"1.0\"}");
+        manifestFile.close();
+    }
+
+    // Two contexts on one extension + one on another extension.
+    ChromeBridge bg(QStringLiteral("relayext0000000001"),
+                    QStringLiteral("tst-relay"), dir);
+    ChromeBridge popup(QStringLiteral("relayext0000000001"),
+                       QStringLiteral("tst-relay"), dir);
+    ChromeBridge other(QStringLiteral("relayext0000000002"),
+                       QStringLiteral("tst-other"), dir);
+    QVERIFY(!runtime->registerRelayContext(
+        &bg, QStringLiteral("background")).isEmpty());
+    QVERIFY(!runtime->registerRelayContext(
+        &popup, QStringLiteral("popup")).isEmpty());
+    QVERIFY(!runtime->registerRelayContext(
+        &other, QStringLiteral("background")).isEmpty());
+    // Re-registering the same bridge returns the same context id.
+    QCOMPARE(runtime->registerRelayContext(
+                 &bg, QStringLiteral("background")),
+             QStringLiteral("relayext0000000001|background|0"));
+
+    QSignalSpy popupEvents(&popup, &ChromeBridge::hostEvent);
+    QSignalSpy otherEvents(&other, &ChromeBridge::hostEvent);
+    QSignalSpy bgEvents(&bg, &ChromeBridge::hostEvent);
+
+    // send fans out to the same-extension peer only.
+    const int peers = runtime->relaySend(
+        &bg, QStringLiteral("m1"),
+        QJsonObject{{QStringLiteral("__aroraMsg"),
+                     QJsonObject{{QStringLiteral("mid"),
+                                  QStringLiteral("m1")}}}});
+    QCOMPARE(peers, 1);
+    QCOMPARE(popupEvents.size(), 1);
+    QCOMPARE(otherEvents.size(), 0);
+    QCOMPARE(popupEvents.first().at(0).toString(),
+             QStringLiteral("__arora.relay"));
+    QCOMPARE(popupEvents.first().at(1).toJsonObject()
+             .value(QLatin1String("mid")).toString(),
+             QStringLiteral("m1"));
+
+    // The peer's response routes back to the origin.
+    QVERIFY(runtime->relayRespond(
+        &popup, QStringLiteral("m1"),
+        QJsonValue(QStringLiteral("pong"))));
+    QCOMPARE(bgEvents.size(), 1);
+    QCOMPARE(bgEvents.first().at(0).toString(),
+             QStringLiteral("__arora.relayResponse"));
+    QCOMPARE(bgEvents.first().at(1).toJsonObject()
+             .value(QLatin1String("response")).toString(),
+             QStringLiteral("pong"));
+
+    // A spent mid no longer routes.
+    QVERIFY(!runtime->relayRespond(
+        &popup, QStringLiteral("m1"), QJsonValue()));
+
+    // peers=0 message (no sibling contexts): nothing pending.
+    QCOMPARE(runtime->relaySend(
+                 &other, QStringLiteral("m2"), QJsonObject()),
+             0);
+    QVERIFY(!runtime->relayRespond(
+        &other, QStringLiteral("m2"), QJsonValue(1)));
+
+    // Empty peer reply resolves to null after all peers answered.
+    QCOMPARE(runtime->relaySend(
+                 &bg, QStringLiteral("m3"), QJsonObject()), 1);
+    QVERIFY(runtime->relayRespond(
+        &popup, QStringLiteral("m3"), QJsonValue()));
+    QCOMPARE(bgEvents.size(), 2);
+    QVERIFY(bgEvents.last().at(1).toJsonObject()
+            .value(QLatin1String("response")).isNull());
+
+    // Teardown unregisters; a further send finds no peers.
+    runtime->unregisterRelayContext(&popup);
+    QCOMPARE(runtime->relaySend(
+                 &bg, QStringLiteral("m4"), QJsonObject()), 0);
+    runtime->unregisterRelayContext(&bg);
+    runtime->unregisterRelayContext(&other);
 
     QDir(dir).removeRecursively();
 }
