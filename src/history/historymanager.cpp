@@ -75,6 +75,7 @@
 #include <qdir.h>
 #include <qfile.h>
 #include <qfileinfo.h>
+#include <qmessagebox.h>
 #include <qpointer.h>
 #include <qsettings.h>
 #include <qtemporaryfile.h>
@@ -437,6 +438,17 @@ void HistoryManager::setDaysToExpire(int limit)
     m_daysToExpire = limit;
     checkForExpired();
     m_saveTimer->changeOccurred();
+}
+
+bool HistoryManager::confirmClear(QWidget *parent)
+{
+    if (QMessageBox::question(parent, tr("Clear History"),
+            tr("Do you want to clear the history?"),
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No) != QMessageBox::Yes)
+        return false;
+    clear();
+    return true;
 }
 
 void HistoryManager::clear()

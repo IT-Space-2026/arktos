@@ -74,6 +74,7 @@
 #include "engineregistry.h"
 #include "fakeengine.h"
 #include "history.h"
+#include "historymanager.h"
 #include "pdfview.h"
 #include "printpreviewdialog.h"
 #include "sidebargrip.h"
@@ -216,6 +217,7 @@ private slots:
     void downloadsSidebarFinishedRows();
     void downloadsSidebarMinWidth();
     void downloadsSidebarActions();
+    void sidebarHistoryControls();
     void bookmarksSidebarPanel();
     void chromeSlots();
     void widgetTabBookmarksSafety();
@@ -5200,6 +5202,116 @@ void tst_BrowserMainWindow::downloadsSidebarPanel()
     DownloadManager::instance()->cleanup();
     DownloadManager::instance()->deleteLater();
     QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+}
+
+// HIST03: the History page's header row carries a period combo
+// (Today/This Week/This Month/All — a date filter between the
+// day-group tree model and the search proxy, persisted under
+// sidebar/historyPeriod) and a clear button on the shared
+// HistoryManager::confirmClear path.
+void tst_BrowserMainWindow::sidebarHistoryControls()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+    settings.remove(QLatin1String("sidebar/historyPeriod"));
+
+    // Seed the shared store with entries on distinct days — the day
+    // groups are what the period filter keeps or drops.
+    HistoryManager *manager = HistoryManager::instance();
+    manager->setDaysToExpire(-1);   // keep the backdated row
+    const QDate today = QDate::currentDate();
+    manager->setHistory(QList<HistoryEntry>()
+        << HistoryEntry(QStringLiteral("http://today.example"),
+                        QDateTime(today, QTime(12, 0)))
+        << HistoryEntry(QStringLiteral("http://old.example"),
+                        QDateTime(today.addDays(-45), QTime(12, 0))));
+
+    SubWindow *window = new SubWindow;
+    window->show();
+    QDockWidget *dock = window->sidebarDock();
+    dock->toggleViewAction()->trigger();
+    SidebarPanel *panel = window->sidebarPanel();
+    QVERIFY(panel);
+
+    QComboBox *period = panel->findChild<QComboBox *>(
+        QLatin1String("sidebarHistoryPeriod"));
+    QToolButton *clearButton = panel->findChild<QToolButton *>(
+        QLatin1String("sidebarHistoryClear"));
+    QTreeView *view = panel->findChild<QTreeView *>(
+        QLatin1String("sidebarHistoryView"));
+    QVERIFY(period);
+    QVERIFY(clearButton);
+    QVERIFY(view);
+    QCOMPARE(period->count(), 4);
+    QAbstractItemModel *model = view->model();
+    QVERIFY(model);
+
+    // Default All — both day groups show, nothing hidden.
+    QCOMPARE(period->currentData().toInt(),
+             int(HistoryPeriodFilterModel::All));
+    QCOMPARE(model->rowCount(), 2);
+
+    // Today — the old group drops entirely; the pick persists.
+    emit period->activated(0);
+    QCOMPARE(model->rowCount(), 1);
+    QCOMPARE(model->index(0, 0).data(HistoryModel::DateRole).toDate(),
+             today);
+    QCOMPARE(settings.value(QLatin1String("sidebar/historyPeriod"))
+                 .toInt(), int(HistoryPeriodFilterModel::Today));
+
+    // Text search composes with the range.  Day groups with children
+    // always pass the search proxy, so under Today + "old" the one
+    // surviving group shows zero matching children; back on All the
+    // old group reappears with its match.
+    QLineEdit *search = view->parentWidget()->findChild<QLineEdit *>();
+    QVERIFY(search);
+    search->setText(QLatin1String("old"));
+    QCOMPARE(model->rowCount(), 1);
+    QCOMPARE(model->rowCount(model->index(0, 0)), 0);
+    emit period->activated(3);
+    QCOMPARE(model->rowCount(), 2);
+    QCOMPARE(model->rowCount(model->index(0, 0)), 0);
+    QCOMPARE(model->rowCount(model->index(1, 0)), 1);
+    search->clear();
+    QCOMPARE(model->rowCount(), 2);
+    QCOMPARE(model->rowCount(model->index(0, 0)), 1);
+
+    // Offscreen grab of the History page (combo + clear button +
+    // grouped tree) for visual review — same ARORA_SIDEBAR_GRAB_DIR
+    // convention as sidebarPanel, lands as sidebar-history.png.
+    const QByteArray sidebarGrabDir = qgetenv("ARORA_SIDEBAR_GRAB_DIR");
+    if (!sidebarGrabDir.isEmpty()) {
+        QDir().mkpath(QString::fromLocal8Bit(sidebarGrabDir));
+        panel->tabs()->setCurrentWidget(view->parentWidget());
+        qApp->processEvents();
+        view->parentWidget()->grab().save(
+            QString::fromLocal8Bit(sidebarGrabDir)
+            + QStringLiteral("/sidebar-history.png"));
+    }
+
+    // The clear button runs the menu's shared confirmation — No
+    // keeps the store, Yes empties it.
+    const auto answerQuestion = [](QMessageBox::StandardButton button) {
+        QTimer::singleShot(100, qApp, [button]() {
+            QMessageBox *box = qobject_cast<QMessageBox *>(
+                QApplication::activeModalWidget());
+            if (box && box->button(button))
+                box->button(button)->click();
+        });
+    };
+    answerQuestion(QMessageBox::No);
+    clearButton->click();
+    QCOMPARE(manager->history().count(), 2);
+    QCOMPARE(model->rowCount(), 2);
+
+    answerQuestion(QMessageBox::Yes);
+    clearButton->click();
+    QVERIFY(manager->history().isEmpty());
+    QCOMPARE(model->rowCount(), 0);
+
+    manager->setDaysToExpire(30);
+    settings.remove(QLatin1String("sidebar/historyPeriod"));
+    closeWindow(window);
 }
 
 // SIDE04: Bookmarks > "Show All Bookmarks" (Ctrl+Shift+B) raises the

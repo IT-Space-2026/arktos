@@ -750,9 +750,53 @@ QWidget *SidebarPanel::buildHistoryPage()
         AroraStyle::Spacing::Small, AroraStyle::Spacing::Small,
         AroraStyle::Spacing::Small, AroraStyle::Spacing::Small);
     historyLayout->setSpacing(AroraStyle::Spacing::Small);
+
+    // HIST03: the reference's header controls — a period combo
+    // narrowing the day groups plus the shared clear-history
+    // confirmation on an icon button.  Both take the downloads
+    // panel's compact treatment (Ignored policy, autoRaise glyph)
+    // so the dock's ~160px floor stays reachable.
+    QHBoxLayout *historyHeader = new QHBoxLayout;
+    historyHeader->setSpacing(AroraStyle::Spacing::Small);
     SearchLineEdit *historySearch = new SearchLineEdit(historyPage);
-    historyLayout->addWidget(historySearch);
+    historySearch->setSizePolicy(QSizePolicy::Ignored,
+                                 QSizePolicy::Fixed);
+    historyHeader->addWidget(historySearch, 2);
+    m_historyPeriod = new QComboBox(historyPage);
+    m_historyPeriod->setObjectName(QLatin1String("sidebarHistoryPeriod"));
+    m_historyPeriod->setAccessibleName(tr("Filter history by period"));
+    m_historyPeriod->setToolTip(tr("Filter history by period"));
+    m_historyPeriod->setSizePolicy(QSizePolicy::Ignored,
+                                   QSizePolicy::Fixed);
+    m_historyPeriod->addItem(tr("Today"),
+                             HistoryPeriodFilterModel::Today);
+    m_historyPeriod->addItem(tr("This Week"),
+                             HistoryPeriodFilterModel::ThisWeek);
+    m_historyPeriod->addItem(tr("This Month"),
+                             HistoryPeriodFilterModel::ThisMonth);
+    m_historyPeriod->addItem(tr("All"),
+                             HistoryPeriodFilterModel::All);
+    // Both header widgets are Ignored, so a stretch of 0 would leave
+    // the combo at 0px — split the row 2:1 and let it elide.
+    historyHeader->addWidget(m_historyPeriod, 1);
+    QToolButton *clearButton = new QToolButton(historyPage);
+    clearButton->setObjectName(QLatin1String("sidebarHistoryClear"));
+    clearButton->setAccessibleName(tr("Clear history"));
+    clearButton->setToolTip(tr("Clear history..."));
+    clearButton->setAutoRaise(true);
+    clearButton->setIcon(
+        AroraIcon::getChrome(QLatin1String("edit-clear")));
+    connect(clearButton, &QToolButton::clicked,
+            this, [historyPage]() {
+        HistoryManager::instance()->confirmClear(historyPage);
+    });
+    historyHeader->addWidget(clearButton);
+    historyLayout->addLayout(historyHeader);
+
     m_historyView = new EditTreeView(historyPage);
+    m_historyPeriodFilter = new HistoryPeriodFilterModel(m_historyView);
+    m_historyPeriodFilter->setSourceModel(
+        HistoryManager::instance()->historyTreeModel());
     m_historyProxy = new TreeSortFilterProxyModel(m_historyView);
     m_historyView->setObjectName(QLatin1String("sidebarHistoryView"));
     m_historyView->setAccessibleName(tr("History"));
@@ -764,10 +808,34 @@ QWidget *SidebarPanel::buildHistoryPage()
     m_historyProxy->setFilterKeyColumn(-1);
     connect(historySearch, &SearchLineEdit::textChanged,
             m_historyProxy, &QSortFilterProxyModel::setFilterFixedString);
-    m_historyProxy->setSourceModel(
-        HistoryManager::instance()->historyTreeModel());
+    connect(m_historyPeriod, &QComboBox::activated,
+            this, [this](int index) {
+        const HistoryPeriodFilterModel::Period period =
+            static_cast<HistoryPeriodFilterModel::Period>(
+                m_historyPeriod->itemData(index).toInt());
+        m_historyPeriodFilter->setPeriod(period);
+        QSettings().setValue(QLatin1String("sidebar/historyPeriod"),
+                             int(period));
+        // A narrower range can hide the day group holding the view's
+        // current row — the first (newest) group is always in range.
+        m_historyView->setExpanded(m_historyProxy->index(0, 0), true);
+    });
+    m_historyProxy->setSourceModel(m_historyPeriodFilter);
     m_historyView->setModel(m_historyProxy);
     m_historyView->setExpanded(m_historyProxy->index(0, 0), true);
+    // Persisted like the rest of the panel state; the default is All
+    // so a first run hides nothing.
+    const int savedPeriod = QSettings().value(
+        QLatin1String("sidebar/historyPeriod"),
+        int(HistoryPeriodFilterModel::All)).toInt();
+    int periodRow = m_historyPeriod->findData(savedPeriod);
+    if (periodRow < 0)
+        periodRow = m_historyPeriod->findData(
+            int(HistoryPeriodFilterModel::All));
+    m_historyPeriod->setCurrentIndex(periodRow);
+    m_historyPeriodFilter->setPeriod(
+        static_cast<HistoryPeriodFilterModel::Period>(
+            m_historyPeriod->itemData(periodRow).toInt()));
     // SIDE06: same name-only treatment — column 1 (address / item
     // count) hoarded the slack; hide it so titles fill the panel.
     m_historyView->setColumnHidden(1, true);

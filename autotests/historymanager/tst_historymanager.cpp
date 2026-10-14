@@ -142,6 +142,8 @@ private slots:
     // TODO move to their own tests
     void big();
 
+    void periodFilter();
+
     void historyDialog_data();
     void historyDialog();
 
@@ -714,6 +716,82 @@ void tst_HistoryManager::big()
 
     HistoryDialog dialog(nullptr, &history);
     QTest::qWait(100);
+}
+
+void tst_HistoryManager::periodFilter()
+{
+    // HIST03: the sidebar's period combo maps onto a date cutoff —
+    // Today / this ISO week / this calendar month / no cutoff.
+    const QDate today = QDate::currentDate();
+    QCOMPARE(HistoryPeriodFilterModel::periodStart(
+                 HistoryPeriodFilterModel::Today, today),
+             today);
+    QCOMPARE(HistoryPeriodFilterModel::periodStart(
+                 HistoryPeriodFilterModel::ThisWeek, today),
+             today.addDays(1 - today.dayOfWeek()));
+    QCOMPARE(HistoryPeriodFilterModel::periodStart(
+                 HistoryPeriodFilterModel::ThisMonth, today),
+             QDate(today.year(), today.month(), 1));
+    QVERIFY(!HistoryPeriodFilterModel::periodStart(
+                 HistoryPeriodFilterModel::All, today).isValid());
+
+    SubHistory history;
+    history.setDaysToExpire(-1);   // keep the backdated rows
+    const QDateTime noon(today, QTime(12, 0));
+    history.setHistory(HistoryList()
+        << HistoryEntry(QStringLiteral("http://today.example"), noon)
+        << HistoryEntry(QStringLiteral("http://yesterday.example"),
+                        QDateTime(today.addDays(-1), QTime(12, 0)))
+        << HistoryEntry(QStringLiteral("http://lastmonth.example"),
+                        QDateTime(
+                            QDate(today.year(), today.month(), 1)
+                                .addMonths(-1),
+                            QTime(12, 0)))
+        << HistoryEntry(QStringLiteral("http://ancient.example"),
+                        QDateTime(today.addDays(-400), QTime(12, 0))));
+
+    HistoryPeriodFilterModel filter;
+    filter.setSourceModel(history.historyTreeModel());
+    QCOMPARE(filter.period(), HistoryPeriodFilterModel::All);
+
+    // All — every day group shows (four distinct days).
+    QCOMPARE(filter.rowCount(), 4);
+
+    // Today — only the group matching the model's own "Earlier Today"
+    // date (QDate::currentDate()) survives, with its entry inside.
+    filter.setPeriod(HistoryPeriodFilterModel::Today);
+    QCOMPARE(filter.rowCount(), 1);
+    const QModelIndex todayGroup = filter.index(0, 0);
+    QCOMPARE(todayGroup.data(HistoryModel::DateRole).toDate(), today);
+    QCOMPARE(filter.rowCount(todayGroup), 1);
+    QCOMPARE(filter.index(0, 0, todayGroup).data(
+                 HistoryModel::UrlStringRole).toString(),
+             QStringLiteral("http://today.example"));
+
+    // This Week — yesterday counts only if the ISO week hasn't rolled
+    // over; the two older groups are always out.
+    filter.setPeriod(HistoryPeriodFilterModel::ThisWeek);
+    const int weekGroups =
+        today.addDays(-1)
+            >= HistoryPeriodFilterModel::periodStart(
+                   HistoryPeriodFilterModel::ThisWeek, today) ? 2 : 1;
+    QCOMPARE(filter.rowCount(), weekGroups);
+
+    // This Month — today/yesterday stay, the month-ago and ancient
+    // groups drop entirely.
+    filter.setPeriod(HistoryPeriodFilterModel::ThisMonth);
+    QCOMPARE(filter.rowCount(), 2);
+    for (int row = 0; row < filter.rowCount(); ++row) {
+        QVERIFY(filter.index(row, 0)
+                    .data(HistoryModel::DateRole).toDate()
+                >= QDate(today.year(), today.month(), 1));
+    }
+
+    // Back to All — the range opens up again without a model reset.
+    filter.setPeriod(HistoryPeriodFilterModel::All);
+    QCOMPARE(filter.rowCount(), 4);
+
+    history.setHistory(HistoryList());
 }
 
 void tst_HistoryManager::historyDialog_data()

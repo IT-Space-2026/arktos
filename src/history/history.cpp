@@ -396,10 +396,8 @@ void HistoryMenu::postPopulated()
 
 void HistoryMenu::clearHistoryDialog()
 {
-    if (m_history && QMessageBox::question(this, tr("Clear History"), tr("Do you want to clear the history?"),
-            QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes) {
-        m_history->clear();
-    }
+    if (m_history)
+        m_history->confirmClear(this);
 }
 
 void HistoryMenu::setInitialActions(QList<QAction*> actions)
@@ -1026,3 +1024,52 @@ void HistoryTreeModel::sourceRowsRemoved(const QModelIndex &parent, int start, i
     }
 }
 
+
+HistoryPeriodFilterModel::HistoryPeriodFilterModel(QObject *parent)
+    : QSortFilterProxyModel(parent)
+    , m_period(All)
+{
+}
+
+HistoryPeriodFilterModel::Period HistoryPeriodFilterModel::period() const
+{
+    return m_period;
+}
+
+void HistoryPeriodFilterModel::setPeriod(Period period)
+{
+    if (m_period == period)
+        return;
+    beginFilterChange();
+    m_period = period;
+    m_start = periodStart(period);
+    endFilterChange();
+}
+
+QDate HistoryPeriodFilterModel::periodStart(Period period,
+                                            const QDate &today)
+{
+    switch (period) {
+    case Today:
+        return today;
+    case ThisWeek:
+        // ISO week — Qt dayOfWeek() is Monday=1 .. Sunday=7.
+        return today.addDays(1 - today.dayOfWeek());
+    case ThisMonth:
+        return QDate(today.year(), today.month(), 1);
+    case All:
+        break;
+    }
+    return QDate();
+}
+
+bool HistoryPeriodFilterModel::filterAcceptsRow(
+        int source_row, const QModelIndex &source_parent) const
+{
+    if (!m_start.isValid())
+        return true;
+    const QModelIndex index =
+        sourceModel()->index(source_row, 0, source_parent);
+    const QDate date = index.data(HistoryModel::DateRole).toDate();
+    return date.isValid() && date >= m_start;
+}

@@ -32,6 +32,7 @@
 class AutoSaver;
 class DownloadItem;
 class EditTreeView;
+class HistoryPeriodFilterModel;
 class QComboBox;
 class QFrame;
 class QListView;
@@ -178,6 +179,10 @@ private:
     QPointer<QListView> m_downloadsView;
     QPointer<TreeSortFilterProxyModel> m_bookmarksProxy;
     QPointer<TreeSortFilterProxyModel> m_historyProxy;
+    // HIST03: period combo + the date filter it drives, sitting
+    // between the day-group tree model and the search proxy.
+    QPointer<QComboBox> m_historyPeriod;
+    QPointer<HistoryPeriodFilterModel> m_historyPeriodFilter;
     QPointer<QSortFilterProxyModel> m_downloadsProxy;
     QPointer<QWidget> m_downloadsPage;
     QPointer<QComboBox> m_downloadsSort;
