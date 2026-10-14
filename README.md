@@ -387,11 +387,15 @@ that already carries extensions it is installed but left disabled —
 flip it on from Settings → Extensions. It installs exactly once:
 uninstalling is never undone, and it is never loaded into private
 or Tor profiles. The bundled build cannot self-update (no
-`update_url`); updates arrive with Arora releases. Qt WebEngine's
-extension API is a tech preview — a few chrome.* calls the Bitwarden
-popup uses (`chrome.tabs.getCurrent`, `getBackgroundPage`) are not
-yet implemented by the engine and are logged as console warnings;
-the core autofill content scripts work.
+`update_url`); updates arrive with Arora releases. The Bitwarden
+popup runs its real app under the hosted runtime — extension pages
+(popup, options, extension links in tabs) get the same shim
+injection and chromeBridge channel as the background, and the popup
+reaches its genuine vault login/unlock gate. Actual sign-in needs a
+real Bitwarden account; a few surfaces it touches
+(`chrome.tabs.sendMessage` to content scripts, `chrome.notifications`)
+answer typed errors that show up in its Settings → Extensions
+health row instead of failing silently.
 
 Enabled extensions that declare a background script additionally get
 a hosted background context: a hidden page on the extension's own
