@@ -81,38 +81,10 @@ bool BrowserTheme::isDarkPalette(const QPalette &palette)
 
 QPalette BrowserTheme::darkPalette()
 {
-    QPalette palette;
-    palette.setColor(QPalette::Window, QColor(53, 53, 53));
-    palette.setColor(QPalette::WindowText, Qt::white);
-    palette.setColor(QPalette::Disabled, QPalette::WindowText,
-                     QColor(127, 127, 127));
-    palette.setColor(QPalette::Base, QColor(35, 35, 35));
-    palette.setColor(QPalette::AlternateBase, QColor(53, 53, 53));
-    palette.setColor(QPalette::ToolTipBase, QColor(25, 25, 25));
-    palette.setColor(QPalette::ToolTipText, Qt::white);
-    palette.setColor(QPalette::Text, Qt::white);
-    palette.setColor(QPalette::Disabled, QPalette::Text,
-                     QColor(127, 127, 127));
-    palette.setColor(QPalette::Dark, QColor(35, 35, 35));
-    palette.setColor(QPalette::Light, QColor(75, 75, 75));
-    palette.setColor(QPalette::Midlight, QColor(64, 64, 64));
-    palette.setColor(QPalette::Mid, QColor(45, 45, 45));
-    palette.setColor(QPalette::Shadow, QColor(20, 20, 20));
-    palette.setColor(QPalette::Button, QColor(53, 53, 53));
-    palette.setColor(QPalette::ButtonText, Qt::white);
-    palette.setColor(QPalette::Disabled, QPalette::ButtonText,
-                     QColor(127, 127, 127));
-    palette.setColor(QPalette::BrightText, Qt::red);
-    palette.setColor(QPalette::Link, QColor(42, 130, 218));
-    palette.setColor(QPalette::LinkVisited, QColor(127, 84, 183));
-    palette.setColor(QPalette::Highlight, QColor(42, 130, 218));
-    palette.setColor(QPalette::Disabled, QPalette::Highlight,
-                     QColor(80, 80, 80));
-    palette.setColor(QPalette::HighlightedText, Qt::black);
-    palette.setColor(QPalette::Disabled, QPalette::HighlightedText,
-                     QColor(127, 127, 127));
-    palette.setColor(QPalette::PlaceholderText, QColor(160, 160, 160));
-    return palette;
+    // THEM04: the forced dark variant lives with the rest of the
+    // chrome palette definitions in AroraStyle — one source for all
+    // variants (system / dark / tor).
+    return AroraStyle::darkPalette();
 }
 
 static void applyScheme(Qt::ColorScheme scheme)

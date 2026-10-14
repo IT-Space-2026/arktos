@@ -27,6 +27,7 @@
 #include <QtGui/QtGui>
 
 #include "aroraicon.h"
+#include "arorastyle.h"
 #include "browsertheme.h"
 
 class tst_AroraIcon : public QObject
@@ -317,12 +318,13 @@ void tst_AroraIcon::chromeIcon()
     QCOMPARE(offTintPixels(disabled, disabledTint), 0);
     QVERIFY(disabled != image);
 
-    // THEM03: a selected request tints to the Highlight card's own
-    // foreground instead of ButtonText.
+    // THEM03/THEM04: a selected request tints to the Highlight
+    // card's foreground — selectionTextColor, the same pick the
+    // sheets pair with the card's text.
     const QImage selected =
         icon.pixmap(QSize(24, 24), QIcon::Selected).toImage();
-    QCOMPARE(offTintPixels(selected, saved.color(
-                 QPalette::HighlightedText)),
+    QCOMPARE(offTintPixels(selected,
+                           AroraStyle::selectionTextColor(saved)),
              0);
 
     // The same QIcon re-tints across a palette flip — nothing

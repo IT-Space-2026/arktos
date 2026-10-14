@@ -108,8 +108,9 @@ QIcon getTinted(const QString &name,
                 const QColor &disabledColor = AroraStyle::torDimTextColor());
 
 // ICONS09: the house icon for chrome surfaces — the themed shape
-// re-tinted to the palette's ButtonText (HighlightedText when the
-// pixmap is requested Selected, Disabled to the disabled tone),
+// re-tinted to the palette's ButtonText (the Highlight card's own
+// foreground via AroraStyle::selectionTextColor when the pixmap is
+// requested Selected, Disabled to the disabled tone),
 // resolved lazily so an
 // icon-theme swap or a live light<->dark flip restyles icons that
 // are already installed on actions.  Menus, toolbars, tabs, panels

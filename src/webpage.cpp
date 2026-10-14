@@ -22,6 +22,7 @@
 
 #include "adblockmanager.h"
 #include "adblockpage.h"
+#include "arorastyle.h"
 #include "autofillmanager.h"
 #include "browserapplication.h"
 #include "browserprofile.h"
@@ -1876,8 +1877,8 @@ void WebPage::showRateLimitNoticeIfNeeded()
         "var bar=document.createElement('div');"
         "bar.id='arora-rate-limit';"
         "bar.setAttribute('style','all:initial;display:block;position:relative;"
-            "z-index:2147483647;background:#fff4ce;color:#3b3105;"
-            "border-bottom:2px solid #e0c45f;"
+            "z-index:2147483647;background:%3;color:%4;"
+            "border-bottom:2px solid %5;"
             "font:14px/1.45 sans-serif;padding:10px 16px;');"
         "var title=document.createElement('strong');"
         "title.textContent=\"%1 \";"
@@ -1893,7 +1894,10 @@ void WebPage::showRateLimitNoticeIfNeeded()
                         "it temporarily flagged search traffic from this "
                         "profile. Complete the prompt below or try again "
                         "later; or switch the default search engine under "
-                        "Tools > Options > Search.")));
+                        "Tools > Options > Search.")),
+             AroraStyle::warningBannerColor().name(),
+             AroraStyle::warningBannerTextColor().name(),
+             AroraStyle::warningBannerBorderColor().name());
     runJavaScript(script);
 }
 

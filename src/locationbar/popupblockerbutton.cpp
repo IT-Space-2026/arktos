@@ -20,6 +20,7 @@
 #include "popupblockerbutton.h"
 
 #include "aroraicon.h"
+#include "arorastyle.h"
 #include "browsertheme.h"
 #include "popupblocker.h"
 #include "safetext.h"
@@ -114,9 +115,9 @@ void PopupBlockerButton::refresh()
         painter.fontMetrics().horizontalAdvance(text) + 4);
     const QRect badge(16 - w, 7, w, 9);
     painter.setPen(Qt::NoPen);
-    painter.setBrush(palette().color(QPalette::Accent));
+    painter.setBrush(AroraStyle::accentFillColor(palette()));
     painter.drawRoundedRect(badge, 2, 2);
-    painter.setPen(palette().color(QPalette::HighlightedText));
+    painter.setPen(AroraStyle::onAccentColor(palette()));
     painter.drawText(badge, Qt::AlignCenter, text);
     painter.end();
     setIcon(QIcon(pixmap));

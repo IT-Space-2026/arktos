@@ -571,6 +571,13 @@ UI:
   borders and consistent headers; menus and dropdowns share flat
   padding, hairline separators, and a rounded selection — Tor windows
   follow the same rules through the palette (THEM03).
+- Palette unification + contrast pass: every hardcoded color in the
+  chrome now lives in the one central style source — the container
+  accent set, secure-field and loading cues, the warning banner, and
+  the forced dark variant join the Tor violet family — and text and
+  icons on selections and accent fills pick their foreground by
+  measured WCAG contrast, fixing unreadable cases like white labels
+  on bright container chips (THEM04).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

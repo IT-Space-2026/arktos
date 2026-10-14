@@ -2025,8 +2025,10 @@ void TabBar::paintEvent(QPaintEvent *event)
             const QColor accent = tabWidget->tabGroupColor(gid).isValid()
                 ? tabWidget->tabGroupColor(gid)
                 : palette().color(QPalette::Highlight);
-            const QColor textColor = accent.lightness() > 140
-                ? Qt::black : Qt::white;
+            // WCAG pick — a lightness threshold misjudges saturated
+            // mid-tone accents (the turquoise container color reads
+            // light enough for white text but only gives ~2:1).
+            const QColor textColor = AroraStyle::contrastTextColor(accent);
             const QRect rect = tabRect(index);
             const QString name = tabWidget->tabGroupName(gid);
 

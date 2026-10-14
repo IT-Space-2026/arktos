@@ -19,6 +19,7 @@
 
 #include "readerbutton.h"
 
+#include "arorastyle.h"
 #include "browsertheme.h"
 #include "readermode.h"
 #include "webview.h"
@@ -73,12 +74,13 @@ QIcon ReaderButton::makeIcon(bool active) const
     pixmap.fill(Qt::transparent);
     QPainter painter(&pixmap);
     painter.setRenderHint(QPainter::Antialiasing);
-    const QColor fg = palette().color(
-        active ? QPalette::HighlightedText : QPalette::ButtonText);
+    const QColor fg = active
+        ? AroraStyle::onAccentColor(palette())
+        : palette().color(QPalette::ButtonText);
     const QRectF page(2.5, 1.5, 11, 13);
     if (active) {
         painter.setPen(Qt::NoPen);
-        painter.setBrush(palette().color(QPalette::Accent));
+        painter.setBrush(AroraStyle::accentFillColor(palette()));
         painter.drawRoundedRect(page, 1.5, 1.5);
     }
     painter.setPen(QPen(fg, 1.1));

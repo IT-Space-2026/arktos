@@ -72,10 +72,12 @@ public:
         QStyledItemDelegate::paint(painter, opt, index);
 
         const bool selected = opt.state & QStyle::State_Selected;
-        const QPalette::ColorRole role = selected
-            ? QPalette::HighlightedText : QPalette::PlaceholderText;
+        const QColor hintColor = selected
+            ? AroraStyle::selectionTextColor(opt.palette)
+            : opt.palette.color(QPalette::Active,
+                                QPalette::PlaceholderText);
         painter->save();
-        painter->setPen(opt.palette.color(QPalette::Active, role));
+        painter->setPen(hintColor);
         QRect hintRect = opt.rect.adjusted(0, 0, -8, 0);
         painter->drawText(hintRect, Qt::AlignRight | Qt::AlignVCenter, hint);
         painter->restore();

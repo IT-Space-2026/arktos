@@ -24,6 +24,7 @@
 #include <qapplication.h>
 #include <qfontmetrics.h>
 #include <qframe.h>
+#include <qmath.h>
 #include <qpainter.h>
 #include <qpainterpath.h>
 #include <qproxystyle.h>
@@ -406,6 +407,170 @@ QColor AroraStyle::tabActiveColor(const QPalette &palette)
     return blend(window, palette.color(QPalette::WindowText), 0.14);
 }
 
+// WCAG 2.x relative luminance — the sRGB channels linearized, then
+// weighted for how the eye reads them.
+static qreal relativeLuminance(const QColor &color)
+{
+    const auto channel = [](qreal c) {
+        return c <= 0.04045 ? c / 12.92
+                            : qPow((c + 0.055) / 1.055, 2.4);
+    };
+    return 0.2126 * channel(color.redF())
+        + 0.7152 * channel(color.greenF())
+        + 0.0722 * channel(color.blueF());
+}
+
+qreal AroraStyle::contrastRatio(const QColor &a, const QColor &b)
+{
+    qreal high = relativeLuminance(a);
+    qreal low = relativeLuminance(b);
+    if (high < low)
+        qSwap(high, low);
+    return (high + 0.05) / (low + 0.05);
+}
+
+QColor AroraStyle::contrastTextColor(const QColor &on)
+{
+    return contrastRatio(QColor(Qt::black), on)
+            >= contrastRatio(QColor(Qt::white), on)
+        ? QColor(Qt::black) : QColor(Qt::white);
+}
+
+QColor AroraStyle::selectionTextColor(const QPalette &palette)
+{
+    const QColor highlight = palette.color(QPalette::Highlight);
+    const QColor onHighlight =
+        palette.color(QPalette::HighlightedText);
+    if (contrastRatio(onHighlight, highlight) >= 4.5)
+        return onHighlight;
+    return contrastTextColor(highlight);
+}
+
+QColor AroraStyle::accentFillColor(const QPalette &palette)
+{
+    const QColor accent = palette.color(QPalette::Accent);
+    return accent.isValid() ? accent
+                            : palette.color(QPalette::Highlight);
+}
+
+QColor AroraStyle::onAccentColor(const QPalette &palette)
+{
+    const QColor fill = accentFillColor(palette);
+    const QColor on = palette.color(QPalette::HighlightedText);
+    if (contrastRatio(on, fill) >= 4.5)
+        return on;
+    return contrastTextColor(fill);
+}
+
+// THEME01's dark variant moved here (THEM04) — the palette
+// BrowserTheme forces when the platform has no dark scheme.  It is
+// the classic Fusion dark set; every color is a variant definition,
+// not a stray literal.
+QPalette AroraStyle::darkPalette()
+{
+    QPalette palette;
+    palette.setColor(QPalette::Window, QColor(53, 53, 53));
+    palette.setColor(QPalette::WindowText, Qt::white);
+    palette.setColor(QPalette::Disabled, QPalette::WindowText,
+                     QColor(127, 127, 127));
+    palette.setColor(QPalette::Base, QColor(35, 35, 35));
+    palette.setColor(QPalette::AlternateBase, QColor(53, 53, 53));
+    palette.setColor(QPalette::ToolTipBase, QColor(25, 25, 25));
+    palette.setColor(QPalette::ToolTipText, Qt::white);
+    palette.setColor(QPalette::Text, Qt::white);
+    palette.setColor(QPalette::Disabled, QPalette::Text,
+                     QColor(127, 127, 127));
+    palette.setColor(QPalette::Dark, QColor(35, 35, 35));
+    palette.setColor(QPalette::Light, QColor(75, 75, 75));
+    palette.setColor(QPalette::Midlight, QColor(64, 64, 64));
+    palette.setColor(QPalette::Mid, QColor(45, 45, 45));
+    palette.setColor(QPalette::Shadow, QColor(20, 20, 20));
+    palette.setColor(QPalette::Button, QColor(53, 53, 53));
+    palette.setColor(QPalette::ButtonText, Qt::white);
+    palette.setColor(QPalette::Disabled, QPalette::ButtonText,
+                     QColor(127, 127, 127));
+    palette.setColor(QPalette::BrightText, Qt::red);
+    palette.setColor(QPalette::Link, QColor(42, 130, 218));
+    palette.setColor(QPalette::LinkVisited, QColor(127, 84, 183));
+    palette.setColor(QPalette::Highlight, QColor(42, 130, 218));
+    palette.setColor(QPalette::Disabled, QPalette::Highlight,
+                     QColor(80, 80, 80));
+    palette.setColor(QPalette::HighlightedText, Qt::black);
+    palette.setColor(QPalette::Disabled, QPalette::HighlightedText,
+                     QColor(127, 127, 127));
+    palette.setColor(QPalette::PlaceholderText, QColor(160, 160, 160));
+    return palette;
+}
+
+QList<QColor> AroraStyle::containerIdentityColors()
+{
+    // Firefox's container accent palette — blue, turquoise, green,
+    // yellow, orange, red, pink, purple.
+    return { QColor(0x37, 0xad, 0xff), QColor(0x00, 0xc7, 0x9a),
+             QColor(0x51, 0xcd, 0x00), QColor(0xff, 0xcb, 0x00),
+             QColor(0xff, 0x9f, 0x00), QColor(0xff, 0x61, 0x3d),
+             QColor(0xff, 0x4b, 0xda), QColor(0xaf, 0x51, 0xf5) };
+}
+
+QColor AroraStyle::noContainerColor()
+{
+    return QColor(0x8a, 0x8a, 0x8a);
+}
+
+QColor AroraStyle::loadingProgressColor(const QPalette &fieldPalette)
+{
+    // Light text on the field means a dark or violet scheme — step
+    // the app palette's Base down for the cue instead.  The app
+    // palette, not the widget's own: the progress gradient may
+    // already have overwritten the widget's Base role.
+    if (fieldPalette.color(QPalette::Text).value() >= 128) {
+        const QPalette appPalette =
+            qApp ? qApp->palette() : QPalette();
+        return appPalette.color(QPalette::Base).darker(200);
+    }
+    return QColor(116, 192, 250);
+}
+
+QColor AroraStyle::secureFieldColor()
+{
+    return QColor(248, 248, 210);
+}
+
+QColor AroraStyle::warningBannerColor()
+{
+    return QColor(0xff, 0xf4, 0xce);
+}
+
+QColor AroraStyle::warningBannerTextColor()
+{
+    return QColor(0x3b, 0x31, 0x05);
+}
+
+QColor AroraStyle::warningBannerBorderColor()
+{
+    return QColor(0xe0, 0xc4, 0x5f);
+}
+
+void AroraStyle::macToolbarSurfacePalette(QPalette &palette)
+{
+    palette.setColor(QPalette::Active, QPalette::Window,
+                     QColor(150, 150, 150));
+    palette.setColor(QPalette::Inactive, QPalette::Window,
+                     QColor(207, 207, 207));
+}
+
+void AroraStyle::macToolbarFramePalette(QPalette &palette)
+{
+    palette.setColor(QPalette::Active, QPalette::Light,
+                     QColor(64, 64, 64));
+    palette.setColor(QPalette::Active, QPalette::Dark,
+                     QColor(192, 192, 192));
+    palette.setColor(QPalette::Inactive, QPalette::Light,
+                     QColor(135, 135, 135));
+    palette.setColor(QPalette::Inactive, QPalette::Dark,
+                     QColor(226, 226, 226));
+}
+
 QColor AroraStyle::torChromeColor()
 {
     return QColor(0x4a, 0x33, 0x72);
@@ -442,8 +607,7 @@ QString AroraStyle::chromeStyleSheet()
     const QString separator = separatorColor(palette).name();
     const QString highlight = palette.color(QPalette::Highlight).name();
     const QString hover = hoverColor(palette).name();
-    const QString onHighlight =
-        palette.color(QPalette::HighlightedText).name();
+    const QString onHighlight = selectionTextColor(palette).name();
     return QString::fromLatin1(
         // Flat bars: no sunken frames anywhere.  The stylesheet
         // style reports PM_ToolBarFrameWidth as border+padding and

@@ -66,6 +66,8 @@ private slots:
     void tabCardShape();
     void tabControlHover();
     void roundedTabChrome();
+    void fixedFamilies();
+    void contrastAudit();
     void chromeGrab();
 };
 
@@ -289,9 +291,12 @@ void tst_Arorastyle::dialogAndMenuSheet()
     QVERIFY(sheet.contains(
         QStringLiteral("QMenu::item:selected { background: %1")
             .arg(highlight)));
+    // THEM04: selected-item text resolves through
+    // selectionTextColor — the platform role where it reads, the
+    // contrast pick where the platform pairs below AA.
     QVERIFY(sheet.contains(
         QStringLiteral("color: %1").arg(
-            palette.color(QPalette::HighlightedText).name())));
+            AroraStyle::selectionTextColor(palette).name())));
     QVERIFY(sheet.contains(QLatin1String("margin: 4px 4px")));
     QVERIFY(sheet.contains(
         QLatin1String("QComboBox QAbstractItemView")));
@@ -668,6 +673,135 @@ void tst_Arorastyle::roundedTabChrome()
         image.save(base + QLatin1String("/rounded-tabs-top.png"));
         railImage.save(base + QLatin1String("/rounded-tabs-left.png"));
     }
+}
+
+// THEM04 §a — the fixed families sit in the one source and the
+// callers quote them by name: the container accents, the
+// no-container grey, the warning banner's amber, the location bar's
+// cues, the mac toolbar greys, and the forced dark variant.
+void tst_Arorastyle::fixedFamilies()
+{
+    QCOMPARE(AroraStyle::containerIdentityColors(),
+             ContainerManager::defaultColors());
+    QCOMPARE(AroraStyle::containerIdentityColors().count(), 8);
+    QCOMPARE(AroraStyle::noContainerColor(),
+             QColor(0x8a, 0x8a, 0x8a));
+
+    // The injected warning banner keeps its amber set.
+    QCOMPARE(AroraStyle::warningBannerColor().name(),
+             QLatin1String("#fff4ce"));
+    QCOMPARE(AroraStyle::warningBannerTextColor().name(),
+             QLatin1String("#3b3105"));
+    QCOMPARE(AroraStyle::warningBannerBorderColor().name(),
+             QLatin1String("#e0c45f"));
+
+    // The location bar's cues — the https tint, and the loading
+    // accent: the fixed blue over a light field, the app Base's
+    // deeper step where light text sits on the field.
+    QCOMPARE(AroraStyle::secureFieldColor(), QColor(248, 248, 210));
+    QCOMPARE(AroraStyle::loadingProgressColor(QApplication::palette()),
+             QColor(116, 192, 250));
+    QPalette violetField;
+    violetField.setColor(QPalette::Text, AroraStyle::torTextColor());
+    QCOMPARE(AroraStyle::loadingProgressColor(violetField),
+             QApplication::palette().color(QPalette::Base)
+                 .darker(200));
+
+    // The mac greys patch the two palettes the unified toolbar wears.
+    QPalette frame;
+    AroraStyle::macToolbarFramePalette(frame);
+    QVERIFY(frame.color(QPalette::Active, QPalette::Light)
+            != frame.color(QPalette::Inactive, QPalette::Light));
+    QPalette bar;
+    AroraStyle::macToolbarSurfacePalette(bar);
+    QVERIFY(bar.color(QPalette::Active, QPalette::Window)
+            != bar.color(QPalette::Inactive, QPalette::Window));
+
+    // The forced dark variant delegates — one definition, two names.
+    QCOMPARE(BrowserTheme::darkPalette().color(QPalette::Window),
+             AroraStyle::darkPalette().color(QPalette::Window));
+}
+
+// THEM04 §b — the contrast audit.  4.5:1 is WCAG AA for body text;
+// accent links keep the 3:1 floor used for large text and UI
+// affordances.
+void tst_Arorastyle::contrastAudit()
+{
+    // The pick is correct at the extremes and lands on the readable
+    // side of mid-tone accents — the old lightness() > 140 threshold
+    // chose white on the turquoise container accent (~2.2:1).
+    QCOMPARE(AroraStyle::contrastTextColor(Qt::white),
+             QColor(Qt::black));
+    QCOMPARE(AroraStyle::contrastTextColor(Qt::black),
+             QColor(Qt::white));
+    QCOMPARE(AroraStyle::contrastTextColor(
+                 AroraStyle::containerIdentityColors().at(1)),
+             QColor(Qt::black));
+    QCOMPARE(AroraStyle::contrastTextColor(AroraStyle::torChromeColor()),
+             QColor(Qt::white));
+
+    // Every container accent carries its label at AA or better.
+    for (const QColor &accent : AroraStyle::containerIdentityColors()) {
+        const QColor text = AroraStyle::contrastTextColor(accent);
+        QVERIFY2(AroraStyle::contrastRatio(text, accent) >= 4.5,
+                 qPrintable(accent.name()));
+    }
+
+    // The tor chrome family — light text on the violet surface and
+    // on every step the sheets layer over it.
+    const QColor chrome = AroraStyle::torChromeColor();
+    QVERIFY(AroraStyle::contrastRatio(AroraStyle::torTextColor(),
+                                    chrome) >= 4.5);
+    QVERIFY(AroraStyle::contrastRatio(AroraStyle::torDimTextColor(),
+                                    chrome) >= 4.5);
+    const QList<QColor> steps = { AroraStyle::torChromeHoverColor(),
+                                  AroraStyle::torChromePressedColor(),
+                                  AroraStyle::torChromeRaisedColor() };
+    for (const QColor &step : steps) {
+        QVERIFY2(AroraStyle::contrastRatio(AroraStyle::torTextColor(),
+                                         step) >= 4.5,
+                 qPrintable(step.name()));
+    }
+
+    // The injected warning banner — dark ink on amber.
+    QVERIFY(AroraStyle::contrastRatio(AroraStyle::warningBannerTextColor(),
+                                    AroraStyle::warningBannerColor())
+            >= 4.5);
+
+    // The forced dark variant — every text role on its surface.
+    const QPalette dark = AroraStyle::darkPalette();
+    QVERIFY(AroraStyle::contrastRatio(dark.color(QPalette::Text),
+                                    dark.color(QPalette::Base)) >= 4.5);
+    QVERIFY(AroraStyle::contrastRatio(dark.color(QPalette::WindowText),
+                                    dark.color(QPalette::Window)) >= 4.5);
+    QVERIFY(AroraStyle::contrastRatio(dark.color(QPalette::ButtonText),
+                                    dark.color(QPalette::Button)) >= 4.5);
+    QVERIFY(AroraStyle::contrastRatio(
+                dark.color(QPalette::HighlightedText),
+                dark.color(QPalette::Highlight)) >= 4.5);
+    QCOMPARE(AroraStyle::selectionTextColor(dark),
+             dark.color(QPalette::HighlightedText));
+    QVERIFY(AroraStyle::contrastRatio(dark.color(QPalette::Link),
+                                    dark.color(QPalette::Base)) >= 3.0);
+    QVERIFY(AroraStyle::contrastRatio(dark.color(QPalette::PlaceholderText),
+                                    dark.color(QPalette::Base)) >= 4.5);
+
+    // The live (normal) palette gets the same audit.  The platform
+    // owns its own roles — floor them at the large-text level; the
+    // surfaces we control pair selection through selectionTextColor,
+    // which upgrades the stock sub-AA pairing (Fusion's light
+    // Highlight sits at ~3.7) to a guaranteed AA pick.
+    const QPalette live = QApplication::palette();
+    QVERIFY(AroraStyle::contrastRatio(live.color(QPalette::Text),
+                                    live.color(QPalette::Base)) >= 4.5);
+    QVERIFY(AroraStyle::contrastRatio(live.color(QPalette::WindowText),
+                                    live.color(QPalette::Window)) >= 4.5);
+    QVERIFY(AroraStyle::contrastRatio(
+                live.color(QPalette::HighlightedText),
+                live.color(QPalette::Highlight)) >= 3.0);
+    QVERIFY(AroraStyle::contrastRatio(
+                AroraStyle::selectionTextColor(live),
+                live.color(QPalette::Highlight)) >= 4.5);
 }
 
 void tst_Arorastyle::chromeGrab()

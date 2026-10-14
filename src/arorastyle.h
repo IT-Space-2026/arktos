@@ -21,6 +21,7 @@
 #define ARORASTYLE_H
 
 #include <qcolor.h>
+#include <qlist.h>
 #include <qpalette.h>
 #include <qstring.h>
 
@@ -42,9 +43,10 @@
 //     Preferences theme preview) re-derives the colors instead of
 //     going stale.
 //
-// Nothing here hardcodes a color outside the tor family below — the
-// violet set is the fixed brand accent (and the single legitimate
-// exception every tor rule quotes by name).
+// Every hardcoded color in chrome code lives in this file — the tor
+// violet family, the container identity accents, the fixed cue and
+// notice colors, the macOS toolbar greys, and the forced dark
+// palette.  Everything else resolves from the live QPalette.
 namespace AroraStyle {
 
 // The chrome spacing scale.  Layout margins and spacings on toolbars,
@@ -75,9 +77,72 @@ QColor pressedColor(const QPalette &palette);
 // raised rather than recessed in both.
 QColor tabActiveColor(const QPalette &palette);
 
+// WCAG 2.x contrast ratio (1.0 – 21.0) between two colors — the
+// audit yardstick, and the pick rule behind contrastTextColor.
+qreal contrastRatio(const QColor &a, const QColor &b);
+
+// Black or white — whichever scores the higher contrastRatio()
+// against `on`.  For text and icons painted on accent fills the
+// palette cannot name (container chips, group bands, badges).
+QColor contrastTextColor(const QColor &on);
+
+// Text on a palette Highlight fill.  The platform's own
+// HighlightedText wins where it already meets the 4.5:1 AA floor;
+// below it (Fusion's stock light palette pairs white on #308cc6 at
+// ~3.7) the black/white contrast pick upgrades the surface.  Chrome
+// sheets quote this instead of the raw role.
+QColor selectionTextColor(const QPalette &palette);
+
+// The accent fill badges and toggles paint — the palette's Accent,
+// falling back to Highlight where the palette never set one — and
+// the text/glyph color that reads on it: the platform's
+// HighlightedText where it meets AA, the black/white pick below it.
+QColor accentFillColor(const QPalette &palette);
+QColor onAccentColor(const QPalette &palette);
+
+// --- palette variants -----------------------------------------------
+// One home for the chrome variants: the platform palette is the
+// "normal" one, darkPalette() is the variant BrowserTheme forces
+// when the platform has no dark scheme of its own, and the tor
+// family below is the tor variant.
+
+QPalette darkPalette();
+
+// --- fixed color families -------------------------------------------
+// Fixed by design, like the tor set: identity and cue colors that
+// must read identically on every palette.
+
+// The container identity accents — Firefox's eight: blue, turquoise,
+// green, yellow, orange, red, pink, purple.  The neutral grey the
+// "No Container" entry wears sits next to them.
+QList<QColor> containerIdentityColors();
+QColor noContainerColor();
+
+// The location bar's loading accent — a fixed blue over a light
+// field; where light text sits on the field (dark palettes, the tor
+// bar) the app Base color's deeper step keeps the cue visible.
+QColor loadingProgressColor(const QPalette &fieldPalette);
+
+// The https field tint — the classic light-yellow secure cue.  The
+// caller applies it only where dark text sits on the field.
+QColor secureFieldColor();
+
+// The rate-limit notice WebPage injects into arbitrary page DOM —
+// fixed amber because all:initial cuts it off from the page's own
+// colors and the widget palette alike.
+QColor warningBannerColor();
+QColor warningBannerTextColor();
+QColor warningBannerBorderColor();
+
+// The macOS unified-toolbar greys (referenced only under Q_OS_MACOS)
+// — the fixed Qt4-era Mac look: the bookmarks bar's grey surface and
+// the bevel pair its separator frame derives from.
+void macToolbarSurfacePalette(QPalette &palette);
+void macToolbarFramePalette(QPalette &palette);
+
 // --- tor chrome ---------------------------------------------------
-// The fixed violet family.  These are the only hardcoded colors in
-// chrome code, and they live only here.
+// The fixed violet family — the tor variant's brand accent, quoted
+// by name from every tor rule.
 
 QColor torChromeColor();        // the violet surface
 QColor torChromeHoverColor();   // hover step on the surface

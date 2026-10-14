@@ -21,6 +21,7 @@
 
 #include "adblockmanager.h"
 #include "aroraicon.h"
+#include "arorastyle.h"
 #include "browsertheme.h"
 #include "sitepanel.h"
 #include "webview.h"
@@ -150,9 +151,9 @@ void SiteShieldButton::refreshIcon()
                 painter.fontMetrics().horizontalAdvance(text) + 4);
             const QRect badge(16 - w, 7, w, 9);
             painter.setPen(Qt::NoPen);
-            painter.setBrush(palette().color(QPalette::Accent));
+            painter.setBrush(AroraStyle::accentFillColor(palette()));
             painter.drawRoundedRect(badge, 2, 2);
-            painter.setPen(palette().color(QPalette::HighlightedText));
+            painter.setPen(AroraStyle::onAccentColor(palette()));
             painter.drawText(badge, Qt::AlignCenter, text);
             tip += tr(" — %1 requests blocked").arg(blocked);
         }
@@ -163,8 +164,8 @@ void SiteShieldButton::refreshIcon()
         // count badge occupies the right one.
         if (jsBlocked) {
             const qreal x = blocked > 0 ? 0.5 : 9.5;
-            painter.setBrush(palette().color(QPalette::Accent));
-            painter.setPen(palette().color(QPalette::Base));
+            painter.setBrush(AroraStyle::accentFillColor(palette()));
+            painter.setPen(AroraStyle::onAccentColor(palette()));
             painter.drawEllipse(QRectF(x, 9.5, 6.0, 6.0));
             tip += tr(" — JavaScript blocked");
         }

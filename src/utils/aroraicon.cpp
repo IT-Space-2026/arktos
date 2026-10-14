@@ -19,6 +19,7 @@
 
 #include "aroraicon.h"
 
+#include "arorastyle.h"
 #include "browsertheme.h"
 
 #include <qapplication.h>
@@ -198,11 +199,15 @@ public:
         // THEM03: selected chrome glyphs ride a Highlight card (the
         // prefs nav rail, the sidebar section rail) — ButtonText on
         // Highlight can sink to unreadable, so the selected request
-        // tints to the matching foreground role.
-        return tintedPixmap(base, palette.color(
-            QPalette::Normal,
-            mode == QIcon::Selected ? QPalette::HighlightedText
-                                    : QPalette::ButtonText));
+        // tints to the matching foreground.  THEM04: through
+        // selectionTextColor, the same pick the sheets give the
+        // card's text — a sub-AA platform pairing can't split the
+        // glyph and label onto different colors.
+        if (mode == QIcon::Selected)
+            return tintedPixmap(base,
+                                AroraStyle::selectionTextColor(palette));
+        return tintedPixmap(base, palette.color(QPalette::Normal,
+                                                QPalette::ButtonText));
     }
 
 private:
