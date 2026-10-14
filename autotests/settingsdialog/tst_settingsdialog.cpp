@@ -32,6 +32,7 @@
 #include <qframe.h>
 #include <qgridlayout.h>
 #include <qgroupbox.h>
+#include <qheaderview.h>
 #include <qscrollarea.h>
 #include <qscrollbar.h>
 #include <qstandarditemmodel.h>
@@ -112,6 +113,7 @@ private slots:
     void pagePolishSettings();
     void extensionReview();
     void extensionVersionColumn();
+    void extensionColumnSizing();
     void performancePage();
     void energySaver();
     void tabHoverPreviews();
@@ -2625,6 +2627,42 @@ void tst_SettingsDialog::extensionVersionColumn()
     else
         settings.remove(QLatin1String("proxy/enabled"));
     NetworkAccessManager::instance()->loadSettings();
+}
+
+// EXT10: the Extensions table's stretch column is the long free-text
+// one — Description once EXT06's column merges in (it lands last),
+// Name until then.  Version/Status hug their contents and Source
+// keeps a small interactive width so it can never balloon and strand
+// a sliver column at the far right again.
+void tst_SettingsDialog::extensionColumnSizing()
+{
+    SettingsDialog dialog;
+    QHeaderView *header = dialog.extensionsTree->header();
+    const int columns = dialog.extensionsTree->columnCount();
+    QVERIFY(columns >= 4);
+    const int stretchColumn = columns > 4 ? columns - 1 : 0;
+    QVERIFY(!header->stretchLastSection());
+    for (int column = 0; column < columns; ++column) {
+        const QHeaderView::ResizeMode mode =
+            header->sectionResizeMode(column);
+        if (column == stretchColumn)
+            QCOMPARE(mode, QHeaderView::Stretch);
+        else if (column == 3)
+            QCOMPARE(mode, QHeaderView::Interactive);
+        else
+            QCOMPARE(mode, QHeaderView::ResizeToContents);
+    }
+    QCOMPARE(header->sectionSize(3), 100);
+
+    // Laid out: Source stays a compact column next to the stretch
+    // cell instead of absorbing the viewport's slack.
+    dialog.tabWidget->setCurrentIndex(int(SettingsDialog::ExtensionsPage));
+    dialog.pagesList->setCurrentRow(int(SettingsDialog::ExtensionsPage));
+    dialog.resize(900, 600);
+    dialog.show();
+    qApp->processEvents();
+    QVERIFY(header->sectionSize(3) <= 160);
+    QVERIFY(header->sectionSize(stretchColumn) > header->sectionSize(3));
 }
 
 // PREFUI04: the Performance page — every control persists under its
