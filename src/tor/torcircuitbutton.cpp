@@ -308,9 +308,9 @@ TorCircuitButton::TorCircuitButton(TorManager *manager, QWidget *parent)
     // click on the New-circuit button fires without dismissing the
     // popup (the status text lands underneath it).
     m_panel = new TorCircuitPanel(m_menu);
-    QWidgetAction *panelAction = new QWidgetAction(m_menu);
-    panelAction->setDefaultWidget(m_panel);
-    m_menu->addAction(panelAction);
+    m_panelAction = new QWidgetAction(m_menu);
+    m_panelAction->setDefaultWidget(m_panel);
+    m_menu->addAction(m_panelAction);
     connect(m_panel, &TorCircuitPanel::newCircuitRequested,
             this, &TorCircuitButton::onNewCircuit);
     connect(m_menu, &QMenu::aboutToShow,
@@ -328,6 +328,10 @@ TorCircuitButton::TorCircuitButton(TorManager *manager, QWidget *parent)
         });
     }
     refreshState();
+    // TOR19: populate immediately so the panel's content — and the
+    // sizeHint the tool button's pre-popup flush will read — is real
+    // before the first click, not the ctor's empty layout.
+    applyPanelContent();
 }
 
 void TorCircuitButton::setSiteHostProvider(
@@ -550,6 +554,18 @@ void TorCircuitButton::populateMenu()
     // A fresh open resets the New-circuit feedback line.
     m_statusText.clear();
     applyPanelContent();
+    // TOR19: QToolButton's InstantPopup path calls the menu's
+    // sizeHint() BEFORE aboutToShow to pick the popup position, which
+    // resolves and caches the action rect from whatever the panel
+    // last rendered.  QMenu::popup re-runs that layout pass after
+    // aboutToShow only when an item changed since — content that
+    // shifted while the menu was closed (or during this populate)
+    // would still open inside the stale rect: the first-click
+    // squashed popup.  Mutating the action re-marks the item layout
+    // dirty, forcing a fresh rect before the menu maps.  Cheap: one
+    // action-rect pass over a single-item menu.
+    m_panelAction->setVisible(false);
+    m_panelAction->setVisible(true);
 }
 
 void TorCircuitButton::syncOpenMenu()
@@ -560,8 +576,15 @@ void TorCircuitButton::syncOpenMenu()
     // rebuild is skipped unless the rendered content would actually
     // change: touching the hosted panel re-lays out the visible
     // popup, which on the reporter's desktop repositions it.
-    if (!m_menu->isVisible())
+    //
+    // TOR19: while the menu is CLOSED the panel is kept current too —
+    // the next popup's sizeHint is fixed from the panel's last
+    // rendered state before aboutToShow runs, so a stale panel here
+    // is exactly the first-click wrong-size popup.
+    if (!m_menu->isVisible()) {
+        applyPanelContent();
         return;
+    }
     const CircuitPanelContent content =
         torCircuitPanelContent(m_tor, currentSiteHost(), m_statusText);
     const QStringList signature = panelContentSignature(content);

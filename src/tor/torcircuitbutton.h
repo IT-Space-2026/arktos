@@ -28,6 +28,7 @@
 #include "tormanager.h"
 
 class QMenu;
+class QWidgetAction;
 class TorCircuitPanel;
 
 // TOR08: the nav-toolbar circuit dropdown — a small onion button next
@@ -61,6 +62,15 @@ class TorCircuitPanel;
 // nothing, keeping TOR13's no-creep guarantee), and the chain view
 // reserves the standard five-node chain so the size is stable across
 // circuit rotations.
+//
+// TOR19: QToolButton's InstantPopup path queries the menu's
+// sizeHint() BEFORE aboutToShow to pick the popup position, and that
+// call resolves the action rects from whatever the panel last
+// rendered — the post-aboutToShow layout pass skips widgets whose
+// action didn't change.  So the panel is kept current while the menu
+// is closed (applyPanelContent on every state/circuit signal), and a
+// populate that changes the rendered content re-dirties the item
+// layout so the popup never opens at a stale rect.
 class TorCircuitButton : public QToolButton
 {
     Q_OBJECT
@@ -98,6 +108,7 @@ private:
     QPointer<TorManager> m_tor;
     QMenu *m_menu;
     TorCircuitPanel *m_panel;
+    QWidgetAction *m_panelAction;
     std::function<QString()> m_siteHostProvider;
     // Result text shown under the New-circuit button ("requested",
     // "failed", "unavailable"); cleared on each open.
