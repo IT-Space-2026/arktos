@@ -301,9 +301,16 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
         QLabel *badge = new QLabel(QLatin1String(" Tor "), m_navigationBar);
         badge->setStyleSheet(AroraStyle::torBadgeStyleSheet());
         badge->setToolTip(tr("This window browses through the Tor network"));
-        m_navigationBar->addWidget(badge)
-            ->setProperty(kNavBarItemIdProperty,
-                          QLatin1String("torBadge"));
+        QAction *badgeAction = m_navigationBar->addWidget(badge);
+        badgeAction->setProperty(kNavBarItemIdProperty,
+                                 QLatin1String("torBadge"));
+        // MENU13: the badge slots in ahead of the wordmark so the
+        // 'Arora' label stays the bar's trailing element on tor too.
+        if (m_navBarBrandAction) {
+            m_navigationBar->removeAction(badgeAction);
+            m_navigationBar->insertAction(m_navBarBrandAction,
+                                          badgeAction);
+        }
 
         // READ02: the reader button paints its glyph from
         // ButtonText — dark on the violet tor bar.  Lift it to the
@@ -361,6 +368,14 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
         QPalette appMenuPalette = m_appMenuButton->palette();
         appMenuPalette.setColor(QPalette::ButtonText, torGlyph);
         m_appMenuButton->setPalette(appMenuPalette);
+
+        // MENU13: the trailing wordmark paints from palette
+        // WindowText — dark on the violet bar.  Lift it to the tor
+        // chrome's flat text color like the badge and painted glyphs.
+        QPalette brandPalette = m_navBarBrandLabel->palette();
+        brandPalette.setColor(QPalette::WindowText,
+                              AroraStyle::torTextColor());
+        m_navBarBrandLabel->setPalette(brandPalette);
 
         // TOR14: the status bar joins the violet chrome.  The
         // transient message line is painted straight from
@@ -1765,6 +1780,8 @@ void BrowserMainWindow::retranslate()
     m_appMenuButton->setText(tr("Arora"));
     m_appMenuButton->setToolTip(tr("Arora menu"));
     m_appMenuButton->setAccessibleName(tr("Arora menu"));
+    if (m_navBarBrandLabel)
+        m_navBarBrandLabel->setText(tr("Arora"));
 
     m_navBarEditAction->setText(tr("Edit Navigation Bar"));
     m_navBarResetAction->setText(tr("Reset Navigation Bar"));
@@ -1855,7 +1872,10 @@ void BrowserMainWindow::setupToolBar()
     // pins the paint to a square — a non-square icon cell under a
     // stylesheet or foreign style can no longer stretch the mark.
     m_appMenuButton->setIcon(QIcon(new AroraLogoEngine(false)));
-    m_appMenuButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    // MENU13: the button is icon-only — the 'Arora' wordmark moved to
+    // the bar's trailing edge below.  setText still carries "Arora"
+    // (retranslate) so screen readers keep a real label.
+    m_appMenuButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
     m_appMenuButton->setPopupMode(QToolButton::InstantPopup);
     m_appMenuButton->setMenu(m_appMenu);
     appMenuButtonLayout->addWidget(m_appMenuButton);
@@ -1981,6 +2001,20 @@ void BrowserMainWindow::setupToolBar()
     m_navigationBar->addAction(m_viewSidebarAction);
     m_viewSidebarAction->setProperty(kNavBarItemIdProperty,
                                      QLatin1String("sidebar"));
+
+    // MENU13: the 'Arora' wordmark moved off the app-menu button to
+    // the bar's trailing edge — a plain label, not a control.  It
+    // deliberately carries NO navBarItemId: navBarOrder() ignores it,
+    // applyNavBarOrder's unlisted-tail rule pins it last on every
+    // rebuild, and the edit-mode press filter refuses to pick it up —
+    // brand is fixed chrome, not a draggable item.
+    QLabel *brandLabel = new QLabel(m_navigationBar);
+    brandLabel->setObjectName(QLatin1String("navBarBrandLabel"));
+    QFont brandFont = brandLabel->font();
+    brandFont.setLetterSpacing(QFont::AbsoluteSpacing, 1.0);
+    brandLabel->setFont(brandFont);
+    m_navBarBrandLabel = brandLabel;
+    m_navBarBrandAction = m_navigationBar->addWidget(brandLabel);
     int splitterWidth = m_navigationSplitter->width();
     QList<int> sizes;
     sizes << (int)((double)splitterWidth * .80);
@@ -2423,6 +2457,12 @@ QAction *BrowserMainWindow::navBarDropTarget(
         if (pos < mid)
             return action;
     }
+    // MENU13: the wordmark is pinned to the trailing edge — a release
+    // past the last movable item drops before it, never after, so no
+    // drag can push chrome beyond the brand.
+    if (m_navBarBrandAction && m_navBarBrandAction->isVisible()
+        && m_navBarBrandAction != m_navBarDragAction)
+        return m_navBarBrandAction;
     return nullptr;
 }
 
@@ -2468,6 +2508,10 @@ void BrowserMainWindow::commitNavBarDrag()
     m_navigationBar->removeAction(dragged);
     if (before)
         m_navigationBar->insertAction(before, dragged);
+    else if (m_navBarBrandAction)
+        // MENU13: defensive — navBarDropTarget already resolves
+        // end-of-bar to the wordmark; keep the pin even if it hid.
+        m_navigationBar->insertAction(m_navBarBrandAction, dragged);
     else
         m_navigationBar->addAction(dragged);
     // The remove/insert only marks the layout dirty — actionGeometry
@@ -2517,8 +2561,11 @@ bool BrowserMainWindow::navBarEditEvent(QObject *object, QEvent *event)
         if (widget == m_navigationBar
             || m_navigationBar->isAncestorOf(widget)) {
             // In edit mode a press picks the item — it never fires
-            // the button underneath.
+            // the button underneath.  MENU13: the trailing wordmark
+            // is fixed chrome — a press on it picks nothing.
             m_navBarDragAction = m_navigationBar->actionAt(barPos);
+            if (m_navBarDragAction == m_navBarBrandAction)
+                m_navBarDragAction = nullptr;
             m_navBarDragStart = barPos;
             m_navBarDragging = false;
             m_navBarDropBefore = nullptr;
