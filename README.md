@@ -394,10 +394,17 @@ flip it on from Settings → Extensions. It installs exactly once:
 uninstalling is never undone, and it is never loaded into private
 or Tor profiles. The bundled build cannot self-update (no
 `update_url`); updates arrive with Arora releases. Qt WebEngine's
-extension API is a tech preview — a few chrome.* calls the Bitwarden
-popup uses (`chrome.tabs.getCurrent`, `getBackgroundPage`) are not
-yet implemented by the engine and are logged as console warnings;
-the core autofill content scripts work.
+extension API is a tech preview — measured on 6.12: MV3 service
+workers, content scripts, action popups, `storage`, `alarms`,
+`idle`, `offscreen`, `i18n`, observe-only `webRequest` and runtime
+messaging all work, but `chrome.extension`, `tabs.getCurrent/query`
+and tab events, `webNavigation`, `scripting`, `contextMenus`,
+`notifications`, `windows`, `action` and `declarativeNetRequest`
+are not implemented. Bitwarden's background worker needs several of
+the missing namespaces, fails registration
+(`kErrorScriptEvaluateFailed`), and its popup dies on
+`chrome.extension.getBackgroundPage` — so it cannot function; see
+`.devin/EXT11-report.md` for the full matrix.
 
 ### Credentials & autofill
 

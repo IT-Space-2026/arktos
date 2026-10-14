@@ -1071,6 +1071,11 @@ Extensions:
   Settings → Extensions), and never again after uninstall. It is
   never loaded into private or Tor profiles, and it cannot
   self-update — updates arrive with Arora releases.
+- Measured the MV3 platform end to end (EXT11): the engine runs real
+  extension service workers, content scripts, action popups, runtime
+  messaging and storage, but the chrome.* surface is a subset and
+  Bitwarden's background worker cannot run on it — documented
+  honestly in the README.
 
 Downloads:
 - QtWebEngine download manager: progress, Try Again, safe names
@@ -2336,3 +2341,6 @@ Servo wheel scrolling reaches browser pace (ENG25):
 
 A crashed Servo engine no longer wedges the backend slot forever (ENG27):
     Tearing down a crashed Servo tab could itself panic inside webrender's GL teardown — the catch in se_destroy logged "panic during se_destroy — instance leaked" but the instance slot stayed occupied, so no later code path could ever recover: one unlucky crash meant Servo was dead for the rest of the process. se_destroy now hands the instance slot back before the fallible teardown runs — the slot holds the live pointer, so a stale or double-destroyed instance is rejected without being dereferenced — and the teardown itself runs under two panic catches so a failure in the pre-drop GL drain can't skip the drop attempt. A panicking teardown now degrades to a contained memory leak with a free slot, never a stranded slot. New exports se_instance_active/se_can_init let the host prove the slot was released and learn whether a fresh instance can be minted (the once-per-process engine still refuses a second init today — that's the next slice), and --servo-smoke injects a panic inside the teardown to assert the whole chain end to end. The deployed servo-embed artifact was also rebuilt — the pinned copy predated several engine fixes.
+
+MV3 extension support is now measured, not guessed (EXT11):
+    "If Bitwarden doesn't work, will anything?" now has a measured answer. A new --mv3-health-smoke diagnostic installs a fixture MV3 extension carrying Bitwarden's permission set onto the isolated smoke profile and interrogates it from inside its own contexts: the background runs as a real service worker and answers messages from content scripts and the popup, content scripts inject, the action popup renders, storage (local/session/managed) and runtime messaging round-trip, and alarms/idle/offscreen/i18n/observe-only webRequest are live — while chrome.extension, tabs lookup and tab events, webNavigation, scripting, contextMenus, notifications, windows, action and declarativeNetRequest are not implemented by the engine. Against the bundled Bitwarden the diagnosis is precise: its background worker dies during script evaluation on those missing namespaces (Chromium status 15, kErrorScriptEvaluateFailed) — a registered-but-unresponsive context — and its popup's Angular bootstrap throws on chrome.extension.getBackgroundPage, which is why it spins forever; the popup host itself is exonerated. No flag, setting or install option adds the missing surface (the schemas are compiled into QtWebEngineCore but its embedder never registers them), so the README now states the support boundary honestly and .devin/EXT11-report.md holds the full matrix and the EXT12 degradation plan.

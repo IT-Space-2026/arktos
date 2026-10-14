@@ -10662,7 +10662,7 @@ int main(int argc, char **argv)
         // Fixture extension on disk — Bitwarden's permission set so
         // the namespace matrix answers "what does Bitwarden see".
         const QString mv3Dir = QDir::temp().filePath(
-            QLatin1String("arora-mv3-health"));
+            QLatin1String("arora-mv3-health-b"));
         QDir().mkpath(mv3Dir);
         const auto putFile = [mv3Dir, die](const QString &name,
                                            const QByteArray &body) {
@@ -10674,7 +10674,7 @@ int main(int argc, char **argv)
         putFile(QLatin1String("manifest.json"), QByteArray(R"JSON({
   "manifest_version": 3,
   "name": "arora-mv3-health",
-  "version": "1.0",
+  "version": "1.1",
   "description": "EXT11 MV3 platform health probe",
   "permissions": ["activeTab","alarms","clipboardRead","clipboardWrite",
     "contextMenus","idle","offscreen","scripting","sidePanel","storage",
@@ -10756,14 +10756,23 @@ int main(int argc, char **argv)
     report.fns = {
         'tabs.getCurrent': has('chrome.tabs.getCurrent'),
         'tabs.query': has('chrome.tabs.query'),
+        'tabs.onUpdated': has('chrome.tabs.onUpdated'),
+        'tabs.onRemoved': has('chrome.tabs.onRemoved'),
         'runtime.sendMessage': has('chrome.runtime.sendMessage'),
         'runtime.onMessage': has('chrome.runtime.onMessage'),
+        'runtime.onConnect': has('chrome.runtime.onConnect'),
         'runtime.getContexts': has('chrome.runtime.getContexts'),
         'storage.local.set': has('chrome.storage.local.set'),
         'storage.local.get': has('chrome.storage.local.get'),
+        'storage.session': has('chrome.storage.session'),
+        'storage.managed': has('chrome.storage.managed'),
         'webNavigation.onCommitted':
             has('chrome.webNavigation.onCommitted'),
         'alarms.create': has('chrome.alarms.create'),
+        'notifications.onClicked': has('chrome.notifications.onClicked'),
+        'contextMenus.create': has('chrome.contextMenus.create'),
+        'scripting.executeScript': has('chrome.scripting.executeScript'),
+        'windows.getAll': has('chrome.windows.getAll'),
         'extension.getBackgroundPage':
             has('chrome.extension.getBackgroundPage')
     };
@@ -10972,6 +10981,14 @@ int main(int argc, char **argv)
         QUrl mv3PopupUrl;
         ExtensionManager::ExtensionInfo bwRow;
 
+        // A runJavaScript callback that never arrives must not stall
+        // the pipeline — every poll decides from the LAST delivered
+        // snapshot, and each phase carries a watchdog.
+        const auto pageSnapshot = std::make_shared<QJsonObject>();
+        const auto popupReport = std::make_shared<QString>();
+        const auto popupDone = std::make_shared<bool>(false);
+        const auto bwDone = std::make_shared<bool>(false);
+
         const auto finish = [&application, &mv3Failures]() {
             qInfo() << "mv3-health-smoke:"
                     << (mv3Failures == 0 ? "PASS" : "FAIL")
@@ -10985,25 +11002,51 @@ int main(int argc, char **argv)
         // profile), console captured, then a guarded eval of the two
         // calls its Angular bootstrap dies on plus its rendered size.
         const auto probeBitwarden =
-            [&application, &bwRow, check, note, finish, profile]() {
+            [&application, &bwRow, check, note, finish, mv3, profile,
+             bwDone]() {
+            const auto finishOnce = [bwDone, finish]() {
+                if (*bwDone)
+                    return;
+                *bwDone = true;
+                finish();
+            };
             if (bwRow.id.isEmpty() || !bwRow.actionPopupUrl.isValid()) {
                 note(QStringLiteral("bitwarden-popup"),
                      QStringLiteral("no row/actionPopupUrl"));
-                finish();
+                finishOnce();
                 return;
             }
+            note(QStringLiteral("bitwarden-row"),
+                 QStringLiteral("id=%1 installed=%2 loaded=%3 "
+                                "enabled=%4 error=%5")
+                     .arg(bwRow.id).arg(bwRow.installed)
+                     .arg(bwRow.loaded).arg(bwRow.enabled)
+                     .arg(bwRow.error));
             QWebEngineView *bwView = new QWebEngineView;
             Mv3ProbePage *bwPage =
                 new Mv3ProbePage(profile, bwView);
             bwPage->setObjectName(QStringLiteral("bitwarden-console"));
             bwView->setPage(bwPage);
+            // Stage 0 probes the as-found popup, then enables the
+            // extension and reloads; stage 1 re-probes — separating
+            // "disabled context has no chrome.*" from "enabled but
+            // the API surface itself is missing".
+            const auto stage = std::make_shared<int>(0);
             QObject::connect(bwPage, &QWebEnginePage::loadFinished,
-                             &application,
-                             [&, bwView, check, note, finish](bool ok) {
-                check(ok, QStringLiteral(
-                          "bitwarden popup chrome-extension:// loads"));
+                             bwView,
+                             [&bwRow, bwView, check, note, mv3,
+                              stage, finishOnce](bool ok) {
+                if (*stage == 0)
+                    check(ok, QStringLiteral(
+                              "bitwarden popup chrome-extension:// "
+                              "loads"));
+                const int round = *stage;
                 QTimer::singleShot(4000, bwView,
-                                   [&, bwView, note, finish]() {
+                                   [&bwRow, bwView, note, mv3, stage,
+                                    round, finishOnce]() {
+                    // runJavaScript does NOT await a returned Promise —
+                    // the async probe stashes its JSON on window and a
+                    // follow-up poll reads it once the battery settles.
                     bwView->page()->runJavaScript(QStringLiteral(R"JS(
 (function () {
     function has(p) {
@@ -11013,7 +11056,11 @@ int main(int argc, char **argv)
             return typeof o;
         } catch (e) { return 'undefined'; }
     }
-    return {
+    function timed(p, ms) {
+        return Promise.race([p, new Promise(function (res) {
+            setTimeout(function () { res('TIMEOUT'); }, ms); })]);
+    }
+    var out = {
         'chrome.extension': has('chrome.extension'),
         'extension.getBackgroundPage':
             has('chrome.extension.getBackgroundPage'),
@@ -11028,24 +11075,109 @@ int main(int argc, char **argv)
             ? document.body.innerText.length : -1,
         'title': document.title
     };
-})()
-)JS"), [note, bwView, finish](const QVariant &result) {
-                        note(QStringLiteral("bitwarden-probe"),
-                             QString::fromUtf8(QJsonDocument::fromVariant(
-                                 result).toJson(QJsonDocument::Compact)));
-                        bwView->deleteLater();
-                        finish();
+    var seq = Promise.resolve();
+    if (chrome.runtime && chrome.runtime.getContexts) {
+        seq = seq.then(function () {
+            return timed(chrome.runtime.getContexts(
+                {contextTypes: ['BACKGROUND', 'POPUP', 'TAB']}), 3000)
+                .then(function (ctx) {
+                    out.getContexts = ctx === 'TIMEOUT' ? 'TIMEOUT'
+                        : ctx.map(function (c) {
+                              return c.contextType; });
+                });
+        }).catch(function (e) {
+            out.getContexts = 'THROW:' + e;
+        });
+    } else {
+        out.getContexts = 'absent';
+    }
+    seq = seq.then(function () {
+        if (!(chrome.runtime && chrome.runtime.sendMessage)) {
+            out.pingBackground = 'absent';
+            return;
+        }
+        return timed(new Promise(function (resolve) {
+            try {
+                chrome.runtime.sendMessage({probe: 'mv3-health'},
+                    function () {
+                        resolve(chrome.runtime.lastError
+                            ? 'ERR:' + chrome.runtime.lastError.message
+                            : 'PONG');
                     });
+            } catch (e) { resolve('THROW:' + e); }
+        }), 3000).then(function (pong) {
+            out.pingBackground = pong;
+        });
+    });
+    seq.then(function () {
+        window.__bwProbe = JSON.stringify(out);
+    }).catch(function (e) {
+        window.__bwProbe = JSON.stringify(
+            {fatal: String(e), partial: out});
+    });
+    return 'started';
+})()
+)JS"), [](const QVariant &) {});
+                    // Read window.__bwProbe once the battery settles —
+                    // bounded internally to ~6s, poll to ~15s.
+                    QTimer *readPoll = new QTimer(bwView);
+                    const auto readTries = std::make_shared<int>(0);
+                    QObject::connect(readPoll, &QTimer::timeout, bwView,
+                        [&bwRow, bwView, note, mv3, stage, round,
+                         finishOnce, readPoll, readTries]() {
+                        ++*readTries;
+                        bwView->page()->runJavaScript(QStringLiteral(
+                            "window.__bwProbe || ''"),
+                            [&bwRow, bwView, note, mv3, stage, round,
+                             finishOnce, readPoll, readTries](
+                                const QVariant &result) {
+                            const QString json = result.toString();
+                            if (json.isEmpty() && *readTries <= 30)
+                                return;
+                            readPoll->stop();
+                            readPoll->deleteLater();
+                            if (round == 0) {
+                                note(QStringLiteral("bitwarden-probe"),
+                                     json.isEmpty()
+                                         ? QStringLiteral("<none>")
+                                         : json);
+                                *stage = 1;
+                                mv3->setExtensionEnabled(bwRow.id,
+                                                         true);
+                                QTimer::singleShot(1500, bwView,
+                                    [&bwRow, bwView]() {
+                                    bwView->page()->load(
+                                        bwRow.actionPopupUrl);
+                                });
+                                return;
+                            }
+                            note(QStringLiteral(
+                                     "bitwarden-probe-enabled"),
+                                 json.isEmpty()
+                                     ? QStringLiteral("<none>")
+                                     : json);
+                            finishOnce();
+                        });
+                    });
+                    readPoll->start(500);
                 });
             });
             bwPage->load(bwRow.actionPopupUrl);
+            // Watchdog: a dropped loadFinished/eval still terminates.
+            QTimer::singleShot(45000, bwView, finishOnce);
         };
 
         // Phase 3: the fixture's action popup runs the call battery —
         // each result lands in window.__mv3Report.
         const auto openFixturePopup =
-            [&application, &mv3PopupUrl, check, note, die, profile,
-             probeBitwarden]() {
+            [&application, &mv3PopupUrl, check, note, profile,
+             popupReport, popupDone, probeBitwarden]() {
+            const auto proceed = [popupDone, probeBitwarden]() {
+                if (*popupDone)
+                    return;
+                *popupDone = true;
+                probeBitwarden();
+            };
             check(mv3PopupUrl.isValid()
                       && mv3PopupUrl.scheme()
                           == QLatin1String("chrome-extension"),
@@ -11058,134 +11190,137 @@ int main(int argc, char **argv)
                 QStringLiteral("fixture-popup-console"));
             popupView->setPage(popupPage);
             QObject::connect(popupPage, &QWebEnginePage::loadFinished,
-                             &application,
-                             [&, popupView, check, note, die](bool ok) {
+                             popupView,
+                             [popupView, check, note, popupReport,
+                              proceed](bool ok) {
                 check(ok, QStringLiteral("fixture popup loads"));
-                auto *poll = new QTimer(&application);
-                auto *tries = new int(0);
-                QObject::connect(poll, &QTimer::timeout, &application,
-                                 [&, popupView, check, note, die,
-                                  poll, tries]() {
+                QTimer *poll = new QTimer(popupView);
+                const auto tries = std::make_shared<int>(0);
+                QObject::connect(poll, &QTimer::timeout, popupView,
+                                 [popupView, poll, tries, popupReport,
+                                  check, note, proceed]() {
                     ++*tries;
                     popupView->page()->runJavaScript(
                         QStringLiteral(
                             "window.__mv3Report ? "
                             "JSON.stringify(window.__mv3Report) : ''"),
-                        [&, popupView, check, note, die,
-                         poll, tries](const QVariant &result) {
-                        const QString json = result.toString();
-                        if (json.isEmpty()) {
-                            if (*tries > 60) {
-                                poll->stop();
-                                poll->deleteLater();
-                                delete tries;
-                                check(false, QStringLiteral(
-                                          "popup battery produced a "
-                                          "report"));
-                                die(QStringLiteral(
-                                    "popup report never arrived"));
-                            }
-                            return;
-                        }
-                        poll->stop();
-                        poll->deleteLater();
-                        delete tries;
-                        note(QStringLiteral("popup-report"), json);
-                        popupView->deleteLater();
-                        probeBitwarden();
-                    });
+                        [popupReport](const QVariant &result) {
+                            *popupReport = result.toString();
+                        });
+                    if (popupReport->isEmpty() && *tries <= 60)
+                        return;
+                    poll->stop();
+                    if (popupReport->isEmpty())
+                        check(false, QStringLiteral(
+                                  "popup battery produced a report"));
+                    else
+                        note(QStringLiteral("popup-report"),
+                             *popupReport);
+                    proceed();
                 });
                 poll->start(300);
             });
             popupPage->load(mv3PopupUrl);
+            // Watchdog: the popup load wedging must not strand the
+            // run — proceed with whatever the report holds.
+            QTimer::singleShot(30000, &application,
+                               [popupView, proceed]() {
+                popupView->deleteLater();
+                proceed();
+            });
         };
 
         // Phase 2: the loopback page — the content script's DOM
         // attributes (its own report + the background's message
         // reply) and the page-level SW registration verdict.
         const auto probePage =
-            [&application, view, mv3Page, check, note, die,
-             openFixturePopup]() {
-            auto *poll = new QTimer(&application);
-            auto *tries = new int(0);
-            QObject::connect(poll, &QTimer::timeout, &application,
-                             [&, check, note, die,
-                              openFixturePopup, poll, tries]() {
+            [&application, view, mv3Page, check, note,
+             pageSnapshot, openFixturePopup]() {
+            QTimer *poll = new QTimer(view);
+            const auto tries = std::make_shared<int>(0);
+            QObject::connect(poll, &QTimer::timeout, view,
+                             [view, poll, tries, pageSnapshot,
+                              check, note, openFixturePopup]() {
                 ++*tries;
-                view->enginePage()->runJavaScript(QStringLiteral(
+                view->page()->runJavaScript(QStringLiteral(
                     "JSON.stringify({"
                     "cs:document.documentElement.getAttribute('data-mv3cs'),"
                     "reply:document.documentElement.getAttribute('data-mv3reply'),"
                     "pagesw:document.documentElement.getAttribute('data-pagesw')"
                     "})"),
-                    [&, check, note, die, openFixturePopup,
-                     poll, tries](const QVariant &result) {
-                    const QJsonObject obj = QJsonDocument::fromJson(
-                        result.toString().toUtf8()).object();
-                    const QString cs = obj.value(
-                        QLatin1String("cs")).toString();
-                    const QString reply = obj.value(
-                        QLatin1String("reply")).toString();
-                    const QString pagesw = obj.value(
-                        QLatin1String("pagesw")).toString();
-                    if ((cs.isEmpty() || pagesw.isEmpty()
-                         || reply.isEmpty()) && *tries <= 40)
-                        return;
-                    poll->stop();
-                    poll->deleteLater();
-                    delete tries;
-                    note(QStringLiteral("content-script-report"), cs);
-                    note(QStringLiteral("cs-to-bg-reply"), reply);
-                    note(QStringLiteral("page-serviceworker"), pagesw);
-                    check(!cs.isEmpty(),
-                          QStringLiteral("content script injected"));
-                    check(!pagesw.isEmpty(),
-                          QStringLiteral("page SW verdict recorded"));
-                    openFixturePopup();
-                });
+                    [pageSnapshot](const QVariant &result) {
+                        *pageSnapshot = QJsonDocument::fromJson(
+                            result.toString().toUtf8()).object();
+                    });
+                const QString cs = pageSnapshot->value(
+                    QLatin1String("cs")).toString();
+                const QString reply = pageSnapshot->value(
+                    QLatin1String("reply")).toString();
+                const QString pagesw = pageSnapshot->value(
+                    QLatin1String("pagesw")).toString();
+                if ((cs.isEmpty() || pagesw.isEmpty()
+                     || reply.isEmpty()) && *tries <= 40)
+                    return;
+                poll->stop();
+                poll->deleteLater();
+                note(QStringLiteral("content-script-report"), cs);
+                note(QStringLiteral("cs-to-bg-reply"), reply);
+                note(QStringLiteral("page-serviceworker"), pagesw);
+                check(!cs.isEmpty(),
+                      QStringLiteral("content script injected"));
+                check(!pagesw.isEmpty(),
+                      QStringLiteral("page SW verdict recorded"));
+                openFixturePopup();
             });
             poll->start(250);
             view->loadUrl(mv3Page);
         };
 
         // Phase 1: install + enable the fixture, then run the page
-        // probe once Chromium reports the row enabled.
-        auto *enablePoll = new QTimer(&application);
-        auto *enableTries = new int(0);
+        // probe once Chromium reports the row enabled.  Driven off
+        // extensions() polling rather than the signal alone — an
+        // install that lands without installFinished still advances.
+        QTimer *enablePoll = new QTimer(&application);
+        const auto enableTries = std::make_shared<int>(0);
         QObject::connect(enablePoll, &QTimer::timeout, &application,
-                         [&, mv3, check, die, probePage,
-                          enablePoll, enableTries]() {
+                         [&mv3ExtId, &mv3PopupUrl, mv3, check, die,
+                          probePage, enablePoll, enableTries]() {
+            ++*enableTries;
             for (const ExtensionManager::ExtensionInfo &info
                  : mv3->extensions()) {
-                if (info.id != mv3ExtId)
+                if (info.name != QLatin1String("arora-mv3-health"))
                     continue;
+                if (mv3ExtId.isEmpty()) {
+                    check(info.installed && info.error.isEmpty(),
+                          QStringLiteral("fixture installed (%1)")
+                              .arg(info.error));
+                    mv3ExtId = info.id;
+                    mv3PopupUrl = info.actionPopupUrl;
+                    mv3->setExtensionEnabled(info.id, true);
+                }
                 if (!info.enabled)
                     return;
                 enablePoll->stop();
                 enablePoll->deleteLater();
-                delete enableTries;
                 check(true, QStringLiteral("fixture enabled"));
                 probePage();
                 return;
             }
-            if (++*enableTries > 60) {
+            if (*enableTries > 200) {
                 enablePoll->stop();
-                die(QStringLiteral("fixture never enabled"));
+                die(QStringLiteral(
+                        "fixture never appeared in extensions()"));
             }
         });
+        enablePoll->start(150);
         QObject::connect(mv3, &ExtensionManager::extensionInstalled,
                          &application,
-                         [&, mv3, check, enablePoll](
+                         [note](
                              const ExtensionManager::ExtensionInfo &info) {
-            if (info.name != QLatin1String("arora-mv3-health"))
-                return;
-            check(info.installed && info.error.isEmpty(),
-                  QStringLiteral("fixture installed (%1)")
-                      .arg(info.error));
-            mv3ExtId = info.id;
-            mv3PopupUrl = info.actionPopupUrl;
-            mv3->setExtensionEnabled(info.id, true);
-            enablePoll->start(150);
+            note(QStringLiteral("install-event"),
+                 QStringLiteral("%1 id=%2 installed=%3 err=%4")
+                     .arg(info.name, info.id)
+                     .arg(info.installed).arg(info.error));
         });
         QObject::connect(mv3, &ExtensionManager::errorOccurred,
                          &application, [die](const QString &message) {
@@ -11193,10 +11328,10 @@ int main(int argc, char **argv)
         });
         // Grab the bundled Bitwarden row when it lands — the bundled
         // install ran at profile prep on this extension-fresh store.
-        auto *bwPoll = new QTimer(&application);
-        auto *bwTries = new int(0);
+        QTimer *bwPoll = new QTimer(&application);
+        const auto bwTries = std::make_shared<int>(0);
         QObject::connect(bwPoll, &QTimer::timeout, &application,
-                         [&, mv3, bwPoll, bwTries]() {
+                         [&bwRow, mv3, bwPoll, bwTries, note]() {
             for (const ExtensionManager::ExtensionInfo &info
                  : mv3->extensions()) {
                 if (info.name.contains(QLatin1String("bitwarden"),
@@ -11205,14 +11340,22 @@ int main(int argc, char **argv)
                     bwRow = info;
                     bwPoll->stop();
                     bwPoll->deleteLater();
-                    delete bwTries;
                     return;
                 }
+            }
+            if (*bwTries == 25 || *bwTries == 150
+                    || *bwTries == 300) {
+                QStringList seen;
+                for (const ExtensionManager::ExtensionInfo &info
+                     : mv3->extensions())
+                    seen << QStringLiteral("%1/%2/en=%3")
+                        .arg(info.name, info.id).arg(info.enabled);
+                note(QStringLiteral("extensions-seen"),
+                     seen.join(QLatin1Char(',')));
             }
             if (++*bwTries > 300) {
                 bwPoll->stop();
                 bwPoll->deleteLater();
-                delete bwTries;
             }
         });
         bwPoll->start(200);
@@ -11222,6 +11365,11 @@ int main(int argc, char **argv)
         });
         mv3->grantConsent(mv3Dir);
         mv3->installExtension(mv3Dir);
+        note(QStringLiteral("install-issued"), mv3Dir);
+        note(QStringLiteral("install-path"),
+             QStringLiteral("%1 exists=%2")
+                 .arg(mv3->installPath())
+                 .arg(QDir(mv3->installPath()).exists()));
         return application.exec();
     }
 
