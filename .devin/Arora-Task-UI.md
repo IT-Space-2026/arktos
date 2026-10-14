@@ -140,6 +140,9 @@ This file is the task queue for the Devin CLI task loop
 | THEM02 | Chrome polish 2/4 — rounded tabs + active/hover contrast both orientations (needs THEM01) — details below | pending | 0 | |
 | THEM03 | Chrome polish 3/4 — Preferences/sidebar/menus dialog polish (needs THEM01) — details below | pending | 0 | |
 | THEM04 | Chrome polish 4/4 — central palette, kill hardcoded colors, contrast + review pass — details below | pending | 0 | |
+| PKG01 | Linux .deb package — debian/ metadata, .so artifacts, desktop file, install+run verified — details below | pending | 0 | |
+| PKG02 | Flatpak manifest — KDE runtime build, honest sandbox perms, installable bundle — details below | pending | 0 | |
+| PKG03 | openSUSE RPM — .spec + build flow, consistent artifact policy with deb — details below | pending | 0 | |
 
 ## Task details
 
@@ -872,3 +875,15 @@ Chrome polish slice 3/4 — dialogs & panels (needs THEM01). Preferences + sideb
 ### THEM04
 
 Chrome polish slice 4/4 — palette unification + review pass (needs THEM01-03). Hardcoded colors are scattered (e.g. purple tor QToolBar '#4a3372', ad-hoc panel colors). Spec: (a) one palette source — normal/private/tor variants defined centrally; every hardcoded hex in chrome code routes through it; (b) contrast audit — text/icons on all surfaces meet readable contrast in every variant; (c) full-window review pass — main window, prefs, sidebar, menus, popovers, all three window types; fix stragglers. Verify: grep finds no stray hex colors in chrome code outside the palette source; grab set reviewed; make check PASS.
+
+### PKG01
+
+Linux packaging 1/3 — Debian .deb (user: 'I need deb, flatpak, rpm (Suse), Windows 10/11, macOS DMG'). Build a real .deb from the qmake build: (a) debian/ packaging metadata (control/rules/compat/copyright — check for existing skeleton first, AUD01 deleted an old builddeb.sh that referenced a removed debian-upstream/ — rebuild properly, don't resurrect the stale one); correct deps (Qt6 libs, libqt6webengine*, the rust .so artifacts libservo_embed + rustcore/rustdl must ship inside the package or link statically — decide + document); (b) desktop file + icon install (hicolor sizes), /usr/bin + /usr/lib layout per FHS, install.pri updated if the install rules are stale; (c) build via dpkg-buildpackage or a .devin/pkg-deb.sh script — reproducible, documented in README; (d) verify the package INSTALLS and runs: dpkg -i on this host (or container if cleaner), binary launches, finds its .so artifacts + Qt plugins, no missing-dep errors (ldd clean inside the package layout). Verify: .deb builds reproducibly, installs, launches; check-bundle.sh extended to cover the artifact if it fits; notes committed.
+
+### PKG02
+
+Linux packaging 2/3 — Flatpak manifest. A flatpak manifest (org or io.arora.* id) that builds arora inside the KDE runtime/SDK: (a) manifest yaml — org.kde Platform/SDK matching our Qt 6 version, arora source module + the rust crates as additional sources (rust toolchain inside the SDK or the rust-extension — document the choice; servo-embed is heavy — check whether it's buildable in the sandbox or shipped as a prebuilt module, either is acceptable if documented); (b) sandbox permissions honest — network, x11/wayland, pulseaudio, filesystem access only what the browser needs; (c) flatpak-builder run locally produces an installable bundle; appdata/metainfo.xml for store listing. Verify: flatpak-builder completes, bundle installs + launches via flatpak run, engine + servo + tor paths smoke inside the sandbox (tor needs its bundled binary + ports — flag sandbox conflicts honestly); notes committed.
+
+### PKG03
+
+Linux packaging 3/3 — RPM for openSUSE. A .spec + rpmbuild flow producing an openSUSE-compatible RPM: (a) .spec file — BuildRequires Qt6 devel packages (opensuse package names — libqt6-qtwebengine-devel etc.), the rust toolchain buildrequires or vendored artifacts per the PKG01 decision (CONSISTENT with whatever the deb chose — same shipping policy for the .so artifacts); %files covering binary + libs + desktop file + icons; (b) .devin/pkg-rpm.sh or documented rpmbuild invocation — buildable locally even if this host isn't suse (mock/obs or a suse container — pick what's actually runnable here; if rpm tooling is unavailable locally, deliver the verified .spec + a container-based build command and mark verification level honestly); (c) deps + paths checked against opensuse conventions. Verify: spec passes rpmlint-level sanity, package builds (container if needed), installs + launches where verifiable; notes committed.
