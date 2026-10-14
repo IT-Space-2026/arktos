@@ -2600,6 +2600,10 @@ void TabBar::layoutNewTabButton()
     // ends they take clip the space the '+' may use.
     int leading = vertical ? band : 0;
     int trailing = vertical ? height() : width();
+    // The scroll buttons that bound the trailing end — collected so
+    // the '+' can be hosted inside their chrome when the strip's
+    // rows leave it no free run (TABS18).
+    QList<QAbstractButton*> trailingChrome;
     const QTabBar::ButtonPosition sides[2] = { QTabBar::LeftSide,
                                                QTabBar::RightSide };
     const QObjectList kids = children();
@@ -2621,10 +2625,12 @@ void TabBar::layoutNewTabButton()
         const QRect geo = child->geometry();
         if (vertical) {
             const int mid = (band + height()) / 2;
-            if (geo.center().y() > mid)
+            if (geo.center().y() > mid) {
                 trailing = qMin(trailing, geo.top() - 2);
-            else
+                trailingChrome.append(child);
+            } else {
                 leading = qMax(leading, geo.bottom() + 3);
+            }
         } else {
             const int mid = width() / 2;
             if (geo.center().x() > mid)
@@ -2643,7 +2649,85 @@ void TabBar::layoutNewTabButton()
         rect = QRect(2, qBound(leading, anchor,
                                qMax(leading, trailing - extent)),
                      qMax(16, width() - 4), extent);
+        // TABS18: a '+' that cannot reach free strip space used to
+        // clamp onto the row the rail was scrolled to — it covered
+        // the label and read as a truncated row.  Rows tile right up
+        // to the scroll chrome, so when the candidate still covers a
+        // row the chrome is the only non-row space left: a multi-row
+        // band collapses its arrows into the first row side by side
+        // and the '+' takes the row below; a single-cell band splits
+        // its last cell; no chrome at all (a rail exactly full)
+        // hides the button rather than cover a row.
+        bool coversRow = false;
+        for (int i = 0; i < count() && !coversRow; ++i) {
+            const QRect row = tabRect(i).translated(0, band);
+            if (row.isValid() && rect.intersects(row))
+                coversRow = true;
+        }
+        if (!coversRow || trailingChrome.isEmpty())
+            m_newTabChromeBand = QRect();
+        if (coversRow) {
+            // The reflowed buttons no longer span their band — once
+            // remembered, only a fresh layout outside it re-derives.
+            QRect current;
+            for (QAbstractButton *button :
+                 std::as_const(trailingChrome)) {
+                current = current.isNull()
+                    ? button->geometry()
+                    : current.united(button->geometry());
+            }
+            QRect chrome = m_newTabChromeBand;
+            if (chrome.isNull()
+                || (!current.isNull() && !chrome.contains(current)))
+                chrome = current;
+            m_newTabChromeBand = chrome;
+            if (chrome.isNull()) {
+                rect = QRect();
+            } else if (chrome.height() >= 28
+                       && trailingChrome.count() > 1) {
+                const int arrowHeight =
+                    qMin(chrome.height() / 2, 16);
+                const int share =
+                    chrome.width() / trailingChrome.count();
+                int x = chrome.left();
+                for (QAbstractButton *button :
+                     std::as_const(trailingChrome)) {
+                    button->setGeometry(
+                        QRect(x, chrome.top(), share, arrowHeight));
+                    x += share;
+                }
+                rect = QRect(2, chrome.top() + arrowHeight + 1,
+                             qMax(16, width() - 4),
+                             chrome.height() - arrowHeight - 1);
+            } else {
+                // Only a single cell's worth of band — split the
+                // lower-most cell between its scroll button and the
+                // '+'.  The cell comes from the remembered band, not
+                // the button's live geometry: the re-split is what
+                // keeps repeated layouts idempotent.
+                QAbstractButton *host = trailingChrome.last();
+                for (QAbstractButton *button :
+                     std::as_const(trailingChrome)) {
+                    if (button->geometry().bottom()
+                        > host->geometry().bottom())
+                        host = button;
+                }
+                const int cellHeight =
+                    chrome.height() / trailingChrome.count();
+                const QRect cell(chrome.left(),
+                                 chrome.bottom() - cellHeight + 1,
+                                 chrome.width(), cellHeight);
+                const int half = cell.width() / 2;
+                host->setGeometry(QRect(cell.topLeft(),
+                                        QSize(half, cell.height())));
+                rect = QRect(cell.left() + half + 1,
+                             cell.top() + 2,
+                             cell.width() - half - 3,
+                             cell.height() - 4);
+            }
+        }
     } else {
+        m_newTabChromeBand = QRect();
         const int strip = height() - band;
         const int extent = qBound(18, strip - 6, 30);
         const bool rtl = isRightToLeft();
@@ -2655,10 +2739,16 @@ void TabBar::layoutNewTabButton()
                      band + qMax(0, (strip - extent) / 2),
                      extent, extent);
     }
+    // TABS18: a '+' with no honest parking spot hides rather than
+    // cover a tab row.
+    if (!rect.isValid()) {
+        m_newTabButton->hide();
+        return;
+    }
     if (m_newTabButton->geometry() != rect)
         m_newTabButton->setGeometry(rect);
-    // Overlap is legal geometry (an overflowing strip leaves no
-    // sliver) — keep the '+' above the tab buttons it may cover.
+    // The button still shares space with the scroll chrome and tab
+    // edge widgets — keep it above what it adjoins.
     m_newTabButton->raise();
     m_newTabButton->show();
 }

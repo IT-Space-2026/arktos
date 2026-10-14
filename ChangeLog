@@ -637,6 +637,14 @@ UI:
   instead of landing on the row's clipped bottom edge — favicons and
   close buttons ride the same band.  Both Left and Right rails, and
   Tor-violet and dark themes, render the full title (TABS17).
+- The vertical rail's truncated 'History' row is fixed for real this
+  time: it was never the row's height — the in-strip '+' new-tab
+  button clamped itself on top of whichever row the rail was scrolled
+  to, covering its label.  When an overflowing Left/Right strip
+  leaves the '+' no free space it now moves inside the scroll-button
+  band instead — the stacked scroll arrows share one row side by side
+  and the '+' takes the row below — and on a rail that is exactly
+  full with no scroll chrome it hides rather than cover a tab (TABS18).
 - Bigger text in the Arora app menu: the dropdown and its whole
   submenu tree — File, Edit, View, History, Bookmarks, Window, Tools,
   Help, including nested flyouts and the dynamic History/Bookmarks
