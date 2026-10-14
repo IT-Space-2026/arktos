@@ -19,6 +19,7 @@
 
 #include "tabpreview.h"
 
+#include "arorastyle.h"
 #include "tabbar.h"
 #include "tabwidget.h"
 #include "webview.h"
@@ -51,7 +52,7 @@ TabPreview::TabPreview(TabBar *bar)
     setAttribute(Qt::WA_TransparentForMouseEvents);
     setFocusPolicy(Qt::NoFocus);
     setFrameShape(QFrame::StyledPanel);
-    setFrameShadow(QFrame::Raised);
+    setFrameShadow(QFrame::Plain);
 
     // Page titles/urls are attacker-influenced — plain text only so a
     // '<'-bearing title can never mark the card up.
@@ -66,8 +67,11 @@ TabPreview::TabPreview(TabBar *bar)
     m_thumbnail->setFixedWidth(ThumbWidth);
 
     QVBoxLayout *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(8, 8, 8, 8);
-    layout->setSpacing(4);
+    layout->setContentsMargins(AroraStyle::Spacing::Medium,
+                               AroraStyle::Spacing::Medium,
+                               AroraStyle::Spacing::Medium,
+                               AroraStyle::Spacing::Medium);
+    layout->setSpacing(AroraStyle::Spacing::Small);
     layout->addWidget(m_thumbnail, 0, Qt::AlignHCenter);
     layout->addWidget(m_title);
     layout->addWidget(m_detail);

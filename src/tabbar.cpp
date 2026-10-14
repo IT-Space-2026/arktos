@@ -63,6 +63,7 @@
 #include "tabbar.h"
 
 #include "aroraicon.h"
+#include "arorastyle.h"
 #include "browserapplication.h"
 #include "containermanager.h"
 #include "energysaver.h"
@@ -299,17 +300,15 @@ TabBar::TabBar(QWidget *parent)
     m_newTabButton->setToolTip(tr("New Tab"));
     m_newTabButton->setAccessibleName(tr("New Tab"));
     // The tor strip's violet chrome sits on the app's light palette
-    // — the themed dark glyph would be mud, so tint it to the nav
-    // cluster's flat #eee the way ICONS06 does, and give the
+    // — the themed dark glyph would be mud, so tint it to the
+    // chrome's flat text color the way ICONS06 does, and give the
     // hover/pressed states the violet bar's own shades.
     if (BrowserApplication::isTorMode()) {
         m_newTabButton->setIcon(AroraIcon::getTinted(
-            QLatin1String("tab-new"), QColor(0xee, 0xee, 0xee),
-            QColor(0xb9, 0xae, 0xcf)));
-        m_newTabButton->setStyleSheet(QLatin1String(
-            "QToolButton { background: transparent; }"
-            "QToolButton:hover { background: #5d4491; }"
-            "QToolButton:pressed { background: #3a2a5c; }"));
+            QLatin1String("tab-new"), AroraStyle::torTextColor(),
+            AroraStyle::torDimTextColor()));
+        m_newTabButton->setStyleSheet(
+            AroraStyle::torToolButtonStyleSheet());
     } else {
         m_newTabButton->setIcon(AroraIcon::getChrome(QLatin1String("tab-new")));
     }

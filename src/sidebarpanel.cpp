@@ -18,6 +18,7 @@
  */
 #include "sidebarpanel.h"
 
+#include "arorastyle.h"
 #include "autosaver.h"
 #include "bookmarksmanager.h"
 #include "bookmarksmodel.h"
@@ -660,8 +661,10 @@ QWidget *SidebarPanel::buildBookmarksPage()
 {
     m_bookmarksPage = new QWidget(m_tabs);
     QVBoxLayout *bookmarksLayout = new QVBoxLayout(m_bookmarksPage);
-    bookmarksLayout->setContentsMargins(2, 2, 2, 2);
-    bookmarksLayout->setSpacing(2);
+    bookmarksLayout->setContentsMargins(
+        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small,
+        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small);
+    bookmarksLayout->setSpacing(AroraStyle::Spacing::Small);
     SearchLineEdit *bookmarksSearch = new SearchLineEdit(m_bookmarksPage);
     bookmarksLayout->addWidget(bookmarksSearch);
     m_bookmarksView = new EditTreeView(m_bookmarksPage);
@@ -743,8 +746,10 @@ QWidget *SidebarPanel::buildHistoryPage()
 {
     QWidget *historyPage = new QWidget(m_tabs);
     QVBoxLayout *historyLayout = new QVBoxLayout(historyPage);
-    historyLayout->setContentsMargins(2, 2, 2, 2);
-    historyLayout->setSpacing(2);
+    historyLayout->setContentsMargins(
+        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small,
+        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small);
+    historyLayout->setSpacing(AroraStyle::Spacing::Small);
     SearchLineEdit *historySearch = new SearchLineEdit(historyPage);
     historyLayout->addWidget(historySearch);
     m_historyView = new EditTreeView(historyPage);
@@ -808,8 +813,10 @@ QWidget *SidebarPanel::buildDownloadsPage()
 {
     m_downloadsPage = new QWidget(m_tabs);
     QVBoxLayout *downloadsLayout = new QVBoxLayout(m_downloadsPage);
-    downloadsLayout->setContentsMargins(2, 2, 2, 2);
-    downloadsLayout->setSpacing(2);
+    downloadsLayout->setContentsMargins(
+        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small,
+        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small);
+    downloadsLayout->setSpacing(AroraStyle::Spacing::Small);
 
     QHBoxLayout *downloadsHeader = new QHBoxLayout;
     QLabel *downloadsTitle = new QLabel(tr("Downloads"), m_downloadsPage);
@@ -918,7 +925,9 @@ QWidget *SidebarPanel::buildDownloadsPage()
     m_downloadDetail->setAccessibleName(tr("Download details"));
     m_downloadDetail->setFrameShape(QFrame::StyledPanel);
     QVBoxLayout *detailLayout = new QVBoxLayout(m_downloadDetail);
-    detailLayout->setContentsMargins(4, 4, 4, 4);
+    detailLayout->setContentsMargins(
+        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small,
+        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small);
     // The card keeps its full height — the scrolling list above
     // absorbs vertical deficits, the hosted rows never clip.
     m_downloadDetail->setSizePolicy(QSizePolicy::Expanding,
@@ -1021,8 +1030,10 @@ QWidget *SidebarPanel::buildNotesPage()
 {
     QWidget *notesPage = new QWidget(m_tabs);
     QVBoxLayout *notesLayout = new QVBoxLayout(notesPage);
-    notesLayout->setContentsMargins(2, 2, 2, 2);
-    notesLayout->setSpacing(2);
+    notesLayout->setContentsMargins(
+        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small,
+        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small);
+    notesLayout->setSpacing(AroraStyle::Spacing::Small);
     m_notes = new QPlainTextEdit(notesPage);
     m_notes->setObjectName(QLatin1String("sidebarNotes"));
     m_notes->setAccessibleName(tr("Notes"));

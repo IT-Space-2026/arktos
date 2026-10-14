@@ -18,6 +18,8 @@
  */
 #include "positionpicker.h"
 
+#include "arorastyle.h"
+
 #include <qboxlayout.h>
 #include <qevent.h>
 #include <qpainter.h>
@@ -200,7 +202,7 @@ PositionPicker::PositionPicker(const QStringList &labels,
 
     QHBoxLayout *layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(10);
+    layout->setSpacing(AroraStyle::Spacing::Large);
 
     m_tiles.reserve(labels.count());
     for (int slot = 0; slot < labels.count(); ++slot) {

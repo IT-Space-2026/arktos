@@ -1982,8 +1982,10 @@ void tst_SettingsDialog::densityAndFooter()
     QVERIFY(!groups.isEmpty());
     for (QGroupBox *box : groups) {
         QVERIFY2(box->layout(), qPrintable(box->title()));
+        // THEM01: group boxes ride the 4/8/12 spacing scale — Medium
+        // sides/bottom, Small under the title.
         QCOMPARE(box->layout()->contentsMargins(),
-                 QMargins(9, 6, 9, 9));
+                 QMargins(8, 4, 8, 8));
     }
 
     // Footer strip: a full-width separator line above a button box

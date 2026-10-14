@@ -20,6 +20,7 @@
 #include "scriptblockinfobar.h"
 
 #include "aroraicon.h"
+#include "arorastyle.h"
 
 #include <qboxlayout.h>
 #include <qlabel.h>
@@ -30,11 +31,14 @@ ScriptBlockInfoBar::ScriptBlockInfoBar(QWidget *parent)
     : QFrame(parent)
 {
     setObjectName(QLatin1String("scriptBlockInfoBar"));
-    setFrameStyle(QFrame::StyledPanel | QFrame::Raised);
+    setFrameStyle(QFrame::StyledPanel | QFrame::Plain);
 
     QHBoxLayout *layout = new QHBoxLayout(this);
-    layout->setContentsMargins(8, 2, 8, 2);
-    layout->setSpacing(6);
+    layout->setContentsMargins(AroraStyle::Spacing::Medium,
+                               AroraStyle::Spacing::Small,
+                               AroraStyle::Spacing::Medium,
+                               AroraStyle::Spacing::Small);
+    layout->setSpacing(AroraStyle::Spacing::Medium);
 
     m_label = new QLabel(this);
     // The host is web-derived — keep it literal (SEC10).

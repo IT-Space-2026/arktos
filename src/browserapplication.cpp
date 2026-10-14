@@ -65,6 +65,7 @@
 #include "acceptlanguagedialog.h"
 #include "adblockmanager.h"
 #include "adblocknetwork.h"
+#include "arorastyle.h"
 #include "autosaver.h"
 #include "autofillmanager.h"
 #include "bookmarksmanager.h"
@@ -275,6 +276,12 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
 
     // UIP02: uniform modern button metrics in every dialog.
     BrowserTheme::installDialogButtonPolish();
+
+    // THEME01: the central chrome polish — spacing/flat-chrome/section
+    // typography from one source.  Install after applyColorScheme() so
+    // the proxy wraps the post-scheme style; the hook re-wraps and
+    // re-resolves on every later flip.
+    AroraStyle::install();
 
 #if defined(Q_OS_MACOS)
     QApplication::setQuitOnLastWindowClosed(false);

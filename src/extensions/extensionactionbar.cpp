@@ -20,6 +20,7 @@
 #include "extensionactionbar.h"
 
 #include "aroraicon.h"
+#include "arorastyle.h"
 #include "browserapplication.h"
 #include "extensionmanager.h"
 
@@ -135,7 +136,7 @@ ExtensionActionBar::ExtensionActionBar(QWidget *parent)
 {
     setObjectName(QLatin1String("extensionActionBar"));
     m_layout->setContentsMargins(0, 0, 0, 0);
-    m_layout->setSpacing(2);
+    m_layout->setSpacing(AroraStyle::Spacing::Small);
     m_iconSize = QSize(18, 18);
 
     ExtensionManager *extensions = ExtensionManager::instance();

@@ -242,7 +242,8 @@ browsing profile:
   `ARORA_COLOR_SCHEME` override), selectable bundled icon sets
   (Adwaita/Breeze/Tabler, light+dark variants — the Native desktop set
   falls back to bundled dark glyphs when it can't serve
-  light-on-dark art), status-bar load
+  light-on-dark art), flat palette-aware chrome with a consistent
+  spacing rhythm, status-bar load
   indicator, zoom control and per-tab memory/bandwidth readouts
   (Linux), domain-emphasized anti-phishing address
   bar with IDN punycode display.

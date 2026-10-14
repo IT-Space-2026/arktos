@@ -769,6 +769,12 @@ UI:
   shortcut and behavior are identical — on every window type,
   including Tor windows where the menu button is the only menu
   (MENU11).
+- Flatter, more modern chrome from one central style source: sunken
+  toolbar/dock/panel frames and hard borders are replaced by subtle
+  palette-derived hairlines, toolbars and panels share a consistent
+  4/8/12px spacing rhythm, group headers render semibold, and the Tor
+  window's violet styling is defined once and reused everywhere — all
+  of it tracks light/dark theme changes live (THEM01).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

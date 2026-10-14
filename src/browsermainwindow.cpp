@@ -67,6 +67,7 @@
 #include "aboutdialog.h"
 #include "addbookmarkdialog.h"
 #include "aroraicon.h"
+#include "arorastyle.h"
 #include "autosaver.h"
 #include "bookmarksmanager.h"
 #include "bookmarksmenu.h"
@@ -148,66 +149,9 @@
 
 #include <qdebug.h>
 
-// TOR02/TOR07: the tor window's violet chrome — one bar treatment
-// shared by the navigation and bookmarks toolbars so the header band
-// reads as a single surface.
-static QString torBarStyleSheet()
-{
-    return QLatin1String(
-        "QToolBar { background: #4a3372; border: none; }"
-        "QToolButton { color: #eee; background: transparent; }"
-        "QToolButton:hover { background: #5d4491; }"
-        "QToolButton:pressed { background: #3a2a5c; }");
-}
-
-// TOR07: the tab strip takes the same treatment as the rest of the
-// header: inactive tabs read as chrome (mid violet), the selected tab
-// is the light "field" element — the same inside-the-violet treatment
-// the location bar carries, resolved from the live palette so it
-// tracks the field in day and night schemes alike.  Re-applied on
-// chromeSchemeChanged so a live theme preview keeps it in sync.
-static QString torTabBarStyleSheet()
-{
-    const QPalette palette = qApp ? qApp->palette() : QPalette();
-    return QString::fromLatin1(
-        "QTabBar { background: #4a3372; }"
-        // 6px vertical padding pushes the stylesheet's natural tab
-        // hint past TabBar::tabSizeHint's TABS07 cap, so the bound
-        // clamps to exactly the same thickness a normal strip gets.
-        "QTabBar::tab { background: #5d4491; color: #eee;"
-        " border: 1px solid #3a2a5c; padding: 6px 8px; }"
-        "QTabBar::tab:top { border-bottom: none;"
-        " border-top-left-radius: 4px; border-top-right-radius: 4px; }"
-        "QTabBar::tab:bottom { border-top: none;"
-        " border-bottom-left-radius: 4px; border-bottom-right-radius: 4px; }"
-        "QTabBar::tab:left { border-right: none;"
-        " border-top-left-radius: 4px; border-bottom-left-radius: 4px; }"
-        "QTabBar::tab:right { border-left: none;"
-        " border-top-right-radius: 4px; border-bottom-right-radius: 4px; }"
-        "QTabBar::tab:selected { background: %1; color: %2; }"
-        "QTabBar::tab:!selected:hover { background: #6b4fa3; }")
-        .arg(palette.color(QPalette::Base).name(),
-             palette.color(QPalette::Text).name());
-}
-
-// TOR14: the chrome's bottom edge — the status bar joins the violet
-// treatment so the circuit label, the MEM/NET/loading/zoom widgets
-// and the transient message line read light-on-violet instead of the
-// app palette's dark text.  All fixed colors (unlike the tab strip's
-// field element), so a live theme preview needs no re-resolution.
-static QString torStatusBarStyleSheet()
-{
-    return QLatin1String(
-        "QStatusBar { background: #4a3372; color: #eee; }"
-        "QStatusBar::item { border: none; }"
-        "QLabel { color: #eee; background: transparent; }"
-        "QToolButton { color: #eee; background: transparent; }"
-        "QToolButton:hover { background: #5d4491; }"
-        "QToolButton:pressed { background: #3a2a5c; }"
-        "QProgressBar { background: #3a2a5c; border: none;"
-        " border-radius: 3px; }"
-        "QProgressBar::chunk { background: #b9aecf; }");
-}
+// THEME01: the tor window's violet chrome (TOR02/TOR07/TOR14) and the
+// palette-derived flat-chrome rules all build in AroraStyle — the one
+// central style source — not as per-callsite setStyleSheet strings.
 
 // MENU09: one extent drives both the plain icon size and the tor
 // composite below, so the violet window's logo can never drift off
@@ -279,7 +223,9 @@ private:
             painter->save();
             painter->setRenderHint(QPainter::Antialiasing);
             painter->setPen(Qt::NoPen);
-            painter->setBrush(QColor(0xee, 0xee, 0xee, 150));
+            QColor disc = AroraStyle::torTextColor();
+            disc.setAlpha(150);
+            painter->setBrush(disc);
             const qreal inset = side / 24.0; // 1.5px at the 36px baseline
             painter->drawEllipse(
                 target.adjusted(inset, inset, -inset, -inset));
@@ -356,22 +302,16 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
         // Unmistakable chrome accent — violet navigation bar + badge,
         // and a "(Tor)" marker in the window title — so a tor window
         // is never mistaken for a normal one at a glance.
-        m_navigationBar->setStyleSheet(torBarStyleSheet());
+        m_navigationBar->setStyleSheet(AroraStyle::torBarStyleSheet());
 
         // TOR07: the violet used to stop at the navigation bar, so
         // the menu row stayed on the default palette — three
         // unrelated shades in the header block.  The menu bar takes
         // the same treatment; its popup menus are intentionally left
         // on the platform palette.
-        menuBar()->setStyleSheet(QLatin1String(
-            "QMenuBar { background: #4a3372; }"
-            "QMenuBar::item { color: #eee; background: transparent; }"
-            "QMenuBar::item:selected { background: #5d4491; }"
-            "QMenuBar::item:pressed { background: #3a2a5c; }"));
+        menuBar()->setStyleSheet(AroraStyle::torMenuBarStyleSheet());
         QLabel *badge = new QLabel(QLatin1String(" Tor "), m_navigationBar);
-        badge->setStyleSheet(QLatin1String(
-            "QLabel { color: white; background: #6b4fa3;"
-            " border-radius: 6px; padding: 1px 8px; font-weight: bold; }"));
+        badge->setStyleSheet(AroraStyle::torBadgeStyleSheet());
         badge->setToolTip(tr("This window browses through the Tor network"));
         m_navigationBar->addWidget(badge)
             ->setProperty(kNavBarItemIdProperty,
@@ -383,14 +323,14 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
         // (the button only ever repaints while a page is loaded).
         QPalette readerPalette = m_readerModeButton->palette();
         readerPalette.setColor(QPalette::ButtonText,
-                               QColor(238, 238, 238));
+                               AroraStyle::torTextColor());
         m_readerModeButton->setPalette(readerPalette);
         // TOR08: same lift for the circuit button's painted onion —
         // its PaletteChange handler repaints the glyph.
         if (m_torCircuitButton) {
             QPalette circuitPalette = m_torCircuitButton->palette();
             circuitPalette.setColor(QPalette::ButtonText,
-                                    QColor(238, 238, 238));
+                                    AroraStyle::torTextColor());
             m_torCircuitButton->setPalette(circuitPalette);
         }
 
@@ -400,14 +340,14 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
         // pick) there is no -dark art to pin at all.  Qt's generated
         // Disabled ghosting then rendered the idle back/forward
         // arrows paler than the enabled reload.  Tint every nav
-        // glyph flat #eee — the same value the palette-painted
-        // reader/onion buttons take — and seed the Disabled mode
-        // with the tab strip's dimmed #b9aecf so the state stays
-        // deliberate instead of washed.  The menu actions keep the
-        // normal icons — their popups stay on the platform palette,
-        // not the violet bar.
-        const QColor torGlyph(0xee, 0xee, 0xee);
-        const QColor torGlyphDisabled(0xb9, 0xae, 0xcf);
+        // glyph to the tor chrome's flat text color — the same value
+        // the palette-painted reader/onion buttons take — and seed
+        // the Disabled mode with the dimmed variant so the state
+        // stays deliberate instead of washed.  The menu actions keep
+        // the normal icons — their popups stay on the platform
+        // palette, not the violet bar.
+        const QColor torGlyph = AroraStyle::torTextColor();
+        const QColor torGlyphDisabled = AroraStyle::torDimTextColor();
         m_reloadIcon = AroraIcon::getTinted(
             QLatin1String("view-refresh"), torGlyph, torGlyphDisabled);
         m_stopIcon = AroraIcon::getTinted(
@@ -438,10 +378,10 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
         // transient message line is painted straight from
         // palette().windowText() (it bypasses the stylesheet), so
         // the role is lifted explicitly — children inherit it.
-        statusBar()->setStyleSheet(torStatusBarStyleSheet());
+        statusBar()->setStyleSheet(AroraStyle::torStatusBarStyleSheet());
         QPalette statusPalette = statusBar()->palette();
         statusPalette.setColor(QPalette::WindowText,
-                               QColor(0xee, 0xee, 0xee));
+                               AroraStyle::torTextColor());
         statusBar()->setPalette(statusPalette);
         // The zoom +/- glyphs are themed icons — dark art on the
         // violet bar.  Tint them to the nav cluster's flat #eee.
@@ -504,7 +444,7 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     m_bookmarksToolbarFrame->setLineWidth(1);
     m_bookmarksToolbarFrame->setMidLineWidth(0);
     m_bookmarksToolbarFrame->setFrameShape(QFrame::HLine);
-    m_bookmarksToolbarFrame->setFrameShadow(QFrame::Raised);
+    m_bookmarksToolbarFrame->setFrameShadow(QFrame::Plain);
     QPalette fp = m_bookmarksToolbarFrame->palette();
     fp.setColor(QPalette::Active, QPalette::Light, QColor(64, 64, 64));
     fp.setColor(QPalette::Active, QPalette::Dark, QColor(192, 192, 192));
@@ -530,7 +470,9 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
 #else
     // UIP01: modest padding around the bookmarks row (skipped on macOS
     // where the toolbar is hard-capped to 19px for the unified look).
-    m_bookmarksToolbar->setContentsMargins(4, 2, 4, 2);
+    m_bookmarksToolbar->setContentsMargins(
+        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small,
+        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small);
     addToolBarBreak();
     addToolBar(m_bookmarksToolbar);
 #endif
@@ -545,36 +487,37 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
         // light "field" element, inactive tabs = violet chrome).
         // The objectName scopes the pane rule so a QTabWidget hosted
         // inside a widget tab never picks the chrome colors up.
-        m_bookmarksToolbar->setStyleSheet(torBarStyleSheet());
+        m_bookmarksToolbar->setStyleSheet(AroraStyle::torBarStyleSheet());
         m_tabWidget->setObjectName(QLatin1String("mainTabWidget"));
-        m_tabWidget->setStyleSheet(QLatin1String(
-            "QTabWidget#mainTabWidget { background: #4a3372; }"
-            "QTabWidget#mainTabWidget::pane { border: none; }"));
+        m_tabWidget->setStyleSheet(AroraStyle::torTabWidgetStyleSheet());
         // Manual strip paints (the vertical-row background fill, the
         // edge divider, the sleeping-tab badge) take palette() colors
         // — pull them into the same violet family.
         QPalette stripPalette = m_tabWidget->tabBar()->palette();
-        stripPalette.setColor(QPalette::Window, QColor(0x4a, 0x33, 0x72));
-        stripPalette.setColor(QPalette::Button, QColor(0x4a, 0x33, 0x72));
+        stripPalette.setColor(QPalette::Window,
+                              AroraStyle::torChromeColor());
+        stripPalette.setColor(QPalette::Button,
+                              AroraStyle::torChromeColor());
         stripPalette.setColor(QPalette::WindowText,
-                              QColor(0xee, 0xee, 0xee));
+                              AroraStyle::torTextColor());
         stripPalette.setColor(QPalette::ButtonText,
-                              QColor(0xee, 0xee, 0xee));
+                              AroraStyle::torTextColor());
         stripPalette.setColor(QPalette::Disabled, QPalette::WindowText,
-                              QColor(0xb9, 0xae, 0xcf));
+                              AroraStyle::torDimTextColor());
         stripPalette.setColor(QPalette::Disabled, QPalette::ButtonText,
-                              QColor(0xb9, 0xae, 0xcf));
-        stripPalette.setColor(QPalette::Mid, QColor(0x3a, 0x2a, 0x5c));
+                              AroraStyle::torDimTextColor());
+        stripPalette.setColor(QPalette::Mid,
+                              AroraStyle::torChromePressedColor());
         TabBar *tabBar = m_tabWidget->tabBar();
         tabBar->setPalette(stripPalette);
-        tabBar->setStyleSheet(torTabBarStyleSheet());
+        tabBar->setStyleSheet(AroraStyle::torTabBarStyleSheet());
         // The selected tab borrows the palette's field colors — a
         // live theme preview re-resolves them so the tab keeps
         // matching the location bar.
         connect(BrowserTheme::themeNotifier(),
                 &BrowserTheme::BrowserThemeNotifier::chromeSchemeChanged,
                 tabBar, [tabBar]() {
-            tabBar->setStyleSheet(torTabBarStyleSheet());
+            tabBar->setStyleSheet(AroraStyle::torTabBarStyleSheet());
         });
 
         // TOR17: until the daemon's SOCKS listener is live every page
@@ -1934,8 +1877,9 @@ void BrowserMainWindow::setupToolBar()
     // band under the nav items.  Zero them — the layout's own margin
     // still pads the row, and the whole row now centers against the
     // app button instead of riding the top edge.
-    m_navigationBar->setContentsMargins(6, 0, 6, 0);
-    m_navigationBar->layout()->setSpacing(6);
+    m_navigationBar->setContentsMargins(AroraStyle::Spacing::Medium, 0,
+                                        AroraStyle::Spacing::Medium, 0);
+    m_navigationBar->layout()->setSpacing(AroraStyle::Spacing::Medium);
     // UIP02: one icon size for the nav buttons on every platform —
     // was macOS-only, so Linux/Windows fell back to the style's
     // larger default and the row looked uneven.

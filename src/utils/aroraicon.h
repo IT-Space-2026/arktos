@@ -19,6 +19,8 @@
 #ifndef ARORAICON_H
 #define ARORAICON_H
 
+#include "arorastyle.h"
+
 #include <qcolor.h>
 #include <qicon.h>
 #include <qstringlist.h>
@@ -96,14 +98,14 @@ QIcon getOnDark(const QString &name);
 // Disabled mode is seeded with `disabledColor` rather than left to
 // Qt's generated ghosting, which is what washed the idle
 // back/forward arrows out on the violet bar.  The default pair is
-// the tor chrome's glyph colors (enabled #eee, disabled #b9aecf —
-// the tab strip's dimmed text tone).
+// the tor chrome's glyph colors from AroraStyle (the light text and
+// the tab strip's dimmed tone) — the single tor color source.
 QIcon tinted(const QIcon &icon,
-             const QColor &color = QColor(0xee, 0xee, 0xee),
-             const QColor &disabledColor = QColor(0xb9, 0xae, 0xcf));
+             const QColor &color = AroraStyle::torTextColor(),
+             const QColor &disabledColor = AroraStyle::torDimTextColor());
 QIcon getTinted(const QString &name,
-                const QColor &color = QColor(0xee, 0xee, 0xee),
-                const QColor &disabledColor = QColor(0xb9, 0xae, 0xcf));
+                const QColor &color = AroraStyle::torTextColor(),
+                const QColor &disabledColor = AroraStyle::torDimTextColor());
 
 // ICONS09: the house icon for chrome surfaces — the themed shape
 // re-tinted to the palette's ButtonText, resolved lazily so an
