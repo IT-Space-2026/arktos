@@ -830,3 +830,4 @@
 - 2026-10-14 MERGEWATCH: rust-work merged — no conflicts (3 commits: DEVT09/ENG25 queued + ENG25 row added in .devin/Arora-Task-Rust.md); ui-work SKIPPED (0 ahead), build ok
 - 2026-10-14 MERGEWATCH: rust-work merged — no conflicts (1 commit: ENG27 table row in .devin/Arora-Task-Rust.md), build ok
 - 2026-10-14 MERGEWATCH: ui-work merged — no conflicts (4 commits: TOR19/SIDE11/DOWN03/HIST02 queued in .devin/Arora-Task-UI.md), build ok
+- 2026-10-14 DEVT09: BiDi waterfall legibility — p90 dense-window zoom (2x-tail guard), 5px min bar + edge, clipped-bar notch, DCL/Load marker lines — tst_devtools 10/10, cargo test 232/232, check-warnings PASS
