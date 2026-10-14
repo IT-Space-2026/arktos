@@ -84,6 +84,14 @@ public:
         bool installed = false; // persisted under the profile's installPath
         bool enabled = false;
         bool builtin = false;   // shipped component extension
+        // EXT14 hosted-background runtime tier — "starting"/"hosted"/
+        // "failed" while a hidden host exists for this extension,
+        // empty otherwise.  hostError carries the last hosted-side
+        // failure detail.  When EXT12's ExtensionHealth machinery
+        // merges from the main lane, "hosted" is the healthy tier.
+        QString hostState;
+        QString hostError;
+        bool hosted = false;    // host up, chromeBridge handshake done
     };
 
     // Result of reading an unpacked extension's manifest.json — used to
@@ -97,6 +105,9 @@ public:
         QString version;
         QString description;
         bool hasBackground = false;
+        QStringList backgroundScripts;  // background.scripts then
+                                        // background.service_worker,
+                                        // in manifest order (EXT14)
         int contentScriptCount = 0;
         bool hasAction = false;
         QStringList permissions;      // permissions + optional_permissions

@@ -17,6 +17,7 @@
     <file>pip.js</file>
     <file>pip-shim.js</file>
     <file>pip-player.html</file>
+    <file>exthost.js</file>
     <file>../../AUTHORS</file>
     <file>../../LICENSE.GPL2</file>
 </qresource>

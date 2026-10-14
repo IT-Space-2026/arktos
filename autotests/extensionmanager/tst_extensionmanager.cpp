@@ -26,12 +26,14 @@
 #include <QtNetwork/QtNetwork>
 #include <qtcpserver.h>
 #include <qtcpsocket.h>
+#include <qwebenginepage.h>
 #include <qwebengineprofile.h>
 
 #include <memory>
 
 #include "browserapplication.h"
 #include "browserprofile.h"
+#include "extensionbackgroundhost.h"
 #include "extensionmanager.h"
 #include "qtest_arora.h"
 #include "qtry.h"
@@ -52,6 +54,7 @@ private slots:
     void profileIsolation();
     void bundledInstall();
     void updateCheckLoopback();
+    void hostedBackgroundRuntime();
 
 private:
     // Minimal PK zip writer (store-only) — enough for the update
@@ -490,6 +493,36 @@ void tst_ExtensionManager::bundledInstall()
     ExtensionManager *manager = ExtensionManager::instance();
     QWebEngineProfile *profile = BrowserApplication::webEngineProfile();
 
+    // Leftovers are persistent: a standalone run (real HOME) inherits
+    // both the consumed marker and any previously installed fixture
+    // rows, and either makes this run skip the installs outright.
+    // Drop both so the leg is idempotent outside the runTests.sh HOME
+    // sandbox.
+    {
+        const QString key = QStringLiteral("extensions/bundled/")
+            + profile->storageName();
+        QSettings settings;
+        QStringList consumed = settings.value(key).toStringList();
+        consumed.removeAll(QLatin1String("tst-bundle"));
+        consumed.removeAll(QLatin1String("tst-bundle-zip.zip"));
+        settings.setValue(key, consumed);
+    }
+    for (const ExtensionManager::ExtensionInfo &info
+         : manager->extensions()) {
+        if (info.name.startsWith(QLatin1String("tst-bundle")))
+            manager->removeExtension(info.id);
+    }
+    // Uninstall is async — wait until no fixture row survives, or the
+    // stem check inside installBundledExtensions() satisfies them.
+    QTRY_VERIFY_WITH_TIMEOUT([&] {
+        for (const ExtensionManager::ExtensionInfo &info
+             : manager->extensions()) {
+            if (info.name.startsWith(QLatin1String("tst-bundle")))
+                return false;
+        }
+        return true;
+    }(), 10000);
+
     // The enable expectation mirrors installBundledExtensions(): the
     // bundle enables exactly when installPath held nothing before.
     const QString installDir = manager->installPath();
@@ -710,6 +743,128 @@ void tst_ExtensionManager::updateCheckLoopback()
     QVERIFY(!manager->updateCheckInProgress());
 
     QDir(root).removeRecursively();
+}
+
+// EXT14: a session-loaded extension declaring a background script
+// gets a hidden hosted view at its chrome-extension:// origin — the
+// generated injection runs the preamble, the real script executes,
+// chrome.runtime survives, and the chromeBridge handshake completes.
+// Disable tears the host down, re-enable respawns it.
+void tst_ExtensionManager::hostedBackgroundRuntime()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-exthost-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile manifestFile(dir + QLatin1String("/manifest.json"));
+        QVERIFY(manifestFile.open(QIODevice::WriteOnly));
+        manifestFile.write(
+            "{\"manifest_version\":3,\"name\":\"tst-hosted\","
+            "\"version\":\"1.0\",\"permissions\":[\"storage\"],"
+            "\"background\":{\"service_worker\":\"sw.js\"}}");
+        manifestFile.close();
+        QFile worker(dir + QLatin1String("/sw.js"));
+        QVERIFY(worker.open(QIODevice::WriteOnly));
+        worker.write(
+            "self.__hostedBgRan = (typeof chrome !== 'undefined'"
+            " && chrome.runtime) ? 'runtime-ok' : 'no-runtime';\n"
+            "chrome.runtime.onMessage.addListener("
+            "function(m,s,r){ return false; });\n");
+        worker.close();
+    }
+
+    // The manifest inspector supplies the script list.
+    const ExtensionManager::Manifest manifest =
+        ExtensionManager::inspectManifest(dir);
+    QVERIFY(manifest.valid);
+    QCOMPARE(manifest.backgroundScripts,
+             QStringList{QStringLiteral("sw.js")});
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+
+    auto loaded = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-hosted")
+                && info.error.isEmpty())
+            *loaded = info.id;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded->isEmpty(), 30000);
+    const QString id = *loaded;
+
+    // No host while disabled; enabling spawns it.
+    QVERIFY(!runtime->host(id));
+    manager->setExtensionEnabled(id, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(id)
+            && runtime->host(id)->state()
+                   == ExtensionBackgroundHost::State::Ready,
+        45000);
+
+    auto eval = [](QWebEnginePage *page, const QString &source) {
+        auto result = std::make_shared<QVariant>();
+        page->runJavaScript(source,
+                            [result](const QVariant &v) { *result = v; });
+        QElapsedTimer timer;
+        timer.start();
+        while (!result->isValid() && timer.elapsed() < 10000)
+            QTest::qWait(50);
+        return *result;
+    };
+    const QJsonObject state = QJsonDocument::fromJson(
+        eval(runtime->host(id)->page(), QStringLiteral(
+            "JSON.stringify({state:__aroraHost.state,"
+            "bridge:__aroraHost.bridgeUp,"
+            "bg:self.__hostedBgRan||null,"
+            "runtime:typeof (chrome&&chrome.runtime),"
+            "storage:typeof (chrome&&chrome.storage"
+            "&&chrome.storage.local)})")).toString().toUtf8()).object();
+    QCOMPARE(state.value(QLatin1String("state")).toString(),
+             QStringLiteral("ready"));
+    QVERIFY(state.value(QLatin1String("bridge")).toBool());
+    QCOMPARE(state.value(QLatin1String("bg")).toString(),
+             QStringLiteral("runtime-ok"));
+    QCOMPARE(state.value(QLatin1String("runtime")).toString(),
+             QStringLiteral("object"));
+    QCOMPARE(state.value(QLatin1String("storage")).toString(),
+             QStringLiteral("object"));
+
+    // The manager reports the hosted tier on the info row.
+    bool sawHosted = false;
+    for (const ExtensionManager::ExtensionInfo &info
+         : manager->extensions()) {
+        if (info.id == id) {
+            sawHosted = info.hosted
+                && info.hostState == QLatin1String("hosted")
+                && info.hostError.isEmpty();
+        }
+    }
+    QVERIFY(sawHosted);
+
+    // Disable -> the hosted view is torn down; re-enable -> respawn.
+    manager->setExtensionEnabled(id, false);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 15000);
+    manager->setExtensionEnabled(id, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(id)
+            && runtime->host(id)->state()
+                   == ExtensionBackgroundHost::State::Ready,
+        45000);
+
+    // Unload -> host gone, no stray state.
+    manager->removeExtension(id);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 15000);
+
+    QDir(dir).removeRecursively();
 }
 
 QTEST_MAIN(tst_ExtensionManager)

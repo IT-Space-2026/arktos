@@ -43,6 +43,7 @@
 #include "containermanager.h"
 #include "cookiejar.h"
 #include "downloadmanager.h"
+#include "extensionbackgroundhost.h"
 #include "extensionmanager.h"
 #include "fingerprintprotector.h"
 #include "history.h"
@@ -4184,7 +4185,8 @@ int main(int argc, char **argv)
         "adblock-list-smoke", "adblock-rust-smoke", "autofill-smoke",
         "settings-smoke", "find-smoke", "source-smoke", "browser-smoke",
         "app-smoke", "extension-smoke", "extension-otr-smoke",
-        "extension-update-smoke", "bitwarden-smoke",
+        "extension-update-smoke", "extension-host-smoke",
+        "bitwarden-smoke",
         "ua-smoke", "perf-smoke",
         "session-smoke", "restore-smoke", "tor-smoke", "privacy-smoke",
         "sigterm-smoke", "sigterm-child-smoke",
@@ -10160,6 +10162,162 @@ int main(int argc, char **argv)
 
         // exec() must run while this block's locals are still alive:
         // the finished-signal lambdas above capture them by reference.
+        return application.exec();
+    }
+
+    // Headless verification for EXT14: a session-loaded MV3 fixture
+    // with a background script gets a hidden hosted view — the
+    // generated wrapper runs the shim preamble, the extension's real
+    // background script executes at its chrome-extension:// origin
+    // (manifest order), real chrome.runtime is present and the
+    // chromeBridge handshake completes; disabling tears the host
+    // down and re-enabling respawns it.  Exits 0 on PASS.
+    if (args.contains(QLatin1String("--extension-host-smoke"))) {
+        extensions = ExtensionManager::instance();
+        ExtensionBackgroundRuntime *runtime =
+            ExtensionBackgroundRuntime::instance();
+
+        extDir = QDir::temp().filePath(
+            QLatin1String("arora-ext-host-smoke"));
+        QDir().mkpath(extDir);
+        {
+            QFile manifestFile(extDir + QLatin1String("/manifest.json"));
+            if (!manifestFile.open(QIODevice::WriteOnly)) {
+                qInfo() << "extension-host-smoke: FAIL"
+                           " (cannot write manifest)";
+                return 1;
+            }
+            manifestFile.write(
+                "{\"manifest_version\":3,"
+                "\"name\":\"arora-host-smoke-ext\","
+                "\"version\":\"0.1\","
+                "\"description\":\"EXT14 hosted-runtime fixture\","
+                "\"permissions\":[\"storage\"],"
+                "\"background\":{\"service_worker\":\"sw.js\"}}");
+            QFile worker(extDir + QLatin1String("/sw.js"));
+            if (!worker.open(QIODevice::WriteOnly)) {
+                qInfo() << "extension-host-smoke: FAIL"
+                           " (cannot write worker)";
+                return 1;
+            }
+            worker.write(
+                "self.__hostedBgRan = (typeof chrome !== 'undefined'"
+                " && chrome.runtime) ? 'runtime-ok' : 'no-runtime';\n"
+                "chrome.runtime.onInstalled.addListener("
+                "function(){ self.__hostedInstalled = true; });\n"
+                "chrome.runtime.onMessage.addListener("
+                "function(m,s,r){ if(m&&m.ping){ r({pong:true,"
+                "from:'hosted'}); return true; } return false; });\n");
+        }
+
+        // Manifest inspector must hand the runtime the script list.
+        const ExtensionManager::Manifest manifest =
+            ExtensionManager::inspectManifest(extDir);
+        check(manifest.valid
+              && manifest.backgroundScripts
+                     == QStringList{QStringLiteral("sw.js")},
+              "manifest background scripts listed");
+
+        // phase: 0 = waiting for the host to reach Ready after
+        // enable; 1 = waiting for teardown after disable; 2 = the
+        // re-enable respawn must reach Ready again.
+        auto phase = std::make_shared<int>(0);
+        auto hostTicks = std::make_shared<int>(0);
+        QTimer *hostPoll = new QTimer(&application);
+        hostPoll->setInterval(250);
+
+        const auto finish = [&]() {
+            qInfo() << "extension-host-smoke:"
+                    << (failures == 0 ? "PASS" : "FAIL")
+                    << "failures:" << failures;
+            QDir(extDir).removeRecursively();
+            std::quick_exit(failures == 0 ? 0 : 1);
+        };
+
+        QObject::connect(hostPoll, &QTimer::timeout, &application, [&]() {
+            ExtensionBackgroundHost *host = runtime->host(extensionId);
+            if (*phase == 0 || *phase == 2) {
+                if (!host)
+                    return;
+                if (host->state()
+                        == ExtensionBackgroundHost::State::Failed) {
+                    die(QStringLiteral("host failed: %1")
+                            .arg(host->lastError()));
+                    return;
+                }
+                if (host->state()
+                        != ExtensionBackgroundHost::State::Ready) {
+                    if (++*hostTicks > 120)
+                        die(QStringLiteral("host never reached Ready"));
+                    return;
+                }
+                hostPoll->stop();
+                if (*phase == 2) {
+                    check(true, "disable/re-enable respawns the host");
+                    finish();
+                    return;
+                }
+                // Ready: the background ran, chrome.runtime survives,
+                // the bridge handshake completed.
+                check(true, "host reached Ready");
+                host->page()->runJavaScript(QStringLiteral(
+                    "JSON.stringify({state:__aroraHost.state,"
+                    "bridge:__aroraHost.bridgeUp,"
+                    "bg:self.__hostedBgRan||null,"
+                    "installed:self.__hostedInstalled===true,"
+                    "runtime:typeof (chrome&&chrome.runtime)})"),
+                    [&](const QVariant &v) {
+                    const QJsonObject o = QJsonDocument::fromJson(
+                        v.toString().toUtf8()).object();
+                    check(o.value(QLatin1String("state")).toString()
+                              == QLatin1String("ready"),
+                          "in-page state ready");
+                    check(o.value(QLatin1String("bridge")).toBool(),
+                          "chromeBridge handshake");
+                    check(o.value(QLatin1String("bg")).toString()
+                              == QLatin1String("runtime-ok"),
+                          "background script ran with chrome.runtime");
+                    check(o.value(QLatin1String("runtime")).toString()
+                              == QLatin1String("object"),
+                          "chrome.runtime survives in the host");
+                    *phase = 1;
+                    *hostTicks = 0;
+                    extensions->setExtensionEnabled(extensionId, false);
+                    hostPoll->start();
+                });
+            } else {  // phase 1 — teardown
+                if (!host) {
+                    check(true, "disable tears the hosted view down");
+                    *phase = 2;
+                    *hostTicks = 0;
+                    extensions->setExtensionEnabled(extensionId, true);
+                    return;
+                }
+                if (++*hostTicks > 40)
+                    die(QStringLiteral("host survived disable"));
+            }
+        });
+
+        QObject::connect(extensions, &ExtensionManager::extensionLoaded,
+            &application, [&](const ExtensionManager::ExtensionInfo &info) {
+            if (info.name != QLatin1String("arora-host-smoke-ext"))
+                return;
+            check(info.loaded && info.error.isEmpty(),
+                  "loadExtension finished");
+            extensionId = info.id;
+            extensions->setExtensionEnabled(extensionId, true);
+            hostPoll->start();
+        });
+        QObject::connect(extensions, &ExtensionManager::errorOccurred,
+            &application, [die](const QString &message) {
+            die(QStringLiteral("errorOccurred: %1").arg(message));
+        });
+        QTimer::singleShot(60000, &application, [die]() {
+            die(QStringLiteral("timeout"));
+        });
+
+        extensions->grantConsent(extDir);
+        extensions->loadExtension(extDir);
         return application.exec();
     }
 

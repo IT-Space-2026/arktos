@@ -610,9 +610,10 @@ void tst_TabBar::verticalGripReset()
                          Qt::LeftButton, Qt::LeftButton,
                          Qt::NoModifier);
     bar.call_mouseDoubleClickEvent(&dblClick);
-    QCOMPARE(bar.verticalTabWidth(), 140);
+    // TABS16: the grip reset follows the roomier 180px default.
+    QCOMPARE(bar.verticalTabWidth(), 180);
     QCOMPARE(
-        settings.value(QLatin1String("verticalTabWidth")).toInt(), 140);
+        settings.value(QLatin1String("verticalTabWidth")).toInt(), 180);
 
     settings.remove(QLatin1String("verticalTabWidth"));
     settings.endGroup();

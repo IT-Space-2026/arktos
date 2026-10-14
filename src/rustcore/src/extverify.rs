@@ -48,7 +48,8 @@
 //!     SEC19 "manifest.json stays Qt" gap now that manifests arrive
 //!     inside untrusted packages).  Result JSON:
 //!     {"valid","manifest_version","name","version","description",
-//!     "update_url","key","has_background","has_action",
+//!     "update_url","key","has_background","background_scripts",
+//!     "has_action",
 //!     "content_script_count","permissions","host_permissions",
 //!     "unsupported","unverified","dangerous","errors"}
 //!     "unsupported"/"unverified" mirror ExtensionManager's chrome.*
@@ -792,6 +793,22 @@ pub fn manifest_check(data: &[u8]) -> RcResult<Vec<u8>> {
     let host_permissions =
         strings(root.get("host_permissions").unwrap_or(&Value::Null));
 
+    // EXT14: the hosted background runtime needs the real script list
+    // — MV2-style "scripts" in listed order first (a manifest that
+    // carries both is malformed but harmless), then the MV3
+    // service_worker.  Empty when the extension declares no
+    // background at all.
+    let background = root.get("background").unwrap_or(&Value::Null);
+    let mut background_scripts =
+        strings(background.get("scripts").unwrap_or(&Value::Null));
+    if let Some(worker) = background
+        .get("service_worker")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+    {
+        background_scripts.push(worker.to_string());
+    }
+
     let unsupported: Vec<&str> = permissions
         .iter()
         .map(String::as_str)
@@ -823,6 +840,7 @@ pub fn manifest_check(data: &[u8]) -> RcResult<Vec<u8>> {
         "update_url": string(root.get("update_url").unwrap_or(&Value::Null)),
         "key": string(root.get("key").unwrap_or(&Value::Null)),
         "has_background": root.contains_key("background"),
+        "background_scripts": background_scripts,
         "has_action": root.contains_key("action")
             || root.contains_key("browser_action")
             || root.contains_key("page_action"),
@@ -1098,6 +1116,29 @@ mod tests {
         assert_eq!(v["valid"], true);
         assert_eq!(v["manifest_version"], 3);
         assert_eq!(v["has_background"], true);
+        // EXT14: the hosted runtime consumes the script list in
+        // manifest order — MV2-style "scripts" first, then the MV3
+        // service_worker.
+        assert_eq!(v["background_scripts"], json!(["w.js"]));
+        let both = fields(
+            &manifest_check(
+                br#"{"manifest_version":3,"name":"B",
+                    "background":{"scripts":["a.js","b.js"],
+                    "service_worker":"w.js"}}"#,
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            both["background_scripts"],
+            json!(["a.js", "b.js", "w.js"])
+        );
+        let none = fields(
+            &manifest_check(
+                br#"{"manifest_version":3,"name":"N"}"#,
+            )
+            .unwrap(),
+        );
+        assert_eq!(none["background_scripts"], json!([]));
         assert_eq!(v["content_script_count"], 1);
         // dangerous: the deny-by-default set, sorted by declaration
         let dangerous: Vec<&str> = v["dangerous"]

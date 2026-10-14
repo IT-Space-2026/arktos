@@ -20,6 +20,7 @@
 #include "extensionmanager.h"
 
 #include "browserapplication.h"
+#include "extensionbackgroundhost.h"
 #include "browserpaths.h"
 #include "browserprofile.h"
 #include "networkaccessmanager.h"
@@ -171,6 +172,7 @@ static void fillManifestFromCheck(ExtensionManager::Manifest *manifest,
             list.append(value.toString());
         return list;
     };
+    manifest->backgroundScripts = stringList("background_scripts");
     manifest->permissions = stringList("permissions");
     manifest->hostPermissions = stringList("host_permissions");
     manifest->unsupported = stringList("unsupported");
@@ -310,6 +312,19 @@ void ExtensionManager::installOnProfile(QWebEngineProfile *profile)
     connect(extensions, &QWebEngineExtensionManager::uninstallFinished,
             this, relay(&ExtensionManager::extensionUninstalled));
 
+    // EXT14: the hosted-background runtime reconciles against the
+    // engine's enabled/loaded state on every change.
+    static bool runtimeWired = false;
+    if (!runtimeWired) {
+        runtimeWired = true;
+        ExtensionBackgroundRuntime *runtime =
+            ExtensionBackgroundRuntime::instance();
+        connect(this, &ExtensionManager::changed,
+                runtime, &ExtensionBackgroundRuntime::syncNow);
+    }
+    if (!qEnvironmentVariableIsSet("ARORA_EXTHOST_OFF"))
+        ExtensionBackgroundRuntime::instance()->attachProfile(profile);
+
     scheduleAutoUpdateCheck();
 
     // EXT07: default-installed bundle lands once per profile.
@@ -332,6 +347,30 @@ QList<ExtensionManager::ExtensionInfo> ExtensionManager::extensions() const
     const QList<QWebEngineExtensionInfo> loaded = extensions->extensions();
     for (const QWebEngineExtensionInfo &info : loaded)
         list.append(infoFrom(info));
+    // EXT14: fold in the hosted-runtime tier — a Ready host is the
+    // "Hosted" surface; Starting/Failed report through hostState and
+    // hostError so the UI and smokes can tell a live background from
+    // a dead one without poking the engine.
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    for (ExtensionInfo &info : list) {
+        ExtensionBackgroundHost *host = runtime->host(info.id);
+        if (!host)
+            continue;
+        switch (host->state()) {
+        case ExtensionBackgroundHost::State::Starting:
+            info.hostState = QStringLiteral("starting");
+            break;
+        case ExtensionBackgroundHost::State::Ready:
+            info.hostState = QStringLiteral("hosted");
+            info.hosted = true;
+            break;
+        case ExtensionBackgroundHost::State::Failed:
+            info.hostState = QStringLiteral("failed");
+            break;
+        }
+        info.hostError = host->lastError();
+    }
 #endif
     return list;
 }
@@ -688,6 +727,20 @@ ExtensionManager::Manifest ExtensionManager::inspectManifest(const QString &path
     manifest.version = root.value(QLatin1String("version")).toString();
     manifest.description = root.value(QLatin1String("description")).toString();
     manifest.hasBackground = root.contains(QLatin1String("background"));
+    // EXT14: same field order as the Rust classifier — scripts[] in
+    // listed order, then service_worker.
+    const QJsonObject background =
+        root.value(QLatin1String("background")).toObject();
+    for (const QJsonValue &entry
+         : background.value(QLatin1String("scripts")).toArray()) {
+        const QString name = entry.toString();
+        if (!name.isEmpty())
+            manifest.backgroundScripts.append(name);
+    }
+    const QString worker =
+        background.value(QLatin1String("service_worker")).toString();
+    if (!worker.isEmpty())
+        manifest.backgroundScripts.append(worker);
     manifest.hasAction = root.contains(QLatin1String("action"))
         || root.contains(QLatin1String("browser_action"))
         || root.contains(QLatin1String("page_action"));
