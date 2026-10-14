@@ -33,6 +33,8 @@
 #include <qgridlayout.h>
 #include <qgroupbox.h>
 #include <qheaderview.h>
+#include <qplaintextedit.h>
+#include <qradiobutton.h>
 #include <qscrollarea.h>
 #include <qscrollbar.h>
 #include <qstandarditemmodel.h>
@@ -81,6 +83,7 @@ private slots:
 
     void constructDefaults();
     void saveAndReload();
+    void generalPageModes();
     void buttonBoxCloseRequest();
     void searchTab();
     void searchContextControls();
@@ -215,7 +218,7 @@ void tst_SettingsDialog::saveAndReload()
         SettingsDialog dialog;
         dialog.tabWidget->setCurrentIndex(2);
         dialog.homeLineEdit->setText(QLatin1String("http://home.example.com/"));
-        dialog.startupBehavior->setCurrentIndex(1);
+        dialog.startupLastSessionRadio->setChecked(true);
         dialog.showSearchBox->setChecked(true);
         // ICONS01: pick a non-native bundled set so the round-trip
         // proves the persisted id lands on the right combo row.
@@ -292,6 +295,134 @@ void tst_SettingsDialog::saveAndReload()
         QVERIFY(reloaded.minimFontSizeCheckBox->isChecked());
         QCOMPARE(reloaded.minimumFontSizeSpinBox->value(), 12);
     }
+}
+
+// PREF04: the General page's Homepage + Startup-with radio groups and
+// the Close and Exit section — real mode keys, radio-driven
+// enablement, the legacy startupBehavior/home migrations, and the
+// exit confirm's fallback to the migrated window key.
+void tst_SettingsDialog::generalPageModes()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("MainWindow/startupMode"));
+    settings.remove(QLatin1String("MainWindow/startupBehavior"));
+    settings.remove(QLatin1String("MainWindow/startupPages"));
+    settings.remove(QLatin1String("MainWindow/homePageMode"));
+    settings.remove(QLatin1String("MainWindow/home"));
+    settings.remove(QLatin1String("tabs/confirmExit"));
+    settings.remove(QLatin1String("tabs/confirmClosingMultipleTabs"));
+
+    // Defaults: Start Page homepage + Start Page startup; the exit
+    // confirm inherits the window confirm's default-on.
+    {
+        SettingsDialog dialog;
+        QVERIFY(dialog.homeStartPageRadio->isChecked());
+        QVERIFY(!dialog.homeLineEdit->isEnabled());
+        QVERIFY(dialog.startupStartPageRadio->isChecked());
+        QVERIFY(!dialog.startupPagesEdit->isEnabled());
+        QVERIFY(dialog.confirmClosingMultipleTabs->isChecked());
+        QVERIFY(dialog.confirmExitCheck->isChecked());
+        // The moved close-window checkbox now lives in the General
+        // page's Close and Exit group.
+        QCOMPARE(dialog.confirmClosingMultipleTabs->text(),
+                 QLatin1String("Show Close Window Confirmation Dialog"));
+    }
+
+    // Round-trip: specific homepage + specific-pages startup persist
+    // the mode enums and the URL list (blank/space-padded lines drop).
+    {
+        SettingsDialog dialog;
+        dialog.homeSpecificPageRadio->setChecked(true);
+        QVERIFY(dialog.homeLineEdit->isEnabled());
+        dialog.homeLineEdit->setText(
+            QLatin1String("http://home.example/"));
+        dialog.startupSpecificPagesRadio->setChecked(true);
+        QVERIFY(dialog.startupPagesEdit->isEnabled());
+        dialog.startupPagesEdit->setPlainText(QStringLiteral(
+            "http://a.example/\n\n http://b.example/ \n"));
+        dialog.confirmExitCheck->setChecked(false);
+        dialog.accept();
+    }
+    QCOMPARE(settings.value(QLatin1String("MainWindow/homePageMode"))
+                 .toInt(),
+             int(BrowserApplication::SpecificPageHome));
+    QCOMPARE(settings.value(QLatin1String("MainWindow/startupMode"))
+                 .toInt(),
+             int(BrowserApplication::SpecificPagesStartup));
+    QCOMPARE(settings.value(QLatin1String("MainWindow/startupPages"))
+                 .toStringList(),
+             QStringList({QLatin1String("http://a.example/"),
+                          QLatin1String("http://b.example/")}));
+    QCOMPARE(settings.value(QLatin1String("tabs/confirmExit")).toBool(),
+             false);
+    {
+        SettingsDialog dialog;
+        QVERIFY(dialog.homeSpecificPageRadio->isChecked());
+        QVERIFY(dialog.homeLineEdit->isEnabled());
+        QVERIFY(dialog.startupSpecificPagesRadio->isChecked());
+        QVERIFY(dialog.startupPagesEdit->isEnabled());
+        QCOMPARE(dialog.startupPagesEdit->toPlainText(),
+                 QStringLiteral("http://a.example/\nhttp://b.example/"));
+        QVERIFY(!dialog.confirmExitCheck->isChecked());
+        dialog.reject();
+    }
+
+    // Migration: each legacy startupBehavior int lands on the mapped
+    // radio; a written startupMode wins over a stale legacy key.
+    const QHash<int, int> legacyMap = {
+        {0, int(BrowserApplication::HomepageStartup)},
+        {1, int(BrowserApplication::StartPageStartup)},
+        {2, int(BrowserApplication::LastSessionStartup)},
+    };
+    for (auto it = legacyMap.constBegin(); it != legacyMap.constEnd(); ++it) {
+        settings.remove(QLatin1String("MainWindow/startupMode"));
+        settings.setValue(QLatin1String("MainWindow/startupBehavior"),
+                          it.key());
+        QCOMPARE(BrowserApplication::startupMode(), it.value());
+        SettingsDialog dialog;
+        QCOMPARE(int(it.value() == int(BrowserApplication::HomepageStartup)
+                     ? dialog.startupHomepageRadio->isChecked()
+                     : it.value() == int(BrowserApplication::LastSessionStartup)
+                     ? dialog.startupLastSessionRadio->isChecked()
+                     : dialog.startupStartPageRadio->isChecked()),
+                 int(true));
+    }
+    settings.setValue(QLatin1String("MainWindow/startupMode"),
+                      int(BrowserApplication::HomepageStartup));
+    QCOMPARE(BrowserApplication::startupMode(),
+             int(BrowserApplication::HomepageStartup));
+    settings.remove(QLatin1String("MainWindow/startupBehavior"));
+
+    // homePageMode migration: a custom stored home url means Specific
+    // Page, the default about:home means Start Page.
+    settings.remove(QLatin1String("MainWindow/homePageMode"));
+    settings.setValue(QLatin1String("MainWindow/home"),
+                      QLatin1String("http://x.example/"));
+    QCOMPARE(BrowserApplication::homePageMode(),
+             int(BrowserApplication::SpecificPageHome));
+    settings.setValue(QLatin1String("MainWindow/home"),
+                      QLatin1String("about:home"));
+    QCOMPARE(BrowserApplication::homePageMode(),
+             int(BrowserApplication::StartPageHome));
+
+    // The exit confirm's fallback: unset confirmExit inherits the
+    // migrated window key's value — off here.
+    settings.remove(QLatin1String("tabs/confirmExit"));
+    settings.setValue(QLatin1String("tabs/confirmClosingMultipleTabs"),
+                      false);
+    {
+        SettingsDialog dialog;
+        QVERIFY(!dialog.confirmExitCheck->isChecked());
+        dialog.reject();
+    }
+
+    // Tidy up for later legs.
+    settings.remove(QLatin1String("MainWindow/startupMode"));
+    settings.remove(QLatin1String("MainWindow/startupPages"));
+    settings.remove(QLatin1String("MainWindow/homePageMode"));
+    settings.remove(QLatin1String("MainWindow/home"));
+    settings.remove(QLatin1String("tabs/confirmExit"));
+    settings.remove(QLatin1String("tabs/confirmClosingMultipleTabs"));
 }
 
 // PREFS01: the in-tab button box keeps the modal dialog's contract —
@@ -3313,7 +3444,8 @@ void tst_SettingsDialog::languageSelector()
                  .toString(),
              QLatin1String("hu_HU"));
     qApp->processEvents();
-    QCOMPARE(dialog.label_3->text(), QString::fromUtf8("Kezdőlap:"));
+    QCOMPARE(dialog.label_4->text(),
+             QString::fromUtf8("Előzmények eltávolítása:"));
 
     // The trailing English row writes the explicit no-translation pick.
     dialog.languageCombo->setCurrentIndex(
@@ -3323,7 +3455,8 @@ void tst_SettingsDialog::languageSelector()
                  .toString(),
              QString());
     qApp->processEvents();
-    QCOMPARE(dialog.label_3->text(), QLatin1String("Home Page:"));
+    QCOMPARE(dialog.label_4->text(),
+             QLatin1String("Remove history items:"));
 
     // System default persists the "system" sentinel — never a resolved
     // code — so an OS-language change still wins on the next launch.

@@ -142,10 +142,10 @@ void tst_Accessibility::settingsDialogBuddies()
 {
     SettingsDialog dialog;
 
-    QCOMPARE(dialog.label_7->buddy(),
-             static_cast<QWidget*>(dialog.startupBehavior));
-    QCOMPARE(dialog.label_3->buddy(),
-             static_cast<QWidget*>(dialog.homeLineEdit));
+    // PREF04: the startup combo and Home Page label became radio
+    // groups — their edit fields carry accessible names instead.
+    QVERIFY(!dialog.homeLineEdit->accessibleName().isEmpty());
+    QVERIFY(!dialog.startupPagesEdit->accessibleName().isEmpty());
     QCOMPARE(dialog.label_4->buddy(),
              static_cast<QWidget*>(dialog.expireHistory));
     QCOMPARE(dialog.label_5->buddy(),

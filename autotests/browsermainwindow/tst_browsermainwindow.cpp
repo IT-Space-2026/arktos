@@ -188,6 +188,7 @@ private slots:
     void readerModeContent();
     void readerSanitizer();
     void homeButton();
+    void homePageModes();
     void statusBarWidgets();
     void statusBarIndicators();
     void sidebarPanel();
@@ -3756,6 +3757,83 @@ void tst_BrowserMainWindow::homeButton()
                 && torTab->page() && !torTab->page()->isLoading());
     closeWindow(torWindow);
     BrowserApplication::setTorMode(false);
+}
+
+// PREF04: the Homepage radio mode drives the Home action's target —
+// Start Page lands on the branded start page, Specific Page on the
+// stored url — and the startup Specific Pages list opens fully.
+void tst_BrowserMainWindow::homePageModes()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("MainWindow/homePageMode"));
+    settings.remove(QLatin1String("MainWindow/home"));
+    settings.remove(QLatin1String("MainWindow/startupPages"));
+
+    const auto writeFixture = [](const QString &name) -> QUrl {
+        const QString path = QDir::temp().filePath(name);
+        QFile fixture(path);
+        if (!fixture.open(QIODevice::WriteOnly))
+            return QUrl();
+        fixture.write("<html><head><title>pref04</title>"
+                      "</head><body>x</body></html>");
+        return QUrl::fromLocalFile(path);
+    };
+    const QUrl homeFixture = writeFixture(
+        QLatin1String("arora-pref04-home.html"));
+    const QUrl secondFixture = writeFixture(
+        QLatin1String("arora-pref04-second.html"));
+    QVERIFY(homeFixture.isValid() && secondFixture.isValid());
+
+    SubWindow *window = new SubWindow;
+    window->resize(1000, 600);
+    window->show();
+    QApplication::processEvents();
+    WebView *view = window->currentTab();
+    QVERIFY(view);
+
+    // Specific Page mode: the Home slot loads the stored url.
+    settings.setValue(QLatin1String("MainWindow/homePageMode"),
+                      int(BrowserApplication::SpecificPageHome));
+    settings.setValue(QLatin1String("MainWindow/home"),
+                      homeFixture.toString());
+    window->goHome();
+    QTRY_VERIFY(view->url() == homeFixture
+                && view->page() && !view->page()->isLoading());
+
+    // Start Page mode: the same slot lands on the branded start page
+    // even with a specific url still stored.
+    settings.setValue(QLatin1String("MainWindow/homePageMode"),
+                      int(BrowserApplication::StartPageHome));
+    window->goHome();
+    QTRY_VERIFY(view->url()
+                == QUrl(QLatin1String("qrc:/startpage.html"))
+                && view->page() && !view->page()->isLoading());
+
+    // The startup Specific Pages list opens fully — first entry in
+    // the current tab, the rest as background tabs; an empty entry
+    // can't wedge the list.
+    settings.setValue(QLatin1String("MainWindow/startupPages"),
+                      QStringList({homeFixture.toString(), QString(),
+                                   secondFixture.toString()}));
+    BrowserApplication::openStartupPages(window);
+    QTRY_VERIFY(window->tabWidget()->count() == 2);
+    QTRY_VERIFY(window->tabWidget()->webView(0)->url() == homeFixture
+                && window->tabWidget()->webView(1)->url()
+                       == secondFixture);
+
+    // An empty list leaves the window's fresh tab alone.
+    SubWindow *window2 = new SubWindow;
+    window2->show();
+    settings.setValue(QLatin1String("MainWindow/startupPages"),
+                      QStringList());
+    BrowserApplication::openStartupPages(window2);
+    QCOMPARE(window2->tabWidget()->count(), 1);
+    closeWindow(window2);
+
+    settings.remove(QLatin1String("MainWindow/homePageMode"));
+    settings.remove(QLatin1String("MainWindow/home"));
+    settings.remove(QLatin1String("MainWindow/startupPages"));
+    closeWindow(window);
 }
 
 // UIP04: permanent status-bar widgets — a load-time indicator and a

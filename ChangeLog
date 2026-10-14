@@ -531,6 +531,16 @@ UI:
   favicons and site/search icons, extension artwork, and the private-
   browsing badge; the Tor window keeps its light-on-violet glyphs
   (ICONS09).
+- Preferences → General homepage and startup reworked: the homepage
+  is now a Start Page / Specific Page pair (Set to Current Page still
+  fills in the address, and the Home button plus startup-homepage
+  honor the choice), "Startup with" offers Last Session, Homepage,
+  Start Page or Specific Pages — the last takes a list of addresses,
+  one per line, each opening in its own tab. A new Close and Exit
+  section hosts the moved "Show Close Window Confirmation Dialog"
+  plus a new "Show Exit Confirmation Dialog" that prompts before the
+  whole app quits. Saved preferences from older versions migrate
+  automatically (PREF04).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

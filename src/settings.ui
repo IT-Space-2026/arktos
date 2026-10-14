@@ -148,95 +148,191 @@
        </property>
      <widget class="QWidget" name="tab">
       <layout class="QGridLayout" name="gridLayout_4">
-       <item row="0" column="0">
-        <widget class="QLabel" name="label_7">
-         <property name="text">
-          <string>On startup:</string>
+       <item row="0" column="0" colspan="3">
+        <widget class="QGroupBox" name="homepageGroupBox">
+         <property name="title">
+          <string>Homepage</string>
          </property>
-         <property name="alignment">
-          <set>Qt::AlignLeft|Qt::AlignVCenter</set>
-         </property>
-         <property name="buddy">
-          <cstring>startupBehavior</cstring>
-         </property>
+         <layout class="QGridLayout" name="homepageLayout" columnstretch="0,0,0,1">
+          <item row="0" column="0" colspan="4">
+           <widget class="QRadioButton" name="homeStartPageRadio">
+            <property name="toolTip">
+             <string>The Home button and homepage startup open the built-in Arora start page.</string>
+            </property>
+            <property name="text">
+             <string>Start Page</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="0">
+           <widget class="QRadioButton" name="homeSpecificPageRadio">
+            <property name="text">
+             <string>Specific Page</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="1">
+           <widget class="QLineEdit" name="homeLineEdit">
+            <property name="enabled">
+             <bool>false</bool>
+            </property>
+            <property name="maximumSize">
+             <size>
+              <width>480</width>
+              <height>16777215</height>
+             </size>
+            </property>
+            <property name="layoutDirection">
+             <enum>Qt::LeftToRight</enum>
+            </property>
+            <property name="accessibleName">
+             <string>Specific home page URL</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="2">
+           <widget class="QPushButton" name="setHomeToCurrentPageButton">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="text">
+             <string>Set to current page</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
         </widget>
        </item>
-       <item row="0" column="1" colspan="2">
-        <widget class="QComboBox" name="startupBehavior">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
-           <horstretch>0</horstretch>
-           <verstretch>0</verstretch>
-          </sizepolicy>
+       <item row="1" column="0" colspan="3">
+        <widget class="QGroupBox" name="startupGroupBox">
+         <property name="title">
+          <string>Startup with</string>
          </property>
-         <item>
-          <property name="text">
-           <string>Show my home page</string>
-          </property>
-         </item>
-         <item>
-          <property name="text">
-           <string>Show a blank page</string>
-          </property>
-         </item>
-         <item>
-          <property name="text">
-           <string>Restore windows and tabs from last time</string>
-          </property>
-         </item>
+         <layout class="QVBoxLayout" name="startupGroupLayout">
+          <item>
+           <widget class="QRadioButton" name="startupLastSessionRadio">
+            <property name="toolTip">
+             <string>Restore the windows and tabs that were open when Arora last closed.</string>
+            </property>
+            <property name="text">
+             <string>Last Session</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QRadioButton" name="startupHomepageRadio">
+            <property name="toolTip">
+             <string>Open the homepage picked above.</string>
+            </property>
+            <property name="text">
+             <string>Homepage</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QRadioButton" name="startupStartPageRadio">
+            <property name="toolTip">
+             <string>Open the built-in Arora start page.</string>
+            </property>
+            <property name="text">
+             <string>Start Page</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QRadioButton" name="startupSpecificPagesRadio">
+            <property name="toolTip">
+             <string>Open every URL in the list below, each in its own tab.</string>
+            </property>
+            <property name="text">
+             <string>Specific Pages</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="startupPagesLayout">
+            <item>
+             <spacer name="startupPagesIndent">
+              <property name="orientation">
+               <enum>Qt::Horizontal</enum>
+              </property>
+              <property name="sizeType">
+               <enum>QSizePolicy::Fixed</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size>
+                <width>20</width>
+                <height>20</height>
+               </size>
+              </property>
+             </spacer>
+            </item>
+            <item>
+             <widget class="QPlainTextEdit" name="startupPagesEdit">
+              <property name="enabled">
+               <bool>false</bool>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>80</height>
+               </size>
+              </property>
+              <property name="placeholderText">
+               <string>One URL per line — every entry opens in its own tab on startup.</string>
+              </property>
+              <property name="accessibleName">
+               <string>Startup pages, one URL per line</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <!-- PREF05/PREF06: the Lazy Load / Always Load Pinned rows
+               slot into this group under the startup radios. -->
+         </layout>
         </widget>
        </item>
-       <item row="1" column="0">
-        <widget class="QLabel" name="label_3">
-         <property name="text">
-          <string>Home Page:</string>
+       <item row="2" column="0" colspan="3">
+        <widget class="QGroupBox" name="closeExitGroupBox">
+         <property name="title">
+          <string>Close and Exit</string>
          </property>
-         <property name="alignment">
-          <set>Qt::AlignLeft|Qt::AlignVCenter</set>
-         </property>
-         <property name="buddy">
-          <cstring>homeLineEdit</cstring>
-         </property>
+         <layout class="QVBoxLayout" name="closeExitLayout">
+          <item>
+           <widget class="QCheckBox" name="confirmClosingMultipleTabs">
+            <property name="toolTip">
+             <string>Ask before closing a window that still has multiple tabs open.</string>
+            </property>
+            <property name="text">
+             <string>Show Close Window Confirmation Dialog</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QCheckBox" name="confirmExitCheck">
+            <property name="toolTip">
+             <string>Ask before quitting Arora — from File &gt; Quit or when the last window closes.</string>
+            </property>
+            <property name="text">
+             <string>Show Exit Confirmation Dialog</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
         </widget>
-       </item>
-       <item row="1" column="1" colspan="2">
-        <widget class="QLineEdit" name="homeLineEdit">
-         <property name="maximumSize">
-          <size>
-           <width>480</width>
-           <height>16777215</height>
-          </size>
-         </property>
-         <property name="layoutDirection">
-          <enum>Qt::LeftToRight</enum>
-         </property>
-        </widget>
-       </item>
-       <item row="2" column="1">
-        <widget class="QPushButton" name="setHomeToCurrentPageButton">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
-           <horstretch>0</horstretch>
-           <verstretch>0</verstretch>
-          </sizepolicy>
-         </property>
-         <property name="text">
-          <string>Set to current page</string>
-         </property>
-        </widget>
-       </item>
-       <item row="2" column="2">
-        <spacer name="horizontalSpacer">
-         <property name="orientation">
-          <enum>Qt::Horizontal</enum>
-         </property>
-         <property name="sizeHint" stdset="0">
-          <size>
-           <width>280</width>
-           <height>18</height>
-          </size>
-         </property>
-        </spacer>
        </item>
        <item row="3" column="0">
         <widget class="QLabel" name="label_4">
@@ -2615,16 +2711,6 @@
         </widget>
        </item>
        <item>
-        <widget class="QCheckBox" name="confirmClosingMultipleTabs">
-         <property name="text">
-          <string>Confirm when closing multiple tabs or windows</string>
-         </property>
-         <property name="checked">
-          <bool>true</bool>
-         </property>
-        </widget>
-       </item>
-       <item>
         <widget class="QCheckBox" name="oneCloseButton">
          <property name="text">
           <string>Show only one close button instead of one for each tab</string>
@@ -4162,9 +4248,16 @@
  <tabstops>
   <tabstop>pagesFilter</tabstop>
   <tabstop>pagesList</tabstop>
-  <tabstop>startupBehavior</tabstop>
+  <tabstop>homeStartPageRadio</tabstop>
+  <tabstop>homeSpecificPageRadio</tabstop>
   <tabstop>homeLineEdit</tabstop>
   <tabstop>setHomeToCurrentPageButton</tabstop>
+  <tabstop>startupLastSessionRadio</tabstop>
+  <tabstop>startupHomepageRadio</tabstop>
+  <tabstop>startupStartPageRadio</tabstop>
+  <tabstop>startupSpecificPagesRadio</tabstop>
+  <tabstop>startupPagesEdit</tabstop>
+  <tabstop>confirmExitCheck</tabstop>
   <tabstop>expireHistory</tabstop>
   <tabstop>downloadAsk</tabstop>
   <tabstop>downloadDestination</tabstop>
