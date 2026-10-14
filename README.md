@@ -242,10 +242,11 @@ browsing profile:
 - **History manager** — "Show All History" (Ctrl+H) opens in a tab
   instead of a floating window; entries open in new tabs.
 - **Look & feel** — Theme selector (System default / Light / Dark,
-  `ARORA_COLOR_SCHEME` override), selectable bundled icon sets
-  (Adwaita/Breeze/Tabler, light+dark variants — the Native desktop set
-  falls back to bundled dark glyphs when it can't serve
-  light-on-dark art), flat palette-aware chrome with a consistent
+  `ARORA_COLOR_SCHEME` override), bundled icon sets
+  (Adwaita/Breeze/Tabler, light+dark variants — Tabler is the default
+  so every menu glyph ships in the bundle; Native still follows the
+  desktop theme and falls back to bundled dark glyphs when it can't
+  serve light-on-dark art), flat palette-aware chrome with a consistent
   spacing rhythm, status-bar load
   indicator, zoom control and per-tab memory/bandwidth readouts
   (Linux), domain-emphasized anti-phishing address

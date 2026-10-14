@@ -38,6 +38,10 @@ namespace {
 
 const QLatin1String s_resourcePrefix(":/icons");
 const QLatin1String s_nativeId("native");
+// ICONS10: bundled Tabler is the default set — "native" stays
+// selectable but a sparse desktop theme served missing names as
+// duplicate lookalikes (the "some icons look the same" report).
+const QLatin1String s_defaultId("tabler");
 
 QString s_systemTheme;
 QString s_currentId;
@@ -314,9 +318,9 @@ QString AroraIcon::themeDisplayName(const QString &id)
 QString AroraIcon::theme()
 {
     const QString id = QSettings()
-        .value(QLatin1String("MainWindow/iconTheme"), s_nativeId)
+        .value(QLatin1String("MainWindow/iconTheme"), s_defaultId)
         .toString();
-    return themeIds().contains(id) ? id : s_nativeId;
+    return themeIds().contains(id) ? id : s_defaultId;
 }
 
 QString AroraIcon::effectiveThemeName(const QString &id)
@@ -343,7 +347,7 @@ QString AroraIcon::effectiveThemeName(const QString &id)
 void AroraIcon::setTheme(const QString &id)
 {
     init();
-    s_currentId = themeIds().contains(id) ? id : s_nativeId;
+    s_currentId = themeIds().contains(id) ? id : s_defaultId;
     QIcon::setThemeName(effectiveThemeName(s_currentId));
 }
 
@@ -355,10 +359,23 @@ void AroraIcon::applyFromSettings()
 QStringList AroraIcon::names()
 {
     init();
-    QStringList out = QDir(QLatin1String(":/icons/arora-adwaita/icons"))
-        .entryList(QStringList(QLatin1String("*.svg")), QDir::Files, QDir::Name);
-    for (QString &n : out)
-        n.chop(4);
+    QStringList out;
+    // The union across every bundled set — ICONS10: tabler ships the
+    // full chrome surface, so reading only one set's directory would
+    // under-report what callers can ask for.
+    for (const char *set : { "arora-adwaita", "arora-breeze",
+                            "arora-tabler", "arora-legacy" }) {
+        QStringList entries = QDir(s_resourcePrefix + QLatin1Char('/')
+            + QLatin1String(set) + QLatin1String("/icons"))
+            .entryList(QStringList(QLatin1String("*.svg")),
+                       QDir::Files, QDir::Name);
+        for (QString &name : entries) {
+            name.chop(4);
+            if (!out.contains(name))
+                out.append(name);
+        }
+    }
+    out.sort();
     return out;
 }
 

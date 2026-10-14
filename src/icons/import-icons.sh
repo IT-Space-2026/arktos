@@ -99,6 +99,9 @@ declare -A BREEZE_MAP=(
     [emblem-downloads]=icons/actions/16/download.svg
     [preferences-desktop-locale]=icons/actions/16/set-language.svg
     [tab-new]=icons/actions/16/tab-new.svg
+    # ICONS10: tab-close is real upstream art in breeze — File >
+    # Close Tab and Close Window used to share window-close's glyph.
+    [tab-close]=icons/actions/16/tab-close.svg
     [list-add]=icons/actions/16/list-add.svg
     [system-run]=icons/actions/16/system-run.svg
 )
@@ -127,7 +130,9 @@ declare -A TABLER_MAP=(
     # ICONS04: plain x, not square-x — the box tripled the ink next to
     # the thin arrows.  view-refresh is a maintained glyph — see
     # write_reload() below.
-    [process-stop]=x
+    # ICONS10: player-stop, not x — window-close already took x and
+    # identical glyphs were the "icons look the same" report.
+    [process-stop]=player-stop
     [view-fullscreen]=arrows-maximize
     [zoom-in]=zoom-in
     [zoom-out]=zoom-out
@@ -138,8 +143,42 @@ declare -A TABLER_MAP=(
     [emblem-downloads]=download
     [preferences-desktop-locale]=language
     [tab-new]=plus
-    [list-add]=plus
+    # ICONS10: browser-x so File > Close Tab does not share
+    # window-close's bare x.
+    [tab-close]=browser-x
+    # ICONS10: playlist-add, not plus — tab-new already took the bare
+    # plus and identical glyphs were the "icons look the same" report.
+    # Same for player-stop: a stop square distinct from window-close's x.
+    [list-add]=playlist-add
     [system-run]=player-play
+    # ICONS10 coverage audit — every chrome name the code requests
+    # resolves inside this set; nothing silently falls through to
+    # arora-legacy's 2009 art.
+    [accessories-character-map]=omega
+    [applications-development]=device-desktop-code
+    [application-x-addon]=puzzle
+    [avatar-default]=user-circle
+    [container-tab]=container
+    [document-export]=file-export
+    [document-import]=file-import
+    [go-down]=arrow-down
+    [go-jump]=arrow-bar-to-right
+    [go-up]=arrow-up
+    [preferences-system]=settings
+    [security-high]=shield-check
+    [text-html]=code
+    [text-x-generic]=article
+    [utilities-terminal]=terminal-2
+    [view-history]=history
+    [view-icon]=icons
+    [view-menubar]=layout-navbar
+    [view-pip]=picture-in-picture
+    [view-private]=spy
+    [view-restore]=stack-pop
+    [view-statusbar]=layout-bottombar
+    [view-tabbar]=browser
+    [view-toolbar]=tools
+    [zoom-text]=text-size
 )
 
 copy_map() { # assoc-name srcroot outdir [sed-expr...]
@@ -195,6 +234,25 @@ RELOAD_HEAD16="m 10.72 2.72 l 0.53 2.33 l -2.38 -0.13"
 RELOAD_ARC24="m 16.88 7.57 a 6.9 6.9 0 1 0 -1.43 10.85"
 RELOAD_HEAD24="m 16.08 4.08 l 0.8 3.49 l -3.57 -0.2"
 
+# ICONS10: tor-onion has no upstream tabler glyph — a maintained
+# onion outline at tabler conventions (24 box, 2px round-cap stroke):
+# concentric bulbs plus the sprout.
+write_onion() { # outdir color
+    cat > "$1/icons/tor-onion.svg" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ICONS10: hand-drawn onion matching tabler conventions — upstream
+     ships no onion glyph. -->
+<svg height="24" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+    <g fill="none" stroke="$2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 6c-4.2 1.6-7 5.6-7 9.5a7 7 0 0 0 14 0c0-3.9-2.8-7.9-7-9.5z"/>
+        <path d="M12 6c-2.4 1.4-4 4.9-4 8.4a4 4 0 0 0 8 0c0-3.5-1.6-7-4-8.4z"/>
+        <path d="M12 6v-1.8c0-1 .8-1.7 1.8-1.7"/>
+        <path d="M12 10.4c-1 1-1.6 2.4-1.6 4a1.6 1.6 0 0 0 3.2 0c0-1.6-.6-3-1.6-4z"/>
+    </g>
+</svg>
+EOF
+}
+
 # ICONS04: breeze's process-stop gets the same treatment — upstream is
 # a colored NegativeText glyph; a plain X at set weight keeps the nav
 # cluster monochrome.
@@ -219,6 +277,7 @@ copy_map TABLER_MAP  "$TABLER"  "$OUT/arora-tabler" \
 write_reload "$OUT/arora-adwaita" "#2e3436" 1.7 16 "$RELOAD_ARC16" "$RELOAD_HEAD16"
 write_reload "$OUT/arora-breeze"  "#232629" 1   16 "$RELOAD_ARC16" "$RELOAD_HEAD16"
 write_reload "$OUT/arora-tabler"  "#3d3d3d" 2   24 "$RELOAD_ARC24" "$RELOAD_HEAD24"
+write_onion  "$OUT/arora-tabler"  "#3d3d3d"
 write_stop   "$OUT/arora-breeze"  "#232629" 1
 
 index_theme "$OUT/arora-adwaita" "Arora Adwaita" \
@@ -238,6 +297,7 @@ copy_map TABLER_MAP  "$TABLER"  "$OUT/arora-tabler-dark" \
 write_reload "$OUT/arora-adwaita-dark" "#e8e8e8" 1.7 16 "$RELOAD_ARC16" "$RELOAD_HEAD16"
 write_reload "$OUT/arora-breeze-dark"  "#eff0f1" 1   16 "$RELOAD_ARC16" "$RELOAD_HEAD16"
 write_reload "$OUT/arora-tabler-dark"  "#e8e8e8" 2   24 "$RELOAD_ARC24" "$RELOAD_HEAD24"
+write_onion  "$OUT/arora-tabler-dark"  "#e8e8e8"
 write_stop   "$OUT/arora-breeze-dark"  "#eff0f1" 1
 
 index_theme "$OUT/arora-adwaita-dark" "Arora Adwaita Dark" \

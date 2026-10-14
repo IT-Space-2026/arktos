@@ -102,6 +102,7 @@
     <file>arora-breeze/icons/preferences-desktop-locale.svg</file>
     <file>arora-breeze/icons/process-stop.svg</file>
     <file>arora-breeze/icons/system-run.svg</file>
+    <file>arora-breeze/icons/tab-close.svg</file>
     <file>arora-breeze/icons/tab-new.svg</file>
     <file>arora-breeze/icons/user-bookmarks.svg</file>
     <file>arora-breeze/icons/view-fullscreen.svg</file>
@@ -139,6 +140,7 @@
     <file>arora-breeze-dark/icons/preferences-desktop-locale.svg</file>
     <file>arora-breeze-dark/icons/process-stop.svg</file>
     <file>arora-breeze-dark/icons/system-run.svg</file>
+    <file>arora-breeze-dark/icons/tab-close.svg</file>
     <file>arora-breeze-dark/icons/tab-new.svg</file>
     <file>arora-breeze-dark/icons/user-bookmarks.svg</file>
     <file>arora-breeze-dark/icons/view-fullscreen.svg</file>
@@ -150,8 +152,15 @@
     <file>arora-breeze-dark/icons/zoom-out.svg</file>
     <file>arora-tabler/index.theme</file>
     <file>arora-tabler/LICENSE</file>
+    <file>arora-tabler/icons/accessories-character-map.svg</file>
     <file>arora-tabler/icons/application-exit.svg</file>
+    <file>arora-tabler/icons/application-x-addon.svg</file>
+    <file>arora-tabler/icons/applications-development.svg</file>
+    <file>arora-tabler/icons/avatar-default.svg</file>
     <file>arora-tabler/icons/bookmark-new.svg</file>
+    <file>arora-tabler/icons/container-tab.svg</file>
+    <file>arora-tabler/icons/document-export.svg</file>
+    <file>arora-tabler/icons/document-import.svg</file>
     <file>arora-tabler/icons/document-open.svg</file>
     <file>arora-tabler/icons/document-print-preview.svg</file>
     <file>arora-tabler/icons/document-print.svg</file>
@@ -169,26 +178,53 @@
     <file>arora-tabler/icons/edit-undo.svg</file>
     <file>arora-tabler/icons/emblem-downloads.svg</file>
     <file>arora-tabler/icons/folder-new.svg</file>
+    <file>arora-tabler/icons/go-down.svg</file>
     <file>arora-tabler/icons/go-home.svg</file>
+    <file>arora-tabler/icons/go-jump.svg</file>
     <file>arora-tabler/icons/go-next.svg</file>
     <file>arora-tabler/icons/go-previous.svg</file>
+    <file>arora-tabler/icons/go-up.svg</file>
     <file>arora-tabler/icons/list-add.svg</file>
     <file>arora-tabler/icons/preferences-desktop-locale.svg</file>
+    <file>arora-tabler/icons/preferences-system.svg</file>
     <file>arora-tabler/icons/process-stop.svg</file>
+    <file>arora-tabler/icons/security-high.svg</file>
     <file>arora-tabler/icons/system-run.svg</file>
+    <file>arora-tabler/icons/tab-close.svg</file>
     <file>arora-tabler/icons/tab-new.svg</file>
+    <file>arora-tabler/icons/text-html.svg</file>
+    <file>arora-tabler/icons/text-x-generic.svg</file>
+    <file>arora-tabler/icons/tor-onion.svg</file>
     <file>arora-tabler/icons/user-bookmarks.svg</file>
+    <file>arora-tabler/icons/utilities-terminal.svg</file>
     <file>arora-tabler/icons/view-fullscreen.svg</file>
+    <file>arora-tabler/icons/view-history.svg</file>
+    <file>arora-tabler/icons/view-icon.svg</file>
+    <file>arora-tabler/icons/view-menubar.svg</file>
+    <file>arora-tabler/icons/view-pip.svg</file>
+    <file>arora-tabler/icons/view-private.svg</file>
     <file>arora-tabler/icons/view-refresh.svg</file>
+    <file>arora-tabler/icons/view-restore.svg</file>
+    <file>arora-tabler/icons/view-statusbar.svg</file>
+    <file>arora-tabler/icons/view-tabbar.svg</file>
+    <file>arora-tabler/icons/view-toolbar.svg</file>
     <file>arora-tabler/icons/window-close.svg</file>
     <file>arora-tabler/icons/window-new.svg</file>
     <file>arora-tabler/icons/zoom-in.svg</file>
     <file>arora-tabler/icons/zoom-original.svg</file>
     <file>arora-tabler/icons/zoom-out.svg</file>
+    <file>arora-tabler/icons/zoom-text.svg</file>
     <file>arora-tabler-dark/index.theme</file>
     <file>arora-tabler-dark/LICENSE</file>
+    <file>arora-tabler-dark/icons/accessories-character-map.svg</file>
     <file>arora-tabler-dark/icons/application-exit.svg</file>
+    <file>arora-tabler-dark/icons/application-x-addon.svg</file>
+    <file>arora-tabler-dark/icons/applications-development.svg</file>
+    <file>arora-tabler-dark/icons/avatar-default.svg</file>
     <file>arora-tabler-dark/icons/bookmark-new.svg</file>
+    <file>arora-tabler-dark/icons/container-tab.svg</file>
+    <file>arora-tabler-dark/icons/document-export.svg</file>
+    <file>arora-tabler-dark/icons/document-import.svg</file>
     <file>arora-tabler-dark/icons/document-open.svg</file>
     <file>arora-tabler-dark/icons/document-print-preview.svg</file>
     <file>arora-tabler-dark/icons/document-print.svg</file>
@@ -206,22 +242,42 @@
     <file>arora-tabler-dark/icons/edit-undo.svg</file>
     <file>arora-tabler-dark/icons/emblem-downloads.svg</file>
     <file>arora-tabler-dark/icons/folder-new.svg</file>
+    <file>arora-tabler-dark/icons/go-down.svg</file>
     <file>arora-tabler-dark/icons/go-home.svg</file>
+    <file>arora-tabler-dark/icons/go-jump.svg</file>
     <file>arora-tabler-dark/icons/go-next.svg</file>
     <file>arora-tabler-dark/icons/go-previous.svg</file>
+    <file>arora-tabler-dark/icons/go-up.svg</file>
     <file>arora-tabler-dark/icons/list-add.svg</file>
     <file>arora-tabler-dark/icons/preferences-desktop-locale.svg</file>
+    <file>arora-tabler-dark/icons/preferences-system.svg</file>
     <file>arora-tabler-dark/icons/process-stop.svg</file>
+    <file>arora-tabler-dark/icons/security-high.svg</file>
     <file>arora-tabler-dark/icons/system-run.svg</file>
+    <file>arora-tabler-dark/icons/tab-close.svg</file>
     <file>arora-tabler-dark/icons/tab-new.svg</file>
+    <file>arora-tabler-dark/icons/text-html.svg</file>
+    <file>arora-tabler-dark/icons/text-x-generic.svg</file>
+    <file>arora-tabler-dark/icons/tor-onion.svg</file>
     <file>arora-tabler-dark/icons/user-bookmarks.svg</file>
+    <file>arora-tabler-dark/icons/utilities-terminal.svg</file>
     <file>arora-tabler-dark/icons/view-fullscreen.svg</file>
+    <file>arora-tabler-dark/icons/view-history.svg</file>
+    <file>arora-tabler-dark/icons/view-icon.svg</file>
+    <file>arora-tabler-dark/icons/view-menubar.svg</file>
+    <file>arora-tabler-dark/icons/view-pip.svg</file>
+    <file>arora-tabler-dark/icons/view-private.svg</file>
     <file>arora-tabler-dark/icons/view-refresh.svg</file>
+    <file>arora-tabler-dark/icons/view-restore.svg</file>
+    <file>arora-tabler-dark/icons/view-statusbar.svg</file>
+    <file>arora-tabler-dark/icons/view-tabbar.svg</file>
+    <file>arora-tabler-dark/icons/view-toolbar.svg</file>
     <file>arora-tabler-dark/icons/window-close.svg</file>
     <file>arora-tabler-dark/icons/window-new.svg</file>
     <file>arora-tabler-dark/icons/zoom-in.svg</file>
     <file>arora-tabler-dark/icons/zoom-original.svg</file>
     <file>arora-tabler-dark/icons/zoom-out.svg</file>
+    <file>arora-tabler-dark/icons/zoom-text.svg</file>
     <file>arora-legacy/index.theme</file>
     <file>arora-legacy/LICENSE</file>
     <file>arora-legacy/icons/accessories-character-map.svg</file>
@@ -251,6 +307,7 @@
     <file>arora-legacy/icons/view-toolbar.svg</file>
     <file>arora-legacy/icons/zoom-text.svg</file>
     <file alias="arora-legacy/icons/tab-new.png">../data/graphics/addtab.png</file>
+    <file alias="arora-legacy/icons/tab-close.png">../data/graphics/closetab.png</file>
     <file alias="arora-legacy/icons/window-close.png">../data/graphics/closetab.png</file>
     <file alias="arora-legacy/icons/system-run.png">../data/128x128/run.png</file>
 </qresource>

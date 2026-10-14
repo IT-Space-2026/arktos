@@ -195,7 +195,9 @@ TabWidget::TabWidget(QWidget *parent)
 
     m_closeTabAction = new QAction(this);
     m_closeTabAction->setShortcuts(QKeySequence::Close);
-    m_closeTabAction->setIcon(AroraIcon::getChrome(QLatin1String("window-close")));
+    // ICONS10: tab-close, not window-close — File > Close Tab and
+    // Close Window shared the same glyph.
+    m_closeTabAction->setIcon(AroraIcon::getChrome(QLatin1String("tab-close")));
 #if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
     m_closeTabAction->setIconVisibleInMenu(false);
 #endif

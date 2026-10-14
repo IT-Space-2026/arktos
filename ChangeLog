@@ -61,6 +61,11 @@ UI:
   (UIP01).
 - Central icon provider + bundled Adwaita/Breeze/Tabler sets, light and
   dark variants (ICONS01).
+- Bundled Tabler icons are now the default set — the previous "follow
+  the desktop theme" default rendered missing glyphs as duplicate
+  lookalikes on sparse themes.  Every chrome icon the browser requests
+  ships inside the bundled set (and its dark variant), and Native
+  remains selectable in Preferences > Appearance (ICONS10).
 - Vivaldi-style vertical navigation in Preferences (UIP03).
 - Status-bar load indicator and zoom control (UIP04).
 - Shield icon at the left of the location bar (UIP05).
