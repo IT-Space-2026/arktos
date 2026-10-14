@@ -72,7 +72,7 @@ public:
     void showPdfDocument(const QString &localPath, const QUrl &sourceUrl);
     PdfView *pdfView() const { return m_pdfView; }
 
-    // ENG24: recreate the page+view pair in place after the backend's
+    // ENG28: recreate the page+view pair in place after the backend's
     // view died (Servo's poisoned SeInstance advertises
     // restartRequested()).  The dead objects are torn down first —
     // the engine's single-instance slot only frees on destroy — then

@@ -1299,7 +1299,7 @@ EngineTab *TabWidget::addEngineTab(Engine::Backend *backend, bool makeCurrent)
         mapper->addChild(tab->page()->action(mapper->webAction()));
     }
 
-    // ENG24: an engine restart swaps the Engine::Page object in place
+    // ENG28: an engine restart swaps the Engine::Page object in place
     // (the crashed Servo view's "Try Servo Again" path) — the dead
     // page's actions die with it, so the new page's action() children
     // join the mappers and the current-tab binding re-points.

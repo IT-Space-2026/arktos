@@ -87,7 +87,7 @@ struct ServoApi {
     // pin cannot report the painter's GL_RENDERER; a missing symbol
     // reads as "unverifiable".
     const char *(*glRenderer)(SeInstance) = nullptr;
-    // ENG24: optional — explicit engine teardown.  A missing symbol
+    // ENG28: optional — explicit engine teardown.  A missing symbol
     // leaves the engine parked until process exit (threads die with
     // it), the same outcome artifacts had before the export existed.
     void (*shutdown)() = nullptr;
@@ -219,7 +219,7 @@ bool resolve()
     // engaged rather than trust the env override took.
     api().glRenderer = reinterpret_cast<decltype(api().glRenderer)>(
         library().resolve("se_gl_renderer"));
-    // Optional ENG24 addition — explicit engine shutdown for app
+    // Optional ENG28 addition — explicit engine shutdown for app
     // teardown.  Missing on older artifacts: the engine simply stays
     // resident until the process dies, as it always has.
     api().shutdown = reinterpret_cast<decltype(api().shutdown)>(
@@ -245,14 +245,14 @@ bool resolve()
 
 } // namespace
 
-// ---- one LIVE SeInstance at a time (ENG12/ENG24/ENG27) -------------
+// ---- one LIVE SeInstance at a time (ENG12/ENG27/ENG28) -------------
 //
 // The engine is once-per-process; an INSTANCE is a webview over it.
 // The slot guards concurrency, not lifetime: Free -> InUse on the
 // view's se_init claim, -> Free again when the view is destroyed —
 // the next se_init then manufactures a FRESH instance on the
-// surviving engine (the ENG24 crash recovery).  -> Exhausted only
-// when se_init itself fails: on a pre-ENG24 artifact that is also
+// surviving engine (the ENG28 crash recovery).  -> Exhausted only
+// when se_init itself fails: on a pre-ENG28 artifact that is also
 // the answer every later attempt gets, so the failure stays
 // terminal for the session instead of being retried on every swap.
 //
@@ -276,7 +276,7 @@ QMutex &servoMutex()
 ServoSlot g_servoSlot = ServoSlot::Free;      // under servoMutex()
 ServoView *g_liveView = nullptr;              // under servoMutex()
 
-// ENG24: callback userdata is &g_liveView — a stable CELL, never the
+// ENG28: callback userdata is &g_liveView — a stable CELL, never the
 // view itself.  The engine's event-loop waker was bound at
 // ServoBuilder::build time to the FIRST instance's SeCallbacks; on a
 // post-crash second instance it still wakes through that userdata,
@@ -419,7 +419,7 @@ ServoView::ServoView(QWidget *parent)
     const int h = height() > 0 ? height() : 600;
     m_instance = api().init(callbacks, w, h, configDir.constData());
     if (m_instance) {
-        // ENG24 self-check: a fresh instance counts only when its
+        // ENG28 self-check: a fresh instance counts only when its
         // first real pump stays panic-free — resize exercises the
         // painter bookkeeping, spin runs the event loop, and either
         // one tripping poison means the surviving engine is dead too
@@ -451,7 +451,7 @@ ServoView::~ServoView()
         QMutexLocker lock(&servoMutex());
         if (g_liveView == this)
             g_liveView = nullptr;
-        // ENG24: a destroyed instance hands the slot BACK — the shim
+        // ENG28: a destroyed instance hands the slot BACK — the shim
         // creates a fresh SeInstance on the surviving engine at the
         // next se_init, so recovery is possible the moment the dead
         // object graph is gone.  Only the view that held the claim
@@ -646,7 +646,7 @@ void ServoView::paintEvent(QPaintEvent *event)
                          tr("Servo engine unavailable — the "
                             "servo-embed artifact could not be loaded."));
     } else if (isPoisoned()) {
-        // ENG20/ENG24: the shim caught a panic inside servo — the
+        // ENG20/ENG28: the shim caught a panic inside servo — the
         // instance is dead, but the app survived.  Say so on the
         // surface and offer BOTH honest paths: "Try Servo Again"
         // tears down this view and creates a fresh SeInstance on the
@@ -1156,7 +1156,7 @@ void ServoProfile::setProfileAttribute(const QString &name, const QVariant &valu
 ServoBackend::ServoBackend(QObject *parent)
     : Engine::Backend(parent)
 {
-    // ENG24: the engine's lifetime is the process's — it outlives
+    // ENG28: the engine's lifetime is the process's — it outlives
     // every SeInstance by design.  The graceful shutdown (Servo's
     // Exit + shutdown spin) must run while the GUI thread is still
     // intact, so it is driven from aboutToQuit rather than left to
@@ -1272,13 +1272,13 @@ Engine::Profile *ServoBackend::createProfile(
 Engine::Page *ServoBackend::createPage(Engine::Profile *profile,
                                        QObject *parent)
 {
-    // ENG12/ENG24: one LIVE WebView at a time — a second se_init while
+    // ENG12/ENG28: one LIVE WebView at a time — a second se_init while
     // an instance is alive is refused, and a failed init stays
     // terminal.  Refusing the page fails the whole EngineTab upstream
     // (addEngineTab drops it, reloadTabInEngine keeps the old tab, a
     // servo-default newTab() falls back to Chromium) instead of
     // manufacturing the crash.  A slot that freed itself when its
-    // view died reaches the ctor probe normally — that IS the ENG24
+    // view died reaches the ctor probe normally — that IS the ENG28
     // recovery path.
     if (!ServoView::instanceAvailable()) {
         qWarning("servo: refusing engine tab — a live Servo instance "
@@ -1290,7 +1290,7 @@ Engine::Page *ServoBackend::createPage(Engine::Profile *profile,
 
 QString ServoBackend::pageUnavailableReason() const
 {
-    // ENG12/ENG24: the single live-instance slot.  InUse reads as
+    // ENG12/ENG28: the single live-instance slot.  InUse reads as
     // "one tab at a time" (a crashed-but-still-alive view counts —
     // the dead tab stays disabled until it is retried or closed);
     // Exhausted means se_init itself failed, which is terminal for

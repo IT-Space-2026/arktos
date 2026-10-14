@@ -133,6 +133,7 @@
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
+#include <QtCore/QPointer>
 #include <QtCore/QProcess>
 #include <QtCore/QProcessEnvironment>
 #include <QtCore/QScopeGuard>
@@ -3366,7 +3367,7 @@ static int servoLifecycleSmoke()
         // SE_SELFTEST_PANIC forces a panic inside se_spin so the real
         // path is exercised: caught -> poisoned -> every later call a
         // no-op, the app degrades to a dead tab instead of dying.  The
-        // leg runs last on THIS instance — ENG24 makes a poisoned
+        // leg runs last on THIS instance — ENG28 makes a poisoned
         // instance recoverable by teardown + a fresh se_init on the
         // surviving engine, which the legs below exercise.
         ServoView *servoView = engineTab && engineTab->page()
@@ -3556,7 +3557,7 @@ static int servoLifecycleSmoke()
             pumpUntil([]() { return false; }, 500);
             servoView->grab();
             report(QStringLiteral("panic-survived"), true);
-            // ENG24: the crashed surface paints its disabled notice AND
+            // ENG28: the crashed surface paints its disabled notice AND
             // offers the retry affordance — the grab above drove
             // paintEvent through the poisoned branch, which lazily
             // installs the "Try Servo Again" button.
@@ -3583,7 +3584,7 @@ static int servoLifecycleSmoke()
                ServoView::instanceActive());
         qputenv("SE_SELFTEST_DESTROY_PANIC", "1");
 #endif
-        // (c) ENG24 recovery: swapping the crashed tab to Chromium
+        // (c) ENG28 recovery: swapping the crashed tab to Chromium
         // destroys the poisoned view — se_destroy frees the single
         // instance slot — so the NEXT swap back to Servo creates a
         // FRESH SeInstance on the still-running engine instead of
