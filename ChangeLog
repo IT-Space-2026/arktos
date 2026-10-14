@@ -2456,3 +2456,13 @@ The History sidebar can now filter by period and clear itself (HIST03):
 
 Hosted extensions get a working chrome.* core API (EXT15):
     The EXT14 hosted background context now runs a real WebExtensions surface instead of a handshake stub: chrome.runtime (messaging, Ports, lifecycle events, getURL/getManifest/getPlatformInfo), chrome.storage.local persisted per extension plus in-memory storage.session with onChanged, chrome.extension, chrome.i18n lookups against _locales, chrome.alarms backed by host timers, and chrome.action/browserAction state. Half-implemented native namespaces are repaired rather than replaced — missing members are filled in even when Chromium re-installs its own partial objects during startup — and everything the hosted runtime cannot do answers a typed error that shows up in the extension's health diagnostics instead of silently no-op'ing. Hosted contexts of the same extension can message each other and hold Port channels through a host-side relay that never crosses extension boundaries. Real bundled webpack extensions now boot too: Bitwarden lazy-loads a JavaScript chunk through a synchronous importScripts() that no extension page can satisfy under the MV3 content-security policy, so the host delivers the manifest's background entries and their sibling chunks as one merged script injected before page scripts run — the chunk's modules register with webpack in the same pass, before its deferred require can fail. The bundled Bitwarden background boots with a 114-surface compatibility audit clean and zero unshimmed-API errors.
+
+The Notes sidebar is now a real multi-note manager (NOTE02):
+    The single scratch pad is replaced by named notes: the panel lists
+    them, clicking one opens it in an editor (title field plus body),
+    and header +/- buttons add or delete — deleting a note that has
+    content asks first.  With zero notes the panel shows a "Write your
+    first note" empty state.  Notes autosave as before and persist per
+    browsing profile; a private or Tor session's notes stay in memory
+    and never reach disk.  Any text already typed into the old scratch
+    pad migrates into the first note automatically.

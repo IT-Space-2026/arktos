@@ -25,6 +25,7 @@
 
 #include <qlist.h>
 #include <QModelIndex>
+#include <QPersistentModelIndex>
 #include <qpointer.h>
 #include <qstringlist.h>
 #include <qwidget.h>
@@ -33,19 +34,22 @@ class AutoSaver;
 class DownloadItem;
 class EditTreeView;
 class HistoryPeriodFilterModel;
+class NotesModel;
 class QComboBox;
 class QFrame;
+class QLineEdit;
 class QListView;
 class QPlainTextEdit;
 class QPushButton;
 class QSortFilterProxyModel;
+class QStackedWidget;
 class QTabWidget;
 class QToolButton;
 class TreeSortFilterProxyModel;
 
 // SIDE01: the content widget of the optional Vivaldi-style sidebar
 // dock.  Four switchable sections — bookmarks, history, downloads and
-// a scratch-notes editor — over the existing shared models.
+// the NOTE02 multi-note notes page — over the existing shared models.
 class SidebarPanel : public QWidget
 {
     Q_OBJECT
@@ -98,6 +102,9 @@ public:
 
     QTabWidget *tabs() const;
     QPlainTextEdit *notes() const;
+    // NOTE02: the per-profile notes store backing the Notes page —
+    // nullptr while the panel is hidden or the page is still pending.
+    NotesModel *notesModel() const;
     QWidget *downloadsPage() const;
     QWidget *bookmarksPage() const;
 
@@ -146,6 +153,15 @@ private slots:
     void removeSelectedDownload();
     void revealSelectedDownload();
     void setSelectedDownloadExpanded(bool expanded);
+    // NOTE02: the notes stack — list -> editor navigation plus the
+    // header's add/remove buttons.
+    void addNote();
+    void removeSelectedNote();
+    void openNote(const QModelIndex &index);
+    void closeNoteEditor();
+    // Picks the stack page from the model's row count (empty state
+    // vs list) and folds the editor when its note vanished.
+    void updateNotesView();
 
 private:
     static QList<Panel> &registry();
@@ -196,7 +212,18 @@ private:
     QPointer<QToolButton> m_downloadDetailsButton;
     // The DownloadItem card currently hosted in the detail pane.
     QPointer<QWidget> m_detailItem;
+    // NOTE02: the multi-note page — a three-state stack (empty state,
+    // notes list, note editor) over the per-profile shared model.
+    // m_editingNote tracks the row the editor is bound to; a
+    // persistent index so removals invalidate it instead of leaving a
+    // stale row number.
+    QPointer<NotesModel> m_notesModel;
+    QPointer<QStackedWidget> m_notesStack;
+    QPointer<QListView> m_notesList;
+    QPointer<QToolButton> m_notesRemoveButton;
+    QPointer<QLineEdit> m_noteTitle;
     QPointer<QPlainTextEdit> m_notes;
+    QPersistentModelIndex m_editingNote;
     AutoSaver *m_autoSaver;
     // SIDE09: sidebar/lazyLoad — visible panels sit behind a
     // placeholder page until first selected.

@@ -206,7 +206,10 @@ browsing profile:
 - **Sidebar dock** — optional Vivaldi-style side panel (bookmarks,
   history, downloads, notes), lazily built and off by default; the
   bookmarks rail doubles as the manager — "Show All Bookmarks"
-  (Ctrl+Shift+B) opens it with Add/Remove right on the page.
+  (Ctrl+Shift+B) opens it with Add/Remove right on the page.  The
+  notes panel manages multiple named notes (list, editor, autosave);
+  notes persist per browsing profile — private/Tor sessions keep
+  them in memory only.
 - **Tab search** — Ctrl+Shift+A fuzzy dropdown over all open tabs,
   with hover previews.
 - **Sleeping tabs** — suspend tabs to reclaim memory without losing

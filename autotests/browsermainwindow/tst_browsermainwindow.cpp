@@ -51,6 +51,7 @@
 #include <qpushbutton.h>
 #include <qsortfilterproxymodel.h>
 #include <qsplitter.h>
+#include <qstackedwidget.h>
 #include <qstatusbar.h>
 #include <qtabwidget.h>
 #include <qtcpserver.h>
@@ -75,6 +76,7 @@
 #include "fakeengine.h"
 #include "history.h"
 #include "historymanager.h"
+#include "notesmodel.h"
 #include "pdfview.h"
 #include "printpreviewdialog.h"
 #include "sidebargrip.h"
@@ -4647,11 +4649,78 @@ void tst_BrowserMainWindow::sidebarPanel()
     window->addDockWidget(Qt::RightDockWidgetArea, dock);
     QCOMPARE(panel->tabs()->tabPosition(), QTabWidget::East);
 
-    // Notes persist through the panel's autosave slot.
+    // NOTE02: the notes page is a multi-note stack over the shared
+    // per-profile NotesModel — empty state -> list -> editor.
+    QStackedWidget *notesStack = panel->findChild<QStackedWidget *>(
+        QLatin1String("sidebarNotesStack"));
+    QListView *notesList = panel->findChild<QListView *>(
+        QLatin1String("sidebarNotesList"));
+    QToolButton *addNoteButton = panel->findChild<QToolButton *>(
+        QLatin1String("sidebarNotesAdd"));
+    QToolButton *removeNoteButton = panel->findChild<QToolButton *>(
+        QLatin1String("sidebarNotesRemove"));
+    QVERIFY(notesStack && notesList && addNoteButton && removeNoteButton);
+    QVERIFY(panel->notesModel());
+    QVERIFY(panel->notes());
+    // Zero notes renders the empty state and disables delete.
+    QCOMPARE(notesStack->currentIndex(), 0);
+    QVERIFY(!removeNoteButton->isEnabled());
+
+    // + creates a note and opens its editor; typing lands in the
+    // model and the autosave slot flushes it to the store.
+    addNoteButton->click();
+    QCOMPARE(panel->notesModel()->rowCount(), 1);
+    QCOMPARE(notesStack->currentIndex(), 2);
     panel->notes()->setPlainText(QLatin1String("remember me"));
+    QLineEdit *noteTitle = panel->findChild<QLineEdit *>(
+        QLatin1String("sidebarNoteTitle"));
+    QVERIFY(noteTitle);
+    noteTitle->setText(QLatin1String("First note"));
+    QCOMPARE(panel->notesModel()->index(0, 0)
+                 .data(Qt::EditRole).toString(),
+             QLatin1String("First note"));
     QVERIFY(QMetaObject::invokeMethod(panel, "save"));
-    QCOMPARE(settings.value(QLatin1String("sidebar/notes")).toString(),
-             QLatin1String("remember me"));
+    // Persisted through the model's own file, not the retired
+    // sidebar/notes scratch key.
+    QVERIFY(!settings.contains(QLatin1String("sidebar/notes")));
+    QVERIFY(QFileInfo::exists(panel->notesModel()->storageFile()));
+
+    // The editor's back button returns to the (now populated) list.
+    QToolButton *notesBack = panel->findChild<QToolButton *>(
+        QLatin1String("sidebarNotesBack"));
+    QVERIFY(notesBack);
+    notesBack->click();
+    QCOMPARE(notesStack->currentIndex(), 1);
+    QCOMPARE(notesList->model()->rowCount(), 1);
+
+    // − deletes the selected note after confirmation (same
+    // arm-the-answer-then-click pattern the history clear leg uses).
+    const auto answerQuestion = [](QMessageBox::StandardButton button) {
+        QTimer::singleShot(100, qApp, [button]() {
+            QMessageBox *box = qobject_cast<QMessageBox *>(
+                QApplication::activeModalWidget());
+            if (box && box->button(button))
+                box->button(button)->click();
+        });
+    };
+    notesList->setCurrentIndex(notesList->model()->index(0, 0));
+    answerQuestion(QMessageBox::No);
+    removeNoteButton->click();
+    QCOMPARE(panel->notesModel()->rowCount(), 1);
+    answerQuestion(QMessageBox::Yes);
+    removeNoteButton->click();
+    QCOMPARE(panel->notesModel()->rowCount(), 0);
+    QCOMPARE(notesStack->currentIndex(), 0);
+
+    // Migrate the legacy scratch pad in through the public seam —
+    // the note lands first and the key is consumed.
+    settings.setValue(QLatin1String("sidebar/notes"),
+                      QLatin1String("legacy scratch"));
+    NotesModel::migrateLegacyScratch(panel->notesModel());
+    QCOMPARE(panel->notesModel()->rowCount(), 1);
+    QCOMPARE(panel->notesModel()->noteBody(0),
+             QLatin1String("legacy scratch"));
+    QVERIFY(!settings.contains(QLatin1String("sidebar/notes")));
 
     // A second window honors the persisted show state + dock side.
     SubWindow *window2 = new SubWindow;
@@ -4660,8 +4729,12 @@ void tst_BrowserMainWindow::sidebarPanel()
     QCOMPARE(window2->dockWidgetArea(window2->sidebarDock()),
              Qt::RightDockWidgetArea);
     QVERIFY(window2->sidebarPanel());
-    QCOMPARE(window2->sidebarPanel()->notes()->toPlainText(),
-             QLatin1String("remember me"));
+    // The notes store is shared per browsing profile — the second
+    // window's panel edits the same model instance.
+    QCOMPARE(window2->sidebarPanel()->notesModel(),
+             panel->notesModel());
+    QCOMPARE(window2->sidebarPanel()->notesModel()->noteBody(0),
+             QLatin1String("legacy scratch"));
     closeWindow(window2);
 
     settings.remove(QLatin1String("MainWindow/showSidebar"));

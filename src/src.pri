@@ -107,6 +107,7 @@ HEADERS += \
     $$PWD/fingerprintprotector.h \
     $$PWD/modelmenu.h \
     $$PWD/modeltoolbar.h \
+    $$PWD/notesmodel.h \
     $$PWD/pdfsupport.h \
     $$PWD/pdfview.h \
     $$PWD/pdfworker.h \
@@ -186,6 +187,7 @@ SOURCES += \
     $$PWD/fingerprintprotector.cpp \
     $$PWD/modelmenu.cpp \
     $$PWD/modeltoolbar.cpp \
+    $$PWD/notesmodel.cpp \
     $$PWD/pdfsupport.cpp \
     $$PWD/pdfview.cpp \
     $$PWD/pdfworker.cpp \

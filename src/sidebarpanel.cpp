@@ -23,9 +23,11 @@
 #include "bookmarksmanager.h"
 #include "bookmarksmodel.h"
 #include "bookmarknode.h"
+#include "browserapplication.h"
 #include "downloadmanager.h"
 #include "history.h"
 #include "historymanager.h"
+#include "notesmodel.h"
 #include "searchlineedit.h"
 #include "settings.h"
 #include "utils/aroraicon.h"
@@ -42,8 +44,10 @@
 #include <qfileinfo.h>
 #include <qheaderview.h>
 #include <qlabel.h>
+#include <qlineedit.h>
 #include <qlistview.h>
 #include <qmenu.h>
+#include <qmessagebox.h>
 #include <qpainter.h>
 #include <qplaintextedit.h>
 #include <qpushbutton.h>
@@ -51,6 +55,7 @@
 #include <qshortcut.h>
 #include <QSignalBlocker>
 #include <qsortfilterproxymodel.h>
+#include <qstackedwidget.h>
 #include <qstyleditemdelegate.h>
 #include <qstyle.h>
 #include <qstyleoption.h>
@@ -390,9 +395,6 @@ SidebarPanel::SidebarPanel(QWidget *parent)
             &QToolButton::clicked, this, &SidebarPanel::closeRequested);
 
     QSettings settings;
-    if (m_notes)
-        m_notes->setPlainText(
-            settings.value(QLatin1String("sidebar/notes")).toString());
     const int tab = settings.value(QLatin1String("sidebar/currentTab"), 0)
                         .toInt();
     if (tab >= 0 && tab < m_tabs->count())
@@ -1092,8 +1094,10 @@ QWidget *SidebarPanel::buildDownloadsPage()
     return m_downloadsPage;
 }
 
-// Notes — a per-profile scratch pad, debounce-persisted through
-// the AutoSaver like every other app-side store.
+// NOTE02: Notes — a per-profile multi-note store (NotesModel) behind
+// a three-state stack: the "Write your first note" empty state, the
+// notes list, and the editor a selected note opens in.  Persistence
+// is the model's debounced autosave; the page carries no save button.
 QWidget *SidebarPanel::buildNotesPage()
 {
     QWidget *notesPage = new QWidget(m_tabs);
@@ -1102,19 +1106,208 @@ QWidget *SidebarPanel::buildNotesPage()
         AroraStyle::Spacing::Small, AroraStyle::Spacing::Small,
         AroraStyle::Spacing::Small, AroraStyle::Spacing::Small);
     notesLayout->setSpacing(AroraStyle::Spacing::Small);
-    m_notes = new QPlainTextEdit(notesPage);
-    m_notes->setObjectName(QLatin1String("sidebarNotes"));
-    m_notes->setAccessibleName(tr("Notes"));
-    m_notes->setPlaceholderText(tr("Notes are saved automatically."));
-    notesLayout->addWidget(m_notes);
 
-    connect(m_notes, &QPlainTextEdit::textChanged,
-            m_autoSaver, &AutoSaver::changeOccurred);
-    // The panel may be re-enabled at runtime — a stored note picks
-    // back up without waiting for a restart.
-    m_notes->setPlainText(
-        QSettings().value(QLatin1String("sidebar/notes")).toString());
+    // NOTE02: the window's browsing profile owns the store — the
+    // shared normal-profile model in a regular window, a session-only
+    // volatile one while private/tor (an off-the-record profile's
+    // notes never reach disk).  SidebarPanel itself stays
+    // engine-free: it only ever sees the model.
+    m_notesModel = NotesModel::instance(BrowserApplication::webEngineProfile());
+    // A rebuilt page (panel hidden then re-enabled) starts at the
+    // list — the old editor's binding dies with the old widgets.
+    m_editingNote = QPersistentModelIndex();
+
+    // Header row — the add/delete buttons sit beside the spot
+    // NOTE03's search field will take.
+    QHBoxLayout *notesHeader = new QHBoxLayout;
+    notesHeader->setSpacing(AroraStyle::Spacing::Small);
+    QLabel *notesTitle = new QLabel(tr("Notes"), notesPage);
+    QFont titleFont = notesTitle->font();
+    titleFont.setBold(true);
+    notesTitle->setFont(titleFont);
+    notesTitle->setSizePolicy(QSizePolicy::Ignored,
+                              QSizePolicy::Preferred);
+    notesHeader->addWidget(notesTitle, 1);
+    const auto noteButton = [this, notesPage, notesHeader](
+            const char *objectName, const QString &label,
+            const char *iconName) {
+        QToolButton *button = new QToolButton(notesPage);
+        button->setObjectName(QLatin1String(objectName));
+        button->setAutoRaise(true);
+        button->setIcon(AroraIcon::getChrome(QLatin1String(iconName)));
+        button->setToolTip(label);
+        button->setAccessibleName(label);
+        notesHeader->addWidget(button);
+        return button;
+    };
+    QToolButton *addButton = noteButton("sidebarNotesAdd",
+                                        tr("New note"), "list-add");
+    connect(addButton, &QToolButton::clicked,
+            this, &SidebarPanel::addNote);
+    m_notesRemoveButton = noteButton("sidebarNotesRemove",
+                                     tr("Delete note"), "edit-clear");
+    connect(m_notesRemoveButton, &QToolButton::clicked,
+            this, &SidebarPanel::removeSelectedNote);
+    notesLayout->addLayout(notesHeader);
+
+    m_notesStack = new QStackedWidget(notesPage);
+    m_notesStack->setObjectName(QLatin1String("sidebarNotesStack"));
+
+    // Empty state — zero notes.
+    QLabel *emptyLabel = new QLabel(
+        tr("Write your first note."), m_notesStack);
+    emptyLabel->setObjectName(QLatin1String("sidebarNotesEmpty"));
+    emptyLabel->setAlignment(Qt::AlignCenter);
+    emptyLabel->setWordWrap(true);
+    emptyLabel->setForegroundRole(QPalette::PlaceholderText);
+    m_notesStack->addWidget(emptyLabel);
+
+    // The notes list — a click opens the note in the editor, F2
+    // renames the title in place.
+    m_notesList = new QListView(m_notesStack);
+    m_notesList->setObjectName(QLatin1String("sidebarNotesList"));
+    m_notesList->setAccessibleName(tr("Notes"));
+    m_notesList->setUniformItemSizes(true);
+    m_notesList->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_notesList->setEditTriggers(QAbstractItemView::EditKeyPressed);
+    m_notesList->setModel(m_notesModel);
+    connect(m_notesList, &QListView::activated,
+            this, &SidebarPanel::openNote);
+    connect(m_notesList, &QListView::clicked,
+            this, &SidebarPanel::openNote);
+    m_notesStack->addWidget(m_notesList);
+
+    // The editor — back button, the note's title (renaming edits the
+    // same row the list shows), then the body.
+    QWidget *editorPage = new QWidget(m_notesStack);
+    QVBoxLayout *editorLayout = new QVBoxLayout(editorPage);
+    editorLayout->setContentsMargins(0, 0, 0, 0);
+    editorLayout->setSpacing(AroraStyle::Spacing::Small);
+    QHBoxLayout *editorHeader = new QHBoxLayout;
+    editorHeader->setSpacing(AroraStyle::Spacing::Small);
+    QToolButton *backButton = new QToolButton(editorPage);
+    backButton->setObjectName(QLatin1String("sidebarNotesBack"));
+    backButton->setAutoRaise(true);
+    backButton->setIcon(AroraIcon::getChrome(QLatin1String("go-previous")));
+    backButton->setToolTip(tr("Back to notes"));
+    backButton->setAccessibleName(tr("Back to notes"));
+    connect(backButton, &QToolButton::clicked,
+            this, &SidebarPanel::closeNoteEditor);
+    editorHeader->addWidget(backButton);
+    m_noteTitle = new QLineEdit(editorPage);
+    m_noteTitle->setObjectName(QLatin1String("sidebarNoteTitle"));
+    m_noteTitle->setAccessibleName(tr("Note title"));
+    m_noteTitle->setPlaceholderText(tr("Title"));
+    editorHeader->addWidget(m_noteTitle, 1);
+    editorLayout->addLayout(editorHeader);
+    m_notes = new QPlainTextEdit(editorPage);
+    m_notes->setObjectName(QLatin1String("sidebarNotes"));
+    m_notes->setAccessibleName(tr("Note text"));
+    m_notes->setPlaceholderText(tr("Notes are saved automatically."));
+    editorLayout->addWidget(m_notes);
+    m_notesStack->addWidget(editorPage);
+    notesLayout->addWidget(m_notesStack);
+
+    // Editor -> model.  Loading a note into the widgets blocks these
+    // so a page switch never reads as an edit.
+    connect(m_notes, &QPlainTextEdit::textChanged, this, [this]() {
+        if (m_notesModel && m_editingNote.isValid())
+            m_notesModel->setData(m_editingNote, m_notes->toPlainText(),
+                                  NotesModel::BodyRole);
+    });
+    connect(m_noteTitle, &QLineEdit::textChanged, this,
+            [this](const QString &title) {
+        if (m_notesModel && m_editingNote.isValid())
+            m_notesModel->setData(m_editingNote, title, Qt::EditRole);
+    });
+    // A removal that takes out the open note folds the editor back to
+    // whichever list state applies.
+    if (m_notesModel) {
+        connect(m_notesModel, &QAbstractItemModel::rowsRemoved,
+                this, &SidebarPanel::updateNotesView);
+        connect(m_notesModel, &QAbstractItemModel::modelReset,
+                this, &SidebarPanel::updateNotesView);
+    }
+    updateNotesView();
     return notesPage;
+}
+
+// The stack page for the current model state — the empty state when
+// no notes exist, the list otherwise (the editor is only ever shown
+// by openNote / left by closeNoteEditor or a removal).  The − button
+// stays live in the editor too — it deletes the open note.
+void SidebarPanel::updateNotesView()
+{
+    if (!m_notesStack)
+        return;
+    const bool hasNote = m_editingNote.isValid()
+        || (m_notesModel && m_notesModel->rowCount() > 0);
+    if (m_notesRemoveButton)
+        m_notesRemoveButton->setEnabled(hasNote);
+    if (m_editingNote.isValid())
+        return;
+    m_notesStack->setCurrentIndex(hasNote ? 1 : 0);
+}
+
+void SidebarPanel::openNote(const QModelIndex &index)
+{
+    if (!m_notesModel || !index.isValid())
+        return;
+    m_editingNote = index;
+    // Select in the list too so the − button and a later delete land
+    // on the same row the editor is showing.
+    m_notesList->setCurrentIndex(index);
+    {
+        const QSignalBlocker titleBlocker(m_noteTitle);
+        const QSignalBlocker bodyBlocker(m_notes);
+        m_noteTitle->setText(index.data(Qt::EditRole).toString());
+        m_notes->setPlainText(index.data(NotesModel::BodyRole).toString());
+    }
+    m_notesStack->setCurrentIndex(2);
+    updateNotesView();
+    m_notes->setFocus();
+}
+
+void SidebarPanel::closeNoteEditor()
+{
+    m_editingNote = QPersistentModelIndex();
+    updateNotesView();
+}
+
+void SidebarPanel::addNote()
+{
+    if (!m_notesModel)
+        return;
+    const QModelIndex index = m_notesModel->addNote();
+    openNote(index);
+    // A fresh note is renamed by typing — preselect the empty title
+    // field so the first keystrokes name it.
+    m_noteTitle->setFocus();
+}
+
+void SidebarPanel::removeSelectedNote()
+{
+    if (!m_notesModel)
+        return;
+    QModelIndex index = m_editingNote.isValid()
+        ? QModelIndex(m_editingNote)
+        : m_notesList->currentIndex();
+    if (!index.isValid())
+        return;
+    const QString title = index.data(Qt::DisplayRole).toString();
+    const QString body = index.data(NotesModel::BodyRole).toString();
+    if (!title.isEmpty() || !body.isEmpty()) {
+        if (QMessageBox::question(m_notesStack, tr("Delete Note"),
+                tr("Delete the note \"%1\"?").arg(title),
+                QMessageBox::Yes | QMessageBox::No,
+                QMessageBox::No) != QMessageBox::Yes)
+            return;
+    }
+    // The persistent index invalidates on removal — clear the editing
+    // binding first so updateNotesView() can pick the right state.
+    m_editingNote = QPersistentModelIndex();
+    m_notesModel->removeRow(index.row());
+    updateNotesView();
 }
 
 QIcon SidebarPanel::icon(const QWidget *forPalette)
@@ -1144,14 +1337,19 @@ QPlainTextEdit *SidebarPanel::notes() const
     return m_notes;
 }
 
+NotesModel *SidebarPanel::notesModel() const
+{
+    return m_notesModel;
+}
+
 void SidebarPanel::save()
 {
     QSettings settings;
-    // A hidden Notes panel keeps its stored text — don't clobber the
-    // key with an empty editor state.
-    if (m_notes)
-        settings.setValue(QLatin1String("sidebar/notes"),
-                          m_notes->toPlainText());
+    // NOTE02: the notes text is the NotesModel's own file-backed
+    // store now — flush it here so callers that force a save (window
+    // teardown, tests) can't strand a pending debounce.
+    if (m_notesModel)
+        m_notesModel->save();
     settings.setValue(QLatin1String("sidebar/currentTab"), m_tabs->currentIndex());
 }
 
