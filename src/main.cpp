@@ -10375,22 +10375,36 @@ int main(int argc, char **argv)
         return application.exec();
     }
 
-    // Headless verification for EXT14: a session-loaded MV3 fixture
-    // with a background script gets a hidden hosted view — the
-    // generated wrapper runs the shim preamble, the extension's real
-    // background script executes at its chrome-extension:// origin
-    // (manifest order), real chrome.runtime is present and the
-    // chromeBridge handshake completes; disabling tears the host
-    // down and re-enabling respawns it.  Exits 0 on PASS.
+    // Headless verification for EXT14+EXT15: a session-loaded MV3
+    // fixture with a background script gets a hidden hosted view —
+    // the generated wrapper runs the shim preamble, the extension's
+    // real background script executes at its chrome-extension://
+    // origin (manifest order), real chrome.runtime is present and
+    // the chromeBridge handshake completes; an in-page probe then
+    // exercises the EXT15 gapfill (bridge storage round trip, a host
+    // timer firing alarms.onAlarm, action state, and a typed
+    // 'unsupported' error reaching the host's gap list); disabling
+    // tears the host down and re-enabling respawns it.  Exits 0 on
+    // PASS.
     if (args.contains(QLatin1String("--extension-host-smoke"))) {
         extensions = ExtensionManager::instance();
         ExtensionBackgroundRuntime *runtime =
             ExtensionBackgroundRuntime::instance();
 
-        extDir = QDir::temp().filePath(
-            QLatin1String("arora-ext-host-smoke"));
+        // EXT15: ARORA_EXTHOST_SMOKE_DIR=<unpacked ext dir> hosts a
+        // REAL extension instead of the generated fixture — the
+        // background boot then verifies zero unshimmed-API errors
+        // (the EXT13-measured delta drives the checklist) and dumps
+        // the shim gap/note/touched diagnostics.  The provided dir
+        // is never deleted; the generated fixture still is.
+        const QString realExtDir =
+            qEnvironmentVariable("ARORA_EXTHOST_SMOKE_DIR");
+        const bool realExt = !realExtDir.isEmpty();
+        extDir = realExt ? realExtDir
+                         : QDir::temp().filePath(
+                               QLatin1String("arora-ext-host-smoke"));
         QDir().mkpath(extDir);
-        {
+        if (!realExt) {
             QFile manifestFile(extDir + QLatin1String("/manifest.json"));
             if (!manifestFile.open(QIODevice::WriteOnly)) {
                 qInfo() << "extension-host-smoke: FAIL"
@@ -10424,15 +10438,19 @@ int main(int argc, char **argv)
         const ExtensionManager::Manifest manifest =
             ExtensionManager::inspectManifest(extDir);
         check(manifest.valid
-              && manifest.backgroundScripts
-                     == QStringList{QStringLiteral("sw.js")},
+              && (realExt
+                      ? !manifest.backgroundScripts.isEmpty()
+                      : manifest.backgroundScripts
+                            == QStringList{QStringLiteral("sw.js")}),
               "manifest background scripts listed");
 
         // phase: 0 = waiting for the host to reach Ready after
-        // enable; 1 = waiting for teardown after disable; 2 = the
-        // re-enable respawn must reach Ready again.
+        // enable; 3 = the EXT15 shim probe is running in-page;
+        // 1 = waiting for teardown after disable; 2 = the re-enable
+        // respawn must reach Ready again.
         auto phase = std::make_shared<int>(0);
         auto hostTicks = std::make_shared<int>(0);
+        auto probeTicks = std::make_shared<int>(0);
         QTimer *hostPoll = new QTimer(&application);
         hostPoll->setInterval(250);
 
@@ -10440,7 +10458,8 @@ int main(int argc, char **argv)
             qInfo() << "extension-host-smoke:"
                     << (failures == 0 ? "PASS" : "FAIL")
                     << "failures:" << failures;
-            QDir(extDir).removeRecursively();
+            if (!realExt)
+                QDir(extDir).removeRecursively();
             std::quick_exit(failures == 0 ? 0 : 1);
         };
 
@@ -10475,8 +10494,12 @@ int main(int argc, char **argv)
                     "bridge:__aroraHost.bridgeUp,"
                     "bg:self.__hostedBgRan||null,"
                     "installed:self.__hostedInstalled===true,"
+                    "shim:!!(window.__aroraShim),"
+                    "errors:(__aroraHost.errors||[]),"
+                    "probe:(window.__aroraShim?__aroraShim.probe()"
+                    ":null),"
                     "runtime:typeof (chrome&&chrome.runtime)})"),
-                    [&](const QVariant &v) {
+                    [&, host](const QVariant &v) {
                     const QJsonObject o = QJsonDocument::fromJson(
                         v.toString().toUtf8()).object();
                     check(o.value(QLatin1String("state")).toString()
@@ -10484,17 +10507,224 @@ int main(int argc, char **argv)
                           "in-page state ready");
                     check(o.value(QLatin1String("bridge")).toBool(),
                           "chromeBridge handshake");
-                    check(o.value(QLatin1String("bg")).toString()
-                              == QLatin1String("runtime-ok"),
-                          "background script ran with chrome.runtime");
                     check(o.value(QLatin1String("runtime")).toString()
                               == QLatin1String("object"),
                           "chrome.runtime survives in the host");
+                    check(o.value(QLatin1String("shim")).toBool(),
+                          "extshim present in the host");
+                    if (!realExt) {
+                    check(o.value(QLatin1String("bg")).toString()
+                              == QLatin1String("runtime-ok"),
+                          "background script ran with chrome.runtime");
+                    } else {
+                    // EXT15 real-extension leg — the boot must show
+                    // ZERO unshimmed-API errors: nothing the scripts
+                    // touched was missing or threw a chrome.*-shaped
+                    // failure.  Environmental errors (offline
+                    // fetches, etc.) are dumped but do not fail.
+                    QStringList apiErrors;
+                    for (const QJsonValue &e :
+                         o.value(QLatin1String("errors")).toArray()) {
+                        const QString s = e.toString();
+                        qInfo() << "  page-error:" << s;
+                        if (s.contains(QLatin1String("chrome."),
+                                       Qt::CaseInsensitive)
+                                || s.contains(QLatin1String(
+                                        "is not a function"))
+                                || s.contains(QLatin1String(
+                                        "Cannot read")))
+                            apiErrors.append(s);
+                    }
+                    check(apiErrors.isEmpty(),
+                          "real extension boot: zero unshimmed-API "
+                          "errors");
+                    const QJsonObject probe =
+                        o.value(QLatin1String("probe")).toObject();
+                    // The compat-surface audit is the authoritative
+                    // checklist — every required chrome.* member must
+                    // resolve (present = exists; proxied surfaces
+                    // answer typed errors).
+                    const QJsonObject audit =
+                        probe.value(QLatin1String("audit")).toObject();
+                    QStringList missingList;
+                    for (const QJsonValue &m :
+                         audit.value(QLatin1String("missing")).toArray())
+                        missingList.append(m.toString());
+                    check(missingList.isEmpty(),
+                          "compat audit: every chrome.* surface "
+                          "resolves");
+                    for (const QString &s : missingList)
+                        qInfo() << "  missing:" << s;
+                    qInfo() << "extension-host-smoke: audit:"
+                            << audit.value(QLatin1String("present")).toInt()
+                            << "/" << audit.value(QLatin1String("checked")).toInt()
+                            << "present";
+                    QStringList gapList;
+                    for (const QJsonValue &g :
+                         probe.value(QLatin1String("gaps")).toArray())
+                        gapList.append(g.toString());
+                    qInfo() << "extension-host-smoke: shim gaps:"
+                            << gapList.join(QLatin1String(" | "));
+                    QStringList noteList;
+                    for (const QJsonValue &n :
+                         probe.value(QLatin1String("notes")).toArray())
+                        noteList.append(n.toString());
+                    qInfo() << "extension-host-smoke: shim notes:"
+                            << noteList.join(QLatin1String(" | "));
+                    qInfo() << "extension-host-smoke: shim touched:"
+                            << QString::fromUtf8(QJsonDocument(
+                                   probe.value(QLatin1String(
+                                       "touched")).toObject())
+                                       .toJson(QJsonDocument::Compact));
+                    }
+                    // EXT15: exercise the shim in-page — bridge
+                    // storage round trip, a real alarm firing, action
+                    // state landing on the C++ registry, and a typed
+                    // unsupported error.  Results land on
+                    // self.__smokeProbe; phase 3 polls for done.
+                    host->page()->runJavaScript(QStringLiteral(
+                        "self.__smokeProbe={done:false,step:'init'};"
+                        "(async function(){"
+                        " var o={};__smokeProbe.step='area';"
+                        " var area=__aroraShim.storageArea('session');"
+                        " __smokeProbe.step='set';"
+                        " await area.set({sk:'sv'});"
+                        " __smokeProbe.step='get';"
+                        " o.stored=(await area.get('sk')).sk==='sv';"
+                        " __smokeProbe.step='stored';"
+                        " await new Promise(function(r){"
+                        "   var done=false;"
+                        "   chrome.alarms.onAlarm.addListener("
+                        "     function(a){if(!done&&a.name==="
+                        "       'arora-smoke-alarm'){"
+                        "       done=true;o.alarm=true;r();}});"
+                        "   chrome.alarms.create('arora-smoke-alarm',"
+                        "     {delayInMinutes:0.002}).then(function(){"
+                        "       __smokeProbe.step='alarm-created';"
+                        "       return chrome.alarms.get("
+                        "         'arora-smoke-alarm');}).then("
+                        "         function(v){o.alarmListed=!!v;});"
+                        "   setTimeout(function(){"
+                        "     if(!done){done=true;"
+                        "       chrome.alarms.get('arora-smoke-alarm')"
+                        "         .then(function(v){"
+                        "           o.alarmStillListed=!!v;"
+                        "           o.alarm=false;r();});"
+                        "       }},15000);});"
+                        " __smokeProbe.step='alarms-done';"
+                        " await chrome.alarms.clearAll();"
+                        " __smokeProbe.step='action';"
+                        " await chrome.action.setTitle({title:'S'});"
+                        " o.title=await chrome.action.getTitle({});"
+                        " __smokeProbe.step='notif';"
+                        " try{await chrome.notifications.create("
+                        "   {type:'basic',title:'x',message:'y'});"
+                        "   o.notif='resolved';"
+                        " }catch(e){o.notif=e.code||String(e);}"
+                        " __smokeProbe.out=o;__smokeProbe.done=true;"
+                        "})().catch(function(e){"
+                        " __smokeProbe.err=String(e&&e.stack||e);"
+                        " __smokeProbe.done=true;});"),
+                        [](const QVariant &) {});
+                    *phase = 3;
+                    *hostTicks = 0;
+                    hostPoll->start();
+                });
+            } else if (*phase == 3) {   // shim probe
+                if (!host)
+                    return;
+                ++*probeTicks;
+                host->page()->runJavaScript(QStringLiteral(
+                    "self.__smokeProbe?JSON.stringify(self.__smokeProbe)"
+                    ":'missing'"),
+                    [&, host](const QVariant &v) {
+                    if (*probeTicks > 240) {
+                        die(QStringLiteral("shim probe timed out: %1")
+                                .arg(v.toString()));
+                        return;
+                    }
+                    const QJsonObject r = QJsonDocument::fromJson(
+                        v.toString().toUtf8()).object();
+                    if (!r.value(QLatin1String("done")).toBool())
+                        return;
+                    hostPoll->stop();
+                    check(r.value(QLatin1String("err")).toString()
+                              .isEmpty(),
+                          "in-page shim probe ran clean");
+                    const QJsonObject o = r.value(
+                        QLatin1String("out")).toObject();
+                    check(o.value(QLatin1String("stored")).toBool(),
+                          "bridge storage set/get round trip");
+                    if (!realExt) {
+                    check(o.value(QLatin1String("alarm")).toBool(),
+                          "host timer fired alarms.onAlarm");
+                    } else {
+                    // A real extension runs its own alarm hygiene
+                    // (Bitwarden calls alarms.clearAll on boot) —
+                    // the probe alarm may legitimately be cleared
+                    // before it fires.  Fail only when it is still
+                    // listed host-side yet never fired.
+                    const bool alarmFired =
+                        o.value(QLatin1String("alarm")).toBool();
+                    const bool alarmStill =
+                        o.value(QLatin1String("alarmStillListed"))
+                            .toBool();
+                    qInfo() << "extension-host-smoke: alarm fired:"
+                            << alarmFired << "still-listed:"
+                            << alarmStill << "listed:"
+                            << o.value(QLatin1String("alarmListed"))
+                                   .toBool();
+                    check(alarmFired || !alarmStill,
+                          "host timer fired alarms.onAlarm (or "
+                          "extension cleared it)");
+                    }
+                    check(o.value(QLatin1String("title")).toString()
+                              == QLatin1String("S"),
+                          "action.setTitle/getTitle round trip");
+                    const QString notif =
+                        o.value(QLatin1String("notif")).toString();
+                    if (!realExt) {
+                    check(notif == QLatin1String("unsupported"),
+                          "notifications.create is a typed error");
+                    } else {
+                    // A real extension may carry the native
+                    // notifications binding — worked-or-typed-error
+                    // both satisfy 'never silently no-op'.
+                    check(!notif.isEmpty(),
+                          "notifications.create answered (worked or "
+                          "typed error)");
+                    qInfo() << "extension-host-smoke: notifications"
+                               " outcome:" << notif;
+                    }
+                    // The typed error reports asynchronously over
+                    // invoke('shim','gap') — poll for it (skip when
+                    // the native binding answered instead).
+                    if (notif == QLatin1String("unsupported")) {
+                        *phase = 4;
+                    } else {
+                        *phase = 1;
+                        *hostTicks = 0;
+                        extensions->setExtensionEnabled(extensionId,
+                                                        false);
+                    }
+                    *probeTicks = 0;
+                    hostPoll->start();
+                });
+            } else if (*phase == 4) {   // gap surfaced to health
+                if (!host)
+                    return;
+                if (host->shimGaps().contains(QStringLiteral(
+                        "chrome.notifications.create: unsupported"))) {
+                    hostPoll->stop();
+                    check(true, "typed error surfaced as a shim gap");
                     *phase = 1;
                     *hostTicks = 0;
                     extensions->setExtensionEnabled(extensionId, false);
                     hostPoll->start();
-                });
+                    return;
+                }
+                if (++*probeTicks > 40)
+                    die(QStringLiteral("shim gap never surfaced"));
             } else {  // phase 1 — teardown
                 if (!host) {
                     check(true, "disable tears the hosted view down");
@@ -10510,8 +10740,13 @@ int main(int argc, char **argv)
 
         QObject::connect(extensions, &ExtensionManager::extensionLoaded,
             &application, [&](const ExtensionManager::ExtensionInfo &info) {
-            if (info.name != QLatin1String("arora-host-smoke-ext"))
+            if (!realExt
+                    && info.name
+                           != QLatin1String("arora-host-smoke-ext"))
                 return;
+            if (!info.error.isEmpty())
+                qInfo() << "extension-smoke: loadExtension error:"
+                        << info.error;
             check(info.loaded && info.error.isEmpty(),
                   "loadExtension finished");
             extensionId = info.id;

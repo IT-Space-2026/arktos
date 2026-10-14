@@ -151,6 +151,18 @@ public:
         QString hostState;
         QString hostError;
         bool hosted = false;    // host up, chromeBridge handshake done
+        // EXT15 shim diagnostics — typed errors the hosted page's
+        // gapfill surfaced (APIs the extension relies on that cannot
+        // work).  Empty when nothing tripped.
+        QStringList shimGaps;
+        // EXT15: chrome.action/browserAction setters land here (the
+        // hosted runtime has no native action delegate); EXT08's
+        // action strip renders badge/title from these on merge.
+        QString actionTitle;      // empty = manifest default_title
+        QString actionBadgeText;
+        QString actionBadgeColor; // css color string, empty = default
+        QString actionPopup;      // setPopup override path
+        bool actionEnabled = true;
     };
 
     // Result of reading an unpacked extension's manifest.json — used to

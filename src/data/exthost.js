@@ -39,6 +39,12 @@
 
     function record(what) {
         var text = String(what && what.message || what);
+        // A minified bundle's bare "Cannot read properties of
+        // undefined" is undebuggable — keep the first frames.
+        var stack = what && what.stack;
+        if (stack)
+            text += ' @' + String(stack).split('\n')
+                    .slice(1, 4).join(' <-');
         if (host.errors.length < 200)
             host.errors.push(text);
         if (host.bridgeUp) {
@@ -46,7 +52,7 @@
         }
     }
     window.addEventListener('error', function (e) {
-        record(e.message || e.error);
+        record(e.error || e.message);
     });
     window.addEventListener('unhandledrejection', function (e) {
         record(e.reason);
@@ -54,8 +60,11 @@
 
     // A hosted page has a DOM; the SW-only entry points a manifest's
     // background bundle may touch get page-world mappings rather than
-    // throwing (spike: a one-line importScripts stub carried
-    // Bitwarden's webpack chunk loading).
+    // throwing.  importScripts cannot be made synchronous under the
+    // MV3 script-src 'self' CSP (no eval, no inline) — the C++ host
+    // covers webpack's lazy chunks by merging them into the code
+    // injection; this stub is a last-resort async append for chunk
+    // URLs the scan did not know about.
     if (typeof self !== 'undefined' && !self.importScripts) {
         self.importScripts = function () {
             for (var i = 0; i < arguments.length; ++i) {
@@ -107,10 +116,21 @@
                 }
                 host.bridge = bridge;
                 bridge.handshake(
-                    { id: cfg.id, url: String(location.href) },
+                    { id: cfg.id, url: String(location.href),
+                      shimVersion: 2 },
                     function (reply) {
                         host.bridgeReply = reply;
                         host.bridgeUp = true;
+                        // EXT15: the gapfill shim registers a hook so
+                        // it can wire hostEvent/relay eagerly — a
+                        // setTimeout poll would lose the race once
+                        // the hidden page's timers get clamped.
+                        try {
+                            if (host.onBridgeUp)
+                                host.onBridgeUp();
+                        } catch (e) {
+                            record('onBridgeUp hook: ' + e);
+                        }
                         maybeReady();
                     });
             });
@@ -120,11 +140,33 @@
     }
 
     // --- the extension's own background scripts, manifest order ---
+    // cfg.inlineCode means the C++ host delivered the manifest
+    // entries plus any webpack lazy chunks as a merged injection —
+    // the only channel that can satisfy webpack's synchronous
+    // importScripts() lazy-require under the extension CSP.  That
+    // injection marks scriptsLoaded itself; nothing to do here.
     function loadScripts() {
-        var files = (cfg.scripts || []).slice();
+        if (cfg.inlineCode)
+            return;
+        var files = cfg.scripts || [];
         (function next() {
             var f = files.shift();
             if (!f) {
+                // Chunks pushed before the entry's runtime patched
+                // webpackChunk.push sit in the array unprocessed —
+                // this webpack build does not replay the queue.
+                // Re-pushing them now runs the patched push and
+                // registers their modules in o.m.
+                for (var k in self) {
+                    if (k.indexOf('webpackChunk') === 0
+                            && Array.isArray(self[k])) {
+                        var arr = self[k];
+                        var n = arr.length;
+                        for (var i = 0; i < n; ++i) {
+                            try { arr.push(arr[i]); } catch (e) {}
+                        }
+                    }
+                }
                 host.scriptsLoaded = true;
                 maybeReady();
                 return;
@@ -133,8 +175,8 @@
             s.src = f;
             s.onload = next;
             s.onerror = function () {
+                record('script failed to load: ' + f);
                 host.state = 'failed:script:' + f;
-                record('background script failed to load: ' + f);
             };
             (document.head || document.documentElement).appendChild(s);
         })();
