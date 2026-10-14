@@ -303,7 +303,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | NOTE03 | Notes slice B — search, selection-to-note, markdown flag, page-URL insert — details below | done | 0 | Search proxy + selection-to-note + persisted markdown flag/render + URL insert landed; tst_notesmodel 10/10, sidebarPanel+webview legs PASS, gates PASS, only known pre-existing fails |
 | QUAL01 | Audit 1/5: dead code + redundant-implementation sweep, fix findings — details below | done | 3 | ~20 dead methods/signals/members removed (Engine::Page createWindow+signal surface, ChromeBridge handshake plumbing, ext-host accessors); setHomeToCurrentPage rewired to currentTab() + test re-pointed at a real window; dupes audited = intentional, documented. Verified: 0-warning build, 4 check gates PASS, suite 82 programs green except 5 documented pre-existing browsermainwindow legs, --quit-after-load rc=0 |
 | QUAL02 | Audit 2/5: memory leaks — check-leaks + ownership/FFI-boundary audit, fix findings — details below | done | 1 | LSan suite our-code blocks 53→0, all 18 smoke flags clean; valgrind top smokes our-code records 3→0 (2,848B→0 definite); audits found+fixed: unparented EngineTab profiles, parentless ServoBackend probe, drag mime data, ext-popup UAF, notes-model profile lifetime; suite green standalone except 5 documented bmw legs; gates PASS |
-| QUAL03 | Audit 3/5: security — channels, injection, isolation, fail-closed, secrets — details below | pending | 0 | |
+| QUAL03 | Audit 3/5: security — channels, injection, isolation, fail-closed, secrets — details below | done | 3 | 5 findings fixed (ext nav-lock, relay key ownership, tabs-reply scrub, PiP script-breakout, cookie-value log) + 4 UBSan teardown fixes incl late navBarEditEvent cast; gates PASS, suite green except documented pre-existing legs, ext 26/26, instrumented re-run zero our-code reports |
 | QUAL04 | Audit 4/5: performance — baseline measurements then fix real regressions — details below | pending | 0 | |
 | QUAL05 | Audit 5/5: consistency sweep + final all-gates-green closing pass — details below | pending | 0 | |
 | SRCH01 | Restore editable-field "Add search provider" context menu (dropped at MIG08 — needs runJavaScript form introspection) | pending | 0 | |
@@ -1706,6 +1706,132 @@ load flakes); ./arora --quit-after-load rc=0 offscreen.
 ### QUAL03
 
 Quality sweep 3/5 — security audit (user: 'security issues'). Run check-sanitize.sh + check-supplychain.sh first, then focused review of the surfaces that grew recently: (a) PRIVILEGED CHANNELS — QWebChannel object exposure: nothing privileged reachable from page JS (SEC24's boundary), the EXT14 chromeBridge surface exposes ONLY extension-facing methods, hosted extension JS can't reach app objects; (b) INJECTION POINTS — every string reaching HTML/SQL/shell/JS eval (reader overlay, tor panel, extension popup host, notes); (c) reader-mode isolation post-READ06 still holds (isolated world + C++ sanitize + sandboxed iframe); (d) URL/trust paths — Tor fail-closed still true (no clearnet fallback), trust verdicts honest (TRUST14), TLS probe can't leak; (e) secrets — no keys/credentials in tree, logs don't dump sensitive values; (f) file writes — path traversal in downloads/notes/session files. Fix findings; document any accepted-risk items explicitly. Verify: gates PASS, findings fixed or documented, make check PASS.
+
+**QUAL03 findings (landed)**
+
+Gates: check-supplychain PASS; check-sanitize resumed the
+attempt-2 instrumented tree (two prior runs were OOM-killed by the
+task runner's ~2 GB cap — ASan builds now run detached).
+
+Findings fixed:
+
+- **Hosted-extension page navigation was unlocked** — `chromeBridge`
+  (extension storage, identity, relay) is bound to the host *page*,
+  so a hosted document navigating (or being iframed) to foreign
+  content would hand that content the bridge.  New
+  `HostedBackgroundPage` locks the main frame to the wrapper url
+  (about:blank for the initial commit) and subframes to the
+  extension's own `chrome-extension://<id>` origin.
+- **Extension relay keys were caller-trusted** — `mid`/`chan` arrive
+  inside caller-supplied strings; the shim mints `<extId>#…` but
+  nothing host-side verified it, so a bridge could graft an end onto
+  another extension's port channel, message/disconnect it, or resolve
+  a foreign pending `sendMessage`.  `ownsRelayKey()` now enforces the
+  sender's own id prefix on send/connect/accept/message/disconnect,
+  delivery filters ends by extension id, and `relayRespond` requires
+  the responder's extension to equal the origin's.
+- **`chrome.tabs` replies leaked url/title** — `tabObject()` emitted
+  both unconditionally; EXT16 already scrubbed *event* payloads on
+  `tabs`/host permission but the query/get/create/update replies were
+  raw.  `shapedTab()` applies `seesUrls()` (same rule) to every reply.
+- **PiP config JSON was injectable** — page-derived video fields were
+  interpolated into `<script>` in the trusted player document;
+  `</script>` inside a string broke out of the element.  `<` is now
+  escaped to \u003c before interpolation.
+- **Debug builds logged rejected-cookie values** — the live
+  `NETWORKCOOKIEJAR_LOGREJECTEDCOOKIES` site dumped the whole
+  QNetworkCookie (value = live session credential).  Now logs
+  name/domain/url only.
+
+Sanitizer-driven fixes (the instrumented suite surfaced these; all
+our-code reports in the sweep):
+
+- `ExtensionEventHub` fired `tabs.onRemoved`/`windows.onRemoved` from
+  `QObject::destroyed()` handlers that downcasted and dereferenced the
+  mid-destruction object (UBSan downcast + member-access reports at
+  extensioneventhub.cpp:417/437/468 and browsermainwindow.cpp:3606).
+  Handlers now capture the typed pointer at wire time and never
+  dereference it; tracked state keeps QObject-identity keys
+  (`windowObject`, `m_windowIds`/`m_dyingWindows` rekeyed) plus
+  pre-minted `tabId`/`windowId`, so teardown emits without touching a
+  dying object's vtable.
+- SIDE09's `qApp` focusChanged lambda could run while
+  `~BrowserMainWindow` had already sliced `this` past its dynamic type
+  (UBSan member-access at browsermainwindow.cpp:641) — the connection
+  is kept (`m_sidebarFocusConnection`) and disconnected first in the
+  dtor.
+- `DownloadManager::timeString()` int()'d an `inf` when a zero-speed
+  sample made the ETA divide-by-zero (UBSan float-to-int at
+  downloadmanager.cpp:1749) — non-finite/negative input now returns
+  the empty string.
+- The sweep's remaining reports are Qt-internal and out of scope:
+  a fontconfig/expat `getenv` SEGV on a Chromium worker thread and a
+  `ProfileAdapter` teardown UAF inside libQt6WebEngineCore —
+  same class as the pre-existing entries in SANITIZER.md.
+
+Audited clean / accepted risks (documented):
+
+- SEC24 channel isolation holds: `external`/`aroraAutofill`/`arora`
+  live in `AroraChannelWorld`; the main world reaches them only via
+  the whitelisted postMessage forwarder; `arora` is qrc:-only; tor
+  pages get a bare channel.
+- `external.AddSearchProvider` is page-callable by design — C++
+  validates the url and asks for consent before fetching (accepted).
+- Reader mode still holds: dedicated script world, C++ tokenizer
+  sanitizer, sandboxed iframe without `allow-scripts`.  The iframe's
+  `allow-same-origin` lets the *page* inspect the frame — same-origin
+  already implies that; accepted.
+- `data:` urls pass `isUrlAllowedOnUntrustedInput` deliberately
+  (SEC09 typed-equivalent); `javascript:` is refused.  Extension
+  `tabs.create`/`update` ride the same gate (comment corrected — it
+  claimed `data:` was blocked).
+- Tor fail-closed holds: requests route through NavigationPolicy with
+  `torMode`; no code path ever clears the app proxy; TlsVerifier
+  refuses probes under tor/proxy (SSRF guard intact); the control-
+  port cookie is compared as raw 32 bytes, hex on the wire, never
+  logged.
+- Autofill form data is JSON-encoded into an isolated closure behind
+  a per-load UUID token; SecureStore blobs are AES-GCM sealed with
+  0600 perms.
+- Path traversal: download filenames are sanitized, note ids map
+  `/`→`_`, session/extension-storage writes use fixed names or
+  sanitized ext ids under `BrowserPaths` + `QSaveFile`.
+- Remaining `runJavaScript` interpolations are escaped (jsQuote /
+  QJsonDocument) or numeric; `javascript:` typed/bookmarklet exec is
+  behind the untrusted-input gate.
+- Extension popup windows use a plain `QWebEnginePage` — no app
+  channel objects leak in.
+- Tor circuit panel text renders via QLabel (consensus-derived, no
+  HTML sink); notes render via QTextBrowser markdown (user-authored).
+- PiP `requestPopOut` is page-callable but narrow: one window per
+  view, nonce-gated close, value-only bridge; Chrome-parity user-
+  gesture requirement is NOT enforced (accepted — worst case is the
+  page popping out its own video; no privilege gained).
+
+One late finding surfaced while re-verifying under UBSan:
+`navBarEditEvent` ran `qobject_cast<QWidget*>` on every event the
+qApp filter saw — including queued/meta events delivered for
+receivers already mid-destruction (invalid-vptr report, fired inside
+tst_browsermainwindow::navBarEditMode).  The cast is now computed
+inside the mouse cases only; input events only ever target live
+widgets.
+
+Verify: 0-warning clean build; `make check` gates — check-warnings
+PASS, check-supplychain PASS, check-engine-audit PASS (165 files),
+check-rustcoverage PASS (adblock 90.50 / rustcore 91.75 / rustdl
+89.25); suite — every binary green standalone except the documented
+pre-existing legs (tst_browsermainwindow
+privateStartPage/homeButton/chromeSlots/extensionActionButtons/
+navBarOrderPersistence + its post-Totals SIGSEGV-exit, torStartPage
+order-flake, schemehandlers::fileSchemeErrors order-flake — both
+PASS standalone); tst_extensionmanager 26/26 incl. new
+relay-ownership + tabs-reply-scrub legs, tst_downloadmanager 46/46,
+tst_schemehandlers 25/25; `./arora --quit-after-load` rc=0
+offscreen.  Instrumented re-run (ASan+UBSan, resumed tree):
+tst_browsermainwindow + tst_downloadmanager produce ZERO reports at
+every previously-reported site (extensioneventhub destroyed()-cast
+x3, browsermainwindow member-access x2, downloadmanager inf-int);
+the new navBarEditEvent site re-verified clean after its fix.
 
 ### QUAL04
 

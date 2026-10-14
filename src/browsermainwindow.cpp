@@ -636,7 +636,11 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     // the location bar, a menu's parent...).  Menus/popups raised
     // from the panel itself don't count, focus leaving the window
     // entirely keeps the dock up, and a floating dock never folds.
-    connect(qApp, &QApplication::focusChanged,
+    // The connection is kept for the destructor — a focus signal
+    // arriving while ~BrowserMainWindow has already sliced 'this'
+    // down past its dynamic type would run this lambda on a stale
+    // object (UBSan member-access finding, QUAL03).
+    m_sidebarFocusConnection = connect(qApp, &QApplication::focusChanged,
             this, [this](QWidget *, QWidget *now) {
         if (!m_sidebarAutoClose || !m_sidebarDock->isVisible()
             || m_sidebarDock->isFloating() || !now
@@ -706,6 +710,9 @@ BrowserMainWindow::~BrowserMainWindow()
     // NAVB03: an active edit mode leaves a qApp event filter and
     // possibly an override cursor armed — detach both before the
     // window object dies or the filter would fire on a dead this.
+    // Same for the SIDE09 qApp focusChanged hook — it reads members
+    // on 'this' and must not run once destruction started.
+    disconnect(m_sidebarFocusConnection);
     setNavBarEditMode(false);
     m_autoSaver->changeOccurred();
     m_autoSaver->saveIfNeccessary();
@@ -2766,7 +2773,11 @@ void BrowserMainWindow::endNavBarDrag()
 // children like per-tab location bars.
 bool BrowserMainWindow::navBarEditEvent(QObject *object, QEvent *event)
 {
-    QWidget *widget = qobject_cast<QWidget *>(object);
+    // QUAL03: 'object' is not dereferenced until an input case needs
+    // it — a qApp-level filter also sees queued/meta events for
+    // receivers that are already mid-destruction, where any cast or
+    // member call on 'object' is UB (UBSan invalid-vptr report).
+    QWidget *widget = nullptr;
     switch (event->type()) {
     case QEvent::KeyPress:
         if (static_cast<QKeyEvent *>(event)->key() == Qt::Key_Escape
@@ -2777,7 +2788,8 @@ bool BrowserMainWindow::navBarEditEvent(QObject *object, QEvent *event)
         return false;
     case QEvent::MouseButtonPress: {
         QMouseEvent *mouseEvent = static_cast<QMouseEvent *>(event);
-        if (mouseEvent->button() != Qt::LeftButton || !widget)
+        if (mouseEvent->button() != Qt::LeftButton
+            || !(widget = qobject_cast<QWidget *>(object)))
             return false;
         const QPoint barPos = m_navigationBar->mapFromGlobal(
             mouseEvent->globalPosition().toPoint());
@@ -2825,6 +2837,7 @@ bool BrowserMainWindow::navBarEditEvent(QObject *object, QEvent *event)
         endNavBarDrag();
         return true;
     case QEvent::MouseButtonDblClick:
+        widget = qobject_cast<QWidget *>(object);
         return widget && (widget == m_navigationBar
                           || m_navigationBar->isAncestorOf(widget));
     default:

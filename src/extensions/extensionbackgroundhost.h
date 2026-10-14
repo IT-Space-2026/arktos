@@ -267,6 +267,12 @@ public:
     int deliverEvent(const QString &extensionId, const QString &name,
                      const QJsonObject &payload);
 
+    // Whether url-bearing fields may reach this extension ('tabs'
+    // permission or a host permission covering the url).  Public so
+    // chrome.tabs replies in ExtensionShimBackend apply the same
+    // scrub rule the event fan-out does.
+    bool seesUrls(const QString &extensionId, const QString &url) const;
+
 signals:
     void hostChanged(const QString &extensionId);
 
@@ -291,8 +297,6 @@ private:
     QJsonObject shapedPayload(const QString &extensionId,
                               const QString &name,
                               const QJsonObject &payload) const;
-    bool seesUrls(const QString &extensionId,
-                  const QString &url) const;
 
     // Relay: live shimmed contexts and in-flight deliveries
     // (mid -> the sending bridge; entries expire on a timer so a

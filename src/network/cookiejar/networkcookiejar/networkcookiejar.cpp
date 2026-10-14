@@ -249,8 +249,12 @@ bool NetworkCookieJar::setCookiesFromUrl(const QList<QNetworkCookie> &cookieList
             cookie.setDomain(host);
         } else if (!d->matchingDomain(cookie, url)) {
 #ifdef NETWORKCOOKIEJAR_LOGREJECTEDCOOKIES
+            // Never log the cookie itself — its value is a live
+            // credential.  Name + declared domain are enough to spot
+            // the rejection.
             qDebug() << "NetworkCookieJar::" << __FUNCTION__
-                     << "Blocked cookie because: domain doesn't match: " << cookie << url;
+                     << "Blocked cookie because: domain doesn't match:"
+                     << cookie.name() << cookie.domain() << url;
 #endif
             continue;
         }

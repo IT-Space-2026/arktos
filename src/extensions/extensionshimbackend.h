@@ -135,6 +135,10 @@ private:
                              const QJsonObject &args);
     QJsonObject invokeTabs(const QString &method,
                            const QJsonObject &args);
+    // QUAL03: apply the EXT16 url-field scrub to chrome.tabs replies —
+    // url/title leave the host only when the extension holds 'tabs'
+    // or a host permission covering the tab's url.
+    QJsonObject shapedTab(const QJsonObject &tab) const;
     QJsonObject invokeAction(const QString &method,
                              const QJsonObject &args);
     QJsonObject invokeI18n(const QString &method,

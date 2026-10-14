@@ -354,7 +354,11 @@ private:
     QPointer<BidiPanel> m_bidiPanel;
     // SIDE09: 'Auto-Close Inactive Panel' (sidebar/autoCloseInactive)
     // — the focusChanged hook folds the dock when focus lands outside
-    // it in this window.
+    // it in this window.  The connection is kept so ~BrowserMainWindow
+    // can detach it before member teardown — qApp focus signals fired
+    // mid-destruction would otherwise run the lambda on a sliced this
+    // (UBSan member-access).
+    QMetaObject::Connection m_sidebarFocusConnection;
     bool m_sidebarAutoClose;
 
     HistoryMenu *m_historyMenu;

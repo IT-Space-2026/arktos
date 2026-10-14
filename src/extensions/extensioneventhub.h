@@ -139,13 +139,16 @@ private:
     void wireWindow(BrowserMainWindow *window);
     void wireView(WebView *view);
     void onTabActivated(TabWidget *tabs, int index);
-    void onViewDestroyed(QObject *object);
-    void onWindowDestroyed(QObject *object);
+    // destroyed() handlers receive the TYPED pointer captured at wire
+    // time — during the signal the object is already sliced to
+    // QObject and any downcast or member access on it is UB.
+    void onViewDestroyed(WebView *view);
+    void onWindowDestroyed(BrowserMainWindow *window);
 
     // Emitters — one per event family; all shapes per the
     // WebExtensions spec, multi-arg events via the __args envelope.
     void emitTabCreated(WebView *view);
-    void emitTabRemoved(WebView *view, int windowId,
+    void emitTabRemoved(int tabId, int windowId,
                         bool isWindowClosing);
     void emitTabUpdated(WebView *view, const QJsonObject &changeInfo);
     void emitNavEvent(WebView *view, const QString &name,
@@ -164,6 +167,13 @@ private:
     struct TrackedTab {
         QPointer<WebView> view;
         QPointer<BrowserMainWindow> window;
+        // Identity-only keys: windowObject is the window's address as
+        // a plain QObject — usable in dead-object compares where
+        // QPointer::data()'s checked cast would be UB.  tabId is
+        // minted while the view lives, so teardown emits it without
+        // touching the dead object.
+        QObject *windowObject = nullptr;
+        int tabId = -1;
         int windowId = -1;  // minted once, kept for teardown — the
                             // window->id map may be gone by then
         int index = -1;
@@ -183,12 +193,14 @@ private:
     // safe: every wired window's destroyed() removes the entry.
     QSet<BrowserMainWindow *> m_wiredWindows;
     // Windows seen on a previous scan — their ids let teardown fire
-    // windows.onRemoved even after the widget is gone.
-    QHash<BrowserMainWindow *, int> m_windowIds;
+    // windows.onRemoved even after the widget is gone.  Keyed by
+    // QObject identity: entries get consulted while the window is
+    // mid-destruction, where a typed-pointer cast is UB.
+    QHash<QObject *, int> m_windowIds;
     // Windows in ~QObject — onWindowDestroyed marks them before the
     // child WebViews' own destroyed() lands, so each tab's onRemoved
     // can answer isWindowClosing honestly.
-    QSet<BrowserMainWindow *> m_dyingWindows;
+    QSet<QObject *> m_dyingWindows;
     int m_focusWindowId = -2;   // -2 = unset (first scan is quiet)
     QTimer *m_scan = nullptr;
 };

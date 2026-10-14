@@ -1743,6 +1743,9 @@ QString DownloadManager::timeString(double timeRemaining)
 {
     QString remaining;
 
+    // A zero-speed sample divides to inf/nan — int() of that is UB.
+    if (!std::isfinite(timeRemaining) || timeRemaining < 0)
+        return remaining;
     if (timeRemaining > 60) {
         timeRemaining = timeRemaining / 60;
         timeRemaining = floor(timeRemaining);

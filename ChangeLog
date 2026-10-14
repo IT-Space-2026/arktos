@@ -1009,6 +1009,20 @@ Security:
   a DOM event.  The reader-mode driver keeps its own isolated world
   and speaks DOM events; only its tiny event relay moved into the
   channel world.
+- Extension-surface hardening pass (QUAL03): a hosted extension
+  background page is now navigation-locked to its own wrapper URL and
+  origin — it can no longer hand the privileged chromeBridge channel
+  to foreign content by navigating or iframing away. The extension
+  message relay re-verifies the "<extension-id>#…" key prefix it
+  mints, so one extension cannot graft itself onto another
+  extension's port channels or forge sendMessage replies, and
+  chrome.tabs query/get/create/update replies now scrub url/title
+  unless the extension holds the 'tabs' permission or a covering host
+  permission — matching the event-payload rule. The
+  picture-in-picture player escapes '<' in the page-derived video
+  spec it interpolates into its trusted document, closing a
+  script-element breakout, and the debug cookie jar no longer logs
+  rejected cookie values.
 
 Containers:
 - Isolated container profiles (CONT01).

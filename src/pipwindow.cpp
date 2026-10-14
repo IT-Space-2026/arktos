@@ -147,9 +147,17 @@ PipWindow::PipWindow(QWebEngineProfile *profile, const QVariantMap &video,
     const QByteArray configJson = QJsonDocument(
             QJsonObject::fromVariantMap(video))
         .toJson(QJsonDocument::Compact);
+    // The video spec is page-derived and lands inside a <script> in
+    // the trusted player document — JSON escaping is not enough:
+    // a "</script>" inside a string value would end the element and
+    // inject markup.  Rewriting '<' to its \u003c
+    // escape keeps the JSON valid while killing the breakout.
     html.replace(QLatin1String("/*__PIP_CONFIG__*/"),
             QLatin1String("window.__PIP_CONFIG__ = ")
-                + QString::fromUtf8(configJson) + QLatin1Char(';'));
+                + QString::fromUtf8(configJson)
+                      .replace(QLatin1Char('<'),
+                               QLatin1String("\\u003c"))
+                + QLatin1Char(';'));
     m_view->setHtml(html, baseUrl);
 }
 

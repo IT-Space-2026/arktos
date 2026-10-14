@@ -1666,24 +1666,36 @@ void tst_ExtensionManager::extensionMessageRelay()
     QSignalSpy otherEvents(&other, &ChromeBridge::hostEvent);
     QSignalSpy bgEvents(&bg, &ChromeBridge::hostEvent);
 
+    // Relay keys carry the owning extension's id prefix — exactly the
+    // "<extId>#<seq>#<ts>" form the shim mints (QUAL03: the host
+    // re-verifies the prefix instead of trusting the caller).
+    const QString m1 = QStringLiteral("relayext0000000001#1#t");
+    const QString m2 = QStringLiteral("relayext0000000002#2#t");
+    const QString m3 = QStringLiteral("relayext0000000001#3#t");
+    const QString m4 = QStringLiteral("relayext0000000001#4#t");
+
     // send fans out to the same-extension peer only.
     const int peers = runtime->relaySend(
-        &bg, QStringLiteral("m1"),
+        &bg, m1,
         QJsonObject{{QStringLiteral("__aroraMsg"),
-                     QJsonObject{{QStringLiteral("mid"),
-                                  QStringLiteral("m1")}}}});
+                     QJsonObject{{QStringLiteral("mid"), m1}}}});
     QCOMPARE(peers, 1);
     QCOMPARE(popupEvents.size(), 1);
     QCOMPARE(otherEvents.size(), 0);
     QCOMPARE(popupEvents.first().at(0).toString(),
              QStringLiteral("__arora.relay"));
     QCOMPARE(popupEvents.first().at(1).toJsonObject()
-             .value(QLatin1String("mid")).toString(),
-             QStringLiteral("m1"));
+             .value(QLatin1String("mid")).toString(), m1);
+
+    // QUAL03: a foreign bridge that learned the mid may not resolve
+    // another extension's message — the pending entry survives.
+    QVERIFY(!runtime->relayRespond(
+        &other, m1, QJsonValue(QStringLiteral("forged"))));
+    QCOMPARE(bgEvents.size(), 0);
 
     // The peer's response routes back to the origin.
     QVERIFY(runtime->relayRespond(
-        &popup, QStringLiteral("m1"),
+        &popup, m1,
         QJsonValue(QStringLiteral("pong"))));
     QCOMPARE(bgEvents.size(), 1);
     QCOMPARE(bgEvents.first().at(0).toString(),
@@ -1694,28 +1706,75 @@ void tst_ExtensionManager::extensionMessageRelay()
 
     // A spent mid no longer routes.
     QVERIFY(!runtime->relayRespond(
-        &popup, QStringLiteral("m1"), QJsonValue()));
+        &popup, m1, QJsonValue()));
+
+    // QUAL03: a mid outside the sender's own id space is refused
+    // before delivery or pend — no cross-extension keying.
+    QCOMPARE(runtime->relaySend(
+                 &bg, m2, QJsonObject()), 0);
+    QCOMPARE(popupEvents.size(), 1);
 
     // peers=0 message (no sibling contexts): nothing pending.
     QCOMPARE(runtime->relaySend(
-                 &other, QStringLiteral("m2"), QJsonObject()),
+                 &other, m2, QJsonObject()),
              0);
     QVERIFY(!runtime->relayRespond(
-        &other, QStringLiteral("m2"), QJsonValue(1)));
+        &other, m2, QJsonValue(1)));
 
     // Empty peer reply resolves to null after all peers answered.
     QCOMPARE(runtime->relaySend(
-                 &bg, QStringLiteral("m3"), QJsonObject()), 1);
+                 &bg, m3, QJsonObject()), 1);
     QVERIFY(runtime->relayRespond(
-        &popup, QStringLiteral("m3"), QJsonValue()));
+        &popup, m3, QJsonValue()));
     QCOMPARE(bgEvents.size(), 2);
     QVERIFY(bgEvents.last().at(1).toJsonObject()
             .value(QLatin1String("response")).isNull());
 
+    // QUAL03: port channels are scoped the same way — a foreign chan
+    // string is refused at every relay entry point, so an extension
+    // cannot graft an end onto another extension's port.
+    const QString foreignChan =
+        QStringLiteral("relayext0000000001#p9");
+    QCOMPARE(runtime->relayPortConnect(
+                 &other, foreignChan, QStringLiteral("pX"),
+                 QString()), 0);
+    runtime->relayPortAccept(&other, foreignChan,
+                             QStringLiteral("pX"));
+    QCOMPARE(runtime->relayPortMessage(
+                 &other, foreignChan, QStringLiteral("pX"),
+                 QJsonValue(QStringLiteral("x"))), 0);
+    QCOMPARE(bgEvents.size(), 2);   // unchanged — nothing leaked
+
+    // A legit same-extension port round-trips end to end.
+    const QString chan = QStringLiteral("relayext0000000001#p1");
+    QCOMPARE(runtime->relayPortConnect(
+                 &bg, chan, QStringLiteral("p1"),
+                 QStringLiteral("named")), 1);
+    QCOMPARE(popupEvents.size(), 3);
+    QCOMPARE(popupEvents.last().at(0).toString(),
+             QStringLiteral("__arora.portConnect"));
+    runtime->relayPortAccept(&popup, chan, QStringLiteral("pA"));
+    QCOMPARE(runtime->relayPortMessage(
+                 &bg, chan, QStringLiteral("p1"),
+                 QJsonValue(QStringLiteral("hello"))), 1);
+    QCOMPARE(popupEvents.size(), 4);
+    QCOMPARE(popupEvents.last().at(0).toString(),
+             QStringLiteral("__arora.portMessage"));
+    QCOMPARE(popupEvents.last().at(1).toJsonObject()
+             .value(QLatin1String("msg")).toString(),
+             QStringLiteral("hello"));
+
+    // ...and a foreign bridge cannot tear the channel down either.
+    runtime->relayPortDisconnect(&other, foreignChan,
+                                 QStringLiteral("pX"));
+    QCOMPARE(runtime->relayPortMessage(
+                 &popup, chan, QStringLiteral("pA"),
+                 QJsonValue(QStringLiteral("back"))), 1);
+
     // Teardown unregisters; a further send finds no peers.
     runtime->unregisterRelayContext(&popup);
     QCOMPARE(runtime->relaySend(
-                 &bg, QStringLiteral("m4"), QJsonObject()), 0);
+                 &bg, m4, QJsonObject()), 0);
     runtime->unregisterRelayContext(&bg);
     runtime->unregisterRelayContext(&other);
 
@@ -1973,6 +2032,31 @@ void tst_ExtensionManager::extensionEventSurfaces()
             " return e.n==='tabs.onUpdated'&&e.a[2]"
             "   &&e.a[2].url!==undefined;})"));
     QCOMPARE(aUrl.toBool(), true);
+
+    // QUAL03: chrome.tabs REPLIES obey the same permission — B's
+    // query returns the tabs but without url/title, A's 'tabs'
+    // permission keeps them visible.
+    ExtensionShimBackend *backendB =
+        runtime->host(idB)->bridge()->backend();
+    QVERIFY(backendB);
+    const QJsonObject queryArgs{
+        {QStringLiteral("query"), QJsonObject()}};
+    const QJsonArray bTabs = backendB->invoke(
+        QStringLiteral("tabs"), QStringLiteral("query"), queryArgs)
+        .value(QLatin1String("result")).toArray();
+    QVERIFY(!bTabs.isEmpty());
+    for (const QJsonValue &v : bTabs) {
+        QVERIFY(!v.toObject().contains(QLatin1String("url")));
+        QVERIFY(!v.toObject().contains(QLatin1String("title")));
+    }
+    ExtensionShimBackend *backendA0 =
+        runtime->host(idA)->bridge()->backend();
+    QVERIFY(backendA0);
+    const QJsonArray aTabs = backendA0->invoke(
+        QStringLiteral("tabs"), QStringLiteral("query"), queryArgs)
+        .value(QLatin1String("result")).toArray();
+    QVERIFY(!aTabs.isEmpty());
+    QVERIFY(aTabs.first().toObject().contains(QLatin1String("url")));
 
     // --- contextMenus: registry -> real menu -> onClicked -------------
     ExtensionShimBackend *backendA =

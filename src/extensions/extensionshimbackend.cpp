@@ -22,6 +22,7 @@
 #include "browserapplication.h"
 #include "browsermainwindow.h"
 #include "browserpaths.h"
+#include "extensionbackgroundhost.h"
 #include "extensioneventhub.h"
 #include "tabwidget.h"
 #include "webview.h"
@@ -572,6 +573,20 @@ QJsonObject ExtensionShimBackend::tabObject(WebView *view, int index,
     return tab;
 }
 
+QJsonObject ExtensionShimBackend::shapedTab(const QJsonObject &tab) const
+{
+    if (ExtensionBackgroundRuntime::instance()->seesUrls(
+            m_extensionId,
+            tab.value(QStringLiteral("url")).toString()))
+        return tab;
+    QJsonObject out = tab;
+    out.remove(QStringLiteral("url"));
+    out.remove(QStringLiteral("title"));
+    out.remove(QStringLiteral("favIconUrl"));
+    out.remove(QStringLiteral("pendingUrl"));
+    return out;
+}
+
 QJsonObject ExtensionShimBackend::invokeTabs(const QString &method,
                                              const QJsonObject &args)
 {
@@ -662,7 +677,7 @@ QJsonObject ExtensionShimBackend::invokeTabs(const QString &method,
                     if (!urlOk)
                         continue;
                 }
-                out.append(tab);
+                out.append(shapedTab(tab));
             }
         }
         return okReply(out);
@@ -680,7 +695,8 @@ QJsonObject ExtensionShimBackend::invokeTabs(const QString &method,
                 WebView *view = tw->webView(i);
                 if (ExtensionEventHub::trackable(view)
                         && idFor(view) == wanted)
-                    return okReply(tabObject(view, i, idFor(window)));
+                    return okReply(shapedTab(
+                        tabObject(view, i, idFor(window))));
             }
         }
         return errReply(QStringLiteral("not-found"));
@@ -703,7 +719,8 @@ QJsonObject ExtensionShimBackend::invokeTabs(const QString &method,
             return errReply(QStringLiteral("no-window"));
         const QUrl url(props.value(QStringLiteral("url")).toString());
         // The untrusted-input gate — an extension may only ask for
-        // navigable urls, never javascript:/data: payload execution.
+        // navigable urls (SEC09: data: passes as typed-equivalent;
+        // javascript: never does).
         if (!url.isEmpty()
                 && !WebView::isUrlAllowedOnUntrustedInput(url))
             return errReply(QStringLiteral("url-refused"));
@@ -716,7 +733,8 @@ QJsonObject ExtensionShimBackend::invokeTabs(const QString &method,
             view->loadUrl(url);
         const int index =
             window->tabWidget()->webViewIndex(view);
-        return okReply(tabObject(view, index, idFor(window)));
+        return okReply(shapedTab(
+            tabObject(view, index, idFor(window))));
     }
     if (method == QLatin1String("update")) {
         const QJsonObject props =
@@ -762,8 +780,8 @@ QJsonObject ExtensionShimBackend::invokeTabs(const QString &method,
         }
         if (props.value(QStringLiteral("active")).toBool())
             targetWindow->tabWidget()->setCurrentIndex(targetIndex);
-        return okReply(tabObject(target, targetIndex,
-                                 idFor(targetWindow)));
+        return okReply(shapedTab(
+            tabObject(target, targetIndex, idFor(targetWindow))));
     }
     return errReply(QStringLiteral("unimplemented"));
 }
