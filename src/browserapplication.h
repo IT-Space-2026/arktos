@@ -178,6 +178,16 @@ public:
     static QString defaultEngineId();
     // The managed daemon — nullptr unless tor mode is on.
     TorManager *torManager() const;
+#ifdef AUTOTESTS
+    // Test seam: only the --tor constructor path builds a manager —
+    // the autotests inject one (test-owned; it is NOT reparented) so
+    // the bootstrap navigation gate in WebView/WebPage has a daemon
+    // to watch.
+    void setTorManagerForTesting(TorManager *manager)
+    {
+        m_torManager = manager;
+    }
+#endif
     // Spawns an independent `arora --tor` process.  An optional start
     // url (CONT07's 'Open in New Tor Window') rides as its own argv
     // element — never a shell string — and is re-gated as untrusted

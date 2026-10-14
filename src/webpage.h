@@ -23,6 +23,7 @@
 #include "tabwidget.h"
 
 #include <qlist.h>
+#include <qpointer.h>
 #include <qset.h>
 #include <qsslcertificate.h>
 #include <qwebenginecertificateerror.h>
@@ -41,8 +42,10 @@ public:
 
 class QWebEngineLoadingInfo;
 class QWebChannel;
+class QTimer;
 class AutoFillBridge;
 class OpenSearchEngine;
+class TorManager;
 // See https://developer.mozilla.org/en/adding_search_engines_from_web_pages
 class JavaScriptExternalObject : public QObject
 {
@@ -219,6 +222,19 @@ private:
     // holds a candidate, declines otherwise.
     void handleClientCertificateSelection(
             QWebEngineClientCertificateSelection selection);
+    // TOR18: the bounded bootstrap auto-retry.  A genuine main-frame
+    // failure while the daemon is still coming up (or inside the
+    // cold-circuit stretch right after `ready`) is almost always
+    // bootstrap-transient — torArmRetry() holds the failed url and
+    // re-issues it exactly once when the network can plausibly serve
+    // it: the first BUILT circuit reported, else a bounded grace
+    // timer after `ready`.  A settled Failed/Stopped daemon never
+    // arms, so the honest error page stays.
+    void torArmRetry(const QUrl &url);
+    void torDisarmRetry();
+    void torStartRetryFallback();
+    void torFireRetry();
+    static TorManager *torManager();
 
 protected:
     static QString s_userAgent;
@@ -270,6 +286,21 @@ protected:
     // records "send nothing" — a negotiation's repeated challenges
     // reuse the decision instead of re-prompting.
     QHash<QString, QSslCertificate> m_clientCertChoices;
+    // TOR18: m_torRetryUrl is the failed navigation waiting for its
+    // wake-up (empty = none armed); m_torRetriedUrl records the url
+    // that already spent its one retry — the bound is spent on the
+    // arm, not the fire, so a retry that fails again can never loop.
+    QUrl m_torRetryUrl;
+    QUrl m_torRetriedUrl;
+    QPointer<TorManager> m_torRetryManager;
+    QTimer *m_torRetryTimer = nullptr;
+#ifdef AUTOTESTS
+public:
+    // Test seam: the armed bootstrap retry — the gate tests observe
+    // the arm/disarm directly.
+    QUrl torRetryUrlForTesting() const { return m_torRetryUrl; }
+private:
+#endif
 };
 
 #endif // WEBPAGE_H

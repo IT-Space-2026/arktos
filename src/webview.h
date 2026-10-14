@@ -79,6 +79,7 @@ class PictureInPicture;
 class ReaderMode;
 class ScriptBlockInfoBar;
 class TabWidget;
+class TorManager;
 class WebEnginePageAdapter;
 class WebPage;
 class WebView : public QWebEngineView
@@ -101,6 +102,13 @@ public:
     void loadSettings();
 
     void loadUrl(const QUrl &url, const QString &title = QString());
+#ifdef AUTOTESTS
+    // Test seam: the url loadUrl() is holding until the tor daemon
+    // reports ready — empty when nothing is queued.  Lets the
+    // bootstrap-gate tests assert the nav never reached the network
+    // stack.
+    QUrl torQueuedUrlForTesting() const { return m_torQueuedUrl; }
+#endif
     // Whether a url that arrived from outside the browser chrome — the
     // command line, a forwarded second-instance message, a drop, a
     // pasted selection — may be handed to loadUrl().  javascript: is
@@ -210,6 +218,17 @@ private:
     void openContextPosterInTarget(const QPoint &viewPos,
             TabWidget::OpenUrlIn target);
 
+    // TOR18: the bootstrap navigation gate.  While the managed daemon
+    // is still coming up, a remote loadUrl() is held in the view
+    // (m_torQueuedUrl) and dispatched when `ready` lands instead of
+    // dying at the fail-closed proxy — the user no longer has to
+    // reload a dead tab by hand.  Local schemes (qrc:/about:/data:/
+    // file:) never ride SOCKS and always dispatch immediately.
+    TorManager *torManager() const;
+    bool torMustQueue(const QUrl &url) const;
+    void torArmWakeup();
+    void torFlushQueuedLoad();
+
 private slots:
     void setProgress(int progress);
     void loadFinished();
@@ -247,6 +266,11 @@ private:
     // (no WebViewWithSearch parent) path; inside a tab the
     // WebViewWithSearch owns it and pdfView() resolves up the chain.
     QPointer<PdfView> m_pdfView;
+    // TOR18: a remote navigation held until TorManager::ready — the
+    // newest intent wins, so a second loadUrl() simply replaces it.
+    QUrl m_torQueuedUrl;
+    QString m_torQueuedTitle;
+    bool m_torWakeupArmed = false;
 };
 
 #endif

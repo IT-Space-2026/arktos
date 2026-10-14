@@ -136,6 +136,12 @@ bool TorManager::isReady() const
     return m_state == Ready;
 }
 
+qint64 TorManager::readyElapsed() const
+{
+    return (m_state == Ready && m_readyClock.isValid())
+        ? m_readyClock.elapsed() : -1;
+}
+
 bool TorManager::isRunning() const
 {
     return m_process && m_process->state() != QProcess::NotRunning;
@@ -456,6 +462,13 @@ void TorManager::setState(State state)
     if (m_state == state)
         return;
     m_state = state;
+    // TOR18: the warm-up clock runs only inside Ready — a leaving
+    // transition (restart, shutdown) invalidates it so readyElapsed()
+    // reports -1 again.
+    if (state == Ready)
+        m_readyClock.start();
+    else
+        m_readyClock.invalidate();
     emit stateChanged(state);
     if (state == Ready) {
         // A finished launch series — the retry budget is whole again
