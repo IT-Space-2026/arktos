@@ -171,6 +171,7 @@ private slots:
     void tabStripCompactHeight();
     void stopReloadState();
     void extensionActionButtons();
+    void navBarEditMode();
 };
 
 void tst_BrowserMainWindow::initTestCase()
@@ -5153,6 +5154,254 @@ void tst_BrowserMainWindow::extensionActionButtons()
     // tests or the real profile's extension list.
     extensions->removeExtension(extensionId);
     QTRY_VERIFY_WITH_TIMEOUT(findId().isEmpty(), 15000);
+}
+
+// NAVB03: nav-bar context menu + in-place edit mode.  Right-click
+// offers New Tab / New Private Tab / Edit Navigation Bar ahead of
+// the stock toolbar entries; edit mode drag-reorders items behind a
+// drop-gap line and exits via the toggle, Esc or an outside click.
+void tst_BrowserMainWindow::navBarEditMode()
+{
+    SubWindow *window = new SubWindow;
+    window->resize(1400, 700);
+    window->show();
+    QApplication::processEvents();
+
+    QToolBar *navBar = window->findChild<QToolBar *>(
+        QLatin1String("NavigationToolBar"));
+    QVERIFY(navBar);
+    QCOMPARE(navBar->contextMenuPolicy(), Qt::CustomContextMenu);
+    QAction *editAction = window->navBarEditAction();
+    QVERIFY(editAction);
+    QVERIFY(editAction->isCheckable());
+    QVERIFY(!window->isNavBarEditMode());
+
+    // The File menu's shared private action — the context menu must
+    // carry the same object, not a re-wired clone.
+    QMenu *fileMenu = window->appMenu()->actions().first()->menu();
+    QAction *filePrivate = nullptr;
+    for (QAction *action : fileMenu->actions()) {
+        if (action->text().contains(QLatin1String("Private")))
+            filePrivate = action;
+    }
+    QVERIFY(filePrivate);
+
+    // Menu leg — the exec()'d popup is inspected + closed from a
+    // timer (same pattern as the tab-rename context menu test).
+    QStringList labels;
+    QList<bool> visibleFlags;
+    QList<QAction *> menuActions;
+    const QByteArray grabDir = qgetenv("ARORA_NAVBAR_GRAB_DIR");
+    const auto inspectPopup = [&labels, &visibleFlags,
+                               &menuActions,
+                               &grabDir](const char *grabName) {
+        QMenu *menu = qobject_cast<QMenu *>(
+            QApplication::activePopupWidget());
+        if (!menu) {
+            const auto tops = QApplication::topLevelWidgets();
+            for (QWidget *top : tops) {
+                if (QMenu *m = qobject_cast<QMenu *>(top);
+                    m && m->isVisible()) {
+                    menu = m;
+                    break;
+                }
+            }
+        }
+        if (!menu)
+            return;
+        const auto acts = menu->actions();
+        for (QAction *action : acts) {
+            labels << (action->isSeparator()
+                           ? QStringLiteral("|")
+                           : action->text().remove(QLatin1Char('&')));
+            visibleFlags << action->isVisible();
+            menuActions << action;
+        }
+        if (!grabDir.isEmpty()) {
+            QDir().mkpath(QString::fromLocal8Bit(grabDir));
+            menu->grab().save(QString::fromLocal8Bit(grabDir)
+                              + QLatin1String(grabName));
+        }
+        menu->close();
+    };
+    QTimer::singleShot(50, navBar, [&inspectPopup]() {
+        inspectPopup("/navbar-context.png");
+    });
+    emit navBar->customContextMenuRequested(QPoint(6, 6));
+    QTRY_VERIFY_WITH_TIMEOUT(labels.size() >= 5, 5000);
+    QCOMPARE(labels.at(0), QLatin1String("New Tab"));
+    QCOMPARE(labels.at(1), QLatin1String("New Private Tab"));
+    QCOMPARE(labels.at(2), QLatin1String("|"));
+    QCOMPARE(labels.at(3), QLatin1String("Edit Navigation Bar"));
+    QCOMPARE(labels.at(4), QLatin1String("|"));
+    // Same QAction objects the File menu drives.
+    QCOMPARE(menuActions.at(0), window->tabWidget()->newTabAction());
+    QCOMPARE(menuActions.at(1), filePrivate);
+    // The stock QMainWindow toolbar toggles still ride below.
+    QVERIFY(labels.contains(QLatin1String("Navigation")));
+    QVERIFY(labels.contains(QLatin1String("Bookmarks")));
+
+    // Slot identities for the drag legs — the order READ02/HOME01
+    // lock: app-menu host, Back, Forward, Stop/Reload, Home, hidden
+    // reader, splitter, sidebar toggle.
+    const QList<QAction *> stock = navBar->actions();
+    QAction *back = stock.at(1);
+    QAction *stopReload = stock.at(3);
+    QAction *sidebarToggle = stock.last();
+    QWidget *stopButton = navBar->widgetForAction(stopReload);
+    QWidget *backButton = navBar->widgetForAction(back);
+    QVERIFY(stopButton && backButton);
+
+    // Normal mode: a click on a bar button still fires it.
+    QSignalSpy reloadSpy(stopReload, &QAction::triggered);
+    QTest::mouseClick(stopButton, Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(reloadSpy.count() == 1, 5000);
+
+    // Toggle on — the checkable entry latches, the frame is drawn.
+    editAction->setChecked(true);
+    QVERIFY(window->isNavBarEditMode());
+    QVERIFY(editAction->isChecked());
+    QVERIFY(navBar->styleSheet().contains(QLatin1String("dashed")));
+    QWidget *indicator = navBar->findChild<QWidget *>(
+        QLatin1String("navBarDropIndicator"));
+    QVERIFY(indicator);
+    QVERIFY(indicator->isHidden());
+
+    // In edit mode a plain click picks the item — it doesn't fire,
+    // and it doesn't drop out of the mode either.
+    reloadSpy.clear();
+    QTest::mouseClick(stopButton, Qt::LeftButton);
+    QTest::qWait(200);
+    QCOMPARE(reloadSpy.count(), 0);
+    QVERIFY(window->isNavBarEditMode());
+
+    // Drag leg: pick up Stop/Reload and drop it ahead of Back — the
+    // gap line shows while the drag is live, then the item moves.
+    // (Sibling-widget drops are aimed through the bar's own
+    // coordinates — QWidget::mapTo only walks up the parent chain.)
+    const QPoint start = stopButton->rect().center();
+    QTest::mousePress(stopButton, Qt::LeftButton, Qt::NoModifier,
+                      start);
+    const QPoint dropPos = stopButton->mapFrom(
+        navBar, QPoint(navBar->actionGeometry(back).left()
+                           + navBar->actionGeometry(back).width() / 4,
+                       navBar->actionGeometry(back).center().y()));
+    QTest::mouseMove(stopButton, dropPos);
+    QVERIFY(indicator->isVisible());
+    // Offscreen grab for visual review — framed bar + live gap line.
+    if (!grabDir.isEmpty()) {
+        navBar->grab().save(QString::fromLocal8Bit(grabDir)
+                            + QLatin1String("/navbar-edit-drag.png"));
+    }
+    QTest::mouseRelease(stopButton, Qt::LeftButton, Qt::NoModifier,
+                        dropPos);
+    QCOMPARE(navBar->actions().indexOf(stopReload), 1);
+    QCOMPARE(navBar->actions().indexOf(back), 2);
+    QVERIFY(indicator->isHidden());
+    QCOMPARE(reloadSpy.count(), 0);
+
+    // Second leg: the last item (sidebar toggle) can move into the
+    // middle — drops are not tail/boundary special cases.
+    QWidget *sidebarButton = navBar->widgetForAction(sidebarToggle);
+    QVERIFY(sidebarButton);
+    QTest::mousePress(sidebarButton, Qt::LeftButton, Qt::NoModifier,
+                      sidebarButton->rect().center());
+    const QPoint midDrop = sidebarButton->mapFrom(
+        navBar, QPoint(navBar->actionGeometry(stopReload).left()
+                           + navBar->actionGeometry(stopReload).width()
+                                 / 4,
+                       navBar->actionGeometry(stopReload).center()
+                           .y()));
+    QTest::mouseMove(sidebarButton, midDrop);
+    QTest::mouseRelease(sidebarButton, Qt::LeftButton, Qt::NoModifier,
+                        midDrop);
+    QCOMPARE(navBar->actions().indexOf(sidebarToggle), 1);
+    QCOMPARE(navBar->actions().indexOf(stopReload), 2);
+
+    // Esc exits — the entry unlatches, the sheet restores, the order
+    // the user left stays.
+    QTest::keyClick(window, Qt::Key_Escape);
+    QVERIFY(!window->isNavBarEditMode());
+    QVERIFY(!editAction->isChecked());
+    QVERIFY(!navBar->styleSheet().contains(QLatin1String("dashed")));
+    QCOMPARE(navBar->actions().indexOf(sidebarToggle), 1);
+
+    // Re-enter — a click anywhere outside the bar locks the order
+    // and exits (the click itself is passed through).
+    editAction->setChecked(true);
+    QVERIFY(window->isNavBarEditMode());
+    QTest::mouseClick(window->tabWidget(), Qt::LeftButton,
+                      Qt::NoModifier, QPoint(30, 30));
+    QVERIFY(!window->isNavBarEditMode());
+    QVERIFY(!editAction->isChecked());
+
+    // And normal mode fires bar buttons again.
+    reloadSpy.clear();
+    QTest::mouseClick(stopButton, Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(reloadSpy.count() >= 1, 5000);
+    closeWindow(window);
+
+    // Tor window: the violet sheet survives entering/leaving edit
+    // mode byte-identically, the private entry stays hidden like in
+    // the File menu, and reorder works under the tor chrome.
+    BrowserApplication::setTorMode(true);
+    SubWindow *torWindow = new SubWindow;
+    torWindow->resize(1200, 700);
+    torWindow->show();
+    QApplication::processEvents();
+    QToolBar *torBar = torWindow->findChild<QToolBar *>(
+        QLatin1String("NavigationToolBar"));
+    QVERIFY(torBar);
+    const QString torSheet = torBar->styleSheet();
+    QVERIFY(torSheet.contains(QLatin1String("#4a3372")));
+    QAction *torEdit = torWindow->navBarEditAction();
+    QVERIFY(torEdit);
+    torEdit->setChecked(true);
+    QVERIFY(torWindow->isNavBarEditMode());
+    QVERIFY(torBar->styleSheet().contains(QLatin1String("#4a3372")));
+    QVERIFY(torBar->styleSheet().contains(QLatin1String("dashed")));
+    if (!grabDir.isEmpty()) {
+        torBar->grab().save(QString::fromLocal8Bit(grabDir)
+                            + QLatin1String("/navbar-edit-tor.png"));
+    }
+
+    labels.clear();
+    visibleFlags.clear();
+    menuActions.clear();
+    QTimer::singleShot(50, torBar, [&inspectPopup]() {
+        inspectPopup("/navbar-context-tor.png");
+    });
+    emit torBar->customContextMenuRequested(QPoint(6, 6));
+    QTRY_VERIFY_WITH_TIMEOUT(labels.size() >= 3, 5000);
+    QCOMPARE(labels.at(0), QLatin1String("New Tab"));
+    // The shared private action is hidden on tor — the row exists in
+    // the action list but never paints, matching the File menu.
+    QCOMPARE(labels.at(1), QLatin1String("New Private Tab"));
+    QVERIFY(!visibleFlags.at(1));
+
+    const QList<QAction *> torStock = torBar->actions();
+    QAction *torHome = torStock.at(4);
+    QAction *torBack = torStock.at(1);
+    QWidget *torHomeButton = torBar->widgetForAction(torHome);
+    QWidget *torBackButton = torBar->widgetForAction(torBack);
+    QVERIFY(torHomeButton && torBackButton);
+    QTest::mousePress(torHomeButton, Qt::LeftButton, Qt::NoModifier,
+                      torHomeButton->rect().center());
+    const QPoint torDrop = torHomeButton->mapFrom(
+        torBar, QPoint(torBar->actionGeometry(torBack).left()
+                           + torBar->actionGeometry(torBack).width()
+                                 / 4,
+                       torBar->actionGeometry(torBack).center().y()));
+    QTest::mouseMove(torHomeButton, torDrop);
+    QTest::mouseRelease(torHomeButton, Qt::LeftButton, Qt::NoModifier,
+                        torDrop);
+    QCOMPARE(torBar->actions().indexOf(torHome), 1);
+
+    torEdit->setChecked(false);
+    QVERIFY(!torWindow->isNavBarEditMode());
+    QCOMPARE(torBar->styleSheet(), torSheet);
+    closeWindow(torWindow);
+    BrowserApplication::setTorMode(false);
 }
 
 QTEST_MAIN(tst_BrowserMainWindow)

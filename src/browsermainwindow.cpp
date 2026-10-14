@@ -698,6 +698,10 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
 
 BrowserMainWindow::~BrowserMainWindow()
 {
+    // NAVB03: an active edit mode leaves a qApp event filter and
+    // possibly an override cursor armed — detach both before the
+    // window object dies or the filter would fire on a dead this.
+    setNavBarEditMode(false);
     m_autoSaver->changeOccurred();
     m_autoSaver->saveIfNeccessary();
 }
@@ -1798,6 +1802,8 @@ void BrowserMainWindow::retranslate()
     m_appMenuButton->setToolTip(tr("Arora menu"));
     m_appMenuButton->setAccessibleName(tr("Arora menu"));
 
+    m_navBarEditAction->setText(tr("Edit Navigation Bar"));
+
     m_stopReloadAction->setText(tr("Reload / Stop"));
     updateStopReloadActionText(false);
 }
@@ -1991,6 +1997,20 @@ void BrowserMainWindow::setupToolBar()
     sizes << (int)((double)splitterWidth * .20);
     m_navigationSplitter->setSizes(sizes);
 
+    // NAVB03: right-click on the bar offers New Tab / New Private Tab
+    // and the edit-mode toggle ahead of the stock QMainWindow toolbar
+    // entries (see showNavigationBarContextMenu).  The event only
+    // reaches the bar from chrome surfaces — the location bar and
+    // search field keep their own text-edit menus.
+    m_navBarEditAction = new QAction(this);
+    m_navBarEditAction->setObjectName(QLatin1String("navBarEditAction"));
+    m_navBarEditAction->setCheckable(true);
+    connect(m_navBarEditAction, &QAction::toggled,
+            this, &BrowserMainWindow::setNavBarEditMode);
+    m_navigationBar->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_navigationBar, &QWidget::customContextMenuRequested,
+            this, &BrowserMainWindow::showNavigationBarContextMenu);
+
     // MENU08: bigger text under the Arora button — the dropdown and
     // its whole submenu tree paint at ~120% of the platform menu font
     // (MENU07's larger button pairs with a proportionally larger
@@ -2170,6 +2190,8 @@ void BrowserMainWindow::updateSidebarGripPlacement()
 
 bool BrowserMainWindow::eventFilter(QObject *object, QEvent *event)
 {
+    if (m_navBarEditMode && navBarEditEvent(object, event))
+        return true;
     if (object == m_sidebarDock) {
         // RSZ02: a hidden dock ignores resizeDocks, so the stored
         // width lands again on the first show.  Afterwards every
@@ -2188,6 +2210,244 @@ bool BrowserMainWindow::eventFilter(QObject *object, QEvent *event)
         }
     }
     return QMainWindow::eventFilter(object, event);
+}
+
+// NAVB03: the bar's context menu — New Tab and New Private Tab head
+// it (the same QAction objects the File menu drives, so shortcuts,
+// icons and the tor-window hidden state all follow the menu), then
+// the checkable Edit Navigation Bar entry.  CustomContextMenu on the
+// bar pre-empts QMainWindow's "hide toolbar" popup, so its entries
+// are appended below — nothing the bar used to offer is lost.
+void BrowserMainWindow::showNavigationBarContextMenu(
+    const QPoint &position)
+{
+    QMenu *menu = createPopupMenu();
+    if (!menu)
+        menu = new QMenu(m_navigationBar);
+    const bool hadStockEntries = !menu->actions().isEmpty();
+    QAction *first = menu->actions().value(0);
+    menu->insertAction(first, m_tabWidget->newTabAction());
+    menu->insertAction(first, m_fileNewPrivateTabAction);
+    menu->insertSeparator(first);
+    menu->insertAction(first, m_navBarEditAction);
+    if (hadStockEntries)
+        menu->insertSeparator(first);
+    menu->exec(m_navigationBar->mapToGlobal(position));
+    delete menu;
+}
+
+bool BrowserMainWindow::isNavBarEditMode() const
+{
+    return m_navBarEditMode;
+}
+
+QAction *BrowserMainWindow::navBarEditAction() const
+{
+    return m_navBarEditAction;
+}
+
+// NAVB03: edit mode — every bar item (the location-bar splitter
+// counts as one item; the shield/engine surfaces live inside the
+// location bar itself and move with it) can be dragged to a new
+// slot.  While on, presses on the bar select instead of firing, a
+// ClosedHand drag shows a highlight gap line, and release moves the
+// item.  Exit paths: the context-menu toggle, Esc, or a click
+// anywhere outside the bar.  The order stays in memory for this
+// window — persistence + Reset are NAVB04.
+void BrowserMainWindow::setNavBarEditMode(bool enabled)
+{
+    if (m_navBarEditMode == enabled)
+        return;
+    m_navBarEditMode = enabled;
+    // Keeps the checkable entry honest when the mode is left through
+    // Esc or an outside click rather than the menu itself.
+    if (m_navBarEditAction)
+        m_navBarEditAction->setChecked(enabled);
+    if (enabled) {
+        qApp->installEventFilter(this);
+        // Frame the bar — the rule is appended to whatever sheet the
+        // window already carries (tor's violet one included), so it
+        // wins the border property without touching anything else.
+        m_navBarSavedStyleSheet = m_navigationBar->styleSheet();
+        const QString frame = m_navigationBar->palette()
+            .color(QPalette::Highlight).name();
+        m_navigationBar->setStyleSheet(m_navBarSavedStyleSheet
+            + QStringLiteral("\nQToolBar { border: 1px dashed %1; }")
+                  .arg(frame));
+        m_navigationBar->setCursor(Qt::OpenHandCursor);
+        if (!m_navBarDropIndicator) {
+            m_navBarDropIndicator = new QWidget(m_navigationBar);
+            m_navBarDropIndicator->setObjectName(
+                QLatin1String("navBarDropIndicator"));
+            m_navBarDropIndicator->setAutoFillBackground(true);
+            m_navBarDropIndicator->setBackgroundRole(
+                QPalette::Highlight);
+            m_navBarDropIndicator->hide();
+        }
+    } else {
+        qApp->removeEventFilter(this);
+        m_navigationBar->setStyleSheet(m_navBarSavedStyleSheet);
+        m_navBarSavedStyleSheet.clear();
+        m_navigationBar->unsetCursor();
+        endNavBarDrag();
+    }
+}
+
+// The action the dragged item should land before — nullptr appends
+// it at the bar's end.  Hidden items are skipped: they hold their
+// index slot while invisible (the reader button re-appears wherever
+// its slot ended up).  The bar is QMainWindow-movable, so the gap
+// math follows its live orientation rather than assuming horizontal.
+QAction *BrowserMainWindow::navBarDropTarget(
+    const QPoint &barPos) const
+{
+    const bool horizontal =
+        m_navigationBar->orientation() == Qt::Horizontal;
+    const QList<QAction *> actions = m_navigationBar->actions();
+    for (QAction *action : actions) {
+        if (action == m_navBarDragAction || !action->isVisible())
+            continue;
+        const QRect rect = m_navigationBar->actionGeometry(action);
+        if (rect.isNull())
+            continue;
+        const int pos = horizontal ? barPos.x() : barPos.y();
+        const int mid = horizontal ? rect.center().x()
+                                   : rect.center().y();
+        if (pos < mid)
+            return action;
+    }
+    return nullptr;
+}
+
+void BrowserMainWindow::updateNavBarDropIndicator(
+    const QPoint &barPos)
+{
+    const bool horizontal =
+        m_navigationBar->orientation() == Qt::Horizontal;
+    m_navBarDropBefore = navBarDropTarget(barPos);
+    int at = horizontal ? m_navigationBar->width()
+                        : m_navigationBar->height();
+    if (m_navBarDropBefore) {
+        const QRect rect =
+            m_navigationBar->actionGeometry(m_navBarDropBefore);
+        at = horizontal ? rect.left() : rect.top();
+    } else {
+        const QList<QAction *> actions = m_navigationBar->actions();
+        for (int i = actions.size() - 1; i >= 0; --i) {
+            QAction *action = actions.at(i);
+            if (action == m_navBarDragAction || !action->isVisible())
+                continue;
+            const QRect rect = m_navigationBar->actionGeometry(action);
+            if (!rect.isNull()) {
+                at = (horizontal ? rect.right() : rect.bottom()) + 1;
+                break;
+            }
+        }
+    }
+    m_navBarDropIndicator->setGeometry(
+        horizontal ? QRect(at - 1, 2, 3, m_navigationBar->height() - 4)
+                   : QRect(2, at - 1, m_navigationBar->width() - 4, 3));
+    m_navBarDropIndicator->show();
+    m_navBarDropIndicator->raise();
+}
+
+void BrowserMainWindow::commitNavBarDrag()
+{
+    QAction *dragged = m_navBarDragAction;
+    QAction *before = m_navBarDropBefore;
+    if (!dragged || before == dragged
+        || !m_navigationBar->actions().contains(dragged))
+        return;
+    m_navigationBar->removeAction(dragged);
+    if (before)
+        m_navigationBar->insertAction(before, dragged);
+    else
+        m_navigationBar->addAction(dragged);
+    // The remove/insert only marks the layout dirty — actionGeometry
+    // stays stale until the next relayout.  Activate now so a second
+    // drag (and any index/geometry probe) sees the new order.
+    m_navigationBar->layout()->activate();
+}
+
+void BrowserMainWindow::endNavBarDrag()
+{
+    if (m_navBarDragging) {
+        m_navBarDragging = false;
+        QApplication::restoreOverrideCursor();
+    }
+    m_navBarDragAction = nullptr;
+    m_navBarDropBefore = nullptr;
+    if (m_navBarDropIndicator)
+        m_navBarDropIndicator->hide();
+}
+
+// Runs as a qApp-level filter while edit mode is on so drags that
+// start deep inside a bar widget (the location field, the splitter)
+// are still picked up — installing per-widget would chase dynamic
+// children like per-tab location bars.
+bool BrowserMainWindow::navBarEditEvent(QObject *object, QEvent *event)
+{
+    QWidget *widget = qobject_cast<QWidget *>(object);
+    switch (event->type()) {
+    case QEvent::KeyPress:
+        if (static_cast<QKeyEvent *>(event)->key() == Qt::Key_Escape
+            && !QApplication::activePopupWidget()) {
+            setNavBarEditMode(false);
+            return true;
+        }
+        return false;
+    case QEvent::MouseButtonPress: {
+        QMouseEvent *mouseEvent = static_cast<QMouseEvent *>(event);
+        if (mouseEvent->button() != Qt::LeftButton || !widget)
+            return false;
+        const QPoint barPos = m_navigationBar->mapFromGlobal(
+            mouseEvent->globalPosition().toPoint());
+        if (widget == m_navigationBar
+            || m_navigationBar->isAncestorOf(widget)) {
+            // In edit mode a press picks the item — it never fires
+            // the button underneath.
+            m_navBarDragAction = m_navigationBar->actionAt(barPos);
+            m_navBarDragStart = barPos;
+            m_navBarDragging = false;
+            m_navBarDropBefore = nullptr;
+            return true;
+        }
+        // A click anywhere else locks the order and exits — the
+        // click itself is passed through so it lands normally.
+        // Popup clicks (the bar's own context menu) don't count.
+        if (!QApplication::activePopupWidget())
+            setNavBarEditMode(false);
+        return false;
+    }
+    case QEvent::MouseMove: {
+        if (!m_navBarDragAction)
+            return false;
+        QMouseEvent *mouseEvent = static_cast<QMouseEvent *>(event);
+        const QPoint barPos = m_navigationBar->mapFromGlobal(
+            mouseEvent->globalPosition().toPoint());
+        if (!m_navBarDragging) {
+            if ((barPos - m_navBarDragStart).manhattanLength()
+                    < QApplication::startDragDistance())
+                return true;
+            m_navBarDragging = true;
+            QApplication::setOverrideCursor(Qt::ClosedHandCursor);
+        }
+        updateNavBarDropIndicator(barPos);
+        return true;
+    }
+    case QEvent::MouseButtonRelease:
+        if (!m_navBarDragAction)
+            return false;
+        if (m_navBarDragging)
+            commitNavBarDrag();
+        endNavBarDrag();
+        return true;
+    case QEvent::MouseButtonDblClick:
+        return widget && (widget == m_navigationBar
+                          || m_navigationBar->isAncestorOf(widget));
+    default:
+        return false;
+    }
 }
 
 SidebarPanel *BrowserMainWindow::sidebarPanel() const

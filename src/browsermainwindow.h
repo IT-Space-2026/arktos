@@ -125,6 +125,10 @@ public:
     // MENU06: the app-menu button's dropdown — it shares the real
     // top-level menus (same QMenu objects as the menubar).
     QMenu *appMenu() const;
+    // NAVB03: nav-bar edit mode state — exposed for tests; the toggle
+    // lives in the bar's context menu.
+    bool isNavBarEditMode() const;
+    QAction *navBarEditAction() const;
     // CMD01: lazily created Ctrl+Shift+P command palette bound to this
     // window.
     CommandPalette *commandPalette();
@@ -213,6 +217,11 @@ private slots:
     void openActionUrl(QAction *action);
     void showWindow();
     void swapFocus();
+    // NAVB03: the nav bar's context menu — New Tab / New Private Tab
+    // on top, then the edit-mode toggle, then the stock QMainWindow
+    // toolbar entries.
+    void showNavigationBarContextMenu(const QPoint &position);
+    void setNavBarEditMode(bool enabled);
 
     void printRequested(WebView *view);
 
@@ -230,6 +239,15 @@ private:
     void persistSidebarWidth(int width);
     void updateSidebarGripPlacement();
     void updateStopReloadActionText(bool loading);
+    // NAVB03: edit-mode machinery — navBarEditEvent runs the qApp
+    // event filter while the mode is on (press picks a bar item,
+    // drag shows the drop gap, release reorders); the rest are the
+    // drop-target math and the drag lifecycle.
+    bool navBarEditEvent(QObject *object, QEvent *event);
+    QAction *navBarDropTarget(const QPoint &barPos) const;
+    void updateNavBarDropIndicator(const QPoint &barPos);
+    void commitNavBarDrag();
+    void endNavBarDrag();
     // MENU06: applies m_menuBarVisible — a plain visibility flip on
     // normal windows, but on tor windows the menu row doubles as the
     // drawn title bar (TOR11) so it stays put and the top-level menu
@@ -356,6 +374,19 @@ private:
     // extensions there).
     ExtensionActionBar *m_extensionActionBar = nullptr;
     ToolbarSearch *m_toolbarSearch;
+    // NAVB03: in-place nav-bar customization.  The checkable context
+    // menu entry toggles edit mode; while on, every bar item — the
+    // location-bar splitter included — can be dragged to a new slot
+    // (m_navBarDropIndicator marks the gap).  The order is per-window
+    // in-memory; persisted order + Reset land in NAVB04.
+    QAction *m_navBarEditAction = nullptr;
+    bool m_navBarEditMode = false;
+    bool m_navBarDragging = false;
+    QPointer<QAction> m_navBarDragAction;
+    QPointer<QAction> m_navBarDropBefore;
+    QPoint m_navBarDragStart;
+    QWidget *m_navBarDropIndicator = nullptr;
+    QString m_navBarSavedStyleSheet;
 #if defined(Q_OS_MACOS)
     QFrame *m_bookmarksToolbarFrame;
 #endif
