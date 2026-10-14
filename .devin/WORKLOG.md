@@ -855,3 +855,4 @@
 - 2026-10-14 MERGEWATCH: rust-work skipped — dirty src/main.cpp in this tree still conflicts with lane's ENG28 commit (agent mid-run); ui-work 0 commits ahead, no merge
 - 2026-10-14 MERGEWATCH: rust-work skipped — dirty src/main.cpp + ChangeLog + README.md in this tree conflict with lane's ENG28 commit (agent mid-run); ui-work 0 commits ahead, no merge
 - 2026-10-14 MERGEWATCH: rust-work skipped — dirty ChangeLog + src/main.cpp in this tree conflict with lane's commit (agent mid-run); ui-work skipped — dirty ChangeLog (agent mid-run), no merges
+- 2026-10-14 MERGEWATCH: rust-work skipped — dirty ChangeLog + README.md + src/main.cpp conflict with lane's ENG28 commit (agent mid-run); ui-work skipped — dirty ChangeLog (agent mid-run), no merges
