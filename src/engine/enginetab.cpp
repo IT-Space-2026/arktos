@@ -183,54 +183,6 @@ void EngineTab::reload()
         m_page->reload();
 }
 
-bool EngineTab::restartEngine()
-{
-    if (!m_backend || !m_profile)
-        return false;
-    const QUrl lastUrl = m_page ? m_page->url() : QUrl();
-
-    // The dead objects go first — the engine's single-instance slot
-    // only frees when the old view's SeInstance is destroyed, so the
-    // recreate below only works after this teardown.
-    if (QWidget *view = m_page ? m_page->view() : nullptr) {
-        m_layout->removeWidget(view);
-        delete view;
-    }
-    delete m_page;
-    m_page = nullptr;
-    m_progress = 0;
-
-    m_page = m_backend->createPage(m_profile, this);
-    if (!m_page) {
-        // Honest failure — the engine could not restart in-process;
-        // a browser restart is the only remaining recovery.
-        if (!m_notice) {
-            m_notice = new QLabel(this);
-            m_notice->setWordWrap(true);
-            m_notice->setContentsMargins(12, 12, 12, 12);
-            m_notice->setAlignment(Qt::AlignTop | Qt::AlignLeft);
-            m_layout->addWidget(m_notice);
-        }
-        m_notice->setText(
-            tr("The %1 engine could not be restarted. Reload this "
-               "tab in Chromium to keep browsing, or restart Arora "
-               "to try %1 again.").arg(m_backend->displayName()));
-        m_layout->setCurrentWidget(m_notice);
-        emit pageRecreated();
-        return false;
-    }
-    if (QWidget *view = m_backend->createView(m_page, this)) {
-        m_layout->addWidget(view);
-        m_layout->setCurrentWidget(view);
-        wireViewRecovery(view);
-    }
-    wirePage();
-    emit pageRecreated();
-    if (lastUrl.isValid())
-        m_page->load(lastUrl);
-    return true;
-}
-
 void EngineTab::showPdfDocument(const QString &localPath,
                                 const QUrl &sourceUrl)
 {
