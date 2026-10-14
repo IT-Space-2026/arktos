@@ -853,3 +853,4 @@
 - 2026-10-14 MERGEWATCH: ui-work merged — include-only conflict in autotests/settingsdialog/tst_settingsdialog.cpp (kept both qheaderview.h + qhostaddress.h); WORKLOG/ChangeLog auto-unioned, build ok
 - 2026-10-14 MERGEWATCH: rust-work skipped — dirty src/main.cpp in this tree conflicts with lane's ENG28 commit (agent mid-run); ui-work 0 commits ahead, no merge
 - 2026-10-14 MERGEWATCH: rust-work skipped — dirty src/main.cpp in this tree still conflicts with lane's ENG28 commit (agent mid-run); ui-work 0 commits ahead, no merge
+- 2026-10-14 MERGEWATCH: rust-work skipped — dirty src/main.cpp + ChangeLog + README.md in this tree conflict with lane's ENG28 commit (agent mid-run); ui-work 0 commits ahead, no merge
