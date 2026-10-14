@@ -699,6 +699,12 @@ UI:
   and new window — normal, private and tor alike (tor keeps its
   violet chrome) — and the menu's "Reset Navigation Bar" restores
   the stock layout (NAVB03, NAVB04).
+- The Preferences > Extensions table no longer wastes its width on
+  the Source column: Version, Status and Source now hug their short
+  fixed strings (Source stays user-resizable at a compact width)
+  while the long free-text column takes the leftover space, so the
+  description sits immediately right of Source instead of stranded
+  at the far right (EXT10).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

@@ -484,6 +484,28 @@ SettingsDialog::SettingsDialog(QWidget *parent)
         extensionsHintLabel->setText(
             tr("This build of Qt WebEngine was compiled without extension support."));
     }
+
+    // EXT10: header sizing.  Version/Status hug their short fixed
+    // strings and Source keeps a small interactive width, while the
+    // long free-text column takes the leftover space — EXT06's
+    // Description lands last once it merges in; until then Name
+    // carries the stretch so Source (Built-in/Installed/Session)
+    // can't balloon and strand a sliver column at the far right.
+    // This block must run after EXT06's sizing lines so these modes
+    // win if they linger post-merge.
+    QHeaderView *extensionsHeader = extensionsTree->header();
+    extensionsHeader->setStretchLastSection(false);
+    extensionsHeader->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    extensionsHeader->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    extensionsHeader->setSectionResizeMode(3, QHeaderView::Interactive);
+    extensionsHeader->resizeSection(3, 100);
+    if (extensionsTree->columnCount() > 4) {
+        extensionsHeader->resizeSection(0, 200);
+        extensionsHeader->setSectionResizeMode(
+            extensionsTree->columnCount() - 1, QHeaderView::Stretch);
+    } else {
+        extensionsHeader->setSectionResizeMode(0, QHeaderView::Stretch);
+    }
     refreshExtensions();
     refreshUserScripts();
 
