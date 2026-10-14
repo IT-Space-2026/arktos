@@ -547,6 +547,11 @@ UI:
   properly indented beneath its parent checkbox. Background session
   tabs still restore their title and icon without loading until
   first activated; saved picks carry over (PREF05).
+- The Arora app menu now has a direct "Preferences..." entry between
+  Tools and Help — the same item as File > Preferences, so the
+  shortcut and behavior are identical — on every window type,
+  including Tor windows where the menu button is the only menu
+  (MENU11).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

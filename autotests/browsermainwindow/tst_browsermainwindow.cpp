@@ -969,25 +969,55 @@ void tst_BrowserMainWindow::appMenuButton()
     QCOMPARE(firstWidget, button->parentWidget());
 
     // The dropdown lists the real top-level menus in menubar order —
-    // the same QMenu objects the menubar holds, not clones.
+    // the same QMenu objects the menubar holds, not clones.  MENU11:
+    // a direct Preferences... leaf sits bracketed by separators
+    // between the Tools and Help entries; every other row is a
+    // submenu.
     QMenu *appMenu = window->appMenu();
     QVERIFY(appMenu);
     QCOMPARE(button->menu(), appMenu);
     QStringList titles;
+    QAction *appPrefs = nullptr;
     for (QAction *menuAction : appMenu->actions()) {
-        QVERIFY(menuAction->menu());
-        titles << menuAction->text().remove(QLatin1Char('&'));
+        if (menuAction->isSeparator())
+            continue;
+        const QString text =
+            menuAction->text().remove(QLatin1Char('&'));
+        if (!menuAction->menu()) {
+            QCOMPARE(text, QLatin1String("Preferences..."));
+            appPrefs = menuAction;
+        }
+        titles << text;
     }
     QCOMPARE(titles, QStringList()
              << QLatin1String("File") << QLatin1String("Edit")
              << QLatin1String("View") << QLatin1String("History")
              << QLatin1String("Bookmarks") << QLatin1String("Window")
-             << QLatin1String("Tools") << QLatin1String("Help"));
+             << QLatin1String("Tools")
+             << QLatin1String("Preferences...")
+             << QLatin1String("Help"));
+    const QList<QAction *> appActions = appMenu->actions();
+    int toolsIndex = -1;
+    for (int i = 0; i < appActions.count(); ++i) {
+        if (appActions.at(i)->text().remove(QLatin1Char('&'))
+                == QLatin1String("Tools"))
+            toolsIndex = i;
+    }
+    QVERIFY(toolsIndex >= 0 && toolsIndex + 4 < appActions.count());
+    QVERIFY(appActions.at(toolsIndex + 1)->isSeparator());
+    QCOMPARE(appActions.at(toolsIndex + 2), appPrefs);
+    QVERIFY(appActions.at(toolsIndex + 3)->isSeparator());
+    QCOMPARE(appActions.at(toolsIndex + 4)->text()
+                 .remove(QLatin1Char('&')),
+             QLatin1String("Help"));
     const QList<QAction *> barMenus = window->menuBar()->actions();
-    QCOMPARE(barMenus.count(), appMenu->actions().count());
+    QList<QAction *> appSubmenus;
+    for (QAction *menuAction : appActions)
+        if (menuAction->menu())
+            appSubmenus << menuAction;
+    QCOMPARE(barMenus.count(), appSubmenus.count());
     for (int i = 0; i < barMenus.count(); ++i)
-        QCOMPARE(barMenus.at(i)->menu(),
-                 appMenu->actions().at(i)->menu());
+        QCOMPARE(barMenus.at(i)->menu(), appSubmenus.at(i)->menu());
 
     // MENU08: the dropdown paints ~120% of the platform menu font,
     // and the growth reaches every shared top-level menu plus the
@@ -1003,7 +1033,10 @@ void tst_BrowserMainWindow::appMenuButton()
     else
         QVERIFY(menuFont.pixelSize() > plainMenu.font().pixelSize());
     for (QAction *menuAction : appMenu->actions()) {
+        // MENU11: the direct Preferences... leaf has no submenu.
         QMenu *sub = menuAction->menu();
+        if (!sub)
+            continue;
         QCOMPARE(sub->font(), menuFont);
         for (QAction *innerAction : sub->actions())
             if (QMenu *nested = innerAction->menu())
@@ -1072,6 +1105,27 @@ void tst_BrowserMainWindow::appMenuButton()
     newTab->trigger();
     QCOMPARE(window->tabWidget()->count(), tabs + 1);
 
+    // MENU11: the app-menu leaf IS the File > Preferences QAction —
+    // one object in both menus — and triggering it opens the
+    // settings tab.
+    QAction *filePrefs = nullptr;
+    for (QAction *action : fileMenu->actions()) {
+        if (action->text().remove(QLatin1Char('&'))
+                == QLatin1String("Preferences..."))
+            filePrefs = action;
+    }
+    QVERIFY(filePrefs);
+    QCOMPARE(appPrefs, filePrefs);
+    QCOMPARE(appPrefs->shortcut(),
+             QKeySequence(QStringLiteral("Ctrl+,")));
+    appPrefs->trigger();
+    int prefsTab = -1;
+    for (int i = 0; i < window->tabWidget()->count(); ++i)
+        if (window->tabWidget()->widget(i)->inherits("SettingsDialog"))
+            prefsTab = i;
+    QVERIFY(prefsTab >= 0);
+    window->tabWidget()->closeTab(prefsTab);
+
     // The window-state blob round-trips the flag both ways — hidden
     // stays hidden, an explicit show survives restore too.
     const QByteArray hiddenState = window->saveState();
@@ -1136,6 +1190,17 @@ void tst_BrowserMainWindow::appMenuButton()
     const bool torRowBare = torWindow->menuBar()->actions().isEmpty();
     const int torMenuCount = torWindow->appMenu()
         ? torWindow->appMenu()->actions().count() : -1;
+    // MENU11: the tor dropdown carries the same direct leaf between
+    // Tools and Help.
+    bool torPrefsLeaf = false;
+    if (torWindow->appMenu()) {
+        for (QAction *action : torWindow->appMenu()->actions()) {
+            if (!action->menu() && !action->isSeparator()
+                && action->text().remove(QLatin1Char('&'))
+                       == QLatin1String("Preferences..."))
+                torPrefsLeaf = true;
+        }
+    }
     const bool torBigIcon = torButton
         && torButton->iconSize() == QSize(36, 36);
     // MENU08: the violet window's dropdown is enlarged identically —
@@ -1187,7 +1252,8 @@ void tst_BrowserMainWindow::appMenuButton()
     QCOMPARE(torMenuFont, menuFont);
     QVERIFY(torRowVisible);
     QVERIFY(torRowBare);
-    QCOMPARE(torMenuCount, 8);
+    QCOMPARE(torMenuCount, 11);
+    QVERIFY(torPrefsLeaf);
     QVERIFY(lightPixels > 0);
     QVERIFY(torRowRepopulated);
     QVERIFY(torRowBareAgain);

@@ -1878,8 +1878,18 @@ void BrowserMainWindow::setupToolBar()
     // menubar can hide without losing anything.  First widget added,
     // so it anchors the bar ahead of Back on every window type.
     m_appMenu = new QMenu(this);
-    for (QMenu *menu : m_topMenus)
+    for (QMenu *menu : m_topMenus) {
         m_appMenu->addMenu(menu);
+        // MENU11: Preferences is also a direct app-menu entry right
+        // after Tools — the same QAction object as File > Preferences
+        // (a QAction can live in several menus; each still fires
+        // preferences()), so text, shortcut and icon cannot drift.
+        if (menu == m_toolsMenu) {
+            m_appMenu->addSeparator();
+            m_appMenu->addAction(m_filePreferencesAction);
+            m_appMenu->addSeparator();
+        }
+    }
 
     // MENU09: a QToolButton parented straight to a QToolBar is laid
     // out AND painted at the bar's iconSize — Qt's toolbar path
