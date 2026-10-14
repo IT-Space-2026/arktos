@@ -36,7 +36,6 @@ public:
     };
     SourceHighlighter(QTextDocument *document);
 
-    QTextCharFormat getFormatFor(Construct construct);
     void setFormatFor(Construct construct, QTextCharFormat &format);
 
 protected:

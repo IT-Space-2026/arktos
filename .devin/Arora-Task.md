@@ -301,11 +301,12 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | HIST03 | History sidebar lacks period-filter combo + clear button — details below | done | 0 | period combo (Today/This Week/This Month/All) via new HistoryPeriodFilterModel between tree model and search proxy (composes w/ text search, persists sidebar/historyPeriod, default All) + clear icon button on new shared HistoryManager::confirmClear — menu clearHistoryDialog rewired to it; verified: tst_historymanager 49/49 incl periodFilter, sidebarHistoryControls PASS, offscreen grab shows search+All combo+clear button, make check 4 gates PASS, suite clean except 5 documented pre-existing browsermainwindow flakes |
 | NOTE02 | Notes slice A — multi-note model + list/editor + add/delete + persist + migrate — details below | done | 1 | NotesModel (QAbstractListModel, per-profile <data>/notes/<profile>.json via AutoSaver, OTR volatile) + sidebar 3-state stack (empty/list/editor) +/−/back, delete-confirm, sidebar/notes→note #1 migration; ENGINE.md EXT15 shim row backfilled (gate was failing pre-task). Verified: tst_notesmodel 9/9, sidebarPanel leg PASS, --quit-after-load exit 0, make check 4 gates PASS, suite fails only on 6 documented pre-existing legs |
 | NOTE03 | Notes slice B — search, selection-to-note, markdown flag, page-URL insert — details below | done | 0 | Search proxy + selection-to-note + persisted markdown flag/render + URL insert landed; tst_notesmodel 10/10, sidebarPanel+webview legs PASS, gates PASS, only known pre-existing fails |
-| QUAL01 | Audit 1/5: dead code + redundant-implementation sweep, fix findings — details below | pending | 0 | |
+| QUAL01 | Audit 1/5: dead code + redundant-implementation sweep, fix findings — details below | done | 3 | ~20 dead methods/signals/members removed (Engine::Page createWindow+signal surface, ChromeBridge handshake plumbing, ext-host accessors); setHomeToCurrentPage rewired to currentTab() + test re-pointed at a real window; dupes audited = intentional, documented. Verified: 0-warning build, 4 check gates PASS, suite 82 programs green except 5 documented pre-existing browsermainwindow legs, --quit-after-load rc=0 |
 | QUAL02 | Audit 2/5: memory leaks — check-leaks + ownership/FFI-boundary audit, fix findings — details below | pending | 0 | |
 | QUAL03 | Audit 3/5: security — channels, injection, isolation, fail-closed, secrets — details below | pending | 0 | |
 | QUAL04 | Audit 4/5: performance — baseline measurements then fix real regressions — details below | pending | 0 | |
 | QUAL05 | Audit 5/5: consistency sweep + final all-gates-green closing pass — details below | pending | 0 | |
+| SRCH01 | Restore editable-field "Add search provider" context menu (dropped at MIG08 — needs runJavaScript form introspection) | pending | 0 | |
 
 ## Task details
 
@@ -1527,6 +1528,113 @@ DONE (2026-10-14): (a) SEARCH — sidebarNotesSearch SearchLineEdit over a new S
 ### QUAL01
 
 Quality sweep 1/5 — dead code & redundancy (user: 'thorough test from code quality, dead code, redundant solutions'). Baseline: run .devin/check-static.sh + check-tidy.sh + check-warnings.sh first — then go deeper than the scripts: (a) DEAD CODE — functions/methods/classes never called (static analysis + grep cross-check; watch qmake .pri staleness — files listed but unused, files on disk not in any .pri), dead settings keys (written/read mismatches), dead i18n strings, unreachable branches; (b) REDUNDANT SOLUTIONS — duplicated implementations across the lanes' merged work: the READ06 Rust/C++ sanitizer divergence is the poster case — hunt for other re-implemented pairs (two sanitizers, two URL fixers, duplicated icon/theme helpers, forked tab/session logic); consolidate where one impl should win, or document why the duplication is intentional; (c) merge-leftover debt — superseded helpers left by sequential task merges; (d) FIX findings directly in this task where the fix is mechanical (delete dead code, unify obvious dupes); large refactors become follow-up tasks, don't half-land them. Deliverable: findings list in task notes + fixes committed. Verify: whole-tree build 0 warnings, all check-*.sh gates pass, make check PASS.
+
+**QUAL01 findings (landed)**
+
+Baseline: `check-warnings.sh` PASS (fresh no-rust copy, 0 warnings).
+STAT01/AUDIT01 report-driven gates (gcc -fanalyzer, clang --analyze,
+clang-tidy) were last run whole-tree on 2026-10-10 (reports in
+`.devin/`); clang-tidy 22.1.8 spot-pass over every TU this task
+touched produced only the documented wontfix families
+(narrowing-conversions, easily-swappable-parameters, Qt-blindness
+CallAndMessage/NullDereference) — nothing on edited lines.
+
+(a) DEAD CODE — removed (all verified decl+def only, zero callers
+incl. autotests, no QWebChannel/Q_INVOKABLE/QMetaObject-by-name reach):
+
+- `AdBlockSubscription::replaceRule` (ADB04 leftover after the
+  custom-rules pane switched to setRules)
+- `AddBookmarkDialog::isFolder`
+- `ExtensionBackgroundHost::shimNotes` (host-level accessor;
+  `ExtensionShimBackend::notes()` kept — it is the drain for the
+  still-writeable JS 'note' diagnostics channel)
+- `ExtensionBackgroundRuntime::hostedIds`
+- `ExtensionShimBackend::actionStateJson`
+- `ChromeBridge` handshake-done plumbing: `handshakeDone()`,
+  `m_handshakeDone`, `handshook` signal (emitted once, zero listeners)
+- `SecureStore::isInteractiveUnlockEnabled` (setter stays — live via
+  autotests)
+- `SidebarGrip::isDragging`, `SourceHighlighter::getFormatFor`,
+  `LanguageManager::localeDirectories`,
+  `CookieJar::{filterTrackingCookies,setFilterTrackingCookies}`
+  (member stays live via settings persistence),
+  `EngineIndicator::isSwappable`, `RustDownloadEngine::outputPath`,
+  `WebPage::torRetryUrlForTesting` (test seam with no test),
+  `BookmarksToolBar::m_dragStartPosition`
+- Engine-interface dead surface: `Engine::Page::createWindow`
+  (pure virtual, zero callers — real window routing lives in
+  `WebPage::createWindow`), `WebEnginePageAdapter::
+  {createWindow,setCreateWindowHandler,m_createWindow}`,
+  `ServoPage::createWindow`, `FakeEnginePage::createWindow` +
+  `lastWindowType`/`windowResult` + the tst_engineadapter leg that
+  tested the dead plumbing; never-emitted/never-connected signals
+  `windowRequested`, `permissionRequested`, `contextMenuRequested`;
+  orphaned sketch enums `Engine::WebWindowType`,
+  `Engine::PermissionType` (SEC05 broker uses
+  `QWebEnginePermission::PermissionType`).  `certificateError` kept —
+  emitted interface surface.  `caps.contextMenuInfo` kept, comment
+  re-pointed at the ContextMenuInfo-production it actually describes.
+- Empty `if (info.isContentEditable) {}` scaffolding in
+  WebView::contextMenuEvent + the stale `TODO(MIG08)` — the feature
+  ("Add search provider" from editable fields) is a real drop, queued
+  as SRCH01.
+- `TODO(MIG14)` resolved: `SettingsDialog::setHomeToCurrentPage` now
+  goes through `BrowserMainWindow::currentTab()` via `window()` —
+  identical semantics (standalone dialog → no-op, hosted tab →
+  current WebView or none while the prefs tab itself is current).
+
+(a2) Audited-clean, documented:
+- .pri/.pro staleness: zero tracked source files unreferenced, zero
+  commented-out listings, all autotest dirs wired into SUBDIRS.
+- Dead settings keys: every "write-only" key is read via
+  `beginGroup` scoping — none dead.
+- `#if 0` blocks: one, in networkcookiejar.cpp — intentional
+  upstream-deviation documentation (Firefox path-check behavior),
+  kept.
+- Dead signals scan found only the engine-interface decls above;
+  `emit obj->name()` patterns verified live.
+
+(b) REDUNDANT SOLUTIONS — audited, all documented-intentional or
+different-purpose, no consolidation needed:
+- Rust/C++ reader sanitizer pair — READ06-mandated defense-in-depth
+  (C++ floor re-applied to Rust fragments), commented in readermode.cpp.
+- rustcore-vs-C++ dual paths (guessUrlFromStringCpp, adblock engines,
+  session store) — the RDEF01 default+fallback architecture.
+- eTLD approximations: adblockrule `sameParty` (subdomain-tree party
+  test), LocationBar::registrableDomainRange (display-range finder
+  w/ IPv6/userinfo handling), networkcookiejar secondLevelDomains
+  (real PSL table) — three different jobs, not dupes.
+- bidipanel `formatBytes`/`formatMillis` vs DownloadManager::
+  dataString/timeString — different display conventions for a
+  diagnostics panel (compact "B"/"-"-sentinel vs "bytes"/GB tiers);
+  left as-is, noted here.
+- `BrowserApplication::icon` is a stable facade over
+  HistoryManager::icon (MIG06), not a second implementation.
+
+(c) MERGE-LEFTOVER DEBT — the two remaining `TODO(MIGxx)` handled
+above; UIAUDIT02/03 per-lane sweeps already covered their deltas;
+`siteTrustEnabled` family is wired since TRUST03 (stale UIAUDIT03
+note only, no code action).
+
+(d) Also fixed: 2 pre-existing autotest warnings — deprecated
+2-arg QContextMenuEvent ctor (tst_modelmenu ×3, now passes
+mapToGlobal) and nodiscard `QTest::qWaitFor` (tst_rustdownload ×2,
+now QVERIFY).
+
+Attempt 3 addendum (verification): the suite caught one regression
+from the setHomeToCurrentPage rewiring —
+`tst_SettingsDialog::setHomeToCurrentPage` built its positive leg on
+the interim visible-WebView scan (plain QWidget parent + unhidden
+WebView). Re-pointed the leg at the real seam: a standalone dialog
+parented to a BrowserMainWindow reads currentTab() (54/54). The
+prefs-tab path is a no-op under both implementations — a QTabWidget
+hides non-current pages, so the scan found nothing while prefs was
+current either. Suite result: 82 programs, only the 5 documented
+pre-existing browsermainwindow legs fail (PTAB02 privateStartPage/
+homeButton, PRINT01 chromeSlots, EXT08 extensionActionButtons,
+NAVB04-vs-TRUST14 navBarOrderPersistence). Gates: check-warnings
+PASS (fresh no-rust copy), supplychain PASS, engine-audit PASS,
+rustcoverage PASS (90.50/91.75/89.25 ≥ 85%).
 
 ### QUAL02
 

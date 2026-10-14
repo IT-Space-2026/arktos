@@ -2503,3 +2503,10 @@ The Notes sidebar gains search, selection capture and markdown
     URL" drops the open tab's address at the cursor.
 Hosted extensions now see browser events (EXT16):
     Extensions that subscribe to browser lifecycle events — chrome.tabs.onCreated/onUpdated/onActivated/onRemoved (plus onHighlighted/onMoved/onDetached/onAttached), chrome.windows.onCreated/onRemoved/onFocusChanged, chrome.webNavigation.onBeforeNavigate/onCommitted/onCompleted/onErrorOccurred (with onHistoryStateUpdated/onReferenceFragmentUpdated for same-document navigations), and chrome.contextMenus.onClicked/onShown/onHidden — now receive them in their hosted background context as the browser actually runs. A new ExtensionEventHub watches the real window set and maps engine signals to spec-shaped event objects; events reach hidden hosted contexts even while Chromium throttles their timers, and delivery follows Chrome's permission model — webNavigation and contextMenus events require the declared permission, while tab events arrive for every hosted extension but with URL and title fields scrubbed unless the manifest grants tabs or a matching host permission. Private and Tor tabs are invisible to extensions entirely. Extension-registered context-menu items now appear in the real page context menu as a per-extension submenu, filtered by their declared contexts, and clicks deliver the spec's (info, tab) arguments back to the extension.
+Internal cleanup: dead-code sweep across the merged lanes (QUAL01):
+    Removed unused methods, signals and members left by sequential
+    task work — the never-wired Engine::Page window-creation and
+    permission/context-menu request surface, dead diagnostics
+    accessors in the extension host and a handful of orphaned
+    getters and test seams; Preferences' "set home to current page"
+    now asks the window for its current tab directly.

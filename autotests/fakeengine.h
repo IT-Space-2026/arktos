@@ -155,12 +155,6 @@ public:
     }
     bool memoryIsShared() const override { return m_memoryShared; }
 
-    Engine::Page *createWindow(Engine::WebWindowType type) override
-    {
-        lastWindowType = type;
-        return windowResult;
-    }
-
     void insertScript(const Engine::Script &script) override
     {
         m_scripts.insert(script.name, script);
@@ -192,8 +186,6 @@ public:
     int liftedCalls = 0;
     QString m_markup;
     QHash<QString, bool> attributes;
-    Engine::WebWindowType lastWindowType = Engine::WebWindowType::BrowserWindow;
-    Engine::Page *windowResult = nullptr;
     int loads = 0;
     int stops = 0;
     int reloads = 0;

@@ -513,11 +513,6 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
                         this, &WebView::addSelectionToNote);
     }
 
-    if (info.isContentEditable) {
-        // TODO(MIG08): "Add to the toolbar search" — needs the input element's
-        // form data via runJavaScript (was synchronous QWebElement access).
-    }
-
     if (menu->isEmpty()) {
         delete menu;
         menu = createStandardContextMenu();

@@ -551,17 +551,6 @@ qint64 WebEnginePageAdapter::renderProcessId() const
     return m_page->renderProcessPid();
 }
 
-Engine::Page *WebEnginePageAdapter::createWindow(Engine::WebWindowType type)
-{
-    return m_createWindow ? m_createWindow(type) : nullptr;
-}
-
-void WebEnginePageAdapter::setCreateWindowHandler(
-        const std::function<Engine::Page *(Engine::WebWindowType)> &handler)
-{
-    m_createWindow = handler;
-}
-
 void WebEnginePageAdapter::runJavaScriptLifted(
         const QString &source,
         const std::function<void(const QVariant &)> &resultCallback,

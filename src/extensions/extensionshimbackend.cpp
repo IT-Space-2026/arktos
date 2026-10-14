@@ -169,19 +169,6 @@ ExtensionShimBackend::actionState(const QString &extensionId)
     return actionStates().value(extensionId);
 }
 
-QJsonObject ExtensionShimBackend::actionStateJson(const QString &extensionId)
-{
-    const ActionState state = actionStates().value(extensionId);
-    QJsonObject o;
-    o.insert(QStringLiteral("title"), state.title);
-    o.insert(QStringLiteral("badgeText"), state.badgeText);
-    o.insert(QStringLiteral("badgeColor"), state.badgeColor);
-    o.insert(QStringLiteral("badgeTextColor"), state.badgeTextColor);
-    o.insert(QStringLiteral("popup"), state.popup);
-    o.insert(QStringLiteral("enabled"), state.enabled);
-    return o;
-}
-
 int ExtensionShimBackend::tabIdFor(const QObject *view)
 {
     return idFor(view);

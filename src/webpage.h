@@ -294,13 +294,6 @@ protected:
     QUrl m_torRetriedUrl;
     QPointer<TorManager> m_torRetryManager;
     QTimer *m_torRetryTimer = nullptr;
-#ifdef AUTOTESTS
-public:
-    // Test seam: the armed bootstrap retry — the gate tests observe
-    // the arm/disarm directly.
-    QUrl torRetryUrlForTesting() const { return m_torRetryUrl; }
-private:
-#endif
 };
 
 #endif // WEBPAGE_H

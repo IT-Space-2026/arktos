@@ -81,8 +81,6 @@ ChromeBridge::ChromeBridge(const QString &extensionId,
 
 QJsonObject ChromeBridge::handshake(const QJsonObject &hello)
 {
-    m_handshakeDone = true;
-    emit handshook();
     QJsonObject reply;
     reply.insert(QStringLiteral("ok"), true);
     reply.insert(QStringLiteral("host"), QStringLiteral("arora"));
@@ -486,12 +484,6 @@ ExtensionBackgroundHost::~ExtensionBackgroundHost()
     delete m_view;
 }
 
-QStringList ExtensionBackgroundHost::shimNotes() const
-{
-    return m_bridge && m_bridge->backend()
-        ? m_bridge->backend()->notes() : QStringList();
-}
-
 QStringList ExtensionBackgroundHost::shimGaps() const
 {
     return m_bridge && m_bridge->backend()
@@ -703,11 +695,6 @@ ExtensionBackgroundHost *ExtensionBackgroundRuntime::host(
         const QString &extensionId) const
 {
     return m_hosts.value(extensionId);
-}
-
-QStringList ExtensionBackgroundRuntime::hostedIds() const
-{
-    return m_hosts.keys();
 }
 
 // -------------------------------------------------------------------

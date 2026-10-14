@@ -2975,3 +2975,5 @@ I'll start by checking the repository state and fetching from origin.The tree ha
 
 The pre-existing dirty files in this tree (notesmodel/sidebarpanel/webview work by another agent mid-run) didn't overlap with the merge and were left untouched. Stopping after this pass as instructed.
 [2026-10-14 20:38:04] merge run exited rc=0
+[2026-10-14 21:33:10] merge due: ui-work(1) — spawning devin merge run
+Working tree is dirty — likely another agent mid-run. I'll check lane ahead-counts and which files each merge would touch.rust-work is at 0 — skip. ui-work has 1 commit ahead. Let me see what it touches.The ui-work merge touches `ChangeLog`, which has unstaged changes in this tree — likely another agent mid-run. Let me confirm whether the merge can proceed (git will refuse if it must overwrite dirty files).[2026-10-14 21:33:49] merge run exited rc=0

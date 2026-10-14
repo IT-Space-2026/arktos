@@ -1067,11 +1067,6 @@ bool ServoPage::memoryIsShared() const
     return true;
 }
 
-Engine::Page *ServoPage::createWindow(Engine::WebWindowType)
-{
-    return nullptr;
-}
-
 void ServoPage::insertScript(const Engine::Script &script)
 {
     // Recorded but never injected — the shim has no script-collection

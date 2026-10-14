@@ -72,11 +72,6 @@ int SidebarGrip::clampedWidth(int width, int windowWidth)
     return qBound(160, width, hi);
 }
 
-bool SidebarGrip::isDragging() const
-{
-    return m_dragging;
-}
-
 int SidebarGrip::applyWidth(int width)
 {
     QMainWindow *window = m_dock

@@ -105,11 +105,9 @@ public:
                                    const QJsonObject &args);
 
     QString extensionId() const { return m_extensionId; }
-    bool handshakeDone() const { return m_handshakeDone; }
     ExtensionShimBackend *backend() const { return m_backend; }
 
 signals:
-    void handshook();
     void errorReported(const QString &message);
     // EXT15 health diagnostics — a shimmed API answered a typed
     // error (the extension touched something that cannot work).
@@ -124,7 +122,6 @@ private:
 
     QString m_extensionId;
     QString m_extensionName;
-    bool m_handshakeDone = false;
     ExtensionShimBackend *m_backend = nullptr;
 };
 
@@ -158,9 +155,8 @@ public:
     State state() const { return m_state; }
     QString lastError() const { return m_error; }
     QStringList errors() const { return m_errors; }
-    // EXT15 diagnostics: benign shim notes and the typed-error gap
-    // list the hosted page has surfaced so far.
-    QStringList shimNotes() const;
+    // EXT15 diagnostics: the typed-error gap list the hosted page
+    // has surfaced so far.
     QStringList shimGaps() const;
     ChromeBridge *bridge() const { return m_bridge; }
 
@@ -224,7 +220,6 @@ public:
     void syncNow();
 
     ExtensionBackgroundHost *host(const QString &extensionId) const;
-    QStringList hostedIds() const;
 
     // EXT15 messaging relay — shimmed contexts (the hosted
     // background page now, action popups once EXT17 injects them)

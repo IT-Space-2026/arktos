@@ -60,8 +60,6 @@ public:
     static int defaultWidth();
     static int clampedWidth(int width, int windowWidth);
 
-    bool isDragging() const;
-
 protected:
     void paintEvent(QPaintEvent *event) override;
     void enterEvent(QEnterEvent *event) override;

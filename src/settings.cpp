@@ -2295,23 +2295,15 @@ void SettingsDialog::chooseFixedFont()
 
 void SettingsDialog::setHomeToCurrentPage()
 {
-    // TODO(MIG14): this used to go through BrowserMainWindow::
-    // currentTab(); until windows exist again, use the visible WebView
-    // under the parent window — a QTabWidget hides all non-current
-    // pages, so the unhidden view is the current tab.
-    QWidget *window = parentWidget();
-    if (!window)
+    BrowserMainWindow *mainWindow =
+            qobject_cast<BrowserMainWindow*>(window());
+    WebView *view = mainWindow ? mainWindow->currentTab() : nullptr;
+    if (!view)
         return;
-    const QList<WebView*> views = window->findChildren<WebView*>();
-    for (WebView *view : views) {
-        if (!view->isHidden()) {
-            homeLineEdit->setText(QString::fromUtf8(view->url().toEncoded()));
-            // PREF04: populating the url only means something under
-            // Specific Page — pick it so the click isn't a no-op.
-            homeSpecificPageRadio->setChecked(true);
-            return;
-        }
-    }
+    homeLineEdit->setText(QString::fromUtf8(view->url().toEncoded()));
+    // PREF04: populating the url only means something under
+    // Specific Page — pick it so the click isn't a no-op.
+    homeSpecificPageRadio->setChecked(true);
 }
 
 void SettingsDialog::refreshAcceptLanguages()

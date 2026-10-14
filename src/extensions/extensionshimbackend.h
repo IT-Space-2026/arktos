@@ -90,9 +90,6 @@ public:
         bool enabled = true;
     };
     static ActionState actionState(const QString &extensionId);
-    // The button strip listens on the runtime's hostChanged pulse;
-    // this exists so a badge-only change still repaints.
-    static QJsonObject actionStateJson(const QString &extensionId);
 
     // Session-stable ids for tabs/windows so chrome.tabs ids stay
     // consistent across query+get and (EXT16) event payloads.

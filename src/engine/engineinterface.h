@@ -82,15 +82,6 @@ enum class NavigationType {
     Other
 };
 
-// What kind of window a page asked to open (POPUP01 relies on the
-// popup-shaped values to discriminate window.open from target=_blank).
-enum class WebWindowType {
-    BrowserWindow,
-    BrowserTab,
-    BrowserBackgroundTab,
-    Dialog
-};
-
 // ---- request policy ------------------------------------------------------
 
 // Mirrors QWebEngineUrlRequestInfo::ResourceType.  The adblock rule
@@ -228,25 +219,6 @@ Q_DECLARE_FLAGS(FindFlags, FindFlag)
 struct FindResult {
     int numberOfMatches = 0;
     int activeMatch = 0;   // 1-based on QtWebEngine 6.12 (empirically)
-};
-
-// ---- permissions ---------------------------------------------------------------
-
-// Union of the permission types the SEC05 broker handles plus the
-// obvious engine-neutral rest.  Backend maps its own permission set;
-// anything unmapped arrives as Unsupported and the broker denies it.
-enum class PermissionType {
-    Notifications,
-    Geolocation,
-    MediaAudioCapture,
-    MediaVideoCapture,
-    MediaAudioVideoCapture,
-    MouseLock,
-    DesktopVideoCapture,
-    DesktopAudioVideoCapture,
-    ClipboardReadWrite,
-    LocalFontsAccess,
-    Unsupported
 };
 
 // ---- certificate errors ----------------------------------------------------------
@@ -478,10 +450,6 @@ public:
     // no backend has to carry its own procfs parse.
     static qint64 processMemoryKb(qint64 pid);
 
-    // POPUP01/tab creation — the engine asks the app for a new page.
-    // Returning nullptr refuses the window.
-    virtual Page *createWindow(WebWindowType type) = 0;
-
     // Trusted chrome-script injection for callers whose work must
     // still reach a page while page scripting is off (JSCTL/SECLVL
     // block): reader-mode's driver, PiP's pop-out, the context-image
@@ -529,15 +497,10 @@ signals:
     void printRequested();
     void renderProcessIdChanged(qint64 pid);
     void findTextFinished(const Engine::FindResult &result);
-    void contextMenuRequested(const Engine::ContextMenuInfo &info);
     void certificateError(const Engine::CertificateErrorInfo &error,
                           bool *accepted /* out-param on the signal is
                               sketch shorthand — the real interface may
                               prefer a decision callback */);
-    void permissionRequested(const QUrl &origin,
-                             Engine::PermissionType type,
-                             bool *granted);
-    void windowRequested(Engine::WebWindowType type);
 };
 
 // ---- profile --------------------------------------------------------------------------
@@ -609,7 +572,7 @@ struct Capabilities {
     bool cookieFilter = false;         // setCookieFilter is honored
     bool perPageSettings = false;      // setPageAttribute is per-page, not global
     bool lifecycleDiscard = false;     // Discarded frees resources
-    bool contextMenuInfo = false;      // contextMenuRequested carries payload
+    bool contextMenuInfo = false;      // a full ContextMenuInfo can be produced
     bool certificateOverride = false;  // cert-error decisions are accepted
     bool devTools = false;             // an inspectable debug channel exists
     bool extensions = false;           // WebExtension-style add-ons

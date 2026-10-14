@@ -53,7 +53,6 @@ public:
     static LanguageManager *instance();
 
     void addLocaleDirectory(const QString &directory);
-    QStringList localeDirectories() const;
 
     QString currentLanguage() const;
     bool setCurrentLanguage(const QString &language);

@@ -53,6 +53,7 @@
 #include "adblockmanager.h"
 #include "aroraicon.h"
 #include "browserapplication.h"
+#include "browsermainwindow.h"
 #include "browsertheme.h"
 #include "extensionmanager.h"
 #include "extensionreviewdialog.h"
@@ -2081,8 +2082,8 @@ void tst_SettingsDialog::subDialogButtons()
     dialog.extensionsTree->clearSelection();
 }
 
-// setHomeToCurrentPage finds the visible WebView under the parent
-// window; without one it is an early return.
+// setHomeToCurrentPage reads the parent main window's current tab;
+// without one it is an early return.
 void tst_SettingsDialog::setHomeToCurrentPage()
 {
     {
@@ -2092,11 +2093,11 @@ void tst_SettingsDialog::setHomeToCurrentPage()
         QCOMPARE(orphan.homeLineEdit->text(), before);
     }
 
-    QWidget window;
-    WebView *view = new WebView(BrowserApplication::webEngineProfile(), &window);
-    view->loadUrl(QUrl(QLatin1String("data:text/html,<p>home</p>")));
+    BrowserMainWindow window;
+    window.currentTab()->loadUrl(QUrl(QLatin1String("data:text/html,<p>home</p>")));
     QTRY_VERIFY_WITH_TIMEOUT(
-        !QString::fromUtf8(view->url().toEncoded()).isEmpty(), 15000);
+        QString::fromUtf8(window.currentTab()->url().toEncoded())
+            .startsWith(QLatin1String("data:text/html")), 15000);
 
     SettingsDialog dialog(&window);
     dialog.setHomeToCurrentPageButton->click();

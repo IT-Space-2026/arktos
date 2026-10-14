@@ -197,12 +197,6 @@ void tst_EngineAdapter::fakePageLifecycleAndPid()
     QCOMPARE(page.renderProcessId(), qint64(-1));
     page.setRenderProcessId(4242);
     QCOMPARE(page.renderProcessId(), qint64(4242));
-
-    FakeEnginePage child;
-    page.windowResult = &child;
-    QCOMPARE(page.createWindow(Engine::WebWindowType::BrowserTab),
-             static_cast<Engine::Page*>(&child));
-    QCOMPARE(page.lastWindowType, Engine::WebWindowType::BrowserTab);
 }
 
 void tst_EngineAdapter::fakeProfileSurface()
