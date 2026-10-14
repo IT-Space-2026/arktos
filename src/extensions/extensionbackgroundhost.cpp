@@ -63,6 +63,7 @@
 ChromeBridge::ChromeBridge(const QString &extensionId,
                            const QString &extensionName,
                            const QString &extensionPath,
+                           ExtensionShimBackend *backend,
                            QObject *parent)
     : QObject(parent)
     , m_extensionId(extensionId)
@@ -71,8 +72,13 @@ ChromeBridge::ChromeBridge(const QString &extensionId,
     // EXT15 backend — storage store, host-timer alarms, the live
     // tab snapshot, action state, manifest-derived answers.  Its
     // pushEvent feeds the page through the hostEvent signal below.
-    m_backend = new ExtensionShimBackend(extensionId, extensionName,
-                                         extensionPath, this);
+    // EXT17: sibling pages (popup/options) SHARE the hosted
+    // background's backend — storage writes, alarms and action state
+    // are per-extension, not per-context.
+    m_backend = backend
+        ? backend
+        : new ExtensionShimBackend(extensionId, extensionName,
+                                   extensionPath, this);
     connect(m_backend, &ExtensionShimBackend::pushEvent, this,
             &ChromeBridge::hostEvent);
     connect(m_backend, &ExtensionShimBackend::gapReported, this,
@@ -100,6 +106,21 @@ QJsonObject ChromeBridge::handshake(const QJsonObject &hello)
     return reply;
 }
 
+ExtensionShimBackend *ChromeBridge::backend() const
+{
+    return m_backend;
+}
+
+void ChromeBridge::setContextPage(QWebEnginePage *page)
+{
+    m_contextPage = page;
+}
+
+QWebEnginePage *ChromeBridge::contextPage() const
+{
+    return m_contextPage;
+}
+
 void ChromeBridge::reportError(const QString &message)
 {
     emit errorReported(message.left(4096));
@@ -114,6 +135,20 @@ QJsonObject ChromeBridge::invoke(const QString &ns,
                 << ns << method << args;
     if (ns == QLatin1String("relay"))
         return invokeRelay(method, args);
+    // EXT17: getCurrent is context-local — the bridge knows which
+    // page asked (a popup hosted inside a real tab resolves to that
+    // tab; the hidden background page is never a tab).
+    if (ns == QLatin1String("tabs")
+            && method == QLatin1String("getCurrent")) {
+        return ExtensionShimBackend::tabForPageReply(m_contextPage);
+    }
+    if (!m_backend) {
+        QJsonObject o;
+        o.insert(QStringLiteral("ok"), false);
+        o.insert(QStringLiteral("error"),
+                 QStringLiteral("backend-gone"));
+        return o;
+    }
     return m_backend->invoke(ns, method, args);
 }
 
@@ -145,7 +180,9 @@ QJsonObject ChromeBridge::invokeRelay(const QString &method,
         if (kind.isEmpty())
             return err(QStringLiteral("invalid-argument"));
         const QString contextId =
-            runtime->registerRelayContext(this, kind);
+            runtime->registerRelayContext(
+                this, kind,
+                args.value(QStringLiteral("url")).toString());
         return ok(contextId);
     }
     if (method == QLatin1String("send")) {
@@ -174,7 +211,8 @@ QJsonObject ChromeBridge::invokeRelay(const QString &method,
             return err(QStringLiteral("invalid-argument"));
         const int peers = runtime->relayPortConnect(
             this, chan, portId,
-            args.value(QStringLiteral("name")).toString());
+            args.value(QStringLiteral("name")).toString(),
+            args.value(QStringLiteral("senderUrl")).toString());
         return ok(QJsonObject{{QStringLiteral("peers"), peers}});
     }
     if (method == QLatin1String("portAccept")) {
@@ -293,6 +331,7 @@ QString jsLiteral(const QString &text)
 // the preamble cannot be delivered by runJavaScript.
 QString injectionSource(const QString &extensionId,
                         const QString &extensionName,
+                        const QString &extensionPath,
                         const QStringList &scripts,
                         bool inlineCode)
 {
@@ -300,6 +339,12 @@ QString injectionSource(const QString &extensionId,
     config.insert(QStringLiteral("id"), extensionId);
     config.insert(QStringLiteral("name"), extensionName);
     config.insert(QStringLiteral("inlineCode"), inlineCode);
+    // EXT17: the extension's _locales map rides the config so the
+    // shim's getMessage resolves synchronously — the native binding
+    // answers '' for every key on this engine (blank popup chrome),
+    // and page scripts call getMessage before the bridge is up.
+    config.insert(QStringLiteral("i18n"),
+                  ExtensionShimBackend::i18nMessages(extensionPath));
     QJsonArray list;
     for (const QString &script : scripts)
         list.append(script);
@@ -307,6 +352,45 @@ QString injectionSource(const QString &extensionId,
 
     QString source = QStringLiteral("(function(){")
         + QLatin1String("if(window.top!==window||location.href!==")
+        + jsLiteral(ExtensionBackgroundHost::hostUrl(extensionId)
+                        .toString())
+        + QLatin1String(")return;window.__ARORA_HOST_CONFIG=")
+        + QString::fromUtf8(
+            QJsonDocument(config).toJson(QJsonDocument::Compact))
+        + QLatin1Char(';');
+    source += resourceText(
+        QStringLiteral(":/qtwebchannel/qwebchannel.js"));
+    source += resourceText(QStringLiteral(":exthost.js"));
+    source += resourceText(QStringLiteral(":extshim.js"));
+    source += QLatin1String("})();");
+    return source;
+}
+
+// EXT17 — sibling-page injection: the same preamble+shim payload on
+// every other top-level document at the extension's own origin (the
+// action popup, options_ui pages, offscreen documents).  No
+// background code — cfg.kind 'page' tells exthost.js to skip the
+// script loader, and the shim registers the context with the relay
+// so runtime.sendMessage reaches the hosted background.
+QString pageInjectionSource(const QString &extensionId,
+                            const QString &extensionName,
+                            const QString &extensionPath)
+{
+    QJsonObject config;
+    config.insert(QStringLiteral("id"), extensionId);
+    config.insert(QStringLiteral("name"), extensionName);
+    config.insert(QStringLiteral("kind"), QStringLiteral("page"));
+    config.insert(QStringLiteral("scripts"), QJsonArray());
+    config.insert(QStringLiteral("i18n"),
+                  ExtensionShimBackend::i18nMessages(extensionPath));
+
+    const QString origin =
+        QStringLiteral("chrome-extension://") + extensionId;
+    QString source = QStringLiteral("(function(){")
+        + QLatin1String("if(window.top!==window)return;"
+                        "var l=location;if(l.origin!==")
+        + jsLiteral(origin)
+        + QLatin1String("||l.href===")
         + jsLiteral(ExtensionBackgroundHost::hostUrl(extensionId)
                         .toString())
         + QLatin1String(")return;window.__ARORA_HOST_CONFIG=")
@@ -383,6 +467,12 @@ QString ExtensionBackgroundHost::injectionName(const QString &extensionId)
     return QStringLiteral("arora-exthost-") + extensionId;
 }
 
+QString ExtensionBackgroundHost::pageInjectionName(
+    const QString &extensionId)
+{
+    return QStringLiteral("arora-extpage-") + extensionId;
+}
+
 ExtensionBackgroundHost::ExtensionBackgroundHost(
         QWebEngineProfile *profile,
         const QString &extensionId,
@@ -394,6 +484,7 @@ ExtensionBackgroundHost::ExtensionBackgroundHost(
     , m_profile(profile)
     , m_extensionId(extensionId)
     , m_extensionName(extensionName)
+    , m_extensionPath(extensionPath)
 {
     // Manifest-order list, minus anything that is not a plain
     // relative path — a scheme/absolute/traversal entry never becomes
@@ -419,7 +510,8 @@ ExtensionBackgroundHost::ExtensionBackgroundHost(
 
     m_channel = new QWebChannel(m_page);
     m_bridge = new ChromeBridge(extensionId, extensionName,
-                                extensionPath, m_page);
+                                extensionPath, nullptr, m_page);
+    m_bridge->setContextPage(m_page);
     m_channel->registerObject(QStringLiteral("chromeBridge"), m_bridge);
     // MainWorld — the shim runs there beside the extension's real
     // scripts; the page is the extension's own context, so the bridge
@@ -468,7 +560,8 @@ ExtensionBackgroundHost::ExtensionBackgroundHost(
         injection.setWorldId(QWebEngineScript::MainWorld);
         injection.setRunsOnSubFrames(false);
         injection.setSourceCode(
-            injectionSource(extensionId, extensionName, m_scripts,
+            injectionSource(extensionId, extensionName,
+                            extensionPath, m_scripts,
                             !extensionCode.isEmpty()));
         profile->scripts()->insert(injection);
 
@@ -495,6 +588,20 @@ ExtensionBackgroundHost::ExtensionBackgroundHost(
                     "})();"));
             profile->scripts()->insert(code);
         }
+
+        // EXT17 — the sibling-page shim: armed with the host (the
+        // relay peer it talks to), gated inside the payload to
+        // top-level chrome-extension://<id>/ documents that are not
+        // the host wrapper.  No package bytes are touched (SEC25).
+        QWebEngineScript pages;
+        pages.setName(pageInjectionName(extensionId));
+        pages.setInjectionPoint(QWebEngineScript::DocumentCreation);
+        pages.setWorldId(QWebEngineScript::MainWorld);
+        pages.setRunsOnSubFrames(false);
+        pages.setSourceCode(
+            pageInjectionSource(extensionId, extensionName,
+                                extensionPath));
+        profile->scripts()->insert(pages);
     }
 
     m_poll = new QTimer(this);
@@ -526,7 +633,8 @@ ExtensionBackgroundHost::~ExtensionBackgroundHost()
         const QString name = injectionName(m_extensionId);
         for (const QWebEngineScript &script : installed) {
             if (script.name() == name
-                || script.name() == name + QLatin1String("-code"))
+                || script.name() == name + QLatin1String("-code")
+                || script.name() == pageInjectionName(m_extensionId))
                 m_profile->scripts()->remove(script);
         }
     }
@@ -649,6 +757,20 @@ void ExtensionBackgroundRuntime::teardown(const QString &id)
         host->deleteLater();
         emit hostChanged(id);
     }
+    // EXT17: sibling pages keep no state across a host teardown —
+    // their shared backend just died, so their bridges are dead
+    // contexts.  Drop them (the shim answers typed errors); Chrome
+    // closes an extension's pages on unload anyway.
+    for (auto it = m_pageBridges.begin(); it != m_pageBridges.end();) {
+        ChromeBridge *bridge = it.value();
+        if (bridge && bridge->extensionId() == id) {
+            unregisterRelayContext(bridge);
+            it = m_pageBridges.erase(it);
+            bridge->deleteLater();
+        } else {
+            ++it;
+        }
+    }
 }
 
 void ExtensionBackgroundRuntime::syncNow()
@@ -740,6 +862,106 @@ void ExtensionBackgroundRuntime::syncNow()
 #endif // QT_CONFIG(webengine_extensions)
 }
 
+// -------------------------------------------------------------------
+// EXT17 sibling pages — an extension's own documents (action popup,
+// options tab, offscreen document) get a chromeBridge channel of
+// their own so the injected preamble/shim handshake lands and their
+// chrome.* calls share the hosted background's backend.  The page
+// injection (armed by the host) already ran at DocumentCreation; the
+// bridge is what makes the shim live.
+// -------------------------------------------------------------------
+
+bool ExtensionBackgroundRuntime::attachExtensionPage(
+        QWebEnginePage *page, const QString &extensionId)
+{
+    if (!page)
+        return false;
+    QString id = extensionId;
+    if (id.isEmpty()) {
+        const QUrl url = page->url();
+        if (url.scheme() == QLatin1String("chrome-extension"))
+            id = url.host();
+    }
+    if (id.isEmpty())
+        return false;
+    if (m_pageBridges.contains(page)) {
+        ChromeBridge *existing = m_pageBridges.value(page);
+        if (existing && existing->extensionId() == id)
+            return true;    // already wired for this extension
+        // A navigation to ANOTHER extension's document — the old
+        // bridge is scoped to the previous id and must not answer
+        // for the new context (relay would cross boundaries).
+        detachExtensionPage(page);
+    }
+    ExtensionBackgroundHost *host = m_hosts.value(id);
+    if (!host || !host->bridge())
+        return false;
+    // Channels only ever bind pages on the host's own profile — a
+    // foreign-profile or OTR/tor page never reaches the bridge.
+    if (!page->profile() || page->profile()->isOffTheRecord()
+            || !host->page() || !host->page()->profile()
+            || page->profile() != host->page()->profile())
+        return false;
+
+    auto *channel = new QWebChannel(page);
+    auto *bridge = new ChromeBridge(id, host->extensionName(),
+                                    host->extensionPath(),
+                                    host->bridge()->backend(), page);
+    bridge->setContextPage(page);
+    channel->registerObject(QStringLiteral("chromeBridge"), bridge);
+    page->setWebChannel(channel, QWebEngineScript::MainWorld);
+    m_pageBridges.insert(page, bridge);
+    connect(page, &QObject::destroyed, this, [this, page]() {
+        detachExtensionPage(page);
+    });
+    return true;
+}
+
+void ExtensionBackgroundRuntime::detachExtensionPage(
+        QWebEnginePage *page)
+{
+    if (!page)
+        return;
+    ChromeBridge *bridge = m_pageBridges.take(page);
+    if (bridge) {
+        unregisterRelayContext(bridge);
+        bridge->deleteLater();
+    }
+}
+
+QJsonArray ExtensionBackgroundRuntime::contextsJson(
+        const QString &extensionId) const
+{
+    QJsonArray out;
+    for (const RelayContext &ctx : m_relayContexts) {
+        if (!ctx.bridge || ctx.bridge->extensionId() != extensionId)
+            continue;
+        QJsonObject entry;
+        QString type = QStringLiteral("TAB");
+        if (ctx.kind == QLatin1String("background"))
+            type = QStringLiteral("BACKGROUND");
+        else if (ctx.kind == QLatin1String("popup"))
+            type = QStringLiteral("POPUP");
+        else if (ctx.kind == QLatin1String("offscreen"))
+            type = QStringLiteral("OFFSCREEN_DOCUMENT");
+        entry.insert(QStringLiteral("contextType"), type);
+        entry.insert(QStringLiteral("contextId"), ctx.contextId);
+        entry.insert(QStringLiteral("documentOrigin"),
+                     QStringLiteral("chrome-extension://")
+                         + extensionId);
+        entry.insert(QStringLiteral("documentUrl"),
+                     ctx.url.isEmpty()
+                         ? ExtensionBackgroundHost::hostUrl(extensionId)
+                             .toString()
+                         : ctx.url);
+        entry.insert(QStringLiteral("incognito"), false);
+        entry.insert(QStringLiteral("tabId"), -1);
+        entry.insert(QStringLiteral("windowId"), -1);
+        out.append(entry);
+    }
+    return out;
+}
+
 ExtensionBackgroundHost *ExtensionBackgroundRuntime::host(
         const QString &extensionId) const
 {
@@ -756,20 +978,27 @@ ExtensionBackgroundHost *ExtensionBackgroundRuntime::host(
 // -------------------------------------------------------------------
 
 QString ExtensionBackgroundRuntime::registerRelayContext(
-        ChromeBridge *bridge, const QString &kind)
+        ChromeBridge *bridge, const QString &kind, const QString &url)
 {
     if (!bridge)
         return QString();
-    for (const RelayContext &ctx : m_relayContexts) {
-        if (ctx.bridge == bridge)
-            return ctx.contextId;
+    for (int i = 0; i < m_relayContexts.size(); ++i) {
+        if (m_relayContexts.at(i).bridge == bridge) {
+            // A re-register refreshes kind/url (the page may learn
+            // its role after attach).
+            m_relayContexts[i].kind = kind;
+            if (!url.isEmpty())
+                m_relayContexts[i].url = url;
+            return m_relayContexts.at(i).contextId;
+        }
     }
     RelayContext ctx;
     ctx.bridge = bridge;
     ctx.kind = kind;
+    ctx.url = url;
     ctx.contextId = bridge->extensionId() + QLatin1Char('|') + kind
         + QLatin1Char('|')
-        + QString::number(m_relayContexts.size());
+        + QString::number(m_nextContextId++);
     m_relayContexts.append(ctx);
     return ctx.contextId;
 }
@@ -839,6 +1068,13 @@ int ExtensionBackgroundRuntime::relaySend(ChromeBridge *from,
                                        {QStringLiteral("mid"), mid},
                                        {QStringLiteral("msg"), envelope}});
         ++peers;
+        // A popup->background send lands on a throttled hidden page —
+        // nudge it awake like the EXT16 event fan-out does.
+        if (ExtensionBackgroundHost *host =
+                m_hosts.value(ctx.bridge->extensionId())) {
+            if (ctx.bridge == host->bridge())
+                host->nudge();
+        }
     }
     if (peers > 0) {
         PendingRelay pending;
@@ -905,12 +1141,23 @@ bool ExtensionBackgroundRuntime::relayRespond(ChromeBridge *responder,
 
 int ExtensionBackgroundRuntime::relayPortConnect(
         ChromeBridge *from, const QString &chan,
-        const QString &portId, const QString &name)
+        const QString &portId, const QString &name,
+        const QString &senderUrl)
 {
     if (!from || chan.isEmpty() || portId.isEmpty()
             || !ownsRelayKey(from, chan))
         return 0;
     m_portEnds[chan].append(PortEnd{from, portId});
+    // A complete MessageSender — extension handlers gate on
+    // sender.origin == chrome.runtime.getURL('') (Bitwarden's
+    // senderIsInternal drops the session port otherwise).  The id is
+    // always trusted from the bridge; url/origin describe the
+    // connecting document.
+    const QJsonObject sender{
+        {QStringLiteral("id"), from->extensionId()},
+        {QStringLiteral("url"), senderUrl},
+        {QStringLiteral("origin"), QStringLiteral("chrome-extension://")
+                                     + from->extensionId()}};
     int peers = 0;
     for (const RelayContext &ctx : m_relayContexts) {
         if (!ctx.bridge || ctx.bridge == from)
@@ -921,8 +1168,13 @@ int ExtensionBackgroundRuntime::relayPortConnect(
             QStringLiteral("__arora.portConnect"),
             QJsonObject{{QStringLiteral("chan"), chan},
                         {QStringLiteral("name"), name},
-                        {QStringLiteral("sender"), from->extensionId()}});
+                        {QStringLiteral("sender"), sender}});
         ++peers;
+        if (ExtensionBackgroundHost *host =
+                m_hosts.value(ctx.bridge->extensionId())) {
+            if (ctx.bridge == host->bridge())
+                host->nudge();
+        }
     }
     return peers;
 }
@@ -961,6 +1213,11 @@ int ExtensionBackgroundRuntime::relayPortMessage(
             QJsonObject{{QStringLiteral("portId"), end.localPortId},
                         {QStringLiteral("msg"), msg}});
         ++delivered;
+        if (ExtensionBackgroundHost *host =
+                m_hosts.value(end.bridge->extensionId())) {
+            if (end.bridge == host->bridge())
+                host->nudge();
+        }
     }
     return delivered;
 }

@@ -219,14 +219,18 @@ browsing profile:
   engine and offers "Reload in …" on the other backends; Servo
   (`qmake servo=1` + the servo-embed artifact) is an experimental
   degraded co-engine — Tor windows stay Chromium-locked and private
-  tabs refuse the swap. libservo supports one web view at a time, so
-  only one Servo tab can exist; further swaps are refused instead of
-  crashing. A crash inside the engine degrades that tab to a crash
-  notice instead of taking the browser down, and the notice offers
-  "Try Servo Again" — the crashed web view is torn down and a fresh
-  one is created on the still-running engine (switching the tab to
-  Chromium and back recovers the same way). Servo renders in-process,
-  so its status-bar memory readout shows the shared whole-app figure
+  tabs refuse the swap, and its selector entries carry a note that
+  page loads are slower than Chromium (running a debug servo-embed
+  artifact marks the name "(debug build)" and warns about extreme
+  slowness instead of passing off as engine speed). libservo
+  supports one web view at a time, so only one Servo tab can exist;
+  further swaps are refused instead of crashing. A crash inside the
+  engine degrades that tab to a crash notice instead of taking the
+  browser down, and the notice offers "Try Servo Again" — the
+  crashed web view is torn down and a fresh one is created on the
+  still-running engine (switching the tab to Chromium and back
+  recovers the same way). Servo renders in-process, so its
+  status-bar memory readout shows the shared whole-app figure
   marked "(shared)" rather than a per-tab number.
 - **Reader mode** (Ctrl+Alt+R) and **Picture-in-Picture** on videos.
 - **Command palette** — Ctrl+Shift+P fuzzy search over browser
@@ -421,10 +425,18 @@ and tab events, `webNavigation`, `scripting`, `contextMenus`,
 are not implemented. Bitwarden's background worker needs several of
 the missing namespaces, fails registration
 (`kErrorScriptEvaluateFailed`), and its popup dies on
-`chrome.extension.getBackgroundPage` — so it cannot function; the
-health check above therefore reports it **Not supported** with the
-missing APIs listed. See `.devin/EXT11-report.md` for the full
-matrix.
+`chrome.extension.getBackgroundPage` — so natively it cannot
+function; the health check above therefore reports it **Not
+supported** with the missing APIs listed. See
+`.devin/EXT11-report.md` for the full matrix. Under the hosted
+runtime below, though, the Bitwarden popup runs its real app —
+extension pages (popup, options, extension links in tabs) get the
+same shim injection and chromeBridge channel as the background, and
+the popup reaches its genuine vault login/unlock gate. Actual
+sign-in needs a real Bitwarden account; a few surfaces it touches
+(`chrome.tabs.sendMessage` to content scripts,
+`chrome.notifications`) answer typed errors that show up in its
+Settings → Extensions health row instead of failing silently.
 
 Enabled extensions that declare a background script additionally get
 a hosted background context: a hidden page on the extension's own
@@ -580,13 +592,22 @@ the distro's *webengine*, *webchannel*, *core5compat*, *svg* and
 - `servo=1` — experimental Servo co-engine (ENG05): compiles the
   Servo backend against `spikes/servo/servo-embed/include`, then
   dlopens the prebuilt `libservo_embed.so` at runtime. The artifact
-  is an out-of-tree ~1 GB build (pinned libservo v0.7.0, see
+  is an out-of-tree build (pinned libservo v0.7.0, see
   `.devin/SERVO-SPIKE.md`); when it is absent the Servo option simply
   never appears — nothing links or loads against it. While a
   `libservo_embed.so` exists under `spikes/servo/servo-embed/target/`,
   `.qmake.conf` auto-adds `CONFIG+=servo` so a plain `qmake && make`
   cannot silently drop the backend; opt out with `qmake CONFIG-=servo`,
-  `noservo=1` or `servo=0`
+  `noservo=1` or `servo=0`. The canonical artifact step is
+  `cargo build --release` in `spikes/servo/servo-embed/` — the
+  resolver prefers `target/release` over `target/debug` at every
+  candidate depth, and a debug-only artifact set warns at configure
+  time. If a debug cdylib does end up in use, the app logs a loud
+  warning once and marks the engine name "(debug build)" with an
+  extreme-slowness note on the engine surfaces — an unoptimized
+  libservo is drastically slower than the release build, which is
+  itself slower than Chromium on real pages (Servo is an
+  experimental engine, not a performance option)
 - `CONFIG+=sanitize` — ASan+UBSan instrumented build for the test
   suite
 

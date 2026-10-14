@@ -28,8 +28,11 @@
  *                         store backs contexts without bindings
  *   chrome.extension    — getURL/getViews/getBackgroundPage mapped to
  *                         the hosted context
- *   chrome.i18n         — real getMessage kept; bridge fallback reads
- *                         _locales/<lang>/messages.json host-side
+ *   chrome.i18n         — getMessage wrapped unconditionally: the
+ *                         native binding answers '' for every key;
+ *                         misses fall to the _locales/<lang>/
+ *                         messages.json map embedded in the injected
+ *                         config (bridge fetch as backup)
  *   chrome.alarms       — bridge-backed (host timers) — the inert
  *                         binding is replaced so onAlarm really fires
  *   chrome.action /
@@ -136,7 +139,7 @@
             if (payload && payload.chan) {
                 var localId = 'p' + (++shim.seq) + '#' + Date.now();
                 var port = newPort(payload.name || '', payload.chan,
-                                   localId);
+                                   localId, payload.sender);
                 call('relay', 'portAccept',
                      { chan: payload.chan, portId: localId })
                     .catch(function () {});
@@ -207,6 +210,70 @@
         'contextMenus.onShown': ['info', 'tab']
     };
 
+    // EXT17 context kind — 'background' is the hidden host page;
+    // a sibling document is 'popup' when its URL is the manifest's
+    // declared action popup, else 'page' (options tab, offscreen
+    // document — reported as TAB by getContexts).
+    function contextKind() {
+        if (host.kind === 'background')
+            return 'background';
+        var path = '';
+        try {
+            path = decodeURIComponent(String(location.pathname))
+                .replace(/^\/+/, '');
+        } catch (e) {
+            path = String(location.pathname).replace(/^\/+/, '');
+        }
+        var m = manifest();
+        var decls = [m.action, m.browser_action, m.page_action];
+        for (var i = 0; i < decls.length; ++i) {
+            if (decls[i] && decls[i].default_popup === path)
+                return 'popup';
+        }
+        return 'page';
+    }
+
+    // chrome.extension.getViews/getBackgroundPage answers that are
+    // honest in every context kind — a sibling page cannot return
+    // the background's real Window object, so it reports its own
+    // type and answers null with a recorded gap rather than handing
+    // back the wrong window.
+    function thisViewType() {
+        return host.kind === 'background'
+            ? 'BACKGROUND'
+            : (contextKind() === 'popup' ? 'POPUP' : 'TAB');
+    }
+    function extensionGetViews(fetchProperties) {
+        touch('chrome.extension.getViews');
+        var type = fetchProperties && fetchProperties.type;
+        if (!type || type === thisViewType())
+            return [window];
+        note('chrome.extension.getViews(' + type + '): only the '
+             + thisViewType() + ' context is enumerable here');
+        return [];
+    }
+    function extensionGetBackgroundPage(cb) {
+        touch('chrome.extension.getBackgroundPage');
+        if (host.kind === 'background') {
+            if (cb) {
+                try { cb(window); } catch (e) {}
+            }
+            return window;
+        }
+        if (manifest().manifest_version === 3)
+            // Chrome itself answers null under MV3 — there is no
+            // persistent background page to hand back.  Not a gap.
+            note('chrome.extension.getBackgroundPage: null under '
+                 + 'MV3 matches Chrome (service worker, no window)');
+        else
+            recordGap('chrome.extension.getBackgroundPage',
+                      'cross-context');
+        if (cb) {
+            try { cb(null); } catch (e) {}
+        }
+        return null;
+    }
+
     function wireHostEvent() {
         if (hostEventWired || !host.bridge)
             return;
@@ -219,9 +286,11 @@
             recordGap('chromeBridge.hostEvent', String(e));
         }
         // Register this hosted context with the runtime's message
-        // relay — sibling shimmed contexts (other hosted pages now,
-        // shimmed popups once EXT17 lands) reach us via hostEvent.
-        call('relay', 'register', { kind: 'background' })
+        // relay — sibling shimmed contexts (other hosted pages,
+        // EXT17 popups/options pages) reach us via hostEvent.  The
+        // kind+url feed chrome.runtime.getContexts.
+        call('relay', 'register',
+             { kind: contextKind(), url: String(location.href) })
             .then(function (id) { shim.contextId = id; })
             .catch(function () {});
     }
@@ -287,8 +356,11 @@
             flushBridgeQueue();
             return;
         }
-        if (host.state === 'failed' || host.state === 'ready')
-            return;   // ready without bridge: channel-less context
+        if (host.state === 'ready'
+                || String(host.state).indexOf('failed') === 0)
+            return;   // ready without bridge: channel-less context;
+                      // failed:<reason> — stop polling, calls queue
+                      // into the watchdog instead of spinning.
         setTimeout(waitBridge, 50);
     })();
 
@@ -314,7 +386,31 @@
         // real bindings exist — best-effort assign, else park the
         // message where the shim (and tests) can still read it.
         try { chrome.runtime.lastError = { message: message }; }
-        catch (e) { shim.lastError = { message: message }; }
+        catch (e) {}
+        shim.lastError = { message: message };
+    }
+
+    function clearLastError() {
+        // Chrome semantics: lastError exists only for the duration of
+        // the failing call's callback.  Where the binding exposes it
+        // as a plain writable property a set survives its callback
+        // and poisons every later lastError read — a real extension's
+        // storage.get retried forever on exactly this.  Clear
+        // explicitly; on the read-only getter the assign no-ops.
+        try { chrome.runtime.lastError = undefined; } catch (e) {}
+        shim.lastError = null;
+    }
+
+    // The one funnel every shim-callback answer goes through: the
+    // error is visible inside cb exactly like Chrome scopes it, then
+    // cleared; a success answer clears any residue first.
+    function answerCb(cb, value, message) {
+        if (!cb)
+            return;
+        if (message) setLastError(message);
+        else clearLastError();
+        try { cb(value); } catch (e) {}
+        if (message) clearLastError();
     }
 
     // A chrome.* method dual-call convention: trailing function arg
@@ -323,17 +419,12 @@
     // the typed error still reaches health via recordGap.
     function failCall(api, code, cb) {
         var err = typedError(code, api);
-        if (cb) {
-            setLastError(err.message);
-            try { cb(undefined); } catch (e) {}
-        }
+        answerCb(cb, undefined, err.message);
         return Promise.reject(err);
     }
 
     function okCall(value, cb) {
-        if (cb) {
-            try { cb(value); } catch (e) {}
-        }
+        answerCb(cb, value);
         return Promise.resolve(value);
     }
 
@@ -450,7 +541,12 @@
     var tabsProxyRef = null, tabsNsRef = null;
     var bridgeLocalRef = null, bridgeSessionRef = null;
     var wrappedOnMessageRef = null, shimSendMessageRef = null;
+    var shimConnectRef = null;
     var rtImpls = {}, rtEventNames = null;
+    // Connection events are re-asserted by IDENTITY, not presence —
+    // a late native binding swap would otherwise strand the
+    // extension's listeners on an event the relay can never fire.
+    var rtReassert = {};
 
     // Assert chrome.tabs is our proxy.  First try a getter+no-op-setter
     // descriptor — Chromium's bootstrap rewrites 'tabs' by assignment
@@ -539,10 +635,25 @@
                     && typeof rt2.sendMessage !== 'function')
                 safeSet(rt2, 'sendMessage', shimSendMessageRef,
                         'chrome.runtime.sendMessage');
+            // connect is overridden even when a native binding
+            // exists — identity check, not presence check (the
+            // native connect reaches the dead service worker, never
+            // the hosted background).
+            if (shimConnectRef && rt2.connect !== shimConnectRef)
+                safeSet(rt2, 'connect', shimConnectRef,
+                        'chrome.runtime.connect');
             for (var mn in rtImpls) {
                 if (rt2[mn] === undefined)
                     safeSet(rt2, mn, rtImpls[mn],
                             'chrome.runtime.' + mn);
+            }
+            // Identity re-assert for the connection events — a late
+            // native swap would strand listeners where the relay can
+            // never reach them (see the install block).
+            for (var ra in rtReassert) {
+                if (rt2[ra] !== rtReassert[ra])
+                    safeSet(rt2, ra, rtReassert[ra],
+                            'chrome.runtime.' + ra);
             }
         }
     }
@@ -637,8 +748,14 @@
             try {
                 var r = listeners[i].call(
                     null, msg,
+                    // A real MessageSender — sender.origin must equal
+                    // the extension origin or senderIsInternal-style
+                    // gates (Bitwarden's session/message handlers)
+                    // drop the delivery.
                     { id: env && env.extId || cfg.id,
-                      origin: 'relay' },
+                      url: env && env.senderUrl || undefined,
+                      origin: 'chrome-extension://'
+                              + (env && env.extId || cfg.id) },
                     respond);
                 if (r === true)
                     wantAsync = true;
@@ -694,10 +811,19 @@
 
     shim.ports = {};   // local port id -> Port
 
-    function newPort(name, chan, localId) {
+    function newPort(name, chan, localId, sender) {
+        // port.sender is the REMOTE end's MessageSender — Bitwarden's
+        // session handler drops any connect whose sender.origin does
+        // not equal chrome.runtime.getURL('') (senderIsInternal), so
+        // the field must be complete, not just {id}.
+        if (!sender || typeof sender !== 'object') {
+            sender = { id: cfg.id,
+                       url: String(location.href),
+                       origin: 'chrome-extension://' + cfg.id };
+        }
         var port = {
             name: name,
-            sender: { id: cfg.id },
+            sender: sender,
             onMessage: makeLocalEvent(),
             onDisconnect: makeLocalEvent(),
             disconnected: false
@@ -848,7 +974,10 @@
                 var mid = cfg.id + '#' + (++shim.seq) + '#'
                           + Date.now();
                 var envelope = { __aroraMsg: { mid: mid, msg: msg,
-                                               extId: cfg.id } };
+                                               extId: cfg.id,
+                                               senderUrl:
+                                                   String(location
+                                                          .href) } };
                 var promise = new Promise(function (resolve) {
                     var entry = { peers: -1, replies: 0, done: false,
                                   nativeDone: false };
@@ -864,13 +993,12 @@
                             return;
                         entry.done = true;
                         delete msgPending[mid];
-                        if (v === undefined)
-                            setLastError('The message port closed '
-                                         + 'before a response was '
-                                         + 'received.');
-                        if (cb) {
-                            try { cb(v); } catch (e) {}
-                        }
+                        answerCb(cb, v,
+                                 v === undefined
+                                     ? 'The message port closed '
+                                       + 'before a response was '
+                                       + 'received.'
+                                     : null);
                         resolve(v);
                     };
                     msgPending[mid] = entry;
@@ -935,17 +1063,62 @@
             rtSet('onStartup',
                     makeEvent('runtime.onStartup'),
                     'chrome.runtime.onStartup');
-        if (!rt.getContexts) {
+        {
+            // EXT17: the runtime's relay registry is the authoritative
+            // context list — the hosted background plus every injected
+            // sibling page that completed its handshake.  A native
+            // getContexts may exist (popup pages are real extension
+            // contexts to Chromium) but cannot see the hosted
+            // background — merge, don't defer to it.
+            var nativeGetContexts = rt.getContexts;
             rtSet('getContexts', function (filter, cb) {
-                var list = [{
-                    contextType: 'BACKGROUND',
-                    documentId: cfg.id,
-                    documentOrigin: 'chrome-extension://' + cfg.id,
-                    documentUrl: 'chrome-extension://' + cfg.id
-                                   + '/manifest.json#arora-hosted',
-                    incognito: false, tabId: -1, windowId: -1
-                }];
-                return okCall(list, cb);
+                var bridgeP = call('runtime', 'getContexts', {})
+                    .then(function (v) {
+                        return (v && v.length) ? v : [];
+                    }, function () {
+                        return [];
+                    });
+                var nativeP = nativeGetContexts
+                    ? new Promise(function (res) {
+                        try {
+                            var r = nativeGetContexts.call(
+                                rt, filter || {},
+                                function (v) { res(v || []); });
+                            if (r && r.then)
+                                r.then(function (v) {
+                                    res(v || []);
+                                }, function () { res([]); });
+                        } catch (e) { res([]); }
+                    })
+                    : Promise.resolve([]);
+                var p = Promise.all([bridgeP, nativeP])
+                    .then(function (both) {
+                        var list = both[0].slice();
+                        var seen = {};
+                        list.forEach(function (c) {
+                            seen[String(c.contextType) + '|'
+                                 + String(c.documentUrl)] = true;
+                        });
+                        both[1].forEach(function (c) {
+                            var k = String(c.contextType) + '|'
+                                    + String(c.documentUrl);
+                            if (!seen[k]) {
+                                seen[k] = true;
+                                list.push(c);
+                            }
+                        });
+                        var types = filter && filter.contextTypes;
+                        if (types && types.length) {
+                            list = list.filter(function (c) {
+                                return types.indexOf(c.contextType)
+                                    >= 0;
+                            });
+                        }
+                        return list;
+                    });
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v); });
+                return p;
             }, 'chrome.runtime.getContexts');
         }
 
@@ -965,36 +1138,104 @@
                         'chrome.runtime.' + rtEvents[re]);
         }
 
-        // runtime.connect — same-extension connects route over the
-        // relay as Ports; a cross-extension connect delegates to the
-        // native binding when it has one, else answers a deadPort
-        // (a typed gap, never a missing function).
-        if (typeof rt.connect !== 'function') {
-            rtSet('connect', function (a1, a2) {
-                var extId = cfg.id;
-                var info = {};
-                if (typeof a1 === 'string') {
-                    extId = a1;
-                    info = a2 || {};
-                } else if (a1) {
-                    info = a1;
+        // EXT17: connection events get the onMessage treatment.  A
+        // native onConnect may exist — but a native connect can only
+        // target the dead service worker, so the extension's listener
+        // must ALSO land on the shim event the __arora.portConnect
+        // delivery fires.  The real Bitwarden popup opened its
+        // 'session' port into exactly this dead end (the bg-side port
+        // registered but onConnect never fired — Angular's bootstrap
+        // awaited the session IPC forever).  Dual-register so a real
+        // external connect still reaches the listener.
+        var connEvents = ['onConnect', 'onConnectExternal',
+                          'onMessageExternal'];
+        for (var ce = 0; ce < connEvents.length; ++ce) {
+            (function (cname) {
+                var evName = 'runtime.' + cname;
+                var shimEv = shim.events[evName]
+                             || makeEvent(evName);
+                var realEv;
+                try { realEv = rt[cname]; } catch (e) {
+                    realEv = null;
                 }
-                var name = info.name || '';
-                if (extId !== cfg.id) {
-                    note('chrome.runtime.connect(' + extId
-                         + '): cross-extension connect unsupported');
-                    return deadPort(name, 'cross-extension');
+                var installed = shimEv;
+                if (realEv && realEv !== shimEv
+                        && typeof realEv.addListener === 'function') {
+                    installed = {
+                        addListener: function (fn) {
+                            shimEv.addListener(fn);
+                            try {
+                                realEv.addListener(fn);
+                            } catch (e) {}
+                        },
+                        removeListener: function (fn) {
+                            shimEv.removeListener(fn);
+                            try {
+                                realEv.removeListener(fn);
+                            } catch (e) {}
+                        },
+                        hasListener: function (fn) {
+                            return shimEv.hasListener(fn)
+                                || (typeof realEv.hasListener
+                                        === 'function'
+                                    && realEv.hasListener(fn));
+                        },
+                        hasListeners: function () {
+                            return shimEv.hasListeners()
+                                || (typeof realEv.hasListeners
+                                        === 'function'
+                                    && realEv.hasListeners());
+                        }
+                    };
                 }
-                touch('chrome.runtime.connect');
-                var localId = 'p' + (++shim.seq) + '#' + Date.now();
-                var chan = cfg.id + '#' + localId;
-                var port = newPort(name, chan, localId);
-                call('relay', 'portConnect',
-                     { chan: chan, portId: localId, name: name })
-                    .catch(function () {});
-                return port;
-            }, 'chrome.runtime.connect');
+                rtImpls[cname] = installed;
+                rtReassert[cname] = installed;
+                safeSet(rt, cname, installed,
+                        'chrome.runtime.' + cname);
+            })(connEvents[ce]);
         }
+
+        // runtime.connect — a same-extension connect ALWAYS rides
+        // the relay: the native binding targets the extension's own
+        // service worker, which the hosted runtime replaced, so a
+        // native connect can only reach dead air (the real Bitwarden
+        // popup awaited its background-port handshake forever on
+        // exactly this — bootstrap never reached the unlock gate).
+        // A cross-extension connect still delegates to the native
+        // binding when it has one, else answers a deadPort (a typed
+        // gap, never a missing function).
+        var realConnect = (typeof rt.connect === 'function')
+            ? rt.connect.bind(rt) : null;
+        shimConnectRef = function (a1, a2) {
+            var extId = cfg.id;
+            var info = {};
+            if (typeof a1 === 'string') {
+                extId = a1;
+                info = a2 || {};
+            } else if (a1) {
+                info = a1;
+            }
+            var name = info.name || '';
+            if (extId !== cfg.id) {
+                if (realConnect) {
+                    touch('chrome.runtime.connect');
+                    try { return realConnect(a1, a2); } catch (e) {}
+                }
+                note('chrome.runtime.connect(' + extId
+                     + '): cross-extension connect unsupported');
+                return deadPort(name, 'cross-extension');
+            }
+            touch('chrome.runtime.connect');
+            var localId = 'p' + (++shim.seq) + '#' + Date.now();
+            var chan = cfg.id + '#' + localId;
+            var port = newPort(name, chan, localId);
+            call('relay', 'portConnect',
+                 { chan: chan, portId: localId, name: name,
+                   senderUrl: String(location.href) })
+                .catch(function () {});
+            return port;
+        };
+        rtSet('connect', shimConnectRef, 'chrome.runtime.connect');
         if (typeof rt.getPlatformInfo !== 'function') {
             rtSet('getPlatformInfo', function (cb) {
                 var p = call('runtime', 'platformInfo', {})
@@ -1006,7 +1247,7 @@
                                  nacl_arch: 'x86-64' };
                     });
                 if (cb)
-                    p.then(function (v) { cb(v); });
+                    p.then(function (v) { answerCb(cb, v); });
                 return p;
             }, 'chrome.runtime.getPlatformInfo');
         }
@@ -1019,8 +1260,16 @@
         }
         if (typeof rt.openOptionsPage !== 'function') {
             rtSet('openOptionsPage', function (cb) {
-                return failCall('runtime.openOptionsPage',
-                                'unsupported', cb);
+                // EXT17: opens options_ui.page in a normal tab via
+                // the backend — the sibling-page injection gives it
+                // the shim there.
+                var p = call('runtime', 'openOptionsPage', {});
+                if (cb)
+                    p.then(function () { cb(); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p;
             }, 'chrome.runtime.openOptionsPage');
         }
         if (typeof rt.requestUpdateCheck !== 'function') {
@@ -1068,26 +1317,12 @@
                 return 'chrome-extension://' + cfg.id + '/'
                        + String(p || '');
             },
-            // Window objects cannot cross the bridge — the hosted
-            // context IS this extension's background page; popup/tab
-            // views are not enumerable from here.
-            getViews: function (fetchProperties) {
-                touch('chrome.extension.getViews');
-                var type = fetchProperties && fetchProperties.type;
-                if (!type || type === 'BACKGROUND')
-                    return [window];
-                note('chrome.extension.getViews(' + type
-                     + '): only the hosted background context is '
-                     + 'enumerable');
-                return [];
-            },
-            getBackgroundPage: function (cb) {
-                touch('chrome.extension.getBackgroundPage');
-                if (cb) {
-                    try { cb(window); } catch (e) {}
-                }
-                return window;
-            },
+            // Window objects cannot cross the bridge — a context
+            // answers its OWN window for its own type; EXT17 page
+            // contexts answer null for the background page rather
+            // than the wrong object.
+            getViews: extensionGetViews,
+            getBackgroundPage: extensionGetBackgroundPage,
             inIncognitoContext: false,
             isAllowedIncognitoAccess: function (cb) {
                 return okCall(false, cb);
@@ -1132,9 +1367,9 @@
                 var p = call('storage', areaName + '.get',
                              { keys: keys === undefined ? null : keys });
                 if (cb)
-                    p.then(function (v) { cb(v); },
+                    p.then(function (v) { answerCb(cb, v); },
                            function (e) {
-                               setLastError(e.message); cb({});
+                               answerCb(cb, {}, e.message);
                            });
                 return p;
             },
@@ -1145,7 +1380,7 @@
                 if (cb)
                     p.then(function () { cb(); },
                            function (e) {
-                               setLastError(e.message); cb();
+                               answerCb(cb, undefined, e.message);
                            });
                 return p.then(function () {});
             },
@@ -1156,7 +1391,7 @@
                 if (cb)
                     p.then(function () { cb(); },
                            function (e) {
-                               setLastError(e.message); cb();
+                               answerCb(cb, undefined, e.message);
                            });
                 return p.then(function () {});
             },
@@ -1166,7 +1401,7 @@
                 if (cb)
                     p.then(function () { cb(); },
                            function (e) {
-                               setLastError(e.message); cb();
+                               answerCb(cb, undefined, e.message);
                            });
                 return p.then(function () {});
             },
@@ -1174,7 +1409,7 @@
                 var p = call('storage', areaName + '.getBytesInUse',
                              { keys: keys === undefined ? null : keys });
                 if (cb)
-                    p.then(function (v) { cb(v); },
+                    p.then(function (v) { answerCb(cb, v); },
                            function () { cb(0); });
                 return p;
             },
@@ -1222,40 +1457,89 @@
     }
 
     // --- chrome.i18n -----------------------------------------------------
-    // Real i18n.getMessage reads _locales off the extension origin.
-    // The bridge fallback parses messages.json host-side.
-    if (typeof chrome !== 'undefined'
-            && (!chrome.i18n || !chrome.i18n.getMessage)) {
+    // EXT17: the native getMessage EXISTS on this engine's extension
+    // pages but resolves no message catalog — every key answers ''
+    // and the real Bitwarden popup rendered fully blank chrome (its
+    // first-run carousel's CTAs carried no text to match).  Wrap
+    // getMessage unconditionally: a working native answer wins, every
+    // empty/native miss falls through to the _locales map embedded
+    // in the injected config (synchronous — page scripts calling
+    // getMessage at import time cannot wait for a bridge round-trip),
+    // with the bridge fetch behind it for hosts built without one.
+    if (typeof chrome !== 'undefined') {
         if (!chrome.i18n)
             safeSet(chrome, 'i18n', {}, 'chrome.i18n');
-        if (chrome.i18n && !chrome.i18n.getMessage) {
+        if (cfg.i18n && typeof cfg.i18n === 'object'
+                && !shim.i18nCache)
+            shim.i18nCache = cfg.i18n;
+        var i18nLookup = function (name, substitutions) {
+            var cached = shim.i18nCache && shim.i18nCache[name];
+            if (cached === undefined)
+                return String(name);
+            var out = String(cached);
+            var subs = substitutions === undefined ? []
+                : (Array.isArray(substitutions)
+                       ? substitutions : [substitutions]);
+            // Chrome substitutes $1..$9 positionally; $$ escapes a
+            // literal dollar so it is shielded during the $n pass.
+            var ESC = '\u0001';
+            out = out.split('$$').join(ESC);
+            for (var i = 0; i < subs.length && i < 9; ++i)
+                out = out.split('$' + (i + 1)).join(String(subs[i]));
+            return out.split(ESC).join('$');
+        };
+        if (chrome.i18n) {
+            var nativeGetMessage = null;
+            try {
+                if (typeof chrome.i18n.getMessage === 'function')
+                    nativeGetMessage =
+                        chrome.i18n.getMessage.bind(chrome.i18n);
+            } catch (e) {
+                nativeGetMessage = null;
+            }
             safeSet(chrome.i18n, 'getMessage',
                     function (name, substitutions) {
                 touch('chrome.i18n.getMessage');
-                var cached = shim.i18nCache && shim.i18nCache[name];
-                if (cached === undefined) {
-                    // sync API: ask the host for the whole locale map
-                    // once and consult it thereafter.
-                    return name;
+                var out = '';
+                if (nativeGetMessage) {
+                    try {
+                        out = nativeGetMessage(name, substitutions)
+                                  || '';
+                    } catch (e) {
+                        out = '';
+                    }
                 }
-                var out = cached;
-                if (substitutions) {
-                    var subs = Array.isArray(substitutions)
-                        ? substitutions : [substitutions];
-                    for (var i = 0; i < subs.length; ++i)
-                        out = out.split('$' + (i + 1))
-                                 .join(String(subs[i]));
-                }
+                if (!out)
+                    out = i18nLookup(name, substitutions);
                 return out;
             }, 'chrome.i18n.getMessage');
-            call('i18n', 'messages', {}).then(function (map) {
-                shim.i18nCache = map || {};
-            }).catch(function () { shim.i18nCache = {}; });
-        }
-        if (chrome.i18n && !chrome.i18n.getUILanguage) {
-            safeSet(chrome.i18n, 'getUILanguage', function () {
-                return manifest().default_locale || 'en';
-            }, 'chrome.i18n.getUILanguage');
+            if (!shim.i18nCache) {
+                // sync API: ask the host for the whole locale map
+                // once and consult it thereafter.
+                call('i18n', 'messages', {}).then(function (map) {
+                    shim.i18nCache = map || {};
+                }).catch(function () { shim.i18nCache = {}; });
+            }
+            if (!chrome.i18n.getUILanguage) {
+                safeSet(chrome.i18n, 'getUILanguage', function () {
+                    return manifest().default_locale || 'en';
+                }, 'chrome.i18n.getUILanguage');
+            }
+            if (!chrome.i18n.getAcceptLanguages) {
+                safeSet(chrome.i18n, 'getAcceptLanguages',
+                        function (cb) {
+                    var langs = [];
+                    try {
+                        langs = [(chrome.i18n.getUILanguage
+                                      ? chrome.i18n.getUILanguage()
+                                      : 'en')];
+                    } catch (e) {
+                        langs = ['en'];
+                    }
+                    answerCb(cb, langs);
+                    return Promise.resolve(langs);
+                }, 'chrome.i18n.getAcceptLanguages');
+            }
         }
     }
 
@@ -1278,28 +1562,28 @@
             get: function (name, cb) {
                 var p = call('alarms', 'get', { name: name || '' });
                 if (cb)
-                    p.then(function (v) { cb(v); },
+                    p.then(function (v) { answerCb(cb, v); },
                            function () { cb(undefined); });
                 return p;
             },
             getAll: function (cb) {
                 var p = call('alarms', 'getAll', {});
                 if (cb)
-                    p.then(function (v) { cb(v); },
+                    p.then(function (v) { answerCb(cb, v); },
                            function () { cb([]); });
                 return p;
             },
             clear: function (name, cb) {
                 var p = call('alarms', 'clear', { name: name || '' });
                 if (cb)
-                    p.then(function (v) { cb(v); },
+                    p.then(function (v) { answerCb(cb, v); },
                            function () { cb(false); });
                 return p;
             },
             clearAll: function (cb) {
                 var p = call('alarms', 'clearAll', {});
                 if (cb)
-                    p.then(function (v) { cb(v); },
+                    p.then(function (v) { answerCb(cb, v); },
                            function () { cb(false); });
                 return p;
             },
@@ -1326,7 +1610,7 @@
                              { key: 'title',
                                tabId: details && details.tabId });
                 if (cb)
-                    p.then(function (v) { cb(v); },
+                    p.then(function (v) { answerCb(cb, v); },
                            function () { cb(''); });
                 return p;
             },
@@ -1343,7 +1627,7 @@
                              { key: 'badgeText',
                                tabId: details && details.tabId });
                 if (cb)
-                    p.then(function (v) { cb(v); },
+                    p.then(function (v) { answerCb(cb, v); },
                            function () { cb(''); });
                 return p;
             },
@@ -1360,7 +1644,7 @@
                              { key: 'badgeColor',
                                tabId: details && details.tabId });
                 if (cb)
-                    p.then(function (v) { cb(v); },
+                    p.then(function (v) { answerCb(cb, v); },
                            function () { cb([0, 0, 0, 0]); });
                 return p;
             },
@@ -1378,7 +1662,7 @@
                              { key: 'badgeTextColor',
                                tabId: details && details.tabId });
                 if (cb)
-                    p.then(function (v) { cb(v); },
+                    p.then(function (v) { answerCb(cb, v); },
                            function () { cb(null); });
                 return p;
             },
@@ -1399,7 +1683,7 @@
                              { key: 'popup',
                                tabId: details && details.tabId });
                 if (cb)
-                    p.then(function (v) { cb(v); },
+                    p.then(function (v) { answerCb(cb, v); },
                            function () { cb(''); });
                 return p;
             },
@@ -1421,7 +1705,7 @@
                 var p = call('action', 'get',
                              { key: 'enabled', tabId: tabId });
                 if (cb)
-                    p.then(function (v) { cb(v); },
+                    p.then(function (v) { answerCb(cb, v); },
                            function () { cb(true); });
                 return p;
             },
@@ -1449,30 +1733,42 @@
                 makeEvent('tabs.' + tabsEvents[te]);
         }
         tabsNs.getCurrent = function (cb) {
+            // EXT17: context-local — the bridge resolves the tab
+            // hosting THIS page (an extension page in a real tab
+            // answers itself; the background page and detached
+            // popup answer undefined).
             touch('chrome.tabs.getCurrent');
-            return okCall(undefined, cb);  // a background page is no tab
+            var err = null;
+            var p = call('tabs', 'getCurrent', {})
+                .then(function (v) {
+                    return (v === null) ? undefined : v;
+                }, function (e) {
+                    err = e.message;
+                    return undefined;
+                });
+            if (cb)
+                p.then(function (v) { answerCb(cb, v, err); });
+            return p;
         };
         tabsNs.query = function (queryInfo, cb) {
             var p = call('tabs', 'query', { query: queryInfo || {} });
             if (cb)
-                p.then(function (v) { cb(v); },
-                       function (e) { setLastError(e.message); cb([]); });
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) { answerCb(cb, [], e.message); });
             return p;
         };
         tabsNs.get = function (tabId, cb) {
             var p = call('tabs', 'get', { id: tabId });
             if (cb)
-                p.then(function (v) { cb(v); },
-                       function (e) { setLastError(e.message);
-                                      cb(undefined); });
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) { answerCb(cb, undefined, e.message); });
             return p;
         };
         tabsNs.create = function (props, cb) {
             var p = call('tabs', 'create', { props: props || {} });
             if (cb)
-                p.then(function (v) { cb(v); },
-                       function (e) { setLastError(e.message);
-                                      cb(undefined); });
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) { answerCb(cb, undefined, e.message); });
             return p;
         };
         tabsNs.update = function (tabId, props, cb) {
@@ -1484,9 +1780,8 @@
             var p = call('tabs', 'update',
                          { id: tabId, props: props || {} });
             if (cb)
-                p.then(function (v) { cb(v); },
-                       function (e) { setLastError(e.message);
-                                      cb(undefined); });
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) { answerCb(cb, undefined, e.message); });
             return p;
         };
         tabsNs.sendMessage = function (tabId, msg, opts, cb) {
@@ -1536,6 +1831,76 @@
         tabsProxyRef = tabsProxy;
         tabsNsRef = tabsNs;
         assertTabs();
+    }
+
+    // --- chrome.windows -----------------------------------------------------
+    // EXT17: real window-level answers over the bridge (the EXT16
+    // hub's window set — private/tor windows are invisible); events
+    // are the shim events EXT16 pushes.  create/update/remove keep
+    // their typed-error stubs via fillNs below.
+    if (typeof chrome !== 'undefined') {
+        var winNs = { __aroraShim: true };
+        var winEventNames = ['onCreated', 'onRemoved',
+            'onFocusChanged', 'onBoundsChanged'];
+        for (var wne = 0; wne < winEventNames.length; ++wne)
+            winNs[winEventNames[wne]] =
+                makeEvent('windows.' + winEventNames[wne]);
+        winNs.WINDOW_ID_NONE = -1;
+        winNs.WINDOW_ID_CURRENT = -2;
+        function winMethod(method) {
+            return function () {
+                var a = Array.prototype.slice.call(arguments);
+                var cb = (a.length
+                          && typeof a[a.length - 1] === 'function')
+                    ? a.pop() : null;
+                var args = {};
+                if (a.length && typeof a[0] === 'number')
+                    args.id = a[0];
+                var p = call('windows', method, args);
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p;
+            };
+        }
+        winNs.get = winMethod('get');
+        winNs.getCurrent = winMethod('getCurrent');
+        winNs.getLastFocused = winMethod('getLastFocused');
+        winNs.getAll = winMethod('getAll');
+        // create/update/remove take an object first arg (or id then
+        // object), not the id-only shape winMethod maps.
+        winNs.create = function (createData, cb) {
+            var p = call('windows', 'create',
+                         { props: createData || {} });
+            if (cb)
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) {
+                           answerCb(cb, undefined, e.message);
+                       });
+            return p;
+        };
+        winNs.update = function (windowId, updateInfo, cb) {
+            var p = call('windows', 'update',
+                         { id: windowId, props: updateInfo || {} });
+            if (cb)
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) {
+                           answerCb(cb, undefined, e.message);
+                       });
+            return p;
+        };
+        winNs.remove = function (windowId, cb) {
+            var p = call('windows', 'remove', { id: windowId });
+            if (cb)
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) {
+                           answerCb(cb, undefined, e.message);
+                       });
+            return p;
+        };
+        installNs('windows', winNs);
     }
 
     // --- chrome.webNavigation ------------------------------------------------
@@ -1630,30 +1995,29 @@
                              { id: id || '', options: options || {} });
                 var q = p.then(function (v) { return v.id || ''; });
                 if (cb)
-                    q.then(function (v) { cb(v); },
-                           function (e) { setLastError(e.message);
-                                          cb(''); });
+                    q.then(function (v) { answerCb(cb, v); },
+                           function (e) { answerCb(cb, '', e.message); });
                 return q;
             },
             update: function (id, options, cb) {
                 var p = call('notifications', 'update',
                              { id: id || '', options: options || {} });
                 if (cb)
-                    p.then(function (v) { cb(v); },
+                    p.then(function (v) { answerCb(cb, v); },
                            function () { cb(false); });
                 return p;
             },
             clear: function (id, cb) {
                 var p = call('notifications', 'clear', { id: id || '' });
                 if (cb)
-                    p.then(function (v) { cb(v); },
+                    p.then(function (v) { answerCb(cb, v); },
                            function () { cb(false); });
                 return p;
             },
             getAll: function (cb) {
                 var p = call('notifications', 'getAll', {});
                 if (cb)
-                    p.then(function (v) { cb(v); },
+                    p.then(function (v) { answerCb(cb, v); },
                            function () { cb({}); });
                 return p;
             },
@@ -1699,8 +2063,7 @@
                 var id = props && props.id;
                 if (cb)
                     p.then(function () { cb(); },
-                           function (e) { setLastError(e.message);
-                                          cb(); });
+                           function (e) { answerCb(cb, undefined, e.message); });
                 return id !== undefined ? id : p.then(
                     function (v) { return v && v.id; });
             },
@@ -1709,24 +2072,21 @@
                              { id: id, props: props || {} });
                 if (cb)
                     p.then(function () { cb(); },
-                           function (e) { setLastError(e.message);
-                                          cb(); });
+                           function (e) { answerCb(cb, undefined, e.message); });
                 return p.then(function () {});
             },
             remove: function (id, cb) {
                 var p = call('contextMenus', 'remove', { id: id });
                 if (cb)
                     p.then(function () { cb(); },
-                           function (e) { setLastError(e.message);
-                                          cb(); });
+                           function (e) { answerCb(cb, undefined, e.message); });
                 return p.then(function () {});
             },
             removeAll: function (cb) {
                 var p = call('contextMenus', 'removeAll', {});
                 if (cb)
                     p.then(function () { cb(); },
-                           function (e) { setLastError(e.message);
-                                          cb(); });
+                           function (e) { answerCb(cb, undefined, e.message); });
                 return p.then(function () {});
             },
             refresh: function (cb) {
@@ -1751,7 +2111,7 @@
                 var p = call('sidePanel', 'getOptions',
                              { options: options || {} });
                 if (cb)
-                    p.then(function (v) { cb(v); },
+                    p.then(function (v) { answerCb(cb, v); },
                            function () { cb({}); });
                 return p;
             },
@@ -1765,7 +2125,7 @@
             getPanelBehavior: function (cb) {
                 var p = call('sidePanel', 'getPanelBehavior', {});
                 if (cb)
-                    p.then(function (v) { cb(v); },
+                    p.then(function (v) { answerCb(cb, v); },
                            function () { cb({}); });
                 return p;
             }
@@ -1853,28 +2213,13 @@
             }
             if (typeof ext.getViews !== 'function') {
                 try {
-                    ext.getViews = function (fetchProperties) {
-                        touch('chrome.extension.getViews');
-                        var t = fetchProperties && fetchProperties.type;
-                        if (!t || t === 'BACKGROUND')
-                            return [window];
-                        note('chrome.extension.getViews(' + t
-                             + '): only the hosted background '
-                             + 'context is enumerable');
-                        return [];
-                    };
+                    ext.getViews = extensionGetViews;
                 } catch (e) { recordGap('chrome.extension.getViews',
                                         String(e)); }
             }
             if (typeof ext.getBackgroundPage !== 'function') {
                 try {
-                    ext.getBackgroundPage = function (cb) {
-                        touch('chrome.extension.getBackgroundPage');
-                        if (cb) {
-                            try { cb(window); } catch (e2) {}
-                        }
-                        return window;
-                    };
+                    ext.getBackgroundPage = extensionGetBackgroundPage;
                 } catch (e) { recordGap(
                         'chrome.extension.getBackgroundPage',
                         String(e)); }

@@ -609,6 +609,13 @@ public:
     // default says a page is always possible.
     virtual QString pageUnavailableReason() const { return QString(); }
 
+    // ENG29: an optional one-line caveat the selector surfaces show
+    // next to the name — Servo reports its experimental slower-than-
+    // Chromium baseline here, escalating to a debug-artifact warning
+    // when the resolved cdylib is unoptimized.  Empty means nothing
+    // to explain.
+    virtual QString engineNote() const { return QString(); }
+
     // The painted surface — a QWidget so existing tab/chrome code
     // hosts any backend; QtWebEngine returns a QWebEngineView, Servo
     // would return the spike's QOpenGLWidget host.

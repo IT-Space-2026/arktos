@@ -190,6 +190,8 @@ QJsonObject ExtensionShimBackend::invoke(const QString &ns,
         return invokeAlarms(method, args);
     if (ns == QLatin1String("tabs"))
         return invokeTabs(method, args);
+    if (ns == QLatin1String("windows"))
+        return invokeWindows(method, args);
     if (ns == QLatin1String("action")
             || ns == QLatin1String("browserAction"))
         return invokeAction(method, args);
@@ -786,6 +788,182 @@ QJsonObject ExtensionShimBackend::invokeTabs(const QString &method,
     return errReply(QStringLiteral("unimplemented"));
 }
 
+// EXT17 — context-local resolution: the tab whose page IS the asking
+// context.  An extension page hosted in a real browser tab (options
+// pages via tabs.create) answers itself; a popup/detached page gets
+// Chrome's undefined (null result), never a guess.
+QJsonObject ExtensionShimBackend::tabForPageReply(QWebEnginePage *page)
+{
+    if (page) {
+        for (BrowserMainWindow *window
+             : ExtensionEventHub::browsingWindows()) {
+            if (!window || !window->tabWidget())
+                continue;
+            TabWidget *tw = window->tabWidget();
+            for (int i = 0; i < tw->count(); ++i) {
+                WebView *view = tw->webView(i);
+                if (ExtensionEventHub::trackable(view)
+                        && view->page() == page)
+                    return okReply(tabObject(view, i, idFor(window)));
+            }
+        }
+    }
+    return okReply(QJsonValue(QJsonValue::Null));
+}
+
+// -------------------------------------------------------------------
+// chrome.windows — the window-level mirror of the tabs snapshot.
+// -------------------------------------------------------------------
+
+QJsonObject ExtensionShimBackend::windowObject(BrowserMainWindow *window)
+{
+    QJsonObject out;
+    out.insert(QStringLiteral("id"), idFor(window));
+    out.insert(QStringLiteral("focused"),
+               window && window->isActiveWindow());
+    out.insert(QStringLiteral("state"), QStringLiteral("normal"));
+    out.insert(QStringLiteral("type"), QStringLiteral("normal"));
+    out.insert(QStringLiteral("alwaysOnTop"), false);
+    out.insert(QStringLiteral("incognito"), false);
+    return out;
+}
+
+QJsonObject ExtensionShimBackend::invokeWindows(const QString &method,
+                                              const QJsonObject &args)
+{
+    // EXT16 parity: a window with no trackable tab (all-OTR, tor)
+    // is invisible to extensions — filter it out of every answer.
+    QList<BrowserMainWindow *> windows;
+    for (BrowserMainWindow *window
+         : ExtensionEventHub::browsingWindows()) {
+        if (!window || !window->tabWidget())
+            continue;
+        TabWidget *tw = window->tabWidget();
+        bool visible = false;
+        for (int i = 0; i < tw->count(); ++i) {
+            if (ExtensionEventHub::trackable(tw->webView(i))) {
+                visible = true;
+                break;
+            }
+        }
+        if (visible)
+            windows.append(window);
+    }
+    if (method == QLatin1String("get")
+            || method == QLatin1String("getCurrent")
+            || method == QLatin1String("getLastFocused")) {
+        if (method == QLatin1String("get")) {
+            const int wanted =
+                int(args.value(QStringLiteral("id")).toDouble(-1));
+            for (BrowserMainWindow *window : windows) {
+                if (window && idFor(window) == wanted)
+                    return okReply(windowObject(window));
+            }
+            return errReply(QStringLiteral("not-found"));
+        }
+        BrowserMainWindow *current = currentWindow();
+        if (!current || !windows.contains(current))
+            return errReply(QStringLiteral("no-window"));
+        return okReply(windowObject(current));
+    }
+    if (method == QLatin1String("getAll")) {
+        QJsonArray out;
+        for (BrowserMainWindow *window : windows)
+            out.append(windowObject(window));
+        return okReply(out);
+    }
+    if (method == QLatin1String("create")) {
+        // EXT17 — extensions open real windows (Bitwarden's pop-out
+        // and SSO flows call this).  type:'popup'/'panel' has no
+        // chrome-less shell to map to, so it lands as a normal
+        // window; the url list fans out one tab each.
+        const QJsonObject props =
+            args.value(QStringLiteral("props")).toObject();
+        QStringList urls;
+        const QJsonValue urlVal = props.value(QStringLiteral("url"));
+        if (urlVal.isArray()) {
+            for (const QJsonValue &u : urlVal.toArray())
+                urls.append(u.toString());
+        } else if (urlVal.isString()) {
+            urls.append(urlVal.toString());
+        }
+        for (const QString &u : urls) {
+            const QUrl url(u);
+            if (!url.isEmpty()
+                    && !WebView::isUrlAllowedOnUntrustedInput(url))
+                return errReply(QStringLiteral("url-refused"));
+        }
+        BrowserApplication *app = BrowserApplication::instance();
+        if (!app)
+            return errReply(QStringLiteral("no-window"));
+        BrowserMainWindow *window = app->newMainWindow();
+        if (!window || !window->tabWidget())
+            return errReply(QStringLiteral("no-window"));
+        TabWidget *tw = window->tabWidget();
+        WebView *first = tw->count() ? tw->webView(0) : nullptr;
+        bool usedFirst = false;
+        for (const QString &u : urls) {
+            const QUrl url(u);
+            WebView *view = (!usedFirst && first) ? first
+                : tw->makeNewTab(false);
+            if (!view)
+                continue;
+            usedFirst = true;
+            if (!url.isEmpty())
+                view->loadUrl(url);
+        }
+        if (props.value(QStringLiteral("focused")).toBool(true))
+            window->activateWindow();
+        QJsonObject reply = windowObject(window);
+        // Chrome answers with the tabs array populated — callers
+        // read win.tabs[0].id to drive follow-up chrome.tabs calls.
+        QJsonArray tabs;
+        for (int i = 0; i < tw->count(); ++i) {
+            WebView *view = tw->webView(i);
+            if (ExtensionEventHub::trackable(view))
+                tabs.append(tabObject(view, i, idFor(window)));
+        }
+        reply.insert(QStringLiteral("tabs"), tabs);
+        return okReply(reply);
+    }
+    if (method == QLatin1String("update")) {
+        const int wanted =
+            int(args.value(QStringLiteral("id")).toDouble(-1));
+        const QJsonObject props =
+            args.value(QStringLiteral("props")).toObject();
+        for (BrowserMainWindow *window : windows) {
+            if (!window || idFor(window) != wanted)
+                continue;
+            const QString state =
+                props.value(QStringLiteral("state")).toString();
+            if (state == QLatin1String("minimized"))
+                window->showMinimized();
+            else if (state == QLatin1String("maximized"))
+                window->showMaximized();
+            else if (state == QLatin1String("fullscreen"))
+                window->showFullScreen();
+            else if (state == QLatin1String("normal"))
+                window->showNormal();
+            if (props.value(QStringLiteral("focused")).toBool())
+                window->activateWindow();
+            return okReply(windowObject(window));
+        }
+        return errReply(QStringLiteral("not-found"));
+    }
+    if (method == QLatin1String("remove")) {
+        const int wanted =
+            int(args.value(QStringLiteral("id")).toDouble(-1));
+        for (BrowserMainWindow *window : windows) {
+            if (!window || idFor(window) != wanted)
+                continue;
+            window->close();
+            return okReply();
+        }
+        return errReply(QStringLiteral("not-found"));
+    }
+    return errReply(QStringLiteral("unimplemented"));
+}
+
 // -------------------------------------------------------------------
 // chrome.action / chrome.browserAction — state feeds the EXT08
 // button strip via ExtensionInfo; no native toolbar delegate exists.
@@ -888,32 +1066,36 @@ QJsonObject ExtensionShimBackend::manifestJson() const
     return m_manifest;
 }
 
-QJsonObject ExtensionShimBackend::invokeI18n(const QString &method,
-                                             const QJsonObject &args)
+QJsonObject ExtensionShimBackend::i18nMessages(
+        const QString &extensionPath)
 {
-    Q_UNUSED(args);
-    if (method != QLatin1String("messages"))
-        return errReply(QStringLiteral("unimplemented"));
-    if (m_extensionPath.isEmpty())
-        return errReply(QStringLiteral("no-path"));
+    if (extensionPath.isEmpty())
+        return QJsonObject();
 
     // Locale pick order: UI languages, then the manifest's declared
     // default, then 'en'.
     QStringList langs = QLocale().uiLanguages();
-    const QString deflt = manifestJson()
-        .value(QStringLiteral("default_locale")).toString();
-    if (!deflt.isEmpty())
-        langs.append(deflt);
+    {
+        QFile mfile(extensionPath + QLatin1String("/manifest.json"));
+        if (mfile.size() <= 1024 * 1024
+                && mfile.open(QIODevice::ReadOnly)) {
+            const QString deflt = QJsonDocument::fromJson(
+                mfile.readAll()).object()
+                .value(QStringLiteral("default_locale")).toString();
+            if (!deflt.isEmpty())
+                langs.append(deflt);
+        }
+    }
     langs.append(QStringLiteral("en"));
 
     for (const QString &lang : langs) {
         QString dir = QLocale(lang).name();
-        QFile file(m_extensionPath + QLatin1String("/_locales/")
+        QFile file(extensionPath + QLatin1String("/_locales/")
                    + dir + QLatin1String("/messages.json"));
         if (!file.exists()) {
             // Chrome also accepts the short tag (_locales/en).
             const QString shortTag = dir.section(QLatin1Char('_'), 0, 0);
-            file.setFileName(m_extensionPath
+            file.setFileName(extensionPath
                              + QLatin1String("/_locales/") + shortTag
                              + QLatin1String("/messages.json"));
         }
@@ -929,9 +1111,20 @@ QJsonObject ExtensionShimBackend::invokeI18n(const QString &method,
             if (!msg.isEmpty())
                 flat.insert(it.key(), msg);
         }
-        return okReply(flat);
+        return flat;
     }
-    return okReply(QJsonObject());
+    return QJsonObject();
+}
+
+QJsonObject ExtensionShimBackend::invokeI18n(const QString &method,
+                                             const QJsonObject &args)
+{
+    Q_UNUSED(args);
+    if (method != QLatin1String("messages"))
+        return errReply(QStringLiteral("unimplemented"));
+    if (m_extensionPath.isEmpty())
+        return errReply(QStringLiteral("no-path"));
+    return okReply(i18nMessages(m_extensionPath));
 }
 
 // -------------------------------------------------------------------
@@ -1148,6 +1341,41 @@ QJsonObject ExtensionShimBackend::invokeRuntime(const QString &method,
     }
     if (method == QLatin1String("getManifest"))
         return okReply(manifestJson());
+    // EXT17: the shim's merged getContexts — synthetic entries for
+    // every registered context of THIS extension (the hosted
+    // background, open popups, extension pages in tabs).
+    if (method == QLatin1String("getContexts"))
+        return okReply(ExtensionBackgroundRuntime::instance()
+                           ->contextsJson(m_extensionId));
+    if (method == QLatin1String("openOptionsPage")) {
+        // options_ui.page (or the legacy options_page) opens in a
+        // normal tab — the EXT17 page injection gives it the shim
+        // there like any extension document.
+        const QJsonObject manifest = manifestJson();
+        QString page = manifest.value(QStringLiteral("options_ui"))
+            .toObject().value(QStringLiteral("page")).toString();
+        if (page.isEmpty())
+            page = manifest.value(QStringLiteral("options_page"))
+                .toString();
+        if (page.isEmpty() || page.startsWith(QLatin1Char('/'))
+                || page.contains(QLatin1Char(':'))
+                || page.split(QLatin1Char('/')).contains(
+                    QStringLiteral("..")))
+            return errReply(QStringLiteral("no-options-page"));
+        const QJsonObject open = invokeTabs(
+            QStringLiteral("create"),
+            QJsonObject{{QStringLiteral("props"),
+                         QJsonObject{{QStringLiteral("url"),
+                                      QStringLiteral(
+                                          "chrome-extension://")
+                                          + m_extensionId
+                                          + QLatin1Char('/') + page},
+                                     {QStringLiteral("active"),
+                                      true}}}});
+        if (!open.value(QStringLiteral("ok")).toBool())
+            return open;
+        return okReply();
+    }
     if (method == QLatin1String("platformInfo")) {
         // chrome.runtime.getPlatformInfo shape — real values from
         // QSysInfo so extensions feature-detecting the platform get
