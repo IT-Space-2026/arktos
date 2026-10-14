@@ -25,15 +25,85 @@
 #include <qfontmetrics.h>
 #include <qframe.h>
 #include <qpainter.h>
+#include <qpainterpath.h>
 #include <qproxystyle.h>
 #include <qstylefactory.h>
 #include <qstyleoption.h>
+#include <qtabbar.h>
+#include <qtoolbutton.h>
+
+namespace {
+
+// THEM02: tab-strip helpers shared by the proxy's drawControl —
+// a vertical QTabBar::Shape, and the lifted card's outline path.
+// The path is open on the content-facing edge so the active tab
+// reads merged into the page instead of boxed inside a border.
+bool verticalTabCardShape(QTabBar::Shape shape)
+{
+    return shape == QTabBar::RoundedWest
+        || shape == QTabBar::TriangularWest
+        || shape == QTabBar::RoundedEast
+        || shape == QTabBar::TriangularEast;
+}
+
+QPainterPath tabCardOutline(const QRectF &rect, QTabBar::Shape shape,
+                            qreal radius)
+{
+    QPainterPath path;
+    const qreal l = rect.left(), t = rect.top();
+    const qreal r = rect.right(), b = rect.bottom();
+    switch (shape) {
+    case QTabBar::RoundedSouth:
+    case QTabBar::TriangularSouth:
+        path.moveTo(r, t);
+        path.lineTo(r, b - radius);
+        path.quadTo(r, b, r - radius, b);
+        path.lineTo(l + radius, b);
+        path.quadTo(l, b, l, b - radius);
+        path.lineTo(l, t);
+        break;
+    case QTabBar::RoundedWest:
+    case QTabBar::TriangularWest:
+        path.moveTo(r, t);
+        path.lineTo(l + radius, t);
+        path.quadTo(l, t, l, t + radius);
+        path.lineTo(l, b - radius);
+        path.quadTo(l, b, l + radius, b);
+        path.lineTo(r, b);
+        break;
+    case QTabBar::RoundedEast:
+    case QTabBar::TriangularEast:
+        path.moveTo(l, t);
+        path.lineTo(r - radius, t);
+        path.quadTo(r, t, r, t + radius);
+        path.lineTo(r, b - radius);
+        path.quadTo(r, b, r - radius, b);
+        path.lineTo(l, b);
+        break;
+    default:
+        path.moveTo(l, b);
+        path.lineTo(l, t + radius);
+        path.quadTo(l, t, l + radius, t);
+        path.lineTo(r - radius, t);
+        path.quadTo(r, t, r, t + radius);
+        path.lineTo(r, b);
+        break;
+    }
+    return path;
+}
+
+} // namespace
 
 // THEME01 §c/§d — metrics the stylesheet cannot reach: group-box
 // titles drawn at section-header weight (children keep the base font),
 // zero-width toolbar frames so bars are flat on every style, and
 // QFrame separator lines redrawn as single palette hairlines instead
 // of the sunken/raised bevel pair.
+// THEM02 — the same hook owns the tab strip: squared tabs with hard
+// borders are repainted as rounded cards (flat resting, washed hover,
+// lifted active) and the per-tab controls get a matching rounded
+// hover.  Only pixels inside option.rect change — every size hint
+// the TABS02/RSZ02 strip metrics computed still stands.
 class ChromeProxyStyle : public QProxyStyle
 {
 public:
@@ -72,7 +142,70 @@ public:
                                   1, rect.height(), line);
             return;
         }
+        // THEM02: the flat strip carries no base band — the old
+        // shaded band used to hide under the squared tabs' opaque
+        // bodies and would leak through the rounded corners.  The
+        // pane hairline and the active card's open edge mark the
+        // seam instead.
+        if (element == PE_FrameTabBarBase)
+            return;
+        // THEM02 §c — the strip's per-tab controls (close buttons,
+        // the '+' new-tab button) get one flat rounded hover instead
+        // of the base style's bevelled auto-raise frame.  The tor
+        // strip's own palette makes the wash read violet there.
+        if (element == PE_PanelButtonTool && painter && widget
+                && qobject_cast<const QTabBar *>(widget->parentWidget())) {
+            const QToolButton *button =
+                qobject_cast<const QToolButton *>(widget);
+            if (button && button->autoRaise()) {
+                if ((option->state & State_Enabled)
+                        && (option->state & State_MouseOver)) {
+                    const QColor fill = (option->state & State_Sunken)
+                        ? AroraStyle::pressedColor(option->palette)
+                        : AroraStyle::hoverColor(option->palette);
+                    painter->save();
+                    painter->setRenderHint(QPainter::Antialiasing);
+                    painter->setPen(Qt::NoPen);
+                    painter->setBrush(fill);
+                    painter->drawRoundedRect(
+                        option->rect.adjusted(0, 0, -1, -1), 3, 3);
+                    painter->restore();
+                }
+                return;
+            }
+        }
         QProxyStyle::drawPrimitive(element, option, painter, widget);
+    }
+
+    void drawControl(ControlElement control,
+                     const QStyleOption *option, QPainter *painter,
+                     const QWidget *widget) const override
+    {
+        const QStyleOptionTab *tab =
+            qstyleoption_cast<const QStyleOptionTab *>(option);
+        if (control == CE_TabBarTabShape && tab && painter) {
+            drawTabCard(tab, painter, widget);
+            return;
+        }
+        // Resting tabs recede a step further than their flat card —
+        // the title drops toward the strip color while the active
+        // tab's stays at full contrast.  A hovered resting tab lifts
+        // its title back out of the dim along with the card wash.
+        if (control == CE_TabBarTabLabel && tab
+                && (tab->state & State_Enabled)
+                && !(tab->state & State_Selected)
+                && !(tab->state & State_MouseOver)) {
+            QStyleOptionTab copy(*tab);
+            const QColor dim = AroraStyle::blend(
+                tab->palette.color(QPalette::WindowText),
+                tab->palette.color(QPalette::Window), 0.28);
+            copy.palette.setColor(QPalette::WindowText, dim);
+            copy.palette.setColor(QPalette::Text, dim);
+            copy.palette.setColor(QPalette::ButtonText, dim);
+            QProxyStyle::drawControl(control, &copy, painter, widget);
+            return;
+        }
+        QProxyStyle::drawControl(control, option, painter, widget);
     }
 
     void drawComplexControl(ComplexControl control,
@@ -102,6 +235,98 @@ public:
         QProxyStyle::drawComplexControl(control, option, painter,
                                         widget);
     }
+
+private:
+    // THEM02 — the tab card: resting tabs stay flat (a hairline
+    // separates resting neighbors), hover and press paint a washed
+    // card, and the active tab lifts to the field/raised color with
+    // an outline that opens into the page edge.  A vertical strip's
+    // forced-horizontal rows read as rounded list cards instead of
+    // merge-tabs.
+    void drawTabCard(const QStyleOptionTab *tab, QPainter *painter,
+                     const QWidget *widget) const
+    {
+        const QRect rect = tab->rect;
+        const bool selected = tab->state & State_Selected;
+        const bool pressed = tab->state & State_Sunken;
+        const bool hovered = tab->state & State_MouseOver;
+        const QTabBar *bar = qobject_cast<const QTabBar *>(widget);
+        const bool railRow = bar
+            && verticalTabCardShape(bar->shape())
+            && !verticalTabCardShape(tab->shape);
+
+        painter->save();
+        painter->setRenderHint(QPainter::Antialiasing);
+
+        if (!selected && !hovered && !pressed) {
+            // Flat resting tab — only a hairline marks the boundary
+            // with a resting neighbor (a card edge needs no help).
+            if (bar) {
+                const int index = bar->tabAt(rect.center());
+                if (index >= 0 && index + 1 < bar->count()
+                        && bar->currentIndex() != index + 1) {
+                    const QColor line =
+                        AroraStyle::separatorColor(tab->palette);
+                    if (railRow || verticalTabCardShape(tab->shape))
+                        painter->fillRect(rect.left() + 8, rect.bottom(),
+                                          rect.width() - 16, 1, line);
+                    else
+                        painter->fillRect(rect.right(), rect.top() + 5,
+                                          1, rect.height() - 10, line);
+                }
+            }
+            painter->restore();
+            return;
+        }
+
+        // The active card reaches past its rect into the page edge;
+        // hover/press and rail cards float a pixel inside it.
+        QRectF card(rect);
+        if (selected && !railRow) {
+            switch (tab->shape) {
+            case QTabBar::RoundedSouth:
+            case QTabBar::TriangularSouth:
+                card.adjust(0, -2, 0, 0);
+                break;
+            case QTabBar::RoundedWest:
+            case QTabBar::TriangularWest:
+                card.adjust(0, 0, 2, 0);
+                break;
+            case QTabBar::RoundedEast:
+            case QTabBar::TriangularEast:
+                card.adjust(-2, 0, 0, 0);
+                break;
+            default:
+                card.adjust(0, 0, 0, 2);
+                break;
+            }
+        } else {
+            card = card.adjusted(1, 1, -1, -1);
+        }
+
+        const qreal radius = railRow ? 5 : 6;
+        QPainterPath outline = railRow
+            ? QPainterPath()
+            : tabCardOutline(card, tab->shape, radius);
+        if (railRow)
+            outline.addRoundedRect(card, radius, radius);
+        QPainterPath fill(outline);
+        fill.closeSubpath();
+
+        const QColor color = selected
+            ? AroraStyle::tabActiveColor(tab->palette)
+            : pressed ? AroraStyle::pressedColor(tab->palette)
+                      : AroraStyle::hoverColor(tab->palette);
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(color);
+        painter->drawPath(fill);
+        if (selected) {
+            painter->setPen(AroraStyle::separatorColor(tab->palette));
+            painter->setBrush(Qt::NoBrush);
+            painter->drawPath(outline);
+        }
+        painter->restore();
+    }
 };
 
 QColor AroraStyle::blend(const QColor &base, const QColor &over,
@@ -125,6 +350,21 @@ QColor AroraStyle::hoverColor(const QPalette &palette)
 {
     return blend(palette.color(QPalette::Window),
                  palette.color(QPalette::WindowText), 0.08);
+}
+
+QColor AroraStyle::pressedColor(const QPalette &palette)
+{
+    return blend(palette.color(QPalette::Window),
+                 palette.color(QPalette::WindowText), 0.13);
+}
+
+QColor AroraStyle::tabActiveColor(const QPalette &palette)
+{
+    const QColor window = palette.color(QPalette::Window);
+    const QColor base = palette.color(QPalette::Base);
+    if (base.value() >= window.value())
+        return base;
+    return blend(window, palette.color(QPalette::WindowText), 0.14);
 }
 
 QColor AroraStyle::torChromeColor()

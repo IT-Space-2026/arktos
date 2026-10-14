@@ -300,6 +300,7 @@ public:
 
 protected:
     void changeEvent(QEvent *event) override;
+    void paintEvent(QPaintEvent *event) override;
 
 public slots:
     void loadString(const QString &string, OpenUrlIn tab = CurrentTab);
