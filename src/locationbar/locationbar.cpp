@@ -24,7 +24,7 @@
 #include "popupblockerbutton.h"
 #include "privacyindicator.h"
 #include "searchlineedit.h"
-#include "siteshield.h"
+#include "sitepadlock.h"
 #include "twoleveldomains_p.h"
 #include "webview.h"
 
@@ -43,7 +43,7 @@ LocationBar::LocationBar(QWidget *parent)
     : LineEdit(parent)
     , m_webView(nullptr)
     , m_siteIcon(nullptr)
-    , m_shield(nullptr)
+    , m_padlock(nullptr)
     , m_popupBlockerButton(nullptr)
     , m_privacyIndicator(nullptr)
 {
@@ -56,12 +56,13 @@ LocationBar::LocationBar(QWidget *parent)
     setMinimumHeight(fontMetrics().height() + 12);
 
     setUpdatesEnabled(false);
-    // UIP05: the shield indicator opens the per-site privacy panel —
-    // leftmost of the leading site-info zone, Vivaldi-style.
-    m_shield = new SiteShieldButton(this);
-    addWidget(m_shield, LeftSide);
+    // TRUST14: the padlock owns the leftmost site-info slot — it shows
+    // the connection/trust verdict (SitePadlockButton), while the
+    // shield that used to sit here moved onto the navigation toolbar.
+    m_padlock = new SitePadlockButton(this);
+    addWidget(m_padlock, LeftSide);
 
-    // site icon on the left, next to the shield
+    // site icon on the left, next to the padlock
     m_siteIcon = new LocationBarSiteIcon(this);
     addWidget(m_siteIcon, LeftSide);
 
@@ -94,7 +95,7 @@ void LocationBar::setWebView(WebView *webView)
     Q_ASSERT(webView);
     m_webView = webView;
     m_siteIcon->setWebView(webView);
-    m_shield->setWebView(webView);
+    m_padlock->setWebView(webView);
     m_popupBlockerButton->setWebView(webView);
     m_privacyIndicator->setWebView(webView);
     connect(webView, &QWebEngineView::urlChanged,

@@ -79,6 +79,7 @@ class QTimer;
 class ReaderButton;
 class SidebarGrip;
 class SidebarPanel;
+class SiteShieldButton;
 class TabWidget;
 class ToolbarSearch;
 class QToolButton;
@@ -367,6 +368,11 @@ private:
     QIcon m_reloadIcon;
     QIcon m_stopIcon;
     QSplitter *m_navigationSplitter;
+    // TRUST14: the site shield lives on the navigation toolbar
+    // immediately left of the location bar — one button per window,
+    // rebound to the active tab's WebView on every tab switch so its
+    // badge and privacy panel always describe the front tab.
+    SiteShieldButton *m_siteShield;
     // ENG08: one engine switcher for the whole window — a fixed-width
     // cell between the url-bar stack and the dedicated search box,
     // replacing the per-bar embedded indicators.

@@ -2455,22 +2455,24 @@ mod tests {
         assert!(e[2].contains("\"decodedDataLength\":null"), "{e:?}");
 
         // Page lifecycle timings ride the browsingContext group on the
-        // same monotonic clock as the network events.
+        // same monotonic clock as the network events.  The session
+        // already emitted one of each above — the count is cumulative
+        // and the fresh event is the last one.
         core.on_message(&json!({
             "method": "Page.domContentEventFired", "sessionId": "S2",
             "params": {"timestamp": 12.8}
         }));
         let e = events_named(&got, "browsingContext.domContentLoaded");
-        assert_eq!(e.len(), 1);
-        assert!(e[0].contains("\"timestamp\":12800.0")
-            && e[0].contains("\"context\":\"T2\""), "{e:?}");
+        assert_eq!(e.len(), 2);
+        assert!(e[1].contains("\"timestamp\":12800.0")
+            && e[1].contains("\"context\":\"T2\""), "{e:?}");
         core.on_message(&json!({
             "method": "Page.loadEventFired", "sessionId": "S2",
             "params": {"timestamp": 13.4}
         }));
         let e = events_named(&got, "browsingContext.load");
-        assert_eq!(e.len(), 1);
-        assert!(e[0].contains("\"timestamp\":13400.0"), "{e:?}");
+        assert_eq!(e.len(), 2);
+        assert!(e[1].contains("\"timestamp\":13400.0"), "{e:?}");
 
         // Cache flags ride responseStarted so the Size column can mark
         // cache-served rows honestly.

@@ -87,6 +87,9 @@
 #include "webpage.h"
 #include "webviewsearch.h"
 #include "locationbar.h"
+#include "sitepadlock.h"
+#include "sitepanel.h"
+#include "siteshield.h"
 #include "toolbarsearch.h"
 #include "torcircuitbutton.h"
 #include "torcircuitpanel.h"
@@ -187,6 +190,7 @@ private slots:
     void tabStripCompactHeight();
     void stopReloadState();
     void extensionActionButtons();
+    void navShieldPadlock();
 };
 
 void tst_BrowserMainWindow::initTestCase()
@@ -3216,7 +3220,8 @@ void tst_BrowserMainWindow::readerModeButton()
 
     // Slot order in the toolbar's action list: the MENU06 app-menu
     // button leads, then Back, Forward, Stop/Reload, the HOME01 Home
-    // button, the reader button, then the location-bar splitter.
+    // button, the reader button, the TRUST14 site shield, then the
+    // location-bar splitter.
     const QList<QAction *> barActions = navBar->actions();
     int readerIndex = -1;
     int splitterIndex = -1;
@@ -3228,7 +3233,7 @@ void tst_BrowserMainWindow::readerModeButton()
             splitterIndex = i;
     }
     QCOMPARE(readerIndex, 5);
-    QCOMPARE(splitterIndex, readerIndex + 1);
+    QCOMPARE(splitterIndex, readerIndex + 2);
 
     // The View-menu action shares the same ReaderMode state.
     QAction *viewAction = nullptr;
@@ -5690,14 +5695,14 @@ void tst_BrowserMainWindow::extensionActionButtons()
         QLatin1String("extensionActionBar"));
     QVERIFY(bar);
 
-    // The strip lives in the navigation splitter immediately after
-    // the location bar stack — index 1, where the engine indicator
-    // cell sits on master.
+    // The strip lives in the navigation splitter right after the
+    // engine indicator cell — location bar stack, engine indicator,
+    // then this.
     QSplitter *splitter = window
         ->findChild<QToolBar *>(QLatin1String("NavigationToolBar"))
         ->findChild<QSplitter *>();
     QVERIFY(splitter);
-    QCOMPARE(splitter->indexOf(bar), 1);
+    QCOMPARE(splitter->indexOf(bar), 2);
 
     // The bundled component extensions carry no action popup, so a
     // fresh window's strip is empty and hidden — no dead gap.
@@ -5851,6 +5856,113 @@ void tst_BrowserMainWindow::extensionActionButtons()
     // tests or the real profile's extension list.
     extensions->removeExtension(extensionId);
     QTRY_VERIFY_WITH_TIMEOUT(findId().isEmpty(), 15000);
+}
+
+// TRUST14: the site shield moved out of the url bar onto the
+// navigation toolbar — the shared button sits immediately left of the
+// location-bar stack and rebinds to the ACTIVE tab's WebView on every
+// switch (the user's explicit rule: the shield always shows the
+// settings of the active tab).  The padlock took the in-bar slot.
+void tst_BrowserMainWindow::navShieldPadlock()
+{
+    SubWindow *window = new SubWindow;
+    window->resize(1100, 700);
+    window->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+
+    QToolBar *navBar = window->findChild<QToolBar *>(
+        QLatin1String("NavigationToolBar"));
+    QVERIFY(navBar);
+    SiteShieldButton *shield = window->findChild<SiteShieldButton *>(
+        QLatin1String("navSiteShield"));
+    QVERIFY(shield);
+    QCOMPARE(shield->parentWidget(), navBar);
+
+    // Immediately left of the splitter = immediately left of the url
+    // bar itself (the splitter's first cell is the location-bar stack).
+    QWidget *splitter = window->findChild<QWidget *>(
+        QLatin1String("navigationSplitter"));
+    QVERIFY(splitter);
+    int shieldIndex = -1;
+    int splitterIndex = -1;
+    const QList<QAction *> actions = navBar->actions();
+    for (int i = 0; i < actions.size(); ++i) {
+        QWidget *widget = navBar->widgetForAction(actions.at(i));
+        if (widget == shield)
+            shieldIndex = i;
+        if (widget == splitter)
+            splitterIndex = i;
+    }
+    QVERIFY(shieldIndex >= 0);
+    QCOMPARE(splitterIndex, shieldIndex + 1);
+
+    // Bound to the front tab from the start — its privacy panel shows
+    // the active tab's site settings.
+    WebView *first = window->currentTab();
+    QVERIFY(first);
+    QVERIFY(shield->panel());
+    QCOMPARE(shield->panel()->webView(), first);
+
+    // The bar itself carries a padlock (SitePadlockButton), no shield.
+    LocationBar *bar = qobject_cast<LocationBar *>(
+        window->tabWidget()->currentLocationBar());
+    QVERIFY(bar);
+    QVERIFY(!bar->findChild<SiteShieldButton *>());
+    SitePadlockButton *padlock =
+        bar->findChild<SitePadlockButton *>();
+    QVERIFY(padlock);
+
+    // Tab switch rebinds the shared shield; the padlock belongs to the
+    // tab's own bar, so each page keeps its own verdict.
+    WebView *second = window->tabWidget()->makeNewTab(true);
+    QVERIFY(second && second != first);
+    QCOMPARE(shield->panel()->webView(), second);
+    window->tabWidget()->setCurrentIndex(0);
+    QCOMPARE(shield->panel()->webView(), first);
+    window->tabWidget()->setCurrentIndex(1);
+    QCOMPARE(shield->panel()->webView(), second);
+
+    // Offscreen grabs for visual review — set ARORA_TRUST_GRAB_DIR to a
+    // directory; normal + tor + private nav rows land there.
+    const QByteArray grabDir = qgetenv("ARORA_TRUST_GRAB_DIR");
+    if (!grabDir.isEmpty()) {
+        QDir().mkpath(QString::fromLocal8Bit(grabDir));
+        navBar->grab().save(QString::fromLocal8Bit(grabDir)
+                            + QLatin1String("/nav-normal.png"));
+        window->grab().save(QString::fromLocal8Bit(grabDir)
+                            + QLatin1String("/window-normal.png"));
+    }
+    closeWindow(window);
+
+    if (!grabDir.isEmpty()) {
+        BrowserApplication::setTorMode(true);
+        SubWindow *torWindow = new SubWindow;
+        torWindow->resize(1100, 700);
+        torWindow->show();
+        QVERIFY(QTest::qWaitForWindowExposed(torWindow));
+        if (QToolBar *torBar = torWindow->findChild<QToolBar *>(
+                QLatin1String("NavigationToolBar")))
+            torBar->grab().save(QString::fromLocal8Bit(grabDir)
+                                + QLatin1String("/nav-tor.png"));
+        torWindow->grab().save(QString::fromLocal8Bit(grabDir)
+                               + QLatin1String("/window-tor.png"));
+        closeWindow(torWindow);
+        BrowserApplication::setTorMode(false);
+
+        BrowserApplication::setPrivate(true);
+        SubWindow *privateWindow = new SubWindow;
+        privateWindow->resize(1100, 700);
+        privateWindow->show();
+        QVERIFY(QTest::qWaitForWindowExposed(privateWindow));
+        if (QToolBar *privateBar = privateWindow->findChild<QToolBar *>(
+                QLatin1String("NavigationToolBar")))
+            privateBar->grab().save(QString::fromLocal8Bit(grabDir)
+                                    + QLatin1String("/nav-private.png"));
+        privateWindow->grab().save(QString::fromLocal8Bit(grabDir)
+                                   + QLatin1String("/window-private.png"));
+        closeWindow(privateWindow);
+        BrowserApplication::setPrivate(false);
+    }
 }
 
 QTEST_MAIN(tst_BrowserMainWindow)

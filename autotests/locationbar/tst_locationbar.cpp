@@ -43,6 +43,7 @@
 #include "adblockdialog.h"
 #include "adblockmanager.h"
 #include "clearbutton.h"
+#include "sitepadlock.h"
 #include "sitepanel.h"
 #include "siteshield.h"
 #include "webview.h"
@@ -165,7 +166,10 @@ void tst_LocationBar::widgets()
 {
     TestLocationBar bar;
     QVERIFY(bar.findChild<LocationBarSiteIcon*>());
-    QVERIFY(bar.findChild<SiteShieldButton*>());
+    // TRUST14: the in-bar indicator is the trust padlock now — the
+    // site shield moved onto the navigation toolbar next to the bar.
+    QVERIFY(bar.findChild<SitePadlockButton*>());
+    QVERIFY(!bar.findChild<SiteShieldButton*>());
     QVERIFY(bar.findChild<PrivacyIndicator*>());
     QVERIFY(bar.findChild<ClearButton*>());
     // SHLD02: one shield only — the separate content-blocker button
@@ -407,20 +411,25 @@ void tst_LocationBar::privacyIndicator()
 }
 
 // SHLD02 + UIP05: the merged site shield — the standalone
-// content-blocker button is gone from the right cluster; the left
-// shield's panel hosts the global toggle, the per-page blocked count
-// and the settings entry, and the shield icon itself carries the
-// blocked-count badge and the disabled/whitelisted states.
+// content-blocker button is gone from the right cluster; the shield's
+// panel hosts the global toggle, the per-page blocked count and the
+// settings entry, and the shield icon itself carries the
+// blocked-count badge and the disabled/whitelisted states.  TRUST14
+// re-homed the shield onto the navigation toolbar, so the in-bar
+// assertions moved to the padlock and the shield is exercised
+// standalone — the panel surface is identical wherever the button
+// lives (tst_BrowserMainWindow::navShieldPadlock covers the toolbar
+// placement and active-tab rebinding).
 void tst_LocationBar::contentBlockingShield()
 {
     TestLocationBar bar;
 
-    SiteShieldButton *shield = bar.findChild<SiteShieldButton*>();
+    SitePadlockButton *padlock = bar.findChild<SitePadlockButton*>();
     LocationBarSiteIcon *siteIcon = bar.findChild<LocationBarSiteIcon*>();
-    QVERIFY(shield);
+    QVERIFY(padlock);
     QVERIFY(siteIcon);
-    QVERIFY(shield->isHidden()); // nothing to report without a view
-    // One shield only — the right cluster has no blocker button.
+    QVERIFY(padlock->isHidden()); // nothing to report without a view
+    // One merged indicator — the right cluster has no blocker button.
     const QList<QToolButton*> buttons = bar.findChildren<QToolButton*>();
     for (QToolButton *candidate : buttons)
         QVERIFY(candidate->accessibleName()
@@ -428,18 +437,22 @@ void tst_LocationBar::contentBlockingShield()
 
     WebView view(BrowserApplication::webEngineProfile());
     bar.setWebView(&view);
-    QVERIFY(!shield->isHidden());
+    QVERIFY(!padlock->isHidden());
 
-    // Vivaldi order on the left — shield, then site icon, then the
+    // Vivaldi order on the left — padlock, then site icon, then the
     // url text.
     bar.show();
     QTRY_VERIFY_WITH_TIMEOUT(
-        shield->mapTo(&bar, QPoint(0, 0)).x()
+        padlock->mapTo(&bar, QPoint(0, 0)).x()
             < siteIcon->mapTo(&bar, QPoint(0, 0)).x(), 3000);
 
-    // The panel popup still anchors under the shield at its new spot.
-    // showMenu() runs the menu's nested exec() loop, so a timer
-    // captures the geometry and dismisses it from inside.
+    // The shield keeps its whole panel surface on the toolbar; a
+    // standalone instance exercises it the same way.  showMenu() runs
+    // the menu's nested exec() loop, so a timer captures the geometry
+    // and dismisses it from inside.
+    SiteShieldButton *shield = new SiteShieldButton(&bar);
+    shield->setWebView(&view);
+    shield->show();
     QVERIFY(shield->menu());
     QPoint menuPos(-1, -1);
     QTimer::singleShot(200, shield->menu(), [shield, &menuPos]() {

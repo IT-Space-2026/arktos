@@ -855,6 +855,15 @@ Security:
   while the downloads run and reports failures honestly; the button
   is disabled with an explanation until remote list downloads are
   consented to (TRUST13).
+- A small padlock inside the left end of the address bar reports the
+  connection and site-trust verdict at a glance — locked green for
+  https on a positively verified host, locked amber for unranked or
+  still-probing https, locked red when a trust signal flags the site,
+  and the same tier colors unlocked over plain http; clicking it opens
+  an info-only summary (TRUST14).
+- The site-privacy shield moved out of the address bar onto the
+  navigation toolbar immediately left of it — one button per window
+  that always shows the active tab's settings (TRUST14).
 - WebChannel isolation (SEC24): the page's QWebChannel is bound to a
   dedicated isolated script world, so web content can no longer
   enumerate or call the registered bridge objects — the
@@ -1703,6 +1712,9 @@ URL-bar search opt-out moved to a trusted key (SRCH12):
 
 New tab opens the start page (START02):
     The New Tab command — Ctrl+T, File > New Tab, the tab-strip "+" button and double-clicking empty tab-strip space — now opens the tab on the start page with its search box instead of a blank "Untitled" tab. The same applies to the other user-initiated new-tab surfaces: the "New Container Tab" entries, the fresh tab left behind when the last tab closes while "quit when the last tab closes" is off, and the tab recreated when a close is refused. The target is the same "Home page" setting the Home button uses, whose default is the bundled start page, so a customized home page applies to new tabs too. Tabs created programmatically — the window's first tab, session-restored tabs and link/context-spawned tabs — still open bare, so the "On startup" preference (home page / blank page / restore session) keeps deciding what launch shows.
+
+Trust padlock in the URL bar, shield on the toolbar (TRUST14):
+    The site-privacy shield moved out of the address bar onto the navigation toolbar immediately left of the url field — one button per window, rebound to the active tab on every switch so its badge and privacy panel always describe the front tab. In the vacated in-bar slot a small padlock now reports the connection and the trust verdict: https on a host that is both positively known (a Tranco rank or equivalent) and TLS-verified by the second-opinion probe shows a locked green padlock; https with no negative signal — unranked, unprobed or still probing — shows amber; a threat-list hit, a lookalike verdict or a failed TLS probe shows red; and plain http always shows the unlocked padlock in the verdict's color. Turning the Site Trust master switch off drops the verdict entirely — the padlock falls back to a plain chrome lock that still reports the scheme honestly rather than disappearing. Tor pages are never probed and can never wear a misleading green. Clicking the padlock opens an info-only popup — scheme, TLS status and the same trust-signal lines the shield panel lists — with no certificate-bypass affordance.
 
 0.11.0
 Interface:

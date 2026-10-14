@@ -100,6 +100,7 @@ inherently Chromium — capability-gated, degrades on Servo; **comment**
 | `src/locationbar/popupblockerbutton.cpp` | `QWebEngineView` `urlChanged` | wrap | — |
 | `src/locationbar/privacyindicator.cpp` | `QWebEnginePage` profile OTR read | wrap | `Profile::isOffTheRecord`. |
 | `src/locationbar/sitepanel.cpp` | `QWebEngineView` load/url signals | wrap | — |
+| `src/locationbar/sitepadlock.cpp` | `QWebEngineView` `urlChanged`/`loadStarted`/`loadFinished` connects | wrap | `Engine::View` signals. |
 | `src/locationbar/siteshield.cpp` | `QWebEngineView` load signals | wrap | — |
 | `src/toolbarsearch.cpp` | `QWebEnginePage` OTR-profile read | wrap | `Profile::isOffTheRecord`. |
 | `src/sourceviewer.cpp` | probe `QWebEnginePage` for DOM-compare + `toHtml` | wrap | `Page::runJavaScript`/`toHtml` behind a capability. |

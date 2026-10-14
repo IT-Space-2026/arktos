@@ -49,8 +49,11 @@
 #include "aroraicon.h"
 #include "cookiejar.h"
 #include "popupblocker.h"
+#include "sitepadlock.h"
 #include "sitepanel.h"
 #include "siteshield.h"
+#include "tlsverifier.h"
+#include "tlsfixture.h"
 #include "webpermissionmanager.h"
 #include "webview.h"
 #include "qtest_arora.h"
@@ -119,6 +122,9 @@ private slots:
     void trustBadgeNavigation();
     void trustGating();
     void trustSectionHeader();
+    void padlockStateMatrix();
+    void padlockFollowsPage();
+    void padlockPopup();
 };
 
 void tst_SitePanel::initTestCase()
@@ -887,6 +893,272 @@ void tst_SitePanel::trustSectionHeader()
             != SitePanel::trustLevelColor(QLatin1String("green"), false));
     SiteShieldButton::clearTrustCache();
 #endif
+}
+
+// TRUST14: the padlock's whole decision table — the static stateFor()
+// seam maps (scheme, composite trust verdict, TLS second-opinion
+// verdict) onto the visible states.  Fixture tables drive the trust
+// verdict; the TLS legs use the shared openssl fixture through
+// probeHost's ALLOW_LOCAL seam.
+void tst_SitePanel::padlockStateMatrix()
+{
+    typedef SitePadlockButton::State S;
+
+    // TRUST03 master gate first — before any fixture loads: off means
+    // NO verdict claim, just the plain chrome lock honestly reporting
+    // the scheme.
+    {
+        QSettings settings;
+        settings.setValue(QLatin1String("trust/enabled"), false);
+        QCOMPARE(int(SitePadlockButton::stateFor(QUrl(QLatin1String(
+                       "https://threat-fixture.test/")))),
+                 int(S::PlainLocked));
+        QCOMPARE(int(SitePadlockButton::stateFor(QUrl(QLatin1String(
+                       "http://threat-fixture.test/")))),
+                 int(S::PlainUnlocked));
+        QCOMPARE(int(SitePadlockButton::stateFor(QUrl(QLatin1String("about:blank")))),
+                 int(S::PlainUnlocked));
+        settings.remove(QLatin1String("trust/enabled"));
+    }
+
+    // Non-web pages carry no verdict — the unclaimed open lock.
+    QCOMPARE(int(SitePadlockButton::stateFor(QUrl(QLatin1String("about:blank")))),
+             int(S::PlainUnlocked));
+    QCOMPARE(int(SitePadlockButton::stateFor(QUrl(QLatin1String("file:///etc/passwd")))),
+             int(S::PlainUnlocked));
+    QCOMPARE(int(SitePadlockButton::stateFor(QUrl(QLatin1String("arora-file:///tmp/")))),
+             int(S::PlainUnlocked));
+
+#if defined(ARORA_RUSTCORE)
+    const QByteArray tranco =
+        "4,known-fixture.test\n1,localhost\n2,paypal.com\n";
+    QCOMPARE(rc_tranco_load(
+                 reinterpret_cast<const uint8_t *>(tranco.constData()),
+                 size_t(tranco.size())),
+             RC_OK);
+    const QByteArray block = "threat-fixture.test\n";
+    QCOMPARE(rc_blocklist_load(
+                 reinterpret_cast<const uint8_t *>(block.constData()),
+                 size_t(block.size())),
+             RC_OK);
+    SiteShieldButton::clearTrustCache();
+
+    // Threat-list hit — red, locked on https, unlocked on http.
+    QCOMPARE(int(SitePadlockButton::stateFor(QUrl(QLatin1String(
+                   "https://threat-fixture.test/")))),
+             int(S::LockedRed));
+    QCOMPARE(int(SitePadlockButton::stateFor(QUrl(QLatin1String(
+                   "http://threat-fixture.test/")))),
+             int(S::UnlockedRed));
+    // Lookalike of a ranked domain — red as well.
+    QCOMPARE(int(SitePadlockButton::stateFor(QUrl(QLatin1String("https://paypa1.com/")))),
+             int(S::LockedRed));
+
+    // Neutral tier: no negative signal anywhere -> yellow.
+    QCOMPARE(int(SitePadlockButton::stateFor(QUrl(QLatin1String(
+                   "https://obscure-fixture.test/")))),
+             int(S::LockedYellow));
+    QCOMPARE(int(SitePadlockButton::stateFor(QUrl(QLatin1String(
+                   "http://obscure-fixture.test/")))),
+             int(S::UnlockedYellow));
+
+    // Plaintext http is never green, even for a ranked host — the
+    // verdict itself ambers it — and https + Tranco rank but NO
+    // completed TLS probe stays yellow: an unprobed page (tor, proxy,
+    // Pending, Refused) can never wear a misleading green.
+    QCOMPARE(int(SitePadlockButton::stateFor(QUrl(QLatin1String(
+                   "http://known-fixture.test/")))),
+             int(S::UnlockedYellow));
+    QCOMPARE(int(SitePadlockButton::stateFor(QUrl(QLatin1String(
+                   "https://known-fixture.test/")))),
+             int(S::LockedYellow));
+
+    // TLS legs — the CA root anchors the fixture chains.
+    const QByteArray ca = TlsFixtureData::certFile(QLatin1String("ca.der"));
+    QVERIFY2(!ca.isEmpty(),
+             "fixture CA missing — run data/testcerts/gen_testcerts.py");
+    QCOMPARE(rc_tls_add_root(
+                 reinterpret_cast<const uint8_t *>(ca.constData()),
+                 size_t(ca.size())),
+             RC_OK);
+    TlsVerifier *verifier = TlsVerifier::instance();
+
+    {
+        TlsFixture good;
+        QVERIFY(good.start(QLatin1String("valid")));
+        const QUrl url(QString::fromLatin1("https://localhost:%1/")
+                       .arg(good.port()));
+        verifier->probeHost(QLatin1String("localhost"), good.port(),
+                            RC_TLS_F_ALLOW_LOCAL);
+        // record() lands through a queued slot — until the event loop
+        // pumps, the probe is deterministically in flight.  Pending
+        // must render neutral, NEVER red (honesty rule).
+        QCOMPARE(int(verifier->statusFor(QLatin1String("localhost"),
+                                         good.port())),
+                 int(TlsVerifier::Status::Pending));
+        QCOMPARE(int(SitePadlockButton::stateFor(url)), int(S::LockedYellow));
+        QTRY_VERIFY(verifier->statusFor(QLatin1String("localhost"),
+                                        good.port())
+                    == TlsVerifier::Status::Verified);
+        // Verified chain but no positive listing — localhost can
+        // never carry a Tranco rank — stays neutral yellow.
+        QCOMPARE(int(SitePadlockButton::stateFor(url)),
+                 int(S::LockedYellow));
+    }
+    {
+        // Tranco-listed + Verified = the one green.  The verdict
+        // table is fixtured above; the TLS verdict is seeded through
+        // the same record() slot the probe worker posts to (a real
+        // openssl handshake to a listed name is impossible — fixture
+        // names do not resolve).
+        QVERIFY(QMetaObject::invokeMethod(
+            verifier, "record",
+            Q_ARG(QString, QLatin1String("known-fixture.test:443")),
+            Q_ARG(int, int(TlsVerifier::Status::Verified)),
+            Q_ARG(QString, QString()),
+            Q_ARG(QString, QString()),
+            Q_ARG(QString, QLatin1String("TLSv1_3"))));
+        QCOMPARE(int(verifier->statusFor(
+                     QLatin1String("known-fixture.test"))),
+                 int(TlsVerifier::Status::Verified));
+        QCOMPARE(int(SitePadlockButton::stateFor(QUrl(QLatin1String(
+                       "https://known-fixture.test/")))),
+                 int(S::LockedGreen));
+    }
+    {
+        // An evaluated-and-failed chain turns the lock red even on a
+        // Tranco-listed host — the TLS verdict is a negative signal.
+        TlsFixture bad;
+        QVERIFY(bad.start(QLatin1String("expired")));
+        const QUrl url(QString::fromLatin1("https://localhost:%1/")
+                       .arg(bad.port()));
+        verifier->probeHost(QLatin1String("localhost"), bad.port(),
+                            RC_TLS_F_ALLOW_LOCAL);
+        QTRY_VERIFY(verifier->statusFor(QLatin1String("localhost"),
+                                        bad.port())
+                    == TlsVerifier::Status::Warning);
+        QCOMPARE(int(SitePadlockButton::stateFor(url)), int(S::LockedRed));
+    }
+    {
+        // Probe failure is Unverified, not Warning — neutral yellow.
+        quint16 deadPort;
+        {
+            QTcpServer tmp;
+            QVERIFY(tmp.listen(QHostAddress::LocalHost));
+            deadPort = tmp.serverPort();
+        }
+        const QUrl url(QString::fromLatin1("https://localhost:%1/")
+                       .arg(deadPort));
+        verifier->probeHost(QLatin1String("localhost"), deadPort,
+                            RC_TLS_F_ALLOW_LOCAL);
+        QTRY_VERIFY(verifier->statusFor(QLatin1String("localhost"),
+                                        deadPort)
+                    == TlsVerifier::Status::Unverified);
+        QCOMPARE(int(SitePadlockButton::stateFor(url)), int(S::LockedYellow));
+    }
+
+    SiteShieldButton::clearTrustCache();
+    rc_tls_clear_roots();
+    rc_sitetrust_reload();
+#else
+    // No crate: no verdict and no probe — every web page lands on the
+    // neutral tier, locked iff https.
+    QCOMPARE(int(SitePadlockButton::stateFor(QUrl(QLatin1String("https://a.example/")))),
+             int(S::LockedYellow));
+    QCOMPARE(int(SitePadlockButton::stateFor(QUrl(QLatin1String("http://a.example/")))),
+             int(S::UnlockedYellow));
+#endif
+}
+
+// TRUST14: the padlock tracks its page — a plaintext load shows the
+// unlocked neutral state, leaving the web scheme drops the claim
+// entirely.  The per-tab LocationBar ownership makes the same tracking
+// per-tab by construction.
+void tst_SitePanel::padlockFollowsPage()
+{
+#if defined(ARORA_RUSTCORE)
+    SiteShieldButton::clearTrustCache();
+#endif
+
+    LocalHttpServer server;
+    QVERIFY(server.start());
+
+    WebView view;
+    SitePadlockButton padlock;
+    padlock.setWebView(&view);
+    QCOMPARE(int(padlock.state()),
+             int(SitePadlockButton::State::PlainUnlocked));
+
+    QSignalSpy loadSpy(&view, SIGNAL(loadFinished(bool)));
+    view.load(server.url());
+    QTRY_COMPARE(loadSpy.count(), 1);
+    QCOMPARE(int(padlock.state()),
+             int(SitePadlockButton::State::UnlockedYellow));
+    QVERIFY(!padlock.icon().isNull());
+    QVERIFY(padlock.toolTip().contains(QLatin1String("not secure"),
+                                     Qt::CaseInsensitive));
+
+    view.load(QUrl(QLatin1String("about:blank")));
+    QTRY_VERIFY(int(padlock.state())
+                == int(SitePadlockButton::State::PlainUnlocked));
+}
+
+// TRUST14: the click popup is information-only — host, scheme line,
+// the TLS chip and the trust signal lines; no bypass affordance.
+void tst_SitePanel::padlockPopup()
+{
+    LocalHttpServer server;
+    QVERIFY(server.start());
+    const QString host = server.url().host();
+
+    WebView view;
+    SitePadlockButton padlock;
+    padlock.setWebView(&view);
+    QSignalSpy loadSpy(&view, SIGNAL(loadFinished(bool)));
+    view.load(server.url());
+    QTRY_COMPARE(loadSpy.count(), 1);
+
+    QFrame *popup = padlock.popup();
+    QVERIFY(popup);
+    QLabel *hostLabel =
+        popup->findChild<QLabel*>(QLatin1String("padlockPopupHost"));
+    QVERIFY(hostLabel);
+    QCOMPARE(hostLabel->text(), host);
+    QLabel *security =
+        popup->findChild<QLabel*>(QLatin1String("padlockPopupSecurity"));
+    QVERIFY(security);
+    QVERIFY(security->text().contains(QLatin1String("not secure"),
+                                    Qt::CaseInsensitive));
+    // http pages are never probed — the TLS chip hides.
+    QLabel *tls =
+        popup->findChild<QLabel*>(QLatin1String("padlockPopupTls"));
+    QVERIFY(tls);
+    QVERIFY(!tls->isVisibleTo(popup));
+
+    QWidget *trust =
+        popup->findChild<QWidget*>(QLatin1String("padlockPopupTrust"));
+    QVERIFY(trust);
+#if defined(ARORA_RUSTCORE)
+    // Unlisted loopback host — the informative line shows.
+    QVERIFY(trust->isVisibleTo(popup));
+    const QList<QLabel *> lines = trust->findChildren<QLabel*>();
+    QVERIFY(!lines.isEmpty());
+#else
+    QVERIFY(!trust->isVisibleTo(popup));
+#endif
+
+    // Trust surface off: the popup says so instead of showing lines.
+    QSettings settings;
+    settings.setValue(QLatin1String("trust/enabled"), false);
+    view.reload();
+    QTRY_COMPARE(loadSpy.count(), 2);
+    QCOMPARE(int(padlock.state()),
+             int(SitePadlockButton::State::PlainUnlocked));
+    QVERIFY(trust->isVisibleTo(popup));
+    QLabel *off =
+        trust->findChild<QLabel*>(QLatin1String("padlockPopupTrustOff"));
+    QVERIFY(off);
+    settings.remove(QLatin1String("trust/enabled"));
 }
 
 QTEST_MAIN(tst_SitePanel)

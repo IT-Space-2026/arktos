@@ -97,6 +97,8 @@
 #include "bidipanel.h"
 #include "sidebargrip.h"
 #include "sidebarpanel.h"
+#include "sitepadlock.h"
+#include "siteshield.h"
 #include "sourceviewer.h"
 #include "statusbarwidgets.h"
 #include "tabbar.h"
@@ -2022,7 +2024,34 @@ void BrowserMainWindow::setupToolBar()
     m_navigationSplitter->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
     m_tabWidget->locationBarStack()->setMinimumWidth(120);
     m_navigationSplitter->setCollapsible(0, false);
-    m_navigationBar->addWidget(m_navigationSplitter);
+    QAction *splitterAction =
+        m_navigationBar->addWidget(m_navigationSplitter);
+
+    // TRUST14: the site shield moved out of the location bar onto the
+    // nav row — one shared button immediately left of the url field.
+    // It keeps the whole SitePanel surface; the rebinding below is the
+    // point of the move — the shield always shows the ACTIVE tab's
+    // site settings, never a background tab's (tab switches, same-index
+    // container refilters and engine swaps all re-point it, and a torn
+    // or new window binds its own button's tab).
+    m_siteShield = new SiteShieldButton(m_navigationBar);
+    m_siteShield->setObjectName(QLatin1String("navSiteShield"));
+    m_navigationBar->insertWidget(splitterAction, m_siteShield);
+    const auto rebindTrust = [this]() {
+        m_siteShield->setWebView(currentTab());
+        // The padlock is per-tab (it lives in each bar), but the front
+        // one re-evaluates here too — the trust surface reads its
+        // QSettings keys live, and returning to a tab is often the
+        // first refresh since a flag flip in Settings.
+        if (QLineEdit *bar = m_tabWidget->currentLocationBar())
+            if (SitePadlockButton *padlock =
+                    bar->findChild<SitePadlockButton *>())
+                padlock->refresh();
+    };
+    connect(m_tabWidget, &QTabWidget::currentChanged, this,
+            [this, rebindTrust](int) { rebindTrust(); });
+    connect(m_tabWidget, &TabWidget::tabsChanged, this, rebindTrust);
+    rebindTrust();
     // SIDE01: sidebar toggle at the far right of the navigation bar —
     // same checkable action as View > Sidebar (F4).
     m_navigationBar->addAction(m_viewSidebarAction);

@@ -250,7 +250,9 @@ void tst_EngineSwitch::indicatorToolbarSlot()
 
     QCOMPARE(splitter->widget(0), tabs->locationBarStack());
     QCOMPARE(splitter->indexOf(host), 1);
-    QCOMPARE(splitter->indexOf(search), 2);
+    // EXT08's extension action strip sits between the indicator host
+    // and the search cell on non-private windows.
+    QCOMPARE(splitter->indexOf(search), 3);
     QCOMPARE(indicator->parentWidget(), host);
     // fixed size, no stretch — the splitter cannot grow the cell.
     QCOMPARE(host->minimumWidth(), host->maximumWidth());
