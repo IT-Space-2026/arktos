@@ -73,7 +73,9 @@ void tst_EngineAdapter::fakeBackendShape()
     QVERIFY(profile);
     Engine::Page *page = backend.createPage(profile, &backend);
     QVERIFY(page);
-    QVERIFY(backend.createView(page));
+    QWidget *view = backend.createView(page);
+    QVERIFY(view);
+    delete view;
 }
 
 void tst_EngineAdapter::fakePageNavigation()

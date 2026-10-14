@@ -323,27 +323,34 @@ void ExtensionActionBar::openPopup(const QString &id, const QUrl &popupUrl,
     // Chrome resizes the bubble to the document — WebEngine cannot
     // report a preferred size up front, so after each load the doc's
     // scroll size re-fits the popup within the usual bubble bounds.
-    QPointer<QWebEnginePage> pageGuard(page);
+    // The deferred callback must survive neither object: the popup is
+    // delete-on-close and rebuild() can replace the anchor button
+    // while an eval is still in flight — QPointer both, or the
+    // resize/move lands on freed widgets.
+    const QPointer<QFrame> popupGuard(popup);
+    const QPointer<QToolButton> anchorGuard(anchor);
+    const QPointer<QWebEnginePage> pageGuard(page);
     connect(view, &QWebEngineView::loadFinished, popup,
-            [popup, pageGuard, anchor]() {
+            [popupGuard, pageGuard, anchorGuard]() {
         if (!pageGuard)
             return;
         pageGuard->runJavaScript(
             QStringLiteral("[document.documentElement.scrollWidth,"
                            "document.documentElement.scrollHeight]"),
-            [popup, anchor](const QVariant &result) {
-                if (!popup || !anchor)
+            [popupGuard, anchorGuard](const QVariant &result) {
+                if (!popupGuard || !anchorGuard)
                     return;
                 const QVariantList size = result.toList();
                 if (size.size() != 2)
                     return;
-                popup->resize(
+                popupGuard->resize(
                     qBound(280, size.at(0).toInt() + 24, 800),
                     qBound(120, size.at(1).toInt() + 24, 600));
-                const QPoint topRight = anchor->mapToGlobal(
-                    QPoint(anchor->width() + 1, anchor->height() + 1));
-                popup->move(topRight.x() - popup->width(),
-                            topRight.y() + 2);
+                const QPoint topRight = anchorGuard->mapToGlobal(
+                    QPoint(anchorGuard->width() + 1,
+                           anchorGuard->height() + 1));
+                popupGuard->move(topRight.x() - popupGuard->width(),
+                                 topRight.y() + 2);
             });
     });
 

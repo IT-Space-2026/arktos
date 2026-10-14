@@ -2977,3 +2977,95 @@ The pre-existing dirty files in this tree (notesmodel/sidebarpanel/webview work 
 [2026-10-14 20:38:04] merge run exited rc=0
 [2026-10-14 21:33:10] merge due: ui-work(1) — spawning devin merge run
 Working tree is dirty — likely another agent mid-run. I'll check lane ahead-counts and which files each merge would touch.rust-work is at 0 — skip. ui-work has 1 commit ahead. Let me see what it touches.The ui-work merge touches `ChangeLog`, which has unstaged changes in this tree — likely another agent mid-run. Let me confirm whether the merge can proceed (git will refuse if it must overwrite dirty files).[2026-10-14 21:33:49] merge run exited rc=0
+[2026-10-14 21:38:49] merge due: ui-work(1) — spawning devin merge run
+I'll start by checking the current state of the repo and fetching.rust-work is at 0 — skipping. ui-work is 1 ahead; let me inspect that commit and check whether it touches the dirty log files.Clean merge, no conflicts. Now verifying the build.Build is running. Waiting for it to finish.Build succeeded. Now appending the MERGEWATCH line to WORKLOG.md — let me check the existing format first.Build passed. Appending the MERGEWATCH line, then committing just that file and pushing.Done. One merge pass complete:
+
+- **rust-work**: 0 commits ahead — skipped.
+- **ui-work**: 1 commit ahead (`1b3301d` ICONS10 — bundled Tabler icons become default theme). Merged cleanly via ort with no conflicts; union auto-merge covered `WORKLOG.md`, `ChangeLog`, `README.md`, `settings.ui`, `tabwidget.cpp`, `browsermainwindow.cpp`, and the browsermainwindow test.
+- **Build**: `make -C src -j2` succeeded — `arora` binary linked.
+- **Push**: `40d42df..64ef97f` pushed to origin/master (merge commit + worklog line).
+- The pre-existing dirty `.devin/mergewatch.log` and `.devin/taskloop.log` were left untouched and unstaged.
+[2026-10-14 21:43:26] merge run exited rc=0
+[2026-10-14 21:53:27] merge due: ui-work(1) — spawning devin merge run
+I'll start by checking the current state of the repository.Working tree has uncommitted changes (possibly an agent mid-run). Fetching origin and checking lane status.The ui-work commit touches no dirty files in this tree (dirty: `Arora-Task.md`, `mergewatch.log`, `taskloop.log`, two `src/` files; lane touches `Arora-Task-UI.md`, `taskloop-ui.log`, packaging files). Safe to merge.Clean merge, no conflicts. Now verifying the build.The `arora.pro` change only adds a `pkg-rpm` packaging target — doesn't affect the `src/` build. Build is clean. Pushing master.Pushed. Now checking the WORKLOG format before appending the merge line.Merge run complete. Summary:
+
+- **rust-work**: 0 commits ahead — skipped.
+- **ui-work**: 1 commit ahead (`d9512a8` — PKG03 openSUSE RPM spec + driver). Merged cleanly via ort, no conflicts; the lane touched only packaging/docs/task files, none of which overlapped the dirty working-tree files (`Arora-Task.md`, `mergewatch.log`, `taskloop.log`, `extensionactionbar.cpp`, `notesmodel.cpp` — left untouched, agent presumably mid-run).
+- **Build**: `make -C src -j2` → "Nothing to be done" — merge added no `src/` changes; `arora.pro` only gained a `pkg-rpm` extra target. Build ok.
+- **Pushed**: `master` `64ef97f..ce51b17`.
+- **WORKLOG**: appended MERGEWATCH line at `.devin/WORKLOG.md:933`.
+
+Stopping after this pass.
+[2026-10-14 21:54:02] merge run exited rc=0
+[2026-10-14 22:14:03] merge due: ui-work(3) — spawning devin merge run
+Working tree is dirty. Let me check lane counts and which files each merge would touch.rust-work is at 0 — skip. ui-work is 3 ahead, touching only `.devin/Arora-Task-UI.md`, which isn't dirty locally. Merging.Clean merge, no conflicts. Verifying the build.Build is fine (merge touched only a task file). Pushing and logging.Merge run complete:
+
+- **rust-work**: 0 commits ahead — skipped.
+- **ui-work**: 3 commits ahead — merged cleanly (`ort` strategy, no conflicts; only `.devin/Arora-Task-UI.md` changed on that side).
+- **Build**: `make -C src -j2` → nothing to rebuild, ok.
+- **Push**: `ce51b17..5af10c9 master -> master`.
+- **WORKLOG**: appended `MERGEWATCH` line.
+
+Pre-existing dirty files (`.devin/Arora-Task.md`, `WORKLOG.md`, logs, `src/` files) were left untouched — none overlapped with the merge. Stopping after this pass.
+[2026-10-14 22:14:24] merge run exited rc=0
+[2026-10-14 22:19:24] merge due: ui-work(2) — spawning devin merge run
+Starting merge run. First, check the tree state and fetch.Working tree is dirty with what looks like an in-flight agent's changes. Now check lane commits.rust-work is at 0 — skipping. ui-work is 2 ahead. Let me check which files its commits touch vs. the dirty files here.ui-work only touches `.devin/Arora-Task-UI.md`, which isn't dirty here. Merging.Clean merge, no conflicts. Verifying build now (only a task file changed, so this mostly confirms baseline).Build is clean (nothing to rebuild). Pushing master.Pushed. Appending the worklog line (file is dirty from another agent — I'll only append).Let me check whether that last MERGEWATCH line is already part of this merge or a stale entry.The last line is an uncommitted stub entry for this merge. I'll flesh it out rather than add a duplicate.Committing the worklog entry (matching prior MERGEWATCH convention) and pushing.Merge run complete.
+
+- **rust-work**: 0 commits ahead — skipped
+- **ui-work**: 2 commits ahead (`f6b938c`, MENU14/MENU15 task-queue rows) — merged clean via ort, no conflicts (only `.devin/Arora-Task-UI.md`)
+- **Build**: `make -C src -j2` → clean (nothing to rebuild)
+- **Pushed**: merge commit + worklog entry (`2308765`)
+- Working tree had unrelated mid-run agent changes; left untouched — only `WORKLOG.md` was staged (its dirty lines were mergewatch entries).
+[2026-10-14 22:19:58] merge run exited rc=0
+[2026-10-14 22:24:58] merge due: ui-work(1) — spawning devin merge run
+I'll start by checking the current state of the repo and fetching.Working tree has uncommitted changes — possibly an agent mid-run. Let me check lane status.rust-work is at 0 (skip). ui-work is 1 ahead. Let me check what that commit touches and whether it collides with the dirty files.The lane commit only touches `.devin/Arora-Task-UI.md` — no overlap with the dirty files. Safe to merge.Clean merge — no conflicts. Now verifying the build.Build is clean. Pushing master and updating the worklog.Following the established convention, I'll append the log line and commit only WORKLOG.md.Merge run complete:
+
+- **rust-work**: 0 commits ahead — skipped.
+- **ui-work**: 1 commit (`3211550`, queues TABS19 task row) — merged cleanly via ort; only `.devin/Arora-Task-UI.md` changed, no conflicts. The dirty working-tree files (mid-run agent changes in `src/`, `autotests/`) didn't overlap with the merge and were left untouched.
+- **Build**: `make -C src -j2` clean — nothing to rebuild.
+- **Pushed** master, appended the MERGEWATCH line to `.devin/WORKLOG.md`, committed and pushed it (`ec195da`).
+
+Stopping here — one pass done.
+[2026-10-14 22:25:27] merge run exited rc=0
+[2026-10-14 22:30:28] merge due: rust-work(1) — spawning devin merge run
+I'll start by checking the repo state and fetching.The working tree has modified files (an agent may be mid-run). Now check lane ahead-counts.rust-work is 1 ahead; ui-work is at 0 (skip). Let me check which files rust-work's commit touches vs the dirty files.That diff is large because master has diverged. Let me see only what rust-work's single commit touches.rust-work's commit only touches `.devin/Arora-Task-Rust.md` — no overlap with dirty files. Safe to merge.Clean merge, no conflicts. Now verify the build.Build OK. Let me check the WORKLOG tail for format, then push and log.I'll append the log line to WORKLOG.md.Now commit only WORKLOG.md and push master.Merge run complete:
+
+- **rust-work**: 1 commit ahead — merged `907435d` (queued ENG29 task row). Clean ort merge, no conflicts; touched only `.devin/Arora-Task-Rust.md`, so no overlap with the dirty working tree.
+- **ui-work**: 0 commits ahead — skipped.
+- **Build**: `make -C src -j2` — nothing to rebuild (docs-only merge), ok.
+- **Pushed** `master` → `457360b` (merge `a8b4557` + WORKLOG log commit).
+- Pre-existing dirty files left untouched; no other branches pushed or checked out.
+[2026-10-14 22:31:33] merge run exited rc=0
+[2026-10-14 22:36:33] merge due: ui-work(1) — spawning devin merge run
+I'll start by checking the current state of the repository and fetching from origin.The lane's touched files don't overlap with the dirty files in this tree, so the merge is safe to proceed.Clean merge — no conflicts. Now verify the build.Build is running. Waiting for it to finish.Build succeeded (linked `../arora`, exit 0). Let me check the WORKLOG conventions and recent MERGEWATCH entries before pushing.Build ok. Prior runs commit the worklog line as a `MERGEWATCH: log <lane> merge` commit. Let me check whether those commits carry the Devin trailer.Now I'll append the MERGEWATCH line to `.devin/WORKLOG.md`.Need a longer unique anchor — let me get the tail of that last line.Worklog line appended. Now staging only WORKLOG.md, committing, and pushing master.One merge pass complete.
+
+- **rust-work**: 0 commits ahead — skipped.
+- **ui-work**: 1 commit ahead (`320f036` MENU12: drop duplicate File > Preferences entry) — merged cleanly with `--no-edit`; ort auto-merged `WORKLOG.md`, `ChangeLog`, `tst_browsermainwindow.cpp`, and `browsermainwindow.{cpp,h}` with no conflicts. The lane touched no files that are dirty in this tree (another agent's mid-run changes were left untouched).
+- **Build**: `make -C src -j2` exited 0 — `arora` linked successfully.
+- **Worklog**: appended `- 2026-10-14 MERGEWATCH: ui-work merged (320f036, ...) — no conflicts ... build ok; rust-work 0 commits ahead, skipped`, committed as `56cfdb1`.
+- **Push**: `4159dea..56cfdb1 master -> master` succeeded.
+
+Stopping here per instructions — the watchdog will launch the next run.
+[2026-10-14 22:40:01] merge run exited rc=0
+[2026-10-14 22:45:02] merge due: rust-work(1) — spawning devin merge run
+I'll start by checking the repo state and fetching.The tree has uncommitted changes (agent mid-run). I'll check lane ahead counts now.`rust-work` is 1 commit ahead; `ui-work` is up to date. Checking what rust-work touches and whether it collides with dirty files.Only `.devin/Arora-Task-Rust.md` changed — no overlap with dirty files. Merging.Clean merge — only a task file changed. Running the build verification anyway.Build is clean (nothing to rebuild — merge only touched a task file). Pushing master and logging.I appended the log line after pushing, which leaves WORKLOG.md dirty — and since lanes regularly modify that file, an uncommitted change here could block the next run's merge. I'll commit just my worklog line and push it.Merge run complete:
+
+- **rust-work**: 1 commit ahead → merged `895e28a` (queued EXT18 Bitwarden e2e task row). Clean ort merge, `.devin/Arora-Task-Rust.md` only, no conflicts.
+- **ui-work**: 0 commits ahead → skipped.
+- **Build**: `make -C src -j2` — nothing to rebuild, ok.
+- **Push**: master `088d435 → 64ad695`.
+- **Worklog**: MERGEWATCH line appended and committed so the file doesn't sit dirty for the next run.
+
+The pre-existing dirty files (mid-run agent changes in `src/`, `autotests/`, `.devin/`) were left untouched and didn't overlap the merge.
+[2026-10-14 22:45:36] merge run exited rc=0
+[2026-10-14 23:00:37] merge due: ui-work(1) — spawning devin merge run
+Starting merge run. First, check repo state and fetch.Fetch done. There are modified files in this tree (an agent appears to be mid-run). Now check how far each lane is ahead.`rust-work` is at 0 — skip. `ui-work` has 1 commit. Let me see what it touches before merging.No overlap between the lane's files and this tree's dirty files, so the merge is safe. Proceeding.Clean merge of `ui-work`, no conflicts. Now verify the build.Build succeeded. Now push master, then append the MERGEWATCH line to WORKLOG. Let me check the log format first.The WORKLOG already contains committed MERGEWATCH lines from prior runs, so I'll append the line, commit it, and push master once. Checking how prior runner commits were styled:Pushed. Final sanity check on tree state:Merge run complete.
+
+- **rust-work**: 0 commits ahead — skipped
+- **ui-work**: 1 commit (`4eff4a9` MENU13: icon-only app-menu button + Arora wordmark) — merged cleanly via ort, no conflicts
+- **Build**: `make -C src -j2` → ok (exit 0, linked `../arora`)
+- **Push**: `86e18cf..585a5bc master -> master` (merge commit + `MERGEWATCH: log ui-work merge`)
+- **WORKLOG**: appended `MERGEWATCH` line for the ui-work merge
+
+The pre-existing dirty files (agent mid-run) were left untouched; the lane touched none of them. Stopping after this pass.
+[2026-10-14 23:02:53] merge run exited rc=0

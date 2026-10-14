@@ -1158,6 +1158,9 @@ void TabBar::mouseMoveEvent(QMouseEvent *event)
             // bar across exec()'s nested event loop.
             QPointer<TabBar> guard(this);
             const Qt::DropAction action = drag->exec();
+            // QDrag::setMimeData does not take ownership — the mime
+            // data is still ours once exec() returns.
+            delete mimeData;
             // TABS13: released where nothing accepted the drop —
             // over the desktop, a window's page body, foreign chrome —
             // the tab tears off into a new window.  A consumed drop

@@ -1191,6 +1191,12 @@ EngineTab *TabWidget::addEngineTab(Engine::Backend *backend, bool makeCurrent)
     Engine::Profile *profile =
         backend->createProfile(Engine::ProfileOptions(), nullptr);
     EngineTab *tab = new EngineTab(backend, profile, this);
+    // The profile is the tab's context — give it the tab as owner so
+    // tab teardown frees it.  Backends that hand out a shared object
+    // (Servo's single browsing context is parented to the backend)
+    // keep their existing owner.
+    if (profile && !profile->parent())
+        profile->setParent(tab);
     if (!tab->page()) {
         // ENG12: the backend refused the page (servo's one-instance
         // limit, an absent artifact, ...) — surface the refusal

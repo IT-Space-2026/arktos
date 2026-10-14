@@ -1337,7 +1337,10 @@ void probeServoBackend()
     if (probed)
         return;
     probed = true;
-    ServoBackend *candidate = new ServoBackend();
+    // qApp-owned: the registry lists backends without owning them,
+    // so an unparented registered backend would leak the object, its
+    // members and its aboutToQuit connection node at exit.
+    ServoBackend *candidate = new ServoBackend(qApp);
     if (candidate->initialize())
         EngineRegistry::registerBackend(candidate);
     else

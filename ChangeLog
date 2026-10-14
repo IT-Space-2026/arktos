@@ -2527,3 +2527,13 @@ Internal cleanup: dead-code sweep across the merged lanes (QUAL01):
     accessors in the extension host and a handful of orphaned
     getters and test seams; Preferences' "set home to current page"
     now asks the window for its current tab directly.
+Memory and lifetime fixes (QUAL02):
+    Engine tabs no longer leak their browsing profile — a profile
+    created without an owner is now freed with its tab.  The Servo
+    engine probe no longer leaks its registered backend object, and
+    tab drag-and-drop no longer leaks its drag payload.  Closing or
+    rebuilding an extension toolbar popup while its page was still
+    evaluating could touch freed widgets — the resize callback now
+    checks that both still exist first.  Sidebar notes stores are now
+    bound to their profile's lifetime instead of the application's,
+    so a discarded private profile takes its notes model with it.

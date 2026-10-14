@@ -302,7 +302,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | NOTE02 | Notes slice A — multi-note model + list/editor + add/delete + persist + migrate — details below | done | 1 | NotesModel (QAbstractListModel, per-profile <data>/notes/<profile>.json via AutoSaver, OTR volatile) + sidebar 3-state stack (empty/list/editor) +/−/back, delete-confirm, sidebar/notes→note #1 migration; ENGINE.md EXT15 shim row backfilled (gate was failing pre-task). Verified: tst_notesmodel 9/9, sidebarPanel leg PASS, --quit-after-load exit 0, make check 4 gates PASS, suite fails only on 6 documented pre-existing legs |
 | NOTE03 | Notes slice B — search, selection-to-note, markdown flag, page-URL insert — details below | done | 0 | Search proxy + selection-to-note + persisted markdown flag/render + URL insert landed; tst_notesmodel 10/10, sidebarPanel+webview legs PASS, gates PASS, only known pre-existing fails |
 | QUAL01 | Audit 1/5: dead code + redundant-implementation sweep, fix findings — details below | done | 3 | ~20 dead methods/signals/members removed (Engine::Page createWindow+signal surface, ChromeBridge handshake plumbing, ext-host accessors); setHomeToCurrentPage rewired to currentTab() + test re-pointed at a real window; dupes audited = intentional, documented. Verified: 0-warning build, 4 check gates PASS, suite 82 programs green except 5 documented pre-existing browsermainwindow legs, --quit-after-load rc=0 |
-| QUAL02 | Audit 2/5: memory leaks — check-leaks + ownership/FFI-boundary audit, fix findings — details below | in_progress | 1 | |
+| QUAL02 | Audit 2/5: memory leaks — check-leaks + ownership/FFI-boundary audit, fix findings — details below | done | 1 | LSan suite our-code blocks 53→0, all 18 smoke flags clean; valgrind top smokes our-code records 3→0 (2,848B→0 definite); audits found+fixed: unparented EngineTab profiles, parentless ServoBackend probe, drag mime data, ext-popup UAF, notes-model profile lifetime; suite green standalone except 5 documented bmw legs; gates PASS |
 | QUAL03 | Audit 3/5: security — channels, injection, isolation, fail-closed, secrets — details below | pending | 0 | |
 | QUAL04 | Audit 4/5: performance — baseline measurements then fix real regressions — details below | pending | 0 | |
 | QUAL05 | Audit 5/5: consistency sweep + final all-gates-green closing pass — details below | pending | 0 | |
@@ -1647,6 +1647,61 @@ rustcoverage PASS (90.50/91.75/89.25 ≥ 85%).
 ### QUAL02
 
 Quality sweep 2/5 — memory & lifetime (user: 'memory leak'). (a) run .devin/check-leaks.sh on every smoke path it supports; if valgrind/ASan available, run the top smoke harnesses under it; (b) OWNERSHIP AUDIT of recently-added surfaces — the new extension host (EXT14 hidden views, popup views), tor popovers/panels, sidebar panels, extension action buttons, BiDi devtools objects, reader overlay — verify Qt parent chains own them and delete is never skipped on error paths; (c) FFI BOUNDARIES — rustcore/rustdl/servo-embed ownership rules: who frees what, are returned buffers dropped, se_* lifecycle vs Qt object lifetime (ENG27/28 fixed instance leaks — audit the callers too); (d) signal-connection leaks — lambdas capturing dead receivers, connections never disconnected on teardown; (e) fix leaks found; a real leak count goes in the notes with before/after. Verify: leak harness output improves or is documented-clean; no new leaks introduced by fixes; make check PASS.
+
+**QUAL02 findings (landed)**
+
+Harness (a): check-leaks.sh phase 1 over the ASan/LSan instrumented
+tree — full suite + all 18 --*-smoke flags. Before: 53 our-code leak
+blocks (first run), 44 after the first fix round; after all fixes:
+**0 our-code blocks** (21,618 blocks, all upstream — see generated
+.devin/LEAKS.md). Valgrind memcheck on the four top smoke harnesses
+(--quit-after-load, --app-smoke, --browser-smoke, --extensions-smoke):
+3 our-code definite/indirect records (2,848 B) pre-fix → **0**
+post-fix; remaining records all sited in Qt6WebEngineCore/Qt6Core.
+
+Leaks/UAFs fixed:
+
+- `tabwidget.cpp addEngineTab` — `createProfile(..., nullptr)` result
+  never freed: every engine tab leaked its profile (22+22 suite
+  blocks). Now parents a parentless profile to its EngineTab; shared
+  backend-owned profiles (servo's single context) keep their owner.
+- `servobackend.cpp probeServoBackend` — registered backend was
+  `new`'d unparented while the registry doesn't own backends: object +
+  members + aboutToQuit connection node leaked at exit. Now qApp-owned.
+- `tabbar.cpp` — `QDrag::setMimeData` doesn't take ownership; the
+  drag's QMimeData leaked on every exec(). Deleted after exec returns.
+- `extensionactionbar.cpp openPopup` — deferred runJavaScript callback
+  captured raw `popup`/`anchor`: rebuild() can replace the anchor and
+  the popup is delete-on-close while an eval is in flight → UAF.
+  Rebound through QPointer guards on all three objects.
+- `notesmodel.cpp instance()` — per-profile models parented to qApp
+  outlived their profile; a destroyed profile left a live stale model
+  keyed by a dangling pointer, returnable on address reuse. Now
+  profile-parented so the QPointer registry expires with the profile.
+- `main.cpp servoLifecycleSmoke` — held the refused-page probe
+  results (page + profile) across the report; both now released —
+  with the correction that servo's profile is the backend's SHARED
+  m_defaultProfile and must NOT be deleted (a delete would leave the
+  backend handing out a dangling pointer on the next createProfile).
+- test-side: `tst_engineadapter` leaked the created view;
+  `tst_tabbar containerBandEvents` heap-allocated its QMimeData —
+  stack-allocated now.
+
+Audits with no findings: extension host hidden/popup views (parented,
+view deleted in dtor), tor popovers/panels + sidebar panels (lazy,
+parented), BiDi devtools objects, reader overlay (QPointer-guarded,
+closeOverlay path), PiP window, download worker FFI (frees handle on
+every exit path), rustcore `se_*`/`RcBuffer`/`oseStringList` (Rust only
+writes `out` on success; all call sites free), se_* called only via
+ServoView::api().
+
+Verify: check-leaks gate PASS (0 ours); check-warnings PASS;
+check-supplychain PASS; check-engine-audit PASS; check-rustcoverage
+PASS (91.75/89.25); make check suite — every binary green standalone
+(tst_browsermainwindow 63/5 = the five documented pre-existing legs
+privateStartPage/homeButton/chromeSlots/extensionActionButtons/
+navBarOrderPersistence; concurrent-run extras all pass standalone —
+load flakes); ./arora --quit-after-load rc=0 offscreen.
 
 ### QUAL03
 

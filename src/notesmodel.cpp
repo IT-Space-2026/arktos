@@ -73,7 +73,11 @@ NotesModel *NotesModel::instance(QWebEngineProfile *profile)
             + QString(name).replace(QLatin1Char('/'), QLatin1Char('_'))
             + QLatin1String(".json");
     }
-    model = new NotesModel(storageFile, qApp);
+    // Parented to the profile, not qApp: a destroyed profile takes
+    // its model down, so the static registry's QPointer expires with
+    // it instead of handing a stale store to an address-reused
+    // profile object.
+    model = new NotesModel(storageFile, profile);
     if (model->isPersistent())
         migrateLegacyScratch(model);
     models.insert(profile, model);

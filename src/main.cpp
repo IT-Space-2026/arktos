@@ -3582,8 +3582,14 @@ static int servoLifecycleSmoke()
             // the dead tab stays disabled until retried or closed.
             Engine::Profile *profile =
                 servo->createProfile(Engine::ProfileOptions(), nullptr);
+            Engine::Page *refusedPage =
+                profile ? servo->createPage(profile, nullptr) : nullptr;
             report(QStringLiteral("second-page-refused-live"),
-                   profile && !servo->createPage(profile, nullptr));
+                   profile && !refusedPage);
+            delete refusedPage;
+            // profile is servo's shared backend-owned context —
+            // never deleted here (a delete would leave the backend's
+            // m_defaultProfile dangling).
         }
 
         // ENG27: the crashed+destroyed instance must release the
@@ -3656,8 +3662,13 @@ static int servoLifecycleSmoke()
             // A live instance again refuses a concurrent second page.
             Engine::Profile *profile =
                 servo->createProfile(Engine::ProfileOptions(), nullptr);
+            Engine::Page *refusedPage =
+                profile ? servo->createPage(profile, nullptr) : nullptr;
             report(QStringLiteral("second-page-refused"),
-                   profile && !servo->createPage(profile, nullptr));
+                   profile && !refusedPage);
+            delete refusedPage;
+            // profile is servo's shared backend-owned context —
+            // never deleted here (see second-page-refused-live).
 
             // The in-tab retry path: re-poison the recovered view,
             // let paintEvent install "Try Servo Again", click it —

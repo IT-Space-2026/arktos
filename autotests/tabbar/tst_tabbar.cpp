@@ -1603,18 +1603,18 @@ void tst_TabBar::containerBandEvents()
 
     // External URL drags highlight the hovered header; a drop on a
     // header loads there instead of onto a tab.
-    QMimeData *mime = new QMimeData;
-    mime->setUrls({QUrl(QLatin1String("http://band.test/"))});
+    QMimeData mime;
+    mime.setUrls({QUrl(QLatin1String("http://band.test/"))});
     const QPointF bandPoint(hx2, bandY);
-    QDragEnterEvent enter(bandPoint, Qt::CopyAction, mime,
+    QDragEnterEvent enter(bandPoint, Qt::CopyAction, &mime,
                           Qt::NoButton, Qt::NoModifier);
     QApplication::sendEvent(bar, &enter);
-    QDragMoveEvent move(bandPoint, Qt::CopyAction, mime,
+    QDragMoveEvent move(bandPoint, Qt::CopyAction, &mime,
                         Qt::NoButton, Qt::NoModifier);
     QApplication::sendEvent(bar, &move);
     QDragLeaveEvent leave;
     QApplication::sendEvent(bar, &leave);
-    QDropEvent drop(bandPoint, Qt::CopyAction, mime,
+    QDropEvent drop(bandPoint, Qt::CopyAction, &mime,
                     Qt::NoButton, Qt::NoModifier);
     QApplication::sendEvent(bar, &drop);
 
