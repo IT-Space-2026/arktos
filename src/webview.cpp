@@ -71,6 +71,7 @@
 #include "browsermainwindow.h"
 #include "containermanager.h"
 #include "extensioneventhub.h"
+#include "notesmodel.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
 #include "pdfview.h"
@@ -505,6 +506,11 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
             connect(action, &QAction::triggered,
                     this, [this, action]() { searchRequested(action); });
         }
+        // NOTE03: the reference's explicit flow — the selection lands
+        // as a new note in this window's Notes panel.
+        menu->addSeparator();
+        menu->addAction(tr("Add Selection to &Notes"),
+                        this, &WebView::addSelectionToNote);
     }
 
     if (info.isContentEditable) {
@@ -813,6 +819,30 @@ void WebView::searchRequested(QAction *action)
     emit search(engine->searchUrl(selectedText()),
                 background ? TabWidget::NewNotSelectedTab
                            : TabWidget::NewSelectedTab);
+}
+
+void WebView::addSelectionToNote()
+{
+    if (!m_page)
+        return;
+    const QString text = selectedText();
+    if (text.isEmpty())
+        return;
+    // The sidebar's store is keyed to the window's profile
+    // (BrowserApplication::webEngineProfile) — land the note there so
+    // it surfaces in this window's Notes panel.  An off-the-record
+    // window gets the volatile model: private selections never touch
+    // disk.
+    NotesModel *model = NotesModel::instance(
+        BrowserApplication::webEngineProfile());
+    if (!model)
+        return;
+    QString body = text;
+    const QUrl source = url();
+    if (source.isValid() && !source.isEmpty())
+        body += QLatin1String("\n\n") + source.toString();
+    model->addNote(title(), body);
+    setStatusBarText(tr("Selection added to notes."));
 }
 
 void WebView::imageSearchRequested()

@@ -20,6 +20,7 @@
 #include <notesmodel.h>
 #include <browserprofile.h>
 
+#include <qfile.h>
 #include <qfileinfo.h>
 #include <qsettings.h>
 #include <qtemporarydir.h>
@@ -42,6 +43,7 @@ private slots:
     void persistence();
     void volatileModel();
     void migration();
+    void markdownFlag();
     void instancePerProfile();
 };
 
@@ -267,6 +269,53 @@ void tst_NotesModel::migration()
 
     // A null model argument is tolerated.
     NotesModel::migrateLegacyScratch(nullptr);
+}
+
+void tst_NotesModel::markdownFlag()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString file = dir.path() + QLatin1String("/notes.json");
+
+    // NOTE03: the per-note markdown flag rides MarkdownRole — false
+    // by default, writable, and persisted through the JSON store.
+    {
+        NotesModel model(file);
+        model.addNote(QLatin1String("md"), QLatin1String("**bold**"));
+        model.addNote(QLatin1String("plain"), QLatin1String("plain"));
+        QCOMPARE(model.index(0).data(NotesModel::MarkdownRole).toBool(),
+                 false);
+        QVERIFY(model.setData(model.index(0), true,
+                              NotesModel::MarkdownRole));
+        QCOMPARE(model.index(0).data(NotesModel::MarkdownRole).toBool(),
+                 true);
+        QCOMPARE(model.index(1).data(NotesModel::MarkdownRole).toBool(),
+                 false);
+        // Same-value writes are refused like the other roles'.
+        QVERIFY(!model.setData(model.index(0), true,
+                               NotesModel::MarkdownRole));
+        model.save();
+    }
+    {
+        NotesModel model(file);
+        QCOMPARE(model.rowCount(), 2);
+        QCOMPARE(model.index(0).data(NotesModel::MarkdownRole).toBool(),
+                 true);
+        QCOMPARE(model.index(1).data(NotesModel::MarkdownRole).toBool(),
+                 false);
+    }
+
+    // A pre-NOTE03 store without the key loads the flag as false.
+    {
+        QFile legacy(file);
+        QVERIFY(legacy.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        legacy.write("[{\"title\":\"old\",\"body\":\"still here\"}]");
+        legacy.close();
+        NotesModel model(file);
+        QCOMPARE(model.rowCount(), 1);
+        QCOMPARE(model.index(0).data(NotesModel::MarkdownRole).toBool(),
+                 false);
+    }
 }
 
 void tst_NotesModel::instancePerProfile()

@@ -35,6 +35,7 @@ class DownloadItem;
 class EditTreeView;
 class HistoryPeriodFilterModel;
 class NotesModel;
+class QAction;
 class QComboBox;
 class QFrame;
 class QLineEdit;
@@ -44,7 +45,9 @@ class QPushButton;
 class QSortFilterProxyModel;
 class QStackedWidget;
 class QTabWidget;
+class QTextBrowser;
 class QToolButton;
+class SearchLineEdit;
 class TreeSortFilterProxyModel;
 
 // SIDE01: the content widget of the optional Vivaldi-style sidebar
@@ -162,6 +165,12 @@ private slots:
     // Picks the stack page from the model's row count (empty state
     // vs list) and folds the editor when its note vanished.
     void updateNotesView();
+    // NOTE03: the editor's options menu — markdown flag on the open
+    // note (its body swaps between source editor and a rendered
+    // preview) and the current-page-URL insert.
+    void setOpenNoteMarkdown(bool markdown);
+    void updateNoteBodyPage();
+    void insertCurrentPageUrl();
 
 private:
     static QList<Panel> &registry();
@@ -220,6 +229,14 @@ private:
     QPointer<NotesModel> m_notesModel;
     QPointer<QStackedWidget> m_notesStack;
     QPointer<QListView> m_notesList;
+    // NOTE03: the live-search proxy the list runs on, the search row
+    // that drives it, and the editor's options menu / markdown preview.
+    QPointer<QSortFilterProxyModel> m_notesProxy;
+    QPointer<SearchLineEdit> m_notesSearch;
+    QPointer<QStackedWidget> m_noteBodyStack;
+    QPointer<QTextBrowser> m_notesPreview;
+    QPointer<QAction> m_noteMarkdownAction;
+    QPointer<QAction> m_noteInsertUrlAction;
     QPointer<QToolButton> m_notesRemoveButton;
     QPointer<QLineEdit> m_noteTitle;
     QPointer<QPlainTextEdit> m_notes;

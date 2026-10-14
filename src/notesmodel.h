@@ -43,7 +43,10 @@ class NotesModel : public QAbstractListModel
 
 public:
     enum Role {
-        BodyRole = Qt::UserRole + 1
+        BodyRole = Qt::UserRole + 1,
+        // NOTE03: per-note markdown flag (bool) — the sidebar editor
+        // renders a flagged note's body in place.
+        MarkdownRole
     };
 
     // A standalone store bound to an explicit file — the form tests
@@ -99,6 +102,7 @@ private:
     struct Note {
         QString title;
         QString body;
+        bool markdown = false;
     };
 
     void load();

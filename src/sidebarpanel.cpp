@@ -24,17 +24,20 @@
 #include "bookmarksmodel.h"
 #include "bookmarknode.h"
 #include "browserapplication.h"
+#include "browsermainwindow.h"
 #include "downloadmanager.h"
 #include "history.h"
 #include "historymanager.h"
 #include "notesmodel.h"
 #include "searchlineedit.h"
 #include "settings.h"
+#include "webview.h"
 #include "utils/aroraicon.h"
 #include "utils/edittreeview.h"
 #include "utils/flowlayout.h"
 #include "utils/treesortfilterproxymodel.h"
 
+#include <qaction.h>
 #include <qapplication.h>
 #include <qboxlayout.h>
 #include <qcombobox.h>
@@ -60,6 +63,7 @@
 #include <qstyle.h>
 #include <qstyleoption.h>
 #include <qtabbar.h>
+#include <qtextbrowser.h>
 #include <qtabwidget.h>
 #include <qtoolbutton.h>
 
@@ -1096,6 +1100,66 @@ QWidget *SidebarPanel::buildDownloadsPage()
     return m_downloadsPage;
 }
 
+// The bundled icon themes ship no overflow-menu glyph — paint the
+// three-dot mark from the palette like the rail icon does.
+static QIcon notesMenuIcon(const QWidget *forPalette)
+{
+    const qreal dpr = forPalette ? forPalette->devicePixelRatioF() : 1.0;
+    QPixmap pixmap(16 * dpr, 16 * dpr);
+    pixmap.setDevicePixelRatio(dpr);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(forPalette
+        ? forPalette->palette().color(QPalette::ButtonText)
+        : QColor(Qt::black));
+    for (int i = 0; i < 3; ++i)
+        painter.drawEllipse(QPointF(8, 3.5 + i * 4.5), 1.4, 1.4);
+    return QIcon(pixmap);
+}
+
+// NOTE03: live search over the notes list — a row survives when the
+// needle matches the displayed title (stored or derived first line)
+// or the body text.  View indices are proxy indices; the editor binds
+// through mapToSource so m_editingNote stays a model row.
+class SidebarNotesFilter : public QSortFilterProxyModel
+{
+public:
+    SidebarNotesFilter(QAbstractItemModel *source, QObject *parent = nullptr)
+        : QSortFilterProxyModel(parent)
+    {
+        setSourceModel(source);
+        setDynamicSortFilter(true);
+    }
+
+    void setSearchText(const QString &text)
+    {
+        if (m_searchText == text)
+            return;
+        m_searchText = text;
+        beginFilterChange();
+        endFilterChange();
+    }
+
+protected:
+    bool filterAcceptsRow(int row, const QModelIndex &parent) const override
+    {
+        if (m_searchText.isEmpty())
+            return true;
+        const QModelIndex index = sourceModel()->index(row, 0, parent);
+        const auto matches = [this](const QVariant &text) {
+            return text.toString().contains(m_searchText,
+                                            Qt::CaseInsensitive);
+        };
+        return matches(index.data(Qt::DisplayRole))
+            || matches(index.data(NotesModel::BodyRole));
+    }
+
+private:
+    QString m_searchText;
+};
+
 // NOTE02: Notes — a per-profile multi-note store (NotesModel) behind
 // a three-state stack: the "Write your first note" empty state, the
 // notes list, and the editor a selected note opens in.  Persistence
@@ -1152,6 +1216,20 @@ QWidget *SidebarPanel::buildNotesPage()
             this, &SidebarPanel::removeSelectedNote);
     notesLayout->addLayout(notesHeader);
 
+    // NOTE03: the search row the header buttons were waiting for —
+    // filters the list live on titles and bodies.
+    m_notesSearch = new SearchLineEdit(notesPage);
+    m_notesSearch->setObjectName(QLatin1String("sidebarNotesSearch"));
+    m_notesSearch->setInactiveText(tr("Search notes"));
+    m_notesSearch->setAccessibleName(tr("Search notes"));
+    connect(m_notesSearch, &SearchLineEdit::textChanged,
+            this, [this](const QString &text) {
+        if (m_notesProxy)
+            static_cast<SidebarNotesFilter *>(m_notesProxy.data())
+                ->setSearchText(text);
+    });
+    notesLayout->addWidget(m_notesSearch);
+
     m_notesStack = new QStackedWidget(notesPage);
     m_notesStack->setObjectName(QLatin1String("sidebarNotesStack"));
 
@@ -1172,7 +1250,13 @@ QWidget *SidebarPanel::buildNotesPage()
     m_notesList->setUniformItemSizes(true);
     m_notesList->setSelectionMode(QAbstractItemView::SingleSelection);
     m_notesList->setEditTriggers(QAbstractItemView::EditKeyPressed);
-    m_notesList->setModel(m_notesModel);
+    // The list sees the search-filtering proxy; the editor binds the
+    // source row underneath it.
+    if (m_notesModel)
+        m_notesProxy = new SidebarNotesFilter(m_notesModel, m_notesList);
+    m_notesList->setModel(m_notesProxy
+                          ? static_cast<QAbstractItemModel *>(m_notesProxy.data())
+                          : static_cast<QAbstractItemModel *>(m_notesModel));
     connect(m_notesList, &QListView::activated,
             this, &SidebarPanel::openNote);
     connect(m_notesList, &QListView::clicked,
@@ -1201,12 +1285,56 @@ QWidget *SidebarPanel::buildNotesPage()
     m_noteTitle->setAccessibleName(tr("Note title"));
     m_noteTitle->setPlaceholderText(tr("Title"));
     editorHeader->addWidget(m_noteTitle, 1);
+
+    // NOTE03: the note options menu — every entry is a real action
+    // (no placeholders): a per-note markdown flag that renders the
+    // body in place, and the reference's link button that inserts the
+    // current page URL at the cursor.
+    QToolButton *menuButton = new QToolButton(editorPage);
+    menuButton->setObjectName(QLatin1String("sidebarNotesMenu"));
+    menuButton->setAutoRaise(true);
+    menuButton->setIcon(notesMenuIcon(editorPage));
+    menuButton->setToolTip(tr("Note options"));
+    menuButton->setAccessibleName(tr("Note options"));
+    menuButton->setPopupMode(QToolButton::InstantPopup);
+    QMenu *noteMenu = new QMenu(menuButton);
+    m_noteInsertUrlAction = noteMenu->addAction(
+        tr("Insert Current Page &URL"),
+        this, &SidebarPanel::insertCurrentPageUrl);
+    m_noteInsertUrlAction->setObjectName(
+        QLatin1String("sidebarNotesInsertUrl"));
+    noteMenu->addSeparator();
+    m_noteMarkdownAction = noteMenu->addAction(tr("&Markdown"));
+    m_noteMarkdownAction->setObjectName(
+        QLatin1String("sidebarNotesMarkdown"));
+    m_noteMarkdownAction->setCheckable(true);
+    connect(m_noteMarkdownAction, &QAction::toggled,
+            this, &SidebarPanel::setOpenNoteMarkdown);
+    connect(noteMenu, &QMenu::aboutToShow, this, [this]() {
+        // The URL insert is honest about having nothing to offer when
+        // the current tab is a non-web page (or no tab at all).
+        BrowserMainWindow *window = BrowserMainWindow::parentWindow(this);
+        m_noteInsertUrlAction->setEnabled(window && window->currentTab());
+    });
+    menuButton->setMenu(noteMenu);
+    editorHeader->addWidget(menuButton);
     editorLayout->addLayout(editorHeader);
-    m_notes = new QPlainTextEdit(editorPage);
+
+    // The body stack swaps the source editor for a rendered preview
+    // while the open note's markdown flag is set (updateNoteBodyPage).
+    m_noteBodyStack = new QStackedWidget(editorPage);
+    m_noteBodyStack->setObjectName(QLatin1String("sidebarNoteBodyStack"));
+    m_notes = new QPlainTextEdit(m_noteBodyStack);
     m_notes->setObjectName(QLatin1String("sidebarNotes"));
     m_notes->setAccessibleName(tr("Note text"));
     m_notes->setPlaceholderText(tr("Notes are saved automatically."));
-    editorLayout->addWidget(m_notes);
+    m_noteBodyStack->addWidget(m_notes);
+    m_notesPreview = new QTextBrowser(m_noteBodyStack);
+    m_notesPreview->setObjectName(QLatin1String("sidebarNotesPreview"));
+    m_notesPreview->setOpenLinks(false);
+    m_notesPreview->setAccessibleName(tr("Note preview"));
+    m_noteBodyStack->addWidget(m_notesPreview);
+    editorLayout->addWidget(m_noteBodyStack);
     m_notesStack->addWidget(editorPage);
     notesLayout->addWidget(m_notesStack);
 
@@ -1229,6 +1357,23 @@ QWidget *SidebarPanel::buildNotesPage()
                 this, &SidebarPanel::updateNotesView);
         connect(m_notesModel, &QAbstractItemModel::modelReset,
                 this, &SidebarPanel::updateNotesView);
+        // NOTE03: an edit to the open row from anywhere (this editor,
+        // another window's panel) re-syncs the markdown toggle and the
+        // rendered preview.
+        connect(m_notesModel, &QAbstractItemModel::dataChanged, this,
+                [this](const QModelIndex &topLeft, const QModelIndex &,
+                       const QList<int> &) {
+            if (!m_editingNote.isValid()
+                || topLeft.row() != m_editingNote.row())
+                return;
+            if (m_noteMarkdownAction) {
+                const QSignalBlocker blocker(m_noteMarkdownAction);
+                m_noteMarkdownAction->setChecked(
+                    m_editingNote.data(NotesModel::MarkdownRole)
+                        .toBool());
+            }
+            updateNoteBodyPage();
+        });
     }
     updateNotesView();
     return notesPage;
@@ -1255,19 +1400,34 @@ void SidebarPanel::openNote(const QModelIndex &index)
 {
     if (!m_notesModel || !index.isValid())
         return;
-    m_editingNote = index;
+    // The list runs on the search proxy — the editor binds the source
+    // row so a live re-filter never shifts the note under the cursor.
+    const QModelIndex source = m_notesProxy
+        ? m_notesProxy->mapToSource(index) : index;
+    if (!source.isValid())
+        return;
+    m_editingNote = source;
     // Select in the list too so the − button and a later delete land
     // on the same row the editor is showing.
     m_notesList->setCurrentIndex(index);
     {
         const QSignalBlocker titleBlocker(m_noteTitle);
         const QSignalBlocker bodyBlocker(m_notes);
-        m_noteTitle->setText(index.data(Qt::EditRole).toString());
-        m_notes->setPlainText(index.data(NotesModel::BodyRole).toString());
+        m_noteTitle->setText(source.data(Qt::EditRole).toString());
+        m_notes->setPlainText(source.data(NotesModel::BodyRole).toString());
     }
+    if (m_noteMarkdownAction) {
+        const QSignalBlocker blocker(m_noteMarkdownAction);
+        m_noteMarkdownAction->setChecked(
+            source.data(NotesModel::MarkdownRole).toBool());
+    }
+    updateNoteBodyPage();
     m_notesStack->setCurrentIndex(2);
     updateNotesView();
-    m_notes->setFocus();
+    // Focus whichever body widget the flag picked — the markdown
+    // preview is read-only but still takes focus for scrolling.
+    if (m_noteBodyStack && m_noteBodyStack->currentWidget())
+        m_noteBodyStack->currentWidget()->setFocus();
 }
 
 void SidebarPanel::closeNoteEditor()
@@ -1280,8 +1440,12 @@ void SidebarPanel::addNote()
 {
     if (!m_notesModel)
         return;
+    // An active search would filter the fresh note out of the list —
+    // drop it so the editor opens on a visible row.
+    if (m_notesSearch)
+        m_notesSearch->clear();
     const QModelIndex index = m_notesModel->addNote();
-    openNote(index);
+    openNote(m_notesProxy ? m_notesProxy->mapFromSource(index) : index);
     // A fresh note is renamed by typing — preselect the empty title
     // field so the first keystrokes name it.
     m_noteTitle->setFocus();
@@ -1291,9 +1455,15 @@ void SidebarPanel::removeSelectedNote()
 {
     if (!m_notesModel)
         return;
-    QModelIndex index = m_editingNote.isValid()
-        ? QModelIndex(m_editingNote)
-        : m_notesList->currentIndex();
+    // The editor binding is already a source index; a list selection
+    // is a proxy row that maps back through the search filter.
+    QModelIndex index;
+    if (m_editingNote.isValid())
+        index = m_editingNote;
+    else if (m_notesProxy)
+        index = m_notesProxy->mapToSource(m_notesList->currentIndex());
+    else
+        index = m_notesList->currentIndex();
     if (!index.isValid())
         return;
     const QString title = index.data(Qt::DisplayRole).toString();
@@ -1310,6 +1480,54 @@ void SidebarPanel::removeSelectedNote()
     m_editingNote = QPersistentModelIndex();
     m_notesModel->removeRow(index.row());
     updateNotesView();
+}
+
+// The open note's markdown flag, toggled from the options menu.
+void SidebarPanel::setOpenNoteMarkdown(bool markdown)
+{
+    if (!m_notesModel || !m_editingNote.isValid())
+        return;
+    m_notesModel->setData(m_editingNote, markdown,
+                          NotesModel::MarkdownRole);
+    updateNoteBodyPage();
+}
+
+// NOTE03: render-in-place — a flagged note swaps the source editor
+// for a read-only QTextBrowser rendered from the markdown body
+// (Qt renders markdown natively, so this stays cheap); unflagging
+// returns to source editing.
+void SidebarPanel::updateNoteBodyPage()
+{
+    if (!m_noteBodyStack)
+        return;
+    const bool markdown = m_editingNote.isValid()
+        && m_editingNote.data(NotesModel::MarkdownRole).toBool();
+    if (markdown && m_notesPreview) {
+        m_notesPreview->setMarkdown(
+            m_editingNote.data(NotesModel::BodyRole).toString());
+        if (m_noteBodyStack->currentWidget() != m_notesPreview)
+            m_noteBodyStack->setCurrentWidget(m_notesPreview);
+    } else if (m_notes
+               && m_noteBodyStack->currentWidget() != m_notes) {
+        m_noteBodyStack->setCurrentWidget(m_notes);
+    }
+}
+
+// NOTE03: the reference's link button — inserts the current page's
+// URL at the note cursor.  Writes through the plain-text editor even
+// while the markdown preview is showing: its textChanged lands in the
+// model and the dataChanged hook re-renders the preview.
+void SidebarPanel::insertCurrentPageUrl()
+{
+    if (!m_notes || !m_editingNote.isValid())
+        return;
+    BrowserMainWindow *window = BrowserMainWindow::parentWindow(this);
+    WebView *view = window ? window->currentTab() : nullptr;
+    if (!view)
+        return;
+    const QString text = view->url().toString();
+    if (!text.isEmpty())
+        m_notes->insertPlainText(text);
 }
 
 QIcon SidebarPanel::icon(const QWidget *forPalette)

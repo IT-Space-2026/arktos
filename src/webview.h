@@ -249,6 +249,9 @@ private slots:
     void blockImage();
     void bookmarkLink();
     void searchRequested(QAction *action);
+    // NOTE03: 'Add Selection to Notes' — the selection becomes a new
+    // note in the window profile's store (the sidebar's model).
+    void addSelectionToNote();
     void imageSearchRequested();
 
 private:

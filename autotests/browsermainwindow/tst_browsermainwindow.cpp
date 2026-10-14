@@ -53,6 +53,7 @@
 #include <qsplitter.h>
 #include <qstackedwidget.h>
 #include <qstatusbar.h>
+#include <qtextbrowser.h>
 #include <qtabwidget.h>
 #include <qtcpserver.h>
 #include <qtcpsocket.h>
@@ -4731,6 +4732,83 @@ void tst_BrowserMainWindow::sidebarPanel()
     QCOMPARE(panel->notesModel()->noteBody(0),
              QLatin1String("legacy scratch"));
     QVERIFY(!settings.contains(QLatin1String("sidebar/notes")));
+
+    // NOTE03: the search row filters the list live on title and body.
+    QLineEdit *notesSearch = panel->findChild<QLineEdit *>(
+        QLatin1String("sidebarNotesSearch"));
+    QVERIFY(notesSearch);
+    panel->notesModel()->addNote(QLatin1String("Recipes"),
+                                 QLatin1String("**bread** flour water"));
+    panel->notesModel()->addNote(QLatin1String("Calls"),
+                                 QLatin1String("phone the bank"));
+    QCOMPARE(notesList->model()->rowCount(), 3);
+    notesSearch->setText(QLatin1String("reci"));
+    QCOMPARE(notesList->model()->rowCount(), 1);
+    // Body text matches too, and the filtered display stays titled.
+    notesSearch->setText(QLatin1String("bank"));
+    QCOMPARE(notesList->model()->rowCount(), 1);
+    QCOMPARE(notesList->model()->index(0, 0)
+                 .data(Qt::DisplayRole).toString(),
+             QLatin1String("Calls"));
+    notesSearch->clear();
+    QCOMPARE(notesList->model()->rowCount(), 3);
+
+    // A filtered row still opens its source note in the editor.
+    notesSearch->setText(QLatin1String("reci"));
+    emit notesList->activated(notesList->model()->index(0, 0));
+    QCOMPARE(notesStack->currentIndex(), 2);
+    QCOMPARE(noteTitle->text(), QLatin1String("Recipes"));
+    const int recipeRow = 1;   // "legacy scratch" holds row 0
+
+    // The options menu carries only real actions — the per-note
+    // markdown flag and the page-URL insert.
+    QAction *markdownAction = panel->findChild<QAction *>(
+        QLatin1String("sidebarNotesMarkdown"));
+    QAction *insertUrlAction = panel->findChild<QAction *>(
+        QLatin1String("sidebarNotesInsertUrl"));
+    QStackedWidget *bodyStack = panel->findChild<QStackedWidget *>(
+        QLatin1String("sidebarNoteBodyStack"));
+    QTextBrowser *notesPreview = panel->findChild<QTextBrowser *>(
+        QLatin1String("sidebarNotesPreview"));
+    QVERIFY(markdownAction && insertUrlAction && bodyStack
+            && notesPreview);
+    QVERIFY(markdownAction->isCheckable());
+    QVERIFY(!markdownAction->isChecked());
+    QCOMPARE(bodyStack->currentWidget(),
+             static_cast<QWidget *>(panel->notes()));
+
+    // Flagging the note swaps the body to the rendered preview —
+    // markdown markup renders instead of showing raw asterisks.
+    markdownAction->trigger();
+    QVERIFY(markdownAction->isChecked());
+    QCOMPARE(panel->notesModel()->index(recipeRow, 0)
+                 .data(NotesModel::MarkdownRole).toBool(), true);
+    QCOMPARE(bodyStack->currentWidget(),
+             static_cast<QWidget *>(notesPreview));
+    QVERIFY(notesPreview->toPlainText().contains(
+                QLatin1String("bread flour")));
+    QVERIFY(!notesPreview->toPlainText().contains(QLatin1String("**")));
+
+    // Unflagging returns to the source editor.
+    markdownAction->trigger();
+    QVERIFY(!markdownAction->isChecked());
+    QCOMPARE(panel->notesModel()->index(recipeRow, 0)
+                 .data(NotesModel::MarkdownRole).toBool(), false);
+    QCOMPARE(bodyStack->currentWidget(),
+             static_cast<QWidget *>(panel->notes()));
+
+    // The link button inserts the current page URL at the cursor —
+    // the tab's address lands in the note body.
+    WebView *noteTab = window->currentTab();
+    QVERIFY(noteTab);
+    noteTab->loadUrl(QUrl(QStringLiteral(
+        "data:text/html,<title>NoteURL</title><p>x</p>")));
+    const QString noteTabUrl = noteTab->url().toString();
+    QVERIFY(!noteTabUrl.isEmpty());
+    insertUrlAction->trigger();
+    QVERIFY(panel->notesModel()->index(recipeRow, 0)
+                .data(NotesModel::BodyRole).toString()
+                .contains(noteTabUrl));
 
     // A second window honors the persisted show state + dock side.
     SubWindow *window2 = new SubWindow;

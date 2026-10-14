@@ -124,6 +124,8 @@ QVariant NotesModel::data(const QModelIndex &index, int role) const
         return displayTitle(note.title, note.body);
     case BodyRole:
         return note.body;
+    case MarkdownRole:
+        return note.markdown;
     }
     return QVariant();
 }
@@ -145,12 +147,17 @@ bool NotesModel::setData(const QModelIndex &index, const QVariant &value,
         if (note.body == body)
             return false;
         note.body = body;
+    } else if (role == MarkdownRole) {
+        const bool markdown = value.toBool();
+        if (note.markdown == markdown)
+            return false;
+        note.markdown = markdown;
     } else {
         return false;
     }
     emit dataChanged(index, index,
                      { Qt::DisplayRole, Qt::EditRole, Qt::ToolTipRole,
-                       BodyRole });
+                       BodyRole, MarkdownRole });
     markDirty();
     return true;
 }
@@ -225,7 +232,9 @@ void NotesModel::load()
     for (const QJsonValue &value : notes) {
         const QJsonObject object = value.toObject();
         loaded.append({ object.value(QLatin1String("title")).toString(),
-                        object.value(QLatin1String("body")).toString() });
+                        object.value(QLatin1String("body")).toString(),
+                        object.value(QLatin1String("markdown"))
+                            .toBool() });
     }
     if (loaded.isEmpty())
         return;
@@ -251,6 +260,7 @@ void NotesModel::save()
         notes.append(QJsonObject{
             { QLatin1String("title"), note.title },
             { QLatin1String("body"), note.body },
+            { QLatin1String("markdown"), note.markdown },
         });
     }
     file.write(QJsonDocument(notes).toJson(QJsonDocument::Compact));

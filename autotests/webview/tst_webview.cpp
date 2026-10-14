@@ -53,6 +53,7 @@
 #include "browsermainwindow.h"
 #include "browserprofile.h"
 #include "historymanager.h"
+#include "notesmodel.h"
 #include "tabwidget.h"
 #include "tormanager.h"
 #include "qtest_arora.h"
@@ -244,6 +245,7 @@ private slots:
     void contextMenuLinkCrossProfileMatrix();
     void linkOpenRefererDiscipline();
     void contextMenuPageActions();
+    void contextMenuSelectionToNote();
     void contextMenuImageActions();
     void contextMenuImageLinkActions();
     void contextMenuCanvasActions();
@@ -1707,6 +1709,53 @@ void tst_WebView::contextMenuPageActions()
     QVERIFY(dialog);
     dialog->close();
     QTRY_VERIFY_WITH_TIMEOUT(dialog.isNull(), 5000);
+}
+
+// NOTE03: 'Add Selection to Notes' — a selection on the page becomes
+// a new note (titled by the page, body = selection + source url) in
+// the window profile's NotesModel — the store the sidebar shows.
+// The leg drives the menu action's slot directly: exec()ing the real
+// context menu over an active text selection traps intermittently in
+// offscreen Chromium teardown (blink.mojom.Widget message rejection)
+// regardless of which actions the menu carries.
+void tst_WebView::contextMenuSelectionToNote()
+{
+    TestWebView view;
+    view.resize(800, 600);
+    view.show();
+
+    QSignalSpy loaded(&view, SIGNAL(loadFinished(bool)));
+    view.loadUrl(QUrl(QStringLiteral(
+        "data:text/html,<html><head><title>Noted Page</title></head>"
+        "<body><p>remember this passage</p></body></html>")));
+    QTRY_VERIFY_WITH_TIMEOUT(loaded.count() >= 1, 15000);
+
+    view.page()->runJavaScript(QLatin1String(
+        "window.getSelection().selectAllChildren(document.body);"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        view.selectedText().contains(QLatin1String("remember this")),
+        5000);
+
+    NotesModel *model = NotesModel::instance(
+        BrowserApplication::webEngineProfile());
+    QVERIFY(model);
+    const int before = model->rowCount();
+
+    // The context menu wires 'Add Selection to Notes' to this slot.
+    QVERIFY(QMetaObject::invokeMethod(&view, "addSelectionToNote"));
+    QCOMPARE(model->rowCount(), before + 1);
+    const QModelIndex note = model->index(model->rowCount() - 1, 0);
+    QCOMPARE(note.data(Qt::EditRole).toString(),
+             QLatin1String("Noted Page"));
+    const QString body = note.data(NotesModel::BodyRole).toString();
+    QVERIFY(body.contains(QLatin1String("remember this passage")));
+    QVERIFY(body.contains(view.url().toString()));
+    QVERIFY(view.lastStatusBarText().contains(QLatin1String("notes"),
+                                              Qt::CaseInsensitive));
+
+    // Leave the shared store as found.
+    while (model->rowCount() > before)
+        model->removeRow(model->rowCount() - 1);
 }
 
 // CTX01 helpers — 'Open Image in New Tab/Window' lands in a detached
