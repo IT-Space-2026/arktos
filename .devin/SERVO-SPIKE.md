@@ -122,9 +122,19 @@ delegate, per-webview prefs} lands — those are the three hard gates.
 `spikes/servo/servo-embed` (cdylib over libservo v0.7.0,
 `default-features=false` + `bundled`/`js_jit`; ~700 crates incl.
 mozjs/webrender, ~20min cold build on this box, ~6s incremental;
-debug .so ~1.15 GB — link via lld, GNU ld is too memory-hungry) +
-`spikes/servo/harness` (Qt offscreen harness: wake→queued spin,
-painted-frame grab, input forwarding, request-log dump).
+debug .so ~1.15 GB, release ~150 MB — link via lld, GNU ld is too
+memory-hungry) + `spikes/servo/harness` (Qt offscreen harness:
+wake→queued spin, painted-frame grab, input forwarding,
+request-log dump).
+
+**Artifact step:** the canonical build for app use is
+`cargo build --release` in `spikes/servo/servo-embed/`. A
+`target/debug` cdylib resolves (the app prefers release at every
+candidate depth) but is pathologically slow — ENG29 added the loud
+runtime warning + "(debug build)" engine marker and a
+configure-time warning on debug-only artifact sets precisely
+because a debug-only tree once masqueraded as "the engine is just
+slow".
 
 ### Smoke results (offscreen, SoftwareRenderingContext)
 

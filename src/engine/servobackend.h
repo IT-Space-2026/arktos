@@ -316,6 +316,11 @@ public:
     // Filesystem+symbol resolution only; does not start servo.
     static bool artifactAvailable();
     static QString artifactPath();
+    // ENG29: true when the resolved artifact is an unoptimized
+    // target/debug cdylib — page loads on it are pathologically slow,
+    // so the backend warns loudly rather than letting a debug Servo
+    // masquerade as "the engine is just slow".
+    static bool artifactIsDebug();
     // ENG28: drive the engine's graceful shutdown while the GUI
     // thread is intact — no-op when the artifact predates
     // se_shutdown (the engine then dies with the process, as it
@@ -325,6 +330,7 @@ public:
 
     QString id() const override;
     QString displayName() const override;
+    QString engineNote() const override;
     Engine::Capabilities capabilities() const override;
     bool initialize() override;
 

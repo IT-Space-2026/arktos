@@ -175,6 +175,15 @@ bool resolve()
         state = -1;
         return false;
     }
+    // ENG29: a target/debug cdylib is pathologically slow — without
+    // this line it masquerades as "the engine is just slow" (the user
+    // report behind the task).  resolve()'s one-shot state makes the
+    // warning once-per-process.
+    if (ServoBackend::artifactIsDebug())
+        qWarning("servo-embed: DEBUG artifact in use (%s) — an "
+                 "unoptimized build, expect extreme slowness; the "
+                 "canonical artifact is `cargo build --release` in "
+                 "spikes/servo/servo-embed", qPrintable(path));
     bool ok = true;
 #define RESOLVE(field, symbol) \
     api().field = reinterpret_cast<decltype(api().field)>( \
@@ -1213,6 +1222,23 @@ QString ServoBackend::artifactPath()
     return QString();
 }
 
+bool ServoBackend::artifactIsDebug()
+{
+    // Path-profile probe: the artifactPath() candidate order already
+    // prefers target/release at every layout depth, so landing on a
+    // .../target/debug/ path means no release artifact outranked it.
+    // An env-override or appdir-staged .so outside a target/<profile>
+    // layout reads as not-debug — there is nothing to warn about a
+    // path that does not claim a profile.
+    const QString path = artifactPath();
+    if (path.isEmpty())
+        return false;
+    QDir dir = QFileInfo(path).absoluteDir();
+    return dir.dirName() == QLatin1String("debug")
+        && dir.cdUp()
+        && dir.dirName() == QLatin1String("target");
+}
+
 bool ServoBackend::artifactAvailable()
 {
     return resolve();
@@ -1229,12 +1255,30 @@ QString ServoBackend::displayName() const
     // se_version — same shape as the Chromium entry. The pinned
     // artifact may predate the export; honest fallback, never a faked
     // number.
+    // ENG29: the debug-artifact marker rides the name so every
+    // surface that shows it — indicator tooltip, settings combo, tab
+    // title, --engine-list — carries the warning with zero extra
+    // plumbing.
+    const QString debugSuffix = artifactIsDebug()
+        ? QStringLiteral(" (debug build)") : QString();
     if (resolve() && api().version) {
         if (const char *version = api().version(); version && *version)
-            return QStringLiteral("Servo %1")
-                    .arg(QString::fromUtf8(version));
+            return QStringLiteral("Servo %1%2")
+                    .arg(QString::fromUtf8(version), debugSuffix);
     }
-    return QStringLiteral("Servo (version unknown)");
+    return QStringLiteral("Servo (version unknown)%1").arg(debugSuffix);
+}
+
+QString ServoBackend::engineNote() const
+{
+    // ENG29: the honest baseline next to the selector — even a
+    // release Servo is slower than Chromium on real pages; a debug
+    // artifact escalates the note to the extreme-slowness warning.
+    if (artifactIsDebug())
+        return tr("Debug servo-embed artifact — expect extreme "
+                  "slowness");
+    return tr("Experimental engine — page loads are slower than "
+              "Chromium");
 }
 
 Engine::Capabilities ServoBackend::capabilities() const

@@ -73,9 +73,16 @@ void EngineIndicator::refresh()
     const QString name = backend
         ? backend->displayName() : m_engineId;
     const bool locked = isLocked();
-    setToolTip(locked
+    // ENG29: a backend caveat (Servo's experimental/debug-artifact
+    // notes) rides the tooltip — the lightest surface that still
+    // answers "why is this engine slow" at the glyph itself.
+    const QString note = backend ? backend->engineNote() : QString();
+    QString tip = locked
         ? tr("Rendered by %1 — %2").arg(name, m_lockReason)
-        : tr("Rendered by %1").arg(name));
+        : tr("Rendered by %1").arg(name);
+    if (!note.isEmpty())
+        tip += QLatin1String(" — ") + note;
+    setToolTip(tip);
     setStatusTip(locked
         ? tr("Engine locked: %1").arg(m_lockReason)
         : tr("Reload this page on another engine"));
@@ -119,6 +126,13 @@ void EngineIndicator::rebuildMenu()
             action->setEnabled(false);
             action->setToolTip(unavailable);
             action->setStatusTip(unavailable);
+        } else if (const QString note = backend->engineNote();
+                   !note.isEmpty()) {
+            // ENG29: a pickable backend with a caveat (Servo's
+            // slower-than-Chromium baseline, escalated on a debug
+            // artifact) explains itself on hover before the swap.
+            action->setToolTip(note);
+            action->setStatusTip(note);
         }
         connect(action, &QAction::triggered,
                 this, [this, id = backend->id()]() {

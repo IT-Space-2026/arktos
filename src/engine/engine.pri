@@ -62,6 +62,22 @@ equals(_PRO_FILE_, $$clean_path($$PWD/../src.pro)) {
                     exists under spikes/servo/servo-embed/target/*/ — \
                     the backend stays unregistered until the cdylib is \
                     built (cargo build in spikes/servo/servo-embed))
+        # ENG29: a debug-only artifact set means the app will dlopen an
+        # unoptimized libservo — pathologically slow page loads that
+        # masquerade as "the engine is just slow".  The runtime warns
+        # too, but configure is where the fix belongs.  (The $$find
+        # result must ride through a named variable — a nested call's
+        # comma would split isEmpty()'s argument list.)
+        ARORA_SERVO_RELEASE_ARTIFACTS = \
+            $$find(ARORA_SERVO_ARTIFACTS, /target/release/)
+        !isEmpty(ARORA_SERVO_ARTIFACTS): \
+            isEmpty(ARORA_SERVO_RELEASE_ARTIFACTS): \
+                warning(servo-embed artifacts exist but none is a \
+                        target/release build — the app will run the \
+                        unoptimized debug cdylib and pages will load \
+                        pathologically slowly; build the canonical \
+                        artifact with `cargo build --release` in \
+                        spikes/servo/servo-embed)
     } else {
         !isEmpty(ARORA_SERVO_ARTIFACTS): \
             message(Arora engine backends: webengine only — servo opted \

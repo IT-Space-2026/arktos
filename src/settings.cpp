@@ -336,10 +336,16 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     for (Engine::Backend *backend : EngineRegistry::backends()) {
         renderEngineCombo->addItem(backend->displayName(),
                                     backend->id());
+        const int row = renderEngineCombo->count() - 1;
         renderEngineCombo->setItemIcon(
-            renderEngineCombo->count() - 1,
-            EngineRegistry::backendIcon(backend->id(),
-                                        renderEngineCombo->palette()));
+            row, EngineRegistry::backendIcon(backend->id(),
+                                             renderEngineCombo->palette()));
+        // ENG29: backend caveats (Servo's slower-than-Chromium
+        // baseline, escalated on a debug artifact) show on hover in
+        // the selector itself.
+        const QString note = backend->engineNote();
+        if (!note.isEmpty())
+            renderEngineCombo->setItemData(row, note, Qt::ToolTipRole);
     }
     renderEngineGroup->setVisible(EngineRegistry::backends().count() >= 2);
 
@@ -2939,6 +2945,19 @@ void SettingsDialog::extensionSelectionChanged()
                                ? QString()
                                : tr(" — %1").arg(info.hostError)));
         }
+        // EXT17: hosted-but-degraded — the shim bridge is live but
+        // the extension touched APIs that answered typed errors.
+        // List them so the Hosted tier explains itself honestly.
+        if (!info.shimGaps.isEmpty()) {
+            lines << tr("Degraded — the hosted shim could not fully "
+                        "provide:");
+            const int shown = qMin(info.shimGaps.size(), 6);
+            for (int i = 0; i < shown; ++i)
+                lines << QStringLiteral("  • ") + info.shimGaps.at(i);
+            if (info.shimGaps.size() > shown)
+                lines << tr("  … and %1 more")
+                             .arg(info.shimGaps.size() - shown);
+        }
         if (info.builtin)
             lines << tr("Built-in component extension.");
         if (!info.path.isEmpty())
@@ -2953,8 +2972,12 @@ void SettingsDialog::extensionSelectionChanged()
                 lines << tr("Installed under: %1").arg(installPath);
         }
         if (info.actionPopupUrl.isValid())
-            lines << tr("Declares a toolbar action — Qt WebEngine has no "
-                        "extension toolbar, so its popup will not appear.");
+            lines << (info.hosted
+                ? tr("Declares a toolbar action — its popup gets the "
+                     "hosted shim when opened; Arora has no toolbar "
+                     "button for it yet.")
+                : tr("Declares a toolbar action — Qt WebEngine has no "
+                     "extension toolbar, so its popup will not appear."));
         if (!info.path.isEmpty()) {
             const ExtensionManager::Manifest manifest =
                 ExtensionManager::inspectManifest(info.path);
@@ -3041,7 +3064,9 @@ void SettingsDialog::refreshExtensions()
         else if (!info.loaded)
             status = tr("Not loaded");
         else if (info.enabled && info.hosted)
-            status = tr("Enabled (hosted)");   // EXT14 background host up
+            status = info.shimGaps.isEmpty()
+                ? tr("Enabled (hosted)")   // EXT14 background host up
+                : tr("Enabled (hosted, degraded)");   // EXT17 shim gaps
         else if (info.enabled && info.hostState == QLatin1String("failed"))
             status = tr("Enabled (background failed)");
         else

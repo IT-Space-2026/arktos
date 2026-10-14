@@ -3151,6 +3151,19 @@ static int servoLifecycleSmoke()
     const auto pumpDeletes = [] {
         QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     };
+#ifdef ARORA_SERVO
+    // ENG29: the resolved artifact's profile flag and the marker the
+    // engine surfaces show must agree — the flag is what
+    // artifactPath() picked (env override included), the marker is
+    // what the user sees.  Run once under each fixture (default
+    // resolution -> release; ARORA_SERVO_EMBED_LIB -> a debug path)
+    // to pin both directions; the loud qWarning fires in resolve().
+    report(QStringLiteral("artifact-debug-marker"),
+           ServoBackend::artifactIsDebug()
+               == servo->displayName().contains(
+                   QStringLiteral("(debug build)")));
+#endif
+
     const QString fixturePath = QDir::temp().filePath(
         QLatin1String("arora-servo-smoke.html"));
     {
@@ -9983,7 +9996,11 @@ int main(int argc, char **argv)
     };
     const auto die = [&application](const QString &why) {
         qInfo() << "extension-smoke: FAIL" << why;
-        application.exit(1);
+        fflush(nullptr);
+        // quick_exit, not application.exit: orderly teardown crashes
+        // with live views/pages (the host-smoke popup and autofill
+        // legs keep views around) — the verdict is already printed.
+        std::quick_exit(1);
     };
     QString extensionId;
     QString extDir;
@@ -10209,7 +10226,32 @@ int main(int argc, char **argv)
                 "\"description\":\"EXT14 hosted-runtime fixture\","
                 "\"permissions\":[\"storage\",\"tabs\","
                 "\"webNavigation\",\"contextMenus\"],"
+                "\"action\":{\"default_popup\":\"popup.html\","
+                "\"default_title\":\"Smoke\"},"
                 "\"background\":{\"service_worker\":\"sw.js\"}}");
+            // EXT17: the action popup document — the sibling-page
+            // injection must land on it, and its sendMessage must
+            // reach the hosted background over the relay.
+            QFile popupHtml(extDir + QLatin1String("/popup.html"));
+            if (!popupHtml.open(QIODevice::WriteOnly)) {
+                qInfo() << "extension-host-smoke: FAIL"
+                           " (cannot write popup.html)";
+                return 1;
+            }
+            popupHtml.write(
+                "<!doctype html><html><body>"
+                "<div id=\"root\">smoke popup</div>"
+                "<script src=\"popup.js\"></script>"
+                "</body></html>");
+            QFile popupJs(extDir + QLatin1String("/popup.js"));
+            if (!popupJs.open(QIODevice::WriteOnly)) {
+                qInfo() << "extension-host-smoke: FAIL"
+                           " (cannot write popup.js)";
+                return 1;
+            }
+            popupJs.write(
+                "self.__popupBootRan = (typeof chrome !== 'undefined'"
+                " && chrome.runtime) ? 'ok' : 'no';\n");
             QFile worker(extDir + QLatin1String("/sw.js"));
             if (!worker.open(QIODevice::WriteOnly)) {
                 qInfo() << "extension-host-smoke: FAIL"
@@ -10241,7 +10283,15 @@ int main(int argc, char **argv)
                 " chrome.webNavigation[e].addListener("
                 " self.__extRec('webNavigation.'+e));});\n"
                 "chrome.contextMenus.onClicked.addListener("
-                " self.__extRec('contextMenus.onClicked'));\n");
+                " self.__extRec('contextMenus.onClicked'));\n"
+                // EXT17: mark a ping answer that came through the
+                // hosted context — the popup leg asserts this flag
+                // so the relay path is proven regardless of whether
+                // the native service worker also answered.
+                "self.__sawPingHosted=false;\n"
+                "chrome.runtime.onMessage.addListener("
+                "function(m,s,r){ if(m&&m.ping&&m.via==='popup')"
+                "{ self.__sawPingHosted=true; } return false; });\n");
         }
 
         // Manifest inspector must hand the runtime the script list.
@@ -10257,13 +10307,44 @@ int main(int argc, char **argv)
         // phase: 0 = waiting for the host to reach Ready after
         // enable; 3 = the EXT15 shim probe is running in-page;
         // 4 = waiting for a typed-error gap; 5 = the EXT16 event
-        // legs drive a real window; 1 = waiting for teardown after
+        // legs drive a real window; 6 = the EXT17 popup waits for
+        // its own bridge; 7 = the popup probe runs; 8 = fixture-only
+        // hosted-side ping verification; 9 = the real extension's
+        // popup gate inspection; 10 = the autofill attempt against a
+        // loopback login form; 1 = waiting for teardown after
         // disable; 2 = the re-enable respawn must reach Ready again.
         auto phase = std::make_shared<int>(0);
         auto hostTicks = std::make_shared<int>(0);
         auto probeTicks = std::make_shared<int>(0);
+        auto gateClicks = std::make_shared<int>(0);
+        auto gateReloaded = std::make_shared<bool>(false);
         auto smokeDrove = std::make_shared<bool>(false);
+        auto afDrove = std::make_shared<bool>(false);
+        auto afStep = std::make_shared<int>(0);
         BrowserMainWindow *smokeWindow = nullptr;
+        // Never destruct a WebEngine page/view inside a runJavaScript
+        // result callback — the IPC teardown can deadlock the channel
+        // and the smoke starves until the watchdog (EXT17 hit exactly
+        // that at the autofill leg).
+        const auto closeSmokeWindow = [&]() {
+            if (!smokeWindow)
+                return;
+            // NEVER close() here: closeEvent pops a modal "close N
+            // tabs?" confirm when the fixture opened a second tab,
+            // and a nested modal loop inside a runJavaScript result
+            // callback wedges the leg (observed: autofill PASS
+            // printed, then silence until the watchdog).  WA_Delete
+            // OnClose-style destruction via deleteLater drops the
+            // window and its tab WebViews on the next event pass,
+            // after this callback's IPC answer has left the stack.
+            smokeWindow->deleteLater();
+            smokeWindow = nullptr;
+        };
+        // EXT17: the action popup lives in its own hidden view — the
+        // page injection + attachExtensionPage give it the shim.
+        QPointer<QWebEngineView> popupView;
+        QPointer<QWebEnginePage> popupPage;
+        QTcpServer *afServer = nullptr;
         QTimer *hostPoll = new QTimer(&application);
         hostPoll->setInterval(250);
 
@@ -10279,8 +10360,15 @@ int main(int argc, char **argv)
         QObject::connect(hostPoll, &QTimer::timeout, &application, [&]() {
             ExtensionBackgroundHost *host = runtime->host(extensionId);
             if (*phase == 0 || *phase == 2) {
-                if (!host)
+                if (!host) {
+                    // A null host in phase 2 means the re-enable did
+                    // not respawn anything — bound the silence so a
+                    // broken respawn reports instead of drifting to
+                    // the watchdog.
+                    if (*phase == 2 && ++*hostTicks > 160)
+                        die(QStringLiteral("host never respawned"));
                     return;
+                }
                 if (host->state()
                         == ExtensionBackgroundHost::State::Failed) {
                     die(QStringLiteral("host failed: %1")
@@ -10613,7 +10701,9 @@ int main(int argc, char **argv)
                 host->page()->runJavaScript(QStringLiteral(
                     "self.__extEvents?JSON.stringify(self.__extEvents)"
                     ":'missing'"),
-                    [&](const QVariant &v) {
+                    // 'host' by value — this fires after the poll
+                    // frame is gone.
+                    [&, host](const QVariant &v) {
                     const QJsonArray evs = QJsonDocument::fromJson(
                         v.toString().toUtf8()).array();
                     const auto saw = [&evs](const char *name) {
@@ -10674,16 +10764,788 @@ int main(int argc, char **argv)
                               "(tabId, changeInfo, tab)");
                         break;
                     }
-                    if (smokeWindow) {
-                        smokeWindow->close();
-                        QApplication::sendPostedEvents(
-                            nullptr, QEvent::DeferredDelete);
-                        smokeWindow = nullptr;
+                    closeSmokeWindow();
+                    // EXT17 sibling-page leg — load the extension's
+                    // declared action popup in a fresh view, attach
+                    // it BEFORE the document commits so the channel
+                    // is live when the preamble polls for it.  The
+                    // captured host pointer may be stale — re-resolve.
+                    ExtensionBackgroundHost *liveHost =
+                        runtime->host(extensionId);
+                    QUrl popupUrl;
+                    for (const ExtensionManager::ExtensionInfo &ei
+                         : extensions->extensions()) {
+                        if (ei.id == extensionId) {
+                            popupUrl = ei.actionPopupUrl;
+                            break;
+                        }
                     }
+                    if (!popupUrl.isValid() || !liveHost
+                            || !liveHost->page()
+                            || !liveHost->page()->profile()) {
+                        check(realExt,
+                              "popup leg skipped — no action popup");
+                        *phase = 1;
+                        *hostTicks = 0;
+                        extensions->setExtensionEnabled(
+                            extensionId, false);
+                        hostPoll->start();
+                        return;
+                    }
+                    popupView = new QWebEngineView;
+                    popupPage = new QWebEnginePage(
+                        liveHost->page()->profile(), popupView);
+                    popupView->setPage(popupPage);
+                    check(runtime->attachExtensionPage(
+                              popupPage, extensionId),
+                          "attachExtensionPage wires the popup");
+                    popupPage->load(popupUrl);
+                    *phase = 6;
+                    *probeTicks = 0;
+                    hostPoll->start();
+                });
+            } else if (*phase == 6) {   // EXT17 popup bridge
+                if (!host)
+                    return;
+                if (!popupPage) {
+                    die(QStringLiteral(
+                        "popup page died before its bridge"));
+                    return;
+                }
+                ++*probeTicks;
+                popupPage->runJavaScript(QStringLiteral(
+                    "JSON.stringify({up:!!(window.__aroraHost"
+                    "&&__aroraHost.bridgeUp),"
+                    "shim:!!window.__aroraShim,"
+                    "st:window.__aroraHost?__aroraHost.state:null,"
+                    "boot:self.__popupBootRan||null})"),
+                    [&](const QVariant &v) {
+                    const QJsonObject o = QJsonDocument::fromJson(
+                        v.toString().toUtf8()).object();
+                    const QString st =
+                        o.value(QLatin1String("st")).toString();
+                    if (st.startsWith(QLatin1String("failed"))) {
+                        die(QStringLiteral("popup preamble failed: %1")
+                                .arg(st));
+                        return;
+                    }
+                    if (!o.value(QLatin1String("up")).toBool()) {
+                        if (*probeTicks > 160)
+                            die(QStringLiteral(
+                                "popup bridge never came up: %1")
+                                    .arg(v.toString()));
+                        return;
+                    }
+                    hostPoll->stop();
+                    check(o.value(QLatin1String("shim")).toBool(),
+                          "popup DocumentCreation injection landed "
+                          "the shim");
+                    check(true, "popup chromeBridge handshake "
+                                "completed");
+                    if (!realExt) {
+                        check(o.value(QLatin1String("boot")).toString()
+                                  == QLatin1String("ok"),
+                              "popup's own script ran with "
+                              "chrome.runtime");
+                    }
+                    // One async probe in the popup: sendMessage to
+                    // the hosted background, getContexts, the
+                    // context-local tabs.getCurrent, windows.getAll,
+                    // and what the page actually rendered.
+                    popupPage->runJavaScript(QStringLiteral(
+                        "self.__popupProbe={done:false};"
+                        "(async function(){var o={};"
+                        " try{o.reply=await new Promise("
+                        "   function(res){"
+                        "   chrome.runtime.sendMessage("
+                        "     {ping:true,via:'popup'},"
+                        "     function(r){res({"
+                        "       r:(r===undefined)?null:r,"
+                        "       le:(chrome.runtime.lastError"
+                        "         ?String(chrome.runtime.lastError"
+                        "                .message):null)});});});"
+                        " }catch(e){o.threw=String(e);}"
+                        " try{o.contexts="
+                        "   await chrome.runtime.getContexts();}"
+                        " catch(e){o.contextsErr=String(e);}"
+                        " try{o.curTab=await chrome.tabs.getCurrent();"
+                        "  if(o.curTab===undefined)o.curTab=null;}"
+                        " catch(e){o.curTabErr=String(e);}"
+                        " try{o.wins=await chrome.windows.getAll();}"
+                        " catch(e){o.winsErr=String(e);}"
+                        // EXT17 diagnostics: is lastError a managed
+                        // getter or a writable property, and does the
+                        // NATIVE storage.local answer a get() in this
+                        // context (Bitwarden's bootstrap loops on it).
+                        " try{var ld=Object.getOwnPropertyDescriptor("
+                        "   chrome.runtime,'lastError');"
+                        "  o.leDesc=ld?('w'+(ld.writable?1:0)"
+                        "   +'g'+(ld.get?1:0)):'inherited';}"
+                        " catch(e){o.leDesc='err';}"
+                        " try{o.stGet=await new Promise("
+                        "   function(res){var st=setTimeout("
+                        "   function(){res('timeout')},5000);"
+                        "   chrome.storage.local.get('__arora_probe__',"
+                        "   function(i){clearTimeout(st);res({"
+                        "   le:(chrome.runtime.lastError?String("
+                        "   chrome.runtime.lastError.message):null),"
+                        "   keys:i?Object.keys(i).length:-1});});});}"
+                        " catch(e){o.stGet='threw:'+String(e);}"
+                        " try{o.bg=chrome.extension"
+                        "   .getBackgroundPage()===null?'null':"
+                        "   'window';}catch(e){o.bgErr=String(e);}"
+                        " o.bodyKids=document.body"
+                        "   ?document.body.childElementCount:-1;"
+                        " __popupProbe.out=o;__popupProbe.done=true;"
+                        "})().catch(function(e){"
+                        " __popupProbe.err=String(e);"
+                        "__popupProbe.done=true;});"),
+                        [](const QVariant &) {});
+                    *phase = 7;
+                    *probeTicks = 0;
+                    hostPoll->start();
+                });
+            } else if (*phase == 7) {   // EXT17 popup assertions
+                if (!host)
+                    return;
+                if (!popupPage) {
+                    die(QStringLiteral("popup page gone mid-probe"));
+                    return;
+                }
+                ++*probeTicks;
+                popupPage->runJavaScript(QStringLiteral(
+                    "self.__popupProbe?JSON.stringify("
+                    "self.__popupProbe):'missing'"),
+                    [&, host](const QVariant &v) {
+                    if (*probeTicks > 160) {
+                        die(QStringLiteral("popup probe timed out: %1")
+                                .arg(v.toString()));
+                        return;
+                    }
+                    const QJsonObject r = QJsonDocument::fromJson(
+                        v.toString().toUtf8()).object();
+                    if (!r.value(QLatin1String("done")).toBool())
+                        return;
+                    hostPoll->stop();
+                    check(r.value(QLatin1String("err")).toString()
+                              .isEmpty(),
+                          "popup probe ran clean");
+                    const QJsonObject o =
+                        r.value(QLatin1String("out")).toObject();
+                    const QJsonArray contexts =
+                        o.value(QLatin1String("contexts")).toArray();
+                    bool sawBackground = false;
+                    bool sawPopup = false;
+                    for (const QJsonValue &c : contexts) {
+                        const QString t = c.toObject().value(
+                            QLatin1String("contextType")).toString();
+                        if (t == QLatin1String("BACKGROUND"))
+                            sawBackground = true;
+                        if (t == QLatin1String("POPUP"))
+                            sawPopup = true;
+                    }
+                    check(sawBackground,
+                          "getContexts lists the hosted background");
+                    check(sawPopup,
+                          "getContexts lists the popup context");
+                    check(!o.contains(QLatin1String("curTabErr"))
+                              && o.value(QLatin1String("curTab"))
+                                     .isNull(),
+                          "tabs.getCurrent: popup is no tab");
+                    check(o.value(QLatin1String("wins")).isArray()
+                              && !o.contains(QLatin1String("winsErr")),
+                          "windows.getAll answers an array");
+                    const QJsonObject reply =
+                        o.value(QLatin1String("reply")).toObject();
+                    if (!realExt) {
+                        const QJsonObject rr =
+                            reply.value(QLatin1String("r")).toObject();
+                        check(rr.value(QLatin1String("pong")).toBool()
+                                  && rr.value(QLatin1String("from"))
+                                         .toString()
+                                     == QLatin1String("hosted"),
+                              "popup->background sendMessage "
+                              "round trip");
+                    } else {
+                        // Bitwarden's background speaks its own
+                        // protocol — the ping goes unanswered; the
+                        // leg asserts the channel RESOLVES (typed
+                        // lastError or a reply), never hangs.
+                        check(o.contains(QLatin1String("reply")),
+                              "popup sendMessage resolved "
+                              "(reply or typed lastError)");
+                        qInfo() << "extension-host-smoke: popup"
+                                   " sendMessage outcome:"
+                                << QString::fromUtf8(QJsonDocument(
+                                       reply).toJson(
+                                       QJsonDocument::Compact))
+                                << "getBackgroundPage:"
+                                << o.value(QLatin1String("bg"))
+                                       .toString()
+                                << "popup body children:"
+                                << o.value(QLatin1String("bodyKids"))
+                                       .toInt()
+                                << "lastError-desc:"
+                                << o.value(QLatin1String("leDesc"))
+                                       .toString()
+                                << "native storage.get:"
+                                << (o.value(QLatin1String("stGet"))
+                                        .isObject()
+                                    ? QString::fromUtf8(QJsonDocument(
+                                          o.value(QLatin1String(
+                                              "stGet")).toObject())
+                                          .toJson(QJsonDocument::Compact))
+                                    : o.value(QLatin1String("stGet"))
+                                          .toString());
+                        check(o.value(QLatin1String("bodyKids"))
+                                  .toInt() > 0,
+                              "real popup rendered DOM content");
+                    }
+                    // The relay delivered to the hosted context —
+                    // proven on the host page, independent of which
+                    // context answered the popup first.
+                    if (!realExt) {
+                        *phase = 8;
+                        *probeTicks = 0;
+                        hostPoll->start();
+                        return;
+                    }
+                    // Real extension: keep the popup alive and run the
+                    // acceptance legs — gate inspection, then the
+                    // autofill attempt.
+                    *phase = 9;
+                    *probeTicks = 0;
+                    hostPoll->start();
+                });
+            } else if (*phase == 9) {   // real popup: unlock gate
+                if (!popupPage) {
+                    hostPoll->stop();
+                    check(false, "popup page survives gate "
+                                 "inspection");
+                    if (popupView) {
+                        popupView->deleteLater();
+                        popupView.clear();
+                    }
+                    *phase = 10;
+                    *afDrove = false;
+                    *afStep = 0;
+                    *probeTicks = 0;
+                    hostPoll->start();
+                    return;
+                }
+                ++*probeTicks;
+                popupPage->runJavaScript(QStringLiteral(
+                    "(function(){try{return JSON.stringify({"
+                    "href:String(location.href),"
+                    "rs:document.readyState,"
+                    "inputs:document.querySelectorAll('input').length,"
+                    "pw:!!document.querySelector("
+                    " 'input[type=password]'),"
+                    "email:!!document.querySelector("
+                    " 'input[type=email],input[name*=email i]'),"
+                    "buttons:document.querySelectorAll('button')"
+                    " .length,"
+                    "items:document.querySelectorAll("
+                    " '[class*=cipher],[class*=item-list],"
+                    "cdk-virtual-scroll-viewport').length,"
+                    "text:(document.body?document.body.innerText:'')"
+                    " .slice(0,200),"
+                    // EXT17 diagnostics: the preamble captures page
+                    // errors — dump them plus the relay port count
+                    // so a stalled bootstrap explains itself.
+                    "errs:(window.__aroraHost?__aroraHost.errors"
+                    " .slice(0,6):[]),"
+                    "ports:(window.__aroraShim&&__aroraShim.ports"
+                    " ?Object.keys(__aroraShim.ports).length:-1),"
+                    "appRoot:(document.querySelector('app-root')"
+                    " ?document.querySelector('app-root')"
+                    " .innerHTML.length:-1),"
+                    // Resource timing answers whether the defer
+                    // scripts ever fetched (transfer/encoded size 0
+                    // = never loaded), and the global markers show
+                    // how far execution got: zone.js sets Zone,
+                    // webpack sets its chunk array, Angular mounts
+                    // under ng.
+                    "res:(performance.getEntriesByType('resource')"
+                    " .map(function(e){return e.name.split('/').pop()"
+                    " +':'+(e.transferSize||e.encodedBodySize||0);})"
+                    " .join(',')),"
+                    "nscripts:document.scripts.length,"
+                    "zone:(typeof Zone!=='undefined'),"
+                    "ngcore:Object.getOwnPropertyNames(self)"
+                    " .filter(function(k){return /webpackChunk|ng\\./"
+                    " .test(k);}).join(','),"
+                    // The popup's own shim diagnostics — which APIs
+                    // its scripts touched and which answered typed
+                    // errors.  A silent bootstrap stall reads here.
+                    "shimProbe:(window.__aroraShim"
+                    " ?__aroraShim.probe():null)});"
+                    "}catch(e){return 'evalerr:'"
+                    "+String(e);}})()"),
+                    [&](const QVariant &v) {
+                    if (!v.isValid()
+                            || v.toString().startsWith(
+                                QLatin1String("evalerr"))) {
+                        if (*probeTicks > 160) {
+                            hostPoll->stop();
+                            check(false, "real popup gate eval");
+                            qInfo() << "extension-host-smoke: gate"
+                                       " eval returned" << v;
+                            *phase = 10;
+                            *afDrove = false;
+                            *afStep = 0;
+                            *probeTicks = 0;
+                            if (popupView) {
+                                popupView->deleteLater();
+                                popupView.clear();
+                                popupPage.clear();
+                            }
+                            hostPoll->start();
+                        }
+                        return;
+                    }
+                    const QJsonObject o = QJsonDocument::fromJson(
+                        v.toString().toUtf8()).object();
+                    const bool gate = o.value(QLatin1String("pw"))
+                            .toBool()
+                        || o.value(QLatin1String("email")).toBool();
+                    const int items =
+                        o.value(QLatin1String("items")).toInt();
+                    if (!gate && items <= 0) {
+                        // EXT17: a fresh profile lands on Bitwarden's
+                        // first-run intro carousel instead of /login —
+                        // clicking its advance button persists the
+                        // onboarding state and routes to the real
+                        // gate.  Click through while the route still
+                        // says intro/registration, bounded so a stuck
+                        // carousel cannot eat the whole probe budget.
+                        const QString href =
+                            o.value(QLatin1String("href")).toString();
+                        if (o.value(QLatin1String("appRoot")).toInt()
+                                    > 200
+                            && *gateClicks < 12
+                            && (href.contains(
+                                     QLatin1String("intro-carousel"))
+                                || href.contains(
+                                     QLatin1String("registration")))) {
+                            ++*gateClicks;
+                            // NOTE: innerText is empty for every
+                            // button in the hidden popup view (no
+                            // layout → displayless text), so match
+                            // textContent.  Prefer the terminal
+                            // 'log in' CTA — it dismisses the
+                            // carousel straight to /login; only fall
+                            // back to generic advance buttons while
+                            // the slides have not offered it.
+                            popupPage->runJavaScript(QStringLiteral(
+                                "(function(){var bs=document"
+                                ".querySelectorAll('app-root button');"
+                                "var login=null,adv=null;"
+                                "for(var i=0;i<bs.length;++i){"
+                                " var t=(bs[i].textContent||'')"
+                                " .toLowerCase();"
+                                " if(/log in/.test(t))login=bs[i];"
+                                " else if(/get started|next|continue"
+                                "|skip|finish|done/.test(t))"
+                                "adv=bs[i];}"
+                                "var b=login||adv||bs[bs.length-1];"
+                                "if(b)b.click();"
+                                "return JSON.stringify({clicked:"
+                                "b?(b.textContent||'').trim():null,"
+                                "tc:(document.body.textContent||'')"
+                                " .replace(/\\s+/g,' ').trim()"
+                                " .slice(0,300),"
+                                "html:bs.length?bs[bs.length-1]"
+                                " .outerHTML.slice(0,200):'',"
+                                "i18n:(window.chrome&&chrome.i18n"
+                                " ?String(chrome.i18n.getMessage"
+                                "('logIn')):'noapi'),"
+                                "bs:[].map.call(bs,function(x){return"
+                                " (x.textContent||'').trim()+'|'"
+                                "+(x.getAttribute('aria-label')||'')"
+                                "+'|'+(x.id||'');}).slice(0,14)});"
+                                "})()"),
+                                [](const QVariant &cv) {
+                                qInfo() << "extension-host-smoke:"
+                                           " carousel click:"
+                                        << cv.toString();
+                            });
+                            return;
+                        }
+                        // EXT17: real CTA clicks landed (the
+                        // introCarouselDismissed write is in the
+                        // native extension store) but the Angular
+                        // guard re-read a stale seeded state$ and
+                        // bounced /login back to the carousel.  The
+                        // persisted flag wins on a fresh bootstrap —
+                        // reload the document once so the seed read
+                        // gets true and the router reaches /login.
+                        if (!*gateReloaded
+                                && *gateClicks >= 4
+                                && href.contains(QLatin1String(
+                                       "intro-carousel"))) {
+                            *gateReloaded = true;
+                            QUrl reloadUrl = popupPage->url();
+                            reloadUrl.setFragment(QString());
+                            popupPage->load(reloadUrl);
+                            // A reload re-boots Angular — restart the
+                            // probe clock so the FAIL budget counts
+                            // the fresh page, not the spent one.
+                            *probeTicks = 0;
+                            return;
+                        }
+                        if (*probeTicks > 160) {
+                            // A real FAIL — record it, keep going to
+                            // the autofill leg; never die() with live
+                            // views (exit-time teardown crashes).
+                            hostPoll->stop();
+                            check(false, "real popup presents its "
+                                         "unlock/login gate");
+                            qInfo() << "extension-host-smoke: popup"
+                                       " gate probe:" << v;
+                            // EXT17 diagnostics — the other half of
+                            // the port story lives in the hosted
+                            // background: did its runtime.onConnect
+                            // shim event keep the extension's
+                            // listeners, and did the offered port
+                            // register on this side?  A silent
+                            // bootstrap stall reads here.  NOTE:
+                            // 'host' cannot be used — this eval
+                            // callback outlives the poll tick's
+                            // stack frame, so the by-ref capture is
+                            // dangling.  Re-resolve by id instead.
+                            ExtensionBackgroundHost *dumpHost =
+                                runtime->host(extensionId);
+                            QPointer<QWebEnginePage> dumpPage =
+                                dumpHost ? dumpHost->page()
+                                         : nullptr;
+                            if (dumpPage) {
+                            dumpPage->runJavaScript(QStringLiteral(
+                                "(function(){try{var s=__aroraShim;"
+                                "var p={};for(var k in s.ports)"
+                                "p[k]={name:s.ports[k].name,"
+                                "disc:s.ports[k].disconnected,"
+                                "onMsg:s.ports[k].onMessage.__count"
+                                " ?s.ports[k].onMessage.__count():-1};"
+                                "var evs={};for(var en in s.events)"
+                                "if(s.events[en].__count)"
+                                "evs[en]=s.events[en].__count();"
+                                "return JSON.stringify({ports:p,"
+                                "evs:evs,touched:s.touched,"
+                                "errs:(__aroraHost.errors||[])"
+                                " .slice(0,8)});"
+                                "}catch(e){return 'evalerr:'"
+                                "+String(e);}})()"),
+                                [](const QVariant &hv) {
+                                qInfo() << "extension-host-smoke:"
+                                           " background shim dump:"
+                                        << hv.toString();
+                            });
+                            }
+                            if (popupView) {
+                                popupView->deleteLater();
+                                popupView.clear();
+                                popupPage.clear();
+                            }
+                            *phase = 10;
+                            *afDrove = false;
+                            *afStep = 0;
+                            *probeTicks = 0;
+                            hostPoll->start();
+                        }
+                        return;
+                    }
+                    hostPoll->stop();
+                    qInfo() << "extension-host-smoke: popup page"
+                               " errors:"
+                            << QString::fromUtf8(QJsonDocument(
+                                   o.value(QLatin1String("errs"))
+                                       .toArray()).toJson(
+                                   QJsonDocument::Compact))
+                            << "open ports:"
+                            << o.value(QLatin1String("ports")).toInt()
+                            << "app-root bytes:"
+                            << o.value(QLatin1String("appRoot"))
+                                   .toInt();
+                    qInfo() << "extension-host-smoke: popup gate:"
+                            << "pw-input" << o.value(
+                                   QLatin1String("pw")).toBool()
+                            << "email-input" << o.value(
+                                   QLatin1String("email")).toBool()
+                            << "inputs" << o.value(
+                                   QLatin1String("inputs")).toInt()
+                            << "buttons" << o.value(
+                                   QLatin1String("buttons")).toInt()
+                            << "text:" << o.value(
+                                   QLatin1String("text")).toString();
+                    if (gate) {
+                        check(true, "real popup presents its "
+                                    "unlock/login gate");
+                        // An unlock needs real credentials — out of
+                        // scope; the vault list legitimately cannot
+                        // render.  Record it, don't fail it.
+                        qInfo() << "extension-host-smoke: vault item"
+                                   " list unreachable without"
+                                   " credentials (items:"
+                                << items << ")";
+                    } else {
+                        // Items without a gate would mean the vault
+                        // rendered unlocked — flag it honestly.
+                        check(items > 0,
+                              "vault item list rendered unlocked");
+                    }
+                    if (popupView) {
+                        popupView->deleteLater();
+                        popupView.clear();
+                        popupPage.clear();
+                    }
+                    *phase = 10;
+                    *afDrove = false;
+                    *afStep = 0;
+                    *probeTicks = 0;
+                    hostPoll->start();
+                });
+            } else if (*phase == 10) {  // autofill attempt leg
+                if (!host)
+                    return;
+                if (!*afDrove) {
+                    *afDrove = true;
+                    // A login form over loopback — content scripts
+                    // cannot run on data: pages, so serve real http.
+                    afServer = new QTcpServer(&application);
+                    if (!afServer->listen(QHostAddress::LocalHost)) {
+                        die(QStringLiteral("autofill fixture cannot "
+                                           "listen"));
+                        return;
+                    }
+                    QObject::connect(afServer,
+                                     &QTcpServer::newConnection,
+                                     &application, [afServer]() {
+                        QTcpSocket *socket =
+                            afServer->nextPendingConnection();
+                        QObject::connect(socket,
+                            &QTcpSocket::readyRead, socket,
+                            [socket]() {
+                            socket->readAll();
+                            const QByteArray body =
+                                "<html><body><form id=\"login\">"
+                                "<input name=\"username\" type=\"text\""
+                                " autocomplete=\"username\">"
+                                "<input name=\"password\""
+                                " type=\"password\""
+                                " autocomplete=\"current-password\">"
+                                "</form></body></html>";
+                            socket->write("HTTP/1.1 200 OK\r\n"
+                                "Content-Type: text/html\r\n"
+                                "Content-Length: "
+                                + QByteArray::number(body.size())
+                                + "\r\nConnection: close\r\n\r\n"
+                                + body);
+                            socket->disconnectFromHost();
+                            });
+                    });
+                    smokeWindow = application.newMainWindow();
+                    if (!smokeWindow || !smokeWindow->tabWidget()) {
+                        die(QStringLiteral("no autofill window"));
+                        return;
+                    }
+                    TabWidget *tw = smokeWindow->tabWidget();
+                    tw->newTab();
+                    WebView *view = tw->webView(0);
+                    if (!view) {
+                        die(QStringLiteral("no autofill tab"));
+                        return;
+                    }
+                    // Arm the Bitwarden content-script handshake and
+                    // the field-value recorder.
+                    QObject::connect(view->page(),
+                        &QWebEnginePage::loadFinished, &application,
+                        [view](bool ok) {
+                        if (!ok)
+                            return;
+                        view->page()->runJavaScript(QStringLiteral(
+                            "window.__afHs=null;"
+                            "window.addEventListener('message',"
+                            "function(e){if(e.data&&e.data.command==="
+                            "'hasBwInstalled')window.__afHs=true;});"
+                            "window.postMessage({command:"
+                            "'checkIfBWExtensionInstalled'},'*');"
+                            "setTimeout(function(){if(window.__afHs"
+                            "===null)window.__afHs=false;},5000);"),
+                            [](const QVariant &) {});
+                    });
+                    view->load(QUrl(QStringLiteral(
+                        "http://127.0.0.1:%1/")
+                        .arg(afServer->serverPort())));
+                    return;
+                }
+                if (!smokeWindow || !smokeWindow->tabWidget()
+                        || !smokeWindow->tabWidget()->webView(0)) {
+                    hostPoll->stop();
+                    check(false, "autofill page survives the leg");
                     *phase = 1;
                     *hostTicks = 0;
                     extensions->setExtensionEnabled(extensionId, false);
                     hostPoll->start();
+                    return;
+                }
+                ++*probeTicks;
+                WebView *afView =
+                    smokeWindow->tabWidget()->webView(0);
+                if (*afStep == 0) {
+                    afView->page()->runJavaScript(QStringLiteral(
+                        "JSON.stringify({hs:window.__afHs,"
+                        "user:(document.querySelector("
+                        " 'input[name=username]')||{}).value||'',"
+                        "pass:(document.querySelector("
+                        " 'input[name=password]')||{}).value||''})"),
+                        [&, host](const QVariant &v) {
+                        const QJsonObject o = QJsonDocument::fromJson(
+                            v.toString().toUtf8()).object();
+                        if (o.value(QLatin1String("hs")).isNull()) {
+                            if (*probeTicks > 80) {
+                                hostPoll->stop();
+                                check(false, "content-script "
+                                             "handshake resolved");
+                                closeSmokeWindow();
+                                *phase = 1;
+                                *hostTicks = 0;
+                                extensions->setExtensionEnabled(
+                                    extensionId, false);
+                                hostPoll->start();
+                            }
+                            return;
+                        }
+                        check(o.value(QLatin1String("hs")).toBool(),
+                              "content script answered "
+                              "hasBwInstalled on the login page");
+                        // The autofill attempt: route the command a
+                        // real Bitwarden background would send to the
+                        // tab — through OUR hosted background's tabs
+                        // API, recording whatever comes back.
+                        host->page()->runJavaScript(QStringLiteral(
+                            "self.__af={sent:false};"
+                            "chrome.tabs.query({active:true},"
+                            "function(tabs){var t=tabs&&tabs[0];"
+                            "self.__af={sent:true,tab:t&&t.id};"
+                            "if(t){try{chrome.tabs.sendMessage(t.id,"
+                            "{command:'autofillPage',"
+                            "fillScript:{script:[]},"
+                            "pageDetailsUuid:'arora-smoke'},"
+                            "function(r){self.__af.resp=(r===undefined)"
+                            "?null:String(r);self.__af.le="
+                            "(chrome.runtime.lastError?String("
+                            "chrome.runtime.lastError.message):null);}"
+                            ");}catch(e){self.__af.le='threw:'"
+                            "+String(e);}}});"),
+                            [](const QVariant &) {});
+                        *afStep = 1;
+                        *probeTicks = 0;
+                    });
+                } else {    // afStep == 1: collect the outcome
+                    host->page()->runJavaScript(QStringLiteral(
+                        "self.__af?JSON.stringify(self.__af):'null'"),
+                        [&, afView](const QVariant &v) {
+                        const QJsonObject af =
+                            QJsonDocument::fromJson(
+                                v.toString().toUtf8()).object();
+                        const bool resolved =
+                            af.value(QLatin1String("sent")).toBool()
+                            && (af.contains(QLatin1String("resp"))
+                                || af.contains(QLatin1String("le"))
+                                || af.value(QLatin1String("tab"))
+                                       .isNull());
+                        if (!resolved) {
+                            if (*probeTicks > 80) {
+                                // Never hang the harness — record
+                                // and fall through to teardown.
+                                hostPoll->stop();
+                                check(false, "autofill command "
+                                             "resolved");
+                                qInfo() << "extension-host-smoke:"
+                                           " autofill unresolved:"
+                                        << v.toString();
+                                closeSmokeWindow();
+                                *phase = 1;
+                                *hostTicks = 0;
+                                extensions->setExtensionEnabled(
+                                    extensionId, false);
+                                hostPoll->start();
+                            }
+                            return;
+                        }
+                        afView->page()->runJavaScript(QStringLiteral(
+                            "JSON.stringify({"
+                            "user:(document.querySelector("
+                            " 'input[name=username]')||{}).value||'',"
+                            "pass:(document.querySelector("
+                            " 'input[name=password]')||{}).value||''})"),
+                            [&, af](const QVariant &fv) {
+                            hostPoll->stop();
+                            const QJsonObject f =
+                                QJsonDocument::fromJson(
+                                    fv.toString().toUtf8()).object();
+                            const bool filled =
+                                !f.value(QLatin1String("pass"))
+                                     .toString().isEmpty();
+                            // Honest accounting: a fill is a real
+                            // form fill; anything else (typed
+                            // lastError, silent no-op, locked vault)
+                            // is recorded verbatim — autofill is
+                            // unreachable without unlock regardless.
+                            if (filled)
+                                check(true, "autofill wrote the "
+                                            "password field");
+                            else
+                                check(true, "autofill attempt "
+                                            "recorded (no fill)");
+                            qInfo() << "extension-host-smoke:"
+                                       " autofill outcome: fill="
+                                    << filled
+                                    << "resp=" << af.value(
+                                           QLatin1String("resp"))
+                                           .toVariant()
+                                    << "lastError=" << af.value(
+                                           QLatin1String("le"))
+                                           .toString()
+                                    << "(clipboard fill not"
+                                       " observed; vault locked)";
+                            closeSmokeWindow();
+                            *phase = 1;
+                            *hostTicks = 0;
+                            extensions->setExtensionEnabled(
+                                extensionId, false);
+                            hostPoll->start();
+                        });
+                    });
+                }
+            } else if (*phase == 8) {   // hosted-context saw the ping
+                if (!host)
+                    return;
+                ++*probeTicks;
+                host->page()->runJavaScript(QStringLiteral(
+                    "self.__sawPingHosted===true?'yes':'no'"),
+                    [&](const QVariant &v) {
+                    if (v.toString() == QLatin1String("yes")) {
+                        hostPoll->stop();
+                        check(true, "relay delivered the popup ping "
+                                    "to the hosted background");
+                        if (popupView) {
+                            popupView->deleteLater();
+                            popupView.clear();
+                            popupPage.clear();
+                        }
+                        *phase = 1;
+                        *hostTicks = 0;
+                        extensions->setExtensionEnabled(
+                            extensionId, false);
+                        hostPoll->start();
+                        return;
+                    }
+                    if (*probeTicks > 80)
+                        die(QStringLiteral(
+                            "hosted context never saw the popup "
+                            "ping"));
                 });
             } else {  // phase 1 — teardown
                 if (!host) {
@@ -10717,7 +11579,15 @@ int main(int argc, char **argv)
             &application, [die](const QString &message) {
             die(QStringLiteral("errorOccurred: %1").arg(message));
         });
-        QTimer::singleShot(60000, &application, [die]() {
+        // A real extension runs extra acceptance legs (popup gate,
+        // autofill attempt) that legitimately take minutes — the
+        // fixture still finishes in seconds.  Bitwarden's 3.4MB
+        // background boots twice (phase 0 + the respawn leg); the
+        // gate probe alone may legitimately poll 40s while Angular
+        // initializers drain, so the real-extension watchdog stays
+        // well past the sum of the leg budgets.
+        QTimer::singleShot(realExt ? 600000 : 60000, &application,
+                           [die]() {
             die(QStringLiteral("timeout"));
         });
 
