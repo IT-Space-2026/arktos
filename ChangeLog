@@ -564,6 +564,13 @@ UI:
   buttons share a rounded hover; group bands, container chips, and
   private badges stay legible on both the horizontal strip and the
   vertical rail (THEM02).
+- Dialog and panel polish: Preferences sections read as semibold
+  headers over a thin palette hairline instead of sunken group frames,
+  page spacing follows the shared rhythm, and the page rail is a
+  frameless rounded-selection list; sidebar panels keep flat hairline
+  borders and consistent headers; menus and dropdowns share flat
+  padding, hairline separators, and a rounded selection — Tor windows
+  follow the same rules through the palette (THEM03).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

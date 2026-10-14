@@ -95,7 +95,8 @@ QPainterPath tabCardOutline(const QRectF &rect, QTabBar::Shape shape,
 } // namespace
 
 // THEME01 §c/§d — metrics the stylesheet cannot reach: group-box
-// titles drawn at section-header weight (children keep the base font),
+// headers drawn flat (DemiBold title + hairline, no sunken frame —
+// THEM03) and children keep the base font,
 // zero-width toolbar frames so bars are flat on every style, and
 // QFrame separator lines redrawn as single palette hairlines instead
 // of the sunken/raised bevel pair.
@@ -217,6 +218,11 @@ public:
             qstyleoption_cast<const QStyleOptionGroupBox *>(option);
         if (control == CC_GroupBox && box && !box->text.isEmpty()
                 && painter) {
+            // THEM03 §a — a titled group box is a flat section: the
+            // sunken rounded frame is replaced by one palette
+            // hairline under the header band.  Untitled boxes fall
+            // through to the base frame — there is no header for a
+            // separator to sit under.
             QStyleOptionGroupBox copy(*box);
             QFont titleFont =
                 widget ? widget->font() : QApplication::font();
@@ -225,10 +231,43 @@ public:
             // so a heavier title cannot clip — while the glyphs pick
             // the painter's font up.
             copy.fontMetrics = QFontMetrics(titleFont);
+            const QRect textRect = subControlRect(
+                CC_GroupBox, &copy, SC_GroupBoxLabel, widget);
+            const QRect checkRect = subControlRect(
+                CC_GroupBox, &copy, SC_GroupBoxCheckBox, widget);
+            const QRect frameRect = (box->subControls & SC_GroupBoxFrame)
+                ? subControlRect(CC_GroupBox, &copy, SC_GroupBoxFrame,
+                                 widget)
+                : box->rect;
             painter->save();
             painter->setFont(titleFont);
-            QProxyStyle::drawComplexControl(control, &copy, painter,
-                                            widget);
+            // The hairline under the header — what the framed
+            // panel's top edge used to mark.
+            const int lineY =
+                qMax(textRect.bottom(), checkRect.bottom()) + 2;
+            painter->fillRect(frameRect.left(), lineY,
+                              frameRect.width(), 1,
+                              AroraStyle::separatorColor(box->palette));
+            if (box->subControls & SC_GroupBoxCheckBox) {
+                QStyleOptionButton indicator;
+                indicator.QStyleOption::operator=(*box);
+                indicator.rect = checkRect;
+                drawPrimitive(PE_IndicatorCheckBox, &indicator,
+                              painter, widget);
+            }
+            int alignment = int(box->textAlignment);
+            if (!styleHint(SH_UnderlineShortcut, &copy, widget))
+                alignment |= Qt::TextHideMnemonic;
+            if (!(alignment & Qt::AlignVertical_Mask))
+                alignment |= Qt::AlignVCenter;
+            QPalette textPalette(box->palette);
+            if (box->textColor.isValid())
+                textPalette.setColor(QPalette::WindowText,
+                                     box->textColor);
+            drawItemText(painter, textRect,
+                         Qt::TextShowMnemonic | alignment, textPalette,
+                         box->state & State_Enabled, box->text,
+                         QPalette::WindowText);
             painter->restore();
             return;
         }
@@ -401,6 +440,10 @@ QString AroraStyle::chromeStyleSheet()
 {
     const QPalette palette = qApp ? qApp->palette() : QPalette();
     const QString separator = separatorColor(palette).name();
+    const QString highlight = palette.color(QPalette::Highlight).name();
+    const QString hover = hoverColor(palette).name();
+    const QString onHighlight =
+        palette.color(QPalette::HighlightedText).name();
     return QString::fromLatin1(
         // Flat bars: no sunken frames anywhere.  The stylesheet
         // style reports PM_ToolBarFrameWidth as border+padding and
@@ -415,14 +458,45 @@ QString AroraStyle::chromeStyleSheet()
         // Dock chrome keeps a boundary — a flat palette line instead
         // of a styled frame (floating docks keep it too).
         "QDockWidget { border: 1px solid %1; }"
+        // The dock title reads as a header row on the spacing scale.
+        "QDockWidget::title { padding: %2px %4px; }"
         // The tab pane's seam is the same hairline; the tor window
         // overrides the pane to borderless violet itself.
         "QTabWidget::pane { border: 1px solid %1; }"
-        // Menu separators collapse to the hairline convention.
+        // THEM03 §c — menus and dropdown popovers share one flat
+        // treatment app-wide (the tor window's menus included — the
+        // rules resolve from the palette, not the chrome color):
+        // hairline edge, Small pad around the list, a softly rounded
+        // Highlight selection, and the same hairline separator.
+        "QMenu { border: 1px solid %1; padding: %2px; }"
+        "QMenu::item { padding: %2px 20px; border-radius: 3px; }"
+        "QMenu::item:selected { background: %3; color: %6; }"
         "QMenu::separator { height: 1px; background: %1;"
-        " margin: %2px %2px; }")
+        " margin: %2px %2px; }"
+        "QComboBox QAbstractItemView { border: 1px solid %1;"
+        " padding: %2px; }"
+        // THEM03 §b — sidebar panel surfaces keep a flat hairline
+        // instead of the styled field frame.
+        "#sidebarTabs QAbstractItemView { border: 1px solid %1; }"
+        "#sidebarTabs QPlainTextEdit { border: 1px solid %1; }"
+        "QFrame#sidebarDownloadDetail { border: 1px solid %1; }"
+        // THEM03 §a — the Preferences nav list is a frameless rail:
+        // rows ride a rounded Highlight card on selection and the
+        // hover wash in between, matching the tab-strip language.
+        "QListWidget#pagesList { border: none;"
+        " background: transparent; }"
+        "QListWidget#pagesList::item { border-radius: 4px;"
+        " padding: 2px %2px; }"
+        "QListWidget#pagesList::item:hover:!selected {"
+        " background: %5; }"
+        "QListWidget#pagesList::item:selected { background: %3;"
+        " color: %6; }")
         .arg(separator)
-        .arg(Spacing::Small);
+        .arg(Spacing::Small)
+        .arg(highlight)
+        .arg(Spacing::Medium)
+        .arg(hover)
+        .arg(onHighlight);
 }
 
 QString AroraStyle::torBarStyleSheet()

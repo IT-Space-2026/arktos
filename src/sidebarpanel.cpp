@@ -752,7 +752,9 @@ QWidget *SidebarPanel::buildDownloadsPage()
     QHBoxLayout *downloadsHeader = new QHBoxLayout;
     QLabel *downloadsTitle = new QLabel(tr("Downloads"), m_downloadsPage);
     QFont titleFont = downloadsTitle->font();
-    titleFont.setBold(true);
+    // THEM03: header rows share the section-title weight the chrome
+    // style gives group boxes (DemiBold, not full Bold).
+    titleFont.setWeight(QFont::DemiBold);
     downloadsTitle->setFont(titleFont);
     // DOWN04: the title yields first at narrow widths so the close
     // button is never pushed off the row's right edge.

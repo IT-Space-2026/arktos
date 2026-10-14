@@ -232,6 +232,11 @@ SettingsDialog::SettingsDialog(QWidget *parent)
         qRound(QFontMetricsF(navFont).height() * 1.1);
     pagesList->setIconSize(QSize(navIconExtent, navIconExtent));
     pagesList->setUniformItemSizes(true);
+    // THEM03: the nav reads as a rail, not a list box — the chrome
+    // sheet drops the frame to transparent and rounds the
+    // selection; match the widget state so frameWidth() stays
+    // truthful for the width math below.
+    pagesList->setFrameShape(QFrame::NoFrame);
     // Fixed-width nav column sized to the longest translated label —
     // measured after the font bump so the width reflects the larger
     // text.
@@ -270,10 +275,14 @@ SettingsDialog::SettingsDialog(QWidget *parent)
         QWidget *surface = tabWidget->widget(i);
         if (QScrollArea *area = qobject_cast<QScrollArea *>(surface))
             surface = area->widget();
-        if (surface && surface->layout())
+        if (surface && surface->layout()) {
             surface->layout()->setContentsMargins(
                 AroraStyle::Spacing::Medium, AroraStyle::Spacing::Medium,
                 AroraStyle::Spacing::Medium, AroraStyle::Spacing::Medium);
+            // THEM03: one Medium step between sections — uic leaves
+            // the style's ad-hoc default otherwise.
+            surface->layout()->setSpacing(AroraStyle::Spacing::Medium);
+        }
     }
     const QList<QGroupBox *> groups = findChildren<QGroupBox *>();
     for (QGroupBox *box : groups) {

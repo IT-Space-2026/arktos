@@ -4238,8 +4238,18 @@ void tst_BrowserMainWindow::sidebarPanel()
     if (!sidebarGrabDir.isEmpty()) {
         QDir().mkpath(QString::fromLocal8Bit(sidebarGrabDir));
         qApp->processEvents();
-        panel->grab().save(QString::fromLocal8Bit(sidebarGrabDir)
-            + QStringLiteral("/sidebar-panel.png"));
+        // THEM03: every panel, not just the current one — the rail
+        // tabs swap pages lazily, so select each before grabbing.
+        const int current = panel->tabs()->currentIndex();
+        for (int i = 0; i < panel->tabs()->count(); ++i) {
+            panel->tabs()->setCurrentIndex(i);
+            qApp->processEvents();
+            panel->grab().save(QString::fromLocal8Bit(sidebarGrabDir)
+                + QStringLiteral("/sidebar-panel-%1.png")
+                    .arg(panel->tabs()->tabText(i)));
+        }
+        panel->tabs()->setCurrentIndex(current);
+        qApp->processEvents();
     }
 
     // Toggling writes the persisted key; hiding is remembered.

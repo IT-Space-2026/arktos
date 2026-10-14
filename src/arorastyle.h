@@ -33,8 +33,9 @@
 //
 // Two runtime surfaces come out of install():
 //   * a QProxyStyle layered on the app style — metrics polish that
-//     stylesheets cannot reach (zero-width toolbar frames, semibold
-//     group-box titles that do not leak into a group's children);
+//     stylesheets cannot reach (zero-width toolbar frames, flat
+//     group-box section headers — semibold title + hairline — that
+//     do not leak a heavier font into a group's children);
 //   * an application stylesheet built from the LIVE palette — flat
 //     toolbar/dock/status-bar chrome with hairline separators.  It is
 //     rebuilt on every chromeSchemeChanged so a light/dark flip (or a

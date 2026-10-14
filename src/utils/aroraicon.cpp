@@ -146,7 +146,9 @@ QPixmap tintedPixmap(const QPixmap &source, const QColor &color)
 // ICONS09: chrome icon engine — the themed art serves shape+alpha
 // only; every opaque pixel is re-tinted to the palette's ButtonText
 // (Disabled mode takes the palette's disabled tone rather than Qt's
-// generated ghosting, same lesson as ICONS06).  The tint is resolved
+// generated ghosting, same lesson as ICONS06; THEM03: Selected takes
+// HighlightedText — the glyph rides a Highlight card on nav rails).
+// The tint is resolved
 // per pixmap() request — not baked at setIcon() — so a runtime
 // light<->dark flip (THEME01 preview, desktop scheme change) or an
 // icon-theme swap reaches already-installed icons without any widget
@@ -190,10 +192,17 @@ public:
             return base;
         base.setDevicePixelRatio(scale);
         const QPalette palette = qApp ? qApp->palette() : QPalette();
+        if (mode == QIcon::Disabled)
+            return tintedPixmap(base, palette.color(
+                QPalette::Disabled, QPalette::ButtonText));
+        // THEM03: selected chrome glyphs ride a Highlight card (the
+        // prefs nav rail, the sidebar section rail) — ButtonText on
+        // Highlight can sink to unreadable, so the selected request
+        // tints to the matching foreground role.
         return tintedPixmap(base, palette.color(
-            mode == QIcon::Disabled ? QPalette::Disabled
-                                    : QPalette::Normal,
-            QPalette::ButtonText));
+            QPalette::Normal,
+            mode == QIcon::Selected ? QPalette::HighlightedText
+                                    : QPalette::ButtonText));
     }
 
 private:

@@ -34,6 +34,7 @@
 #include <qdir.h>
 #include <qgroupbox.h>
 #include <qlabel.h>
+#include <qmenu.h>
 #include <qpainter.h>
 #include <qsettings.h>
 #include <qstatusbar.h>
@@ -57,6 +58,9 @@ private slots:
     void chromeSheetResolvesPalette();
     void flatChromeInstalled();
     void groupBoxTitleWeight();
+    void flatGroupSection();
+    void dialogAndMenuSheet();
+    void flatMenuChrome();
     void polishSurvivesSchemeFlip();
     void torSheetsShareOneSource();
     void tabCardShape();
@@ -203,6 +207,125 @@ void tst_Arorastyle::groupBoxTitleWeight()
 
     host.hide();
     delete fusion;
+}
+
+// THEM03 §a: a titled group box is a flat section — a palette
+// hairline under the semibold header, no framed panel edge around
+// the sides and bottom.
+void tst_Arorastyle::flatGroupSection()
+{
+    QGroupBox box(QLatin1String("Section Header"));
+    box.resize(360, 140);
+    box.show();
+    QApplication::processEvents();
+    const QImage image = box.grab().toImage();
+    const QPalette palette = box.palette();
+    const QColor window = palette.color(QPalette::Window);
+    const QColor sep = AroraStyle::separatorColor(palette);
+
+    // No side or bottom frame — the edge pixels stay on Window.
+    QVERIFY(nearColor(image.pixelColor(0, image.height() / 2),
+                      window));
+    QVERIFY(nearColor(image.pixelColor(image.width() - 1,
+                                       image.height() / 2), window));
+    QVERIFY(nearColor(image.pixelColor(image.width() / 2,
+                                       image.height() - 1), window));
+
+    // The hairline row under the title band spans the box width.
+    int lineY = -1;
+    const int band = box.fontMetrics().height() + 8;
+    for (int y = 0; y < band && y < image.height(); ++y) {
+        if (nearColor(image.pixelColor(image.width() / 2, y), sep)) {
+            lineY = y;
+            break;
+        }
+    }
+    QVERIFY(lineY > 0);
+    QVERIFY(nearColor(image.pixelColor(8, lineY), sep));
+    QVERIFY(nearColor(image.pixelColor(image.width() - 8, lineY),
+                      sep));
+
+    // A checkable section keeps its indicator next to the title —
+    // ink in the left column of the header band.
+    QGroupBox checkable(QLatin1String("Checkable"));
+    checkable.setCheckable(true);
+    checkable.resize(360, 140);
+    checkable.show();
+    QApplication::processEvents();
+    const QImage checkImage = checkable.grab().toImage();
+    bool indicatorInk = false;
+    for (int y = 0; y < band && y < checkImage.height(); ++y) {
+        for (int x = 4; x < 30; ++x) {
+            const QColor c = checkImage.pixelColor(x, y);
+            if (c.alpha() > 0
+                    && !nearColor(c, window)
+                    && !nearColor(c, sep)) {
+                indicatorInk = true;
+                break;
+            }
+        }
+        if (indicatorInk)
+            break;
+    }
+    QVERIFY(indicatorInk);
+    box.hide();
+    checkable.hide();
+}
+
+// THEM03: the chrome sheet carries the dialog/panel/menu polish —
+// flat menus on the spacing scale, flat sidebar surfaces, and the
+// frameless Preferences nav rail — all palette-resolved.
+void tst_Arorastyle::dialogAndMenuSheet()
+{
+    const QString sheet = AroraStyle::chromeStyleSheet();
+    const QPalette palette = QApplication::palette();
+    const QString sep = AroraStyle::separatorColor(palette).name();
+    const QString highlight =
+        palette.color(QPalette::Highlight).name();
+    const QString hover = AroraStyle::hoverColor(palette).name();
+
+    QVERIFY(sheet.contains(
+        QStringLiteral("QMenu { border: 1px solid %1").arg(sep)));
+    QVERIFY(sheet.contains(
+        QStringLiteral("QMenu::item:selected { background: %1")
+            .arg(highlight)));
+    QVERIFY(sheet.contains(
+        QStringLiteral("color: %1").arg(
+            palette.color(QPalette::HighlightedText).name())));
+    QVERIFY(sheet.contains(QLatin1String("margin: 4px 4px")));
+    QVERIFY(sheet.contains(
+        QLatin1String("QComboBox QAbstractItemView")));
+    QVERIFY(sheet.contains(
+        QLatin1String("#sidebarTabs QAbstractItemView")));
+    QVERIFY(sheet.contains(
+        QLatin1String("QFrame#sidebarDownloadDetail")));
+    QVERIFY(sheet.contains(
+        QLatin1String("QListWidget#pagesList { border: none")));
+    QVERIFY(sheet.contains(
+        QStringLiteral(
+            "QListWidget#pagesList::item:selected { background: %1")
+            .arg(highlight)));
+    QVERIFY(sheet.contains(hover));
+}
+
+// THEM03 §c: menus get a flat palette hairline edge — the left
+// border column is the separator color top to bottom.
+void tst_Arorastyle::flatMenuChrome()
+{
+    QMenu menu;
+    menu.addAction(QLatin1String("Alpha action"));
+    menu.addSeparator();
+    menu.addAction(QLatin1String("Beta action"));
+    menu.popup(QPoint(60, 60));
+    QApplication::processEvents();
+    QVERIFY(menu.isVisible());
+    const QImage image = menu.grab().toImage();
+    const QColor sep =
+        AroraStyle::separatorColor(menu.palette());
+    QVERIFY(nearColor(image.pixelColor(0, image.height() / 2), sep));
+    QVERIFY(nearColor(
+        image.pixelColor(0, image.height() - 2), sep));
+    menu.hide();
 }
 
 void tst_Arorastyle::polishSurvivesSchemeFlip()
