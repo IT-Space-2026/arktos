@@ -94,6 +94,24 @@ int se_is_poisoned(SeInstance instance);
  * artifacts predating ENG23 — resolve optionally. */
 const char *se_gl_renderer(SeInstance instance);
 
+/* ENG27: crash-recovery introspection.
+ * se_instance_active — non-zero while the instance slot is occupied
+ * (se_init claims it; se_destroy hands it back BEFORE the fallible
+ * teardown, so even a panicking drop leaves it free).  This is the
+ * host-side proof that a crashed+destroyed instance released its
+ * slot — the state a recovery path (ENG28) needs to find.
+ * se_can_init — non-zero when a se_init issued right now would
+ * produce a live instance: true pre-init, false once the once-per-
+ * process engine is consumed.  Absent on pre-ENG27 artifacts —
+ * resolve optionally; a missing symbol reads as "unverifiable /
+ * no re-init". */
+int se_instance_active(void);
+int se_can_init(void);
+
+/* ENG27: se_destroy releases the instance slot even when teardown
+ * panics (a webrender GL panic used to leak the box AND strand the
+ * slot forever).  Only the pointer that claimed the slot releases
+ * it — a stale or double-destroyed pointer is a harmless no-op. */
 void se_destroy(SeInstance instance);
 
 #ifdef __cplusplus

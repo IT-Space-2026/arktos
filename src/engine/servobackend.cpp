@@ -91,6 +91,12 @@ struct ServoApi {
     // leaves the engine parked until process exit (threads die with
     // it), the same outcome artifacts had before the export existed.
     void (*shutdown)() = nullptr;
+    // ENG27: optional — crash-recovery introspection.  Missing on
+    // pre-ENG27 artifacts: the instance slot then reads occupied while
+    // a view lives (the old spend-once contract) and a spent slot
+    // stays terminal.
+    int (*instanceActive)() = nullptr;
+    int (*canInit)() = nullptr;
 };
 
 // ENG18: serves the schemes libservo cannot fetch straight out of the
@@ -218,6 +224,14 @@ bool resolve()
     // resident until the process dies, as it always has.
     api().shutdown = reinterpret_cast<decltype(api().shutdown)>(
         library().resolve("se_shutdown"));
+    // Optional ENG27 additions — instance-slot introspection for the
+    // crash-recovery path.  Missing on older artifacts: the slot
+    // keeps behaving as a one-way spend, exactly as before.
+    api().instanceActive =
+        reinterpret_cast<decltype(api().instanceActive)>(
+            library().resolve("se_instance_active"));
+    api().canInit = reinterpret_cast<decltype(api().canInit)>(
+        library().resolve("se_can_init"));
     state = ok ? 1 : -1;
     if (!ok)
         qWarning("servo-embed: artifact at %s is missing symbols",
@@ -231,7 +245,7 @@ bool resolve()
 
 } // namespace
 
-// ---- one LIVE SeInstance at a time (ENG12/ENG24) -------------------
+// ---- one LIVE SeInstance at a time (ENG12/ENG24/ENG27) -------------
 //
 // The engine is once-per-process; an INSTANCE is a webview over it.
 // The slot guards concurrency, not lifetime: Free -> InUse on the
@@ -241,6 +255,13 @@ bool resolve()
 // when se_init itself fails: on a pre-ENG24 artifact that is also
 // the answer every later attempt gets, so the failure stays
 // terminal for the session instead of being retried on every swap.
+//
+// ENG27: the shim's se_destroy hands its instance slot back even
+// when teardown panics (the webrender gl.rs panic used to leak the
+// box AND strand the slot), so whether an Exhausted slot can host a
+// fresh instance is the artifact's call — instanceAvailable()
+// consults se_can_init.  Missing on old artifacts: the slot stays
+// terminal, exactly as before.
 
 namespace {
 
@@ -435,7 +456,9 @@ ServoView::~ServoView()
         // next se_init, so recovery is possible the moment the dead
         // object graph is gone.  Only the view that held the claim
         // frees the slot — an inert never-initialized view must not
-        // downgrade a live one.
+        // downgrade a live one.  ENG27: the release survives a
+        // panicking teardown — the shim frees its instance slot in
+        // se_destroy before the catch-wrapped drop.
         if (m_instance)
             g_servoSlot = ServoSlot::Free;
     }
@@ -472,7 +495,22 @@ QString ServoView::glRenderer() const
 bool ServoView::instanceAvailable()
 {
     QMutexLocker lock(&servoMutex());
-    return g_servoSlot == ServoSlot::Free;
+    if (g_servoSlot == ServoSlot::Free)
+        return true;
+    if (g_servoSlot == ServoSlot::InUse)
+        return false;
+    // Exhausted: the shim alone knows whether a fresh se_init would
+    // take — "engine alive, slot free" once the re-init path exists,
+    // "Opts consumed" on artifacts that still refuse a second init.
+    // A missing export keeps the old terminal answer.
+    return api().canInit && api().canInit();
+}
+
+bool ServoView::instanceActive()
+{
+    // ENG27: the shim's instance slot — the readback proving
+    // se_destroy released it even when teardown panicked.
+    return api().instanceActive && api().instanceActive();
 }
 
 bool ServoView::instanceInUse()

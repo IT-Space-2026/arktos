@@ -3569,6 +3569,19 @@ static int servoLifecycleSmoke()
             report(QStringLiteral("second-page-refused-live"),
                    profile && !servo->createPage(profile, nullptr));
         }
+
+        // ENG27: the crashed+destroyed instance must release the
+        // shim's slot — while the view lives it reads occupied, and
+        // after the swap-back destroys it the slot must read free
+        // EVEN THOUGH teardown itself panics (SE_SELFTEST_DESTROY_
+        // PANIC injects the panic inside se_destroy's catch-wrapped
+        // teardown — the desktop log's webrender-GL-during-drop
+        // shape).  The readback is se_instance_active through
+        // ServoView::instanceActive(); artifacts predating the export
+        // fail the held-leg loudly.
+        report(QStringLiteral("instance-slot-held"),
+               ServoView::instanceActive());
+        qputenv("SE_SELFTEST_DESTROY_PANIC", "1");
 #endif
         // (c) ENG24 recovery: swapping the crashed tab to Chromium
         // destroys the poisoned view — se_destroy frees the single
@@ -3578,6 +3591,14 @@ static int servoLifecycleSmoke()
         report(QStringLiteral("swap-back"),
                tabs.reloadTabInEngine(0, QStringLiteral("webengine")));
         pumpDeletes();
+#ifdef ARORA_SERVO
+        // ENG27: the destroy above ran with the panic injection armed
+        // — the shim caught it AND still released the slot.
+        qunsetenv("SE_SELFTEST_DESTROY_PANIC");
+        // servoView itself is gone — only the slot readback survives.
+        report(QStringLiteral("destroy-panic-slot-freed"),
+               !ServoView::instanceActive());
+#endif
         report(QStringLiteral("reswap-recovers"),
                tabs.reloadTabInEngine(0, QStringLiteral("servo")));
 #ifdef ARORA_SERVO
@@ -4163,6 +4184,7 @@ int main(int argc, char **argv)
         "settings-smoke", "find-smoke", "source-smoke", "browser-smoke",
         "app-smoke", "extension-smoke", "extension-otr-smoke",
         "extension-update-smoke", "bitwarden-smoke",
+        "mv3-health-smoke",
         "ua-smoke", "perf-smoke",
         "session-smoke", "restore-smoke", "tor-smoke", "privacy-smoke",
         "sigterm-smoke", "sigterm-child-smoke",
@@ -10601,6 +10623,605 @@ int main(int argc, char **argv)
         QTimer::singleShot(120000, &application, [die]() {
             die(QStringLiteral("timeout"));
         });
+        return application.exec();
+    }
+
+    // EXT11 diagnostic (read-only — no product fix): platform-wide
+    // MV3 health check.  Installs a purpose-built fixture extension —
+    // a content script, an action popup and a declared service worker
+    // carrying Bitwarden's permission set — onto the isolated
+    // smoke-store profile and measures, from inside the extension's
+    // own JS contexts, which chrome.* surfaces Qt WebEngine actually
+    // serves: content-script injection and its API slice, the popup
+    // document, a timed call battery (storage round-trip,
+    // tabs.getCurrent/query, runtime.sendMessage to the background,
+    // runtime.getContexts), the background context's self-reported
+    // kind (ServiceWorkerGlobalScope vs generated page), and a
+    // page-level navigator.serviceWorker registration as the control.
+    // The matrix goes to the log as mv3-health-smoke lines; PASS/FAIL
+    // covers harness mechanics only — capability gaps are data, not
+    // failures.  Reproduce: ./arora --mv3-health-smoke.
+    if (args.contains(QLatin1String("--mv3-health-smoke"))) {
+        int mv3Failures = 0;
+        const auto check = [&mv3Failures](bool ok, const QString &what) {
+            qInfo().noquote() << "mv3-health-smoke:" << what
+                              << (ok ? "PASS" : "FAIL");
+            if (!ok)
+                ++mv3Failures;
+        };
+        const auto note = [](const QString &key, const QString &value) {
+            qInfo().noquote() << "mv3-health-smoke:" << key << "="
+                              << value;
+        };
+        const auto die = [&application](const QString &why) {
+            qInfo() << "mv3-health-smoke: FAIL" << why;
+            fflush(nullptr);
+            std::quick_exit(1);
+        };
+
+        // Fixture extension on disk — Bitwarden's permission set so
+        // the namespace matrix answers "what does Bitwarden see".
+        const QString mv3Dir = QDir::temp().filePath(
+            QLatin1String("arora-mv3-health"));
+        QDir().mkpath(mv3Dir);
+        const auto putFile = [mv3Dir, die](const QString &name,
+                                           const QByteArray &body) {
+            QFile f(mv3Dir + QLatin1Char('/') + name);
+            if (!f.open(QIODevice::WriteOnly))
+                die(QStringLiteral("cannot write %1").arg(name));
+            f.write(body);
+        };
+        putFile(QLatin1String("manifest.json"), QByteArray(R"JSON({
+  "manifest_version": 3,
+  "name": "arora-mv3-health",
+  "version": "1.0",
+  "description": "EXT11 MV3 platform health probe",
+  "permissions": ["activeTab","alarms","clipboardRead","clipboardWrite",
+    "contextMenus","idle","offscreen","scripting","sidePanel","storage",
+    "tabs","unlimitedStorage","webNavigation","webRequest",
+    "webRequestAuthProvider","notifications"],
+  "optional_permissions": ["nativeMessaging","privacy"],
+  "host_permissions": ["http://*/*","https://*/*"],
+  "background": {"service_worker": "sw.js"},
+  "action": {"default_title": "mv3health", "default_popup": "popup.html"},
+  "content_scripts": [{"matches": ["http://127.0.0.1/*","http://localhost/*"],
+    "js": ["cs.js"], "run_at": "document_end"}]
+})JSON"));
+        putFile(QLatin1String("cs.js"), QByteArray(R"JS(
+(function () {
+    function has(path) {
+        try {
+            var o = window, p = path.split('.');
+            for (var i = 0; i < p.length; ++i) o = o[p[i]];
+            return typeof o;
+        } catch (e) { return 'undefined'; }
+    }
+    var report = {
+        ran: true,
+        apis: {
+            chrome: has('chrome'),
+            runtime: has('chrome.runtime'),
+            runtimeId: has('chrome.runtime.id'),
+            storage: has('chrome.storage'),
+            tabs: has('chrome.tabs'),
+            sendMessage: has('chrome.runtime.sendMessage')
+        }
+    };
+    // Isolated world: only the DOM is shared with the page, so the
+    // report lands in document attributes for the app to scrape.
+    function put(name, value) {
+        document.documentElement.setAttribute(name, JSON.stringify(value));
+    }
+    put('data-mv3cs', report);
+    try {
+        chrome.runtime.sendMessage({probe: 'cs-to-bg'}, function (resp) {
+            var lastError = chrome.runtime && chrome.runtime.lastError;
+            put('data-mv3reply', lastError
+                ? ('lastError:' + lastError.message)
+                : (resp || null));
+        });
+    } catch (e) { put('data-mv3reply', 'throw:' + String(e)); }
+})();
+)JS"));
+        putFile(QLatin1String("sw.js"), QByteArray(R"JS(
+(function () {
+    var report = {evaluated: true};
+    function has(path) {
+        try {
+            var o = (typeof self !== 'undefined') ? self : globalThis;
+            var p = path.split('.');
+            for (var i = 0; i < p.length; ++i) o = o[p[i]];
+            return typeof o;
+        } catch (e) { return 'undefined'; }
+    }
+    try {
+        report.isWorkerScope = (typeof WorkerGlobalScope !== 'undefined')
+            && (self instanceof WorkerGlobalScope);
+    } catch (e) { report.isWorkerScope = 'error'; }
+    try {
+        report.isServiceWorkerScope =
+            (typeof ServiceWorkerGlobalScope !== 'undefined')
+            && (self instanceof ServiceWorkerGlobalScope);
+    } catch (e) { report.isServiceWorkerScope = 'error'; }
+    report.hasWindow = (typeof window !== 'undefined');
+    report.hasDocument = (typeof document !== 'undefined');
+    report.apis = {};
+    ['runtime','extension','storage','tabs','webNavigation','webRequest',
+     'alarms','scripting','contextMenus','idle','offscreen','sidePanel',
+     'notifications','declarativeNetRequest','permissions','i18n',
+     'action','windows','cookies','bookmarks','identity','gcm',
+     'nativeMessaging','privacy'].forEach(function (n) {
+        report.apis[n] = has('chrome.' + n);
+    });
+    report.fns = {
+        'tabs.getCurrent': has('chrome.tabs.getCurrent'),
+        'tabs.query': has('chrome.tabs.query'),
+        'runtime.sendMessage': has('chrome.runtime.sendMessage'),
+        'runtime.onMessage': has('chrome.runtime.onMessage'),
+        'runtime.getContexts': has('chrome.runtime.getContexts'),
+        'storage.local.set': has('chrome.storage.local.set'),
+        'storage.local.get': has('chrome.storage.local.get'),
+        'webNavigation.onCommitted':
+            has('chrome.webNavigation.onCommitted'),
+        'alarms.create': has('chrome.alarms.create'),
+        'extension.getBackgroundPage':
+            has('chrome.extension.getBackgroundPage')
+    };
+    try {
+        chrome.storage.local.set({mv3SwReport: report});
+    } catch (e) { report.storageSetThrow = String(e); }
+    try {
+        chrome.runtime.onInstalled.addListener(function () {
+            try {
+                chrome.storage.local.set({mv3SwInstalled: true});
+            } catch (e) {}
+        });
+    } catch (e) { report.onInstalledThrow = String(e); }
+    try {
+        chrome.runtime.onMessage.addListener(
+            function (msg, sender, sendResponse) {
+                if (msg && (msg.probe === 'popup-to-sw'
+                            || msg.probe === 'cs-to-bg')) {
+                    try { sendResponse({pong: true, sw: report}); }
+                    catch (e) {}
+                }
+            });
+    } catch (e) { report.onMessageThrow = String(e); }
+    try {
+        if (chrome.webNavigation && chrome.webNavigation.onCommitted)
+            chrome.webNavigation.onCommitted.addListener(function () {});
+    } catch (e) { report.webNavThrow = String(e); }
+    try { console.log('mv3-health background evaluated'); } catch (e) {}
+})();
+)JS"));
+        putFile(QLatin1String("popup.html"), QByteArray(
+            "<!doctype html><html><head><meta charset=\"utf-8\"></head>"
+            "<body><div id=\"r\">running</div>"
+            "<script src=\"popup.js\"></script></body></html>"));
+        putFile(QLatin1String("popup.js"), QByteArray(R"JS(
+(function () {
+    var R = {popupRan: true};
+    function has(path) {
+        try {
+            var o = window, p = path.split('.');
+            for (var i = 0; i < p.length; ++i) o = o[p[i]];
+            return typeof o;
+        } catch (e) { return 'undefined'; }
+    }
+    ['runtime','extension','storage','tabs','webNavigation','webRequest',
+     'alarms','scripting','contextMenus','idle','offscreen','sidePanel',
+     'notifications','declarativeNetRequest','permissions','i18n',
+     'action','windows','cookies','bookmarks','identity',
+     'nativeMessaging','privacy','topSites','history'].forEach(
+        function (n) { R['ns_' + n] = has('chrome.' + n); });
+    ['runtime.id','runtime.getManifest','runtime.getURL',
+     'runtime.sendMessage','runtime.onMessage','runtime.getContexts',
+     'runtime.getBackgroundPage','runtime.openOptionsPage',
+     'extension.getBackgroundPage','extension.getViews',
+     'tabs.getCurrent','tabs.query','tabs.create','tabs.update',
+     'tabs.get','tabs.sendMessage','storage.local.get',
+     'storage.local.set','webNavigation.onCommitted',
+     'webNavigation.getFrame','webRequest.onBeforeRequest',
+     'alarms.create','alarms.getAll','scripting.executeScript',
+     'contextMenus.create','idle.queryState','offscreen.createDocument',
+     'sidePanel.setOptions','notifications.create','permissions.contains',
+     'windows.getCurrent','cookies.getAll','i18n.getMessage',
+     'action.setBadgeText','declarativeNetRequest.updateDynamicRules'
+    ].forEach(function (n) { R['fn_' + n] = has('chrome.' + n); });
+    function timed(fn) {
+        return new Promise(function (res) {
+            var done = false;
+            var t = setTimeout(function () {
+                if (!done) { done = true; res('TIMEOUT'); }
+            }, 2000);
+            try {
+                fn(function (v) {
+                    if (!done) { done = true; clearTimeout(t); res(v); }
+                });
+            } catch (e) {
+                if (!done) { done = true; clearTimeout(t);
+                             res('THROW:' + String(e)); }
+            }
+        });
+    }
+    var seq = Promise.resolve();
+    function step(name, fn) {
+        seq = seq.then(function () {
+            return timed(fn).then(function (r) {
+                R['call_' + name] = r;
+            });
+        });
+    }
+    step('storageSet', function (cb) {
+        chrome.storage.local.set({mv3PopupProbe: 7}, function () {
+            cb(chrome.runtime.lastError
+               ? 'err:' + chrome.runtime.lastError.message : 'ok');
+        });
+    });
+    step('storageGet', function (cb) {
+        chrome.storage.local.get(
+            ['mv3PopupProbe', 'mv3SwReport', 'mv3SwInstalled'],
+            function (v) {
+                cb(chrome.runtime.lastError
+                   ? 'err:' + chrome.runtime.lastError.message : v);
+            });
+    });
+    step('tabsGetCurrent', function (cb) {
+        chrome.tabs.getCurrent(function (t) {
+            cb(chrome.runtime.lastError
+               ? 'err:' + chrome.runtime.lastError.message
+               : (t ? 'id=' + t.id : 'undefined'));
+        });
+    });
+    step('tabsQuery', function (cb) {
+        chrome.tabs.query({}, function (ts) {
+            cb(chrome.runtime.lastError
+               ? 'err:' + chrome.runtime.lastError.message
+               : (Array.isArray(ts) ? 'count=' + ts.length
+                                   : String(ts)));
+        });
+    });
+    step('sendMessageToBg', function (cb) {
+        chrome.runtime.sendMessage({probe: 'popup-to-sw'},
+            function (resp) {
+                cb(chrome.runtime.lastError
+                   ? 'err:' + chrome.runtime.lastError.message : resp);
+            });
+    });
+    step('getContexts', function (cb) {
+        if (!chrome.runtime.getContexts) { cb('absent'); return; }
+        chrome.runtime.getContexts({}, function (cs) {
+            cb(chrome.runtime.lastError
+               ? 'err:' + chrome.runtime.lastError.message
+               : cs.map(function (c) { return c.contextType; }));
+        });
+    });
+    seq.then(function () {
+        window.__mv3Report = R;
+        document.getElementById('r').textContent = 'done';
+        document.title = 'MV3REPORT';
+    });
+})();
+)JS"));
+
+        // EXT08's production popup host deliberately uses a plain
+        // QWebEnginePage (no arora channel/page policy leaks into
+        // extension chrome) — the probe uses the same shape, plus the
+        // console-message forwarder the diagnostic needs.
+        struct Mv3ProbePage : public QWebEnginePage {
+            using QWebEnginePage::QWebEnginePage;
+            void javaScriptConsoleMessage(
+                JavaScriptConsoleMessageLevel level,
+                const QString &message, int line,
+                const QString &sourceId) override {
+                const QString tag = objectName().isEmpty()
+                    ? QStringLiteral("ext-console")
+                    : objectName();
+                qInfo().noquote()
+                    << "mv3-health-smoke:" << tag << "="
+                    << QStringLiteral("%1:%2 %3")
+                           .arg(sourceId).arg(line).arg(message);
+                QWebEnginePage::javaScriptConsoleMessage(
+                    level, message, line, sourceId);
+            }
+        };
+
+        // Loopback page — the control: does a plain-page
+        // navigator.serviceWorker registration work at all?
+        QTcpServer *mv3Server = new QTcpServer(&application);
+        if (!mv3Server->listen(QHostAddress::LocalHost))
+            die(QStringLiteral("cannot listen on loopback"));
+        QObject::connect(mv3Server, &QTcpServer::newConnection,
+                         &application, [mv3Server]() {
+            QTcpSocket *socket = mv3Server->nextPendingConnection();
+            QObject::connect(socket, &QTcpSocket::readyRead,
+                             socket, [socket]() {
+                const QByteArray request = socket->readAll();
+                const bool isSw =
+                    request.contains("GET /pagesw.js");
+                const QByteArray body = isSw
+                    ? QByteArray(
+                        "self.addEventListener('install',function(){});\n")
+                    : QByteArray(
+                        "<html><body>mv3health<script>"
+                        "if(navigator.serviceWorker){"
+                        "navigator.serviceWorker.register('/pagesw.js')"
+                        ".then(function(){"
+                        "document.documentElement.setAttribute("
+                        "'data-pagesw','registered');},function(e){"
+                        "document.documentElement.setAttribute("
+                        "'data-pagesw','fail:'+String(e));});"
+                        "}else{document.documentElement.setAttribute("
+                        "'data-pagesw','no-api');}"
+                        "</script></body></html>");
+                socket->write("HTTP/1.1 200 OK\r\n"
+                    "Content-Type: "
+                    + QByteArray(isSw ? "application/javascript"
+                                      : "text/html")
+                    + "\r\nContent-Length: "
+                    + QByteArray::number(body.size())
+                    + "\r\nConnection: close\r\n\r\n" + body);
+                socket->disconnectFromHost();
+            });
+        });
+        const QUrl mv3Page(QStringLiteral("http://127.0.0.1:%1/")
+            .arg(mv3Server->serverPort()));
+
+        ExtensionManager *mv3 = ExtensionManager::instance();
+        QString mv3ExtId;
+        QUrl mv3PopupUrl;
+        ExtensionManager::ExtensionInfo bwRow;
+
+        const auto finish = [&application, &mv3Failures]() {
+            qInfo() << "mv3-health-smoke:"
+                    << (mv3Failures == 0 ? "PASS" : "FAIL")
+                    << "harness failures:" << mv3Failures;
+            fflush(nullptr);
+            std::quick_exit(mv3Failures == 0 ? 0 : 1);
+        };
+
+        // Phase 4: probe Bitwarden's real popup context — the EXT08
+        // host path verbatim (plain QWebEnginePage on the browsing
+        // profile), console captured, then a guarded eval of the two
+        // calls its Angular bootstrap dies on plus its rendered size.
+        const auto probeBitwarden =
+            [&application, &bwRow, check, note, finish, profile]() {
+            if (bwRow.id.isEmpty() || !bwRow.actionPopupUrl.isValid()) {
+                note(QStringLiteral("bitwarden-popup"),
+                     QStringLiteral("no row/actionPopupUrl"));
+                finish();
+                return;
+            }
+            QWebEngineView *bwView = new QWebEngineView;
+            Mv3ProbePage *bwPage =
+                new Mv3ProbePage(profile, bwView);
+            bwPage->setObjectName(QStringLiteral("bitwarden-console"));
+            bwView->setPage(bwPage);
+            QObject::connect(bwPage, &QWebEnginePage::loadFinished,
+                             &application,
+                             [&, bwView, check, note, finish](bool ok) {
+                check(ok, QStringLiteral(
+                          "bitwarden popup chrome-extension:// loads"));
+                QTimer::singleShot(4000, bwView,
+                                   [&, bwView, note, finish]() {
+                    bwView->page()->runJavaScript(QStringLiteral(R"JS(
+(function () {
+    function has(p) {
+        try {
+            var o = window, a = p.split('.');
+            for (var i = 0; i < a.length; ++i) o = o[a[i]];
+            return typeof o;
+        } catch (e) { return 'undefined'; }
+    }
+    return {
+        'chrome.extension': has('chrome.extension'),
+        'extension.getBackgroundPage':
+            has('chrome.extension.getBackgroundPage'),
+        'runtime.getBackgroundPage':
+            has('chrome.runtime.getBackgroundPage'),
+        'runtime.getContexts': has('chrome.runtime.getContexts'),
+        'tabs': has('chrome.tabs'),
+        'tabs.getCurrent': has('chrome.tabs.getCurrent'),
+        'tabs.query': has('chrome.tabs.query'),
+        'storage.local.get': has('chrome.storage.local.get'),
+        'bodyTextLength': document.body
+            ? document.body.innerText.length : -1,
+        'title': document.title
+    };
+})()
+)JS"), [note, bwView, finish](const QVariant &result) {
+                        note(QStringLiteral("bitwarden-probe"),
+                             QString::fromUtf8(QJsonDocument::fromVariant(
+                                 result).toJson(QJsonDocument::Compact)));
+                        bwView->deleteLater();
+                        finish();
+                    });
+                });
+            });
+            bwPage->load(bwRow.actionPopupUrl);
+        };
+
+        // Phase 3: the fixture's action popup runs the call battery —
+        // each result lands in window.__mv3Report.
+        const auto openFixturePopup =
+            [&application, &mv3PopupUrl, check, note, die, profile,
+             probeBitwarden]() {
+            check(mv3PopupUrl.isValid()
+                      && mv3PopupUrl.scheme()
+                          == QLatin1String("chrome-extension"),
+                  QStringLiteral("fixture actionPopupUrl: %1")
+                      .arg(mv3PopupUrl.toString()));
+            QWebEngineView *popupView = new QWebEngineView;
+            Mv3ProbePage *popupPage =
+                new Mv3ProbePage(profile, popupView);
+            popupPage->setObjectName(
+                QStringLiteral("fixture-popup-console"));
+            popupView->setPage(popupPage);
+            QObject::connect(popupPage, &QWebEnginePage::loadFinished,
+                             &application,
+                             [&, popupView, check, note, die](bool ok) {
+                check(ok, QStringLiteral("fixture popup loads"));
+                auto *poll = new QTimer(&application);
+                auto *tries = new int(0);
+                QObject::connect(poll, &QTimer::timeout, &application,
+                                 [&, popupView, check, note, die,
+                                  poll, tries]() {
+                    ++*tries;
+                    popupView->page()->runJavaScript(
+                        QStringLiteral(
+                            "window.__mv3Report ? "
+                            "JSON.stringify(window.__mv3Report) : ''"),
+                        [&, popupView, check, note, die,
+                         poll, tries](const QVariant &result) {
+                        const QString json = result.toString();
+                        if (json.isEmpty()) {
+                            if (*tries > 60) {
+                                poll->stop();
+                                poll->deleteLater();
+                                delete tries;
+                                check(false, QStringLiteral(
+                                          "popup battery produced a "
+                                          "report"));
+                                die(QStringLiteral(
+                                    "popup report never arrived"));
+                            }
+                            return;
+                        }
+                        poll->stop();
+                        poll->deleteLater();
+                        delete tries;
+                        note(QStringLiteral("popup-report"), json);
+                        popupView->deleteLater();
+                        probeBitwarden();
+                    });
+                });
+                poll->start(300);
+            });
+            popupPage->load(mv3PopupUrl);
+        };
+
+        // Phase 2: the loopback page — the content script's DOM
+        // attributes (its own report + the background's message
+        // reply) and the page-level SW registration verdict.
+        const auto probePage =
+            [&application, view, mv3Page, check, note, die,
+             openFixturePopup]() {
+            auto *poll = new QTimer(&application);
+            auto *tries = new int(0);
+            QObject::connect(poll, &QTimer::timeout, &application,
+                             [&, check, note, die,
+                              openFixturePopup, poll, tries]() {
+                ++*tries;
+                view->enginePage()->runJavaScript(QStringLiteral(
+                    "JSON.stringify({"
+                    "cs:document.documentElement.getAttribute('data-mv3cs'),"
+                    "reply:document.documentElement.getAttribute('data-mv3reply'),"
+                    "pagesw:document.documentElement.getAttribute('data-pagesw')"
+                    "})"),
+                    [&, check, note, die, openFixturePopup,
+                     poll, tries](const QVariant &result) {
+                    const QJsonObject obj = QJsonDocument::fromJson(
+                        result.toString().toUtf8()).object();
+                    const QString cs = obj.value(
+                        QLatin1String("cs")).toString();
+                    const QString reply = obj.value(
+                        QLatin1String("reply")).toString();
+                    const QString pagesw = obj.value(
+                        QLatin1String("pagesw")).toString();
+                    if ((cs.isEmpty() || pagesw.isEmpty()
+                         || reply.isEmpty()) && *tries <= 40)
+                        return;
+                    poll->stop();
+                    poll->deleteLater();
+                    delete tries;
+                    note(QStringLiteral("content-script-report"), cs);
+                    note(QStringLiteral("cs-to-bg-reply"), reply);
+                    note(QStringLiteral("page-serviceworker"), pagesw);
+                    check(!cs.isEmpty(),
+                          QStringLiteral("content script injected"));
+                    check(!pagesw.isEmpty(),
+                          QStringLiteral("page SW verdict recorded"));
+                    openFixturePopup();
+                });
+            });
+            poll->start(250);
+            view->loadUrl(mv3Page);
+        };
+
+        // Phase 1: install + enable the fixture, then run the page
+        // probe once Chromium reports the row enabled.
+        auto *enablePoll = new QTimer(&application);
+        auto *enableTries = new int(0);
+        QObject::connect(enablePoll, &QTimer::timeout, &application,
+                         [&, mv3, check, die, probePage,
+                          enablePoll, enableTries]() {
+            for (const ExtensionManager::ExtensionInfo &info
+                 : mv3->extensions()) {
+                if (info.id != mv3ExtId)
+                    continue;
+                if (!info.enabled)
+                    return;
+                enablePoll->stop();
+                enablePoll->deleteLater();
+                delete enableTries;
+                check(true, QStringLiteral("fixture enabled"));
+                probePage();
+                return;
+            }
+            if (++*enableTries > 60) {
+                enablePoll->stop();
+                die(QStringLiteral("fixture never enabled"));
+            }
+        });
+        QObject::connect(mv3, &ExtensionManager::extensionInstalled,
+                         &application,
+                         [&, mv3, check, enablePoll](
+                             const ExtensionManager::ExtensionInfo &info) {
+            if (info.name != QLatin1String("arora-mv3-health"))
+                return;
+            check(info.installed && info.error.isEmpty(),
+                  QStringLiteral("fixture installed (%1)")
+                      .arg(info.error));
+            mv3ExtId = info.id;
+            mv3PopupUrl = info.actionPopupUrl;
+            mv3->setExtensionEnabled(info.id, true);
+            enablePoll->start(150);
+        });
+        QObject::connect(mv3, &ExtensionManager::errorOccurred,
+                         &application, [die](const QString &message) {
+            die(QStringLiteral("errorOccurred: %1").arg(message));
+        });
+        // Grab the bundled Bitwarden row when it lands — the bundled
+        // install ran at profile prep on this extension-fresh store.
+        auto *bwPoll = new QTimer(&application);
+        auto *bwTries = new int(0);
+        QObject::connect(bwPoll, &QTimer::timeout, &application,
+                         [&, mv3, bwPoll, bwTries]() {
+            for (const ExtensionManager::ExtensionInfo &info
+                 : mv3->extensions()) {
+                if (info.name.contains(QLatin1String("bitwarden"),
+                                       Qt::CaseInsensitive)
+                        && info.installed) {
+                    bwRow = info;
+                    bwPoll->stop();
+                    bwPoll->deleteLater();
+                    delete bwTries;
+                    return;
+                }
+            }
+            if (++*bwTries > 300) {
+                bwPoll->stop();
+                bwPoll->deleteLater();
+                delete bwTries;
+            }
+        });
+        bwPoll->start(200);
+
+        QTimer::singleShot(120000, &application, [die]() {
+            die(QStringLiteral("timeout"));
+        });
+        mv3->grantConsent(mv3Dir);
+        mv3->installExtension(mv3Dir);
         return application.exec();
     }
 

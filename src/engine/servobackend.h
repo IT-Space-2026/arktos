@@ -55,6 +55,13 @@
 // when se_init itself fails (a pre-ENG24 artifact refuses every
 // second init the same way, so the failure is declared permanent for
 // the session rather than retried on every swap).
+//
+// ENG27: the shim's instance slot is no longer a one-way spend —
+// se_destroy releases it FIRST, before the catch-wrapped teardown,
+// so a panicking drop (the desktop log's webrender GL panic) cannot
+// strand the slot anymore.  The Qt side can read that back through
+// se_instance_active/se_can_init on artifacts new enough to export
+// them.
 
 #include "engineinterface.h"
 
@@ -93,12 +100,18 @@ public:
     // se_gl_renderer.
     QString glRenderer() const;
     // Whether another ServoView may be constructed — false while a
-    // live instance holds the slot or after a failed se_init (ENG12).
+    // live instance holds the slot or after a failed se_init (ENG12);
+    // a spent slot answers through the artifact's se_can_init
+    // (ENG27).
     static bool instanceAvailable();
     // ENG24: a live instance currently holds the slot — false while
     // Free and after a failed-init Exhausted (the two refused states
     // report different reasons in pageUnavailableReason()).
     static bool instanceInUse();
+    // ENG27: the shim-side instance slot — true while a SeInstance is
+    // live, false once se_destroy released it (even when teardown
+    // panicked).  false on artifacts predating se_instance_active.
+    static bool instanceActive();
     void load(const QUrl &url);
     void spinOnce();              // one se_spin — GUI thread
     void goBack();
