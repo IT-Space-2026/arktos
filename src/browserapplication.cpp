@@ -513,25 +513,37 @@ void BrowserApplication::quitBrowser()
     if (!downloadManager()->allowQuit())
         return;
 
-    if (QSettings().value(QLatin1String("tabs/confirmClosingMultipleTabs"), true).toBool()) {
-        clean();
+    // PREF04: 'Show Exit Confirmation Dialog' (tabs/confirmExit)
+    // guards the explicit quit path.  When the key was never written
+    // it inherits the migrated close-window confirm's value, so a user
+    // who turned that off is not surprised by a new prompt — while the
+    // old default (on) keeps the quit warning alive.
+    QSettings settings;
+    const bool confirmWindow = settings.value(
+        QLatin1String("tabs/confirmClosingMultipleTabs"), true).toBool();
+    clean();
+    if (settings.value(QLatin1String("tabs/confirmExit"),
+                       confirmWindow).toBool()
+            && !m_mainWindows.isEmpty()) {
         int tabCount = 0;
         for (int i = 0; i < m_mainWindows.count(); ++i) {
             // CONT06: include tabs hidden in filtered container levels.
             tabCount += m_mainWindows.at(i)->tabWidget()->totalTabCount();
         }
 
-        if (tabCount > 1) {
-            QWidget *widget = mainWindow();
-            QApplication::alert(widget);
-            int ret = QMessageBox::warning(widget, QString(),
-                               tr("There are %1 windows and %2 tabs open\n"
-                                  "Do you want to quit anyway?").arg(m_mainWindows.count()).arg(tabCount),
-                               QMessageBox::Yes | QMessageBox::No,
-                               QMessageBox::No);
-            if (ret == QMessageBox::No)
-                return;
-        }
+        QWidget *widget = mainWindow();
+        QApplication::alert(widget);
+        const QString question =
+            (m_mainWindows.count() > 1 || tabCount > 1)
+            ? tr("There are %1 windows and %2 tabs open\n"
+                 "Do you want to quit anyway?")
+                  .arg(m_mainWindows.count()).arg(tabCount)
+            : tr("Do you want to quit Arora?");
+        int ret = QMessageBox::warning(widget, QString(), question,
+                           QMessageBox::Yes | QMessageBox::No,
+                           QMessageBox::No);
+        if (ret == QMessageBox::No)
+            return;
     }
 
     saveSession();
@@ -559,9 +571,6 @@ void BrowserApplication::postLaunch()
 
     // newMainWindow() needs to be called in main() for this to happen
     if (m_mainWindows.count() > 0) {
-        QSettings settings;
-        settings.beginGroup(QLatin1String("MainWindow"));
-        int startup = settings.value(QLatin1String("startupBehavior")).toInt();
         const QString url = argumentUrl();
 
         if (isTorMode()) {
@@ -581,8 +590,8 @@ void BrowserApplication::postLaunch()
             // forwarded second-instance message — an external program
             // invoking `arora javascript:...` must not get script
             // execution in the new window.
-            switch (startup) {
-            case 2: {
+            switch (startupMode()) {
+            case LastSessionStartup: {
                 restoreLastSession();
                 mainWindow()->tabWidget()->loadStringFromUntrustedSource(url, TabWidget::NewSelectedTab);
                 break;
@@ -592,14 +601,21 @@ void BrowserApplication::postLaunch()
                 break;
             }
         } else {
-            switch (startup) {
-            case 0:
+            // PREF04: the Startup-with radios — see startupMode() for
+            // the MainWindow/startupMode key + legacy migration.
+            switch (startupMode()) {
+            case LastSessionStartup:
+                restoreLastSession();
+                break;
+            case HomepageStartup:
                 mainWindow()->goHome();
                 break;
-            case 1:
+            case SpecificPagesStartup:
+                openStartupPages(mainWindow());
                 break;
-            case 2:
-                restoreLastSession();
+            case StartPageStartup:
+            default:
+                mainWindow()->tabWidget()->loadUrl(startPageUrl());
                 break;
             }
         }
@@ -665,11 +681,20 @@ void BrowserApplication::torStartup(const QString &url)
         }
         return;
     }
-    // startupBehavior: homepage (0) still applies; restore-session (2)
-    // is meaningless — the blob belongs to the clearnet profile — and
-    // blank (1) is the fallback for it.
-    if (QSettings().value(QLatin1String("MainWindow/startupBehavior")).toInt() == 0)
+    // PREF04: the startup pick applies minus Last Session — the
+    // session blob is clearnet-profile state.  Start Page needs no
+    // navigation here: the window's fresh tor tab already carries the
+    // branded start page.
+    switch (startupMode()) {
+    case HomepageStartup:
         window->goHome();
+        break;
+    case SpecificPagesStartup:
+        openStartupPages(window);
+        break;
+    default:
+        break;
+    }
 }
 
 void BrowserApplication::loadSettings()
@@ -1229,6 +1254,72 @@ QUrl BrowserApplication::startPageUrl(const QString &engineId,
     if (engineId == QLatin1String("servo"))
         return QUrl(QLatin1String("qrc:/startpage-servo.html"));
     return QUrl(QLatin1String("qrc:/startpage.html"));
+}
+
+// PREF04: the Homepage radio's persisted mode.  A pre-mode settings
+// store has no homePageMode key — then the old free-form "home" value
+// decides: the default about:home IS the start page, anything else was
+// a user-picked specific page.
+int BrowserApplication::homePageMode()
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("MainWindow"));
+    const QVariant mode = settings.value(QLatin1String("homePageMode"));
+    if (mode.isValid())
+        return mode.toInt() == SpecificPageHome
+            ? SpecificPageHome : StartPageHome;
+    const QString home = settings.value(
+        QLatin1String("home"), QLatin1String("about:home")).toString();
+    return home.trimmed().isEmpty() || home == QLatin1String("about:home")
+        ? StartPageHome : SpecificPageHome;
+}
+
+// PREF04: the Startup radio's persisted mode.  Migration — the retired
+// combo stored MainWindow/startupBehavior: 0 "home page" -> Homepage,
+// 1 "blank page" -> Start Page (the fresh tab it described now carries
+// the start page), 2 "restore" -> Last Session.
+int BrowserApplication::startupMode()
+{
+    QSettings settings;
+    const QVariant mode =
+        settings.value(QLatin1String("MainWindow/startupMode"));
+    if (mode.isValid())
+        return qBound(0, mode.toInt(), int(SpecificPagesStartup));
+    const QVariant legacy =
+        settings.value(QLatin1String("MainWindow/startupBehavior"));
+    if (legacy.isValid()) {
+        switch (legacy.toInt()) {
+        case 0:
+            return HomepageStartup;
+        case 2:
+            return LastSessionStartup;
+        default:
+            return StartPageStartup;
+        }
+    }
+    return StartPageStartup;
+}
+
+QStringList BrowserApplication::startupPages()
+{
+    return QSettings()
+        .value(QLatin1String("MainWindow/startupPages")).toStringList();
+}
+
+void BrowserApplication::openStartupPages(BrowserMainWindow *window)
+{
+    if (!window || !window->tabWidget())
+        return;
+    bool first = true;
+    const QStringList pages = startupPages();
+    for (const QString &page : pages) {
+        const QString trimmed = page.trimmed();
+        if (trimmed.isEmpty())
+            continue;
+        window->tabWidget()->loadString(trimmed,
+            first ? TabWidget::CurrentTab : TabWidget::NewNotSelectedTab);
+        first = false;
+    }
 }
 
 QString BrowserApplication::defaultEngineId()

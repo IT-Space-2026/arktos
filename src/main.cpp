@@ -4535,9 +4535,14 @@ int main(int argc, char **argv)
     // opens a BrowserMainWindow and a tab that loads a fixture page,
     // the title propagating to the window.  Exits 0 on PASS.
     if (args.contains(QLatin1String("--app-smoke"))) {
-        // Suppress postLaunch()'s startup behavior (goHome / session
-        // restore) so the fixture load is the only navigation.
-        QSettings().setValue(QLatin1String("MainWindow/startupBehavior"), 1);
+        // Suppress postLaunch()'s startup navigation (homepage /
+        // session restore / start page) so the fixture load is the
+        // only navigation — Specific Pages with an empty list opens
+        // nothing.
+        QSettings().setValue(QLatin1String("MainWindow/startupMode"),
+                             int(BrowserApplication::SpecificPagesStartup));
+        QSettings().setValue(QLatin1String("MainWindow/startupPages"),
+                             QStringList());
         BrowserMainWindow *browserWindow = application.newMainWindow();
         WebView *tab = browserWindow->currentTab();
 
@@ -12482,8 +12487,8 @@ int main(int argc, char **argv)
     // user-close before quitOnLastWindowClosed ends the run.  The
     // persisted blob is parsed in aboutToQuit.
     //
-    // `--restore-smoke` (restore phase): startupBehavior=2 so the
-    // postLaunch() queued by the BrowserApplication ctor runs
+    // `--restore-smoke` (restore phase): startupMode=LastSession so
+    // the postLaunch() queued by the BrowserApplication ctor runs
     // restoreLastSession() on the window created here; a poll then
     // verifies every tab url in order and the restored current index.
     const bool sessionSaveSmoke = args.contains(QLatin1String("--session-smoke"));
@@ -12520,9 +12525,13 @@ int main(int argc, char **argv)
         }
 
         if (sessionSaveSmoke) {
-            // postLaunch runs inside exec() — pin the startup behavior
-            // to "blank" so it does not navigate the window away.
-            QSettings().setValue(QLatin1String("MainWindow/startupBehavior"), 1);
+            // postLaunch runs inside exec() — pin the startup pick to
+            // Specific Pages with an empty list so it does not
+            // navigate the window away.
+            QSettings().setValue(QLatin1String("MainWindow/startupMode"),
+                                 int(BrowserApplication::SpecificPagesStartup));
+            QSettings().setValue(QLatin1String("MainWindow/startupPages"),
+                                 QStringList());
             QSettings().remove(QLatin1String("sessions"));
 #ifdef ARORA_RUSTCORE
             rustCoreEnsureDataDir();
@@ -12693,7 +12702,8 @@ int main(int argc, char **argv)
         }
 
         if (sessionRestoreSmoke) {
-            QSettings().setValue(QLatin1String("MainWindow/startupBehavior"), 2);
+            QSettings().setValue(QLatin1String("MainWindow/startupMode"),
+                                 int(BrowserApplication::LastSessionStartup));
             BrowserMainWindow *browserWindow = application.newMainWindow();
 
             QTimer *poll = new QTimer(&application);

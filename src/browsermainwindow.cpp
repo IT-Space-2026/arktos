@@ -1949,8 +1949,18 @@ void BrowserMainWindow::setupToolBar()
     // menubar can hide without losing anything.  First widget added,
     // so it anchors the bar ahead of Back on every window type.
     m_appMenu = new QMenu(this);
-    for (QMenu *menu : m_topMenus)
+    for (QMenu *menu : m_topMenus) {
         m_appMenu->addMenu(menu);
+        // MENU11: Preferences is also a direct app-menu entry right
+        // after Tools — the same QAction object as File > Preferences
+        // (a QAction can live in several menus; each still fires
+        // preferences()), so text, shortcut and icon cannot drift.
+        if (menu == m_toolsMenu) {
+            m_appMenu->addSeparator();
+            m_appMenu->addAction(m_filePreferencesAction);
+            m_appMenu->addSeparator();
+        }
+    }
 
     // MENU09: a QToolButton parented straight to a QToolBar is laid
     // out AND painted at the bar's iconSize — Qt's toolbar path
@@ -3207,12 +3217,11 @@ void BrowserMainWindow::fileNew()
         return;
     BrowserMainWindow *window = application->newMainWindow();
 
-    QSettings settings;
-    settings.beginGroup(QLatin1String("MainWindow"));
-    int startup = settings.value(QLatin1String("startupBehavior")).toInt();
-
-    if (startup == 0)
-        window->goHome();
+    // PREF04: the Startup-with pick governs first launch only — a New
+    // Window always opens the homepage (whose own mode decides start
+    // page vs specific url).  That keeps the gesture meaningful in
+    // every startup mode instead of producing the old blank tab.
+    window->goHome();
 }
 
 void BrowserMainWindow::fileOpen()
@@ -3400,12 +3409,29 @@ void BrowserMainWindow::closeEvent(QCloseEvent *event)
     if (openTabs > 1) {
         QSettings settings;
         settings.beginGroup(QLatin1String("tabs"));
-        bool confirm = settings.value(QLatin1String("confirmClosingMultipleTabs"), true).toBool();
+        const bool confirmWindow = settings.value(
+            QLatin1String("confirmClosingMultipleTabs"), true).toBool();
+        // PREF04: closing the LAST window quits the app (macOS excepted
+        // — its lastWindowClosed respawns one), so that close answers
+        // to the exit confirmation instead.  confirmExit falls back to
+        // the migrated window key when never set; either way one
+        // prompt fires here, not two.
+        bool lastWindow = false;
+#if !defined(Q_OS_MACOS)
+        lastWindow = application && application->mainWindows().count() <= 1;
+#endif
+        const bool confirm = lastWindow
+            ? settings.value(QLatin1String("confirmExit"),
+                             confirmWindow).toBool()
+            : confirmWindow;
         if (confirm) {
             QApplication::alert(this);
-            int ret = QMessageBox::warning(this, QString(),
-                                           tr("Are you sure you want to close the window?"
-                                              "  There are %1 tabs open").arg(openTabs),
+            const QString question = lastWindow
+                ? tr("Closing the last window quits Arora."
+                     "  There are %1 tabs open").arg(openTabs)
+                : tr("Are you sure you want to close the window?"
+                     "  There are %1 tabs open").arg(openTabs);
+            int ret = QMessageBox::warning(this, QString(), question,
                                            QMessageBox::Yes | QMessageBox::No,
                                            QMessageBox::No);
             if (ret == QMessageBox::No) {
@@ -3514,9 +3540,20 @@ void BrowserMainWindow::viewPageSource()
 
 void BrowserMainWindow::goHome()
 {
-    QSettings settings;
-    settings.beginGroup(QLatin1String("MainWindow"));
-    QString home = settings.value(QLatin1String("home"), QLatin1String("about:home")).toString();
+    // PREF04: the Homepage radio decides — Start Page goes through
+    // about:home, which guessUrlFromString resolves to the context's
+    // branded start page (private/servo/tor variants included); a
+    // Specific Page loads the stored url verbatim.
+    QString home = QLatin1String("about:home");
+    if (BrowserApplication::homePageMode()
+            == BrowserApplication::SpecificPageHome) {
+        QSettings settings;
+        settings.beginGroup(QLatin1String("MainWindow"));
+        home = settings.value(QLatin1String("home"),
+                              QLatin1String("about:home")).toString();
+        if (home.trimmed().isEmpty())
+            home = QLatin1String("about:home");
+    }
     tabWidget()->loadString(home);
 }
 

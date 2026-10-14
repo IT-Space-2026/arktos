@@ -282,6 +282,13 @@ SettingsDialog::SettingsDialog(QWidget *parent)
 
     connect(exceptionsButton, &QPushButton::clicked, this, &SettingsDialog::showExceptions);
     connect(setHomeToCurrentPageButton, &QPushButton::clicked, this, &SettingsDialog::setHomeToCurrentPage);
+    // PREF04: the URL field only edits under Specific Page, and the
+    // multi-URL editor only edits under Specific Pages — the radio's
+    // toggled signal keeps the enablement honest both directions.
+    connect(homeSpecificPageRadio, &QRadioButton::toggled,
+            homeLineEdit, &QLineEdit::setEnabled);
+    connect(startupSpecificPagesRadio, &QRadioButton::toggled,
+            startupPagesEdit, &QPlainTextEdit::setEnabled);
 
     // ICONS01: one entry per AroraIcon::themeIds() — itemData carries
     // the id.
@@ -1076,7 +1083,32 @@ void SettingsDialog::loadFromSettings()
     settings.beginGroup(QLatin1String("MainWindow"));
     QString defaultHome = QLatin1String("about:home");
     homeLineEdit->setText(settings.value(QLatin1String("home"), defaultHome).toString());
-    startupBehavior->setCurrentIndex(settings.value(QLatin1String("startupBehavior"), 0).toInt());
+    settings.endGroup();
+    // PREF04: the Homepage / Startup-with radios read through the
+    // migrated helpers so a pre-mode "home" url or a legacy
+    // startupBehavior int still lands on the right radio.
+    const bool specificHome = BrowserApplication::homePageMode()
+        == BrowserApplication::SpecificPageHome;
+    homeSpecificPageRadio->setChecked(specificHome);
+    homeStartPageRadio->setChecked(!specificHome);
+    switch (BrowserApplication::startupMode()) {
+    case BrowserApplication::LastSessionStartup:
+        startupLastSessionRadio->setChecked(true);
+        break;
+    case BrowserApplication::HomepageStartup:
+        startupHomepageRadio->setChecked(true);
+        break;
+    case BrowserApplication::SpecificPagesStartup:
+        startupSpecificPagesRadio->setChecked(true);
+        break;
+    case BrowserApplication::StartPageStartup:
+    default:
+        startupStartPageRadio->setChecked(true);
+        break;
+    }
+    startupPagesEdit->setPlainText(
+        BrowserApplication::startupPages().join(QLatin1Char('\n')));
+    settings.beginGroup(QLatin1String("MainWindow"));
     // SRCH03+SRCH04: the same key backs the General checkbox and the
     // Search page's field/button radios — button mode when off.
     const bool showBox = settings.value(QLatin1String("showSearchBox"), false).toBool();
@@ -1485,6 +1517,12 @@ void SettingsDialog::loadFromSettings()
     tabBarPosition->setCurrentIndex(qBound(0, tabBarPositionIndex, tabBarPosition->count() - 1));
     selectTabsWhenCreated->setChecked(settings.value(QLatin1String("selectNewTabs"), false).toBool());
     confirmClosingMultipleTabs->setChecked(settings.value(QLatin1String("confirmClosingMultipleTabs"), true).toBool());
+    // PREF04: the exit confirm inherits the migrated window key when
+    // never written — the old default (on) keeps the quit warning.
+    confirmExitCheck->setChecked(settings.value(
+        QLatin1String("confirmExit"),
+        settings.value(QLatin1String("confirmClosingMultipleTabs"),
+                       true)).toBool());
     oneCloseButton->setChecked(settings.value(QLatin1String("oneCloseButton"),false).toBool());
     quitAsLastTabClosed->setChecked(settings.value(QLatin1String("quitAsLastTabClosed"), true).toBool());
     openTargetBlankLinksIn->setCurrentIndex(settings.value(QLatin1String("openTargetBlankLinksIn"), TabWidget::NewSelectedTab).toInt());
@@ -1574,7 +1612,32 @@ void SettingsDialog::saveToSettings()
 
     settings.beginGroup(QLatin1String("MainWindow"));
     settings.setValue(QLatin1String("home"), homeLineEdit->text());
-    settings.setValue(QLatin1String("startupBehavior"), startupBehavior->currentIndex());
+    // PREF04: the Homepage + Startup-with radios persist the mode
+    // enums BrowserApplication's helpers read.  The retired
+    // startupBehavior int is consumed by the migration — drop it so a
+    // stale value can't shadow the new pick.
+    settings.setValue(QLatin1String("homePageMode"),
+        homeSpecificPageRadio->isChecked()
+            ? int(BrowserApplication::SpecificPageHome)
+            : int(BrowserApplication::StartPageHome));
+    int startup = int(BrowserApplication::StartPageStartup);
+    if (startupLastSessionRadio->isChecked())
+        startup = int(BrowserApplication::LastSessionStartup);
+    else if (startupHomepageRadio->isChecked())
+        startup = int(BrowserApplication::HomepageStartup);
+    else if (startupSpecificPagesRadio->isChecked())
+        startup = int(BrowserApplication::SpecificPagesStartup);
+    settings.setValue(QLatin1String("startupMode"), startup);
+    settings.remove(QLatin1String("startupBehavior"));
+    QStringList pages;
+    const QStringList lines = startupPagesEdit->toPlainText()
+        .split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    for (const QString &line : lines) {
+        const QString trimmed = line.trimmed();
+        if (!trimmed.isEmpty())
+            pages << trimmed;
+    }
+    settings.setValue(QLatin1String("startupPages"), pages);
     settings.setValue(QLatin1String("showSearchBox"), showSearchBox->isChecked());
     settings.setValue(QLatin1String("showSidebar"), showSidebar->isChecked());
     settings.setValue(QLatin1String("sidebarDockArea"),
@@ -1913,6 +1976,7 @@ void SettingsDialog::saveToSettings()
     settings.setValue(QLatin1String("tabBarPosition"), tabBarPosition->currentIndex());
     settings.setValue(QLatin1String("selectNewTabs"), selectTabsWhenCreated->isChecked());
     settings.setValue(QLatin1String("confirmClosingMultipleTabs"), confirmClosingMultipleTabs->isChecked());
+    settings.setValue(QLatin1String("confirmExit"), confirmExitCheck->isChecked());
     settings.setValue(QLatin1String("oneCloseButton"), oneCloseButton->isChecked());
     settings.setValue(QLatin1String("quitAsLastTabClosed"), quitAsLastTabClosed->isChecked());
     // PREFUI04: the memory-saver radios write the same SLEEP01 keys
@@ -2224,6 +2288,9 @@ void SettingsDialog::setHomeToCurrentPage()
     for (WebView *view : views) {
         if (!view->isHidden()) {
             homeLineEdit->setText(QString::fromUtf8(view->url().toEncoded()));
+            // PREF04: populating the url only means something under
+            // Specific Page — pick it so the click isn't a no-op.
+            homeSpecificPageRadio->setChecked(true);
             return;
         }
     }

@@ -739,6 +739,27 @@ UI:
   Tear the dock off into a floating window and the title-bar X comes
   back, still governed by Preferences' "Show panel close button"
   option (SIDE11).
+- Preferences → General homepage and startup reworked: the homepage
+  is now a Start Page / Specific Page pair (Set to Current Page still
+  fills in the address, and the Home button plus startup-homepage
+  honor the choice), "Startup with" offers Last Session, Homepage,
+  Start Page or Specific Pages — the last takes a list of addresses,
+  one per line, each opening in its own tab. A new Close and Exit
+  section hosts the moved "Show Close Window Confirmation Dialog"
+  plus a new "Show Exit Confirmation Dialog" that prompts before the
+  whole app quits. Saved preferences from older versions migrate
+  automatically (PREF04).
+- "Lazy Load Restored Tabs" moved to Preferences → General under
+  "Startup with", next to the session-restore setting it modifies —
+  the "Always Load Pinned Tabs" opt-out moved with it and now sits
+  properly indented beneath its parent checkbox. Background session
+  tabs still restore their title and icon without loading until
+  first activated; saved picks carry over (PREF05).
+- The Arora app menu now has a direct "Preferences..." entry between
+  Tools and Help — the same item as File > Preferences, so the
+  shortcut and behavior are identical — on every window type,
+  including Tor windows where the menu button is the only menu
+  (MENU11).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
