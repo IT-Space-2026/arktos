@@ -446,18 +446,14 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     m_bookmarksToolbarFrame->setFrameShape(QFrame::HLine);
     m_bookmarksToolbarFrame->setFrameShadow(QFrame::Plain);
     QPalette fp = m_bookmarksToolbarFrame->palette();
-    fp.setColor(QPalette::Active, QPalette::Light, QColor(64, 64, 64));
-    fp.setColor(QPalette::Active, QPalette::Dark, QColor(192, 192, 192));
-    fp.setColor(QPalette::Inactive, QPalette::Light, QColor(135, 135, 135));
-    fp.setColor(QPalette::Inactive, QPalette::Dark, QColor(226, 226, 226));
+    AroraStyle::macToolbarFramePalette(fp);
     m_bookmarksToolbarFrame->setAttribute(Qt::WA_MacNoClickThrough, true);
     m_bookmarksToolbarFrame->setPalette(fp);
     layout->addWidget(m_bookmarksToolbarFrame);
 
     layout->addWidget(m_bookmarksToolbar);
     QPalette p = m_bookmarksToolbar->palette();
-    p.setColor(QPalette::Active, QPalette::Window, QColor(150, 150, 150));
-    p.setColor(QPalette::Inactive, QPalette::Window, QColor(207, 207, 207));
+    AroraStyle::macToolbarSurfacePalette(p);
     m_bookmarksToolbar->setAttribute(Qt::WA_MacNoClickThrough, true);
     m_bookmarksToolbar->setAutoFillBackground(true);
     m_bookmarksToolbar->setPalette(p);
@@ -3658,7 +3654,8 @@ void BrowserMainWindow::populateNewContainerTabMenu()
         tr("&Manage Containers..."),
         m_tabWidget, &TabWidget::manageContainers);
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
-    noContainer->setIcon(ContainerManager::colorIcon(QColor(0x8a, 0x8a, 0x8a)));
+    noContainer->setIcon(
+        ContainerManager::colorIcon(AroraStyle::noContainerColor()));
     newContainer->setIcon(AroraIcon::getChrome(QLatin1String("list-add")));
     manageContainers->setIcon(AroraIcon::getChrome(QLatin1String("preferences-system")));
 #endif

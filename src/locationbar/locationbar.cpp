@@ -19,6 +19,7 @@
 
 #include "locationbar.h"
 
+#include "arorastyle.h"
 #include "clearbutton.h"
 #include "locationbarsiteicon.h"
 #include "popupblockerbutton.h"
@@ -266,8 +267,7 @@ void LocationBar::paintEvent(QPaintEvent *event)
     QColor backgroundColor = defaultBaseColor;
     if (m_webView && m_webView->url().scheme() == QLatin1String("https")
         && p.color(QPalette::Text).value() < 128) {
-        QColor lightYellow(248, 248, 210);
-        backgroundColor = lightYellow;
+        backgroundColor = AroraStyle::secureFieldColor();
     }
 
     // set the progress bar
@@ -277,9 +277,8 @@ void LocationBar::paintEvent(QPaintEvent *event)
         if (progress == 0) {
             p.setBrush(QPalette::Base, backgroundColor);
         } else {
-            QColor loadingColor = QColor(116, 192, 250);
-            if (p.color(QPalette::Text).value() >= 128)
-                loadingColor = defaultBaseColor.darker(200);
+            const QColor loadingColor =
+                AroraStyle::loadingProgressColor(p);
 
             QLinearGradient gradient(0, 0, width(), 0);
             gradient.setColorAt(0, loadingColor);
@@ -298,9 +297,7 @@ void LocationBar::paintEvent(QPaintEvent *event)
     // field's bottom edge (the affordance the dead 0<progress<100
     // gradient used to provide mid-load).
     if (m_webView && m_webView->isLoading()) {
-        QColor stripColor(116, 192, 250);
-        if (p.color(QPalette::Text).value() >= 128)
-            stripColor = defaultBaseColor.darker(200);
+        const QColor stripColor = AroraStyle::loadingProgressColor(p);
         QPainter stripPainter(this);
         stripPainter.fillRect(QRect(1, height() - 3, width() - 2, 2),
                               stripColor);

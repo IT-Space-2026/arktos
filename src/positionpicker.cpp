@@ -109,7 +109,7 @@ protected:
             p.setPen(Qt::NoPen);
             p.setBrush(pal.color(QPalette::Highlight));
             p.drawEllipse(badge);
-            p.setPen(QPen(pal.color(QPalette::HighlightedText), 2));
+            p.setPen(QPen(AroraStyle::selectionTextColor(pal), 2));
             const int cx = badge.center().x(), cy = badge.center().y();
             p.drawLine(QPoint(cx - 4, cy), QPoint(cx - 1, cy + 3));
             p.drawLine(QPoint(cx - 1, cy + 3), QPoint(cx + 4, cy - 3));

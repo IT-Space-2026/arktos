@@ -781,6 +781,20 @@ UI:
   buttons share a rounded hover; group bands, container chips, and
   private badges stay legible on both the horizontal strip and the
   vertical rail (THEM02).
+- Dialog and panel polish: Preferences sections read as semibold
+  headers over a thin palette hairline instead of sunken group frames,
+  page spacing follows the shared rhythm, and the page rail is a
+  frameless rounded-selection list; sidebar panels keep flat hairline
+  borders and consistent headers; menus and dropdowns share flat
+  padding, hairline separators, and a rounded selection — Tor windows
+  follow the same rules through the palette (THEM03).
+- Palette unification + contrast pass: every hardcoded color in the
+  chrome now lives in the one central style source — the container
+  accent set, secure-field and loading cues, the warning banner, and
+  the forced dark variant join the Tor violet family — and text and
+  icons on selections and accent fills pick their foreground by
+  measured WCAG contrast, fixing unreadable cases like white labels
+  on bright container chips (THEM04).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
@@ -1182,6 +1196,10 @@ Build, tests & tools:
 - GUI-thread blocking audit (FRZ01).
 - Startup performance passes (PERF01/03).
 - Self-contained `make bundle` Linux package (PACK01).
+- Debian .deb package: `make pkg-deb` (or `dpkg-buildpackage -b`)
+  produces `dist/arora_0.2_amd64.deb` — bundled Qt/WebEngine runtime
+  under /usr/lib/arora, /usr/bin launcher, desktop file + hicolor
+  icons, real versioned Depends via dpkg-shlibdeps (PKG01).
 - THIRD-PARTY-NOTICES audit (LIC01); post-migration cleanup (AUD01).
 - Third-party inventory synced — THIRD-PARTY-NOTICES now covers the
   Mozilla/Arc90 Readability sources, the Gegesy/Witt BSD files, the

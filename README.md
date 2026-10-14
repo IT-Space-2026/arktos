@@ -711,6 +711,22 @@ the full transitive list lives in `THIRD-PARTY-NOTICES` §7–9)
 https://servo.org) behind the spikes/servo embedding harness and the
 planned selectable engine.
 
+`make pkg-deb` (driver: `./.devin/pkg-deb.sh`) builds a **Debian
+package** at `dist/arora_0.2_amd64.deb`. The same payload is laid out
+on the FHS — `/usr/bin/arora` launcher, bundled Qt 6.12 + QtWebEngine
+under `/usr/lib/arora` (the tree builds against a newer Qt than the
+distro series ships), app data in `/usr/share/arora`, desktop file,
+hicolor icons and man page under `/usr/share`. The optional Rust crates
+(arora-rustdl, arora-rustcore) are statically linked, so the package
+has no rust artifacts to ship. Runtime `Depends` are computed by
+`dpkg-shlibdeps` — real versioned system deps only (libnss3, libdbus,
+libxcb-cursor0, ...). `debian/` carries hand-rolled metadata (no
+debhelper needed): `dpkg-buildpackage -b -us -uc -rfakeroot -d` works
+too and drops the artifacts in the parent dir as usual. The driver
+verifies the package after building: a real `dpkg -i` into a scratch
+instdir, `ldd` clean with the dev Qt masked, and a headless
+`--quit-after-load` launch from the installed layout.
+
 ## License
 
 Arora is **free software under the GNU General Public License,

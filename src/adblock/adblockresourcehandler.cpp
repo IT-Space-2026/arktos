@@ -101,7 +101,7 @@ QHash<QByteArray, StubResource> buildResourceTable()
     click.mimeType = QByteArrayLiteral("text/html");
     click.body = QByteArrayLiteral(
         "<!DOCTYPE html><html><head><title>Blocked frame</title>"
-        "<style>body{font-family:sans-serif;color:#555;padding:1em}"
+        "<style>body{font-family:sans-serif;color:GrayText;padding:1em}"
         "a{cursor:pointer}</style></head>"
         "<body><a href=\"#\">This content was blocked by Arora."
         " Click to load.</a>"

@@ -154,7 +154,7 @@ public:
             index.data(DownloadModel::CompletedRole).toBool();
         const bool selected = opt.state & QStyle::State_Selected;
         const QColor textColor = selected
-            ? opt.palette.color(QPalette::HighlightedText)
+            ? AroraStyle::selectionTextColor(opt.palette)
             : completed
                 ? opt.palette.color(QPalette::Text)
                 : opt.palette.color(QPalette::Disabled, QPalette::Text);
@@ -168,7 +168,7 @@ public:
             const int sizeWidth = metrics.horizontalAdvance(sizeText);
             nameRect.setRight(rect.right() - sizeWidth - 8);
             painter->setPen(selected
-                ? opt.palette.color(QPalette::HighlightedText)
+                ? AroraStyle::selectionTextColor(opt.palette)
                 : opt.palette.color(QPalette::PlaceholderText));
             painter->drawText(rect, Qt::AlignVCenter | Qt::AlignRight,
                               sizeText);
@@ -891,7 +891,9 @@ QWidget *SidebarPanel::buildDownloadsPage()
     QHBoxLayout *downloadsHeader = new QHBoxLayout;
     QLabel *downloadsTitle = new QLabel(tr("Downloads"), m_downloadsPage);
     QFont titleFont = downloadsTitle->font();
-    titleFont.setBold(true);
+    // THEM03: header rows share the section-title weight the chrome
+    // style gives group boxes (DemiBold, not full Bold).
+    titleFont.setWeight(QFont::DemiBold);
     downloadsTitle->setFont(titleFont);
     // DOWN04: the title yields first at narrow widths so the close
     // button is never pushed off the row's right edge.

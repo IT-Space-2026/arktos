@@ -5049,7 +5049,8 @@ int main(int argc, char **argv)
     if (args.contains(QLatin1String("--container-smoke"))) {
         ContainerManager *manager = ContainerManager::instance();
         const QString cid = manager->createContainer(
-            QLatin1String("container-smoke"), QColor(0xff, 0x61, 0x3d)).id;
+            QLatin1String("container-smoke"),
+            ContainerManager::defaultColors().value(5)).id;
         bool ok = true;
         auto expect = [&ok](bool condition, const char *what) {
             if (!condition) {
@@ -9674,10 +9675,10 @@ int main(int argc, char **argv)
             }
             fixture.write("<html><head><title>tabstrip-fixture</title></head>"
                           "<body style=\"margin:0\">"
-                          "<div style=\"height:80px;background:#c33\"></div>"
-                          "<div style=\"height:80px;background:#36c\"></div>"
-                          "<div style=\"height:80px;background:#3a3\"></div>"
-                          "<div style=\"height:80px;background:#cc3\"></div>"
+                          "<div style=\"height:80px;background:tomato\"></div>"
+                          "<div style=\"height:80px;background:royalblue\"></div>"
+                          "<div style=\"height:80px;background:seagreen\"></div>"
+                          "<div style=\"height:80px;background:goldenrod\"></div>"
                           "</body></html>");
         }
         const QUrl fixtureUrl = QUrl::fromLocalFile(fixturePath);

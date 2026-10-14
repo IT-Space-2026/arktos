@@ -27,6 +27,7 @@
 #include <QtGui/QtGui>
 
 #include "aroraicon.h"
+#include "arorastyle.h"
 #include "browsertheme.h"
 
 class tst_AroraIcon : public QObject
@@ -297,6 +298,16 @@ void tst_AroraIcon::chromeIcon()
     const QIcon icon =
         AroraIcon::getChrome(QLatin1String("go-previous"));
 
+    // A palette flip only posts ApplicationPaletteChange — the
+    // PaletteWatcher's setTheme (and any -dark art swap it picks)
+    // happens when the event is delivered, so settle the queue
+    // before each measurement or the base shape is nondeterministic.
+    const auto settleTheme = []() {
+        QCoreApplication::sendPostedEvents(
+            qApp, QEvent::ApplicationPaletteChange);
+    };
+    settleTheme();
+
     const QImage image = icon.pixmap(QSize(24, 24)).toImage();
     QVERIFY(opaquePixels(image) > 0);
     QCOMPARE(offTintPixels(image, tint), 0);
@@ -307,15 +318,26 @@ void tst_AroraIcon::chromeIcon()
     QCOMPARE(offTintPixels(disabled, disabledTint), 0);
     QVERIFY(disabled != image);
 
+    // THEM03/THEM04: a selected request tints to the Highlight
+    // card's foreground — selectionTextColor, the same pick the
+    // sheets pair with the card's text.
+    const QImage selected =
+        icon.pixmap(QSize(24, 24), QIcon::Selected).toImage();
+    QCOMPARE(offTintPixels(selected,
+                           AroraStyle::selectionTextColor(saved)),
+             0);
+
     // The same QIcon re-tints across a palette flip — nothing
     // re-set it; that is the whole point of the lazy engine.
     qApp->setPalette(BrowserTheme::darkPalette());
+    settleTheme();
     const QImage dark = icon.pixmap(QSize(24, 24)).toImage();
     QCOMPARE(offTintPixels(dark, BrowserTheme::darkPalette()
                            .color(QPalette::ButtonText)),
              0);
     QVERIFY(dark != image);
     qApp->setPalette(saved);
+    settleTheme();
     QCOMPARE(icon.pixmap(QSize(24, 24)).toImage(), image);
 
     // Theme swap still changes the shape under the fixed tint.

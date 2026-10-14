@@ -50,6 +50,12 @@ fuzz/seedgen/seedgen
 # PACK01 bundle output
 dist/
 
+# PKG01 dpkg staging artifacts
+debian/arora/
+debian/files
+debian/substvars
+*.deb
+
 # crash dumps from debugged smoke runs
 core
 core.*

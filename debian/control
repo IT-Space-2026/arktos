@@ -1,0 +1,30 @@
+Source: arora
+Section: web
+Priority: optional
+Maintainer: Arora Developers <devin@cognition.ai>
+Standards-Version: 4.6.2
+# The distro-package equivalents of the toolchain Arora builds against.
+# The dev loop satisfies these with a user-local Qt 6.12 (~/Qt) plus the
+# rustup toolchain (~/.cargo), so .devin/pkg-deb.sh drives the build
+# with dependency checks relaxed (-d) — install these to build against
+# the system Qt instead.
+Build-Depends: qt6-base-dev, qt6-webengine-dev, qt6-tools-dev,
+ qt6-5compat-dev, cargo, rustc
+
+Package: arora
+Architecture: any
+Depends: ${shlibs:Depends}
+Suggests: tor
+Description: experimental Qt 6 / QtWebEngine web browser
+ Arora is a Qt 6 / QtWebEngine (Chromium) web browser — a maintained
+ continuation of the 2009 Qt/WebKit Arora. The shell has been rebuilt
+ around privacy hardening, per-site containers, optional Tor windows
+ and a Vivaldi-style UI: icon-rail sidebar, two-level container tab
+ strip, reader mode, rich download cards and a command palette.
+ .
+ This package bundles the Qt 6.12 runtime and QtWebEngine process
+ under /usr/lib/arora (the upstream build targets a newer Qt than the
+ distro series ships), and statically links the optional Rust
+ components (arora-rustdl download engine, arora-rustcore when built)
+ into the binary — there are no separate rust .so artifacts to ship.
+ Arora is experimental software provided as is.

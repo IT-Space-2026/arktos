@@ -19,6 +19,7 @@
 
 #include "containermanager.h"
 
+#include "arorastyle.h"
 #include "browserapplication.h"
 #include "browserpaths.h"
 #include "browserprofile.h"
@@ -356,14 +357,11 @@ void ContainerManager::releaseProfileFor(const QString &id)
     delete m_profiles.take(id);
 }
 
-// Firefox's container accent palette — blue, turquoise, green,
-// yellow, orange, red, pink, purple.
+// The container accent palette — the fixed identity family lives in
+// AroraStyle with the rest of the chrome colors.
 QList<QColor> ContainerManager::defaultColors()
 {
-    return { QColor(0x37, 0xad, 0xff), QColor(0x00, 0xc7, 0x9a),
-             QColor(0x51, 0xcd, 0x00), QColor(0xff, 0xcb, 0x00),
-             QColor(0xff, 0x9f, 0x00), QColor(0xff, 0x61, 0x3d),
-             QColor(0xff, 0x4b, 0xda), QColor(0xaf, 0x51, 0xf5) };
+    return AroraStyle::containerIdentityColors();
 }
 
 QIcon ContainerManager::colorIcon(const QColor &color)
