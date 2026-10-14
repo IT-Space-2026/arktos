@@ -60,6 +60,8 @@ private slots:
     void integrityPin();
     void broadHostWarning();
     void updateDriftReview();
+    void healthClassification();
+    void backgroundHealthProbe();
 
 private:
     // Minimal PK zip writer (store-only) — enough for the update
@@ -931,6 +933,130 @@ void tst_ExtensionManager::updateDriftReview()
     for (int i = 0; i < freshWarnings->count(); ++i)
         freshText += freshWarnings->item(i)->text() + QLatin1Char('\n');
     QVERIFY(!freshText.contains(QLatin1String("New since")));
+}
+
+// EXT12: the degradation classifier folds declared-but-missing
+// chrome.* APIs and the measured background verdict into one row
+// state — pin the whole matrix so a regression in the fold is loud.
+void tst_ExtensionManager::healthClassification()
+{
+    using EH = ExtensionManager::ExtensionHealth;
+    using PV = ExtensionManager::ProbeVerdict;
+
+    QCOMPARE(ExtensionManager::classifyHealth(
+                 false, QStringList(), PV::Pending),
+             EH::Unknown);
+    QCOMPARE(ExtensionManager::classifyHealth(
+                 false, QStringList(), PV::None),
+             EH::Healthy);
+    QCOMPARE(ExtensionManager::classifyHealth(
+                 true, QStringList(), PV::Pending),
+             EH::Unknown);
+    QCOMPARE(ExtensionManager::classifyHealth(
+                 true, QStringList(), PV::Responsive),
+             EH::Healthy);
+    QCOMPARE(ExtensionManager::classifyHealth(
+                 true, QStringList(), PV::Dead),
+             EH::NotSupported);
+    QCOMPARE(ExtensionManager::classifyHealth(
+                 true, {QStringLiteral("notifications")},
+                 PV::Responsive),
+             EH::Limited);
+    // Dead beats Limited — a crashed worker means nothing works.
+    QCOMPARE(ExtensionManager::classifyHealth(
+                 true, {QStringLiteral("notifications")},
+                 PV::Dead),
+             EH::NotSupported);
+
+    QString reason;
+    ExtensionManager::classifyHealth(
+        true, {QStringLiteral("notifications"),
+               QStringLiteral("tabs")}, PV::Dead, &reason);
+    QVERIFY(reason.contains(QLatin1String("background")));
+    QVERIFY(reason.contains(QLatin1String("notifications")));
+    reason.clear();
+    ExtensionManager::classifyHealth(
+        true, {QStringLiteral("cookies")}, PV::Responsive, &reason);
+    QVERIFY(reason.contains(QLatin1String("cookies")));
+    reason.clear();
+    ExtensionManager::classifyHealth(
+        true, QStringList(), PV::Dead, &reason);
+    QVERIFY(reason.contains(QLatin1String("background")));
+}
+
+// EXT12: the real measurement — a live service worker must classify
+// Healthy and an eval-crashing one NotSupported, driven through the
+// same hidden-page probe the app runs.
+void tst_ExtensionManager::backgroundHealthProbe()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString root = QDir::temp().filePath(
+        QStringLiteral("tst-exthealth-%1")
+            .arg(QCoreApplication::applicationPid()));
+    // Live: only an onInstalled listener — the probe ping errors with
+    // "receiving end does not exist" but the worker context registers,
+    // which is the healthy-no-listener shape.
+    const QString liveDir = writeExtension(
+        root, QStringLiteral("tst-health-live"),
+        QStringLiteral("1.0.0"));
+    // Dead: same manifest shape but the worker throws at eval —
+    // Bitwarden's failure mode (Chromium status 15).
+    const QString deadDir = writeExtension(
+        root, QStringLiteral("tst-health-dead"),
+        QStringLiteral("1.0.0"), QString(),
+        {QStringLiteral("notifications")});
+    QVERIFY(!liveDir.isEmpty() && !deadDir.isEmpty());
+    {
+        QFile dead(deadDir + QLatin1String("/sw.js"));
+        QVERIFY(dead.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        dead.write("throw new Error('eval crash');\n");
+    }
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    const auto infoFor = [manager](const QString &extId) {
+        const QList<ExtensionManager::ExtensionInfo> list =
+            manager->extensions();
+        for (const ExtensionManager::ExtensionInfo &info : list)
+            if (info.id == extId)
+                return info;
+        return ExtensionManager::ExtensionInfo();
+    };
+
+    const QString liveId = installFixture(liveDir);
+    const QString deadId = installFixture(deadDir);
+    QVERIFY2(!liveId.isEmpty() && !deadId.isEmpty(),
+             qPrintable(QStringLiteral(
+                 "fixtures must install: live=%1 dead=%2")
+                 .arg(liveId, deadId)));
+
+    manager->setExtensionEnabled(liveId, true);
+    manager->setExtensionEnabled(deadId, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        infoFor(liveId).enabled && infoFor(deadId).enabled, 30000);
+
+    // requestHealthProbe queues ahead of the changed()-driven scan —
+    // either path lands the same verdict.
+    manager->requestHealthProbe(liveId, false);
+    manager->requestHealthProbe(deadId, false);
+
+    using EH = ExtensionManager::ExtensionHealth;
+    QTRY_VERIFY_WITH_TIMEOUT(
+        infoFor(liveId).health == EH::Healthy, 60000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        infoFor(deadId).health == EH::NotSupported, 60000);
+    const ExtensionManager::ExtensionInfo dead = infoFor(deadId);
+    QVERIFY(!dead.healthReason.isEmpty());
+    QVERIFY(dead.healthReason.contains(QLatin1String("background")));
+    // "notifications" is unsupported in Qt WebEngine — the reason
+    // names the missing surface, not just the crash.
+    QVERIFY(dead.missingApis.contains(QLatin1String("notifications")));
+
+    manager->removeExtension(liveId);
+    manager->removeExtension(deadId);
+    QTest::qWait(500);
+    QDir(root).removeRecursively();
 }
 
 QTEST_MAIN(tst_ExtensionManager)

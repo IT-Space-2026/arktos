@@ -500,7 +500,11 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     extensionsHeader->setSectionResizeMode(3, QHeaderView::Interactive);
     extensionsHeader->resizeSection(3, 100);
     if (extensionsTree->columnCount() > 4) {
-        extensionsHeader->resizeSection(0, 200);
+        // EXT06 landed the Description column — it owns the stretch
+        // and Name drops back to hugging its contents (the default
+        // Interactive mode would leave it freely resizable).
+        extensionsHeader->setSectionResizeMode(
+            0, QHeaderView::ResizeToContents);
         extensionsHeader->setSectionResizeMode(
             extensionsTree->columnCount() - 1, QHeaderView::Stretch);
     } else {
@@ -2976,6 +2980,14 @@ void SettingsDialog::extensionSelectionChanged()
                         "review or remove this extension.");
         if (!info.error.isEmpty())
             lines << tr("Error: %1").arg(info.error);
+        // EXT12: the measured degradation verdict, so a row that
+        // reads Enabled never hides a dead or partial extension.
+        if (info.health
+                == ExtensionManager::ExtensionHealth::NotSupported)
+            lines << tr("Not supported: %1.").arg(info.healthReason);
+        else if (info.health
+                 == ExtensionManager::ExtensionHealth::Limited)
+            lines << tr("Limited support: %1.").arg(info.healthReason);
         if (info.builtin)
             lines << tr("Built-in component extension.");
         if (!info.path.isEmpty())
@@ -3096,8 +3108,18 @@ void SettingsDialog::refreshExtensions()
             status = tr("Error");
         else if (!info.loaded)
             status = tr("Not loaded");
+        else if (!info.enabled)
+            status = tr("Disabled");
+        // EXT12: an enabled-but-dead or partially-served extension
+        // gets its real state, not a naked "Enabled".
+        else if (info.health
+                 == ExtensionManager::ExtensionHealth::NotSupported)
+            status = tr("Not supported");
+        else if (info.health
+                 == ExtensionManager::ExtensionHealth::Limited)
+            status = tr("Limited");
         else
-            status = info.enabled ? tr("Enabled") : tr("Disabled");
+            status = tr("Enabled");
         item->setText(2, status);
         item->setText(3, info.builtin ? tr("Built-in")
                                     : (info.installed ? tr("Installed")

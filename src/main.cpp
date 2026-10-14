@@ -4185,7 +4185,7 @@ int main(int argc, char **argv)
         "settings-smoke", "find-smoke", "source-smoke", "browser-smoke",
         "app-smoke", "extension-smoke", "extension-otr-smoke",
         "extension-update-smoke", "bitwarden-smoke",
-        "mv3-health-smoke",
+        "mv3-health-smoke", "extension-health-smoke",
         "ua-smoke", "perf-smoke",
         "session-smoke", "restore-smoke", "tor-smoke", "privacy-smoke",
         "sigterm-smoke", "sigterm-child-smoke",
@@ -10622,6 +10622,239 @@ int main(int argc, char **argv)
         bwPoll->start(200);
 
         QTimer::singleShot(120000, &application, [die]() {
+            die(QStringLiteral("timeout"));
+        });
+        return application.exec();
+    }
+
+    // EXT12 verification: the health probe must classify a live
+    // service worker Healthy, a live worker over missing chrome.*
+    // APIs Limited, and a never-ready worker NotSupported — and the
+    // real bundled Bitwarden, whose worker eval-crashes on the
+    // missing namespaces, must land "Not supported" with a reason
+    // rather than leaving a spinner.  Exits 0 on PASS.
+    if (args.contains(QLatin1String("--extension-health-smoke"))) {
+        int healthFailures = 0;
+        const auto check = [&healthFailures](bool ok,
+                                             const QString &what) {
+            qInfo() << "extension-health-smoke:" << what
+                    << (ok ? "PASS" : "FAIL");
+            if (!ok)
+                ++healthFailures;
+        };
+        const auto note = [](const QString &key, const QString &value) {
+            qInfo().noquote() << "extension-health-smoke:" << key
+                              << "=" << value;
+        };
+        const auto die = [&application](const QString &why) {
+            qInfo() << "extension-health-smoke: FAIL" << why;
+            fflush(nullptr);
+            std::quick_exit(1);
+        };
+
+        ExtensionManager *mgr = ExtensionManager::instance();
+        check(ExtensionManager::isSupported(),
+              QStringLiteral("webengine_extensions feature"));
+
+        // Static legs — the classifier's fold needs no engine.
+        using EH = ExtensionManager::ExtensionHealth;
+        using PV = ExtensionManager::ProbeVerdict;
+        check(ExtensionManager::classifyHealth(
+                  false, QStringList(), PV::None) == EH::Healthy,
+              QStringLiteral("clean no-background manifest = Healthy"));
+        check(ExtensionManager::classifyHealth(
+                  true, QStringList() << QStringLiteral("notifications"),
+                  PV::Responsive) == EH::Limited,
+              QStringLiteral("missing API over live worker = Limited"));
+        check(ExtensionManager::classifyHealth(
+                  true, QStringList(), PV::Dead) == EH::NotSupported,
+              QStringLiteral("dead worker = NotSupported"));
+
+        // Fixtures: identical MV3 shells differing only in what the
+        // manifest asks for and whether the service worker evaluates.
+        // Each gets an action popup so the probe's fallback page
+        // exists if manifest.json serves no chrome.* bindings.
+        const auto putFixture = [die](const QString &name,
+                const QString &permissions, const QByteArray &worker) {
+            const QString dir = QDir::temp().filePath(name);
+            QDir().mkpath(dir);
+            QFile manifestFile(dir + QLatin1String("/manifest.json"));
+            if (!manifestFile.open(QIODevice::WriteOnly))
+                die(QStringLiteral("cannot write %1 manifest")
+                        .arg(name));
+            manifestFile.write(QByteArray(
+                "{\"manifest_version\":3,\"name\":\"") + name.toUtf8()
+                + "\",\"version\":\"1.0\",\"permissions\":["
+                + permissions.toUtf8()
+                + "],\"background\":{\"service_worker\":\"sw.js\"},"
+                  "\"action\":{\"default_popup\":\"popup.html\"}}");
+            manifestFile.close();
+            QFile workerFile(dir + QLatin1String("/sw.js"));
+            if (!workerFile.open(QIODevice::WriteOnly))
+                die(QStringLiteral("cannot write %1 worker").arg(name));
+            workerFile.write(worker);
+            QFile popup(dir + QLatin1String("/popup.html"));
+            if (!popup.open(QIODevice::WriteOnly))
+                die(QStringLiteral("cannot write %1 popup").arg(name));
+            popup.write("<html><body>health probe</body></html>");
+            return dir;
+        };
+        putFixture(QStringLiteral("arora-health-live"),
+            QStringLiteral("\"storage\""),
+            QByteArray(
+                "chrome.runtime.onMessage.addListener("
+                "function(m,s,r){"
+                "if(m&&m.__aroraHealthProbe)r({pong:true});});\n"));
+        putFixture(QStringLiteral("arora-health-limited"),
+            QStringLiteral("\"notifications\",\"storage\""),
+            QByteArray(
+                "chrome.runtime.onInstalled.addListener("
+                "function(){});\n"));
+        putFixture(QStringLiteral("arora-health-dead"),
+            QStringLiteral("\"notifications\",\"webNavigation\""),
+            QByteArray(
+                "throw new Error('eval crash — same shape as "
+                "Bitwarden on the missing chrome.* namespaces');\n"));
+
+        // name → expected terminal health once the probe lands.
+        const QList<QPair<QString, ExtensionManager::ExtensionHealth>>
+            expected = {
+                {QStringLiteral("arora-health-live"), EH::Healthy},
+                {QStringLiteral("arora-health-limited"), EH::Limited},
+                {QStringLiteral("arora-health-dead"), EH::NotSupported},
+            };
+
+        // Drive: install all three (each lands disabled), enable as
+        // they appear, then wait for the probe verdicts to settle.
+        const auto fixtureInfo =
+            [mgr](const QString &name, ExtensionManager::ExtensionInfo *out) {
+            for (const ExtensionManager::ExtensionInfo &info
+                 : mgr->extensions()) {
+                if (info.name == name) {
+                    *out = info;
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        QTimer *driver = new QTimer(&application);
+        const auto driverTicks = std::make_shared<int>(0);
+        QObject::connect(driver, &QTimer::timeout, &application,
+                         [&, check, note, expected, fixtureInfo,
+                          driver, driverTicks, mgr]() {
+            ++*driverTicks;
+            int settled = 0;
+            for (const auto &want : expected) {
+                ExtensionManager::ExtensionInfo info;
+                if (!fixtureInfo(want.first, &info)) {
+                    if (*driverTicks == 1) {
+                        const auto dir = QDir::temp().filePath(
+                            want.first);
+                        mgr->grantConsent(dir);
+                        mgr->installExtension(dir);
+                    }
+                    continue;
+                }
+                if (!info.enabled) {
+                    if (*driverTicks % 20 == 0)
+                        mgr->setExtensionEnabled(info.id, true);
+                    continue;
+                }
+                // Probe requests are also queued by the changed()
+                // scan; asking directly keeps the smoke fast.
+                if (info.health == EH::Unknown)
+                    mgr->requestHealthProbe(info.id, false);
+                if (info.health == want.second)
+                    ++settled;
+            }
+
+            // The headline check: bundled Bitwarden lands disabled
+            // on a non-fresh profile — enable it, let the probe
+            // measure the dead worker, and require the row to read
+            // NotSupported rather than spinning forever in a popup.
+            ExtensionManager::ExtensionInfo bw;
+            bool bwSeen = false;
+            for (const ExtensionManager::ExtensionInfo &info
+                 : mgr->extensions()) {
+                if (info.name.contains(QLatin1String("bitwarden"),
+                                       Qt::CaseInsensitive)) {
+                    bw = info;
+                    bwSeen = true;
+                }
+            }
+            if (bwSeen && !bw.enabled) {
+                if (*driverTicks % 20 == 0)
+                    mgr->setExtensionEnabled(bw.id, true);
+            } else if (bwSeen) {
+                // No-op once a verdict exists or the probe is
+                // queued/running — Bitwarden already reads Limited
+                // from its missing APIs, so health alone never
+                // re-arms the request here.
+                mgr->requestHealthProbe(bw.id, false);
+            }
+            // Settled = a probe FINISHED — the detail string is only
+            // written by finishHealthProbe; a Pending verdict (and a
+            // Limited row that hasn't been measured yet) must not
+            // count.
+            const bool bwSettled = bwSeen && bw.enabled
+                && !mgr->healthProbeDetail(bw.id).isEmpty();
+
+            if (settled == expected.size() && bwSettled) {
+                driver->stop();
+                driver->deleteLater();
+
+                for (const auto &want : expected) {
+                    ExtensionManager::ExtensionInfo info;
+                    fixtureInfo(want.first, &info);
+                    check(info.health == want.second,
+                          QStringLiteral("%1 health = %2")
+                              .arg(want.first)
+                              .arg(static_cast<int>(info.health)));
+                    if (want.second == EH::NotSupported) {
+                        check(!info.healthReason.isEmpty(),
+                              QStringLiteral(
+                                  "%1 carries a degradation reason")
+                                  .arg(want.first));
+                        check(!info.missingApis.isEmpty(),
+                              QStringLiteral(
+                                  "%1 lists the missing chrome.* APIs")
+                                  .arg(want.first));
+                        note(QStringLiteral("%1-reason")
+                                 .arg(want.first),
+                             info.healthReason);
+                    }
+                }
+
+                check(bw.health == EH::NotSupported,
+                      QStringLiteral(
+                          "bundled bitwarden reports Not supported "
+                          "(got %1)")
+                          .arg(static_cast<int>(bw.health)));
+                check(!bw.healthReason.isEmpty(),
+                      QStringLiteral("bitwarden reason populated"));
+                note(QStringLiteral("bitwarden-reason"),
+                     bw.healthReason);
+                note(QStringLiteral("bitwarden-probe"),
+                     mgr->healthProbeDetail(bw.id));
+                check(!bw.missingApis.isEmpty(),
+                      QStringLiteral(
+                          "bitwarden missing-apis list populated"));
+                note(QStringLiteral("bitwarden-missing"),
+                     bw.missingApis.join(QLatin1String(", ")));
+
+                qInfo() << "extension-health-smoke:"
+                        << (healthFailures == 0 ? "PASS" : "FAIL")
+                        << "failures:" << healthFailures;
+                fflush(nullptr);
+                std::quick_exit(healthFailures == 0 ? 0 : 1);
+            }
+            if (*driverTicks > 400)
+                die(QStringLiteral("health verdicts never settled"));
+        });
+        driver->start(250);
+
+        QTimer::singleShot(180000, &application, [die]() {
             die(QStringLiteral("timeout"));
         });
         return application.exec();

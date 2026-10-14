@@ -377,13 +377,22 @@ changed outside the engine mark the row **Tampered** rather than
 loading silently. Update reviews call out permissions and host
 patterns the installed version never declared, and whole-scheme host
 grants (`<all_urls>`, `*://*/*`, `http://*/*` …) get a warning row of
-their own. The Settings → Extensions page lists each extension's
-manifest description and, for installed ones, the on-disk folder —
-installed extensions live under the browsing profile's
-`QtWebEngine/arora/Extensions/` directory (inside the Arora data
-location, e.g. `~/.local/share/Arora/Arora/` on Linux) and can be
-removed with the page's Remove button or by deleting their folder
-while Arora is closed.
+their own. Each enabled extension is also health-checked once per
+session: a hidden extension-origin page pings its background service
+worker and counts live background contexts, and the result is folded
+together with the manifest's declared-but-missing `chrome.*` APIs
+into the Settings → Extensions status — **Limited** when the worker
+runs but some declared APIs cannot be served, **Not supported** when
+the background worker never became ready — with the reason shown in
+the details pane instead of a naked "Enabled". Clicking a
+Not-supported extension's toolbar action opens a short explanation
+rather than a popup that spins on a dead worker. The page lists each
+extension's manifest description and, for installed ones, the
+on-disk folder — installed extensions live under the browsing
+profile's `QtWebEngine/arora/Extensions/` directory (inside the
+Arora data location, e.g. `~/.local/share/Arora/Arora/` on Linux)
+and can be removed with the page's Remove button or by deleting
+their folder while Arora is closed.
 
 Arora bundles the **Bitwarden password-manager extension** (official
 Chrome build, `src/data/extensions/` — provenance and checksums in
@@ -403,8 +412,10 @@ and tab events, `webNavigation`, `scripting`, `contextMenus`,
 are not implemented. Bitwarden's background worker needs several of
 the missing namespaces, fails registration
 (`kErrorScriptEvaluateFailed`), and its popup dies on
-`chrome.extension.getBackgroundPage` — so it cannot function; see
-`.devin/EXT11-report.md` for the full matrix.
+`chrome.extension.getBackgroundPage` — so it cannot function; the
+health check above therefore reports it **Not supported** with the
+missing APIs listed. See `.devin/EXT11-report.md` for the full
+matrix.
 
 ### Credentials & autofill
 

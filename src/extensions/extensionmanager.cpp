@@ -47,6 +47,7 @@
 #include <qtimer.h>
 #include <qxmlstream.h>
 
+#include <qwebenginepage.h>
 #include <qwebengineprofile.h>
 #include <qwebenginescript.h>
 #include <qwebenginescriptcollection.h>
@@ -240,6 +241,30 @@ static ExtensionManager::Manifest inspectPackageManifest(const QString &path)
 ExtensionManager::ExtensionManager(QObject *parent)
     : QObject(parent)
 {
+    // EXT12: every lifecycle pulse (load/install/uninstall + the
+    // enable/disable settle) fans out through changed() — coalesce
+    // them into one deferred scan that queues health probes for any
+    // enabled background-carrying extension not yet measured this
+    // session.  Probes are strictly additive: nothing already
+    // verdicted re-queues here (setExtensionEnabled clears the stale
+    // verdict itself before re-enabling).
+    connect(this, &ExtensionManager::changed, this, [this]() {
+        if (m_healthScanScheduled)
+            return;
+        m_healthScanScheduled = true;
+        QTimer::singleShot(1500, this, [this]() {
+            m_healthScanScheduled = false;
+            enqueuePendingProbes();
+        });
+    });
+    // A live probe page must not outlive teardown — an orphaned
+    // WebEnginePage at profile destruction is exactly the
+    // "WebEnginePage still not deleted" crash shape (MIG12 notes).
+    connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit,
+            this, [this]() {
+        m_healthQueue.clear();
+        delete m_healthPage;
+    });
 }
 
 ExtensionManager *ExtensionManager::instance()
@@ -319,6 +344,9 @@ void ExtensionManager::installOnProfile(QWebEngineProfile *profile)
         QSettings().remove(integritySettingsKey(
             profile->storageName(), plain.id));
         m_tamperedIds.remove(plain.id);
+        // EXT12: its health verdict too.
+        m_healthVerdicts.remove(plain.id);
+        m_healthDetails.remove(plain.id);
         emit extensionUninstalled(plain);
         emit changed();
     });
@@ -332,6 +360,15 @@ void ExtensionManager::installOnProfile(QWebEngineProfile *profile)
 
     // EXT07: default-installed bundle lands once per profile.
     installBundledExtensions(profile);
+
+    // EXT12: the engine's installed-extension registry fills in
+    // asynchronously, so the first health scan runs deferred; every
+    // later lifecycle pulse re-scans through the changed() coalescer.
+    const QPointer<QWebEngineProfile> scanGuard(profile);
+    QTimer::singleShot(5000, this, [this, scanGuard]() {
+        if (scanGuard)
+            enqueuePendingProbes();
+    });
 #endif
 }
 
@@ -351,6 +388,21 @@ QList<ExtensionManager::ExtensionInfo> ExtensionManager::extensions() const
     for (const QWebEngineExtensionInfo &info : loaded) {
         ExtensionInfo plain = infoFrom(info);
         plain.tampered = m_tamperedIds.contains(info.id());
+        // EXT12: fold the manifest's declared-but-missing chrome.*
+        // APIs together with the measured background verdict into
+        // one health state — the Preferences row reads this instead
+        // of a naked "Enabled".
+        bool hasBackground = false;
+        if (!plain.builtin && !plain.path.isEmpty()) {
+            const Manifest manifest = inspectManifest(plain.path);
+            if (manifest.valid) {
+                plain.missingApis = manifest.unsupported;
+                hasBackground = manifest.hasBackground;
+            }
+        }
+        plain.health = classifyHealth(hasBackground, plain.missingApis,
+                m_healthVerdicts.value(plain.id, ProbeVerdict::Pending),
+                &plain.healthReason);
         list.append(plain);
     }
 #endif
@@ -460,6 +512,12 @@ void ExtensionManager::setExtensionEnabled(const QString &id, bool enabled)
                     return;
                 poll->stop();
                 poll->deleteLater();
+                // EXT12: a fresh enable re-measures — clear the stale
+                // verdict so the changed() scan re-queues the probe.
+                if (enabled) {
+                    m_healthVerdicts.remove(id);
+                    m_healthDetails.remove(id);
+                }
                 emit changed();
             });
             poll->start();
@@ -864,6 +922,38 @@ QStringList ExtensionManager::dangerousHostPatterns()
     return dangerous;
 }
 
+ExtensionManager::ExtensionHealth ExtensionManager::classifyHealth(
+        bool hasBackground, const QStringList &missingApis,
+        ProbeVerdict verdict, QString *reason)
+{
+    QString why;
+    // A dead background means the extension cannot work at all —
+    // every declared feature that routes through the worker (the
+    // whole vault in Bitwarden's case) is dead with it.
+    if (verdict == ProbeVerdict::Dead) {
+        why = missingApis.isEmpty()
+            ? tr("its background service worker never became ready")
+            : tr("its background service worker never became ready — "
+                 "it needs chrome.* APIs Qt WebEngine doesn't provide "
+                 "(%1)").arg(missingApis.join(QLatin1String(", ")));
+    } else if (!missingApis.isEmpty()) {
+        why = tr("it declares chrome.* APIs Qt WebEngine doesn't "
+                 "provide (%1) — the features using them won't work")
+                  .arg(missingApis.join(QLatin1String(", ")));
+    }
+    if (reason)
+        *reason = why;
+
+    if (verdict == ProbeVerdict::Dead)
+        return ExtensionHealth::NotSupported;
+    if (!missingApis.isEmpty())
+        return ExtensionHealth::Limited;
+    if (verdict == ProbeVerdict::Responsive
+            || (verdict == ProbeVerdict::None && !hasBackground))
+        return ExtensionHealth::Healthy;
+    return ExtensionHealth::Unknown;
+}
+
 bool ExtensionManager::isBroadHostPattern(const QString &pattern)
 {
     if (pattern == QLatin1String("<all_urls>"))
@@ -1022,6 +1112,387 @@ void ExtensionManager::verifyInstalledIntegrity(QWebEngineProfile *profile)
 #else
     Q_UNUSED(profile);
 #endif
+}
+
+// -- EXT12: background-liveness probe ----------------------------------
+//
+// EXT11 measured that a Manifest-V3 extension whose service worker
+// dies during evaluation (Bitwarden: "Service worker registration
+// failed. Status code: 15" — Chromium kErrorScriptEvaluateFailed on
+// the missing chrome.* namespaces) leaves no signal the app can see
+// through QWebEngineExtensionManager: the row still reads
+// enabled+loaded, and its action popup spins on a worker that never
+// exists.  The health probe measures it directly: a hidden page on
+// the extension's own chrome-extension:// origin sends the worker a
+// message and then counts BACKGROUND contexts via
+// chrome.runtime.getContexts.  A worker that evaluated stays
+// registered and answers (or refuses the ping with a fast lastError);
+// a worker that eval-crashed retries forever and the ping times out.
+//
+// The probe page is the extension's own manifest.json — every
+// extension ships one and it carries no extension JS, so measuring
+// an extension never runs its code (a pinned popup's page could make
+// network calls the user never asked for).  Only when the engine
+// refuses to inject chrome.* bindings into that document does the
+// probe fall back to the declared action popup; if neither context
+// exposes chrome.runtime the verdict is left inconclusive rather
+// than guessed — we never mark an extension dead without a
+// measurement.
+
+#if QT_CONFIG(webengine_extensions)
+// Runs inside the extension-origin page.  Drives a timed
+// sendMessage ping at the background context and then samples
+// getContexts; the result lands on window.__aroraExtHealth for the
+// C++ side to poll (runJavaScript cannot await a promise).
+static const char kHealthProbeScript[] = R"JS(
+(function () {
+    var R = {runtime: false};
+    function done() {
+        try { window.__aroraExtHealth = JSON.stringify(R); }
+        catch (e) { window.__aroraExtHealth = '{"runtime":false}'; }
+    }
+    try {
+        R.runtime = (typeof chrome !== 'undefined')
+            && !!(chrome.runtime && chrome.runtime.sendMessage);
+    } catch (e) {}
+    if (!R.runtime) { done(); return 'no-bindings'; }
+    var settled = false;
+    function contexts() {
+        try {
+            if (!chrome.runtime.getContexts) {
+                R.backgrounds = -2;
+                done();
+                return;
+            }
+            chrome.runtime.getContexts({contextTypes: ['BACKGROUND']},
+                function (cs) {
+                    R.backgrounds = chrome.runtime.lastError
+                        ? -1 : (cs ? cs.length : 0);
+                    done();
+                });
+        } catch (e) { R.backgrounds = -1; done(); }
+    }
+    function finishPing(p) {
+        R.ping = p;
+        // A just-started worker lags a beat behind a fast lastError —
+        // sample the context list after it settles.
+        setTimeout(contexts, 1500);
+    }
+    var timer = setTimeout(function () {
+        if (!settled) { settled = true; finishPing('TIMEOUT'); }
+    }, 6000);
+    try {
+        chrome.runtime.sendMessage({__aroraHealthProbe: 1},
+            function (resp) {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                var le = chrome.runtime.lastError;
+                finishPing(le ? ('ERR:' + le.message)
+                              : (resp === undefined ? 'EMPTY' : 'PONG'));
+            });
+    } catch (e) {
+        if (!settled) {
+            settled = true;
+            clearTimeout(timer);
+            finishPing('THROW:' + String(e));
+        }
+    }
+    return 'started';
+})()
+)JS";
+#endif
+
+void ExtensionManager::enqueuePendingProbes()
+{
+#if QT_CONFIG(webengine_extensions)
+    QWebEngineExtensionManager *engine = managerFor(m_profiles);
+    if (!engine)
+        return;
+    QWebEngineProfile *profile = nullptr;
+    for (const QPointer<QWebEngineProfile> &candidate : m_profiles) {
+        if (candidate && candidate->extensionManager() == engine) {
+            profile = candidate;
+            break;
+        }
+    }
+    if (!profile)
+        return;
+    for (const ExtensionInfo &info : extensions()) {
+        if (!info.loaded || !info.enabled || info.builtin
+                || info.path.isEmpty() || !info.error.isEmpty())
+            continue;
+        // A stored verdict (Pending in-flight, Responsive, Dead, or
+        // None for the no-background/inconclusive cases) means the
+        // extension was already measured this session — enable-
+        // toggles clear it before re-queueing.
+        if (m_healthVerdicts.contains(info.id))
+            continue;
+        if (inspectManifest(info.path).hasBackground)
+            m_healthQueue.append(
+                qMakePair(info.id, QPointer<QWebEngineProfile>(profile)));
+        else
+            // Nothing to measure — no background to be dead.
+            m_healthVerdicts.insert(info.id, ProbeVerdict::None);
+    }
+    startNextHealthProbe();
+#endif
+}
+
+void ExtensionManager::requestHealthProbe(const QString &id, bool force)
+{
+#if QT_CONFIG(webengine_extensions)
+    if (id.isEmpty())
+        return;
+    if (force) {
+        m_healthVerdicts.remove(id);
+        m_healthDetails.remove(id);
+    } else if (m_healthVerdicts.contains(id)) {
+        return;
+    }
+    for (const auto &entry : m_healthQueue) {
+        if (entry.first == id)
+            return;
+    }
+    if (m_healthProbeId == id)
+        return;
+    QWebEngineExtensionManager *engine = managerFor(m_profiles);
+    // Only a manifest-declared background can die — skip the page
+    // entirely for extensions that have none.
+    for (const ExtensionInfo &info : extensions()) {
+        if (info.id != id)
+            continue;
+        if (info.path.isEmpty()
+                || !inspectManifest(info.path).hasBackground) {
+            m_healthVerdicts.insert(id, ProbeVerdict::None);
+            emit changed();
+            return;
+        }
+        break;
+    }
+    for (const QPointer<QWebEngineProfile> &profile : m_profiles) {
+        if (profile && profile->extensionManager() == engine) {
+            m_healthQueue.append(qMakePair(id, profile));
+            break;
+        }
+    }
+    startNextHealthProbe();
+#else
+    Q_UNUSED(id);
+    Q_UNUSED(force);
+#endif
+}
+
+void ExtensionManager::startNextHealthProbe()
+{
+#if QT_CONFIG(webengine_extensions)
+    if (m_healthPage || m_healthQueue.isEmpty())
+        return;
+    const auto request = m_healthQueue.takeFirst();
+    QWebEngineProfile *profile = request.second;
+    if (!profile) {
+        startNextHealthProbe();
+        return;
+    }
+    // Re-resolve the row — the extension may have been disabled or
+    // removed since it queued.
+    ExtensionInfo info;
+    for (const ExtensionInfo &candidate : extensions()) {
+        if (candidate.id == request.first) {
+            info = candidate;
+            break;
+        }
+    }
+    if (!info.loaded || !info.enabled) {
+        startNextHealthProbe();
+        return;
+    }
+
+    m_healthProbeId = info.id;
+    m_healthProfile = profile;
+    m_healthPopupStage = false;
+    m_healthVerdicts.insert(info.id, ProbeVerdict::Pending);
+
+    // A bare page on the extension's profile — deliberately not the
+    // app's WebPage subclass, same as the EXT08 popup host: no arora
+    // channel objects or page policy leak into extension chrome.
+    QWebEnginePage *page = new QWebEnginePage(profile);
+    m_healthPage = page;
+    connect(page, &QWebEnginePage::loadFinished,
+            this, [this](bool ok) {
+        if (!m_healthPage)
+            return;
+        if (ok) {
+            runHealthProbeScript();
+            return;
+        }
+        // The manifest.json document failed — try the declared popup
+        // page once before giving up on this extension.
+        ExtensionInfo info;
+        for (const ExtensionInfo &candidate : extensions()) {
+            if (candidate.id == m_healthProbeId)
+                info = candidate;
+        }
+        if (!m_healthPopupStage && info.actionPopupUrl.isValid()) {
+            m_healthPopupStage = true;
+            m_healthPage->load(info.actionPopupUrl);
+            return;
+        }
+        finishHealthProbe(ProbeVerdict::None,
+            tr("could not load a probe page for this extension"));
+    });
+    connect(profile, &QObject::destroyed, this,
+            [this]() { abandonHealthProbe(); });
+    page->load(QUrl(QStringLiteral("chrome-extension://%1/manifest.json")
+                        .arg(info.id)));
+    // Watchdog: a wedged load or a dropped eval must not stall the
+    // queue — an unmeasurable extension stays static-classified.
+    QTimer::singleShot(30000, this, [this, page]() {
+        if (m_healthPage == page)
+            finishHealthProbe(ProbeVerdict::None,
+                tr("health probe timed out"));
+    });
+#endif
+}
+
+void ExtensionManager::runHealthProbeScript()
+{
+#if QT_CONFIG(webengine_extensions)
+    QWebEnginePage *page = m_healthPage;
+    if (!page)
+        return;
+    page->runJavaScript(QString::fromUtf8(kHealthProbeScript),
+                        [](const QVariant &) {});
+    // Poll for the report — runJavaScript does not await the
+    // promise-shaped probe, so the script parks its JSON on window.
+    QTimer *poll = new QTimer(page);
+    poll->setInterval(400);
+    const auto tries = std::make_shared<int>(0);
+    connect(poll, &QTimer::timeout, page, [this, poll, page, tries]() {
+        if (m_healthPage != page) {
+            poll->stop();
+            poll->deleteLater();
+            return;
+        }
+        ++*tries;
+        page->runJavaScript(
+            QStringLiteral("window.__aroraExtHealth || ''"),
+            [this, poll, tries](const QVariant &result) {
+                const QByteArray json = result.toString().toUtf8();
+                if (json.isEmpty() && *tries <= 30)
+                    return;
+                poll->stop();
+                poll->deleteLater();
+                evaluateHealthReport(json);
+            });
+    });
+    poll->start();
+#endif
+}
+
+void ExtensionManager::evaluateHealthReport(const QByteArray &json)
+{
+#if QT_CONFIG(webengine_extensions)
+    const QJsonObject report = QJsonDocument::fromJson(json).object();
+    if (!report.value(QLatin1String("runtime")).toBool()) {
+        // manifest.json got no chrome.* bindings — retry once on the
+        // declared action popup, which is a guaranteed extension
+        // context (EXT08 probes it the same way).
+        ExtensionInfo info;
+        for (const ExtensionInfo &candidate : extensions()) {
+            if (candidate.id == m_healthProbeId)
+                info = candidate;
+        }
+        if (!m_healthPopupStage && info.actionPopupUrl.isValid()
+                && m_healthPage) {
+            m_healthPopupStage = true;
+            m_healthPage->load(info.actionPopupUrl);
+            return;
+        }
+        finishHealthProbe(ProbeVerdict::None,
+            tr("the probe page got no chrome.* bindings"));
+        return;
+    }
+
+    const QString ping = report.value(QLatin1String("ping")).toString();
+    const int backgrounds =
+        report.value(QLatin1String("backgrounds")).toInt(-2);
+    if (ping == QLatin1String("TIMEOUT")) {
+        // EXT11's Bitwarden signature: the sendMessage triggered a
+        // worker start that never became ready (eval crash → status
+        // 15 → Chromium retries forever).
+        finishHealthProbe(ProbeVerdict::Dead,
+            tr("the background ping timed out — its service worker "
+               "never became ready"));
+        return;
+    }
+    // ERR with zero BACKGROUND contexts means the ping returned
+    // without a worker ever registering — but only when the manifest
+    // actually declares one (an extension with no background rightly
+    // shows none, and a response that did arrive is itself proof of
+    // a live context, so the check is gated on the error path).
+    bool declaresBackground = false;
+    for (const ExtensionInfo &candidate : extensions()) {
+        if (candidate.id == m_healthProbeId
+                && !candidate.path.isEmpty()) {
+            declaresBackground =
+                inspectManifest(candidate.path).hasBackground;
+            break;
+        }
+    }
+    if (declaresBackground && backgrounds == 0
+            && ping.startsWith(QLatin1String("ERR"))) {
+        finishHealthProbe(ProbeVerdict::Dead,
+            tr("its background service worker failed to register"));
+        return;
+    }
+    // PONG / EMPTY / "port closed" / a fast connection error with a
+    // live BACKGROUND context — the worker evaluated and stays
+    // registered, whether or not it answers foreign pings.
+    finishHealthProbe(ProbeVerdict::Responsive,
+        QStringLiteral("ping=%1 backgrounds=%2")
+            .arg(ping).arg(backgrounds));
+#endif
+}
+
+void ExtensionManager::finishHealthProbe(ProbeVerdict verdict,
+                                         const QString &detail)
+{
+    const QString id = m_healthProbeId;
+    m_healthProbeId.clear();
+    delete m_healthPage;
+    m_healthPage = nullptr;
+    m_healthProfile = nullptr;
+    if (!id.isEmpty()) {
+        if (verdict != ProbeVerdict::Pending)
+            m_healthVerdicts.insert(id, verdict);
+        else
+            m_healthVerdicts.remove(id);
+        m_healthDetails.insert(id, detail);
+        emit changed();
+    }
+    // Drain the queue — one probe page at a time.
+    QTimer::singleShot(0, this, [this]() { startNextHealthProbe(); });
+}
+
+QString ExtensionManager::healthProbeDetail(const QString &id) const
+{
+    return m_healthDetails.value(id);
+}
+
+void ExtensionManager::abandonHealthProbe()
+{
+    // The profile under the probe page is going away — drop the page
+    // first, then leave the id verdict-less so the next attach can
+    // measure fresh.
+    const QString id = m_healthProbeId;
+    m_healthProbeId.clear();
+    delete m_healthPage;
+    m_healthPage = nullptr;
+    m_healthProfile = nullptr;
+    if (!id.isEmpty())
+        m_healthVerdicts.remove(id);
+    m_healthQueue.clear();
 }
 
 QString ExtensionManager::userScriptsPath()

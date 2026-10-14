@@ -29,6 +29,7 @@
 #include <qguiapplication.h>
 #include <qjsondocument.h>
 #include <qjsonobject.h>
+#include <qlabel.h>
 #include <qlayout.h>
 #include <qscreen.h>
 #include <qtoolbutton.h>
@@ -198,7 +199,22 @@ void ExtensionActionBar::rebuild()
         button->setFocusPolicy(Qt::ClickFocus);
         button->setIconSize(m_iconSize);
         button->setIcon(extensionIcon(info, edge));
-        button->setToolTip(info.name);
+        // EXT12: carry the degradation verdict on the button — an
+        // extension that cannot run must not wear a bare name that
+        // promises a working popup.
+        QString toolTip = info.name;
+        if (info.health
+                == ExtensionManager::ExtensionHealth::NotSupported)
+            toolTip = tr("%1 — not supported: this extension needs "
+                         "chrome.* APIs Qt WebEngine doesn't provide")
+                          .arg(info.name);
+        else if (info.health
+                 == ExtensionManager::ExtensionHealth::Limited)
+            toolTip = tr("%1 — limited support: needs %2")
+                          .arg(info.name,
+                               info.missingApis.join(
+                                   QLatin1String(", ")));
+        button->setToolTip(toolTip);
         button->setAccessibleName(info.name);
         const QString id = info.id;
         const QUrl popupUrl = info.actionPopupUrl;
@@ -234,6 +250,46 @@ void ExtensionActionBar::openPopup(const QString &id, const QUrl &popupUrl,
         return;
     }
     delete m_popup;
+
+    // EXT12: an extension measured dead would open its action popup
+    // on a spinner that never finishes (the engine serves the
+    // chrome-extension:// page; the extension's bootstrap then waits
+    // on a background worker that does not exist).  Show the reason
+    // instead — the honest state of the row, not a fake bubble.
+    ExtensionManager::ExtensionInfo info;
+    for (const ExtensionManager::ExtensionInfo &entry
+         : ExtensionManager::instance()->extensions()) {
+        if (entry.id == id) {
+            info = entry;
+            break;
+        }
+    }
+    if (info.health == ExtensionManager::ExtensionHealth::NotSupported) {
+        QFrame *note = new QFrame(this, Qt::Popup);
+        note->setAttribute(Qt::WA_DeleteOnClose);
+        note->setObjectName(QLatin1String("extensionActionPopup"));
+        note->setFrameShape(QFrame::StyledPanel);
+        QVBoxLayout *noteLayout = new QVBoxLayout(note);
+        noteLayout->setContentsMargins(12, 10, 12, 10);
+        QLabel *label = new QLabel(note);
+        label->setWordWrap(true);
+        label->setMaximumWidth(340);
+        label->setTextFormat(Qt::PlainText);
+        label->setText(tr("%1 can't run in Arora: %2.")
+                           .arg(info.name.isEmpty() ? info.id
+                                                    : info.name,
+                                info.healthReason));
+        noteLayout->addWidget(label);
+        note->installEventFilter(this);
+        note->adjustSize();
+        const QPoint topRight = anchor->mapToGlobal(
+            QPoint(anchor->width() + 1, anchor->height() + 1));
+        note->move(topRight.x() - note->width(), topRight.y() + 2);
+        note->show();
+        m_popup = note;
+        m_popupExtensionId = id;
+        return;
+    }
 
     QWebEngineProfile *profile =
         BrowserApplication::instance()->webEngineProfile();
