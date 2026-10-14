@@ -35,6 +35,7 @@
 #include <qpointer.h>
 #include <qwidget.h>
 
+class QLabel;
 class PdfView;
 class QStackedLayout;
 
@@ -71,6 +72,15 @@ public:
     void showPdfDocument(const QString &localPath, const QUrl &sourceUrl);
     PdfView *pdfView() const { return m_pdfView; }
 
+    // ENG28: recreate the page+view pair in place after the backend's
+    // view died (Servo's poisoned SeInstance advertises
+    // restartRequested()).  The dead objects are torn down first —
+    // the engine's single-instance slot only frees on destroy — then
+    // a fresh page+view is created and reloaded at the last committed
+    // url.  On failure the tab shows an honest could-not-restart
+    // notice; the swap-to-Chromium path still works.
+    bool restartEngine();
+
 signals:
     void titleChanged(const QString &title);
     void urlChanged(const QUrl &url);
@@ -78,12 +88,20 @@ signals:
     void loadStarted();
     void loadProgress(int progress);
     void loadFinished(bool ok);
+    // The Engine::Page object was replaced in place (engine restart)
+    // — bindings that point at the old page must re-resolve.
+    void pageRecreated();
 
 private:
+    void wirePage();
+    void wireViewRecovery(QWidget *view);
+
     Engine::Backend *m_backend;
+    QPointer<Engine::Profile> m_profile;
     Engine::Page *m_page;
     QStackedLayout *m_layout;
     PdfView *m_pdfView = nullptr;
+    QLabel *m_notice = nullptr;
     QString m_title;
     int m_progress;
 };

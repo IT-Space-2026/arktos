@@ -36,6 +36,7 @@
 #include <qmimedatabase.h>
 #include <qmutex.h>
 #include <qpainter.h>
+#include <qpushbutton.h>
 #include <qstylehints.h>
 
 #include <cstring>
@@ -86,6 +87,10 @@ struct ServoApi {
     // pin cannot report the painter's GL_RENDERER; a missing symbol
     // reads as "unverifiable".
     const char *(*glRenderer)(SeInstance) = nullptr;
+    // ENG28: optional — explicit engine teardown.  A missing symbol
+    // leaves the engine parked until process exit (threads die with
+    // it), the same outcome artifacts had before the export existed.
+    void (*shutdown)() = nullptr;
     // ENG27: optional — crash-recovery introspection.  Missing on
     // pre-ENG27 artifacts: the instance slot then reads occupied while
     // a view lives (the old spend-once contract) and a spent slot
@@ -214,6 +219,11 @@ bool resolve()
     // engaged rather than trust the env override took.
     api().glRenderer = reinterpret_cast<decltype(api().glRenderer)>(
         library().resolve("se_gl_renderer"));
+    // Optional ENG28 addition — explicit engine shutdown for app
+    // teardown.  Missing on older artifacts: the engine simply stays
+    // resident until the process dies, as it always has.
+    api().shutdown = reinterpret_cast<decltype(api().shutdown)>(
+        library().resolve("se_shutdown"));
     // Optional ENG27 additions — instance-slot introspection for the
     // crash-recovery path.  Missing on older artifacts: the slot
     // keeps behaving as a one-way spend, exactly as before.
@@ -235,23 +245,23 @@ bool resolve()
 
 } // namespace
 
-// ---- one SeInstance at a time (ENG12/ENG27) --------------------------
+// ---- one LIVE SeInstance at a time (ENG12/ENG27/ENG28) -------------
 //
-// libservo v0.7.0 parks its Opts in a process-global OnceCell — the
-// first Servo build wins and EVERY later se_init panics ("Already
-// initialized", components/config/opts.rs).  Rust panics cannot
-// unwind across the extern "C" ABI, so a second CONCURRENT ServoView
-// is not a degraded tab, it is a guaranteed process abort.  The slot
-// below is the honest guard: Free -> InUse on se_init, -> Exhausted
-// when the view dies or init fails.
+// The engine is once-per-process; an INSTANCE is a webview over it.
+// The slot guards concurrency, not lifetime: Free -> InUse on the
+// view's se_init claim, -> Free again when the view is destroyed —
+// the next se_init then manufactures a FRESH instance on the
+// surviving engine (the ENG28 crash recovery).  -> Exhausted only
+// when se_init itself fails: on a pre-ENG28 artifact that is also
+// the answer every later attempt gets, so the failure stays
+// terminal for the session instead of being retried on every swap.
 //
-// ENG27: Exhausted is no longer hard-forever.  The shim's se_destroy
-// hands its instance slot back even when teardown panics (the
-// webrender gl.rs panic used to leak the box AND strand the slot),
-// so whether a spent slot can host a fresh instance is the artifact's
-// call: se_can_init answers it — 0 on the once-per-process engine
-// (this slice) and nonzero once ENG28's re-init lands.  Missing on
-// old artifacts: the slot stays terminal, exactly as before.
+// ENG27: the shim's se_destroy hands its instance slot back even
+// when teardown panics (the webrender gl.rs panic used to leak the
+// box AND strand the slot), so whether an Exhausted slot can host a
+// fresh instance is the artifact's call — instanceAvailable()
+// consults se_can_init.  Missing on old artifacts: the slot stays
+// terminal, exactly as before.
 
 namespace {
 
@@ -266,19 +276,31 @@ QMutex &servoMutex()
 ServoSlot g_servoSlot = ServoSlot::Free;      // under servoMutex()
 ServoView *g_liveView = nullptr;              // under servoMutex()
 
+// ENG28: callback userdata is &g_liveView — a stable CELL, never the
+// view itself.  The engine's event-loop waker was bound at
+// ServoBuilder::build time to the FIRST instance's SeCallbacks; on a
+// post-crash second instance it still wakes through that userdata,
+// so only a shared indirection routes every generation's wake (and
+// every delegate callback, uniformly) to the CURRENT view.  Anything
+// that is not the cell reads as dead.
+ServoView *viewFor(void *userdata)
+{
+    return userdata == &g_liveView ? g_liveView : nullptr;
+}
+
 } // namespace
 
 // ---- ServoView ------------------------------------------------------
 
 void ServoView::cbWake(void *userdata)
 {
-    // Any Servo thread — bounce to the GUI thread.  userdata is a raw
-    // this and Servo threads may still wake while se_destroy unwinds
-    // underneath ~ServoView, so the live-view slot gates the
-    // dereference: a stale wake only compares the pointer value.
+    // Any Servo thread — bounce to the GUI thread.  userdata is the
+    // &g_liveView cell, so the live-view gate is the dereference
+    // itself: a stale wake (engine shutting down, a dying view's last
+    // frames) resolves to null and drops here.
     QMutexLocker lock(&servoMutex());
-    ServoView *view = static_cast<ServoView *>(userdata);
-    if (!view || g_liveView != view)
+    ServoView *view = viewFor(userdata);
+    if (!view)
         return;
     QMetaObject::invokeMethod(view, &ServoView::spinOnce,
                               Qt::QueuedConnection);
@@ -291,8 +313,8 @@ void ServoView::cbFrameReady(void *userdata)
     // running the frame copy on the GUI thread also closes the
     // m_image write-vs-paintEvent race.
     QMutexLocker lock(&servoMutex());
-    ServoView *view = static_cast<ServoView *>(userdata);
-    if (!view || g_liveView != view)
+    ServoView *view = viewFor(userdata);
+    if (!view)
         return;
     QMetaObject::invokeMethod(view, [view]() {
         view->grabFrame();
@@ -305,8 +327,8 @@ void ServoView::cbUrlChanged(void *userdata, const char *url)
     // setUrl writes m_url and emits — both belong on the GUI thread,
     // and the live-view gate keeps a late callback off a dying view.
     QMutexLocker lock(&servoMutex());
-    ServoView *view = static_cast<ServoView *>(userdata);
-    if (!view || g_liveView != view)
+    ServoView *view = viewFor(userdata);
+    if (!view)
         return;
     const QUrl qurl(QString::fromUtf8(url));
     QMetaObject::invokeMethod(view, [view, qurl]() {
@@ -317,8 +339,8 @@ void ServoView::cbUrlChanged(void *userdata, const char *url)
 void ServoView::cbTitleChanged(void *userdata, const char *title)
 {
     QMutexLocker lock(&servoMutex());
-    ServoView *view = static_cast<ServoView *>(userdata);
-    if (!view || g_liveView != view)
+    ServoView *view = viewFor(userdata);
+    if (!view)
         return;
     const QString text(QString::fromUtf8(title));
     QMetaObject::invokeMethod(view, [view, text]() {
@@ -329,8 +351,8 @@ void ServoView::cbTitleChanged(void *userdata, const char *title)
 void ServoView::cbLoadStatus(void *userdata, int status)
 {
     QMutexLocker lock(&servoMutex());
-    ServoView *view = static_cast<ServoView *>(userdata);
-    if (!view || g_liveView != view)
+    ServoView *view = viewFor(userdata);
+    if (!view)
         return;
     QMetaObject::invokeMethod(view, [view, status]() {
         view->onLoadStatus(status);
@@ -369,9 +391,9 @@ ServoView::ServoView(QWidget *parent)
         QMutexLocker lock(&servoMutex());
         if (g_servoSlot != ServoSlot::Free) {
             // Reached only via a caller that skipped createPage's
-            // refusal — inert, never a second se_init.
-            qWarning("servo-embed: refusing a second se_init — libservo "
-                     "permits one instance per process (see header)");
+            // refusal — inert, never a concurrent second se_init.
+            qWarning("servo-embed: refusing se_init — a live instance "
+                     "already exists or init failed (see header)");
             return;
         }
         g_servoSlot = ServoSlot::InUse;
@@ -379,7 +401,9 @@ ServoView::ServoView(QWidget *parent)
     }
 
     SeCallbacks callbacks = {};
-    callbacks.userdata = this;
+    // &g_liveView, NOT this — the indirection cell the first-
+    // generation engine waker keeps routing through (see viewFor).
+    callbacks.userdata = &g_liveView;
     callbacks.wake = &ServoView::cbWake;
     callbacks.frame_ready = &ServoView::cbFrameReady;
     callbacks.url_changed = &ServoView::cbUrlChanged;
@@ -391,15 +415,31 @@ ServoView::ServoView(QWidget *parent)
 
     const QByteArray configDir =
         ServoBackend::configDir().toUtf8();
-    m_instance = api().init(callbacks,
-                            width() > 0 ? width() : 800,
-                            height() > 0 ? height() : 600,
-                            configDir.constData());
+    const int w = width() > 0 ? width() : 800;
+    const int h = height() > 0 ? height() : 600;
+    m_instance = api().init(callbacks, w, h, configDir.constData());
+    if (m_instance) {
+        // ENG28 self-check: a fresh instance counts only when its
+        // first real pump stays panic-free — resize exercises the
+        // painter bookkeeping, spin runs the event loop, and either
+        // one tripping poison means the surviving engine is dead too
+        // (the instance is then torn down here: the slot stays spent
+        // and recovery is declared impossible, never half-alive).
+        api().resize(m_instance, w, h);
+        api().spin(m_instance);
+        if (isPoisoned()) {
+            api().destroy(m_instance);
+            m_instance = nullptr;
+            qWarning("servo-embed: fresh instance poisoned on its "
+                     "init probe — engine unrecoverable");
+        }
+    }
     if (!m_instance) {
         QMutexLocker lock(&servoMutex());
         g_liveView = nullptr;
-        // A failed se_init may already have consumed the global Opts
-        // — never hand the slot back.
+        // A failed se_init is terminal for the session — on an
+        // artifact predating sequential instances every later attempt
+        // fails identically; on a current one a dead engine does too.
         g_servoSlot = ServoSlot::Exhausted;
         qWarning("servo-embed: se_init failed");
     }
@@ -411,14 +451,16 @@ ServoView::~ServoView()
         QMutexLocker lock(&servoMutex());
         if (g_liveView == this)
             g_liveView = nullptr;
-        // Only the view that held the claim spends the slot — an
-        // inert never-initialized view must not downgrade a live one.
-        // ENG27: Exhausted means "spent" not "forever" — the shim
-        // released its instance slot in se_destroy (panic-safe), and
-        // instanceAvailable() consults the artifact's se_can_init to
-        // reopen it once the re-init path exists.
+        // ENG28: a destroyed instance hands the slot BACK — the shim
+        // creates a fresh SeInstance on the surviving engine at the
+        // next se_init, so recovery is possible the moment the dead
+        // object graph is gone.  Only the view that held the claim
+        // frees the slot — an inert never-initialized view must not
+        // downgrade a live one.  ENG27: the release survives a
+        // panicking teardown — the shim frees its instance slot in
+        // se_destroy before the catch-wrapped drop.
         if (m_instance)
-            g_servoSlot = ServoSlot::Exhausted;
+            g_servoSlot = ServoSlot::Free;
     }
     if (m_instance && resolve())
         api().destroy(m_instance);
@@ -469,6 +511,12 @@ bool ServoView::instanceActive()
     // ENG27: the shim's instance slot — the readback proving
     // se_destroy released it even when teardown panicked.
     return api().instanceActive && api().instanceActive();
+}
+
+bool ServoView::instanceInUse()
+{
+    QMutexLocker lock(&servoMutex());
+    return g_servoSlot == ServoSlot::InUse;
 }
 
 void ServoView::load(const QUrl &url)
@@ -568,6 +616,23 @@ void ServoView::onLoadStatus(int status)
 }
 
 
+void ServoView::ensureCrashUi()
+{
+    if (m_retryButton)
+        return;
+    m_retryButton = new QPushButton(tr("Try Servo Again"), this);
+    m_retryButton->setAccessibleName(tr("Restart the Servo engine"));
+    m_retryButton->setToolTip(
+        tr("Tear down the crashed engine view and create a fresh "
+           "Servo instance on the still-running engine."));
+    connect(m_retryButton, &QPushButton::clicked,
+            this, &ServoView::restartRequested);
+    m_retryButton->adjustSize();
+    m_retryButton->move(12, height()
+                            - m_retryButton->height() - 12);
+    m_retryButton->show();
+}
+
 void ServoView::paintEvent(QPaintEvent *event)
 {
     QPainter painter(this);
@@ -581,16 +646,19 @@ void ServoView::paintEvent(QPaintEvent *event)
                          tr("Servo engine unavailable — the "
                             "servo-embed artifact could not be loaded."));
     } else if (isPoisoned()) {
-        // ENG20: the shim caught a panic inside servo — the instance
-        // is dead, but the app survived.  Say so on the surface and
-        // point at the one working recovery: swap back to Chromium
-        // (a new servo tab is impossible — the slot stays spent).
+        // ENG20/ENG28: the shim caught a panic inside servo — the
+        // instance is dead, but the app survived.  Say so on the
+        // surface and offer BOTH honest paths: "Try Servo Again"
+        // tears down this view and creates a fresh SeInstance on the
+        // surviving engine (restartRequested -> EngineTab), or the
+        // tab can be swapped back to Chromium.
+        ensureCrashUi();
         painter.setPen(palette().color(QPalette::Text));
         painter.drawText(rect().adjusted(12, 12, -12, -12),
                          Qt::AlignTop | Qt::AlignLeft | Qt::TextWordWrap,
                          tr("The Servo engine crashed — this tab is "
-                            "disabled. Switch it back to Chromium to "
-                            "keep browsing."));
+                            "disabled. Try Servo again, or switch it "
+                            "back to Chromium to keep browsing."));
     }
 }
 
@@ -598,6 +666,11 @@ void ServoView::resizeEvent(QResizeEvent *)
 {
     if (m_instance && !isPoisoned())
         api().resize(m_instance, width(), height());
+    // Keep the crash surface's retry button parked at the bottom —
+    // a no-op while the instance is healthy.
+    if (m_retryButton)
+        m_retryButton->move(12, height()
+                                - m_retryButton->height() - 12);
 }
 
 void ServoView::mouseMoveEvent(QMouseEvent *event)
@@ -1083,6 +1156,21 @@ void ServoProfile::setProfileAttribute(const QString &name, const QVariant &valu
 ServoBackend::ServoBackend(QObject *parent)
     : Engine::Backend(parent)
 {
+    // ENG28: the engine's lifetime is the process's — it outlives
+    // every SeInstance by design.  The graceful shutdown (Servo's
+    // Exit + shutdown spin) must run while the GUI thread is still
+    // intact, so it is driven from aboutToQuit rather than left to
+    // the shim's TLS teardown, where its own TLS may already be gone.
+    if (qApp) {
+        connect(qApp, &QCoreApplication::aboutToQuit,
+                this, &ServoBackend::shutdownEngine);
+    }
+}
+
+void ServoBackend::shutdownEngine()
+{
+    if (resolve() && api().shutdown)
+        api().shutdown();
 }
 
 ServoBackend *ServoBackend::instance()
@@ -1184,15 +1272,17 @@ Engine::Profile *ServoBackend::createProfile(
 Engine::Page *ServoBackend::createPage(Engine::Profile *profile,
                                        QObject *parent)
 {
-    // ENG12: one WebView per process lifetime — a second se_init
-    // aborts (process-global Opts panic crossing the C ABI).  Refusing
-    // the page fails the whole EngineTab upstream (addEngineTab drops
-    // it, reloadTabInEngine keeps the old tab, a servo-default
-    // newTab() falls back to Chromium) instead of manufacturing the
-    // crash.  ServoView's ctor double-checks at se_init time.
+    // ENG12/ENG28: one LIVE WebView at a time — a second se_init while
+    // an instance is alive is refused, and a failed init stays
+    // terminal.  Refusing the page fails the whole EngineTab upstream
+    // (addEngineTab drops it, reloadTabInEngine keeps the old tab, a
+    // servo-default newTab() falls back to Chromium) instead of
+    // manufacturing the crash.  A slot that freed itself when its
+    // view died reaches the ctor probe normally — that IS the ENG28
+    // recovery path.
     if (!ServoView::instanceAvailable()) {
-        qWarning("servo: refusing engine tab — libservo supports one "
-                 "WebView per process and it is already claimed");
+        qWarning("servo: refusing engine tab — a live Servo instance "
+                 "already exists or the engine failed to start");
         return nullptr;
     }
     return new ServoPage(profile, parent);
@@ -1200,13 +1290,17 @@ Engine::Page *ServoBackend::createPage(Engine::Profile *profile,
 
 QString ServoBackend::pageUnavailableReason() const
 {
-    // ENG12: the process-global SeInstance slot — claimed by a live
-    // view or spent (a dead view / failed init) — refuses every
-    // further page, so the switcher menu shows the entry disabled
-    // rather than offering a swap that can only fail.
+    // ENG12/ENG28: the single live-instance slot.  InUse reads as
+    // "one tab at a time" (a crashed-but-still-alive view counts —
+    // the dead tab stays disabled until it is retried or closed);
+    // Exhausted means se_init itself failed, which is terminal for
+    // the session and worth saying differently.
     if (ServoView::instanceAvailable())
         return QString();
-    return tr("already in use — Servo supports one tab per session");
+    if (!ServoView::instanceInUse())
+        return tr("the engine could not be started — "
+                  "restart Arora to try again");
+    return tr("already in use — Servo supports one tab at a time");
 }
 
 QWidget *ServoBackend::createView(Engine::Page *page, QWidget *parent)

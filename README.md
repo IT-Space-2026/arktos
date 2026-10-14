@@ -212,11 +212,13 @@ browsing profile:
   engine and offers "Reload in …" on the other backends; Servo
   (`qmake servo=1` + the servo-embed artifact) is an experimental
   degraded co-engine — Tor windows stay Chromium-locked and private
-  tabs refuse the swap. libservo currently supports one web view per
-  process, so only one Servo tab can exist at a time; further swaps
-  are refused instead of crashing, and a crash inside the engine
-  degrades that tab to an inert crash notice instead of taking the
-  browser down.
+  tabs refuse the swap. libservo supports one web view at a time, so
+  only one Servo tab can exist; further swaps are refused instead of
+  crashing. A crash inside the engine degrades that tab to a crash
+  notice instead of taking the browser down, and the notice offers
+  "Try Servo Again" — the crashed web view is torn down and a fresh
+  one is created on the still-running engine (switching the tab to
+  Chromium and back recovers the same way).
 - **Reader mode** (Ctrl+Alt+R) and **Picture-in-Picture** on videos.
 - **Command palette** — Ctrl+Shift+P fuzzy search over browser
   commands.

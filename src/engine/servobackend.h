@@ -42,21 +42,26 @@
 // surface handoff, so the QOpenGLWidget/surfman upgrade needs a shim
 // extension first (noted in the spike doc).
 //
-// ENG12: exactly ONE LIVE ServoView at a time.
-// libservo v0.7.0 parks Opts in a process-global OnceCell — the first
-// Servo build wins, every later se_init panics ("Already initialized"
-// in components/config/opts.rs), and a Rust panic cannot unwind
-// across the extern "C" boundary so the host process aborts.  The
-// backend refuses a second page/view rather than manufacturing the
-// abort; a spent slot is only handed back when the artifact says a
-// fresh init can serve it (se_can_init — ENG27).
+// ENG12/ENG28: one LIVE ServoView at a time — never two instances
+// concurrently.  libservo v0.7.0 parks Opts in a process-global
+// OnceLock, so the ENGINE is built once on the first se_init and kept
+// for the process lifetime; but a SeInstance is only a webview +
+// delegate + rendering context over that engine and CAN be replaced
+// (ENG28 — the shim keeps the engine in a thread_local and creates a
+// fresh instance on se_init once the old one is se_destroy'd, the
+// same shape as Chromium respawning a crashed renderer on the
+// surviving browser process).  The Qt slot below therefore has no
+// terminal state for a destroyed view — Exhausted is only reached
+// when se_init itself fails (a pre-ENG28 artifact refuses every
+// second init the same way, so the failure is declared permanent for
+// the session rather than retried on every swap).
 //
 // ENG27: the shim's instance slot is no longer a one-way spend —
 // se_destroy releases it FIRST, before the catch-wrapped teardown,
 // so a panicking drop (the desktop log's webrender GL panic) cannot
-// strand the slot anymore.  A spent slot recovers the moment the
-// artifact can mint a fresh instance on the surviving engine —
-// ENG28's re-init — and reads terminal until then.
+// strand the slot anymore.  The Qt side can read that back through
+// se_instance_active/se_can_init on artifacts new enough to export
+// them.
 
 #include "engineinterface.h"
 
@@ -68,6 +73,7 @@
 #include <qurl.h>
 #include <qwidget.h>
 
+class QPushButton;
 class ServoPage;
 
 // QWidget hosting one libservo WebView through the servo-embed C ABI
@@ -85,17 +91,23 @@ public:
     bool isReady() const;
     // ENG20: the shim caught a panic inside servo and poisoned this
     // instance — every further export is a no-op and the tab is dead
-    // (swap back to Chromium to keep browsing).  Always false on
-    // artifacts predating se_is_poisoned.
+    // (retry in place via restartRequested, or swap back to Chromium
+    // to keep browsing).  Always false on artifacts predating
+    // se_is_poisoned.
     bool isPoisoned() const;
     // ENG23: GL_RENDERER of the painter's context — names the software
     // rasterizer once the shim pins it, empty on artifacts predating
     // se_gl_renderer.
     QString glRenderer() const;
-    // Whether another ServoView may be constructed — false while the
-    // process's single SeInstance slot is claimed; a spent slot
-    // answers through the artifact's se_can_init (ENG27).
+    // Whether another ServoView may be constructed — false while a
+    // live instance holds the slot or after a failed se_init (ENG12);
+    // a spent slot answers through the artifact's se_can_init
+    // (ENG27).
     static bool instanceAvailable();
+    // ENG28: a live instance currently holds the slot — false while
+    // Free and after a failed-init Exhausted (the two refused states
+    // report different reasons in pageUnavailableReason()).
+    static bool instanceInUse();
     // ENG27: the shim-side instance slot — true while a SeInstance is
     // live, false once se_destroy released it (even when teardown
     // panicked).  false on artifacts predating se_instance_active.
@@ -125,6 +137,10 @@ signals:
     void loadProgress(int progress);
     void loadFinished(bool ok);
     void statusChanged(const QString &status);
+    // ENG28: the crashed-view surface's "Try Servo again" affordance —
+    // the host (EngineTab) recreates page+view on a fresh SeInstance;
+    // the dead object graph is torn down first, never resurrected.
+    void restartRequested();
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -142,6 +158,8 @@ private:
     void setUrl(const QUrl &url);
     void setTitle(const QString &title);
     void onLoadStatus(int status);
+    // ENG28: lazily create/position the poisoned view's retry button.
+    void ensureCrashUi();
 
     // SeCallbacks trampolines — static members so the C ABI reaches
     // private state without friend pollution.
@@ -159,6 +177,7 @@ private:
     QUrl m_url;
     QString m_title;
     bool m_loading;
+    QPushButton *m_retryButton = nullptr;
     // ENG25: wheel events coalesce into one se_wheel per ~frame —
     // every notify_input_event ends in a full-viewport software
     // raster + readback on this display path, so raw 1:1 forwarding
@@ -297,6 +316,12 @@ public:
     // Filesystem+symbol resolution only; does not start servo.
     static bool artifactAvailable();
     static QString artifactPath();
+    // ENG28: drive the engine's graceful shutdown while the GUI
+    // thread is intact — no-op when the artifact predates
+    // se_shutdown (the engine then dies with the process, as it
+    // always has).  Wired to aboutToQuit automatically; harnesses
+    // that exit without exec() call it explicitly.
+    static void shutdownEngine();
 
     QString id() const override;
     QString displayName() const override;

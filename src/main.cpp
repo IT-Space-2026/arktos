@@ -133,6 +133,7 @@
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
+#include <QtCore/QPointer>
 #include <QtCore/QProcess>
 #include <QtCore/QProcessEnvironment>
 #include <QtCore/QScopeGuard>
@@ -3366,8 +3367,9 @@ static int servoLifecycleSmoke()
         // SE_SELFTEST_PANIC forces a panic inside se_spin so the real
         // path is exercised: caught -> poisoned -> every later call a
         // no-op, the app degrades to a dead tab instead of dying.  The
-        // leg runs last on the live instance — poisoning is permanent
-        // and a process only ever gets one SeInstance.
+        // leg runs last on THIS instance — ENG28 makes a poisoned
+        // instance recoverable by teardown + a fresh se_init on the
+        // surviving engine, which the legs below exercise.
         ServoView *servoView = engineTab && engineTab->page()
             ? qobject_cast<ServoView *>(engineTab->page()->view())
             : nullptr;
@@ -3555,6 +3557,18 @@ static int servoLifecycleSmoke()
             pumpUntil([]() { return false; }, 500);
             servoView->grab();
             report(QStringLiteral("panic-survived"), true);
+            // ENG28: the crashed surface paints its disabled notice AND
+            // offers the retry affordance — the grab above drove
+            // paintEvent through the poisoned branch, which lazily
+            // installs the "Try Servo Again" button.
+            report(QStringLiteral("retry-offered"),
+                   servoView->findChild<QPushButton *>() != nullptr);
+            // The crashed-but-live instance still holds the slot —
+            // the dead tab stays disabled until retried or closed.
+            Engine::Profile *profile =
+                servo->createProfile(Engine::ProfileOptions(), nullptr);
+            report(QStringLiteral("second-page-refused-live"),
+                   profile && !servo->createPage(profile, nullptr));
         }
 
         // ENG27: the crashed+destroyed instance must release the
@@ -3570,35 +3584,142 @@ static int servoLifecycleSmoke()
                ServoView::instanceActive());
         qputenv("SE_SELFTEST_DESTROY_PANIC", "1");
 #endif
-        // (c) mid-tab backend switching stays stable: back to
-        // webengine destroys the only ServoView, and a second
-        // servo tab must be refused — not manufactured into an abort.
+        // (c) ENG28 recovery: swapping the crashed tab to Chromium
+        // destroys the poisoned view — se_destroy frees the single
+        // instance slot — so the NEXT swap back to Servo creates a
+        // FRESH SeInstance on the still-running engine instead of
+        // being refused forever.
         report(QStringLiteral("swap-back"),
                tabs.reloadTabInEngine(0, QStringLiteral("webengine")));
         pumpDeletes();
 #ifdef ARORA_SERVO
         // ENG27: the destroy above ran with the panic injection armed
-        // — the shim caught it AND still released the slot.  A second
-        // se_init stays refused on this slice's once-per-process
-        // engine (se_can_init reads 0); ENG28's re-init flips that.
+        // — the shim caught it AND still released the slot.
         qunsetenv("SE_SELFTEST_DESTROY_PANIC");
         // servoView itself is gone — only the slot readback survives.
         report(QStringLiteral("destroy-panic-slot-freed"),
                !ServoView::instanceActive());
 #endif
-        report(QStringLiteral("reswap-refused"),
-               !tabs.reloadTabInEngine(0, QStringLiteral("servo")));
+        report(QStringLiteral("reswap-recovers"),
+               tabs.reloadTabInEngine(0, QStringLiteral("servo")));
+#ifdef ARORA_SERVO
+        EngineTab *recovered = tabs.engineTab(0);
+        ServoView *recoveredView = recovered && recovered->page()
+            ? qobject_cast<ServoView *>(recovered->page()->view())
+            : nullptr;
+        // The recovery is a verified-clean instance: ctor probe
+        // (resize+spin) passed AND the poison flag reads false — the
+        // dead instance's flag was never silently cleared, it was
+        // dropped with its object.
+        report(QStringLiteral("recovery-fresh-instance"),
+               recoveredView && recoveredView != servoView
+               && recoveredView->isReady()
+               && !recoveredView->isPoisoned());
+        if (recoveredView && recovered) {
+            bool finished = false;
+            QObject::connect(recovered, &EngineTab::loadFinished,
+                             recovered,
+                             [&finished](bool) { finished = true; });
+            recovered->load(probe);
+            pumpUntil([&finished]() { return finished; }, 30000);
+            pumpUntil([]() { return false; }, 2000);
+            const QImage grab = recoveredView->grab().toImage();
+            int distinct = 0;
+            QSet<QRgb> colors;
+            for (int y = 0; y < grab.height() && distinct <= 100; ++y) {
+                for (int x = 0; x < grab.width(); ++x) {
+                    const QRgb pixel = grab.pixel(x, y);
+                    if (!colors.contains(pixel)) {
+                        colors.insert(pixel);
+                        ++distinct;
+                    }
+                }
+            }
+            report(QStringLiteral("recovery-renders"),
+                   finished && distinct > 100
+                   && !recoveredView->isPoisoned());
+            // A live instance again refuses a concurrent second page.
+            Engine::Profile *profile =
+                servo->createProfile(Engine::ProfileOptions(), nullptr);
+            report(QStringLiteral("second-page-refused"),
+                   profile && !servo->createPage(profile, nullptr));
+
+            // The in-tab retry path: re-poison the recovered view,
+            // let paintEvent install "Try Servo Again", click it —
+            // EngineTab tears the dead objects down and recreates
+            // page+view on a THIRD SeInstance.  The restart is
+            // queued (the click must finish its signal emission
+            // before the owning view dies), so the wait is on
+            // pageRecreated, not the click's return.
+            QPointer<ServoView> oldView = recoveredView;
+            bool recreated = false;
+            QObject::connect(recovered, &EngineTab::pageRecreated,
+                             recovered,
+                             [&recreated]() { recreated = true; });
+            qputenv("SE_SELFTEST_PANIC", "1");
+            recoveredView->spinOnce();
+            qunsetenv("SE_SELFTEST_PANIC");
+            report(QStringLiteral("re-poisoned"),
+                   recoveredView->isPoisoned());
+            recoveredView->grab();
+            QPushButton *retry =
+                recoveredView->findChild<QPushButton *>();
+            report(QStringLiteral("retry-button-present"),
+                   retry != nullptr);
+            if (retry)
+                retry->click();
+            pumpUntil([&recreated]() { return recreated; }, 10000);
+            pumpDeletes();
+            ServoView *retried = recovered->page()
+                ? qobject_cast<ServoView *>(recovered->page()->view())
+                : nullptr;
+            report(QStringLiteral("retry-recreates"),
+                   retried && retried != oldView
+                   && retried->isReady() && !retried->isPoisoned());
+            if (retried) {
+                pumpUntil([recovered, &probe]() {
+                    return recovered->url() == probe;
+                }, 30000);
+                report(QStringLiteral("retry-reloads"),
+                       recovered->url() == probe);
+            }
+        }
+#endif
+        report(QStringLiteral("swap-back-final"),
+               tabs.reloadTabInEngine(0, QStringLiteral("webengine")));
+        pumpDeletes();
         report(QStringLiteral("original-kept"),
                tabs.webView(0) != nullptr);
     }
 
-    // (d) the direct-API refusal: once the single instance is spent,
-    // createPage hands back nothing instead of letting se_init panic.
+#ifdef ARORA_SERVO
+    // (d) a freed slot is really free — the direct-API path (the old
+    // "second-page-refused" leg's counterpart) now gets a fresh page
+    // AND a live fresh instance, not a refusal and not the dead graph.
     pumpDeletes();
-    Engine::Profile *profile =
-        servo->createProfile(Engine::ProfileOptions(), nullptr);
-    report(QStringLiteral("second-page-refused"),
-           profile && !servo->createPage(profile, nullptr));
+    report(QStringLiteral("slot-freed"),
+           ServoView::instanceAvailable());
+    {
+        Engine::Profile *profile =
+            servo->createProfile(Engine::ProfileOptions(), nullptr);
+        Engine::Page *page =
+            profile ? servo->createPage(profile, nullptr) : nullptr;
+        QWidget *view =
+            page ? servo->createView(page, nullptr) : nullptr;
+        ServoView *servoView = qobject_cast<ServoView *>(view);
+        report(QStringLiteral("post-destroy-recreates"),
+               servoView && servoView->isReady()
+               && !servoView->isPoisoned());
+        delete view;
+        delete page;
+        delete profile;
+    }
+    // The smoke returns without exec(), so aboutToQuit never fires —
+    // drive the engine's graceful shutdown explicitly or servo
+    // threads outlive it into libc's static teardown (a
+    // pthread_mutex_destroy-busy SIGSEGV at exit).
+    ServoBackend::shutdownEngine();
+#endif
 
     qInfo() << "servo-smoke:" << (ok ? "PASS" : "FAIL");
     return ok ? 0 : 1;

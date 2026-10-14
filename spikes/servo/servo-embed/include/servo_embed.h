@@ -27,6 +27,19 @@ typedef struct SeCallbacks {
     void (*resource_load)(void *userdata, const char *method_and_url);
 } SeCallbacks;
 
+/* se_init: one LIVE instance at a time. The first call also builds the
+ * once-per-process engine (consuming libservo's process-global Opts and
+ * config_dir). A call while another instance is live returns NULL; a
+ * call AFTER se_destroy freed the slot mints a FRESH SeInstance — new
+ * WebView/delegate/render context — on the surviving engine (ENG28
+ * crash recovery).
+ *
+ * The engine's event-loop waker is bound at engine-build time to the
+ * FIRST call's callbacks.userdata and is never re-installed, so the
+ * host MUST pass a stable indirection cell (e.g. &live_view) it keeps
+ * pointed at whichever view is current — a raw per-view pointer dies
+ * with the first instance and the recovered one would never be pumped.
+ * config_dir is honored on the first call only. */
 SeInstance se_init(SeCallbacks callbacks, unsigned width, unsigned height,
                    const char *config_dir);
 void se_spin(SeInstance instance);
@@ -101,12 +114,24 @@ const char *se_gl_renderer(SeInstance instance);
  * host-side proof that a crashed+destroyed instance released its
  * slot — the state a recovery path (ENG28) needs to find.
  * se_can_init — non-zero when a se_init issued right now would
- * produce a live instance: true pre-init, false once the once-per-
- * process engine is consumed.  Absent on pre-ENG27 artifacts —
- * resolve optionally; a missing symbol reads as "unverifiable /
- * no re-init". */
+ * produce a live instance: true pre-init AND, on ENG28 artifacts,
+ * whenever the slot is free while the engine survives (the re-init
+ * case).  Stays 0 only for genuinely unrecoverable state — a live
+ * instance, a failed engine build, or post-se_shutdown.  Absent on
+ * pre-ENG27 artifacts — resolve optionally; a missing symbol reads
+ * as "unverifiable / no re-init". */
 int se_instance_active(void);
 int se_can_init(void);
+
+/* ENG28: explicit engine teardown. Drops the shared engine while the
+ * GUI thread is intact (the engine handle is ManuallyDrop so an
+ * unshut-down engine leaks harmlessly at thread exit instead of
+ * running its shutdown spin inside a TLS destructor). No-op when no
+ * engine exists or after a previous call; a live SeInstance is NOT
+ * destroyed — se_destroy it first. Absent on pre-ENG28 artifacts —
+ * resolve optionally; a missing symbol leaves the engine resident
+ * until process exit, as before. */
+void se_shutdown(void);
 
 /* ENG27: se_destroy releases the instance slot even when teardown
  * panics (a webrender GL panic used to leak the box AND strand the
