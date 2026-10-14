@@ -1618,7 +1618,7 @@
           <item row="4" column="0" colspan="3">
            <widget class="QCheckBox" name="sidebarShowCloseCheck">
             <property name="toolTip">
-             <string>Show the close (X) buttons on the sidebar title bar and panel headers.</string>
+             <string>Show the close (X) button on the Downloads panel header — and on the title bar when the sidebar is torn off into a floating window.</string>
             </property>
             <property name="text">
              <string>Show panel close button</string>

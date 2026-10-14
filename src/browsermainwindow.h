@@ -254,6 +254,11 @@ private:
     void applySidebarWidth();
     void persistSidebarWidth(int width);
     void updateSidebarGripPlacement();
+    // SIDE11: while docked the panel's own close controls are the
+    // only X — the dock title-bar's close button is shown again only
+    // for a torn-off floating dock (and only while
+    // sidebar/showCloseButton is on).
+    void updateSidebarCloseButton();
     void updateStopReloadActionText(bool loading);
     // ENG08: mirrors the ACTIVE tab's engine onto the shared nav-row
     // EngineIndicator — engine id, swappability and visibility all

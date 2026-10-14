@@ -4749,9 +4749,18 @@ void tst_BrowserMainWindow::sidebarPanelOptions()
     window->applySidebarSettings();
     QVERIFY(toggle->isVisible());
 
-    // 'Show Close Button' — the dock's title-bar X and the Downloads
-    // header X share the switch.
+    // 'Show Close Button' + SIDE11 — docked, the switch drives
+    // exactly one close control: the Downloads header X.  The dock
+    // title bar's own X (Qt's private qt_dockwidget_closebutton) was
+    // the duplicate sitting beside it, so that button is hidden while
+    // docked.  DockWidgetClosable itself stays on — stripping it
+    // would also break the toggle action's hide path.
     QVERIFY(dock->features() & QDockWidget::DockWidgetClosable);
+    QVERIFY(dock->toggleViewAction()->isEnabled());
+    QWidget *titleX = dock->findChild<QWidget *>(
+        QLatin1String("qt_dockwidget_closebutton"));
+    QVERIFY(titleX);
+    QVERIFY(titleX->isHidden());
     QWidget *headerX = panel->findChild<QWidget *>(
         QLatin1String("sidebarCloseButton"));
     QVERIFY(headerX);
@@ -4760,12 +4769,33 @@ void tst_BrowserMainWindow::sidebarPanelOptions()
     QVERIFY(!headerX->isHidden());
     settings.setValue(QLatin1String("sidebar/showCloseButton"), false);
     window->applySidebarSettings();
-    QVERIFY(!(dock->features() & QDockWidget::DockWidgetClosable));
+    QVERIFY(titleX->isHidden());
     QVERIFY(headerX->isHidden());
     settings.setValue(QLatin1String("sidebar/showCloseButton"), true);
     window->applySidebarSettings();
-    QVERIFY(dock->features() & QDockWidget::DockWidgetClosable);
+    QVERIFY(titleX->isHidden());
     QVERIFY(!headerX->isHidden());
+
+    // SIDE11 float/undock: a torn-off dock re-shows the title-bar X
+    // (a floating window needs its own close affordance), still
+    // gated by the option; re-docking hides it again.
+    dock->setFloating(true);
+    QTRY_VERIFY(dock->isFloating());
+    QVERIFY(!titleX->isHidden());
+    dock->setFloating(false);
+    QTRY_VERIFY(!dock->isFloating());
+    QVERIFY(titleX->isHidden());
+    settings.setValue(QLatin1String("sidebar/showCloseButton"), false);
+    window->applySidebarSettings();
+    dock->setFloating(true);
+    QTRY_VERIFY(dock->isFloating());
+    QVERIFY(titleX->isHidden());
+    dock->setFloating(false);
+    QTRY_VERIFY(!dock->isFloating());
+    settings.setValue(QLatin1String("sidebar/showCloseButton"), true);
+    window->applySidebarSettings();
+    QVERIFY(!headerX->isHidden());
+    QVERIFY(dock->isVisible());
 
     // 'Auto-Close Inactive Panel' — focus inside the dock keeps it
     // up; focus landing on a window widget outside it folds it.

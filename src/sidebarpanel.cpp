@@ -600,9 +600,9 @@ void SidebarPanel::buildPendingTab(int index)
 }
 
 // SIDE09: apply the working panel options — every checkbox in the
-// Preferences Sidebar group maps to one of these switches (the dock
-// title-bar close button and auto-close live in BrowserMainWindow's
-// applySidebarSettings, which calls this).
+// Preferences Sidebar group maps to one of these switches (the
+// floating dock's title-bar close button and auto-close live in
+// BrowserMainWindow, which calls this).
 void SidebarPanel::applyOptions()
 {
     const QSettings settings;
@@ -611,7 +611,11 @@ void SidebarPanel::applyOptions()
         settings.value(QLatin1String("sidebar/showPanelToggle"), true)
             .toBool());
     // 'Show Close Button' — the page-header X (Downloads is the one
-    // page that carries a header).
+    // page that carries a header).  SIDE11 audit: no other page
+    // (Bookmarks/History/Notes) hosts an in-panel X, and while docked
+    // the dock's own title-bar X stays off — the header X and the
+    // rail's fold button are the sidebar's only close controls, all
+    // on the same closeRequested path.
     if (m_downloadsPage) {
         if (QWidget *closeX = m_downloadsPage->findChild<QWidget *>(
                 QLatin1String("sidebarCloseButton")))

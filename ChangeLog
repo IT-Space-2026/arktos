@@ -732,6 +732,13 @@ UI:
   favicons and site/search icons, extension artwork, and the private-
   browsing badge; the Tor window keeps its light-on-violet glyphs
   (ICONS09).
+- The docked sidebar no longer shows two close buttons side by side:
+  the dock title bar's own X used to sit next to the panel's styled
+  close button, so it stays hidden while docked — the Downloads
+  header X and the rail's fold button are the single close path.
+  Tear the dock off into a floating window and the title-bar X comes
+  back, still governed by Preferences' "Show panel close button"
+  option (SIDE11).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

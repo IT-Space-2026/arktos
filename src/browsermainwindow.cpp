@@ -665,11 +665,18 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
             m_sidebarPanel->setDockSide(area);
         // RSZ02: the grip re-anchors to the new inner edge.
         updateSidebarGripPlacement();
+        // SIDE11: a dock move can rebuild the title-bar buttons —
+        // re-hide the close X.
+        updateSidebarCloseButton();
     });
     // RSZ02: a floating dock has no window edge to resize against —
-    // the grip hides while it floats.
+    // the grip hides while it floats.  SIDE11: floating is also when
+    // the title bar's close X reappears (updateSidebarCloseButton).
     connect(m_sidebarDock, &QDockWidget::topLevelChanged,
-            this, [this](bool) { updateSidebarGripPlacement(); });
+            this, [this](bool) {
+        updateSidebarGripPlacement();
+        updateSidebarCloseButton();
+    });
     // SIDE09: 'Auto-Close Inactive Panel' — fold the dock when focus
     // lands on a widget in this window outside the sidebar (the page,
     // the location bar, a menu's parent...).  Menus/popups raised
@@ -2367,16 +2374,10 @@ void BrowserMainWindow::applySidebarSettings()
     // SIDE09: 'Auto-Close Inactive Panel' — the focusChanged hook.
     m_sidebarAutoClose = settings.value(
         QLatin1String("sidebar/autoCloseInactive"), false).toBool();
-    // SIDE09: 'Show Close Button' — the dock's title-bar X joins the
-    // per-panel header X the panel itself gates.
-    QDockWidget::DockWidgetFeatures features = m_sidebarDock->features();
-    if (settings.value(QLatin1String("sidebar/showCloseButton"), true)
-            .toBool())
-        features |= QDockWidget::DockWidgetClosable;
-    else
-        features &= ~QDockWidget::DockWidgetClosable;
-    if (features != m_sidebarDock->features())
-        m_sidebarDock->setFeatures(features);
+    // SIDE11: the docked dock's title-bar X duplicated the panel's
+    // own close X side by side — while docked it stays hidden and
+    // the panel's header X / rail fold button are the close surface.
+    updateSidebarCloseButton();
     // RSZ02: the stored width lands before the dock shows; the
     // dock's first Show re-applies it via the event filter.
     applySidebarWidth();
@@ -2428,6 +2429,30 @@ void BrowserMainWindow::updateSidebarGripPlacement()
         m_sidebarGripLayout->removeWidget(m_sidebarGrip);
         m_sidebarGripLayout->addWidget(m_sidebarGrip);
     }
+}
+
+// SIDE11: the docked title bar's close X sat right beside the
+// panel's own header X (DOWN02) — one small, one bigger — so while
+// docked the title-bar button is hidden and the panel's styled
+// controls (the Downloads header X, the rail's fold button) are the
+// single close path, all landing on closeRequested -> dock hide.
+// DockWidgetClosable itself stays on: stripping it would also
+// disable the toggle action and make it swallow hide requests —
+// View > Sidebar / F4 must keep working both ways.
+// A torn-off floating dock re-shows the title-bar X (still gated by
+// sidebar/showCloseButton) so the detached window keeps a chrome
+// close affordance on top of the OS frame's own.
+void BrowserMainWindow::updateSidebarCloseButton()
+{
+    // The title bar's buttons are private Qt children; the object
+    // name is stable and safer than stripping the feature (see
+    // above).
+    if (QWidget *closeButton = m_sidebarDock->findChild<QWidget *>(
+            QLatin1String("qt_dockwidget_closebutton")))
+        closeButton->setVisible(
+            m_sidebarDock->isFloating()
+            && QSettings().value(QLatin1String("sidebar/showCloseButton"),
+                                 true).toBool());
 }
 
 bool BrowserMainWindow::eventFilter(QObject *object, QEvent *event)
