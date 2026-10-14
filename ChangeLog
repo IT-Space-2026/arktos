@@ -782,6 +782,9 @@ UI:
   navigation bar, on normal, private and Tor windows. It is fixed
   chrome: the edit-mode drag reorder cannot pick it up or drop
   items past it (MENU13).
+- File > "Open Location..." is removed — the omnibox is always on
+  the navigation bar, and Ctrl+L / Alt+D / Alt+O still focus and
+  select it (MENU14).
 - Flatter, more modern chrome from one central style source: sunken
   toolbar/dock/panel frames and hard borders are replaced by subtle
   palette-derived hairlines, toolbars and panels share a consistent

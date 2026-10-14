@@ -595,6 +595,25 @@ void tst_BrowserMainWindow::fileMenuOrder()
              QLatin1String("Close Window"));
     QCOMPARE(entries.constLast(), QLatin1String("Quit"));
 
+    // MENU14: "Open Location" left the File menu too — its action
+    // survives on the window as the Ctrl+L/Alt+D/Alt+O carrier so the
+    // location-bar focus shortcut keeps working with no menu row.
+    QCOMPARE(entries.indexOf(QLatin1String("Open Location...")), -1);
+    QAction *openLocation = nullptr;
+    for (QAction *action : window->actions()) {
+        if (action->text().remove(QLatin1Char('&'))
+                == QLatin1String("Open Location..."))
+            openLocation = action;
+    }
+    QVERIFY(openLocation);
+    QVERIFY(openLocation->shortcuts().contains(
+        QKeySequence(Qt::ControlModifier | Qt::Key_L)));
+    openLocation->trigger();
+    if (window->isActiveWindow())
+        QCOMPARE(QApplication::focusWidget(),
+                 static_cast<QWidget *>(
+                     window->tabWidget()->currentLocationBar()));
+
     // The action fires the tab widget's private-tab slot and carries
     // the incognito-style shortcut (Ctrl+Shift+P is the palette).
     QAction *privateAction = nullptr;

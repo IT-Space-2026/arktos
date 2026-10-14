@@ -296,7 +296,7 @@ private:
     QAction *m_fileNewWindowAction;
     QMenu *m_fileNewContainerTabMenu;
     QAction *m_fileOpenFileAction;
-    QAction *m_fileOpenLocationAction;
+    QAction *m_openLocationAction;
     QAction *m_fileSaveAsAction;
     QAction *m_fileImportBookmarksAction;
     QAction *m_fileExportBookmarksAction;

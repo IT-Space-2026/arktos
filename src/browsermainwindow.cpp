@@ -727,7 +727,7 @@ void BrowserMainWindow::keyPressEvent(QKeyEvent *event)
         event->accept();
         break;
     case Qt::Key_OpenUrl:
-        m_fileOpenLocationAction->trigger();
+        m_openLocationAction->trigger();
         event->accept();
         break;
     default:
@@ -1005,16 +1005,19 @@ void BrowserMainWindow::setupMenu()
             this, &BrowserMainWindow::fileOpen);
     m_fileMenu->addAction(m_fileOpenFileAction);
 
-    m_fileOpenLocationAction = new QAction(m_fileMenu);
-    // Add the location bar shortcuts familiar to users from other browsers
+    // MENU14: no File-menu entry — the action lives on the window
+    // itself (like the Ctrl+K webSearch carrier) so the location-bar
+    // shortcuts familiar from other browsers keep reaching
+    // selectLineEdit() without a menu row to show.
+    m_openLocationAction = new QAction(this);
     QList<QKeySequence> openLocationShortcuts;
     openLocationShortcuts.append(QKeySequence(Qt::ControlModifier | Qt::Key_L));
     openLocationShortcuts.append(QKeySequence(Qt::AltModifier | Qt::Key_O));
     openLocationShortcuts.append(QKeySequence(Qt::AltModifier | Qt::Key_D));
-    m_fileOpenLocationAction->setShortcuts(openLocationShortcuts);
-    connect(m_fileOpenLocationAction, &QAction::triggered,
+    m_openLocationAction->setShortcuts(openLocationShortcuts);
+    connect(m_openLocationAction, &QAction::triggered,
             this, &BrowserMainWindow::selectLineEdit);
-    m_fileMenu->addAction(m_fileOpenLocationAction);
+    addAction(m_openLocationAction);
 
     m_fileMenu->addSeparator();
     m_fileMenu->addAction(m_tabWidget->closeTabAction());
@@ -1085,7 +1088,6 @@ void BrowserMainWindow::setupMenu()
     m_fileNewContainerTabMenu->setIcon(
         AroraIcon::getChrome(QLatin1String("container-tab")));
     m_fileOpenFileAction->setIcon(AroraIcon::getChrome(QLatin1String("document-open")));
-    m_fileOpenLocationAction->setIcon(AroraIcon::getChrome(QLatin1String("go-jump")));
     m_fileSaveAsAction->setIcon(AroraIcon::getChrome(QLatin1String("document-save-as")));
     m_fileImportBookmarksAction->setIcon(AroraIcon::getChrome(QLatin1String("document-import")));
     m_fileExportBookmarksAction->setIcon(AroraIcon::getChrome(QLatin1String("document-export")));
@@ -1756,7 +1758,7 @@ void BrowserMainWindow::retranslate()
     m_fileNewWindowAction->setText(tr("&New Window"));
     m_fileNewContainerTabMenu->setTitle(tr("New &Container Tab"));
     m_fileOpenFileAction->setText(tr("&Open File..."));
-    m_fileOpenLocationAction->setText(tr("Open &Location..."));
+    m_openLocationAction->setText(tr("Open &Location..."));
     m_fileSaveAsAction->setText(tr("&Save As..."));
     m_fileImportBookmarksAction->setText(tr("&Import Bookmarks..."));
     m_fileExportBookmarksAction->setText(tr("&Export Bookmarks..."));
