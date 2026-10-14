@@ -824,3 +824,4 @@
 - 2026-10-13 ICONS08: static submenu headers iconed — new container-tab crate glyph + fd-standard names for DevTools/Text Encoding/User Agent/Recently Closed (5 mid-grey arora-legacy fallbacks); tst menuIcons requires icons on every static-menu row + tor headers leg — verified: tst_browsermainwindow 56/56, menu grabs in-column, make check rc=0 (check-warnings PASS, 65 programs 0 failed) offscreen --disable-gpu
 - 2026-10-13 MERGEWATCH: ui-work merged — conflict in src/browsermainwindow.cpp (master DEVT04 moved DevTools View→Tools; re-applied ICONS08 header icon to m_toolsDevToolsMenu, kept View Text Encoding icon); stale 'View → Dev Tools' refs fixed in ChangeLog + tst comment; build ok
 - 2026-10-14 MERGEWATCH: ui-work merged — no conflicts (1 commit: TOR18 queue-tor-navigations task queued in .devin/Arora-Task-UI.md), build ok
+- 2026-10-14 MERGEWATCH: ui-work merged — no conflicts (.devin/Arora-Task-UI.md append-only), build ok
