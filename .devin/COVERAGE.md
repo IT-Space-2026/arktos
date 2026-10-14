@@ -224,7 +224,7 @@ Per-crate total LINE coverage from `cargo llvm-cov --workspace --json --summary-
 | Crate | Lines |
 |-------|-------|
 | src/adblock/rust | 90.50% |
-| src/rustcore | 91.74% |
+| src/rustcore | 91.72% |
 | src/rustdl | 89.25% |
 
 <!-- rustcov:end -->

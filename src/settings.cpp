@@ -3055,6 +3055,17 @@ void SettingsDialog::extensionSelectionChanged()
         else if (info.health
                  == ExtensionManager::ExtensionHealth::Limited)
             lines << tr("Limited support: %1.").arg(info.healthReason);
+        // EXT14: the hosted-background tier — a real background
+        // context when Qt's MV3 service-worker host can't run one.
+        if (!info.hostState.isEmpty()) {
+            lines << (info.hosted
+                ? tr("Background: hosted (shim bridge up)")
+                : tr("Background: host %1%2")
+                      .arg(info.hostState,
+                           info.hostError.isEmpty()
+                               ? QString()
+                               : tr(" — %1").arg(info.hostError)));
+        }
         if (info.builtin)
             lines << tr("Built-in component extension.");
         if (!info.path.isEmpty())
@@ -3185,6 +3196,10 @@ void SettingsDialog::refreshExtensions()
         else if (info.health
                  == ExtensionManager::ExtensionHealth::Limited)
             status = tr("Limited");
+        else if (info.enabled && info.hosted)
+            status = tr("Enabled (hosted)");   // EXT14 background host up
+        else if (info.enabled && info.hostState == QLatin1String("failed"))
+            status = tr("Enabled (background failed)");
         else
             status = tr("Enabled");
         item->setText(2, status);

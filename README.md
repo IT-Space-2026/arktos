@@ -421,6 +421,20 @@ health check above therefore reports it **Not supported** with the
 missing APIs listed. See `.devin/EXT11-report.md` for the full
 matrix.
 
+Enabled extensions that declare a background script additionally get
+a hosted background context: a hidden page on the extension's own
+profile at its real `chrome-extension://` origin runs a generated
+bootstrap (shim preamble, then the real background scripts in
+manifest order — the installed package is never modified). This
+works around Qt WebEngine's MV3 service-worker subset, which cannot
+run most background bundles. The hosted page keeps real
+`chrome.runtime`/`chrome.storage`, is kept answerable under
+background throttling, and bridges to the shell over a dedicated
+`chromeBridge` WebChannel — calls into chrome.* surfaces that are
+not implemented yet answer a typed error that shows up in the
+extension's health state on the Settings page rather than silently
+no-op'ing. Set `ARORA_EXTHOST_OFF=1` to disable hosted backgrounds.
+
 ### Credentials & autofill
 
 Saved-password prompts, per-site "never" rules and a form-passwords
