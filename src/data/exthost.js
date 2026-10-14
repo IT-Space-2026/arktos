@@ -29,6 +29,10 @@
     var host = window.__aroraHost = {
         id: cfg.id,
         name: cfg.name || '',
+        // EXT17: 'background' is the hidden host page; 'page' is an
+        // injected sibling document (popup/options/offscreen) — it
+        // gets the shim but never the background script loader.
+        kind: cfg.kind || 'background',
         state: 'booting',
         bridgeUp: false,
         scriptsLoaded: false,
@@ -117,6 +121,7 @@
                 host.bridge = bridge;
                 bridge.handshake(
                     { id: cfg.id, url: String(location.href),
+                      kind: host.kind,
                       shimVersion: 3 },
                     function (reply) {
                         host.bridgeReply = reply;
@@ -146,6 +151,14 @@
     // importScripts() lazy-require under the extension CSP.  That
     // injection marks scriptsLoaded itself; nothing to do here.
     function loadScripts() {
+        // EXT17: a sibling page's own markup loads its scripts —
+        // injecting the background bundle there would fork the
+        // extension's state per context.
+        if (host.kind !== 'background') {
+            host.scriptsLoaded = true;
+            maybeReady();
+            return;
+        }
         if (cfg.inlineCode)
             return;
         var files = cfg.scripts || [];

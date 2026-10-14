@@ -28,6 +28,7 @@
 #include <qstringlist.h>
 
 class QTimer;
+class QWebEnginePage;
 class QWebEngineProfile;
 
 // EXT15 — host-side backend behind ChromeBridge::invoke() for the
@@ -104,6 +105,19 @@ public:
     static QJsonObject tabObject(class WebView *view, int index,
                                  int windowId);
 
+    // EXT17 context-local queries — resolves the tab whose page IS
+    // the asking context (an extension page living in a real tab),
+    // else {ok,result:null} like Chrome's undefined answer for
+    // popups/background contexts.
+    static QJsonObject tabForPageReply(QWebEnginePage *page);
+    // The chrome.windows object shape for invokeWindows.
+    static QJsonObject windowObject(class BrowserMainWindow *window);
+
+    // EXT17: the flat _locales/<lang>/messages.json map — shared by
+    // invokeI18n (bridge fetch) and the injected __ARORA_HOST_CONFIG
+    // so getMessage resolves synchronously before page scripts run.
+    static QJsonObject i18nMessages(const QString &extensionPath);
+
     // EXT16: the page context menu reads this shared registry — an
     // ordered item list per extension plus the display name its
     // submenu shows.  Owned by whichever live backend holds the id:
@@ -138,6 +152,8 @@ private:
                              const QJsonObject &args);
     QJsonObject invokeTabs(const QString &method,
                            const QJsonObject &args);
+    QJsonObject invokeWindows(const QString &method,
+                              const QJsonObject &args);
     QJsonObject invokeAction(const QString &method,
                              const QJsonObject &args);
     QJsonObject invokeI18n(const QString &method,

@@ -68,6 +68,7 @@ private slots:
     void extensionShimBackend();
     void extensionMessageRelay();
     void extensionEventSurfaces();
+    void extensionPopupContext();
 
 private:
     // Minimal PK zip writer (store-only) — enough for the update
@@ -1304,8 +1305,12 @@ void tst_ExtensionManager::extensionMessageRelay()
                        QStringLiteral("tst-relay"), dir);
     ChromeBridge other(QStringLiteral("relayext0000000002"),
                        QStringLiteral("tst-other"), dir);
-    QVERIFY(!runtime->registerRelayContext(
-        &bg, QStringLiteral("background")).isEmpty());
+    // Context ids carry a process-wide monotonic suffix — earlier
+    // tests may have consumed slots, so compare re-registration
+    // against the id the first call returned rather than a literal.
+    const QString bgContextId = runtime->registerRelayContext(
+        &bg, QStringLiteral("background"));
+    QVERIFY(!bgContextId.isEmpty());
     QVERIFY(!runtime->registerRelayContext(
         &popup, QStringLiteral("popup")).isEmpty());
     QVERIFY(!runtime->registerRelayContext(
@@ -1313,7 +1318,7 @@ void tst_ExtensionManager::extensionMessageRelay()
     // Re-registering the same bridge returns the same context id.
     QCOMPARE(runtime->registerRelayContext(
                  &bg, QStringLiteral("background")),
-             QStringLiteral("relayext0000000001|background|0"));
+             bgContextId);
 
     QSignalSpy popupEvents(&popup, &ChromeBridge::hostEvent);
     QSignalSpy otherEvents(&other, &ChromeBridge::hostEvent);
@@ -1704,6 +1709,196 @@ void tst_ExtensionManager::extensionEventSurfaces()
     manager->removeExtension(idB);
     QDir(dirA).removeRecursively();
     QDir(dirB).removeRecursively();
+}
+
+// EXT17: the sibling-page context.  A fixture extension declaring an
+// action popup gets its popup document loaded in a second
+// QWebEngineView wired through attachExtensionPage — the page
+// injection must land the shim there, the popup's chrome.runtime.
+// sendMessage must reach the hosted background over the relay and
+// back, getContexts must list both contexts, and teardown must close
+// the popup context.
+void tst_ExtensionManager::extensionPopupContext()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extpopup-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-popup\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"],"
+                "\"action\":{\"default_popup\":\"popup.html\","
+                "\"default_title\":\"Pop\"},"
+                "\"background\":{\"service_worker\":\"sw.js\"}}");
+        f.close();
+        QFile w(dir + QLatin1String("/sw.js"));
+        QVERIFY(w.open(QIODevice::WriteOnly));
+        w.write(
+            "chrome.runtime.onInstalled.addListener(function(){});\n"
+            "self.__sawPopupPing=false;\n"
+            "chrome.runtime.onMessage.addListener("
+            "function(m,s,r){ if(m&&m.ping){"
+            " self.__sawPopupPing=true;"
+            " r({pong:true,from:'hosted'}); return true; }"
+            " return false; });\n");
+        w.close();
+        QFile h(dir + QLatin1String("/popup.html"));
+        QVERIFY(h.open(QIODevice::WriteOnly));
+        h.write("<!doctype html><html><body><div id=\"r\">p</div>"
+                "<script src=\"popup.js\"></script></body></html>");
+        h.close();
+        QFile j(dir + QLatin1String("/popup.js"));
+        QVERIFY(j.open(QIODevice::WriteOnly));
+        j.write("self.__popupBootRan=!!(chrome&&chrome.runtime);\n");
+        j.close();
+    }
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    auto loaded = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-popup")
+                && info.error.isEmpty())
+            *loaded = info.id;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QElapsedTimer timer;
+    timer.start();
+    while (loaded->isEmpty() && timer.elapsed() < 30000)
+        QTest::qWait(50);
+    const QString id = *loaded;
+    QVERIFY2(!id.isEmpty(), "popup fixture loaded");
+    manager->setExtensionEnabled(id, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(id)
+            && runtime->host(id)->state()
+               == ExtensionBackgroundHost::State::Ready,
+        45000);
+    ExtensionBackgroundHost *host = runtime->host(id);
+    QVERIFY(host && host->page() && host->page()->profile());
+
+    auto eval = [](QWebEnginePage *page, const QString &source) {
+        auto result = std::make_shared<QVariant>();
+        page->runJavaScript(source,
+                            [result](const QVariant &v) {
+                                *result = v; });
+        QElapsedTimer t;
+        t.start();
+        while (!result->isValid() && t.elapsed() < 15000)
+            QTest::qWait(50);
+        return *result;
+    };
+
+    // --- attach + load the popup document -------------------------
+    auto *popupView = new QWebEngineView;
+    QWebEnginePage *popup =
+        new QWebEnginePage(host->page()->profile(), popupView);
+    popupView->setPage(popup);
+    // The bridge goes on BEFORE the document so the DocumentCreation
+    // preamble's channel poll finds it.
+    QVERIFY(runtime->attachExtensionPage(popup, id));
+    popup->load(QUrl(QStringLiteral("chrome-extension://") + id
+                     + QStringLiteral("/popup.html")));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(popup, QStringLiteral(
+            "!!(window.__aroraHost&&__aroraHost.bridgeUp"
+            "&&window.__aroraShim)")).toBool(),
+        30000);
+    QCOMPARE(eval(popup, QStringLiteral(
+                 "self.__popupBootRan===true")).toBool(),
+             true);
+    // The page injection skipped the background loader — the
+    // document marks itself 'page'-kind.
+    QCOMPARE(eval(popup, QStringLiteral(
+                 "window.__aroraHost.kind")).toString(),
+             QStringLiteral("page"));
+
+    // --- popup -> hosted background sendMessage --------------------
+    eval(popup, QStringLiteral(
+        "self.__pr=undefined;"
+        "chrome.runtime.sendMessage({ping:true},function(r){"
+        "self.__pr=r===undefined?{undef:true}:r;});0"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(popup, QStringLiteral("self.__pr!==undefined"))
+            .toBool(),
+        20000);
+    QCOMPARE(eval(popup, QStringLiteral(
+                 "self.__pr&&self.__pr.pong===true"
+                 "&&self.__pr.from==='hosted'")).toBool(),
+             true);
+    // The hosted context itself saw the delivery (relay path).
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(), QStringLiteral(
+            "self.__sawPopupPing===true")).toBool(),
+        20000);
+
+    // --- getContexts / tabs.getCurrent / windows -------------------
+    eval(popup, QStringLiteral(
+        "self.__gc=undefined;"
+        "chrome.runtime.getContexts().then(function(v){"
+        "self.__gc=v;});0"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(popup, QStringLiteral("self.__gc!==undefined"))
+            .toBool(),
+        15000);
+    const QJsonArray contexts = QJsonDocument::fromJson(
+        QStringLiteral("[%1]")
+            .arg(eval(popup, QStringLiteral(
+                "JSON.stringify(self.__gc)")).toString())
+            .toUtf8()).array().first().toArray();
+    {
+        bool sawBackground = false, sawPopup = false;
+        for (const QJsonValue &c : contexts) {
+            const QString t = c.toObject()
+                .value(QLatin1String("contextType")).toString();
+            if (t == QLatin1String("BACKGROUND"))
+                sawBackground = true;
+            if (t == QLatin1String("POPUP"))
+                sawPopup = true;
+        }
+        QVERIFY2(sawBackground, "getContexts lists BACKGROUND");
+        QVERIFY2(sawPopup, "getContexts lists POPUP");
+    }
+    // A detached popup answers undefined for tabs.getCurrent.
+    eval(popup, QStringLiteral(
+        "self.__ct=undefined;"
+        "chrome.tabs.getCurrent().then(function(t){"
+        "self.__ct=(t===undefined)?'undef':'tab';});0"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(popup, QStringLiteral("self.__ct!==undefined"))
+            .toBool(),
+        15000);
+    QCOMPARE(eval(popup, QStringLiteral("self.__ct")).toString(),
+             QStringLiteral("undef"));
+
+    // --- teardown ---------------------------------------------------
+    popupView->deleteLater();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !runtime->contextsJson(id).isEmpty(), 5000);   // bg stays
+    {
+        bool popupGone = true;
+        for (const QJsonValue &c : runtime->contextsJson(id)) {
+            if (c.toObject().value(QLatin1String("contextType"))
+                    .toString() == QLatin1String("POPUP"))
+                popupGone = false;
+        }
+        QVERIFY2(popupGone, "popup context closed with the page");
+    }
+
+    manager->setExtensionEnabled(id, false);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 20000);
+    manager->removeExtension(id);
+    QDir(dir).removeRecursively();
 }
 
 QTEST_MAIN(tst_ExtensionManager)

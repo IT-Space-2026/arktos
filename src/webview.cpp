@@ -70,6 +70,7 @@
 #include "browserapplication.h"
 #include "browsermainwindow.h"
 #include "containermanager.h"
+#include "extensionbackgroundhost.h"
 #include "extensioneventhub.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
@@ -159,6 +160,22 @@ void WebView::init()
             this, [this]() { loadFinished(); });
     connect(m_page, &WebPage::aboutToLoadUrl,
             this, &QWebEngineView::urlChanged);
+    // EXT17: an extension's own document landing in a real tab (the
+    // options page via tabs.create/openOptionsPage, or an extension
+    // link) gets the hosted shim — attach its chromeBridge channel
+    // before DocumentCreation's preamble polls for it.  The runtime
+    // refuses foreign/OTR profiles and non-hosted ids itself.
+    connect(m_page, &WebPage::aboutToLoadUrl, this,
+            [this](const QUrl &url) {
+        if (url.scheme() == QLatin1String("chrome-extension"))
+            ExtensionBackgroundRuntime::instance()
+                ->attachExtensionPage(m_page, url.host());
+        else
+            // Navigating away closes the extension context — the
+            // document that owned the shim is gone.
+            ExtensionBackgroundRuntime::instance()
+                ->detachExtensionPage(m_page);
+    });
 
     // JSCTL: the per-site/tier script decision is applied to the page
     // before each navigation commits (WebPage::applyJavaScriptPolicy);

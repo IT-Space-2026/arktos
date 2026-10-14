@@ -24,6 +24,7 @@
 
 #include <qjsonobject.h>   // moc needs the complete type for the
                           // by-value invokable signatures
+#include <qjsonarray.h>
 #include <qhash.h>
 #include <qlist.h>
 #include <qpointer.h>
@@ -83,9 +84,14 @@ class ChromeBridge : public QObject
     Q_OBJECT
 
 public:
+    // EXT17: 'backend' shares an existing per-extension backend
+    // (popup/sibling pages ride the same storage/alarms/action state
+    // as the hosted background instead of forking it); nullptr builds
+    // a private one owned by this bridge.
     explicit ChromeBridge(const QString &extensionId,
                           const QString &extensionName,
                           const QString &extensionPath,
+                          ExtensionShimBackend *backend = nullptr,
                           QObject *parent = nullptr);
 
     // First call the shim makes — answers the extension's identity
@@ -106,7 +112,15 @@ public:
 
     QString extensionId() const { return m_extensionId; }
     bool handshakeDone() const { return m_handshakeDone; }
-    ExtensionShimBackend *backend() const { return m_backend; }
+    // Out-of-line — QPointer needs the complete type.
+    ExtensionShimBackend *backend() const;
+
+    // EXT17: the page this bridge serves — a popup/options document
+    // resolves chrome.tabs.getCurrent against the tab hosting it.
+    // The background host's own page is never a tab.  (Out-of-line —
+    // QPointer needs the complete type.)
+    void setContextPage(QWebEnginePage *page);
+    QWebEnginePage *contextPage() const;
 
 signals:
     void handshook();
@@ -125,7 +139,10 @@ private:
     QString m_extensionId;
     QString m_extensionName;
     bool m_handshakeDone = false;
-    ExtensionShimBackend *m_backend = nullptr;
+    // QPointer — a shared backend dies with the host that owns it;
+    // a popup bridge must answer typed errors, not dangle.
+    QPointer<ExtensionShimBackend> m_backend;
+    QPointer<QWebEnginePage> m_contextPage;
 };
 
 // One hidden hosted view for one extension.  Owns the view, page,
@@ -155,6 +172,8 @@ public:
     ~ExtensionBackgroundHost() override;
 
     QString extensionId() const { return m_extensionId; }
+    QString extensionName() const { return m_extensionName; }
+    QString extensionPath() const { return m_extensionPath; }
     State state() const { return m_state; }
     QString lastError() const { return m_error; }
     QStringList errors() const { return m_errors; }
@@ -176,6 +195,11 @@ public:
     // (and not, say, a health probe reading the same file).
     static QUrl hostUrl(const QString &extensionId);
     static QString injectionName(const QString &extensionId);
+    // EXT17 sibling-page injection — preamble + shim (no background
+    // code) on every other top-level document at the extension's own
+    // chrome-extension://<id>/ origin: the action popup, options
+    // pages, offscreen documents.
+    static QString pageInjectionName(const QString &extensionId);
 
     // One bounded wake eval — the runtime calls it after pushing a
     // hostEvent so the delivery drains even while the hidden page's
@@ -193,6 +217,7 @@ private:
     QPointer<QWebEngineProfile> m_profile;
     QString m_extensionId;
     QString m_extensionName;
+    QString m_extensionPath;
     QStringList m_scripts;
     State m_state = State::Starting;
     QString m_error;
@@ -226,15 +251,33 @@ public:
     ExtensionBackgroundHost *host(const QString &extensionId) const;
     QStringList hostedIds() const;
 
+    // EXT17 — wire an extension-owned page (the action popup, an
+    // options tab, an offscreen document) into the shim: attaches a
+    // QWebChannel carrying a ChromeBridge so the page-side
+    // injection's handshake lands and its chrome.* calls reach the
+    // hosted background through the relay.  Call BEFORE the page
+    // finishes loading (the DocumentCreation preamble polls briefly
+    // for the channel).  Returns false when the extension is not
+    // hosted or the page is on an off-the-record/tor profile — a
+    // plain popup still works natively then.  extensionId may be
+    // left empty to derive it from an already-set chrome-extension
+    // page url.
+    bool attachExtensionPage(QWebEnginePage *page,
+                             const QString &extensionId = QString());
+    // The page navigated away from the extension document — its
+    // relay context and bridge die with the document it served.
+    void detachExtensionPage(QWebEnginePage *page);
+
     // EXT15 messaging relay — shimmed contexts (the hosted
-    // background page now, action popups once EXT17 injects them)
-    // register here keyed by extension id; relaySend() fans a
+    // background page and EXT17's injected sibling pages) register
+    // here keyed by extension id; relaySend() fans a
     // wrapped message out to the sender's sibling contexts via each
     // bridge's hostEvent push, and relayRespond() routes the
     // answering context's sendResponse back to the sender.  The
     // registry never crosses extension boundaries.
     QString registerRelayContext(ChromeBridge *bridge,
-                                 const QString &kind);
+                                 const QString &kind,
+                                 const QString &url = QString());
     void unregisterRelayContext(ChromeBridge *bridge);
     int relaySend(ChromeBridge *from, const QString &mid,
                   const QJsonObject &envelope);
@@ -247,7 +290,8 @@ public:
     // to the remote end's local id so both halves of a self-connect
     // can live in one context without colliding.
     int relayPortConnect(ChromeBridge *from, const QString &chan,
-                         const QString &portId, const QString &name);
+                         const QString &portId, const QString &name,
+                         const QString &senderUrl);
     void relayPortAccept(ChromeBridge *accepter, const QString &chan,
                          const QString &portId);
     int relayPortMessage(ChromeBridge *from, const QString &chan,
@@ -271,6 +315,13 @@ public:
                        const QJsonObject &payload);
     int deliverEvent(const QString &extensionId, const QString &name,
                      const QJsonObject &payload);
+
+    // EXT17 — chrome.runtime.getContexts backing: the registered
+    // shim contexts of one extension as spec-shaped context entries
+    // (contextType from the registered kind — BACKGROUND for the
+    // host, POPUP for the action popup, TAB for a page hosted in a
+    // real tab).
+    QJsonArray contextsJson(const QString &extensionId) const;
 
 signals:
     void hostChanged(const QString &extensionId);
@@ -304,10 +355,12 @@ private:
     // dead peer cannot pin the slot forever).
     struct RelayContext {
         QPointer<ChromeBridge> bridge;
-        QString kind;           // "background" | "popup" | ...
+        QString kind;           // "background" | "popup" | "page" | ...
         QString contextId;
+        QString url;            // documentUrl the context registered
     };
     QList<RelayContext> m_relayContexts;
+    int m_nextContextId = 0;
     struct PendingRelay {
         QPointer<ChromeBridge> origin;
         int peers = 0;
@@ -324,6 +377,10 @@ private:
         QString localPortId;
     };
     QHash<QString, QList<PortEnd>> m_portEnds;
+
+    // EXT17: sibling-page bridges keyed by their page so an open
+    // popup's channel is unregistered when the view goes away.
+    QHash<QWebEnginePage *, QPointer<ChromeBridge>> m_pageBridges;
 };
 
 #endif // EXTENSIONBACKGROUNDHOST_H
