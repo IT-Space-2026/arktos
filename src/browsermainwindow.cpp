@@ -1076,15 +1076,20 @@ void BrowserMainWindow::setupMenu()
     m_fileCloseWindow->setShortcut(QKeySequence(Qt::ControlModifier | Qt::ShiftModifier | Qt::Key_W));
     m_fileMenu->addAction(m_fileCloseWindow);
 
-    m_fileQuit = new QAction(m_fileMenu);
+    // MENU15: Quit left the File menu — its single menu home is the
+    // app-menu dropdown's bottom leaf after Help (added in
+    // setupToolBar once m_appMenu exists).  The action stays
+    // registered on the window (the MENU12 m_preferencesAction
+    // carrier pattern) so Ctrl+Q keeps firing with no File-menu row.
+    m_quitAction = new QAction(this);
     int kdeSessionVersion = QString::fromLocal8Bit(qgetenv("KDE_SESSION_VERSION")).toInt();
     BrowserApplication *application = BrowserApplication::instance();
     if (kdeSessionVersion != 0 || !application)
-        connect(m_fileQuit, &QAction::triggered, this, &QWidget::close);
+        connect(m_quitAction, &QAction::triggered, this, &QWidget::close);
     else
-        connect(m_fileQuit, &QAction::triggered, application, &BrowserApplication::quitBrowser);
-    m_fileQuit->setShortcut(QKeySequence(Qt::ControlModifier | Qt::Key_Q));
-    m_fileMenu->addAction(m_fileQuit);
+        connect(m_quitAction, &QAction::triggered, application, &BrowserApplication::quitBrowser);
+    m_quitAction->setShortcut(QKeySequence(Qt::ControlModifier | Qt::Key_Q));
+    addAction(m_quitAction);
 
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
     m_fileNewWindowAction->setIcon(AroraIcon::getChrome(QLatin1String("window-new")));
@@ -1102,7 +1107,7 @@ void BrowserMainWindow::setupMenu()
     m_filePrintAction->setIcon(AroraIcon::getChrome(QLatin1String("document-print")));
     m_preferencesAction->setIcon(AroraIcon::getChrome(QLatin1String("preferences-system")));
     m_fileCloseWindow->setIcon(AroraIcon::getChrome(QLatin1String("window-close")));
-    m_fileQuit->setIcon(AroraIcon::getChrome(QLatin1String("application-exit")));
+    m_quitAction->setIcon(AroraIcon::getChrome(QLatin1String("application-exit")));
 #endif
 
     // Edit
@@ -1776,7 +1781,7 @@ void BrowserMainWindow::retranslate()
     m_preferencesAction->setText(tr("Preferences..."));
     m_preferencesAction->setShortcut(tr("Ctrl+,"));
     m_fileCloseWindow->setText(tr("Close Window"));
-    m_fileQuit->setText(tr("&Quit"));
+    m_quitAction->setText(tr("&Quit"));
 
     m_editMenu->setTitle(tr("&Edit"));
     m_editUndoAction->setText(tr("&Undo"));
@@ -1929,6 +1934,11 @@ void BrowserMainWindow::setupToolBar()
             m_appMenu->addSeparator();
         }
     }
+    // MENU15: Quit closes the dropdown — a direct leaf after the
+    // last submenu (Help), separator-bracketed like the Preferences
+    // leaf so both app-menu-level rows read the same.
+    m_appMenu->addSeparator();
+    m_appMenu->addAction(m_quitAction);
 
     // MENU09: a QToolButton parented straight to a QToolBar is laid
     // out AND painted at the bar's iconSize — Qt's toolbar path

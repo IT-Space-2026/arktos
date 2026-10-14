@@ -381,7 +381,7 @@
           <item>
            <widget class="QCheckBox" name="confirmExitCheck">
             <property name="toolTip">
-             <string>Ask before quitting Arora — from File &gt; Quit or when the last window closes.</string>
+             <string>Ask before quitting Arora — from the Arora menu's Quit entry or when the last window closes.</string>
             </property>
             <property name="text">
              <string>Show Exit Confirmation Dialog</string>

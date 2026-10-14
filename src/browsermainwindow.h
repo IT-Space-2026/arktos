@@ -305,7 +305,7 @@ private:
     QAction *m_fileNewPrivateTabAction;
     QAction *m_fileNewTorWindowAction;
     QAction *m_fileCloseWindow;
-    QAction *m_fileQuit;
+    QAction *m_quitAction;
 
     QMenu *m_editMenu;
     QAction *m_editUndoAction;

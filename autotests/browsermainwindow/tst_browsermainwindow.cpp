@@ -587,13 +587,12 @@ void tst_BrowserMainWindow::fileMenuOrder()
     QCOMPARE(privateBrowsing, -1);
     QVERIFY(newTor < closeWindowIndex);
 
-    // MENU12: Preferences left the File menu entirely — it is a
-    // direct app-menu leaf now (asserted in appMenuButton) — so the
-    // bottom group is just Close Window + Quit.
+    // MENU12+MENU15: Preferences and Quit both left the File menu —
+    // they are direct app-menu leaves now (asserted in
+    // appMenuButton) — so Close Window is the last File row.
     QCOMPARE(preferencesIndex, -1);
-    QCOMPARE(entries.at(entries.count() - 2),
-             QLatin1String("Close Window"));
-    QCOMPARE(entries.constLast(), QLatin1String("Quit"));
+    QCOMPARE(entries.indexOf(QLatin1String("Quit")), -1);
+    QCOMPARE(entries.constLast(), QLatin1String("Close Window"));
 
     // MENU14: "Open Location" left the File menu too — its action
     // survives on the window as the Ctrl+L/Alt+D/Alt+O carrier so the
@@ -1078,21 +1077,27 @@ void tst_BrowserMainWindow::appMenuButton()
     // The dropdown lists the real top-level menus in menubar order —
     // the same QMenu objects the menubar holds, not clones.  MENU11:
     // a direct Preferences... leaf sits bracketed by separators
-    // between the Tools and Help entries; every other row is a
-    // submenu.
+    // between the Tools and Help entries; MENU15: Quit is the second
+    // direct leaf, closing the dropdown after Help; every other row
+    // is a submenu.
     QMenu *appMenu = window->appMenu();
     QVERIFY(appMenu);
     QCOMPARE(button->menu(), appMenu);
     QStringList titles;
     QAction *appPrefs = nullptr;
+    QAction *appQuit = nullptr;
     for (QAction *menuAction : appMenu->actions()) {
         if (menuAction->isSeparator())
             continue;
         const QString text =
             menuAction->text().remove(QLatin1Char('&'));
         if (!menuAction->menu()) {
-            QCOMPARE(text, QLatin1String("Preferences..."));
-            appPrefs = menuAction;
+            if (text == QLatin1String("Quit")) {
+                appQuit = menuAction;
+            } else {
+                QCOMPARE(text, QLatin1String("Preferences..."));
+                appPrefs = menuAction;
+            }
         }
         titles << text;
     }
@@ -1102,7 +1107,9 @@ void tst_BrowserMainWindow::appMenuButton()
              << QLatin1String("Bookmarks") << QLatin1String("Window")
              << QLatin1String("Tools")
              << QLatin1String("Preferences...")
-             << QLatin1String("Help"));
+             << QLatin1String("Help")
+             << QLatin1String("Quit"));
+    QVERIFY(appQuit);
     const QList<QAction *> appActions = appMenu->actions();
     int toolsIndex = -1;
     for (int i = 0; i < appActions.count(); ++i) {
@@ -1110,13 +1117,18 @@ void tst_BrowserMainWindow::appMenuButton()
                 == QLatin1String("Tools"))
             toolsIndex = i;
     }
-    QVERIFY(toolsIndex >= 0 && toolsIndex + 4 < appActions.count());
+    QVERIFY(toolsIndex >= 0 && toolsIndex + 6 < appActions.count());
     QVERIFY(appActions.at(toolsIndex + 1)->isSeparator());
     QCOMPARE(appActions.at(toolsIndex + 2), appPrefs);
     QVERIFY(appActions.at(toolsIndex + 3)->isSeparator());
     QCOMPARE(appActions.at(toolsIndex + 4)->text()
                  .remove(QLatin1Char('&')),
              QLatin1String("Help"));
+    // MENU15: one separator past Help, then Quit is the last action
+    // outright.
+    QVERIFY(appActions.at(toolsIndex + 5)->isSeparator());
+    QCOMPARE(appActions.at(toolsIndex + 6), appQuit);
+    QCOMPARE(appActions.constLast(), appQuit);
     const QList<QAction *> barMenus = window->menuBar()->actions();
     QList<QAction *> appSubmenus;
     for (QAction *menuAction : appActions)
@@ -1229,6 +1241,15 @@ void tst_BrowserMainWindow::appMenuButton()
     QVERIFY(prefsTab >= 0);
     window->tabWidget()->closeTab(prefsTab);
 
+    // MENU15: Quit mirrors the Preferences carrier exactly — its
+    // only menu home is the app-menu leaf, File carries no copy, and
+    // the window registration keeps Ctrl+Q live.  Never trigger it:
+    // quitBrowser() exits the test process outright.
+    QVERIFY(!fileMenu->actions().contains(appQuit));
+    QVERIFY(window->actions().contains(appQuit));
+    QCOMPARE(appQuit->shortcut(),
+             QKeySequence(Qt::ControlModifier | Qt::Key_Q));
+
     // The window-state blob round-trips the flag both ways — hidden
     // stays hidden, an explicit show survives restore too.
     const QByteArray hiddenState = window->saveState();
@@ -1306,15 +1327,22 @@ void tst_BrowserMainWindow::appMenuButton()
     const int torMenuCount = torWindow->appMenu()
         ? torWindow->appMenu()->actions().count() : -1;
     // MENU11: the tor dropdown carries the same direct leaf between
-    // Tools and Help.
+    // Tools and Help; MENU15: Quit closes it there too.
     bool torPrefsLeaf = false;
+    bool torQuitLast = false;
     if (torWindow->appMenu()) {
-        for (QAction *action : torWindow->appMenu()->actions()) {
+        const QList<QAction *> torActions =
+            torWindow->appMenu()->actions();
+        for (QAction *action : torActions) {
             if (!action->menu() && !action->isSeparator()
                 && action->text().remove(QLatin1Char('&'))
                        == QLatin1String("Preferences..."))
                 torPrefsLeaf = true;
         }
+        torQuitLast = !torActions.isEmpty()
+            && torActions.constLast()->text()
+                       .remove(QLatin1Char('&'))
+                   == QLatin1String("Quit");
     }
     const bool torBigIcon = torButton
         && torButton->iconSize() == QSize(36, 36);
@@ -1378,8 +1406,9 @@ void tst_BrowserMainWindow::appMenuButton()
     QCOMPARE(torMenuFont, menuFont);
     QVERIFY(torRowVisible);
     QVERIFY(torRowBare);
-    QCOMPARE(torMenuCount, 11);
+    QCOMPARE(torMenuCount, 13);
     QVERIFY(torPrefsLeaf);
+    QVERIFY(torQuitLast);
     QVERIFY(lightPixels > 0);
     QVERIFY(torBrandLast);
     QVERIFY(torRowRepopulated);
