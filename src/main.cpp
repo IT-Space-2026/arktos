@@ -3373,6 +3373,152 @@ static int servoLifecycleSmoke()
             ? qobject_cast<ServoView *>(engineTab->page()->view())
             : nullptr;
         if (servoView) {
+            // ENG25: scroll measurement through the REAL input path —
+            // synthetic QWheelEvents into ServoView::wheelEvent, the
+            // page's scrollY read back through the one string channel
+            // the shim has (evaluate_javascript drops its JSValue, but
+            // a document.title write surfaces through
+            // notify_page_title_changed -> titleChanged end-to-end),
+            // frames blitted counted via ServoView::frameCount so the
+            // log splits px-per-notch (input side) from ms-per-frame
+            // (paint side).  Pace/direction/clamp are asserted; raw
+            // timings are reported, never gated (hardware-dependent).
+            const QString scrollPath = QDir::temp().filePath(
+                QLatin1String("arora-servo-scroll.html"));
+            {
+                QStringList rows;
+                rows.reserve(320);
+                for (int i = 0; i < 320; ++i)
+                    rows.append(QStringLiteral(
+                        "<div style='height:80px;background:%1'>"
+                        "scroll row %2</div>")
+                            .arg(i % 2 ? QLatin1String("#9ab")
+                                       : QLatin1String("#ba9"))
+                            .arg(i));
+                QFile fixture(scrollPath);
+                if (fixture.open(QIODevice::WriteOnly))
+                    fixture.write(
+                        QStringLiteral("<html><head><title>"
+                                       "ServoScrollBench</title></head>"
+                                       "<body style='margin:0'>")
+                            .toUtf8()
+                        + rows.join(QString()).toUtf8()
+                        + "</body></html>");
+            }
+            bool scrollLoaded = false;
+            QObject::connect(engineTab, &EngineTab::loadFinished,
+                             engineTab,
+                             [&scrollLoaded](bool) {
+                                 scrollLoaded = true; });
+            engineTab->load(QUrl::fromLocalFile(scrollPath));
+            pumpUntil([&scrollLoaded]() { return scrollLoaded; }, 30000);
+            pumpUntil([]() { return false; }, 1500);
+            report(QStringLiteral("scroll-fixture"), scrollLoaded);
+
+            int probeSeq = 0;
+            const auto probeScrollY = [&]() -> qreal {
+                // A seq-nonce prefixes each probe so a stale title
+                // from the previous eval can never satisfy the wait.
+                const QString prefix =
+                    QStringLiteral("SY%1:").arg(++probeSeq);
+                servoView->evaluateJavaScript(QStringLiteral(
+                    "document.title='%1'+(window.scrollY||"
+                    "document.documentElement.scrollTop||0)")
+                        .arg(prefix));
+                pumpUntil([&]() {
+                    return engineTab->title().startsWith(prefix);
+                }, 3000);
+                const QString title = engineTab->title();
+                return title.startsWith(prefix)
+                    ? title.mid(prefix.size()).toDouble() : -1.0;
+            };
+            const auto settleScrollY = [&](qreal last) -> qreal {
+                for (int i = 0; i < 60; ++i) {
+                    pumpUntil([]() { return false; }, 250);
+                    const qreal current = probeScrollY();
+                    if (current < 0 || current == last)
+                        return current < 0 ? last : current;
+                    last = current;
+                }
+                return last;
+            };
+            const QPointF center = QPointF(servoView->rect().center());
+            const QPointF global =
+                servoView->mapToGlobal(center.toPoint());
+            const auto sendWheel = [&](int dy, bool pixelDelta) {
+                QWheelEvent ev(center, global,
+                               pixelDelta ? QPoint(0, dy) : QPoint(),
+                               pixelDelta ? QPoint() : QPoint(0, dy),
+                               Qt::NoButton, Qt::NoModifier,
+                               Qt::NoScrollPhase, false);
+                QApplication::sendEvent(servoView, &ev);
+            };
+            const qreal yTop = settleScrollY(probeScrollY());
+            report(QStringLiteral("scroll-starts-top"),
+                   yTop >= 0 && yTop <= 1.0);
+            // The bench itself: 10 down-notches, timed.  The logged
+            // line is the input-vs-paint measurement this task exists
+            // for — px/notch pins the input delta, ms/frame exposes a
+            // paint-path bottleneck.
+            QElapsedTimer bench;
+            bench.start();
+            const int framesBefore = servoView->frameCount();
+            for (int i = 0; i < 10; ++i) {
+                sendWheel(-120, false);
+                pumpUntil([]() { return false; }, 30);
+            }
+            const qreal yDown = settleScrollY(probeScrollY());
+            const qint64 benchMs = bench.elapsed();
+            const int benchPaints = servoView->frameCount() - framesBefore;
+            const qreal pxPerNotch = (yDown - yTop) / 10.0;
+            qInfo("servo-smoke: scroll-bench 10 notches -> %.0fpx "
+                  "(%.0fpx/notch) in %lldms, %d paints "
+                  "(%.0fms/frame)",
+                  double(yDown - yTop), double(pxPerNotch),
+                  qlonglong(benchMs), benchPaints,
+                  benchPaints
+                      ? double(benchMs) / double(benchPaints) : 0.0);
+            report(QStringLiteral("scroll-moves"), yDown > yTop);
+            // Browser-pace scroll: ~3 lines x ~53px per notch
+            // (Chrome/Firefox territory is 150-300px; the pre-ENG25
+            // angleDelta/8 conversion yielded 15px).
+            report(QStringLiteral("scroll-notch-pace"),
+                   pxPerNotch >= 100.0);
+            // pixelDelta (trackpads, hi-res wheels) — raw passthrough.
+            sendWheel(-300, true);
+            const qreal yPixel = settleScrollY(yDown);
+            report(QStringLiteral("scroll-pixel-delta"),
+                   yPixel > yDown + 50.0);
+            // Drive to the bottom adaptively (stop when scrollY stops
+            // growing, capped), then keep wheeling — overscroll must
+            // clamp at max, never wrap.
+            qreal yBottom = yPixel;
+            int plateau = 0;
+            for (int i = 0; i < 40 && plateau < 2; ++i) {
+                for (int j = 0; j < 4; ++j) {
+                    sendWheel(-120, false);
+                    pumpUntil([]() { return false; }, 20);
+                }
+                const qreal cur = settleScrollY(yBottom);
+                plateau = (cur <= yBottom) ? plateau + 1 : 0;
+                yBottom = qMax(yBottom, cur);
+            }
+            for (int i = 0; i < 5; ++i)
+                sendWheel(-120, false);
+            const qreal yClamp = settleScrollY(yBottom);
+            report(QStringLiteral("scroll-overscroll-clamped"),
+                   qAbs(yClamp - yBottom) < 2.0
+                       && yBottom > yTop + 500.0);
+            // Up-notches must reduce scrollY — the sign convention
+            // survives the scaling.
+            for (int i = 0; i < 6; ++i) {
+                sendWheel(120, false);
+                pumpUntil([]() { return false; }, 30);
+            }
+            const qreal yUp = settleScrollY(yClamp);
+            report(QStringLiteral("scroll-direction-kept"),
+                   yUp >= 0 && yUp < yBottom - 200.0);
+
             // ENG23: the desktop panic fix — servo-embed pins the
             // painter to the software rasterizer: the model is
             // render+readback (frames go to a QImage, never to a
