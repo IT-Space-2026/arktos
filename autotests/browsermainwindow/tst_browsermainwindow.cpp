@@ -3822,6 +3822,28 @@ void tst_BrowserMainWindow::readerModeContent()
     QCOMPARE(reader->isActive(), expectActive);
     QCOMPARE(!messageSpy.isEmpty(), expectMessage);
 
+#ifdef ARORA_RUSTCORE
+    // RDR01: the article lives in the overlay widget's own
+    // QWebEngineView — read .content off its page.
+    const auto readerContent = [&]() -> QString {
+        QWebEngineView *readerView = view->findChild<QWebEngineView *>(
+            QLatin1String("aroraReaderView"));
+        if (!readerView || !readerView->page())
+            return QString();
+        auto state = std::make_shared<QPair<QVariant, bool>>(
+            QVariant(), false);
+        readerView->page()->runJavaScript(QStringLiteral(
+            "(function(){var c=document.querySelector('.content');"
+            "return c?c.innerHTML:'';})()"), [state](const QVariant &v) {
+                state->first = v;
+                state->second = true;
+            });
+        for (int waited = 0; !state->second && waited < 8000;
+             waited += 50)
+            QTest::qWait(50);
+        return state->first.toString();
+    };
+#else
     // READ05: the article lives in the overlay's sandboxed iframe —
     // allow-same-origin keeps it readable here.  The srcdoc parses
     // asynchronously, so the read polls until it lands.
@@ -3836,6 +3858,7 @@ void tst_BrowserMainWindow::readerModeContent()
             "return c?c.innerHTML:'';"
             "})()")).toString();
     };
+#endif
     QString content = readerContent();
     if (expectActive)
         QTRY_VERIFY_WITH_TIMEOUT(
@@ -3864,6 +3887,27 @@ void tst_BrowserMainWindow::readerModeContent()
     }
 
     if (path == QByteArray("/hostile") && expectActive) {
+#ifdef ARORA_RUSTCORE
+        // The fixture's payloads fire on the served page itself — the
+        // observable flag for a leak is the READER VIEW's own window:
+        // anything the sanitizer missed would have run there when the
+        // article document rendered.
+        QWebEngineView *readerView = view->findChild<QWebEngineView *>(
+            QLatin1String("aroraReaderView"));
+        QVERIFY(readerView);
+        auto pwned = std::make_shared<QPair<QVariant, bool>>(
+            QVariant(), false);
+        readerView->page()->runJavaScript(
+            QStringLiteral("String(window.__pwned)"),
+            [pwned](const QVariant &v) {
+                pwned->first = v;
+                pwned->second = true;
+            });
+        for (int waited = 0; !pwned->second && waited < 8000;
+             waited += 50)
+            QTest::qWait(50);
+        QCOMPARE(pwned->first.toString(), QLatin1String("undefined"));
+#else
         // The fixture's payloads do fire on the served page itself —
         // they are live page markup, that is the point — so the flag
         // that proves reader-content inertness is the SANDBOXED
@@ -3891,6 +3935,7 @@ void tst_BrowserMainWindow::readerModeContent()
             "d.body.appendChild(s);"
             "return String(f.contentWindow.__pwned);"
             "})()")), QLatin1String("undefined"));
+#endif
     }
 
     closeWindow(window);

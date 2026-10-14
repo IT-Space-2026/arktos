@@ -340,6 +340,15 @@ UI:
   safe allowlist before display, and the content renders inside a
   script-free sandboxed frame — scripts, event handlers, and
   javascript: links hidden in article markup are inert (READ05).
+- Reader Mode reliability pass on the Rust pipeline: article text
+  wrapped in a form or noscript element is no longer stripped with
+  the container (the Rust sanitizer now unwraps transparent wrappers
+  like the C++ one does), degenerate heading-only extractions are
+  refused with an honest status-bar message instead of opening an
+  empty overlay, and a wedged DOM serialization can no longer park
+  the reader in a permanent busy state. Every silent dead-end in the
+  probe → toggle → extract → overlay chain now logs a diagnostic
+  line (READ06).
 - Downloads moved from the Window menu to the Tools menu — the
   Ctrl+Y shortcut and icon are unchanged, and the Window menu now
   holds only tab/window-switching entries (MENU04).

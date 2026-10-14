@@ -40,6 +40,8 @@
 #include <qwebenginescriptcollection.h>
 #include <qwebenginesettings.h>
 
+#include <memory>
+
 #ifdef ARORA_RUSTCORE
 #include "rustcore.h"
 
@@ -408,10 +410,15 @@ void ReaderMode::probe()
 #ifdef ARORA_RUSTCORE
     // The Rust probe runs isProbablyReaderable's equivalent over the
     // serialized DOM — no script eval in the page world.
-    collectHtml([self, generation](const QString &html) {
+    collectHtml([self, generation, url = page->url()](const QString &html) {
         if (!self || self->m_probeGeneration != generation)
             return;
         if (html.isEmpty()) {
+            // toHtml() handed back nothing — without this line the
+            // verdict just reads "not an article" and the real cause
+            // (wedged serialization, dead renderer) is invisible.
+            qInfo() << "ReaderMode: probe got an empty serialized DOM on"
+                    << url;
             self->probeFinished(false);
             return;
         }
@@ -432,8 +439,13 @@ void ReaderMode::probe()
 void ReaderMode::probeFinished(bool available)
 {
     setAvailable(available);
-    if (available || m_probeRetries >= 3)
+    if (available || m_probeRetries >= 3) {
+        // The settled verdict — a page that never probed readable is
+        // indistinguishable from a dead probe without it.
+        qInfo() << "ReaderMode: probe verdict" << available << "on"
+                << m_seenUrl;
         return;
+    }
     // loadFinished can precede the article markup on pages that
     // hydrate or inject content after the document event — give the
     // DOM a few more chances before settling on non-article.
@@ -459,19 +471,33 @@ void ReaderMode::collectHtml(
         return;
     }
     QWebEngineSettings *settings = page->settings();
+    // The caller's state machine (probe retries, enter()'s m_busy)
+    // only unwinds when the callback lands, and a toHtml callback is
+    // not guaranteed to arrive (dead or mid-navigation renderer) —
+    // every path below settles the callback exactly once through the
+    // shared fired-flag so nothing wedges silently.
+    auto fired = std::make_shared<bool>(false);
+    const std::function<void(const QString &)> settle =
+            [callback, fired](const QString &html) {
+        if (*fired)
+            return;
+        *fired = true;
+        callback(html);
+    };
     if (settings->testAttribute(QWebEngineSettings::JavascriptEnabled)) {
-        page->toHtml(callback);
+        page->toHtml(settle);
+        QTimer::singleShot(10000, this,
+                [settle]() { settle(QString()); });
         return;
     }
     settings->setAttribute(QWebEngineSettings::JavascriptEnabled, true);
     QPointer<QWebEnginePage> livePage(page);
-    QTimer::singleShot(700, this,
-            [livePage, callback]() {
-        if (!livePage)
+    QTimer::singleShot(700, this, [livePage, settle, fired]() {
+        if (!livePage || *fired)
             return;
         livePage->toHtml(
-                [callback, livePage](const QString &html) {
-            callback(html);
+                [settle, livePage](const QString &html) {
+            settle(html);
             QTimer::singleShot(400, qApp, [livePage]() {
                 if (livePage) {
                     livePage->settings()->setAttribute(
@@ -480,11 +506,14 @@ void ReaderMode::collectHtml(
             });
         });
     });
-    // Fallback restore if the toHtml callback never arrives.
-    QTimer::singleShot(5000, this, [livePage]() {
+    // Fallback restore if the toHtml callback never arrives — and
+    // settle the caller so a wedged renderer cannot park the reader
+    // in a permanent busy state.
+    QTimer::singleShot(5000, this, [livePage, settle]() {
         if (livePage)
             livePage->settings()->setAttribute(
                 QWebEngineSettings::JavascriptEnabled, false);
+        settle(QString());
     });
 }
 #endif
@@ -620,8 +649,16 @@ void ReaderMode::closeOverlay()
 void ReaderMode::enter()
 {
     QWebEnginePage *page = m_view ? m_view->page() : nullptr;
-    if (!page || m_busy)
+    if (!page || m_busy) {
+        // A wedged earlier attempt (its async callback never landed)
+        // parks m_busy forever — every later click then dies here
+        // with no visible effect at all.  Say so.
+        if (m_busy)
+            qInfo() << "ReaderMode: enter() ignored — a previous"
+                       " attempt is still in flight on"
+                    << (page ? page->url() : QUrl());
         return;
+    }
     if (m_active) {
         // Belt-and-braces for a stale flag: verify the overlay is
         // actually there before declaring victory.
@@ -637,6 +674,9 @@ void ReaderMode::enter()
             if (!self)
                 return;
             self->m_busy = false;
+            if (html.isEmpty())
+                qInfo() << "ReaderMode: enter got an empty serialized"
+                           " DOM on" << pageUrl;
             const QByteArray utf8 = html.toUtf8();
             const QByteArray url8 = pageUrl.toString().toUtf8();
             RcBuffer out { nullptr, 0 };
@@ -648,13 +688,39 @@ void ReaderMode::enter()
                 static_cast<qsizetype>(out.len));
             if (out.data)
                 rc_buffer_free(out);
-            const QVariantMap map = QJsonDocument::fromJson(json)
+            QVariantMap map = QJsonDocument::fromJson(json)
                 .object().toVariantMap();
             if (status == RC_OK
                 && map.value(QLatin1String("ok")).toBool()) {
+                // Rust sanitizes the fragment already, but re-running
+                // the C++ policy keeps the READ05 invariant that the
+                // overlay only ever renders ReaderSanitizer output —
+                // and it hands us textLength/hasMedia for the READ03
+                // thin-content floor the Rust path skipped.  Without
+                // it, a heading-only extraction opened a nearly empty
+                // overlay instead of being refused honestly.
+                const ReaderSanitizer::Result sanitized =
+                    ReaderSanitizer::sanitize(
+                        map.value(QLatin1String("content")).toString());
+                if (sanitized.textLength < 500 && !sanitized.hasMedia) {
+                    qInfo() << "ReaderMode: extracted article below the"
+                               " content floor on" << pageUrl
+                            << "(chars" << sanitized.textLength
+                            << "media" << sanitized.hasMedia << ")";
+                    emit self->message(
+                        tr("Reader view is not available on this page."));
+                    return;
+                }
+                map[QLatin1String("content")] = sanitized.html;
                 self->showOverlay(map);
                 self->setActive(true);
             } else {
+                // "Not article-like" and "the extractor itself failed"
+                // look identical to the user — log the distinction.
+                qInfo() << "ReaderMode: extract declined on" << pageUrl
+                        << "(status" << status << "probably"
+                        << map.value(QLatin1String("probably")).toBool()
+                        << "html" << utf8.size() << "bytes)";
                 emit self->message(
                     tr("Reader view is not available on this page."));
             }
@@ -673,6 +739,11 @@ void ReaderMode::enter()
             return;
         const QVariantMap map = result.toMap();
         if (!map.value(QLatin1String("ok")).toBool()) {
+            // A world-eval that threw or never ran comes back as an
+            // invalid/empty variant — same "not available" user path,
+            // very different cause.  Log it.
+            qInfo() << "ReaderMode: extract() declined"
+                    << "(result" << result << ")";
             self->m_busy = false;
             emit self->message(
                 tr("Reader view is not available on this page."));
@@ -689,6 +760,9 @@ void ReaderMode::enter()
             ReaderSanitizer::sanitize(
                 map.value(QLatin1String("content")).toString());
         if (sanitized.textLength < 500 && !sanitized.hasMedia) {
+            qInfo() << "ReaderMode: sanitized article below the"
+                       " content floor (chars" << sanitized.textLength
+                    << "media" << sanitized.hasMedia << ")";
             self->m_busy = false;
             emit self->message(
                 tr("Reader view is not available on this page."));
@@ -725,6 +799,8 @@ void ReaderMode::enter()
             if (showResult.toMap().value(QLatin1String("ok")).toBool()) {
                 self->setActive(true);
             } else {
+                qInfo() << "ReaderMode: overlay enter() refused"
+                        << "(result" << showResult << ")";
                 emit self->message(
                     tr("Reader view is not available on this page."));
             }

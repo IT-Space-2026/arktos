@@ -4207,7 +4207,7 @@ int main(int argc, char **argv)
         "ping-smoke", "httpsonly-smoke", "resourceblock-smoke",
         "fingerprint-smoke", "fingerprint-child-smoke",
         "fingerprint-inject-smoke", "fingerprint-inject-seed",
-        "reader-smoke",
+        "reader-smoke", "reader-live",
         "telemetry-smoke", "telemetry-browse-smoke",
         "telemetry-prefetch-child-smoke",
         "doh-smoke", "tls-smoke", "tls-off-smoke",
@@ -8572,6 +8572,198 @@ int main(int argc, char **argv)
         // closing brace, so falling through to main's shared exec()
         // would leave every stage lambda dereferencing dead stack.
         view->loadUrl(articleUrl);
+        return application.exec();
+    }
+
+    // READ06 diagnostic: drive the reader against a REAL page (the
+    // positional argv url) instead of a synthetic fixture — the
+    // failure the user reported never reproduced on fixtures.  Waits
+    // for the post-load probe, logs the availability verdict, runs
+    // the same toggle() the nav-bar button invokes, then checks the
+    // overlay came up with content and that exit() restores.  Every
+    // stage reports PASS/FAIL so the dead link in the
+    // probe->toggle->extract->overlay chain is named, and the
+    // ReaderMode qInfo lines above narrate what the pipeline did.
+    // Exits 0 on PASS.
+    if (args.contains(QLatin1String("--reader-live"))) {
+        ReaderMode *reader = view->readerMode();
+        // A real size so the pixel leg can assert actual paint.
+        window.resize(1280, 800);
+        const QUrl target = firstUrl;
+        if (!target.isValid()
+            || (target.scheme() != QLatin1String("http")
+                && target.scheme() != QLatin1String("https")
+                && target.scheme() != QLatin1String("file"))) {
+            qInfo() << "reader-live: FAIL (need an http/https/file url)";
+            return 1;
+        }
+        auto fail = [&application](const char *stage) {
+            qInfo() << "reader-live: FAIL at" << stage;
+            application.exit(1);
+        };
+        auto pollUntil = [](std::function<bool()> condition,
+                            std::function<void(bool)> finished) {
+            auto ticks = std::make_shared<int>(0);
+            QTimer *poll = new QTimer(qApp);
+            QObject::connect(poll, &QTimer::timeout, qApp,
+                [condition, finished, ticks, poll]() {
+                if (condition() || ++*ticks > 400) {
+                    poll->stop();
+                    poll->deleteLater();
+                    finished(condition());
+                }
+            });
+            poll->start(50);
+        };
+        auto overlay = [&]() -> QWidget * {
+            return view->findChild<QWidget *>(
+                QLatin1String("aroraReaderOverlay"));
+        };
+
+        // Wait until the probe settles: available, or three settled
+        // verdict lines (the retry cap) without one.  m_probeRetries
+        // is private, so "settled" is approximated by a grace window
+        // — 12s covers loadFinished plus the 3x2s retry ladder.
+        auto *settled = new QTimer(&application);
+        settled->setSingleShot(true);
+        QObject::connect(settled, &QTimer::timeout, &application, [&]() {
+            qInfo() << "reader-live: probe available"
+                    << reader->isAvailable();
+            // The same entry the toolbar button takes.
+            reader->toggle();
+            pollUntil([&]() { return reader->isActive(); },
+                [&](bool active) {
+                qInfo() << "reader-live: enter -> overlay"
+                        << (active ? "PASS" : "FAIL");
+                if (!active) {
+                    fail("enter");
+                    return;
+                }
+                qInfo() << "reader-live: overlay widget"
+                        << (overlay() ? "present" : "MISSING");
+                if (!overlay()) {
+                    fail("overlay");
+                    return;
+                }
+                // Content check under the Rust overlay: the surface
+                // is its own QWebEngineView holding .content.
+#ifdef ARORA_RUSTCORE
+                QWebEngineView *surface = view->findChild<QWebEngineView *>(
+                    QLatin1String("aroraReaderView"));
+                if (!surface) {
+                    fail("surface");
+                    return;
+                }
+                auto tries = std::make_shared<int>(0);
+                QTimer *poll = new QTimer(qApp);
+                QObject::connect(poll, &QTimer::timeout, qApp,
+                    [&, poll, tries, surface]() {
+                    surface->page()->runJavaScript(QLatin1String(
+                        "document.readyState==='complete'&&"
+                        "!!(document.querySelector('.content')&&"
+                        "document.querySelector('.content').innerText"
+                        ".trim().length>200);"),
+                        [&, poll, tries](const QVariant &r) {
+                        if (r.toBool() || ++*tries > 100) {
+                            poll->stop();
+                            poll->deleteLater();
+                            if (!r.toBool()) {
+                                fail("content");
+                                return;
+                            }
+                            qInfo() << "reader-live: overlay content PASS";
+                            // Pixel-level check: state assertions
+                            // cannot see an overlay that was created
+                            // but never composites (the READ06
+                            // desktop-only failure shape).  Grab the
+                            // top-level window's real framebuffer —
+                            // under X11/xvfb this reads actual
+                            // screen pixels, native surfaces
+                            // included — and compare the center of
+                            // the overlay against the reader
+                            // document's background.
+                            QTimer::singleShot(400, qApp, [&]() {
+                                QScreen *screen =
+                                    QGuiApplication::primaryScreen();
+                                // Root grab: the real framebuffer —
+                                // native/composited surfaces show up
+                                // here exactly as the user sees them.
+                                const QImage shot =
+                                    screen->grabWindow(0).toImage();
+                                const QPoint overlayCenter =
+                                    overlay()->mapToGlobal(
+                                        overlay()->rect().center());
+                                qInfo() << "reader-live: grab"
+                                        << shot.size() << "center"
+                                        << overlayCenter << "screen"
+                                        << screen->geometry();
+                                if (!shot.valid(overlayCenter)) {
+                                    fail("grab");
+                                    return;
+                                }
+                                const QColor pixel =
+                                    shot.pixelColor(overlayCenter);
+                                const QColor lightBg(0xf8, 0xf6, 0xf1);
+                                const QColor darkBg(0x1c, 0x1c, 0x1e);
+                                const bool isReaderBg =
+                                    (pixel.lightness() > 200
+                                     && qAbs(pixel.lightness()
+                                             - lightBg.lightness()) < 60)
+                                    || (pixel.lightness() < 80
+                                        && qAbs(pixel.lightness()
+                                                - darkBg.lightness())
+                                            < 60);
+                                qInfo() << "reader-live: overlay paints"
+                                        << (isReaderBg ? "PASS" : "FAIL")
+                                        << pixel.name();
+                                if (!isReaderBg) {
+                                    fail("paint");
+                                    return;
+                                }
+                                reader->exit();
+                                QTimer::singleShot(600, qApp, [&]() {
+                                    const bool restored =
+                                        !reader->isActive() && !overlay();
+                                    qInfo() << "reader-live: exit restores"
+                                            << (restored ? "PASS" : "FAIL");
+                                    if (!restored) {
+                                        fail("exit");
+                                        return;
+                                    }
+                                    qInfo() << "reader-live: DONE";
+                                    application.exit(0);
+                                });
+                            });
+                        }
+                    });
+                });
+                poll->start(100);
+#else
+                reader->exit();
+                QTimer::singleShot(600, qApp, [&]() {
+                    const bool restored = !reader->isActive();
+                    qInfo() << "reader-live: exit restores"
+                            << (restored ? "PASS" : "FAIL");
+                    qInfo() << "reader-live: DONE";
+                    application.exit(restored ? 0 : 1);
+                });
+#endif
+            });
+        });
+
+        QObject::connect(view, &QWebEngineView::loadFinished, &application,
+            [&](bool ok) {
+            if (!ok || !view->url().toString()
+                    .startsWith(target.toString().left(20)))
+                return;
+            settled->start(12000);
+        });
+        QTimer::singleShot(120000, &application, [&application]() {
+            qInfo() << "reader-live: FAIL (timeout)";
+            application.exit(1);
+        });
+        // firstUrl was already loaded above; exec inside the block so
+        // the captures stay live for the run.
         return application.exec();
     }
 
