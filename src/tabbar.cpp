@@ -1997,26 +1997,29 @@ void TabBar::paintEvent(QPaintEvent *event)
             ? container.color : palette().color(QPalette::Highlight);
         const QRect rect = tabRect(index);
 
+        // THEM02: the stripe hugs the tab's rounded outer edge, so
+        // its ends pull in past the corner radius — a full-span bar
+        // would stick out of the card's arcs.
         QRect accentRect;
         switch (shape()) {
         case QTabBar::RoundedSouth:
         case QTabBar::TriangularSouth:
-            accentRect = QRect(rect.left(), rect.bottom() - strip + 1,
-                               rect.width(), strip);
+            accentRect = QRect(rect.left() + 7, rect.bottom() - strip + 1,
+                               rect.width() - 14, strip);
             break;
         case QTabBar::RoundedWest:
         case QTabBar::TriangularWest:
-            accentRect = QRect(rect.left(), rect.top(),
-                               strip, rect.height());
+            accentRect = QRect(rect.left(), rect.top() + 5,
+                               strip, rect.height() - 10);
             break;
         case QTabBar::RoundedEast:
         case QTabBar::TriangularEast:
-            accentRect = QRect(rect.right() - strip + 1, rect.top(),
-                               strip, rect.height());
+            accentRect = QRect(rect.right() - strip + 1, rect.top() + 5,
+                               strip, rect.height() - 10);
             break;
         default:
-            accentRect = QRect(rect.left(), rect.top(),
-                               rect.width(), strip);
+            accentRect = QRect(rect.left() + 7, rect.top(),
+                               rect.width() - 14, strip);
             break;
         }
         painter.fillRect(accentRect, accent);
@@ -2132,6 +2135,10 @@ void TabBar::paintEvent(QPaintEvent *event)
                 continue;
             }
 
+            // THEM02: the rail rides the content-facing edge — square
+            // on horizontal tabs, so it spans full width there; a
+            // vertical row is rounded on every corner, so the rail
+            // shortens to stay inside the card.
             switch (shape()) {
             case QTabBar::RoundedSouth:
             case QTabBar::TriangularSouth:
@@ -2140,13 +2147,14 @@ void TabBar::paintEvent(QPaintEvent *event)
                 break;
             case QTabBar::RoundedWest:
             case QTabBar::TriangularWest:
-                painter.fillRect(rect.right() - strip + 1, rect.top(),
-                                 strip, rect.height(), accent);
+                painter.fillRect(rect.right() - strip + 1,
+                                 rect.top() + 5,
+                                 strip, rect.height() - 10, accent);
                 break;
             case QTabBar::RoundedEast:
             case QTabBar::TriangularEast:
-                painter.fillRect(rect.left(), rect.top(),
-                                 strip, rect.height(), accent);
+                painter.fillRect(rect.left(), rect.top() + 5,
+                                 strip, rect.height() - 10, accent);
                 break;
             default:
                 painter.fillRect(rect.left(), rect.bottom() - strip + 1,
@@ -2488,7 +2496,23 @@ void TabBar::paintResizeGrip(QPainter *painter)
         const int y = (shape() == QTabBar::RoundedSouth
                        || shape() == QTabBar::TriangularSouth)
             ? zone.top() : zone.bottom();
-        painter->drawLine(zone.left(), y, zone.right(), y);
+        // THEM02: the edge line opens under the selected card so
+        // the active tab merges into the page instead of being
+        // boxed by the grip's resting line.  Vertical rails keep
+        // the divider behind their floating cards.
+        const QRect sel = currentIndex() >= 0
+            ? tabRect(currentIndex()) : QRect();
+        if (sel.isValid()
+                && sel.intersects(zone.adjusted(0, -1, 0, 1))) {
+            const int gapLeft = sel.left() - 1;
+            const int gapRight = sel.right() + 1;
+            if (zone.left() < gapLeft)
+                painter->drawLine(zone.left(), y, gapLeft - 1, y);
+            if (gapRight < zone.right())
+                painter->drawLine(gapRight + 1, y, zone.right(), y);
+        } else {
+            painter->drawLine(zone.left(), y, zone.right(), y);
+        }
     }
     // The handle rides the zone's center — a vertical stack for
     // vertical strips, a horizontal run for horizontal ones.

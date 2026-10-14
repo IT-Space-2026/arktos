@@ -775,6 +775,12 @@ UI:
   4/8/12px spacing rhythm, group headers render semibold, and the Tor
   window's violet styling is defined once and reused everywhere — all
   of it tracks light/dark theme changes live (THEM01).
+- Tab strip restyle: squared tabs are now rounded cards — the active
+  tab lifts and merges into the page, inactive tabs sit flat with
+  dimmed titles, hover is a soft intermediate step, and the strip's
+  buttons share a rounded hover; group bands, container chips, and
+  private badges stay legible on both the horizontal strip and the
+  vertical rail (THEM02).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

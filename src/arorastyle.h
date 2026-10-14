@@ -65,6 +65,15 @@ QColor separatorColor(const QPalette &palette);
 // Highlight at low alpha over the surface color.
 QColor hoverColor(const QPalette &palette);
 
+// The deeper step on the hover wash — pressed chrome and held tabs.
+QColor pressedColor(const QPalette &palette);
+
+// The lifted active tab card — the field color where that is the
+// lighter surface (every light scheme), a raised wash where Base
+// sinks below the chrome (dark palettes), so the current tab reads
+// raised rather than recessed in both.
+QColor tabActiveColor(const QPalette &palette);
+
 // --- tor chrome ---------------------------------------------------
 // The fixed violet family.  These are the only hardcoded colors in
 // chrome code, and they live only here.

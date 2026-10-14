@@ -27,14 +27,20 @@
 #include <arorastyle.h>
 #include <browsermainwindow.h>
 #include <browsertheme.h>
+#include <containermanager.h>
+#include <tabbar.h>
+#include <tabwidget.h>
 
 #include <qdir.h>
 #include <qgroupbox.h>
 #include <qlabel.h>
+#include <qpainter.h>
 #include <qsettings.h>
 #include <qstatusbar.h>
 #include <qstyle.h>
 #include <qstylefactory.h>
+#include <qstyleoption.h>
+#include <qtabbar.h>
 #include <qtoolbar.h>
 #include <qtoolbutton.h>
 #include <qboxlayout.h>
@@ -53,8 +59,22 @@ private slots:
     void groupBoxTitleWeight();
     void polishSurvivesSchemeFlip();
     void torSheetsShareOneSource();
+    void tabCardShape();
+    void tabControlHover();
+    void roundedTabChrome();
     void chromeGrab();
 };
+
+// Channel-wise color comparison — rendered pixels pick up
+// anti-aliased edges and platform noise.
+static bool nearColor(const QColor &a, const QColor &b,
+                      int tolerance = 8)
+{
+    return a.isValid() && b.isValid()
+        && qAbs(a.red() - b.red()) <= tolerance
+        && qAbs(a.green() - b.green()) <= tolerance
+        && qAbs(a.blue() - b.blue()) <= tolerance;
+}
 
 void tst_Arorastyle::initTestCase()
 {
@@ -240,6 +260,293 @@ void tst_Arorastyle::torSheetsShareOneSource()
         AroraStyle::torChromePressedColor().name()));
 }
 
+// THEM02: the proxy paints chrome tabs as flat/rounded cards — a
+// resting tab shows nothing but a hairline to its resting neighbor,
+// hover and press step up a washed card, and the active tab lifts to
+// the field color and merges into the page edge.  A vertical strip's
+// rows paint the same card fully rounded instead.
+void tst_Arorastyle::tabCardShape()
+{
+    QTabBar bar;
+    bar.setShape(QTabBar::RoundedNorth);
+    bar.resize(480, 28);
+    bar.addTab(QLatin1String("one"));
+    bar.addTab(QLatin1String("two"));
+    bar.addTab(QLatin1String("three"));
+    bar.setCurrentIndex(2);
+    const QRect restRect = bar.tabRect(0);  // forces Qt's layout
+    const QRect activeRect = bar.tabRect(2);
+    QVERIFY(restRect.isValid());
+    QVERIFY(activeRect.isValid());
+
+    const QPalette pal = bar.palette();
+    QStyleOptionTab opt;
+    opt.initFrom(&bar);
+    opt.rect = restRect;
+    opt.shape = QTabBar::RoundedNorth;
+    opt.fontMetrics = QFontMetrics(bar.font());
+    opt.text = QLatin1String("one");
+
+    const auto render = [&](QStyle::ControlElement element,
+                            QStyle::State state, const QRect &rect) {
+        QStyleOptionTab copy(opt);
+        copy.state = state;
+        copy.rect = rect;
+        QImage image(bar.width(), 40, QImage::Format_ARGB32);
+        image.fill(Qt::transparent);
+        QPainter painter(&image);
+        QApplication::style()->drawControl(element, &copy, &painter,
+                                           &bar);
+        return image;
+    };
+
+    // Resting — flat; the only ink is the hairline at the boundary
+    // to the next resting tab (index 1 is not the current tab).
+    const QImage resting = render(QStyle::CE_TabBarTabShape,
+                                  QStyle::State_Enabled, restRect);
+    QCOMPARE(resting.pixelColor(restRect.center()).alpha(), 0);
+    QVERIFY(nearColor(
+        resting.pixelColor(restRect.right(), restRect.top() + 8),
+        AroraStyle::separatorColor(pal)));
+
+    // Hover and press — a washed card, press the deeper step.
+    const QImage hovered = render(
+        QStyle::CE_TabBarTabShape,
+        QStyle::State_Enabled | QStyle::State_MouseOver, restRect);
+    QCOMPARE(hovered.pixelColor(restRect.topLeft()).alpha(), 0);
+    QVERIFY(nearColor(hovered.pixelColor(restRect.center()),
+                      AroraStyle::hoverColor(pal)));
+    const QImage pressed = render(
+        QStyle::CE_TabBarTabShape,
+        QStyle::State_Enabled | QStyle::State_MouseOver
+            | QStyle::State_Sunken,
+        restRect);
+    QVERIFY(nearColor(pressed.pixelColor(restRect.center()),
+                      AroraStyle::pressedColor(pal)));
+
+    // Active — lifted to the field color, rounded at the outer
+    // corners, and the fill reaches past the rect's bottom edge so
+    // it merges with the page instead of ending in a border.
+    const QImage active = render(
+        QStyle::CE_TabBarTabShape,
+        QStyle::State_Enabled | QStyle::State_Selected, activeRect);
+    QCOMPARE(active.pixelColor(activeRect.topLeft()).alpha(), 0);
+    QCOMPARE(active.pixelColor(activeRect.topRight()).alpha(), 0);
+    const QColor lifted = AroraStyle::tabActiveColor(pal);
+    QVERIFY(nearColor(active.pixelColor(activeRect.center().x(),
+                                        activeRect.top() + 2),
+                      lifted));
+    QVERIFY(nearColor(
+        active.pixelColor(activeRect.center().x(),
+                          activeRect.bottom() + 1),
+        lifted));
+
+    // A vertical strip's rows get the same card fully rounded — the
+    // forced-North option shape on a West bar is the TABS02 row.
+    TabBar rail;
+    rail.setShape(QTabBar::RoundedWest);
+    rail.setExpanding(false);
+    rail.addTab(QLatin1String("one"));
+    rail.addTab(QLatin1String("two"));
+    rail.resize(200, 300);
+    const QRect row = rail.tabRect(0);
+    QVERIFY(row.isValid());
+    QStyleOptionTab ropt = opt;
+    ropt.initFrom(&rail);
+    ropt.rect = row;
+    ropt.shape = QTabBar::RoundedNorth;
+    ropt.state = QStyle::State_Enabled | QStyle::State_Selected;
+    ropt.fontMetrics = QFontMetrics(rail.font());
+    QImage rowImage(220, 300, QImage::Format_ARGB32);
+    rowImage.fill(Qt::transparent);
+    QPainter rowPainter(&rowImage);
+    QApplication::style()->drawControl(
+        QStyle::CE_TabBarTabShape, &ropt, &rowPainter, &rail);
+    QCOMPARE(rowImage.pixelColor(row.topLeft()).alpha(), 0);
+    QCOMPARE(rowImage.pixelColor(row.bottomLeft()).alpha(), 0);
+    QCOMPARE(rowImage.pixelColor(row.topRight()).alpha(), 0);
+    QCOMPARE(rowImage.pixelColor(row.bottomRight()).alpha(), 0);
+    QVERIFY(nearColor(rowImage.pixelColor(row.center().x(),
+                                          row.top() + 2),
+                      AroraStyle::tabActiveColor(rail.palette())));
+
+    // Resting titles dim — the inactive card recedes one step
+    // further than its flat fill.  The selected tab's ink keeps
+    // full contrast: compare each render's darkest pixel.
+    const auto darkestInk = [](const QImage &image) {
+        int darkest = 255;
+        for (int y = 0; y < image.height(); ++y)
+            for (int x = 0; x < image.width(); ++x) {
+                const QColor c = image.pixelColor(x, y);
+                if (c.alpha() > 150)
+                    darkest = qMin(darkest, c.lightness());
+            }
+        return darkest;
+    };
+    opt.rect = QRect(4, 4, 160, 24);
+    const QImage restingLabel = render(QStyle::CE_TabBarTabLabel,
+                                       QStyle::State_Enabled,
+                                       opt.rect);
+    const QImage activeLabel = render(
+        QStyle::CE_TabBarTabLabel,
+        QStyle::State_Enabled | QStyle::State_Selected, opt.rect);
+    QVERIFY(darkestInk(restingLabel) > darkestInk(activeLabel) + 10);
+}
+
+// THEM02 §c: the strip's per-tab controls share one flat rounded
+// hover — an auto-raise tool button inside a tab bar paints the
+// wash instead of the base style's bevelled frame.
+void tst_Arorastyle::tabControlHover()
+{
+    QTabBar bar;
+    QToolButton button(&bar);
+    button.setAutoRaise(true);
+    button.resize(16, 16);
+
+    QStyleOptionButton opt;
+    opt.initFrom(&button);
+    opt.rect = QRect(0, 0, 16, 16);
+
+    const auto render = [&](QStyle::State state) {
+        QStyleOptionButton copy(opt);
+        copy.state = state;
+        QImage image(16, 16, QImage::Format_ARGB32);
+        image.fill(Qt::transparent);
+        QPainter painter(&image);
+        QApplication::style()->drawPrimitive(
+            QStyle::PE_PanelButtonTool, &copy, &painter, &button);
+        return image;
+    };
+
+    // Idle — nothing paints; hover — a rounded wash whose corner
+    // falls back to ~nothing (anti-aliased feather aside).
+    const QImage idle = render(QStyle::State_Enabled);
+    QCOMPARE(idle.pixelColor(8, 8).alpha(), 0);
+    const QImage hover = render(QStyle::State_Enabled
+                                | QStyle::State_MouseOver);
+    QVERIFY(hover.pixelColor(0, 0).alpha() < 32);
+    QVERIFY(nearColor(hover.pixelColor(8, 8),
+                      AroraStyle::hoverColor(button.palette())));
+    const QImage pressed = render(
+        QStyle::State_Enabled | QStyle::State_MouseOver
+            | QStyle::State_Sunken);
+    QVERIFY(nearColor(pressed.pixelColor(8, 8),
+                      AroraStyle::pressedColor(button.palette())));
+
+    // Outside the strip the auto-raise panel is untouched — a
+    // toolbar child still renders the base style's frame (opaque).
+    QToolBar toolbar;
+    QToolButton toolbarButton(&toolbar);
+    toolbarButton.setAutoRaise(true);
+    QStyleOptionButton topt;
+    topt.initFrom(&toolbarButton);
+    topt.rect = QRect(0, 0, 24, 24);
+    topt.state = QStyle::State_Enabled | QStyle::State_MouseOver;
+    QImage outside(24, 24, QImage::Format_ARGB32);
+    outside.fill(Qt::transparent);
+    QPainter outsidePainter(&outside);
+    QApplication::style()->drawPrimitive(
+        QStyle::PE_PanelButtonTool, &topt, &outsidePainter,
+        &toolbarButton);
+    QVERIFY(outside.pixelColor(12, 12).alpha() > 0);
+}
+
+// THEM02: the same card on real strips, both orientations — the
+// active tab reads lifted, resting tabs flat with hairlines, and
+// the corners actually come off the squared look.
+void tst_Arorastyle::roundedTabChrome()
+{
+    TabBar bar;
+    bar.setShape(QTabBar::RoundedNorth);
+    bar.setExpanding(false);
+    bar.show();
+    for (const char *title : { "first", "second", "third", "fourth" })
+        bar.addTab(QLatin1String(title));
+    bar.setCurrentIndex(1);
+    bar.resize(560, bar.sizeHint().height());
+    QApplication::processEvents();
+
+    const QPalette pal = bar.palette();
+    const QColor strip = pal.color(QPalette::Window);
+    const QImage image = bar.grab().toImage();
+    const QRect active = bar.tabRect(1);
+    const QRect resting = bar.tabRect(2);
+    QVERIFY(active.isValid());
+    QVERIFY(resting.isValid());
+
+    // The active card: outer corners stay on the strip color, the
+    // top band fills with the lifted color.
+    QVERIFY(nearColor(image.pixelColor(active.topLeft()), strip));
+    QVERIFY(nearColor(image.pixelColor(active.topRight()), strip));
+    QVERIFY(nearColor(
+        image.pixelColor(active.center().x(), active.top() + 2),
+        AroraStyle::tabActiveColor(pal)));
+    // Resting interior is flat strip color; the boundary to the
+    // next resting tab is a hairline, while the gap to the active
+    // tab needs none — its card edge separates already.
+    QVERIFY(nearColor(
+        image.pixelColor(resting.center().x(), resting.bottom() - 2),
+        strip));
+    QVERIFY(nearColor(
+        image.pixelColor(resting.right(), resting.center().y()),
+        AroraStyle::separatorColor(pal)));
+    const QRect first = bar.tabRect(0);
+    // No resting hairline toward the active tab — its edge column
+    // carries only the card outline's antialiased fringe, and the
+    // pixel inside tab 0 stays on the strip color.
+    QVERIFY(!nearColor(
+        image.pixelColor(first.right(), first.center().y()),
+        AroraStyle::separatorColor(pal)));
+    QVERIFY(nearColor(
+        image.pixelColor(first.right() - 1, first.center().y()),
+        strip));
+
+    // Vertical rail: every row card is rounded on all four corners.
+    TabBar rail;
+    rail.setShape(QTabBar::RoundedWest);
+    rail.setExpanding(false);
+    rail.show();
+    for (const char *title : { "first", "second", "third", "fourth" })
+        rail.addTab(QLatin1String(title));
+    rail.setCurrentIndex(1);
+    rail.resize(220, 400);
+    QApplication::processEvents();
+
+    const QImage railImage = rail.grab().toImage();
+    const QPalette rpal = rail.palette();
+    const QRect row = rail.tabRect(1);
+    const QRect restRow = rail.tabRect(2);
+    QVERIFY(nearColor(railImage.pixelColor(row.topLeft()),
+                      rpal.color(QPalette::Window)));
+    QVERIFY(nearColor(railImage.pixelColor(row.bottomRight()),
+                      rpal.color(QPalette::Window)));
+    QVERIFY(nearColor(
+        railImage.pixelColor(row.center().x(), row.top() + 2),
+        AroraStyle::tabActiveColor(rpal)));
+    // The resting row separates from its resting neighbor below
+    // with a hairline; the row before the active one needs none.
+    QVERIFY(nearColor(
+        railImage.pixelColor(restRow.center().x(), restRow.bottom()),
+        AroraStyle::separatorColor(rpal)));
+    const QRect rowBefore = rail.tabRect(0);
+    QVERIFY(nearColor(
+        railImage.pixelColor(rowBefore.center().x(),
+                             rowBefore.bottom()),
+        rpal.color(QPalette::Window)));
+
+    // Offscreen grabs for visual review — ARORA_CHROME_GRAB_DIR or
+    // ARORA_TABBAR_GRAB_DIR both work here.
+    const QByteArray grabDir = qgetenv("ARORA_TABBAR_GRAB_DIR").isEmpty()
+        ? qgetenv("ARORA_CHROME_GRAB_DIR")
+        : qgetenv("ARORA_TABBAR_GRAB_DIR");
+    if (!grabDir.isEmpty()) {
+        const QString base = QString::fromLocal8Bit(grabDir);
+        QDir().mkpath(base);
+        image.save(base + QLatin1String("/rounded-tabs-top.png"));
+        railImage.save(base + QLatin1String("/rounded-tabs-left.png"));
+    }
+}
+
 void tst_Arorastyle::chromeGrab()
 {
     // Offscreen grab for visual review — set ARORA_CHROME_GRAB_DIR to
@@ -254,13 +561,46 @@ void tst_Arorastyle::chromeGrab()
     QApplication::processEvents();
 
     QDir().mkpath(QString::fromLocal8Bit(grabDir));
-    QVERIFY(window->grab().save(
-        QString::fromLocal8Bit(grabDir)
-        + QLatin1String("/mainwindow.png")));
+    const QString base = QString::fromLocal8Bit(grabDir);
+    QVERIFY(window->grab().save(base + QLatin1String("/mainwindow.png")));
 
     delete window;
     QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     QApplication::processEvents();
+
+    // THEM02 variants strip — a pinned tab, a named+colored group
+    // run, an off-the-record tab and a container tab all ride the
+    // new card chrome; grabbed once per orientation.
+    TabWidget *variants = new TabWidget;
+    variants->resize(860, 220);
+    variants->show();
+    for (int i = 0; i < 5; ++i)
+        variants->newTab();
+    variants->setTabPinned(0, true);
+    const QString gid = variants->createTabGroup(2);
+    variants->renameTabGroup(gid, QLatin1String("Work"));
+    variants->setTabGroupColor(gid, QColor(0x2e, 0x7d, 0x32));
+    variants->addTabToGroup(3, gid);
+    variants->makeNewPrivateTab();
+    const ContainerManager::Container box =
+        ContainerManager::instance()->createContainer(
+            QLatin1String("GrabBox"), QColor(0x8e, 0x24, 0xaa));
+    variants->makeNewTabInContainer(box.id);
+    variants->setCurrentIndex(1);
+    QApplication::processEvents();
+
+    QVERIFY(variants->grab().save(
+        base + QLatin1String("/variants-top.png")));
+    variants->setTabPosition(QTabWidget::West);
+    variants->resize(300, 460);
+    QApplication::processEvents();
+    QVERIFY(variants->grab().save(
+        base + QLatin1String("/variants-left.png")));
+
+    delete variants;
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QApplication::processEvents();
+    ContainerManager::instance()->deleteContainer(box.id);
 }
 
 QTEST_MAIN(tst_Arorastyle)
