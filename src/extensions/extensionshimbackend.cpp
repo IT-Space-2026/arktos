@@ -22,6 +22,7 @@
 #include "browserapplication.h"
 #include "browsermainwindow.h"
 #include "browserpaths.h"
+#include "extensioneventhub.h"
 #include "tabwidget.h"
 #include "webview.h"
 
@@ -73,6 +74,24 @@ QHash<QString, ExtensionShimBackend::ActionState> &actionStates()
     return states;
 }
 
+// EXT16 shared contextMenus registry — the page context menu reads
+// one ordered item list per extension (registration order kept;
+// QHash iteration order would scramble a menu).  The owners map
+// keys the registry to the live backend: a respawning host hands
+// its slot to the new backend, and a stale destructor clears only
+// what it still owns.
+struct MenuRegistry {
+    QHash<QString, QList<QPair<QString, QJsonObject>>> items;
+    QHash<QString, QString> names;
+    QHash<QString, const ExtensionShimBackend *> owners;
+};
+
+MenuRegistry &menuRegistry()
+{
+    static MenuRegistry registry;
+    return registry;
+}
+
 // Session-stable id minting for tab/window objects — a dynamic
 // property on the object itself, so a destroyed object takes its id
 // with it and a recycled address can never inherit it.
@@ -90,17 +109,23 @@ int idFor(const QObject *object)
 }
 
 // The window a chrome.tabs call targets for currentWindow /
-// lastFocusedWindow — the active window, else the most recently
-// created one.
+// lastFocusedWindow — the active top-level, else the first seen.
+// Enumerates widgets like the EXT16 hub so the set covers windows
+// the app registry does not track (private windows, qtest windows)
+// and never dereferences a null instance() under autotests.
 BrowserMainWindow *currentWindow()
 {
-    BrowserApplication *app = BrowserApplication::instance();
-    const QList<BrowserMainWindow *> windows = app->mainWindows();
-    for (BrowserMainWindow *window : windows) {
-        if (window && window->isActiveWindow())
+    BrowserMainWindow *fallback = nullptr;
+    for (BrowserMainWindow *window
+         : ExtensionEventHub::browsingWindows()) {
+        if (!window)
+            continue;
+        if (window->isActiveWindow())
             return window;
+        if (!fallback)
+            fallback = window;
     }
-    return windows.isEmpty() ? nullptr : windows.last();
+    return fallback;
 }
 
 } // namespace
@@ -114,6 +139,10 @@ ExtensionShimBackend::ExtensionShimBackend(const QString &extensionId,
     , m_extensionName(extensionName)
     , m_extensionPath(extensionPath)
 {
+    // EXT16 registry ownership — this backend is now the authority
+    // for the extension's context-menu items and display name.
+    menuRegistry().owners.insert(m_extensionId, this);
+    menuRegistry().names.insert(m_extensionId, m_extensionName);
 }
 
 ExtensionShimBackend::~ExtensionShimBackend()
@@ -124,6 +153,14 @@ ExtensionShimBackend::~ExtensionShimBackend()
     }
     if (m_localDirty)
         flushLocalStore();
+    // The items die with their owner — Chrome clears an extension's
+    // context menus when its background context ends.  A respawn's
+    // replacement backend already claimed the slot: leave it.
+    if (menuRegistry().owners.value(m_extensionId) == this) {
+        menuRegistry().owners.remove(m_extensionId);
+        menuRegistry().items.remove(m_extensionId);
+        menuRegistry().names.remove(m_extensionId);
+    }
 }
 
 ExtensionShimBackend::ActionState
@@ -514,7 +551,7 @@ QJsonObject ExtensionShimBackend::invokeAlarms(const QString &method,
 // -------------------------------------------------------------------
 
 QJsonObject ExtensionShimBackend::tabObject(WebView *view, int index,
-                                            int windowId) const
+                                            int windowId)
 {
     QJsonObject tab;
     tab.insert(QStringLiteral("id"), idFor(view));
@@ -551,8 +588,11 @@ QJsonObject ExtensionShimBackend::tabObject(WebView *view, int index,
 QJsonObject ExtensionShimBackend::invokeTabs(const QString &method,
                                              const QJsonObject &args)
 {
-    BrowserApplication *app = BrowserApplication::instance();
-    const QList<BrowserMainWindow *> windows = app->mainWindows();
+    // EXT16 parity: the query surface describes the same tab set
+    // the event hub tracks — every top-level window, minus tabs on
+    // profiles extensions may not see (OTR, tor).
+    const QList<BrowserMainWindow *> windows =
+        ExtensionEventHub::browsingWindows();
 
     if (method == QLatin1String("query")) {
         const QJsonObject q =
@@ -579,8 +619,10 @@ QJsonObject ExtensionShimBackend::invokeTabs(const QString &method,
                 continue;
             for (int i = 0; i < tw->count(); ++i) {
                 WebView *view = tw->webView(i);
-                if (!view)
-                    continue;   // engine/widget tabs have no WebView
+                // Engine/widget tabs have no WebView; OTR and tor
+                // pages are invisible to extensions (EXT16 parity).
+                if (!ExtensionEventHub::trackable(view))
+                    continue;
                 QJsonObject tab = tabObject(view, i, wid);
                 if (q.contains(QStringLiteral("active"))
                         && q.value(QStringLiteral("active")).toBool()
@@ -649,7 +691,8 @@ QJsonObject ExtensionShimBackend::invokeTabs(const QString &method,
                 continue;
             for (int i = 0; i < tw->count(); ++i) {
                 WebView *view = tw->webView(i);
-                if (view && idFor(view) == wanted)
+                if (ExtensionEventHub::trackable(view)
+                        && idFor(view) == wanted)
                     return okReply(tabObject(view, i, idFor(window)));
             }
         }
@@ -702,7 +745,7 @@ QJsonObject ExtensionShimBackend::invokeTabs(const QString &method,
             TabWidget *tw = window->tabWidget();
             for (int i = 0; i < tw->count(); ++i) {
                 WebView *view = tw->webView(i);
-                if (!view)
+                if (!ExtensionEventHub::trackable(view))
                     continue;
                 if (wanted < 0) {
                     // No id -> the active tab of the current window.
@@ -935,42 +978,107 @@ QJsonObject ExtensionShimBackend::invokePermissions(
 }
 
 // -------------------------------------------------------------------
-// chrome.contextMenus — per-extension item registry; the page-menu
-// contribution point lands with EXT16.
+// chrome.contextMenus — the shared registry EXT16's page-menu
+// contribution point renders.  create() answers the id like Chrome
+// and refuses duplicates (a silent overwrite would orphan a
+// listener's menuItemId).
 // -------------------------------------------------------------------
+
+QList<ExtensionShimBackend::ContextMenuEntry>
+ExtensionShimBackend::contextMenuEntries()
+{
+    QList<ContextMenuEntry> out;
+    const MenuRegistry &registry = menuRegistry();
+    for (auto it = registry.items.constBegin();
+         it != registry.items.constEnd(); ++it) {
+        for (const auto &item : it.value()) {
+            ContextMenuEntry entry;
+            entry.extensionId = it.key();
+            entry.extensionName = registry.names.value(it.key());
+            entry.itemId = item.first;
+            entry.props = item.second;
+            out.append(entry);
+        }
+    }
+    return out;
+}
+
+QJsonObject ExtensionShimBackend::contextMenuItem(
+        const QString &extensionId, const QString &itemId)
+{
+    const auto items = menuRegistry().items.value(extensionId);
+    for (const auto &item : items) {
+        if (item.first == itemId)
+            return item.second;
+    }
+    return QJsonObject();
+}
+
+void ExtensionShimBackend::setContextMenuChecked(
+        const QString &extensionId, const QString &itemId,
+        bool checked)
+{
+    auto &items = menuRegistry().items[extensionId];
+    for (auto &item : items) {
+        if (item.first == itemId) {
+            item.second.insert(QStringLiteral("checked"), checked);
+            return;
+        }
+    }
+}
 
 QJsonObject ExtensionShimBackend::invokeContextMenus(
         const QString &method, const QJsonObject &args)
 {
+    // Re-claim the slot — a stale owner's destructor may already
+    // have cleared it (respawn ordering or test backends sharing an
+    // id); whoever writes owns the entries.
+    if (menuRegistry().owners.value(m_extensionId) != this) {
+        menuRegistry().owners.insert(m_extensionId, this);
+        menuRegistry().names.insert(m_extensionId, m_extensionName);
+    }
+    auto &items = menuRegistry().items[m_extensionId];
+    const auto findItem = [&items](const QString &id) {
+        for (int i = 0; i < items.size(); ++i) {
+            if (items.at(i).first == id)
+                return i;
+        }
+        return -1;
+    };
     if (method == QLatin1String("create")) {
         QJsonObject props = args.value(QStringLiteral("props")).toObject();
         QString id = props.value(QStringLiteral("id")).toString();
         if (id.isEmpty())
-            id = QStringLiteral("item-%1").arg(m_menuItems.size() + 1);
+            id = QStringLiteral("item-%1").arg(items.size() + 1);
+        if (findItem(id) >= 0)
+            return errReply(QStringLiteral("duplicate-id"));
         props.insert(QStringLiteral("id"), id);
-        m_menuItems.insert(id, props);
+        items.append({id, props});
         return okReply(QJsonObject{{QStringLiteral("id"), id}});
     }
     if (method == QLatin1String("update")) {
         const QString id = args.value(QStringLiteral("id")).toString();
-        if (!m_menuItems.contains(id))
+        const int at = findItem(id);
+        if (at < 0)
             return errReply(QStringLiteral("not-found"));
-        QJsonObject props = m_menuItems.value(id);
+        QJsonObject props = items.at(at).second;
         const QJsonObject patch =
             args.value(QStringLiteral("props")).toObject();
         for (auto it = patch.constBegin(); it != patch.constEnd(); ++it)
             props.insert(it.key(), it.value());
-        m_menuItems.insert(id, props);
+        items[at].second = props;
         return okReply();
     }
     if (method == QLatin1String("remove")) {
         const QString id = args.value(QStringLiteral("id")).toString();
-        if (!m_menuItems.remove(id))
+        const int at = findItem(id);
+        if (at < 0)
             return errReply(QStringLiteral("not-found"));
+        items.removeAt(at);
         return okReply();
     }
     if (method == QLatin1String("removeAll")) {
-        m_menuItems.clear();
+        items.clear();
         return okReply();
     }
     return errReply(QStringLiteral("unimplemented"));

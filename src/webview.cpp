@@ -70,6 +70,7 @@
 #include "browserapplication.h"
 #include "browsermainwindow.h"
 #include "containermanager.h"
+#include "extensioneventhub.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
 #include "pdfview.h"
@@ -533,6 +534,13 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
     }
     menu->addAction(tr("Show &QR Code for This Page"), this,
             [this]() { QrCodeDialog::showForUrl(url(), this); });
+
+    // EXT16: extension chrome.contextMenus contributions — items
+    // registered through the hosted shim render here (grouped per
+    // extension, context-filtered, checkable state live) and a
+    // trigger delivers contextMenus.onClicked back into the hidden
+    // background context.
+    ExtensionEventHub::contributeContextMenu(menu, info, this);
 
     if (!menu->isEmpty()) {
         if (BrowserMainWindow *window = BrowserMainWindow::parentWindow(this)) {

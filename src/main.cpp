@@ -44,6 +44,7 @@
 #include "cookiejar.h"
 #include "downloadmanager.h"
 #include "extensionbackgroundhost.h"
+#include "extensioneventhub.h"
 #include "extensionmanager.h"
 #include "fingerprintprotector.h"
 #include "history.h"
@@ -10206,7 +10207,8 @@ int main(int argc, char **argv)
                 "\"name\":\"arora-host-smoke-ext\","
                 "\"version\":\"0.1\","
                 "\"description\":\"EXT14 hosted-runtime fixture\","
-                "\"permissions\":[\"storage\"],"
+                "\"permissions\":[\"storage\",\"tabs\","
+                "\"webNavigation\",\"contextMenus\"],"
                 "\"background\":{\"service_worker\":\"sw.js\"}}");
             QFile worker(extDir + QLatin1String("/sw.js"));
             if (!worker.open(QIODevice::WriteOnly)) {
@@ -10221,7 +10223,25 @@ int main(int argc, char **argv)
                 "function(){ self.__hostedInstalled = true; });\n"
                 "chrome.runtime.onMessage.addListener("
                 "function(m,s,r){ if(m&&m.ping){ r({pong:true,"
-                "from:'hosted'}); return true; } return false; });\n");
+                "from:'hosted'}); return true; } return false; });\n"
+                // EXT16: extension-registered event listeners —
+                // real browser signals must land here.
+                "self.__extEvents=[];\n"
+                "self.__extRec=function(n){return function(){\n"
+                " self.__extEvents.push({n:n,"
+                "a:Array.prototype.slice.call(arguments).map("
+                "function(v){try{return JSON.parse("
+                "JSON.stringify(v));}catch(e){return String(v);}})"
+                "});};};\n"
+                "['onCreated','onUpdated','onActivated','onRemoved']"
+                ".forEach(function(e){chrome.tabs[e].addListener("
+                " self.__extRec('tabs.'+e));});\n"
+                "['onBeforeNavigate','onCommitted','onCompleted',"
+                "'onErrorOccurred'].forEach(function(e){\n"
+                " chrome.webNavigation[e].addListener("
+                " self.__extRec('webNavigation.'+e));});\n"
+                "chrome.contextMenus.onClicked.addListener("
+                " self.__extRec('contextMenus.onClicked'));\n");
         }
 
         // Manifest inspector must hand the runtime the script list.
@@ -10236,11 +10256,14 @@ int main(int argc, char **argv)
 
         // phase: 0 = waiting for the host to reach Ready after
         // enable; 3 = the EXT15 shim probe is running in-page;
-        // 1 = waiting for teardown after disable; 2 = the re-enable
-        // respawn must reach Ready again.
+        // 4 = waiting for a typed-error gap; 5 = the EXT16 event
+        // legs drive a real window; 1 = waiting for teardown after
+        // disable; 2 = the re-enable respawn must reach Ready again.
         auto phase = std::make_shared<int>(0);
         auto hostTicks = std::make_shared<int>(0);
         auto probeTicks = std::make_shared<int>(0);
+        auto smokeDrove = std::make_shared<bool>(false);
+        BrowserMainWindow *smokeWindow = nullptr;
         QTimer *hostPoll = new QTimer(&application);
         hostPoll->setInterval(250);
 
@@ -10492,10 +10515,9 @@ int main(int argc, char **argv)
                     if (notif == QLatin1String("unsupported")) {
                         *phase = 4;
                     } else {
-                        *phase = 1;
-                        *hostTicks = 0;
-                        extensions->setExtensionEnabled(extensionId,
-                                                        false);
+                        // Straight to the EXT16 event legs.
+                        *phase = 5;
+                        *probeTicks = 0;
                     }
                     *probeTicks = 0;
                     hostPoll->start();
@@ -10507,14 +10529,162 @@ int main(int argc, char **argv)
                         "chrome.notifications.create: unsupported"))) {
                     hostPoll->stop();
                     check(true, "typed error surfaced as a shim gap");
-                    *phase = 1;
-                    *hostTicks = 0;
-                    extensions->setExtensionEnabled(extensionId, false);
+                    *phase = 5;
+                    *probeTicks = 0;
                     hostPoll->start();
                     return;
                 }
                 if (++*probeTicks > 40)
                     die(QStringLiteral("shim gap never surfaced"));
+            } else if (*phase == 5) {   // EXT16 event surfaces
+                if (!host)
+                    return;
+                if (!*smokeDrove) {
+                    *smokeDrove = true;
+                    // A real extension never wrote the fixture's
+                    // listener block — inject the same harness so the
+                    // delivery assertions run against ITS manifest's
+                    // permissions.
+                    if (realExt) {
+                        host->page()->runJavaScript(QStringLiteral(
+                            "self.__extEvents=[];"
+                            "self.__extRec=function(n){"
+                            "return function(){self.__extEvents.push("
+                            "{n:n,a:Array.prototype.slice.call("
+                            "arguments).map(function(v){"
+                            "try{return JSON.parse(JSON.stringify(v));}"
+                            "catch(e){return String(v);}})});};};"
+                            "['onCreated','onUpdated','onActivated',"
+                            "'onRemoved'].forEach(function(e){"
+                            "chrome.tabs[e].addListener("
+                            " self.__extRec('tabs.'+e));});"
+                            "['onBeforeNavigate','onCommitted',"
+                            "'onCompleted','onErrorOccurred'].forEach("
+                            "function(e){chrome.webNavigation[e]"
+                            ".addListener(self.__extRec("
+                            "'webNavigation.'+e));});"
+                            "chrome.contextMenus.onClicked.addListener("
+                            "self.__extRec('contextMenus.onClicked'));"),
+                            [](const QVariant &) {});
+                    }
+                    // Register a menu item through the real shim
+                    // path, then drive a real window — tab create/
+                    // activate/close plus a data: navigation cover
+                    // the whole EXT16 surface.
+                    host->page()->runJavaScript(QStringLiteral(
+                        "chrome.contextMenus.create({id:"
+                        "'arora-smoke-menu',title:'Smoke',"
+                        "contexts:['all']},function(){});"),
+                        [&](const QVariant &) {
+                        smokeWindow = application.newMainWindow();
+                        if (!smokeWindow
+                                || !smokeWindow->tabWidget()) {
+                            die(QStringLiteral("no smoke window"));
+                            return;
+                        }
+                        TabWidget *tw = smokeWindow->tabWidget();
+                        tw->newTab();
+                        // Navigate the tab that survives — the view
+                        // under load must live until loadStarted/
+                        // loadFinished return from the renderer;
+                        // closing a mid-load view drops the signals.
+                        WebView *view = tw->webView(0);
+                        if (view) {
+                            view->load(QUrl(QStringLiteral(
+                                "data:text/html,<title>smoke</title>"
+                                "ok")));
+                        }
+                        tw->setCurrentIndex(0);
+                        if (tw->count() > 1)
+                            tw->setCurrentIndex(1);
+                        Engine::ContextMenuInfo cinfo;
+                        ExtensionEventHub::deliverMenuClicked(
+                            extensionId,
+                            QStringLiteral("arora-smoke-menu"),
+                            cinfo, tw->currentWebView());
+                        if (tw->count() > 1)
+                            tw->closeTab(1);
+                    });
+                    return;
+                }
+                if (!host)
+                    return;
+                ++*probeTicks;
+                host->page()->runJavaScript(QStringLiteral(
+                    "self.__extEvents?JSON.stringify(self.__extEvents)"
+                    ":'missing'"),
+                    [&](const QVariant &v) {
+                    const QJsonArray evs = QJsonDocument::fromJson(
+                        v.toString().toUtf8()).array();
+                    const auto saw = [&evs](const char *name) {
+                        for (const QJsonValue &e : evs) {
+                            if (e.toObject()
+                                    .value(QLatin1String("n"))
+                                    .toString()
+                                    == QLatin1String(name))
+                                return true;
+                        }
+                        return false;
+                    };
+                    // The assertions follow the extension's own
+                    // manifest: tabs.* events are ungated, the
+                    // webNavigation/contextMenus families only for
+                    // declared permissions.
+                    const bool needNav = !realExt
+                        || manifest.permissions.contains(
+                            QLatin1String("webNavigation"));
+                    const bool needMenu = !realExt
+                        || manifest.permissions.contains(
+                            QLatin1String("contextMenus"));
+                    const bool done =
+                        saw("tabs.onCreated") && saw("tabs.onUpdated")
+                        && saw("tabs.onActivated") && saw("tabs.onRemoved")
+                        && (!needNav
+                            || (saw("webNavigation.onCommitted")
+                                && (saw("webNavigation.onCompleted")
+                                    || saw("webNavigation."
+                                           "onErrorOccurred"))))
+                        && (!needMenu
+                            || saw("contextMenus.onClicked"));
+                    if (!done) {
+                        if (*probeTicks > 240)
+                            die(QStringLiteral(
+                                "EXT16 events never arrived: %1")
+                                .arg(v.toString()));
+                        return;
+                    }
+                    hostPoll->stop();
+                    check(true, "tabs onCreated/onUpdated/onActivated/"
+                                "onRemoved delivered in-page");
+                    if (needNav)
+                        check(true, "webNavigation onCommitted + "
+                                    "terminal delivered in-page");
+                    if (needMenu)
+                        check(true, "contextMenus.onClicked delivered "
+                                    "in-page");
+                    for (const QJsonValue &e : evs) {
+                        const QJsonObject o = e.toObject();
+                        if (o.value(QLatin1String("n")).toString()
+                                != QLatin1String("tabs.onUpdated"))
+                            continue;
+                        const QJsonArray a =
+                            o.value(QLatin1String("a")).toArray();
+                        check(a.size() == 3,
+                              "tabs.onUpdated arg shape "
+                              "(tabId, changeInfo, tab)");
+                        break;
+                    }
+                    if (smokeWindow) {
+                        smokeWindow->close();
+                        QApplication::sendPostedEvents(
+                            nullptr, QEvent::DeferredDelete);
+                        smokeWindow = nullptr;
+                    }
+                    *phase = 1;
+                    *hostTicks = 0;
+                    extensions->setExtensionEnabled(extensionId, false);
+                    hostPoll->start();
+                });
             } else {  // phase 1 — teardown
                 if (!host) {
                     check(true, "disable tears the hosted view down");

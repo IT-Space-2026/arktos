@@ -61,7 +61,7 @@
 
     var LOG_CAP = 500;
     var shim = window.__aroraShim = {
-        version: 2,
+        version: 3,
         gaps: [],       // typed errors observed (health surface)
         notes: [],      // benign diagnostics (recorded registrations,
                         // accepted-but-unsourced state)
@@ -163,9 +163,49 @@
             return;
         }
         var ev = shim.events[name];
-        if (ev && ev.__fire)
-            ev.__fire(payload ? [payload] : []);
+        if (!ev && name.indexOf('chrome.') === 0)
+            ev = shim.events[name.slice('chrome.'.length)];
+        if (!ev)
+            ev = shim.events['chrome.' + name];
+        if (ev && ev.__fire) {
+            // EXT16 multi-arg convention: the host spreads listener
+            // arguments through __args ([tabId, changeInfo, tab]
+            // for tabs.onUpdated).  Named-object payloads without
+            // it still fan out through the arg-order table so an
+            // event lands correctly either way; a plain scalar
+            // payload stays a single argument.
+            var args;
+            if (payload && payload.__args !== undefined)
+                args = payload.__args;
+            else if (payload && ARG_KEYS[name])
+                args = ARG_KEYS[name].map(function (k) {
+                    return payload[k];
+                });
+            else
+                args = payload === undefined ? [] : [payload];
+            ev.__fire(args);
+        }
     }
+
+    // Fallback argument order for events the host pushes as a named
+    // object rather than an __args array.
+    var ARG_KEYS = {
+        'tabs.onCreated': ['tab'],
+        'tabs.onUpdated': ['tabId', 'changeInfo', 'tab'],
+        'tabs.onMoved': ['tabId', 'moveInfo'],
+        'tabs.onActivated': ['tabId', 'windowId'],
+        'tabs.onHighlighted': ['highlightInfo'],
+        'tabs.onDetached': ['tabId', 'detachInfo'],
+        'tabs.onAttached': ['tabId', 'attachInfo'],
+        'tabs.onRemoved': ['tabId', 'removeInfo'],
+        'tabs.onReplaced': ['addedTabId', 'removedTabId'],
+        'tabs.onZoomChange': ['zoomInfo'],
+        'windows.onCreated': ['window'],
+        'windows.onRemoved': ['windowId'],
+        'windows.onFocusChanged': ['windowId'],
+        'contextMenus.onClicked': ['info', 'tab'],
+        'contextMenus.onShown': ['info', 'tab']
+    };
 
     function wireHostEvent() {
         if (hostEventWired || !host.bridge)
@@ -253,10 +293,12 @@
     })();
 
     function typedError(code, api) {
-        var e = new Error('chrome.' + api + ': ' + code);
+        var name = api.indexOf('chrome.') === 0 ? api
+                                                 : 'chrome.' + api;
+        var e = new Error(name + ': ' + code);
         e.code = code;
         e.api = api;
-        recordGap('chrome.' + api, code);
+        recordGap(name, code);
         return e;
     }
 
@@ -2064,6 +2106,20 @@
                     installNs(ns, unsupportedNs('chrome.' + ns),
                               false);
             } catch (e) {}
+        }
+        // windows.* does have a real event source (the EXT16 hub
+        // pushes onCreated/onRemoved/onFocusChanged): pre-create them
+        // so the typed-error proxy hands out real events without the
+        // 'no event source' note; windows.get et al still answer
+        // honest 'unsupported' errors.
+        if (chrome.windows) {
+            var winEvents = ['onCreated', 'onRemoved',
+                             'onFocusChanged'];
+            for (var we = 0; we < winEvents.length; ++we) {
+                var wn = 'windows.' + winEvents[we];
+                if (!shim.events[wn])
+                    makeEvent(wn);
+            }
         }
     }
 

@@ -32,13 +32,21 @@
 #include <memory>
 
 #include "browserapplication.h"
+#include "browsermainwindow.h"
 #include "browserpaths.h"
 #include "browserprofile.h"
 #include "extensionbackgroundhost.h"
+#include "extensioneventhub.h"
 #include "extensionmanager.h"
 #include "extensionshimbackend.h"
+#include "engineinterface.h"
 #include "qtest_arora.h"
 #include "qtry.h"
+#include "tabwidget.h"
+#include "webview.h"
+
+#include <qmenu.h>
+#include <qsignalspy.h>
 
 class tst_ExtensionManager : public QObject
 {
@@ -59,6 +67,7 @@ private slots:
     void hostedBackgroundRuntime();
     void extensionShimBackend();
     void extensionMessageRelay();
+    void extensionEventSurfaces();
 
 private:
     // Minimal PK zip writer (store-only) — enough for the update
@@ -1364,6 +1373,337 @@ void tst_ExtensionManager::extensionMessageRelay()
     runtime->unregisterRelayContext(&other);
 
     QDir(dir).removeRecursively();
+}
+
+// EXT16: the event surfaces.  Two hosted extensions — one declaring
+// tabs/webNavigation/contextMenus + a host permission, one declaring
+// only storage — record real listener deliveries in-page; a real
+// BrowserMainWindow drives tab create/activate/close and a data:
+// navigation through the engine so the hub's tab and webNavigation
+// events are exercised end to end.  The permission gate is asserted
+// two ways: webNavigation deliveries never reach the unpermitted
+// extension, and url-bearing tab payload fields are scrubbed for it
+// (Chrome parity).
+void tst_ExtensionManager::extensionEventSurfaces()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString swRecord =
+        "self.__extEvents=[];\n"
+        "self.__extRec=function(n){return function(){\n"
+        " self.__extEvents.push({n:n,a:Array.prototype.slice.call(\n"
+        "  arguments).map(function(v){\n"
+        "   try{return JSON.parse(JSON.stringify(v));}catch(e){\n"
+        "    return String(v);}})});};};\n"
+        "['onCreated','onUpdated','onActivated','onRemoved'].forEach(\n"
+        " function(e){chrome.tabs[e].addListener(\n"
+        "  self.__extRec('tabs.'+e));});\n"
+        "['onBeforeNavigate','onCommitted','onCompleted',\n"
+        " 'onErrorOccurred'].forEach(function(e){\n"
+        " chrome.webNavigation[e].addListener(\n"
+        "  self.__extRec('webNavigation.'+e));});\n"
+        "chrome.contextMenus.onClicked.addListener(\n"
+        " self.__extRec('contextMenus.onClicked'));\n";
+
+    const QString dirA = QDir::temp().filePath(
+        QStringLiteral("tst-extevA-%1")
+            .arg(QCoreApplication::applicationPid()));
+    const QString dirB = QDir::temp().filePath(
+        QStringLiteral("tst-extevB-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirA));
+    QVERIFY(QDir().mkpath(dirB));
+    {
+        QFile f(dirA + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-events-a\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\","
+                "\"tabs\",\"webNavigation\",\"contextMenus\"],"
+                "\"host_permissions\":[\"https://allowed.example/*\"],"
+                "\"background\":{\"service_worker\":\"sw.js\"}}");
+        f.close();
+        QFile w(dirA + QLatin1String("/sw.js"));
+        QVERIFY(w.open(QIODevice::WriteOnly));
+        w.write(swRecord.toUtf8());
+        w.close();
+    }
+    {
+        QFile f(dirB + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-events-b\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"],"
+                "\"background\":{\"service_worker\":\"sw.js\"}}");
+        f.close();
+        QFile w(dirB + QLatin1String("/sw.js"));
+        QVERIFY(w.open(QIODevice::WriteOnly));
+        w.write(swRecord.toUtf8());
+        w.close();
+    }
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    ExtensionEventHub *hub = ExtensionEventHub::instance();
+
+    const auto loadReady = [this, manager, runtime](
+            const QString &dir, const QString &name) -> QString {
+        auto loaded = std::make_shared<QString>();
+        QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                         this, [loaded, name](
+                             const ExtensionManager::ExtensionInfo
+                                 &info) {
+            if (info.name == name && info.error.isEmpty())
+                *loaded = info.id;
+        });
+        manager->grantConsent(dir);
+        manager->loadExtension(dir);
+        QElapsedTimer timer;
+        timer.start();
+        while (loaded->isEmpty() && timer.elapsed() < 30000)
+            QTest::qWait(50);
+        const QString id = *loaded;
+        if (id.isEmpty())
+            return id;
+        manager->setExtensionEnabled(id, true);
+        timer.restart();
+        while (timer.elapsed() < 45000) {
+            ExtensionBackgroundHost *host = runtime->host(id);
+            if (host && host->state()
+                    == ExtensionBackgroundHost::State::Ready)
+                break;
+            QTest::qWait(50);
+        }
+        return id;
+    };
+    const QString idA = loadReady(dirA,
+                                  QStringLiteral("tst-events-a"));
+    QVERIFY2(!idA.isEmpty(), "fixture A loaded + hosted");
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(idA)
+            && runtime->host(idA)->state()
+               == ExtensionBackgroundHost::State::Ready,
+        45000);
+    const QString idB = loadReady(dirB,
+                                  QStringLiteral("tst-events-b"));
+    QVERIFY2(!idB.isEmpty(), "fixture B loaded + hosted");
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(idB)
+            && runtime->host(idB)->state()
+               == ExtensionBackgroundHost::State::Ready,
+        45000);
+
+    auto eval = [](QWebEnginePage *page, const QString &source) {
+        auto result = std::make_shared<QVariant>();
+        page->runJavaScript(source,
+                            [result](const QVariant &v) { *result = v; });
+        QElapsedTimer timer;
+        timer.start();
+        while (!result->isValid() && timer.elapsed() < 10000)
+            QTest::qWait(50);
+        return *result;
+    };
+    auto sawEvent = [&eval](QWebEnginePage *page, const QString &name) {
+        return eval(page, QStringLiteral(
+            "(self.__extEvents||[]).some(function(e){return e.n===\"")
+            + name + QLatin1String("\";})"))
+            .toBool();
+    };
+
+    // --- hub tracking + window/tab drive -----------------------------
+    hub->setTracking(true);
+    hub->syncNow();   // silent baseline
+
+    BrowserMainWindow *window = new BrowserMainWindow;
+    TabWidget *tw = window->tabWidget();
+    QVERIFY(tw && tw->count() >= 1);
+    hub->syncNow();
+    QVERIFY(hub->trackedTabCount() >= 1);
+    QVERIFY(ExtensionEventHub::browsingWindows().contains(window));
+    QVERIFY(ExtensionEventHub::trackable(tw->currentWebView()));
+
+    // The window's first tab was born after tracking began ->
+    // onCreated lands in-page (A and B both — tabs events are
+    // ungated).
+    QTRY_VERIFY_WITH_TIMEOUT(
+        sawEvent(runtime->host(idA)->page(),
+                 QStringLiteral("tabs.onCreated")),
+        20000);
+
+    // A second tab + activation + close cover the remaining tab
+    // events.
+    tw->newTab();
+    hub->syncNow();
+    QVERIFY(tw->count() >= 2);
+    tw->setCurrentIndex(0);
+    WebView *view = tw->webView(0);
+    QVERIFY(view);
+
+    // A real navigation — the webNavigation lifecycle and
+    // tabs.onUpdated (loading -> complete) ride the page signals.
+    view->load(QUrl(QStringLiteral("data:text/html,<title>ev</title>ok")));
+    tw->closeTab(1);
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    hub->syncNow();
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        sawEvent(runtime->host(idA)->page(),
+                 QStringLiteral("tabs.onActivated"))
+            && sawEvent(runtime->host(idA)->page(),
+                        QStringLiteral("tabs.onUpdated"))
+            && sawEvent(runtime->host(idA)->page(),
+                        QStringLiteral("tabs.onRemoved"))
+            && sawEvent(runtime->host(idA)->page(),
+                        QStringLiteral("webNavigation.onCommitted")),
+        30000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        sawEvent(runtime->host(idA)->page(),
+                 QStringLiteral("webNavigation.onCompleted"))
+            || sawEvent(runtime->host(idA)->page(),
+                        QStringLiteral("webNavigation.onErrorOccurred")),
+        15000);
+
+    // Payload shape — the onUpdated entry carries
+    // (tabId, changeInfo, tab); the committed entry carries
+    // tabId/url/frameId.
+    {
+        const QJsonArray rows = QJsonDocument::fromJson(
+            eval(runtime->host(idA)->page(), QStringLiteral(
+                "JSON.stringify(self.__extEvents)"))
+                .toString().toUtf8()).array();
+        bool sawUpdatedShape = false;
+        bool sawCommittedShape = false;
+        for (const QJsonValue &v : rows) {
+            const QJsonObject e = v.toObject();
+            const QString n = e.value(QLatin1String("n")).toString();
+            const QJsonArray a = e.value(QLatin1String("a")).toArray();
+            if (n == QLatin1String("tabs.onUpdated") && a.size() == 3
+                    && a.at(2).toObject()
+                           .contains(QLatin1String("url")))
+                sawUpdatedShape = true;
+            if (n == QLatin1String("webNavigation.onCommitted")
+                    && a.size() == 1
+                    && a.at(0).toObject()
+                           .contains(QLatin1String("tabId"))
+                    && a.at(0).toObject()
+                           .contains(QLatin1String("url"))
+                    && a.at(0).toObject()
+                           .value(QLatin1String("frameId")).toInt(-1)
+                           == 0)
+                sawCommittedShape = true;
+        }
+        QVERIFY2(sawUpdatedShape,
+                 "tabs.onUpdated(tabId, changeInfo, tab) shape");
+        QVERIFY2(sawCommittedShape,
+                 "webNavigation.onCommitted(details) shape");
+    }
+
+    // --- permission gating -------------------------------------------
+    // B declares no webNavigation permission — the whole family is
+    // gated for it.  tabs.* events do arrive (ungated) but url-bearing
+    // fields are scrubbed ('tabs' permission and no host match).
+    const QVariant bNav = eval(runtime->host(idB)->page(),
+        QStringLiteral(
+            "(self.__extEvents||[]).some(function(e){"
+            " return e.n.indexOf('webNavigation.')===0;})"));
+    QCOMPARE(bNav.toBool(), false);
+    const QVariant bScrub = eval(runtime->host(idB)->page(),
+        QStringLiteral(
+            "(self.__extEvents||[]).filter(function(e){"
+            " return e.n==='tabs.onUpdated';}).every(function(e){"
+            " var t=e.a[2]||{}; return t.url===undefined"
+            "   &&t.title===undefined"
+            "   &&(e.a[1]||{}).url===undefined;})"));
+    QCOMPARE(bScrub.toBool(), true);
+    // B still sees the events themselves.
+    QVERIFY(sawEvent(runtime->host(idB)->page(),
+                     QStringLiteral("tabs.onUpdated")));
+
+    // A keeps the url — 'tabs' permission grants it.
+    const QVariant aUrl = eval(runtime->host(idA)->page(),
+        QStringLiteral(
+            "(self.__extEvents||[]).some(function(e){"
+            " return e.n==='tabs.onUpdated'&&e.a[2]"
+            "   &&e.a[2].url!==undefined;})"));
+    QCOMPARE(aUrl.toBool(), true);
+
+    // --- contextMenus: registry -> real menu -> onClicked -------------
+    ExtensionShimBackend *backendA =
+        runtime->host(idA)->bridge()->backend();
+    QVERIFY(backendA);
+    QVERIFY(backendA->invoke(
+        QStringLiteral("contextMenus"), QStringLiteral("create"),
+        QJsonObject{{QStringLiteral("props"),
+                     QJsonObject{{QStringLiteral("id"),
+                                  QStringLiteral("mi")},
+                                 {QStringLiteral("title"),
+                                  QStringLiteral("Ev Item")},
+                                 {QStringLiteral("contexts"),
+                                  QJsonArray{QStringLiteral("page")}}}}})
+        .value(QLatin1String("ok")).toBool());
+    QCOMPARE(ExtensionShimBackend::contextMenuEntries().size(), 1);
+
+    QMenu menu;
+    Engine::ContextMenuInfo cinfo;
+    ExtensionEventHub::contributeContextMenu(&menu, cinfo, view);
+    bool sawItem = false;
+    for (QAction *action : menu.actions()) {
+        if (QMenu *sub = action->menu()) {
+            for (QAction *item : sub->actions()) {
+                if (item->text() == QLatin1String("Ev Item"))
+                    sawItem = true;
+            }
+        }
+    }
+    QVERIFY2(sawItem, "registered item renders in the page menu");
+
+    ExtensionEventHub::deliverMenuClicked(idA, QStringLiteral("mi"),
+                                          cinfo, view);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        sawEvent(runtime->host(idA)->page(),
+                 QStringLiteral("contextMenus.onClicked")),
+        20000);
+    // Targeted delivery — B's identical listener stays silent.
+    QCOMPARE(eval(runtime->host(idB)->page(), QStringLiteral(
+        "(self.__extEvents||[]).some(function(e){"
+        " return e.n==='contextMenus.onClicked';})")).toBool(), false);
+    // The click info reports the menuItemId.
+    QCOMPARE(eval(runtime->host(idA)->page(), QStringLiteral(
+        "(self.__extEvents||[]).some(function(e){"
+        " return e.n==='contextMenus.onClicked'&&e.a[0]"
+        "   &&e.a[0].menuItemId==='mi';})")).toBool(), true);
+
+    // --- fan-out gate, direct-drive -----------------------------------
+    ChromeBridge *bridgeA = runtime->host(idA)->bridge();
+    ChromeBridge *bridgeB = runtime->host(idB)->bridge();
+    QSignalSpy spyA(bridgeA, &ChromeBridge::hostEvent);
+    QSignalSpy spyB(bridgeB, &ChromeBridge::hostEvent);
+    runtime->broadcastEvent(
+        QStringLiteral("webNavigation.onCommitted"),
+        QJsonObject{{QStringLiteral("tabId"), 1},
+                    {QStringLiteral("url"),
+                     QStringLiteral("https://x.example/")}});
+    QCOMPARE(spyA.size(), 1);
+    QCOMPARE(spyB.size(), 0);
+    runtime->deliverEvent(
+        idA, QStringLiteral("contextMenus.onClicked"),
+        QJsonObject{{QStringLiteral("menuItemId"),
+                     QStringLiteral("mi")}});
+    QCOMPARE(spyA.size(), 2);
+    QCOMPARE(spyB.size(), 0);
+
+    // Cleanup — the menu registry dies with the backend on teardown.
+    window->close();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    manager->setExtensionEnabled(idA, false);
+    manager->setExtensionEnabled(idB, false);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !runtime->host(idA) && !runtime->host(idB), 20000);
+    hub->setTracking(false);
+    manager->removeExtension(idA);
+    manager->removeExtension(idB);
+    QDir(dirA).removeRecursively();
+    QDir(dirB).removeRecursively();
 }
 
 QTEST_MAIN(tst_ExtensionManager)
