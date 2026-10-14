@@ -73,6 +73,7 @@ Rules for the agent working this file:
 | DEVT08 | Devtools menu: BiDi entry checkable, sibling isn't — neither should be — details below | blocked | 5 | blocked:exceeded 5 restarts |
 
 | DEVT09 | BiDi waterfall bars invisible — collapse to hairlines on any real timeline — details below | in_progress | 0 | |
+| ENG25 | Servo scroll too slow — measure input-delta vs paint-path, fix the real bottleneck — details below | pending | 0 | |
 
 ## Task details
 
