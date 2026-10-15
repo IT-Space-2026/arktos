@@ -2104,6 +2104,11 @@ void BrowserMainWindow::setupToolBar()
     // in its tooltip, and a ctor-hidden widget would latch the
     // QWidgetAction invisible at insertion (the action's own
     // visibility is what governs), so the action is pinned here.
+    // TRUST16 locks the shape: exactly one shield, on the bar never
+    // inside the field (the field keeps its own left-side surface —
+    // the site icon here, the padlock on the merged tree), a normal
+    // movable item in edit mode whose stock slot stays directly left
+    // of the url field.
     m_siteShield = new SiteShieldButton(m_navigationBar);
     m_siteShield->setObjectName(QLatin1String("navSiteShield"));
     QAction *navShieldAction =
@@ -2583,10 +2588,11 @@ void BrowserMainWindow::resetNavBarOrder()
     syncNavBarOrderToWindows();
 }
 
-// NAVB03: edit mode — every bar item (the location-bar splitter
-// counts as one item; the shield/engine surfaces live inside the
-// location bar itself and move with it) can be dragged to a new
-// slot.  While on, presses on the bar select instead of firing, a
+// NAVB03: edit mode — every bar item (the shared site shield is a
+// normal movable item; the location-bar splitter counts as one item
+// and the in-field surfaces — site icon, privacy/reader/popup
+// buttons — move with it) can be dragged to a new slot.  While on,
+// presses on the bar select instead of firing, a
 // ClosedHand drag shows a highlight gap line, and release moves the
 // item.  Exit paths: the context-menu toggle, Esc, or a click
 // anywhere outside the bar.  The order stays in memory for this

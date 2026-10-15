@@ -856,7 +856,7 @@ UI:
   fresh or session-restored windows, and on tabs without a web page
   (Preferences, history, engine tabs) it stays in place disabled with
   an honest "not available on this tab" tooltip instead of leaving a
-  gap (TRUST15).
+  gap (TRUST15, placement locked in TRUST16).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
