@@ -33,7 +33,9 @@ class AdBlockNetwork;
 // The upgrade covers every http: request, not just main-frame
 // navigations: anything crossing an exit relay on port 80 is
 // plaintext to that exit.  .onion hosts are exempt — onion services
-// are end-to-end encrypted by tor itself and many serve http only.
+// are end-to-end encrypted by tor itself and many serve http only —
+// and so are loopback/private-net hosts (MEM07), which have no TLS to
+// upgrade to and can never be reached through an exit anyway.
 class TorRequestInterceptor : public QWebEngineUrlRequestInterceptor
 {
     Q_OBJECT

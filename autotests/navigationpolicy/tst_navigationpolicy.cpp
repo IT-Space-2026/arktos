@@ -352,6 +352,20 @@ void tst_NavigationPolicy::torModeUpgradesEverythingButOnion()
     v = NavigationPolicy::evaluate(
         torReq(QStringLiteral("http://abc.onion/i.png"), 4));
     QCOMPARE(v.action, PolicyVerdict::Action::Allow);
+    // MEM07: loopback / LAN / .local hosts stay http under tor too —
+    // they have no TLS to upgrade to and could never exit anyway.
+    const QStringList localExempt = {
+        QStringLiteral("http://localhost:8080/x"),
+        QStringLiteral("http://127.0.0.1/x"),
+        QStringLiteral("http://10.1.2.3/x"),
+        QStringLiteral("http://192.168.1.1/x"),
+        QStringLiteral("http://router.local/x"),
+    };
+    for (const QString &u : localExempt) {
+        const auto r = NavigationPolicy::evaluate(torReq(u, 0));
+        QVERIFY2(r.action == PolicyVerdict::Action::Allow,
+                 qPrintable(u));
+    }
     // At least Trimmed referer even under EngineDefault.
     auto snap = defaultSnapshot();
     snap.refererPolicy = 0;

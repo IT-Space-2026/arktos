@@ -2815,3 +2815,14 @@ Inactive tabs now release memory without being reloaded (MEM06):
     sound, or downloading are skipped. The status-bar memory figure
     now also says its number is memory the engine reclaims when the
     system needs it.
+Memory coverage audit across every tab surface (MEM07):
+    The article→back memory climb was measured per surface — normal,
+    private, background, torn-off window, engine tab, a bare engine
+    control, and a real Tor window whose page loads verifiably rode a
+    SOCKS tunnel. Every surface shows the same ~4–8 MB/cycle renderer
+    climb as the bare engine control, while the application's own
+    memory stays essentially flat — confirming the growth is the web
+    engine's reclaimable retention, not an Arora leak in any specific
+    profile or interceptor path. The audit also fixed Tor mode
+    force-upgrading plain HTTP on localhost/LAN addresses to HTTPS,
+    which made local services unreachable in Tor windows.

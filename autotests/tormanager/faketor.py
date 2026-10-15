@@ -13,7 +13,17 @@
 #     either — a well-formed refusal proves the protocol)
 #   * exits on SIGNAL SHUTDOWN, or on owner disconnect after
 #     TAKEOWNERSHIP (mirroring real tor behavior)
+#
+# MEM07: FAKETOR_SOCKS_RELAY=1 turns the SOCKS listener into a real
+# loopback-only relay — CONNECTs to 127.0.0.0/8, [::1] and
+# localhost/*.localhost are dialed and piped so page loads through the
+# proxy actually commit (the tor-window memory leg needs committed
+# documents, not refusals).  Every CONNECT target is appended to
+# <DataDirectory>/socks-connect-log so tests can assert traffic really
+# rode the tunnel; non-loopback targets are still refused outright so
+# the harness can never reach off-box.
 
+import ipaddress
 import os
 import socket
 import sys
@@ -21,6 +31,7 @@ import threading
 
 SOCKS_REP = {
     "refuse": b"\x05\x05\x00\x01\x00\x00\x00\x00\x00\x00",
+    "ok": b"\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00",
 }
 
 # TOR05: relay directory + geoip answers for the circuit hops below.
@@ -97,6 +108,135 @@ def main():
 
     state = {"progress": 10, "owner": False, "nym": 0, "circ_id": 3}
     no_geoip = os.environ.get("FAKETOR_NOGEOIP") == "1"
+    socks_relay = os.environ.get("FAKETOR_SOCKS_RELAY") == "1"
+    connect_log = os.path.join(data_dir, "socks-connect-log")
+
+    def recv_exact(conn, count):
+        data = b""
+        while len(data) < count:
+            chunk = conn.recv(count - len(data))
+            if not chunk:
+                raise OSError("peer hung up")
+            data += chunk
+        return data
+
+    def local_addresses():
+        # Every address this machine answers for — loopback plus own
+        # interface IPs.  Chromium's implicit proxy bypass covers
+        # loopback only, so the memcycle fixture listens on an own
+        # non-loopback address to still cross the tunnel; allowing the
+        # whole local set keeps the relay strictly on-box (a LAN host
+        # or external target is still refused outright).
+        addrs = {"127.0.0.1", "::1"}
+        try:
+            import fcntl
+            import struct
+            for _, name in socket.if_nameindex():
+                try:
+                    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    req = struct.pack("256s", name[:15].encode())
+                    addrs.add(socket.inet_ntoa(
+                        fcntl.ioctl(s.fileno(), 0x8915, req)[20:24]))
+                    s.close()
+                except OSError:
+                    pass
+        except ImportError:
+            pass
+        return addrs
+
+    own_addrs = local_addresses()
+
+    def relay_target_allowed(host):
+        # Domain-form targets come through for IP literals too (Chromium
+        # prefers ATYP=3) — accept by name, then hard-verify every
+        # resolved address is one of ours so a lookalike name can't
+        # pivot the fixture off-box.
+        lowered = host.lower().strip("[]")
+        if lowered == "localhost" or lowered.endswith(".localhost"):
+            return True
+        try:
+            return str(ipaddress.ip_address(lowered)) in own_addrs
+        except ValueError:
+            pass
+        try:
+            infos = socket.getaddrinfo(lowered, None)
+        except OSError:
+            return False
+        return bool(infos) and all(str(ipaddress.ip_address(
+            i[4][0].split("%")[0])) in own_addrs for i in infos)
+
+    def pipe(upstream, conn):
+        def fwd(src, dst):
+            try:
+                while True:
+                    data = src.recv(65536)
+                    if not data:
+                        break
+                    dst.sendall(data)
+            except OSError:
+                pass
+            try:
+                dst.shutdown(socket.SHUT_WR)
+            except OSError:
+                pass
+        relay = threading.Thread(target=fwd, args=(conn, upstream),
+                                 daemon=True)
+        relay.start()
+        fwd(upstream, conn)
+        relay.join(30)
+        for sock in (conn, upstream):
+            try:
+                sock.close()
+            except OSError:
+                pass
+
+    def socks_session(conn):
+        try:
+            conn.settimeout(15)
+            head = recv_exact(conn, 2)
+            if head[:1] != b"\x05":
+                return
+            recv_exact(conn, head[1])       # method list
+            conn.sendall(b"\x05\x00")       # no-auth accepted
+            req = recv_exact(conn, 4)
+            if req[:3] != b"\x05\x01\x00":
+                conn.sendall(SOCKS_REP["refuse"])
+                return
+            atyp = req[3]
+            if atyp == 1:
+                host = socket.inet_ntoa(recv_exact(conn, 4))
+            elif atyp == 3:
+                host = recv_exact(
+                    conn, recv_exact(conn, 1)[0]).decode("utf-8",
+                                                         "replace")
+            elif atyp == 4:
+                host = socket.inet_ntop(socket.AF_INET6,
+                                        recv_exact(conn, 16))
+            else:
+                conn.sendall(SOCKS_REP["refuse"])
+                return
+            port = int.from_bytes(recv_exact(conn, 2), "big")
+            with open(connect_log, "a") as f:
+                f.write("%s:%d\n" % (host, port))
+            if not socks_relay or not relay_target_allowed(host):
+                conn.sendall(SOCKS_REP["refuse"])
+                return
+            try:
+                upstream = socket.create_connection((host, port),
+                                                    timeout=10)
+            except OSError:
+                conn.sendall(SOCKS_REP["refuse"])
+                return
+            conn.sendall(SOCKS_REP["ok"])
+            conn.settimeout(30)
+            pipe(upstream, conn)
+        except OSError:
+            pass
+        finally:
+            try:
+                conn.close()
+            except OSError:
+                pass
 
     # TOR15: the circuit-status body served before and after SIGNAL
     # NEWNYM — same guard fingerprint, rotated middle+exit, fresh
@@ -134,18 +274,8 @@ def main():
                 conn, _ = socks.accept()
             except OSError:
                 return
-            try:
-                conn.settimeout(10)
-                if conn.recv(64)[:1] != b"\x05":
-                    conn.close()
-                    continue
-                conn.sendall(b"\x05\x00")  # no-auth accepted
-                req = conn.recv(300)
-                if req[:3] == b"\x05\x01\x00":
-                    conn.sendall(SOCKS_REP["refuse"])
-                conn.close()
-            except OSError:
-                pass
+            threading.Thread(target=socks_session, args=(conn,),
+                             daemon=True).start()
 
     threading.Thread(target=socks_worker, daemon=True).start()
 

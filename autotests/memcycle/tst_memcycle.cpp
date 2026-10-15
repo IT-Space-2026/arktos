@@ -26,10 +26,11 @@
 // host tab (the fake backend stands in for Servo — this build has no
 // ARORA_SERVO — still exercising the EngineTab chrome path; an
 // in-process engine has no renderer pid so its renderer series reads
-// -1 and only the app-RSS slope is gated) and a bare-QWebEngineView
-// attribution control.  The tor leg is deliberately not here — its
-// loads only commit behind real SOCKS plumbing; MEM07 owns the
-// coverage matrix incl. tor via the faketor harness.
+// -1 and only the app-RSS slope is gated), a real tor-mode window
+// (MEM07 — a faketor daemon whose SOCKS listener relays loopback
+// CONNECTs, so the cycled tab rides the real tor stack: OTR tor
+// profile, TorRequestInterceptor, violet chrome) and a
+// bare-QWebEngineView attribution control.
 //
 // Reading the numbers: a leak in OUR objects — per-navigation state
 // that is never freed — grows the app series monotonically;
@@ -72,6 +73,7 @@
 #include "engineregistry.h"
 #include "enginetab.h"
 #include "tabwidget.h"
+#include "tormanager.h"
 #include "webpage.h"
 #include "webview.h"
 #include "fakeengine.h"
@@ -123,13 +125,30 @@ public:
         });
     }
 
-    bool start() { return m_server.listen(QHostAddress::LocalHost); }
+    bool start() { return start(QHostAddress::LocalHost); }
+
+    // MEM07: a rebind is how the tor child lands the fixture on an
+    // own NON-loopback address — Chromium implicitly bypasses every
+    // proxy for loopback targets, so 127.0.0.1 loads would silently
+    // skip the SOCKS tunnel the leg exists to measure.
+    bool start(const QHostAddress &address)
+    {
+        m_server.close();
+        m_host = address.toString();
+        return m_server.listen(address);
+    }
 
     QUrl url(const QString &path) const
     {
-        return QUrl(QString::fromLatin1("http://127.0.0.1:%1%2")
-                    .arg(m_server.serverPort()).arg(path));
+        const QString host = m_server.serverAddress().protocol()
+                == QAbstractSocket::IPv6Protocol
+            ? QLatin1Char('[') + m_host + QLatin1Char(']')
+            : m_host;
+        return QUrl(QString::fromLatin1("http://%1:%2%3")
+                    .arg(host).arg(m_server.serverPort()).arg(path));
     }
+
+    QString serverError() const { return m_server.errorString(); }
 
     QUrl index() const { return url(QStringLiteral("/")); }
     QUrl article(int n) const
@@ -180,6 +199,7 @@ private:
     }
 
     QTcpServer m_server;
+    QString m_host;
     QByteArray m_indexHtml;
     QByteArray m_articleTemplate;
 };
@@ -272,6 +292,9 @@ private slots:
     void secondWindowCycle();
     void engineTabCycle();
     void bareEngineCycle();
+    void torTabCycle();
+    // MEM07: runs only inside the re-exec'd tor-mode child process.
+    void torTabCycleChild();
 
 private:
     void runCycles(WebView *view, TabWidget *tabs, const QString &name,
@@ -682,5 +705,157 @@ void tst_MemCycle::bareEngineCycle()
     checkSeries("bare-engine", samples);
 }
 
-QTEST_MAIN(tst_MemCycle)
+// MEM07: the tor surface — parent leg.  Tor routing is decided at
+// process birth: the BrowserApplication ctor arms the fail-closed
+// proxy, spawns the managed daemon and creates the OTR tor profile,
+// and the engine latches its proxy config while that profile comes
+// up — a mid-run setApplicationProxy/tor-mode flip happens after the
+// latch and the loads silently go direct (measured: zero CONNECTs
+// ever reached the SOCKS listener).  So this leg re-execs the test
+// binary as a child process with the ARORA_MEMCYCLE_TOR_CHILD marker,
+// where main() reproduces the production --tor ctor sequence before
+// the app object exists, and runs only torTabCycleChild().
+void tst_MemCycle::torTabCycle()
+{
+    const QString fake = QDir(QCoreApplication::applicationDirPath())
+        .absoluteFilePath(QStringLiteral("../tormanager/faketor.py"));
+    if (!QFileInfo(fake).isExecutable()
+        || QStandardPaths::findExecutable(QStringLiteral("python3"))
+               .isEmpty())
+        QSKIP("tor leg needs the faketor.py fixture + python3");
+
+    QProcess child;
+    // The child's per-cycle qInfo table and slope verdict stay visible
+    // in this run's output.
+    child.setProcessChannelMode(QProcess::ForwardedChannels);
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert(QStringLiteral("ARORA_MEMCYCLE_TOR_CHILD"),
+               QStringLiteral("1"));
+    env.insert(QStringLiteral("ARORA_TOR_BINARY"), fake);
+    env.insert(QStringLiteral("FAKETOR_SOCKS_RELAY"),
+               QStringLiteral("1"));
+    child.setProcessEnvironment(env);
+    child.start(QCoreApplication::applicationFilePath(),
+                QStringList{QStringLiteral("torTabCycleChild")});
+    QVERIFY(child.waitForStarted(10000));
+    QVERIFY2(child.waitForFinished(600000),
+             "tor child process did not finish inside 600s");
+    QCOMPARE(child.exitCode(), 0);
+}
+
+// MEM07: the tor surface — child leg.  Runs inside a genuinely
+// tor-mode process: the ctor's daemon is faketor (ARORA_TOR_BINARY)
+// whose relay-mode SOCKS listener (FAKETOR_SOCKS_RELAY) pipes loopback
+// CONNECTs, so the cycled tab rides the real stack — OTR torProfile,
+// TorRequestInterceptor, the nav/circuit gate, violet chrome — and
+// every fixture request provably crosses the tunnel (CONNECT log
+// assertion below).
+void tst_MemCycle::torTabCycleChild()
+{
+    if (!qEnvironmentVariableIsSet("ARORA_MEMCYCLE_TOR_CHILD"))
+        QSKIP("runs only inside the ARORA_MEMCYCLE_TOR_CHILD process");
+    QVERIFY(BrowserApplication::isTorMode());
+    QVERIFY(BrowserApplication::isPrivate());
+
+    TorManager *manager =
+        BrowserApplication::instance()->torManager();
+    QVERIFY(manager);
+    QTRY_VERIFY_WITH_TIMEOUT(manager->state() == TorManager::Ready,
+                             30000);
+    // TOR12's navigation gate releases loads early only once a
+    // stream-ridable circuit exists — faketor's BUILT GENERAL circuit
+    // arrives on the CIRC event right after bootstrap.
+    QTRY_VERIFY_WITH_TIMEOUT(manager->hasUsableCircuit(), 15000);
+    QCOMPARE(QNetworkProxy::applicationProxy().port(),
+             int(manager->socksPort()));
+
+    // Chromium implicitly bypasses the proxy for loopback targets —
+    // serve the fixture on one of the machine's own non-loopback
+    // interface addresses instead (faketor's relay allowlist is the
+    // local-address set, so the CONNECT still lands on-box).
+    QHostAddress local;
+    const QList<QHostAddress> addresses =
+        QNetworkInterface::allAddresses();
+    for (const QHostAddress &address : addresses) {
+        if (address.protocol() == QAbstractSocket::IPv4Protocol
+            && !address.isLoopback()) {
+            local = address;
+            break;
+        }
+    }
+    if (local.isNull())
+        QSKIP("tor leg needs a non-loopback local IPv4 address");
+    // Qt routes even QTcpServer::listen() through the application
+    // proxy (SOCKS BIND) — clear it just for the bind; the accepted
+    // fixture sockets then serve directly.
+    const QNetworkProxy savedProxy = QNetworkProxy::applicationProxy();
+    QNetworkProxy::setApplicationProxy(QNetworkProxy());
+    const bool bound = m_fixture.start(local);
+    QNetworkProxy::setApplicationProxy(savedProxy);
+    QVERIFY2(bound, qPrintable(local.toString() + QLatin1String(" -> ")
+                             + m_fixture.serverError()));
+    qInfo().noquote() << "tor fixture on" << m_fixture.index();
+
+    WindowListGuard guard;
+    BrowserMainWindow *window =
+        BrowserApplication::instance()->newMainWindow();
+    guard.windows << window;
+    window->show();
+    TabWidget *tabs = window->tabWidget();
+    WebView *view = tabs->currentWebView();
+    QVERIFY(view);
+    QVERIFY(view->page()->profile()->isOffTheRecord());
+
+    QList<CycleSample> samples;
+    runCycles(view, tabs, QStringLiteral("tor"), &samples);
+    checkSeries("tor", samples);
+
+    // Without this proof the leg degenerates into a plain OTR-window
+    // run — the fixture port must show up in the daemon's CONNECT log
+    // or the pages never rode the SOCKS tunnel.
+    QFile connectLog(manager->dataDirectory()
+                     + QLatin1String("/socks-connect-log"));
+    QVERIFY(connectLog.open(QIODevice::ReadOnly));
+    QVERIFY2(connectLog.readAll().contains(
+                 QByteArray::number(m_fixture.index().port())),
+             "no fixture CONNECTs reached the tor SOCKS listener — "
+             "the leg measured the direct path");
+}
+
+// MEM07: custom main — the qtest_arora.h QTEST_MAIN body, plus the
+// tor-child seam: with ARORA_MEMCYCLE_TOR_CHILD set the fail-closed
+// proxy + tor mode must exist BEFORE the BrowserApplication ctor
+// builds the browsing profile (mirroring the production argv scan
+// that is compiled out under AUTOTESTS).
+int main(int argc, char *argv[])
+{
+    Q_INIT_RESOURCE(htmls);
+    Q_INIT_RESOURCE(data);
+    QStandardPaths::setTestModeEnabled(true);
+    if (qEnvironmentVariableIsSet("ARORA_MEMCYCLE_TOR_CHILD")) {
+        BrowserApplication::setTorMode(true);
+        QNetworkProxy::setApplicationProxy(QNetworkProxy(
+            QNetworkProxy::Socks5Proxy, QStringLiteral("127.0.0.1"), 1));
+        // Chromium implicitly bypasses every proxy for loopback
+        // targets — which is exactly what the loopback fixture is.
+        // The "<-loopback>" token retracts that implicit bypass so
+        // fixture requests actually cross the faketor SOCKS tunnel.
+        // Latched at engine init, so it must sit in the flags env
+        // before the app ctor builds the profile.
+        QByteArray flags = qgetenv("QTWEBENGINE_CHROMIUM_FLAGS");
+        if (!flags.isEmpty())
+            flags += ' ';
+        flags += "--proxy-bypass-list=<-loopback>";
+        qputenv("QTWEBENGINE_CHROMIUM_FLAGS", flags);
+    }
+    BrowserApplication app(argc, argv);
+    QCoreApplication::setApplicationName(
+        QFileInfo(QCoreApplication::applicationFilePath()).baseName());
+    tst_MemCycle tc;
+    const int rc = QTest::qExec(&tc, argc, argv);
+    fflush(nullptr);
+    _exit(rc);
+    return rc;
+}
+
 #include "tst_memcycle.moc"
