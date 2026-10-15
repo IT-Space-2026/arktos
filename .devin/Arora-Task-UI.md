@@ -165,6 +165,8 @@ This file is the task queue for the Devin CLI task loop
 | TRUST20 | Tor dark-theme glyphs: reader reverts black on scroll/state change + sidebar strip icons all black — fix at the shared source — details below | pending | 0 | |
 | TRUST21 | Dark theme: reader button glyph color differs from sibling nav buttons — details below | pending | 0 | |
 | THEM05 | Theme picker: visual Light/Dark/Auto tile cards instead of combo dropdown — details below | pending | 0 | |
+| MENU19 | App-menu logo button +25% again (current ~23px → ~29px), keep aspect ratio — details below | pending | 0 | |
+
 
 
 
@@ -1043,3 +1045,7 @@ User report: switching to the dark browser theme makes the reader-mode button a 
 ### THEM05
 
 User wants the Appearance theme selector replaced with the tile-card style they screenshotted: three large selectable cards side by side — Light, Dark, Auto (system) — each showing a mini preview graphic (the screenshot style: a small page-ish swatch in that theme — light card = white doc mock, dark = dark doc mock, auto = half/half split like their image) with the label under it and the selected card getting a colored border + checkmark badge. Replaces the current QComboBox in Preferences > Appearance. Implementation: a small exclusive button-group of styled QToolButton/QFrame cards; draw the three mini previews as SVG or painted pixmaps (keep it simple — a rounded rect split/filled per mode, like the user's image); selected state = accent border + small check badge corner; keyboard/accessible (radio semantics — checkable exclusive buttons with accessible names). Must still read/write the SAME settings key the combo used (theme persistence untouched), reflect the stored value on dialog open, and live-apply the same way. If the combo is embedded in settings.ui, replace that widget cleanly. Also: the icon-theme selector stays a combo — only the color-theme picker becomes tiles. Verify: Preferences shows three tiles; click each → theme applies live + persists after restart; stored theme shows selected on open; tst leg asserts the group maps to the same QSettings values the combo wrote. make check PASS.
+
+### MENU19
+
+User confirmed on the post-MENU17 build: enlarge the corner app-menu button logo ANOTHER ~25% — current is bar-iconSize × 1.25 (~23px at the bar's 18px) → target ~29px (bar × ~1.6, or 23 × 1.25 ≈ 29). Keep uniform scaling — no distortion, SVG scales cleanly. Same constraints as MENU17: only this button grows, siblings stay 18px, the nav bar's row height must NOT grow (URL field drives it — check the button's sizeHint doesn't push the bar taller; if it does, cap height not icon), hit-rect stays at least as big as the glyph, private/Tor variants follow. If 29px measurably crowds the bar, 28px is acceptable — the spec is 'visibly bigger by about a quarter vs current', not a pixel religion. Verify: grab the bar — glyph clearly ~25% larger than current build's, bar height unchanged, siblings unchanged; update the MENU17 test assert (it pins ~1.25× — retarget to the new ratio). make check PASS.
