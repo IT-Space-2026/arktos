@@ -976,3 +976,4 @@
 - 2026-10-15 MERGEWATCH: ui-work merged — clean ort, no conflicts (MENU16+TRUST17+TRUST18 queued; Arora-Task-UI.md +16/-1 over 3 commits), build ok
 - 2026-10-15 MERGEWATCH: rust-work merged — clean ort, no conflicts (12602394 EXT19 Bitwarden-blank-popup queued; Arora-Task-Rust.md +5), build ok
 - 2026-10-15 MERGEWATCH: ui-work merged — clean ort, no conflicts (32c48eae TABS20 favicon-overflow queued + 4cb868e0 TRUST18 widened to all nav-bar glyphs on Tor dark; Arora-Task-UI.md +8/-2 over 2 commits), build ok
+- 2026-10-15 MERGEWATCH: ui-work skipped — dirty ChangeLog in main tree (agent mid-run, DEVT11 entry + bidipanel/arorastyle/tst_devtools WIP), merge refused by git; rust-work 0 commits ahead; build skipped (nothing merged)
