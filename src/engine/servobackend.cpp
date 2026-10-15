@@ -391,6 +391,7 @@ ServoView::ServoView(QWidget *parent)
     setFocusPolicy(Qt::StrongFocus);
     setAttribute(Qt::WA_OpaquePaintEvent);
     setAccessibleName(tr("Servo Page"));
+    m_frameClock.start();
 
     if (!resolve()) {
         qWarning("servo-embed: unavailable — ServoView inert");
@@ -575,8 +576,28 @@ void ServoView::evaluateJavaScript(const QString &source)
         api().evalJs(m_instance, source.toUtf8().constData());
 }
 
+// ENG31: scroll instrumentation history depth — the smoke reads the
+// whole list, so a modest cap keeps a long session from growing it.
+static constexpr int kFrameIntervalHistory = 256;
+
 void ServoView::grabFrame()
 {
+    // ENG31: frame_ready marks one COMPLETED paint — this is the
+    // pacing point for wheel delivery, and it fires even when the
+    // copy below fails, so the bookkeeping stays unconditional.
+    // Record the inter-frame interval for the bench histogram,
+    // release the in-flight gate, and flush whatever wheel delta
+    // accumulated as ONE summed se_wheel per frame (the backlog
+    // bound: input can never queue deeper than one delivery).
+    const qint64 now = m_frameClock.elapsed();
+    if (m_lastFrameReadyMs >= 0) {
+        m_frameIntervalsMs.append(now - m_lastFrameReadyMs);
+        if (m_frameIntervalsMs.size() > kFrameIntervalHistory)
+            m_frameIntervalsMs.removeFirst();
+    }
+    m_lastFrameReadyMs = now;
+    m_wheelInFlight = false;
+    flushWheelDelta();
     if (!m_instance || isPoisoned())
         return;
     unsigned w = 0, h = 0;
@@ -733,20 +754,31 @@ static QPointF servoWheelPixels(const QWheelEvent &event)
         * (scrollLines * kServoWheelLineStepPx / 120.0);
 }
 
+// ENG31: the wheel watchdog interval.  Not a pacing cadence — a
+// delivered delta releases its in-flight gate on the frame_ready it
+// produces (grabFrame), so the timer only covers the case where NO
+// frame comes back (overscroll clamp, a deduped input).  The window
+// sits well above a healthy llvmpipe frame time (~35ms release) so
+// it never preempts real pacing, and bounds the stuck-gate latency
+// to something imperceptible.
+static constexpr int kWheelFrameGuardMs = 100;
+
 void ServoView::wheelEvent(QWheelEvent *event)
 {
     if (!m_instance || isPoisoned())
         return;
-    // Coalesce a wheel burst into one se_wheel per ~frame.  Each
-    // notify_input_event ends in a full-viewport software raster +
-    // readback (this shim's display contract), so forwarding raw
-    // notches 1:1 outruns llvmpipe — measured ~46ms/frame at 900x600
-    // in the debug artifact — and reads as molasses regardless of the
-    // delta size.  The first event of a burst goes out immediately
-    // (a lone notch stays low-latency); later deltas accumulate and
-    // flush on a 16ms cadence.  Servo already sums same-mode pending
-    // wheel deltas internally (document_event_handler.rs), so merging
-    // here bounds IPC without changing scroll semantics.
+    // Pace deliveries on frame COMPLETION, not a wall-clock cadence.
+    // ENG25's 16ms flush timer still outran the rasterizer — at
+    // ~35ms/frame it queued ~2 se_wheel per paint, each a full-
+    // viewport raster inside se_spin, so a sustained burst fell
+    // further and further behind live input (the choppy/slow report
+    // behind ENG31).  Now the first delta of a burst still goes out
+    // immediately (a lone notch stays low-latency), but while its
+    // frame is in flight later deltas accumulate and flush once per
+    // frame_ready — input rate locks to paint rate and the queue
+    // depth is bounded at one delivery.  Servo already sums same-mode
+    // pending wheel deltas internally (document_event_handler.rs),
+    // so merging here bounds IPC without changing scroll semantics.
     const QPointF delta = servoWheelPixels(*event);
     if (!m_pendingWheelDelta.isNull()
             && event->modifiers() != m_pendingWheelMods)
@@ -754,27 +786,48 @@ void ServoView::wheelEvent(QWheelEvent *event)
     m_pendingWheelDelta += delta;
     m_pendingWheelPos = event->position();
     m_pendingWheelMods = event->modifiers();
-    if (!m_wheelTimer.isActive()) {
+    if (!m_wheelInFlight)
         flushWheelDelta();
-        m_wheelTimer.start(16, this);
-    }
 }
 
 void ServoView::flushWheelDelta()
 {
-    if (m_pendingWheelDelta.isNull() || !m_instance || isPoisoned())
+    if (m_pendingWheelDelta.isNull())
         return;
+    if (!m_instance || isPoisoned()) {
+        m_pendingWheelDelta = QPointF();
+        return;
+    }
     api().wheel(m_instance,
                 m_pendingWheelDelta.x(), m_pendingWheelDelta.y(),
                 m_pendingWheelPos.x(), m_pendingWheelPos.y());
+    ++m_wheelEventsSent;
+    m_wheelInFlight = true;
     m_pendingWheelDelta = QPointF();
+    // The watchdog releases the gate if this delivery never produces
+    // a frame_ready; when frames ARE flowing it never gets to fire
+    // ahead of the real pacing path.
+    if (!m_wheelTimer.isActive())
+        m_wheelTimer.start(kWheelFrameGuardMs, this);
+}
+
+void ServoView::resetScrollStats()
+{
+    m_wheelEventsSent = 0;
+    m_frameIntervalsMs.clear();
+    m_lastFrameReadyMs = -1;
 }
 
 void ServoView::timerEvent(QTimerEvent *event)
 {
     if (event->timerId() == m_wheelTimer.timerId()) {
+        // Watchdog — the last delivered delta produced no frame inside
+        // the guard window, so its gate would otherwise latch.  Clear
+        // and push anything queued; keep running while in flight or
+        // pending so a later delivery stays covered.
+        m_wheelInFlight = false;
         flushWheelDelta();
-        if (m_pendingWheelDelta.isNull())
+        if (!m_wheelInFlight && m_pendingWheelDelta.isNull())
             m_wheelTimer.stop();
         return;
     }
