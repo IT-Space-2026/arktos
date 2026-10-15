@@ -9,6 +9,10 @@
 #include "bidipanel.h"
 
 #include "bidiclient.h"
+#include "engineinterface.h"
+#include "enginetab.h"
+#include "tabwidget.h"
+#include "webview.h"
 #include "utils/flowlayout.h"
 
 #include <qabstractitemmodel.h>
@@ -31,6 +35,7 @@
 #include <qsortfilterproxymodel.h>
 #include <qsplitter.h>
 #include <qstackedwidget.h>
+#include <qstandarditemmodel.h>
 #include <qstyle.h>
 #include <qstyleditemdelegate.h>
 #include <qtableview.h>
@@ -1002,6 +1007,23 @@ BidiPanel::BidiPanel(QWidget *parent)
     m_unavailableLabel->setText(tr("Debug channel not connected."));
 }
 
+void BidiPanel::setTabWidget(TabWidget *tabs)
+{
+    if (m_tabWidget == tabs)
+        return;
+    if (m_tabWidget)
+        disconnect(m_tabWidget, nullptr, this, nullptr);
+    m_tabWidget = tabs;
+    if (tabs) {
+        // Strip churn that produces no CDP traffic (engine/widget
+        // tabs, renames, drags) still re-merges the selector against
+        // the cached context list.
+        connect(tabs, &TabWidget::tabsChanged,
+                this, &BidiPanel::rebuildContextCombo);
+    }
+    rebuildContextCombo();
+}
+
 void BidiPanel::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
@@ -1072,6 +1094,137 @@ void BidiPanel::refreshContexts()
         m_evalTags.insert(id, 0); // 0 = getTree bookkeeping
     if (!m_preserveLog->isChecked())
         clearNetworkLog();
+}
+
+// DEVT10: the selector mirrors the window's REAL tab strip.  CDP
+// only ever reports type=="page" targets — engine tabs (Servo) and
+// widget tabs (Preferences, Downloads, ...) have none, so they used
+// to be silently absent and a missing first tab read as a bug.  Now
+// every strip tab gets a row in strip order; non-debuggable rows are
+// disabled with the reason in the tooltip and as a suffix — the same
+// honesty pattern as the engine indicator's locked-with-tooltip.
+// WebEngine tabs claim their context by committed url; targets no
+// strip tab claimed (other windows, the inspector page) keep the old
+// append-only behavior at the end of the list.
+void BidiPanel::rebuildContextCombo()
+{
+    const QString keep = currentContext();
+    m_contextCombo->blockSignals(true);
+    m_contextCombo->clear();
+    QStandardItemModel *model =
+        qobject_cast<QStandardItemModel *>(m_contextCombo->model());
+
+    auto cdpLabel = [](const QJsonObject &c) {
+        const QString title = c[QLatin1String("title")].toString();
+        return title.isEmpty()
+            ? c[QLatin1String("url")].toString() : title;
+    };
+
+    // Unclaimed page targets — a matched web tab consumes one entry.
+    QVector<QJsonObject> pending;
+    pending.reserve(m_contexts.size());
+    for (const QJsonValue &cv : m_contexts)
+        pending.append(cv.toObject());
+
+    const auto addDisabled = [&](const QString &title,
+                                 const QString &tag,
+                                 const QString &reason) {
+        const int row = m_contextCombo->count();
+        m_contextCombo->addItem(title.isEmpty()
+                                ? tag
+                                : tr("%1 — %2").arg(title, tag));
+        if (model) {
+            if (QStandardItem *item = model->item(row))
+                item->setFlags(item->flags() & ~Qt::ItemIsEnabled);
+        }
+        m_contextCombo->setItemData(row, reason, Qt::ToolTipRole);
+    };
+
+    if (m_tabWidget) {
+        for (int i = 0; i < m_tabWidget->count(); ++i) {
+            const QString title = m_tabWidget->tabDisplayTitle(i);
+            if (EngineTab *foreign = m_tabWidget->engineTab(i)) {
+                const QString backend = foreign->backend()
+                    ? foreign->backend()->displayName() : QString();
+                addDisabled(title,
+                            backend.isEmpty()
+                                ? tr("non-Chromium tab")
+                                : tr("%1 tab").arg(backend),
+                            backend.isEmpty()
+                                ? tr("This engine exposes no devtools "
+                                     "backend")
+                                : tr("%1 tab — no devtools backend")
+                                      .arg(backend));
+                continue;
+            }
+            WebView *view = m_tabWidget->webView(i);
+            if (!view) {
+                addDisabled(title, tr("not a web page"),
+                            tr("Not a web page — the devtools panel "
+                               "inspects web content only"));
+                continue;
+            }
+            int found = -1;
+            for (int p = 0; p < pending.size(); ++p) {
+                const QString url =
+                    pending[p][QLatin1String("url")].toString();
+                if (url == view->url().toString()
+                    || QUrl(url) == view->url()) {
+                    found = p;
+                    break;
+                }
+            }
+            if (found < 0) {
+                addDisabled(title,
+                            m_tabWidget->isTabSleeping(i)
+                                ? tr("asleep")
+                                : tr("no debug target"),
+                            m_tabWidget->isTabSleeping(i)
+                                ? tr("Tab is asleep — wake it to "
+                                     "attach devtools")
+                                : tr("Web page — not exposed on the "
+                                     "debug channel"));
+                continue;
+            }
+            const QJsonObject c = pending.takeAt(found);
+            m_contextCombo->addItem(
+                title.isEmpty() ? cdpLabel(c) : title,
+                c[QLatin1String("context")].toString());
+        }
+    }
+
+    for (const QJsonObject &c : pending) {
+        m_contextCombo->addItem(
+            cdpLabel(c), c[QLatin1String("context")].toString());
+    }
+
+    // Restore by context id; a vanished selection (or a strip whose
+    // first slot is a non-CDP tab) must not land on a disabled row —
+    // fall back to the first enabled entry, never index 0 blindly.
+    const auto enabledAt = [model, this](int i) {
+        const QStandardItem *item = model ? model->item(i) : nullptr;
+        return !item || (item->flags() & Qt::ItemIsEnabled);
+    };
+    int idx = keep.isEmpty() ? -1 : m_contextCombo->findData(keep);
+    if (idx < 0 || !enabledAt(idx)) {
+        idx = -1;
+        for (int i = 0; i < m_contextCombo->count(); ++i) {
+            if (enabledAt(i)) {
+                idx = i;
+                break;
+            }
+        }
+    }
+    const QString now = idx >= 0
+        ? m_contextCombo->itemData(idx).toString() : QString();
+    m_contextCombo->setCurrentIndex(idx);
+    m_contextCombo->blockSignals(false);
+    // currentIndexChanged is blocked — run the context-switch reset
+    // ourselves when the effective context actually moved.
+    if (now != keep) {
+        m_dclMs = m_loadMs = -1.0;
+        updateNetworkSummary();
+    }
 }
 
 void BidiPanel::clearNetworkLog()
@@ -1282,23 +1435,8 @@ void BidiPanel::onResponse(quint64 id, const QByteArray &json)
     const QJsonObject result = root[QStringLiteral("result")].toObject();
 
     if (tag == 0) { // browsingContext.getTree
-        const QString keep = currentContext();
-        m_contextCombo->blockSignals(true);
-        m_contextCombo->clear();
-        const QJsonArray contexts =
-            result[QStringLiteral("contexts")].toArray();
-        for (const QJsonValue &cv : contexts) {
-            const QJsonObject c = cv.toObject();
-            const QString ctx = c[QStringLiteral("context")].toString();
-            const QString label =
-                c[QStringLiteral("title")].toString().isEmpty()
-                    ? c[QStringLiteral("url")].toString()
-                    : c[QStringLiteral("title")].toString();
-            m_contextCombo->addItem(label, ctx);
-        }
-        const int idx = m_contextCombo->findData(keep);
-        m_contextCombo->setCurrentIndex(idx >= 0 ? idx : 0);
-        m_contextCombo->blockSignals(false);
+        m_contexts = result[QStringLiteral("contexts")].toArray();
+        rebuildContextCombo();
         refreshDom();
         refreshStorage();
         return;

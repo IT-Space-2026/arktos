@@ -42,6 +42,10 @@
 
 #include "bidiclient.h"
 #include "bidipanel.h"
+#include "engineregistry.h"
+#include "enginetab.h"
+#include "fakeengine.h"
+#include "tabwidget.h"
 
 #include <qabstractitemmodel.h>
 #include <qbuttongroup.h>
@@ -54,6 +58,7 @@
 #include <qscrollbar.h>
 #include <qsortfilterproxymodel.h>
 #include <qstackedwidget.h>
+#include <qstandarditemmodel.h>
 #include <qtableview.h>
 #include <qtablewidget.h>
 #include <qtabwidget.h>
@@ -75,6 +80,7 @@ private slots:
     void closeReleasesBinding();
     void inspectedPageDestroyedClosesWindow();
     void bidiPanel();
+    void bidiContextSelector();
     void bidiWaterfallLegibility();
 };
 
@@ -856,6 +862,146 @@ void tst_DevTools::bidiPanel()
             + QByteArray("\",\"method\":\"GET\",\"url\":\"http://c/\"}}}"));
     }
     QVERIFY(net->rowCount() <= 1000);
+}
+
+// DEVT10: the context selector mirrors the window's real tab strip —
+// tabs with no CDP target (engine tabs, widget tabs) appear disabled
+// with the reason instead of being silently absent, and a strip whose
+// first slot isn't debuggable never strands the selection on it.
+void tst_DevTools::bidiContextSelector()
+{
+    const auto flagsOf = [](QComboBox *combo, int row) {
+        QStandardItemModel *model =
+            qobject_cast<QStandardItemModel *>(combo->model());
+        QStandardItem *item = model ? model->item(row) : nullptr;
+        return item ? item->flags() : Qt::ItemFlags();
+    };
+    const auto disabled = [&flagsOf](QComboBox *combo, int row) {
+        return !(flagsOf(combo, row) & Qt::ItemIsEnabled);
+    };
+
+    // Strip order: [engine tab] [webengine tab] [widget tab] — the
+    // user's report had a non-CDP tab in slot 0.
+    FakeEngineBackend fake;
+    TabWidget strip;
+    strip.makeNewTab(true);
+    EngineRegistry::registerBackend(&fake);
+    QVERIFY(strip.reloadTabInEngine(0, QStringLiteral("fake")));
+    QVERIFY(strip.engineTab(0));
+    WebView *view = strip.makeNewTab(true);
+    QVERIFY(view);
+    QSignalSpy loaded(view->page(), &QWebEnginePage::loadFinished);
+    view->setHtml(QStringLiteral("<html><head><title>web tab</title>"
+                                 "</head><body>x</body></html>"),
+                  QUrl(QStringLiteral("http://devtools.test/")));
+    QTRY_VERIFY(loaded.count() >= 1);
+    strip.addWidgetTab(new QLabel(QStringLiteral("prefs")),
+                       QStringLiteral("Preferences"), QIcon(), false);
+    QCOMPARE(strip.count(), 3);
+
+    BidiPanel panel;
+    panel.setTabWidget(&strip);
+    // Before any getTree answer the strip rows already list — every
+    // one disabled: engine tab, no-target web tab, widget tab.
+    QCOMPARE(panel.m_contextCombo->count(), 3);
+    QVERIFY(disabled(panel.m_contextCombo, 0));
+    QVERIFY(disabled(panel.m_contextCombo, 1));
+    QVERIFY(disabled(panel.m_contextCombo, 2));
+    QVERIFY(panel.currentContext().isEmpty());
+
+    // getTree: the web tab claims its context by committed url; a
+    // foreign-window page stays appended+enabled as before.
+    const QByteArray tree = QByteArray(
+        "{\"result\":{\"contexts\":["
+        "{\"context\":\"ctx-web\",\"url\":\"")
+        + view->url().toString().toUtf8()
+        + QByteArray("\",\"title\":\"web tab\"},"
+        "{\"context\":\"ctx-other\",\"url\":\"http://elsewhere/\","
+        "\"title\":\"Elsewhere\"}]}}");
+    panel.onResponse(4242, tree);
+    QCOMPARE(panel.m_contextCombo->count(), 4);
+
+    QVERIFY(disabled(panel.m_contextCombo, 0));
+    QVERIFY(panel.m_contextCombo->itemData(0, Qt::ToolTipRole)
+                .toString().contains(
+                    QStringLiteral("no devtools backend")));
+    QVERIFY(panel.m_contextCombo->itemData(0, Qt::ToolTipRole)
+                .toString().contains(
+                    QStringLiteral("Fake Engine")));
+    QVERIFY(!disabled(panel.m_contextCombo, 1));
+    QCOMPARE(panel.m_contextCombo->itemData(1).toString(),
+             QStringLiteral("ctx-web"));
+    QVERIFY(disabled(panel.m_contextCombo, 2));
+    QVERIFY(panel.m_contextCombo->itemData(2, Qt::ToolTipRole)
+                .toString().contains(QStringLiteral("Not a web page")));
+    QVERIFY(!disabled(panel.m_contextCombo, 3));
+    QCOMPARE(panel.m_contextCombo->itemData(3).toString(),
+             QStringLiteral("ctx-other"));
+
+    // Slot 0 is the engine tab — the selection must have landed on
+    // the first ENABLED row, not index 0.
+    QCOMPARE(panel.currentContext(), QStringLiteral("ctx-web"));
+
+    // Keep-restore still honors a live selection across rebuilds.
+    panel.m_contextCombo->setCurrentIndex(3);
+    QCOMPARE(panel.currentContext(), QStringLiteral("ctx-other"));
+    panel.onResponse(4243, tree);
+    QCOMPARE(panel.currentContext(), QStringLiteral("ctx-other"));
+
+    // A vanished selection falls forward to the first enabled row.
+    panel.onResponse(4244, QByteArray(
+        "{\"result\":{\"contexts\":["
+        "{\"context\":\"ctx-web\",\"url\":\"")
+        + view->url().toString().toUtf8()
+        + QByteArray("\",\"title\":\"web tab\"}]}}"));
+    QCOMPARE(panel.currentContext(), QStringLiteral("ctx-web"));
+
+    // Strip churn with no CDP traffic still re-merges the selector
+    // against the cached tree — a new widget tab appears instantly.
+    // (4244's tree carried only ctx-web, so 4 strip rows + 0
+    // leftovers = 4.)
+    strip.addWidgetTab(new QLabel(QStringLiteral("dl")),
+                       QStringLiteral("Downloads"), QIcon(), false);
+    QCOMPARE(panel.m_contextCombo->count(), 4);
+    QVERIFY(disabled(panel.m_contextCombo, 3));
+    QVERIFY(panel.m_contextCombo->itemData(3, Qt::ToolTipRole)
+                .toString().contains(QStringLiteral("Not a web page")));
+
+    // Index-0 webengine tab: the first row is selectable and evals
+    // route to its context.
+    TabWidget plain;
+    WebView *first = plain.makeNewTab(true);
+    QVERIFY(first);
+    QSignalSpy loaded2(first->page(), &QWebEnginePage::loadFinished);
+    first->setHtml(QStringLiteral("<html><body>first</body></html>"),
+                   QUrl(QStringLiteral("http://first.test/")));
+    QTRY_VERIFY(loaded2.count() >= 1);
+    panel.setTabWidget(&plain);
+    panel.onResponse(4245, QByteArray(
+        "{\"result\":{\"contexts\":[{\"context\":\"ctx-first\",\"url\":\"")
+        + first->url().toString().toUtf8()
+        + QByteArray("\",\"title\":\"first\"}]}}"));
+    QCOMPARE(panel.m_contextCombo->count(), 1);
+    QVERIFY(!disabled(panel.m_contextCombo, 0));
+    QCOMPARE(panel.currentContext(), QStringLiteral("ctx-first"));
+    panel.m_evalLine->setText(QStringLiteral("1+1"));
+    emit panel.m_evalLine->returnPressed();
+    QVERIFY(panel.m_console->toPlainText().contains(
+        QStringLiteral("> 1+1")));
+
+    // All-disabled strip: the combo shows rows but no context.
+    TabWidget widgetsOnly;
+    widgetsOnly.addWidgetTab(new QLabel(QStringLiteral("p")),
+                             QStringLiteral("Preferences"), QIcon(),
+                             false);
+    panel.setTabWidget(&widgetsOnly);
+    panel.onResponse(4246, QByteArray(
+        "{\"result\":{\"contexts\":[]}}"));
+    QCOMPARE(panel.m_contextCombo->count(), 1);
+    QVERIFY(disabled(panel.m_contextCombo, 0));
+    QVERIFY(panel.currentContext().isEmpty());
+
+    EngineRegistry::unregisterBackend(&fake);
 }
 
 // DEVT09 helpers — pixel-level checks on the painted waterfall.

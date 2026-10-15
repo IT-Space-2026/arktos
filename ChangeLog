@@ -2613,3 +2613,19 @@ The Servo start page is finally reachable (ENG30):
     Setting Servo as the default engine made every new tab come up blank — the tab was created but nothing ever told it to load a page — and swapping a tab between engines carried the SOURCE engine's branded start page along, so a Servo tab could show the Chromium-branded start page and vice versa. A fresh engine-default tab now loads that engine's branded start page, an engine swap re-resolves any branded start page (or the about:home alias) to the destination's own variant, and the same re-resolution applies when the Home button or a typed about:home targets a foreign-engine tab — the servo start page shows on Servo tabs, the plain one on Chromium, never crossed.
 Development Tools menu entries are plain actions, not checkboxes (DEVT08/DEVT14):
     Tools → Development Tools showed a tick box on "BiDi Dev Tools" but not on "Chromium Dev Tool" — the BiDi row borrowed the dock's toggleViewAction, which Qt makes checkable by design. These entries open or focus separate tool surfaces; they are not persistent states, so neither should carry a check. The BiDi entry is now a dedicated plain action whose trigger flips the dock's visibility; the dock's own close button remains the other close path and a non-checkable action can never strand a stale tick. Tor windows keep the entry visible but disabled with its explanatory tooltip.
+BiDi Dev Tools selector lists every tab, not just the debuggable ones (DEVT10):
+    The context combo was fed only by browsingContext.getTree, which the
+    CDP bridge filters to real page targets — engine tabs (Servo) and
+    widget tabs (Preferences, Downloads) had no target and silently
+    vanished, so a non-CDP tab in slot 0 read as 'the first tab is not
+    selectable'. The panel now binds the window's actual tab strip:
+    every tab gets a row in strip order, non-debuggable rows are
+    disabled with the reason spelled out ('Fake Engine tab — no
+    devtools backend', 'Not a web page — the devtools panel inspects
+    web content only'), a sleeping or unexposed WebEngine tab says so
+    instead of pretending, and CDP pages with no tab here (other
+    windows, the inspector itself) keep appending at the end.
+    Selection restores by context id and falls back to the first
+    ENABLED row, so a strip whose slot 0 is a Servo or widget tab can
+    no longer strand the selection on a dead entry — and an ordinary
+    WebEngine tab in slot 0 selects and evaluates normally.

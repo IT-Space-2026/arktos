@@ -2340,6 +2340,10 @@ void BrowserMainWindow::ensureBidiPanel()
     if (m_bidiPanel)
         return;
     m_bidiPanel = new BidiPanel(m_bidiPanelDock);
+    // DEVT10: hand the panel the real strip so its context selector
+    // lists every tab — CDP reports only debuggable WebEngine pages,
+    // so engine/widget tabs would otherwise be silently absent.
+    m_bidiPanel->setTabWidget(m_tabWidget);
     m_bidiPanelDock->setWidget(m_bidiPanel);
 }
 

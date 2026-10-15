@@ -39,6 +39,8 @@
  */
 
 #include <qhash.h>
+#include <qjsonarray.h>
+#include <qpointer.h>
 #include <qwidget.h>
 
 class QAbstractTableModel;
@@ -56,6 +58,7 @@ class QTableWidget;
 class QToolButton;
 class QTreeWidget;
 class QTreeWidgetItem;
+class TabWidget;
 
 class BidiPanel : public QWidget
 {
@@ -63,6 +66,13 @@ class BidiPanel : public QWidget
 
 public:
     explicit BidiPanel(QWidget *parent = nullptr);
+
+    // DEVT10: bind the owning window's tab strip so the context
+    // selector lists EVERY tab — engine tabs (Servo, ...) and widget
+    // tabs have no CDP target, so they join the combo as disabled
+    // entries carrying the reason instead of being silently absent
+    // (a missing first tab read as a bug).  The strip is not owned.
+    void setTabWidget(TabWidget *tabs);
 
 protected:
     void showEvent(QShowEvent *event) override;
@@ -92,6 +102,11 @@ private:
     void onConnectionChanged(int state);
     void evaluateInput();
     void refreshContexts();
+    // DEVT10: merge the last getTree answer with the bound tab strip —
+    // one combo row per strip tab in strip order, then CDP pages with
+    // no tab here.  Selection restores by context id and falls back to
+    // the first ENABLED row (never a disabled non-CDP entry).
+    void rebuildContextCombo();
     void refreshDom();
     void refreshStorage();
     void domItemExpanded(QTreeWidgetItem *item);
@@ -126,6 +141,11 @@ private:
     QLabel *m_networkSummary;
     QTableWidget *m_cookieTable;
     QTableWidget *m_localStorageTable;
+
+    // DEVT10: the owning window's strip (not owned) and the cached
+    // browsingContext.getTree answer the selector merges against.
+    QPointer<TabWidget> m_tabWidget;
+    QJsonArray m_contexts;
 
     // pending eval bookkeeping: bidi id -> purpose
     QHash<quint64, quint64> m_evalTags;
