@@ -185,7 +185,6 @@ private slots:
 
     void fileNew();
     void fileOpen();
-    void filePrintPreview();
     void filePrint();
     void fileSaveAs();
     void editFind();
@@ -237,9 +236,9 @@ private slots:
     void printRequested(WebView *view);
 
 private:
-    // PRINT01: engine-tab half of filePrintPreview/filePrint — hosts
-    // the staged-PDF preview or returns the honest refusal.  True when
-    // the current tab is an engine tab (handled either way).
+    // PRINT01/02: engine-tab half of filePrint — hosts the staged-PDF
+    // preview or returns the honest refusal.  True when the current
+    // tab is an engine tab (handled either way).
     bool previewEngineTabDocument();
     void retranslate();
     void loadDefaultState();
@@ -300,7 +299,6 @@ private:
     QAction *m_fileSaveAsAction;
     QAction *m_fileImportBookmarksAction;
     QAction *m_fileExportBookmarksAction;
-    QAction *m_filePrintPreviewAction;
     QAction *m_filePrintAction;
     QAction *m_fileNewPrivateTabAction;
     QAction *m_fileNewTorWindowAction;

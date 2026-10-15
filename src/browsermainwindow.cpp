@@ -123,9 +123,6 @@
 #include <qiconengine.h>
 #include <qlabel.h>
 #include <qpointer.h>
-#include <qprintdialog.h>
-#include <qprinter.h>
-#include <qprinterinfo.h>
 #include <qscreen.h>
 #include <qset.h>
 #include <qsettings.h>
@@ -1048,11 +1045,10 @@ void BrowserMainWindow::setupMenu()
     m_fileMenu->addAction(m_fileExportBookmarksAction);
     m_fileMenu->addSeparator();
 
-    m_filePrintPreviewAction= new QAction(m_fileMenu);
-    connect(m_filePrintPreviewAction, &QAction::triggered,
-            this, &BrowserMainWindow::filePrintPreview);
-    m_fileMenu->addAction(m_filePrintPreviewAction);
-
+    // PRINT02: one print entry — the preview dialog IS the print
+    // dialog (Firefox's model).  There is no separate Print Preview
+    // action and no straight-to-printer path; the dialog's own Print
+    // button performs the final native print.
     m_filePrintAction = new QAction(m_fileMenu);
     m_filePrintAction->setShortcut(QKeySequence::Print);
     connect(m_filePrintAction, &QAction::triggered,
@@ -1103,7 +1099,6 @@ void BrowserMainWindow::setupMenu()
     m_fileSaveAsAction->setIcon(AroraIcon::getChrome(QLatin1String("document-save-as")));
     m_fileImportBookmarksAction->setIcon(AroraIcon::getChrome(QLatin1String("document-import")));
     m_fileExportBookmarksAction->setIcon(AroraIcon::getChrome(QLatin1String("document-export")));
-    m_filePrintPreviewAction->setIcon(AroraIcon::getChrome(QLatin1String("document-print-preview")));
     m_filePrintAction->setIcon(AroraIcon::getChrome(QLatin1String("document-print")));
     m_preferencesAction->setIcon(AroraIcon::getChrome(QLatin1String("preferences-system")));
     m_fileCloseWindow->setIcon(AroraIcon::getChrome(QLatin1String("window-close")));
@@ -1774,7 +1769,6 @@ void BrowserMainWindow::retranslate()
     m_fileSaveAsAction->setText(tr("&Save As..."));
     m_fileImportBookmarksAction->setText(tr("&Import Bookmarks..."));
     m_fileExportBookmarksAction->setText(tr("&Export Bookmarks..."));
-    m_filePrintPreviewAction->setText(tr("P&rint Preview..."));
     m_filePrintAction->setText(tr("&Print..."));
     m_fileNewPrivateTabAction->setText(tr("New &Private Tab"));
     m_fileNewTorWindowAction->setText(tr("New &Tor Window"));
@@ -3269,19 +3263,28 @@ bool BrowserMainWindow::previewEngineTabDocument()
     const QString engine = foreign->backend()
         ? foreign->backend()->displayName()
         : tr("This engine");
-    QMessageBox::information(this, tr("Print Preview"),
+    QMessageBox::information(this, tr("Print"),
         tr("%1 cannot produce print output — there is nothing to "
-           "preview for this tab.").arg(engine));
+           "print for this tab.").arg(engine));
     return true;
 }
 
-void BrowserMainWindow::filePrintPreview()
+void BrowserMainWindow::filePrint()
 {
-    QPointer<WebView> view = currentTab();
-    if (!view) {
-        previewEngineTabDocument();
+    if (WebView *view = currentTab()) {
+        printRequested(view);
         return;
     }
+    // Engine tabs can't printToPdf, but one hosting the shell
+    // document view still previews/prints its staged PDF; anything
+    // else gets the honest refusal rather than a dead Ctrl+P.
+    previewEngineTabDocument();
+}
+
+void BrowserMainWindow::printRequested(WebView *view)
+{
+    if (!view)
+        return;
     // A tab hosting the shell document view previews the staged
     // document — the engine page under it has nothing to print.
     if (PdfView *pdfView = view->pdfView();
@@ -3292,105 +3295,17 @@ void BrowserMainWindow::filePrintPreview()
         dialog.exec();
         return;
     }
-    // The stock QPrintPreviewDialog's paintRequested expects a
-    // synchronous paint into a QPrinter while engine printing is
-    // async — the preview rendered zero pages.  PrintPreviewDialog
-    // renders the page's printToPdf output instead: real pagination,
-    // real margins, no borrowed printer to outlive.
+    // PRINT02: one print path — Ctrl+P, the File-menu entry and JS
+    // window.print() all land here, and all open the preview: the
+    // preview IS the print dialog.  Its own Print button performs
+    // the final native print on the generated PDF, so nothing is
+    // lost with the old straight-to-printer path — Firefox carries
+    // no 'print without preview' either, and neither do we.  The
+    // async printToPdf generation also keeps real pagination and
+    // margins in the preview instead of a re-rendered guess.
     PrintPreviewDialog dialog(this);
     dialog.setPage(view->page(), view->url());
     dialog.exec();
-}
-
-void BrowserMainWindow::filePrint()
-{
-    WebView *view = currentTab();
-    if (view) {
-        printRequested(view);
-        return;
-    }
-    // Engine tabs can't printToPdf, but one hosting the shell
-    // document view still prints its staged PDF; anything else gets
-    // the honest refusal rather than a dead Ctrl+P.
-    if (EngineTab *foreign =
-            m_tabWidget->engineTab(m_tabWidget->currentIndex())) {
-        if (PdfView *pdfView = foreign->pdfView();
-                pdfView && pdfView->isReady()) {
-            pdfView->printDocument();
-            return;
-        }
-        const QString engine = foreign->backend()
-            ? foreign->backend()->displayName()
-            : tr("This engine");
-        QMessageBox::information(this, tr("Print Document"),
-            tr("%1 cannot produce print output — there is nothing to "
-               "print for this tab.").arg(engine));
-    }
-}
-
-void BrowserMainWindow::printRequested(WebView *view)
-{
-    if (!view)
-        return;
-    // PDF02: a tab showing the shell document view prints through
-    // the pdf raster path — engine printing has nothing to paint
-    // (the page underneath holds the previous document).
-    if (PdfView *pdfView = view->pdfView()) {
-        if (pdfView->isReady()) {
-            pdfView->printDocument();
-            return;
-        }
-    }
-    // Engine printing is asynchronous — the printer must stay alive
-    // until printFinished fires. The guard is a child of the view, so
-    // the printer is also freed if the view is destroyed mid-print
-    // (the connection alone would leak it).
-    QPrinter *printer = new QPrinter(QPrinter::HighResolution);
-    QPrintDialog dialog(printer, this);
-    dialog.setWindowTitle(tr("Print Document"));
-    if (dialog.exec() != QDialog::Accepted) {
-        delete printer;
-        return;
-    }
-    // CRASH02: an accepted dialog can still describe an unprintable
-    // target — on a CUPS host with zero destinations Qt leaves a
-    // file-format printer pointed at a *directory* (the user's home
-    // dir), and the engine's print path dies trying to paint into it
-    // ("QPainter::begin(): Returned false" then a silent exit).  Fail
-    // visibly instead of handing the engine a dead printer.
-    QString refuseReason;
-    if (!printer->isValid()) {
-        refuseReason = tr("The selected printer is not valid.");
-    } else {
-        const bool fileTarget =
-            printer->outputFormat() != QPrinter::NativeFormat
-            || printer->printerName().isEmpty();
-        if (fileTarget) {
-            const QFileInfo outFile(printer->outputFileName());
-            const QFileInfo outDir(outFile.dir().absolutePath());
-            if (printer->outputFileName().isEmpty() || outFile.isDir()
-                    || (outFile.exists() && !outFile.isWritable())
-                    || (!outFile.exists() && !outDir.isWritable()))
-                refuseReason =
-                    tr("The output file '%1' cannot be written.")
-                        .arg(printer->outputFileName());
-        } else if (QPrinterInfo::printerInfo(printer->printerName())
-                       .isNull()) {
-            refuseReason = tr("The selected printer is not available.");
-        }
-    }
-    if (!refuseReason.isEmpty()) {
-        QMessageBox::warning(this, tr("Print Document"),
-                             tr("Cannot print: %1").arg(refuseReason));
-        delete printer;
-        return;
-    }
-    QObject *printerGuard = new QObject(view);
-    connect(printerGuard, &QObject::destroyed,
-            [printer] { delete printer; });
-    connect(view, &WebView::printFinished, printerGuard,
-            [printerGuard](bool) { printerGuard->deleteLater(); });
-    view->print(printer);
 }
 
 void BrowserMainWindow::zoomTextOnlyChanged(bool textOnly)

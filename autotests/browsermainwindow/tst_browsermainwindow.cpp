@@ -641,6 +641,22 @@ void tst_BrowserMainWindow::fileMenuOrder()
     QCOMPARE(privateAction->shortcut(),
              QKeySequence(Qt::ControlModifier | Qt::ShiftModifier
                           | Qt::Key_N));
+
+    // PRINT02: the File menu carries exactly one print entry —
+    // "Print..." keeping Ctrl+P and the print icon.  The separate
+    // "Print Preview" row is gone; the preview IS the print dialog.
+    QCOMPARE(entries.indexOf(QLatin1String("Print Preview...")), -1);
+    QCOMPARE(entries.count(QLatin1String("Print...")), 1);
+    QAction *printAction = nullptr;
+    for (QAction *action : fileMenu->actions()) {
+        if (action->text().remove(QLatin1Char('&'))
+                == QLatin1String("Print..."))
+            printAction = action;
+    }
+    QVERIFY(printAction);
+    QCOMPARE(printAction->shortcut(),
+             QKeySequence(QKeySequence::Print));
+    QVERIFY(!printAction->icon().isNull());
     closeWindow(window);
 }
 
@@ -1724,10 +1740,11 @@ void tst_BrowserMainWindow::events()
                            Qt::NoModifier);
     window->sendMousePress(&mouseEvent);
 
-    // printRequested needs a live page; the dialog is rejected.  A
-    // repeating dismisser beats the print dialog's variable startup —
-    // a one-shot rejectModal() can fire before the CUPS-backed dialog
-    // becomes the active modal and strand it open forever.
+    // printRequested needs a live page; PRINT02 merged the paths so
+    // the preview dialog comes up — rejected like any modal.  A
+    // repeating dismisser beats the dialog's variable startup — a
+    // one-shot rejectModal() can fire before it becomes the active
+    // modal and strand it open forever.
     if (window->currentTab() && window->currentTab()->webPage()) {
         QTimer modal;
         modal.setInterval(50);
@@ -1748,13 +1765,14 @@ void tst_BrowserMainWindow::events()
     QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
 }
 
-// CRASH02: the print paths must never kill the app.  On a host with
-// zero printers an ACCEPTED print dialog still describes an
-// unprintable target (file-format printer pointed at a directory) —
-// the engine's paint into it was the suspected death; the path now
-// warns and refuses before reaching the engine.  The preview path
-// must also survive a mid-print dialog close (its internal printer
-// used to be freed under the engine's async job).
+// CRASH02+PRINT02: the print paths must never kill the app, and
+// there is exactly one of them — Ctrl+P, the File-menu entry and JS
+// window.print() (printRequested) all open the preview dialog, whose
+// own Print button runs the final QPrintDialog -> raster print.  On
+// a host with zero printers an ACCEPTED print dialog still describes
+// an unprintable target (file-format printer pointed at a
+// directory) — the handoff validates the target and warns instead of
+// painting into a dead printer.
 void tst_BrowserMainWindow::printPaths()
 {
     SubWindow *window = new SubWindow;
@@ -1765,14 +1783,75 @@ void tst_BrowserMainWindow::printPaths()
     const bool noPrinters =
         QPrinterInfo::availablePrinterNames().isEmpty();
 
-    // Dismiss whatever modal comes up: the print dialog gets accepted
-    // (only an accepted dialog reaches the target validation) and a
-    // refusal warning gets recorded then dismissed.
-    bool sawPrintDialog = false;
-    bool sawWarning = false;
+    // Leg 1 — the merged entry: printRequested (JS window.print(),
+    // Ctrl+P, the File-menu item all land here) opens the preview;
+    // the generated document must actually arrive — the stock
+    // QPrintPreviewDialog starved to "1 / 0" pages, so the regression
+    // assertion is real pages (about:blank makes a one-page doc).
+    bool sawPreview = false;
+    int previewedPages = 0;
+    int pumpTicks = 0;
+    QString previewFailure;
     QTimer modal;
     modal.setInterval(50);
     QObject::connect(&modal, &QTimer::timeout, qApp, [&]() {
+        QWidget *widget = QApplication::activeModalWidget();
+        if (QMessageBox *box = qobject_cast<QMessageBox *>(widget)) {
+            box->accept();
+            return;
+        }
+        PrintPreviewDialog *dialog =
+            qobject_cast<PrintPreviewDialog *>(widget);
+        if (!dialog) {
+            if (QDialog *other = qobject_cast<QDialog *>(widget))
+                other->reject();
+            return;
+        }
+        sawPreview = true;
+        ++pumpTicks;
+        if (dialog->hasFailed()) {
+            previewFailure = dialog->failureMessage();
+            dialog->accept();
+            return;
+        }
+        if (dialog->isReady() && dialog->pdfView()
+                && dialog->pdfView()->client()
+                && dialog->pdfView()->client()->pageCount() > 0) {
+            previewedPages = dialog->pdfView()->client()->pageCount();
+            dialog->accept();
+        }
+        if (pumpTicks > 600)    // ~30s — never wedge the suite
+            dialog->accept();
+    });
+    modal.start();
+    QVERIFY(QMetaObject::invokeMethod(window, "printRequested",
+                                    Q_ARG(WebView *, view)));
+    modal.stop();
+    QVERIFY(sawPreview);
+    QVERIFY2(previewedPages >= 1,
+             qPrintable(QStringLiteral("preview never produced pages")
+                        + (previewFailure.isEmpty() ? QString()
+                           : QLatin1String(": ") + previewFailure)));
+
+    // Leg 2 — the preview's own Print button runs the native print
+    // pipeline on the generated PDF.  A nested exec inside the
+    // preview's modal loop starves the dismisser, so the preview is
+    // shown NON-modally here: pdfView->printDocument() then owns the
+    // only exec — the QPrintDialog it raises is accepted, and on a
+    // no-printer host the dead target must warn instead of printing.
+    PrintPreviewDialog preview;   // no parent: stack object must
+                                  // outlive window teardown safely
+    preview.setPage(view->page(), view->url());
+    preview.show();
+    QTRY_VERIFY_WITH_TIMEOUT(preview.isReady(), 30000);
+    QVERIFY(preview.pdfView()->client()
+            && preview.pdfView()->client()->pageCount() > 0);
+
+    bool sawPrintDialog = false;
+    bool sawWarning = false;
+    QTimer printPump;
+    printPump.setInterval(50);
+    QObject::connect(&printPump, &QTimer::timeout, qApp, [&]() {
         QWidget *widget = QApplication::activeModalWidget();
         if (QMessageBox *box = qobject_cast<QMessageBox *>(widget)) {
             sawWarning = true;
@@ -1785,13 +1864,13 @@ void tst_BrowserMainWindow::printPaths()
             printDialog->accept();
             return;
         }
-        if (QDialog *dialog = qobject_cast<QDialog *>(widget))
-            dialog->accept();
+        if (QDialog *other = qobject_cast<QDialog *>(widget))
+            other->reject();
     });
-    modal.start();
-
-    QVERIFY(QMetaObject::invokeMethod(window, "printRequested",
-                                    Q_ARG(WebView *, view)));
+    printPump.start();
+    QVERIFY(QMetaObject::invokeMethod(preview.pdfView(),
+                                    "printDocument"));
+    printPump.stop();
     QVERIFY(sawPrintDialog);
     if (noPrinters) {
         // The accepted dialog described a dead target: refusal must
@@ -1799,55 +1878,50 @@ void tst_BrowserMainWindow::printPaths()
         QVERIFY(sawWarning);
     }
 
-    // filePrintPreview drives the generated-document path; the
-    // generic QDialog accept above closes it while printToPdf may
-    // still be in flight — exactly the mid-generation close case.
-    QVERIFY(QMetaObject::invokeMethod(window, "filePrintPreview"));
+    // The merged pipeline's last mile, host-independent: printPages
+    // must produce a real print artifact, honoring the QPrintDialog
+    // page range (the only print pipeline left — nothing may be
+    // lost with the old straight-to-printer path).
+    QTemporaryDir outDir;
+    QVERIFY(outDir.isValid());
+    const QString outPath = outDir.filePath("print.pdf");
+    QPrinter printer(QPrinter::HighResolution);
+    printer.setOutputFormat(QPrinter::PdfFormat);
+    printer.setOutputFileName(outPath);
+    QString printError;
+    QVERIFY(preview.pdfView()->canvas()->printPages(&printer,
+                                                  &printError));
+    QVERIFY2(QFile::exists(outPath), qPrintable(printError));
+    QFile out(outPath);
+    QVERIFY(out.open(QIODevice::ReadOnly));
+    QVERIFY(out.read(5).startsWith("%PDF-"));
+    out.close();
 
-    modal.stop();
+    const QString rangedPath = outDir.filePath("print-ranged.pdf");
+    printer.setPrintRange(QPrinter::PageRange);
+    printer.setFromTo(1, 1);
+    printer.setOutputFileName(rangedPath);
+    QVERIFY(preview.pdfView()->canvas()->printPages(&printer,
+                                                  &printError));
+    QVERIFY(QFile::exists(rangedPath));
+    preview.close();
 
-    // PRINT01: hold the preview open until the generated document
-    // actually lands — the stock QPrintPreviewDialog starved to
-    // "1 / 0" pages, so the regression assertion is that real pages
-    // arrive (about:blank produces a one-page document).
-    int previewedPages = 0;
-    bool sawPreview = false;
-    int pumpTicks = 0;
-    QString previewFailure;
-    QTimer pump;
-    pump.setInterval(100);
-    QObject::connect(&pump, &QTimer::timeout, qApp, [&]() {
-        auto *dialog = qobject_cast<PrintPreviewDialog *>(
-            QApplication::activeModalWidget());
-        if (!dialog)
-            return;
-        sawPreview = true;
-        ++pumpTicks;
-        if (dialog->hasFailed()) {
-            previewFailure = dialog->failureMessage();
-            qInfo() << "printPaths: previewFailed:" << previewFailure;
-            dialog->accept();
-            return;
-        }
-        if (dialog->isReady() && dialog->pdfView()
-                && dialog->pdfView()->client()
-                && dialog->pdfView()->client()->pageCount() > 0)
-            previewedPages = dialog->pdfView()->client()->pageCount();
-        if (previewedPages > 0 || pumpTicks > 600)
+    // filePrint — the menu/Ctrl+P slot — opens the same preview; a
+    // prompt generic accept lands while a fresh printToPdf may still
+    // be in flight — exactly the mid-generation close case.
+    QTimer earlyClose;
+    earlyClose.setInterval(50);
+    QObject::connect(&earlyClose, &QTimer::timeout, qApp, []() {
+        if (QDialog *dialog = qobject_cast<QDialog *>(
+                QApplication::activeModalWidget()))
             dialog->accept();
     });
-    pump.start();
-    QVERIFY(QMetaObject::invokeMethod(window, "filePrintPreview"));
-    pump.stop();
-    QVERIFY(sawPreview);
-    QVERIFY2(previewedPages >= 1,
-             qPrintable(QStringLiteral("preview never produced pages")
-                        + (previewFailure.isEmpty() ? QString()
-                           : QLatin1String(": ") + previewFailure)));
+    earlyClose.start();
+    QVERIFY(QMetaObject::invokeMethod(window, "filePrint"));
+    earlyClose.stop();
 
-    // PRINT01: an engine tab has no printToPdf — preview and print
-    // must refuse honestly rather than open a dead dialog or do
-    // nothing at all.
+    // PRINT01/02: an engine tab has no printToPdf — Print must
+    // refuse honestly rather than open a dead dialog or do nothing.
     FakeEngineBackend backend;
     EngineRegistry::registerBackend(&backend);
     QVERIFY(window->tabWidget()->reloadTabInEngine(
@@ -1868,9 +1942,6 @@ void tst_BrowserMainWindow::printPaths()
         }
     });
     refusalPump.start();
-    QVERIFY(QMetaObject::invokeMethod(window, "filePrintPreview"));
-    QVERIFY(sawRefusal);
-    sawRefusal = false;
     QVERIFY(QMetaObject::invokeMethod(window, "filePrint"));
     QVERIFY(sawRefusal);
     refusalPump.stop();
@@ -5784,7 +5855,7 @@ void tst_BrowserMainWindow::bookmarksSidebarPanel()
     closeWindow(window);
 }
 
-// COV05: the remaining chrome slots — print/print-preview dialogs,
+// COV05: the remaining chrome slots — the merged print dialog,
 // the page-source viewer, home navigation, the command palette
 // overlays, the New-Container-Tab menu build (private + populated),
 // the privacy-mode mirror, and lastTabClosed's keep-open branch.
@@ -5807,11 +5878,12 @@ void tst_BrowserMainWindow::chromeSlots()
     QSignalSpy loaded(view->page(), &QWebEnginePage::loadFinished);
     view->load(QUrl("about:blank"));
     QTRY_VERIFY_WITH_TIMEOUT(!loaded.isEmpty(), 15000);
-    // Print paths — the machinery stands up even when the dialog is
-    // rejected.  PRINT01: the preview renders the page's printToPdf
-    // output in an in-process PdfView — no borrowed printer and no
-    // printFinished.  Poll the modal dialog until the generated
-    // document is ready (or generation reports failure), then close.
+    // Print path — the machinery stands up even when the dialog is
+    // rejected.  PRINT02: the single Print entry opens the preview,
+    // which renders the page's printToPdf output in an in-process
+    // PdfView — no borrowed printer and no printFinished.  Poll the
+    // modal dialog until the generated document is ready (or
+    // generation reports failure), then close.
     QString previewState;
     QTimer previewPoll;
     previewPoll.setInterval(50);
@@ -5831,11 +5903,9 @@ void tst_BrowserMainWindow::chromeSlots()
     });
     previewPoll.start();
     rejectModal(20000); // backstop if the print pipeline never answers
-    QVERIFY(QMetaObject::invokeMethod(window, "filePrintPreview"));
+    QVERIFY(QMetaObject::invokeMethod(window, "filePrint"));
     previewPoll.stop();
     QCOMPARE(previewState, QLatin1String("ready"));
-    rejectModal(); // QPrintDialog — rejected before print() starts
-    QVERIFY(QMetaObject::invokeMethod(window, "filePrint"));
 
     // viewPageSource is intentionally not driven: the SourceViewer's
     // application-side NAM refetch is unstable under the offscreen

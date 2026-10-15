@@ -21,6 +21,10 @@
 #define PRINTPREVIEWDIALOG_H
 
 // PRINT01 — the print-preview replacement for QPrintPreviewDialog.
+// PRINT02 — this is now the browser's ONLY print surface: the single
+// File-menu "Print..." entry (Ctrl+P) and JS window.print() all open
+// it, and its Print action performs the final native print — there
+// is no "print without preview" path (Firefox's model).
 //
 // The stock dialog's paintRequested contract is synchronous painting
 // into a QPrinter paint device, which engine printing cannot satisfy
@@ -29,10 +33,10 @@
 // generate a real PDF — true pagination and margins, the same bytes
 // a print would produce — and renders it through the shell's own
 // PDF stack (PdfDocumentClient + PdfCanvas, PDF02's hayro rasterizer).
-// The toolbar keeps the stock UX: page navigation, zoom, fit-width,
-// Page Setup (regenerates under the chosen layout), Print (feeds
-// the generated document to a real printer through
-// PdfCanvas::printPages) and Save as PDF.
+// The toolbar keeps the stock UX: Print (native QPrintDialog — full
+// printer selection/copies/page range — then PdfCanvas::printPages),
+// Page Setup (regenerates under the chosen layout), Save as PDF,
+// page navigation, zoom and fit-width.
 
 #include <qdialog.h>
 #include <qpagelayout.h>

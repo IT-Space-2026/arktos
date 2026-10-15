@@ -876,6 +876,13 @@ Search & location bar:
   and select values ride along; a multiple-submit form asks which
   button carries the query, and POST forms get an honest "not
   supported" warning instead of a silent no-op) (SRCH01).
+- Print and Print Preview merged into a single Print entry
+  (Ctrl+P), matching Firefox: the menu item and JS window.print()
+  open the print-preview dialog directly, and the preview's own
+  Print action runs the native print dialog (printer selection,
+  copies and page range) on the generated PDF. There is no longer a
+  straight-to-printer path, and PDF document tabs preview their
+  staged document the same way (PRINT02).
 
 Security:
 - HTTPS-First upgrades and HTTPS-Only interstitial; real-TLS-failure
