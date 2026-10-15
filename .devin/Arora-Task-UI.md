@@ -177,6 +177,7 @@ This file is the task queue for the Devin CLI task loop
 | MEM05 | Memory climbs on every nav→back cycle — MEASURE ONLY: RSS/heap slope over ~20 cycles on normal window, plateau-vs-leak verdict, indicator honesty — details below | in_progress | 2 | VERDICT pending make check — see details; indicator honest, ~+5.4MB/cycle renderer-side upstream retention |
 | MEM06 | Memory climb fix pass — apply MEM05's verdict: fix the growing allocation site OR tune/document bounded caches — details below | pending | 0 | needs:task:MEM05 |
 | MEM07 | Memory coverage matrix — run MEM05's cycle fixture across private/Tor/Servo/background/tear-off surfaces, per-type slope table — details below | pending | 0 | needs:task:MEM05 |
+| MEM08 | Manual memory flush on tab context menu — discard retained WebContents on demand (current tab = discard+reload) — details below | pending | 0 | |
 | TRUST23 | Padlock stays yellow on Tor window — decide green-on-verified-TLS vs honest neutral — details below | pending | 0 | retry after 4GB cap raise — 5 prior runs died to 3072MB watchdog during builds, not task failure |
 | DEVT16 | BiDi: web tab shows "no debug target" — tab-vs-target re-matching only (Elements=DEVT17, waterfall=DEVT18) — details below | in_progress | 0 | |
 | DEVT17 | BiDi: Elements page renders empty tree — DOM.getDocument fetch/parse/populate path — details below | pending | 0 | |
@@ -1111,3 +1112,9 @@ Migrated from UI lane TRUST19 (padlock/TlsVerifier/SiteDecisionStore machinery i
 
 
 
+
+### MEM08
+
+User request: a manual 'flush memory' item on the tab right-click menu as a workaround even if MEM06's automatic fix only partly helps. MEM05 established the retention lives in the renderer's per-navigation WebContents retention — the ONLY honest flush is tearing the WebContents down (history()->clear() freed 0 kB; verified by the bare-view control). SLEEP01 already has the discard machinery: TabBar Sleep/Wake entry -> TabWidget::sleepTab/beginTabSleep -> Engine::Page::setLifecycleState(Discarded) frees the renderer side while the slot keeps title+favicon.
+
+Build: (a) add 'Free Memory' to the tab context menu next to Sleep/Wake. For a NON-current tab: run the existing discard path (beginTabSleep) — that IS the flush; same exemptions (form-dirty refusal) apply. For the CURRENT tab: sleeping is impossible, so the honest flush is discard+immediate reactivate — setLifecycleState(Discarded) then back to Active, which rebuilds the WebContents and reloads the current entry, dropping all retained session documents (user-visible effect = a reload; label it honestly, e.g. 'Reload && Free Memory' or one item whose text reflects the action). If discarding the active tab is not reliable, fall back to a WebContents recreate (reloadIntoNewContents-style) and document why. (b) Status feedback: sample the tab's renderer RSS via the same processMemoryKb(renderProcessId()) path the mem indicator uses before and ~2s after; show 'freed ~N MB' or 'no memory freed' in the statusbar — honest, no fake numbers; a sleeping tab shows 'already discarded'. (c) Optional window-level 'Free Memory in Background Tabs' in the same menu — sleeps all suspendable tabs; only add if it stays small. Verify: tabbar menu leg (item present, enabled/disabled states, current-vs-background wording); a memcycle-style leg asserting renderer RSS drops after flush on a tab that has cycled navigations; make check PASS.
