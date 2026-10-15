@@ -4,10 +4,13 @@
 # and upload their result as a workflow artifact. No release is created —
 # artifacts are downloaded from the Actions run page.
 #
-# Qt comes from jurplel/install-qt-action (Qt 6.12 + qtwebengine +
-# qt5compat — the tree uses Qt5Compat for QRegExp/QTextCodec bridges).
+# Qt comes from jurplel/install-qt-action on linux/macos (Qt 6.12 +
+# qtwebengine qt5compat qtwebchannel qtpositioning — webchannel and
+# positioning are transitive deps of webenginewidgets that aqt does not
+# auto-install). Windows installs Qt via aqt directly with a patch for
+# the 6.11+ per-arch repo layout (upstream aqtinstall issue #1022).
 # The package drivers (.devin/pkg-*.sh) locate qmake via $QTDIR, which
-# each job derives from the action's Qt6_DIR (…/lib/cmake/Qt6 → prefix).
+# each job derives from qmake on PATH.
 #
 # Coverage:
 #   deb      — .devin/pkg-deb.sh (dpkg-buildpackage path) → dist/*.deb
@@ -29,7 +32,7 @@ concurrency:
 
 jobs:
   deb:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
 
@@ -56,7 +59,7 @@ jobs:
           path: dist/*.deb
 
   rpm:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
 
@@ -86,7 +89,7 @@ jobs:
           path: dist/*.rpm
 
   flatpak:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     container:
       image: bilelmoussaoui/flatpak-github-actions:freedesktop-24-08
       options: --privileged
@@ -116,23 +119,36 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: jurplel/install-qt-action@v4
-        with:
-          version: '6.12.0'
-          arch: 'win64_msvc2022_64'
-          modules: 'qtwebengine qt5compat qtwebchannel qtpositioning'
-          aqtversion: '>=3.3.0'
-          cache: true
-
-      - uses: ilammy/msvc-dev-cmd@v1
-
-      - name: Derive QTDIR
+      # install-qt-action is bypassed here: Qt 6.11+ ships Windows metadata as
+      # per-arch repos (qt6_6120/qt6_6120_msvc2022_64/) with no shared catalog,
+      # which aqt (even latest 3.3.0) cannot parse — aqtinstall issue #1022.
+      # We patch aqt's extension_for_arch to map win64_* -> the arch suffix,
+      # making it resolve the per-arch Updates.xml directly.
+      - name: Install Qt 6.12.0 (aqt + repo-layout patch)
         shell: pwsh
         run: |
-          $q = (Get-Command qmake -ErrorAction SilentlyContinue).Source
-          if (-not $q) { Write-Error "no qmake on PATH"; exit 1 }
-          $QTDIR = Split-Path (Split-Path $q)
-          echo "QTDIR=$QTDIR" >> $env:GITHUB_ENV
+          python -m pip install --quiet "aqtinstall==3.3.0"
+          $patch = @'
+          import pathlib
+          import aqt.metadata
+          p = pathlib.Path(aqt.metadata.__file__)
+          s = p.read_text()
+          anchor = "        return \"\"\n\n    @staticmethod\n    def possible_extensions_for_arch"
+          assert anchor in s, "aqt layout changed; patch anchor not found"
+          insert = "        elif is_version_ge_6 and architecture.startswith(\"win64_\"):\n            return architecture[len(\"win64_\"):]\n"
+          s = s.replace(anchor, insert + "        return \"\"\n\n    @staticmethod\n    def possible_extensions_for_arch")
+          p.write_text(s)
+          print("patched aqt extension_for_arch for win64_* per-arch repos")
+          '@
+          Set-Content -Path patch_aqt.py -Value $patch
+          python patch_aqt.py
+          python -m aqt install-qt windows desktop 6.12.0 win64_msvc2022_64 --outputdir "$env:RUNNER_WORKSPACE\Qt" --modules qtwebengine qt5compat qtwebchannel qtpositioning
+          $qt = "$env:RUNNER_WORKSPACE\Qt\6.12.0\msvc2022_64"
+          if (-not (Test-Path "$qt\bin\qmake.exe")) { Write-Error "qmake not found at $qt"; exit 1 }
+          "QTDIR=$qt" >> $env:GITHUB_ENV
+          "$qt\bin" >> $env:GITHUB_PATH
+
+      - uses: ilammy/msvc-dev-cmd@v1
 
       - name: Build
         shell: cmd
