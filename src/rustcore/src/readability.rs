@@ -198,10 +198,17 @@ fn estimated_max_depth(html: &[u8]) -> usize {
 
 /// The dead-tag list the JS reader's sanitize() removed before
 /// inserting the fragment — interactive and document-level elements
-/// never survive the FFI boundary.
-const DEAD_TAGS: &str = "script, iframe, frame, frameset, object, embed,\
- applet, form, input, button, select, textarea, link, meta, base,\
- template, noscript";
+/// never survive the FFI boundary.  Aligned with the C++
+/// ReaderSanitizer's raw-text/container/void drops.
+const DEAD_TAGS: &str = "script, style, title, xmp, iframe, noembed,\
+ noframes, object, applet, select, button, template, frameset,\
+ textarea, link, meta, base, input, embed, frame";
+
+/// Transparent wrappers — the tag dies but its children are ordinary
+/// article markup and must survive.  The READ03 regression, mirrored:
+/// deleting <form> or <noscript> *with* their contents produced a
+/// title-only overlay on pages whose article body sat inside one.
+const UNWRAP_TAGS: &[&str] = &["form", "noscript"];
 
 fn config() -> Config {
     Config {
@@ -278,6 +285,9 @@ pub fn probably_readable(html: &[u8]) -> RcResult<bool> {
 /// fragment: dead tags out, on* and javascript: attributes stripped.
 fn sanitize(content: &str) -> String {
     let doc = Document::fragment(content);
+    // Unwrap first so a dead tag *inside* a transparent wrapper is
+    // still caught by the removal pass below.
+    doc.root().strip_elements(UNWRAP_TAGS);
     doc.select(DEAD_TAGS).remove();
     for node in doc.select("*").nodes() {
         let mut drop_names: Vec<String> = Vec::new();
@@ -479,6 +489,31 @@ mod tests {
         assert!(!content.contains("<script"), "{content}");
         assert!(!content.contains("<form"), "{content}");
         assert!(!content.contains("<input"), "{content}");
+    }
+
+    #[test]
+    fn sanitizer_unwraps_transparent_wrappers() {
+        // READ03: deleting <form>/<noscript> *with* their children
+        // produced a title-only overlay.  The tags die, the article
+        // text inside them survives.
+        let mut paragraphs = String::new();
+        for _ in 0..6 {
+            paragraphs.push_str(
+                "<p>Form-wrapped article copy that has to survive the \
+                 sanitizer even though its container element does \
+                 not make it across the FFI boundary itself.</p>",
+            );
+        }
+        let html = format!(
+            "<html><body><article><h1>t</h1><form>{paragraphs}</form>\
+             <noscript><p>noscript copy kept</p></noscript>\
+             </article></body></html>"
+        );
+        let v = verdict(html.as_bytes(), Some("https://example.com/a"));
+        let content = v["content"].as_str().unwrap();
+        assert!(!content.contains("<form"), "{content}");
+        assert!(!content.contains("<noscript"), "{content}");
+        assert!(content.contains("Form-wrapped article copy"), "{content}");
     }
 
     #[test]

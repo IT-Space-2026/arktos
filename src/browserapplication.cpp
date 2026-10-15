@@ -65,6 +65,7 @@
 #include "acceptlanguagedialog.h"
 #include "adblockmanager.h"
 #include "adblocknetwork.h"
+#include "arorastyle.h"
 #include "autosaver.h"
 #include "autofillmanager.h"
 #include "bookmarksmanager.h"
@@ -275,6 +276,12 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
 
     // UIP02: uniform modern button metrics in every dialog.
     BrowserTheme::installDialogButtonPolish();
+
+    // THEME01: the central chrome polish — spacing/flat-chrome/section
+    // typography from one source.  Install after applyColorScheme() so
+    // the proxy wraps the post-scheme style; the hook re-wraps and
+    // re-resolves on every later flip.
+    AroraStyle::install();
 
 #if defined(Q_OS_MACOS)
     QApplication::setQuitOnLastWindowClosed(false);
@@ -502,7 +509,7 @@ void BrowserApplication::messageReceived(QLocalSocket *socket)
 #endif
 #ifdef Q_OS_WIN
         WId wid = (WId)winid.toLongLong();
-        SetForegroundWindow(wid);
+        SetForegroundWindow(reinterpret_cast<HWND>(wid));
 #endif
         return;
     }
@@ -513,29 +520,45 @@ void BrowserApplication::quitBrowser()
     if (!downloadManager()->allowQuit())
         return;
 
-    if (QSettings().value(QLatin1String("tabs/confirmClosingMultipleTabs"), true).toBool()) {
-        clean();
+    // PREF04: 'Show Exit Confirmation Dialog' (tabs/confirmExit)
+    // guards the explicit quit path.  When the key was never written
+    // it inherits the migrated close-window confirm's value, so a user
+    // who turned that off is not surprised by a new prompt — while the
+    // old default (on) keeps the quit warning alive.
+    QSettings settings;
+    const bool confirmWindow = settings.value(
+        QLatin1String("tabs/confirmClosingMultipleTabs"), true).toBool();
+    clean();
+    if (settings.value(QLatin1String("tabs/confirmExit"),
+                       confirmWindow).toBool()
+            && !m_mainWindows.isEmpty()) {
         int tabCount = 0;
         for (int i = 0; i < m_mainWindows.count(); ++i) {
             // CONT06: include tabs hidden in filtered container levels.
             tabCount += m_mainWindows.at(i)->tabWidget()->totalTabCount();
         }
 
-        if (tabCount > 1) {
-            QWidget *widget = mainWindow();
-            QApplication::alert(widget);
-            int ret = QMessageBox::warning(widget, QString(),
-                               tr("There are %1 windows and %2 tabs open\n"
-                                  "Do you want to quit anyway?").arg(m_mainWindows.count()).arg(tabCount),
-                               QMessageBox::Yes | QMessageBox::No,
-                               QMessageBox::No);
-            if (ret == QMessageBox::No)
-                return;
-        }
+        QWidget *widget = mainWindow();
+        QApplication::alert(widget);
+        const QString question =
+            (m_mainWindows.count() > 1 || tabCount > 1)
+            ? tr("There are %1 windows and %2 tabs open\n"
+                 "Do you want to quit anyway?")
+                  .arg(m_mainWindows.count()).arg(tabCount)
+            : tr("Do you want to quit Arora?");
+        int ret = QMessageBox::warning(widget, QString(), question,
+                           QMessageBox::Yes | QMessageBox::No,
+                           QMessageBox::No);
+        if (ret == QMessageBox::No)
+            return;
     }
 
     saveSession();
     clearPrivateDataOnExit();
+    // SESS02: ::exit() never unwinds to main()'s markSessionCleanExit,
+    // so an explicit Quit would leave the sentinel armed and score as
+    // a crash on the next start — record the clean exit first.
+    BrowserProfile::markSessionCleanExit(0);
     exit(0);
 }
 
@@ -559,9 +582,6 @@ void BrowserApplication::postLaunch()
 
     // newMainWindow() needs to be called in main() for this to happen
     if (m_mainWindows.count() > 0) {
-        QSettings settings;
-        settings.beginGroup(QLatin1String("MainWindow"));
-        int startup = settings.value(QLatin1String("startupBehavior")).toInt();
         const QString url = argumentUrl();
 
         if (isTorMode()) {
@@ -581,8 +601,8 @@ void BrowserApplication::postLaunch()
             // forwarded second-instance message — an external program
             // invoking `arora javascript:...` must not get script
             // execution in the new window.
-            switch (startup) {
-            case 2: {
+            switch (startupMode()) {
+            case LastSessionStartup: {
                 restoreLastSession();
                 mainWindow()->tabWidget()->loadStringFromUntrustedSource(url, TabWidget::NewSelectedTab);
                 break;
@@ -592,19 +612,34 @@ void BrowserApplication::postLaunch()
                 break;
             }
         } else {
-            switch (startup) {
-            case 0:
+            // PREF04: the Startup-with radios — see startupMode() for
+            // the MainWindow/startupMode key + legacy migration.
+            switch (startupMode()) {
+            case LastSessionStartup:
+                restoreLastSession();
+                break;
+            case HomepageStartup:
                 mainWindow()->goHome();
                 break;
-            case 1:
+            case SpecificPagesStartup:
+                openStartupPages(mainWindow());
                 break;
-            case 2:
-                restoreLastSession();
+            case StartPageStartup:
+            default:
+                mainWindow()->tabWidget()->loadUrl(startPageUrl());
                 break;
             }
         }
     }
     StartupProfile::mark("postLaunch: navigation dispatched");
+
+    // SESS02: the dispatch above must never leave a real session
+    // windowless — an empty/corrupt session blob, a declined
+    // crash-guard restore prompt, or a window lost between its
+    // creation and this queued slot all land here without a live
+    // BrowserMainWindow.  Standalone runs manage their own windows.
+    if (!isStandalone() || isTorMode())
+        ensureSessionWindow();
 
     // PERF03: the heavyweight stores were forced synchronously here —
     // after the first window painted but before the startup
@@ -665,11 +700,20 @@ void BrowserApplication::torStartup(const QString &url)
         }
         return;
     }
-    // startupBehavior: homepage (0) still applies; restore-session (2)
-    // is meaningless — the blob belongs to the clearnet profile — and
-    // blank (1) is the fallback for it.
-    if (QSettings().value(QLatin1String("MainWindow/startupBehavior")).toInt() == 0)
+    // PREF04: the startup pick applies minus Last Session — the
+    // session blob is clearnet-profile state.  Start Page needs no
+    // navigation here: the window's fresh tor tab already carries the
+    // branded start page.
+    switch (startupMode()) {
+    case HomepageStartup:
         window->goHome();
+        break;
+    case SpecificPagesStartup:
+        openStartupPages(window);
+        break;
+    default:
+        break;
+    }
 }
 
 void BrowserApplication::loadSettings()
@@ -804,13 +848,18 @@ void BrowserApplication::saveSession()
     m_lastSession = data;
 }
 
-void BrowserApplication::flushSessionsForTermination()
+void BrowserApplication::flushSessionsForTermination(int signalNumber)
 {
     // CRASH01: a signal-driven shutdown is a clean exit — clear the
     // crash-loop sentinel/counter so logoff/service-stop kills aren't
-    // scored against the next run's GPU safe-mode check.  Done first:
-    // the watchdog may kill the process mid-flush.
-    BrowserProfile::markSessionCleanExit();
+    // scored against the next run's GPU safe-mode check.  SESS02: the
+    // lastExit record still says 'terminated by signal N' rather than
+    // 'clean rc=0' — a signal death must not masquerade as a normal
+    // exit.  Done first: the watchdog may kill the process mid-flush.
+    if (signalNumber)
+        BrowserProfile::markSessionTerminated(signalNumber);
+    else
+        BrowserProfile::markSessionCleanExit();
     clean();
     for (int i = 0; i < m_mainWindows.count(); ++i) {
         if (BrowserMainWindow *window = m_mainWindows.at(i))
@@ -822,6 +871,29 @@ void BrowserApplication::flushSessionsForTermination()
     // browsing stays excluded: saveSession() writes nothing while
     // isPrivate().
     saveSession();
+}
+
+bool BrowserApplication::ensureSessionWindow()
+{
+    clean();
+    bool created = false;
+    if (m_mainWindows.isEmpty()) {
+        qWarning() << "BrowserApplication: startup produced no browser"
+                      " window — opening a fallback";
+        BrowserMainWindow *window = newMainWindow();
+        window->tabWidget()->loadUrl(startPageUrl(),
+                                     TabWidget::CurrentTab);
+        created = true;
+    }
+    // The same blank-ness one level down: a window whose strip ended
+    // empty (e.g. every restored tab detached into a filtered
+    // container level) still needs one live tab.
+    for (const QPointer<BrowserMainWindow> &window :
+             std::as_const(m_mainWindows)) {
+        if (window && window->tabWidget()->totalTabCount() == 0)
+            window->tabWidget()->newTabPage();
+    }
+    return created;
 }
 
 bool BrowserApplication::canRestoreSession() const
@@ -1031,10 +1103,60 @@ BrowserMainWindow *BrowserApplication::newMainWindow()
     m_mainWindows.prepend(browser);
     connect(this, &BrowserApplication::privacyChanged,
             browser, &BrowserMainWindow::privacyChanged);
+#ifndef AUTOTESTS
+    // SESS02: if this turns out to be the last browser window, a stray
+    // visible top-level (a dialog outliving its parent window) would
+    // keep the process running windowless — windowDestroyed() forces
+    // the clean exit the close was meant to be.
+    connect(browser, &QObject::destroyed,
+            this, &BrowserApplication::windowDestroyed);
+#endif
     browser->show();
     if (m_mainWindows.count() == 1)
         StartupProfile::mark("first window shown");
     return browser;
+}
+
+void BrowserApplication::windowDestroyed()
+{
+    // Defer past the destroyed() emission — the QPointer in
+    // m_mainWindows does not clear until ~QObject unwinds.
+    QTimer::singleShot(0, this, [this]() {
+        if (quitting)
+            return;
+        // Standalone smokes open and close windows in scripted order —
+        // their harness owns the lifetime.
+        if (isStandalone() && !isTorMode())
+            return;
+        clean();
+        if (!m_mainWindows.isEmpty())
+            return;
+        // If no visible top-level survived, quitOnLastWindowClosed is
+        // already unwinding exec() — nothing to do.  The zombie case
+        // is a stray VISIBLE top-level keeping the event loop alive
+        // with no browser chrome left (observed live: a session
+        // restore whose pages died under it left a process only a
+        // second launch could rouse).
+        bool strayVisible = false;
+        for (QWidget *top : QApplication::topLevelWidgets()) {
+            if (top->isVisible()
+                && !qobject_cast<BrowserMainWindow*>(top)) {
+                strayVisible = true;
+                break;
+            }
+        }
+        if (!strayVisible)
+            return;
+        // The dying window's ~BrowserMainWindow already flushed the
+        // session through its AutoSaver.  exit() on the application —
+        // NOT ::exit() — lets exec() unwind so main() still records
+        // the 'clean rc=0' breadcrumb; a bare ::exit() here would
+        // leave the sentinel armed and read as a crash next start.
+        qWarning() << "BrowserApplication: last browser window is gone"
+                      " but a stray top-level kept the process alive"
+                      " — exiting instead of running windowless";
+        QCoreApplication::exit(0);
+    });
 }
 
 BrowserMainWindow *BrowserApplication::newMainWindowInContainer(const QString &containerId)
@@ -1229,6 +1351,72 @@ QUrl BrowserApplication::startPageUrl(const QString &engineId,
     if (engineId == QLatin1String("servo"))
         return QUrl(QLatin1String("qrc:/startpage-servo.html"));
     return QUrl(QLatin1String("qrc:/startpage.html"));
+}
+
+// PREF04: the Homepage radio's persisted mode.  A pre-mode settings
+// store has no homePageMode key — then the old free-form "home" value
+// decides: the default about:home IS the start page, anything else was
+// a user-picked specific page.
+int BrowserApplication::homePageMode()
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("MainWindow"));
+    const QVariant mode = settings.value(QLatin1String("homePageMode"));
+    if (mode.isValid())
+        return mode.toInt() == SpecificPageHome
+            ? SpecificPageHome : StartPageHome;
+    const QString home = settings.value(
+        QLatin1String("home"), QLatin1String("about:home")).toString();
+    return home.trimmed().isEmpty() || home == QLatin1String("about:home")
+        ? StartPageHome : SpecificPageHome;
+}
+
+// PREF04: the Startup radio's persisted mode.  Migration — the retired
+// combo stored MainWindow/startupBehavior: 0 "home page" -> Homepage,
+// 1 "blank page" -> Start Page (the fresh tab it described now carries
+// the start page), 2 "restore" -> Last Session.
+int BrowserApplication::startupMode()
+{
+    QSettings settings;
+    const QVariant mode =
+        settings.value(QLatin1String("MainWindow/startupMode"));
+    if (mode.isValid())
+        return qBound(0, mode.toInt(), int(SpecificPagesStartup));
+    const QVariant legacy =
+        settings.value(QLatin1String("MainWindow/startupBehavior"));
+    if (legacy.isValid()) {
+        switch (legacy.toInt()) {
+        case 0:
+            return HomepageStartup;
+        case 2:
+            return LastSessionStartup;
+        default:
+            return StartPageStartup;
+        }
+    }
+    return StartPageStartup;
+}
+
+QStringList BrowserApplication::startupPages()
+{
+    return QSettings()
+        .value(QLatin1String("MainWindow/startupPages")).toStringList();
+}
+
+void BrowserApplication::openStartupPages(BrowserMainWindow *window)
+{
+    if (!window || !window->tabWidget())
+        return;
+    bool first = true;
+    const QStringList pages = startupPages();
+    for (const QString &page : pages) {
+        const QString trimmed = page.trimmed();
+        if (trimmed.isEmpty())
+            continue;
+        window->tabWidget()->loadString(trimmed,
+            first ? TabWidget::CurrentTab : TabWidget::NewNotSelectedTab);
+        first = false;
+    }
 }
 
 QString BrowserApplication::defaultEngineId()

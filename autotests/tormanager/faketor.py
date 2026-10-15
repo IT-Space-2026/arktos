@@ -100,19 +100,24 @@ def main():
 
     # TOR15: the circuit-status body served before and after SIGNAL
     # NEWNYM — same guard fingerprint, rotated middle+exit, fresh
-    # CircID.
+    # CircID.  TOR13: the dirty pre-NEWNYM circuit stays listed while
+    # its streams are alive — real tor marks circuits dirty rather
+    # than closing them — and its streams stay pinned on it, which is
+    # exactly why the display kept showing the old hops.
     def circuit_lines():
+        old_circuit = ("3 BUILT "
+                       "$AA11AA11AA11AA11AA11AA11AA11AA11AA11AA11"
+                       "~GuardOne,"
+                       "$BB22BB22BB22BB22BB22BB22BB22BB22BB22BB22"
+                       "=MiddleTwo,"
+                       "$CC33CC33CC33CC33CC33CC33CC33CC33CC33CC33"
+                       "~ExitThree "
+                       "BUILD_FLAGS=NEED_CAPACITY PURPOSE=GENERAL "
+                       "TIME_CREATED=2026-10-09T00:00:00.000000")
         if state["nym"] == 0:
-            return ["3 BUILT "
-                    "$AA11AA11AA11AA11AA11AA11AA11AA11AA11AA11"
-                    "~GuardOne,"
-                    "$BB22BB22BB22BB22BB22BB22BB22BB22BB22BB22"
-                    "=MiddleTwo,"
-                    "$CC33CC33CC33CC33CC33CC33CC33CC33CC33CC33"
-                    "~ExitThree "
-                    "BUILD_FLAGS=NEED_CAPACITY PURPOSE=GENERAL "
-                    "TIME_CREATED=2026-10-09T00:00:00.000000"]
-        return ["%d BUILT "
+            return [old_circuit]
+        return [old_circuit,
+                "%d BUILT "
                 "$AA11AA11AA11AA11AA11AA11AA11AA11AA11AA11"
                 "~GuardOne,"
                 "$EE66EE66EE66EE66EE66EE66EE66EE66EE66EE66"
@@ -248,21 +253,29 @@ def main():
                 reply("250 OK\r\n")
             elif cmd.startswith("GETINFO stream-status"):
                 reply("250+stream-status=\r\n")
-                reply("8 SUCCEEDED %d 127.0.0.1:80\r\n"
-                      % state["circ_id"])
-                reply("9 SUCCEEDED %d 127.0.0.1:443\r\n"
-                      % state["circ_id"])
+                # TOR13: streams attached before NEWNYM keep riding
+                # the dirty circuit — the busiest-stream pick alone
+                # would surface circuit 3 forever.  Only a fresh
+                # stream (the reload the UI now drives) lands on the
+                # replacement.
+                reply("8 SUCCEEDED 3 127.0.0.1:80\r\n")
+                reply("9 SUCCEEDED 3 127.0.0.1:443\r\n")
+                if state["nym"] > 0:
+                    reply("11 SUCCEEDED %d 127.0.0.1:8080\r\n"
+                          % state["circ_id"])
                 reply("10 NEW 5 127.0.0.1:80\r\n")
                 reply(".\r\n250 OK\r\n")
             elif cmd == "SIGNAL NEWNYM":
                 # TOR15: rotate to clean circuits — new CircID, new
                 # middle+exit, same guard — then announce it over the
-                # CIRC event channel like a real daemon does.
+                # CIRC event channel like a real daemon does.  The id
+                # stays above every prior one (ids are monotonic in a
+                # real daemon; SoloHop sits at 5).
                 with open(os.path.join(data_dir, "signal-log"),
                           "a") as f:
                     f.write("NEWNYM\n")
                 state["nym"] += 1
-                state["circ_id"] += 1
+                state["circ_id"] = 5 + state["nym"]
                 reply("250 OK\r\n")
                 try:
                     reply("650 CIRC %d BUILT "

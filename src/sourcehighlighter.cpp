@@ -84,11 +84,6 @@ SourceHighlighter::SourceHighlighter(QTextDocument *document)
     setFormatFor(Attribute, attributeFormat);
 }
 
-QTextCharFormat SourceHighlighter::getFormatFor(Construct construct)
-{
-    return formats[construct];
-}
-
 void SourceHighlighter::setFormatFor(Construct construct,
                          QTextCharFormat &format)
 {

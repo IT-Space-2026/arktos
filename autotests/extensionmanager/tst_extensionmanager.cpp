@@ -31,6 +31,10 @@
 
 #include <memory>
 
+#include <qcheckbox.h>
+#include <qlistwidget.h>
+#include <qpushbutton.h>
+
 #include "browserapplication.h"
 #include "browsermainwindow.h"
 #include "browserpaths.h"
@@ -38,6 +42,7 @@
 #include "extensionbackgroundhost.h"
 #include "extensioneventhub.h"
 #include "extensionmanager.h"
+#include "extensionreviewdialog.h"
 #include "extensionshimbackend.h"
 #include "engineinterface.h"
 #include "qtest_arora.h"
@@ -66,6 +71,11 @@ private slots:
     void profileIsolation();
     void bundledInstall();
     void updateCheckLoopback();
+    void integrityPin();
+    void broadHostWarning();
+    void updateDriftReview();
+    void healthClassification();
+    void backgroundHealthProbe();
     void hostedBackgroundRuntime();
     void extensionShimBackend();
     void extensionMessageRelay();
@@ -761,6 +771,343 @@ void tst_ExtensionManager::updateCheckLoopback()
     QDir(root).removeRecursively();
 }
 
+// SEC25 (a): every successful install pins a sha256 of its on-disk
+// tree; the startup sweep re-hashes and flags a mismatch instead of
+// silently loading — "files changed since install".
+void tst_ExtensionManager::integrityPin()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString root = QDir::temp().filePath(
+        QStringLiteral("tst-extpin-%1")
+            .arg(QCoreApplication::applicationPid()));
+    const QString dir = writeExtension(root, QStringLiteral("tst-pin"),
+                                       QStringLiteral("1.0.0"));
+    QVERIFY(!dir.isEmpty());
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    QWebEngineProfile *profile = BrowserApplication::webEngineProfile();
+
+    // Sweep earlier leftovers by manifest name (pid-rooted ids differ
+    // per run, the manifest name survives into the installed copy).
+    for (const ExtensionManager::ExtensionInfo &info
+         : manager->extensions()) {
+        if (!info.builtin && info.name == QLatin1String("tst-pin"))
+            manager->removeExtension(info.id);
+    }
+    QTest::qWait(300);
+
+    const QString id = installFixture(dir);
+    QVERIFY2(!id.isEmpty(), "fixture extension must install");
+
+    const auto infoFor = [manager](const QString &extId) {
+        const QList<ExtensionManager::ExtensionInfo> list =
+            manager->extensions();
+        for (const ExtensionManager::ExtensionInfo &info : list)
+            if (info.id == extId)
+                return info;
+        return ExtensionManager::ExtensionInfo();
+    };
+
+    // The install pinned the tree — a sweep right after is clean.
+    auto tampered = std::make_shared<QStringList>();
+    QObject::connect(manager, &ExtensionManager::extensionTampered,
+                     this, [tampered](
+                         const ExtensionManager::ExtensionInfo &info) {
+        tampered->append(info.id);
+    });
+    manager->verifyInstalledIntegrity(profile);
+    QVERIFY(tampered->isEmpty());
+    QVERIFY(!infoFor(id).tampered);
+
+    // Tamper a file in the installed dir -> the next sweep flags it.
+    const QString installedDir = infoFor(id).path;
+    QVERIFY(!installedDir.isEmpty());
+    QFile victim(installedDir + QLatin1String("/sw.js"));
+    QVERIFY(victim.open(QIODevice::Append));
+    victim.write("// tampered\n");
+    victim.close();
+
+    manager->verifyInstalledIntegrity(profile);
+    QVERIFY(tampered->contains(id));
+    QVERIFY(infoFor(id).tampered);
+
+    // The hash itself: deterministic over a tree, sensitive to a new
+    // file, empty for a missing dir.
+    const QByteArray h1 = ExtensionManager::extensionTreeHash(dir);
+    QVERIFY(!h1.isEmpty());
+    QCOMPARE(ExtensionManager::extensionTreeHash(dir), h1);
+    QFile extra(dir + QLatin1String("/extra.js"));
+    QVERIFY(extra.open(QIODevice::WriteOnly));
+    extra.write("x");
+    extra.close();
+    QVERIFY(ExtensionManager::extensionTreeHash(dir) != h1);
+    QVERIFY(ExtensionManager::extensionTreeHash(
+                QStringLiteral("/nonexistent/ext-dir")).isEmpty());
+
+    // Removing clears the flag with the extension.
+    manager->removeExtension(id);
+    QTest::qWait(500);
+    QVERIFY(!infoFor(id).tampered);   // row gone -> default info
+
+    QDir(root).removeRecursively();
+}
+
+// SEC25 (c): whole-scheme host permissions (<all_urls>, *://*/*,
+// http/https wildcard roots) are visually escalated in the review
+// dialog — a warning icon on the permission row plus a dedicated
+// warnings row — while scoped wildcards stay plain.
+void tst_ExtensionManager::broadHostWarning()
+{
+    QVERIFY(ExtensionManager::isBroadHostPattern(
+                QLatin1String("<all_urls>")));
+    QVERIFY(ExtensionManager::isBroadHostPattern(
+                QLatin1String("*://*/*")));
+    QVERIFY(ExtensionManager::isBroadHostPattern(
+                QLatin1String("http://*/*")));
+    QVERIFY(ExtensionManager::isBroadHostPattern(
+                QLatin1String("https://*/*")));
+    QVERIFY(!ExtensionManager::isBroadHostPattern(
+                QLatin1String("*://*.example.com/*")));
+    QVERIFY(!ExtensionManager::isBroadHostPattern(
+                QLatin1String("https://example.com/*")));
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    {
+        QFile file(dir.path() + QLatin1String("/manifest.json"));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("{\"manifest_version\":3,\"name\":\"Broad\","
+                   "\"version\":\"1.0\",\"host_permissions\":"
+                   "[\"https://*/*\",\"*://*.example.com/*\"]}");
+    }
+    const ExtensionManager::Manifest manifest =
+        ExtensionManager::inspectManifest(dir.path());
+    QVERIFY(manifest.valid);
+
+    ExtensionReviewDialog dialog(manifest, dir.path(),
+                                 ExtensionReviewDialog::Install);
+    QListWidget *warnings = dialog.findChild<QListWidget *>(
+        QLatin1String("warningsList"));
+    QVERIFY(warnings);
+    QString warningText;
+    for (int i = 0; i < warnings->count(); ++i)
+        warningText += warnings->item(i)->text() + QLatin1Char('\n');
+    QVERIFY(warningText.contains(QLatin1String("Broad host access")));
+    QVERIFY(warningText.contains(QLatin1String("https://*/*")));
+    // The scoped subdomain wildcard is not escalated.
+    QVERIFY(!warningText.contains(QLatin1String("example.com")));
+
+    // The broad row carries the warning icon; the scoped row none.
+    QListWidget *perms = dialog.findChild<QListWidget *>(
+        QLatin1String("permissionsList"));
+    QVERIFY(perms);
+    bool broadHasIcon = false;
+    bool scopedPlain = false;
+    for (int i = 0; i < perms->count(); ++i) {
+        QListWidgetItem *item = perms->item(i);
+        if (item->toolTip() == QLatin1String("https://*/*"))
+            broadHasIcon = !item->icon().isNull();
+        if (item->toolTip() == QLatin1String("*://*.example.com/*"))
+            scopedPlain = item->icon().isNull();
+    }
+    QVERIFY(broadHasIcon);
+    QVERIFY(scopedPlain);
+}
+
+// SEC25 (b): applying an update re-presents grants the installed
+// version never had — added permissions and host patterns listed as
+// "new since installed version", escalated dangerous access called
+// out and still gated on the per-item consent checkboxes.
+void tst_ExtensionManager::updateDriftReview()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    {
+        QFile file(dir.path() + QLatin1String("/manifest.json"));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("{\"manifest_version\":3,\"name\":\"Grown\","
+                   "\"version\":\"2.0\",\"permissions\":"
+                   "[\"tabs\",\"cookies\"],"
+                   "\"host_permissions\":[\"<all_urls>\"]}");
+    }
+    const ExtensionManager::Manifest next =
+        ExtensionManager::inspectManifest(dir.path());
+    QVERIFY(next.valid);
+
+    // The installed version declared "tabs" only, no host access.
+    ExtensionManager::Manifest installed;
+    installed.valid = true;
+    installed.manifestVersion = 3;
+    installed.name = QLatin1String("Grown");
+    installed.version = QLatin1String("1.0");
+    installed.permissions = {QStringLiteral("tabs")};
+
+    ExtensionReviewDialog dialog(next, dir.path(),
+                                 ExtensionReviewDialog::Install,
+                                 nullptr, &installed);
+    QListWidget *warnings = dialog.findChild<QListWidget *>(
+        QLatin1String("warningsList"));
+    QVERIFY(warnings);
+    QString warningText;
+    for (int i = 0; i < warnings->count(); ++i)
+        warningText += warnings->item(i)->text() + QLatin1Char('\n');
+    QVERIFY(warningText.contains(QLatin1String("New since")));
+    QVERIFY(warningText.contains(QLatin1String("1.0")));
+    QVERIFY(warningText.contains(QLatin1String("cookies")));
+    QVERIFY(warningText.contains(QLatin1String("<all_urls>")));
+    QVERIFY(warningText.contains(QLatin1String("high-risk")));
+    // Pre-existing grants are not re-listed as new.
+    QVERIFY(!warningText.contains(
+                QRegularExpression(QStringLiteral("New since.*tabs"))));
+
+    // Escalated dangerous grants still need explicit per-item consent.
+    QPushButton *approve = dialog.findChild<QPushButton *>(
+        QLatin1String("approveButton"));
+    QVERIFY(approve);
+    QVERIFY(!approve->isEnabled());
+    const QList<QCheckBox *> consents =
+        dialog.findChildren<QCheckBox *>(
+            QLatin1String("dangerousConsent"));
+    QCOMPARE(consents.size(), next.dangerous.size());
+
+    // No installed baseline (initial install) -> no drift rows.
+    ExtensionReviewDialog fresh(next, dir.path(),
+                                ExtensionReviewDialog::Install);
+    QListWidget *freshWarnings = fresh.findChild<QListWidget *>(
+        QLatin1String("warningsList"));
+    QVERIFY(freshWarnings);
+    QString freshText;
+    for (int i = 0; i < freshWarnings->count(); ++i)
+        freshText += freshWarnings->item(i)->text() + QLatin1Char('\n');
+    QVERIFY(!freshText.contains(QLatin1String("New since")));
+}
+
+// EXT12: the degradation classifier folds declared-but-missing
+// chrome.* APIs and the measured background verdict into one row
+// state — pin the whole matrix so a regression in the fold is loud.
+void tst_ExtensionManager::healthClassification()
+{
+    using EH = ExtensionManager::ExtensionHealth;
+    using PV = ExtensionManager::ProbeVerdict;
+
+    QCOMPARE(ExtensionManager::classifyHealth(
+                 false, QStringList(), PV::Pending),
+             EH::Unknown);
+    QCOMPARE(ExtensionManager::classifyHealth(
+                 false, QStringList(), PV::None),
+             EH::Healthy);
+    QCOMPARE(ExtensionManager::classifyHealth(
+                 true, QStringList(), PV::Pending),
+             EH::Unknown);
+    QCOMPARE(ExtensionManager::classifyHealth(
+                 true, QStringList(), PV::Responsive),
+             EH::Healthy);
+    QCOMPARE(ExtensionManager::classifyHealth(
+                 true, QStringList(), PV::Dead),
+             EH::NotSupported);
+    QCOMPARE(ExtensionManager::classifyHealth(
+                 true, {QStringLiteral("notifications")},
+                 PV::Responsive),
+             EH::Limited);
+    // Dead beats Limited — a crashed worker means nothing works.
+    QCOMPARE(ExtensionManager::classifyHealth(
+                 true, {QStringLiteral("notifications")},
+                 PV::Dead),
+             EH::NotSupported);
+
+    QString reason;
+    ExtensionManager::classifyHealth(
+        true, {QStringLiteral("notifications"),
+               QStringLiteral("tabs")}, PV::Dead, &reason);
+    QVERIFY(reason.contains(QLatin1String("background")));
+    QVERIFY(reason.contains(QLatin1String("notifications")));
+    reason.clear();
+    ExtensionManager::classifyHealth(
+        true, {QStringLiteral("cookies")}, PV::Responsive, &reason);
+    QVERIFY(reason.contains(QLatin1String("cookies")));
+    reason.clear();
+    ExtensionManager::classifyHealth(
+        true, QStringList(), PV::Dead, &reason);
+    QVERIFY(reason.contains(QLatin1String("background")));
+}
+
+// EXT12: the real measurement — a live service worker must classify
+// Healthy and an eval-crashing one NotSupported, driven through the
+// same hidden-page probe the app runs.
+void tst_ExtensionManager::backgroundHealthProbe()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString root = QDir::temp().filePath(
+        QStringLiteral("tst-exthealth-%1")
+            .arg(QCoreApplication::applicationPid()));
+    // Live: only an onInstalled listener — the probe ping errors with
+    // "receiving end does not exist" but the worker context registers,
+    // which is the healthy-no-listener shape.
+    const QString liveDir = writeExtension(
+        root, QStringLiteral("tst-health-live"),
+        QStringLiteral("1.0.0"));
+    // Dead: same manifest shape but the worker throws at eval —
+    // Bitwarden's failure mode (Chromium status 15).
+    const QString deadDir = writeExtension(
+        root, QStringLiteral("tst-health-dead"),
+        QStringLiteral("1.0.0"), QString(),
+        {QStringLiteral("notifications")});
+    QVERIFY(!liveDir.isEmpty() && !deadDir.isEmpty());
+    {
+        QFile dead(deadDir + QLatin1String("/sw.js"));
+        QVERIFY(dead.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        dead.write("throw new Error('eval crash');\n");
+    }
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    const auto infoFor = [manager](const QString &extId) {
+        const QList<ExtensionManager::ExtensionInfo> list =
+            manager->extensions();
+        for (const ExtensionManager::ExtensionInfo &info : list)
+            if (info.id == extId)
+                return info;
+        return ExtensionManager::ExtensionInfo();
+    };
+
+    const QString liveId = installFixture(liveDir);
+    const QString deadId = installFixture(deadDir);
+    QVERIFY2(!liveId.isEmpty() && !deadId.isEmpty(),
+             qPrintable(QStringLiteral(
+                 "fixtures must install: live=%1 dead=%2")
+                 .arg(liveId, deadId)));
+
+    manager->setExtensionEnabled(liveId, true);
+    manager->setExtensionEnabled(deadId, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        infoFor(liveId).enabled && infoFor(deadId).enabled, 30000);
+
+    // requestHealthProbe queues ahead of the changed()-driven scan —
+    // either path lands the same verdict.
+    manager->requestHealthProbe(liveId, false);
+    manager->requestHealthProbe(deadId, false);
+
+    using EH = ExtensionManager::ExtensionHealth;
+    QTRY_VERIFY_WITH_TIMEOUT(
+        infoFor(liveId).health == EH::Healthy, 60000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        infoFor(deadId).health == EH::NotSupported, 60000);
+    const ExtensionManager::ExtensionInfo dead = infoFor(deadId);
+    QVERIFY(!dead.healthReason.isEmpty());
+    QVERIFY(dead.healthReason.contains(QLatin1String("background")));
+    // "notifications" is unsupported in Qt WebEngine — the reason
+    // names the missing surface, not just the crash.
+    QVERIFY(dead.missingApis.contains(QLatin1String("notifications")));
+
+    manager->removeExtension(liveId);
+    manager->removeExtension(deadId);
+    QTest::qWait(500);
+    QDir(root).removeRecursively();
+}
+
 // EXT14: a session-loaded extension declaring a background script
 // gets a hidden hosted view at its chrome-extension:// origin — the
 // generated injection runs the preamble, the real script executes,
@@ -1326,24 +1673,36 @@ void tst_ExtensionManager::extensionMessageRelay()
     QSignalSpy otherEvents(&other, &ChromeBridge::hostEvent);
     QSignalSpy bgEvents(&bg, &ChromeBridge::hostEvent);
 
+    // Relay keys carry the owning extension's id prefix — exactly the
+    // "<extId>#<seq>#<ts>" form the shim mints (QUAL03: the host
+    // re-verifies the prefix instead of trusting the caller).
+    const QString m1 = QStringLiteral("relayext0000000001#1#t");
+    const QString m2 = QStringLiteral("relayext0000000002#2#t");
+    const QString m3 = QStringLiteral("relayext0000000001#3#t");
+    const QString m4 = QStringLiteral("relayext0000000001#4#t");
+
     // send fans out to the same-extension peer only.
     const int peers = runtime->relaySend(
-        &bg, QStringLiteral("m1"),
+        &bg, m1,
         QJsonObject{{QStringLiteral("__aroraMsg"),
-                     QJsonObject{{QStringLiteral("mid"),
-                                  QStringLiteral("m1")}}}});
+                     QJsonObject{{QStringLiteral("mid"), m1}}}});
     QCOMPARE(peers, 1);
     QCOMPARE(popupEvents.size(), 1);
     QCOMPARE(otherEvents.size(), 0);
     QCOMPARE(popupEvents.first().at(0).toString(),
              QStringLiteral("__arora.relay"));
     QCOMPARE(popupEvents.first().at(1).toJsonObject()
-             .value(QLatin1String("mid")).toString(),
-             QStringLiteral("m1"));
+             .value(QLatin1String("mid")).toString(), m1);
+
+    // QUAL03: a foreign bridge that learned the mid may not resolve
+    // another extension's message — the pending entry survives.
+    QVERIFY(!runtime->relayRespond(
+        &other, m1, QJsonValue(QStringLiteral("forged"))));
+    QCOMPARE(bgEvents.size(), 0);
 
     // The peer's response routes back to the origin.
     QVERIFY(runtime->relayRespond(
-        &popup, QStringLiteral("m1"),
+        &popup, m1,
         QJsonValue(QStringLiteral("pong"))));
     QCOMPARE(bgEvents.size(), 1);
     QCOMPARE(bgEvents.first().at(0).toString(),
@@ -1354,28 +1713,84 @@ void tst_ExtensionManager::extensionMessageRelay()
 
     // A spent mid no longer routes.
     QVERIFY(!runtime->relayRespond(
-        &popup, QStringLiteral("m1"), QJsonValue()));
+        &popup, m1, QJsonValue()));
+
+    // QUAL03: a mid outside the sender's own id space is refused
+    // before delivery or pend — no cross-extension keying.
+    QCOMPARE(runtime->relaySend(
+                 &bg, m2, QJsonObject()), 0);
+    QCOMPARE(popupEvents.size(), 1);
 
     // peers=0 message (no sibling contexts): nothing pending.
     QCOMPARE(runtime->relaySend(
-                 &other, QStringLiteral("m2"), QJsonObject()),
+                 &other, m2, QJsonObject()),
              0);
     QVERIFY(!runtime->relayRespond(
-        &other, QStringLiteral("m2"), QJsonValue(1)));
+        &other, m2, QJsonValue(1)));
 
     // Empty peer reply resolves to null after all peers answered.
     QCOMPARE(runtime->relaySend(
-                 &bg, QStringLiteral("m3"), QJsonObject()), 1);
+                 &bg, m3, QJsonObject()), 1);
     QVERIFY(runtime->relayRespond(
-        &popup, QStringLiteral("m3"), QJsonValue()));
+        &popup, m3, QJsonValue()));
     QCOMPARE(bgEvents.size(), 2);
     QVERIFY(bgEvents.last().at(1).toJsonObject()
             .value(QLatin1String("response")).isNull());
 
+    // QUAL03: port channels are scoped the same way — a foreign chan
+    // string is refused at every relay entry point, so an extension
+    // cannot graft an end onto another extension's port.
+    const QString foreignChan =
+        QStringLiteral("relayext0000000001#p9");
+    QCOMPARE(runtime->relayPortConnect(
+                 &other, foreignChan, QStringLiteral("pX"),
+                 QString(), QString()), 0);
+    runtime->relayPortAccept(&other, foreignChan,
+                             QStringLiteral("pX"));
+    QCOMPARE(runtime->relayPortMessage(
+                 &other, foreignChan, QStringLiteral("pX"),
+                 QJsonValue(QStringLiteral("x"))), 0);
+    QCOMPARE(bgEvents.size(), 2);   // unchanged — nothing leaked
+
+    // A legit same-extension port round-trips end to end.
+    const QString chan = QStringLiteral("relayext0000000001#p1");
+    QCOMPARE(runtime->relayPortConnect(
+                 &bg, chan, QStringLiteral("p1"),
+                 QStringLiteral("named"),
+                 QStringLiteral("chrome-extension://relayext0000000001/"
+                                "popup.html")), 1);
+    QCOMPARE(popupEvents.size(), 3);
+    QCOMPARE(popupEvents.last().at(0).toString(),
+             QStringLiteral("__arora.portConnect"));
+    // EXT18: the delivered sender carries the connecting document's
+    // url — Bitwarden's internal-sender gate keys on it.
+    QCOMPARE(popupEvents.last().at(1).toJsonObject()
+             .value(QLatin1String("sender")).toObject()
+             .value(QLatin1String("url")).toString(),
+             QStringLiteral("chrome-extension://relayext0000000001/"
+                            "popup.html"));
+    runtime->relayPortAccept(&popup, chan, QStringLiteral("pA"));
+    QCOMPARE(runtime->relayPortMessage(
+                 &bg, chan, QStringLiteral("p1"),
+                 QJsonValue(QStringLiteral("hello"))), 1);
+    QCOMPARE(popupEvents.size(), 4);
+    QCOMPARE(popupEvents.last().at(0).toString(),
+             QStringLiteral("__arora.portMessage"));
+    QCOMPARE(popupEvents.last().at(1).toJsonObject()
+             .value(QLatin1String("msg")).toString(),
+             QStringLiteral("hello"));
+
+    // ...and a foreign bridge cannot tear the channel down either.
+    runtime->relayPortDisconnect(&other, foreignChan,
+                                 QStringLiteral("pX"));
+    QCOMPARE(runtime->relayPortMessage(
+                 &popup, chan, QStringLiteral("pA"),
+                 QJsonValue(QStringLiteral("back"))), 1);
+
     // Teardown unregisters; a further send finds no peers.
     runtime->unregisterRelayContext(&popup);
     QCOMPARE(runtime->relaySend(
-                 &bg, QStringLiteral("m4"), QJsonObject()), 0);
+                 &bg, m4, QJsonObject()), 0);
     runtime->unregisterRelayContext(&bg);
     runtime->unregisterRelayContext(&other);
 
@@ -1633,6 +2048,31 @@ void tst_ExtensionManager::extensionEventSurfaces()
             " return e.n==='tabs.onUpdated'&&e.a[2]"
             "   &&e.a[2].url!==undefined;})"));
     QCOMPARE(aUrl.toBool(), true);
+
+    // QUAL03: chrome.tabs REPLIES obey the same permission — B's
+    // query returns the tabs but without url/title, A's 'tabs'
+    // permission keeps them visible.
+    ExtensionShimBackend *backendB =
+        runtime->host(idB)->bridge()->backend();
+    QVERIFY(backendB);
+    const QJsonObject queryArgs{
+        {QStringLiteral("query"), QJsonObject()}};
+    const QJsonArray bTabs = backendB->invoke(
+        QStringLiteral("tabs"), QStringLiteral("query"), queryArgs)
+        .value(QLatin1String("result")).toArray();
+    QVERIFY(!bTabs.isEmpty());
+    for (const QJsonValue &v : bTabs) {
+        QVERIFY(!v.toObject().contains(QLatin1String("url")));
+        QVERIFY(!v.toObject().contains(QLatin1String("title")));
+    }
+    ExtensionShimBackend *backendA0 =
+        runtime->host(idA)->bridge()->backend();
+    QVERIFY(backendA0);
+    const QJsonArray aTabs = backendA0->invoke(
+        QStringLiteral("tabs"), QStringLiteral("query"), queryArgs)
+        .value(QLatin1String("result")).toArray();
+    QVERIFY(!aTabs.isEmpty());
+    QVERIFY(aTabs.first().toObject().contains(QLatin1String("url")));
 
     // --- contextMenus: registry -> real menu -> onClicked -------------
     ExtensionShimBackend *backendA =

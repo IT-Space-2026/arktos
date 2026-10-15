@@ -123,7 +123,6 @@ public:
     QWebEnginePage *contextPage() const;
 
 signals:
-    void handshook();
     void errorReported(const QString &message);
     // EXT15 health diagnostics — a shimmed API answered a typed
     // error (the extension touched something that cannot work).
@@ -177,9 +176,8 @@ public:
     State state() const { return m_state; }
     QString lastError() const { return m_error; }
     QStringList errors() const { return m_errors; }
-    // EXT15 diagnostics: benign shim notes and the typed-error gap
-    // list the hosted page has surfaced so far.
-    QStringList shimNotes() const;
+    // EXT15 diagnostics: the typed-error gap list the hosted page
+    // has surfaced so far.
     QStringList shimGaps() const;
     ChromeBridge *bridge() const { return m_bridge; }
 
@@ -249,7 +247,6 @@ public:
     void syncNow();
 
     ExtensionBackgroundHost *host(const QString &extensionId) const;
-    QStringList hostedIds() const;
 
     // EXT17 — wire an extension-owned page (the action popup, an
     // options tab, an offscreen document) into the shim: attaches a
@@ -319,6 +316,12 @@ public:
     int deliverEvent(const QString &extensionId, const QString &name,
                      const QJsonObject &payload);
 
+    // Whether url-bearing fields may reach this extension ('tabs'
+    // permission or a host permission covering the url).  Public so
+    // chrome.tabs replies in ExtensionShimBackend apply the same
+    // scrub rule the event fan-out does.
+    bool seesUrls(const QString &extensionId, const QString &url) const;
+
     // EXT17 — chrome.runtime.getContexts backing: the registered
     // shim contexts of one extension as spec-shaped context entries
     // (contextType from the registered kind — BACKGROUND for the
@@ -360,8 +363,6 @@ private:
     QJsonObject shapedPayload(const QString &extensionId,
                               const QString &name,
                               const QJsonObject &payload) const;
-    bool seesUrls(const QString &extensionId,
-                  const QString &url) const;
 
     // Relay: live shimmed contexts and in-flight deliveries
     // (mid -> the sending bridge; entries expire on a timer so a

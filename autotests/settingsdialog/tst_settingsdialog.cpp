@@ -33,7 +33,10 @@
 #include <qframe.h>
 #include <qgridlayout.h>
 #include <qgroupbox.h>
+#include <qheaderview.h>
 #include <qhostaddress.h>
+#include <qplaintextedit.h>
+#include <qradiobutton.h>
 #include <qscrollarea.h>
 #include <qscrollbar.h>
 #include <qstandarditemmodel.h>
@@ -50,6 +53,7 @@
 #include "adblockmanager.h"
 #include "aroraicon.h"
 #include "browserapplication.h"
+#include "browsermainwindow.h"
 #include "browsertheme.h"
 #include "extensionmanager.h"
 #include "extensionreviewdialog.h"
@@ -77,6 +81,7 @@
 #include "sidebarpositionpicker.h"
 #include "tabpositionpicker.h"
 #include "tabwidget.h"
+#include "themepicker.h"
 #include "toolbarsearch.h"
 #include "trancolist.h"
 #include "webview.h"
@@ -93,6 +98,7 @@ private slots:
 
     void constructDefaults();
     void saveAndReload();
+    void generalPageModes();
     void buttonBoxCloseRequest();
     void searchTab();
     void searchContextControls();
@@ -108,8 +114,10 @@ private slots:
     void sidebarPanelOptions();
     void settingsFilter();
     void iconThemeSelector();
+    void iconThemeRetiredNative();
     void themeSelector();
     void themePreview();
+    void themePicker();
     void uniformSidebarIcons();
     void scrollablePages();
     void densityAndFooter();
@@ -129,6 +137,8 @@ private slots:
     void extensionPage();
     void credentialsPage();
     void containerSiteRows();
+    void extensionVersionColumn();
+    void extensionColumnSizing();
     void performancePage();
     void energySaver();
     void tabHoverPreviews();
@@ -370,9 +380,9 @@ void tst_SettingsDialog::saveAndReload()
         SettingsDialog dialog;
         dialog.tabWidget->setCurrentIndex(2);
         dialog.homeLineEdit->setText(QLatin1String("http://home.example.com/"));
-        dialog.startupBehavior->setCurrentIndex(1);
+        dialog.startupLastSessionRadio->setChecked(true);
         dialog.showSearchBox->setChecked(true);
-        // ICONS01: pick a non-native bundled set so the round-trip
+        // ICONS01: pick a bundled set so the round-trip
         // proves the persisted id lands on the right combo row.
         const int tablerRow = dialog.iconThemeCombo->findData(
             QLatin1String("tabler"));
@@ -447,6 +457,151 @@ void tst_SettingsDialog::saveAndReload()
         QVERIFY(reloaded.minimFontSizeCheckBox->isChecked());
         QCOMPARE(reloaded.minimumFontSizeSpinBox->value(), 12);
     }
+}
+
+// PREF04: the General page's Homepage + Startup-with radio groups and
+// the Close and Exit section — real mode keys, radio-driven
+// enablement, the legacy startupBehavior/home migrations, and the
+// exit confirm's fallback to the migrated window key.
+void tst_SettingsDialog::generalPageModes()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("MainWindow/startupMode"));
+    settings.remove(QLatin1String("MainWindow/startupBehavior"));
+    settings.remove(QLatin1String("MainWindow/startupPages"));
+    settings.remove(QLatin1String("MainWindow/homePageMode"));
+    settings.remove(QLatin1String("MainWindow/home"));
+    settings.remove(QLatin1String("tabs/confirmExit"));
+    settings.remove(QLatin1String("tabs/confirmClosingMultipleTabs"));
+
+    // Defaults: Start Page homepage + Start Page startup; the exit
+    // confirm inherits the window confirm's default-on.
+    {
+        SettingsDialog dialog;
+        QVERIFY(dialog.homeStartPageRadio->isChecked());
+        QVERIFY(!dialog.homeLineEdit->isEnabled());
+        QVERIFY(dialog.startupStartPageRadio->isChecked());
+        QVERIFY(!dialog.startupPagesEdit->isEnabled());
+        QVERIFY(dialog.confirmClosingMultipleTabs->isChecked());
+        QVERIFY(dialog.confirmExitCheck->isChecked());
+        // The moved close-window checkbox now lives in the General
+        // page's Close and Exit group.
+        QCOMPARE(dialog.confirmClosingMultipleTabs->text(),
+                 QLatin1String("Show Close Window Confirmation Dialog"));
+    }
+
+    // Round-trip: specific homepage + specific-pages startup persist
+    // the mode enums and the URL list (blank/space-padded lines drop).
+    {
+        SettingsDialog dialog;
+        dialog.homeSpecificPageRadio->setChecked(true);
+        QVERIFY(dialog.homeLineEdit->isEnabled());
+        dialog.homeLineEdit->setText(
+            QLatin1String("http://home.example/"));
+        dialog.startupSpecificPagesRadio->setChecked(true);
+        QVERIFY(dialog.startupPagesEdit->isEnabled());
+        dialog.startupPagesEdit->setPlainText(QStringLiteral(
+            "http://a.example/\n\n http://b.example/ \n"));
+        dialog.confirmExitCheck->setChecked(false);
+        dialog.accept();
+    }
+    QCOMPARE(settings.value(QLatin1String("MainWindow/homePageMode"))
+                 .toInt(),
+             int(BrowserApplication::SpecificPageHome));
+    QCOMPARE(settings.value(QLatin1String("MainWindow/startupMode"))
+                 .toInt(),
+             int(BrowserApplication::SpecificPagesStartup));
+    QCOMPARE(settings.value(QLatin1String("MainWindow/startupPages"))
+                 .toStringList(),
+             QStringList({QLatin1String("http://a.example/"),
+                          QLatin1String("http://b.example/")}));
+    QCOMPARE(settings.value(QLatin1String("tabs/confirmExit")).toBool(),
+             false);
+    {
+        SettingsDialog dialog;
+        QVERIFY(dialog.homeSpecificPageRadio->isChecked());
+        QVERIFY(dialog.homeLineEdit->isEnabled());
+        QVERIFY(dialog.startupSpecificPagesRadio->isChecked());
+        QVERIFY(dialog.startupPagesEdit->isEnabled());
+        QCOMPARE(dialog.startupPagesEdit->toPlainText(),
+                 QStringLiteral("http://a.example/\nhttp://b.example/"));
+        QVERIFY(!dialog.confirmExitCheck->isChecked());
+        dialog.reject();
+    }
+
+    // Migration: each legacy startupBehavior int lands on the mapped
+    // radio; a written startupMode wins over a stale legacy key.
+    const QHash<int, int> legacyMap = {
+        {0, int(BrowserApplication::HomepageStartup)},
+        {1, int(BrowserApplication::StartPageStartup)},
+        {2, int(BrowserApplication::LastSessionStartup)},
+    };
+    for (auto it = legacyMap.constBegin(); it != legacyMap.constEnd(); ++it) {
+        settings.remove(QLatin1String("MainWindow/startupMode"));
+        settings.setValue(QLatin1String("MainWindow/startupBehavior"),
+                          it.key());
+        QCOMPARE(BrowserApplication::startupMode(), it.value());
+        SettingsDialog dialog;
+        QCOMPARE(int(it.value() == int(BrowserApplication::HomepageStartup)
+                     ? dialog.startupHomepageRadio->isChecked()
+                     : it.value() == int(BrowserApplication::LastSessionStartup)
+                     ? dialog.startupLastSessionRadio->isChecked()
+                     : dialog.startupStartPageRadio->isChecked()),
+                 int(true));
+    }
+    settings.setValue(QLatin1String("MainWindow/startupMode"),
+                      int(BrowserApplication::HomepageStartup));
+    QCOMPARE(BrowserApplication::startupMode(),
+             int(BrowserApplication::HomepageStartup));
+    settings.remove(QLatin1String("MainWindow/startupBehavior"));
+
+    // homePageMode migration: a custom stored home url means Specific
+    // Page, the default about:home means Start Page.
+    settings.remove(QLatin1String("MainWindow/homePageMode"));
+    settings.setValue(QLatin1String("MainWindow/home"),
+                      QLatin1String("http://x.example/"));
+    QCOMPARE(BrowserApplication::homePageMode(),
+             int(BrowserApplication::SpecificPageHome));
+    settings.setValue(QLatin1String("MainWindow/home"),
+                      QLatin1String("about:home"));
+    QCOMPARE(BrowserApplication::homePageMode(),
+             int(BrowserApplication::StartPageHome));
+
+    // The exit confirm's fallback: unset confirmExit inherits the
+    // migrated window key's value — off here.
+    settings.remove(QLatin1String("tabs/confirmExit"));
+    settings.setValue(QLatin1String("tabs/confirmClosingMultipleTabs"),
+                      false);
+    {
+        SettingsDialog dialog;
+        QVERIFY(!dialog.confirmExitCheck->isChecked());
+        dialog.reject();
+    }
+
+    // PREF05: the lazy-restore rows live in the General page's Startup
+    // with group (moved off the Performance page — one home; the
+    // performance/* keys keep their paths so saved picks carry over).
+    {
+        SettingsDialog dialog;
+        QCOMPARE(dialog.lazyRestoreTabs->parentWidget(),
+                 dialog.startupGroupBox);
+        QCOMPARE(dialog.alwaysLoadPinnedTabs->parentWidget(),
+                 dialog.startupGroupBox);
+        dialog.pagesFilter->setText(QStringLiteral("lazy"));
+        QVERIFY(!dialog.pagesList->item(
+                     int(SettingsDialog::GeneralPage))->isHidden());
+        QVERIFY(dialog.pagesList->item(
+                     int(SettingsDialog::PerformancePage))->isHidden());
+        dialog.reject();
+    }
+
+    // Tidy up for later legs.
+    settings.remove(QLatin1String("MainWindow/startupMode"));
+    settings.remove(QLatin1String("MainWindow/startupPages"));
+    settings.remove(QLatin1String("MainWindow/homePageMode"));
+    settings.remove(QLatin1String("MainWindow/home"));
+    settings.remove(QLatin1String("tabs/confirmExit"));
+    settings.remove(QLatin1String("tabs/confirmClosingMultipleTabs"));
 }
 
 // PREFS01: the in-tab button box keeps the modal dialog's contract —
@@ -1503,12 +1658,45 @@ void tst_SettingsDialog::iconThemeSelector()
             != strips.value(QLatin1String("tabler")));
     QVERIFY(strips.value(QLatin1String("adwaita"))
             != strips.value(QLatin1String("breeze")));
+    // ICONS12: the retired OS-theme option is not a row.
+    QCOMPARE(dialog.iconThemeCombo->findData(QLatin1String("native")),
+             -1);
+    // ICONS13: neither is the removed bundled legacy set.
+    QCOMPARE(dialog.iconThemeCombo->findData(QLatin1String("legacy")),
+             -1);
 }
 
-// THEME01: the Appearance Theme combo persists browser/colorScheme
-// and applies live — accept() flips the palette mid-session; picking
-// System again restores the captured platform palette even though the
-// offscreen QPA reports Qt::ColorScheme::Unknown.
+// ICONS12: a profile pinned to the retired "native" id migrates to
+// the default bundled set — the combo shows the Tabler row selected
+// rather than a dead row or a blank pick.  ICONS13: the removed
+// arora-legacy set migrates the same way.
+void tst_SettingsDialog::iconThemeRetiredNative()
+{
+    QSettings settings;
+    const QVariant saved = settings.value(
+        QLatin1String("MainWindow/iconTheme"));
+
+    for (const char *retired : { "native", "arora-legacy" }) {
+        settings.setValue(QLatin1String("MainWindow/iconTheme"),
+                          QLatin1String(retired));
+
+        SettingsDialog dialog;
+        QCOMPARE(dialog.iconThemeCombo->currentData().toString(),
+                 QLatin1String("tabler"));
+        QCOMPARE(AroraIcon::theme(), QLatin1String("tabler"));
+    }
+
+    if (saved.isValid())
+        settings.setValue(QLatin1String("MainWindow/iconTheme"), saved);
+    else
+        settings.remove(QLatin1String("MainWindow/iconTheme"));
+}
+
+// THEME01/THEM05: the Appearance Theme tile picker persists
+// browser/colorScheme and applies live — accept() flips the palette
+// mid-session; picking Auto again restores the captured platform
+// palette even though the offscreen QPA reports
+// Qt::ColorScheme::Unknown.
 void tst_SettingsDialog::themeSelector()
 {
     // Sits on the Appearance page (sidebar row 2), next to the
@@ -1516,19 +1704,24 @@ void tst_SettingsDialog::themeSelector()
     // with — the note label underneath keeps the split honest.
     {
         SettingsDialog dialog;
-        QWidget *host = dialog.themeCombo;
+        QWidget *host = dialog.themePicker;
         while (host && host->parentWidget() != dialog.tabWidget)
             host = host->parentWidget();
         QVERIFY(host);
         QCOMPARE(dialog.tabWidget->indexOf(host), 2);
-        QCOMPARE(dialog.themeCombo->count(), 3);
-        QCOMPARE(dialog.themeCombo->itemText(0),
-                 QStringLiteral("System default"));
+        QCOMPARE(dialog.themePicker->count(), 3);
+        // Tiles display Light / Dark / Auto.
+        const QList<QWidget *> tiles =
+            dialog.themePicker->findChildren<QWidget *>();
+        QCOMPARE(tiles.count(), 3);
+        QCOMPARE(tiles.at(0)->accessibleName(), QLatin1String("Light"));
+        QCOMPARE(tiles.at(1)->accessibleName(), QLatin1String("Dark"));
+        QCOMPARE(tiles.at(2)->accessibleName(), QLatin1String("Auto"));
         QCOMPARE(dialog.themeLabel->buddy(),
-                 static_cast<QWidget *>(dialog.themeCombo));
+                 static_cast<QWidget *>(dialog.themePicker));
         QVERIFY(!dialog.themeNoteLabel->text().isEmpty());
-        // Default with no stored key is System.
-        QCOMPARE(dialog.themeCombo->currentIndex(), 0);
+        // Default with no stored key is System (the Auto tile).
+        QCOMPARE(dialog.themePicker->currentIndex(), 0);
     }
 
     const QColor platformWindow =
@@ -1536,7 +1729,7 @@ void tst_SettingsDialog::themeSelector()
 
     {
         SettingsDialog dialog;
-        dialog.themeCombo->setCurrentIndex(2);   // Dark
+        dialog.themePicker->setCurrentIndex(2);   // Dark
         dialog.accept();
     }
     QCOMPARE(QSettings().value(
@@ -1548,8 +1741,8 @@ void tst_SettingsDialog::themeSelector()
     // Reloaded dialog shows the stored pick; Light applies live too.
     {
         SettingsDialog dialog;
-        QCOMPARE(dialog.themeCombo->currentIndex(), 2);
-        dialog.themeCombo->setCurrentIndex(1);   // Light
+        QCOMPARE(dialog.themePicker->currentIndex(), 2);
+        dialog.themePicker->setCurrentIndex(1);   // Light
         dialog.accept();
     }
     QCOMPARE(QSettings().value(
@@ -1563,13 +1756,13 @@ void tst_SettingsDialog::themeSelector()
     // path rather than an explicit Light.
     {
         SettingsDialog dialog;
-        dialog.themeCombo->setCurrentIndex(2);
+        dialog.themePicker->setCurrentIndex(2);
         dialog.accept();
     }
     QVERIFY(BrowserTheme::isDarkPalette(QApplication::palette()));
     {
         SettingsDialog dialog;
-        dialog.themeCombo->setCurrentIndex(0);   // System default
+        dialog.themePicker->setCurrentIndex(0);   // System default
         dialog.accept();
     }
     QCOMPARE(QSettings().value(
@@ -1600,14 +1793,14 @@ void tst_SettingsDialog::themePreview()
     // nothing is persisted yet.
     {
         SettingsDialog dialog;
-        dialog.themeCombo->setCurrentIndex(2);   // Dark
+        dialog.themePicker->setCurrentIndex(2);   // Dark
         QVERIFY(BrowserTheme::paletteIsForced());
         QVERIFY(BrowserTheme::isDarkPalette(QApplication::palette()));
         QCOMPARE(QSettings().value(
                      QLatin1String("browser/colorScheme")).toString(),
                  QLatin1String("system"));
         // Reverting the combo before Apply restores the prior scheme.
-        dialog.themeCombo->setCurrentIndex(0);   // System default
+        dialog.themePicker->setCurrentIndex(0);   // System default
         QVERIFY(!BrowserTheme::paletteIsForced());
         QCOMPARE(QApplication::palette().color(QPalette::Window),
                  platformWindow);
@@ -1616,7 +1809,7 @@ void tst_SettingsDialog::themePreview()
     // Cancel discards the preview, not just the widget state.
     {
         SettingsDialog dialog;
-        dialog.themeCombo->setCurrentIndex(2);
+        dialog.themePicker->setCurrentIndex(2);
         QVERIFY(BrowserTheme::isDarkPalette(QApplication::palette()));
         dialog.reject();
     }
@@ -1627,7 +1820,7 @@ void tst_SettingsDialog::themePreview()
     // Closing the page outright (tab close — no reject()) reverts too.
     {
         SettingsDialog *dialog = new SettingsDialog;
-        dialog->themeCombo->setCurrentIndex(2);
+        dialog->themePicker->setCurrentIndex(2);
         QVERIFY(BrowserTheme::isDarkPalette(QApplication::palette()));
         delete dialog;
     }
@@ -1639,14 +1832,14 @@ void tst_SettingsDialog::themePreview()
     // scheme comes back, not the platform palette.
     {
         SettingsDialog dialog;
-        dialog.themeCombo->setCurrentIndex(2);
+        dialog.themePicker->setCurrentIndex(2);
         dialog.accept();
     }
     QVERIFY(BrowserTheme::isDarkPalette(QApplication::palette()));
     {
         SettingsDialog *dialog = new SettingsDialog;
-        QCOMPARE(dialog->themeCombo->currentIndex(), 2);
-        dialog->themeCombo->setCurrentIndex(1);   // Light
+        QCOMPARE(dialog->themePicker->currentIndex(), 2);
+        dialog->themePicker->setCurrentIndex(1);   // Light
         QVERIFY(!BrowserTheme::isDarkPalette(QApplication::palette()));
         delete dialog;
     }
@@ -1655,12 +1848,80 @@ void tst_SettingsDialog::themePreview()
     // Restore "system" + the platform palette for the following legs.
     {
         SettingsDialog dialog;
-        dialog.themeCombo->setCurrentIndex(0);
+        dialog.themePicker->setCurrentIndex(0);
         dialog.accept();
     }
     QVERIFY(!BrowserTheme::paletteIsForced());
     QCOMPARE(QApplication::palette().color(QPalette::Window),
              platformWindow);
+}
+
+// THEM05: the theme tiles are an exclusive control with radio
+// semantics — click and keyboard commits emit positionChanged with
+// the persisted combo index (the Auto tile displays third but still
+// writes index 0 — System), so browser/colorScheme keeps the values
+// the combo wrote.
+void tst_SettingsDialog::themePicker()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("browser/colorScheme"));
+
+    {
+        SettingsDialog dialog;
+        // The tiles can only take focus while their page is current —
+        // navigate there instead of relying on a persisted currentTab.
+        dialog.tabWidget->setCurrentIndex(
+            int(SettingsDialog::AppearancePage));
+        const QList<QWidget *> tiles =
+            dialog.themePicker->findChildren<QWidget *>();
+        QCOMPARE(tiles.count(), 3);
+        QCOMPARE(dialog.themePicker->currentIndex(), 0);
+
+        dialog.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+        // Focus asserts need the window ACTIVE, not just exposed —
+        // the offscreen platform can lag activation past the expose
+        // event.
+        dialog.activateWindow();
+        QVERIFY(QTest::qWaitForWindowActive(&dialog));
+
+        QSignalSpy spy(dialog.themePicker,
+                       &ThemePicker::positionChanged);
+
+        // Clicking Dark (display slot 1) commits persisted index 2;
+        // clicking Auto (slot 2) commits persisted index 0.
+        QTest::mouseClick(tiles.at(1), Qt::LeftButton);
+        QCOMPARE(dialog.themePicker->currentIndex(), 2);
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.takeFirst().at(0).toInt(), 2);
+        QTest::mouseClick(tiles.at(2), Qt::LeftButton);
+        QCOMPARE(dialog.themePicker->currentIndex(), 0);
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.takeFirst().at(0).toInt(), 0);
+        // Re-clicking the selected tile is a no-op.
+        QTest::mouseClick(tiles.at(2), Qt::LeftButton);
+        QCOMPARE(spy.count(), 0);
+
+        // Keyboard: arrows move focus between tiles in display order
+        // (wrapping); Enter commits the focused tile's persisted
+        // index.
+        tiles.at(0)->setFocus();
+        QVERIFY(tiles.at(0)->hasFocus());
+        QTest::keyClick(tiles.at(0), Qt::Key_Left);   // wraps to Auto
+        QVERIFY(tiles.at(2)->hasFocus());
+        QTest::keyClick(tiles.at(2), Qt::Key_Right);  // wraps to Light
+        QVERIFY(tiles.at(0)->hasFocus());
+        QTest::keyClick(tiles.at(0), Qt::Key_Return); // Light -> 1
+        QCOMPARE(dialog.themePicker->currentIndex(), 1);
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.last().at(0).toInt(), 1);
+        dialog.close();
+    }
+
+    // Nothing was committed — the tile flips were previews; the dtor
+    // reverts the Light preview back onto the platform palette.
+    QVERIFY(!BrowserTheme::paletteIsForced());
+    QVERIFY(!BrowserTheme::isDarkPalette(QApplication::palette()));
 }
 
 // ICONS02: the sidebar, the theme-preview combo and the engine list
@@ -1720,8 +1981,6 @@ void tst_SettingsDialog::uniformSidebarIcons()
     // Re-resolving under each bundled set keeps the pinned extent and
     // uniform row heights.
     for (const QString &id : AroraIcon::themeIds()) {
-        if (id == QLatin1String("native"))
-            continue;
         AroraIcon::setTheme(id);
         QCOMPARE(dialog.pagesList->iconSize(), iconExtent);
         checkRows();
@@ -1831,8 +2090,10 @@ void tst_SettingsDialog::densityAndFooter()
     QVERIFY(!groups.isEmpty());
     for (QGroupBox *box : groups) {
         QVERIFY2(box->layout(), qPrintable(box->title()));
+        // THEM01: group boxes ride the 4/8/12 spacing scale — Medium
+        // sides/bottom, Small under the title.
         QCOMPARE(box->layout()->contentsMargins(),
-                 QMargins(9, 6, 9, 9));
+                 QMargins(8, 4, 8, 8));
     }
 
     // Footer strip: a full-width separator line above a button box
@@ -1928,8 +2189,8 @@ void tst_SettingsDialog::subDialogButtons()
     dialog.extensionsTree->clearSelection();
 }
 
-// setHomeToCurrentPage finds the visible WebView under the parent
-// window; without one it is an early return.
+// setHomeToCurrentPage reads the parent main window's current tab;
+// without one it is an early return.
 void tst_SettingsDialog::setHomeToCurrentPage()
 {
     {
@@ -1939,11 +2200,11 @@ void tst_SettingsDialog::setHomeToCurrentPage()
         QCOMPARE(orphan.homeLineEdit->text(), before);
     }
 
-    QWidget window;
-    WebView *view = new WebView(BrowserApplication::webEngineProfile(), &window);
-    view->loadUrl(QUrl(QLatin1String("data:text/html,<p>home</p>")));
+    BrowserMainWindow window;
+    window.currentTab()->loadUrl(QUrl(QLatin1String("data:text/html,<p>home</p>")));
     QTRY_VERIFY_WITH_TIMEOUT(
-        !QString::fromUtf8(view->url().toEncoded()).isEmpty(), 15000);
+        QString::fromUtf8(window.currentTab()->url().toEncoded())
+            .startsWith(QLatin1String("data:text/html")), 15000);
 
     SettingsDialog dialog(&window);
     dialog.setHomeToCurrentPageButton->click();
@@ -2840,11 +3101,12 @@ void tst_SettingsDialog::extensionPage()
     // EXT06: the Description column shows the manifest text, and
     // every row carries something — empty descriptions fall back to
     // "Built-in component" / "(no description)", never a blank cell.
-    QCOMPARE(dialog.extensionsTree->columnCount(), 4);
-    QCOMPARE(row->text(3), QLatin1String("coverage extension"));
+    // (ui-work merge: Name/Version/Status/Source/Description = 5.)
+    QCOMPARE(dialog.extensionsTree->columnCount(), 5);
+    QCOMPARE(row->text(4), QLatin1String("coverage extension"));
     for (int i = 0; i < dialog.extensionsTree->topLevelItemCount(); ++i)
         QVERIFY(!dialog.extensionsTree->topLevelItem(i)
-                     ->text(3).isEmpty());
+                     ->text(4).isEmpty());
 
     const QString details = dialog.extensionDetailsLabel->text();
     QVERIFY(details.contains(QLatin1String("coverage extension")));
@@ -3043,6 +3305,182 @@ void tst_SettingsDialog::containerSiteRows()
             .contains(QLatin1String("always open in the selected container")));
 
     QVERIFY(manager->deleteContainer(id));
+}
+
+// EXT09: the Extensions page's tree carries a Version column fed
+// from each row's manifest.json — built-in components have no source
+// path and show an honest em-dash, and a finished update check
+// appends "→ <version> available" to the cell.
+void tst_SettingsDialog::extensionVersionColumn()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt built without webengine_extensions");
+
+    SettingsDialog dialog;
+    // Union with EXT06's Description column: 5 columns.
+    QCOMPARE(dialog.extensionsTree->columnCount(), 5);
+    QCOMPARE(dialog.extensionsTree->headerItem()->text(0),
+             QLatin1String("Name"));
+    QCOMPARE(dialog.extensionsTree->headerItem()->text(1),
+             QLatin1String("Version"));
+    QCOMPARE(dialog.extensionsTree->headerItem()->text(2),
+             QLatin1String("Status"));
+    QCOMPARE(dialog.extensionsTree->headerItem()->text(3),
+             QLatin1String("Source"));
+    QCOMPARE(dialog.extensionsTree->headerItem()->text(4),
+             QLatin1String("Description"));
+
+    // Built-in component rows carry no path — Version stays "—".
+    bool sawBuiltin = false;
+    for (int i = 0; i < dialog.extensionsTree->topLevelItemCount(); ++i) {
+        QTreeWidgetItem *item = dialog.extensionsTree->topLevelItem(i);
+        const QString id = item->data(0, Qt::UserRole).toString();
+        for (const ExtensionManager::ExtensionInfo &info
+             : ExtensionManager::instance()->extensions()) {
+            if (info.id == id && info.builtin) {
+                sawBuiltin = true;
+                QCOMPARE(item->text(1), QStringLiteral("—"));
+            }
+        }
+    }
+    qInfo() << "builtin extension rows:" << sawBuiltin;
+
+    // Local gupdate endpoint offering 9.9.9 for the fixture.
+    QTcpServer updateServer;
+    QVERIFY(updateServer.listen(QHostAddress::LocalHost));
+    const QByteArray base =
+        "http://127.0.0.1:" + QByteArray::number(updateServer.serverPort());
+    const QByteArray xml =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+        "<gupdate xmlns=\"http://www.google.com/update2/response\""
+        " protocol=\"2.0\"><app appid=\"verfixture\">"
+        "<updatecheck codebase=\"" + base + "/pkg.zip\""
+        " version=\"9.9.9\"/></app></gupdate>";
+    QObject::connect(&updateServer, &QTcpServer::newConnection,
+                     &updateServer, [&updateServer, xml]() {
+        QTcpSocket *socket = updateServer.nextPendingConnection();
+        QObject::connect(socket, &QTcpSocket::readyRead,
+                         socket, [socket, xml]() {
+            const QByteArray request = socket->readAll();
+            const int sp = request.indexOf(' ');
+            const QByteArray path = sp >= 0
+                ? request.mid(sp + 1,
+                              request.indexOf(' ', sp + 1) - sp - 1)
+                : QByteArray();
+            const QByteArray body = path == QByteArray("/update.xml")
+                ? xml : QByteArray("PK\x03\x04 fixture");
+            socket->write("HTTP/1.1 200 OK\r\nContent-Length: "
+                + QByteArray::number(body.size())
+                + "\r\nConnection: close\r\n\r\n" + body);
+            socket->disconnectFromHost();
+        });
+        QObject::connect(socket, &QTcpSocket::disconnected,
+                         socket, &QObject::deleteLater);
+    });
+
+    // Earlier suite legs may persist proxy/enabled — the gupdate
+    // fetch would route through the dead proxy.  Neutralize it for
+    // this leg and restore the saved value afterwards.
+    QSettings settings;
+    const QVariant savedProxy =
+        settings.value(QLatin1String("proxy/enabled"));
+    settings.setValue(QLatin1String("proxy/enabled"), false);
+    NetworkAccessManager::instance()->loadSettings();
+
+    QTemporaryDir fixture;
+    QVERIFY(fixture.isValid());
+    {
+        QFile file(fixture.path() + QLatin1String("/manifest.json"));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(QByteArray("{\"manifest_version\":3,"
+            "\"name\":\"ver-fixture\",\"version\":\"7.7.7\","
+            "\"update_url\":\"") + base + "/update.xml\","
+            "\"background\":{\"service_worker\":\"sw.js\"}}");
+    }
+    {
+        QFile worker(fixture.path() + QLatin1String("/sw.js"));
+        QVERIFY(worker.open(QIODevice::WriteOnly));
+        worker.write("chrome.runtime.onInstalled.addListener(function(){});\n");
+    }
+
+    ExtensionManager *extensions = ExtensionManager::instance();
+    // EXT05 consent gate: simulate the approved review — loadExtension
+    // refuses (and errorOccurred raises a modal warning) without it.
+    extensions->grantConsent(fixture.path());
+    extensions->loadExtension(fixture.path());
+    const auto findRow = [&dialog]() -> QTreeWidgetItem * {
+        for (int i = 0; i < dialog.extensionsTree->topLevelItemCount();
+             ++i) {
+            QTreeWidgetItem *item =
+                dialog.extensionsTree->topLevelItem(i);
+            if (item->text(0) == QLatin1String("ver-fixture"))
+                return item;
+        }
+        return nullptr;
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(findRow() != nullptr, 15000);
+    QCOMPARE(findRow()->text(1), QLatin1String("7.7.7"));
+    QCOMPARE(findRow()->text(2), QLatin1String("Disabled"));
+    QCOMPARE(findRow()->text(3), QLatin1String("Session"));
+
+    // A finished (non-manual) update check surfaces the offered
+    // version in the cell — "7.7.7 → 9.9.9 available".
+    extensions->checkForUpdates(false);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        findRow()
+        && findRow()->text(1).contains(QLatin1String("9.9.9")),
+        30000);
+    QCOMPARE(findRow()->text(1),
+             QString::fromUtf8("7.7.7 → 9.9.9 available"));
+
+    // Session-scoped fixture — unload so nothing leaks into later
+    // tests or the real profile's extension list.
+    const QString extensionId =
+        findRow()->data(0, Qt::UserRole).toString();
+    extensions->removeExtension(extensionId);
+    QTRY_VERIFY_WITH_TIMEOUT(findRow() == nullptr, 15000);
+
+    if (savedProxy.isValid())
+        settings.setValue(QLatin1String("proxy/enabled"), savedProxy);
+    else
+        settings.remove(QLatin1String("proxy/enabled"));
+    NetworkAccessManager::instance()->loadSettings();
+}
+
+// EXT10: the Extensions table's stretch column is the long free-text
+// one — Description once EXT06's column merges in (it lands last),
+// Name until then.  Version/Status hug their contents and Source
+// keeps a small interactive width so it can never balloon and strand
+// a sliver column at the far right again.
+void tst_SettingsDialog::extensionColumnSizing()
+{
+    SettingsDialog dialog;
+    QHeaderView *header = dialog.extensionsTree->header();
+    const int columns = dialog.extensionsTree->columnCount();
+    QVERIFY(columns >= 4);
+    const int stretchColumn = columns > 4 ? columns - 1 : 0;
+    QVERIFY(!header->stretchLastSection());
+    for (int column = 0; column < columns; ++column) {
+        const QHeaderView::ResizeMode mode =
+            header->sectionResizeMode(column);
+        if (column == stretchColumn)
+            QCOMPARE(mode, QHeaderView::Stretch);
+        else if (column == 3)
+            QCOMPARE(mode, QHeaderView::Interactive);
+        else
+            QCOMPARE(mode, QHeaderView::ResizeToContents);
+    }
+    QCOMPARE(header->sectionSize(3), 100);
+
+    // Laid out: Source stays a compact column next to the stretch
+    // cell instead of absorbing the viewport's slack.
+    dialog.tabWidget->setCurrentIndex(int(SettingsDialog::ExtensionsPage));
+    dialog.pagesList->setCurrentRow(int(SettingsDialog::ExtensionsPage));
+    dialog.resize(900, 600);
+    dialog.show();
+    qApp->processEvents();
+    QVERIFY(header->sectionSize(3) <= 160);
+    QVERIFY(header->sectionSize(stretchColumn) > header->sectionSize(3));
 }
 
 // PREFUI04: the Performance page — every control persists under its
@@ -3914,7 +4352,8 @@ void tst_SettingsDialog::languageSelector()
                  .toString(),
              QLatin1String("hu_HU"));
     qApp->processEvents();
-    QCOMPARE(dialog.label_3->text(), QString::fromUtf8("Kezdőlap:"));
+    QCOMPARE(dialog.label_4->text(),
+             QString::fromUtf8("Előzmények eltávolítása:"));
 
     // The trailing English row writes the explicit no-translation pick.
     dialog.languageCombo->setCurrentIndex(
@@ -3924,7 +4363,8 @@ void tst_SettingsDialog::languageSelector()
                  .toString(),
              QString());
     qApp->processEvents();
-    QCOMPARE(dialog.label_3->text(), QLatin1String("Home Page:"));
+    QCOMPARE(dialog.label_4->text(),
+             QLatin1String("Remove history items:"));
 
     // System default persists the "system" sentinel — never a resolved
     // code — so an OS-language change still wins on the next launch.
@@ -4145,12 +4585,19 @@ void tst_SettingsDialog::appearanceFieldBounds()
     }
 
     // The page's combos stay content-sized too — same defect class.
-    for (QComboBox *combo : {dialog.iconThemeCombo, dialog.themeCombo}) {
+    for (QComboBox *combo : {dialog.iconThemeCombo}) {
         QCOMPARE(combo->sizePolicy().horizontalPolicy(),
                  QSizePolicy::Maximum);
         QVERIFY2(combo->width() <= combo->sizeHint().width() + 4,
                  qPrintable(combo->objectName()));
     }
+    // The theme tile picker is content-sized as well — three fixed
+    // tiles, never a full-width band.
+    QCOMPARE(dialog.themePicker->sizePolicy().horizontalPolicy(),
+             QSizePolicy::Maximum);
+    QVERIFY2(dialog.themePicker->width()
+                 <= dialog.themePicker->sizeHint().width() + 4,
+             qPrintable(dialog.themePicker->objectName()));
 
     // Narrow case: the fields stay capped and nothing forces a
     // horizontal scrollbar.

@@ -38,9 +38,11 @@ class QWebEngineProfile;
 //
 // This class owns the C++ side of the feature:
 //
-//   - the privacy/fingerprintProtection toggle (default OFF — the
-//     spoofing is detectable and canvas-heavy sites can break, so it
-//     is opt-in; the tor profile gets it unconditionally),
+//   - the privacy/fingerprintProtection toggle (default ON since
+//     PRIV06 — the spoofing is detectable and canvas-heavy sites can
+//     break, so the shield panel keeps a per-site exemption and the
+//     Settings checkbox still opts out; the tor profile gets it
+//     unconditionally),
 //   - the per-site exemption list.  Persistent exemptions live in
 //     privacy/fingerprintExceptions (normalized lowercase hosts,
 //     CookieJar-style suffix matching); session exemptions are
@@ -63,8 +65,17 @@ public:
     // Lazy qApp-owned singleton (HistoryManager pattern).
     static FingerprintProtector *instance();
 
-    // The user toggle — privacy/fingerprintProtection, default off.
+    // The user toggle — privacy/fingerprintProtection, default on.
     bool isEnabled() const;
+
+    // PRIV06: one-time migration behind privacy/fingerprintMigrationV1.
+    // Before the default flipped, a stored explicit
+    // fingerprintProtection=false meant "the old default", not a
+    // deliberate opt-out — the migration rewrites exactly that case to
+    // true once.  A false written AFTER the flag is set is a real
+    // opt-out and is never re-flipped.  Idempotent; runs from the
+    // ctor and is called directly by the autotests.
+    static void migrateToDefaultOn();
 
     // True when the feature is active for pages on this profile:
     // the toggle, or unconditionally on the tor profile.

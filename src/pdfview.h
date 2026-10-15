@@ -244,8 +244,9 @@ public:
 
     // Print handoff — public so the window's Print action reaches it
     // when this tab is the active document (BrowserMainWindow routes
-    // here instead of the engine print path).
-    void printDocument();
+    // here instead of the engine print path).  Invokable so tests
+    // can drive the print dialog inside the modal preview.
+    Q_INVOKABLE void printDocument();
 
 signals:
     // The host navigates the tab back to the document's origin —

@@ -2,7 +2,7 @@
 Name=Arora Breeze Dark
 Comment=Dark-scheme recolor of the bundled KDE Breeze icons
 Directories=icons
-Inherits=arora-legacy
+Inherits=arora-tabler-dark
 
 [icons]
 Size=16

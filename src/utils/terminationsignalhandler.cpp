@@ -62,7 +62,7 @@ extern "C" void terminationWatchdog(int)
     const int signalNumber = s_pendingSignal ? int(s_pendingSignal)
                                              : SIGTERM;
     struct sigaction action;
-    ::sigemptyset(&action.sa_mask);
+    sigemptyset(&action.sa_mask);
     action.sa_handler = SIG_DFL;
     action.sa_flags = 0;
     ::sigaction(signalNumber, &action, nullptr);
@@ -73,7 +73,7 @@ extern "C" void terminationWatchdog(int)
 void installHandler(int signalNumber, void (*handler)(int))
 {
     struct sigaction action;
-    ::sigemptyset(&action.sa_mask);
+    sigemptyset(&action.sa_mask);
     action.sa_handler = handler;
     action.sa_flags = 0;
     ::sigaction(signalNumber, &action, nullptr);

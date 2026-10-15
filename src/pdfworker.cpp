@@ -55,7 +55,9 @@ void emitLine(const QJsonObject &obj)
     std::fflush(stdout);
 }
 
-void emitError(qint64 req, int code, const QString &message)
+// Only the ARORA_RUSTCORE path reports errors; in the no-rust build
+// this helper is intentionally idle.
+[[maybe_unused]] void emitError(qint64 req, int code, const QString &message)
 {
     QJsonObject out;
     out.insert(QLatin1String("ev"), QLatin1String("error"));

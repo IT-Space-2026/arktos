@@ -18,6 +18,8 @@
  */
 #include "positionpicker.h"
 
+#include "arorastyle.h"
+
 #include <qboxlayout.h>
 #include <qevent.h>
 #include <qpainter.h>
@@ -107,7 +109,7 @@ protected:
             p.setPen(Qt::NoPen);
             p.setBrush(pal.color(QPalette::Highlight));
             p.drawEllipse(badge);
-            p.setPen(QPen(pal.color(QPalette::HighlightedText), 2));
+            p.setPen(QPen(AroraStyle::selectionTextColor(pal), 2));
             const int cx = badge.center().x(), cy = badge.center().y();
             p.drawLine(QPoint(cx - 4, cy), QPoint(cx - 1, cy + 3));
             p.drawLine(QPoint(cx - 1, cy + 3), QPoint(cx + 4, cy - 3));
@@ -200,7 +202,7 @@ PositionPicker::PositionPicker(const QStringList &labels,
 
     QHBoxLayout *layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(10);
+    layout->setSpacing(AroraStyle::Spacing::Large);
 
     m_tiles.reserve(labels.count());
     for (int slot = 0; slot < labels.count(); ++slot) {

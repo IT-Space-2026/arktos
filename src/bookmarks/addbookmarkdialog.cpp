@@ -180,11 +180,6 @@ void AddBookmarkDialog::setFolder(bool addFolder)
     resize(sizeHint());
 }
 
-bool AddBookmarkDialog::isFolder() const
-{
-    return m_addFolder;
-}
-
 BookmarkNode *AddBookmarkDialog::addedNode() const
 {
     return m_addedNode;

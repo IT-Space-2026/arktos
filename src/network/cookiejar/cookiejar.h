@@ -154,9 +154,6 @@ public:
     void setAllowedCookies(QStringList list);
     void setAllowForSessionCookies(QStringList list);
 
-    bool filterTrackingCookies() const;
-    void setFilterTrackingCookies(bool filterTrackingCookies);
-
     // PRIV01: reject cookies set by third-party contexts even under
     // AcceptAlways.  Per-site allow/allowForSession exceptions still
     // win.  On by default.

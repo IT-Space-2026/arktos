@@ -20,6 +20,7 @@
 #include "popupblockerbutton.h"
 
 #include "aroraicon.h"
+#include "arorastyle.h"
 #include "browsertheme.h"
 #include "popupblocker.h"
 #include "safetext.h"
@@ -98,7 +99,7 @@ void PopupBlockerButton::refresh()
     if (count <= 0)
         return;
 
-    QPixmap pixmap = AroraIcon::get(QLatin1String("window-new"))
+    QPixmap pixmap = AroraIcon::getChrome(QLatin1String("window-new"))
         .pixmap(QSize(16, 16));
     // Count badge at the bottom-right corner — same uBO-style
     // treatment the ad-block button uses.
@@ -114,9 +115,9 @@ void PopupBlockerButton::refresh()
         painter.fontMetrics().horizontalAdvance(text) + 4);
     const QRect badge(16 - w, 7, w, 9);
     painter.setPen(Qt::NoPen);
-    painter.setBrush(palette().color(QPalette::Accent));
+    painter.setBrush(AroraStyle::accentFillColor(palette()));
     painter.drawRoundedRect(badge, 2, 2);
-    painter.setPen(palette().color(QPalette::HighlightedText));
+    painter.setPen(AroraStyle::onAccentColor(palette()));
     painter.drawText(badge, Qt::AlignCenter, text);
     painter.end();
     setIcon(QIcon(pixmap));

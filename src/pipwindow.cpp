@@ -19,6 +19,9 @@
 
 #include "pipwindow.h"
 
+#include "aroraicon.h"
+#include "arorastyle.h"
+
 #include <qapplication.h>
 #include <qboxlayout.h>
 #include <qcursor.h>
@@ -76,7 +79,8 @@ PipWindow::PipWindow(QWebEngineProfile *profile, const QVariantMap &video,
     setMinimumSize(200, 112);
 
     // Title strip: drag handle plus the two PiP affordances — return
-    // to tab and close.  Standard style icons keep this theme-free.
+    // to tab and close.  House chrome glyphs (ICONS09): tinted,
+    // palette-following, theme-settable.
     QWidget *strip = new QWidget(this);
     strip->setAutoFillBackground(true);
     QPalette stripPalette = strip->palette();
@@ -88,23 +92,26 @@ PipWindow::PipWindow(QWebEngineProfile *profile, const QVariantMap &video,
     title->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 
     m_returnButton = new QToolButton(strip);
-    m_returnButton->setIcon(style()->standardIcon(
-            QStyle::SP_TitleBarNormalButton));
+    m_returnButton->setIcon(AroraIcon::getChrome(
+            QLatin1String("view-restore")));
     m_returnButton->setToolTip(tr("Return video to tab"));
     m_returnButton->setAutoRaise(true);
     connect(m_returnButton, &QToolButton::clicked,
             this, [this]() { emit returnToTab(m_lastState); });
 
     QToolButton *closeButton = new QToolButton(strip);
-    closeButton->setIcon(style()->standardIcon(
-            QStyle::SP_TitleBarCloseButton));
+    closeButton->setIcon(AroraIcon::getChrome(
+            QLatin1String("window-close")));
     closeButton->setToolTip(tr("Close"));
     closeButton->setAutoRaise(true);
     connect(closeButton, &QToolButton::clicked,
             this, [this]() { close(); });
 
     QHBoxLayout *stripLayout = new QHBoxLayout(strip);
-    stripLayout->setContentsMargins(8, 2, 4, 2);
+    stripLayout->setContentsMargins(AroraStyle::Spacing::Medium,
+                                    AroraStyle::Spacing::Small,
+                                    AroraStyle::Spacing::Small,
+                                    AroraStyle::Spacing::Small);
     stripLayout->addWidget(title);
     stripLayout->addWidget(m_returnButton);
     stripLayout->addWidget(closeButton);
@@ -140,9 +147,17 @@ PipWindow::PipWindow(QWebEngineProfile *profile, const QVariantMap &video,
     const QByteArray configJson = QJsonDocument(
             QJsonObject::fromVariantMap(video))
         .toJson(QJsonDocument::Compact);
+    // The video spec is page-derived and lands inside a <script> in
+    // the trusted player document — JSON escaping is not enough:
+    // a "</script>" inside a string value would end the element and
+    // inject markup.  Rewriting '<' to its \u003c
+    // escape keeps the JSON valid while killing the breakout.
     html.replace(QLatin1String("/*__PIP_CONFIG__*/"),
             QLatin1String("window.__PIP_CONFIG__ = ")
-                + QString::fromUtf8(configJson) + QLatin1Char(';'));
+                + QString::fromUtf8(configJson)
+                      .replace(QLatin1Char('<'),
+                               QLatin1String("\\u003c"))
+                + QLatin1Char(';'));
     m_view->setHtml(html, baseUrl);
 }
 

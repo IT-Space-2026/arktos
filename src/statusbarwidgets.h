@@ -23,6 +23,7 @@
 #include <qpointer.h>
 #include <qwidget.h>
 
+class EngineTab;
 class QLabel;
 class QProgressBar;
 class QTimer;
@@ -106,6 +107,15 @@ private:
 // renderProcessPidChanged), so renderer swaps and crashes are picked
 // up without extra bookkeeping; an unreadable pid shows "MEM —".
 // Linux-only: the widget stays hidden on platforms without /proc.
+//
+// ENG26: foreign-engine tabs carry no WebView, so they bind through
+// setEngineTab() instead — the poll re-resolves the tab's live
+// page() each time, which keeps the reading correct across an
+// in-place engine restart (ENG28's pageRecreated swap).  An
+// in-process engine (Servo) has no per-tab renderer; its page
+// reports the shared host-process figure with memoryIsShared() and
+// the label reads "MEM <n> (shared)" so the number never poses as
+// per-tab.
 class MemIndicator : public QWidget
 {
     Q_OBJECT
@@ -115,6 +125,8 @@ public:
 
     void setWebView(WebView *view);
     WebView *webView() const;
+    void setEngineTab(EngineTab *tab);
+    EngineTab *engineTab() const;
 
     // VmRSS in kB read from /proc/<pid>/status, -1 when unreadable
     // (dead process, bogus pid, non-Linux).  Static so tests can
@@ -129,6 +141,7 @@ private slots:
 
 private:
     QPointer<WebView> m_view;
+    QPointer<EngineTab> m_tab;
     QLabel *m_label;
     QTimer *m_timer;
 };

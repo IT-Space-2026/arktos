@@ -154,7 +154,7 @@ void installOne(int signalNumber)
 {
     struct sigaction action;
     ::memset(&action, 0, sizeof(action));
-    ::sigemptyset(&action.sa_mask);
+    sigemptyset(&action.sa_mask);
     action.sa_sigaction = &crashSignalHandler;
     // SA_RESETHAND disarms on the way in — a fault inside the handler
     // dies immediately instead of recursing; SA_NODEFER keeps the

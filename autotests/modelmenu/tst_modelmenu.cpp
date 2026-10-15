@@ -536,7 +536,8 @@ void tst_ModelMenu::bookmarksToolBarContextMenu()
         QOverload<const QUrl &, TabWidget::OpenUrlIn, const QString &>::of(
             &BookmarksToolBar::openUrl));
     PopupDriver *driver = new PopupDriver(QLatin1String("New"), &bar);
-    QContextMenuEvent onLeaf(QContextMenuEvent::Mouse, pos);
+    QContextMenuEvent onLeaf(QContextMenuEvent::Mouse, pos,
+                             bar.mapToGlobal(pos));
     QApplication::sendEvent(&bar, &onLeaf);
     QVERIFY(driver->fired);
     QTRY_VERIFY_WITH_TIMEOUT(spy.count() >= 1, 5000);
@@ -548,7 +549,8 @@ void tst_ModelMenu::bookmarksToolBarContextMenu()
 
     // "Remove" deletes the leaf through the model.
     driver = new PopupDriver(QLatin1String("Remove"), &bar);
-    QContextMenuEvent onLeaf2(QContextMenuEvent::Mouse, pos);
+    QContextMenuEvent onLeaf2(QContextMenuEvent::Mouse, pos,
+                              bar.mapToGlobal(pos));
     QApplication::sendEvent(&bar, &onLeaf2);
     QVERIFY(driver->fired);
     QTRY_COMPARE_WITH_TIMEOUT(manager->toolbar()->children().count(),
@@ -562,7 +564,8 @@ void tst_ModelMenu::bookmarksToolBarContextMenu()
     // so newBookmark()/newFolder() are invoked directly below.)
     driver = new PopupDriver(QLatin1String("no-such-action"), &bar);
     const QPoint empty = bar.rect().bottomRight() - QPoint(1, 1);
-    QContextMenuEvent onEmpty(QContextMenuEvent::Mouse, empty);
+    QContextMenuEvent onEmpty(QContextMenuEvent::Mouse, empty,
+                              bar.mapToGlobal(empty));
     QApplication::sendEvent(&bar, &onEmpty);
     QVERIFY(driver->fired);
 

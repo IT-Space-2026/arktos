@@ -2,7 +2,7 @@
 Name=Arora Tabler Dark
 Comment=Dark-scheme recolor of the bundled Tabler outline icons
 Directories=icons
-Inherits=arora-legacy
+Inherits=arora-tabler
 
 [icons]
 Size=16

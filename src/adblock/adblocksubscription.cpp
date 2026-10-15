@@ -433,15 +433,6 @@ void AdBlockSubscription::removeRule(int offset)
     emit rulesChanged();
 }
 
-void AdBlockSubscription::replaceRule(const AdBlockRule &rule, int offset)
-{
-    if (offset < 0 || offset >= m_rules.count())
-        return;
-    m_rules[offset] = rule;
-    populateCache();
-    emit rulesChanged();
-}
-
 void AdBlockSubscription::populateCache()
 {
     m_networkExceptionRules.clear();

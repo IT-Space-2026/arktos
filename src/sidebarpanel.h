@@ -25,6 +25,7 @@
 
 #include <qlist.h>
 #include <QModelIndex>
+#include <QPersistentModelIndex>
 #include <qpointer.h>
 #include <qstringlist.h>
 #include <qwidget.h>
@@ -32,18 +33,26 @@
 class AutoSaver;
 class DownloadItem;
 class EditTreeView;
+class HistoryPeriodFilterModel;
+class NotesModel;
+class QAction;
 class QComboBox;
 class QFrame;
+class QLineEdit;
 class QListView;
 class QPlainTextEdit;
 class QPushButton;
 class QSortFilterProxyModel;
+class QStackedWidget;
 class QTabWidget;
+class QTextBrowser;
+class QToolButton;
+class SearchLineEdit;
 class TreeSortFilterProxyModel;
 
 // SIDE01: the content widget of the optional Vivaldi-style sidebar
 // dock.  Four switchable sections — bookmarks, history, downloads and
-// a scratch-notes editor — over the existing shared models.
+// the NOTE02 multi-note notes page — over the existing shared models.
 class SidebarPanel : public QWidget
 {
     Q_OBJECT
@@ -87,6 +96,7 @@ public:
     static bool showsFolderCounters();
 
     explicit SidebarPanel(QWidget *parent = nullptr);
+    ~SidebarPanel() override;
 
     // Palette-following toggle glyph — the bundled icon themes ship no
     // sidebar pictogram and new artwork files stay out per the
@@ -95,6 +105,9 @@ public:
 
     QTabWidget *tabs() const;
     QPlainTextEdit *notes() const;
+    // NOTE02: the per-profile notes store backing the Notes page —
+    // nullptr while the panel is hidden or the page is still pending.
+    NotesModel *notesModel() const;
     QWidget *downloadsPage() const;
     QWidget *bookmarksPage() const;
 
@@ -134,6 +147,30 @@ private slots:
     void downloadSelectionChanged(const QModelIndex &current,
                                   const QModelIndex &previous);
     void applyDownloadSort();
+    // DOWN04: the compact per-download action row — pause/resume,
+    // retry, remove, show-in-folder and the details (speed graph)
+    // toggle all act on the selected list row.
+    void updateDownloadActions();
+    void pauseSelectedDownload();
+    void retrySelectedDownload();
+    void removeSelectedDownload();
+    void revealSelectedDownload();
+    void setSelectedDownloadExpanded(bool expanded);
+    // NOTE02: the notes stack — list -> editor navigation plus the
+    // header's add/remove buttons.
+    void addNote();
+    void removeSelectedNote();
+    void openNote(const QModelIndex &index);
+    void closeNoteEditor();
+    // Picks the stack page from the model's row count (empty state
+    // vs list) and folds the editor when its note vanished.
+    void updateNotesView();
+    // NOTE03: the editor's options menu — markdown flag on the open
+    // note (its body swaps between source editor and a rendered
+    // preview) and the current-page-URL insert.
+    void setOpenNoteMarkdown(bool markdown);
+    void updateNoteBodyPage();
+    void insertCurrentPageUrl();
 
 private:
     static QList<Panel> &registry();
@@ -145,6 +182,10 @@ private:
     // SIDE09 lazy load: swaps a placeholder page for the real one the
     // first time its tab is selected.  No-op on a built page.
     void buildPendingTab(int index);
+    // TRUST20: re-bakes the rail's tab glyphs from the rail's own
+    // resolved palette — driven by SidebarRail on palette/style
+    // moves so the tor strip's light icons survive re-resolves.
+    void refreshRailIcons();
 
     // Registered factories — each builds its page on demand and fills
     // in the matching members (they stay null while the panel is
@@ -155,6 +196,9 @@ private:
     QWidget *buildNotesPage();
     int indexOfPanel(const QByteArray &id) const;
     QModelIndex selectedBookmarkFolder() const;
+    // DOWN04: the item behind the list's current row (nullptr when
+    // nothing is selected) — the action row's target.
+    DownloadItem *selectedDownloadItem() const;
 
     QTabWidget *m_tabs;
     QPointer<QWidget> m_bookmarksPage;
@@ -164,13 +208,43 @@ private:
     QPointer<QListView> m_downloadsView;
     QPointer<TreeSortFilterProxyModel> m_bookmarksProxy;
     QPointer<TreeSortFilterProxyModel> m_historyProxy;
+    // HIST03: period combo + the date filter it drives, sitting
+    // between the day-group tree model and the search proxy.
+    QPointer<QComboBox> m_historyPeriod;
+    QPointer<HistoryPeriodFilterModel> m_historyPeriodFilter;
     QPointer<QSortFilterProxyModel> m_downloadsProxy;
     QPointer<QWidget> m_downloadsPage;
     QPointer<QComboBox> m_downloadsSort;
     QPointer<QFrame> m_downloadDetail;
+    // DOWN04: the compact action row under the detail pane — every
+    // button's enablement mirrors the hosted card's own logic.
+    QPointer<QToolButton> m_downloadPauseButton;
+    QPointer<QToolButton> m_downloadRetryButton;
+    QPointer<QToolButton> m_downloadRemoveButton;
+    QPointer<QToolButton> m_downloadFolderButton;
+    QPointer<QToolButton> m_downloadDetailsButton;
     // The DownloadItem card currently hosted in the detail pane.
     QPointer<QWidget> m_detailItem;
+    // NOTE02: the multi-note page — a three-state stack (empty state,
+    // notes list, note editor) over the per-profile shared model.
+    // m_editingNote tracks the row the editor is bound to; a
+    // persistent index so removals invalidate it instead of leaving a
+    // stale row number.
+    QPointer<NotesModel> m_notesModel;
+    QPointer<QStackedWidget> m_notesStack;
+    QPointer<QListView> m_notesList;
+    // NOTE03: the live-search proxy the list runs on, the search row
+    // that drives it, and the editor's options menu / markdown preview.
+    QPointer<QSortFilterProxyModel> m_notesProxy;
+    QPointer<SearchLineEdit> m_notesSearch;
+    QPointer<QStackedWidget> m_noteBodyStack;
+    QPointer<QTextBrowser> m_notesPreview;
+    QPointer<QAction> m_noteMarkdownAction;
+    QPointer<QAction> m_noteInsertUrlAction;
+    QPointer<QToolButton> m_notesRemoveButton;
+    QPointer<QLineEdit> m_noteTitle;
     QPointer<QPlainTextEdit> m_notes;
+    QPersistentModelIndex m_editingNote;
     AutoSaver *m_autoSaver;
     // SIDE09: sidebar/lazyLoad — visible panels sit behind a
     // placeholder page until first selected.

@@ -121,9 +121,6 @@ public:
     void cancel();
     void restart();
 
-    // Final on-disk path once state() is DownloadCompleted.
-    QString outputPath() const { return m_output; }
-
     // SAND02 diagnostics: true while the crate runs inside the
     // confined worker subprocess rather than in this process.
     bool subprocessActive() const { return m_process != nullptr; }

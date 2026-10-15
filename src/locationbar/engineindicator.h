@@ -56,7 +56,6 @@ public:
     // the button hidden even when alternate backends exist (legacy
     // contract for callers that never set a lock reason).
     void setSwappable(bool swappable);
-    bool isSwappable() const { return m_swappable; }
 
     // ENG19: a non-empty reason renders the button disabled-but-
     // visible with the explanation in its tooltip/status tip — the

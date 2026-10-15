@@ -66,6 +66,7 @@
 
 #include <qwebengineview.h>
 #include <qpointer.h>
+#include <qvariant.h>
 
 #include <functional>
 
@@ -73,12 +74,14 @@
 
 namespace Engine { class Page; class Profile; }
 class QWebEngineProfile;
+class QTimer;
 class BrowserMainWindow;
 class PdfView;
 class PictureInPicture;
 class ReaderMode;
 class ScriptBlockInfoBar;
 class TabWidget;
+class TorManager;
 class WebEnginePageAdapter;
 class WebPage;
 class WebView : public QWebEngineView
@@ -101,6 +104,36 @@ public:
     void loadSettings();
 
     void loadUrl(const QUrl &url, const QString &title = QString());
+    // TOR14: routes a page-initiated remote navigation — the tor
+    // start page's search assigns window.location, link clicks and
+    // JS redirects land the same way — into the same bootstrap hold
+    // loadUrl() uses.  Returns true when the url was queued (the
+    // caller must then refuse the navigation); false when the daemon
+    // can already carry it and the navigation should proceed.
+    bool torHoldNavigation(const QUrl &url);
+    // TOR14: names the warm-up pending state on the status bar —
+    // called when a transient tor failure is being auto-retried so
+    // the chrome shows the wait, not just the pending page.
+    void torWarmupNotice();
+    // TOR14: flushes a held tor navigation once the daemon can carry
+    // it — also called by the page when an in-flight generated commit
+    // lands, since dispatching into that window could lose the load.
+    void torFlushQueuedLoad();
+#ifdef AUTOTESTS
+    // Test seam: the url loadUrl() is holding until the tor daemon
+    // reports ready — empty when nothing is queued.  Lets the
+    // bootstrap-gate tests assert the nav never reached the network
+    // stack.
+    QUrl torQueuedUrlForTesting() const { return m_torQueuedUrl; }
+    // Test seam: overrides the post-ready grace that bounds the wait
+    // for circuit evidence — a small value keeps the grace-expiry leg
+    // off the real multi-second clock; -1 restores the default.
+    static void setTorQueueGraceMsForTesting(int ms);
+    // Test seam: overrides the wall-clock warm-up window that ends
+    // the cold-circuit hold — a large value keeps a slow suite run
+    // from expiring the real bound mid-leg; -1 restores the default.
+    static void setTorQueueWarmupMsForTesting(qint64 ms);
+#endif
     // Whether a url that arrived from outside the browser chrome — the
     // command line, a forwarded second-instance message, a drop, a
     // pasted selection — may be handed to loadUrl().  javascript: is
@@ -209,6 +242,30 @@ private:
             const std::function<void(const QUrl &resolved)> &callback);
     void openContextPosterInTarget(const QPoint &viewPos,
             TabWidget::OpenUrlIn target);
+    // SRCH01: 'Add to the toolbar search' — the input+form the WebKit
+    // hit-test exposed synchronously is resolved in-page through
+    // contextsearch.js at the stored click point; the map then builds
+    // the GET-template engine the same way the old addSearchEngine
+    // slot did.
+    void addSearchEngineFromMap(const QVariantMap &info);
+
+    // TOR18/TOR12: the bootstrap navigation gate.  While the managed
+    // daemon is still coming up — and during the cold-circuit window
+    // just after `ready`, when the SOCKS listener answers but no
+    // stream-ridable circuit exists yet — a remote loadUrl() is held
+    // in the view (m_torQueuedUrl) and dispatched on `ready`,
+    // usable-circuit evidence, or the grace timer instead of dying at
+    // the fail-closed proxy — the user no longer has to reload a dead
+    // tab by hand.  Local schemes (qrc:/about:/data:/file:) never
+    // ride SOCKS and always dispatch immediately.
+    TorManager *torManager() const;
+    bool torMustQueue(const QUrl &url) const;
+    // TOR14: the shared queue step — stores the newest intent, arms
+    // the wake-ups + grace, and announces the wait on the status bar.
+    void torQueueLoad(const QUrl &url, const QString &title);
+    void torArmWakeup();
+    void torArmQueueGrace();
+    void torGraceDispatch();
 
 private slots:
     void setProgress(int progress);
@@ -230,6 +287,12 @@ private slots:
     void blockImage();
     void bookmarkLink();
     void searchRequested(QAction *action);
+    // SRCH01: editable-field 'Add to the toolbar search' — probes the
+    // form under the context-menu point and registers the engine.
+    void addSearchEngine(const QPoint &viewPos);
+    // NOTE03: 'Add Selection to Notes' — the selection becomes a new
+    // note in the window profile's store (the sidebar's model).
+    void addSelectionToNote();
     void imageSearchRequested();
 
 private:
@@ -247,6 +310,22 @@ private:
     // (no WebViewWithSearch parent) path; inside a tab the
     // WebViewWithSearch owns it and pdfView() resolves up the chain.
     QPointer<PdfView> m_pdfView;
+    // TOR18/TOR12: a remote navigation held until the daemon can
+    // actually carry it — the newest intent wins, so a second
+    // loadUrl() simply replaces it.  m_torQueueGrace bounds the
+    // post-ready wait for circuit evidence: a daemon whose control
+    // channel is dead can sit at Ready with an empty circuits()
+    // snapshot forever while SOCKS still proxies, and the held nav
+    // must not be stranded there.
+    QUrl m_torQueuedUrl;
+    QString m_torQueuedTitle;
+    // TOR14: the one-shot release torGraceDispatch stamps on the url
+    // it is sending — that dispatch goes back through
+    // acceptNavigationRequest, where the page-level hold would just
+    // re-queue it; the matching hold call clears the token instead.
+    QUrl m_torGraceReleaseUrl;
+    bool m_torWakeupArmed = false;
+    QTimer *m_torQueueGrace = nullptr;
 };
 
 #endif

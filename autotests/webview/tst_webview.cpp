@@ -39,9 +39,12 @@
 #include <qtoolbutton.h>
 #include <qmenu.h>
 #include <qclipboard.h>
+#include <qinputdialog.h>
+#include <qmessagebox.h>
 #include <qpointer.h>
 #include <qdialog.h>
 #include <qset.h>
+#include <qurlquery.h>
 
 #include <functional>
 #include <memory>
@@ -53,7 +56,11 @@
 #include "browsermainwindow.h"
 #include "browserprofile.h"
 #include "historymanager.h"
+#include "notesmodel.h"
+#include "opensearchengine.h"
+#include "opensearchmanager.h"
 #include "tabwidget.h"
+#include "toolbarsearch.h"
 #include "tormanager.h"
 #include "qtest_arora.h"
 #include "qtry.h"
@@ -219,6 +226,42 @@ struct WindowListGuard {
     }
 };
 
+// TOR12: builds a TorManager circuit-status entry for the warm-up
+// gate legs — BUILT + three hops + empty/GENERAL purpose is what the
+// gate counts as a stream-ridable path.
+static TorCircuit makeCircuit(int id, const QString &status, int hops,
+                              const QString &purpose)
+{
+    TorCircuit circuit;
+    circuit.id = id;
+    circuit.status = status;
+    circuit.purpose = purpose;
+    for (int i = 0; i < hops; ++i) {
+        TorCircuitHop hop;
+        hop.fingerprint = QStringLiteral("%1").arg(id * 10 + i);
+        hop.nickname = QStringLiteral("hop%1").arg(i);
+        circuit.hops << hop;
+    }
+    return circuit;
+}
+
+// Test-owned inert manager — the ctor spawns nothing until start(),
+// so the tests drive the state machine by hand.  The injection guard
+// returns the app seam to nullptr: a dangling pointer would poison
+// every later case.
+struct TorManagerInjection {
+    TorManager *tor;
+    explicit TorManagerInjection(TorManager *manager) : tor(manager)
+    {
+        BrowserApplication::instance()->setTorManagerForTesting(tor);
+    }
+    ~TorManagerInjection()
+    {
+        if (BrowserApplication *app = BrowserApplication::instance())
+            app->setTorManagerForTesting(nullptr);
+    }
+};
+
 class tst_WebView : public QObject
 {
     Q_OBJECT
@@ -229,6 +272,9 @@ private slots:
     void zoom();
     void wheelZoom();
     void loadUrl();
+    void torQueuedNavigation();
+    void torWarmupNavigationGate();
+    void torWarmupRetry();
     void statusBarText();
     void mouseButtons();
     void dropUrl();
@@ -243,11 +289,13 @@ private slots:
     void contextMenuLinkCrossProfileMatrix();
     void linkOpenRefererDiscipline();
     void contextMenuPageActions();
+    void contextMenuSelectionToNote();
     void contextMenuImageActions();
     void contextMenuImageLinkActions();
     void contextMenuCanvasActions();
     void contextMenuVideoPosterActions();
     void contextMenuBlobImage();
+    void contextMenuAddSearchProvider();
 };
 
 // POL01 helpers — the context menu is exec()d inside the right-button
@@ -477,6 +525,311 @@ void tst_WebView::loadUrl()
     view.loadUrl(QUrl(QLatin1String("javascript:void(0)")));
     QTest::qWait(250);
     QCOMPARE(view.url(), before);
+}
+
+// TOR18: a remote loadUrl() issued before the daemon is ready is
+// held in the view — newest url wins — and dispatched when `ready`
+// lands, instead of dying at the fail-closed proxy.  Local schemes
+// never queue: they resolve without the SOCKS listener at all.
+void tst_WebView::torQueuedNavigation()
+{
+    PrivacyFlagGuard flags;
+    BrowserApplication::setTorMode(true);
+
+    // An inert manager — the ctor spawns nothing until start(), so
+    // the test drives the state machine by hand.  The injection is
+    // guarded back to nullptr: a dangling pointer in
+    // m_torManager would poison every later case.
+    TorManager tor;
+    TorManagerInjection injected(&tor);
+    tor.setStateForTesting(TorManager::Bootstrapping);
+
+    TestWebView view;
+    const QUrl queued(QStringLiteral("https://queued.example/"));
+    view.loadUrl(queued);
+    QCOMPARE(view.torQueuedUrlForTesting(), queued);
+    QVERIFY(!view.isLoading());
+
+    // A second kick while still bootstrapping replaces the held url —
+    // the newest user intent wins.
+    const QUrl newer(QStringLiteral("https://newer.example/"));
+    view.loadUrl(newer);
+    QCOMPARE(view.torQueuedUrlForTesting(), newer);
+
+    // data:/qrc:/about:/file: never queue.
+    const QUrl local(QStringLiteral("data:text/html,<p>local</p>"));
+    view.loadUrl(local);
+    QVERIFY(view.torQueuedUrlForTesting().isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        view.url().toString().startsWith(QLatin1String("data:")),
+        15000);
+
+    // Re-queue, drive the daemon to Ready — TOR12: `ready` alone does
+    // not free the hold while no stream-ridable circuit exists yet;
+    // the nav flushes into a real load when usable-circuit evidence
+    // arrives.
+    view.loadUrl(queued);
+    QCOMPARE(view.torQueuedUrlForTesting(), queued);
+    tor.setStateForTesting(TorManager::Ready);
+    tor.ready(QNetworkProxy());
+    QCOMPARE(view.torQueuedUrlForTesting(), queued);
+    QVERIFY(!view.isLoading());
+    QSignalSpy startedSpy(&view, &QWebEngineView::loadStarted);
+    tor.setCircuitsForTesting({ makeCircuit(1, QLatin1String("BUILT"),
+                                            3, QLatin1String("GENERAL")) });
+    QVERIFY(view.torQueuedUrlForTesting().isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(startedSpy.count() >= 1, 15000);
+
+    // A Failed daemon still holds the kick — the banner's Retry
+    // restarts it and the queued nav lands when that ready fires.
+    tor.setStateForTesting(TorManager::Failed);
+    view.loadUrl(newer);
+    QCOMPARE(view.torQueuedUrlForTesting(), newer);
+}
+
+// TOR12: the post-ready cold-circuit window — `ready` means the
+// SOCKS listener answers, not that a stream-ridable circuit exists.
+// A nav issued while Ready is still held until circuit evidence
+// arrives, and a daemon that never shares circuit data (dead control
+// channel — SOCKS still proxies) hits the bounded grace instead of
+// stranding the tab.
+void tst_WebView::torWarmupNavigationGate()
+{
+    PrivacyFlagGuard flags;
+    BrowserApplication::setTorMode(true);
+    TorManager tor;
+    TorManagerInjection injected(&tor);
+    struct GraceGuard {
+        ~GraceGuard()
+        {
+            WebView::setTorQueueGraceMsForTesting(-1);
+            WebView::setTorQueueWarmupMsForTesting(-1);
+            WebPage::setTorWarmupMsForTesting(-1);
+        }
+    } grace;
+    // Both bounds are wall-clock from `ready` — a suite-load stall
+    // must not let the real values expire mid-leg, so the warm-up is
+    // stretched and the grace is staged per phase.  The PAGE warm-up
+    // is closed (0): dispatched leg failures should commit their
+    // honest error pages instead of arming the warm-up retry, whose
+    // fallback clock and pending-page commits would add dispatch
+    // noise the startedSpy counts cannot attribute.
+    WebView::setTorQueueWarmupMsForTesting(10 * 60 * 1000);
+    WebView::setTorQueueGraceMsForTesting(20000);
+    WebPage::setTorWarmupMsForTesting(0);
+
+    // Ready but zero circuit evidence — the nav still holds, and the
+    // pending state is announced rather than silent.
+    tor.setStateForTesting(TorManager::Ready);
+    TestWebView view;
+    const QUrl target(QStringLiteral("https://warmup.example/"));
+    view.loadUrl(target);
+    QCOMPARE(view.torQueuedUrlForTesting(), target);
+    QVERIFY(!view.isLoading());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        view.lastStatusBarText().contains(
+            QLatin1String("Tor is still starting")), 5000);
+
+    // Snapshots carrying only internal or unfinished paths do not
+    // free it.
+    tor.setCircuitsForTesting({
+        makeCircuit(1, QLatin1String("BUILT"), 1,
+                    QLatin1String("DIR_FETCH")),
+        makeCircuit(2, QLatin1String("EXTENDED"), 3,
+                    QLatin1String("GENERAL")),
+    });
+    QCOMPARE(view.torQueuedUrlForTesting(), target);
+
+    // A real three-hop BUILT client circuit flushes it into a load.
+    QSignalSpy startedSpy(&view, &QWebEngineView::loadStarted);
+    tor.setCircuitsForTesting({ makeCircuit(3, QLatin1String("BUILT"),
+                                            3, QLatin1String("GENERAL")) });
+    QVERIFY(view.torQueuedUrlForTesting().isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(startedSpy.count() >= 1, 15000);
+
+    // Grace expiry: a Ready daemon that never reports a usable
+    // circuit still dispatches after the bound rather than holding
+    // the nav forever.  The grace timer stopped on the first
+    // dispatch, so this phase gets a fresh, small bound.
+    WebView::setTorQueueGraceMsForTesting(1500);
+    tor.setCircuitsForTesting({
+        makeCircuit(4, QLatin1String("BUILT"), 1,
+                    QLatin1String("DIR_FETCH")),
+    });
+    const QUrl second(QStringLiteral("https://grace.example/"));
+    view.loadUrl(second);
+    QCOMPARE(view.torQueuedUrlForTesting(), second);
+    const int startedBefore = startedSpy.count();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        view.torQueuedUrlForTesting().isEmpty(), 8000);
+    QTRY_VERIFY_WITH_TIMEOUT(startedSpy.count() > startedBefore,
+                             8000);
+
+    // TOR14: a page-initiated navigation — the tor start page's
+    // search assigns window.location.href, which never reaches
+    // loadUrl — is refused into the same hold instead of dying at
+    // the cold proxy: no dispatch, no error page, and the same
+    // usable-circuit evidence flushes it.  Settle the grace leg's
+    // error-page commit first so its loadStarted is already counted
+    // in the snapshot below — the committed title is the proof it
+    // landed (isLoading can read false in the gap between the failed
+    // load and the generated commit).
+    WebView::setTorQueueGraceMsForTesting(20000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        view.title().startsWith(QLatin1String("Error loading page")),
+        15000);
+    tor.setCircuitsForTesting({
+        makeCircuit(5, QLatin1String("BUILT"), 1,
+                    QLatin1String("DIR_FETCH")),
+    });
+    const QUrl pageNav(QStringLiteral("https://pageinit.example/"));
+    view.webPage()->load(pageNav);
+    // acceptNavigationRequest runs a turn after page->load() — the
+    // hold lands through the event loop rather than synchronously.
+    QTRY_VERIFY_WITH_TIMEOUT(view.torQueuedUrlForTesting() == pageNav,
+                             15000);
+    QTest::qWait(400);
+    // A refused navigation still surfaces loadStarted + a swallowed
+    // LoadFailed for the aborted target (Chromium starts the load
+    // before the refusal aborts it), so the started-spy count is not
+    // the signal here — the hold's proof is that no error page ever
+    // commits for it: a real dispatch into the cold proxy fails and
+    // setHtml()s the notfound page under the target's url, moving
+    // both url() and title to pageNav.
+    QVERIFY(view.url() != pageNav);
+    QVERIFY(!view.title().contains(pageNav.host()));
+    const int startedAfterHold = startedSpy.count();
+    tor.setCircuitsForTesting({ makeCircuit(6, QLatin1String("BUILT"),
+                                            3, QLatin1String("GENERAL")) });
+    QVERIFY(view.torQueuedUrlForTesting().isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(startedSpy.count() > startedAfterHold,
+                             15000);
+}
+
+// TOR12: a navigation that does dispatch into the cold window and
+// fails (page-level navs, link clicks, a grace-expired dispatch)
+// gets bounded auto-retries — not one, since the first usable
+// circuit is often still cold — and stops honestly once the budget
+// is spent.
+void tst_WebView::torWarmupRetry()
+{
+    PrivacyFlagGuard flags;
+    BrowserApplication::setTorMode(true);
+    TorManager tor;
+    TorManagerInjection injected(&tor);
+    // The warm-up window is wall-clock from `ready` — under suite
+    // load four fire->fail->re-arm round-trips can out-last the real
+    // 45s bound, after which torArmRetry honestly refuses and the
+    // leg would wait forever; stretch it for the duration.
+    // TOR14: page-level loads are now held by the view's queue too
+    // — the retry only ever sees a failure the gate released, so the
+    // view's warm-up bound is closed (0 = never holds) to simulate
+    // the post-gate race this leg exercises.
+    struct WarmupGuard {
+        ~WarmupGuard()
+        {
+            WebPage::setTorWarmupMsForTesting(-1);
+            WebView::setTorQueueWarmupMsForTesting(-1);
+        }
+    } warmup;
+    WebPage::setTorWarmupMsForTesting(10 * 60 * 1000);
+    WebView::setTorQueueWarmupMsForTesting(0);
+    tor.setStateForTesting(TorManager::Ready);
+
+    TestWebView view;
+    // A guaranteed-refused target — the loopback port-1 listener does
+    // not exist, so every dispatch fails fast like the cold-circuit
+    // CONNECT failures this path covers.  https: keeps the tor
+    // interceptor's http->https upgrade from renaming the url the
+    // retry arms for.
+    const QUrl target(QStringLiteral("https://127.0.0.1:1/"));
+    int dispatches = 0;
+    QObject::connect(view.webPage(), &WebPage::aboutToLoadUrl,
+                     &view, [&dispatches, &target](const QUrl &url) {
+        if (url == target)
+            ++dispatches;
+    });
+    int failures = 0;
+    QObject::connect(&view, &QWebEngineView::loadFinished,
+                     &view, [&failures](bool ok) {
+        if (!ok)
+            ++failures;
+    });
+    QStringList titles;
+    QObject::connect(&view, &QWebEngineView::titleChanged,
+                     &view, [&titles](const QString &title) {
+        titles.append(title);
+    });
+    // A page-level load with the view gate open dispatches straight
+    // into the dead proxy — the warm-up retry is the fallback for
+    // exactly those post-gate failures.
+    view.webPage()->load(target);
+    QTRY_VERIFY_WITH_TIMEOUT(dispatches == 1, 15000);
+    // Armed once the failure lands — torArmRetry runs inside the
+    // failed load's handling.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        view.webPage()->torPendingRetryForTesting() == target,
+        30000);
+
+    // TOR14: while the retry is armed the committed document is the
+    // "Tor is still starting" pending page — the notfound error page
+    // the report saw flash never commits at all.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        view.title().contains(QLatin1String("Connecting to the Tor")),
+        15000);
+
+    // Past the cold-circuit dwell each usable-circuit snapshot fires
+    // the armed retry; every retry fails again and re-arms while the
+    // budget allows — the first Enter no longer needs a human second
+    // one.  The attempts counter is the deterministic sync point —
+    // torFireRetry increments it synchronously inside the snapshot
+    // or fallback handler, and `>=` absorbs a fallback-clock fire
+    // that beat our snapshot to the armed url.
+    for (int attempt = 1; attempt <= 4; ++attempt) {
+        if (attempt == 1)
+            QTest::qWait(3500);   // past the cold-circuit dwell
+        tor.setCircuitsForTesting({ makeCircuit(10 + attempt,
+                        QLatin1String("BUILT"), 3,
+                        QLatin1String("GENERAL")) });
+        QTRY_VERIFY_WITH_TIMEOUT(
+            view.webPage()->torRetryAttemptsForTesting() >= attempt,
+            30000);
+        // That fire's own failure re-arms the url while attempts
+        // remain — the only honest alternative is the budget
+        // already spent by a double-fire.  The failure round-trip
+        // (dispatch → dead-proxy refuse → LoadFailed → re-arm) runs
+        // through the event loop, so under suite load this needs the
+        // same slack the tail's failure count gets.
+        if (attempt < 4)
+            QTRY_VERIFY_WITH_TIMEOUT(
+                view.webPage()->torPendingRetryForTesting() == target
+                    || view.webPage()
+                           ->torRetryAttemptsForTesting() >= 4,
+                60000);
+    }
+
+    // Budget spent — the last failure lands without re-arming (the
+    // fifth refusal is counted so this does not pass vacuously), a
+    // further usable snapshot fires nothing, and the honest error
+    // page finally commits — it is the ONLY one the leg saw.
+    // The fifth failure lands a beat after the fourth attempt fires
+    // — the dispatch runs through acceptNavigationRequest on a later
+    // event-loop turn, so under suite load this bound needs slack.
+    QTRY_VERIFY_WITH_TIMEOUT(failures >= 5, 60000);
+    QVERIFY(view.webPage()->torPendingRetryForTesting().isEmpty());
+    QCOMPARE(view.webPage()->torRetryAttemptsForTesting(), 4);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        view.title().startsWith(QLatin1String("Error loading page")),
+        15000);
+    tor.setCircuitsForTesting({ makeCircuit(99, QLatin1String("BUILT"),
+                                            3, QLatin1String("GENERAL")) });
+    QTest::qWait(300);
+    QCOMPARE(dispatches, 5);
+    int errorPages = 0;
+    for (const QString &title : titles)
+        if (title.startsWith(QLatin1String("Error loading page")))
+            ++errorPages;
+    QCOMPARE(errorPages, 1);
 }
 
 void tst_WebView::statusBarText()
@@ -1647,6 +2000,53 @@ void tst_WebView::contextMenuPageActions()
     QTRY_VERIFY_WITH_TIMEOUT(dialog.isNull(), 5000);
 }
 
+// NOTE03: 'Add Selection to Notes' — a selection on the page becomes
+// a new note (titled by the page, body = selection + source url) in
+// the window profile's NotesModel — the store the sidebar shows.
+// The leg drives the menu action's slot directly: exec()ing the real
+// context menu over an active text selection traps intermittently in
+// offscreen Chromium teardown (blink.mojom.Widget message rejection)
+// regardless of which actions the menu carries.
+void tst_WebView::contextMenuSelectionToNote()
+{
+    TestWebView view;
+    view.resize(800, 600);
+    view.show();
+
+    QSignalSpy loaded(&view, SIGNAL(loadFinished(bool)));
+    view.loadUrl(QUrl(QStringLiteral(
+        "data:text/html,<html><head><title>Noted Page</title></head>"
+        "<body><p>remember this passage</p></body></html>")));
+    QTRY_VERIFY_WITH_TIMEOUT(loaded.count() >= 1, 15000);
+
+    view.page()->runJavaScript(QLatin1String(
+        "window.getSelection().selectAllChildren(document.body);"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        view.selectedText().contains(QLatin1String("remember this")),
+        5000);
+
+    NotesModel *model = NotesModel::instance(
+        BrowserApplication::webEngineProfile());
+    QVERIFY(model);
+    const int before = model->rowCount();
+
+    // The context menu wires 'Add Selection to Notes' to this slot.
+    QVERIFY(QMetaObject::invokeMethod(&view, "addSelectionToNote"));
+    QCOMPARE(model->rowCount(), before + 1);
+    const QModelIndex note = model->index(model->rowCount() - 1, 0);
+    QCOMPARE(note.data(Qt::EditRole).toString(),
+             QLatin1String("Noted Page"));
+    const QString body = note.data(NotesModel::BodyRole).toString();
+    QVERIFY(body.contains(QLatin1String("remember this passage")));
+    QVERIFY(body.contains(view.url().toString()));
+    QVERIFY(view.lastStatusBarText().contains(QLatin1String("notes"),
+                                              Qt::CaseInsensitive));
+
+    // Leave the shared store as found.
+    while (model->rowCount() > before)
+        model->removeRow(model->rowCount() - 1);
+}
+
 // CTX01 helpers — 'Open Image in New Tab/Window' lands in a detached
 // top-level WebView when the source has no TabWidget (openUrlInTarget's
 // fallback), so the tests locate it among the application's top-levels.
@@ -1968,6 +2368,158 @@ void tst_WebView::contextMenuBlobImage()
     QVERIFY(detached->url().toString().startsWith(
         QLatin1String("blob:")));
     closeDetached(detached);
+}
+
+// SRCH01: 'Add to the toolbar search' on an editable field probes the
+// enclosing GET form in-page (contextsearch.js) and registers a
+// template engine — the clicked input's slot becomes {searchTerms},
+// other fields keep the values a real submission would send.  A
+// textarea (editable but not a search input) and a POST form get the
+// honest failure paths instead.
+void tst_WebView::contextMenuAddSearchProvider()
+{
+    RecordedHttpServer server;
+    QVERIFY(server.start());
+    server.indexHtml = QByteArray(
+        "<html><body style='margin:0'>"
+        "<form action='/find' method='get' "
+        "style='position:fixed;left:0;top:0;margin:0'>"
+        "<label for='q' style='display:block;height:20px'>"
+        "Site Finder</label>"
+        "<input type='search' name='q' id='q' "
+        "style='width:220px;height:30px'>"
+        "<input type='hidden' name='h' value='hid42'>"
+        "<input type='checkbox' name='c' value='yes' checked>"
+        "<input type='checkbox' name='u' value='no'>"
+        "<select name='sel'>"
+        "<option>alpha</option><option selected>beta</option></select>"
+        "<input type='submit' value='Go'>"
+        "</form>"
+        "<form action='/post' method='post' "
+        "style='position:fixed;left:0;top:120px;margin:0'>"
+        "<input type='text' name='p' style='width:220px;height:30px'>"
+        "<input type='submit' value='Send'>"
+        "</form>"
+        "<textarea style='position:fixed;left:0;top:200px;width:220px;"
+        "height:60px'></textarea>"
+        "</body></html>");
+
+    TestWebView view;
+    view.resize(800, 600);
+    view.show();
+    QSignalSpy loaded(&view, SIGNAL(loadFinished(bool)));
+    view.loadUrl(server.url(QLatin1String("/form.html")));
+    QTRY_VERIFY_WITH_TIMEOUT(loaded.count() >= 1, 15000);
+
+    OpenSearchManager *manager = ToolbarSearch::openSearchManager();
+    // The registry persists across runs — clear a leftover from an
+    // earlier aborted attempt so enginesBefore is honest.
+    manager->removeEngine(QLatin1String("Loopback Search"));
+    const int enginesBefore = manager->enginesCount();
+
+    // The probe's follow-ups (engine-name prompt, method warning) are
+    // modal — drive them from a polling timer like the tabbar tests'
+    // rename dialog.
+    int dialogsAccepted = 0;
+    QTimer dialogTimer;
+    QObject::connect(&dialogTimer, &QTimer::timeout, qApp, [&]() {
+        QWidget *modal = QApplication::activeModalWidget();
+        if (QInputDialog *dialog =
+                qobject_cast<QInputDialog *>(modal)) {
+            ++dialogsAccepted;
+            if (QLineEdit *edit = dialog->findChild<QLineEdit *>())
+                edit->setText(QLatin1String("Loopback Search"));
+            dialog->accept();
+        } else if (QMessageBox *box =
+                qobject_cast<QMessageBox *>(modal)) {
+            ++dialogsAccepted;
+            box->accept();
+        }
+    });
+    dialogTimer.start(30);
+
+    // ==== leg 1: GET form — the entry restores the full flow ====
+    bool triggered = false;
+    bool sawEditingCommands = false;
+    const bool popped = driveRightClick(&view, QPoint(60, 35),
+                                        [&](QMenu *menu) {
+        // The provider entry must not cost the standard editing
+        // commands the field's menu used to carry.
+        for (QAction *action : menu->actions()) {
+            const QString text = action->text().remove(QLatin1Char('&'));
+            if (text == QLatin1String("Paste")
+                || text == QLatin1String("Select All")
+                || text == QLatin1String("Copy"))
+                sawEditingCommands = true;
+        }
+        if (QAction *add = findMenuAction(
+                menu, QStringLiteral("Add to the toolbar search"))) {
+            triggered = true;
+            add->trigger();
+        }
+    });
+    QVERIFY2(popped, "no context menu on search-field right-click");
+    QVERIFY(triggered);
+    QVERIFY(sawEditingCommands);
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        manager->enginesCount() == enginesBefore + 1, 15000);
+    QCOMPARE(dialogsAccepted, 1);
+    OpenSearchEngine *engine =
+        manager->engine(QLatin1String("Loopback Search"));
+    QVERIFY(engine);
+    const QString templ = engine->searchUrlTemplate();
+    QVERIFY2(templ.startsWith(server.url(QLatin1String("/find")).toString()),
+             qPrintable(templ));
+    QVERIFY2(templ.contains(QLatin1String("q={searchTerms}")),
+             qPrintable(templ));
+    QVERIFY(templ.contains(QLatin1String("h=hid42")));
+    QVERIFY(templ.contains(QLatin1String("c=yes")));
+    QVERIFY(templ.contains(QLatin1String("sel=beta")));
+    // The unchecked checkbox submits nothing.
+    QVERIFY(!templ.contains(QLatin1String("u=no")));
+    // The template produces a real results url.
+    const QUrl searchUrl = engine->searchUrl(QStringLiteral("hello world"));
+    QCOMPARE(QUrlQuery(searchUrl).queryItemValue(QStringLiteral("q")),
+             QStringLiteral("hello world"));
+
+    manager->removeEngine(QLatin1String("Loopback Search"));
+    QCOMPARE(manager->enginesCount(), enginesBefore);
+
+    // ==== leg 2: a textarea is editable but owns no search form ====
+    bool triggeredTa = false;
+    const bool poppedTa = driveRightClick(&view, QPoint(60, 230),
+                                          [&](QMenu *menu) {
+        if (QAction *add = findMenuAction(
+                menu, QStringLiteral("Add to the toolbar search"))) {
+            triggeredTa = true;
+            add->trigger();
+        }
+    });
+    QVERIFY2(poppedTa, "no context menu on textarea right-click");
+    QVERIFY(triggeredTa);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        view.lastStatusBarText().contains(QLatin1String("No search form")),
+        10000);
+    QTest::qWait(200);
+    QCOMPARE(manager->enginesCount(), enginesBefore);
+    QCOMPARE(dialogsAccepted, 1);
+
+    // ==== leg 3: POST form — the method gate warns ====
+    bool triggeredPost = false;
+    const bool poppedPost = driveRightClick(&view, QPoint(60, 135),
+                                            [&](QMenu *menu) {
+        if (QAction *add = findMenuAction(
+                menu, QStringLiteral("Add to the toolbar search"))) {
+            triggeredPost = true;
+            add->trigger();
+        }
+    });
+    QVERIFY2(poppedPost, "no context menu on post-field right-click");
+    QVERIFY(triggeredPost);
+    QTRY_VERIFY_WITH_TIMEOUT(dialogsAccepted == 2, 10000);
+    QCOMPARE(manager->enginesCount(), enginesBefore);
+    dialogTimer.stop();
 }
 
 int main(int argc, char *argv[])

@@ -20,6 +20,7 @@
 #include "sitepanel.h"
 
 #include "adblockmanager.h"
+#include "arorastyle.h"
 #include "adblockrequestinterceptor.h"
 #include "browserapplication.h"
 #include "browsertheme.h"
@@ -68,12 +69,15 @@ SitePanel::SitePanel(QWidget *parent)
     , m_blockedBaseline(0)
     , m_refreshing(false)
 {
-    setFrameStyle(QFrame::StyledPanel | QFrame::Raised);
+    setFrameStyle(QFrame::StyledPanel | QFrame::Plain);
     setMinimumWidth(280);
 
     QVBoxLayout *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(10, 8, 10, 8);
-    layout->setSpacing(6);
+    layout->setContentsMargins(AroraStyle::Spacing::Medium,
+                               AroraStyle::Spacing::Medium,
+                               AroraStyle::Spacing::Medium,
+                               AroraStyle::Spacing::Medium);
+    layout->setSpacing(AroraStyle::Spacing::Medium);
 
     m_hostLabel = plainLabel(QString(), this);
     m_hostLabel->setObjectName(QLatin1String("sitePanelHost"));
@@ -139,7 +143,7 @@ SitePanel::SitePanel(QWidget *parent)
 
     QFrame *line = new QFrame(this);
     line->setFrameShape(QFrame::HLine);
-    line->setFrameShadow(QFrame::Sunken);
+    line->setFrameShadow(QFrame::Plain);
     layout->addWidget(line);
 
     QHBoxLayout *cookieRow = new QHBoxLayout();
@@ -244,7 +248,7 @@ SitePanel::SitePanel(QWidget *parent)
 
     QFrame *line2 = new QFrame(this);
     line2->setFrameShape(QFrame::HLine);
-    line2->setFrameShadow(QFrame::Sunken);
+    line2->setFrameShadow(QFrame::Plain);
     layout->addWidget(line2);
 
     layout->addWidget(plainLabel(tr("Permissions"), this));
@@ -252,12 +256,12 @@ SitePanel::SitePanel(QWidget *parent)
     m_permissionsBox->setObjectName(QLatin1String("sitePermissions"));
     m_permissionsLayout = new QVBoxLayout(m_permissionsBox);
     m_permissionsLayout->setContentsMargins(0, 0, 0, 0);
-    m_permissionsLayout->setSpacing(2);
+    m_permissionsLayout->setSpacing(AroraStyle::Spacing::Small);
     layout->addWidget(m_permissionsBox);
 
     QFrame *line3 = new QFrame(this);
     line3->setFrameShape(QFrame::HLine);
-    line3->setFrameShadow(QFrame::Sunken);
+    line3->setFrameShadow(QFrame::Plain);
     layout->addWidget(line3);
 
     QHBoxLayout *buttons = new QHBoxLayout();
@@ -276,6 +280,18 @@ SitePanel::SitePanel(QWidget *parent)
     buttons->addWidget(m_clearData);
     buttons->addStretch(1);
     layout->addLayout(buttons);
+
+    // TRUST17: keep the panel synced while its popup is closed — the
+    // menu's pre-popup sizeHint flush measures the last render before
+    // aboutToShow runs, so unsignalled state that shifts while closed
+    // (a remembered-permission grant from a page prompt, a whitelist
+    // edit in the settings dialog) is exactly the first-click
+    // wrong-size popup.
+    connect(WebPermissionManager::instance(),
+            &WebPermissionManager::changed, this, &SitePanel::refresh);
+    connect(AdBlockManager::instance(), &AdBlockManager::rulesChanged,
+            this, &SitePanel::refresh);
+    refresh();
 }
 
 void SitePanel::setWebView(WebView *webView)
@@ -535,6 +551,7 @@ void SitePanel::refresh()
 
     rebuildPermissionRows();
     m_refreshing = false;
+    emit refreshed();
 }
 
 void SitePanel::applyCookieRule(int index)
@@ -655,7 +672,17 @@ void SitePanel::toggleFingerprintSpoof(bool checked)
 
 void SitePanel::rebuildPermissionRows()
 {
+    // Rows are nested layouts — a layout item's widget() is null, so
+    // deleting the item alone orphan-parents the row's widgets to the
+    // box.  Strays stay children of the panel and paint over the popup
+    // on first show (TRUST17).  Drain each row's widgets first.
     while (QLayoutItem *item = m_permissionsLayout->takeAt(0)) {
+        if (QLayout *row = item->layout()) {
+            while (QLayoutItem *child = row->takeAt(0)) {
+                delete child->widget();
+                delete child;
+            }
+        }
         delete item->widget();
         delete item;
     }
@@ -690,6 +717,11 @@ void SitePanel::rebuildPermissionRows()
             tr("No remembered permissions for this site"),
             m_permissionsBox));
     }
+    // TRUST17: swapped rows don't reach the parent layout's per-item
+    // sizeHint cache on their own — a popup measuring the panel mid-
+    // rebuild would read the previous render's size (the first-click
+    // squashed popup).  Mark the box so the next query re-measures.
+    m_permissionsBox->updateGeometry();
 }
 
 #if defined(ARORA_RUSTCORE)

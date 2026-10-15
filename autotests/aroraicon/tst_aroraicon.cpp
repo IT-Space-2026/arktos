@@ -27,6 +27,7 @@
 #include <QtGui/QtGui>
 
 #include "aroraicon.h"
+#include "arorastyle.h"
 #include "browsertheme.h"
 
 class tst_AroraIcon : public QObject
@@ -41,12 +42,31 @@ private slots:
     void namesList();
     void bundledCoverage_data();
     void bundledCoverage();
+    void defaultCoverage();
     void liveSwitch();
     void darkVariant();
-    void nativeDarkVariant();
-    void legacyFallback();
+    void retiredIdMigrates();
+    void bundledFallback();
     void iconForTheme();
+    void chromeIcon();
 };
+
+// Opaque pixels whose color strays more than rounding noise from the
+// palette tint — a getChrome glyph must be perfectly monochrome.
+static int offTintPixels(const QImage &image, const QColor &tint)
+{
+    int off = 0;
+    for (int y = 0; y < image.height(); ++y)
+        for (int x = 0; x < image.width(); ++x) {
+            const QColor c = image.pixelColor(x, y);
+            if (c.alpha() > 128
+                    && (qAbs(c.red() - tint.red()) > 2
+                        || qAbs(c.green() - tint.green()) > 2
+                        || qAbs(c.blue() - tint.blue()) > 2))
+                ++off;
+        }
+    return off;
+}
 
 static int opaquePixels(const QImage &image)
 {
@@ -67,14 +87,18 @@ void tst_AroraIcon::initTestCase()
 
 void tst_AroraIcon::cleanupTestCase()
 {
-    AroraIcon::setTheme(QLatin1String("native"));
+    AroraIcon::setTheme(AroraIcon::theme());
 }
 
 void tst_AroraIcon::themeIds()
 {
     const QStringList ids = AroraIcon::themeIds();
+    // ICONS12: "native" is retired — only bundled sets are
+    // selectable.  ICONS13: so is the bundled "legacy" set.
     QCOMPARE(ids.count(), 4);
-    QCOMPARE(ids.first(), QLatin1String("native"));
+    QCOMPARE(ids.first(), QLatin1String("adwaita"));
+    QVERIFY(!ids.contains(QLatin1String("native")));
+    QVERIFY(!ids.contains(QLatin1String("legacy")));
     for (const QString &id : ids)
         QVERIFY(!AroraIcon::themeDisplayName(id).isEmpty());
 }
@@ -120,6 +144,7 @@ void tst_AroraIcon::bundledCoverage_data()
     QTest::newRow("adwaita") << QStringLiteral("adwaita");
     QTest::newRow("breeze") << QStringLiteral("breeze");
     QTest::newRow("tabler") << QStringLiteral("tabler");
+    QTest::newRow("lucide") << QStringLiteral("lucide");
 }
 
 void tst_AroraIcon::bundledCoverage()
@@ -131,6 +156,24 @@ void tst_AroraIcon::bundledCoverage()
         const QImage image = icon.pixmap(QSize(24, 24)).toImage();
         QVERIFY2(!image.isNull(), qPrintable(id + '/' + name));
         QVERIFY2(opaquePixels(image) > 0, qPrintable(id + '/' + name));
+    }
+}
+
+// ICONS10: the default pick is the bundled Tabler set, and every
+// chrome name the code can ask for ships inside it — ICONS13 made
+// tabler the fallback root every other set inherits (arora-legacy's
+// 2009 art is gone), so a mixed-style fall-through is the regression
+// the audit exists to prevent.  The -dark variant must cover the
+// same surface.
+void tst_AroraIcon::defaultCoverage()
+{
+    QCOMPARE(AroraIcon::theme(), QLatin1String("tabler"));
+    const QDir light(QLatin1String(":/icons/arora-tabler/icons"));
+    const QDir dark(QLatin1String(":/icons/arora-tabler-dark/icons"));
+    for (const QString &name : AroraIcon::names()) {
+        const QString file = name + QLatin1String(".svg");
+        QVERIFY2(light.exists(file), qPrintable(name));
+        QVERIFY2(dark.exists(file), qPrintable(name));
     }
 }
 
@@ -158,6 +201,9 @@ void tst_AroraIcon::darkVariant()
              QLatin1String("arora-tabler-dark"));
     QCOMPARE(AroraIcon::effectiveThemeName(QLatin1String("adwaita")),
              QLatin1String("arora-adwaita-dark"));
+    // ICONS11: lucide ships the same -dark recolor variant.
+    QCOMPARE(AroraIcon::effectiveThemeName(QLatin1String("lucide")),
+             QLatin1String("arora-lucide-dark"));
 
     AroraIcon::setTheme(QLatin1String("tabler"));
     const QImage darkImage = AroraIcon::get(QLatin1String("go-previous"))
@@ -183,22 +229,50 @@ void tst_AroraIcon::darkVariant()
              QLatin1String("arora-tabler"));
 }
 
-// ICONS05: "native" under a dark palette must not render dark
-// glyphs.  A forced dark palette is invisible to the OS icon theme,
-// so unless the system theme provably serves light-on-dark art the
-// effective theme falls back to a bundled -dark set.  Assert the
-// rendered outcome, not the mapping — desktops whose native theme
-// really is dark-aware keep their theme and still pass.
-void tst_AroraIcon::nativeDarkVariant()
+// ICONS12: the retired "native" id — and any other unknown pick —
+// migrates to the default bundled set instead of erroring, so a
+// profile pinned to it keeps working.  ICONS13: the removed
+// arora-legacy set migrates the same way.  Under a dark palette the
+// migrated pick still engages the -dark recolor.
+void tst_AroraIcon::retiredIdMigrates()
 {
-    const QPalette saved = qApp->palette();
-    qApp->setPalette(BrowserTheme::darkPalette());
+    QSettings settings;
+    const QVariant saved = settings.value(
+        QLatin1String("MainWindow/iconTheme"));
 
+    // The persisted read migrates.
+    settings.setValue(QLatin1String("MainWindow/iconTheme"),
+                      QLatin1String("native"));
+    QCOMPARE(AroraIcon::theme(), QLatin1String("tabler"));
+    settings.setValue(QLatin1String("MainWindow/iconTheme"),
+                      QLatin1String("no-such-set"));
+    QCOMPARE(AroraIcon::theme(), QLatin1String("tabler"));
+    // ICONS13: a profile pinned to the removed legacy set (stored
+    // either bare or with the theme-name prefix) reads back as the
+    // default bundled set.
+    settings.setValue(QLatin1String("MainWindow/iconTheme"),
+                      QLatin1String("legacy"));
+    QCOMPARE(AroraIcon::theme(), QLatin1String("tabler"));
+    settings.setValue(QLatin1String("MainWindow/iconTheme"),
+                      QLatin1String("arora-legacy"));
+    QCOMPARE(AroraIcon::theme(), QLatin1String("tabler"));
+    AroraIcon::setTheme(QLatin1String("arora-legacy"));
+    QCOMPARE(QIcon::themeName(),
+             AroraIcon::effectiveThemeName(QLatin1String("tabler")));
+
+    // An explicit setTheme on the retired id lands on the default
+    // set — no dangling "native" resolution.
     AroraIcon::setTheme(QLatin1String("native"));
-    const QString effective = AroraIcon::effectiveThemeName(
-        QLatin1String("native"));
-    QVERIFY2(!effective.isEmpty(), "native must resolve to a theme");
+    QCOMPARE(QIcon::themeName(),
+             AroraIcon::effectiveThemeName(QLatin1String("tabler")));
 
+    // The migrated pick still follows the palette to the -dark
+    // variant — the dark-chrome legibility the old native probe
+    // path used to approximate.
+    const QPalette savedPalette = qApp->palette();
+    qApp->setPalette(BrowserTheme::darkPalette());
+    AroraIcon::setTheme(QLatin1String("native"));
+    QCOMPARE(QIcon::themeName(), QLatin1String("arora-tabler-dark"));
     const QImage image = AroraIcon::get(QLatin1String("go-previous"))
         .pixmap(QSize(24, 24)).toImage();
     qlonglong luminance = 0;
@@ -212,36 +286,33 @@ void tst_AroraIcon::nativeDarkVariant()
             }
         }
     }
-    QVERIFY2(opaque > 0, qPrintable(effective));
-    QVERIFY2(luminance / opaque > 140, qPrintable(
-        effective + QLatin1String(" mean luminance ")
-        + QString::number(luminance / opaque)));
+    QVERIFY(opaque > 0);
+    QVERIFY(luminance / opaque > 140);
 
-    // Back on a light palette native never resolves to a bundled
-    // -dark set — the substitution is palette-driven, not sticky.
-    qApp->setPalette(saved);
-    const QString light = AroraIcon::effectiveThemeName(
-        QLatin1String("native"));
-    QVERIFY2(!(light.startsWith(QLatin1String("arora-"))
-               && light.endsWith(QLatin1String("-dark"))),
-             qPrintable(light));
-    AroraIcon::setTheme(QLatin1String("native"));
+    qApp->setPalette(savedPalette);
+    if (saved.isValid())
+        settings.setValue(QLatin1String("MainWindow/iconTheme"), saved);
+    else
+        settings.remove(QLatin1String("MainWindow/iconTheme"));
+    AroraIcon::setTheme(AroraIcon::theme());
 }
 
-// With no resolvable theme at all the chain must still reach the
-// original 2009 artwork (arora-legacy) — and names missing there
-// must keep falling through to the bundled Adwaita inheritance.
-void tst_AroraIcon::legacyFallback()
+// ICONS13: with no resolvable theme at all the chain must still
+// reach the bundled fallback (arora-tabler, the full-coverage set
+// that replaced arora-legacy) rather than painting blank.
+void tst_AroraIcon::bundledFallback()
 {
     QIcon::setThemeName(QLatin1String("arora-does-not-exist"));
     QVERIFY(!AroraIcon::get(QLatin1String("tab-new")).pixmap(QSize(16, 16))
                  .isNull());
     QVERIFY(!AroraIcon::get(QLatin1String("window-close")).pixmap(QSize(16, 16))
                  .isNull());
-    // Only in the bundled sets — proves the fallback theme's
-    // Inherits=arora-adwaita is walked.
     QVERIFY(!AroraIcon::get(QLatin1String("go-previous")).pixmap(QSize(16, 16))
                  .isNull());
+    // The retired theme name itself resolves to nothing — it is gone
+    // from the bundle, not shadowed.
+    QVERIFY(QDir(QLatin1String(":/icons/arora-legacy"))
+                .entryList().isEmpty());
 }
 
 // Per-option preview icons for the Settings combo: each bundled set
@@ -251,7 +322,8 @@ void tst_AroraIcon::iconForTheme()
     QHash<QString, QImage> previews;
     const QStringList sets = { QLatin1String("adwaita"),
                                QLatin1String("breeze"),
-                               QLatin1String("tabler") };
+                               QLatin1String("tabler"),
+                               QLatin1String("lucide") };
     for (const QString &id : sets) {
         const QIcon icon = AroraIcon::iconForTheme(
             id, QLatin1String("view-refresh"));
@@ -261,6 +333,92 @@ void tst_AroraIcon::iconForTheme()
     }
     QVERIFY(previews.value(QLatin1String("adwaita"))
             != previews.value(QLatin1String("tabler")));
+    // ICONS11: view-refresh is a maintained glyph — tabler and lucide
+    // draw it at identical geometry/color, so the distinctness probe
+    // uses a name where upstream art differs (zoom-original:
+    // zoom-reset vs scan-search).
+    const QImage lucideGlyph = AroraIcon::iconForTheme(
+        QLatin1String("lucide"), QLatin1String("zoom-original"))
+        .pixmap(QSize(24, 24)).toImage();
+    const QImage tablerGlyph = AroraIcon::iconForTheme(
+        QLatin1String("tabler"), QLatin1String("zoom-original"))
+        .pixmap(QSize(24, 24)).toImage();
+    QVERIFY(lucideGlyph != tablerGlyph);
+}
+
+// ICONS09: the chrome contract — getChrome flattens the themed art
+// to the palette's ButtonText (whichever set serves the shape),
+// Disabled takes the palette's own disabled tone, and the tint is
+// resolved per pixmap() request so a live palette flip restyles an
+// already-constructed icon while a theme swap still moves the shape.
+void tst_AroraIcon::chromeIcon()
+{
+    const QPalette saved = qApp->palette();
+    const QColor tint = saved.color(QPalette::Normal,
+                                    QPalette::ButtonText);
+    const QColor disabledTint = saved.color(QPalette::Disabled,
+                                            QPalette::ButtonText);
+
+    const QIcon icon =
+        AroraIcon::getChrome(QLatin1String("go-previous"));
+
+    // Pin the persisted pick first — bundledFallback deliberately
+    // leaves QIcon::themeName on a nonexistent theme, and the
+    // round-trip compare below needs a deterministic base shape.
+    AroraIcon::setTheme(AroraIcon::theme());
+
+    // A palette flip only posts ApplicationPaletteChange — the
+    // PaletteWatcher's setTheme (and any -dark art swap it picks)
+    // happens when the event is delivered, so settle the queue
+    // before each measurement or the base shape is nondeterministic.
+    const auto settleTheme = []() {
+        QCoreApplication::sendPostedEvents(
+            qApp, QEvent::ApplicationPaletteChange);
+    };
+    settleTheme();
+
+    const QImage image = icon.pixmap(QSize(24, 24)).toImage();
+    QVERIFY(opaquePixels(image) > 0);
+    QCOMPARE(offTintPixels(image, tint), 0);
+
+    const QImage disabled =
+        icon.pixmap(QSize(24, 24), QIcon::Disabled).toImage();
+    QVERIFY(opaquePixels(disabled) > 0);
+    QCOMPARE(offTintPixels(disabled, disabledTint), 0);
+    QVERIFY(disabled != image);
+
+    // THEM03/THEM04: a selected request tints to the Highlight
+    // card's foreground — selectionTextColor, the same pick the
+    // sheets pair with the card's text.
+    const QImage selected =
+        icon.pixmap(QSize(24, 24), QIcon::Selected).toImage();
+    QCOMPARE(offTintPixels(selected,
+                           AroraStyle::selectionTextColor(saved)),
+             0);
+
+    // The same QIcon re-tints across a palette flip — nothing
+    // re-set it; that is the whole point of the lazy engine.
+    qApp->setPalette(BrowserTheme::darkPalette());
+    settleTheme();
+    const QImage dark = icon.pixmap(QSize(24, 24)).toImage();
+    QCOMPARE(offTintPixels(dark, BrowserTheme::darkPalette()
+                           .color(QPalette::ButtonText)),
+             0);
+    QVERIFY(dark != image);
+    qApp->setPalette(saved);
+    settleTheme();
+    QCOMPARE(icon.pixmap(QSize(24, 24)).toImage(), image);
+
+    // Theme swap still changes the shape under the fixed tint.
+    AroraIcon::setTheme(QLatin1String("adwaita"));
+    const QImage adwaita = icon.pixmap(QSize(24, 24)).toImage();
+    QCOMPARE(offTintPixels(adwaita, tint), 0);
+    AroraIcon::setTheme(QLatin1String("tabler"));
+    const QImage tabler = icon.pixmap(QSize(24, 24)).toImage();
+    QCOMPARE(offTintPixels(tabler, tint), 0);
+    QVERIFY(adwaita != tabler);
+
+    AroraIcon::setTheme(AroraIcon::theme());
 }
 
 QTEST_MAIN(tst_AroraIcon)

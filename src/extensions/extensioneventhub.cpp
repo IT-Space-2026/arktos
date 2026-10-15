@@ -202,13 +202,13 @@ void ExtensionEventHub::emitTabCreated(WebView *view)
         argsPayload({tabJson(view)}));
 }
 
-void ExtensionEventHub::emitTabRemoved(WebView *view, int windowId,
+void ExtensionEventHub::emitTabRemoved(int tabId, int windowId,
                                        bool isWindowClosing)
 {
     ExtensionBackgroundRuntime::instance()->broadcastEvent(
         QStringLiteral("tabs.onRemoved"),
         argsPayload({
-            ExtensionShimBackend::tabIdFor(view),
+            tabId,
             QJsonObject{
                 {QStringLiteral("windowId"), windowId},
                 {QStringLiteral("isWindowClosing"), isWindowClosing}}}));
@@ -271,8 +271,11 @@ void ExtensionEventHub::wireWindow(BrowserMainWindow *window)
         connect(tw, &QTabWidget::currentChanged, this,
                 [this, tw](int index) { onTabActivated(tw, index); });
     }
+    // The destroyed() signal runs while the object is already sliced
+    // to QObject — a slot parameter cast would be UB, so the typed
+    // pointer is captured at wire time and never dereferenced after.
     connect(window, &QObject::destroyed, this,
-            &ExtensionEventHub::onWindowDestroyed);
+            [this, window]() { onWindowDestroyed(window); });
 }
 
 void ExtensionEventHub::wireView(WebView *view)
@@ -387,7 +390,7 @@ void ExtensionEventHub::wireView(WebView *view)
                        QJsonObject{{QStringLiteral("title"), title}});
     });
     connect(view, &QObject::destroyed, this,
-            &ExtensionEventHub::onViewDestroyed);
+            [this, view]() { onViewDestroyed(view); });
 }
 
 void ExtensionEventHub::onTabActivated(TabWidget *tabs, int index)
@@ -412,29 +415,29 @@ void ExtensionEventHub::onTabActivated(TabWidget *tabs, int index)
             {QStringLiteral("tabIds"), QJsonArray{tabId}}}}));
 }
 
-void ExtensionEventHub::onViewDestroyed(QObject *object)
+void ExtensionEventHub::onViewDestroyed(WebView *view)
 {
-    WebView *view = static_cast<WebView *>(object);
+    // 'view' is mid-destruction — use it ONLY as a map key; every
+    // emitted id was minted while the object was alive.
     const auto it = m_tabs.find(view);
     if (it == m_tabs.end())
         return;
     const TrackedTab tab = it.value();
     m_tabs.erase(it);
     // The window is already dying (or itself gone) when the tab's
-    // removal is window teardown rather than a tab close.
+    // removal is window teardown rather than a tab close.  A dead
+    // window is already out of m_windowIds — identity keys only, the
+    // QPointer<BMW> casts would be UB on the mid-destruction object.
     const bool closing =
-        m_dyingWindows.contains(tab.window.data())
-        || tab.window.isNull()
-        || !m_windowIds.contains(tab.window.data());
+        m_dyingWindows.contains(tab.windowObject)
+        || !m_windowIds.contains(tab.windowObject);
     // The recorded windowId — the live map may already have dropped
     // the dying window.
-    emitTabRemoved(view, tab.windowId, closing);
+    emitTabRemoved(tab.tabId, tab.windowId, closing);
 }
 
-void ExtensionEventHub::onWindowDestroyed(QObject *object)
+void ExtensionEventHub::onWindowDestroyed(BrowserMainWindow *window)
 {
-    BrowserMainWindow *window =
-        static_cast<BrowserMainWindow *>(object);
     m_dyingWindows.insert(window);
     // The children die next; their destroyed() handlers answer
     // isWindowClosing:true, then the rescan records the window's
@@ -458,12 +461,15 @@ void ExtensionEventHub::syncNow()
         ExtensionBackgroundRuntime::instance();
 
     // Every top-level BrowserMainWindow — untrackable-tab windows
-    // (all-OTR, tor) drop out naturally below.
-    QSet<BrowserMainWindow *> liveWindows;
+    // (all-OTR, tor) drop out naturally below.  QObject-identity set:
+    // dying-window compares must never cast the pointer.
+    QSet<QObject *> liveWindows;
     QSet<WebView *> seen;
     for (BrowserMainWindow *window : browsingWindows()) {
         if (!window)
             continue;
+        if (m_dyingWindows.contains(window))
+            continue;   // mid-destruction — no member calls on it
         wireWindow(window);
         TabWidget *tw = window->tabWidget();
         if (!tw)
@@ -480,6 +486,8 @@ void ExtensionEventHub::syncNow()
             if (isNew) {
                 tab.view = view;
                 tab.window = window;
+                tab.windowObject = window;
+                tab.tabId = ExtensionShimBackend::tabIdFor(view);
                 tab.windowId =
                     ExtensionShimBackend::windowIdFor(window);
                 tab.index = i;
@@ -491,7 +499,7 @@ void ExtensionEventHub::syncNow()
                 if (m_firstScanDone)
                     emitTabCreated(view);
             } else {
-                if (tab.window != window) {
+                if (tab.windowObject != window) {
                     // A tear-between-windows: the WebView identity
                     // survives, Chrome detaches and re-attaches.
                     if (m_firstScanDone) {
@@ -502,11 +510,12 @@ void ExtensionEventHub::syncNow()
                                 QJsonObject{
                                     {QStringLiteral("oldWindowId"),
                                      m_windowIds.value(
-                                         tab.window.data(), -1)},
+                                         tab.windowObject, -1)},
                                     {QStringLiteral("oldPosition"),
                                      tab.index}}}));
                     }
                     tab.window = window;
+                    tab.windowObject = window;
                     tab.windowId =
                         ExtensionShimBackend::windowIdFor(window);
                     if (m_firstScanDone) {
@@ -559,10 +568,9 @@ void ExtensionEventHub::syncNow()
         if (!tab.view || !seen.contains(view)) {
             it = m_tabs.erase(it);
             const bool closing =
-                !tab.window
-                || m_dyingWindows.contains(tab.window.data())
-                || !liveWindows.contains(tab.window.data());
-            emitTabRemoved(view, tab.windowId, closing);
+                m_dyingWindows.contains(tab.windowObject)
+                || !liveWindows.contains(tab.windowObject);
+            emitTabRemoved(tab.tabId, tab.windowId, closing);
         } else {
             ++it;
         }
@@ -570,7 +578,7 @@ void ExtensionEventHub::syncNow()
 
     // Removed windows — gone from the top-level set entirely.
     for (auto it = m_windowIds.begin(); it != m_windowIds.end();) {
-        BrowserMainWindow *window = it.key();
+        QObject *window = it.key();
         if (!liveWindows.contains(window)) {
             const int windowId = it.value();
             it = m_windowIds.erase(it);
@@ -582,9 +590,13 @@ void ExtensionEventHub::syncNow()
         }
     }
 
-    // Focus — the active top-level or WINDOW_ID_NONE (-1).
+    // Focus — the active top-level or WINDOW_ID_NONE (-1).  Iterate
+    // the registry (live typed windows) rather than liveWindows: the
+    // identity set holds QObject* keys for teardown compares.
     int focusedId = -1;
-    for (BrowserMainWindow *window : liveWindows) {
+    for (BrowserMainWindow *window : browsingWindows()) {
+        if (!window || m_dyingWindows.contains(window))
+            continue;
         if (window->isActiveWindow()) {
             focusedId = m_windowIds.value(window, -1);
             break;

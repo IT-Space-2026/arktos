@@ -2,7 +2,7 @@
 Name=Arora Breeze
 Comment=Bundled KDE Breeze icons (LGPL-3+)
 Directories=icons
-Inherits=arora-legacy
+Inherits=arora-tabler
 
 [icons]
 Size=16

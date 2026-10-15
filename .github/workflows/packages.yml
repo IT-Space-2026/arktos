@@ -1,0 +1,214 @@
+# packages.yml — CI packaging pipeline for Arora.
+#
+# One job per distributable artifact. All jobs build from the same commit
+# and upload their result as a workflow artifact. No release is created —
+# artifacts are downloaded from the Actions run page.
+#
+# Qt comes from jurplel/install-qt-action on linux/macos (Qt 6.12 +
+# qtwebengine qt5compat qtwebchannel qtpositioning — webchannel and
+# positioning are transitive deps of webenginewidgets that aqt does not
+# auto-install). Windows installs Qt via aqt directly with a patch for
+# the 6.11+ per-arch repo layout (upstream aqtinstall issue #1022).
+# The package drivers (.devin/pkg-*.sh) locate qmake via $QTDIR, which
+# each job derives from qmake on PATH.
+#
+# Coverage:
+#   deb      — .devin/pkg-deb.sh (dpkg-buildpackage path) → dist/*.deb
+#   rpm      — .devin/pkg-rpm.sh (rpmbuild, spec at rpm/arora.spec)
+#   flatpak  — flatpak-builder action → io.arora.Arora.flatpak
+#   windows  — qmake + nmake + windeployqt → zipped portable package
+#   macos    — qmake + make + macdeployqt → Arora.dmg
+
+name: packages
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+
+concurrency:
+  group: packages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deb:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.12.0'
+          modules: 'qtwebengine qt5compat qtwebchannel qtpositioning'
+          aqtversion: '>=3.3.0'
+          cache: true
+
+      - name: Derive QTDIR
+        run: |
+          QMAKE="$(command -v qmake || true)"
+          [ -n "$QMAKE" ] || { echo "no qmake on PATH — install-qt did not expose bin" >&2; exit 1; }
+          QTDIR="$(dirname "$(dirname "$(readlink -f "$QMAKE")")")"
+          echo "QTDIR=$QTDIR" >> "$GITHUB_ENV"
+
+      - name: Build .deb
+        run: ./.devin/pkg-deb.sh
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: arora-deb
+          path: dist/*.deb
+
+  rpm:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.12.0'
+          modules: 'qtwebengine qt5compat qtwebchannel qtpositioning'
+          aqtversion: '>=3.3.0'
+          cache: true
+
+      - name: Derive QTDIR
+        run: |
+          QMAKE="$(command -v qmake || true)"
+          [ -n "$QMAKE" ] || { echo "no qmake on PATH — install-qt did not expose bin" >&2; exit 1; }
+          QTDIR="$(dirname "$(dirname "$(readlink -f "$QMAKE")")")"
+          echo "QTDIR=$QTDIR" >> "$GITHUB_ENV"
+
+      - name: Install rpmbuild
+        run: sudo apt-get update && sudo apt-get install -y rpm
+
+      - name: Build .rpm
+        run: ./.devin/pkg-rpm.sh
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: arora-rpm
+          path: dist/*.rpm
+
+  flatpak:
+    runs-on: ubuntu-26.04
+    container:
+      image: bilelmoussaoui/flatpak-github-actions:freedesktop-24.08
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build flatpak bundle
+        # flatpak-builder handles the KDE 6.11 runtime + qtwebengine
+        # baseapp + rust SDK extension declared in the manifest; the
+        # vendored cargo-sources.json keeps the build offline-exact.
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6.5
+        with:
+          manifest-path: io.arora.Arora.yaml
+          bundle: io.arora.Arora.flatpak
+          repository-name: flathub
+          repository-url: https://flathub.org/repo/flathub.flatpakrepo
+          cache-key: flatpak-builder-${{ github.sha }}
+          verbose: true
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: arora-flatpak
+          path: io.arora.Arora.flatpak
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # install-qt-action is bypassed here: Qt 6.11+ ships Windows metadata as
+      # per-arch repos (qt6_6120/qt6_6120_msvc2022_64/) with no shared catalog,
+      # which aqt (even latest 3.3.0) cannot parse — aqtinstall issue #1022.
+      # We patch aqt's extension_for_arch to map win64_* -> the arch suffix,
+      # making it resolve the per-arch Updates.xml directly.
+      - name: Install Qt 6.12.0 (aqt + repo-layout patch)
+        shell: pwsh
+        run: |
+          python -m pip install --quiet "aqtinstall==3.3.0"
+          $patch = @'
+          import pathlib
+          import aqt.metadata
+          p = pathlib.Path(aqt.metadata.__file__)
+          s = p.read_text()
+          anchor = "        return \"\"\n\n    @staticmethod\n    def possible_extensions_for_arch"
+          assert anchor in s, "aqt layout changed; patch anchor not found"
+          insert = "        elif is_version_ge_6 and architecture.startswith(\"win64_\"):\n            return architecture[len(\"win64_\"):]\n"
+          s = s.replace(anchor, insert + "        return \"\"\n\n    @staticmethod\n    def possible_extensions_for_arch")
+          p.write_text(s)
+          print("patched aqt extension_for_arch for win64_* per-arch repos")
+          '@
+          Set-Content -Path patch_aqt.py -Value $patch
+          python patch_aqt.py
+          python -m aqt install-qt windows desktop 6.12.0 win64_msvc2022_64 --outputdir "$env:RUNNER_WORKSPACE\Qt" --modules qtwebengine qt5compat qtwebchannel qtpositioning
+          $qt = "$env:RUNNER_WORKSPACE\Qt\6.12.0\msvc2022_64"
+          if (-not (Test-Path "$qt\bin\qmake.exe")) { Write-Error "qmake not found at $qt"; exit 1 }
+          "QTDIR=$qt" >> $env:GITHUB_ENV
+          "$qt\bin" >> $env:GITHUB_PATH
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build
+        shell: cmd
+        run: |
+          "%QTDIR%\bin\qmake.exe" -o Makefile arora.pro
+          nmake
+
+      - name: Deploy
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path deploy | Out-Null
+          Copy-Item arora.exe deploy\
+          & "$env:QTDIR\bin\windeployqt.exe" --release --no-translations deploy\arora.exe
+          Compress-Archive -Path deploy\* -DestinationPath arora-windows.zip
+
+      - name: Installer (NSIS)
+        shell: pwsh
+        run: |
+          choco install nsis -y --no-progress
+          $crt = Get-ChildItem "$env:VCToolsRedistDir\x64" -Directory -Filter 'Microsoft.VC*.CRT' | Select-Object -Last 1
+          $args = "/DDEPLOYDIR=deploy"
+          if ($crt) { $args += " /DVCREDIST=$($crt.FullName)" }
+          & makensis $args BuildProcess\windowsinstaller.nsi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: arora-windows
+          path: |
+            arora-windows.zip
+            *Installer*.exe
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.12.0'
+          arch: 'clang_64'
+          modules: 'qtwebengine qt5compat qtwebchannel qtpositioning'
+          cache: true
+
+      - name: Derive QTDIR
+        run: |
+          QMAKE="$(command -v qmake || true)"
+          [ -n "$QMAKE" ] || { echo "no qmake on PATH — install-qt did not expose bin" >&2; exit 1; }
+          QTDIR="$(dirname "$(dirname "$(readlink -f "$QMAKE")")")"
+          echo "QTDIR=$QTDIR" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: |
+          "$QTDIR/bin/qmake" -o Makefile arora.pro
+          make -j"$(sysctl -n hw.ncpu)"
+
+      - name: Package .dmg
+        run: |
+          "$QTDIR/bin/macdeployqt" Arora.app -dmg -verbose=1
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: arora-macos
+          path: '*.dmg'

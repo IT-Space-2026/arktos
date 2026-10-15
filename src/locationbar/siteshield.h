@@ -27,12 +27,15 @@
 class QMenu;
 class SitePanel;
 class WebView;
+class QWidgetAction;
 
-// SHLD01: the location-bar shield indicator.  Opens a per-site
-// privacy panel (SitePanel, hosted in a QMenu so positioning and
-// click-outside dismissal come for free) and reflects the site's
-// protection state: normal while content blocking applies, greyed
-// when the site is whitelisted or blocking is off globally.
+// SHLD01: the site shield indicator — a single shared button on the
+// navigation bar (immediately left of the url field) that follows the
+// active tab.  Opens a per-site privacy panel (SitePanel, hosted in a
+// QMenu so positioning and click-outside dismissal come for free) and
+// reflects the site's protection state: normal while content blocking
+// applies, greyed when the site is whitelisted or blocking is off
+// globally, disabled on tabs with no web view (TRUST15).
 // SHLD02: with the separate AdBlockButton gone this is the single
 // shield — it also carries the uBO-style badge counting requests
 // blocked on the current page load.
@@ -75,12 +78,16 @@ public:
                              const QString &level);
 
 private:
+    void changeEvent(QEvent *event) override;
     void refreshIcon();
+    void populateMenu();
+    void growMenuToFit();
 
     QPointer<WebView> m_webView;
     QMenu *m_menu;
     SitePanel *m_panel;
     QString m_trustLevel;
+    QWidgetAction *m_panelAction;
 };
 
 #endif // SITESHIELD_H

@@ -84,7 +84,6 @@ public:
     void setRules(const QList<AdBlockRule> &rules);
     void addRule(const AdBlockRule &rule);
     void removeRule(int offset);
-    void replaceRule(const AdBlockRule &rule, int offset);
 
 private slots:
     void rulesDownloaded();

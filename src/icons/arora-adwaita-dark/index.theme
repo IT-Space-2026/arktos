@@ -2,7 +2,7 @@
 Name=Arora Adwaita Dark
 Comment=Dark-scheme recolor of the bundled Adwaita symbolic icons
 Directories=icons
-Inherits=arora-legacy
+Inherits=arora-tabler-dark
 
 [icons]
 Size=16

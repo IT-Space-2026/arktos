@@ -64,6 +64,7 @@
 
 #include "addbookmarkdialog.h"
 #include "aroraicon.h"
+#include "arorastyle.h"
 #include "bookmarknode.h"
 #include "bookmarksmanager.h"
 #include "bookmarksmodel.h"
@@ -194,7 +195,9 @@ TabWidget::TabWidget(QWidget *parent)
 
     m_closeTabAction = new QAction(this);
     m_closeTabAction->setShortcuts(QKeySequence::Close);
-    m_closeTabAction->setIcon(AroraIcon::get(QLatin1String("window-close")));
+    // ICONS10: tab-close, not window-close — File > Close Tab and
+    // Close Window shared the same glyph.
+    m_closeTabAction->setIcon(AroraIcon::getChrome(QLatin1String("tab-close")));
 #if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
     m_closeTabAction->setIconVisibleInMenu(false);
 #endif
@@ -203,7 +206,7 @@ TabWidget::TabWidget(QWidget *parent)
     m_bookmarkTabsAction = new QAction(this);
     connect(m_bookmarkTabsAction, &QAction::triggered, this, &TabWidget::bookmarkTabs);
 
-    m_newTabAction->setIcon(AroraIcon::get(QLatin1String("tab-new")));
+    m_newTabAction->setIcon(AroraIcon::getChrome(QLatin1String("tab-new")));
 #if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
     m_newTabAction->setIconVisibleInMenu(false);
 #endif
@@ -214,8 +217,8 @@ TabWidget::TabWidget(QWidget *parent)
     m_previousTabAction = new QAction(this);
     connect(m_previousTabAction, &QAction::triggered, this, &TabWidget::previousTab);
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
-    m_previousTabAction->setIcon(AroraIcon::get(QLatin1String("go-previous")));
-    m_nextTabAction->setIcon(AroraIcon::get(QLatin1String("go-next")));
+    m_previousTabAction->setIcon(AroraIcon::getChrome(QLatin1String("go-previous")));
+    m_nextTabAction->setIcon(AroraIcon::getChrome(QLatin1String("go-next")));
 #endif
 
     m_recentlyClosedTabsMenu = new QMenu(this);
@@ -526,6 +529,23 @@ static void loadBrandedStartPage(WebView *view)
         view->loadUrl(startPage);
 }
 
+// ENG30: every branded start page (the plain variant and the
+// -servo/-private/-tor editions) plus the about:home alias stands for
+// "the start page", not a literal resource — a navigation that lands
+// one on a different engine must re-resolve for the destination, or a
+// swapped/typed load keeps the source context's branding.
+static bool isBrandedStartPageUrl(const QUrl &url)
+{
+    if (url.scheme() == QLatin1String("about"))
+        return url.path() == QLatin1String("home");
+    if (url.scheme() != QLatin1String("qrc"))
+        return false;
+    const QString path = url.path();
+    return path == QLatin1String("/startpage.html")
+        || (path.startsWith(QLatin1String("/startpage-"))
+            && path.endsWith(QLatin1String(".html")));
+}
+
 void TabWidget::newTab()
 {
     // ENG05: the default-engine setting applies to explicit new tabs
@@ -536,9 +556,19 @@ void TabWidget::newTab()
     if (backend && backend->id() != QLatin1String("webengine")
         && !BrowserApplication::isTorMode()
         && !BrowserApplication::isPrivate()
-        && !isTabPrivate(currentIndex())
-        && addEngineTab(backend, true))
-        return;
+        && !isTabPrivate(currentIndex())) {
+        if (EngineTab *tab = addEngineTab(backend, true)) {
+            // ENG30: addEngineTab wires the tab but never navigated
+            // it — a servo-default new tab sat blank forever.  Same
+            // branded-pick rule as loadBrandedStartPage: the engine
+            // variant loads, the plain page would mean no branding.
+            const QUrl startPage = BrowserApplication::startPageUrl(
+                backend->id(), false);
+            if (startPage != QUrl(QLatin1String("qrc:/startpage.html")))
+                tab->load(startPage);
+            return;
+        }
+    }
     loadBrandedStartPage(makeNewTab(true));
 }
 
@@ -1188,6 +1218,12 @@ EngineTab *TabWidget::addEngineTab(Engine::Backend *backend, bool makeCurrent)
     Engine::Profile *profile =
         backend->createProfile(Engine::ProfileOptions(), nullptr);
     EngineTab *tab = new EngineTab(backend, profile, this);
+    // The profile is the tab's context — give it the tab as owner so
+    // tab teardown frees it.  Backends that hand out a shared object
+    // (Servo's single browsing context is parented to the backend)
+    // keep their existing owner.
+    if (profile && !profile->parent())
+        profile->setParent(tab);
     if (!tab->page()) {
         // ENG12: the backend refused the page (servo's one-instance
         // limit, an absent artifact, ...) — surface the refusal
@@ -1380,6 +1416,14 @@ bool TabWidget::reloadTabInEngine(int index, const QString &engineId)
                                  ? view->page()->requestedUrl()
                                  : view->url())
                           : (foreign ? foreign->url() : QUrl());
+    // ENG30: a carried branded start page names the SOURCE engine's
+    // chrome — the destination always gets its own variant (a servo
+    // tab swapped to chromium shows the plain page, and the swap
+    // back re-brands to the servo one).  Private contexts never
+    // reach here — the private/tor guards above already refused.
+    const QUrl targetUrl = isBrandedStartPageUrl(url)
+        ? BrowserApplication::startPageUrl(engineId, false)
+        : url;
     const bool wasCurrent = (index == currentIndex());
     // TABGRP01: membership keys on WebView — a webengine target keeps
     // the group, a foreign tab drops it (no slot to hang the tag on).
@@ -1396,8 +1440,8 @@ bool TabWidget::reloadTabInEngine(int index, const QString &engineId)
             ContainerManager::defaultContainerId(), wasCurrent);
         if (!newView)
             return false;
-        if (url.isValid())
-            newView->loadUrl(url);
+        if (targetUrl.isValid())
+            newView->loadUrl(targetUrl);
         if (!gid.isEmpty())
             assignTabGroup(newView, gid);
         replacement = widget(webViewIndex(newView));
@@ -1405,8 +1449,8 @@ bool TabWidget::reloadTabInEngine(int index, const QString &engineId)
         EngineTab *tab = addEngineTab(backend, wasCurrent);
         if (!tab)
             return false;
-        if (url.isValid())
-            tab->load(url);
+        if (targetUrl.isValid())
+            tab->load(targetUrl);
         replacement = tab;
     }
     if (!replacement)
@@ -3599,6 +3643,31 @@ void TabWidget::changeEvent(QEvent *event)
     QTabWidget::changeEvent(event);
 }
 
+void TabWidget::paintEvent(QPaintEvent *event)
+{
+    QTabWidget::paintEvent(event);
+    // THEM02: the selected card merges into the page — the pane's
+    // hairline row next to the strip takes the card's color where
+    // the card lands, so no seam boxes the lifted tab.  Vertical
+    // rails keep floating cards and need no gap; the strip's own
+    // edge line opens its matching segment in paintResizeGrip().
+    if (!m_tabBar || !m_tabBar->isVisible() || currentIndex() < 0)
+        return;
+    const bool south = tabPosition() == QTabWidget::South;
+    if (tabPosition() == QTabWidget::West
+            || tabPosition() == QTabWidget::East)
+        return;
+    const QRect sel = m_tabBar->tabRect(currentIndex())
+        .translated(m_tabBar->pos());
+    QPainter painter(this);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(AroraStyle::tabActiveColor(palette()));
+    painter.drawRect(sel.left() - 1,
+                     south ? m_tabBar->geometry().top() - 1
+                           : m_tabBar->geometry().bottom() + 1,
+                     sel.width() + 2, 1);
+}
+
 /*
     Transform string into a QUrl and then load it.
 
@@ -3715,8 +3784,12 @@ QUrl TabWidget::guessUrlFromStringRust(const QString &string, bool privateContex
         if (url.scheme() == QLatin1String("about")
             && url.path() == QLatin1String("home"))
             // TOR09/ENG13: same branded pick the C++ path makes —
-            // tor/servo start pages ride the about:home alias.
-            url = BrowserApplication::startPageUrl();
+            // tor/servo start pages ride the about:home alias.  The
+            // pick must take privateContext, not the app-global flag:
+            // a private tab's about:home (typed or Home) is the
+            // private variant.
+            url = BrowserApplication::startPageUrl(
+                BrowserApplication::defaultEngineId(), privateContext);
         return url;
     }
     if (kind == QLatin1String("file"))
@@ -4013,9 +4086,20 @@ void TabWidget::loadUrl(const QUrl &url, OpenUrlIn tab, const QString &title)
     if (tab == CurrentTab) {
         if (EngineTab *foreign = engineTab(currentIndex())) {
             if (foreign->page()) {
+                // ENG30: the destination's branding wins — a resolved
+                // about:home (Home button, typed input, a bookmark)
+                // names the DEFAULT engine's variant, which on a
+                // foreign tab is the wrong chrome; re-pick it for
+                // this backend.  Engine tabs are never private — the
+                // newTab()/reloadTabInEngine() guards keep them on
+                // standard contexts.
+                const QUrl target = isBrandedStartPageUrl(url)
+                    ? BrowserApplication::startPageUrl(
+                          foreign->backend()->id(), false)
+                    : url;
                 if (QLineEdit *bar = locationBar(currentIndex()))
-                    bar->setText(QString::fromUtf8(url.toEncoded()));
-                foreign->load(url);
+                    bar->setText(QString::fromUtf8(target.toEncoded()));
+                foreign->load(target);
                 return;
             }
         }

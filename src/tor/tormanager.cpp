@@ -42,13 +42,15 @@ TorManager::TorManager(QObject *parent)
     , m_bootstrapProgress(-1)
     , m_socksPort(0)
     , m_streamCircuitId(-1)
+    , m_newNymFloor(-1)
+    , m_newNymWindowMs(10000)
     , m_circuitQueryInFlight(false)
     , m_circuitRefreshTimer(nullptr)
+    , m_startRetries(0)
+    , m_retryTimer(nullptr)
     , m_process(nullptr)
     , m_control(nullptr)
     , m_portFileTimer(nullptr)
-    , m_startRetries(0)
-    , m_retryTimer(nullptr)
 {
     // Needed by QSignalSpy/queued consumers of circuitsChanged.
     qRegisterMetaType<TorCircuit>("TorCircuit");
@@ -134,6 +136,12 @@ TorManager::State TorManager::state() const
 bool TorManager::isReady() const
 {
     return m_state == Ready;
+}
+
+qint64 TorManager::readyElapsed() const
+{
+    return (m_state == Ready && m_readyClock.isValid())
+        ? m_readyClock.elapsed() : -1;
 }
 
 bool TorManager::isRunning() const
@@ -244,13 +252,37 @@ QList<TorCircuit> TorManager::parseCircuitStatus(const QStringList &lines)
     return circuits;
 }
 
-int TorManager::displayCircuitId() const
+// TOR12: a stream-ridable circuit is fully BUILT with the real
+// three-hop chain.  Bootstrap's earliest BUILT reports are mostly
+// directory or one-hop internal circuits (PURPOSE=DIR_FETCH & co.)
+// that still refuse a CONNECT — anything with an explicit non-GENERAL
+// purpose or a short chain does not count.
+bool TorManager::isUsableCircuit(const TorCircuit &circuit)
+{
+    if (circuit.status != QLatin1String("BUILT"))
+        return false;
+    if (!circuit.purpose.isEmpty()
+        && circuit.purpose != QLatin1String("GENERAL"))
+        return false;
+    return circuit.hops.size() >= 3;
+}
+
+bool TorManager::hasUsableCircuit() const
+{
+    for (const TorCircuit &circuit : m_circuits)
+        if (isUsableCircuit(circuit))
+            return true;
+    return false;
+}
+
+int TorManager::pickDisplayCircuit(int floorId) const
 {
     const TorCircuit *byStreams = nullptr;
     const TorCircuit *newestBuiltGeneral = nullptr;
     const TorCircuit *newestBuilt = nullptr;
     for (const TorCircuit &circuit : m_circuits) {
-        if (circuit.status != QLatin1String("BUILT"))
+        if (circuit.id <= floorId
+            || circuit.status != QLatin1String("BUILT"))
             continue;
         if (circuit.id == m_streamCircuitId)
             byStreams = &circuit;
@@ -268,6 +300,22 @@ int TorManager::displayCircuitId() const
     return newestBuilt ? newestBuilt->id : -1;
 }
 
+int TorManager::displayCircuitId() const
+{
+    const int fresh = pickDisplayCircuit(m_newNymFloor);
+    if (fresh >= 0)
+        return fresh;
+    return pickDisplayCircuit(-1);
+}
+
+qint64 TorManager::newNymCooldownMs() const
+{
+    if (!m_lastNewNymAt.isValid())
+        return 0;
+    return qMax<qint64>(0,
+        m_newNymWindowMs - m_lastNewNymAt.elapsed());
+}
+
 void TorManager::signalNewNym(
         const std::function<void(int, const QStringList &)> &callback)
 {
@@ -276,7 +324,33 @@ void TorManager::signalNewNym(
             callback(-1, QStringList());
         return;
     }
-    m_control->signalNewNym(callback);
+    // tor rate-limits NEWNYM (one per ~10s) but still answers
+    // "250 OK" when it ignores one — without a client-side gate the
+    // UI would report a success the daemon never acted on.  Arm at
+    // send, not ack: a second click inside the reply roundtrip would
+    // otherwise reach the wire too.
+    if (newNymCooldownMs() > 0) {
+        if (callback)
+            callback(-2, QStringList());
+        return;
+    }
+    m_lastNewNymAt.start();
+    m_control->signalNewNym(
+            [this, callback](int code, const QStringList &lines) {
+        if (code == 250) {
+            // Every circuit the snapshot currently knows predates
+            // this request — the highest known id becomes the floor
+            // displayCircuitId prefers above, so the fresh chain
+            // surfaces over the dirty-but-busiest old one as soon
+            // as its CIRC event lands.
+            int floor = 0;
+            for (const TorCircuit &circuit : m_circuits)
+                floor = qMax(floor, circuit.id);
+            m_newNymFloor = floor;
+        }
+        if (callback)
+            callback(code, lines);
+    });
 }
 
 void TorManager::requestCircuitInfo()
@@ -456,6 +530,13 @@ void TorManager::setState(State state)
     if (m_state == state)
         return;
     m_state = state;
+    // TOR18: the warm-up clock runs only inside Ready — a leaving
+    // transition (restart, shutdown) invalidates it so readyElapsed()
+    // reports -1 again.
+    if (state == Ready)
+        m_readyClock.start();
+    else
+        m_readyClock.invalidate();
     emit stateChanged(state);
     if (state == Ready) {
         // A finished launch series — the retry budget is whole again
@@ -525,6 +606,10 @@ void TorManager::start()
     m_circuits.clear();
     m_streamCircuitId = -1;
     m_circuitQueryInFlight = false;
+    // A fresh daemon restarts circuit ids at 1 — a stale floor would
+    // exclude everything it ever reports.
+    m_newNymFloor = -1;
+    m_lastNewNymAt.invalidate();
     // The fp->country cache survives a daemon restart (relay geography
     // does not change), but queries orphaned by a dead connection must
     // not stay marked in flight.
@@ -839,6 +924,10 @@ void TorManager::stop()
     m_streamCircuitId = -1;
     m_circuitQueryInFlight = false;
     m_countryQueriesInFlight.clear();
+    // The NEWNYM bookkeeping belongs to the dying session — a stopped
+    // manager owes no cooldown and no display floor.
+    m_newNymFloor = -1;
+    m_lastNewNymAt.invalidate();
     if (m_control && m_control->isConnected())
         m_control->signalShutdown();
     if (m_process && m_process->state() != QProcess::NotRunning) {

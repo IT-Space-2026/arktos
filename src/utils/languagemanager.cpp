@@ -87,11 +87,6 @@ void LanguageManager::addLocaleDirectory(const QString &directory)
     m_loaded = false;
 }
 
-QStringList LanguageManager::localeDirectories() const
-{
-    return m_localeDirectories;
-}
-
 QString LanguageManager::currentLanguage() const
 {
 #ifdef LANGUAGEMANAGER_DEBUG

@@ -675,17 +675,6 @@ void CookieJar::applyRules()
     }
 }
 
-bool CookieJar::filterTrackingCookies() const
-{
-    return this->m_filterTrackingCookies;
-}
-
-void CookieJar::setFilterTrackingCookies(bool filterTrackingCookies)
-{
-    this->m_filterTrackingCookies = filterTrackingCookies;
-    updatePolicySnapshot();
-}
-
 bool CookieJar::blockThirdPartyCookies() const
 {
     return m_blockThirdPartyCookies;

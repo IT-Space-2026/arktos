@@ -19,20 +19,24 @@
 //!   network.setCacheBehavior {cacheBehavior:"default"|"bypass",
 //!     contexts?:[...]} — no contexts = global toggle remembered for
 //!     late attaches (maps to CDP Network.setCacheDisabled)
-//!   Events out: browsingContext.*, log.entryAdded (console+log),
+//!   Events out: browsingContext.*, log.entryAdded (console+log —
+//!     DEVT12: BiDi-normalized level, the raw console method name, a
+//!     {url,line} source link from the stack top, and the structured
+//!     RemoteObject args minus session-scoped objectIds),
 //!     network.beforeRequestSent / responseStarted / responseCompleted
-//!     / fetchError — the network events carry the CDP extras the
-//!     panel's Chrome-style view needs: timestamp (ms), request.type,
-//!     params.initiator, params.redirectResponse, response.mimeType /
-//!     statusText / encodedDataLength (DEVT06).  DEVT07 adds the
-//!     footer data: response.{fromDiskCache,fromPrefetchCache,
-//!     fromServiceWorker} so cache-served rows mark honestly,
-//!     responseCompleted.decodedDataLength (uncompressed body bytes
-//!     summed from Network.dataReceived chunks bridge-side — the
-//!     per-chunk events never reach the panel), and the Page domain's
-//!     domContentEventFired / loadEventFired remapped onto
-//!     browsingContext.domContentLoaded / .load (Page.enable rides
-//!     the browsingContext subscription).
+//!     / fetchError / requestServedFromCache — the network events carry
+//!     the CDP extras the panel's Chrome-style view needs: timestamp
+//!     (ms), request.type, params.initiator, params.redirectResponse,
+//!     response.mimeType / statusText / encodedDataLength (DEVT06),
+//!     and — DEVT07 — response.fromDiskCache / fromServiceWorker /
+//!     fromPrefetchCache + response.timing (raw, the waterfall reads
+//!     receiveHeadersEnd), responseCompleted.decodedDataLength
+//!     (uncompressed body bytes summed from Network.dataReceived chunks
+//!     bridge-side — the per-chunk events never reach the panel), plus
+//!     browsingContext.domContentLoaded / .load translated from
+//!     Page.domContentEventFired / loadEventFired so the summary footer
+//!     can show Chrome's DOMContentLoaded/Load milestone times
+//!     (Page.enable rides the browsingContext subscription).
 //!
 //! Transport: RFC 6455 client over a blocking TcpStream — Chromium's
 //! devtools endpoint is loopback-only and gated by a per-session
@@ -527,8 +531,12 @@ impl Core {
             v.push("Runtime.enable");
         }
         if st.subscriptions.contains("browsingContext") {
-            // Page.enable — domContentEventFired/loadEventFired feed
-            // the Network tab's footer timings (DEVT07).
+            // DEVT07: Page.enable so frame lifecycle milestones
+            // (domContentEventFired / loadEventFired) reach the
+            // session — they map to browsingContext.domContentLoaded /
+            // .load for the Network tab's summary footer.  If the
+            // engine's CDP lacks the Page domain the enable just
+            // errors quietly and the footer omits the milestones.
             v.push("Page.enable");
         }
         v
@@ -756,6 +764,62 @@ impl Core {
                 self.answer(bidi_id, json!({}));
                 Ok(())
             }
+            // DEVT13 — vendor extension "arora.cdp": a raw CDP
+            // passthrough so the panel can probe + use domains the
+            // BiDi surface does not model (Page.getResourceTree for
+            // Sources, Performance.getMetrics, domain availability
+            // probes).  params: {method, params?, context?} — a
+            // context routes the command onto that page's session
+            // (attaching first if needed); no context sends it at
+            // browser level.  The CDP result passes back verbatim as
+            // the BiDi result; a CDP error surfaces as the error
+            // envelope so "wasn't found" reads as a real answer, not
+            // silence.
+            "arora.cdp" => {
+                let context = params
+                    .get("context")
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let cdp_method = params
+                    .get("method")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if cdp_method.is_empty() {
+                    self.answer_err(bidi_id, "arora.cdp: missing method");
+                    return Ok(());
+                }
+                if context.is_empty() {
+                    let inner = params
+                        .get("params")
+                        .cloned()
+                        .unwrap_or(json!({}));
+                    self.cdp_call(
+                        None,
+                        &cdp_method,
+                        inner,
+                        CdpAction::Answer {
+                            bidi_id,
+                            kind: AnswerKind::Raw,
+                        },
+                    )?;
+                    Ok(())
+                } else {
+                    self.with_session(
+                        &context,
+                        FollowUp::Command {
+                            bidi_id,
+                            // The second stage matches on the WRAPPER
+                            // name; the real CDP method rides inside
+                            // params.
+                            method: method.to_string(),
+                            params,
+                        },
+                    )?;
+                    Ok(())
+                }
+            }
             _ => Err(Fail {
                 status: RcStatus::InvalidArgument,
                 msg: format!("bidi: unsupported method {method}"),
@@ -830,6 +894,30 @@ impl Core {
                     CdpAction::Answer {
                         bidi_id,
                         kind: AnswerKind::Cookies,
+                    },
+                )
+            }
+            // DEVT13: the session-scoped half of the arora.cdp
+            // passthrough — forward the wrapped method verbatim on
+            // this page's session and answer with the raw CDP result.
+            "arora.cdp" => {
+                let cdp_method = params
+                    .get("method")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if cdp_method.is_empty() {
+                    self.answer_err(bidi_id, "arora.cdp: missing method");
+                    return Ok(());
+                }
+                let inner = params.get("params").cloned().unwrap_or(json!({}));
+                self.cdp_call(
+                    Some(session),
+                    &cdp_method,
+                    inner,
+                    CdpAction::Answer {
+                        bidi_id,
+                        kind: AnswerKind::Raw,
                     },
                 )
             }
@@ -1030,11 +1118,15 @@ impl Core {
                             "statusText": resp["statusText"],
                             "mimeType": resp["mimeType"],
                             "encodedDataLength": resp["encodedDataLength"],
-                            // DEVT07: the panel marks cache-served rows
-                            // "(cached)" rather than showing "0 B".
+                            // DEVT07: cache provenance (the panel's
+                            // Size column shows "(memory cache)" etc.
+                            // instead of a bogus byte count) and the
+                            // raw resource-timing block — the waterfall
+                            // splits its bar at receiveHeadersEnd.
                             "fromDiskCache": resp["fromDiskCache"],
-                            "fromPrefetchCache": resp["fromPrefetchCache"],
                             "fromServiceWorker": resp["fromServiceWorker"],
+                            "fromPrefetchCache": resp["fromPrefetchCache"],
+                            "timing": resp["timing"],
                         },
                     }),
                 );
@@ -1084,6 +1176,21 @@ impl Core {
                     }),
                 );
             }
+            "Network.requestServedFromCache" => {
+                // DEVT07: memory-cache hits report through this event
+                // rather than a response flag — the panel marks the
+                // row "(memory cache)" like Chrome.
+                if !subscribed("network") {
+                    return;
+                }
+                self.event(
+                    "network.requestServedFromCache",
+                    json!({
+                        "context": self.context_for_session(session),
+                        "request": { "request": params["requestId"] },
+                    }),
+                );
+            }
             "Network.loadingFailed" => {
                 if !subscribed("network") {
                     return;
@@ -1106,27 +1213,21 @@ impl Core {
                     }),
                 );
             }
-            // Chrome's footer timings — same CDP MonotonicTime clock
-            // as the network events, so they subtract cleanly off the
-            // waterfall's window start (DEVT07).
-            "Page.domContentEventFired" => {
+            "Page.domContentEventFired" | "Page.loadEventFired" => {
+                // DEVT07: BiDi carries these as browsingContext
+                // milestones — the panel's summary footer shows
+                // Chrome's DOMContentLoaded / Load times.  Same CDP
+                // MonotonicTime clock as the network events, so they
+                // subtract cleanly off the waterfall's window start.
                 if !subscribed("browsingContext") {
                     return;
                 }
                 self.event(
-                    "browsingContext.domContentLoaded",
-                    json!({
-                        "context": self.context_for_session(session),
-                        "timestamp": millis(&params["timestamp"]),
-                    }),
-                );
-            }
-            "Page.loadEventFired" => {
-                if !subscribed("browsingContext") {
-                    return;
-                }
-                self.event(
-                    "browsingContext.load",
+                    if name == "Page.domContentEventFired" {
+                        "browsingContext.domContentLoaded"
+                    } else {
+                        "browsingContext.load"
+                    },
                     json!({
                         "context": self.context_for_session(session),
                         "timestamp": millis(&params["timestamp"]),
@@ -1137,7 +1238,8 @@ impl Core {
                 if !subscribed("log") {
                     return;
                 }
-                let level = params.get("type").and_then(|t| t.as_str()).unwrap_or("log");
+                let raw_method =
+                    params.get("type").and_then(|t| t.as_str()).unwrap_or("log");
                 let text = params
                     .get("args")
                     .and_then(|a| a.as_array())
@@ -1150,6 +1252,13 @@ impl Core {
                                         other => other.to_string(),
                                     })
                                     .or_else(|| {
+                                        // NaN/Infinity/-0 carry their
+                                        // repr in unserializableValue.
+                                        a.get("unserializableValue")
+                                            .and_then(|v| v.as_str())
+                                            .map(String::from)
+                                    })
+                                    .or_else(|| {
                                         a.get("description").and_then(|d| d.as_str()).map(String::from)
                                     })
                                     .unwrap_or_else(|| a.get("type").and_then(|t| t.as_str()).unwrap_or("?").to_string())
@@ -1158,12 +1267,49 @@ impl Core {
                             .join(" ")
                     })
                     .unwrap_or_default();
+                // DEVT12: forward the RemoteObject args (minus the
+                // session-scoped objectId the panel can't resolve) so
+                // console rows can expand object previews; Chromium
+                // attaches preview.properties to console args by
+                // default — when the engine sends none the panel
+                // keeps the row flat, no fake expansion.
+                let args: Vec<Value> = params
+                    .get("args")
+                    .and_then(|a| a.as_array())
+                    .map(|args| {
+                        args.iter()
+                            .take(32)
+                            .map(|a| {
+                                let mut a = a.clone();
+                                if let Some(o) = a.as_object_mut() {
+                                    o.remove("objectId");
+                                    if let Some(props) = o
+                                        .get_mut("preview")
+                                        .and_then(|p| p.as_object_mut())
+                                        .and_then(|p| {
+                                            p.get_mut("properties")
+                                                .and_then(|p| p.as_array_mut())
+                                        })
+                                    {
+                                        props.truncate(64);
+                                    }
+                                }
+                                a
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 self.event(
                     "log.entryAdded",
                     json!({
                         "type": "console",
-                        "level": level,
+                        "level": normalize_level(raw_method),
+                        // The raw console API name (log/dir/table/...)
+                        // — BiDi ConsoleLogEntry calls this "method".
+                        "method": raw_method,
                         "text": text,
+                        "source": stack_source(&params["stackTrace"]),
+                        "args": args,
                         "context": self.context_for_session(session),
                     }),
                 );
@@ -1172,21 +1318,36 @@ impl Core {
                 if !subscribed("log") {
                     return;
                 }
-                let (level, text) = if name == "Log.entryAdded" {
+                let (level, text, source) = if name == "Log.entryAdded" {
                     let e = &params["entry"];
                     (
-                        e.get("level").and_then(|l| l.as_str()).unwrap_or("info").to_string(),
+                        normalize_level(
+                            e.get("level").and_then(|l| l.as_str()).unwrap_or("info"),
+                        ),
                         e.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string(),
+                        url_line_source(
+                            e.get("url").and_then(|u| u.as_str()).unwrap_or(""),
+                            e.get("lineNumber").and_then(|l| l.as_i64()),
+                        ),
                     )
                 } else {
                     let d = &params["exceptionDetails"];
+                    let src = stack_source(&d["stackTrace"]);
                     (
-                        "error".to_string(),
+                        "error",
                         d.get("text")
                             .and_then(|t| t.as_str())
                             .or_else(|| d["exception"].get("description").and_then(|t| t.as_str()))
                             .unwrap_or("exception")
                             .to_string(),
+                        if src.is_null() {
+                            url_line_source(
+                                d.get("url").and_then(|u| u.as_str()).unwrap_or(""),
+                                d.get("lineNumber").and_then(|l| l.as_i64()),
+                            )
+                        } else {
+                            src
+                        },
                     )
                 };
                 self.event(
@@ -1195,6 +1356,7 @@ impl Core {
                         "type": "javascript",
                         "level": level,
                         "text": text,
+                        "source": source,
                         "context": self.context_for_session(session),
                     }),
                 );
@@ -1218,6 +1380,53 @@ impl Core {
 /// Anything non-numeric serializes as null rather than a guess.
 fn millis(v: &Value) -> Value {
     v.as_f64().map(|s| json!(s * 1000.0)).unwrap_or(Value::Null)
+}
+
+/// DEVT12: the console's level buckets are BiDi's four — CDP's
+/// console API names (Log.entryAdded levels too) collapse onto them:
+/// error/assert -> error, warning/warn -> warn, debug/verbose ->
+/// debug, everything else (log/info/dir/table/group/trace/count/
+/// clear/timeEnd) -> info.
+fn normalize_level(raw: &str) -> &'static str {
+    match raw {
+        "error" | "assert" => "error",
+        "warning" | "warn" => "warn",
+        "debug" | "verbose" => "debug",
+        _ => "info",
+    }
+}
+
+/// DEVT12: the console row's right-edge "file.js:line" — the top
+/// frame of a CDP stack trace.  CDP lineNumber is 0-based; the
+/// emitted "line" is 1-based for display.  Null when the event
+/// carries no usable location — the panel then renders no link.
+fn stack_source(trace: &Value) -> Value {
+    let frame = trace
+        .get("callFrames")
+        .and_then(|f| f.as_array())
+        .and_then(|f| f.first());
+    let url = frame
+        .and_then(|f| f.get("url"))
+        .and_then(|u| u.as_str())
+        .unwrap_or("");
+    if url.is_empty() {
+        return Value::Null;
+    }
+    let line = frame
+        .and_then(|f| f.get("lineNumber"))
+        .and_then(|l| l.as_i64())
+        .map(|l| l + 1)
+        .unwrap_or(-1);
+    json!({ "url": url, "line": line })
+}
+
+/// Same shape as stack_source for events that carry a bare
+/// url + 0-based lineNumber instead of a call-frames array.
+fn url_line_source(url: &str, line0: Option<i64>) -> Value {
+    if url.is_empty() {
+        return Value::Null;
+    }
+    json!({ "url": url, "line": line0.map(|l| l + 1).unwrap_or(-1) })
 }
 
 /* -------- CDP -> BiDi translations -------- */
@@ -1985,6 +2194,8 @@ mod tests {
             .insert("CTX".into(), "S1".into());
         core.dispatch(4, "session.subscribe", json!({"events": ["network"]}))
             .unwrap();
+        // Wire frames: setDiscoverTargets + one enable per subscribed
+        // domain group (network, log, browsingContext->Page).
         let mut methods = Vec::new();
         for _ in 0..5 {
             methods.push(
@@ -2050,7 +2261,8 @@ mod tests {
         assert!(
             methods.contains(&"Network.enable")
                 && methods.contains(&"Log.enable")
-                && methods.contains(&"Runtime.enable"),
+                && methods.contains(&"Runtime.enable")
+                && methods.contains(&"Page.enable"),
             "{methods:?}"
         );
         let nav = seen
@@ -2253,6 +2465,71 @@ mod tests {
         assert!(response_for(&got, 16).is_some());
     }
 
+    // DEVT13: the arora.cdp passthrough — browser-level when no
+    // context is named, session-scoped (with lazy attach) when one
+    // is.  Results and CDP errors both pass back untranslated.
+    #[test]
+    fn cdp_passthrough() {
+        let (core, mut peer, got) = mkcore();
+
+        // Browser-level: no context -> no sessionId on the wire.
+        core.dispatch(
+            1,
+            "arora.cdp",
+            json!({"method": "Browser.getVersion", "params": {}}),
+        )
+        .unwrap();
+        let m = read_wire(&mut peer);
+        assert_eq!(m["method"], "Browser.getVersion");
+        assert!(m.get("sessionId").is_none());
+        core.on_message(&json!({"id": m["id"], "result": {"product": "fake/1"}}));
+        let r = response_for(&got, 1).expect("browser-level response");
+        assert!(r.contains("fake/1"), "{r}");
+
+        // Missing method is a local error, not a wire frame.
+        core.dispatch(2, "arora.cdp", json!({"params": {}})).unwrap();
+        let r = response_for(&got, 2).expect("missing-method response");
+        assert!(r.contains("missing method"), "{r}");
+
+        // Session-scoped: context -> attach first, then the wrapped
+        // command rides that session verbatim.
+        core.dispatch(
+            3,
+            "arora.cdp",
+            json!({"context": "CTX", "method": "Page.getResourceTree",
+                   "params": {}}),
+        )
+        .unwrap();
+        let m = read_wire(&mut peer);
+        assert_eq!(m["method"], "Target.attachToTarget");
+        assert_eq!(m["params"]["targetId"], "CTX");
+        core.on_message(
+            &json!({"id": m["id"], "result": {"sessionId": "S9"}}),
+        );
+        let m = read_wire(&mut peer);
+        assert_eq!(m["method"], "Page.getResourceTree");
+        assert_eq!(m["sessionId"], "S9");
+        core.on_message(&json!({"id": m["id"], "result": {"frameTree": {"frame": {"id": "F"}}}}));
+        let r = response_for(&got, 3).expect("session response");
+        assert!(r.contains("frameTree"), "{r}");
+
+        // A CDP "not found" error is itself a useful answer (the
+        // panel's domain probes read it) — forwarded verbatim.
+        core.dispatch(
+            4,
+            "arora.cdp",
+            json!({"context": "CTX", "method": "Debugger.enable"}),
+        )
+        .unwrap();
+        let m = read_wire(&mut peer);
+        assert_eq!(m["method"], "Debugger.enable");
+        assert_eq!(m["sessionId"], "S9"); // session reused, no re-attach
+        core.on_message(&json!({"id": m["id"],
+            "error": {"code": -32601, "message": "'Debugger.enable' wasn't found"}}));
+        let r = response_for(&got, 4).expect("error response");
+        assert!(r.contains("wasn't found"), "{r}");
+    }
+
     #[test]
     fn core_event_translations() {
         let (core, mut peer, got) = mkcore();
@@ -2334,13 +2611,43 @@ mod tests {
             "params": {"requestId": "r1", "timestamp": 12.6, "type": "Document",
                 "response": {"url": "http://r/", "status": 200,
                     "statusText": "OK", "mimeType": "text/html",
-                    "encodedDataLength": 64}}
+                    "encodedDataLength": 64, "fromDiskCache": true,
+                    "timing": {"receiveHeadersEnd": 18.0}}}
         }));
         let e = events_named(&got, "network.responseStarted");
         assert!(e[0].contains("\"status\":200"), "{e:?}");
         assert!(e[0].contains("\"timestamp\":12600.0")
             && e[0].contains("\"mimeType\":\"text/html\"")
             && e[0].contains("\"type\":\"Document\""), "{e:?}");
+        // DEVT07: cache provenance + raw timing ride through for the
+        // Size column and the two-tone waterfall bar.
+        assert!(e[0].contains("\"fromDiskCache\":true")
+            && e[0].contains("\"receiveHeadersEnd\":18.0"), "{e:?}");
+
+        // DEVT07: memory-cache hits and page-load milestones translate.
+        core.on_message(&json!({
+            "method": "Network.requestServedFromCache", "sessionId": "S2",
+            "params": {"requestId": "r1"}
+        }));
+        let e = events_named(&got, "network.requestServedFromCache");
+        assert_eq!(e.len(), 1);
+        assert!(e[0].contains("\"context\":\"T2\"")
+            && e[0].contains("\"request\":\"r1\""), "{e:?}");
+        core.on_message(&json!({
+            "method": "Page.domContentEventFired", "sessionId": "S2",
+            "params": {"timestamp": 12.7}
+        }));
+        let e = events_named(&got, "browsingContext.domContentLoaded");
+        assert_eq!(e.len(), 1);
+        assert!(e[0].contains("\"context\":\"T2\"")
+            && e[0].contains("\"timestamp\":12700.0"), "{e:?}");
+        core.on_message(&json!({
+            "method": "Page.loadEventFired", "sessionId": "S2",
+            "params": {"timestamp": 12.95}
+        }));
+        let e = events_named(&got, "browsingContext.load");
+        assert_eq!(e.len(), 1);
+        assert!(e[0].contains("\"timestamp\":12950.0"), "{e:?}");
         core.on_message(&json!({
             "method": "Network.loadingFinished", "sessionId": "S2",
             "params": {"requestId": "r1", "timestamp": 12.9,
@@ -2404,22 +2711,24 @@ mod tests {
         assert!(e[2].contains("\"decodedDataLength\":null"), "{e:?}");
 
         // Page lifecycle timings ride the browsingContext group on the
-        // same monotonic clock as the network events.
+        // same monotonic clock as the network events.  The session
+        // already emitted one of each above — the count is cumulative
+        // and the fresh event is the last one.
         core.on_message(&json!({
             "method": "Page.domContentEventFired", "sessionId": "S2",
             "params": {"timestamp": 12.8}
         }));
         let e = events_named(&got, "browsingContext.domContentLoaded");
-        assert_eq!(e.len(), 1);
-        assert!(e[0].contains("\"timestamp\":12800.0")
-            && e[0].contains("\"context\":\"T2\""), "{e:?}");
+        assert_eq!(e.len(), 2);
+        assert!(e[1].contains("\"timestamp\":12800.0")
+            && e[1].contains("\"context\":\"T2\""), "{e:?}");
         core.on_message(&json!({
             "method": "Page.loadEventFired", "sessionId": "S2",
             "params": {"timestamp": 13.4}
         }));
         let e = events_named(&got, "browsingContext.load");
-        assert_eq!(e.len(), 1);
-        assert!(e[0].contains("\"timestamp\":13400.0"), "{e:?}");
+        assert_eq!(e.len(), 2);
+        assert!(e[1].contains("\"timestamp\":13400.0"), "{e:?}");
 
         // Cache flags ride responseStarted so the Size column can mark
         // cache-served rows honestly.
@@ -2432,37 +2741,81 @@ mod tests {
         let e = events_named(&got, "network.responseStarted");
         assert!(e.last().unwrap().contains("\"fromDiskCache\":true"), "{e:?}");
 
-        // console args prefer .value, then .description, then the type
-        // name; non-string values serialize.
+        // console args prefer .value, then unserializableValue, then
+        // .description, then the type name; non-string values
+        // serialize.
         core.on_message(&json!({
             "method": "Runtime.consoleAPICalled", "sessionId": "S2",
             "params": {"type": "warn", "args": [
                 {"value": "hi"}, {"value": 42},
+                {"unserializableValue": "NaN", "type": "number"},
                 {"description": "desc"}, {"type": "object"}
             ]}
         }));
         let e = events_named(&got, "log.entryAdded");
         let console = e.iter().find(|p| p.contains("console")).unwrap();
         assert!(console.contains("\"level\":\"warn\""), "{console}");
-        assert!(console.contains("hi 42 desc object"), "{console}");
+        assert!(console.contains("hi 42 NaN desc object"), "{console}");
+        assert!(console.contains("\"method\":\"warn\""), "{console}");
 
-        // Log.entryAdded and exceptionThrown share the javascript lane.
+        // DEVT12: structured args ride along (objectId stripped —
+        // the panel can't resolve session handles), the top stack
+        // frame becomes the entry's {url, 1-based line} source link,
+        // and CDP's "warning" normalizes onto BiDi's "warn".
         core.on_message(&json!({
-            "method": "Log.entryAdded", "sessionId": "S2",
-            "params": {"entry": {"level": "error", "text": "logline"}}
-        }));
-        core.on_message(&json!({
-            "method": "Runtime.exceptionThrown", "sessionId": "S2",
-            "params": {"exceptionDetails": {"text": "kaboom"}}
-        }));
-        core.on_message(&json!({
-            "method": "Runtime.exceptionThrown", "sessionId": "S2",
-            "params": {"exceptionDetails": {"exception": {"description": "nested"}}}
+            "method": "Runtime.consoleAPICalled", "sessionId": "S2",
+            "params": {"type": "warning", "args": [
+                {"type": "object", "objectId": "oid-secret",
+                 "description": "Array(2)",
+                 "preview": {"type": "object", "subtype": "array",
+                     "properties": [
+                        {"name": "0", "type": "number", "value": "7"},
+                        {"name": "length", "type": "number",
+                         "value": "2"}]}}],
+                "stackTrace": {"callFrames": [
+                    {"url": "http://a/app.js", "lineNumber": 6,
+                     "columnNumber": 4}]}}
         }));
         let e = events_named(&got, "log.entryAdded");
-        assert!(e.iter().any(|p| p.contains("logline") && p.contains("javascript")), "{e:?}");
-        assert!(e.iter().any(|p| p.contains("kaboom")), "{e:?}");
-        assert!(e.iter().any(|p| p.contains("nested")), "{e:?}");
+        let console = e.iter().rev().find(|p| p.contains("console")).unwrap();
+        assert!(console.contains("\"level\":\"warn\""), "{console}");
+        assert!(console.contains("\"method\":\"warning\""), "{console}");
+        assert!(console.contains("\"url\":\"http://a/app.js\""), "{console}");
+        assert!(console.contains("\"line\":7"), "{console}");
+        assert!(console.contains("\"subtype\":\"array\""), "{console}");
+        assert!(!console.contains("oid-secret"), "{console}");
+
+        // Log.entryAdded and exceptionThrown share the javascript
+        // lane — levels normalize the same way and entry.url /
+        // exceptionDetails.url feed the same source link.
+        core.on_message(&json!({
+            "method": "Log.entryAdded", "sessionId": "S2",
+            "params": {"entry": {"level": "warning", "text": "logline",
+                "url": "http://a/page.html", "lineNumber": 3}}
+        }));
+        core.on_message(&json!({
+            "method": "Runtime.exceptionThrown", "sessionId": "S2",
+            "params": {"exceptionDetails": {"text": "kaboom",
+                "url": "http://a/boom.js", "lineNumber": 9}}
+        }));
+        core.on_message(&json!({
+            "method": "Runtime.exceptionThrown", "sessionId": "S2",
+            "params": {"exceptionDetails": {"exception": {"description": "nested"},
+                "stackTrace": {"callFrames": [
+                    {"url": "http://a/inner.js", "lineNumber": 0}]}}}
+        }));
+        let e = events_named(&got, "log.entryAdded");
+        let logline = e.iter()
+            .find(|p| p.contains("logline") && p.contains("javascript"))
+            .unwrap();
+        assert!(logline.contains("\"level\":\"warn\""), "{logline}");
+        assert!(logline.contains("\"url\":\"http://a/page.html\""), "{logline}");
+        assert!(logline.contains("\"line\":4"), "{logline}");
+        let kaboom = e.iter().find(|p| p.contains("kaboom")).unwrap();
+        assert!(kaboom.contains("\"line\":10"), "{kaboom}");
+        let nested = e.iter().find(|p| p.contains("nested")).unwrap();
+        assert!(nested.contains("\"url\":\"http://a/inner.js\""), "{nested}");
+        assert!(nested.contains("\"line\":1"), "{nested}");
 
         // Unknown CDP methods are dropped silently.
         let before = got.lock().unwrap().len();
@@ -2494,6 +2847,12 @@ mod tests {
                 "params": {"entry": {}}}),
             json!({"method": "Runtime.exceptionThrown", "sessionId": "S",
                 "params": {"exceptionDetails": {}}}),
+            json!({"method": "Network.requestServedFromCache", "sessionId": "S",
+                "params": {"requestId": "r"}}),
+            json!({"method": "Page.domContentEventFired", "sessionId": "S",
+                "params": {"timestamp": 1.0}}),
+            json!({"method": "Page.loadEventFired", "sessionId": "S",
+                "params": {"timestamp": 1.0}}),
         ] {
             core.on_message(&msg);
         }

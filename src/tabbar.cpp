@@ -63,6 +63,7 @@
 #include "tabbar.h"
 
 #include "aroraicon.h"
+#include "arorastyle.h"
 #include "browserapplication.h"
 #include "containermanager.h"
 #include "energysaver.h"
@@ -102,6 +103,15 @@
 // no sentinel — it IS the default again.
 static const int defaultVerticalTabWidth = 180;
 static const int compactVerticalTabWidth = 140;
+
+// TABS19: Firefox's tab metrics — every titled tab shares one 225px
+// width while space allows (the documentMode strip is non-expanding,
+// so the shared hint IS the rendered width), equal-squeezes to the
+// 76px floor, and only then hands off to the scroll buttons.  The
+// face sits at ~33px on a ~36px strip: content + 17 (a 16px
+// favicon / 9pt title lands exactly at 33).
+static const int firefoxTabWidth = 225;
+static const int firefoxTabMinWidth = 76;
 
 // Defined further down — the TABGRP01 drop-zone check in
 // mouseReleaseEvent needs it too.
@@ -210,6 +220,12 @@ TabBar::TabBar(QWidget *parent)
     setContextMenuPolicy(Qt::CustomContextMenu);
     setAcceptDrops(true);
     setElideMode(Qt::ElideRight);
+    // TABS19: tabs hold their own metric instead of stretching into
+    // the strip's free space — Firefox's left-aligned fixed-width
+    // tabs, not Chrome's fill-the-bar ones.  QTabWidget's
+    // documentMode forces the same for a hosted bar; a standalone
+    // one keeps the contract too.
+    setExpanding(false);
     setUsesScrollButtons(true);
     connect(this, &QTabBar::customContextMenuRequested,
             this, &TabBar::contextMenuRequested);
@@ -246,6 +262,11 @@ TabBar::TabBar(QWidget *parent)
             this, [this](int) {
         updateCloseButtonVisibility();
         hideTabPreview();
+        // CONT06: setCurrentIndex() re-anchors the two touched tabs'
+        // side buttons in strip space — with the band up that parks
+        // them inside it.  Re-seat them immediately so hit-testing
+        // stays right before the next repaint.
+        shiftChildrenBelowStrip();
     });
 
     // POL02: resting the pointer on a tab for a beat pops the hover
@@ -299,19 +320,17 @@ TabBar::TabBar(QWidget *parent)
     m_newTabButton->setToolTip(tr("New Tab"));
     m_newTabButton->setAccessibleName(tr("New Tab"));
     // The tor strip's violet chrome sits on the app's light palette
-    // — the themed dark glyph would be mud, so tint it to the nav
-    // cluster's flat #eee the way ICONS06 does, and give the
+    // — the themed dark glyph would be mud, so tint it to the
+    // chrome's flat text color the way ICONS06 does, and give the
     // hover/pressed states the violet bar's own shades.
     if (BrowserApplication::isTorMode()) {
         m_newTabButton->setIcon(AroraIcon::getTinted(
-            QLatin1String("tab-new"), QColor(0xee, 0xee, 0xee),
-            QColor(0xb9, 0xae, 0xcf)));
-        m_newTabButton->setStyleSheet(QLatin1String(
-            "QToolButton { background: transparent; }"
-            "QToolButton:hover { background: #5d4491; }"
-            "QToolButton:pressed { background: #3a2a5c; }"));
+            QLatin1String("tab-new"), AroraStyle::torTextColor(),
+            AroraStyle::torDimTextColor()));
+        m_newTabButton->setStyleSheet(
+            AroraStyle::torToolButtonStyleSheet());
     } else {
-        m_newTabButton->setIcon(AroraIcon::get(QLatin1String("tab-new")));
+        m_newTabButton->setIcon(AroraIcon::getChrome(QLatin1String("tab-new")));
     }
     connect(m_newTabButton, &QAbstractButton::clicked,
             this, &TabBar::newTab);
@@ -396,8 +415,8 @@ void TabBar::installCloseButton(int index)
     button->setToolButtonStyle(Qt::ToolButtonIconOnly);
     // Resolves through AroraIcon: the active icon theme first, the
     // bundled sets' dark variants when the palette is dark, and the
-    // original closetab.png as the last-resort fallback.
-    button->setIcon(AroraIcon::get(QLatin1String("window-close")));
+    // bundled Tabler set as the last-resort fallback.
+    button->setIcon(AroraIcon::getChrome(QLatin1String("window-close")));
     button->setIconSize(QSize(12, 12));
     // TABS07: an uncapped QToolButton hints ~19px tall, and QTabBar
     // stretches the strip to max(text, widget) + padding — the button
@@ -452,9 +471,18 @@ void TabBar::updateCloseButtonVisibility()
     for (int i = 0; i < count(); ++i) {
         // TABS04: a pinned tab has no close affordance at all —
         // unpinning is the way to make it closable again.
-        if (QWidget *button = tabButton(i, side))
-            button->setVisible(!isTabPinned(i)
-                               && (i == current || i == m_hoveredTab));
+        QWidget *button = tabButton(i, side);
+        if (!button)
+            continue;
+        // TABS19: on a full strip the '+' parks over the last tab's
+        // trailing edge — the close button yields instead of sitting
+        // under a dead click target (middle-click and the context
+        // menu still close the tab).
+        const bool covered = m_newTabButton && m_newTabButton->isVisible()
+            && button->geometry().isValid()
+            && button->geometry().intersects(m_newTabButton->geometry());
+        button->setVisible(!isTabPinned(i) && !covered
+                           && (i == current || i == m_hoveredTab));
     }
 }
 
@@ -1159,6 +1187,9 @@ void TabBar::mouseMoveEvent(QMouseEvent *event)
             // bar across exec()'s nested event loop.
             QPointer<TabBar> guard(this);
             const Qt::DropAction action = drag->exec();
+            // QDrag::setMimeData does not take ownership — the mime
+            // data is still ours once exec() returns.
+            delete mimeData;
             // TABS13: released where nothing accepted the drop —
             // over the desktop, a window's page body, foreign chrome —
             // the tab tears off into a new window.  A consumed drop
@@ -1632,8 +1663,16 @@ void TabBar::paintContainerStrip(QPainter *painter)
 
 // QTabBar lays per-tab side buttons and its scroll buttons out in
 // strip space — with the band up everything sits containerStripHeight()
-// pixels too high.  Qt repositions them on every layout, so any child
-// still inside the band zone shifts down by the band height.
+// pixels too high.  Qt repositions them on every layout, and several
+// of its paths never reach tabLayoutChange() — setCurrentIndex() and
+// move drags call layoutTab() directly, scroll-offset changes call
+// layoutWidgets() — so an incremental shift can silently lose a
+// button to the band (and a strip-space y >= band read as "already
+// shifted" on tall dragged strips).  Per-tab buttons re-anchor
+// deterministically instead: their y is the style's strip-space
+// sub-element rect plus the band, the x Qt chose (drag offsets
+// included) is kept.  paintEvent() re-runs this so a layoutTab-only
+// path still lands on the face on the next repaint.
 void TabBar::shiftChildrenBelowStrip()
 {
     const int band = containerStripHeight();
@@ -1645,22 +1684,42 @@ void TabBar::shiftChildrenBelowStrip()
     const QObjectList kids = children();
     for (QObject *kid : kids) {
         QWidget *child = qobject_cast<QWidget*>(kid);
-        if (!child || child == m_preview || child->y() >= band)
+        // The preview, the '+' and the rename editor all manage their
+        // own band-aware positions.
+        if (!child || child == m_preview || child == m_newTabButton
+            || child == m_titleEditor)
             continue;
-        bool isTabButton = false;
-        for (int i = 0; i < count() && !isTabButton; ++i) {
+        int buttonIndex = -1;
+        QTabBar::ButtonPosition buttonSide = QTabBar::LeftSide;
+        for (int i = 0; i < count() && buttonIndex < 0; ++i) {
             for (const QTabBar::ButtonPosition side : sides) {
                 if (tabButton(i, side) == child) {
-                    isTabButton = true;
+                    buttonIndex = i;
+                    buttonSide = side;
                     break;
                 }
             }
         }
-        // Vertical tab buttons are placed by layoutRowTabButtons(),
-        // which already knows about the band.
-        if (isTabButton && vertical)
+        if (buttonIndex >= 0) {
+            // Vertical tab buttons are placed by layoutRowTabButtons(),
+            // which already knows about the band.
+            if (vertical)
+                continue;
+            QStyleOptionTab option;
+            initStyleOption(&option, buttonIndex);
+            const QRect rect = style()->subElementRect(
+                buttonSide == QTabBar::LeftSide
+                    ? QStyle::SE_TabBarTabLeftButton
+                    : QStyle::SE_TabBarTabRightButton,
+                &option, this);
+            if (child->y() != rect.top() + band)
+                child->move(child->x(), rect.top() + band);
             continue;
-        child->move(child->x(), child->y() + band);
+        }
+        // Qt's scroll buttons (any other strip-space child) shift
+        // once per placement — they always anchor at the strip's top.
+        if (child->y() < band)
+            child->move(child->x(), child->y() + band);
     }
 }
 
@@ -1805,6 +1864,27 @@ QString TabBar::groupChipLabel(int index) const
         : tr("%1 (%2)").arg(name).arg(size);
 }
 
+// TABS17: the readable band a vertical row's label and side widgets
+// share — the row's rect minus the name pill band a group run's
+// first member reserves on top (tabSizeHint grew the row by the
+// same extent).  Centering the title on the whole rect would push
+// its baseline against the row's clipped bottom edge and slide it
+// under the pill.
+QRect TabBar::rowLabelRect(const QRect &rowRect, int index) const
+{
+    const QString gid = groupIdForTab(index);
+    if (gid.isEmpty() || m_iconOnlyTabs || !isFirstInGroupRun(index))
+        return rowRect;
+    const TabWidget *tabWidget =
+        qobject_cast<TabWidget*>(parentWidget());
+    if (!tabWidget || tabWidget->tabGroupName(gid).isEmpty())
+        return rowRect;
+    QRect rect = rowRect;
+    rect.setTop(rect.top()
+                + QFontMetrics(containerChipFont()).height() + 6);
+    return rect;
+}
+
 // CONT02: after the style paints the tab, container tabs get their
 // accent — a strip on the tab's outer edge (top for a horizontal bar,
 // the free side for a vertical one) plus a name chip just inside it.
@@ -1818,6 +1898,10 @@ void TabBar::paintEvent(QPaintEvent *event)
     layoutNewTabButton();
     const int band = containerStripHeight();
     if (band > 0) {
+        // Qt re-anchors side buttons in strip space on several
+        // tabLayoutChange()-free paths — re-seat them on the face
+        // before the tab row (and the children above it) paint.
+        shiftChildrenBelowStrip();
         QPainter bandPainter(this);
         paintContainerStrip(&bandPainter);
     }
@@ -1875,8 +1959,26 @@ void TabBar::paintEvent(QPaintEvent *event)
             }
             if (!(option.state & QStyle::State_Enabled))
                 option.palette.setCurrentColorGroup(QPalette::Disabled);
-            style()->drawControl(QStyle::CE_TabBarTab, &option,
+            // TABS17: the title belongs on the readable band — the
+            // row's rect minus the reserved group-pill top — not the
+            // full row.  Shrinking the option's rect cannot move the
+            // text: the styles anchor the label layout to it (the
+            // sheet style even re-queries tabRect()), so the painter
+            // is translated instead — every style's centered text
+            // then lands centered on the band.  The clip was set in
+            // device space above, so the shifted draw still cannot
+            // leave the row.
+            const int labelShift =
+                rowLabelRect(option.rect, index).center().y()
+                - option.rect.center().y();
+            style()->drawControl(QStyle::CE_TabBarTabShape, &option,
                                  &painter, this);
+            painter.save();
+            if (labelShift)
+                painter.translate(0, labelShift);
+            style()->drawControl(QStyle::CE_TabBarTabLabel, &option,
+                                 &painter, this);
+            painter.restore();
             painter.setClipping(false);
         }
         // The tab under a move drag floats with the cursor; Qt's own
@@ -1906,8 +2008,19 @@ void TabBar::paintEvent(QPaintEvent *event)
                     Qt::TextShowMnemonic);
             }
             painter.setClipRect(option.rect);
-            style()->drawControl(QStyle::CE_TabBarTab, &option,
+            // TABS17: same painter-shifted band label as the docked
+            // rows above.
+            const int labelShift =
+                rowLabelRect(option.rect, m_pressedTabIndex)
+                    .center().y() - option.rect.center().y();
+            style()->drawControl(QStyle::CE_TabBarTabShape, &option,
                                  &painter, this);
+            painter.save();
+            if (labelShift)
+                painter.translate(0, labelShift);
+            style()->drawControl(QStyle::CE_TabBarTabLabel, &option,
+                                 &painter, this);
+            painter.restore();
             painter.setClipping(false);
         }
     } else if (band > 0) {
@@ -1948,26 +2061,29 @@ void TabBar::paintEvent(QPaintEvent *event)
             ? container.color : palette().color(QPalette::Highlight);
         const QRect rect = tabRect(index);
 
+        // THEM02: the stripe hugs the tab's rounded outer edge, so
+        // its ends pull in past the corner radius — a full-span bar
+        // would stick out of the card's arcs.
         QRect accentRect;
         switch (shape()) {
         case QTabBar::RoundedSouth:
         case QTabBar::TriangularSouth:
-            accentRect = QRect(rect.left(), rect.bottom() - strip + 1,
-                               rect.width(), strip);
+            accentRect = QRect(rect.left() + 7, rect.bottom() - strip + 1,
+                               rect.width() - 14, strip);
             break;
         case QTabBar::RoundedWest:
         case QTabBar::TriangularWest:
-            accentRect = QRect(rect.left(), rect.top(),
-                               strip, rect.height());
+            accentRect = QRect(rect.left(), rect.top() + 5,
+                               strip, rect.height() - 10);
             break;
         case QTabBar::RoundedEast:
         case QTabBar::TriangularEast:
-            accentRect = QRect(rect.right() - strip + 1, rect.top(),
-                               strip, rect.height());
+            accentRect = QRect(rect.right() - strip + 1, rect.top() + 5,
+                               strip, rect.height() - 10);
             break;
         default:
-            accentRect = QRect(rect.left(), rect.top(),
-                               rect.width(), strip);
+            accentRect = QRect(rect.left() + 7, rect.top(),
+                               rect.width() - 14, strip);
             break;
         }
         painter.fillRect(accentRect, accent);
@@ -2058,8 +2174,10 @@ void TabBar::paintEvent(QPaintEvent *event)
             const QColor accent = tabWidget->tabGroupColor(gid).isValid()
                 ? tabWidget->tabGroupColor(gid)
                 : palette().color(QPalette::Highlight);
-            const QColor textColor = accent.lightness() > 140
-                ? Qt::black : Qt::white;
+            // WCAG pick — a lightness threshold misjudges saturated
+            // mid-tone accents (the turquoise container color reads
+            // light enough for white text but only gives ~2:1).
+            const QColor textColor = AroraStyle::contrastTextColor(accent);
             const QRect rect = tabRect(index);
             const QString name = tabWidget->tabGroupName(gid);
 
@@ -2083,6 +2201,10 @@ void TabBar::paintEvent(QPaintEvent *event)
                 continue;
             }
 
+            // THEM02: the rail rides the content-facing edge — square
+            // on horizontal tabs, so it spans full width there; a
+            // vertical row is rounded on every corner, so the rail
+            // shortens to stay inside the card.
             switch (shape()) {
             case QTabBar::RoundedSouth:
             case QTabBar::TriangularSouth:
@@ -2091,13 +2213,14 @@ void TabBar::paintEvent(QPaintEvent *event)
                 break;
             case QTabBar::RoundedWest:
             case QTabBar::TriangularWest:
-                painter.fillRect(rect.right() - strip + 1, rect.top(),
-                                 strip, rect.height(), accent);
+                painter.fillRect(rect.right() - strip + 1,
+                                 rect.top() + 5,
+                                 strip, rect.height() - 10, accent);
                 break;
             case QTabBar::RoundedEast:
             case QTabBar::TriangularEast:
-                painter.fillRect(rect.left(), rect.top(),
-                                 strip, rect.height(), accent);
+                painter.fillRect(rect.left(), rect.top() + 5,
+                                 strip, rect.height() - 10, accent);
                 break;
             default:
                 painter.fillRect(rect.left(), rect.bottom() - strip + 1,
@@ -2203,26 +2326,21 @@ QSize TabBar::tabSizeHint(int index) const
 {
     QSize sizeHint = QTabBar::tabSizeHint(index);
     QFontMetrics fm = fontMetrics();
-    const int extent = fm.horizontalAdvance(QLatin1Char('M')) * 18;
-    // QTabBar::tabSizeHint returns a transposed size for vertical
-    // shapes — bound the tab's long axis either way so a long title
-    // can't stretch the whole strip.  UIP01: floor the strip's
-    // thickness so tabs keep modern breathing room.  TABS07: cap it
-    // too — per-tab button widgets and styles with generous padding
-    // pushed a plain tab ~5px past icon+text height; keep the strip
-    // at browser-normal content+padding.  TABS08: tightened — the
-    // user-visible target is the compact ~26-28px band real browsers
-    // sit in, so padding is trimmed to text/icon + 9 (fm+8 floor).
-    // TABS06: a container chip only borrows long-axis extent (accent
-    // line + name pill inside the title's zone) — it never makes the
-    // strip thicker.  RSZ02: a dragged-in strip height
-    // (horizontalTabHeight > 0) overrides the Automatic metrics
-    // bound; 0 keeps the normalized sizing.
-    const int minThickness = fm.height() + 8;
-    const int maxThickness = qMax(fm.height(), iconSize().height()) + 9;
+    // TABS19: the tab face is pinned at Firefox's normal-density
+    // ~33px — content + 17 puts a 16px favicon / desktop title right
+    // at the metric on a ~36px strip, replacing the compact TABS07/08
+    // ~26-28px band.  A generous style hint no longer stretches it
+    // and a lean one no longer shrinks it: UIP01/TABS07's bound is
+    // now a pin.  TABS06: a container chip only borrows long-axis
+    // extent (accent line + name pill inside the title's zone) — it
+    // never makes the strip thicker.  RSZ02: a dragged-in strip
+    // height (horizontalTabHeight > 0) still overrides the Automatic
+    // metrics.
+    const int automaticThickness =
+        qMax(fm.height(), iconSize().height()) + 17;
     const int thickness = m_tabStripHeight > 0
         ? m_tabStripHeight
-        : qBound(minThickness, sizeHint.height(), maxThickness);
+        : automaticThickness;
     const QSize chip = containerChipSize(index);
     const QString gid = groupIdForTab(index);
     // TABS02: vertical strips lay out as horizontal rows — the
@@ -2231,12 +2349,19 @@ QSize TabBar::tabSizeHint(int index) const
     // by the accent line (containerChipSize carries it); a group
     // run's first member keeps the band the name pill paints into.
     if (verticalTabShape(shape())) {
-        // Rows stay one text line tall — the bounded thickness above
+        // Rows stay one uniform height — the bounded thickness above
         // is meaningless here since sizeHint.height() is the
-        // transposed row width for vertical shapes.  TABS09: the
-        // icon-only mode drops the group pill's extra band — the pill
-        // is suppressed while the mode is on.
-        int rowHeight = minThickness;
+        // transposed row width for vertical shapes.  TABS19: the
+        // rows adopt the same ~33px Firefox pad the horizontal face
+        // uses — uniform per TABS18.  TABS09: the icon-only mode
+        // drops the group pill's extra band — the pill is suppressed
+        // while the mode is on.  TABS17: a dragged-in strip height
+        // (horizontalTabHeight > 0) feeds the rows too, floored at
+        // the automatic height — a too-small persisted value can't
+        // crop the title under the row's clip rect.
+        int rowHeight = m_tabStripHeight > 0
+            ? qMax(automaticThickness, m_tabStripHeight)
+            : automaticThickness;
         if (!gid.isEmpty() && !m_iconOnlyTabs) {
             TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
             if (tabWidget && isFirstInGroupRun(index)
@@ -2274,35 +2399,34 @@ QSize TabBar::tabSizeHint(int index) const
                      thickness + chip.height());
     }
     // TABGRP01: a collapsed group's chip shrinks to its label instead
-    // of the member's title; the first member of a run widens to carry
-    // the group name pill paintEvent() draws.
+    // of the member's title — it is not a titled tab and keeps its
+    // own compact sizing.
     if (!gid.isEmpty()) {
         TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
         if (tabWidget && tabWidget->isTabGroupChip(index)) {
             const int labelWidth = QFontMetrics(containerChipFont())
                 .horizontalAdvance(groupChipLabel(index)) + 20;
-            sizeHint.setWidth(qMin(sizeHint.width(), labelWidth));
-        } else if (isFirstInGroupRun(index) && tabWidget) {
-            const QString name = tabWidget->tabGroupName(gid);
-            if (!name.isEmpty()) {
-                const int pillWidth = QFontMetrics(containerChipFont())
-                    .horizontalAdvance(name) + 20;
-                sizeHint.setWidth(sizeHint.width() + pillWidth);
-            }
+            return QSize(qMin(sizeHint.width(), labelWidth),
+                         thickness + chip.height());
         }
     }
-    // RSZ01: the horizontal width bounds — a configured cap replaces
-    // the built-in 18-em extent so tabs cannot balloon; a configured
-    // floor keeps each tab at least that wide (below the collective
-    // fit the scroll buttons take over).  The floor clamps to an
-    // explicit cap but not to the Automatic one — a min wider than
-    // the built-in extent is an explicit request for wider tabs.
-    const int cap = m_tabMaxWidth > 0 ? m_tabMaxWidth : extent;
+    // TABS19: every titled tab — pinned included (TABS14 keeps its
+    // title, not an icon tile), group run leaders included (the name
+    // pill paintEvent() draws shares the card) — reports the shared
+    // 225px Firefox metric.  The non-expanding strip renders the
+    // hint as-is, so tabs left-align at one width like Firefox's and
+    // the squeeze hands off to the scroll buttons at the floor.
+    // RSZ01: configured bounds still override the metric — a
+    // tabs/tabMaxWidth cap narrows the shared 225 (below the
+    // collective fit the scroll buttons take over), a
+    // tabs/tabMinWidth floor wider than it is an explicit request
+    // for wider tabs.
+    const int cap = m_tabMaxWidth > 0 ? m_tabMaxWidth : firefoxTabWidth;
     const int floor = m_tabMinWidth > 0
         ? (m_tabMaxWidth > 0 ? qMin(m_tabMinWidth, m_tabMaxWidth)
                            : m_tabMinWidth)
         : 0;
-    return QSize(qBound(floor, sizeHint.width() + chip.width(),
+    return QSize(qBound(floor, firefoxTabWidth + chip.width(),
                         qMax(cap, floor)),
                  thickness + chip.height());
 }
@@ -2315,29 +2439,34 @@ QSize TabBar::minimumTabSizeHint(int index) const
     // minimum.
     if (verticalTabShape(shape()) || m_iconOnlyTabs)
         return tabSizeHint(index);
+    // TABGRP01: a collapsed group's chip never compresses either —
+    // the chip IS the group's presence on the strip, so squeezing it
+    // under its label would hide the only member still showing.
+    const TabWidget *owner = qobject_cast<TabWidget*>(parentWidget());
+    if (owner && owner->isTabGroupChip(index))
+        return tabSizeHint(index);
     // RSZ01: a configured floor overrides the style's squeeze
     // minimum — tabs never lay out narrower than tabs/tabMinWidth.
     if (m_tabMinWidth > 0) {
         const QSize hint = tabSizeHint(index);
         return QSize(qMin(hint.width(), m_tabMinWidth), hint.height());
     }
-    // TABS14: a pinned tab's floor keeps the favicon plus a stub of
-    // title — under pressure it elides toward that minimum but never
-    // returns to the icon-only tile.
-    if (isTabPinned(index)) {
-        const QSize hint = tabSizeHint(index);
-        const int floorWidth = iconSize().width() + 8
-            + fontMetrics().horizontalAdvance(QLatin1Char('M')) * 5;
-        return QSize(qMin(hint.width(), floorWidth), hint.height());
-    }
+    const QSize hint = QTabBar::minimumTabSizeHint(index);
+    // TABS19: Firefox's squeeze floor — every horizontal tab
+    // equal-shares the strip down to 76px, then the scroll buttons
+    // take over (usesScrollButtons stays on).  Qt's own minimum
+    // derives from the shared 225 hint and is ignored — a uniform
+    // floor is what makes the squeeze equal-width.  A pinned tab
+    // shares the floor: TABS14 keeps its title, and 76px still
+    // carries the favicon plus a stub — it never returns to the
+    // icon-only tile.
+    const int width = firefoxTabMinWidth;
     // RSZ02: a user-set strip height is also the floor — the layout
     // never squeezes a horizontal tab shorter than the drag chose.
-    if (m_tabStripHeight > 0) {
-        const QSize hint = QTabBar::minimumTabSizeHint(index);
-        return QSize(hint.width(),
+    if (m_tabStripHeight > 0)
+        return QSize(width,
                      m_tabStripHeight + containerChipSize(index).height());
-    }
-    return QTabBar::minimumTabSizeHint(index);
+    return QSize(width, hint.height());
 }
 
 void TabBar::tabLayoutChange()
@@ -2434,7 +2563,23 @@ void TabBar::paintResizeGrip(QPainter *painter)
         const int y = (shape() == QTabBar::RoundedSouth
                        || shape() == QTabBar::TriangularSouth)
             ? zone.top() : zone.bottom();
-        painter->drawLine(zone.left(), y, zone.right(), y);
+        // THEM02: the edge line opens under the selected card so
+        // the active tab merges into the page instead of being
+        // boxed by the grip's resting line.  Vertical rails keep
+        // the divider behind their floating cards.
+        const QRect sel = currentIndex() >= 0
+            ? tabRect(currentIndex()) : QRect();
+        if (sel.isValid()
+                && sel.intersects(zone.adjusted(0, -1, 0, 1))) {
+            const int gapLeft = sel.left() - 1;
+            const int gapRight = sel.right() + 1;
+            if (zone.left() < gapLeft)
+                painter->drawLine(zone.left(), y, gapLeft - 1, y);
+            if (gapRight < zone.right())
+                painter->drawLine(gapRight + 1, y, zone.right(), y);
+        } else {
+            painter->drawLine(zone.left(), y, zone.right(), y);
+        }
     }
     // The handle rides the zone's center — a vertical stack for
     // vertical strips, a horizontal run for horizontal ones.
@@ -2489,6 +2634,9 @@ void TabBar::layoutRowTabButtons()
         if (m_moveDragActive && m_moveDragVertical
             && index == m_pressedTabIndex)
             option.rect.moveTop(m_moveDragMouseY - m_moveDragGrabOffset);
+        // TABS17: the widgets center on the row's label band — a
+        // group pill's reserved top is not theirs to sit under.
+        option.rect = rowLabelRect(option.rect, index);
         const QTabBar::ButtonPosition sides[2] = {
             QTabBar::LeftSide, QTabBar::RightSide };
         for (const QTabBar::ButtonPosition side : sides) {
@@ -2542,6 +2690,10 @@ void TabBar::layoutNewTabButton()
     // ends they take clip the space the '+' may use.
     int leading = vertical ? band : 0;
     int trailing = vertical ? height() : width();
+    // The scroll buttons that bound the trailing end — collected so
+    // the '+' can be hosted inside their chrome when the strip's
+    // rows leave it no free run (TABS18).
+    QList<QAbstractButton*> trailingChrome;
     const QTabBar::ButtonPosition sides[2] = { QTabBar::LeftSide,
                                                QTabBar::RightSide };
     const QObjectList kids = children();
@@ -2563,10 +2715,12 @@ void TabBar::layoutNewTabButton()
         const QRect geo = child->geometry();
         if (vertical) {
             const int mid = (band + height()) / 2;
-            if (geo.center().y() > mid)
+            if (geo.center().y() > mid) {
                 trailing = qMin(trailing, geo.top() - 2);
-            else
+                trailingChrome.append(child);
+            } else {
                 leading = qMax(leading, geo.bottom() + 3);
+            }
         } else {
             const int mid = width() / 2;
             if (geo.center().x() > mid)
@@ -2585,7 +2739,85 @@ void TabBar::layoutNewTabButton()
         rect = QRect(2, qBound(leading, anchor,
                                qMax(leading, trailing - extent)),
                      qMax(16, width() - 4), extent);
+        // TABS18: a '+' that cannot reach free strip space used to
+        // clamp onto the row the rail was scrolled to — it covered
+        // the label and read as a truncated row.  Rows tile right up
+        // to the scroll chrome, so when the candidate still covers a
+        // row the chrome is the only non-row space left: a multi-row
+        // band collapses its arrows into the first row side by side
+        // and the '+' takes the row below; a single-cell band splits
+        // its last cell; no chrome at all (a rail exactly full)
+        // hides the button rather than cover a row.
+        bool coversRow = false;
+        for (int i = 0; i < count() && !coversRow; ++i) {
+            const QRect row = tabRect(i).translated(0, band);
+            if (row.isValid() && rect.intersects(row))
+                coversRow = true;
+        }
+        if (!coversRow || trailingChrome.isEmpty())
+            m_newTabChromeBand = QRect();
+        if (coversRow) {
+            // The reflowed buttons no longer span their band — once
+            // remembered, only a fresh layout outside it re-derives.
+            QRect current;
+            for (QAbstractButton *button :
+                 std::as_const(trailingChrome)) {
+                current = current.isNull()
+                    ? button->geometry()
+                    : current.united(button->geometry());
+            }
+            QRect chrome = m_newTabChromeBand;
+            if (chrome.isNull()
+                || (!current.isNull() && !chrome.contains(current)))
+                chrome = current;
+            m_newTabChromeBand = chrome;
+            if (chrome.isNull()) {
+                rect = QRect();
+            } else if (chrome.height() >= 28
+                       && trailingChrome.count() > 1) {
+                const int arrowHeight =
+                    qMin(chrome.height() / 2, 16);
+                const int share =
+                    chrome.width() / trailingChrome.count();
+                int x = chrome.left();
+                for (QAbstractButton *button :
+                     std::as_const(trailingChrome)) {
+                    button->setGeometry(
+                        QRect(x, chrome.top(), share, arrowHeight));
+                    x += share;
+                }
+                rect = QRect(2, chrome.top() + arrowHeight + 1,
+                             qMax(16, width() - 4),
+                             chrome.height() - arrowHeight - 1);
+            } else {
+                // Only a single cell's worth of band — split the
+                // lower-most cell between its scroll button and the
+                // '+'.  The cell comes from the remembered band, not
+                // the button's live geometry: the re-split is what
+                // keeps repeated layouts idempotent.
+                QAbstractButton *host = trailingChrome.last();
+                for (QAbstractButton *button :
+                     std::as_const(trailingChrome)) {
+                    if (button->geometry().bottom()
+                        > host->geometry().bottom())
+                        host = button;
+                }
+                const int cellHeight =
+                    chrome.height() / trailingChrome.count();
+                const QRect cell(chrome.left(),
+                                 chrome.bottom() - cellHeight + 1,
+                                 chrome.width(), cellHeight);
+                const int half = cell.width() / 2;
+                host->setGeometry(QRect(cell.topLeft(),
+                                        QSize(half, cell.height())));
+                rect = QRect(cell.left() + half + 1,
+                             cell.top() + 2,
+                             cell.width() - half - 3,
+                             cell.height() - 4);
+            }
+        }
     } else {
+        m_newTabChromeBand = QRect();
         const int strip = height() - band;
         const int extent = qBound(18, strip - 6, 30);
         const bool rtl = isRightToLeft();
@@ -2597,12 +2829,21 @@ void TabBar::layoutNewTabButton()
                      band + qMax(0, (strip - extent) / 2),
                      extent, extent);
     }
+    // TABS18: a '+' with no honest parking spot hides rather than
+    // cover a tab row.
+    if (!rect.isValid()) {
+        m_newTabButton->hide();
+        return;
+    }
     if (m_newTabButton->geometry() != rect)
         m_newTabButton->setGeometry(rect);
-    // Overlap is legal geometry (an overflowing strip leaves no
-    // sliver) — keep the '+' above the tab buttons it may cover.
+    // The button still shares space with the scroll chrome and tab
+    // edge widgets — keep it above what it adjoins.
     m_newTabButton->raise();
     m_newTabButton->show();
+    // TABS19: the parked spot can slide under (or back out from
+    // under) a tab's close button — re-run the yield.
+    updateCloseButtonVisibility();
 }
 
 int TabBar::verticalTabWidth() const

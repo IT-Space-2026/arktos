@@ -101,13 +101,6 @@ function update()
     arora.translate('Search!', function (t) {
         document.getElementById('searchButton').value = t;
     });
-    arora.translate('Search results provided by', function (provided) {
-        arora.translate('About Arora', function (about) {
-            document.getElementById('footer').innerHTML =
-                provided + ' ' + arora.currentEngineName
-                + ' | <a href="http://arora-browser.org/">' + about + '</a>';
-        });
-    });
     document.getElementById('lineEdit').placeholder = arora.currentEngineName;
 
     // Try to change the direction of the page:

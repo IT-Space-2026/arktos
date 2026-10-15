@@ -22,6 +22,7 @@
 
 #include "adblockmanager.h"
 #include "adblockpage.h"
+#include "arorastyle.h"
 #include "autofillmanager.h"
 #include "browserapplication.h"
 #include "browserprofile.h"
@@ -39,6 +40,7 @@
 #include "tabwidget.h"
 #include "tlsverifier.h"
 #include "toolbarsearch.h"
+#include "tormanager.h"
 #include "webenginebackend.h"
 #include "webpermissionmanager.h"
 #include "webview.h"
@@ -144,9 +146,7 @@ JavaScriptAroraObject::JavaScriptAroraObject(QObject *parent)
     static const char *translations[] = {
         QT_TR_NOOP("Welcome to Arora!"),
         QT_TR_NOOP("Arora Start"),
-        QT_TR_NOOP("Search!"),
-        QT_TR_NOOP("Search results provided by"),
-        QT_TR_NOOP("About Arora")
+        QT_TR_NOOP("Search!")
     };
     Q_UNUSED(translations);
 
@@ -737,6 +737,26 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
         return false;
     }
 
+    // TOR14: page-initiated remote navigations — the tor start page's
+    // search assigns window.location.href, link clicks and JS/meta
+    // redirects land here the same way — never pass through
+    // WebView::loadUrl, so the TOR12 bootstrap queue cannot see them.
+    // While the daemon cannot carry the url yet, refuse the request
+    // and hand it to the view's hold instead: the current document
+    // stays (no error page ever commits) and the queued load
+    // dispatches the moment a stream-ridable circuit exists.
+    if (isMainFrame) {
+        WebView *webView = qobject_cast<WebView *>(
+            WebEnginePageAdapter::forPage(this)->view());
+        if (webView && webView->torHoldNavigation(url)) {
+            // A refused navigation can still report a LoadFailed
+            // under the aborted target — it is neither an error nor
+            // retry-worthy; the queued load is the pending intent.
+            m_torHeldNavs.insert(url);
+            return false;
+        }
+    }
+
     // PDF01: the staged viewer document is file://-origin — an
     // embedded file:///etc/passwd-style link would read as a
     // local-to-local navigation Chromium has no reason to refuse.
@@ -945,8 +965,26 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
         // page — its phantom success no longer needs suppressing.
         // setHtml()'s internal data: commit passes through this hook
         // too and must NOT disarm it — that commit is the error page.
-        if (url.scheme() != QLatin1String("data"))
+        if (url.scheme() != QLatin1String("data")) {
             m_pendingErrorPages = 0;
+            // TOR14: stale held-nav markers — a refusal's failure
+            // report either arrived already or never will.
+            m_torHeldNavs.clear();
+        }
+        // TOR18: a real navigation also supersedes an armed bootstrap
+        // retry — even a manual re-issue of the dead url, which IS
+        // the retry the user asked for.  The same data: carve-out
+        // keeps the error page's own commit from disarming it.  The
+        // retry budget is per navigation (TOR12): a different target
+        // earns its own attempts, and a url that spent all of them
+        // stays bound until the user loads something else.
+        if (url.scheme() != QLatin1String("data")) {
+            torDisarmRetry();
+            if (url != m_torRetriedUrl) {
+                m_torRetriedUrl.clear();
+                m_torRetryAttempts = 0;
+            }
+        }
         m_requestedUrl = url;
         emit aboutToLoadUrl(url);
     }
@@ -1127,6 +1165,21 @@ void WebPage::handleLoadingChanged(const QWebEngineLoadingInfo &loadingInfo)
                  && !loadingInfo.isErrorPage())
             PrivacyRequestInterceptor::clearDowngradedHost(
                 loadingInfo.url().host(), downgradeScope);
+        // TOR14: a generated commit that just landed releases the
+        // work deferred behind it — the warm-up retry's re-issue and
+        // any tor nav the view was holding.  A load() fired while the
+        // setHtml commit is still in flight can be swallowed whole by
+        // the engine — no LoadStarted, no LoadFailed — so both wait
+        // for this edge instead of racing the commit.
+        if (m_pendingErrorPages == 0) {
+            if (m_torDeferredFire) {
+                m_torDeferredFire = false;
+                torFireRetry();
+            }
+            if (WebView *webView = qobject_cast<WebView *>(
+                    WebEnginePageAdapter::forPage(this)->view()))
+                webView->torFlushQueuedLoad();
+        }
         return;
     }
 
@@ -1144,6 +1197,13 @@ void WebPage::handleLoadingChanged(const QWebEngineLoadingInfo &loadingInfo)
 
     QUrl errorUrl = loadingInfo.url();
     if (errorUrl.isEmpty())
+        return;
+
+    // TOR14: a navigation the tor bootstrap hold refused can still
+    // report a failed load under the aborted target — it is neither
+    // an error nor retry-worthy; the queued load is the pending
+    // intent.
+    if (m_torHeldNavs.remove(errorUrl))
         return;
 
     // SEC18: a main-frame request the interceptor just refused under
@@ -1219,6 +1279,20 @@ void WebPage::handleLoadingChanged(const QWebEngineLoadingInfo &loadingInfo)
             errorUrl, int(loadingInfo.errorDomain()),
             loadingInfo.errorCode(), downgradeScope);
 
+    // TOR18/TOR14: under tor a genuine main-frame failure this early
+    // is almost always bootstrap-transient — the fail-closed proxy
+    // was still refusing, or the first exit circuits were not built
+    // yet.  While the bounded auto-retry is armed the failure is
+    // transient and stays invisible: the tab shows a "Tor is
+    // starting" pending page the armed retry resolves on its own —
+    // an error flash that the retry then clears is exactly the
+    // reported bug.  The honest error page commits only once arming
+    // is refused (budget or warm-up window spent, settled daemon).
+    if (BrowserApplication::isTorMode() && torArmRetry(errorUrl)) {
+        showTorWarmupPending(errorUrl);
+        return;
+    }
+
     showErrorPage(errorUrl, loadingInfo.errorString(),
                   downgraded || PrivacyRequestInterceptor::isDowngraded(
                       errorUrl.host(), downgradeScope));
@@ -1278,6 +1352,234 @@ void WebPage::showErrorPage(const QUrl &errorUrl, const QString &errorString,
     // feeds the manager), but a page that loaded and then errored —
     // e.g. a navigation interrupted mid-way — may have gotten in.
     HistoryManager::instance()->removeHistoryEntry(errorUrl, this->title());
+}
+
+// TOR18: the cold-circuit stretch after the SOCKS listener goes
+// live — spec bounds it at ~30-60s; 45s covers the observed
+// 'tried connecting ... giving up' bursts just after PROGRESS=100.
+static const qint64 kTorWarmupMs = 45 * 1000;
+// Ready can land without any CIRC evidence ever arriving (a dead
+// control channel still proxies fine through SOCKS) — fire the armed
+// retry after this grace instead of stranding the error page.
+static const int kTorRetryFallbackMs = 15000;
+// Tor reports its first BUILT circuits moments into Ready — often
+// directory/internal paths, or exits still mid-churn — so a snapshot
+// arriving before this dwell defers to the fallback clock instead of
+// spending a retry on a path that is still cold.
+static const qint64 kTorRetryMinDwellMs = 3000;
+// TOR12: retries a failed navigation may spend inside the warm-up
+// window.  One was not enough — the first usable-circuit snapshot is
+// often still a cold path — so a retry that fails again re-arms
+// while the budget and the window allow; past it the error page
+// stays honest and TOR17's banner carries the manual Retry.
+static const int kTorMaxRetryAttempts = 4;
+
+#ifdef AUTOTESTS
+static qint64 s_torWarmupMs = -1;
+void WebPage::setTorWarmupMsForTesting(qint64 ms)
+{
+    s_torWarmupMs = ms;
+}
+static qint64 torWarmupMs()
+{
+    return s_torWarmupMs >= 0 ? s_torWarmupMs : kTorWarmupMs;
+}
+#else
+static qint64 torWarmupMs() { return kTorWarmupMs; }
+#endif
+
+TorManager *WebPage::torManager()
+{
+    BrowserApplication *app = BrowserApplication::instance();
+    return app ? app->torManager() : nullptr;
+}
+
+// TOR14: returns whether the retry was armed — the caller shows the
+// pending page when it is and the honest error page when it is not.
+bool WebPage::torArmRetry(const QUrl &url)
+{
+    TorManager *tor = torManager();
+    if (!tor || url.isEmpty())
+        return false;
+    // Arm only while the failure is plausibly bootstrap-transient:
+    // the daemon is still coming up (the fail-closed proxy refuses
+    // everything it sees) or ready just landed and the first exit
+    // circuits are still cold.  Failed/Stopped/Stopping are settled
+    // states — the error page stays honest and TOR17's banner
+    // carries the Retry path.
+    const TorManager::State state = tor->state();
+    const bool connecting = state == TorManager::Starting
+        || state == TorManager::Connecting
+        || state == TorManager::Bootstrapping;
+    const qint64 elapsed = tor->readyElapsed();
+    const bool warmup = elapsed >= 0 && elapsed < torWarmupMs();
+    if (!connecting && !warmup)
+        return false;
+    // The retry budget rides with the url it was spent on — a
+    // different target earns a fresh one; this url re-arms while it
+    // has attempts left (TOR12).
+    if (m_torRetriedUrl != url) {
+        m_torRetriedUrl = url;
+        m_torRetryAttempts = 0;
+    } else if (m_torRetryAttempts >= kTorMaxRetryAttempts) {
+        return false;
+    }
+    m_torRetryUrl = url;
+    if (m_torRetryManager != tor) {
+        m_torRetryManager = tor;
+        connect(tor, &TorManager::ready, this,
+                [this](const QNetworkProxy &) {
+            // `ready` alone still races cold exits — it only arms the
+            // no-circuit-evidence fallback; the retry prefers to wait
+            // for a usable circuit.
+            torStartRetryFallback();
+        });
+        connect(tor, &TorManager::stateChanged, this,
+                [this](TorManager::State state) {
+            // A daemon that settles into Failed/Stopped never
+            // produces the circuit evidence the armed retry waits
+            // on, and its fallback clock may never have started —
+            // fire now: the re-issued load re-holds in the view's
+            // queue (the daemon is not ready) so the pending page
+            // resolves through the same wait the typed-nav path
+            // uses, with the banner's Retry as the manual escape.
+            if (!m_torRetryUrl.isEmpty()
+                && (state == TorManager::Failed
+                    || state == TorManager::Stopped))
+                torFireRetry();
+        });
+        connect(tor, &TorManager::circuitsChanged, this,
+                [this](const QList<TorCircuit> &circuits) {
+            TorManager *manager = torManager();
+            if (!manager || !manager->isReady()
+                    || m_torRetryUrl.isEmpty())
+                return;
+            // A snapshot inside the first seconds of Ready is usually
+            // all internal paths or exits still mid-churn — keep
+            // waiting on the fallback clock rather than spend a retry
+            // on it.
+            const qint64 elapsed = manager->readyElapsed();
+            if (elapsed >= 0 && elapsed < kTorRetryMinDwellMs) {
+                torStartRetryFallback();
+                return;
+            }
+            // TOR12: only a stream-ridable circuit earns the fire —
+            // a snapshot of directory/one-hop internals just leaves
+            // the fallback running.
+            for (const TorCircuit &circuit : circuits) {
+                if (TorManager::isUsableCircuit(circuit)) {
+                    torFireRetry();
+                    return;
+                }
+            }
+        });
+    }
+    // A warm-up failure is already past ready — the fallback clock
+    // starts now rather than at a `ready` that already fired.
+    if (tor->isReady())
+        torStartRetryFallback();
+    return true;
+}
+
+// TOR14: the pending page a warm-up-armed failure shows instead of
+// the error page.  The armed retry resolves it without any user
+// action — the read the report called out (an error flash that then
+// clears) was the notfound page committing while the retry was
+// already armed.
+void WebPage::showTorWarmupPending(const QUrl &url)
+{
+    QFile pendingFile(QLatin1String(":/certerror.html"));
+    if (!pendingFile.open(QIODevice::ReadOnly))
+        return;
+    QString html = QLatin1String(pendingFile.readAll());
+    QPixmap pixmap = QIcon(QLatin1String(":/tor-onion.svg"))
+            .pixmap(QSize(64, 64));
+    if (pixmap.isNull())
+        pixmap = QIcon(QLatin1String(":/arora.svg")).pixmap(QSize(64, 64));
+    QBuffer imageBuffer;
+    imageBuffer.open(QBuffer::ReadWrite);
+    if (pixmap.save(&imageBuffer, "PNG")) {
+        html.replace(QLatin1String("IMAGE_BINARY_DATA_HERE"),
+                     QLatin1String(imageBuffer.buffer().toBase64()));
+    }
+    const QString shownUrl =
+        QString::fromUtf8(url.toEncoded()).toHtmlEscaped();
+    html = html.arg(
+        tr("Connecting to the Tor network"),
+        tr("Tor is still starting"),
+        tr("The connection is not ready yet — this page will load "
+           "automatically as soon as Tor can carry it."),
+        QLatin1String("<li>")
+            + tr("Requested address: %1").arg(shownUrl)
+            + QLatin1String("</li>"),
+        QLatin1String("<li>")
+            + tr("No action is needed — the retry happens on its "
+                 "own.")
+            + QLatin1String("</li>"),
+        QString());
+    BrowserTheme::decorateInternalPage(html);
+    ++m_pendingErrorPages;   // SAFE07: the setHtml commit reports a
+                           // LoadSucceeded for the failed url — not
+                           // real evidence, same contract as
+                           // showErrorPage.
+    setHtml(html, url);
+    // Same bookkeeping as the error page: a failed url that already
+    // reached the store is removed.
+    HistoryManager::instance()->removeHistoryEntry(url, title());
+    if (WebView *webView = qobject_cast<WebView *>(
+            WebEnginePageAdapter::forPage(this)->view()))
+        webView->torWarmupNotice();
+}
+
+void WebPage::torDisarmRetry()
+{
+    m_torRetryUrl.clear();
+    m_torDeferredFire = false;
+    if (m_torRetryTimer)
+        m_torRetryTimer->stop();
+}
+
+void WebPage::torStartRetryFallback()
+{
+    if (m_torRetryUrl.isEmpty())
+        return;
+    if (!m_torRetryTimer) {
+        m_torRetryTimer = new QTimer(this);
+        m_torRetryTimer->setSingleShot(true);
+        connect(m_torRetryTimer, &QTimer::timeout,
+                this, [this]() { torFireRetry(); });
+    }
+    m_torRetryTimer->start(kTorRetryFallbackMs);
+}
+
+void WebPage::torFireRetry()
+{
+    if (m_torRetryUrl.isEmpty())
+        return;
+    // TOR14: firing while a generated commit (the warm-up pending
+    // page or the error page) is still in flight races it — the
+    // engine can swallow the re-issued load whole: no LoadStarted,
+    // no LoadFailed, and the armed retry is gone, leaving the tab
+    // stuck on the pending page forever.  Wait out the commit — its
+    // LoadSucceeded edge in handleLoadingChanged re-enters here;
+    // the arm stays so the intent is not lost.
+    if (m_pendingErrorPages > 0) {
+        m_torDeferredFire = true;
+        return;
+    }
+    const QUrl url = m_torRetryUrl;
+    torDisarmRetry();
+    // TOR12: the attempt is spent on the fire — a retry that fails
+    // again re-arms in torArmRetry while the budget and the warm-up
+    // window allow, and a url whose budget is gone keeps its honest
+    // error page.
+    ++m_torRetryAttempts;
+    // No "still on the error page" url() check — the fire can land
+    // between setHtml() and the error page's commit, when url() still
+    // names the previous document, and a user who navigated away has
+    // already disarmed this in acceptNavigationRequest.  The load is
+    // a real navigation and wins the commit either way.
+    load(url);
 }
 
 // SEC06: session-scoped whitelist of (host, certificate) pairs the
@@ -1812,8 +2114,8 @@ void WebPage::showRateLimitNoticeIfNeeded()
         "var bar=document.createElement('div');"
         "bar.id='arora-rate-limit';"
         "bar.setAttribute('style','all:initial;display:block;position:relative;"
-            "z-index:2147483647;background:#fff4ce;color:#3b3105;"
-            "border-bottom:2px solid #e0c45f;"
+            "z-index:2147483647;background:%3;color:%4;"
+            "border-bottom:2px solid %5;"
             "font:14px/1.45 sans-serif;padding:10px 16px;');"
         "var title=document.createElement('strong');"
         "title.textContent=\"%1 \";"
@@ -1829,7 +2131,10 @@ void WebPage::showRateLimitNoticeIfNeeded()
                         "it temporarily flagged search traffic from this "
                         "profile. Complete the prompt below or try again "
                         "later; or switch the default search engine under "
-                        "Tools > Options > Search.")));
+                        "Tools > Options > Search.")),
+             AroraStyle::warningBannerColor().name(),
+             AroraStyle::warningBannerTextColor().name(),
+             AroraStyle::warningBannerBorderColor().name());
     runJavaScript(script);
 }
 

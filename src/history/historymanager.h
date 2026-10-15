@@ -157,6 +157,11 @@ public:
 
 public slots:
     void clear();
+    // HIST03: the shared "clear all history" confirmation — the
+    // History menu's Clear History... and the sidebar's clear button
+    // both land here so the prompt can't drift.  Returns whether the
+    // user confirmed; the store is cleared on Yes.
+    bool confirmClear(QWidget *parent);
     // CLR01 ranged wipe used by a clear-private-data plan: drops the
     // visits at or after the cutoff (ms since epoch); icons and the
     // older rows stay.

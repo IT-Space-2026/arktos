@@ -75,6 +75,7 @@
 #include <qdir.h>
 #include <qfile.h>
 #include <qfileinfo.h>
+#include <qmessagebox.h>
 #include <qpointer.h>
 #include <qsettings.h>
 #include <qtemporaryfile.h>
@@ -439,6 +440,17 @@ void HistoryManager::setDaysToExpire(int limit)
     m_saveTimer->changeOccurred();
 }
 
+bool HistoryManager::confirmClear(QWidget *parent)
+{
+    if (QMessageBox::question(parent, tr("Clear History"),
+            tr("Do you want to clear the history?"),
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No) != QMessageBox::Yes)
+        return false;
+    clear();
+    return true;
+}
+
 void HistoryManager::clear()
 {
     m_history.clear();
@@ -619,7 +631,12 @@ void HistoryManager::save()
     QFile historyFile(BrowserPaths::dataFilePath(QLatin1String("history")));
 
     // When saving everything use a temporary file to prevent possible data loss.
-    QTemporaryFile tempFile;
+    // The temp file must live in the target's directory: a default
+    // QTemporaryFile lands on /tmp and /tmp -> data dir is a cross-device
+    // rename (EXDEV) inside flatpak (and on any tmpfs-/tmp host), which
+    // silently drops the whole history save.
+    QTemporaryFile tempFile(historyFile.fileName()
+                            + QLatin1String(".XXXXXX"));
     tempFile.setAutoRemove(false);
     bool open = false;
     if (saveAll) {

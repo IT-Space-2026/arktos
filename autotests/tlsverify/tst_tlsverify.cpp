@@ -34,6 +34,7 @@
 
 #include "browserapplication.h"
 #include "tlsverifier.h"
+#include "tlsfixture.h"
 #include "qtest_arora.h"
 #include "qtry.h"
 
@@ -41,86 +42,8 @@
 #include <rustcore.h>
 #endif
 
-static QString certDir()
-{
-    return QCoreApplication::applicationDirPath()
-        + QLatin1String("/../../src/rustcore/data/testcerts");
-}
-
-static QByteArray certFile(const QString &name)
-{
-    QFile file(certDir() + QLatin1Char('/') + name);
-    if (!file.open(QIODevice::ReadOnly))
-        return QByteArray();
-    return file.readAll();
-}
-
-// The TLS peer the probe handshakes with: openssl s_server holding a
-// fixture leaf.  A real OpenSSL server is the right peer for a
-// second-opinion verifier — an in-process Qt fixture would also
-// deadlock here, since the synchronous FFI call blocks the event loop
-// the fixture would live on.
-class TlsFixture
-{
-public:
-    ~TlsFixture()
-    {
-        m_proc.kill();
-        m_proc.waitForFinished(2000);
-    }
-
-    // base is the fixture name ("valid", "expired", ...) — cert/key
-    // PEMs sit in src/rustcore/data/testcerts.
-    bool start(const QString &base)
-    {
-        const QString cert =
-            certDir() + QLatin1Char('/') + base + QLatin1String(".pem");
-        const QString key = certDir() + QLatin1Char('/') + base
-            + QLatin1String("-key.pem");
-        if (!QFile::exists(cert) || !QFile::exists(key))
-            return false;
-        quint16 candidate = freePort();
-        m_proc.setProgram(QStringLiteral("openssl"));
-        m_proc.setArguments({
-            QStringLiteral("s_server"),
-            QStringLiteral("-accept"),
-            QLatin1String("127.0.0.1:") + QString::number(candidate),
-            QStringLiteral("-cert"), cert,
-            QStringLiteral("-key"), key,
-            QStringLiteral("-alpn"), QStringLiteral("http/1.1"),
-            QStringLiteral("-quiet"),
-        });
-        m_proc.start();
-        if (!m_proc.waitForStarted(5000))
-            return false;
-        // Wait for the listener: a bare TCP connect drops the attempt
-        // but s_server keeps accepting.
-        for (int i = 0; i < 50; ++i) {
-            QTcpSocket probe;
-            probe.connectToHost(QHostAddress::LocalHost, candidate);
-            if (probe.waitForConnected(200)) {
-                probe.disconnectFromHost();
-                m_port = candidate;
-                return true;
-            }
-            QTest::qWait(50);
-        }
-        return false;
-    }
-
-    quint16 port() const { return m_port; }
-
-private:
-    static quint16 freePort()
-    {
-        QTcpServer server;
-        server.listen(QHostAddress::LocalHost);
-        return server.serverPort();
-    }
-
-    QProcess m_proc;
-    quint16 m_port = 0;
-};
+using TlsFixtureData::certDir;
+using TlsFixtureData::certFile;
 
 #if defined(ARORA_RUSTCORE)
 // Synchronous FFI probe — the verdict JSON parsed into an object.

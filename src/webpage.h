@@ -23,6 +23,7 @@
 #include "tabwidget.h"
 
 #include <qlist.h>
+#include <qpointer.h>
 #include <qset.h>
 #include <qsslcertificate.h>
 #include <qwebenginecertificateerror.h>
@@ -41,8 +42,10 @@ public:
 
 class QWebEngineLoadingInfo;
 class QWebChannel;
+class QTimer;
 class AutoFillBridge;
 class OpenSearchEngine;
+class TorManager;
 // See https://developer.mozilla.org/en/adding_search_engines_from_web_pages
 class JavaScriptExternalObject : public QObject
 {
@@ -164,6 +167,17 @@ public:
     // once the engine navigates it — records the pop-up's target url.
     void noteBlockedPopupTarget(const QUrl &url);
 
+    // TOR14: a generated commit — the not-found error page or the
+    // tor warm-up pending page setHtml()s — is on its way to the
+    // renderer but has not reported its LoadSucceeded yet.  A load()
+    // fired into this window can be swallowed whole by the engine
+    // (no LoadStarted, no LoadFailed), so the tor retry fire and the
+    // view's queued-navigation flush wait it out.
+    bool generatedPageCommitPending() const
+    {
+        return m_pendingErrorPages > 0;
+    }
+
 protected:
     bool acceptNavigationRequest(const QUrl &url, NavigationType type, bool isMainFrame) override;
     QWebEnginePage *createWindow(QWebEnginePage::WebWindowType type) override;
@@ -175,6 +189,18 @@ public:
     // engine-originated window.open.
     QWebEnginePage *testCreateWindow(QWebEnginePage::WebWindowType type)
         { return createWindow(type); }
+    // TOR12: the url the warm-up retry is armed for — empty when
+    // nothing is pending.  The multi-attempt legs poll it to sync on
+    // failure -> re-arm instead of guessing at timings.
+    QUrl torPendingRetryForTesting() const { return m_torRetryUrl; }
+    // TOR12: how many retry fires the armed url's budget has spent —
+    // exact fire accounting, unlike counting dispatch signals that
+    // the fallback timer can also produce.
+    int torRetryAttemptsForTesting() const { return m_torRetryAttempts; }
+    // TOR12: overrides the wall-clock warm-up window torArmRetry
+    // gates on — a large value keeps a slow suite run from expiring
+    // the real bound mid-leg; -1 restores the default.
+    static void setTorWarmupMsForTesting(qint64 ms);
 #endif
 
 private slots:
@@ -219,6 +245,26 @@ private:
     // holds a candidate, declines otherwise.
     void handleClientCertificateSelection(
             QWebEngineClientCertificateSelection selection);
+    // TOR18/TOR14: the bounded bootstrap auto-retry.  A genuine
+    // main-frame failure while the daemon is still coming up (or
+    // inside the cold-circuit stretch right after `ready`) is almost
+    // always bootstrap-transient — torArmRetry() holds the failed url
+    // and re-issues it when the network can plausibly serve it: the
+    // first stream-ridable circuit reported, else a bounded fallback
+    // clock.  Returns whether the retry armed — while it is armed the
+    // caller shows the "Tor is starting" pending page instead of the
+    // error page, so a transient failure never flashes an error the
+    // retry then clears.  A settled Failed/Stopped daemon never arms,
+    // so the honest error page stays.
+    bool torArmRetry(const QUrl &url);
+    void torDisarmRetry();
+    void torStartRetryFallback();
+    void torFireRetry();
+    // TOR14: the pending page shown while a warm-up retry is armed —
+    // "Tor is still starting, the page loads automatically" — in
+    // place of the error page the armed retry would only replace.
+    void showTorWarmupPending(const QUrl &url);
+    static TorManager *torManager();
 
 protected:
     static QString s_userAgent;
@@ -270,6 +316,28 @@ protected:
     // records "send nothing" — a negotiation's repeated challenges
     // reuse the decision instead of re-prompting.
     QHash<QString, QSslCertificate> m_clientCertChoices;
+    // TOR18/TOR12: m_torRetryUrl is the failed navigation waiting for
+    // its wake-up (empty = none armed); m_torRetriedUrl owns the
+    // retry budget and m_torRetryAttempts counts the fires spent on
+    // it — a retry that fails again inside the warm-up window re-arms
+    // while attempts remain, and a url whose budget is gone keeps its
+    // honest error page instead of looping.
+    QUrl m_torRetryUrl;
+    QUrl m_torRetriedUrl;
+    int m_torRetryAttempts = 0;
+    QPointer<TorManager> m_torRetryManager;
+    QTimer *m_torRetryTimer = nullptr;
+    // TOR14: remote urls whose navigation was refused into the
+    // view's tor hold (acceptNavigationRequest).  A refused request
+    // can still surface a LoadFailed under the aborted target — the
+    // set lets handleLoadingChanged swallow exactly those reports
+    // instead of arming a retry for a nav that was never dispatched.
+    QSet<QUrl> m_torHeldNavs;
+    // TOR14: the armed retry asked to fire while a generated commit
+    // was still in flight — the fire is deferred to the commit's
+    // LoadSucceeded edge so the re-issued load() cannot be swallowed
+    // by the engine mid-commit.
+    bool m_torDeferredFire = false;
 };
 
 #endif // WEBPAGE_H

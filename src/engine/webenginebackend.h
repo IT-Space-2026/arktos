@@ -105,13 +105,6 @@ public:
 
     qint64 renderProcessId() const override;
 
-    Engine::Page *createWindow(Engine::WebWindowType type) override;
-    // Window requests keep routing through the app's own chain
-    // (WebPage::createWindow) — a page owner that wants the created
-    // window back as an adapted page installs this handler.
-    void setCreateWindowHandler(
-            const std::function<Engine::Page *(Engine::WebWindowType)> &handler);
-
     void runJavaScriptLifted(const QString &source,
             const std::function<void(const QVariant &)> &resultCallback
                 = std::function<void(const QVariant &)>(),
@@ -137,7 +130,6 @@ public:
 
 private:
     QWebEnginePage *m_page;
-    std::function<Engine::Page *(Engine::WebWindowType)> m_createWindow;
 };
 
 class WebEngineDownloadRequest : public Engine::DownloadRequest
@@ -159,6 +151,7 @@ public:
     void cancel() override;
     void pause() override;
     void resume() override;
+    bool isPaused() const override;
     qint64 receivedBytes() const override;
     qint64 totalBytes() const override;
     State state() const override;

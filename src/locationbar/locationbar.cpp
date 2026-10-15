@@ -19,12 +19,13 @@
 
 #include "locationbar.h"
 
+#include "arorastyle.h"
 #include "clearbutton.h"
 #include "locationbarsiteicon.h"
 #include "popupblockerbutton.h"
 #include "privacyindicator.h"
 #include "searchlineedit.h"
-#include "siteshield.h"
+#include "sitepadlock.h"
 #include "twoleveldomains_p.h"
 #include "webview.h"
 
@@ -43,7 +44,7 @@ LocationBar::LocationBar(QWidget *parent)
     : LineEdit(parent)
     , m_webView(nullptr)
     , m_siteIcon(nullptr)
-    , m_shield(nullptr)
+    , m_padlock(nullptr)
     , m_popupBlockerButton(nullptr)
     , m_privacyIndicator(nullptr)
 {
@@ -56,12 +57,13 @@ LocationBar::LocationBar(QWidget *parent)
     setMinimumHeight(fontMetrics().height() + 12);
 
     setUpdatesEnabled(false);
-    // UIP05: the shield indicator opens the per-site privacy panel —
-    // leftmost of the leading site-info zone, Vivaldi-style.
-    m_shield = new SiteShieldButton(this);
-    addWidget(m_shield, LeftSide);
+    // TRUST14: the padlock owns the leftmost site-info slot — it shows
+    // the connection/trust verdict (SitePadlockButton), while the
+    // shield that used to sit here moved onto the navigation toolbar.
+    m_padlock = new SitePadlockButton(this);
+    addWidget(m_padlock, LeftSide);
 
-    // site icon on the left, next to the shield
+    // site icon on the left, next to the padlock
     m_siteIcon = new LocationBarSiteIcon(this);
     addWidget(m_siteIcon, LeftSide);
 
@@ -94,7 +96,7 @@ void LocationBar::setWebView(WebView *webView)
     Q_ASSERT(webView);
     m_webView = webView;
     m_siteIcon->setWebView(webView);
-    m_shield->setWebView(webView);
+    m_padlock->setWebView(webView);
     m_popupBlockerButton->setWebView(webView);
     m_privacyIndicator->setWebView(webView);
     connect(webView, &QWebEngineView::urlChanged,
@@ -265,8 +267,7 @@ void LocationBar::paintEvent(QPaintEvent *event)
     QColor backgroundColor = defaultBaseColor;
     if (m_webView && m_webView->url().scheme() == QLatin1String("https")
         && p.color(QPalette::Text).value() < 128) {
-        QColor lightYellow(248, 248, 210);
-        backgroundColor = lightYellow;
+        backgroundColor = AroraStyle::secureFieldColor();
     }
 
     // set the progress bar
@@ -276,9 +277,8 @@ void LocationBar::paintEvent(QPaintEvent *event)
         if (progress == 0) {
             p.setBrush(QPalette::Base, backgroundColor);
         } else {
-            QColor loadingColor = QColor(116, 192, 250);
-            if (p.color(QPalette::Text).value() >= 128)
-                loadingColor = defaultBaseColor.darker(200);
+            const QColor loadingColor =
+                AroraStyle::loadingProgressColor(p);
 
             QLinearGradient gradient(0, 0, width(), 0);
             gradient.setColorAt(0, loadingColor);
@@ -297,9 +297,7 @@ void LocationBar::paintEvent(QPaintEvent *event)
     // field's bottom edge (the affordance the dead 0<progress<100
     // gradient used to provide mid-load).
     if (m_webView && m_webView->isLoading()) {
-        QColor stripColor(116, 192, 250);
-        if (p.color(QPalette::Text).value() >= 128)
-            stripColor = defaultBaseColor.darker(200);
+        const QColor stripColor = AroraStyle::loadingProgressColor(p);
         QPainter stripPainter(this);
         stripPainter.fillRect(QRect(1, height() - 3, width() - 2, 2),
                               stripColor);

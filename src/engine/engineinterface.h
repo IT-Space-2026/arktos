@@ -82,15 +82,6 @@ enum class NavigationType {
     Other
 };
 
-// What kind of window a page asked to open (POPUP01 relies on the
-// popup-shaped values to discriminate window.open from target=_blank).
-enum class WebWindowType {
-    BrowserWindow,
-    BrowserTab,
-    BrowserBackgroundTab,
-    Dialog
-};
-
 // ---- request policy ------------------------------------------------------
 
 // Mirrors QWebEngineUrlRequestInfo::ResourceType.  The adblock rule
@@ -230,25 +221,6 @@ struct FindResult {
     int activeMatch = 0;   // 1-based on QtWebEngine 6.12 (empirically)
 };
 
-// ---- permissions ---------------------------------------------------------------
-
-// Union of the permission types the SEC05 broker handles plus the
-// obvious engine-neutral rest.  Backend maps its own permission set;
-// anything unmapped arrives as Unsupported and the broker denies it.
-enum class PermissionType {
-    Notifications,
-    Geolocation,
-    MediaAudioCapture,
-    MediaVideoCapture,
-    MediaAudioVideoCapture,
-    MouseLock,
-    DesktopVideoCapture,
-    DesktopAudioVideoCapture,
-    ClipboardReadWrite,
-    LocalFontsAccess,
-    Unsupported
-};
-
 // ---- certificate errors ----------------------------------------------------------
 
 // Engine-neutral summary of a certificate failure (SEC06).  `error` is
@@ -298,6 +270,10 @@ public:
     virtual void cancel() = 0;
     virtual void pause() = 0;
     virtual void resume() = 0;
+    // DOWN04: the sidebar pause/resume toggle reads the backend's own
+    // pause state — an InProgress request may be paused, which state()
+    // alone cannot express.
+    virtual bool isPaused() const = 0;
     virtual qint64 receivedBytes() const = 0;
     virtual qint64 totalBytes() const = 0;
     virtual State state() const = 0;
@@ -459,9 +435,20 @@ public:
     // without per-page processes returns -1 and the widget shows '—'.
     virtual qint64 renderProcessId() const = 0;
 
-    // POPUP01/tab creation — the engine asks the app for a new page.
-    // Returning nullptr refuses the window.
-    virtual Page *createWindow(WebWindowType type) = 0;
+    // ENG26: the status-bar memory figure for this page, in kB, or
+    // -1 when unavailable.  The default resolves renderProcessId()
+    // through processMemoryKb() — the per-tab renderer reading on a
+    // multi-process engine.  An in-process engine (Servo) has no
+    // per-tab process at all; it reports the HOST process figure
+    // instead, and memoryIsShared() returns true so the UI labels
+    // the number rather than presenting a fake per-tab reading.
+    virtual qint64 residentMemoryKb() const;
+    virtual bool memoryIsShared() const { return false; }
+
+    // VmRSS of `pid` out of /proc/<pid>/status, in kB — -1 when
+    // unreadable (dead process, bogus pid, non-Linux).  Shared so
+    // no backend has to carry its own procfs parse.
+    static qint64 processMemoryKb(qint64 pid);
 
     // Trusted chrome-script injection for callers whose work must
     // still reach a page while page scripting is off (JSCTL/SECLVL
@@ -510,15 +497,10 @@ signals:
     void printRequested();
     void renderProcessIdChanged(qint64 pid);
     void findTextFinished(const Engine::FindResult &result);
-    void contextMenuRequested(const Engine::ContextMenuInfo &info);
     void certificateError(const Engine::CertificateErrorInfo &error,
                           bool *accepted /* out-param on the signal is
                               sketch shorthand — the real interface may
                               prefer a decision callback */);
-    void permissionRequested(const QUrl &origin,
-                             Engine::PermissionType type,
-                             bool *granted);
-    void windowRequested(Engine::WebWindowType type);
 };
 
 // ---- profile --------------------------------------------------------------------------
@@ -590,7 +572,7 @@ struct Capabilities {
     bool cookieFilter = false;         // setCookieFilter is honored
     bool perPageSettings = false;      // setPageAttribute is per-page, not global
     bool lifecycleDiscard = false;     // Discarded frees resources
-    bool contextMenuInfo = false;      // contextMenuRequested carries payload
+    bool contextMenuInfo = false;      // a full ContextMenuInfo can be produced
     bool certificateOverride = false;  // cert-error decisions are accepted
     bool devTools = false;             // an inspectable debug channel exists
     bool extensions = false;           // WebExtension-style add-ons

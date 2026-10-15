@@ -100,7 +100,6 @@ public:
     QModelIndex currentIndex() const;
 
     void setFolder(bool addFolder);
-    bool isFolder() const;
 
     BookmarkNode *addedNode() const;
 

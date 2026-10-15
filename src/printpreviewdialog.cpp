@@ -44,15 +44,21 @@ PrintPreviewDialog::PrintPreviewDialog(QWidget *parent)
     , m_saveAction(nullptr)
     , m_printer(new QPrinter(QPrinter::HighResolution))
 {
-    setWindowTitle(tr("Print Preview"));
+    setWindowTitle(tr("Print"));
     resize(900, 700);
 
     QToolBar *bar = new QToolBar(this);
     bar->setFloatable(false);
     bar->setMovable(false);
-    // The bundled themes carry no page-setup icon — text keeps both
+    // The bundled themes carry no page-setup icon — text keeps the
     // actions readable either way.
     bar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    // PRINT02: this dialog IS the print dialog — the primary action
+    // leads the toolbar.  It runs the native print pipeline on the
+    // generated PDF (QPrintDialog -> PdfCanvas::printPages).
+    bar->addAction(
+        QIcon::fromTheme(QStringLiteral("document-print")),
+        tr("Print..."), m_pdfView, &PdfView::printDocument);
     m_pageSetupAction = bar->addAction(
         tr("Page Setup..."), this, &PrintPreviewDialog::showPageSetup);
     m_pageSetupAction->setVisible(false);   // setPage() reveals it
@@ -101,7 +107,7 @@ void PrintPreviewDialog::setDocumentFile(const QString &pdfPath,
 {
     m_fixedPath = pdfPath;
     if (!title.isEmpty())
-        setWindowTitle(tr("Print Preview — %1").arg(title));
+        setWindowTitle(tr("Print — %1").arg(title));
     m_pdfView->setDocument(pdfPath, QUrl());
 }
 

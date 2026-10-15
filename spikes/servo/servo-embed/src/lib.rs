@@ -11,6 +11,14 @@
  * inside the boundary plus a per-instance `poisoned` flag that turns a
  * panicking webview into a dead tab. A panic may NEVER unwind over the
  * extern "C" boundary: that aborts the whole host process.
+ *
+ * Instance model (ENG24): the Servo engine is built once and kept for
+ * the process lifetime — libservo's Opts is a process-global OnceLock
+ * so a second ServoBuilder::build would panic. But a SeInstance is
+ * only a WebView + delegate + rendering context over that engine, and
+ * those CAN be recreated: after se_destroy frees the slot, se_init
+ * builds a fresh instance on the surviving engine — the crash-
+ * recovery path, one live instance at a time.
  */
 
 use std::cell::{Cell, RefCell};

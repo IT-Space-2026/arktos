@@ -67,6 +67,7 @@
 #include "aboutdialog.h"
 #include "addbookmarkdialog.h"
 #include "aroraicon.h"
+#include "arorastyle.h"
 #include "autosaver.h"
 #include "bookmarksmanager.h"
 #include "bookmarksmenu.h"
@@ -82,6 +83,7 @@
 #include "engineindicator.h"
 #include "engineinterface.h"
 #include "enginetab.h"
+#include "extensionactionbar.h"
 #include "history.h"
 #include "languagemanager.h"
 #include "networkaccessmanager.h"
@@ -96,6 +98,8 @@
 #include "bidipanel.h"
 #include "sidebargrip.h"
 #include "sidebarpanel.h"
+#include "sitepadlock.h"
+#include "siteshield.h"
 #include "sourceviewer.h"
 #include "statusbarwidgets.h"
 #include "tabbar.h"
@@ -116,11 +120,9 @@
 #include <qeventloop.h>
 #include <qfiledialog.h>
 #include <qfileinfo.h>
+#include <qiconengine.h>
 #include <qlabel.h>
 #include <qpointer.h>
-#include <qprintdialog.h>
-#include <qprinter.h>
-#include <qprinterinfo.h>
 #include <qscreen.h>
 #include <qset.h>
 #include <qsettings.h>
@@ -129,6 +131,9 @@
 #include <qmessagebox.h>
 #include <qstatusbar.h>
 #include <qtimer.h>
+#include <qstyle.h>
+#include <qstyleoption.h>
+#include <qstylepainter.h>
 #include <qtoolbar.h>
 #include <qtoolbutton.h>
 #include <qinputdialog.h>
@@ -144,88 +149,218 @@
 
 #include <qdebug.h>
 
-// TOR02/TOR07: the tor window's violet chrome — one bar treatment
-// shared by the navigation and bookmarks toolbars so the header band
-// reads as a single surface.
-static QString torBarStyleSheet()
-{
-    return QLatin1String(
-        "QToolBar { background: #4a3372; border: none; }"
-        "QToolButton { color: #eee; background: transparent; }"
-        "QToolButton:hover { background: #5d4491; }"
-        "QToolButton:pressed { background: #3a2a5c; }");
-}
+// THEME01: the tor window's violet chrome (TOR02/TOR07/TOR14) and the
+// palette-derived flat-chrome rules all build in AroraStyle — the one
+// central style source — not as per-callsite setStyleSheet strings.
 
-// TOR07: the tab strip takes the same treatment as the rest of the
-// header: inactive tabs read as chrome (mid violet), the selected tab
-// is the light "field" element — the same inside-the-violet treatment
-// the location bar carries, resolved from the live palette so it
-// tracks the field in day and night schemes alike.  Re-applied on
-// chromeSchemeChanged so a live theme preview keeps it in sync.
-static QString torTabBarStyleSheet()
-{
-    const QPalette palette = qApp ? qApp->palette() : QPalette();
-    return QString::fromLatin1(
-        "QTabBar { background: #4a3372; }"
-        // 6px vertical padding pushes the stylesheet's natural tab
-        // hint past TabBar::tabSizeHint's TABS07 cap, so the bound
-        // clamps to exactly the same thickness a normal strip gets.
-        "QTabBar::tab { background: #5d4491; color: #eee;"
-        " border: 1px solid #3a2a5c; padding: 6px 8px; }"
-        "QTabBar::tab:top { border-bottom: none;"
-        " border-top-left-radius: 4px; border-top-right-radius: 4px; }"
-        "QTabBar::tab:bottom { border-top: none;"
-        " border-bottom-left-radius: 4px; border-bottom-right-radius: 4px; }"
-        "QTabBar::tab:left { border-right: none;"
-        " border-top-left-radius: 4px; border-bottom-left-radius: 4px; }"
-        "QTabBar::tab:right { border-left: none;"
-        " border-top-right-radius: 4px; border-bottom-right-radius: 4px; }"
-        "QTabBar::tab:selected { background: %1; color: %2; }"
-        "QTabBar::tab:!selected:hover { background: #6b4fa3; }")
-        .arg(palette.color(QPalette::Base).name(),
-             palette.color(QPalette::Text).name());
-}
+// NAVB04: a bar item's stable id rides as a dynamic property on its
+// QAction, so the tag survives the remove/insert shuffle reordering
+// performs.  The id strings persist inside QSettings "navbar/order" —
+// once shipped an id must never be renamed, or a saved order stops
+// resolving its item (which would then silently append at the end).
+static const char kNavBarItemIdProperty[] = "navBarItemId";
 
-// TOR14: the chrome's bottom edge — the status bar joins the violet
-// treatment so the circuit label, the MEM/NET/loading/zoom widgets
-// and the transient message line read light-on-violet instead of the
-// app palette's dark text.  All fixed colors (unlike the tab strip's
-// field element), so a live theme preview needs no re-resolution.
-static QString torStatusBarStyleSheet()
+// MENU10: the style hands a tool button's icon whatever rect its
+// label layout computes — and under the stylesheet path (or any
+// foreign style that asks for the label cell instead of the icon
+// size) that target is not square.  QIcon::paint/QPixmapIconEngine
+// fill the rect outright and arora.svg reports
+// Qt::IgnoreAspectRatio, so a non-square request stretches the
+// bear-globe mark into an ellipse.  This engine renders the mark
+// into the centered square of whatever is asked — the logo can
+// letterbox but can never deform, on every style and scale factor.
+class AroraLogoEngine : public QIconEngine
 {
-    return QLatin1String(
-        "QStatusBar { background: #4a3372; color: #eee; }"
-        "QStatusBar::item { border: none; }"
-        "QLabel { color: #eee; background: transparent; }"
-        "QToolButton { color: #eee; background: transparent; }"
-        "QToolButton:hover { background: #5d4491; }"
-        "QToolButton:pressed { background: #3a2a5c; }"
-        "QProgressBar { background: #3a2a5c; border: none;"
-        " border-radius: 3px; }"
-        "QProgressBar::chunk { background: #b9aecf; }");
-}
+public:
+    // lightDisc: ICONS06's translucent backing plate for the violet
+    // tor bar — painted inside the same square, so it stays a circle.
+    explicit AroraLogoEngine(bool lightDisc)
+        : m_disc(lightDisc)
+    {
+    }
 
-// ICONS06: the app-menu button's bear stays the colored brand mark
-// on the violet bar, but its dark-blue body blends into #4a3372 at
-// 28px.  A soft light disc behind the mark gives the dark parts a
-// surface to read against — deliberately translucent so it reads as
-// a subtle backing plate, not a white sticker.
+    QIconEngine *clone() const override
+    {
+        return new AroraLogoEngine(m_disc);
+    }
+
+    void paint(QPainter *painter, const QRect &rect, QIcon::Mode,
+               QIcon::State) override
+    {
+        paintMark(painter, QRectF(rect));
+    }
+
+    QPixmap pixmap(const QSize &size, QIcon::Mode mode,
+                   QIcon::State state) override
+    {
+        return scaledPixmap(size, mode, state, 1.0);
+    }
+
+    QPixmap scaledPixmap(const QSize &size, QIcon::Mode,
+                         QIcon::State, qreal scale) override
+    {
+        const QSize pixels = size * scale;
+        QPixmap pixmap(pixels);
+        pixmap.fill(Qt::transparent);
+        QPainter painter(&pixmap);
+        paintMark(&painter, QRectF(QPointF(0, 0), QSizeF(pixels)));
+        return pixmap;
+    }
+
+private:
+    void paintMark(QPainter *painter, const QRectF &rect) const
+    {
+        const qreal side = qMin(rect.width(), rect.height());
+        const QRectF target(rect.x() + (rect.width() - side) / 2.0,
+                            rect.y() + (rect.height() - side) / 2.0,
+                            side, side);
+        if (m_disc) {
+            painter->save();
+            painter->setRenderHint(QPainter::Antialiasing);
+            painter->setPen(Qt::NoPen);
+            QColor disc = AroraStyle::torTextColor();
+            disc.setAlpha(150);
+            painter->setBrush(disc);
+            const qreal inset = side / 24.0; // 1.5px at the 36px baseline
+            painter->drawEllipse(
+                target.adjusted(inset, inset, -inset, -inset));
+            painter->restore();
+        }
+        m_icon.paint(painter, target.toRect());
+    }
+
+    const bool m_disc;
+    const QIcon m_icon = QIcon(QLatin1String(":/arora.svg"));
+};
+
 static QIcon torAppMenuIcon()
 {
-    const int extent = 28;
-    const QPixmap bear = QIcon(QLatin1String(":/arora.svg"))
-        .pixmap(QSize(extent, extent));
-    QPixmap pixmap(extent, extent);
-    pixmap.fill(Qt::transparent);
-    QPainter painter(&pixmap);
-    painter.setRenderHint(QPainter::Antialiasing);
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(QColor(0xee, 0xee, 0xee, 150));
-    painter.drawEllipse(QRectF(1.5, 1.5, extent - 3, extent - 3));
-    painter.drawPixmap(0, 0, bear);
-    painter.end();
-    return QIcon(pixmap);
+    return QIcon(new AroraLogoEngine(true));
 }
+
+// MENU17: brand accent — the app-menu button paints its logo larger
+// than the bar's shared nav glyphs (MENU19: ~1.6x, 29px at the
+// bar's 18px).  A widget added through QToolBar::addWidget keeps its
+// own iconSize property, but QToolButton::initStyleOption
+// unconditionally swaps it for the parent toolbar's, so a plain
+// setIconSize() changes the accessor value and never the pixels.
+// This button restores its own iconSize on the style option at the
+// two read sites — paint and sizeHint — so the mark grows while
+// every sibling stays at the bar's size.  The engine already
+// letterboxes the mark into a centered square, so the bigger cell
+// still cannot deform it.
+class AppMenuButton : public QToolButton
+{
+public:
+    explicit AppMenuButton(QWidget *parent = nullptr)
+        : QToolButton(parent)
+    {
+    }
+
+    QSize sizeHint() const override
+    {
+        // QToolButton::sizeHint() verbatim, except opt.iconSize keeps
+        // this button's own size instead of the toolbar's.
+        ensurePolished();
+        QStyleOptionToolButton opt;
+        initStyleOption(&opt);
+        opt.iconSize = iconSize();
+        int w = 0;
+        int h = 0;
+        const QFontMetrics fm(fontMetrics());
+        if (opt.toolButtonStyle != Qt::ToolButtonTextOnly) {
+            w = opt.iconSize.width();
+            h = opt.iconSize.height();
+        }
+        if (opt.toolButtonStyle != Qt::ToolButtonIconOnly) {
+            QSize textSize = fm.size(Qt::TextShowMnemonic, text());
+            textSize.setWidth(textSize.width()
+                              + fm.horizontalAdvance(QLatin1Char(' ')) * 2);
+            if (opt.toolButtonStyle == Qt::ToolButtonTextUnderIcon) {
+                h += 4 + textSize.height();
+                w = qMax(w, textSize.width());
+            } else if (opt.toolButtonStyle == Qt::ToolButtonTextBesideIcon) {
+                w += 4 + textSize.width();
+                h = qMax(h, textSize.height());
+            } else { // TextOnly
+                w = textSize.width();
+                h = textSize.height();
+            }
+        }
+        opt.rect.setSize(QSize(w, h)); // PM_MenuButtonIndicator needs the height
+        if (popupMode() == QToolButton::MenuButtonPopup)
+            w += style()->pixelMetric(QStyle::PM_MenuButtonIndicator,
+                                      &opt, this);
+        QSize grown = style()->sizeFromContents(QStyle::CT_ToolButton,
+                                                &opt, QSize(w, h), this);
+        // The bigger mark fills the face instead of stretching the
+        // row: the face caps at a square one pixel over the glyph,
+        // and NavBarToolBar's compacted vertical margins hand the
+        // extra pixels back so the bar keeps the height the location
+        // field drove.  The style only ever clips the pixmap to the
+        // label cell after bounding the request to iconSize, so a
+        // snug face shrinks the glyph a pixel — never deforms it.
+        // The iconSize floor guards thin styles: the hit-rect never
+        // drops below the art it paints.
+        const int edge = qMax(QToolButton::sizeHint().height(),
+                              iconSize().height()) + 1;
+        return grown.expandedTo(iconSize())
+            .boundedTo(QSize(edge, edge));
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        // QToolButton::paintEvent() verbatim plus the same iconSize
+        // restore — this is where the toolbar clamp would otherwise
+        // shrink the glyph back to the shared nav size.
+        QStylePainter p(this);
+        QStyleOptionToolButton opt;
+        initStyleOption(&opt);
+        opt.iconSize = iconSize();
+        p.drawComplexControl(QStyle::CC_ToolButton, opt);
+    }
+};
+
+// MENU19: the grown brand face borrows the row's vertical chrome —
+// the toolbar layout stretches every item to (bar height - layout
+// margins), so shaving the top/bottom margins seats the 30px face
+// inside the same 34px row the location field used to drive.
+// A StyleChange (tor bar stylesheet, theme rewrap, the app chrome
+// sheet) rebuilds the margins and spacing from style metrics, so
+// the bar re-asserts its authored values right after the base class
+// resets them.
+class NavBarToolBar : public QToolBar
+{
+public:
+    explicit NavBarToolBar(QWidget *parent = nullptr)
+        : QToolBar(parent)
+    {
+        compactLayoutMetrics();
+    }
+
+protected:
+    void changeEvent(QEvent *event) override
+    {
+        QToolBar::changeEvent(event);
+        if (event->type() == QEvent::StyleChange)
+            compactLayoutMetrics();
+    }
+
+private:
+    void compactLayoutMetrics()
+    {
+        QLayout *barLayout = layout();
+        if (!barLayout)
+            return;
+        const QMargins margins = barLayout->contentsMargins();
+        barLayout->setContentsMargins(margins.left(),
+                                      qMin(margins.top(), 2),
+                                      margins.right(),
+                                      qMin(margins.bottom(), 2));
+        barLayout->setSpacing(AroraStyle::Spacing::Medium);
+    }
+};
 
 BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     : QMainWindow(parent, flags)
@@ -237,6 +372,7 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     , m_sidebarAutoClose(false)
     , m_navigationBar(nullptr)
     , m_navigationSplitter(nullptr)
+    , m_siteShield(nullptr)
     , m_engineIndicatorHost(nullptr)
     , m_engineIndicator(nullptr)
     , m_readerModeButton(nullptr)
@@ -286,24 +422,20 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
         // Unmistakable chrome accent — violet navigation bar + badge,
         // and a "(Tor)" marker in the window title — so a tor window
         // is never mistaken for a normal one at a glance.
-        m_navigationBar->setStyleSheet(torBarStyleSheet());
+        m_navigationBar->setStyleSheet(AroraStyle::torBarStyleSheet());
 
         // TOR07: the violet used to stop at the navigation bar, so
         // the menu row stayed on the default palette — three
         // unrelated shades in the header block.  The menu bar takes
         // the same treatment; its popup menus are intentionally left
         // on the platform palette.
-        menuBar()->setStyleSheet(QLatin1String(
-            "QMenuBar { background: #4a3372; }"
-            "QMenuBar::item { color: #eee; background: transparent; }"
-            "QMenuBar::item:selected { background: #5d4491; }"
-            "QMenuBar::item:pressed { background: #3a2a5c; }"));
+        menuBar()->setStyleSheet(AroraStyle::torMenuBarStyleSheet());
         QLabel *badge = new QLabel(QLatin1String(" Tor "), m_navigationBar);
-        badge->setStyleSheet(QLatin1String(
-            "QLabel { color: white; background: #6b4fa3;"
-            " border-radius: 6px; padding: 1px 8px; font-weight: bold; }"));
+        badge->setStyleSheet(AroraStyle::torBadgeStyleSheet());
         badge->setToolTip(tr("This window browses through the Tor network"));
-        m_navigationBar->addWidget(badge);
+        QAction *badgeAction = m_navigationBar->addWidget(badge);
+        badgeAction->setProperty(kNavBarItemIdProperty,
+                                 QLatin1String("torBadge"));
 
         // READ02: the reader button paints its glyph from
         // ButtonText — dark on the violet tor bar.  Lift it to the
@@ -311,31 +443,43 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
         // (the button only ever repaints while a page is loaded).
         QPalette readerPalette = m_readerModeButton->palette();
         readerPalette.setColor(QPalette::ButtonText,
-                               QColor(238, 238, 238));
+                               AroraStyle::torTextColor());
         m_readerModeButton->setPalette(readerPalette);
         // TOR08: same lift for the circuit button's painted onion —
         // its PaletteChange handler repaints the glyph.
         if (m_torCircuitButton) {
             QPalette circuitPalette = m_torCircuitButton->palette();
             circuitPalette.setColor(QPalette::ButtonText,
-                                    QColor(238, 238, 238));
+                                    AroraStyle::torTextColor());
             m_torCircuitButton->setPalette(circuitPalette);
         }
 
+        // TRUST18: the site shield tints its glyph from its own
+        // resolved palette (the stylesheet's `color` already reads as
+        // the light chrome text there).  The sheet sets every group
+        // to the same foreground, so seed the Disabled role with the
+        // dimmed chrome tone — a greyed shield (blocking off, site
+        // whitelisted, unbound tab) must still read as dimmed chrome
+        // instead of a second bright glyph.
+        QPalette shieldPalette = m_siteShield->palette();
+        shieldPalette.setColor(QPalette::Disabled,
+                               QPalette::ButtonText,
+                               AroraStyle::torDimTextColor());
+        m_siteShield->setPalette(shieldPalette);
+
         // ICONS04/ICONS06: the violet bar sits on the application's
         // light palette, so themed icons resolve their dark-glyph
-        // variants — mud on purple — and under "native" (the default
-        // pick) there is no -dark art to pin at all.  Qt's generated
+        // variants — mud on purple.  Qt's generated
         // Disabled ghosting then rendered the idle back/forward
         // arrows paler than the enabled reload.  Tint every nav
-        // glyph flat #eee — the same value the palette-painted
-        // reader/onion buttons take — and seed the Disabled mode
-        // with the tab strip's dimmed #b9aecf so the state stays
-        // deliberate instead of washed.  The menu actions keep the
-        // normal icons — their popups stay on the platform palette,
-        // not the violet bar.
-        const QColor torGlyph(0xee, 0xee, 0xee);
-        const QColor torGlyphDisabled(0xb9, 0xae, 0xcf);
+        // glyph to the tor chrome's flat text color — the same value
+        // the palette-painted reader/onion buttons take — and seed
+        // the Disabled mode with the dimmed variant so the state
+        // stays deliberate instead of washed.  The menu actions keep
+        // the normal icons — their popups stay on the platform
+        // palette, not the violet bar.
+        const QColor torGlyph = AroraStyle::torTextColor();
+        const QColor torGlyphDisabled = AroraStyle::torDimTextColor();
         m_reloadIcon = AroraIcon::getTinted(
             QLatin1String("view-refresh"), torGlyph, torGlyphDisabled);
         m_stopIcon = AroraIcon::getTinted(
@@ -366,10 +510,10 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
         // transient message line is painted straight from
         // palette().windowText() (it bypasses the stylesheet), so
         // the role is lifted explicitly — children inherit it.
-        statusBar()->setStyleSheet(torStatusBarStyleSheet());
+        statusBar()->setStyleSheet(AroraStyle::torStatusBarStyleSheet());
         QPalette statusPalette = statusBar()->palette();
         statusPalette.setColor(QPalette::WindowText,
-                               QColor(0xee, 0xee, 0xee));
+                               AroraStyle::torTextColor());
         statusBar()->setPalette(statusPalette);
         // The zoom +/- glyphs are themed icons — dark art on the
         // violet bar.  Tint them to the nav cluster's flat #eee.
@@ -432,21 +576,15 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     m_bookmarksToolbarFrame->setLineWidth(1);
     m_bookmarksToolbarFrame->setMidLineWidth(0);
     m_bookmarksToolbarFrame->setFrameShape(QFrame::HLine);
-    m_bookmarksToolbarFrame->setFrameShadow(QFrame::Raised);
+    m_bookmarksToolbarFrame->setFrameShadow(QFrame::Plain);
     QPalette fp = m_bookmarksToolbarFrame->palette();
-    fp.setColor(QPalette::Active, QPalette::Light, QColor(64, 64, 64));
-    fp.setColor(QPalette::Active, QPalette::Dark, QColor(192, 192, 192));
-    fp.setColor(QPalette::Inactive, QPalette::Light, QColor(135, 135, 135));
-    fp.setColor(QPalette::Inactive, QPalette::Dark, QColor(226, 226, 226));
-    m_bookmarksToolbarFrame->setAttribute(Qt::WA_MacNoClickThrough, true);
+    AroraStyle::macToolbarFramePalette(fp);
     m_bookmarksToolbarFrame->setPalette(fp);
     layout->addWidget(m_bookmarksToolbarFrame);
 
     layout->addWidget(m_bookmarksToolbar);
     QPalette p = m_bookmarksToolbar->palette();
-    p.setColor(QPalette::Active, QPalette::Window, QColor(150, 150, 150));
-    p.setColor(QPalette::Inactive, QPalette::Window, QColor(207, 207, 207));
-    m_bookmarksToolbar->setAttribute(Qt::WA_MacNoClickThrough, true);
+    AroraStyle::macToolbarSurfacePalette(p);
     m_bookmarksToolbar->setAutoFillBackground(true);
     m_bookmarksToolbar->setPalette(p);
     m_bookmarksToolbar->setBackgroundRole(QPalette::Window);
@@ -458,7 +596,9 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
 #else
     // UIP01: modest padding around the bookmarks row (skipped on macOS
     // where the toolbar is hard-capped to 19px for the unified look).
-    m_bookmarksToolbar->setContentsMargins(4, 2, 4, 2);
+    m_bookmarksToolbar->setContentsMargins(
+        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small,
+        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small);
     addToolBarBreak();
     addToolBar(m_bookmarksToolbar);
 #endif
@@ -473,36 +613,37 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
         // light "field" element, inactive tabs = violet chrome).
         // The objectName scopes the pane rule so a QTabWidget hosted
         // inside a widget tab never picks the chrome colors up.
-        m_bookmarksToolbar->setStyleSheet(torBarStyleSheet());
+        m_bookmarksToolbar->setStyleSheet(AroraStyle::torBarStyleSheet());
         m_tabWidget->setObjectName(QLatin1String("mainTabWidget"));
-        m_tabWidget->setStyleSheet(QLatin1String(
-            "QTabWidget#mainTabWidget { background: #4a3372; }"
-            "QTabWidget#mainTabWidget::pane { border: none; }"));
+        m_tabWidget->setStyleSheet(AroraStyle::torTabWidgetStyleSheet());
         // Manual strip paints (the vertical-row background fill, the
         // edge divider, the sleeping-tab badge) take palette() colors
         // — pull them into the same violet family.
         QPalette stripPalette = m_tabWidget->tabBar()->palette();
-        stripPalette.setColor(QPalette::Window, QColor(0x4a, 0x33, 0x72));
-        stripPalette.setColor(QPalette::Button, QColor(0x4a, 0x33, 0x72));
+        stripPalette.setColor(QPalette::Window,
+                              AroraStyle::torChromeColor());
+        stripPalette.setColor(QPalette::Button,
+                              AroraStyle::torChromeColor());
         stripPalette.setColor(QPalette::WindowText,
-                              QColor(0xee, 0xee, 0xee));
+                              AroraStyle::torTextColor());
         stripPalette.setColor(QPalette::ButtonText,
-                              QColor(0xee, 0xee, 0xee));
+                              AroraStyle::torTextColor());
         stripPalette.setColor(QPalette::Disabled, QPalette::WindowText,
-                              QColor(0xb9, 0xae, 0xcf));
+                              AroraStyle::torDimTextColor());
         stripPalette.setColor(QPalette::Disabled, QPalette::ButtonText,
-                              QColor(0xb9, 0xae, 0xcf));
-        stripPalette.setColor(QPalette::Mid, QColor(0x3a, 0x2a, 0x5c));
+                              AroraStyle::torDimTextColor());
+        stripPalette.setColor(QPalette::Mid,
+                              AroraStyle::torChromePressedColor());
         TabBar *tabBar = m_tabWidget->tabBar();
         tabBar->setPalette(stripPalette);
-        tabBar->setStyleSheet(torTabBarStyleSheet());
+        tabBar->setStyleSheet(AroraStyle::torTabBarStyleSheet());
         // The selected tab borrows the palette's field colors — a
         // live theme preview re-resolves them so the tab keeps
         // matching the location bar.
         connect(BrowserTheme::themeNotifier(),
                 &BrowserTheme::BrowserThemeNotifier::chromeSchemeChanged,
                 tabBar, [tabBar]() {
-            tabBar->setStyleSheet(torTabBarStyleSheet());
+            tabBar->setStyleSheet(AroraStyle::torTabBarStyleSheet());
         });
 
         // TOR17: until the daemon's SOCKS listener is live every page
@@ -556,7 +697,15 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
             this, [this](int) {
         m_loadingIndicator->setWebView(currentTab());
         m_zoomControl->setWebView(currentTab());
-        m_memIndicator->setWebView(currentTab());
+        // ENG26: a foreign-engine tab hosts its Engine::Page without
+        // a WebView — bind the tab itself so the indicator follows
+        // whichever page object is live (engine restarts swap it in
+        // place); plain tabs keep the WebView path.
+        if (EngineTab *foreign =
+                m_tabWidget->engineTab(m_tabWidget->currentIndex()))
+            m_memIndicator->setEngineTab(foreign);
+        else
+            m_memIndicator->setWebView(currentTab());
         updateReaderState();
     });
 
@@ -585,17 +734,28 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
             m_sidebarPanel->setDockSide(area);
         // RSZ02: the grip re-anchors to the new inner edge.
         updateSidebarGripPlacement();
+        // SIDE11: a dock move can rebuild the title-bar buttons —
+        // re-hide the close X.
+        updateSidebarCloseButton();
     });
     // RSZ02: a floating dock has no window edge to resize against —
-    // the grip hides while it floats.
+    // the grip hides while it floats.  SIDE11: floating is also when
+    // the title bar's close X reappears (updateSidebarCloseButton).
     connect(m_sidebarDock, &QDockWidget::topLevelChanged,
-            this, [this](bool) { updateSidebarGripPlacement(); });
+            this, [this](bool) {
+        updateSidebarGripPlacement();
+        updateSidebarCloseButton();
+    });
     // SIDE09: 'Auto-Close Inactive Panel' — fold the dock when focus
     // lands on a widget in this window outside the sidebar (the page,
     // the location bar, a menu's parent...).  Menus/popups raised
     // from the panel itself don't count, focus leaving the window
     // entirely keeps the dock up, and a floating dock never folds.
-    connect(qApp, &QApplication::focusChanged,
+    // The connection is kept for the destructor — a focus signal
+    // arriving while ~BrowserMainWindow has already sliced 'this'
+    // down past its dynamic type would run this lambda on a stale
+    // object (UBSan member-access finding, QUAL03).
+    m_sidebarFocusConnection = connect(qApp, &QApplication::focusChanged,
             this, [this](QWidget *, QWidget *now) {
         if (!m_sidebarAutoClose || !m_sidebarDock->isVisible()
             || m_sidebarDock->isFloating() || !now
@@ -645,11 +805,30 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
     setWindowRole(QLatin1String("browser"));
 #endif
+
+    // NAVB04: whatever the builder just laid out IS the stock order
+    // for this window type (tor badge and circuit button included) —
+    // captured before the persisted order rewrites the bar so Reset
+    // can always return here.  Applying at construction is what puts
+    // the shared order on every window: new windows and
+    // session-restored ones alike (restore constructs fresh windows;
+    // QMainWindow::restoreState only tracks bar area/visibility, not
+    // item order).
+    m_navBarDefaultOrder = navBarOrder();
+    applyStoredNavBarOrder();
+
     retranslate();
 }
 
 BrowserMainWindow::~BrowserMainWindow()
 {
+    // NAVB03: an active edit mode leaves a qApp event filter and
+    // possibly an override cursor armed — detach both before the
+    // window object dies or the filter would fire on a dead this.
+    // Same for the SIDE09 qApp focusChanged hook — it reads members
+    // on 'this' and must not run once destruction started.
+    disconnect(m_sidebarFocusConnection);
+    setNavBarEditMode(false);
     m_autoSaver->changeOccurred();
     m_autoSaver->saveIfNeccessary();
 }
@@ -670,7 +849,7 @@ void BrowserMainWindow::keyPressEvent(QKeyEvent *event)
         event->accept();
         break;
     case Qt::Key_OpenUrl:
-        m_fileOpenLocationAction->trigger();
+        m_openLocationAction->trigger();
         event->accept();
         break;
     default:
@@ -948,16 +1127,19 @@ void BrowserMainWindow::setupMenu()
             this, &BrowserMainWindow::fileOpen);
     m_fileMenu->addAction(m_fileOpenFileAction);
 
-    m_fileOpenLocationAction = new QAction(m_fileMenu);
-    // Add the location bar shortcuts familiar to users from other browsers
+    // MENU14: no File-menu entry — the action lives on the window
+    // itself (like the Ctrl+K webSearch carrier) so the location-bar
+    // shortcuts familiar from other browsers keep reaching
+    // selectLineEdit() without a menu row to show.
+    m_openLocationAction = new QAction(this);
     QList<QKeySequence> openLocationShortcuts;
     openLocationShortcuts.append(QKeySequence(Qt::ControlModifier | Qt::Key_L));
     openLocationShortcuts.append(QKeySequence(Qt::AltModifier | Qt::Key_O));
     openLocationShortcuts.append(QKeySequence(Qt::AltModifier | Qt::Key_D));
-    m_fileOpenLocationAction->setShortcuts(openLocationShortcuts);
-    connect(m_fileOpenLocationAction, &QAction::triggered,
+    m_openLocationAction->setShortcuts(openLocationShortcuts);
+    connect(m_openLocationAction, &QAction::triggered,
             this, &BrowserMainWindow::selectLineEdit);
-    m_fileMenu->addAction(m_fileOpenLocationAction);
+    addAction(m_openLocationAction);
 
     m_fileMenu->addSeparator();
     m_fileMenu->addAction(m_tabWidget->closeTabAction());
@@ -981,11 +1163,10 @@ void BrowserMainWindow::setupMenu()
     m_fileMenu->addAction(m_fileExportBookmarksAction);
     m_fileMenu->addSeparator();
 
-    m_filePrintPreviewAction= new QAction(m_fileMenu);
-    connect(m_filePrintPreviewAction, &QAction::triggered,
-            this, &BrowserMainWindow::filePrintPreview);
-    m_fileMenu->addAction(m_filePrintPreviewAction);
-
+    // PRINT02: one print entry — the preview dialog IS the print
+    // dialog (Firefox's model).  There is no separate Print Preview
+    // action and no straight-to-printer path; the dialog's own Print
+    // button performs the final native print.
     m_filePrintAction = new QAction(m_fileMenu);
     m_filePrintAction->setShortcut(QKeySequence::Print);
     connect(m_filePrintAction, &QAction::triggered,
@@ -993,44 +1174,53 @@ void BrowserMainWindow::setupMenu()
     m_fileMenu->addAction(m_filePrintAction);
     m_fileMenu->addSeparator();
 
-    // MENU03: Preferences lives in the File menu's bottom group,
-    // directly above Close Window (cross-browser convention).
-    m_filePreferencesAction = new QAction(m_fileMenu);
-    m_filePreferencesAction->setMenuRole(QAction::PreferencesRole);
-    connect(m_filePreferencesAction, &QAction::triggered,
+    // MENU12: Preferences is a direct app-menu leaf (MENU11) — the
+    // File-menu copy was dropped as a duplicate.  The action stays
+    // registered on the window (like the Ctrl+K webSearch carrier;
+    // MENU06's app-menu addAction loop covers it too) so Ctrl+,
+    // keeps firing with no menubar row to carry it.
+    m_preferencesAction = new QAction(this);
+    m_preferencesAction->setMenuRole(QAction::PreferencesRole);
+    connect(m_preferencesAction, &QAction::triggered,
             this, &BrowserMainWindow::preferences);
-    m_fileMenu->addAction(m_filePreferencesAction);
-    m_fileMenu->addSeparator();
+    addAction(m_preferencesAction);
 
     m_fileCloseWindow = new QAction(m_fileMenu);
     connect(m_fileCloseWindow, &QAction::triggered, this, &QWidget::close);
     m_fileCloseWindow->setShortcut(QKeySequence(Qt::ControlModifier | Qt::ShiftModifier | Qt::Key_W));
     m_fileMenu->addAction(m_fileCloseWindow);
 
-    m_fileQuit = new QAction(m_fileMenu);
+    // MENU15: Quit left the File menu — its single menu home is the
+    // app-menu dropdown's bottom leaf after Help (added in
+    // setupToolBar once m_appMenu exists).  The action stays
+    // registered on the window (the MENU12 m_preferencesAction
+    // carrier pattern) so Ctrl+Q keeps firing with no File-menu row.
+    m_quitAction = new QAction(this);
     int kdeSessionVersion = QString::fromLocal8Bit(qgetenv("KDE_SESSION_VERSION")).toInt();
     BrowserApplication *application = BrowserApplication::instance();
     if (kdeSessionVersion != 0 || !application)
-        connect(m_fileQuit, &QAction::triggered, this, &QWidget::close);
+        connect(m_quitAction, &QAction::triggered, this, &QWidget::close);
     else
-        connect(m_fileQuit, &QAction::triggered, application, &BrowserApplication::quitBrowser);
-    m_fileQuit->setShortcut(QKeySequence(Qt::ControlModifier | Qt::Key_Q));
-    m_fileMenu->addAction(m_fileQuit);
+        connect(m_quitAction, &QAction::triggered, application, &BrowserApplication::quitBrowser);
+    m_quitAction->setShortcut(QKeySequence(Qt::ControlModifier | Qt::Key_Q));
+    addAction(m_quitAction);
 
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
-    m_fileNewWindowAction->setIcon(AroraIcon::get(QLatin1String("window-new")));
-    m_fileNewPrivateTabAction->setIcon(AroraIcon::get(QLatin1String("view-private")));
-    m_fileNewTorWindowAction->setIcon(AroraIcon::get(QLatin1String("tor-onion")));
-    m_fileOpenFileAction->setIcon(AroraIcon::get(QLatin1String("document-open")));
-    m_fileOpenLocationAction->setIcon(AroraIcon::get(QLatin1String("go-jump")));
-    m_fileSaveAsAction->setIcon(AroraIcon::get(QLatin1String("document-save-as")));
-    m_fileImportBookmarksAction->setIcon(AroraIcon::get(QLatin1String("document-import")));
-    m_fileExportBookmarksAction->setIcon(AroraIcon::get(QLatin1String("document-export")));
-    m_filePrintPreviewAction->setIcon(AroraIcon::get(QLatin1String("document-print-preview")));
-    m_filePrintAction->setIcon(AroraIcon::get(QLatin1String("document-print")));
-    m_filePreferencesAction->setIcon(AroraIcon::get(QLatin1String("preferences-system")));
-    m_fileCloseWindow->setIcon(AroraIcon::get(QLatin1String("window-close")));
-    m_fileQuit->setIcon(AroraIcon::get(QLatin1String("application-exit")));
+    m_fileNewWindowAction->setIcon(AroraIcon::getChrome(QLatin1String("window-new")));
+    m_fileNewPrivateTabAction->setIcon(AroraIcon::getChrome(QLatin1String("view-private")));
+    m_fileNewTorWindowAction->setIcon(AroraIcon::getChrome(QLatin1String("tor-onion")));
+    // ICONS08: submenu headers that sit among iconed leaf rows carry
+    // an icon too — the crate glyph marks the container flyout.
+    m_fileNewContainerTabMenu->setIcon(
+        AroraIcon::getChrome(QLatin1String("container-tab")));
+    m_fileOpenFileAction->setIcon(AroraIcon::getChrome(QLatin1String("document-open")));
+    m_fileSaveAsAction->setIcon(AroraIcon::getChrome(QLatin1String("document-save-as")));
+    m_fileImportBookmarksAction->setIcon(AroraIcon::getChrome(QLatin1String("document-import")));
+    m_fileExportBookmarksAction->setIcon(AroraIcon::getChrome(QLatin1String("document-export")));
+    m_filePrintAction->setIcon(AroraIcon::getChrome(QLatin1String("document-print")));
+    m_preferencesAction->setIcon(AroraIcon::getChrome(QLatin1String("preferences-system")));
+    m_fileCloseWindow->setIcon(AroraIcon::getChrome(QLatin1String("window-close")));
+    m_quitAction->setIcon(AroraIcon::getChrome(QLatin1String("application-exit")));
 #endif
 
     // Edit
@@ -1080,15 +1270,15 @@ void BrowserMainWindow::setupMenu()
     m_editMenu->addAction(m_editFindPreviousAction);
 
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
-    m_editUndoAction->setIcon(AroraIcon::get(QLatin1String("edit-undo")));
-    m_editRedoAction->setIcon(AroraIcon::get(QLatin1String("edit-redo")));
-    m_editCutAction->setIcon(AroraIcon::get(QLatin1String("edit-cut")));
-    m_editCopyAction->setIcon(AroraIcon::get(QLatin1String("edit-copy")));
-    m_editPasteAction->setIcon(AroraIcon::get(QLatin1String("edit-paste")));
-    m_editSelectAllAction->setIcon(AroraIcon::get(QLatin1String("edit-select-all")));
-    m_editFindAction->setIcon(AroraIcon::get(QLatin1String("edit-find")));
-    m_editFindNextAction->setIcon(AroraIcon::get(QLatin1String("go-down")));
-    m_editFindPreviousAction->setIcon(AroraIcon::get(QLatin1String("go-up")));
+    m_editUndoAction->setIcon(AroraIcon::getChrome(QLatin1String("edit-undo")));
+    m_editRedoAction->setIcon(AroraIcon::getChrome(QLatin1String("edit-redo")));
+    m_editCutAction->setIcon(AroraIcon::getChrome(QLatin1String("edit-cut")));
+    m_editCopyAction->setIcon(AroraIcon::getChrome(QLatin1String("edit-copy")));
+    m_editPasteAction->setIcon(AroraIcon::getChrome(QLatin1String("edit-paste")));
+    m_editSelectAllAction->setIcon(AroraIcon::getChrome(QLatin1String("edit-select-all")));
+    m_editFindAction->setIcon(AroraIcon::getChrome(QLatin1String("edit-find")));
+    m_editFindNextAction->setIcon(AroraIcon::getChrome(QLatin1String("go-down")));
+    m_editFindPreviousAction->setIcon(AroraIcon::getChrome(QLatin1String("go-up")));
 #endif
 
     // View
@@ -1272,29 +1462,33 @@ void BrowserMainWindow::setupMenu()
     connect(m_viewTextEncodingMenu, &QMenu::triggered,
             this, &BrowserMainWindow::viewTextEncoding);
 
-    m_stopIcon = AroraIcon::get(QLatin1String("process-stop"));
-    m_reloadIcon = AroraIcon::get(QLatin1String("view-refresh"));
+    m_stopIcon = AroraIcon::getChrome(QLatin1String("process-stop"));
+    m_reloadIcon = AroraIcon::getChrome(QLatin1String("view-refresh"));
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
     m_viewStopAction->setIcon(m_stopIcon);
     m_viewReloadAction->setIcon(m_reloadIcon);
-    m_viewZoomInAction->setIcon(AroraIcon::get(QLatin1String("zoom-in")));
-    m_viewZoomNormalAction->setIcon(AroraIcon::get(QLatin1String("zoom-original")));
-    m_viewZoomOutAction->setIcon(AroraIcon::get(QLatin1String("zoom-out")));
-    m_viewFullScreenAction->setIcon(AroraIcon::get(QLatin1String("view-fullscreen")));
+    m_viewZoomInAction->setIcon(AroraIcon::getChrome(QLatin1String("zoom-in")));
+    m_viewZoomNormalAction->setIcon(AroraIcon::getChrome(QLatin1String("zoom-original")));
+    m_viewZoomOutAction->setIcon(AroraIcon::getChrome(QLatin1String("zoom-out")));
+    m_viewFullScreenAction->setIcon(AroraIcon::getChrome(QLatin1String("view-fullscreen")));
     // ICONS07: the bar-visibility toggles and engine tools get icons
     // too — names with no bundled-set artwork resolve to the mid-grey
     // legacy glyphs (SHLD01 convention).
-    m_viewShowMenuBarAction->setIcon(AroraIcon::get(QLatin1String("view-menubar")));
-    m_viewToolbarAction->setIcon(AroraIcon::get(QLatin1String("view-toolbar")));
-    m_viewBookmarkBarAction->setIcon(AroraIcon::get(QLatin1String("user-bookmarks")));
-    viewTabBarAction->setIcon(AroraIcon::get(QLatin1String("view-tabbar")));
+    m_viewShowMenuBarAction->setIcon(AroraIcon::getChrome(QLatin1String("view-menubar")));
+    m_viewToolbarAction->setIcon(AroraIcon::getChrome(QLatin1String("view-toolbar")));
+    m_viewBookmarkBarAction->setIcon(AroraIcon::getChrome(QLatin1String("user-bookmarks")));
+    viewTabBarAction->setIcon(AroraIcon::getChrome(QLatin1String("view-tabbar")));
     m_tabWidget->tabBar()->iconOnlyTabsAction()->setIcon(
-        AroraIcon::get(QLatin1String("view-icon")));
-    m_viewStatusbarAction->setIcon(AroraIcon::get(QLatin1String("view-statusbar")));
-    m_viewZoomTextOnlyAction->setIcon(AroraIcon::get(QLatin1String("zoom-text")));
-    m_viewReaderAction->setIcon(AroraIcon::get(QLatin1String("text-x-generic")));
-    m_viewPipAction->setIcon(AroraIcon::get(QLatin1String("view-pip")));
-    m_viewSourceAction->setIcon(AroraIcon::get(QLatin1String("text-html")));
+        AroraIcon::getChrome(QLatin1String("view-icon")));
+    m_viewStatusbarAction->setIcon(AroraIcon::getChrome(QLatin1String("view-statusbar")));
+    m_viewZoomTextOnlyAction->setIcon(AroraIcon::getChrome(QLatin1String("zoom-text")));
+    m_viewReaderAction->setIcon(AroraIcon::getChrome(QLatin1String("text-x-generic")));
+    m_viewPipAction->setIcon(AroraIcon::getChrome(QLatin1String("view-pip")));
+    m_viewSourceAction->setIcon(AroraIcon::getChrome(QLatin1String("text-html")));
+    // ICONS08: the View submenu headers sit among iconed leaf rows —
+    // they get icons from the same family.
+    m_viewTextEncodingAction->setIcon(
+        AroraIcon::getChrome(QLatin1String("accessories-character-map")));
 #endif
 
     // History
@@ -1325,7 +1519,7 @@ void BrowserMainWindow::setupMenu()
     m_historyHomeAction->setShortcut(QKeySequence(Qt::ControlModifier | Qt::ShiftModifier | Qt::Key_H));
     // HOME01: the nav-bar Home button reuses this action, so the icon
     // is unconditional — platform convention only hides it in menus.
-    m_historyHomeAction->setIcon(AroraIcon::get(QLatin1String("go-home")));
+    m_historyHomeAction->setIcon(AroraIcon::getChrome(QLatin1String("go-home")));
 #if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
     m_historyHomeAction->setIconVisibleInMenu(false);
 #endif
@@ -1346,7 +1540,10 @@ void BrowserMainWindow::setupMenu()
     historyActions.append(m_historyRestoreLastSessionAction);
     m_historyMenu->setInitialActions(historyActions);
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
-    m_historyRestoreLastSessionAction->setIcon(AroraIcon::get(QLatin1String("document-revert")));
+    m_historyRestoreLastSessionAction->setIcon(AroraIcon::getChrome(QLatin1String("document-revert")));
+    // ICONS08: a static submenu header among iconed rows.
+    m_tabWidget->recentlyClosedTabsAction()->setIcon(
+        AroraIcon::getChrome(QLatin1String("view-restore")));
 #endif
 
     // Bookmarks
@@ -1365,7 +1562,7 @@ void BrowserMainWindow::setupMenu()
             this, &BrowserMainWindow::showBookmarksDialog);
 
     m_bookmarksAddAction = new QAction(this);
-    m_bookmarksAddAction->setIcon(AroraIcon::get(QLatin1String("bookmark-new")));
+    m_bookmarksAddAction->setIcon(AroraIcon::getChrome(QLatin1String("bookmark-new")));
 #if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
     m_bookmarksAddAction->setIconVisibleInMenu(false);
 #endif
@@ -1384,11 +1581,11 @@ void BrowserMainWindow::setupMenu()
     bookmarksActions.append(m_bookmarksAddFolderAction);
     m_bookmarksMenu->setInitialActions(bookmarksActions);
 
-    m_bookmarksAddFolderAction->setIcon(AroraIcon::get(QLatin1String("folder-new")));
-    m_bookmarksShowAllAction->setIcon(AroraIcon::get(QLatin1String("user-bookmarks")));
+    m_bookmarksAddFolderAction->setIcon(AroraIcon::getChrome(QLatin1String("folder-new")));
+    m_bookmarksShowAllAction->setIcon(AroraIcon::getChrome(QLatin1String("user-bookmarks")));
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
     tabWidget()->bookmarkTabsAction()->setIcon(
-        AroraIcon::get(QLatin1String("bookmark-new")));
+        AroraIcon::getChrome(QLatin1String("bookmark-new")));
 #endif
 
     // Window
@@ -1406,7 +1603,7 @@ void BrowserMainWindow::setupMenu()
             this, &BrowserMainWindow::showTabSearch);
     addAction(m_windowTabSearchAction);
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
-    m_windowTabSearchAction->setIcon(AroraIcon::get(QLatin1String("edit-find")));
+    m_windowTabSearchAction->setIcon(AroraIcon::getChrome(QLatin1String("edit-find")));
 #endif
 
     connect(m_windowMenu, &QMenu::aboutToShow,
@@ -1431,7 +1628,7 @@ void BrowserMainWindow::setupMenu()
     // Window menu keeps only tab/window-management entries.
     m_toolsDownloadsAction = new QAction(m_toolsMenu);
     m_toolsDownloadsAction->setIcon(
-        AroraIcon::get(QLatin1String("emblem-downloads")));
+        AroraIcon::getChrome(QLatin1String("emblem-downloads")));
     connect(m_toolsDownloadsAction, &QAction::triggered,
             this, &BrowserMainWindow::downloadManager);
     m_toolsMenu->addAction(m_toolsDownloadsAction);
@@ -1488,26 +1685,26 @@ void BrowserMainWindow::setupMenu()
     });
     m_toolsDevToolsMenu->addAction(m_toolsChromiumDevToolAction);
 
-    // DEVT03/DEVT05: engine-neutral dev tools dock — a plain
-    // open/close action sits inside the submenu next to the Chromium
-    // inspector entry.  DEVT08: the dock's own toggleViewAction is
-    // checkable, which rendered as a tick box next to the plain
-    // inspector row — these are open/close actions, not persistent
-    // states, so the entry toggles visibility through a dedicated
-    // action instead (triggering still flips the dock and its title
-    // bar close button stays the other close path).
-    // No-rust builds have no BiDi backend at all — the entry stays
-    // out of the menu there; a tor window keeps it visible but
-    // disabled since its process never arms the debug channel.
+    // DEVT03/DEVT05/DEVT08: engine-neutral dev tools dock — the BiDi
+    // entry is a plain action like the Chromium inspector one, not
+    // the dock's checkable toggleViewAction: devtools rows are
+    // open/close commands, not persistent states like sidebar
+    // visibility, so nothing in this submenu carries a tick.  The
+    // dock's own visibility is the only truth — triggering flips it,
+    // its close button needs no menu state to stay honest.  No-rust
+    // builds have no BiDi backend at all — the entry stays out of
+    // the menu there; a tor window keeps it visible but disabled
+    // since its process never arms the debug channel.
 #ifdef ARORA_RUSTCORE
     m_toolsBidiDevToolAction = new QAction(m_toolsDevToolsMenu);
     connect(m_toolsBidiDevToolAction, &QAction::triggered,
             this, [this]() {
         m_bidiPanelDock->setVisible(!m_bidiPanelDock->isVisible());
     });
+    m_toolsBidiDevToolAction->setText(tr("BiDi Dev &Tools"));
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
     m_toolsBidiDevToolAction->setIcon(
-        AroraIcon::get(QLatin1String("system-run")));
+        AroraIcon::getChrome(QLatin1String("system-run")));
 #endif
     if (BrowserApplication::isTorMode()) {
         m_toolsBidiDevToolAction->setEnabled(false);
@@ -1523,13 +1720,18 @@ void BrowserMainWindow::setupMenu()
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
     // ICONS07: the dev-tools rows get icons too.
     m_toolsChromiumDevToolAction->setIcon(
-        AroraIcon::get(QLatin1String("utilities-terminal")));
+        AroraIcon::getChrome(QLatin1String("utilities-terminal")));
     m_toolsCommandPaletteAction->setIcon(
-        AroraIcon::get(QLatin1String("system-run")));
+        AroraIcon::getChrome(QLatin1String("system-run")));
     m_toolsClearPrivateDataAction->setIcon(
-        AroraIcon::get(QLatin1String("edit-clear")));
+        AroraIcon::getChrome(QLatin1String("edit-clear")));
     m_toolsLockStoreAction->setIcon(
-        AroraIcon::get(QLatin1String("security-high")));
+        AroraIcon::getChrome(QLatin1String("security-high")));
+    // ICONS08: static submenu headers among iconed rows.
+    m_toolsUserAgentMenu->setIcon(
+        AroraIcon::getChrome(QLatin1String("avatar-default")));
+    m_toolsDevToolsMenu->setIcon(
+        AroraIcon::getChrome(QLatin1String("applications-development")));
 #endif
 
     // MENU05: filter management lives on the Preferences Privacy
@@ -1557,7 +1759,9 @@ void BrowserMainWindow::setupMenu()
     m_helpMenu->addAction(m_helpAboutApplicationAction);
 
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
-    m_helpChangeLanguageAction->setIcon(AroraIcon::get(QLatin1String("preferences-desktop-locale")));
+    m_helpChangeLanguageAction->setIcon(AroraIcon::getChrome(QLatin1String("preferences-desktop-locale")));
+    // ICONS09 identity exceptions: the Qt mark and the app mark keep
+    // their brand colors — chrome glyphs go through getChrome.
     m_helpAboutQtAction->setIcon(QPixmap(QLatin1String(":/qt-project.org/qmessagebox/images/qtlogo-64.png")));
     m_helpAboutApplicationAction->setIcon(windowIcon());
 #endif
@@ -1679,18 +1883,17 @@ void BrowserMainWindow::retranslate()
     m_fileNewWindowAction->setText(tr("&New Window"));
     m_fileNewContainerTabMenu->setTitle(tr("New &Container Tab"));
     m_fileOpenFileAction->setText(tr("&Open File..."));
-    m_fileOpenLocationAction->setText(tr("Open &Location..."));
+    m_openLocationAction->setText(tr("Open &Location..."));
     m_fileSaveAsAction->setText(tr("&Save As..."));
     m_fileImportBookmarksAction->setText(tr("&Import Bookmarks..."));
     m_fileExportBookmarksAction->setText(tr("&Export Bookmarks..."));
-    m_filePrintPreviewAction->setText(tr("P&rint Preview..."));
     m_filePrintAction->setText(tr("&Print..."));
     m_fileNewPrivateTabAction->setText(tr("New &Private Tab"));
     m_fileNewTorWindowAction->setText(tr("New &Tor Window"));
-    m_filePreferencesAction->setText(tr("Preferences..."));
-    m_filePreferencesAction->setShortcut(tr("Ctrl+,"));
+    m_preferencesAction->setText(tr("Preferences..."));
+    m_preferencesAction->setShortcut(tr("Ctrl+,"));
     m_fileCloseWindow->setText(tr("Close Window"));
-    m_fileQuit->setText(tr("&Quit"));
+    m_quitAction->setText(tr("&Quit"));
 
     m_editMenu->setTitle(tr("&Edit"));
     m_editUndoAction->setText(tr("&Undo"));
@@ -1775,6 +1978,9 @@ void BrowserMainWindow::retranslate()
     m_appMenuButton->setToolTip(tr("Arora menu"));
     m_appMenuButton->setAccessibleName(tr("Arora menu"));
 
+    m_navBarEditAction->setText(tr("Edit Navigation Bar"));
+    m_navBarResetAction->setText(tr("Reset Navigation Bar"));
+
     m_stopReloadAction->setText(tr("Reload / Stop"));
     updateStopReloadActionText(false);
 }
@@ -1799,13 +2005,20 @@ static void growMenuTreeFont(QMenu *menu, const QFont &font,
 void BrowserMainWindow::setupToolBar()
 {
     setUnifiedTitleAndToolBarOnMac(true);
-    m_navigationBar = new QToolBar(this);
+    m_navigationBar = new NavBarToolBar(this);
     m_navigationBar->setObjectName(QLatin1String("NavigationToolBar"));
     // UIP01: breathing room on the navigation row — the Qt4-era
     // default item density reads cramped on modern displays.  Widget
     // contents margins forward to the toolbar's internal layout.
-    m_navigationBar->setContentsMargins(6, 4, 6, 4);
-    m_navigationBar->layout()->setSpacing(6);
+    // MENU10: the vertical margins used to double the layout's own
+    // top/bottom padding (widget margin + PM_ToolBarItemMargin), so
+    // the tall app-menu button anchored the row high and left a dead
+    // band under the nav items.  Zero them — the layout's own margin
+    // still pads the row, and the whole row now centers against the
+    // app button instead of riding the top edge.
+    m_navigationBar->setContentsMargins(AroraStyle::Spacing::Medium, 0,
+                                        AroraStyle::Spacing::Medium, 0);
+    m_navigationBar->layout()->setSpacing(AroraStyle::Spacing::Medium);
     // UIP02: one icon size for the nav buttons on every platform —
     // was macOS-only, so Linux/Windows fell back to the style's
     // larger default and the row looked uneven.
@@ -1819,28 +2032,56 @@ void BrowserMainWindow::setupToolBar()
     // menubar can hide without losing anything.  First widget added,
     // so it anchors the bar ahead of Back on every window type.
     m_appMenu = new QMenu(this);
-    for (QMenu *menu : m_topMenus)
+    for (QMenu *menu : m_topMenus) {
         m_appMenu->addMenu(menu);
+        // MENU11/MENU12: Preferences is a direct app-menu leaf right
+        // after Tools — the window-owned action's single menu home
+        // (File no longer carries a copy); it still fires
+        // preferences() with the same text, shortcut and icon.
+        if (menu == m_toolsMenu) {
+            m_appMenu->addSeparator();
+            m_appMenu->addAction(m_preferencesAction);
+            m_appMenu->addSeparator();
+        }
+    }
+    // MENU15: Quit closes the dropdown — a direct leaf after the
+    // last submenu (Help), separator-bracketed like the Preferences
+    // leaf so both app-menu-level rows read the same.
+    m_appMenu->addSeparator();
+    m_appMenu->addAction(m_quitAction);
 
-    m_appMenuButton = new QToolButton(m_navigationBar);
+    // MENU16: the button parents straight to the bar — Qt's toolbar
+    // path lays out AND paints toolbar-hosted tool buttons at the
+    // bar's iconSize, which the MENU07/MENU09 construction (a fixed
+    // 36px inside a margin-less host) fought, rendering the logo
+    // oversized against the nav glyphs.  With the host gone it
+    // matches the siblings' row; MENU17 grew the mark alone ~25% as
+    // a Firefox-style brand accent and MENU19 grows it another
+    // quarter to ~1.6x (18 -> 28.8 -> 29px) — AppMenuButton is what
+    // lets its own iconSize reach the pixels under that clamp.
+    // The square request keeps the ratio: the logo scales
+    // uniformly, never stretches.
+    m_appMenuButton = new AppMenuButton(m_navigationBar);
     m_appMenuButton->setObjectName(QLatin1String("appMenuButton"));
     m_appMenuButton->setAutoRaise(true);
-    // MENU07: the logo is the brand mark, not a nav glyph — render it
-    // bigger than the bar's shared 18px so the button reads as the app
-    // menu anchor on every window type.  The bundled vector art stays
-    // crisp at 28px and fractional scale factors where a resized png
-    // smudges; the text keeps the toolbar font so the growth is
-    // logo-led.
-    m_appMenuButton->setIcon(QIcon(QLatin1String(":/arora.svg")));
-    m_appMenuButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    // MENU10: the engine pins the paint to a square — a non-square
+    // icon cell under a stylesheet or foreign style can never
+    // stretch the mark.  The bundled vector art stays crisp at the
+    // enlarged size and fractional scale factors.
+    m_appMenuButton->setIcon(QIcon(new AroraLogoEngine(false)));
+    // MENU13: the button is icon-only; setText still carries "Arora"
+    // (retranslate) so screen readers keep a real label.
+    m_appMenuButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
     m_appMenuButton->setPopupMode(QToolButton::InstantPopup);
     m_appMenuButton->setMenu(m_appMenu);
-    m_navigationBar->addWidget(m_appMenuButton);
-    // Set after addWidget so nothing on the bar's side can clamp it
-    // back to the shared nav-glyph size.
-    m_appMenuButton->setIconSize(QSize(28, 28));
+    const QSize navIconSize = m_navigationBar->iconSize();
+    m_appMenuButton->setIconSize(
+        QSize(qRound(navIconSize.width() * 1.6),
+              qRound(navIconSize.height() * 1.6)));
+    m_navigationBar->addWidget(m_appMenuButton)
+        ->setProperty(kNavBarItemIdProperty, QLatin1String("appMenu"));
 
-    m_historyBackAction->setIcon(AroraIcon::get(QLatin1String("go-previous")));
+    m_historyBackAction->setIcon(AroraIcon::getChrome(QLatin1String("go-previous")));
     m_historyBackMenu = new QMenu(this);
     m_historyBackAction->setMenu(m_historyBackMenu);
     connect(m_historyBackMenu, &QMenu::aboutToShow,
@@ -1848,8 +2089,10 @@ void BrowserMainWindow::setupToolBar()
     connect(m_historyBackMenu, &QMenu::triggered,
             this, &BrowserMainWindow::openActionUrl);
     m_navigationBar->addAction(m_historyBackAction);
+    m_historyBackAction->setProperty(kNavBarItemIdProperty,
+                                     QLatin1String("back"));
 
-    m_historyForwardAction->setIcon(AroraIcon::get(QLatin1String("go-next")));
+    m_historyForwardAction->setIcon(AroraIcon::getChrome(QLatin1String("go-next")));
     m_historyForwardMenu = new QMenu(this);
     connect(m_historyForwardMenu, &QMenu::aboutToShow,
             this, &BrowserMainWindow::aboutToShowForwardMenu);
@@ -1857,16 +2100,22 @@ void BrowserMainWindow::setupToolBar()
             this, &BrowserMainWindow::openActionUrl);
     m_historyForwardAction->setMenu(m_historyForwardMenu);
     m_navigationBar->addAction(m_historyForwardAction);
+    m_historyForwardAction->setProperty(kNavBarItemIdProperty,
+                                        QLatin1String("forward"));
 
     m_stopReloadAction = new QAction(this);
     m_stopReloadAction->setIcon(m_reloadIcon);
     m_navigationBar->addAction(m_stopReloadAction);
+    m_stopReloadAction->setProperty(kNavBarItemIdProperty,
+                                    QLatin1String("stopReload"));
 
     // HOME01: a Home button immediately after Stop/Reload — the same
     // QAction the History menu and Ctrl+Shift+H drive, so the button
     // can never diverge from the goHome() path.  Shared setup covers
     // normal/private/tor/container windows alike.
     m_navigationBar->addAction(m_historyHomeAction);
+    m_historyHomeAction->setProperty(kNavBarItemIdProperty,
+                                     QLatin1String("home"));
 
     // READ02: reader-mode toggle in the nav row — after stop/reload,
     // before the location bar starts.  READ03: the only reader
@@ -1884,6 +2133,8 @@ void BrowserMainWindow::setupToolBar()
     // updateReaderState() toggles that (the widget's own hidden flag
     // alone leaves the item latched off).
     m_navReaderAction = m_navigationBar->addWidget(m_readerModeButton);
+    m_navReaderAction->setProperty(kNavBarItemIdProperty,
+                                   QLatin1String("reader"));
     m_navReaderAction->setVisible(false);
     m_navReaderAction->setEnabled(true);
 
@@ -1904,7 +2155,21 @@ void BrowserMainWindow::setupToolBar()
             WebView *tab = currentTab();
             return tab ? tab->url().host() : QString();
         });
-        m_navigationBar->addWidget(m_torCircuitButton);
+        // TOR13: tor re-homes NEW streams only — an acked NEWNYM
+        // reloads the site's tab so its traffic actually lands on the
+        // fresh circuit (Tor Browser's identical flow), and the
+        // status-bar toast keeps the feedback visible after the
+        // dropdown closes.
+        m_torCircuitButton->setSiteReloader([this]() {
+            statusBar()->showMessage(
+                tr("New Tor circuit requested — reloading this site"),
+                5000);
+            if (WebView *tab = currentTab())
+                tab->reload();
+        });
+        m_navigationBar->addWidget(m_torCircuitButton)
+            ->setProperty(kNavBarItemIdProperty,
+                          QLatin1String("torCircuit"));
     }
 
     m_navigationSplitter = new QSplitter(m_navigationBar);
@@ -1950,6 +2215,19 @@ void BrowserMainWindow::setupToolBar()
             this, [this]() { updateEngineIndicator(); });
     updateEngineIndicator();
 
+    // EXT08: extension action cluster — one button per enabled
+    // extension that declares an action popup, in the splitter cell
+    // right after the engine indicator.  Private and tor windows get
+    // no strip at all: their profiles may never load extensions, so
+    // there is nothing for it to show.
+    if (!BrowserApplication::isPrivate()) {
+        m_extensionActionBar = new ExtensionActionBar(m_navigationBar);
+        m_extensionActionBar->setIconSize(m_navigationBar->iconSize());
+        m_navigationSplitter->addWidget(m_extensionActionBar);
+        m_navigationSplitter->setCollapsible(2, false);
+        m_navigationSplitter->setStretchFactor(2, 0);
+    }
+
     m_toolbarSearch = new ToolbarSearch(m_navigationBar);
     m_navigationSplitter->addWidget(m_toolbarSearch);
     connect(m_toolbarSearch, &ToolbarSearch::search,
@@ -1966,16 +2244,84 @@ void BrowserMainWindow::setupToolBar()
     m_navigationSplitter->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
     m_tabWidget->locationBarStack()->setMinimumWidth(120);
     m_navigationSplitter->setCollapsible(0, false);
-    m_navigationBar->addWidget(m_navigationSplitter);
+    QAction *splitterAction =
+        m_navigationBar->addWidget(m_navigationSplitter);
+    splitterAction->setProperty(kNavBarItemIdProperty,
+                                QLatin1String("locationBar"));
+
+    // TRUST14: the site shield moved out of the location bar onto the
+    // nav row — one shared button immediately left of the url field
+    // (right of the reader button / tor circuit).  It keeps the whole
+    // SitePanel surface; the rebinding below is the point of the
+    // move — the shield always shows the ACTIVE tab's site settings,
+    // never a background tab's (tab switches, same-index container
+    // refilters and engine swaps all re-point it, and a torn or new
+    // window binds its own button's tab).  TRUST15: it never leaves
+    // the bar — widget/engine tabs show it disabled with the reason
+    // in its tooltip, and a ctor-hidden widget would latch the
+    // QWidgetAction invisible at insertion (the action's own
+    // visibility is what governs), so the action is pinned here.
+    // TRUST16 locks the shape: exactly one shield, on the bar never
+    // inside the field (the field keeps its own left-side surface —
+    // the site icon here, the padlock on the merged tree), a normal
+    // movable item in edit mode whose stock slot stays directly left
+    // of the url field.
+    m_siteShield = new SiteShieldButton(m_navigationBar);
+    m_siteShield->setObjectName(QLatin1String("navSiteShield"));
+    QAction *navShieldAction =
+        m_navigationBar->insertWidget(splitterAction, m_siteShield);
+    navShieldAction->setProperty(kNavBarItemIdProperty,
+                                 QLatin1String("siteShield"));
+    navShieldAction->setVisible(true);
+    const auto rebindTrust = [this]() {
+        m_siteShield->setWebView(currentTab());
+        // The padlock is per-tab (it lives in each bar), but the front
+        // one re-evaluates here too — the trust surface reads its
+        // QSettings keys live, and returning to a tab is often the
+        // first refresh since a flag flip in Settings.
+        if (QLineEdit *bar = m_tabWidget->currentLocationBar())
+            if (SitePadlockButton *padlock =
+                    bar->findChild<SitePadlockButton *>())
+                padlock->refresh();
+    };
+    connect(m_tabWidget, &QTabWidget::currentChanged, this,
+            [this, rebindTrust](int) { rebindTrust(); });
+    connect(m_tabWidget, &TabWidget::tabsChanged, this, rebindTrust);
+    rebindTrust();
     // SIDE01: sidebar toggle at the far right of the navigation bar —
     // same checkable action as View > Sidebar (F4).
     m_navigationBar->addAction(m_viewSidebarAction);
+    m_viewSidebarAction->setProperty(kNavBarItemIdProperty,
+                                     QLatin1String("sidebar"));
+
     int splitterWidth = m_navigationSplitter->width();
     QList<int> sizes;
     sizes << (int)((double)splitterWidth * .80)
-          << m_engineIndicatorHost->sizeHint().width()
-          << (int)((double)splitterWidth * .20);
+          << m_engineIndicatorHost->sizeHint().width();
+    if (m_extensionActionBar)
+        sizes << m_extensionActionBar->sizeHint().width();
+    sizes << (int)((double)splitterWidth * .20);
     m_navigationSplitter->setSizes(sizes);
+
+    // NAVB03: right-click on the bar offers New Tab / New Private Tab
+    // and the edit-mode toggle ahead of the stock QMainWindow toolbar
+    // entries (see showNavigationBarContextMenu).  The event only
+    // reaches the bar from chrome surfaces — the location bar and
+    // search field keep their own text-edit menus.
+    m_navBarEditAction = new QAction(this);
+    m_navBarEditAction->setObjectName(QLatin1String("navBarEditAction"));
+    m_navBarEditAction->setCheckable(true);
+    connect(m_navBarEditAction, &QAction::toggled,
+            this, &BrowserMainWindow::setNavBarEditMode);
+    // NAVB04: the same menu also resets the order to stock — a plain
+    // trigger, greyed out while the bar already sits at default.
+    m_navBarResetAction = new QAction(this);
+    m_navBarResetAction->setObjectName(QLatin1String("navBarResetAction"));
+    connect(m_navBarResetAction, &QAction::triggered,
+            this, &BrowserMainWindow::resetNavBarOrder);
+    m_navigationBar->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_navigationBar, &QWidget::customContextMenuRequested,
+            this, &BrowserMainWindow::showNavigationBarContextMenu);
 
     // MENU08: bigger text under the Arora button — the dropdown and
     // its whole submenu tree paint at ~120% of the platform menu font
@@ -2119,6 +2465,10 @@ void BrowserMainWindow::ensureBidiPanel()
     if (m_bidiPanel)
         return;
     m_bidiPanel = new BidiPanel(m_bidiPanelDock);
+    // DEVT10: hand the panel the real strip so its context selector
+    // lists every tab — CDP reports only debuggable WebEngine pages,
+    // so engine/widget tabs would otherwise be silently absent.
+    m_bidiPanel->setTabWidget(m_tabWidget);
     m_bidiPanelDock->setWidget(m_bidiPanel);
 }
 
@@ -2152,16 +2502,10 @@ void BrowserMainWindow::applySidebarSettings()
     // SIDE09: 'Auto-Close Inactive Panel' — the focusChanged hook.
     m_sidebarAutoClose = settings.value(
         QLatin1String("sidebar/autoCloseInactive"), false).toBool();
-    // SIDE09: 'Show Close Button' — the dock's title-bar X joins the
-    // per-panel header X the panel itself gates.
-    QDockWidget::DockWidgetFeatures features = m_sidebarDock->features();
-    if (settings.value(QLatin1String("sidebar/showCloseButton"), true)
-            .toBool())
-        features |= QDockWidget::DockWidgetClosable;
-    else
-        features &= ~QDockWidget::DockWidgetClosable;
-    if (features != m_sidebarDock->features())
-        m_sidebarDock->setFeatures(features);
+    // SIDE11: the docked dock's title-bar X duplicated the panel's
+    // own close X side by side — while docked it stays hidden and
+    // the panel's header X / rail fold button are the close surface.
+    updateSidebarCloseButton();
     // RSZ02: the stored width lands before the dock shows; the
     // dock's first Show re-applies it via the event filter.
     applySidebarWidth();
@@ -2215,8 +2559,34 @@ void BrowserMainWindow::updateSidebarGripPlacement()
     }
 }
 
+// SIDE11: the docked title bar's close X sat right beside the
+// panel's own header X (DOWN02) — one small, one bigger — so while
+// docked the title-bar button is hidden and the panel's styled
+// controls (the Downloads header X, the rail's fold button) are the
+// single close path, all landing on closeRequested -> dock hide.
+// DockWidgetClosable itself stays on: stripping it would also
+// disable the toggle action and make it swallow hide requests —
+// View > Sidebar / F4 must keep working both ways.
+// A torn-off floating dock re-shows the title-bar X (still gated by
+// sidebar/showCloseButton) so the detached window keeps a chrome
+// close affordance on top of the OS frame's own.
+void BrowserMainWindow::updateSidebarCloseButton()
+{
+    // The title bar's buttons are private Qt children; the object
+    // name is stable and safer than stripping the feature (see
+    // above).
+    if (QWidget *closeButton = m_sidebarDock->findChild<QWidget *>(
+            QLatin1String("qt_dockwidget_closebutton")))
+        closeButton->setVisible(
+            m_sidebarDock->isFloating()
+            && QSettings().value(QLatin1String("sidebar/showCloseButton"),
+                                 true).toBool());
+}
+
 bool BrowserMainWindow::eventFilter(QObject *object, QEvent *event)
 {
+    if (m_navBarEditMode && navBarEditEvent(object, event))
+        return true;
     if (object == m_sidebarDock) {
         // RSZ02: a hidden dock ignores resizeDocks, so the stored
         // width lands again on the first show.  Afterwards every
@@ -2235,6 +2605,365 @@ bool BrowserMainWindow::eventFilter(QObject *object, QEvent *event)
         }
     }
     return QMainWindow::eventFilter(object, event);
+}
+
+// NAVB03: the bar's context menu — New Tab and New Private Tab head
+// it (the same QAction objects the File menu drives, so shortcuts,
+// icons and the tor-window hidden state all follow the menu), then
+// the checkable Edit Navigation Bar entry.  CustomContextMenu on the
+// bar pre-empts QMainWindow's "hide toolbar" popup, so its entries
+// are appended below — nothing the bar used to offer is lost.
+void BrowserMainWindow::showNavigationBarContextMenu(
+    const QPoint &position)
+{
+    QMenu *menu = createPopupMenu();
+    if (!menu)
+        menu = new QMenu(m_navigationBar);
+    const bool hadStockEntries = !menu->actions().isEmpty();
+    QAction *first = menu->actions().value(0);
+    menu->insertAction(first, m_tabWidget->newTabAction());
+    menu->insertAction(first, m_fileNewPrivateTabAction);
+    menu->insertSeparator(first);
+    menu->insertAction(first, m_navBarEditAction);
+    menu->insertAction(first, m_navBarResetAction);
+    // NAVB04: reset greys out while the bar already sits at stock —
+    // the entry stays visible so the affordance is discoverable.
+    m_navBarResetAction->setEnabled(navBarOrder() != m_navBarDefaultOrder);
+    if (hadStockEntries)
+        menu->insertSeparator(first);
+    menu->exec(m_navigationBar->mapToGlobal(position));
+    delete menu;
+}
+
+bool BrowserMainWindow::isNavBarEditMode() const
+{
+    return m_navBarEditMode;
+}
+
+QAction *BrowserMainWindow::navBarEditAction() const
+{
+    return m_navBarEditAction;
+}
+
+QAction *BrowserMainWindow::navBarResetAction() const
+{
+    return m_navBarResetAction;
+}
+
+// NAVB04: the bar's order as a list of stable item ids — this is the
+// exact shape QSettings stores and applyNavBarOrder consumes.
+QStringList BrowserMainWindow::navBarOrder() const
+{
+    QStringList order;
+    const QList<QAction *> actions = m_navigationBar->actions();
+    for (QAction *action : actions) {
+        const QString id =
+            action->property(kNavBarItemIdProperty).toString();
+        if (!id.isEmpty())
+            order.append(id);
+    }
+    return order;
+}
+
+// Rebuilds the bar to match `order`: each stored id resolves to a bar
+// item; ids this window doesn't carry (a normal window meeting a tor
+// badge, or chrome removed since the write) drop cleanly, and items
+// the list doesn't name keep their stock sequence at the end — a
+// stale or partial order can never break the bar.  A resolved order
+// identical to the live one early-outs, so resync paths stay free.
+void BrowserMainWindow::applyNavBarOrder(const QStringList &order)
+{
+    const QList<QAction *> current = m_navigationBar->actions();
+    QHash<QString, QAction *> byId;
+    for (QAction *action : current) {
+        const QString id =
+            action->property(kNavBarItemIdProperty).toString();
+        if (!id.isEmpty())
+            byId.insert(id, action);
+    }
+    QList<QAction *> arranged;
+    for (const QString &id : order) {
+        QAction *action = byId.value(id);
+        if (action && !arranged.contains(action))
+            arranged.append(action);
+    }
+    for (QAction *action : current) {
+        if (!arranged.contains(action))
+            arranged.append(action);
+    }
+    if (arranged == current)
+        return;
+    for (QAction *action : current)
+        m_navigationBar->removeAction(action);
+    for (QAction *action : arranged)
+        m_navigationBar->addAction(action);
+    m_navigationBar->layout()->activate();
+}
+
+void BrowserMainWindow::applyStoredNavBarOrder()
+{
+    QSettings settings;
+    const QStringList order = settings.value(
+        QLatin1String("navbar/order")).toStringList();
+    applyNavBarOrder(order.isEmpty() ? m_navBarDefaultOrder : order);
+}
+
+// Every committed drag writes the one shared order and pushes it to
+// the other open windows — normal, private and tor chrome all carry
+// the same sequence.  A window mid-edit is skipped so its drag is
+// never yanked mid-gesture; it resyncs when edit mode exits.
+void BrowserMainWindow::saveNavBarOrder()
+{
+    QSettings settings;
+    settings.setValue(QLatin1String("navbar/order"), navBarOrder());
+    syncNavBarOrderToWindows();
+}
+
+void BrowserMainWindow::syncNavBarOrderToWindows()
+{
+    const QList<QWidget *> tops = QApplication::topLevelWidgets();
+    for (QWidget *top : tops) {
+        BrowserMainWindow *window =
+            qobject_cast<BrowserMainWindow *>(top);
+        // m_navigationBar nulls out only while the window is still
+        // inside its constructor — leave it to its own apply.
+        if (window && window != this && window->m_navigationBar
+            && !window->m_navBarEditMode)
+            window->applyStoredNavBarOrder();
+    }
+}
+
+// Context-menu reset — drops the stored order so every window falls
+// back to its own stock layout.  Each type resets against the order
+// it was built with: the tor badge and circuit button only exist on
+// tor windows, so a single literal default list couldn't serve both.
+void BrowserMainWindow::resetNavBarOrder()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("navbar/order"));
+    applyNavBarOrder(m_navBarDefaultOrder);
+    syncNavBarOrderToWindows();
+}
+
+// NAVB03: edit mode — every bar item (the shared site shield is a
+// normal movable item; the location-bar splitter counts as one item
+// and the in-field surfaces — site icon, privacy/reader/popup
+// buttons — move with it) can be dragged to a new slot.  While on,
+// presses on the bar select instead of firing, a
+// ClosedHand drag shows a highlight gap line, and release moves the
+// item.  Exit paths: the context-menu toggle, Esc, or a click
+// anywhere outside the bar.  The order stays in memory for this
+// window — persistence + Reset are NAVB04.
+void BrowserMainWindow::setNavBarEditMode(bool enabled)
+{
+    if (m_navBarEditMode == enabled)
+        return;
+    m_navBarEditMode = enabled;
+    // Keeps the checkable entry honest when the mode is left through
+    // Esc or an outside click rather than the menu itself.
+    if (m_navBarEditAction)
+        m_navBarEditAction->setChecked(enabled);
+    if (enabled) {
+        qApp->installEventFilter(this);
+        // Frame the bar — the rule is appended to whatever sheet the
+        // window already carries (tor's violet one included), so it
+        // wins the border property without touching anything else.
+        m_navBarSavedStyleSheet = m_navigationBar->styleSheet();
+        const QString frame = m_navigationBar->palette()
+            .color(QPalette::Highlight).name();
+        m_navigationBar->setStyleSheet(m_navBarSavedStyleSheet
+            + QStringLiteral("\nQToolBar { border: 1px dashed %1; }")
+                  .arg(frame));
+        m_navigationBar->setCursor(Qt::OpenHandCursor);
+        if (!m_navBarDropIndicator) {
+            m_navBarDropIndicator = new QWidget(m_navigationBar);
+            m_navBarDropIndicator->setObjectName(
+                QLatin1String("navBarDropIndicator"));
+            m_navBarDropIndicator->setAutoFillBackground(true);
+            m_navBarDropIndicator->setBackgroundRole(
+                QPalette::Highlight);
+            m_navBarDropIndicator->hide();
+        }
+    } else {
+        qApp->removeEventFilter(this);
+        m_navigationBar->setStyleSheet(m_navBarSavedStyleSheet);
+        m_navBarSavedStyleSheet.clear();
+        m_navigationBar->unsetCursor();
+        endNavBarDrag();
+        // NAVB04: the shared order may have moved under this window
+        // while it was editing (the live sync skips editing windows,
+        // so a drag is never yanked mid-gesture) — resync on exit.
+        // An identical stored order early-outs inside the apply.
+        applyStoredNavBarOrder();
+    }
+}
+
+// The action the dragged item should land before — nullptr appends
+// it at the bar's end.  Hidden items are skipped: they hold their
+// index slot while invisible (the reader button re-appears wherever
+// its slot ended up).  The bar is QMainWindow-movable, so the gap
+// math follows its live orientation rather than assuming horizontal.
+QAction *BrowserMainWindow::navBarDropTarget(
+    const QPoint &barPos) const
+{
+    const bool horizontal =
+        m_navigationBar->orientation() == Qt::Horizontal;
+    const QList<QAction *> actions = m_navigationBar->actions();
+    for (QAction *action : actions) {
+        if (action == m_navBarDragAction || !action->isVisible())
+            continue;
+        const QRect rect = m_navigationBar->actionGeometry(action);
+        if (rect.isNull())
+            continue;
+        const int pos = horizontal ? barPos.x() : barPos.y();
+        const int mid = horizontal ? rect.center().x()
+                                   : rect.center().y();
+        if (pos < mid)
+            return action;
+    }
+    return nullptr;
+}
+
+void BrowserMainWindow::updateNavBarDropIndicator(
+    const QPoint &barPos)
+{
+    const bool horizontal =
+        m_navigationBar->orientation() == Qt::Horizontal;
+    m_navBarDropBefore = navBarDropTarget(barPos);
+    int at = horizontal ? m_navigationBar->width()
+                        : m_navigationBar->height();
+    if (m_navBarDropBefore) {
+        const QRect rect =
+            m_navigationBar->actionGeometry(m_navBarDropBefore);
+        at = horizontal ? rect.left() : rect.top();
+    } else {
+        const QList<QAction *> actions = m_navigationBar->actions();
+        for (int i = actions.size() - 1; i >= 0; --i) {
+            QAction *action = actions.at(i);
+            if (action == m_navBarDragAction || !action->isVisible())
+                continue;
+            const QRect rect = m_navigationBar->actionGeometry(action);
+            if (!rect.isNull()) {
+                at = (horizontal ? rect.right() : rect.bottom()) + 1;
+                break;
+            }
+        }
+    }
+    m_navBarDropIndicator->setGeometry(
+        horizontal ? QRect(at - 1, 2, 3, m_navigationBar->height() - 4)
+                   : QRect(2, at - 1, m_navigationBar->width() - 4, 3));
+    m_navBarDropIndicator->show();
+    m_navBarDropIndicator->raise();
+}
+
+void BrowserMainWindow::commitNavBarDrag()
+{
+    QAction *dragged = m_navBarDragAction;
+    QAction *before = m_navBarDropBefore;
+    if (!dragged || before == dragged
+        || !m_navigationBar->actions().contains(dragged))
+        return;
+    m_navigationBar->removeAction(dragged);
+    if (before)
+        m_navigationBar->insertAction(before, dragged);
+    else
+        m_navigationBar->addAction(dragged);
+    // The remove/insert only marks the layout dirty — actionGeometry
+    // stays stale until the next relayout.  Activate now so a second
+    // drag (and any index/geometry probe) sees the new order.
+    m_navigationBar->layout()->activate();
+    // NAVB04: a committed drop is the write — the order is shared
+    // across every window, so it persists now (not on edit-mode exit,
+    // which a window may never reach before a crash) and lands on the
+    // other open windows immediately.
+    saveNavBarOrder();
+}
+
+void BrowserMainWindow::endNavBarDrag()
+{
+    if (m_navBarDragging) {
+        m_navBarDragging = false;
+        QApplication::restoreOverrideCursor();
+    }
+    m_navBarDragAction = nullptr;
+    m_navBarDropBefore = nullptr;
+    if (m_navBarDropIndicator)
+        m_navBarDropIndicator->hide();
+}
+
+// Runs as a qApp-level filter while edit mode is on so drags that
+// start deep inside a bar widget (the location field, the splitter)
+// are still picked up — installing per-widget would chase dynamic
+// children like per-tab location bars.
+bool BrowserMainWindow::navBarEditEvent(QObject *object, QEvent *event)
+{
+    // QUAL03: 'object' is not dereferenced until an input case needs
+    // it — a qApp-level filter also sees queued/meta events for
+    // receivers that are already mid-destruction, where any cast or
+    // member call on 'object' is UB (UBSan invalid-vptr report).
+    QWidget *widget = nullptr;
+    switch (event->type()) {
+    case QEvent::KeyPress:
+        if (static_cast<QKeyEvent *>(event)->key() == Qt::Key_Escape
+            && !QApplication::activePopupWidget()) {
+            setNavBarEditMode(false);
+            return true;
+        }
+        return false;
+    case QEvent::MouseButtonPress: {
+        QMouseEvent *mouseEvent = static_cast<QMouseEvent *>(event);
+        if (mouseEvent->button() != Qt::LeftButton
+            || !(widget = qobject_cast<QWidget *>(object)))
+            return false;
+        const QPoint barPos = m_navigationBar->mapFromGlobal(
+            mouseEvent->globalPosition().toPoint());
+        if (widget == m_navigationBar
+            || m_navigationBar->isAncestorOf(widget)) {
+            // In edit mode a press picks the item — it never fires
+            // the button underneath.
+            m_navBarDragAction = m_navigationBar->actionAt(barPos);
+            m_navBarDragStart = barPos;
+            m_navBarDragging = false;
+            m_navBarDropBefore = nullptr;
+            return true;
+        }
+        // A click anywhere else locks the order and exits — the
+        // click itself is passed through so it lands normally.
+        // Popup clicks (the bar's own context menu) don't count.
+        if (!QApplication::activePopupWidget())
+            setNavBarEditMode(false);
+        return false;
+    }
+    case QEvent::MouseMove: {
+        if (!m_navBarDragAction)
+            return false;
+        QMouseEvent *mouseEvent = static_cast<QMouseEvent *>(event);
+        const QPoint barPos = m_navigationBar->mapFromGlobal(
+            mouseEvent->globalPosition().toPoint());
+        if (!m_navBarDragging) {
+            if ((barPos - m_navBarDragStart).manhattanLength()
+                    < QApplication::startDragDistance())
+                return true;
+            m_navBarDragging = true;
+            QApplication::setOverrideCursor(Qt::ClosedHandCursor);
+        }
+        updateNavBarDropIndicator(barPos);
+        return true;
+    }
+    case QEvent::MouseButtonRelease:
+        if (!m_navBarDragAction)
+            return false;
+        if (m_navBarDragging)
+            commitNavBarDrag();
+        endNavBarDrag();
+        return true;
+    case QEvent::MouseButtonDblClick:
+        widget = qobject_cast<QWidget *>(object);
+        return widget && (widget == m_navigationBar
+                          || m_navigationBar->isAncestorOf(widget));
+    default:
+        return false;
+    }
 }
 
 SidebarPanel *BrowserMainWindow::sidebarPanel() const
@@ -2441,7 +3170,7 @@ void BrowserMainWindow::showSettingsPage(int page)
                 m_tabWidget->closeTab(index);
         });
         m_tabWidget->addWidgetTab(settings, tr("Preferences"),
-                                  AroraIcon::get(QLatin1String("preferences-system")));
+                                  AroraIcon::getChrome(QLatin1String("preferences-system")));
     }
     if (page >= 0)
         settings->openAtPage(SettingsDialog::Page(page));
@@ -2478,7 +3207,7 @@ void BrowserMainWindow::showHistoryPage()
                 title);
         });
         m_tabWidget->addWidgetTab(history, tr("History"),
-                                  QIcon(QLatin1String(":graphics/history.png")));
+            AroraIcon::getChrome(QLatin1String("view-history")));
     }
     m_tabWidget->setCurrentWidget(history);
     history->setFocus();
@@ -2613,12 +3342,11 @@ void BrowserMainWindow::fileNew()
         return;
     BrowserMainWindow *window = application->newMainWindow();
 
-    QSettings settings;
-    settings.beginGroup(QLatin1String("MainWindow"));
-    int startup = settings.value(QLatin1String("startupBehavior")).toInt();
-
-    if (startup == 0)
-        window->goHome();
+    // PREF04: the Startup-with pick governs first launch only — a New
+    // Window always opens the homepage (whose own mode decides start
+    // page vs specific url).  That keeps the gesture meaningful in
+    // every startup mode instead of producing the old blank tab.
+    window->goHome();
 }
 
 void BrowserMainWindow::fileOpen()
@@ -2652,19 +3380,28 @@ bool BrowserMainWindow::previewEngineTabDocument()
     const QString engine = foreign->backend()
         ? foreign->backend()->displayName()
         : tr("This engine");
-    QMessageBox::information(this, tr("Print Preview"),
+    QMessageBox::information(this, tr("Print"),
         tr("%1 cannot produce print output — there is nothing to "
-           "preview for this tab.").arg(engine));
+           "print for this tab.").arg(engine));
     return true;
 }
 
-void BrowserMainWindow::filePrintPreview()
+void BrowserMainWindow::filePrint()
 {
-    QPointer<WebView> view = currentTab();
-    if (!view) {
-        previewEngineTabDocument();
+    if (WebView *view = currentTab()) {
+        printRequested(view);
         return;
     }
+    // Engine tabs can't printToPdf, but one hosting the shell
+    // document view still previews/prints its staged PDF; anything
+    // else gets the honest refusal rather than a dead Ctrl+P.
+    previewEngineTabDocument();
+}
+
+void BrowserMainWindow::printRequested(WebView *view)
+{
+    if (!view)
+        return;
     // A tab hosting the shell document view previews the staged
     // document — the engine page under it has nothing to print.
     if (PdfView *pdfView = view->pdfView();
@@ -2675,105 +3412,17 @@ void BrowserMainWindow::filePrintPreview()
         dialog.exec();
         return;
     }
-    // The stock QPrintPreviewDialog's paintRequested expects a
-    // synchronous paint into a QPrinter while engine printing is
-    // async — the preview rendered zero pages.  PrintPreviewDialog
-    // renders the page's printToPdf output instead: real pagination,
-    // real margins, no borrowed printer to outlive.
+    // PRINT02: one print path — Ctrl+P, the File-menu entry and JS
+    // window.print() all land here, and all open the preview: the
+    // preview IS the print dialog.  Its own Print button performs
+    // the final native print on the generated PDF, so nothing is
+    // lost with the old straight-to-printer path — Firefox carries
+    // no 'print without preview' either, and neither do we.  The
+    // async printToPdf generation also keeps real pagination and
+    // margins in the preview instead of a re-rendered guess.
     PrintPreviewDialog dialog(this);
     dialog.setPage(view->page(), view->url());
     dialog.exec();
-}
-
-void BrowserMainWindow::filePrint()
-{
-    WebView *view = currentTab();
-    if (view) {
-        printRequested(view);
-        return;
-    }
-    // Engine tabs can't printToPdf, but one hosting the shell
-    // document view still prints its staged PDF; anything else gets
-    // the honest refusal rather than a dead Ctrl+P.
-    if (EngineTab *foreign =
-            m_tabWidget->engineTab(m_tabWidget->currentIndex())) {
-        if (PdfView *pdfView = foreign->pdfView();
-                pdfView && pdfView->isReady()) {
-            pdfView->printDocument();
-            return;
-        }
-        const QString engine = foreign->backend()
-            ? foreign->backend()->displayName()
-            : tr("This engine");
-        QMessageBox::information(this, tr("Print Document"),
-            tr("%1 cannot produce print output — there is nothing to "
-               "print for this tab.").arg(engine));
-    }
-}
-
-void BrowserMainWindow::printRequested(WebView *view)
-{
-    if (!view)
-        return;
-    // PDF02: a tab showing the shell document view prints through
-    // the pdf raster path — engine printing has nothing to paint
-    // (the page underneath holds the previous document).
-    if (PdfView *pdfView = view->pdfView()) {
-        if (pdfView->isReady()) {
-            pdfView->printDocument();
-            return;
-        }
-    }
-    // Engine printing is asynchronous — the printer must stay alive
-    // until printFinished fires. The guard is a child of the view, so
-    // the printer is also freed if the view is destroyed mid-print
-    // (the connection alone would leak it).
-    QPrinter *printer = new QPrinter(QPrinter::HighResolution);
-    QPrintDialog dialog(printer, this);
-    dialog.setWindowTitle(tr("Print Document"));
-    if (dialog.exec() != QDialog::Accepted) {
-        delete printer;
-        return;
-    }
-    // CRASH02: an accepted dialog can still describe an unprintable
-    // target — on a CUPS host with zero destinations Qt leaves a
-    // file-format printer pointed at a *directory* (the user's home
-    // dir), and the engine's print path dies trying to paint into it
-    // ("QPainter::begin(): Returned false" then a silent exit).  Fail
-    // visibly instead of handing the engine a dead printer.
-    QString refuseReason;
-    if (!printer->isValid()) {
-        refuseReason = tr("The selected printer is not valid.");
-    } else {
-        const bool fileTarget =
-            printer->outputFormat() != QPrinter::NativeFormat
-            || printer->printerName().isEmpty();
-        if (fileTarget) {
-            const QFileInfo outFile(printer->outputFileName());
-            const QFileInfo outDir(outFile.dir().absolutePath());
-            if (printer->outputFileName().isEmpty() || outFile.isDir()
-                    || (outFile.exists() && !outFile.isWritable())
-                    || (!outFile.exists() && !outDir.isWritable()))
-                refuseReason =
-                    tr("The output file '%1' cannot be written.")
-                        .arg(printer->outputFileName());
-        } else if (QPrinterInfo::printerInfo(printer->printerName())
-                       .isNull()) {
-            refuseReason = tr("The selected printer is not available.");
-        }
-    }
-    if (!refuseReason.isEmpty()) {
-        QMessageBox::warning(this, tr("Print Document"),
-                             tr("Cannot print: %1").arg(refuseReason));
-        delete printer;
-        return;
-    }
-    QObject *printerGuard = new QObject(view);
-    connect(printerGuard, &QObject::destroyed,
-            [printer] { delete printer; });
-    connect(view, &WebView::printFinished, printerGuard,
-            [printerGuard](bool) { printerGuard->deleteLater(); });
-    view->print(printer);
 }
 
 void BrowserMainWindow::zoomTextOnlyChanged(bool textOnly)
@@ -2806,12 +3455,29 @@ void BrowserMainWindow::closeEvent(QCloseEvent *event)
     if (openTabs > 1) {
         QSettings settings;
         settings.beginGroup(QLatin1String("tabs"));
-        bool confirm = settings.value(QLatin1String("confirmClosingMultipleTabs"), true).toBool();
+        const bool confirmWindow = settings.value(
+            QLatin1String("confirmClosingMultipleTabs"), true).toBool();
+        // PREF04: closing the LAST window quits the app (macOS excepted
+        // — its lastWindowClosed respawns one), so that close answers
+        // to the exit confirmation instead.  confirmExit falls back to
+        // the migrated window key when never set; either way one
+        // prompt fires here, not two.
+        bool lastWindow = false;
+#if !defined(Q_OS_MACOS)
+        lastWindow = application && application->mainWindows().count() <= 1;
+#endif
+        const bool confirm = lastWindow
+            ? settings.value(QLatin1String("confirmExit"),
+                             confirmWindow).toBool()
+            : confirmWindow;
         if (confirm) {
             QApplication::alert(this);
-            int ret = QMessageBox::warning(this, QString(),
-                                           tr("Are you sure you want to close the window?"
-                                              "  There are %1 tabs open").arg(openTabs),
+            const QString question = lastWindow
+                ? tr("Closing the last window quits Arora."
+                     "  There are %1 tabs open").arg(openTabs)
+                : tr("Are you sure you want to close the window?"
+                     "  There are %1 tabs open").arg(openTabs);
+            int ret = QMessageBox::warning(this, QString(), question,
                                            QMessageBox::Yes | QMessageBox::No,
                                            QMessageBox::No);
             if (ret == QMessageBox::No) {
@@ -2920,9 +3586,20 @@ void BrowserMainWindow::viewPageSource()
 
 void BrowserMainWindow::goHome()
 {
-    QSettings settings;
-    settings.beginGroup(QLatin1String("MainWindow"));
-    QString home = settings.value(QLatin1String("home"), QLatin1String("about:home")).toString();
+    // PREF04: the Homepage radio decides — Start Page goes through
+    // about:home, which guessUrlFromString resolves to the context's
+    // branded start page (private/servo/tor variants included); a
+    // Specific Page loads the stored url verbatim.
+    QString home = QLatin1String("about:home");
+    if (BrowserApplication::homePageMode()
+            == BrowserApplication::SpecificPageHome) {
+        QSettings settings;
+        settings.beginGroup(QLatin1String("MainWindow"));
+        home = settings.value(QLatin1String("home"),
+                              QLatin1String("about:home")).toString();
+        if (home.trimmed().isEmpty())
+            home = QLatin1String("about:home");
+    }
     tabWidget()->loadString(home);
 }
 
@@ -3053,7 +3730,8 @@ void BrowserMainWindow::populateNewContainerTabMenu()
     ContainerManager *manager = ContainerManager::instance();
     // ICONS07: the container rows all carry color chips, so the static
     // entries get icons too — a grey chip keeps "No Container" in
-    // column with them.
+    // column with them.  ICONS09: the chips are identity art, not
+    // chrome — the color IS the container, so they stay colored.
     QAction *noContainer = m_fileNewContainerTabMenu->addAction(
         tr("&No Container"), this, [this]() {
         m_tabWidget->newTabPageInContainer(
@@ -3082,9 +3760,10 @@ void BrowserMainWindow::populateNewContainerTabMenu()
         tr("&Manage Containers..."),
         m_tabWidget, &TabWidget::manageContainers);
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
-    noContainer->setIcon(ContainerManager::colorIcon(QColor(0x8a, 0x8a, 0x8a)));
-    newContainer->setIcon(AroraIcon::get(QLatin1String("list-add")));
-    manageContainers->setIcon(AroraIcon::get(QLatin1String("preferences-system")));
+    noContainer->setIcon(
+        ContainerManager::colorIcon(AroraStyle::noContainerColor()));
+    newContainer->setIcon(AroraIcon::getChrome(QLatin1String("list-add")));
+    manageContainers->setIcon(AroraIcon::getChrome(QLatin1String("preferences-system")));
 #endif
 }
 

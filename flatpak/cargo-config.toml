@@ -1,0 +1,15 @@
+# Cargo source replacement for the flatpak build (PKG02).
+#
+# Installed by the manifest as .cargo/config.toml at the arora module
+# root, so it applies to both src/rustdl and src/rustcore cargo invocations.
+# Every crates.io dependency is redirected to the vendored tree that
+# flatpak/cargo-sources.json unpacks into cargo/vendor/ (resolved relative
+# to this file's parent's parent — the module build dir). Combined with
+# CARGO_NET_OFFLINE=true this makes the Rust builds fully offline and
+# lockfile-exact: cargo still verifies each vendored crate's embedded
+# .cargo-checksum.json against Cargo.lock.
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "cargo/vendor"

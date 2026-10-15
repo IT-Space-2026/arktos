@@ -5,6 +5,7 @@ SUBDIRS  = \
     adblock \
     addbookmarkdialog \
     aroraicon \
+    arorastyle \
     autofill \
     autosaver \
     bookmarknode \
@@ -37,6 +38,7 @@ SUBDIRS  = \
     navigationpolicy \
     networkaccessmanager \
     networkcookiejar \
+    notesmodel \
     omnibox \
     opensearchengine \
     opensearchmanager \

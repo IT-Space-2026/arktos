@@ -18,19 +18,27 @@
  */
 #include "sidebarpanel.h"
 
+#include "arorastyle.h"
 #include "autosaver.h"
+#include "browserapplication.h"
 #include "bookmarksmanager.h"
 #include "bookmarksmodel.h"
 #include "bookmarknode.h"
+#include "browserapplication.h"
+#include "browsermainwindow.h"
 #include "downloadmanager.h"
 #include "history.h"
 #include "historymanager.h"
+#include "notesmodel.h"
 #include "searchlineedit.h"
 #include "settings.h"
+#include "webview.h"
 #include "utils/aroraicon.h"
 #include "utils/edittreeview.h"
+#include "utils/flowlayout.h"
 #include "utils/treesortfilterproxymodel.h"
 
+#include <qaction.h>
 #include <qapplication.h>
 #include <qboxlayout.h>
 #include <qcombobox.h>
@@ -40,8 +48,10 @@
 #include <qfileinfo.h>
 #include <qheaderview.h>
 #include <qlabel.h>
+#include <qlineedit.h>
 #include <qlistview.h>
 #include <qmenu.h>
+#include <qmessagebox.h>
 #include <qpainter.h>
 #include <qplaintextedit.h>
 #include <qpushbutton.h>
@@ -49,10 +59,12 @@
 #include <qshortcut.h>
 #include <QSignalBlocker>
 #include <qsortfilterproxymodel.h>
+#include <qstackedwidget.h>
 #include <qstyleditemdelegate.h>
 #include <qstyle.h>
 #include <qstyleoption.h>
 #include <qtabbar.h>
+#include <qtextbrowser.h>
 #include <qtabwidget.h>
 #include <qtoolbutton.h>
 
@@ -147,7 +159,7 @@ public:
             index.data(DownloadModel::CompletedRole).toBool();
         const bool selected = opt.state & QStyle::State_Selected;
         const QColor textColor = selected
-            ? opt.palette.color(QPalette::HighlightedText)
+            ? AroraStyle::selectionTextColor(opt.palette)
             : completed
                 ? opt.palette.color(QPalette::Text)
                 : opt.palette.color(QPalette::Disabled, QPalette::Text);
@@ -161,7 +173,7 @@ public:
             const int sizeWidth = metrics.horizontalAdvance(sizeText);
             nameRect.setRight(rect.right() - sizeWidth - 8);
             painter->setPen(selected
-                ? opt.palette.color(QPalette::HighlightedText)
+                ? AroraStyle::selectionTextColor(opt.palette)
                 : opt.palette.color(QPalette::PlaceholderText));
             painter->drawText(rect, Qt::AlignVCenter | Qt::AlignRight,
                               sizeText);
@@ -266,6 +278,15 @@ public:
         m_toggle->setVisible(visible);
     }
 
+    // TRUST20: the rail's glyphs are baked pixmaps (the fold toggle
+    // paints from palette(), the tab icons carry a palette snapshot),
+    // so the host panel re-bakes the tab icons whenever the resolved
+    // palette moves — the tor chrome seed, a scheme flip, a repolish.
+    void setIconRefresher(std::function<void()> refresher)
+    {
+        m_iconRefresher = std::move(refresher);
+    }
+
     QSize tabSizeHint(int index) const override
     {
         Q_UNUSED(index);
@@ -290,8 +311,20 @@ public:
 
 private:
     QToolButton *m_toggle;
+    std::function<void()> m_iconRefresher;
 
 protected:
+    void changeEvent(QEvent *event) override
+    {
+        if (event->type() == QEvent::PaletteChange
+                || event->type() == QEvent::StyleChange) {
+            m_toggle->setIcon(SidebarPanel::icon(this));
+            if (m_iconRefresher)
+                m_iconRefresher();
+        }
+        QTabBar::changeEvent(event);
+    }
+
     void paintEvent(QPaintEvent *) override
     {
         QPainter painter(this);
@@ -360,6 +393,41 @@ SidebarPanel::SidebarPanel(QWidget *parent)
     m_tabs->setObjectName(QLatin1String("sidebarTabs"));
     m_tabs->setDocumentMode(true);
 
+    // TRUST20: rail glyphs now tint from the rail's own resolved
+    // palette instead of qApp's — on the tor window the strip joins
+    // the violet chrome so the icons read light there; on normal
+    // chrome the rail palette is the inherited application one, so
+    // nothing changes.  The rail re-bakes them itself on any later
+    // palette/style move, so the seed below lands before the first
+    // insert either way.
+    SidebarRail *rail = static_cast<SidebarRail *>(m_tabs->tabBar());
+    rail->setIconRefresher([this]() { refreshRailIcons(); });
+    if (BrowserApplication::isTorMode()) {
+        rail->setAutoFillBackground(true);
+        QPalette railPalette = rail->palette();
+        railPalette.setColor(QPalette::Window,
+                             AroraStyle::torChromeColor());
+        railPalette.setColor(QPalette::Button,
+                             AroraStyle::torChromeColor());
+        railPalette.setColor(QPalette::WindowText,
+                             AroraStyle::torTextColor());
+        railPalette.setColor(QPalette::ButtonText,
+                             AroraStyle::torTextColor());
+        railPalette.setColor(QPalette::Disabled, QPalette::WindowText,
+                             AroraStyle::torDimTextColor());
+        railPalette.setColor(QPalette::Disabled, QPalette::ButtonText,
+                             AroraStyle::torDimTextColor());
+        // The rail's hand-painted selected/hover cells read the
+        // Highlight role — give them the raised violet, and pin the
+        // on-card glyph tone so selectionTextColor resolves the
+        // light chrome text.
+        railPalette.setColor(QPalette::Highlight,
+                             AroraStyle::torChromeRaisedColor());
+        railPalette.setColor(QPalette::HighlightedText,
+                             AroraStyle::torTextColor());
+        rail->setPalette(railPalette);
+    }
+
     // Every rail entry is an icon-only tab — the title rides the
     // tooltip + accessible name instead of rendering as rotated text.
     // The option reads run before the population so lazy load can
@@ -388,9 +456,6 @@ SidebarPanel::SidebarPanel(QWidget *parent)
             &QToolButton::clicked, this, &SidebarPanel::closeRequested);
 
     QSettings settings;
-    if (m_notes)
-        m_notes->setPlainText(
-            settings.value(QLatin1String("sidebar/notes")).toString());
     const int tab = settings.value(QLatin1String("sidebar/currentTab"), 0)
                         .toInt();
     if (tab >= 0 && tab < m_tabs->count())
@@ -400,6 +465,19 @@ SidebarPanel::SidebarPanel(QWidget *parent)
     // kick the swap explicitly.
     buildPendingTab(m_tabs->currentIndex());
     applyOptions();
+}
+
+SidebarPanel::~SidebarPanel()
+{
+    // A hosted download card is only BORROWED from DownloadManager —
+    // its row pointer in m_downloads must never dangle, so the card
+    // goes back before this widget tree deletes it (window close with
+    // a row selected).
+    if (m_detailItem) {
+        m_detailItem->setParent(DownloadManager::instance());
+        m_detailItem->hide();
+        m_detailItem.clear();
+    }
 }
 
 // The registered rail entries, in display order.  Built-ins resolve
@@ -531,7 +609,8 @@ void SidebarPanel::applyPanelVisibility()
                     ++position;
             }
             const int at = m_tabs->insertTab(position, page,
-                AroraIcon::get(QLatin1String(panel.iconName)),
+                AroraIcon::getChrome(QLatin1String(panel.iconName),
+                                     m_tabs->tabBar()->palette()),
                 panel.title);
             m_tabs->setTabToolTip(at, panel.title);
         } else if (index >= 0) {
@@ -557,6 +636,30 @@ void SidebarPanel::applyPanelVisibility()
         if (at != want)
             m_tabs->tabBar()->moveTab(at, want);
         ++want;
+    }
+}
+
+// TRUST20: re-bake every rail tab's glyph from the rail's own
+// resolved palette.  The palette-snapshot icon engine freezes its
+// tint at insert time, so the rail calls this on PaletteChange/
+// StyleChange — the tor chrome seed, a scheme flip, a repolish all
+// land through the same path.
+void SidebarPanel::refreshRailIcons()
+{
+    QTabBar *rail = m_tabs->tabBar();
+    const QList<Panel> all = panels();
+    for (int i = 0; i < m_tabs->count(); ++i) {
+        QWidget *page = m_tabs->widget(i);
+        const QByteArray id = page
+            ? page->property("sidebarPanelId").toByteArray()
+            : QByteArray();
+        for (const Panel &panel : all) {
+            if (panel.id == id) {
+                m_tabs->setTabIcon(i, AroraIcon::getChrome(
+                    QLatin1String(panel.iconName), rail->palette()));
+                break;
+            }
+        }
     }
 }
 
@@ -600,9 +703,9 @@ void SidebarPanel::buildPendingTab(int index)
 }
 
 // SIDE09: apply the working panel options — every checkbox in the
-// Preferences Sidebar group maps to one of these switches (the dock
-// title-bar close button and auto-close live in BrowserMainWindow's
-// applySidebarSettings, which calls this).
+// Preferences Sidebar group maps to one of these switches (the
+// floating dock's title-bar close button and auto-close live in
+// BrowserMainWindow, which calls this).
 void SidebarPanel::applyOptions()
 {
     const QSettings settings;
@@ -611,7 +714,11 @@ void SidebarPanel::applyOptions()
         settings.value(QLatin1String("sidebar/showPanelToggle"), true)
             .toBool());
     // 'Show Close Button' — the page-header X (Downloads is the one
-    // page that carries a header).
+    // page that carries a header).  SIDE11 audit: no other page
+    // (Bookmarks/History/Notes) hosts an in-panel X, and while docked
+    // the dock's own title-bar X stays off — the header X and the
+    // rail's fold button are the sidebar's only close controls, all
+    // on the same closeRequested path.
     if (m_downloadsPage) {
         if (QWidget *closeX = m_downloadsPage->findChild<QWidget *>(
                 QLatin1String("sidebarCloseButton")))
@@ -642,8 +749,10 @@ QWidget *SidebarPanel::buildBookmarksPage()
 {
     m_bookmarksPage = new QWidget(m_tabs);
     QVBoxLayout *bookmarksLayout = new QVBoxLayout(m_bookmarksPage);
-    bookmarksLayout->setContentsMargins(2, 2, 2, 2);
-    bookmarksLayout->setSpacing(2);
+    bookmarksLayout->setContentsMargins(
+        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small,
+        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small);
+    bookmarksLayout->setSpacing(AroraStyle::Spacing::Small);
     SearchLineEdit *bookmarksSearch = new SearchLineEdit(m_bookmarksPage);
     bookmarksLayout->addWidget(bookmarksSearch);
     m_bookmarksView = new EditTreeView(m_bookmarksPage);
@@ -690,7 +799,9 @@ QWidget *SidebarPanel::buildBookmarksPage()
     // dialog's Add/Remove actions on a compact row under the tree.
     // Add is handled by the window (it owns the current tab); Remove
     // works on the shared model straight from here.
-    QHBoxLayout *bookmarksActions = new QHBoxLayout;
+    // DOWN04: a wrapping row — at the dock's floor the buttons stack
+    // instead of holding the whole panel above ~180px.
+    FlowLayout *bookmarksActions = new FlowLayout(0, -1, 2);
     QPushButton *addButton = new QPushButton(tr("Add..."), m_bookmarksPage);
     addButton->setObjectName(QLatin1String("sidebarAddBookmark"));
     addButton->setAccessibleName(tr("Add bookmark"));
@@ -723,11 +834,57 @@ QWidget *SidebarPanel::buildHistoryPage()
 {
     QWidget *historyPage = new QWidget(m_tabs);
     QVBoxLayout *historyLayout = new QVBoxLayout(historyPage);
-    historyLayout->setContentsMargins(2, 2, 2, 2);
-    historyLayout->setSpacing(2);
+    historyLayout->setContentsMargins(
+        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small,
+        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small);
+    historyLayout->setSpacing(AroraStyle::Spacing::Small);
+
+    // HIST03: the reference's header controls — a period combo
+    // narrowing the day groups plus the shared clear-history
+    // confirmation on an icon button.  Both take the downloads
+    // panel's compact treatment (Ignored policy, autoRaise glyph)
+    // so the dock's ~160px floor stays reachable.
+    QHBoxLayout *historyHeader = new QHBoxLayout;
+    historyHeader->setSpacing(AroraStyle::Spacing::Small);
     SearchLineEdit *historySearch = new SearchLineEdit(historyPage);
-    historyLayout->addWidget(historySearch);
+    historySearch->setSizePolicy(QSizePolicy::Ignored,
+                                 QSizePolicy::Fixed);
+    historyHeader->addWidget(historySearch, 2);
+    m_historyPeriod = new QComboBox(historyPage);
+    m_historyPeriod->setObjectName(QLatin1String("sidebarHistoryPeriod"));
+    m_historyPeriod->setAccessibleName(tr("Filter history by period"));
+    m_historyPeriod->setToolTip(tr("Filter history by period"));
+    m_historyPeriod->setSizePolicy(QSizePolicy::Ignored,
+                                   QSizePolicy::Fixed);
+    m_historyPeriod->addItem(tr("Today"),
+                             HistoryPeriodFilterModel::Today);
+    m_historyPeriod->addItem(tr("This Week"),
+                             HistoryPeriodFilterModel::ThisWeek);
+    m_historyPeriod->addItem(tr("This Month"),
+                             HistoryPeriodFilterModel::ThisMonth);
+    m_historyPeriod->addItem(tr("All"),
+                             HistoryPeriodFilterModel::All);
+    // Both header widgets are Ignored, so a stretch of 0 would leave
+    // the combo at 0px — split the row 2:1 and let it elide.
+    historyHeader->addWidget(m_historyPeriod, 1);
+    QToolButton *clearButton = new QToolButton(historyPage);
+    clearButton->setObjectName(QLatin1String("sidebarHistoryClear"));
+    clearButton->setAccessibleName(tr("Clear history"));
+    clearButton->setToolTip(tr("Clear history..."));
+    clearButton->setAutoRaise(true);
+    clearButton->setIcon(
+        AroraIcon::getChrome(QLatin1String("edit-clear")));
+    connect(clearButton, &QToolButton::clicked,
+            this, [historyPage]() {
+        HistoryManager::instance()->confirmClear(historyPage);
+    });
+    historyHeader->addWidget(clearButton);
+    historyLayout->addLayout(historyHeader);
+
     m_historyView = new EditTreeView(historyPage);
+    m_historyPeriodFilter = new HistoryPeriodFilterModel(m_historyView);
+    m_historyPeriodFilter->setSourceModel(
+        HistoryManager::instance()->historyTreeModel());
     m_historyProxy = new TreeSortFilterProxyModel(m_historyView);
     m_historyView->setObjectName(QLatin1String("sidebarHistoryView"));
     m_historyView->setAccessibleName(tr("History"));
@@ -739,10 +896,34 @@ QWidget *SidebarPanel::buildHistoryPage()
     m_historyProxy->setFilterKeyColumn(-1);
     connect(historySearch, &SearchLineEdit::textChanged,
             m_historyProxy, &QSortFilterProxyModel::setFilterFixedString);
-    m_historyProxy->setSourceModel(
-        HistoryManager::instance()->historyTreeModel());
+    connect(m_historyPeriod, &QComboBox::activated,
+            this, [this](int index) {
+        const HistoryPeriodFilterModel::Period period =
+            static_cast<HistoryPeriodFilterModel::Period>(
+                m_historyPeriod->itemData(index).toInt());
+        m_historyPeriodFilter->setPeriod(period);
+        QSettings().setValue(QLatin1String("sidebar/historyPeriod"),
+                             int(period));
+        // A narrower range can hide the day group holding the view's
+        // current row — the first (newest) group is always in range.
+        m_historyView->setExpanded(m_historyProxy->index(0, 0), true);
+    });
+    m_historyProxy->setSourceModel(m_historyPeriodFilter);
     m_historyView->setModel(m_historyProxy);
     m_historyView->setExpanded(m_historyProxy->index(0, 0), true);
+    // Persisted like the rest of the panel state; the default is All
+    // so a first run hides nothing.
+    const int savedPeriod = QSettings().value(
+        QLatin1String("sidebar/historyPeriod"),
+        int(HistoryPeriodFilterModel::All)).toInt();
+    int periodRow = m_historyPeriod->findData(savedPeriod);
+    if (periodRow < 0)
+        periodRow = m_historyPeriod->findData(
+            int(HistoryPeriodFilterModel::All));
+    m_historyPeriod->setCurrentIndex(periodRow);
+    m_historyPeriodFilter->setPeriod(
+        static_cast<HistoryPeriodFilterModel::Period>(
+            m_historyPeriod->itemData(periodRow).toInt()));
     // SIDE06: same name-only treatment — column 1 (address / item
     // count) hoarded the slack; hide it so titles fill the panel.
     m_historyView->setColumnHidden(1, true);
@@ -760,6 +941,26 @@ QWidget *SidebarPanel::buildHistoryPage()
     return historyPage;
 }
 
+// DOWN04: no bundled set ships a pause glyph (media-playback-pause
+// isn't covered) — paint two bars in ButtonText like the rail icon so
+// the action row stays monochrome under every palette, dark included.
+static QIcon downloadPauseIcon(const QWidget *forPalette)
+{
+    const qreal dpr = forPalette ? forPalette->devicePixelRatioF() : 1.0;
+    QPixmap pixmap(16 * dpr, 16 * dpr);
+    pixmap.setDevicePixelRatio(dpr);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(forPalette
+        ? forPalette->palette().color(QPalette::ButtonText)
+        : QColor(Qt::black));
+    painter.drawRoundedRect(QRectF(4.4, 3.4, 3.0, 9.2), 1.0, 1.0);
+    painter.drawRoundedRect(QRectF(9.0, 3.4, 3.0, 9.2), 1.0, 1.0);
+    return QIcon(pixmap);
+}
+
 // DOWN02: downloads — the standalone manager window is gone; this
 // panel is the download surface.  Header close X, a filter field,
 // a sort combo, the item list and a bottom detail pane that hosts
@@ -768,26 +969,74 @@ QWidget *SidebarPanel::buildDownloadsPage()
 {
     m_downloadsPage = new QWidget(m_tabs);
     QVBoxLayout *downloadsLayout = new QVBoxLayout(m_downloadsPage);
-    downloadsLayout->setContentsMargins(2, 2, 2, 2);
-    downloadsLayout->setSpacing(2);
+    downloadsLayout->setContentsMargins(
+        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small,
+        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small);
+    downloadsLayout->setSpacing(AroraStyle::Spacing::Small);
 
     QHBoxLayout *downloadsHeader = new QHBoxLayout;
     QLabel *downloadsTitle = new QLabel(tr("Downloads"), m_downloadsPage);
     QFont titleFont = downloadsTitle->font();
-    titleFont.setBold(true);
+    // THEM03: header rows share the section-title weight the chrome
+    // style gives group boxes (DemiBold, not full Bold).
+    titleFont.setWeight(QFont::DemiBold);
     downloadsTitle->setFont(titleFont);
     // DOWN04: the title yields first at narrow widths so the close
     // button is never pushed off the row's right edge.
     downloadsTitle->setSizePolicy(QSizePolicy::Ignored,
                                   QSizePolicy::Preferred);
     downloadsHeader->addWidget(downloadsTitle, 1);
+    // DOWN05: clear-list affordance, left of the close X — the same
+    // autoRaise chrome-button shape and the house edit-clear glyph.
+    // cleanup() drops only finished/failed/cancelled entries
+    // (DownloadModel::removeRows never touches an in-flight transfer
+    // or a completed file), so the button tracks the same predicate
+    // and stays disabled while nothing is removable.
+    QToolButton *clearButton = new QToolButton(m_downloadsPage);
+    clearButton->setObjectName(QLatin1String("sidebarClearDownloads"));
+    clearButton->setAccessibleName(tr("Clear download list"));
+    clearButton->setToolTip(tr("Clear download list"));
+    clearButton->setAutoRaise(true);
+    clearButton->setIcon(AroraIcon::getChrome(QLatin1String("edit-clear")));
+    // Same lightweight confirm the History menu's Clear uses — a
+    // one-click whole-list wipe is destructive to the record.
+    connect(clearButton, &QToolButton::clicked, this, [this]() {
+        DownloadManager *manager = DownloadManager::instance();
+        if (!manager->hasRemovableItems())
+            return;
+        if (QMessageBox::question(this, tr("Clear Download List"),
+                tr("Remove all finished downloads from the list?\n"
+                   "Downloaded files are kept on disk."),
+                QMessageBox::Yes | QMessageBox::No,
+                QMessageBox::No) == QMessageBox::Yes)
+            manager->cleanup();
+    });
+    QAbstractItemModel *downloadsModel =
+        DownloadManager::instance()->model();
+    const auto refreshClearButton = [clearButton]() {
+        clearButton->setEnabled(
+            DownloadManager::instance()->hasRemovableItems());
+    };
+    connect(downloadsModel, &QAbstractItemModel::rowsInserted,
+            clearButton, refreshClearButton);
+    connect(downloadsModel, &QAbstractItemModel::rowsRemoved,
+            clearButton, refreshClearButton);
+    connect(downloadsModel, &QAbstractItemModel::modelReset,
+            clearButton, refreshClearButton);
+    // A finishing/failing transfer lands here via updateRow.
+    connect(downloadsModel, &QAbstractItemModel::dataChanged,
+            clearButton, refreshClearButton);
+    refreshClearButton();
+    downloadsHeader->addWidget(clearButton);
     QToolButton *closeButton = new QToolButton(m_downloadsPage);
     closeButton->setObjectName(QLatin1String("sidebarCloseButton"));
     closeButton->setAccessibleName(tr("Close sidebar"));
     closeButton->setToolTip(tr("Close sidebar"));
     closeButton->setAutoRaise(true);
+    // ICONS09: house close glyph — palette-tinted chrome like every
+    // other in-panel button instead of a style-pixmap outlier.
     closeButton->setIcon(
-        m_downloadsPage->style()->standardIcon(QStyle::SP_TitleBarCloseButton));
+        AroraIcon::getChrome(QLatin1String("window-close")));
     connect(closeButton, &QToolButton::clicked,
             this, &SidebarPanel::closeRequested);
     downloadsHeader->addWidget(closeButton);
@@ -876,7 +1125,9 @@ QWidget *SidebarPanel::buildDownloadsPage()
     m_downloadDetail->setAccessibleName(tr("Download details"));
     m_downloadDetail->setFrameShape(QFrame::StyledPanel);
     QVBoxLayout *detailLayout = new QVBoxLayout(m_downloadDetail);
-    detailLayout->setContentsMargins(4, 4, 4, 4);
+    detailLayout->setContentsMargins(
+        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small,
+        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small);
     // The card keeps its full height — the scrolling list above
     // absorbs vertical deficits, the hosted rows never clip.
     m_downloadDetail->setSizePolicy(QSizePolicy::Expanding,
@@ -899,6 +1150,62 @@ QWidget *SidebarPanel::buildDownloadsPage()
         }
     });
 
+    // DOWN04: the action row the user's reference grab shows —
+    // pause/resume, retry, remove and show-in-folder on icon-sized
+    // buttons, plus a details toggle for the card's speed graph.
+    // Every button acts on the SELECTED list row and mirrors the
+    // hosted card's own enablement (can't pause a finished download,
+    // can't retry a running one, can't remove an in-flight row), so
+    // the row and the card never disagree.  Glyphs come through
+    // AroraIcon::getChrome — the same palette-tinted monochrome chrome
+    // as the header X — staying legible on dark and tor palettes.
+    // A FlowLayout keeps the dock's 160px floor reachable — the
+    // buttons reflow onto a second row instead of forcing a ~180px
+    // minimum width (same treatment as the card's own button rows).
+    FlowLayout *actionsRow = new FlowLayout(0, 2, 2);
+    const auto actionButton = [this, actionsRow](const char *objectName,
+                                                 const QString &toolTip) {
+        QToolButton *button = new QToolButton(m_downloadsPage);
+        button->setObjectName(QLatin1String(objectName));
+        button->setAutoRaise(true);
+        button->setToolTip(toolTip);
+        button->setAccessibleName(toolTip);
+        button->setEnabled(false);
+        actionsRow->addWidget(button);
+        return button;
+    };
+    m_downloadPauseButton = actionButton("sidebarDownloadPause",
+                                         tr("Pause download"));
+    m_downloadPauseButton->setIcon(downloadPauseIcon(m_downloadsPage));
+    connect(m_downloadPauseButton, &QToolButton::clicked,
+            this, &SidebarPanel::pauseSelectedDownload);
+    m_downloadRetryButton = actionButton("sidebarDownloadRetry",
+                                         tr("Restart download"));
+    m_downloadRetryButton->setIcon(
+        AroraIcon::getChrome(QLatin1String("view-refresh")));
+    connect(m_downloadRetryButton, &QToolButton::clicked,
+            this, &SidebarPanel::retrySelectedDownload);
+    m_downloadRemoveButton = actionButton("sidebarDownloadRemove",
+                                          tr("Remove from list"));
+    m_downloadRemoveButton->setIcon(
+        AroraIcon::getChrome(QLatin1String("edit-clear")));
+    connect(m_downloadRemoveButton, &QToolButton::clicked,
+            this, &SidebarPanel::removeSelectedDownload);
+    m_downloadFolderButton = actionButton("sidebarDownloadFolder",
+                                          tr("Show in File Manager"));
+    m_downloadFolderButton->setIcon(
+        AroraIcon::getChrome(QLatin1String("document-open")));
+    connect(m_downloadFolderButton, &QToolButton::clicked,
+            this, &SidebarPanel::revealSelectedDownload);
+    m_downloadDetailsButton = actionButton("sidebarDownloadDetails",
+                                           tr("Show download details"));
+    m_downloadDetailsButton->setCheckable(true);
+    m_downloadDetailsButton->setIcon(
+        AroraIcon::getChrome(QLatin1String("go-down")));
+    connect(m_downloadDetailsButton, &QToolButton::toggled,
+            this, &SidebarPanel::setSelectedDownloadExpanded);
+    downloadsLayout->addLayout(actionsRow);
+
     QPushButton *settingsButton = new QPushButton(tr("Download Settings..."),
                                                 m_downloadsPage);
     settingsButton->setObjectName(QLatin1String("sidebarDownloadSettings"));
@@ -910,30 +1217,441 @@ QWidget *SidebarPanel::buildDownloadsPage()
         SettingsDialog::openPage(this, SettingsDialog::DownloadsPage);
     });
     downloadsLayout->addWidget(settingsButton);
+    // A row may already be selected (the view auto-selects on a
+    // pre-populated model) — bring the action row in sync now that
+    // the buttons exist.
+    updateDownloadActions();
     return m_downloadsPage;
 }
 
-// Notes — a per-profile scratch pad, debounce-persisted through
-// the AutoSaver like every other app-side store.
+// The bundled icon themes ship no overflow-menu glyph — paint the
+// three-dot mark from the palette like the rail icon does.
+static QIcon notesMenuIcon(const QWidget *forPalette)
+{
+    const qreal dpr = forPalette ? forPalette->devicePixelRatioF() : 1.0;
+    QPixmap pixmap(16 * dpr, 16 * dpr);
+    pixmap.setDevicePixelRatio(dpr);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(forPalette
+        ? forPalette->palette().color(QPalette::ButtonText)
+        : QColor(Qt::black));
+    for (int i = 0; i < 3; ++i)
+        painter.drawEllipse(QPointF(8, 3.5 + i * 4.5), 1.4, 1.4);
+    return QIcon(pixmap);
+}
+
+// NOTE03: live search over the notes list — a row survives when the
+// needle matches the displayed title (stored or derived first line)
+// or the body text.  View indices are proxy indices; the editor binds
+// through mapToSource so m_editingNote stays a model row.
+class SidebarNotesFilter : public QSortFilterProxyModel
+{
+public:
+    SidebarNotesFilter(QAbstractItemModel *source, QObject *parent = nullptr)
+        : QSortFilterProxyModel(parent)
+    {
+        setSourceModel(source);
+        setDynamicSortFilter(true);
+    }
+
+    void setSearchText(const QString &text)
+    {
+        if (m_searchText == text)
+            return;
+        m_searchText = text;
+        beginFilterChange();
+        endFilterChange();
+    }
+
+protected:
+    bool filterAcceptsRow(int row, const QModelIndex &parent) const override
+    {
+        if (m_searchText.isEmpty())
+            return true;
+        const QModelIndex index = sourceModel()->index(row, 0, parent);
+        const auto matches = [this](const QVariant &text) {
+            return text.toString().contains(m_searchText,
+                                            Qt::CaseInsensitive);
+        };
+        return matches(index.data(Qt::DisplayRole))
+            || matches(index.data(NotesModel::BodyRole));
+    }
+
+private:
+    QString m_searchText;
+};
+
+// NOTE02: Notes — a per-profile multi-note store (NotesModel) behind
+// a three-state stack: the "Write your first note" empty state, the
+// notes list, and the editor a selected note opens in.  Persistence
+// is the model's debounced autosave; the page carries no save button.
 QWidget *SidebarPanel::buildNotesPage()
 {
     QWidget *notesPage = new QWidget(m_tabs);
     QVBoxLayout *notesLayout = new QVBoxLayout(notesPage);
-    notesLayout->setContentsMargins(2, 2, 2, 2);
-    notesLayout->setSpacing(2);
-    m_notes = new QPlainTextEdit(notesPage);
-    m_notes->setObjectName(QLatin1String("sidebarNotes"));
-    m_notes->setAccessibleName(tr("Notes"));
-    m_notes->setPlaceholderText(tr("Notes are saved automatically."));
-    notesLayout->addWidget(m_notes);
+    notesLayout->setContentsMargins(
+        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small,
+        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small);
+    notesLayout->setSpacing(AroraStyle::Spacing::Small);
 
-    connect(m_notes, &QPlainTextEdit::textChanged,
-            m_autoSaver, &AutoSaver::changeOccurred);
-    // The panel may be re-enabled at runtime — a stored note picks
-    // back up without waiting for a restart.
-    m_notes->setPlainText(
-        QSettings().value(QLatin1String("sidebar/notes")).toString());
+    // NOTE02: the window's browsing profile owns the store — the
+    // shared normal-profile model in a regular window, a session-only
+    // volatile one while private/tor (an off-the-record profile's
+    // notes never reach disk).  SidebarPanel itself stays
+    // engine-free: it only ever sees the model.
+    m_notesModel = NotesModel::instance(BrowserApplication::webEngineProfile());
+    // A rebuilt page (panel hidden then re-enabled) starts at the
+    // list — the old editor's binding dies with the old widgets.
+    m_editingNote = QPersistentModelIndex();
+
+    // Header row — the add/delete buttons sit beside the spot
+    // NOTE03's search field will take.
+    QHBoxLayout *notesHeader = new QHBoxLayout;
+    notesHeader->setSpacing(AroraStyle::Spacing::Small);
+    QLabel *notesTitle = new QLabel(tr("Notes"), notesPage);
+    QFont titleFont = notesTitle->font();
+    titleFont.setBold(true);
+    notesTitle->setFont(titleFont);
+    notesTitle->setSizePolicy(QSizePolicy::Ignored,
+                              QSizePolicy::Preferred);
+    notesHeader->addWidget(notesTitle, 1);
+    const auto noteButton = [this, notesPage, notesHeader](
+            const char *objectName, const QString &label,
+            const char *iconName) {
+        QToolButton *button = new QToolButton(notesPage);
+        button->setObjectName(QLatin1String(objectName));
+        button->setAutoRaise(true);
+        button->setIcon(AroraIcon::getChrome(QLatin1String(iconName)));
+        button->setToolTip(label);
+        button->setAccessibleName(label);
+        notesHeader->addWidget(button);
+        return button;
+    };
+    QToolButton *addButton = noteButton("sidebarNotesAdd",
+                                        tr("New note"), "list-add");
+    connect(addButton, &QToolButton::clicked,
+            this, &SidebarPanel::addNote);
+    m_notesRemoveButton = noteButton("sidebarNotesRemove",
+                                     tr("Delete note"), "edit-clear");
+    connect(m_notesRemoveButton, &QToolButton::clicked,
+            this, &SidebarPanel::removeSelectedNote);
+    notesLayout->addLayout(notesHeader);
+
+    // NOTE03: the search row the header buttons were waiting for —
+    // filters the list live on titles and bodies.
+    m_notesSearch = new SearchLineEdit(notesPage);
+    m_notesSearch->setObjectName(QLatin1String("sidebarNotesSearch"));
+    m_notesSearch->setInactiveText(tr("Search notes"));
+    m_notesSearch->setAccessibleName(tr("Search notes"));
+    connect(m_notesSearch, &SearchLineEdit::textChanged,
+            this, [this](const QString &text) {
+        if (m_notesProxy)
+            static_cast<SidebarNotesFilter *>(m_notesProxy.data())
+                ->setSearchText(text);
+    });
+    notesLayout->addWidget(m_notesSearch);
+
+    m_notesStack = new QStackedWidget(notesPage);
+    m_notesStack->setObjectName(QLatin1String("sidebarNotesStack"));
+
+    // Empty state — zero notes.
+    QLabel *emptyLabel = new QLabel(
+        tr("Write your first note."), m_notesStack);
+    emptyLabel->setObjectName(QLatin1String("sidebarNotesEmpty"));
+    emptyLabel->setAlignment(Qt::AlignCenter);
+    emptyLabel->setWordWrap(true);
+    emptyLabel->setForegroundRole(QPalette::PlaceholderText);
+    m_notesStack->addWidget(emptyLabel);
+
+    // The notes list — a click opens the note in the editor, F2
+    // renames the title in place.
+    m_notesList = new QListView(m_notesStack);
+    m_notesList->setObjectName(QLatin1String("sidebarNotesList"));
+    m_notesList->setAccessibleName(tr("Notes"));
+    m_notesList->setUniformItemSizes(true);
+    m_notesList->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_notesList->setEditTriggers(QAbstractItemView::EditKeyPressed);
+    // The list sees the search-filtering proxy; the editor binds the
+    // source row underneath it.
+    if (m_notesModel)
+        m_notesProxy = new SidebarNotesFilter(m_notesModel, m_notesList);
+    m_notesList->setModel(m_notesProxy
+                          ? static_cast<QAbstractItemModel *>(m_notesProxy.data())
+                          : static_cast<QAbstractItemModel *>(m_notesModel));
+    connect(m_notesList, &QListView::activated,
+            this, &SidebarPanel::openNote);
+    connect(m_notesList, &QListView::clicked,
+            this, &SidebarPanel::openNote);
+    m_notesStack->addWidget(m_notesList);
+
+    // The editor — back button, the note's title (renaming edits the
+    // same row the list shows), then the body.
+    QWidget *editorPage = new QWidget(m_notesStack);
+    QVBoxLayout *editorLayout = new QVBoxLayout(editorPage);
+    editorLayout->setContentsMargins(0, 0, 0, 0);
+    editorLayout->setSpacing(AroraStyle::Spacing::Small);
+    QHBoxLayout *editorHeader = new QHBoxLayout;
+    editorHeader->setSpacing(AroraStyle::Spacing::Small);
+    QToolButton *backButton = new QToolButton(editorPage);
+    backButton->setObjectName(QLatin1String("sidebarNotesBack"));
+    backButton->setAutoRaise(true);
+    backButton->setIcon(AroraIcon::getChrome(QLatin1String("go-previous")));
+    backButton->setToolTip(tr("Back to notes"));
+    backButton->setAccessibleName(tr("Back to notes"));
+    connect(backButton, &QToolButton::clicked,
+            this, &SidebarPanel::closeNoteEditor);
+    editorHeader->addWidget(backButton);
+    m_noteTitle = new QLineEdit(editorPage);
+    m_noteTitle->setObjectName(QLatin1String("sidebarNoteTitle"));
+    m_noteTitle->setAccessibleName(tr("Note title"));
+    m_noteTitle->setPlaceholderText(tr("Title"));
+    editorHeader->addWidget(m_noteTitle, 1);
+
+    // NOTE03: the note options menu — every entry is a real action
+    // (no placeholders): a per-note markdown flag that renders the
+    // body in place, and the reference's link button that inserts the
+    // current page URL at the cursor.
+    QToolButton *menuButton = new QToolButton(editorPage);
+    menuButton->setObjectName(QLatin1String("sidebarNotesMenu"));
+    menuButton->setAutoRaise(true);
+    menuButton->setIcon(notesMenuIcon(editorPage));
+    menuButton->setToolTip(tr("Note options"));
+    menuButton->setAccessibleName(tr("Note options"));
+    menuButton->setPopupMode(QToolButton::InstantPopup);
+    QMenu *noteMenu = new QMenu(menuButton);
+    m_noteInsertUrlAction = noteMenu->addAction(
+        tr("Insert Current Page &URL"),
+        this, &SidebarPanel::insertCurrentPageUrl);
+    m_noteInsertUrlAction->setObjectName(
+        QLatin1String("sidebarNotesInsertUrl"));
+    noteMenu->addSeparator();
+    m_noteMarkdownAction = noteMenu->addAction(tr("&Markdown"));
+    m_noteMarkdownAction->setObjectName(
+        QLatin1String("sidebarNotesMarkdown"));
+    m_noteMarkdownAction->setCheckable(true);
+    connect(m_noteMarkdownAction, &QAction::toggled,
+            this, &SidebarPanel::setOpenNoteMarkdown);
+    connect(noteMenu, &QMenu::aboutToShow, this, [this]() {
+        // The URL insert is honest about having nothing to offer when
+        // the current tab is a non-web page (or no tab at all).
+        BrowserMainWindow *window = BrowserMainWindow::parentWindow(this);
+        m_noteInsertUrlAction->setEnabled(window && window->currentTab());
+    });
+    menuButton->setMenu(noteMenu);
+    editorHeader->addWidget(menuButton);
+    editorLayout->addLayout(editorHeader);
+
+    // The body stack swaps the source editor for a rendered preview
+    // while the open note's markdown flag is set (updateNoteBodyPage).
+    m_noteBodyStack = new QStackedWidget(editorPage);
+    m_noteBodyStack->setObjectName(QLatin1String("sidebarNoteBodyStack"));
+    m_notes = new QPlainTextEdit(m_noteBodyStack);
+    m_notes->setObjectName(QLatin1String("sidebarNotes"));
+    m_notes->setAccessibleName(tr("Note text"));
+    m_notes->setPlaceholderText(tr("Notes are saved automatically."));
+    m_noteBodyStack->addWidget(m_notes);
+    m_notesPreview = new QTextBrowser(m_noteBodyStack);
+    m_notesPreview->setObjectName(QLatin1String("sidebarNotesPreview"));
+    m_notesPreview->setOpenLinks(false);
+    m_notesPreview->setAccessibleName(tr("Note preview"));
+    m_noteBodyStack->addWidget(m_notesPreview);
+    editorLayout->addWidget(m_noteBodyStack);
+    m_notesStack->addWidget(editorPage);
+    notesLayout->addWidget(m_notesStack);
+
+    // Editor -> model.  Loading a note into the widgets blocks these
+    // so a page switch never reads as an edit.
+    connect(m_notes, &QPlainTextEdit::textChanged, this, [this]() {
+        if (m_notesModel && m_editingNote.isValid())
+            m_notesModel->setData(m_editingNote, m_notes->toPlainText(),
+                                  NotesModel::BodyRole);
+    });
+    connect(m_noteTitle, &QLineEdit::textChanged, this,
+            [this](const QString &title) {
+        if (m_notesModel && m_editingNote.isValid())
+            m_notesModel->setData(m_editingNote, title, Qt::EditRole);
+    });
+    // A removal that takes out the open note folds the editor back to
+    // whichever list state applies.
+    if (m_notesModel) {
+        connect(m_notesModel, &QAbstractItemModel::rowsRemoved,
+                this, &SidebarPanel::updateNotesView);
+        connect(m_notesModel, &QAbstractItemModel::modelReset,
+                this, &SidebarPanel::updateNotesView);
+        // NOTE03: an edit to the open row from anywhere (this editor,
+        // another window's panel) re-syncs the markdown toggle and the
+        // rendered preview.
+        connect(m_notesModel, &QAbstractItemModel::dataChanged, this,
+                [this](const QModelIndex &topLeft, const QModelIndex &,
+                       const QList<int> &) {
+            if (!m_editingNote.isValid()
+                || topLeft.row() != m_editingNote.row())
+                return;
+            if (m_noteMarkdownAction) {
+                const QSignalBlocker blocker(m_noteMarkdownAction);
+                m_noteMarkdownAction->setChecked(
+                    m_editingNote.data(NotesModel::MarkdownRole)
+                        .toBool());
+            }
+            updateNoteBodyPage();
+        });
+    }
+    updateNotesView();
     return notesPage;
+}
+
+// The stack page for the current model state — the empty state when
+// no notes exist, the list otherwise (the editor is only ever shown
+// by openNote / left by closeNoteEditor or a removal).  The − button
+// stays live in the editor too — it deletes the open note.
+void SidebarPanel::updateNotesView()
+{
+    if (!m_notesStack)
+        return;
+    const bool hasNote = m_editingNote.isValid()
+        || (m_notesModel && m_notesModel->rowCount() > 0);
+    if (m_notesRemoveButton)
+        m_notesRemoveButton->setEnabled(hasNote);
+    if (m_editingNote.isValid())
+        return;
+    m_notesStack->setCurrentIndex(hasNote ? 1 : 0);
+}
+
+void SidebarPanel::openNote(const QModelIndex &index)
+{
+    if (!m_notesModel || !index.isValid())
+        return;
+    // The list runs on the search proxy — the editor binds the source
+    // row so a live re-filter never shifts the note under the cursor.
+    const QModelIndex source = m_notesProxy
+        ? m_notesProxy->mapToSource(index) : index;
+    if (!source.isValid())
+        return;
+    m_editingNote = source;
+    // Select in the list too so the − button and a later delete land
+    // on the same row the editor is showing.
+    m_notesList->setCurrentIndex(index);
+    {
+        const QSignalBlocker titleBlocker(m_noteTitle);
+        const QSignalBlocker bodyBlocker(m_notes);
+        m_noteTitle->setText(source.data(Qt::EditRole).toString());
+        m_notes->setPlainText(source.data(NotesModel::BodyRole).toString());
+    }
+    if (m_noteMarkdownAction) {
+        const QSignalBlocker blocker(m_noteMarkdownAction);
+        m_noteMarkdownAction->setChecked(
+            source.data(NotesModel::MarkdownRole).toBool());
+    }
+    updateNoteBodyPage();
+    m_notesStack->setCurrentIndex(2);
+    updateNotesView();
+    // Focus whichever body widget the flag picked — the markdown
+    // preview is read-only but still takes focus for scrolling.
+    if (m_noteBodyStack && m_noteBodyStack->currentWidget())
+        m_noteBodyStack->currentWidget()->setFocus();
+}
+
+void SidebarPanel::closeNoteEditor()
+{
+    m_editingNote = QPersistentModelIndex();
+    updateNotesView();
+}
+
+void SidebarPanel::addNote()
+{
+    if (!m_notesModel)
+        return;
+    // An active search would filter the fresh note out of the list —
+    // drop it so the editor opens on a visible row.
+    if (m_notesSearch)
+        m_notesSearch->clear();
+    const QModelIndex index = m_notesModel->addNote();
+    openNote(m_notesProxy ? m_notesProxy->mapFromSource(index) : index);
+    // A fresh note is renamed by typing — preselect the empty title
+    // field so the first keystrokes name it.
+    m_noteTitle->setFocus();
+}
+
+void SidebarPanel::removeSelectedNote()
+{
+    if (!m_notesModel)
+        return;
+    // The editor binding is already a source index; a list selection
+    // is a proxy row that maps back through the search filter.
+    QModelIndex index;
+    if (m_editingNote.isValid())
+        index = m_editingNote;
+    else if (m_notesProxy)
+        index = m_notesProxy->mapToSource(m_notesList->currentIndex());
+    else
+        index = m_notesList->currentIndex();
+    if (!index.isValid())
+        return;
+    const QString title = index.data(Qt::DisplayRole).toString();
+    const QString body = index.data(NotesModel::BodyRole).toString();
+    if (!title.isEmpty() || !body.isEmpty()) {
+        if (QMessageBox::question(m_notesStack, tr("Delete Note"),
+                tr("Delete the note \"%1\"?").arg(title),
+                QMessageBox::Yes | QMessageBox::No,
+                QMessageBox::No) != QMessageBox::Yes)
+            return;
+    }
+    // The persistent index invalidates on removal — clear the editing
+    // binding first so updateNotesView() can pick the right state.
+    m_editingNote = QPersistentModelIndex();
+    m_notesModel->removeRow(index.row());
+    updateNotesView();
+}
+
+// The open note's markdown flag, toggled from the options menu.
+void SidebarPanel::setOpenNoteMarkdown(bool markdown)
+{
+    if (!m_notesModel || !m_editingNote.isValid())
+        return;
+    m_notesModel->setData(m_editingNote, markdown,
+                          NotesModel::MarkdownRole);
+    updateNoteBodyPage();
+}
+
+// NOTE03: render-in-place — a flagged note swaps the source editor
+// for a read-only QTextBrowser rendered from the markdown body
+// (Qt renders markdown natively, so this stays cheap); unflagging
+// returns to source editing.
+void SidebarPanel::updateNoteBodyPage()
+{
+    if (!m_noteBodyStack)
+        return;
+    const bool markdown = m_editingNote.isValid()
+        && m_editingNote.data(NotesModel::MarkdownRole).toBool();
+    if (markdown && m_notesPreview) {
+        m_notesPreview->setMarkdown(
+            m_editingNote.data(NotesModel::BodyRole).toString());
+        if (m_noteBodyStack->currentWidget() != m_notesPreview)
+            m_noteBodyStack->setCurrentWidget(m_notesPreview);
+    } else if (m_notes
+               && m_noteBodyStack->currentWidget() != m_notes) {
+        m_noteBodyStack->setCurrentWidget(m_notes);
+    }
+}
+
+// NOTE03: the reference's link button — inserts the current page's
+// URL at the note cursor.  Writes through the plain-text editor even
+// while the markdown preview is showing: its textChanged lands in the
+// model and the dataChanged hook re-renders the preview.
+void SidebarPanel::insertCurrentPageUrl()
+{
+    if (!m_notes || !m_editingNote.isValid())
+        return;
+    BrowserMainWindow *window = BrowserMainWindow::parentWindow(this);
+    WebView *view = window ? window->currentTab() : nullptr;
+    if (!view)
+        return;
+    const QString text = view->url().toString();
+    if (!text.isEmpty())
+        m_notes->insertPlainText(text);
 }
 
 QIcon SidebarPanel::icon(const QWidget *forPalette)
@@ -963,14 +1681,19 @@ QPlainTextEdit *SidebarPanel::notes() const
     return m_notes;
 }
 
+NotesModel *SidebarPanel::notesModel() const
+{
+    return m_notesModel;
+}
+
 void SidebarPanel::save()
 {
     QSettings settings;
-    // A hidden Notes panel keeps its stored text — don't clobber the
-    // key with an empty editor state.
-    if (m_notes)
-        settings.setValue(QLatin1String("sidebar/notes"),
-                          m_notes->toPlainText());
+    // NOTE02: the notes text is the NotesModel's own file-backed
+    // store now — flush it here so callers that force a save (window
+    // teardown, tests) can't strand a pending debounce.
+    if (m_notesModel)
+        m_notesModel->save();
     settings.setValue(QLatin1String("sidebar/currentTab"), m_tabs->currentIndex());
 }
 
@@ -1211,13 +1934,118 @@ void SidebarPanel::downloadSelectionChanged(const QModelIndex &current,
     if (item) {
         item->setParent(m_downloadDetail);
         m_downloadDetail->layout()->addWidget(item);
-        item->setExpanded(true);
+        // DOWN04: a hosted card must never auto-collapse — the pane's
+        // only content IS the card, so the finish/stop fold would hide
+        // every action the pane exists for (the reported "buttons
+        // entirely absent" grab).
+        item->pinExpanded();
+        // The action row tracks the card's live state: statusChanged
+        // covers state flips and pause/resume, the card's own chevron
+        // keeps the details toggle honest when the user folds the
+        // card inline.
+        connect(item, &DownloadItem::statusChanged,
+                this, &SidebarPanel::updateDownloadActions,
+                Qt::UniqueConnection);
+        connect(item, &DownloadItem::expandedChanged,
+                this, &SidebarPanel::updateDownloadActions,
+                Qt::UniqueConnection);
         // The card's cached size hint predates the expansion — refresh
         // it so the pane's layout allocates the card's full height.
         item->adjustSize();
         item->show();
     }
     m_downloadDetail->setVisible(item != nullptr);
+    updateDownloadActions();
+}
+
+// DOWN04: the compact action row.  selectedDownloadItem() re-reads the
+// list's current row on every call so the buttons can never act on a
+// stale card after a re-sort or a removal.
+DownloadItem *SidebarPanel::selectedDownloadItem() const
+{
+    if (!m_downloadsView || !m_downloadsProxy)
+        return nullptr;
+    const QModelIndex source = m_downloadsProxy->mapToSource(
+        m_downloadsView->currentIndex());
+    return source.isValid()
+        ? DownloadManager::instance()->itemAt(source.row())
+        : nullptr;
+}
+
+void SidebarPanel::updateDownloadActions()
+{
+    if (!m_downloadPauseButton)
+        return;
+    DownloadItem *item = selectedDownloadItem();
+    const bool paused = item && item->isPaused();
+    m_downloadPauseButton->setEnabled(item && item->canPause()
+                                      && item->downloading());
+    m_downloadPauseButton->setIcon(paused
+        ? AroraIcon::getChrome(QLatin1String("system-run"))
+        : downloadPauseIcon(m_downloadsPage));
+    const QString pauseLabel = paused ? tr("Resume download")
+                                      : tr("Pause download");
+    m_downloadPauseButton->setToolTip(pauseLabel);
+    m_downloadPauseButton->setAccessibleName(pauseLabel);
+
+    // One button covers both card verbs — Try Again (failed/stopped)
+    // and Restart (finished) run the same restartDownload() path.
+    m_downloadRetryButton->setEnabled(item && item->canRestart());
+    const QString retryLabel = item && !item->downloadedSuccessfully()
+        ? tr("Try Again") : tr("Restart download");
+    m_downloadRetryButton->setToolTip(retryLabel);
+    m_downloadRetryButton->setAccessibleName(retryLabel);
+
+    m_downloadRemoveButton->setEnabled(item && item->isRemovable());
+    m_downloadFolderButton->setEnabled(item
+                                       && !item->m_outputFileName.isEmpty());
+
+    const bool expanded = item && item->isExpanded();
+    m_downloadDetailsButton->setEnabled(item != nullptr);
+    m_downloadDetailsButton->setChecked(expanded);
+    m_downloadDetailsButton->setIcon(AroraIcon::getChrome(
+        expanded ? QLatin1String("go-up") : QLatin1String("go-down")));
+    const QString detailsLabel = expanded ? tr("Hide download details")
+                                          : tr("Show download details");
+    m_downloadDetailsButton->setToolTip(detailsLabel);
+    m_downloadDetailsButton->setAccessibleName(detailsLabel);
+}
+
+void SidebarPanel::pauseSelectedDownload()
+{
+    if (DownloadItem *item = selectedDownloadItem())
+        QMetaObject::invokeMethod(item, "pauseOrResume");
+    updateDownloadActions();
+}
+
+void SidebarPanel::retrySelectedDownload()
+{
+    if (DownloadItem *item = selectedDownloadItem())
+        QMetaObject::invokeMethod(item, "restart");
+    updateDownloadActions();
+}
+
+void SidebarPanel::removeSelectedDownload()
+{
+    if (!m_downloadsView || !m_downloadsProxy)
+        return;
+    const QModelIndex source = m_downloadsProxy->mapToSource(
+        m_downloadsView->currentIndex());
+    if (source.isValid())
+        m_downloadsProxy->sourceModel()->removeRow(source.row());
+    updateDownloadActions();
+}
+
+void SidebarPanel::revealSelectedDownload()
+{
+    if (DownloadItem *item = selectedDownloadItem())
+        QMetaObject::invokeMethod(item, "showInFolder");
+}
+
+void SidebarPanel::setSelectedDownloadExpanded(bool expanded)
+{
+    if (DownloadItem *item = selectedDownloadItem())
+        item->setExpanded(expanded);
 }
 
 void SidebarPanel::downloadsContextMenu(const QPoint &pos)

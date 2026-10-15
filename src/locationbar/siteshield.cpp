@@ -21,6 +21,7 @@
 
 #include "adblockmanager.h"
 #include "aroraicon.h"
+#include "arorastyle.h"
 #include "browserapplication.h"
 #include "browsertheme.h"
 #include "domainblocklist.h"
@@ -28,6 +29,7 @@
 #include "trancolist.h"
 #include "webview.h"
 
+#include <qevent.h>
 #include <qhash.h>
 #include <qmenu.h>
 #include <qpainter.h>
@@ -62,12 +64,19 @@ SiteShieldButton::SiteShieldButton(QWidget *parent)
     // frame would reimplement all three badly.
     m_menu = new QMenu(this);
     m_panel = new SitePanel(m_menu);
-    QWidgetAction *panelAction = new QWidgetAction(m_menu);
-    panelAction->setDefaultWidget(m_panel);
-    m_menu->addAction(panelAction);
+    m_panelAction = new QWidgetAction(m_menu);
+    m_panelAction->setDefaultWidget(m_panel);
+    m_menu->addAction(m_panelAction);
     setMenu(m_menu);
     setPopupMode(QToolButton::InstantPopup);
-    connect(m_menu, &QMenu::aboutToShow, m_panel, &SitePanel::refresh);
+    connect(m_menu, &QMenu::aboutToShow,
+            this, &SiteShieldButton::populateMenu);
+    // The panel refreshes itself on web-view signals and its own
+    // control writes; a refresh that lands while the popup is open can
+    // grow the content (TOR16's rule — a shown QMenu never re-fits a
+    // hosted widget on its own).
+    connect(m_panel, &SitePanel::refreshed,
+            this, &SiteShieldButton::growMenuToFit);
     connect(AdBlockManager::instance(), &AdBlockManager::rulesChanged,
             this, &SiteShieldButton::refreshIcon);
     // ICONS05: the icon is baked to a pixmap while the badges are
@@ -87,7 +96,56 @@ SiteShieldButton::SiteShieldButton(QWidget *parent)
             this, [this](bool) { clearTrustCache(); refreshIcon(); });
 
     refreshIcon();
-    setVisible(m_webView != nullptr);
+    // TRUST15: never hide the button.  It rides the navigation bar as
+    // a QWidgetAction, whose visibility is latched from the widget's
+    // state at insertion — a ctor-hidden widget leaves the item
+    // permanently absent no matter how many setVisible(true) calls
+    // follow (the action's flag governs, not the widget's).
+}
+
+void SiteShieldButton::changeEvent(QEvent *event)
+{
+    // TRUST18: the glyph tint follows the resolved palette — rebake
+    // when it moves.  The tor window's violet stylesheet lands on the
+    // toolbar AFTER this button is constructed, and palette() only
+    // resolves to the chrome's light text once that polish passes.
+    if (event->type() == QEvent::PaletteChange
+            || event->type() == QEvent::StyleChange)
+        refreshIcon();
+    QToolButton::changeEvent(event);
+}
+
+void SiteShieldButton::populateMenu()
+{
+    m_panel->refresh();
+    // TRUST17 — same InstantPopup size race as the tor circuit popup
+    // (TOR19): the tool button resolves the menu's sizeHint() BEFORE
+    // aboutToShow to position the popup, which caches the
+    // widget-action rect from the panel's previous render and clears
+    // the item layout's dirty flag.  QMenu::popup re-runs that pass
+    // only when an item changed since, so a refresh() that resized
+    // the panel (a permission row appearing, a longer host or count
+    // line) still opened inside the stale rect — the first-click
+    // squashed popup.  Mutating the action re-dirties the item layout
+    // so the post-aboutToShow pass re-measures the fresh content; the
+    // panel side of the fix lives in rebuildPermissionRows, which
+    // marks its geometry stale so this re-measure reads a real hint.
+    // Cheap: one action-rect pass over a single-item menu.
+    m_panelAction->setVisible(false);
+    m_panelAction->setVisible(true);
+}
+
+// Grow only, never shrink — shrinking a popup under the cursor is the
+// "creeping popup" class of bug; spare room is harmless.
+void SiteShieldButton::growMenuToFit()
+{
+    if (!m_menu->isVisible())
+        return;
+    const QSize chrome = m_menu->size() - m_panel->size();
+    const QSize grow = (m_panel->sizeHint() + chrome)
+        .expandedTo(m_menu->size());
+    if (grow != m_menu->size())
+        m_menu->resize(grow);
 }
 
 void SiteShieldButton::setWebView(WebView *webView)
@@ -113,7 +171,6 @@ void SiteShieldButton::setWebView(WebView *webView)
         connect(webView, &QWebEngineView::loadFinished,
                 this, [this](bool) { refreshIcon(); });
     }
-    setVisible(webView != nullptr);
     refreshIcon();
 }
 
@@ -178,13 +235,25 @@ QIcon SiteShieldButton::tintedBadge(const QIcon &base,
 
 void SiteShieldButton::refreshIcon()
 {
-    const QIcon shield = AroraIcon::get(QLatin1String("security-high"));
+    // TRUST18: tint from THIS surface's resolved palette, not the
+    // application palette — on the tor window's violet bar the
+    // stylesheet lifts ButtonText to the light chrome text color, so
+    // the shield stays legible there and on a forced dark theme
+    // alike, instead of painting the app's dark glyph.
+    const QIcon shield = AroraIcon::getChrome(
+        QLatin1String("security-high"), palette());
 
     m_trustLevel.clear();
+    // TRUST15: unbound (widget/engine tab, or a window before its
+    // first bind) shows the shield disabled with the honest reason —
+    // the row keeps its shape instead of gaining a gap.
     if (!m_webView) {
         setIcon(shield);
+        setEnabled(false);
+        setToolTip(tr("Site privacy — not available on this tab"));
         return;
     }
+    setEnabled(true);
 
     // Badge art is authored in 16x16 space; scale it to the button's
     // icon size so the overlay follows the icon growth.
@@ -248,9 +317,9 @@ void SiteShieldButton::refreshIcon()
                 painter.fontMetrics().horizontalAdvance(text) + 4);
             const QRect badge(16 - w, 7, w, 9);
             painter.setPen(Qt::NoPen);
-            painter.setBrush(palette().color(QPalette::Accent));
+            painter.setBrush(AroraStyle::accentFillColor(palette()));
             painter.drawRoundedRect(badge, 2, 2);
-            painter.setPen(palette().color(QPalette::HighlightedText));
+            painter.setPen(AroraStyle::onAccentColor(palette()));
             painter.drawText(badge, Qt::AlignCenter, text);
             tip += tr(" — %1 requests blocked").arg(blocked);
         }
@@ -261,8 +330,8 @@ void SiteShieldButton::refreshIcon()
         // count badge occupies the right one.
         if (jsBlocked) {
             const qreal x = blocked > 0 ? 0.5 : 9.5;
-            painter.setBrush(palette().color(QPalette::Accent));
-            painter.setPen(palette().color(QPalette::Base));
+            painter.setBrush(AroraStyle::accentFillColor(palette()));
+            painter.setPen(AroraStyle::onAccentColor(palette()));
             painter.drawEllipse(QRectF(x, 9.5, 6.0, 6.0));
             tip += tr(" — JavaScript blocked");
         }

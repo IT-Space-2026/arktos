@@ -308,9 +308,9 @@ TorCircuitButton::TorCircuitButton(TorManager *manager, QWidget *parent)
     // click on the New-circuit button fires without dismissing the
     // popup (the status text lands underneath it).
     m_panel = new TorCircuitPanel(m_menu);
-    QWidgetAction *panelAction = new QWidgetAction(m_menu);
-    panelAction->setDefaultWidget(m_panel);
-    m_menu->addAction(panelAction);
+    m_panelAction = new QWidgetAction(m_menu);
+    m_panelAction->setDefaultWidget(m_panel);
+    m_menu->addAction(m_panelAction);
     connect(m_panel, &TorCircuitPanel::newCircuitRequested,
             this, &TorCircuitButton::onNewCircuit);
     connect(m_menu, &QMenu::aboutToShow,
@@ -328,12 +328,22 @@ TorCircuitButton::TorCircuitButton(TorManager *manager, QWidget *parent)
         });
     }
     refreshState();
+    // TOR19: populate immediately so the panel's content — and the
+    // sizeHint the tool button's pre-popup flush will read — is real
+    // before the first click, not the ctor's empty layout.
+    applyPanelContent();
 }
 
 void TorCircuitButton::setSiteHostProvider(
         const std::function<QString()> &provider)
 {
     m_siteHostProvider = provider;
+}
+
+void TorCircuitButton::setSiteReloader(
+        const std::function<void()> &reloader)
+{
+    m_siteReloader = reloader;
 }
 
 QString TorCircuitButton::currentSiteHost() const
@@ -423,6 +433,7 @@ struct CircuitPanelContent {
     QList<TorCircuitPanel::Node> nodes;
     QString info;          // non-empty => info state, no chain
     bool canNewCircuit = false;
+    QString newCircuitDisabledReason;  // tooltip when greyed (TOR13)
     QString status;
 };
 
@@ -439,9 +450,7 @@ CircuitPanelContent torCircuitPanelContent(TorManager *tor,
     if (!tor) {
         content.info = TorCircuitButton::tr(
             "Tor control connection unavailable");
-        return content;
-    }
-    switch (tor->state()) {
+    } else switch (tor->state()) {
     case TorManager::Ready: {
         // The state can linger at Ready after the daemon drops the
         // control link — serve an honest unavailable state instead of
@@ -449,7 +458,7 @@ CircuitPanelContent torCircuitPanelContent(TorManager *tor,
         if (!tor->controlConnected()) {
             content.info = TorCircuitButton::tr(
                 "Tor circuit unavailable — control connection lost");
-            return content;
+            break;
         }
         // A live control link can always take NEWNYM, even before the
         // first circuit snapshot lands.
@@ -464,24 +473,29 @@ CircuitPanelContent torCircuitPanelContent(TorManager *tor,
             return content;
         }
         content.info = TorCircuitButton::tr("No circuit yet");
-        return content;
+        break;
     }
     case TorManager::Failed:
         content.info = TorCircuitButton::tr("Tor: failed")
             + QLatin1Char('\n') + tor->errorString();
-        return content;
+        break;
     case TorManager::Stopped:
         content.info = TorCircuitButton::tr(
             "Tor daemon is not running");
-        return content;
+        break;
     default: {
         const int progress = tor->bootstrapProgress();
         content.info = progress >= 0
             ? TorCircuitButton::tr("Tor: connecting %1%").arg(progress)
             : TorCircuitButton::tr("Tor: connecting...");
-        return content;
+        break;
     }
     }
+    // The greyed New-circuit button carries the same reason on its
+    // tooltip — the info line alone read as a dead control (TOR13).
+    if (!content.canNewCircuit)
+        content.newCircuitDisabledReason = content.info;
+    return content;
 }
 
 // What a content snapshot looks like once rendered — every field
@@ -491,6 +505,7 @@ QStringList panelContentSignature(const CircuitPanelContent &content)
 {
     QStringList signature;
     signature << content.siteHost << content.info << content.status
+              << content.newCircuitDisabledReason
               << QString::number(int(content.canNewCircuit));
     for (const TorCircuitPanel::Node &node : content.nodes) {
         signature << QString::fromLatin1("%1\x1f%2\x1f%3\x1f%4")
@@ -511,7 +526,8 @@ void TorCircuitButton::applyPanelContent()
         m_panel->setInfo(content.siteHost, content.info);
     else
         m_panel->setCircuit(content.siteHost, content.nodes);
-    m_panel->setNewCircuitEnabled(content.canNewCircuit);
+    m_panel->setNewCircuitEnabled(content.canNewCircuit,
+                                  content.newCircuitDisabledReason);
     m_panel->setStatusText(content.status);
     m_menuSignature = panelContentSignature(content);
     growMenuToFit();
@@ -550,6 +566,18 @@ void TorCircuitButton::populateMenu()
     // A fresh open resets the New-circuit feedback line.
     m_statusText.clear();
     applyPanelContent();
+    // TOR19: QToolButton's InstantPopup path calls the menu's
+    // sizeHint() BEFORE aboutToShow to pick the popup position, which
+    // resolves and caches the action rect from whatever the panel
+    // last rendered.  QMenu::popup re-runs that layout pass after
+    // aboutToShow only when an item changed since — content that
+    // shifted while the menu was closed (or during this populate)
+    // would still open inside the stale rect: the first-click
+    // squashed popup.  Mutating the action re-marks the item layout
+    // dirty, forcing a fresh rect before the menu maps.  Cheap: one
+    // action-rect pass over a single-item menu.
+    m_panelAction->setVisible(false);
+    m_panelAction->setVisible(true);
 }
 
 void TorCircuitButton::syncOpenMenu()
@@ -560,8 +588,15 @@ void TorCircuitButton::syncOpenMenu()
     // rebuild is skipped unless the rendered content would actually
     // change: touching the hosted panel re-lays out the visible
     // popup, which on the reporter's desktop repositions it.
-    if (!m_menu->isVisible())
+    //
+    // TOR19: while the menu is CLOSED the panel is kept current too —
+    // the next popup's sizeHint is fixed from the panel's last
+    // rendered state before aboutToShow runs, so a stale panel here
+    // is exactly the first-click wrong-size popup.
+    if (!m_menu->isVisible()) {
+        applyPanelContent();
         return;
+    }
     const CircuitPanelContent content =
         torCircuitPanelContent(m_tor, currentSiteHost(), m_statusText);
     const QStringList signature = panelContentSignature(content);
@@ -571,16 +606,36 @@ void TorCircuitButton::syncOpenMenu()
         m_panel->setInfo(content.siteHost, content.info);
     else
         m_panel->setCircuit(content.siteHost, content.nodes);
-    m_panel->setNewCircuitEnabled(content.canNewCircuit);
+    m_panel->setNewCircuitEnabled(content.canNewCircuit,
+                                  content.newCircuitDisabledReason);
     m_panel->setStatusText(content.status);
     m_menuSignature = signature;
     growMenuToFit();
+}
+
+// tor's NEWNYM rate limit — mirrored client-side by TorManager; the
+// status line reports the remaining wait.
+static QString newNymCooldownText(qint64 cooldownMs)
+{
+    return TorCircuitButton::tr(
+        "Tor rate-limits new-circuit requests — try again in %1 s")
+        .arg(int((cooldownMs + 999) / 1000));
 }
 
 void TorCircuitButton::onNewCircuit()
 {
     if (!m_tor || !m_tor->controlConnected()) {
         m_statusText = tr("Tor control connection unavailable");
+        m_panel->setStatusText(m_statusText);
+        growMenuToFit();
+        return;
+    }
+    // TOR13: a click inside tor's NEWNYM rate limit used to report
+    // "New circuit requested" while the daemon silently ignored it.
+    // Say so honestly instead of faking a rotation.
+    const qint64 cooldown = m_tor->newNymCooldownMs();
+    if (cooldown > 0) {
+        m_statusText = newNymCooldownText(cooldown);
         m_panel->setStatusText(m_statusText);
         growMenuToFit();
         return;
@@ -592,9 +647,23 @@ void TorCircuitButton::onNewCircuit()
     m_tor->signalNewNym([self](int code, const QStringList &) {
         if (!self)
             return;
-        self->m_statusText = code == 250
-            ? tr("New circuit requested")
-            : tr("New circuit request failed (code %1)").arg(code);
+        if (code == 250) {
+            // TOR13: tor re-homes NEW streams only — the site's tab
+            // reloads so its traffic actually lands on the fresh
+            // circuit (Tor Browser's identical flow) instead of the
+            // page silently keeping the dirty one.
+            self->m_statusText = self->m_siteReloader
+                ? tr("New circuit requested — reloading this site")
+                : tr("New circuit requested");
+            if (self->m_siteReloader)
+                self->m_siteReloader();
+        } else if (code == -2) {
+            self->m_statusText = newNymCooldownText(
+                self->m_tor ? self->m_tor->newNymCooldownMs() : 0);
+        } else {
+            self->m_statusText =
+                tr("New circuit request failed (code %1)").arg(code);
+        }
         self->m_panel->setStatusText(self->m_statusText);
         self->growMenuToFit();
         if (code == 250) {

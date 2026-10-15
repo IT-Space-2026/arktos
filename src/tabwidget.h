@@ -325,6 +325,7 @@ public:
 
 protected:
     void changeEvent(QEvent *event) override;
+    void paintEvent(QPaintEvent *event) override;
     // OMNI01: the routing decision is split so the autotest can
     // corpus-diff the implementations — under CONFIG+=rustcore
     // guessUrlFromString() resolves the rustcore verdict first and

@@ -39,8 +39,10 @@ FORMS += \
 # CONFIG-=adblock_rust`, or `CONFIG+=no-rust` for all crates) or no
 # toolchain exists.
 adblock_rust:!no-rust {
-    CARGO = $$system(command -v cargo || echo $$(HOME)/.cargo/bin/cargo)
-    ADBLOCK_RUST_LIB = $$PWD/rust/target/release/libarora_adblock_ffi.a
+    CARGO = $$ARORA_CARGO
+    isEmpty(CARGO): CARGO = cargo
+    win32: ADBLOCK_RUST_LIB = $$PWD/rust/target/release/arora_adblock_ffi.lib
+    else:  ADBLOCK_RUST_LIB = $$PWD/rust/target/release/libarora_adblock_ffi.a
 
     cargo_adblock_rust.target = $$ADBLOCK_RUST_LIB
     cargo_adblock_rust.commands = cd $$PWD/rust && $$CARGO build --release

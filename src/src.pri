@@ -87,6 +87,7 @@ HEADERS += \
     $$PWD/acceptlanguagedialog.h \
     $$PWD/addressdialog.h \
     $$PWD/argon2id.h \
+    $$PWD/arorastyle.h \
     $$PWD/autofilldialog.h \
     $$PWD/autofillmanager.h \
     $$PWD/autosaver.h \
@@ -106,6 +107,7 @@ HEADERS += \
     $$PWD/fingerprintprotector.h \
     $$PWD/modelmenu.h \
     $$PWD/modeltoolbar.h \
+    $$PWD/notesmodel.h \
     $$PWD/pdfsupport.h \
     $$PWD/pdfview.h \
     $$PWD/pdfworker.h \
@@ -139,6 +141,7 @@ HEADERS += \
     $$PWD/tabbar.h \
     $$PWD/tabpositionpicker.h \
     $$PWD/tabpreview.h \
+    $$PWD/themepicker.h \
     $$PWD/tabwidget.h \
     $$PWD/toolbarsearch.h \
     $$PWD/urlcleaner.h \
@@ -166,6 +169,7 @@ SOURCES += \
     $$PWD/acceptlanguagedialog.cpp \
     $$PWD/addressdialog.cpp \
     $$PWD/argon2id.c \
+    $$PWD/arorastyle.cpp \
     $$PWD/autofilldialog.cpp \
     $$PWD/autofillmanager.cpp \
     $$PWD/autosaver.cpp \
@@ -184,6 +188,7 @@ SOURCES += \
     $$PWD/fingerprintprotector.cpp \
     $$PWD/modelmenu.cpp \
     $$PWD/modeltoolbar.cpp \
+    $$PWD/notesmodel.cpp \
     $$PWD/pdfsupport.cpp \
     $$PWD/pdfview.cpp \
     $$PWD/pdfworker.cpp \
@@ -215,6 +220,7 @@ SOURCES += \
     $$PWD/tabbar.cpp \
     $$PWD/tabpositionpicker.cpp \
     $$PWD/tabpreview.cpp \
+    $$PWD/themepicker.cpp \
     $$PWD/tabwidget.cpp \
     $$PWD/toolbarsearch.cpp \
     $$PWD/urlcleaner.cpp \

@@ -18,8 +18,10 @@
  */
 #include "statusbarwidgets.h"
 
+#include "arorastyle.h"
 #include "downloadmanager.h"
 #include "engineinterface.h"
+#include "enginetab.h"
 #include "webview.h"
 #include "utils/aroraicon.h"
 
@@ -47,7 +49,7 @@ LoadingIndicator::LoadingIndicator(QWidget *parent)
 
     QHBoxLayout *layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(4);
+    layout->setSpacing(AroraStyle::Spacing::Small);
     m_bar->setRange(0, 100);
     m_bar->setTextVisible(false);
     m_bar->setFixedSize(72, 10);
@@ -161,7 +163,7 @@ ZoomControl::ZoomControl(QWidget *parent)
     layout->addWidget(m_valueButton);
     layout->addWidget(m_inButton);
 
-    m_outButton->setIcon(AroraIcon::get(QLatin1String("zoom-out")));
+    m_outButton->setIcon(AroraIcon::getChrome(QLatin1String("zoom-out")));
     m_outButton->setAutoRaise(true);
     m_outButton->setIconSize(QSize(14, 14));
     m_outButton->setToolTip(tr("Zoom Out"));
@@ -172,7 +174,7 @@ ZoomControl::ZoomControl(QWidget *parent)
     // not jitter the status bar on every zoom step.
     m_valueButton->setMinimumWidth(
         fontMetrics().horizontalAdvance(QLatin1String("300%")) + 12);
-    m_inButton->setIcon(AroraIcon::get(QLatin1String("zoom-in")));
+    m_inButton->setIcon(AroraIcon::getChrome(QLatin1String("zoom-in")));
     m_inButton->setAutoRaise(true);
     m_inButton->setIconSize(QSize(14, 14));
     m_inButton->setToolTip(tr("Zoom In"));
@@ -219,8 +221,7 @@ void ZoomControl::setWebView(WebView *view)
 
 void ZoomControl::useOnDarkIcons()
 {
-    // ICONS06: flat-tinted glyphs, same as the nav cluster — the
-    // -dark art getOnDark pins cannot help "native", and Qt's
+    // ICONS06: flat-tinted glyphs, same as the nav cluster — Qt's
     // generated Disabled ghosting washed out on the violet bar.
     m_outButton->setIcon(AroraIcon::getTinted(QLatin1String("zoom-out")));
     m_inButton->setIcon(AroraIcon::getTinted(QLatin1String("zoom-in")));
@@ -244,13 +245,12 @@ MemIndicator::MemIndicator(QWidget *parent)
     layout->addWidget(m_label);
 
     m_label->setAccessibleName(tr("Tab memory usage"));
-    m_label->setToolTip(tr("Resident memory of the current tab's "
-                           "renderer process, read from "
-                           "/proc/<pid>/status every 2 seconds."));
+    // The tooltip is refresh()'s job — it swaps wording with the
+    // shared/per-tab shape of the bound page.
     // Pin the width to the widest expected value so the status bar
-    // does not jitter on every poll.
-    m_label->setMinimumWidth(
-        fontMetrics().horizontalAdvance(QLatin1String("MEM 999.9 MB")));
+    // does not jitter on every poll or engine switch.
+    m_label->setMinimumWidth(fontMetrics().horizontalAdvance(
+        QLatin1String("MEM 999.9 MB (shared)")));
 
     m_timer->setInterval(2000);
     connect(m_timer, &QTimer::timeout, this, &MemIndicator::refresh);
@@ -270,8 +270,14 @@ WebView *MemIndicator::webView() const
 
 void MemIndicator::setWebView(WebView *view)
 {
-    if (m_view == view)
+    if (m_tab) {
+        m_tab->disconnect(this);
+        m_tab = nullptr;
+    }
+    if (m_view == view) {
+        refresh();
         return;
+    }
     if (m_view)
         m_view->enginePage()->disconnect(this);
     m_view = view;
@@ -284,43 +290,59 @@ void MemIndicator::setWebView(WebView *view)
     refresh();
 }
 
+void MemIndicator::setEngineTab(EngineTab *tab)
+{
+    if (m_view) {
+        m_view->enginePage()->disconnect(this);
+        m_view = nullptr;
+    }
+    if (m_tab == tab) {
+        refresh();
+        return;
+    }
+    if (m_tab)
+        m_tab->disconnect(this);
+    m_tab = tab;
+    if (m_tab) {
+        // ENG28: an engine restart swaps the page object in place —
+        // refresh() re-resolves page() anyway, but repaint now rather
+        // than after the poll interval.
+        connect(m_tab, &EngineTab::pageRecreated,
+                this, [this]() { refresh(); });
+    }
+    refresh();
+}
+
+EngineTab *MemIndicator::engineTab() const
+{
+    return m_tab;
+}
+
 void MemIndicator::refresh()
 {
-    qint64 pid = -1;
-    if (m_view)
-        pid = m_view->enginePage()->renderProcessId();
-    const qint64 kb = residentMemoryKb(pid);
+    Engine::Page *page = m_view ? m_view->enginePage()
+        : (m_tab ? m_tab->page() : nullptr);
+    const qint64 kb = page ? page->residentMemoryKb() : -1;
+    const bool shared = kb > 0 && page->memoryIsShared();
     m_label->setText(kb > 0
-                     ? tr("MEM %1").arg(formatRss(kb))
+                     ? (shared
+                        ? tr("MEM %1 (shared)").arg(formatRss(kb))
+                        : tr("MEM %1").arg(formatRss(kb)))
                      : tr("MEM —"));
+    m_label->setToolTip(shared
+        ? tr("Resident memory of the whole Arora process — this "
+             "engine renders in-process, so no per-tab figure "
+             "exists; the number covers the chrome and every other "
+             "tab too.")
+        : tr("Resident memory of the current tab's renderer "
+             "process, read from /proc/<pid>/status every "
+             "2 seconds."));
 }
 
 qint64 MemIndicator::residentMemoryKb(qint64 pid)
 {
-#if defined(Q_OS_LINUX)
-    if (pid <= 0)
-        return -1;
-    QFile file(QStringLiteral("/proc/%1/status").arg(pid));
-    if (!file.open(QIODevice::ReadOnly))
-        return -1;
-    const QByteArray status = file.readAll();
-    const int line = status.indexOf("VmRSS:");
-    if (line == -1)
-        return -1;
-    const int end = status.indexOf('\n', line);
-    const QList<QByteArray> fields = status
-        .mid(line, end == -1 ? -1 : end - line)
-        .simplified().split(' ');
-    // "VmRSS:   238000 kB"
-    if (fields.count() < 2)
-        return -1;
-    bool ok = false;
-    const qint64 kb = fields.at(1).toLongLong(&ok);
-    return ok ? kb : -1;
-#else
-    Q_UNUSED(pid);
-    return -1;
-#endif
+    // The procfs parse lives on Engine::Page so backends share it.
+    return Engine::Page::processMemoryKb(pid);
 }
 
 QString MemIndicator::formatRss(qint64 kb)

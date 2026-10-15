@@ -28,6 +28,15 @@ Core / Qt 6 port:
   flush the pending session save before the process dies, instead of
   losing changes still inside the debounce window (SESS02). SIGKILL
   remains unflushed by design — it cannot be caught.
+- The browser can no longer start windowless or die silently: a
+  session restore that yields no windows (empty or corrupt session,
+  a declined restore prompt) now opens a normal window instead of
+  leaving a running process with nothing to show, and a stray
+  surviving dialog can no longer keep the process alive after the
+  last browser window is gone (SESS02). Every exit is also
+  accounted for — the next start reports whether the previous run
+  exited cleanly, was terminated by a signal, or died uncleanly, so
+  a crash never masquerades as a normal quit or vice versa.
 - Command-line URL arguments treated as untrusted input (SEC09).
 - GPU crash safe mode: Qt 6.12's WebEngine can trap (SIGTRAP) on a
   display-compositor CHECK on some driver stacks, killing the whole
@@ -61,6 +70,22 @@ UI:
   (UIP01).
 - Central icon provider + bundled Adwaita/Breeze/Tabler sets, light and
   dark variants (ICONS01).
+- Bundled Tabler icons are now the default set — the previous "follow
+  the desktop theme" default rendered missing glyphs as duplicate
+  lookalikes on sparse themes.  Every chrome icon the browser requests
+  ships inside the bundled set (and its dark variant) (ICONS10).
+- Lucide joins the bundled icon sets — thin rounded strokes close to
+  Firefox's Proton icon language, covering the full 62-name chrome
+  surface with a generated dark variant.  Selectable in Preferences >
+  Appearance; Tabler stays the default (ICONS11).
+- The "Native" (follow-the-desktop-theme) icon option is retired —
+  sparse desktop themes served missing glyphs as duplicate
+  lookalikes.  Profiles that had it selected migrate to Tabler
+  automatically; only the bundled sets remain selectable (ICONS12).
+- The bundled "arora-legacy" icon set (the original 2009 artwork) is
+  removed — Tabler covers its full name list and is now the fallback
+  root every other set inherits.  Nothing user-visible changes;
+  profiles pinned to the old set fall back to Tabler (ICONS13).
 - Vivaldi-style vertical navigation in Preferences (UIP03).
 - Status-bar load indicator and zoom control (UIP04).
 - Shield icon at the left of the location bar (UIP05).
@@ -285,6 +310,15 @@ UI:
   If the download was deleted or moved, the nearest folder that still
   exists opens instead, and the action disables itself when nothing
   on the path survives (DOWN03).
+- The Downloads sidebar gains a compact per-download action row —
+  pause/resume, retry, remove-from-list, show-in-folder and a
+  details (speed graph) toggle — acting on the selected row with the
+  same per-state enablement as the card's own buttons, and the hosted
+  card stays expanded while it is the pane's only content (DOWN04).
+- The sidebar stays usable at its narrowest dock width: the download
+  card's texts elide instead of demanding full width, its icon moves
+  inline into the name row, and the bookmark/download action rows
+  wrap onto extra lines instead of clipping (DOWN04).
 - Preferences layout normalized across all ten pages: label/field
   pairs sit on shared grid columns, "Select…"-style buttons and combo
   boxes are capped at content width instead of stretching, group
@@ -340,6 +374,15 @@ UI:
   safe allowlist before display, and the content renders inside a
   script-free sandboxed frame — scripts, event handlers, and
   javascript: links hidden in article markup are inert (READ05).
+- Reader Mode reliability pass on the Rust pipeline: article text
+  wrapped in a form or noscript element is no longer stripped with
+  the container (the Rust sanitizer now unwraps transparent wrappers
+  like the C++ one does), degenerate heading-only extractions are
+  refused with an honest status-bar message instead of opening an
+  empty overlay, and a wedged DOM serialization can no longer park
+  the reader in a permanent busy state. Every silent dead-end in the
+  probe → toggle → extract → overlay chain now logs a diagnostic
+  line (READ06).
 - Downloads moved from the Window menu to the Tools menu — the
   Ctrl+Y shortcut and icon are unchanged, and the Window menu now
   holds only tab/window-switching entries (MENU04).
@@ -520,6 +563,12 @@ UI:
   making buttons unreadable. A desktop icon theme that already ships
   light-on-dark art is kept as-is, and flipping Day/Night in
   Preferences swaps the icon art live (ICONS05).
+- The reader-mode button now matches its nav-bar siblings under the
+  dark theme: its glyph is painted at the size the toolbar asks for
+  with the palette's own button/disabled colors, instead of a fixed
+  16-px bitmap that the bar upscaled into a grey blur and ghosted
+  bright when dimmed. Active reader mode keeps its accent mark, and
+  a Day/Night flip still re-themes it live (TRUST21).
 - Tor circuit dropdown stays put: opening it refreshed the menu on
   every daemon reply and each reply kicked another query, so the
   popup re-laid itself out in an endless loop and crept sideways on
@@ -550,6 +599,22 @@ UI:
   "Preserve log" keeps the list across navigations, and "Disable
   cache" is a real browser-wide toggle the engine honors for every
   tab, including ones opened later (DEVT06).
+- BiDi Dev Tools → Network tab now reads like Chrome's at realistic
+  widths: the Name column stretches while Size, Time and Waterfall
+  keep minimum widths (and a horizontal scrollbar at extreme widths)
+  instead of being squeezed invisible, the Size column labels
+  cache-served responses "(memory cache)"/"(disk cache)" rather than
+  showing misleading byte counts, and a Chrome-style summary footer
+  reports the filtered request count, bytes transferred, Finish time
+  and the page's DOMContentLoaded/Load milestones. Waterfall bars
+  paint for every completed request and split into waiting/download
+  segments when the engine reports time-to-first-byte (DEVT07).
+- A crashed Servo engine tab is no longer dead for the rest of the
+  session: the crash notice now offers "Try Servo Again", which
+  tears the dead web view down and builds a fresh one on the
+  still-running engine — switching the tab to Chromium and back
+  recovers the same way — so one engine crash no longer disables
+  Servo until the whole browser is restarted (ENG24).
 - The start page no longer shows faint horizontal bands: its
   background gradient was painted in repeating content-height stripes
   — invisible in the light theme, banded in the dark theme — and now
@@ -614,6 +679,21 @@ UI:
   widths that still hold a past default migrate forward, a width you
   dragged to yourself is kept, and the edge drag and double-click
   reset work as before (TABS16).
+- Vertical tab rows no longer clip their titles: rows can never
+  render shorter than a full text line plus the standard padding (a
+  too-small saved strip height now clamps up instead of cropping the
+  title), and a grouped row's title centers below the group-name pill
+  instead of landing on the row's clipped bottom edge — favicons and
+  close buttons ride the same band.  Both Left and Right rails, and
+  Tor-violet and dark themes, render the full title (TABS17).
+- The vertical rail's truncated 'History' row is fixed for real this
+  time: it was never the row's height — the in-strip '+' new-tab
+  button clamped itself on top of whichever row the rail was scrolled
+  to, covering its label.  When an overflowing Left/Right strip
+  leaves the '+' no free space it now moves inside the scroll-button
+  band instead — the stacked scroll arrows share one row side by side
+  and the '+' takes the row below — and on a rail that is exactly
+  full with no scroll chrome it hides rather than cover a tab (TABS18).
 - Bigger text in the Arora app menu: the dropdown and its whole
   submenu tree — File, Edit, View, History, Bookmarks, Window, Tools,
   Help, including nested flyouts and the dynamic History/Bookmarks
@@ -627,9 +707,192 @@ UI:
   the bundled fallback set cover the freedesktop-name gaps (panel
   toggles, import/export, private mask, Tor onion, reader, PiP, page
   source, terminal); native icon themes substitute their own artwork
-  where the names are standard. Separators, submenu headers and the
-  dynamic rows (history/bookmark entries, window list, encodings,
-  user agents) stay iconless by design (ICONS07).
+  where the names are standard. Separators and the dynamic rows
+  (history/bookmark entries, window list, encodings, user agents)
+  stay iconless by design (ICONS07).
+- Enabled extensions finally get a toolbar face: every loaded
+  extension that declares an action popup shows its own manifest icon
+  in a strip right after the address bar — Bitwarden's shield
+  included — and clicking it opens the extension's real popup UI in a
+  small anchored bubble that sizes itself to the page, never a new
+  tab. Turning an extension off or unloading it removes the button
+  immediately; extensions without popups stay out of the bar, and
+  private or Tor windows never show the strip (EXT08).
+- The Preferences > Extensions list now shows each extension's
+  version next to its name — read from the extension's own manifest,
+  so Bitwarden shows "2026.9.3" while built-in components with no
+  manifest on disk show an honest "—". When an update check finds a
+  newer package the cell reads "1.0.0 → 2.0.0 available" (EXT09).
+- The Arora app-menu logo is now actually bigger: the previous bump
+  only set a property Qt ignores for toolbar-hosted buttons, so the
+  glyph still painted at the shared nav-icon size. The button now
+  renders its bear at 36px — twice the navigation glyphs and clearly
+  dominant over the "Arora" label — on every window type including
+  Tor, where the light backing disc grew to match (MENU09).
+- Menu flyout headers that sit among iconed rows now carry an icon
+  too: File → "New Container Tab" shows a crate glyph, Tools →
+  "Development Tools" code brackets, View → "Text Encoding" a
+  letterform, Tools → "User Agent" a person bust, and History →
+  "Recently Closed Tabs" a restore-windows glyph — so no static row
+  reads naked in the icon column. Standard freedesktop names let
+  native themes substitute their own artwork; five new mid-grey
+  glyphs cover the bundled fallback set (ICONS08).
+- The app-menu Arora logo can no longer paint stretched: the
+  bear-globe mark now renders into a centered square of whatever
+  space the widget style offers, so it stays round at every scale —
+  including fractional display factors and the Tor window's styled
+  bar, where the light backing disc stays a perfect circle too. The
+  rest of the navigation row also centers against the taller app
+  button instead of riding the top edge, so the bar reads as one
+  intentional row (MENU10).
+- The navigation bar is customizable: right-click it for a menu with
+  New Tab and New Private Tab up top plus a checkable "Edit
+  Navigation Bar" — while it's on, the bar shows a dashed frame and
+  every item (app menu, history buttons, reader/onion buttons, the
+  address bar itself, the sidebar toggle) can be dragged to a new
+  spot behind a highlighted drop line. Exit by toggling the entry
+  again, pressing Esc, or clicking anywhere off the bar. The dragged
+  order persists across restarts and is shared live by every open
+  and new window — normal, private and tor alike (tor keeps its
+  violet chrome) — and the menu's "Reset Navigation Bar" restores
+  the stock layout (NAVB03, NAVB04).
+- The Preferences > Extensions table no longer wastes its width on
+  the Source column: Version, Status and Source now hug their short
+  fixed strings (Source stays user-resizable at a compact width)
+  while the long free-text column takes the leftover space, so the
+  description sits immediately right of Source instead of stranded
+  at the far right (EXT10).
+- Every chrome icon now shares one house style: menus, the navigation
+  bar, tab-strip controls, the sidebar, location-bar indicators,
+  dialogs and the Preferences lists all paint the themed glyph in a
+  single palette-tinted monochrome — no more colorful artwork mixed
+  among grey peers — and the tint follows light/dark flips and icon-
+  theme changes automatically. Brand and page icons deliberately keep
+  their own colors: the Arora and Qt logos, container-color chips,
+  favicons and site/search icons, extension artwork, and the private-
+  browsing badge; the Tor window keeps its light-on-violet glyphs
+  (ICONS09).
+- The docked sidebar no longer shows two close buttons side by side:
+  the dock title bar's own X used to sit next to the panel's styled
+  close button, so it stays hidden while docked — the Downloads
+  header X and the rail's fold button are the single close path.
+  Tear the dock off into a floating window and the title-bar X comes
+  back, still governed by Preferences' "Show panel close button"
+  option (SIDE11).
+- Preferences → General homepage and startup reworked: the homepage
+  is now a Start Page / Specific Page pair (Set to Current Page still
+  fills in the address, and the Home button plus startup-homepage
+  honor the choice), "Startup with" offers Last Session, Homepage,
+  Start Page or Specific Pages — the last takes a list of addresses,
+  one per line, each opening in its own tab. A new Close and Exit
+  section hosts the moved "Show Close Window Confirmation Dialog"
+  plus a new "Show Exit Confirmation Dialog" that prompts before the
+  whole app quits. Saved preferences from older versions migrate
+  automatically (PREF04).
+- "Lazy Load Restored Tabs" moved to Preferences → General under
+  "Startup with", next to the session-restore setting it modifies —
+  the "Always Load Pinned Tabs" opt-out moved with it and now sits
+  properly indented beneath its parent checkbox. Background session
+  tabs still restore their title and icon without loading until
+  first activated; saved picks carry over (PREF05).
+- The Arora app menu now has a direct "Preferences..." entry between
+  Tools and Help — the same item as File > Preferences, so the
+  shortcut and behavior are identical — on every window type,
+  including Tor windows where the menu button is the only menu
+  (MENU11).
+- The duplicate File > "Preferences..." entry is removed — the app
+  menu's direct entry is the single menu home and Ctrl+, still
+  opens the settings tab (MENU12).
+- The Arora app-menu button is icon-only now — the "Arora" wordmark
+  moved off the button to a quiet label at the right end of the
+  navigation bar, on normal, private and Tor windows. It is fixed
+  chrome: the edit-mode drag reorder cannot pick it up or drop
+  items past it (MENU13).
+- File > "Open Location..." is removed — the omnibox is always on
+  the navigation bar, and Ctrl+L / Alt+D / Alt+O still focus and
+  select it (MENU14).
+- "Quit" moved out of the File menu — it is now the last entry in
+  the Arora app-menu dropdown, below Help, on every window type.
+  Ctrl+Q is unchanged (MENU15).
+- The "Arora" wordmark is gone from the right end of the navigation
+  bar, and the app-menu logo button on the left now renders at the
+  same icon size as the other navigation buttons instead of
+  oversized — the bar's right end simply ends at the last real
+  control (MENU16).
+- The app-menu logo button is now a deliberate brand accent: the
+  Arora mark paints ~25% larger than the other navigation glyphs,
+  scaled uniformly with no stretching, while the button face and the
+  toolbar's row height stay compact — on normal, private, and Tor
+  windows alike (MENU17).
+- Flatter, more modern chrome from one central style source: sunken
+  toolbar/dock/panel frames and hard borders are replaced by subtle
+  palette-derived hairlines, toolbars and panels share a consistent
+  4/8/12px spacing rhythm, group headers render semibold, and the Tor
+  window's violet styling is defined once and reused everywhere — all
+  of it tracks light/dark theme changes live (THEM01).
+- Tab strip restyle: squared tabs are now rounded cards — the active
+  tab lifts and merges into the page, inactive tabs sit flat with
+  dimmed titles, hover is a soft intermediate step, and the strip's
+  buttons share a rounded hover; group bands, container chips, and
+  private badges stay legible on both the horizontal strip and the
+  vertical rail (THEM02).
+- Dialog and panel polish: Preferences sections read as semibold
+  headers over a thin palette hairline instead of sunken group frames,
+  page spacing follows the shared rhythm, and the page rail is a
+  frameless rounded-selection list; sidebar panels keep flat hairline
+  borders and consistent headers; menus and dropdowns share flat
+  padding, hairline separators, and a rounded selection — Tor windows
+  follow the same rules through the palette (THEM03).
+- Palette unification + contrast pass: every hardcoded color in the
+  chrome now lives in the one central style source — the container
+  accent set, secure-field and loading cues, the warning banner, and
+  the forced dark variant join the Tor violet family — and text and
+  icons on selections and accent fills pick their foreground by
+  measured WCAG contrast, fixing unreadable cases like white labels
+  on bright container chips (THEM04).
+- Firefox-matching tab size: tabs are now ~33px tall on a ~36px
+  strip (up from the compact ~26-28px band), every titled tab —
+  pinned tabs included — holds the same 225px width while space
+  allows, they squeeze to equal widths down to a 76px floor, and
+  only then do the scroll buttons take over instead of the strip
+  stretching or scrolling early.  A strip height you dragged to
+  yourself still wins over the automatic size, vertical-rail rows
+  adopt the same uniform padding, and when the '+' new-tab button
+  parks over a full strip's last tab that tab's close button yields
+  rather than sit under a dead click target (TABS19).
+- The site shield is now a permanent member of the navigation bar —
+  one shared button directly left of the address field (right of the
+  reader-mode button) that follows the active tab instead of living
+  inside each tab's location bar.  It can no longer go missing on
+  fresh or session-restored windows, and on tabs without a web page
+  (Preferences, history, engine tabs) it stays in place disabled with
+  an honest "not available on this tab" tooltip instead of leaving a
+  gap (TRUST15, placement locked in TRUST16).  The shield's popover
+  also opens at the right size on the very first click now — a stale
+  cached geometry could squash it (and leave stale permission-row
+  buttons behind) until the second click (TRUST17).
+- The Downloads sidebar's header gains a "Clear download list" button
+  next to the close X: one click (after a confirm) removes every
+  finished, failed or cancelled entry while in-progress downloads and
+  the files on disk stay untouched; the button disables itself when
+  the list is empty or only active downloads remain (DOWN05).
+- The start pages no longer carry a footer: the "Search results
+  provided by …" attribution and the "About Arora" link are gone from
+  all four variants (standard, private, Tor, Servo) — the page is just
+  the header, the search box and the brand mark (MENU18).
+- The window-theme choice on Preferences → Appearance is now a row of
+  clickable preview tiles — Light, Dark and Auto each sketch a small
+  page in the scheme they commit (Auto paints a half-light/half-dark
+  split for "follow the desktop"), the selection carries a highlighted
+  frame and check badge, and mouse or keyboard (arrows move,
+  Enter/Space commits) both work. The pick still previews instantly
+  and persists as before (THEM05).
+- The app-menu logo button grows another ~25% — the Arora mark now
+  paints at ~29px against the 18px navigation glyphs (about 1.6x),
+  still scaled uniformly with no stretching. The navigation bar keeps
+  its exact row height: the bigger button face borrows the row's
+  vertical padding instead of pushing it taller, on normal, private,
+  and Tor windows alike (MENU19).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
@@ -675,6 +938,20 @@ Search & location bar:
   keeps its thin loading strip along the bottom edge as the load cue
   (NAVB02).
 - Search suggestions off by default, opt-in per engine (SEC11).
+- Right-clicking a text or search input offers "Add to the toolbar
+  search" again — the editable-field menu item lost in the WebEngine
+  port. Arora reads the enclosing form in-page and turns a GET form
+  into a {searchTerms} engine template (hidden fields, checked boxes
+  and select values ride along; a multiple-submit form asks which
+  button carries the query, and POST forms get an honest "not
+  supported" warning instead of a silent no-op) (SRCH01).
+- Print and Print Preview merged into a single Print entry
+  (Ctrl+P), matching Firefox: the menu item and JS window.print()
+  open the print-preview dialog directly, and the preview's own
+  Print action runs the native print dialog (printer selection,
+  copies and page range) on the generated PDF. There is no longer a
+  straight-to-printer path, and PDF document tabs preview their
+  staged document the same way (PRINT02).
 
 Security:
 - HTTPS-First upgrades and HTTPS-Only interstitial; real-TLS-failure
@@ -703,10 +980,12 @@ Security:
   Sec-Fetch-Dest: report tripwire in case they ever do (PING02).
 - Real pop-up blocker for shaped window.open (POPUP01).
 - Fingerprint-resistance countermeasures (PRIV02).
-- Injected fingerprint spoofing (SAFE06) — opt-in per-page script that
-  adds canvas-readout noise, masks WebGL vendor/renderer and normalizes
+- Injected fingerprint spoofing (SAFE06) — per-page script that adds
+  canvas-readout noise, masks WebGL vendor/renderer and normalizes
   navigator.hardwareConcurrency/deviceMemory/plugins; always on in Tor
   windows, per-site exemption on the shield panel. Noise, not anonymity.
+  Now enabled by default (PRIV06) — a stored opt-out from before the
+  flip is migrated on once, and turning it off afterwards stays off.
 - Third-party-cookie and connection/storage privacy group (PRIV01).
 - Zero telemetry verified by capture proxy (TELEM01) — extended to a
   forwarding capture that drives a real browsing session (navigation,
@@ -805,6 +1084,15 @@ Security:
   while the downloads run and reports failures honestly; the button
   is disabled with an explanation until remote list downloads are
   consented to (TRUST13).
+- A small padlock inside the left end of the address bar reports the
+  connection and site-trust verdict at a glance — locked green for
+  https on a positively verified host, locked amber for unranked or
+  still-probing https, locked red when a trust signal flags the site,
+  and the same tier colors unlocked over plain http; clicking it opens
+  an info-only summary (TRUST14).
+- The site-privacy shield moved out of the address bar onto the
+  navigation toolbar immediately left of it — one button per window
+  that always shows the active tab's settings (TRUST14).
 - WebChannel isolation (SEC24): the page's QWebChannel is bound to a
   dedicated isolated script world, so web content can no longer
   enumerate or call the registered bridge objects — the
@@ -819,6 +1107,20 @@ Security:
   a DOM event.  The reader-mode driver keeps its own isolated world
   and speaks DOM events; only its tiny event relay moved into the
   channel world.
+- Extension-surface hardening pass (QUAL03): a hosted extension
+  background page is now navigation-locked to its own wrapper URL and
+  origin — it can no longer hand the privileged chromeBridge channel
+  to foreign content by navigating or iframing away. The extension
+  message relay re-verifies the "<extension-id>#…" key prefix it
+  mints, so one extension cannot graft itself onto another
+  extension's port channels or forge sendMessage replies, and
+  chrome.tabs query/get/create/update replies now scrub url/title
+  unless the extension holds the 'tabs' permission or a covering host
+  permission — matching the event-payload rule. The
+  picture-in-picture player escapes '<' in the page-derived video
+  spec it interpolates into its trusted document, closing a
+  script-element breakout, and the debug cookie jar no longer logs
+  rejected cookie values.
 
 Containers:
 - Isolated container profiles (CONT01).
@@ -831,6 +1133,11 @@ Containers:
   the tab row to the selected container; header click switches, tab
   drag onto a header rebinds, headers reorder, and the single-row
   inline-chips mode remains a setting (CONT06).
+- On that two-level container strip, tab favicons no longer ride up
+  into the header row above the tab — they stay vertically centered
+  inside the tab card at the automatic strip height and at any height
+  you dragged the strip to, across tab switches and scrolling
+  (TABS20).
 
 Tor:
 - Managed tor daemon plumbing (TOR01).
@@ -906,6 +1213,56 @@ Tor:
   instead of every page dying at a raw proxy error.  The fail-closed
   proxy is never bypassed: no page ever falls back to clearnet
   (TOR17).
+- Tor-window searches and navigations now survive the daemon's
+  bootstrap: an address typed or a search kicked while the banner
+  still says connecting is held and dispatched the moment the SOCKS
+  listener is live instead of dying at a proxy error, and a page
+  that still raced cold Tor circuits right after connecting reloads
+  itself once a circuit is usable — no manual reload needed.  A
+  genuinely failed daemon keeps the honest error page and the
+  banner's Retry (TOR18).
+- The Tor circuit popover now opens at the right size on the very
+  first click: the menu was measured from the panel's previous
+  content before the open-time refresh ran, so the first click could
+  show a clipped or mostly empty popup and only the second click
+  looked right (TOR19).
+- The site shield on a Tor window's navigation bar now renders in the
+  chrome's light text color instead of an unreadable black outline on
+  the violet bar — the glyph tint follows the button's own resolved
+  palette, so it stays legible on any dark chrome the same way the
+  reader and circuit buttons do, and its dimmed state still reads as
+  dimmed (TRUST18).
+- The first URL or search typed into a fresh Tor window no longer
+  silently fails: "ready" only means the SOCKS listener answers, so
+  a navigation issued in the cold-circuit stretch right after it is
+  held until a stream-ridable circuit (BUILT, three hops, client
+  purpose) exists — with a status-bar line announcing the wait — and
+  a bounded grace still dispatches when the daemon shares no circuit
+  data.  Navigations that do race the cold window and fail now get
+  several warm-up retries instead of one, still stopping honestly on
+  the error page once the budget is spent (TOR12).
+- The Tor start page's own search — and any link click or redirect a
+  page kicks off — now joins the bootstrap hold instead of slipping
+  past it: page-initiated navigations never reached the location-bar
+  queue, so the first search on a fresh Tor window still died at the
+  cold proxy and briefly showed an error page before the retry
+  cleared it.  Such navigations are now refused into the same hold,
+  and while a warm-up retry is armed the tab shows a "Tor is still
+  starting" pending page that resolves on its own — the error page
+  only commits once the retry budget is honestly spent (TOR14).
+- A warm-up retry's reload could be silently swallowed while the
+  "Tor is still starting" pending page was still committing, leaving
+  the tab stuck on the pending page instead of retrying — the retry
+  now waits for the generated page commit to land before it
+  re-dispatches, so the bounded retry chain actually runs to its
+  honest end (TOR14).
+- Tor window polish: the reader-mode button can no longer revert to a
+  black glyph when a state change lands inside a stylesheet repolish —
+  it re-bakes its icon whenever the palette/style settles, the way the
+  site shield already did.  The sidebar's icon rail joins the violet
+  chrome too: its strip, tab glyphs and fold button now resolve
+  against the rail's own light-on-violet palette instead of the
+  application's (TRUST20).
 - A Servo-branded start page variant appears when the default engine
   pick is Servo: the same Arora header, search box and default
   coloring, with the official Servo logo centered under the search
@@ -979,6 +1336,11 @@ Extensions:
   Settings → Extensions), and never again after uninstall. It is
   never loaded into private or Tor profiles, and it cannot
   self-update — updates arrive with Arora releases.
+- Measured the MV3 platform end to end (EXT11): the engine runs real
+  extension service workers, content scripts, action popups, runtime
+  messaging and storage, but the chrome.* surface is a subset and
+  Bitwarden's background worker cannot run on it — documented
+  honestly in the README.
 - WebExtensions compatibility spike (EXT13): a hidden QWebEngineView
   on the extension's own profile can host a real MV3 extension's
   background script — profile script-collection injection reaches
@@ -1004,6 +1366,20 @@ Build, tests & tools:
 - GUI-thread blocking audit (FRZ01).
 - Startup performance passes (PERF01/03).
 - Self-contained `make bundle` Linux package (PACK01).
+- Debian .deb package: `make pkg-deb` (or `dpkg-buildpackage -b`)
+  produces `dist/arora_0.2_amd64.deb` — bundled Qt/WebEngine runtime
+  under /usr/lib/arora, /usr/bin launcher, desktop file + hicolor
+  icons, real versioned Depends via dpkg-shlibdeps (PKG01).
+- Flatpak bundle: `make pkg-flatpak` (or `.devin/pkg-flatpak.sh`)
+  builds io.arora.Arora inside org.kde.Sdk//6.11 with the
+  QtWebEngine BaseApp, compiles both Rust crates offline from
+  pinned vendored crates, bundles the Tor expert bundle, and
+  produces `dist/io.arora.Arora_0.2_x86_64.flatpak` with honest
+  minimal sandbox permissions and store metainfo (PKG02).
+- openSUSE RPM: `make pkg-rpm` (or `.devin/pkg-rpm.sh`) builds
+  `dist/arora_0.2-0.*.rpm` from rpm/arora.spec — the same bundled
+  Qt/WebEngine payload and /usr/bin launcher as the deb, with an
+  explicit SONAME-capability Requires list (PKG03).
 - THIRD-PARTY-NOTICES audit (LIC01); post-migration cleanup (AUD01).
 - Third-party inventory synced — THIRD-PARTY-NOTICES now covers the
   Mozilla/Arc90 Readability sources, the Gegesy/Witt BSD files, the
@@ -1657,6 +2033,9 @@ URL-bar search opt-out moved to a trusted key (SRCH12):
 New tab opens the start page (START02):
     The New Tab command — Ctrl+T, File > New Tab, the tab-strip "+" button and double-clicking empty tab-strip space — now opens the tab on the start page with its search box instead of a blank "Untitled" tab. The same applies to the other user-initiated new-tab surfaces: the "New Container Tab" entries, the fresh tab left behind when the last tab closes while "quit when the last tab closes" is off, and the tab recreated when a close is refused. The target is the same "Home page" setting the Home button uses, whose default is the bundled start page, so a customized home page applies to new tabs too. Tabs created programmatically — the window's first tab, session-restored tabs and link/context-spawned tabs — still open bare, so the "On startup" preference (home page / blank page / restore session) keeps deciding what launch shows.
 
+Trust padlock in the URL bar, shield on the toolbar (TRUST14):
+    The site-privacy shield moved out of the address bar onto the navigation toolbar immediately left of the url field — one button per window, rebound to the active tab on every switch so its badge and privacy panel always describe the front tab. In the vacated in-bar slot a small padlock now reports the connection and the trust verdict: https on a host that is both positively known (a Tranco rank or equivalent) and TLS-verified by the second-opinion probe shows a locked green padlock; https with no negative signal — unranked, unprobed or still probing — shows amber; a threat-list hit, a lookalike verdict or a failed TLS probe shows red; and plain http always shows the unlocked padlock in the verdict's color. Turning the Site Trust master switch off drops the verdict entirely — the padlock falls back to a plain chrome lock that still reports the scheme honestly rather than disappearing. Tor pages are never probed and can never wear a misleading green. Clicking the padlock opens an info-only popup — scheme, TLS status and the same trust-signal lines the shield panel lists — with no certificate-bypass affordance.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.
@@ -2239,6 +2618,11 @@ Servo tabs no longer crash on real desktop sessions (ENG23):
 BiDi Dev Tools Network tab gains Chrome's status line and real column floors (DEVT07):
     The request table squeezed its Size, Time and Waterfall columns to nothing at realistic dock widths — a bare stretch column grows into slack but never shrinks back, and the header's global minimum could not floor just the waterfall. Name and Waterfall now split the flex space with real 160px/140px minimums while the numeric columns stay fixed-fit, scrolling horizontally at extreme widths instead of vanishing. A Chrome-style footer below the table reads "N requests · X transferred · Y resources · Finish · DOMContentLoaded · Load" — the load timings ride the Page domain on the same monotonic clock as the request rows and reset on each navigation even when Preserve log keeps the rows. Size is honest about what is known: the response's own byte count appears as an interim value while the body loads, cache-served rows mark "(cached)" rather than a misleading "0 B", and the resources total uses decoded (uncompressed) body bytes the bridge now tallies from the transfer stream.
 
+Devtools menu entries are plain actions again (DEVT08):
+    Tools → Development Tools showed a checkable tick box on "BiDi Dev Tools" while its "Chromium Dev Tool" sibling had none — the BiDi row had borrowed the panel dock's toggleViewAction, which is checkable by design. Devtools rows are open/close commands, not persistent visibility states like the sidebar, so the entry is now a plain action that flips the dock's visibility; the dock's own close button stays authoritative and no checked state can be stranded after the panel closes.
+
+Extension installs are integrity-pinned and update reviews show permission drift (SEC25):
+    A successful install now records a SHA-256 of the extension's whole on-disk tree; a startup sweep re-hashes each installed extension and, when files changed outside the engine, flags the row "Tampered" in Settings → Extensions with a "files changed since install — review or remove" warning instead of silently loading it (uninstall clears the pin, an applied update re-pins its new files). Applying a downloaded update now diffs the new package's manifest against the installed version and lists every permission and host pattern it added as "new since installed version" — the original install consent never covers escalated grants. The review dialog also escalates broad host access visually: <all_urls> and whole-scheme wildcards like *://*/* or http://*/* carry a warning icon and a dedicated escalation row instead of reading like a normal site grant.
 BiDi Dev Tools waterfall reads like Chrome's now (DEVT09):
     The Waterfall column still rendered every request as a 1–2px hairline on any real timeline — bars scaled linearly to the whole recording window, so one slow request (a hanging download, a held-open socket) stretched the axis and flattened everything else. The paint axis now zooms into the dense region: the window caps at roughly the p90 completed end whenever the true span is more than twice that dense span, while an evenly spread recording keeps the honest full axis — and the footer's Finish still reports the true end. Bars get a real 5px minimum width (sub-pixel durations stay visible, overlapping honestly like Chrome's), a darker edge keeps swatches legible on light themes, requests clipped by the zoomed window carry a right-edge overflow notch, and the page-load timings DEVT07 added now paint as column-wide DOMContentLoaded/Load marker lines. Pending rows stay translucent, failed rows stay red, and an empty or pending-only window still paints nothing phantom.
 
@@ -2248,17 +2632,80 @@ Servo wheel scrolling reaches browser pace (ENG25):
 A crashed Servo engine no longer wedges the backend slot forever (ENG27):
     Tearing down a crashed Servo tab could itself panic inside webrender's GL teardown — the catch in se_destroy logged "panic during se_destroy — instance leaked" but the instance slot stayed occupied, so no later code path could ever recover: one unlucky crash meant Servo was dead for the rest of the process. se_destroy now hands the instance slot back before the fallible teardown runs — the slot holds the live pointer, so a stale or double-destroyed instance is rejected without being dereferenced — and the teardown itself runs under two panic catches so a failure in the pre-drop GL drain can't skip the drop attempt. A panicking teardown now degrades to a contained memory leak with a free slot, never a stranded slot. New exports se_instance_active/se_can_init let the host prove the slot was released and learn whether a fresh instance can be minted (the once-per-process engine still refuses a second init today — that's the next slice), and --servo-smoke injects a panic inside the teardown to assert the whole chain end to end. The deployed servo-embed artifact was also rebuilt — the pinned copy predated several engine fixes.
 
+MV3 extension support is now measured, not guessed (EXT11):
+    "If Bitwarden doesn't work, will anything?" now has a measured answer. A new --mv3-health-smoke diagnostic installs a fixture MV3 extension carrying Bitwarden's permission set onto the isolated smoke profile and interrogates it from inside its own contexts: the background runs as a real service worker and answers messages from content scripts and the popup, content scripts inject, the action popup renders, storage (local/session/managed) and runtime messaging round-trip, and alarms/idle/offscreen/i18n/observe-only webRequest are live — while chrome.extension, tabs lookup and tab events, webNavigation, scripting, contextMenus, notifications, windows, action and declarativeNetRequest are not implemented by the engine. Against the bundled Bitwarden the diagnosis is precise: its background worker dies during script evaluation on those missing namespaces (Chromium status 15, kErrorScriptEvaluateFailed) — a registered-but-unresponsive context — and its popup's Angular bootstrap throws on chrome.extension.getBackgroundPage, which is why it spins forever; the popup host itself is exonerated. No flag, setting or install option adds the missing surface (the schemas are compiled into QtWebEngineCore but its embedder never registers them), so the README now states the support boundary honestly and .devin/EXT11-report.md holds the full matrix and the EXT12 degradation plan.
 A crashed Servo tab can now be restarted in place (ENG28):
     Servo used to be a one-shot engine per browser session — libservo parks its options in a process-global cell, so the embed shim fused "engine" and "web view" into a single once-per-process instance and a crash disabled Servo until Arora restarted. The two are now separate: the engine is built once and kept for the process lifetime, while each web view is just a WebView over it, so a crashed tab's view can be destroyed and a fresh one minted on the still-running engine — the same shape as Chromium respawning a renderer on the surviving browser process. The crashed tab's notice now offers "Try Servo Again", which tears down the dead objects and recreates the view in place at the last committed address (the engine-swap path recovers identically), and a new graceful se_shutdown gives the engine a clean teardown while the GUI thread is still alive — fixing a SIGSEGV that could fire at process exit. A real-display GL fault the re-init path exposed — a transient "BadAccess" on the first context bind after a generation swap that the painter only logged before drawing blind — is now absorbed and retried inside the shim instead of crashing in the rasterizer.
 
+Extensions now report honest health instead of a fake "Enabled" (EXT12):
+    Arora measures each enabled MV3 extension's background once per session — a hidden page on the extension's own chrome-extension:// origin pings its service worker and counts live background contexts — and folds that verdict together with the manifest's declared-but-missing chrome.* APIs. Settings → Extensions then shows "Limited" (worker runs, some APIs unavailable) or "Not supported" (worker never became ready) with the reason instead of a bare "Enabled", and clicking a dead extension's toolbar action opens a short explanation rather than a popup that spins forever. The bundled Bitwarden measures dead — its worker dies during evaluation on namespaces Qt WebEngine doesn't register — so it now reports "Not supported" with the missing APIs listed; extensions whose workers evaluate fine but declare unserved APIs read "Limited".
+
+Servo tabs show an honest memory figure instead of "MEM —" (ENG26):
+    The status-bar memory readout used to blank on a Servo engine tab — Servo renders in-process, so there is no per-tab renderer pid for the widget to poll and it had nothing honest to show. The engine interface now carries a resident-memory surface (a kB figure plus a "shared" flag, with the /proc VmRSS parse shared by every backend), and the Servo page reports the host process's real RSS marked as shared: the readout shows "MEM <n> (shared)" with a tooltip explaining the number covers the chrome and every other tab too — a real figure, never a fake per-tab one. WebEngine tabs still report their own renderer's RSS, and the indicator rebinds cleanly when a tab switches engines or a crashed Servo view is restarted in place.
 Extensions with background scripts get a hosted background context (EXT14):
     Qt WebEngine's MV3 host cannot actually run most extension background bundles (its service-worker support is a subset and half the chrome.* surface has no embedder delegate), so enabled extensions that declare a background now get one anyway: a hidden page on the extension's own profile at its real chrome-extension:// origin runs a generated bootstrap that installs a shim preamble — error capture, service-worker globals, and a handshake over the dedicated 'chromeBridge' WebChannel — then executes the extension's real background scripts in manifest order. The installed package is never modified, so extension integrity verification still applies. The hidden context is kept answerable under Chromium's background throttling (active-lifecycle pin plus a periodic wake nudge), a crashing background can only take down its own render process and reports through the extension's health state in Settings → Extensions instead of the console, and disabling or removing the extension tears the host down cleanly. The bridge today carries the handshake and error reporting — calls into not-yet-implemented chrome.* surfaces answer a typed 'unimplemented' error that surfaces in the health row rather than silently no-op'ing; the real API surface arrives with the follow-up shim work. Set ARORA_EXTHOST_OFF=1 to disable the hosted runtime entirely.
+The History sidebar can now filter by period and clear itself (HIST03):
+    A compact combo in the History sidebar's header row narrows the day
+    groups to Today, This Week, This Month, or All — the choice persists
+    between sessions and composes with the existing search field, so
+    searching "today" plus a keyword only scans today's entries.  Beside
+    it a clear-history icon button asks the same confirmation the
+    History menu has always shown before wiping the store.
 
 Hosted extensions get a working chrome.* core API (EXT15):
     The EXT14 hosted background context now runs a real WebExtensions surface instead of a handshake stub: chrome.runtime (messaging, Ports, lifecycle events, getURL/getManifest/getPlatformInfo), chrome.storage.local persisted per extension plus in-memory storage.session with onChanged, chrome.extension, chrome.i18n lookups against _locales, chrome.alarms backed by host timers, and chrome.action/browserAction state. Half-implemented native namespaces are repaired rather than replaced — missing members are filled in even when Chromium re-installs its own partial objects during startup — and everything the hosted runtime cannot do answers a typed error that shows up in the extension's health diagnostics instead of silently no-op'ing. Hosted contexts of the same extension can message each other and hold Port channels through a host-side relay that never crosses extension boundaries. Real bundled webpack extensions now boot too: Bitwarden lazy-loads a JavaScript chunk through a synchronous importScripts() that no extension page can satisfy under the MV3 content-security policy, so the host delivers the manifest's background entries and their sibling chunks as one merged script injected before page scripts run — the chunk's modules register with webpack in the same pass, before its deferred require can fail. The bundled Bitwarden background boots with a 114-surface compatibility audit clean and zero unshimmed-API errors.
 
+The Notes sidebar is now a real multi-note manager (NOTE02):
+    The single scratch pad is replaced by named notes: the panel lists
+    them, clicking one opens it in an editor (title field plus body),
+    and header +/- buttons add or delete — deleting a note that has
+    content asks first.  With zero notes the panel shows a "Write your
+    first note" empty state.  Notes autosave as before and persist per
+    browsing profile; a private or Tor session's notes stay in memory
+    and never reach disk.  Any text already typed into the old scratch
+    pad migrates into the first note automatically.
+
+The Notes sidebar gains search, selection capture and markdown
+(NOTE03):
+    A search field above the notes list filters live on note titles
+    and bodies.  Selecting text on a web page now offers "Add
+    Selection to Notes" in the context menu — the selection becomes a
+    new note titled after the page with the source URL appended.  Each
+    note has a markdown flag in the editor's options menu: when set,
+    the body shows rendered in place instead of source text, and the
+    flag persists with the note.  The same menu's "Insert Current Page
+    URL" drops the open tab's address at the cursor.
 Hosted extensions now see browser events (EXT16):
     Extensions that subscribe to browser lifecycle events — chrome.tabs.onCreated/onUpdated/onActivated/onRemoved (plus onHighlighted/onMoved/onDetached/onAttached), chrome.windows.onCreated/onRemoved/onFocusChanged, chrome.webNavigation.onBeforeNavigate/onCommitted/onCompleted/onErrorOccurred (with onHistoryStateUpdated/onReferenceFragmentUpdated for same-document navigations), and chrome.contextMenus.onClicked/onShown/onHidden — now receive them in their hosted background context as the browser actually runs. A new ExtensionEventHub watches the real window set and maps engine signals to spec-shaped event objects; events reach hidden hosted contexts even while Chromium throttles their timers, and delivery follows Chrome's permission model — webNavigation and contextMenus events require the declared permission, while tab events arrive for every hosted extension but with URL and title fields scrubbed unless the manifest grants tabs or a matching host permission. Private and Tor tabs are invisible to extensions entirely. Extension-registered context-menu items now appear in the real page context menu as a per-extension submenu, filtered by their declared contexts, and clicks deliver the spec's (info, tab) arguments back to the extension.
+Internal cleanup: dead-code sweep across the merged lanes (QUAL01):
+    Removed unused methods, signals and members left by sequential
+    task work — the never-wired Engine::Page window-creation and
+    permission/context-menu request surface, dead diagnostics
+    accessors in the extension host and a handful of orphaned
+    getters and test seams; Preferences' "set home to current page"
+    now asks the window for its current tab directly.
+Memory and lifetime fixes (QUAL02):
+    Engine tabs no longer leak their browsing profile — a profile
+    created without an owner is now freed with its tab.  The Servo
+    engine probe no longer leaks its registered backend object, and
+    tab drag-and-drop no longer leaks its drag payload.  Closing or
+    rebuilding an extension toolbar popup while its page was still
+    evaluating could touch freed widgets — the resize callback now
+    checks that both still exist first.  Sidebar notes stores are now
+    bound to their profile's lifetime instead of the application's,
+    so a discarded private profile takes its notes model with it.
+Performance audit and reliability fixes (QUAL04):
+    Measured baselines across startup, tab and paint paths are all
+    inside their targets — cold start to first window ~200 ms, new
+    tab ~1.5 ms, tab switch ~0.6 ms, themed chrome icons ~2 us per
+    paint — so no speculative changes landed.  The History window no
+    longer rebuilds a themed icon per row on every repaint.  An
+    extension whose background worker dies is once more correctly
+    reported "not supported": the hosted-runtime page shim no longer
+    lands on the health probe's own page, and a stale queued probe can
+    no longer overwrite a measured verdict.  The test suite now kills
+    a hung test binary after a timeout instead of stalling the whole
+    run.
 
 Extension popups and pages get the hosted runtime too, and Bitwarden reaches its real login gate (EXT17/EXT18):
     Any extension document the browser renders — an action popup, an options page opened via chrome.runtime.openOptionsPage or tabs.create, an extension link in a tab — now gets the same DocumentCreation shim injection and its own chromeBridge channel wired to the hosted background's backend, so chrome.* calls from those pages work identically to the background's. The channel binds only same-profile, non-private extension pages; navigating across extension boundaries detaches the old bridge so contexts never cross. The bundled Bitwarden popup now boots its real Angular app end-to-end: the extension's i18n message map is embedded into its injected preamble (its flat lookup is what Angular's bootstrap awaited), its intro carousel clicks through, and the popup presents the genuine vault login gate — email and password inputs, "Log in with passkey", single-sign-on — verified headless. Remaining limits are honest rather than hidden: unlocking the vault itself requires real Bitwarden account credentials (server-authenticated, then client-side key derivation — nothing in the browser blocks it), chrome.tabs.sendMessage to content scripts and chrome.notifications answer typed errors that surface in the extension's health row, and the Settings details pane lists the degraded surfaces by name ("Enabled (hosted, degraded)") when the shim answers a typed error. chrome.extension.getBackgroundPage() returning null for a hosted service-worker background matches Chrome's own MV3 behavior.
@@ -2266,12 +2713,83 @@ Extension popups and pages get the hosted runtime too, and Bitwarden reaches its
 A debug Servo build can no longer masquerade as "the engine is just slow" (ENG29):
     A tree carrying only an unoptimized target/debug servo-embed artifact (over a gigabyte of debug libservo) silently loaded it and pages crawled — the resolver preferred release but fell back to debug without telling anyone. Now a debug artifact still loads, but loudly: the app logs a one-time warning naming the artifact and the fix (`cargo build --release` in spikes/servo/servo-embed), the engine name carries a "(debug build)" marker everywhere it appears, and the engine surfaces — the toolbar engine button's tooltip and menu, the Preferences engine dropdown — show a caveat line. That same caveat carries the honest baseline on release builds too: Servo is experimental and page loads are slower than Chromium. qmake also warns at configure time when servo-embed artifacts exist but none is a release build.
 
+The Servo start page is finally reachable (ENG30):
+    Setting Servo as the default engine made every new tab come up blank — the tab was created but nothing ever told it to load a page — and swapping a tab between engines carried the SOURCE engine's branded start page along, so a Servo tab could show the Chromium-branded start page and vice versa. A fresh engine-default tab now loads that engine's branded start page, an engine swap re-resolves any branded start page (or the about:home alias) to the destination's own variant, and the same re-resolution applies when the Home button or a typed about:home targets a foreign-engine tab — the servo start page shows on Servo tabs, the plain one on Chromium, never crossed.
 Development Tools menu entries are plain actions, not checkboxes (DEVT08/DEVT14):
     Tools → Development Tools showed a tick box on "BiDi Dev Tools" but not on "Chromium Dev Tool" — the BiDi row borrowed the dock's toggleViewAction, which Qt makes checkable by design. These entries open or focus separate tool surfaces; they are not persistent states, so neither should carry a check. The BiDi entry is now a dedicated plain action whose trigger flips the dock's visibility; the dock's own close button remains the other close path and a non-checkable action can never strand a stale tick. Tor windows keep the entry visible but disabled with its explanatory tooltip.
+BiDi Dev Tools selector lists every tab, not just the debuggable ones (DEVT10):
+    The context combo was fed only by browsingContext.getTree, which the
+    CDP bridge filters to real page targets — engine tabs (Servo) and
+    widget tabs (Preferences, Downloads) had no target and silently
+    vanished, so a non-CDP tab in slot 0 read as 'the first tab is not
+    selectable'. The panel now binds the window's actual tab strip:
+    every tab gets a row in strip order, non-debuggable rows are
+    disabled with the reason spelled out ('Fake Engine tab — no
+    devtools backend', 'Not a web page — the devtools panel inspects
+    web content only'), a sleeping or unexposed WebEngine tab says so
+    instead of pretending, and CDP pages with no tab here (other
+    windows, the inspector itself) keep appending at the end.
+    Selection restores by context id and falls back to the first
+    ENABLED row, so a strip whose slot 0 is a Servo or widget tab can
+    no longer strand the selection on a dead entry — and an ordinary
+    WebEngine tab in slot 0 selects and evaluates normally.
+BiDi Dev Tools Network tab gains Chrome's toolbar, colored waterfall, and timing ruler (DEVT11):
+    The Network tab read as a bare table with filter chips while
+    Chromium's reads as one tool — the gap is now closed. The toolbar
+    mirrors Chrome's row: a record/stop capture toggle (red dot while
+    recording) and the clear button lead, the filter field stretches,
+    and Preserve log / Disable cache trail; the two controls the debug
+    channel cannot back — the throttling selector and response-body
+    search — sit in their slots honestly disabled with tooltips that
+    say why instead of pretending to work. Waterfall bars are colored
+    by resource type (documents blue, stylesheets green, scripts
+    amber, images purple, XHR/fetch light blue, and so on — failed
+    requests stay red, pending ones stay translucent), a millisecond
+    tick ruler runs across the top of the Waterfall column, and faint
+    gridlines on the same ladder run behind the bars so every row
+    lines up with the ruler. Hovering a bar breaks the request into
+    Chrome's phase list — DNS, initial connection, SSL, request sent,
+    waiting (TTFB), content download — showing only the phases the
+    engine actually reported; cache-served rows grey out like Chrome's
+    muted '(disk cache)' entries, and the Size hover now names both
+    the wire bytes and the decoded resource size.
+BiDi Dev Tools Console reads like Chromium's Console (DEVT12):
+    The flat '[error] text' dump is gone — entries are structured rows
+    colored by level (errors wash red, warnings amber, verbose dims,
+    info/log stay plain, with no textual level prefix), each carrying
+    its source url:line on the right edge when the engine reports it.
+    A 'Default levels' dropdown toggles Errors/Warnings/Info/Verbose
+    as a checkable set and a text field filters live; identical
+    consecutive entries collapse into Chrome's repeat-count badge, and
+    objects expand into preview children whenever the bridge payload
+    carries structured arguments (the bridge now forwards the CDP
+    arg previews and the message source for console calls, exceptions
+    and log entries). The eval line sits on a real '>' prompt row with
+    Up/Down history recall, a console-scoped Preserve log keeps
+    entries across navigations, and the clear button empties the view.
 
 Servo wheel scrolling is frame-paced instead of backlog-prone (ENG31):
     Sustained wheel scrolling on a Servo tab felt choppy because scroll deliveries ran on a fixed 16ms timer while every delivered delta costs a full-viewport software raster (about 34ms per frame on llvmpipe) — input queued up to twice as fast as frames could paint, so a burst ground through stale deltas while live input waited. Wheel deltas are now gated on frame completion: the first notch of a burst still goes out immediately, but while its frame is in flight later deltas accumulate and flush as one summed scroll per completed frame, locking input rate to paint rate and bounding the queue at a single delivery. A watchdog releases the gate when a delivered delta produces no frame at all (overscroll clamp or a deduped input), so scrolling never latches. The --servo-smoke scroll bench now reports both sides — se_wheel deliveries versus frames painted plus a frame-time histogram — and asserts that sends can never outrun paints by more than one in-flight delivery; a synchronous 20-notch burst now collapses to about 2 deliveries carrying the full summed distance. The honest ceiling stands: llvmpipe full-surface repaints cap Servo scrolling near 30fps on heavy pages — smoother than a stalled backlog, never Chromium-compositor smooth.
 
+BiDi Dev Tools now carries Chrome's full top tab row (DEVT13):
+    Elements, Console, Sources, Network, Performance, Memory,
+    Application, Security — the old DOM and Storage tabs are gone,
+    folded into Elements and Application. A new arora.cdp bridge
+    command passes raw CDP calls onto the page session, so the panel
+    probes each domain live and only ships what actually answers:
+    Elements keeps the lazy DOM tree and adds Chrome's breadcrumb
+    trail, a click-to-inspect highlight overlay, and a styles pane
+    (real computed styles when the CSS domain responds, an honest
+    attribute/inline-style readout when it does not); Sources lists
+    the page's resources with a read-only syntax-highlighted view
+    and working URL:line breakpoints through the Debugger domain;
+    Performance shows a live metrics table plus CPU profiles
+    summarized by self time; Memory aggregates allocation samples
+    by function; Application grows a storage tree over cookies,
+    local/session storage and IndexedDB; Security reports the page
+    scheme, the TlsVerifier verdict and mixed-content counts from
+    our own data. A domain that refuses reads as a disabled tab
+    with the reason — never a fake.
 Extension toolbar popups no longer render blank white (EXT19):
     Clicking an extension's toolbar action (e.g. Bitwarden) opened a popup that stayed white — the popup's shim preamble waited for a bridge channel that the live code path never attached. Extension pages now wire themselves: the hosted-extension runtime watches every web view the application raises and attaches the chromeBridge channel as soon as a chrome-extension:// document commits (and detaches it again on navigation away), so any popup, options page, or extension tab gets a working chrome.* surface without the embedder needing to know about it. If the extension's background context genuinely cannot be reached, the popup shows a real "extension background not running" panel instead of silent white, and keeps retrying so it recovers on its own when the background finishes starting.
 
@@ -2282,3 +2800,13 @@ Servo wheel scrolling uses the compositor fast path with smooth easing (ENG33):
   to the DOM-correct se_wheel route — DOM wheel listeners and
   preventDefault work again — for pages whose wheel-intercepting
   widgets regress on the fast path, without a rebuild.
+"New Tor circuit for this site" now visibly rotates the circuit (TOR13):
+    The panel's New-circuit button read as a no-op — SIGNAL NEWNYM only
+    re-homes NEW streams, so the page kept riding the dirty old circuit
+    and the busiest-circuit display kept showing the same hops. An
+    acknowledged NEWNYM now reloads the site's tab (Tor Browser's flow)
+    so its traffic lands on a fresh circuit, and the hop-chain display
+    prefers circuits created after the request, so the rendered chain
+    actually rotates. Clicks inside tor's ~10 s NEWNYM rate limit report
+    the wait honestly instead of faking another rotation, and a
+    greyed-out button now carries the reason on its tooltip.

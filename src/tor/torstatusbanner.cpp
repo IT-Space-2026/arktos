@@ -19,6 +19,7 @@
 
 #include "torstatusbanner.h"
 
+#include "arorastyle.h"
 #include "tormanager.h"
 
 #include <qboxlayout.h>
@@ -30,22 +31,19 @@ TorStatusBanner::TorStatusBanner(QWidget *parent)
     , m_tor(nullptr)
 {
     setObjectName(QLatin1String("torStatusBanner"));
-    setFrameStyle(QFrame::StyledPanel | QFrame::Sunken);
+    setFrameStyle(QFrame::StyledPanel | QFrame::Plain);
     setAccessibleName(tr("Tor connection status"));
     // Only ever hosted inside the tor window — the same fixed violet
-    // family the rest of the chrome uses (TOR07/TOR14).
-    setStyleSheet(QLatin1String(
-        "TorStatusBanner { background: #3a2a5c; color: #eee; }"
-        "QLabel { color: #eee; background: transparent; }"
-        "QPushButton { color: #eee; background: #5d4491;"
-        " border: 1px solid #b9aecf; border-radius: 3px;"
-        " padding: 3px 12px; }"
-        "QPushButton:hover { background: #6b4fa3; }"
-        "QPushButton:pressed { background: #4a3372; }"));
+    // family the rest of the chrome uses (TOR07/TOR14), built by the
+    // central style source (THEME01).
+    setStyleSheet(AroraStyle::torBannerStyleSheet());
 
     QHBoxLayout *layout = new QHBoxLayout(this);
-    layout->setContentsMargins(8, 4, 8, 4);
-    layout->setSpacing(8);
+    layout->setContentsMargins(AroraStyle::Spacing::Medium,
+                               AroraStyle::Spacing::Small,
+                               AroraStyle::Spacing::Medium,
+                               AroraStyle::Spacing::Small);
+    layout->setSpacing(AroraStyle::Spacing::Medium);
 
     m_label = new QLabel(this);
     m_label->setObjectName(QLatin1String("torStatusBannerLabel"));

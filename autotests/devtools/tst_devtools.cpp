@@ -28,6 +28,7 @@
 #include <QtTest/QtTest>
 #include <QtGui/QtGui>
 #include <qmenubar.h>
+#include <qmenu.h>
 #include <qwebenginepage.h>
 #include <qwebengineprofile.h>
 #include <qwebenginesettings.h>
@@ -40,8 +41,13 @@
 #include "qtest_arora.h"
 #include "qtry.h"
 
+#include "arorastyle.h"
 #include "bidiclient.h"
 #include "bidipanel.h"
+#include "engineregistry.h"
+#include "enginetab.h"
+#include "fakeengine.h"
+#include "tabwidget.h"
 
 #include <qabstractitemmodel.h>
 #include <qbuttongroup.h>
@@ -50,10 +56,12 @@
 #include <qheaderview.h>
 #include <qlabel.h>
 #include <qlineedit.h>
+#include <qlistwidget.h>
 #include <qplaintextedit.h>
 #include <qscrollbar.h>
 #include <qsortfilterproxymodel.h>
 #include <qstackedwidget.h>
+#include <qstandarditemmodel.h>
 #include <qtableview.h>
 #include <qtablewidget.h>
 #include <qtabwidget.h>
@@ -75,7 +83,11 @@ private slots:
     void closeReleasesBinding();
     void inspectedPageDestroyedClosesWindow();
     void bidiPanel();
+    void bidiContextSelector();
+    void bidiConsoleParity();
     void bidiWaterfallLegibility();
+    void bidiNetworkParity();
+    void bidiFullTabSet();
 };
 
 void tst_DevTools::initTestCase()
@@ -100,6 +112,16 @@ static void loadTestPage(WebView *view)
                                  "<body><p>inspect me</p></body></html>"),
                   QUrl(QStringLiteral("http://localhost/")));
     QTRY_VERIFY(loaded.count() >= 1);
+}
+
+// DEVT12: the console is a structured tree now — flatten its
+// top-level column-0 texts so assertions can stay one-liners.
+static QString consoleJoined(const BidiPanel &panel)
+{
+    QStringList lines;
+    for (int i = 0; i < panel.m_console->topLevelItemCount(); ++i)
+        lines << panel.m_console->topLevelItem(i)->text(0);
+    return lines.join(QLatin1Char('\n'));
 }
 
 void tst_DevTools::inspectBindsHostPage()
@@ -296,29 +318,27 @@ void tst_DevTools::bidiPanel()
     panel.m_evalLine->setText(QStringLiteral("1+1"));
     emit panel.m_evalLine->returnPressed();
     QVERIFY(panel.m_evalLine->text().isEmpty());
-    QVERIFY(panel.m_console->toPlainText().contains(
-        QStringLiteral("> 1+1")));
+    QVERIFY(consoleJoined(panel).contains(QStringLiteral("> 1+1")));
 
     quint64 id = panel.testRegisterTag(1); // console, plain value
     panel.onResponse(id, ok);
-    QVERIFY(panel.m_console->toPlainText().contains(
-        QStringLiteral("< [1,2]")));
+    QVERIFY(consoleJoined(panel).contains(QStringLiteral("< [1,2]")));
     id = panel.testRegisterTag(1); // console, undefined collapses
     panel.onResponse(id, QByteArray(
         "{\"result\":{\"type\":\"success\",\"result\":"
         "{\"type\":\"undefined\"}}}"));
-    QVERIFY(panel.m_console->toPlainText().contains(
+    QVERIFY(consoleJoined(panel).contains(
         QStringLiteral("< undefined")));
     id = panel.testRegisterTag(1); // console, exceptionDetails text
     panel.onResponse(id, QByteArray(
         "{\"result\":{\"type\":\"exception\",\"exceptionDetails\":"
         "{\"text\":\"ReferenceError: nope\"}}}"));
-    QVERIFY(panel.m_console->toPlainText().contains(
+    QVERIFY(consoleJoined(panel).contains(
         QStringLiteral("< ReferenceError: nope")));
     id = panel.testRegisterTag(1); // console, top-level error envelope
     panel.onResponse(id, QByteArray(
         "{\"error\":{\"message\":\"denied\"}}"));
-    QVERIFY(panel.m_console->toPlainText().contains(
+    QVERIFY(consoleJoined(panel).contains(
         QStringLiteral("< error: denied")));
     id = panel.testRegisterTag(4); // error envelope, non-console tag
     panel.onResponse(id, QByteArray(
@@ -387,8 +407,15 @@ void tst_DevTools::bidiPanel()
     panel.onEvent(QByteArray(
         "{\"method\":\"log.entryAdded\",\"params\":{\"level\":\"warn\""
         ",\"text\":\"hello\"}}"));
-    QVERIFY(panel.m_console->toPlainText().contains(
-        QStringLiteral("[warn] hello")));
+    // DEVT12: the level is the row's wash/icon, not a text prefix.
+    QVERIFY(consoleJoined(panel).contains(QStringLiteral("hello")));
+    {
+        QTreeWidgetItem *row = panel.m_console->topLevelItem(
+            panel.m_console->topLevelItemCount() - 1);
+        QCOMPARE(row->data(0, Qt::UserRole).toInt(), 2); // Warning
+        QVERIFY(!row->icon(0).isNull());
+        QVERIFY(row->background(0).color().isValid());
+    }
     panel.onEvent(QByteArray(
         "{\"method\":\"browsingContext.contextCreated\",\"params\":{}}"));
     panel.onEvent(QByteArray(
@@ -503,6 +530,17 @@ void tst_DevTools::bidiPanel()
     QCOMPARE(net->rowCount(), 5);
     QCOMPARE(netProxy->rowCount(), 5);
 
+    // DEVT07: Chrome's footer line — count, transferred bytes, and
+    // the Finish span track the visible (filtered) rows.  Only r1
+    // carries a real byte count (2048); r4's end (1150) is the last
+    // completion after r1's start (1000).
+    QVERIFY(panel.m_networkSummary);
+    QCOMPARE(panel.m_networkSummary->objectName(),
+             QStringLiteral("bidiNetworkSummary"));
+    QCOMPARE(panel.m_networkSummary->text(),
+             QStringLiteral("5 requests · 2.0 kB transferred "
+                            "· 2.0 kB resources · Finish: 150 ms"));
+
     // Chips are an exclusive filtered view over the same rows.
     const auto chip = [&panel](const QString &label) -> QAbstractButton * {
         for (QAbstractButton *button : panel.m_typeChips->buttons()) {
@@ -514,6 +552,11 @@ void tst_DevTools::bidiPanel()
     QCOMPARE(panel.m_typeChips->buttons().count(), 12);
     chip(QStringLiteral("Doc"))->click();
     QCOMPARE(netProxy->rowCount(), 1);
+    // The footer re-slices with the filter — r1 alone finished in 42ms
+    // (and gets the singular noun, like Chrome).
+    QCOMPARE(panel.m_networkSummary->text(),
+             QStringLiteral("1 request · 2.0 kB transferred "
+                            "· 2.0 kB resources · Finish: 42 ms"));
     chip(QStringLiteral("Fetch/XHR"))->click();
     QCOMPARE(netProxy->rowCount(), 1);
     chip(QStringLiteral("Img"))->click();
@@ -587,6 +630,57 @@ void tst_DevTools::bidiPanel()
     QCOMPARE(netProxy->data(netProxy->index(1, 4)).toString(),
              QStringLiteral("4.0 kB"));
 
+    // DEVT07: cache provenance stays honest — memory/disk hits show
+    // Chrome's "(...cache)" label instead of a bogus byte count, and
+    // the TTFB split rides along for the two-tone waterfall bar.
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.beforeRequestSent\",\"params\":{"
+        "\"timestamp\":300.0,\"request\":{\"request\":\"c1\","
+        "\"method\":\"GET\",\"url\":\"http://a/style.css\","
+        "\"type\":\"Stylesheet\"}}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.requestServedFromCache\",\"params\":{"
+        "\"request\":{\"request\":\"c1\"}}}"));
+    QCOMPARE(net->data(net->index(2, 4)).toString(),
+             QStringLiteral("(memory cache)"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.beforeRequestSent\",\"params\":{"
+        "\"timestamp\":310.0,\"request\":{\"request\":\"c2\","
+        "\"method\":\"GET\",\"url\":\"http://a/app.js\","
+        "\"type\":\"Script\"}}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.responseStarted\",\"params\":{"
+        "\"timestamp\":315.0,\"type\":\"Script\",\"request\":{"
+        "\"request\":\"c2\"},\"response\":{\"status\":200,"
+        "\"fromDiskCache\":true,"
+        "\"timing\":{\"receiveHeadersEnd\":2.0}}}}"));
+    QCOMPARE(net->data(net->index(3, 4)).toString(),
+             QStringLiteral("(disk cache)"));
+    // TtfbRole = Qt::UserRole + 9 (mirrors bidipanel.cpp's enum).
+    QCOMPARE(net->data(net->index(3, 0), Qt::UserRole + 9).toDouble(),
+             2.0);
+
+    // DEVT07: page-load milestones feed the footer relative to the
+    // recording window's start (s1 @100 — the earliest start).
+    // Milestones for another context are ignored.
+    panel.onEvent(QByteArray(
+        "{\"method\":\"browsingContext.domContentLoaded\",\"params\":{"
+        "\"context\":\"elsewhere\",\"timestamp\":330.0}}"));
+    QVERIFY(!panel.m_networkSummary->text().contains(
+        QStringLiteral("DOMContentLoaded")));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"browsingContext.domContentLoaded\",\"params\":{"
+        "\"context\":\"ctx1\",\"timestamp\":340.0}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"browsingContext.load\",\"params\":{"
+        "\"context\":\"ctx1\",\"timestamp\":350.0}}"));
+    QVERIFY(panel.m_networkSummary->text().contains(
+        QStringLiteral("4 requests")));
+    QVERIFY(panel.m_networkSummary->text().contains(
+        QStringLiteral("DOMContentLoaded: 240 ms")));
+    QVERIFY(panel.m_networkSummary->text().contains(
+        QStringLiteral("Load: 250 ms")));
+
     // The offscreen grab renders the red failed row — smoke for the
     // Chrome look (palette-safe red pixels present in the view).
     panel.clearNetworkLog();
@@ -608,6 +702,28 @@ void tst_DevTools::bidiPanel()
         "{\"method\":\"network.fetchError\",\"params\":{\"request\":"
         "{\"request\":\"f1\"},\"errorText\":\"net::ERR_X\","
         "\"timestamp\":150.0}}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.beforeRequestSent\",\"params\":{"
+        "\"timestamp\":120.0,\"request\":{\"request\":\"f2\","
+        "\"method\":\"GET\",\"url\":\"http://a/logo.png\","
+        "\"type\":\"Image\"}}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.responseStarted\",\"params\":{"
+        "\"timestamp\":160.0,\"type\":\"Image\",\"request\":{"
+        "\"request\":\"f2\"},\"response\":{\"status\":200,"
+        "\"timing\":{\"receiveHeadersEnd\":25.0}}}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.responseCompleted\",\"params\":{"
+        "\"timestamp\":210.0,\"request\":{\"request\":\"f2\"},"
+        "\"response\":{\"encodedDataLength\":5120}}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.beforeRequestSent\",\"params\":{"
+        "\"timestamp\":130.0,\"request\":{\"request\":\"f3\","
+        "\"method\":\"GET\",\"url\":\"http://a/fonts.css\","
+        "\"type\":\"Stylesheet\"}}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.requestServedFromCache\",\"params\":{"
+        "\"request\":{\"request\":\"f3\"}}}"));
     panel.resize(700, 300);
     panel.show();
     if (QTabWidget *tabs = panel.findChild<QTabWidget *>())
@@ -629,15 +745,31 @@ void tst_DevTools::bidiPanel()
     }
     QVERIFY(sawRed);
 
-    // DEVT07: Chrome's status line — the two rows above already fed
-    // it (18 kB wire, 80 ms recording window).
+    // DEVT07: column floors — squeezing the dock pins every column at
+    // its minimum instead of losing Size/Time/Waterfall, and the
+    // overflow becomes a horizontal scrollbar.
+    QHeaderView *netHead = panel.m_networkView->horizontalHeader();
+    QVERIFY(netHead->sectionSize(6) >= 130); // Waterfall at 700px
+    QVERIFY(netHead->sectionSize(4) >= 64);  // Size
+    QVERIFY(netHead->sectionSize(5) >= 56);  // Time
+    panel.resize(430, 300);
+    QCoreApplication::processEvents();
+    QTRY_VERIFY(netHead->sectionSize(0) >= 90);  // Name floor
+    QVERIFY(netHead->sectionSize(6) >= 130);
+    QVERIFY(netHead->sectionSize(4) >= 64);
+    QVERIFY(netHead->sectionSize(1) >= 48);
+    QTRY_VERIFY(panel.m_networkView->horizontalScrollBar()
+                    ->maximum() > 0);
+
+    // DEVT07: Chrome's status line — the f-rows above already fed it
+    // (4 rows, 23.0 kB wire, 100→210 ms recording window).
     QVERIFY(panel.m_networkSummary);
     QVERIFY(panel.m_networkSummary->text().contains(
-        QStringLiteral("2 requests")));
+        QStringLiteral("4 requests")));
     QVERIFY(panel.m_networkSummary->text().contains(
-        QStringLiteral("18.0 kB transferred")));
+        QStringLiteral("23.0 kB transferred")));
     QVERIFY(panel.m_networkSummary->text().contains(
-        QStringLiteral("Finish: 80 ms")));
+        QStringLiteral("Finish: 110 ms")));
 
     // The response's own encodedDataLength is the interim Size while
     // a body still loads; the completion overrides it.
@@ -663,7 +795,7 @@ void tst_DevTools::bidiPanel()
     QCOMPARE(net->data(net->index(0, 4)).toString(),
              QStringLiteral("2.0 kB"));
     QVERIFY(panel.m_networkSummary->text().contains(
-        QStringLiteral("1 requests")));
+        QStringLiteral("1 request")));
     QVERIFY(panel.m_networkSummary->text().contains(
         QStringLiteral("2.0 kB transferred")));
     QVERIFY(panel.m_networkSummary->text().contains(
@@ -682,7 +814,7 @@ void tst_DevTools::bidiPanel()
         "\"timestamp\":1610.0,\"request\":{\"request\":\"n2\"},"
         "\"response\":{\"status\":200,\"fromDiskCache\":true}}}"));
     QCOMPARE(net->data(net->index(1, 4)).toString(),
-             QStringLiteral("(cached)"));
+             QStringLiteral("(disk cache)"));
 
     // Page-load timings land on the footer for the current context
     // (window start is n1's 1000 ms) and are ignored for others.
@@ -726,8 +858,8 @@ void tst_DevTools::bidiPanel()
     QVERIFY(nh->sectionSize(0) >= 160);
     panel.resize(360, 320);
     QCoreApplication::processEvents();
-    QCOMPARE(nh->sectionSize(6), 140);
-    QCOMPARE(nh->sectionSize(0), 160);
+    QCOMPARE(nh->sectionSize(6), 130); // Waterfall floor
+    QCOMPARE(nh->sectionSize(0), 90);  // Name floor
     QVERIFY(nh->sectionSize(4) > 0);
     QVERIFY(nh->sectionSize(5) > 0);
     QTRY_VERIFY(
@@ -753,6 +885,352 @@ void tst_DevTools::bidiPanel()
     QVERIFY(net->rowCount() <= 1000);
 }
 
+// DEVT10: the context selector mirrors the window's real tab strip —
+// tabs with no CDP target (engine tabs, widget tabs) appear disabled
+// with the reason instead of being silently absent, and a strip whose
+// first slot isn't debuggable never strands the selection on it.
+void tst_DevTools::bidiContextSelector()
+{
+    const auto flagsOf = [](QComboBox *combo, int row) {
+        QStandardItemModel *model =
+            qobject_cast<QStandardItemModel *>(combo->model());
+        QStandardItem *item = model ? model->item(row) : nullptr;
+        return item ? item->flags() : Qt::ItemFlags();
+    };
+    const auto disabled = [&flagsOf](QComboBox *combo, int row) {
+        return !(flagsOf(combo, row) & Qt::ItemIsEnabled);
+    };
+
+    // Strip order: [engine tab] [webengine tab] [widget tab] — the
+    // user's report had a non-CDP tab in slot 0.
+    FakeEngineBackend fake;
+    TabWidget strip;
+    strip.makeNewTab(true);
+    EngineRegistry::registerBackend(&fake);
+    QVERIFY(strip.reloadTabInEngine(0, QStringLiteral("fake")));
+    QVERIFY(strip.engineTab(0));
+    WebView *view = strip.makeNewTab(true);
+    QVERIFY(view);
+    QSignalSpy loaded(view->page(), &QWebEnginePage::loadFinished);
+    view->setHtml(QStringLiteral("<html><head><title>web tab</title>"
+                                 "</head><body>x</body></html>"),
+                  QUrl(QStringLiteral("http://devtools.test/")));
+    QTRY_VERIFY(loaded.count() >= 1);
+    strip.addWidgetTab(new QLabel(QStringLiteral("prefs")),
+                       QStringLiteral("Preferences"), QIcon(), false);
+    QCOMPARE(strip.count(), 3);
+
+    BidiPanel panel;
+    panel.setTabWidget(&strip);
+    // Before any getTree answer the strip rows already list — every
+    // one disabled: engine tab, no-target web tab, widget tab.
+    QCOMPARE(panel.m_contextCombo->count(), 3);
+    QVERIFY(disabled(panel.m_contextCombo, 0));
+    QVERIFY(disabled(panel.m_contextCombo, 1));
+    QVERIFY(disabled(panel.m_contextCombo, 2));
+    QVERIFY(panel.currentContext().isEmpty());
+
+    // getTree: the web tab claims its context by committed url; a
+    // foreign-window page stays appended+enabled as before.
+    const QByteArray tree = QByteArray(
+        "{\"result\":{\"contexts\":["
+        "{\"context\":\"ctx-web\",\"url\":\"")
+        + view->url().toString().toUtf8()
+        + QByteArray("\",\"title\":\"web tab\"},"
+        "{\"context\":\"ctx-other\",\"url\":\"http://elsewhere/\","
+        "\"title\":\"Elsewhere\"}]}}");
+    panel.onResponse(4242, tree);
+    QCOMPARE(panel.m_contextCombo->count(), 4);
+
+    QVERIFY(disabled(panel.m_contextCombo, 0));
+    QVERIFY(panel.m_contextCombo->itemData(0, Qt::ToolTipRole)
+                .toString().contains(
+                    QStringLiteral("no devtools backend")));
+    QVERIFY(panel.m_contextCombo->itemData(0, Qt::ToolTipRole)
+                .toString().contains(
+                    QStringLiteral("Fake Engine")));
+    QVERIFY(!disabled(panel.m_contextCombo, 1));
+    QCOMPARE(panel.m_contextCombo->itemData(1).toString(),
+             QStringLiteral("ctx-web"));
+    QVERIFY(disabled(panel.m_contextCombo, 2));
+    QVERIFY(panel.m_contextCombo->itemData(2, Qt::ToolTipRole)
+                .toString().contains(QStringLiteral("Not a web page")));
+    QVERIFY(!disabled(panel.m_contextCombo, 3));
+    QCOMPARE(panel.m_contextCombo->itemData(3).toString(),
+             QStringLiteral("ctx-other"));
+
+    // Slot 0 is the engine tab — the selection must have landed on
+    // the first ENABLED row, not index 0.
+    QCOMPARE(panel.currentContext(), QStringLiteral("ctx-web"));
+
+    // Keep-restore still honors a live selection across rebuilds.
+    panel.m_contextCombo->setCurrentIndex(3);
+    QCOMPARE(panel.currentContext(), QStringLiteral("ctx-other"));
+    panel.onResponse(4243, tree);
+    QCOMPARE(panel.currentContext(), QStringLiteral("ctx-other"));
+
+    // A vanished selection falls forward to the first enabled row.
+    panel.onResponse(4244, QByteArray(
+        "{\"result\":{\"contexts\":["
+        "{\"context\":\"ctx-web\",\"url\":\"")
+        + view->url().toString().toUtf8()
+        + QByteArray("\",\"title\":\"web tab\"}]}}"));
+    QCOMPARE(panel.currentContext(), QStringLiteral("ctx-web"));
+
+    // Strip churn with no CDP traffic still re-merges the selector
+    // against the cached tree — a new widget tab appears instantly.
+    // (4244's tree carried only ctx-web, so 4 strip rows + 0
+    // leftovers = 4.)
+    strip.addWidgetTab(new QLabel(QStringLiteral("dl")),
+                       QStringLiteral("Downloads"), QIcon(), false);
+    QCOMPARE(panel.m_contextCombo->count(), 4);
+    QVERIFY(disabled(panel.m_contextCombo, 3));
+    QVERIFY(panel.m_contextCombo->itemData(3, Qt::ToolTipRole)
+                .toString().contains(QStringLiteral("Not a web page")));
+
+    // Index-0 webengine tab: the first row is selectable and evals
+    // route to its context.
+    TabWidget plain;
+    WebView *first = plain.makeNewTab(true);
+    QVERIFY(first);
+    QSignalSpy loaded2(first->page(), &QWebEnginePage::loadFinished);
+    first->setHtml(QStringLiteral("<html><body>first</body></html>"),
+                   QUrl(QStringLiteral("http://first.test/")));
+    QTRY_VERIFY(loaded2.count() >= 1);
+    panel.setTabWidget(&plain);
+    panel.onResponse(4245, QByteArray(
+        "{\"result\":{\"contexts\":[{\"context\":\"ctx-first\",\"url\":\"")
+        + first->url().toString().toUtf8()
+        + QByteArray("\",\"title\":\"first\"}]}}"));
+    QCOMPARE(panel.m_contextCombo->count(), 1);
+    QVERIFY(!disabled(panel.m_contextCombo, 0));
+    QCOMPARE(panel.currentContext(), QStringLiteral("ctx-first"));
+    panel.m_evalLine->setText(QStringLiteral("1+1"));
+    emit panel.m_evalLine->returnPressed();
+    QVERIFY(consoleJoined(panel).contains(QStringLiteral("> 1+1")));
+
+    // All-disabled strip: the combo shows rows but no context.
+    TabWidget widgetsOnly;
+    widgetsOnly.addWidgetTab(new QLabel(QStringLiteral("p")),
+                             QStringLiteral("Preferences"), QIcon(),
+                             false);
+    panel.setTabWidget(&widgetsOnly);
+    panel.onResponse(4246, QByteArray(
+        "{\"result\":{\"contexts\":[]}}"));
+    QCOMPARE(panel.m_contextCombo->count(), 1);
+    QVERIFY(disabled(panel.m_contextCombo, 0));
+    QVERIFY(panel.currentContext().isEmpty());
+
+    EngineRegistry::unregisterBackend(&fake);
+}
+
+// DEVT12: the Console's Chromium-parity pass — per-level washes and
+// icons, the checkable "Default levels" dropdown + live text filter,
+// the right-edge source link, Chrome's repeat-count badge on
+// identical consecutive entries, expandable preview children, a
+// console-scoped Preserve log, and Up/Down history on the REPL
+// prompt.
+void tst_DevTools::bidiConsoleParity()
+{
+    BidiPanel panel;
+    panel.onConnectionChanged(BidiClient::Connected);
+    panel.onResponse(7777, QByteArray(
+        "{\"result\":{\"contexts\":["
+        "{\"context\":\"ctx1\",\"url\":\"http://a/\"}]}}"));
+    QCOMPARE(panel.currentContext(), QStringLiteral("ctx1"));
+
+    // Toolbar controls exist — clear, filter, levels dropdown,
+    // console-scoped Preserve log — and the REPL sits on a '>'
+    // prompt row under the view.
+    QVERIFY(panel.findChild<QWidget *>(
+                QStringLiteral("bidiConsoleToolbar")));
+    QVERIFY(panel.m_clearConsole);
+    QVERIFY(panel.m_consoleFilter);
+    QVERIFY(panel.m_consoleLevels);
+    QVERIFY(panel.m_consolePreserve);
+    QVERIFY(panel.findChild<QWidget *>(
+                QStringLiteral("bidiConsolePrompt"))
+            ->findChild<QLabel *>(
+                QStringLiteral("bidiConsolePromptGlyph")));
+    QCOMPARE(panel.m_console->columnCount(), 3);
+
+    const auto feed = [&panel](const QString &level,
+                               const QString &text,
+                               const QByteArray &extra = QByteArray()) {
+        panel.onEvent(QByteArray(
+            "{\"method\":\"log.entryAdded\",\"params\":{\"level\":\"")
+            + level.toUtf8() + QByteArray("\",\"text\":\"")
+            + text.toUtf8() + QByteArray("\"") + extra
+            + QByteArray("}}"));
+    };
+
+    // Levels — each class gets its own chrome: error row washes red
+    // + critical icon, warning washes amber + warning icon, debug
+    // dims to the disabled-text color, info stays plain.
+    feed(QStringLiteral("error"), QStringLiteral("boom"));
+    feed(QStringLiteral("warn"), QStringLiteral("careful"));
+    feed(QStringLiteral("debug"), QStringLiteral("chatty"));
+    feed(QStringLiteral("info"), QStringLiteral("note"));
+    QCOMPARE(panel.m_console->topLevelItemCount(), 4);
+    QTreeWidgetItem *err = panel.m_console->topLevelItem(0);
+    QTreeWidgetItem *wrn = panel.m_console->topLevelItem(1);
+    QTreeWidgetItem *dbg = panel.m_console->topLevelItem(2);
+    QTreeWidgetItem *inf = panel.m_console->topLevelItem(3);
+    QCOMPARE(err->data(0, Qt::UserRole).toInt(), 3);   // LevelError
+    QCOMPARE(wrn->data(0, Qt::UserRole).toInt(), 2);   // LevelWarning
+    QCOMPARE(dbg->data(0, Qt::UserRole).toInt(), 0);   // LevelVerbose
+    QCOMPARE(inf->data(0, Qt::UserRole).toInt(), 1);   // LevelInfo
+    QVERIFY(!err->icon(0).isNull());
+    QVERIFY(!wrn->icon(0).isNull());
+    QVERIFY(err->data(0, Qt::BackgroundRole).isValid());
+    QVERIFY(wrn->data(0, Qt::BackgroundRole).isValid());
+    QVERIFY(!inf->data(0, Qt::BackgroundRole).isValid());
+    QVERIFY(dbg->data(0, Qt::ForegroundRole).isValid());
+    // No textual "[level]" prefix survived the structure.
+    QVERIFY(!err->text(0).startsWith(QLatin1String("[")));
+
+    // "Default levels" hides Verbose out of the box (Chrome's
+    // default set); the debug row is hidden, the rest visible.
+    QCOMPARE(panel.m_consoleLevels->text(),
+             QStringLiteral("Default levels"));
+    QVERIFY(dbg->isHidden());
+    QVERIFY(!err->isHidden());
+
+    // The dropdown's checkable actions re-slice live: Errors off
+    // hides the error row and renames the button like Chrome.
+    QMenu *menu = panel.m_consoleLevels->menu();
+    QAction *verbose = nullptr, *errors = nullptr;
+    for (QAction *action : menu->actions()) {
+        if (action->text() == QLatin1String("Verbose"))
+            verbose = action;
+        if (action->text() == QLatin1String("Errors"))
+            errors = action;
+    }
+    QVERIFY(verbose && errors);
+    errors->setChecked(false);
+    QVERIFY(err->isHidden());
+    QCOMPARE(panel.m_consoleLevels->text(),
+             QStringLiteral("Custom levels"));
+    errors->setChecked(true);
+    QVERIFY(!err->isHidden());
+    verbose->setChecked(true);
+    QVERIFY(!dbg->isHidden());
+    QCOMPARE(panel.m_consoleLevels->text(),
+             QStringLiteral("All levels"));
+    verbose->setChecked(false);
+    QCOMPARE(panel.m_consoleLevels->text(),
+             QStringLiteral("Default levels"));
+
+    // The text filter matches the message and the source column.
+    feed(QStringLiteral("info"), QStringLiteral("needle entry"),
+         QByteArray(",\"source\":{\"url\":\"http://a/app.js\","
+                    "\"line\":6}"));
+    QTreeWidgetItem *src = panel.m_console->topLevelItem(
+        panel.m_console->topLevelItemCount() - 1);
+    QCOMPARE(src->text(2), QStringLiteral("app.js:6"));
+    QCOMPARE(src->toolTip(2),
+             QStringLiteral("http://a/app.js:6"));
+    panel.m_consoleFilter->setText(QStringLiteral("needle"));
+    QVERIFY(!src->isHidden());
+    QVERIFY(err->isHidden());
+    panel.m_consoleFilter->setText(QStringLiteral("app.js"));
+    QVERIFY(!src->isHidden()); // source column matches too
+    panel.m_consoleFilter->clear();
+    QVERIFY(!err->isHidden());
+
+    // Repeat marker: three identical consecutive entries collapse
+    // into one row with a count badge; a different entry in between
+    // restarts the run.
+    feed(QStringLiteral("error"), QStringLiteral("integrity"));
+    feed(QStringLiteral("error"), QStringLiteral("integrity"));
+    feed(QStringLiteral("error"), QStringLiteral("integrity"));
+    QTreeWidgetItem *spam = panel.m_console->topLevelItem(
+        panel.m_console->topLevelItemCount() - 1);
+    QCOMPARE(spam->text(0), QStringLiteral("integrity"));
+    QCOMPARE(spam->text(1), QStringLiteral("3"));
+    feed(QStringLiteral("error"), QStringLiteral("other"));
+    feed(QStringLiteral("error"), QStringLiteral("integrity"));
+    QTreeWidgetItem *tail = panel.m_console->topLevelItem(
+        panel.m_console->topLevelItemCount() - 1);
+    QCOMPARE(tail->text(0), QStringLiteral("integrity"));
+    QCOMPARE(tail->data(0, Qt::UserRole + 2).toInt(), 1);
+    QVERIFY(tail->text(1).isEmpty());
+
+    // Expandable previews: args carrying a CDP preview grow
+    // "name: value" children (nested previews recurse; overflow gets
+    // the "…" row); args without a preview stay flat.
+    panel.onEvent(QByteArray(
+        "{\"method\":\"log.entryAdded\",\"params\":{\"level\":\"log\""
+        ",\"text\":\"Array(2)\",\"args\":[{\"type\":\"object\","
+        "\"description\":\"Array(2)\",\"preview\":{\"type\":\"object\""
+        ",\"subtype\":\"array\",\"overflow\":true,\"properties\":["
+        "{\"name\":\"0\",\"type\":\"number\",\"value\":\"7\"},"
+        "{\"name\":\"meta\",\"type\":\"object\",\"valuePreview\":{"
+        "\"description\":\"Object\",\"properties\":["
+        "{\"name\":\"id\",\"type\":\"number\",\"value\":\"9\"}]}}]}"
+        "}]}}"));
+    QTreeWidgetItem *arr = panel.m_console->topLevelItem(
+        panel.m_console->topLevelItemCount() - 1);
+    QVERIFY(arr->childCount() >= 3);
+    QCOMPARE(arr->child(0)->text(0), QStringLiteral("0: 7"));
+    QCOMPARE(arr->child(1)->text(0), QStringLiteral("meta: Object"));
+    QCOMPARE(arr->child(1)->child(0)->text(0),
+             QStringLiteral("id: 9"));
+    QCOMPARE(arr->child(arr->childCount() - 1)->text(0),
+             QStringLiteral("…"));
+    feed(QStringLiteral("log"), QStringLiteral("flat"));
+    QTreeWidgetItem *flat = panel.m_console->topLevelItem(
+        panel.m_console->topLevelItemCount() - 1);
+    QCOMPARE(flat->childCount(), 0);
+
+    // Context scoping: entries for another page are dropped; a
+    // contextless entry still lands.
+    const int before = panel.m_console->topLevelItemCount();
+    feed(QStringLiteral("info"), QStringLiteral("foreign"),
+         QByteArray(",\"context\":\"other-ctx\""));
+    QCOMPARE(panel.m_console->topLevelItemCount(), before);
+    feed(QStringLiteral("info"), QStringLiteral("ours"),
+         QByteArray(",\"context\":\"ctx1\""));
+    QCOMPARE(panel.m_console->topLevelItemCount(), before + 1);
+
+    // Navigation clears the console unless its own Preserve log is
+    // ticked — independent of the Network tab's checkbox.
+    panel.onEvent(QByteArray(
+        "{\"method\":\"browsingContext.navigationStarted\",\"params\":"
+        "{\"context\":\"ctx1\"}}"));
+    QCOMPARE(panel.m_console->topLevelItemCount(), 0);
+    panel.m_consolePreserve->setChecked(true);
+    feed(QStringLiteral("info"), QStringLiteral("kept"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"browsingContext.navigationStarted\",\"params\":"
+        "{\"context\":\"ctx1\"}}"));
+    QCOMPARE(panel.m_console->topLevelItemCount(), 1);
+    panel.m_consolePreserve->setChecked(false);
+
+    // The REPL prompt recalls history on Up/Down — first Up stashes
+    // the draft, Down past the newest restores it.
+    panel.m_evalLine->setText(QStringLiteral("1+1"));
+    emit panel.m_evalLine->returnPressed();
+    panel.m_evalLine->setText(QStringLiteral("2+2"));
+    emit panel.m_evalLine->returnPressed();
+    panel.m_evalLine->setText(QStringLiteral("draft"));
+    QKeyEvent up(QEvent::KeyPress, Qt::Key_Up, Qt::NoModifier);
+    QCoreApplication::sendEvent(panel.m_evalLine, &up);
+    QCOMPARE(panel.m_evalLine->text(), QStringLiteral("2+2"));
+    QCoreApplication::sendEvent(panel.m_evalLine, &up);
+    QCOMPARE(panel.m_evalLine->text(), QStringLiteral("1+1"));
+    QKeyEvent down(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+    QCoreApplication::sendEvent(panel.m_evalLine, &down);
+    QCOMPARE(panel.m_evalLine->text(), QStringLiteral("2+2"));
+    QCoreApplication::sendEvent(panel.m_evalLine, &down);
+    QCOMPARE(panel.m_evalLine->text(), QStringLiteral("draft"));
+
+    // The Clear button wipes the console regardless of preserve.
+    feed(QStringLiteral("info"), QStringLiteral("wipe"));
+    panel.m_clearConsole->click();
+    QCOMPARE(panel.m_console->topLevelItemCount(), 0);
+}
+
 // DEVT09 helpers — pixel-level checks on the painted waterfall.
 static bool colorClose(const QColor &a, const QColor &b, int tol = 10)
 {
@@ -768,15 +1246,27 @@ static QColor waterfallFailColor()
         ? QColor(0xff, 0x8a, 0x80) : QColor(0xc6, 0x28, 0x28);
 }
 
-// The delegate paints Highlight swatches with a darker(140) edge;
-// failed rows use the same shape in the fail color.  Anything close
-// to one of those four counts as bar ink.
+// The delegate paints per-type swatches (DEVT11) with a darker(140)
+// edge; failed rows use the same shape in the fail color.  Anything
+// close to a swatch, its edge, or the fail pair counts as bar ink.
 static bool isBarPixel(const QColor &c)
 {
-    const QColor hi = qApp->palette().color(QPalette::Highlight);
+    static const QStringList types = {
+        QStringLiteral("document"), QStringLiteral("stylesheet"),
+        QStringLiteral("script"), QStringLiteral("font"),
+        QStringLiteral("image"), QStringLiteral("media"),
+        QStringLiteral("manifest"), QStringLiteral("websocket"),
+        QStringLiteral("wasm"), QStringLiteral("xhr"),
+        QStringLiteral("other")
+    };
+    for (const QString &type : types) {
+        const QColor swatch =
+            AroraStyle::networkTypeSwatch(type, qApp->palette());
+        if (colorClose(c, swatch) || colorClose(c, swatch.darker(140)))
+            return true;
+    }
     const QColor fail = waterfallFailColor();
-    return colorClose(c, hi) || colorClose(c, hi.darker(140))
-        || colorClose(c, fail) || colorClose(c, fail.darker(140));
+    return colorClose(c, fail) || colorClose(c, fail.darker(140));
 }
 
 // visualRect is in viewport coordinates; a widget grab() paints the
@@ -934,19 +1424,20 @@ void tst_DevTools::bidiWaterfallLegibility()
     QCOMPARE(none.first, -1);
 
     // --- pending beside a completed row still paints, translucent:
-    // its ink is Highlight alpha-120 composited over Base.
+    // its ink is the type swatch alpha-120 composited over Base.
     feed("p2", 100.0, -1.0);
     feed("c1", 0.0, 300.0);
     QVERIFY(rowFor("p2") >= 0);
     regrab();
     const QRect pCell = cellInGrab(
         panel.m_networkView, proxy, rowFor("p2"));
-    const QColor hi = qApp->palette().color(QPalette::Highlight);
+    const QColor swatch = AroraStyle::networkTypeSwatch(
+        QStringLiteral("image"), qApp->palette());
     const QColor base = qApp->palette().color(QPalette::Base);
     const QColor blended(
-        (120 * hi.red() + 135 * base.red()) / 255,
-        (120 * hi.green() + 135 * base.green()) / 255,
-        (120 * hi.blue() + 135 * base.blue()) / 255);
+        (120 * swatch.red() + 135 * base.red()) / 255,
+        (120 * swatch.green() + 135 * base.green()) / 255,
+        (120 * swatch.blue() + 135 * base.blue()) / 255);
     bool sawPending = false;
     for (int x = pCell.left() + 2; x <= pCell.right() - 2 && !sawPending;
          ++x) {
@@ -987,6 +1478,481 @@ void tst_DevTools::bidiWaterfallLegibility()
     }
     QVERIFY(sawDcl);
     QVERIFY(sawLoad);
+}
+
+// DEVT11: the Chromium parity pass — the toolbar row gains the
+// record/stop toggle plus honestly-disabled throttling and
+// response-search controls, waterfall bars take per-type swatches,
+// an ms ruler rides the column header, the waterfall hover breaks
+// the raw CDP ResourceTiming into phases, and cache-served rows
+// gray out.
+void tst_DevTools::bidiNetworkParity()
+{
+    BidiPanel panel;
+    panel.onConnectionChanged(BidiClient::Connected);
+    panel.onResponse(7777, QByteArray(
+        "{\"result\":{\"contexts\":["
+        "{\"context\":\"ctx1\",\"url\":\"http://a/\"}]}}"));
+
+    QAbstractTableModel *net = panel.m_networkModel;
+
+    // Toolbar: Chrome's row — the record toggle starts recording,
+    // the clear button sits next to it, throttling + response search
+    // occupy their slots honestly disabled with the reason stated.
+    QVERIFY(panel.m_recordToggle);
+    QVERIFY(panel.m_recordToggle->isCheckable());
+    QVERIFY(panel.m_recordToggle->isChecked());
+    QVERIFY(!panel.m_recordToggle->icon().isNull());
+    QVERIFY(panel.m_clearRequests);
+    QVERIFY(panel.m_throttling);
+    QVERIFY(!panel.m_throttling->isEnabled());
+    QVERIFY(panel.m_throttling->toolTip().contains(
+        QStringLiteral("not exposed")));
+    QVERIFY(panel.m_responseSearch);
+    QVERIFY(!panel.m_responseSearch->isEnabled());
+    QVERIFY(panel.m_responseSearch->toolTip().contains(
+        QStringLiteral("response bodies")));
+
+    // Record off is Chrome's stop: network.* events still arrive
+    // but nothing is logged; recording picks up where it left off.
+    panel.m_recordToggle->setChecked(false);
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.beforeRequestSent\",\"params\":{"
+        "\"timestamp\":100.0,\"request\":{\"request\":\"p1\","
+        "\"method\":\"GET\",\"url\":\"http://a/paused\","
+        "\"type\":\"Document\"}}}"));
+    QCOMPARE(net->rowCount(), 0);
+    panel.m_recordToggle->setChecked(true);
+    QVERIFY(panel.m_recordToggle->toolTip().contains(
+        QStringLiteral("Stop recording")));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.beforeRequestSent\",\"params\":{"
+        "\"timestamp\":100.0,\"request\":{\"request\":\"p1\","
+        "\"method\":\"GET\",\"url\":\"http://a/paused\","
+        "\"type\":\"Document\"}}}"));
+    QCOMPARE(net->rowCount(), 1);
+
+    // The raw ResourceTiming block becomes the waterfall hover's
+    // per-segment breakdown — every phase CDP reported.
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.responseStarted\",\"params\":{"
+        "\"timestamp\":140.0,\"type\":\"Document\",\"request\":{"
+        "\"request\":\"p1\"},\"response\":{\"status\":200,"
+        "\"timing\":{\"dnsStart\":1.0,\"dnsEnd\":5.0,"
+        "\"connectStart\":5.0,\"connectEnd\":25.0,"
+        "\"sslStart\":8.0,\"sslEnd\":24.0,"
+        "\"sendStart\":25.0,\"sendEnd\":26.0,"
+        "\"receiveHeadersEnd\":60.0}}}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.responseCompleted\",\"params\":{"
+        "\"timestamp\":200.0,\"request\":{\"request\":\"p1\"},"
+        "\"response\":{\"encodedDataLength\":1024,"
+        "\"decodedDataLength\":4096}}}"));
+    const QString tip =
+        net->data(net->index(0, 6), Qt::ToolTipRole).toString();
+    QVERIFY(tip.contains(QStringLiteral("DNS Lookup: 4 ms")));
+    QVERIFY(tip.contains(
+        QStringLiteral("Initial connection: 20 ms")));
+    QVERIFY(tip.contains(QStringLiteral("SSL: 16 ms")));
+    QVERIFY(tip.contains(QStringLiteral("Request sent: 1 ms")));
+    QVERIFY(tip.contains(QStringLiteral("Waiting (TTFB): 34 ms")));
+    QVERIFY(tip.contains(QStringLiteral("Content Download: 40 ms")));
+
+    // Size hover: wire bytes + the decoded resource size, like
+    // Chrome's "transferred over network, resource size".
+    const QString sizeTip =
+        net->data(net->index(0, 4), Qt::ToolTipRole).toString();
+    QVERIFY(sizeTip.contains(
+        QStringLiteral("1.0 kB transferred over network")));
+    QVERIFY(sizeTip.contains(
+        QStringLiteral("resource size 4.0 kB")));
+
+    // A cache-served row grays out (the request hit no wire) while
+    // the live row keeps the default foreground.
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.beforeRequestSent\",\"params\":{"
+        "\"timestamp\":300.0,\"request\":{\"request\":\"p2\","
+        "\"method\":\"GET\",\"url\":\"http://a/cached.css\","
+        "\"type\":\"Stylesheet\"}}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.requestServedFromCache\",\"params\":{"
+        "\"request\":{\"request\":\"p2\"}}}"));
+    const QVariant grayed =
+        net->data(net->index(1, 0), Qt::ForegroundRole);
+    QVERIFY(grayed.isValid());
+    QVERIFY(grayed.value<QColor>() != waterfallFailColor());
+    QVERIFY(!net->data(net->index(0, 0), Qt::ForegroundRole)
+                .isValid());
+
+    // The ruler's ladder covers the recording window on nice,
+    // evenly-spaced steps (p1 spans 100->300 ms).
+    const QVector<double> ticks = panel.testWaterfallTicks();
+    QVERIFY(ticks.size() >= 3);
+    QVERIFY(qAbs(ticks.first() - 100.0) < 1.0);
+    QVERIFY(ticks.last() <= panel.testWaterfallDisplayEnd() + 0.001);
+    const double step = ticks.at(1) - ticks.at(0);
+    for (int i = 2; i < ticks.size(); ++i)
+        QVERIFY(qAbs(ticks.at(i) - ticks.at(i - 1) - step) < 0.001);
+
+    // Per-type swatches: the Script row's cell paints amber ink the
+    // Image row's does not — Chrome's type-colored waterfall.
+    panel.clearNetworkLog();
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.beforeRequestSent\",\"params\":{"
+        "\"timestamp\":0.0,\"request\":{\"request\":\"t1\","
+        "\"method\":\"GET\",\"url\":\"http://a/app.js\","
+        "\"type\":\"Script\"}}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.responseCompleted\",\"params\":{"
+        "\"timestamp\":100.0,\"request\":{\"request\":\"t1\"},"
+        "\"response\":{\"encodedDataLength\":128}}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.beforeRequestSent\",\"params\":{"
+        "\"timestamp\":0.0,\"request\":{\"request\":\"t2\","
+        "\"method\":\"GET\",\"url\":\"http://a/pic.png\","
+        "\"type\":\"Image\"}}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.responseCompleted\",\"params\":{"
+        "\"timestamp\":150.0,\"request\":{\"request\":\"t2\"},"
+        "\"response\":{\"encodedDataLength\":128}}}"));
+    QTabWidget *tabs = panel.findChild<QTabWidget *>();
+    QVERIFY(tabs);
+    tabs->setCurrentWidget(panel.m_networkView->parentWidget());
+    panel.resize(900, 320);
+    panel.show();
+    QCoreApplication::processEvents();
+    const QImage shot = panel.m_networkView->grab().toImage();
+    QSortFilterProxyModel *proxy = panel.m_networkProxy;
+    const auto rowFor = [proxy](const QString &name) -> int {
+        for (int r = 0; r < proxy->rowCount(); ++r) {
+            if (proxy->index(r, 0).data().toString() == name)
+                return r;
+        }
+        return -1;
+    };
+    const auto cellHas = [&](const QString &name,
+                             const QColor &want) {
+        const int row = rowFor(name);
+        if (row < 0)
+            return false;
+        const QRect cell = cellInGrab(panel.m_networkView, proxy,
+                                      row);
+        const int y = cell.center().y();
+        for (int x = cell.left(); x <= cell.right(); ++x) {
+            if (colorClose(shot.pixelColor(x, y), want))
+                return true;
+        }
+        return false;
+    };
+    const QColor amber = AroraStyle::networkTypeSwatch(
+        QStringLiteral("script"), qApp->palette());
+    const QColor purple = AroraStyle::networkTypeSwatch(
+        QStringLiteral("image"), qApp->palette());
+    QVERIFY(cellHas(QStringLiteral("app.js"), amber));
+    QVERIFY(cellHas(QStringLiteral("pic.png"), purple));
+    QVERIFY(!cellHas(QStringLiteral("app.js"), purple));
+    QVERIFY(!cellHas(QStringLiteral("pic.png"), amber));
+
+    // The ruler section paints too — grab the header once so a
+    // paint-time crash/regression is caught; the ladder math itself
+    // is pinned by testWaterfallTicks above.
+    const QByteArray grabDir = qgetenv("ARORA_DEVTOOLS_GRAB_DIR");
+    if (!grabDir.isEmpty()) {
+        panel.m_networkView->horizontalHeader()->grab().save(
+            QString::fromLocal8Bit(grabDir)
+            + QLatin1String("/bidi-network-ruler.png"));
+        panel.m_networkView->grab().save(
+            QString::fromLocal8Bit(grabDir)
+            + QLatin1String("/bidi-network-parity.png"));
+    }
+}
+
+// DEVT13 — the full tab set: Chrome's row order, every new page's
+// widgets present, the DOM/Storage tabs retired into Elements/
+// Application, and the arora.cdp verdicts driving the honest-
+// disabled states.  CdpKind numbers mirror bidipanel.cpp's enum
+// (it is file-local there).
+void tst_DevTools::bidiFullTabSet()
+{
+    BidiPanel panel;
+    panel.show();
+
+    // Tab order: Elements Console Sources Network Performance
+    // Memory Application Security — DOM and Storage are gone.
+    const char *want[] = {
+        "Elements", "Console", "Sources", "Network",
+        "Performance", "Memory", "Application", "Security",
+    };
+    QCOMPARE(panel.m_tabs->count(), 8);
+    for (int i = 0; i < 8; ++i)
+        QCOMPARE(panel.m_tabs->tabText(i),
+                 QString::fromLatin1(want[i]));
+
+    // Elements: tree + toolbar + crumbs + styles pane.
+    QVERIFY(panel.findChild<QWidget *>(
+                QStringLiteral("bidiElementsToolbar")));
+    QVERIFY(panel.findChild<QWidget *>(
+                QStringLiteral("bidiElementsCrumbs")));
+    QVERIFY(panel.m_inspectToggle && panel.m_inspectToggle->isCheckable());
+    QVERIFY(panel.m_stylesView);
+    QVERIFY(panel.m_stylesTitle);
+
+    // Sources: resource tree, read-only view, breakpoint row + list.
+    QVERIFY(panel.m_sourcesTree);
+    QVERIFY(panel.m_sourceView->isReadOnly());
+    QVERIFY(panel.m_bpBar && panel.m_bpLine && panel.m_bpList);
+
+    // Performance / Memory controls exist.
+    QVERIFY(panel.m_cpuToggle && panel.m_cpuToggle->isCheckable());
+    QVERIFY(panel.m_metricsTable && panel.m_cpuTable);
+    QVERIFY(panel.m_heapButton && panel.m_heapTable);
+    QVERIFY(panel.m_perfOffline && panel.m_memOffline);
+    QVERIFY(panel.m_perfOffline->isHidden());
+    QVERIFY(panel.m_memOffline->isHidden());
+
+    // Application: nav tree + four stacked value pages.
+    QVERIFY(panel.m_appTree && panel.m_appStack);
+    QCOMPARE(panel.m_appStack->count(), 4);
+    QVERIFY(panel.m_cookieTable && panel.m_localStorageTable);
+    QVERIFY(panel.m_sessionStorageTable && panel.m_idbTable);
+
+    // Security page labels.
+    QVERIFY(panel.m_secHeadline && panel.m_secDetail);
+    QVERIFY(panel.m_secMixed);
+
+    // Unprobed = not up.
+    QVERIFY(!panel.domainUp(QStringLiteral("CSS")));
+    QCOMPARE(panel.domainReason(QStringLiteral("CSS")),
+             QStringLiteral("not probed"));
+
+    // Drive the probe verdicts: everything up except Profiler and
+    // HeapProfiler — Performance/Memory must disable WITH a reason,
+    // the rest stays up.
+    auto probe = [&panel](const char *domain, bool up) {
+        const quint64 id = panel.testRegisterCdp(
+            1 /*CdpProbe*/, QString::fromLatin1(domain));
+        panel.onResponse(id, up
+            ? QByteArray("{\"result\":{}}")
+            : QByteArray("{\"error\":{\"message\":\"'")
+                  + QByteArray(domain)
+                  + QByteArray("' wasn't found\"}}"));
+    };
+    probe("Runtime", true);
+    probe("DOM", true);
+    probe("CSS", true);
+    probe("Page", true);
+    probe("Debugger", true);
+    probe("Security", true);
+    probe("Performance", true);
+    probe("Profiler", false);
+    probe("HeapProfiler", false);
+    QVERIFY(panel.domainUp(QStringLiteral("CSS")));
+    QVERIFY(panel.domainUp(QStringLiteral("Debugger")));
+    QVERIFY(!panel.domainUp(QStringLiteral("Profiler")));
+    QCOMPARE(panel.domainReason(QStringLiteral("Profiler")),
+             QStringLiteral("'Profiler' wasn't found"));
+
+    // Perf needs Performance+Profiler: Profiler's miss disables it
+    // and explains itself; Memory's HeapProfiler miss does the same.
+    QVERIFY(!panel.m_perfBody->isEnabled());
+    QVERIFY(!panel.m_perfOffline->isHidden());
+    QVERIFY(panel.m_perfOffline->text().contains(
+        QStringLiteral("Profiler")));
+    QVERIFY(!panel.m_memBody->isEnabled());
+    QVERIFY(!panel.m_memOffline->isHidden());
+    QVERIFY(panel.m_memOffline->text().contains(
+        QStringLiteral("HeapProfiler")));
+    // Sources is up (Page answered) and the bp bar is live
+    // (Debugger answered).
+    QVERIFY(panel.m_sourcesTree->isEnabled());
+    QVERIFY(panel.m_bpBar->isEnabled());
+    QCOMPARE(panel.m_stylesTitle->text(),
+             QStringLiteral("Computed styles"));
+
+    // Flip both verdicts up — the bodies re-enable, no fake UI.
+    probe("Profiler", true);
+    probe("HeapProfiler", true);
+    QVERIFY(panel.m_perfBody->isEnabled());
+    QVERIFY(panel.m_memBody->isEnabled());
+    QVERIFY(panel.m_perfOffline->isHidden());
+    QVERIFY(panel.m_memOffline->isHidden());
+
+    // Sources: a canned resource tree builds the grouped nav.
+    {
+        const quint64 id = panel.testRegisterCdp(2 /*CdpResourceTree*/);
+        panel.onResponse(id, QByteArray(
+            "{\"result\":{\"frameTree\":{\"frame\":{\"id\":\"f1\","
+            "\"url\":\"http://a/page.html\"},\"resources\":["
+            "{\"url\":\"http://a/app.js\",\"type\":\"Script\","
+            "\"mimeType\":\"text/javascript\"},"
+            "{\"url\":\"http://a/site.css\",\"type\":\"Stylesheet\","
+            "\"mimeType\":\"text/css\"}]}}}"));
+        QTreeWidgetItem *frame =
+            panel.m_sourcesTree->topLevelItem(0);
+        QVERIFY(frame);
+        QCOMPARE(frame->text(0), QStringLiteral("http://a/page.html"));
+        QCOMPARE(frame->childCount(), 2); // Scripts + Stylesheets
+        QCOMPARE(frame->child(0)->text(0), QStringLiteral("Scripts"));
+        QTreeWidgetItem *js = frame->child(0)->child(0);
+        QCOMPARE(js->text(0), QStringLiteral("app.js"));
+        QCOMPARE(js->data(0, Qt::UserRole + 1).toString(),
+                 QStringLiteral("f1"));
+
+        // Content: raw and base64 bodies both decode.
+        const quint64 cid = panel.testRegisterCdp(
+            3 /*CdpResourceContent*/, QStringLiteral("f1"),
+            QStringLiteral("http://a/app.js"));
+        panel.onResponse(cid, QByteArray(
+            "{\"result\":{\"content\":\"var x=1;\","
+            "\"base64Encoded\":false}}"));
+        QCOMPARE(panel.m_sourceView->toPlainText(),
+                 QStringLiteral("var x=1;"));
+        const quint64 cid2 = panel.testRegisterCdp(
+            3, QStringLiteral("f1"), QStringLiteral("http://a/x"));
+        panel.onResponse(cid2, QByteArray(
+            "{\"result\":{\"content\":\"PGI+bGk8L2I+\","
+            "\"base64Encoded\":true}}"));
+        QCOMPARE(panel.m_sourceView->toPlainText(),
+                 QStringLiteral("<b>li</b>"));
+        // A CDP error lands as readable text, not a crash.
+        const quint64 cid3 = panel.testRegisterCdp(
+            3, QStringLiteral("f1"), QStringLiteral("http://a/gone"));
+        panel.onResponse(cid3, QByteArray(
+            "{\"error\":{\"message\":\"no resource\"}}"));
+        QVERIFY(panel.m_sourceView->toPlainText().contains(
+            QStringLiteral("no resource")));
+    }
+
+    // Breakpoints: a set answer registers a list row keyed by the
+    // real breakpointId; remove clears it.
+    {
+        const quint64 bid = panel.testRegisterCdp(
+            12 /*CdpBpSet*/, QString(), QStringLiteral("http://a/app.js"),
+            7);
+        panel.onResponse(bid, QByteArray(
+            "{\"result\":{\"breakpointId\":\"b1\",\"locations\":[]}}"));
+        QCOMPARE(panel.m_bpList->count(), 1);
+        QVERIFY(panel.m_bpList->item(0)->text().contains(
+            QStringLiteral("app.js:7")));
+        QVERIFY(panel.m_breakpoints.contains(
+            QStringLiteral("b1")));
+        const quint64 rid = panel.testRegisterCdp(
+            13 /*CdpBpRemove*/, QStringLiteral("b1"));
+        panel.onResponse(rid, QByteArray("{\"result\":{}}"));
+        QCOMPARE(panel.m_bpList->count(), 0);
+        QVERIFY(panel.m_breakpoints.isEmpty());
+    }
+
+    // Metrics: the table fills and JSHeapUsedSize feeds the Memory
+    // status line.
+    {
+        const quint64 id = panel.testRegisterCdp(7 /*CdpMetrics*/);
+        panel.onResponse(id, QByteArray(
+            "{\"result\":{\"metrics\":["
+            "{\"name\":\"TaskDuration\",\"value\":0.5},"
+            "{\"name\":\"JSHeapUsedSize\",\"value\":2097152}]}}"));
+        QCOMPARE(panel.m_metricsTable->rowCount(), 2);
+        QCOMPARE(panel.m_metricsTable->item(1, 1)->text(),
+                 QStringLiteral("2.0 MB"));
+        QVERIFY(panel.m_memStatus->text().contains(
+            QStringLiteral("2.0 MB")));
+    }
+
+    // CPU profile: nodes + samples + timeDeltas aggregate into the
+    // top-self table.
+    {
+        const quint64 id = panel.testRegisterCdp(9 /*CdpProfStop*/);
+        panel.onResponse(id, QByteArray(
+            "{\"result\":{\"profile\":{\"nodes\":["
+            "{\"id\":1,\"callFrame\":{\"functionName\":\"root\","
+            "\"url\":\"http://a/app.js\",\"lineNumber\":0},"
+            "\"children\":[2]},"
+            "{\"id\":2,\"callFrame\":{\"functionName\":\"hot\","
+            "\"url\":\"http://a/app.js\",\"lineNumber\":40}}],"
+            "\"samples\":[2,2,1],"
+            "\"timeDeltas\":[1000,2000,500]}}}"));
+        // hot: 3ms self; root: 0.5ms self / 3.5ms total.
+        QCOMPARE(panel.m_cpuTable->rowCount(), 2);
+        QCOMPARE(panel.m_cpuTable->item(0, 0)->text(),
+                 QStringLiteral("hot"));
+        QCOMPARE(panel.m_cpuTable->item(0, 1)->text(),
+                 QStringLiteral("3.0 ms"));
+        QCOMPARE(panel.m_cpuTable->item(1, 0)->text(),
+                 QStringLiteral("root"));
+        QCOMPARE(panel.m_cpuTable->item(1, 2)->text(),
+                 QStringLiteral("3.5 ms"));
+        QVERIFY(panel.m_perfStatus->text().contains(
+            QStringLiteral("2 functions")));
+    }
+
+    // Heap sampling: profile.head flattens to self size per fn.
+    {
+        const quint64 id = panel.testRegisterCdp(11 /*CdpHeapStop*/);
+        panel.onResponse(id, QByteArray(
+            "{\"result\":{\"profile\":{\"head\":{\"callFrame\":"
+            "{\"functionName\":\"\",\"url\":\"\",\"lineNumber\":-1},"
+            "\"selfSize\":0,\"children\":["
+            "{\"callFrame\":{\"functionName\":\"make\","
+            "\"url\":\"http://a/app.js\",\"lineNumber\":3},"
+            "\"selfSize\":4096,\"children\":[]}]}}}}"));
+        QCOMPARE(panel.m_heapTable->rowCount(), 2);
+        QCOMPARE(panel.m_heapTable->item(0, 0)->text(),
+                 QStringLiteral("make"));
+        QCOMPARE(panel.m_heapTable->item(0, 1)->text(),
+                 QStringLiteral("4.0 kB"));
+    }
+
+    // Security: http page reads "Not secure", https picks up the
+    // TlsVerifier text path (no probe data recorded for the fake
+    // host, so it lands on the "no probe" branch).
+    panel.m_contexts = QJsonArray{QJsonObject{
+        {QStringLiteral("context"), QStringLiteral("ctx1")},
+        {QStringLiteral("url"),
+         QStringLiteral("http://site/page.html")}}};
+    panel.m_contextCombo->clear();
+    panel.m_contextCombo->addItem(QStringLiteral("one"),
+                                  QStringLiteral("ctx1"));
+    panel.refreshSecurity();
+    QVERIFY(panel.m_secHeadline->text().contains(
+        QStringLiteral("Not secure")));
+    QVERIFY(panel.m_secDetail->text().contains(
+        QStringLiteral("http://site/page.html")));
+    panel.m_contexts = QJsonArray{QJsonObject{
+        {QStringLiteral("context"), QStringLiteral("ctx1")},
+        {QStringLiteral("url"),
+         QStringLiteral("https://site/page.html")}}};
+    panel.refreshSecurity();
+    QVERIFY(panel.m_secHeadline->text().contains(
+        QStringLiteral("Encrypted")));
+    QVERIFY(panel.m_secMixed->text().contains(
+        QStringLiteral("No insecure")));
+
+    // Breadcrumbs: pick the deepest element, the bar gets the
+    // root..leaf chain as buttons.
+    panel.m_domTree->clear();
+    QTreeWidgetItem *root = new QTreeWidgetItem(
+        QStringList(QStringLiteral("html")));
+    root->setData(0, Qt::UserRole, QString());
+    QTreeWidgetItem *body = new QTreeWidgetItem(
+        QStringList(QStringLiteral("body")));
+    body->setData(0, Qt::UserRole, QStringLiteral("0"));
+    QTreeWidgetItem *div = new QTreeWidgetItem(
+        QStringList(QStringLiteral("div#main")));
+    div->setData(0, Qt::UserRole, QStringLiteral("0/0"));
+    body->addChild(div);
+    root->addChild(body);
+    panel.m_domTree->addTopLevelItem(root);
+    panel.updateCrumbs(div);
+    const QList<QWidget *> crumbs =
+        panel.m_crumbBar->findChildren<QWidget *>(
+            QString(), Qt::FindDirectChildrenOnly);
+    QCOMPARE(crumbs.size(), 5); // html › body › div#main
+    // domItemForPath / domSelectPath: selecting a path lands the
+    // current item on the deepest materialized hop.
+    QCOMPARE(panel.domItemForPath(QStringLiteral("0/0")), div);
+    panel.domSelectPath(QStringLiteral("0/0"));
+    QCOMPARE(panel.m_domTree->currentItem(), div);
+    QVERIFY(!panel.m_selectActive);
 }
 
 QTEST_MAIN(tst_DevTools)

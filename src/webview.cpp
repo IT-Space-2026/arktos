@@ -72,6 +72,7 @@
 #include "containermanager.h"
 #include "extensionbackgroundhost.h"
 #include "extensioneventhub.h"
+#include "notesmodel.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
 #include "pdfview.h"
@@ -93,7 +94,10 @@
 #include <qdebug.h>
 #include <qfile.h>
 #include <qimage.h>
+#include <qinputdialog.h>
+#include <qlineedit.h>
 #include <qmenubar.h>
+#include <qmessagebox.h>
 #include <qevent.h>
 #include <qmenu.h>
 #include <qmimedata.h>
@@ -522,11 +526,37 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
             connect(action, &QAction::triggered,
                     this, [this, action]() { searchRequested(action); });
         }
+        // NOTE03: the reference's explicit flow — the selection lands
+        // as a new note in this window's Notes panel.
+        menu->addSeparator();
+        menu->addAction(tr("Add Selection to &Notes"),
+                        this, &WebView::addSelectionToNote);
     }
 
+    // SRCH01: 'Add to the toolbar search' — the WebKit hit-test knew
+    // the clicked element synchronously; under WebEngine the editable
+    // flag is all the request carries, so the entry shows for any
+    // editable spot and the contextsearch.js probe decides on trigger
+    // whether a GET form actually sits there (failures land on the
+    // status bar, never silently).
     if (info.isContentEditable) {
-        // TODO(MIG08): "Add to the toolbar search" — needs the input element's
-        // form data via runJavaScript (was synchronous QWebElement access).
+        if (menu->isEmpty()) {
+            // A bare editable click used to land on the standard-menu
+            // fallback below — keep Chromium's editing commands
+            // (Cut/Copy/Paste/Select All...) so the provider entry
+            // doesn't cost the user those.
+            if (QMenu *editing = createStandardContextMenu()) {
+                editing->removeAction(enginePage()->action(
+                    Engine::StandardAction::InspectElement));
+                menu->addActions(editing->actions());
+                delete editing;
+            }
+        }
+        if (!menu->isEmpty())
+            menu->addSeparator();
+        const QPoint position = info.position;
+        menu->addAction(tr("Add to the toolbar search"), this,
+                [this, position]() { addSearchEngine(position); });
     }
 
     if (menu->isEmpty()) {
@@ -763,6 +793,14 @@ void WebView::loadUrlInView(WebView *newView, const QUrl &linkUrl)
     const QString scheme = linkUrl.scheme();
     if (scheme == QLatin1String("http")
         || scheme == QLatin1String("https")) {
+        // TOR12: a link open in a tor window while the daemon is
+        // still starting must queue like a typed url — loadUrl()
+        // drops the Referer header the request form carries, which is
+        // strictly safer than dispatching into the fail-closed proxy.
+        if (newView->torMustQueue(linkUrl)) {
+            newView->loadUrl(linkUrl);
+            return;
+        }
         QWebEngineHttpRequest request(linkUrl);
         if (newView->webPage()->profile() == m_page->profile())
             request.setHeader("Referer", url().toEncoded());
@@ -832,6 +870,30 @@ void WebView::searchRequested(QAction *action)
                            : TabWidget::NewSelectedTab);
 }
 
+void WebView::addSelectionToNote()
+{
+    if (!m_page)
+        return;
+    const QString text = selectedText();
+    if (text.isEmpty())
+        return;
+    // The sidebar's store is keyed to the window's profile
+    // (BrowserApplication::webEngineProfile) — land the note there so
+    // it surfaces in this window's Notes panel.  An off-the-record
+    // window gets the volatile model: private selections never touch
+    // disk.
+    NotesModel *model = NotesModel::instance(
+        BrowserApplication::webEngineProfile());
+    if (!model)
+        return;
+    QString body = text;
+    const QUrl source = url();
+    if (source.isValid() && !source.isEmpty())
+        body += QLatin1String("\n\n") + source.toString();
+    model->addNote(title(), body);
+    setStatusBarText(tr("Selection added to notes."));
+}
+
 void WebView::imageSearchRequested()
 {
     QAction *action = qobject_cast<QAction*>(sender());
@@ -847,6 +909,125 @@ void WebView::imageSearchRequested()
     const QUrl searchUrl = engine->imageSearchUrl(imageUrl.toString());
     if (!searchUrl.isEmpty() && searchUrl.isValid())
         emit search(searchUrl, TabWidget::NewSelectedTab);
+}
+
+static QString contextSearchBundle();
+
+// SRCH01: 'Add to the toolbar search' trigger — probe the form under
+// the stored click point in-page.  JSCTL-blocked pages still render
+// fields, so the call rides the lifted path like the CTX01 resolvers.
+void WebView::addSearchEngine(const QPoint &viewPos)
+{
+    qreal zoom = enginePage()->zoomFactor();
+    if (zoom <= 0)
+        zoom = 1.0;
+    const QString call = QStringLiteral("__aroraCtxSearch.formInfo(%1,%2);")
+        .arg(viewPos.x() / zoom)
+        .arg(viewPos.y() / zoom);
+    QPointer<WebView> self(this);
+    enginePage()->runJavaScriptLifted(
+            contextSearchBundle() + QLatin1Char('\n') + call,
+            [self](const QVariant &result) {
+        if (self)
+            self->addSearchEngineFromMap(result.toMap());
+    });
+}
+
+// The probe's verdict becomes the engine: the GET form's submitted
+// pairs rebuild as the template query, the clicked field's slot
+// carrying a literal {searchTerms} (percent-encoding it would hide it
+// from OpenSearchEngine::parseTemplate).
+void WebView::addSearchEngineFromMap(const QVariantMap &info)
+{
+    if (!info.value(QLatin1String("ok")).toBool()) {
+        const QString reason = info.value(QLatin1String("reason")).toString();
+        if (reason == QLatin1String("method")) {
+            QMessageBox::warning(this, tr("Method not supported"),
+                    tr("%1 method is not supported.")
+                        .arg(info.value(QLatin1String("method")).toString()));
+        } else {
+            setStatusBarText(tr("No search form found at that position."));
+        }
+        return;
+    }
+
+    const QUrl actionUrl(info.value(QLatin1String("action")).toString());
+    if (!actionUrl.isValid() || actionUrl.scheme().isEmpty()) {
+        setStatusBarText(tr("No search form found at that position."));
+        return;
+    }
+    // Fragments never ride a form submission; an existing query keeps
+    // its slot ahead of the fields.
+    QString spec = actionUrl.toString(QUrl::RemoveFragment);
+
+    QStringList pairs;
+    const QVariantList fields = info.value(QLatin1String("fields")).toList();
+    for (const QVariant &entry : fields) {
+        const QVariantMap field = entry.toMap();
+        const QString name = QString::fromUtf8(
+            QUrl::toPercentEncoding(field.value(QLatin1String("n")).toString()));
+        const QString value = field.value(QLatin1String("t")).toBool()
+            ? QLatin1String("{searchTerms}")
+            : QString::fromUtf8(QUrl::toPercentEncoding(
+                field.value(QLatin1String("v")).toString()));
+        pairs.append(name + QLatin1Char('=') + value);
+    }
+
+    // Several submit buttons means the form offers more than one
+    // query shape — ask which one carries the terms, exactly as the
+    // WebKit slot did.
+    const QVariantList submits = info.value(QLatin1String("submits")).toList();
+    if (submits.count() > 1) {
+        QStringList labels;
+        for (const QVariant &entry : submits)
+            labels.append(entry.toMap().value(QLatin1String("label")).toString());
+        bool ok = false;
+        const QString picked = QInputDialog::getItem(this,
+                tr("Search engine"),
+                tr("Choose the desired search engine"),
+                labels, 0, false, &ok);
+        if (!ok)
+            return;
+        for (const QVariant &entry : submits) {
+            const QVariantMap submit = entry.toMap();
+            if (submit.value(QLatin1String("label")).toString() == picked) {
+                const QString name = submit.value(QLatin1String("n")).toString();
+                if (!name.isEmpty())
+                    pairs.append(QString::fromUtf8(QUrl::toPercentEncoding(name))
+                        + QLatin1Char('=')
+                        + QString::fromUtf8(QUrl::toPercentEncoding(picked)));
+                break;
+            }
+        }
+    }
+
+    if (!pairs.isEmpty())
+        spec += QLatin1Char(actionUrl.hasQuery() ? '&' : '?')
+            + pairs.join(QLatin1Char('&'));
+
+    bool ok = false;
+    const QString engineName = QInputDialog::getText(this,
+            tr("Engine name"), tr("Type in a name for the engine"),
+            QLineEdit::Normal,
+            info.value(QLatin1String("label")).toString(), &ok);
+    if (!ok || engineName.isEmpty())
+        return;
+
+    OpenSearchEngine *engine = new OpenSearchEngine();
+    engine->setName(engineName);
+    engine->setDescription(engineName);
+    engine->setSearchUrlTemplate(spec);
+    engine->setImage(icon().pixmap(QSize(16, 16)).toImage());
+
+    if (!ToolbarSearch::openSearchManager()->addEngine(engine)) {
+        // A name collision (or an invalid template) refuses the add —
+        // say so instead of swallowing it.
+        delete engine;
+        setStatusBarText(tr("Could not add the '%1' search engine.")
+                .arg(engineName));
+        return;
+    }
+    setStatusBarText(tr("Added '%1' to the search engines.").arg(engineName));
 }
 
 void WebView::setProgress(int progress)
@@ -929,6 +1110,209 @@ bool WebView::isUrlAllowedFromPageLink(const QUrl &url)
         && scheme != QLatin1String("blob");
 }
 
+// TOR18: the managed daemon — null outside tor mode (and in the
+// autotest process until one is injected).
+TorManager *WebView::torManager() const
+{
+    BrowserApplication *app = BrowserApplication::instance();
+    return app ? app->torManager() : nullptr;
+}
+
+// TOR12: the cold-circuit stretch after the SOCKS listener goes live
+// — same bound WebPage's warm-up retry uses; inside it a remote nav
+// with no stream-ridable circuit is still racing the daemon.
+static const qint64 kTorQueueWarmupMs = 45 * 1000;
+// A daemon at Ready that never shares circuit data (dead control
+// channel — SOCKS itself still proxies) cannot hold a nav forever;
+// after this grace the queued url is dispatched anyway and WebPage's
+// warm-up retry covers a failure.
+static const int kTorQueueGraceMs = 10000;
+
+#ifdef AUTOTESTS
+static int s_torQueueGraceMs = -1;
+void WebView::setTorQueueGraceMsForTesting(int ms)
+{
+    s_torQueueGraceMs = ms;
+}
+static int torQueueGraceMs()
+{
+    return s_torQueueGraceMs >= 0 ? s_torQueueGraceMs
+                                  : kTorQueueGraceMs;
+}
+static qint64 s_torQueueWarmupMs = -1;
+void WebView::setTorQueueWarmupMsForTesting(qint64 ms)
+{
+    s_torQueueWarmupMs = ms;
+}
+static qint64 torQueueWarmupMs()
+{
+    return s_torQueueWarmupMs >= 0 ? s_torQueueWarmupMs
+                                   : kTorQueueWarmupMs;
+}
+#else
+static int torQueueGraceMs() { return kTorQueueGraceMs; }
+static qint64 torQueueWarmupMs() { return kTorQueueWarmupMs; }
+#endif
+
+// Whether a loadUrl() must hold for the daemon.  Only schemes that
+// ride the SOCKS listener are queued — qrc:/about:/data:/file: pages
+// resolve locally and must never stall behind bootstrap (the tor
+// start page itself is qrc:).  A missing manager (autotest runs
+// without an injected daemon) leaves the gate open.
+bool WebView::torMustQueue(const QUrl &url) const
+{
+    if (!BrowserApplication::isTorMode())
+        return false;
+    const QString scheme = url.scheme();
+    if (scheme != QLatin1String("http")
+        && scheme != QLatin1String("https")
+        && scheme != QLatin1String("ws")
+        && scheme != QLatin1String("wss")
+        && scheme != QLatin1String("ftp"))
+        return false;
+    TorManager *tor = torManager();
+    if (!tor)
+        return false;
+    if (!tor->isReady())
+        return true;
+    // TOR12: `ready` alone is not the end of the wait — it only means
+    // the SOCKS listener answers; the first stream-ridable circuit
+    // can land seconds after it, and a nav dispatched into that cold
+    // window is the "first Enter does nothing" report.  Hold until
+    // circuit evidence arrives; past the warm-up bound the daemon is
+    // settled and the nav takes its chances honestly.
+    const qint64 elapsed = tor->readyElapsed();
+    return elapsed >= 0 && elapsed < torQueueWarmupMs()
+        && !tor->hasUsableCircuit();
+}
+
+// The wake-ups the queue needs: `ready` ends the bootstrap hold and
+// circuitsChanged ends the post-ready cold-circuit hold the moment a
+// usable path exists instead of at the grace bound.  Armed lazily on
+// the first queued load.
+void WebView::torArmWakeup()
+{
+    if (m_torWakeupArmed)
+        return;
+    TorManager *tor = torManager();
+    if (!tor)
+        return;
+    m_torWakeupArmed = true;
+    connect(tor, &TorManager::ready, this,
+            [this](const QNetworkProxy &) { torFlushQueuedLoad(); });
+    connect(tor, &TorManager::circuitsChanged, this,
+            [this](const QList<TorCircuit> &) { torFlushQueuedLoad(); });
+    // A replaced manager (the autotest seam swaps the pointer) must
+    // earn a fresh wakeup — the armed flag tracks the object it was
+    // connected to.
+    connect(tor, &QObject::destroyed, this,
+            [this]() { m_torWakeupArmed = false; });
+}
+
+// Bounds the post-ready wait for circuit evidence.  The timer is
+// anchored on the first hold and never restarted by a re-queue —
+// circuit churn reporting unusable snapshots cannot push the
+// deadline out forever.
+void WebView::torArmQueueGrace()
+{
+    if (!m_torQueueGrace) {
+        m_torQueueGrace = new QTimer(this);
+        m_torQueueGrace->setSingleShot(true);
+        connect(m_torQueueGrace, &QTimer::timeout,
+                this, [this]() { torGraceDispatch(); });
+    }
+    if (!m_torQueueGrace->isActive())
+        m_torQueueGrace->start(torQueueGraceMs());
+}
+
+// The queue step both entry points share — the typed path
+// (loadUrl) and the page-initiated hold (torHoldNavigation).
+// Newest intent wins; the status line names the pending state so the
+// hold never looks like a dead tab.
+void WebView::torQueueLoad(const QUrl &url, const QString &title)
+{
+    m_torQueuedUrl = url;
+    m_torQueuedTitle = title;
+    // A queued intent supersedes a grace release that never reached
+    // its navigation — the stale one-shot must not free a later hold.
+    m_torGraceReleaseUrl.clear();
+    torArmWakeup();
+    torArmQueueGrace();
+    setStatusBarText(
+        tr("Tor is still starting — the page will load "
+           "automatically when it is ready"));
+}
+
+bool WebView::torHoldNavigation(const QUrl &url)
+{
+    // The grace dispatch's one-shot release — torGraceDispatch only
+    // fires after the wait bound expired, so re-holding the url it
+    // just dispatched would loop the hold forever.
+    if (url == m_torGraceReleaseUrl) {
+        m_torGraceReleaseUrl.clear();
+        return false;
+    }
+    if (!torMustQueue(url))
+        return false;
+    torQueueLoad(url, QString());
+    return true;
+}
+
+void WebView::torWarmupNotice()
+{
+    setStatusBarText(
+        tr("Tor is still starting — the page will load "
+           "automatically when it is ready"));
+}
+
+void WebView::torFlushQueuedLoad()
+{
+    if (m_torQueuedUrl.isEmpty())
+        return;
+    // TOR14: a generated commit still in flight (the warm-up pending
+    // page or the error page) can swallow a raced load() whole — the
+    // queue stays put and the page's commit-landed edge calls back
+    // in here.
+    if (m_page->generatedPageCommitPending())
+        return;
+    const QUrl url = m_torQueuedUrl;
+    const QString title = m_torQueuedTitle;
+    m_torQueuedUrl.clear();
+    m_torQueuedTitle.clear();
+    // Back through loadUrl() — a daemon that somehow is still not
+    // ready (or has no usable circuit yet) re-queues instead of
+    // dispatching into the fail-closed proxy.
+    loadUrl(url, title);
+}
+
+void WebView::torGraceDispatch()
+{
+    if (m_torQueuedUrl.isEmpty())
+        return;
+    TorManager *tor = torManager();
+    if (tor && !tor->isReady())
+        // Still bootstrapping — `ready` stays the wake-up; the grace
+        // restarts when the flush there re-queues the url.
+        return;
+    // A generated commit in flight swallows a raced dispatch — keep
+    // the queue; the commit-landed edge flushes it and the re-queued
+    // path re-arms the grace.
+    if (m_page->generatedPageCommitPending())
+        return;
+    // Ready but no circuit evidence inside the grace — dispatch
+    // anyway; the warm-up retry covers a failure and the error page
+    // is honest about it.  TOR14: the dispatch still runs through
+    // acceptNavigationRequest, whose page-level hold would re-queue
+    // it and loop the grace forever — the released url passes the
+    // gate once; a redirect hop off it is judged on its own merits.
+    const QUrl url = m_torQueuedUrl;
+    const QString title = m_torQueuedTitle;
+    m_torQueuedUrl.clear();
+    m_torQueuedTitle.clear();
+    m_torGraceReleaseUrl = url;
+    load(url);
+}
+
 void WebView::loadUrl(const QUrl &url, const QString &title)
 {
     if (url.scheme() == QLatin1String("javascript")) {
@@ -941,6 +1325,31 @@ void WebView::loadUrl(const QUrl &url, const QString &title)
         emit titleChanged(tr("Loading..."));
     else
         emit titleChanged(title);
+    // TOR18/TOR12/TOR14: a remote navigation issued while the daemon
+    // is still bootstrapping — or inside the post-ready window before
+    // a stream-ridable circuit exists — would die at the fail-closed
+    // proxy and just sit on the error page; hold it in the view until
+    // Tor can actually carry it.  The location bar already shows the
+    // url (TabWidget writes it before calling here), TOR17's banner
+    // explains the wait, and the status-bar line names the pending
+    // state so the hold never looks like a dead tab.
+    if (torMustQueue(url)) {
+        torQueueLoad(url, title);
+        return;
+    }
+    m_torQueuedUrl.clear();
+    m_torQueuedTitle.clear();
+    if (m_torQueueGrace)
+        m_torQueueGrace->stop();
+    // TOR14: under tor a warm-up pending/error page may still be
+    // committing — a load() fired now can be swallowed whole by the
+    // engine.  Queue it instead; the page's commit-landed edge
+    // flushes it moments later.
+    if (BrowserApplication::isTorMode()
+        && m_page->generatedPageCommitPending()) {
+        torQueueLoad(url, title);
+        return;
+    }
     load(url);
 }
 
@@ -1169,6 +1578,21 @@ static QString contextImageBundle()
         QFile file(QLatin1String(":contextimage.js"));
         if (!file.open(QIODevice::ReadOnly)) {
             qWarning() << "WebView: Unable to open :contextimage.js";
+            return QString();
+        }
+        return QString::fromUtf8(file.readAll());
+    }();
+    return bundle;
+}
+
+// SRCH01: the contextsearch.js form introspector — same load-once +
+// per-call-suffix convention as contextimage.js.
+static QString contextSearchBundle()
+{
+    static const QString bundle = [] {
+        QFile file(QLatin1String(":contextsearch.js"));
+        if (!file.open(QIODevice::ReadOnly)) {
+            qWarning() << "WebView: Unable to open :contextsearch.js";
             return QString();
         }
         return QString::fromUtf8(file.readAll());

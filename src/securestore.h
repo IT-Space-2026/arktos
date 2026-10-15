@@ -98,7 +98,6 @@ void lock();
 // setInteractiveUnlockEnabled) simply return isUnlocked().
 bool ensureUnlocked(QWidget *parent = nullptr);
 void setInteractiveUnlockEnabled(bool enabled);
-bool isInteractiveUnlockEnabled();
 
 // Mode transitions.  Each re-seals the known consumer stores
 // (autofill.dat, the proxy password setting) from the old key to the

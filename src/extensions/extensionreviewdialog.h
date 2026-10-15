@@ -44,6 +44,13 @@ class QPushButton;
 // stays disabled until every one is ticked, so a denied dangerous
 // permission refuses the install rather than warning and proceeding.
 // Approving records per-path consent on the ExtensionManager.
+// SEC25: host permissions covering a whole scheme (<all_urls>,
+// "*://*/*", "http://*/*" …) carry a warning icon and a dedicated
+// escalation row — the plain permission list understates them.  When
+// the caller supplies the manifest of the installed version (update
+// apply), permissions and host patterns the installed version did
+// not have are listed explicitly as "new since installed version" —
+// original consent never covers escalated grants.
 class ExtensionReviewDialog : public QDialog
 {
     Q_OBJECT
@@ -54,10 +61,14 @@ public:
         Install  // folder or .zip, persisted under the profile
     };
 
+    // SEC25: pass the installed extension's manifest when the review
+    // covers an update — grants it did not declare are called out as
+    // new.  nullptr (initial install, load) shows no drift rows.
     ExtensionReviewDialog(const ExtensionManager::Manifest &manifest,
                           const QString &sourcePath,
                           Mode mode,
-                          QWidget *parent = nullptr);
+                          QWidget *parent = nullptr,
+                          const ExtensionManager::Manifest *installed = nullptr);
 
     // Runs the dialog modally; true only when the user pressed the
     // approve button.  The approve button is disabled for manifests
@@ -65,7 +76,8 @@ public:
     static bool review(const ExtensionManager::Manifest &manifest,
                        const QString &sourcePath,
                        Mode mode,
-                       QWidget *parent = nullptr);
+                       QWidget *parent = nullptr,
+                       const ExtensionManager::Manifest *installed = nullptr);
 
     // Chrome-store-style description of one chrome.* permission name;
     // unknown names get a generic "uses the X API" line.

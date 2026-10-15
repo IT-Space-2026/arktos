@@ -90,8 +90,6 @@ ChromeBridge::ChromeBridge(const QString &extensionId,
 
 QJsonObject ChromeBridge::handshake(const QJsonObject &hello)
 {
-    m_handshakeDone = true;
-    emit handshook();
     QJsonObject reply;
     reply.insert(QStringLiteral("ok"), true);
     reply.insert(QStringLiteral("host"), QStringLiteral("arora"));
@@ -255,6 +253,53 @@ QJsonObject ChromeBridge::invokeRelay(const QString &method,
 // ------------------------------------------------------------------
 
 namespace {
+
+// QUAL03: setWebChannel binds 'chromeBridge' to the PAGE, not the
+// document — every frame of every later commit exposes the same
+// objects to that world.  The hosted view is therefore navigation-
+// locked: the main frame may only ever be the wrapper url, and
+// subframes must stay inside the extension's own origin.  Without
+// this, a hosted page navigated (or iframed) to foreign content
+// would hand that content the bridge — the extension's storage,
+// identity, and relay channels included.
+class HostedBackgroundPage : public QWebEnginePage
+{
+public:
+    HostedBackgroundPage(QWebEngineProfile *profile,
+                         const QString &extensionId,
+                         QObject *parent = nullptr)
+        : QWebEnginePage(profile, parent)
+        , m_extensionId(extensionId)
+    {
+    }
+
+protected:
+    bool acceptNavigationRequest(const QUrl &url,
+                                 NavigationType /*type*/,
+                                 bool isMainFrame) override
+    {
+        if (isMainFrame)
+            return url == ExtensionBackgroundHost::hostUrl(
+                       m_extensionId)
+                || url == QUrl(QStringLiteral("about:blank"));
+        return url.scheme() == QLatin1String("chrome-extension")
+            && url.host() == m_extensionId;
+    }
+
+private:
+    QString m_extensionId;
+};
+
+// QUAL03: relay keys arrive inside caller-supplied arguments, so the
+// "<extId>#..." prefix the shim mints is re-verified host-side rather
+// than trusted — a bridge may only touch mids/chans its own
+// extension owns.
+bool ownsRelayKey(const ChromeBridge *bridge, const QString &key)
+{
+    return bridge
+        && key.startsWith(bridge->extensionId() + QLatin1Char('#'));
+}
+
 // The injection runs on every page of the profile — the gate has to
 // be a cheap exact match so normal browsing pays ~nothing.
 constexpr int kBootWatchdogMs = 45000;
@@ -344,6 +389,9 @@ QString pageInjectionSource(const QString &extensionId,
 
     const QString origin =
         QStringLiteral("chrome-extension://") + extensionId;
+    // The EXT12 health probe measures the REAL engine worker from a
+    // bare extension-origin page — it must keep pristine native
+    // chrome.* bindings, so its marker fragment skips this shim.
     QString source = QStringLiteral("(function(){")
         + QLatin1String("if(window.top!==window)return;"
                         "var l=location;if(l.origin!==")
@@ -351,7 +399,8 @@ QString pageInjectionSource(const QString &extensionId,
         + QLatin1String("||l.href===")
         + jsLiteral(ExtensionBackgroundHost::hostUrl(extensionId)
                         .toString())
-        + QLatin1String(")return;window.__ARORA_HOST_CONFIG=")
+        + QLatin1String("||l.hash==='#arora-healthprobe'"
+                        ")return;window.__ARORA_HOST_CONFIG=")
         + QString::fromUtf8(
             QJsonDocument(config).toJson(QJsonDocument::Compact))
         + QLatin1Char(';');
@@ -461,7 +510,9 @@ ExtensionBackgroundHost::ExtensionBackgroundHost(
     // Active lifecycle request + nudge timer are the bounded wake
     // strategy on top).
     m_view = new QWebEngineView;
-    m_page = new QWebEnginePage(profile, m_view);
+    // Navigation-locked page — see HostedBackgroundPage above: the
+    // registered channel objects outlive any document change.
+    m_page = new HostedBackgroundPage(profile, extensionId, m_view);
     m_view->setPage(m_page);
 
     m_channel = new QWebChannel(m_page);
@@ -595,12 +646,6 @@ ExtensionBackgroundHost::~ExtensionBackgroundHost()
         }
     }
     delete m_view;
-}
-
-QStringList ExtensionBackgroundHost::shimNotes() const
-{
-    return m_bridge && m_bridge->backend()
-        ? m_bridge->backend()->notes() : QStringList();
 }
 
 QStringList ExtensionBackgroundHost::shimGaps() const
@@ -1025,11 +1070,6 @@ ExtensionBackgroundHost *ExtensionBackgroundRuntime::host(
     return m_hosts.value(extensionId);
 }
 
-QStringList ExtensionBackgroundRuntime::hostedIds() const
-{
-    return m_hosts.keys();
-}
-
 // -------------------------------------------------------------------
 // EXT15 messaging relay.  Native runtime.sendMessage only reaches the
 // real service-worker context — messages between shimmed contexts
@@ -1117,7 +1157,7 @@ int ExtensionBackgroundRuntime::relaySend(ChromeBridge *from,
                                           const QString &mid,
                                           const QJsonObject &envelope)
 {
-    if (!from || mid.isEmpty())
+    if (!from || !ownsRelayKey(from, mid))
         return 0;
     int peers = 0;
     for (const RelayContext &ctx : m_relayContexts) {
@@ -1161,9 +1201,15 @@ bool ExtensionBackgroundRuntime::relayRespond(ChromeBridge *responder,
                                               const QString &mid,
                                               const QJsonValue &response)
 {
-    Q_UNUSED(responder);
     auto it = m_relayPending.find(mid);
     if (it == m_relayPending.end() || !it.value().origin)
+        return false;
+    // QUAL03: only a context of the SENDING extension may resolve its
+    // message — a foreign bridge that learned (or guessed) the mid
+    // would otherwise inject a forged sendMessage response.
+    if (!responder || !ownsRelayKey(responder, mid)
+            || responder->extensionId()
+               != it.value().origin->extensionId())
         return false;
     PendingRelay &pending = it.value();
     ++pending.replies;
@@ -1200,7 +1246,8 @@ int ExtensionBackgroundRuntime::relayPortConnect(
         const QString &portId, const QString &name,
         const QString &senderUrl)
 {
-    if (!from || chan.isEmpty() || portId.isEmpty())
+    if (!from || chan.isEmpty() || portId.isEmpty()
+            || !ownsRelayKey(from, chan))
         return 0;
     m_portEnds[chan].append(PortEnd{from, portId});
     // A complete MessageSender — extension handlers gate on
@@ -1238,7 +1285,8 @@ void ExtensionBackgroundRuntime::relayPortAccept(
         ChromeBridge *accepter, const QString &chan,
         const QString &portId)
 {
-    if (!accepter || chan.isEmpty() || portId.isEmpty())
+    if (!accepter || chan.isEmpty() || portId.isEmpty()
+            || !ownsRelayKey(accepter, chan))
         return;
     for (const PortEnd &end : m_portEnds.value(chan)) {
         if (end.bridge == accepter && end.localPortId == portId)
@@ -1251,13 +1299,15 @@ int ExtensionBackgroundRuntime::relayPortMessage(
         ChromeBridge *from, const QString &chan,
         const QString &portId, const QJsonValue &msg)
 {
-    if (!from)
+    if (!from || !ownsRelayKey(from, chan))
         return 0;
     int delivered = 0;
     const QList<PortEnd> ends = m_portEnds.value(chan);
     for (const PortEnd &end : ends) {
         if (!end.bridge)
             continue;
+        if (end.bridge->extensionId() != from->extensionId())
+            continue;   // never cross extension boundaries
         if (end.bridge == from && end.localPortId == portId)
             continue;   // the sending end itself
         emit end.bridge->hostEvent(
@@ -1278,7 +1328,7 @@ void ExtensionBackgroundRuntime::relayPortDisconnect(
         ChromeBridge *from, const QString &chan,
         const QString &portId)
 {
-    if (!from)
+    if (!from || !ownsRelayKey(from, chan))
         return;
     auto it = m_portEnds.find(chan);
     if (it == m_portEnds.end())

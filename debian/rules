@@ -1,0 +1,35 @@
+#!/usr/bin/make -f
+# debian/rules — hand-rolled, no debhelper. The build host has no
+# debhelper and Arora is qmake-built against a user-local Qt 6.12, so
+# the package ships the bundled runtime produced by
+# BuildProcess/bundle-linux.sh mapped onto an FHS layout under
+# /usr/lib/arora. The heavy lifting lives in .devin/pkg-deb.sh so the
+# same code path serves `dpkg-buildpackage -b -us -uc -rfakeroot -d`
+# and the driver's own direct invocation.
+
+PKGPREFIX = debian/arora
+
+build: build-arch build-indep
+
+build-arch:
+	./.devin/pkg-deb.sh build
+
+build-indep:
+
+binary: binary-arch binary-indep
+
+binary-arch: build-arch
+	./.devin/pkg-deb.sh stage $(PKGPREFIX)
+	./.devin/pkg-deb.sh pack $(PKGPREFIX) ..
+
+binary-indep:
+
+# Clean removes packaging artifacts only — it deliberately does NOT
+# distclean the qmake build tree so `dpkg-buildpackage -b` stays
+# incremental on the dev loop. `make distclean` by hand for a from-
+# scratch rebuild.
+clean:
+	rm -rf debian/arora debian/files debian/substvars \
+	    debian/*.debhelper* debian/*.substvars
+
+.PHONY: build build-arch build-indep binary binary-arch binary-indep clean

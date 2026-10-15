@@ -19,6 +19,7 @@
 
 #include "commandpalette.h"
 
+#include "arorastyle.h"
 #include "bookmarknode.h"
 #include "bookmarksmanager.h"
 #include "browserapplication.h"
@@ -79,10 +80,12 @@ public:
         QStyledItemDelegate::paint(painter, opt, index);
 
         const bool selected = opt.state & QStyle::State_Selected;
-        const QPalette::ColorRole role = selected
-            ? QPalette::HighlightedText : QPalette::PlaceholderText;
+        const QColor hintColor = selected
+            ? AroraStyle::selectionTextColor(opt.palette)
+            : opt.palette.color(QPalette::Active,
+                                QPalette::PlaceholderText);
         painter->save();
-        painter->setPen(opt.palette.color(QPalette::Active, role));
+        painter->setPen(hintColor);
         QRect hintRect = opt.rect.adjusted(0, 0, -8, 0);
         painter->drawText(hintRect, Qt::AlignRight | Qt::AlignVCenter, hint);
         painter->restore();
@@ -151,7 +154,7 @@ CommandPalette::CommandPalette(BrowserMainWindow *window)
     , m_list(new QListWidget(this))
 {
     setFrameShape(QFrame::StyledPanel);
-    setFrameShadow(QFrame::Raised);
+    setFrameShadow(QFrame::Plain);
 
     m_edit->setPlaceholderText(tr("Type a command, tab or bookmark name..."));
     m_edit->installEventFilter(this);
@@ -161,8 +164,11 @@ CommandPalette::CommandPalette(BrowserMainWindow *window)
     m_list->setItemDelegate(new PaletteDelegate(m_list));
 
     QVBoxLayout *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(4, 4, 4, 4);
-    layout->setSpacing(4);
+    layout->setContentsMargins(AroraStyle::Spacing::Small,
+                               AroraStyle::Spacing::Small,
+                               AroraStyle::Spacing::Small,
+                               AroraStyle::Spacing::Small);
+    layout->setSpacing(AroraStyle::Spacing::Small);
     layout->addWidget(m_edit);
     layout->addWidget(m_list);
 
@@ -359,7 +365,10 @@ void CommandPalette::collectTabs()
             WebView *view = tabWidget->webView(i);
             if (!view)
                 continue;
-            QString title = view->title();
+            // tabDisplayTitle() is what the strip shows — a TABS12
+            // rename must be reachable in the palette, and the strip
+            // text still backs the lookup when a page has no title.
+            QString title = tabWidget->tabDisplayTitle(i);
             if (title.isEmpty())
                 title = tabWidget->tabText(i);
             const QString url = view->url().toString();

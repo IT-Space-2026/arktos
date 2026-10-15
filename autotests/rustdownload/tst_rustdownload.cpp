@@ -641,9 +641,9 @@ void tst_RustDownload::cardCancelRetry()
     // rewinds it and the normal filename/accept flow re-issues
     // dl_start, landing on the same name after the partial is dropped.
     QMetaObject::invokeMethod(item, "tryAgain", Qt::DirectConnection);
-    QTest::qWaitFor(
+    QVERIFY(QTest::qWaitFor(
         [item, engine]() { return item->downloadedSuccessfully()
-                                 || engine->isFinished(); }, 10000);
+                                 || engine->isFinished(); }, 10000));
     if (!item->downloadedSuccessfully())
         QFAIL(qPrintable(QLatin1String("retry did not complete: state=")
                          + QString::number(engine->state())
@@ -734,7 +734,8 @@ void tst_RustDownload::engineCookieExport()
     QVERIFY(!rows.contains("unrelated.example"));
     QVERIFY(!rows.contains("ZZZ"));
 
-    QTest::qWaitFor([engine]() { return engine->isFinished(); }, 30000);
+    QVERIFY(QTest::qWaitFor([engine]() { return engine->isFinished(); },
+                           30000));
     if (engine->state() != QWebEngineDownloadRequest::DownloadCompleted)
         qWarning() << "engine ended in state" << engine->state()
                    << "err:" << engine->interruptReasonString();

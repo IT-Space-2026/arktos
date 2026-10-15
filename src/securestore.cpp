@@ -1218,11 +1218,6 @@ void SecureStore::setInteractiveUnlockEnabled(bool enabled)
     s_interactiveUnlock = enabled;
 }
 
-bool SecureStore::isInteractiveUnlockEnabled()
-{
-    return s_interactiveUnlock;
-}
-
 #ifdef AUTOTESTS
 void SecureStore::resetForTests()
 {

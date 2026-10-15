@@ -71,11 +71,13 @@ class BookmarksToolBar;
 class BidiPanel;
 class CommandPalette;
 class EngineIndicator;
+class ExtensionActionBar;
 class QDockWidget;
 class QHBoxLayout;
 class QLabel;
 class QTimer;
 class ReaderButton;
+class SiteShieldButton;
 class SidebarGrip;
 class SidebarPanel;
 class TabWidget;
@@ -127,6 +129,14 @@ public:
     // MENU06: the app-menu button's dropdown — it shares the real
     // top-level menus (same QMenu objects as the menubar).
     QMenu *appMenu() const;
+    // NAVB03: nav-bar edit mode state — exposed for tests; the toggle
+    // lives in the bar's context menu.
+    bool isNavBarEditMode() const;
+    QAction *navBarEditAction() const;
+    // NAVB04: the reset entry sharing that menu, and the bar's order
+    // as the stable-id list QSettings persists — exposed for tests.
+    QAction *navBarResetAction() const;
+    QStringList navBarOrder() const;
     // CMD01: lazily created Ctrl+Shift+P command palette bound to this
     // window.
     CommandPalette *commandPalette();
@@ -175,7 +185,6 @@ private slots:
 
     void fileNew();
     void fileOpen();
-    void filePrintPreview();
     void filePrint();
     void fileSaveAs();
     void editFind();
@@ -218,13 +227,18 @@ private slots:
     void openActionUrl(QAction *action);
     void showWindow();
     void swapFocus();
+    // NAVB03: the nav bar's context menu — New Tab / New Private Tab
+    // on top, then the edit-mode toggle, then the stock QMainWindow
+    // toolbar entries.
+    void showNavigationBarContextMenu(const QPoint &position);
+    void setNavBarEditMode(bool enabled);
 
     void printRequested(WebView *view);
 
 private:
-    // PRINT01: engine-tab half of filePrintPreview/filePrint — hosts
-    // the staged-PDF preview or returns the honest refusal.  True when
-    // the current tab is an engine tab (handled either way).
+    // PRINT01/02: engine-tab half of filePrint — hosts the staged-PDF
+    // preview or returns the honest refusal.  True when the current
+    // tab is an engine tab (handled either way).
     bool previewEngineTabDocument();
     void retranslate();
     void loadDefaultState();
@@ -239,12 +253,37 @@ private:
     void applySidebarWidth();
     void persistSidebarWidth(int width);
     void updateSidebarGripPlacement();
+    // SIDE11: while docked the panel's own close controls are the
+    // only X — the dock title-bar's close button is shown again only
+    // for a torn-off floating dock (and only while
+    // sidebar/showCloseButton is on).
+    void updateSidebarCloseButton();
     void updateStopReloadActionText(bool loading);
     // ENG08: mirrors the ACTIVE tab's engine onto the shared nav-row
     // EngineIndicator — engine id, swappability and visibility all
     // follow the current tab (private tabs refuse swaps, tor windows
     // are Chromium-locked, widget tabs have no engine).
     void updateEngineIndicator();
+    // NAVB03: edit-mode machinery — navBarEditEvent runs the qApp
+    // event filter while the mode is on (press picks a bar item,
+    // drag shows the drop gap, release reorders); the rest are the
+    // drop-target math and the drag lifecycle.
+    bool navBarEditEvent(QObject *object, QEvent *event);
+    QAction *navBarDropTarget(const QPoint &barPos) const;
+    void updateNavBarDropIndicator(const QPoint &barPos);
+    void commitNavBarDrag();
+    void endNavBarDrag();
+    // NAVB04: persisted-order machinery on top of the NAVB03 drag.
+    // Every bar item carries a stable id (a dynamic property on its
+    // QAction); the id list round-trips through QSettings
+    // "navbar/order", is applied at construction so every window type
+    // — normal, private, tor, session-restored — shares it, and each
+    // committed drag pushes it to the other open windows.
+    void applyNavBarOrder(const QStringList &order);
+    void applyStoredNavBarOrder();
+    void saveNavBarOrder();
+    void resetNavBarOrder();
+    void syncNavBarOrderToWindows();
     // MENU06: applies m_menuBarVisible — a plain visibility flip on
     // normal windows, but on tor windows the menu row doubles as the
     // drawn title bar (TOR11) so it stays put and the top-level menu
@@ -256,17 +295,15 @@ private:
     QAction *m_fileNewWindowAction;
     QMenu *m_fileNewContainerTabMenu;
     QAction *m_fileOpenFileAction;
-    QAction *m_fileOpenLocationAction;
+    QAction *m_openLocationAction;
     QAction *m_fileSaveAsAction;
     QAction *m_fileImportBookmarksAction;
     QAction *m_fileExportBookmarksAction;
-    QAction *m_filePrintPreviewAction;
     QAction *m_filePrintAction;
     QAction *m_fileNewPrivateTabAction;
     QAction *m_fileNewTorWindowAction;
-    QAction *m_filePreferencesAction;
     QAction *m_fileCloseWindow;
-    QAction *m_fileQuit;
+    QAction *m_quitAction;
 
     QMenu *m_editMenu;
     QAction *m_editUndoAction;
@@ -315,7 +352,11 @@ private:
     QPointer<BidiPanel> m_bidiPanel;
     // SIDE09: 'Auto-Close Inactive Panel' (sidebar/autoCloseInactive)
     // — the focusChanged hook folds the dock when focus lands outside
-    // it in this window.
+    // it in this window.  The connection is kept so ~BrowserMainWindow
+    // can detach it before member teardown — qApp focus signals fired
+    // mid-destruction would otherwise run the lambda on a sliced this
+    // (UBSan member-access).
+    QMetaObject::Connection m_sidebarFocusConnection;
     bool m_sidebarAutoClose;
 
     HistoryMenu *m_historyMenu;
@@ -341,8 +382,8 @@ private:
     // DEVT04: engine-facing tools under Tools > Development Tools.
     QMenu *m_toolsDevToolsMenu;
     QAction *m_toolsChromiumDevToolAction;
-    // DEVT08: plain open/close entry for the BiDi dock — created only
-    // in rustcore builds, null otherwise.
+    // DEVT08: the BiDi entry is a plain open/close command like its
+    // sibling — no checkable tick (rustcore builds only).
     QAction *m_toolsBidiDevToolAction = nullptr;
     UserAgentMenu *m_toolsUserAgentMenu;
 
@@ -359,6 +400,9 @@ private:
     // itself can hide while every menu stays reachable.
     QToolButton *m_appMenuButton = nullptr;
     QMenu *m_appMenu = nullptr;
+    // MENU12: the app-menu's direct Preferences... leaf — window-owned,
+    // no longer doubled in the File menu.
+    QAction *m_preferencesAction = nullptr;
     QList<QMenu *> m_topMenus;
     QMenu *m_historyBackMenu;
     QMenu *m_historyForwardMenu;
@@ -366,6 +410,13 @@ private:
     QIcon m_reloadIcon;
     QIcon m_stopIcon;
     QSplitter *m_navigationSplitter;
+    // TRUST14/TRUST15: the site shield lives on the navigation
+    // toolbar immediately left of the location bar — one button per
+    // window, rebound to the active tab's WebView on every tab switch
+    // so its badge and privacy panel always describe the front tab.
+    // It is never hidden; on tabs with no web view it stays visible
+    // but disabled with the reason in its tooltip.
+    SiteShieldButton *m_siteShield;
     // ENG08: one engine switcher for the whole window — a fixed-width
     // cell between the url-bar stack and the dedicated search box,
     // replacing the per-bar embedded indicators.
@@ -376,7 +427,29 @@ private:
     // TOR08: circuit dropdown next to the reader button — tor windows
     // only, never constructed otherwise.
     TorCircuitButton *m_torCircuitButton;
+    // EXT08: extension action strip in the navigation splitter cell
+    // right after the location bar — normal windows only; private and
+    // tor windows never construct it (no usable profile may load
+    // extensions there).
+    ExtensionActionBar *m_extensionActionBar = nullptr;
     ToolbarSearch *m_toolbarSearch;
+    // NAVB03/NAVB04: in-place nav-bar customization.  The checkable
+    // context-menu entry toggles edit mode; while on, every bar item —
+    // the location-bar splitter included — can be dragged to a new
+    // slot (m_navBarDropIndicator marks the gap).  Committed drags
+    // persist to QSettings and sync to the other windows; the reset
+    // entry restores m_navBarDefaultOrder (the order the window was
+    // built with, captured before the stored order is applied).
+    QAction *m_navBarEditAction = nullptr;
+    QAction *m_navBarResetAction = nullptr;
+    bool m_navBarEditMode = false;
+    bool m_navBarDragging = false;
+    QPointer<QAction> m_navBarDragAction;
+    QPointer<QAction> m_navBarDropBefore;
+    QPoint m_navBarDragStart;
+    QWidget *m_navBarDropIndicator = nullptr;
+    QString m_navBarSavedStyleSheet;
+    QStringList m_navBarDefaultOrder;
 #if defined(Q_OS_MACOS)
     QFrame *m_bookmarksToolbarFrame;
 #endif

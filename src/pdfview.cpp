@@ -42,6 +42,7 @@
 #include <qpalette.h>
 #include <qprintdialog.h>
 #include <qprinter.h>
+#include <qprinterinfo.h>
 #include <qpushbutton.h>
 #include <qscrollbar.h>
 #include <qspinbox.h>
@@ -967,18 +968,37 @@ bool PdfCanvas::printPages(QPrinter *printer, QString *error)
     // ~150dpi rasters keep the print sharp under the renderer's
     // 48MiB pixel cap for anything up to poster size.
     const double printScale = 150.0 / 72.0;
+    // PRINT02: this is the only print pipeline now, so the
+    // QPrintDialog choices must hold — clip the emitted pages to the
+    // dialog's "Pages" range (1-based fromPage/toPage).
+    const int pageCount = m_sizesPt.size();
+    int first = 0;
+    int last = pageCount - 1;
+    if (printer->printRange() == QPrinter::PageRange
+            && printer->fromPage() > 0) {
+        first = qBound(0, printer->fromPage() - 1, last);
+        last = qBound(first, printer->toPage() - 1, pageCount - 1);
+    }
+    // CUPS multiplies copies server-side; the file/PDF engines do
+    // not — repeat the page set ourselves there (collate ordering:
+    // whole range per copy, or each page's copies together).
+    const int copies =
+        printer->outputFormat() == QPrinter::NativeFormat
+            ? 1 : qMax(1, printer->copyCount());
     QPainter painter;
     if (!painter.begin(printer)) {
         if (error)
             *error = tr("cannot start print job");
         return false;
     }
-    for (int i = 0; i < m_sizesPt.size(); ++i) {
-        if (i > 0 && !printer->newPage()) {
+    bool emitted = false;
+    auto emitPage = [&](int i) -> bool {
+        if (emitted && !printer->newPage()) {
             if (error)
                 *error = tr("printer refused page %1").arg(i + 1);
             return false;
         }
+        emitted = true;
         const QImage image =
             m_client->renderPageSync(i, printScale);
         if (image.isNull()) {
@@ -994,6 +1014,18 @@ bool PdfCanvas::printPages(QPrinter *printer, QString *error)
             (page.height() - fit.height()) / 2.0,
             fit.width(), fit.height());
         painter.drawImage(target, image);
+        return true;
+    };
+    if (printer->collateCopies()) {
+        for (int c = 0; c < copies; ++c)
+            for (int i = first; i <= last; ++i)
+                if (!emitPage(i))
+                    return false;
+    } else {
+        for (int i = first; i <= last; ++i)
+            for (int c = 0; c < copies; ++c)
+                if (!emitPage(i))
+                    return false;
     }
     painter.end();
     return true;
@@ -1289,6 +1321,38 @@ void PdfView::printDocument()
     dialog.setWindowTitle(tr("Print Document"));
     if (dialog.exec() != QDialog::Accepted)
         return;
+    // CRASH02 (moved from BrowserMainWindow::printRequested — this
+    // is the only print pipeline since PRINT02): an accepted dialog
+    // can still describe an unprintable target — on a CUPS host with
+    // zero destinations Qt leaves a file-format printer pointed at a
+    // *directory* (the user's home dir), and painting into it kills
+    // the job.  Fail visibly instead of a silent dead print.
+    QString refuseReason;
+    if (!printer.isValid()) {
+        refuseReason = tr("The selected printer is not valid.");
+    } else {
+        const bool fileTarget =
+            printer.outputFormat() != QPrinter::NativeFormat
+            || printer.printerName().isEmpty();
+        if (fileTarget) {
+            const QFileInfo outFile(printer.outputFileName());
+            const QFileInfo outDir(outFile.dir().absolutePath());
+            if (printer.outputFileName().isEmpty() || outFile.isDir()
+                    || (outFile.exists() && !outFile.isWritable())
+                    || (!outFile.exists() && !outDir.isWritable()))
+                refuseReason =
+                    tr("The output file '%1' cannot be written.")
+                        .arg(printer.outputFileName());
+        } else if (QPrinterInfo::printerInfo(printer.printerName())
+                       .isNull()) {
+            refuseReason = tr("The selected printer is not available.");
+        }
+    }
+    if (!refuseReason.isEmpty()) {
+        QMessageBox::warning(this, tr("Print Document"),
+                             tr("Cannot print: %1").arg(refuseReason));
+        return;
+    }
     QString error;
     if (!m_canvas->printPages(&printer, &error))
         QMessageBox::warning(this, tr("Print Document"),

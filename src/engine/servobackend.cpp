@@ -1267,9 +1267,20 @@ qint64 ServoPage::renderProcessId() const
     return -1;
 }
 
-Engine::Page *ServoPage::createWindow(Engine::WebWindowType)
+qint64 ServoPage::residentMemoryKb() const
 {
-    return nullptr;
+    // ENG26: libservo renders in-process — the embed ABI exposes no
+    // per-instance memory stat (the se_* surface is load/input/frame
+    // + request-log only), so no per-tab figure exists.  The honest
+    // answer is the shared host-process RSS — real, but covering the
+    // chrome and every other tab too; memoryIsShared() is what makes
+    // the widget label it instead of faking a per-tab number.
+    return processMemoryKb(QCoreApplication::applicationPid());
+}
+
+bool ServoPage::memoryIsShared() const
+{
+    return true;
 }
 
 void ServoPage::insertScript(const Engine::Script &script)
@@ -1577,7 +1588,10 @@ void probeServoBackend()
     if (probed)
         return;
     probed = true;
-    ServoBackend *candidate = new ServoBackend();
+    // qApp-owned: the registry lists backends without owning them,
+    // so an unparented registered backend would leak the object, its
+    // members and its aboutToQuit connection node at exit.
+    ServoBackend *candidate = new ServoBackend(qApp);
     if (candidate->initialize())
         EngineRegistry::registerBackend(candidate);
     else

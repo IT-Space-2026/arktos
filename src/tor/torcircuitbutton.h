@@ -28,6 +28,7 @@
 #include "tormanager.h"
 
 class QMenu;
+class QWidgetAction;
 class TorCircuitPanel;
 
 // TOR08: the nav-toolbar circuit dropdown — a small onion button next
@@ -61,6 +62,15 @@ class TorCircuitPanel;
 // nothing, keeping TOR13's no-creep guarantee), and the chain view
 // reserves the standard five-node chain so the size is stable across
 // circuit rotations.
+//
+// TOR19: QToolButton's InstantPopup path queries the menu's
+// sizeHint() BEFORE aboutToShow to pick the popup position, and that
+// call resolves the action rects from whatever the panel last
+// rendered — the post-aboutToShow layout pass skips widgets whose
+// action didn't change.  So the panel is kept current while the menu
+// is closed (applyPanelContent on every state/circuit signal), and a
+// populate that changes the rendered content re-dirties the item
+// layout so the popup never opens at a stale rect.
 class TorCircuitButton : public QToolButton
 {
     Q_OBJECT
@@ -72,6 +82,11 @@ public:
     // Where the "Circuit for <host>" header/site node gets its host
     // — the window wires this to the current tab's url().host().
     void setSiteHostProvider(const std::function<QString()> &provider);
+    // TOR13: invoked on an acked NEWNYM so the site's tab reloads —
+    // tor only re-homes NEW streams, so without the reload the page
+    // would keep riding the dirty circuit and nothing observable
+    // would change (Tor Browser's identical flow).
+    void setSiteReloader(const std::function<void()> &reloader);
 
     // ISO-3166 alpha-2 -> English country name; empty for unknown
     // codes ("ZZ", malformed input).
@@ -98,7 +113,9 @@ private:
     QPointer<TorManager> m_tor;
     QMenu *m_menu;
     TorCircuitPanel *m_panel;
+    QWidgetAction *m_panelAction;
     std::function<QString()> m_siteHostProvider;
+    std::function<void()> m_siteReloader;
     // Result text shown under the New-circuit button ("requested",
     // "failed", "unavailable"); cleared on each open.
     QString m_statusText;

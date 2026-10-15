@@ -91,9 +91,6 @@ public:
         bool enabled = true;
     };
     static ActionState actionState(const QString &extensionId);
-    // The button strip listens on the runtime's hostChanged pulse;
-    // this exists so a badge-only change still repaints.
-    static QJsonObject actionStateJson(const QString &extensionId);
 
     // Session-stable ids for tabs/windows so chrome.tabs ids stay
     // consistent across query+get and (EXT16) event payloads.
@@ -152,6 +149,10 @@ private:
                              const QJsonObject &args);
     QJsonObject invokeTabs(const QString &method,
                            const QJsonObject &args);
+    // QUAL03: apply the EXT16 url-field scrub to chrome.tabs replies —
+    // url/title leave the host only when the extension holds 'tabs'
+    // or a host permission covering the tab's url.
+    QJsonObject shapedTab(const QJsonObject &tab) const;
     QJsonObject invokeWindows(const QString &method,
                               const QJsonObject &args);
     QJsonObject invokeAction(const QString &method,

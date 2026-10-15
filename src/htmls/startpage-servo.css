@@ -2,7 +2,7 @@
    the SAME default coloring (user request: no recolor), plus the
    Servo logo under the search field.  The gradient lives on a
    viewport-height <html> like TOR09's fix, so short content leaves
-   no white band under the footer. */
+   no white band at the bottom. */
 
 * {
     margin: 0;
@@ -19,7 +19,7 @@ body {
     margin-top: 100px;
 }
 
-#header, #search, #servologo, #footer {
+#header, #search, #servologo {
     width: 500px;
     margin: 10px auto;
 }
@@ -79,20 +79,6 @@ body {
     background-size: contain;
 }
 
-#footer {
-    text-align: center;
-    color: #999;
-}
-
-#footer a {
-    color: #555;
-    text-decoration: none;
-}
-
-#footer a:hover {
-    text-decoration: underline;
-}
-
 /* THEME01: the start page adds the arora-dark class on <html> from
    the arora channel's darkChrome property — the app chrome palette,
    not the OS's prefers-color-scheme. */
@@ -109,9 +95,4 @@ html.arora-dark #search {
 html.arora-dark #servologo {
     background-image: url("qrc:/servo-logo-dark.svg");
 }
-html.arora-dark #footer {
-    color: #8a8a93;
-}
-html.arora-dark #footer a {
-    color: #a9a9c0;
-}
+

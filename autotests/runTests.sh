@@ -42,6 +42,13 @@ listed() {
     [ -n "$pro" ] && grep -qw "$name" "$pro"
 }
 
+# Per-binary ceiling so one hung test can't stall the whole suite —
+# tst_browsermainwindow has a known post-Totals WebEngine teardown
+# SIGSEGV loop that never exits on its own (documented pre-existing;
+# its leg results are already printed by then, so the kill loses no
+# signal).  Generous default; override with ARORA_TEST_TIMEOUT.
+TEST_TIMEOUT=${ARORA_TEST_TIMEOUT:-900}
+
 status=0
 for pro in */*.pro */*/*.pro; do
     [ -f "$pro" ] || continue
@@ -66,7 +73,12 @@ for pro in */*.pro */*/*.pro; do
         continue
     fi
     printf "=== %s ===\n" "$dir"
-    (cd "$dir" && "./${bin##*/}" -silent) || status=1
+    (cd "$dir" && timeout "$TEST_TIMEOUT" "./${bin##*/}" -silent)
+    rc=$?
+    if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+        printf "%s: TIMED OUT after %ss (killed)\n" "$dir" "$TEST_TIMEOUT"
+    fi
+    [ "$rc" -eq 0 ] || status=1
     printf "\n"
 done
 exit $status

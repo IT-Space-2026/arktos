@@ -2383,4 +2383,20 @@ Now let me check what `make check` entails and run it.`make check` = 4 gates + b
 - servo-embed cargo test: 4/4
 - `make check`: all 4 gates PASS; suite ran to completion — failures are only the documented bmw crash-loop + 4 load flakes (cookieIsolation, otrCookiesIsolated, fileSchemeErrors, tabTransfer), **all PASS standalone**
 
-Now flipping the row to done with a one-line Notes summary.Now the WORKLOG entry and final commit.
+Now flipping the row to done with a one-line Notes summary.Now the WORKLOG entry and final commit.Done. ENG34 is complete, committed, and pushed to `rust-work`.
+
+**Verdict: PASS — compositor path exists AND is wired; no upstream plumbing needed.**
+
+Audit findings:
+
+- **(a) FFI surface map** — only `se_wheel` and `se_scroll` are scroll-shaped. The key finding: they *converge*. `se_wheel` parks in `pending_wheel_events`, rides constellation→script→DOM dispatch→preventDefault, then lands the *same* `Scroll::Delta` onto `pending_scroll_zoom_events` that `se_scroll` writes to directly. Both drain into a `Transaction` containing **only** `set_scroll_offsets` emitted under `RenderReasons::APZ` — no `set_display_list`, no re-layout. So the DOM path isn't a different raster path; its real cost is pre-scroll *latency* plus wheel-handler side effects.
+- **(b) Measured** — added `ARORA_SERVO_SCROLL_PATH=wheel` (suppresses the `se_scroll` resolve) so both paths could be benched on one build. Frame histograms were statistically identical (compositor: 15 frames, 6×<16ms/6×16–33; DOM: 17 frames, 5×<16/9×16–33) — exactly what the shared APZ tail predicts on a listener-free fixture. Per-stage layout/raster/composite ms isn't reachable from the FFI — upstream `Painter::toggle_webrender_debug(Profiler)` exists but isn't exported; documented as an optional follow-up, not needed for the verdict.
+- **(c) Patch** — audit-only as specced; the env flag doubles as a live kill-switch for the documented `preventDefault` trade-off. Default behavior unchanged.
+
+**Verification:** `--servo-smoke` 60/60 PASS on both paths, servo-embed cargo test 4/4, `make check` gates PASS (warnings + supplychain + engine-audit + rustcoverage — the clean no-rust build covered the touched TU), suite ran to completion with only documented flakes.
+
+One transparency note: `tst_browsermainwindow` printed its final Totals (49/10 — the documented crash-loop flake) then hung in a post-test SIGSEGV teardown loop for ~30min; I killed that stuck process to unblock the remaining ~65 suite binaries — no test results were lost. The 4 other suite failures (cookieIsolation, otrCookiesIsolated, fileSchemeErrors, tabTransfer) all PASS standalone — load-timing flakes with three lanes running concurrently.
+[2026-10-15 21:08:17] <<< devin exited rc=0 (task ENG34)
+[2026-10-15 21:08:17] task ENG34 finished (next: SYNC01)
+[2026-10-15 21:08:20] >>> starting run for task SYNC01 (attempt 1, tree mem cap 2048MB, timeout 3600s)
+I'll start by reading the task queue and the SYNC01 spec.Now let me find the SYNC01 row and its full spec.Merge started with conflicts. Let me see the full picture.Only one conflict — `.devin/COVERAGE.md`. Let me inspect it.Incremental build is the verification bar. Kicking off qmake + make in the background — it'll take a while given 424 files changed.Build is compiling. This will take a while — polling periodically.src/ finished; it's now compiling autotests. Continuing to wait.Still compiling autotests. Continuing to wait.Now linking test binaries — the main app already built. Still a fair number of autotest binaries to go.Still progressing through autotests (alphabetically, now at modeltoolbar). The main app already linked cleanly. Continuing.At `tabbar` now — nearing the end of the autotest dirs.Full `make` finished (rc=0 — src, tools, all autotests). Quick sanity check that nothing failed silently in the log, then commit the merge.`./arora` binary built. Committing the merge now.

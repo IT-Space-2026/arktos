@@ -292,7 +292,8 @@ public:
     void setLifecycleState(LifecycleState state) override;
     LifecycleState lifecycleState() const override;
     qint64 renderProcessId() const override;
-    Engine::Page *createWindow(Engine::WebWindowType type) override;
+    qint64 residentMemoryKb() const override;
+    bool memoryIsShared() const override;
 
     void insertScript(const Engine::Script &script) override;
     void removeScript(const QString &name) override;

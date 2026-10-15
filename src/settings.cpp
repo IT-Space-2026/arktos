@@ -65,6 +65,7 @@
 #include "acceptlanguagedialog.h"
 #include "adblockmanager.h"
 #include "aroraicon.h"
+#include "arorastyle.h"
 #include "addressdialog.h"
 #include "autofilldialog.h"
 #include "autofillmanager.h"
@@ -83,6 +84,7 @@
 #include "engineregistry.h"
 #include "extensionmanager.h"
 #include "extensionreviewdialog.h"
+#include "fingerprintprotector.h"
 #include "historymanager.h"
 #include "languagemanager.h"
 #include "networkaccessmanager.h"
@@ -208,7 +210,7 @@ SettingsDialog::SettingsDialog(QWidget *parent)
          i < pagesList->count()
          && i < int(sizeof(pageIcons) / sizeof(pageIcons[0])); ++i) {
         if (QListWidgetItem *item = pagesList->item(i))
-            item->setIcon(AroraIcon::get(QLatin1String(pageIcons[i])));
+            item->setIcon(AroraIcon::getChrome(QLatin1String(pageIcons[i])));
     }
     // ICONS02: with no explicit iconSize the view paints each icon at
     // whatever nominal size the resolved asset carries — themes ship
@@ -235,11 +237,17 @@ SettingsDialog::SettingsDialog(QWidget *parent)
         qRound(QFontMetricsF(navFont).height() * 1.1);
     pagesList->setIconSize(QSize(navIconExtent, navIconExtent));
     pagesList->setUniformItemSizes(true);
+    // THEM03: the nav reads as a rail, not a list box — the chrome
+    // sheet drops the frame to transparent and rounds the
+    // selection; match the widget state so frameWidth() stays
+    // truthful for the width math below.
+    pagesList->setFrameShape(QFrame::NoFrame);
     // Fixed-width nav column sized to the longest translated label —
     // measured after the font bump so the width reflects the larger
     // text.
     pagesList->setFixedWidth(pagesList->sizeHintForColumn(0)
-                             + 2 * pagesList->frameWidth() + 8);
+                             + 2 * pagesList->frameWidth()
+                             + AroraStyle::Spacing::Medium);
 
     // UIP06: the stack's sizeHint is the tallest page, which can
     // exceed the screen and push the button box out of reach.
@@ -262,26 +270,44 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     // defaults (an 11px shell inset plus 9px on each page and inside
     // every group box), which stacks into uneven bands — most visibly
     // the extra 9px under each group-box title the frame already
-    // clears.  Pin one compact rhythm instead: a 9px shell inset,
-    // 8px page insets, and 9/6/9/9 inside group boxes, so padding is
+    // clears.  Pin the chrome spacing scale instead (THEME01): a
+    // Medium shell inset, Medium page insets, and Medium sides with
+    // a Small step under each group-box title, so padding is
     // identical on every page and pages pack tighter (most no longer
     // need their scroll area at a sane window size).
-    layout()->setContentsMargins(9, 9, 9, 9);
+    layout()->setContentsMargins(
+        AroraStyle::Spacing::Medium, AroraStyle::Spacing::Medium,
+        AroraStyle::Spacing::Medium, AroraStyle::Spacing::Medium);
     for (int i = 0; i < tabWidget->count(); ++i) {
         QWidget *surface = tabWidget->widget(i);
         if (QScrollArea *area = qobject_cast<QScrollArea *>(surface))
             surface = area->widget();
-        if (surface && surface->layout())
-            surface->layout()->setContentsMargins(8, 8, 8, 8);
+        if (surface && surface->layout()) {
+            surface->layout()->setContentsMargins(
+                AroraStyle::Spacing::Medium, AroraStyle::Spacing::Medium,
+                AroraStyle::Spacing::Medium, AroraStyle::Spacing::Medium);
+            // THEM03: one Medium step between sections — uic leaves
+            // the style's ad-hoc default otherwise.
+            surface->layout()->setSpacing(AroraStyle::Spacing::Medium);
+        }
     }
     const QList<QGroupBox *> groups = findChildren<QGroupBox *>();
     for (QGroupBox *box : groups) {
         if (QLayout *boxLayout = box->layout())
-            boxLayout->setContentsMargins(9, 6, 9, 9);
+            boxLayout->setContentsMargins(
+                AroraStyle::Spacing::Medium, AroraStyle::Spacing::Small,
+                AroraStyle::Spacing::Medium, AroraStyle::Spacing::Medium);
     }
 
     connect(exceptionsButton, &QPushButton::clicked, this, &SettingsDialog::showExceptions);
     connect(setHomeToCurrentPageButton, &QPushButton::clicked, this, &SettingsDialog::setHomeToCurrentPage);
+    // PREF04: the URL field only edits under Specific Page, and the
+    // multi-URL editor only edits under Specific Pages — the radio's
+    // toggled signal keeps the enablement honest both directions.
+    connect(homeSpecificPageRadio, &QRadioButton::toggled,
+            homeLineEdit, &QLineEdit::setEnabled);
+    connect(startupSpecificPagesRadio, &QRadioButton::toggled,
+            startupPagesEdit, &QPlainTextEdit::setEnabled);
 
     // ICONS01: one entry per AroraIcon::themeIds() — itemData carries
     // the id.
@@ -357,7 +383,7 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     // loadFromSettings.
     for (const SidebarPanel::Panel &panel : SidebarPanel::orderedPanels()) {
         QListWidgetItem *item = new QListWidgetItem(
-            AroraIcon::get(QLatin1String(panel.iconName)), panel.title,
+            AroraIcon::getChrome(QLatin1String(panel.iconName)), panel.title,
             sidebarPanelsList);
         item->setData(Qt::UserRole, panel.id);
         item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
@@ -489,6 +515,32 @@ SettingsDialog::SettingsDialog(QWidget *parent)
         extensionAutoUpdateCheck->setEnabled(false);
         extensionsHintLabel->setText(
             tr("This build of Qt WebEngine was compiled without extension support."));
+    }
+
+    // EXT10: header sizing.  Version/Status hug their short fixed
+    // strings and Source keeps a small interactive width, while the
+    // long free-text column takes the leftover space — EXT06's
+    // Description lands last once it merges in; until then Name
+    // carries the stretch so Source (Built-in/Installed/Session)
+    // can't balloon and strand a sliver column at the far right.
+    // This block must run after EXT06's sizing lines so these modes
+    // win if they linger post-merge.
+    QHeaderView *extensionsHeader = extensionsTree->header();
+    extensionsHeader->setStretchLastSection(false);
+    extensionsHeader->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    extensionsHeader->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    extensionsHeader->setSectionResizeMode(3, QHeaderView::Interactive);
+    extensionsHeader->resizeSection(3, 100);
+    if (extensionsTree->columnCount() > 4) {
+        // EXT06 landed the Description column — it owns the stretch
+        // and Name drops back to hugging its contents (the default
+        // Interactive mode would leave it freely resizable).
+        extensionsHeader->setSectionResizeMode(
+            0, QHeaderView::ResizeToContents);
+        extensionsHeader->setSectionResizeMode(
+            extensionsTree->columnCount() - 1, QHeaderView::Stretch);
+    } else {
+        extensionsHeader->setSectionResizeMode(0, QHeaderView::Stretch);
     }
     refreshExtensions();
     refreshUserScripts();
@@ -733,14 +785,13 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     loadDefaults();
     loadFromSettings();
 
-    // THEME02: instant theme preview — flipping the combo applies the
+    // THEME02: instant theme preview — flipping the tile applies the
     // picked scheme to the running chrome right away (the key is only
     // written by saveToSettings()).  Connected after the initial load
-    // so populating the combo does not re-apply the committed scheme;
+    // so populating the picker does not re-apply the committed scheme;
     // a later loadFromSettings() (reset buttons) previews the
     // reloaded value, which is exactly the palette it should show.
-    connect(themeCombo,
-            QOverload<int>::of(&QComboBox::currentIndexChanged),
+    connect(themePicker, &ThemePicker::positionChanged,
             this, &SettingsDialog::previewTheme);
 }
 
@@ -753,7 +804,7 @@ SettingsDialog::~SettingsDialog()
 
 void SettingsDialog::previewTheme(int index)
 {
-    // Combo order: System default / Light / Dark.  Preview only —
+    // Persisted index order: System / Light / Dark.  Preview only —
     // the persisted key is untouched, so reverting is just
     // applyColorScheme() re-resolving the committed pick.
     m_themePreviewed = true;
@@ -1056,7 +1107,32 @@ void SettingsDialog::loadFromSettings()
     settings.beginGroup(QLatin1String("MainWindow"));
     QString defaultHome = QLatin1String("about:home");
     homeLineEdit->setText(settings.value(QLatin1String("home"), defaultHome).toString());
-    startupBehavior->setCurrentIndex(settings.value(QLatin1String("startupBehavior"), 0).toInt());
+    settings.endGroup();
+    // PREF04: the Homepage / Startup-with radios read through the
+    // migrated helpers so a pre-mode "home" url or a legacy
+    // startupBehavior int still lands on the right radio.
+    const bool specificHome = BrowserApplication::homePageMode()
+        == BrowserApplication::SpecificPageHome;
+    homeSpecificPageRadio->setChecked(specificHome);
+    homeStartPageRadio->setChecked(!specificHome);
+    switch (BrowserApplication::startupMode()) {
+    case BrowserApplication::LastSessionStartup:
+        startupLastSessionRadio->setChecked(true);
+        break;
+    case BrowserApplication::HomepageStartup:
+        startupHomepageRadio->setChecked(true);
+        break;
+    case BrowserApplication::SpecificPagesStartup:
+        startupSpecificPagesRadio->setChecked(true);
+        break;
+    case BrowserApplication::StartPageStartup:
+    default:
+        startupStartPageRadio->setChecked(true);
+        break;
+    }
+    startupPagesEdit->setPlainText(
+        BrowserApplication::startupPages().join(QLatin1Char('\n')));
+    settings.beginGroup(QLatin1String("MainWindow"));
     // SRCH03+SRCH04: the same key backs the General checkbox and the
     // Search page's field/button radios — button mode when off.
     const bool showBox = settings.value(QLatin1String("showSearchBox"), false).toBool();
@@ -1245,14 +1321,14 @@ void SettingsDialog::loadFromSettings()
     settings.endGroup();
 
     // Appearance
-    // THEME01: chrome color scheme — the combo order is
-    // System default / Light / Dark; anything else falls back to
-    // System.
+    // THEME01: chrome color scheme — the persisted index order is
+    // System / Light / Dark (the tiles display Light / Dark / Auto);
+    // anything else falls back to System.
     {
         const QString colorScheme = settings.value(
             QLatin1String("browser/colorScheme"),
             QLatin1String("system")).toString();
-        themeCombo->setCurrentIndex(
+        themePicker->setCurrentIndex(
             colorScheme == QLatin1String("dark") ? 2
             : colorScheme == QLatin1String("light") ? 1 : 0);
     }
@@ -1403,9 +1479,11 @@ void SettingsDialog::loadFromSettings()
     // PRIV02 fingerprint normalization.
     reportUtcTimezone->setChecked(settings.value(QLatin1String("reportUtcTimezone"), false).toBool());
     normalizeAcceptLanguage->setChecked(settings.value(QLatin1String("normalizeAcceptLanguage"), false).toBool());
-    // SAFE06: opt-in injection — off by default because the spoofing
-    // is detectable and canvas-heavy sites can break.
-    fingerprintProtection->setChecked(settings.value(QLatin1String("fingerprintProtection"), false).toBool());
+    // SAFE06/PRIV06: on by default — read through the protector so the
+    // one-time false->true migration has already run by the time the
+    // checkbox state is shown.
+    fingerprintProtection->setChecked(
+        FingerprintProtector::instance()->isEnabled());
     securityLevelCombo->setCurrentIndex(qBound(
         int(PrivacyRequestInterceptor::Standard),
         settings.value(QLatin1String("securityLevel"),
@@ -1465,6 +1543,12 @@ void SettingsDialog::loadFromSettings()
     tabBarPosition->setCurrentIndex(qBound(0, tabBarPositionIndex, tabBarPosition->count() - 1));
     selectTabsWhenCreated->setChecked(settings.value(QLatin1String("selectNewTabs"), false).toBool());
     confirmClosingMultipleTabs->setChecked(settings.value(QLatin1String("confirmClosingMultipleTabs"), true).toBool());
+    // PREF04: the exit confirm inherits the migrated window key when
+    // never written — the old default (on) keeps the quit warning.
+    confirmExitCheck->setChecked(settings.value(
+        QLatin1String("confirmExit"),
+        settings.value(QLatin1String("confirmClosingMultipleTabs"),
+                       true)).toBool());
     oneCloseButton->setChecked(settings.value(QLatin1String("oneCloseButton"),false).toBool());
     quitAsLastTabClosed->setChecked(settings.value(QLatin1String("quitAsLastTabClosed"), true).toBool());
     openTargetBlankLinksIn->setCurrentIndex(settings.value(QLatin1String("openTargetBlankLinksIn"), TabWidget::NewSelectedTab).toInt());
@@ -1554,7 +1638,32 @@ void SettingsDialog::saveToSettings()
 
     settings.beginGroup(QLatin1String("MainWindow"));
     settings.setValue(QLatin1String("home"), homeLineEdit->text());
-    settings.setValue(QLatin1String("startupBehavior"), startupBehavior->currentIndex());
+    // PREF04: the Homepage + Startup-with radios persist the mode
+    // enums BrowserApplication's helpers read.  The retired
+    // startupBehavior int is consumed by the migration — drop it so a
+    // stale value can't shadow the new pick.
+    settings.setValue(QLatin1String("homePageMode"),
+        homeSpecificPageRadio->isChecked()
+            ? int(BrowserApplication::SpecificPageHome)
+            : int(BrowserApplication::StartPageHome));
+    int startup = int(BrowserApplication::StartPageStartup);
+    if (startupLastSessionRadio->isChecked())
+        startup = int(BrowserApplication::LastSessionStartup);
+    else if (startupHomepageRadio->isChecked())
+        startup = int(BrowserApplication::HomepageStartup);
+    else if (startupSpecificPagesRadio->isChecked())
+        startup = int(BrowserApplication::SpecificPagesStartup);
+    settings.setValue(QLatin1String("startupMode"), startup);
+    settings.remove(QLatin1String("startupBehavior"));
+    QStringList pages;
+    const QStringList lines = startupPagesEdit->toPlainText()
+        .split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    for (const QString &line : lines) {
+        const QString trimmed = line.trimmed();
+        if (!trimmed.isEmpty())
+            pages << trimmed;
+    }
+    settings.setValue(QLatin1String("startupPages"), pages);
     settings.setValue(QLatin1String("showSearchBox"), showSearchBox->isChecked());
     settings.setValue(QLatin1String("showSidebar"), showSidebar->isChecked());
     settings.setValue(QLatin1String("sidebarDockArea"),
@@ -1613,7 +1722,7 @@ void SettingsDialog::saveToSettings()
     };
     settings.setValue(QLatin1String("browser/colorScheme"),
         QLatin1String(colorSchemeKeys[
-            qBound(0, themeCombo->currentIndex(), 2)]));
+            qBound(0, themePicker->currentIndex(), 2)]));
     BrowserTheme::applyColorScheme();
 
     settings.beginGroup(QLatin1String("downloadmanager"));
@@ -1893,6 +2002,7 @@ void SettingsDialog::saveToSettings()
     settings.setValue(QLatin1String("tabBarPosition"), tabBarPosition->currentIndex());
     settings.setValue(QLatin1String("selectNewTabs"), selectTabsWhenCreated->isChecked());
     settings.setValue(QLatin1String("confirmClosingMultipleTabs"), confirmClosingMultipleTabs->isChecked());
+    settings.setValue(QLatin1String("confirmExit"), confirmExitCheck->isChecked());
     settings.setValue(QLatin1String("oneCloseButton"), oneCloseButton->isChecked());
     settings.setValue(QLatin1String("quitAsLastTabClosed"), quitAsLastTabClosed->isChecked());
     // PREFUI04: the memory-saver radios write the same SLEEP01 keys
@@ -2193,20 +2303,15 @@ void SettingsDialog::chooseFixedFont()
 
 void SettingsDialog::setHomeToCurrentPage()
 {
-    // TODO(MIG14): this used to go through BrowserMainWindow::
-    // currentTab(); until windows exist again, use the visible WebView
-    // under the parent window — a QTabWidget hides all non-current
-    // pages, so the unhidden view is the current tab.
-    QWidget *window = parentWidget();
-    if (!window)
+    BrowserMainWindow *mainWindow =
+            qobject_cast<BrowserMainWindow*>(window());
+    WebView *view = mainWindow ? mainWindow->currentTab() : nullptr;
+    if (!view)
         return;
-    const QList<WebView*> views = window->findChildren<WebView*>();
-    for (WebView *view : views) {
-        if (!view->isHidden()) {
-            homeLineEdit->setText(QString::fromUtf8(view->url().toEncoded()));
-            return;
-        }
-    }
+    homeLineEdit->setText(QString::fromUtf8(view->url().toEncoded()));
+    // PREF04: populating the url only means something under
+    // Specific Page — pick it so the click isn't a no-op.
+    homeSpecificPageRadio->setChecked(true);
 }
 
 void SettingsDialog::refreshAcceptLanguages()
@@ -2855,7 +2960,10 @@ void SettingsDialog::extensionUpdateCheckFinished(
 {
     if (ExtensionManager::isSupported())
         extensionUpdateButton->setEnabled(true);
-    extensionSelectionChanged();
+    // EXT09: results carry availableVersion — rebuild so the Version
+    // column picks them up (refreshExtensions ends in
+    // extensionSelectionChanged).
+    refreshExtensions();
     if (!m_manualExtensionCheck)
         return;
     m_manualExtensionCheck = false;
@@ -2902,10 +3010,28 @@ void SettingsDialog::extensionUpdateCheckFinished(
     for (const ExtensionManager::UpdateResult &result : results) {
         if (!result.installable || result.savedTo.isEmpty())
             continue;
+        // SEC25: diff the new package's grants against the installed
+        // version — permissions and host patterns it did not declare
+        // are listed in the review as new-since-installed, so the
+        // original consent never silently covers escalations.
+        QString installedPath;
+        const QList<ExtensionManager::ExtensionInfo> current =
+            ExtensionManager::instance()->extensions();
+        for (const ExtensionManager::ExtensionInfo &info : current) {
+            if (info.id == result.id) {
+                installedPath = info.path;
+                break;
+            }
+        }
+        const ExtensionManager::Manifest installed =
+            installedPath.isEmpty()
+                ? ExtensionManager::Manifest()
+                : ExtensionManager::inspectManifest(installedPath);
         if (!ExtensionReviewDialog::review(
                 ExtensionManager::inspectManifest(result.savedTo),
                 result.savedTo,
-                ExtensionReviewDialog::Install, this))
+                ExtensionReviewDialog::Install, this,
+                installed.valid ? &installed : nullptr))
             continue;
         // review() recorded the consent this call consumes.
         ExtensionManager::instance()->installExtension(result.savedTo);
@@ -2932,8 +3058,21 @@ void SettingsDialog::extensionSelectionChanged()
         QStringList lines;
         if (!info.description.isEmpty())
             lines << info.description;
+        // SEC25: the integrity sweep flagged this extension's files —
+        // say so honestly rather than describing a normal install.
+        if (info.tampered)
+            lines << tr("Warning: files changed since install — "
+                        "review or remove this extension.");
         if (!info.error.isEmpty())
             lines << tr("Error: %1").arg(info.error);
+        // EXT12: the measured degradation verdict, so a row that
+        // reads Enabled never hides a dead or partial extension.
+        if (info.health
+                == ExtensionManager::ExtensionHealth::NotSupported)
+            lines << tr("Not supported: %1.").arg(info.healthReason);
+        else if (info.health
+                 == ExtensionManager::ExtensionHealth::Limited)
+            lines << tr("Limited support: %1.").arg(info.healthReason);
         // EXT14: the hosted-background tier — a real background
         // context when Qt's MV3 service-worker host can't run one.
         if (!info.hostState.isEmpty()) {
@@ -3058,11 +3197,40 @@ void SettingsDialog::refreshExtensions()
         QTreeWidgetItem *item = new QTreeWidgetItem(extensionsTree);
         item->setText(0, info.name.isEmpty() ? info.id : info.name);
         item->setCheckState(0, info.enabled ? Qt::Checked : Qt::Unchecked);
+        // EXT09: QWebEngineExtensionInfo exposes no version, so the
+        // cell is read from the manifest on disk — built-in
+        // components carry no path and get an honest em-dash.  A
+        // finished update check surfaces as "1.0.0 → 2.0.0
+        // available" in the same cell.
+        QString version;
+        if (!info.path.isEmpty())
+            version = ExtensionManager::inspectManifest(info.path).version;
+        if (version.isEmpty())
+            version = QStringLiteral("—");
+        const QString available = ExtensionManager::instance()
+            ->updateResultFor(info.id).availableVersion;
+        if (!available.isEmpty())
+            version += tr(" → %1 available").arg(available);
+        item->setText(1, version);
         QString status;
-        if (!info.error.isEmpty())
+        if (info.tampered)
+            // SEC25: the integrity sweep flagged this tree — a row
+            // that reads "Enabled" would hide it.
+            status = tr("Tampered");
+        else if (!info.error.isEmpty())
             status = tr("Error");
         else if (!info.loaded)
             status = tr("Not loaded");
+        else if (!info.enabled)
+            status = tr("Disabled");
+        // EXT12: an enabled-but-dead or partially-served extension
+        // gets its real state, not a naked "Enabled".
+        else if (info.health
+                 == ExtensionManager::ExtensionHealth::NotSupported)
+            status = tr("Not supported");
+        else if (info.health
+                 == ExtensionManager::ExtensionHealth::Limited)
+            status = tr("Limited");
         else if (info.enabled && info.hosted)
             status = info.shimGaps.isEmpty()
                 ? tr("Enabled (hosted)")   // EXT14 background host up
@@ -3070,15 +3238,15 @@ void SettingsDialog::refreshExtensions()
         else if (info.enabled && info.hostState == QLatin1String("failed"))
             status = tr("Enabled (background failed)");
         else
-            status = info.enabled ? tr("Enabled") : tr("Disabled");
-        item->setText(1, status);
-        item->setText(2, info.builtin ? tr("Built-in")
+            status = tr("Enabled");
+        item->setText(2, status);
+        item->setText(3, info.builtin ? tr("Built-in")
                                     : (info.installed ? tr("Installed")
                                                       : tr("Session")));
         // EXT06: manifest description in its own column.  Built-in
         // component extensions and terse manifests may carry no
         // description — say so rather than leaving the cell blank.
-        item->setText(3, !info.description.isEmpty()
+        item->setText(4, !info.description.isEmpty()
             ? info.description
             : (info.builtin ? tr("Built-in component")
                             : tr("(no description)")));

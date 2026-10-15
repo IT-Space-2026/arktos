@@ -59,7 +59,11 @@ browsing profile:
   lock/shield popover carries a Trust section with one line per real
   signal from the verdict — known/little-known site (Tranco rank),
   "resembles <domain>" lookalike hits, threat-list hits and first
-  visits — refreshed per navigation. The group also has an "Update
+  visits — refreshed per navigation. A small padlock inside the left
+  end of the address bar renders the verdict at a glance (green /
+  amber / red, locked on https and unlocked on http), while the
+  per-site privacy shield sits on the toolbar just left of the bar
+  and always reflects the active tab. The group also has an "Update
   Now" button that refreshes both remote trust lists (Tranco ranks,
   threat blocklist) on demand, with a last-updated status line; it
   stays disabled until remote list downloads are consented to.
@@ -69,14 +73,14 @@ browsing profile:
   Safest) for script and media handling on insecure pages.
 - **Fingerprint resistance** — normalization (vanilla-Chrome user
   agent + client hints, UTC timezone, generic Accept-Language) plus an
-  opt-in injected layer (Settings > Privacy, "Spoof canvas/WebGL
-  fingerprints"; always on in Tor windows): canvas readouts get
-  per-session noise, WebGL reports a generic vendor/renderer and
-  navigator.hardwareConcurrency/deviceMemory/plugins are uniform.
-  Honest caveat: this is noise, not anonymity — sites can detect the
-  spoofing and canvas-heavy pages can break, so the shield panel has a
-  per-site "Spoof fingerprints on this site" switch that exempts a
-  misbehaving site on reload.
+  injected layer that is on by default (Settings > Privacy, "Spoof
+  canvas/WebGL fingerprints"; always on in Tor windows): canvas
+  readouts get per-session noise, WebGL reports a generic
+  vendor/renderer and navigator.hardwareConcurrency/deviceMemory/
+  plugins are uniform. Honest caveat: this is noise, not anonymity —
+  sites can detect the spoofing and canvas-heavy pages can break, so
+  the shield panel has a per-site "Spoof fingerprints on this site"
+  switch that exempts a misbehaving site on reload.
 - **Zero telemetry, verified** — launch *and* real browsing sessions
   produce no unsolicited connections; Chromium's background networking,
   component updates, domain reliability, metrics and sync are disabled,
@@ -127,7 +131,9 @@ browsing profile:
   legacy QDataStream file on first run. The crate also owns session
   save/restore serialization: a versioned session.dat written
   atomically and bounds-checked on decode, so a corrupt file is
-  rejected whole instead of looping the crash-restore prompt —
+  rejected whole instead of looping the crash-restore prompt — and a
+  restore that still yields zero windows (empty, corrupt or declined)
+  falls back to a normal window so the app never runs windowless;
   per-tab records carry url, container binding, tab group and an
   engine tag beside an opaque engine-state blob, keeping the format
   engine-neutral (a pre-Rust QSettings session still restores once
@@ -202,7 +208,10 @@ browsing profile:
 - **Sidebar dock** — optional Vivaldi-style side panel (bookmarks,
   history, downloads, notes), lazily built and off by default; the
   bookmarks rail doubles as the manager — "Show All Bookmarks"
-  (Ctrl+Shift+B) opens it with Add/Remove right on the page.
+  (Ctrl+Shift+B) opens it with Add/Remove right on the page.  The
+  notes panel manages multiple named notes (list, editor, autosave);
+  notes persist per browsing profile — private/Tor sessions keep
+  them in memory only.
 - **Tab search** — Ctrl+Shift+A fuzzy dropdown over all open tabs,
   with hover previews.
 - **Sleeping tabs** — suspend tabs to reclaim memory without losing
@@ -222,7 +231,13 @@ browsing profile:
   browser down, and the notice offers "Try Servo Again" — the
   crashed web view is torn down and a fresh one is created on the
   still-running engine (switching the tab to Chromium and back
-  recovers the same way).
+  recovers the same way). Branded start pages follow the tab's
+  engine: a new tab with Servo as the default engine lands on the
+  Servo-branded start page, and a start page carried through an
+  engine swap (or reached via the Home button) re-resolves to the
+  destination engine's own variant. Servo renders in-process, so its
+  status-bar memory readout shows the shared whole-app figure
+  marked "(shared)" rather than a per-tab number.
 - **Reader mode** (Ctrl+Alt+R) and **Picture-in-Picture** on videos.
 - **Command palette** — Ctrl+Shift+P fuzzy search over browser
   commands.
@@ -237,10 +252,10 @@ browsing profile:
 - **History manager** — "Show All History" (Ctrl+H) opens in a tab
   instead of a floating window; entries open in new tabs.
 - **Look & feel** — Theme selector (System default / Light / Dark,
-  `ARORA_COLOR_SCHEME` override), selectable bundled icon sets
-  (Adwaita/Breeze/Tabler, light+dark variants — the Native desktop set
-  falls back to bundled dark glyphs when it can't serve
-  light-on-dark art), status-bar load
+  `ARORA_COLOR_SCHEME` override), bundled icon sets
+  (Adwaita/Breeze/Tabler/Lucide, light+dark variants — Tabler is the default
+  so every menu glyph ships in the bundle), flat palette-aware chrome with a consistent
+  spacing rhythm, status-bar load
   indicator, zoom control and per-tab memory/bandwidth readouts
   (Linux), domain-emphasized anti-phishing address
   bar with IDN punycode display.
@@ -299,10 +314,20 @@ The status bar shows the live circuit's hop chain
 fingerprints on hover), and a small onion button next to the
 reader-mode icon opens a dropdown of the same circuit — one row per
 hop with country flag and name, fingerprints and OR addresses on
-hover. New tabs land on a Tor-branded start page: the usual Arora
+hover. Its "New Tor circuit for this site" action sends SIGNAL
+NEWNYM and reloads the site's tab, so the page's traffic lands on a
+fresh circuit and the displayed chain rotates; requests inside tor's
+rate limit report the wait instead of pretending to rotate, and the
+button explains itself when the daemon cannot take one. New tabs
+land on a Tor-branded start page: the usual Arora
 header and search box on a purple background with the official Tor
 onion centered — bundled in the binary, so the page never touches the
 network; a configured custom homepage still takes precedence.
+Navigations typed while the daemon is still starting are held rather
+than dropped: the window waits for the SOCKS listener and the first
+stream-ridable circuit (with a status-bar note explaining the wait),
+and a page that still races a cold circuit retries itself inside a
+bounded warm-up window before showing an honest error.
 
 ### Downloads
 
@@ -312,8 +337,12 @@ page), reveal-in-file-manager (with the file selected where the DE
 supports it) and open-with actions, server-suggested names sanitized
 and de-duplicated, and an external download-program handoff. Downloads
 surface in the sidebar's Downloads panel (Ctrl+Y or Tools →
-Downloads) — filterable, sortable, and each selected row expands into a
-detail card in the panel's bottom pane. Preferences → Downloads hosts
+Downloads) — filterable, sortable, each selected row expands into a
+detail card in the panel's bottom pane, and a compact action row
+offers pause/resume, retry, remove and show-in-folder for the
+selected download; a header button clears all finished entries
+(in-progress downloads and files on disk are kept).
+Preferences → Downloads hosts
 a download-engine selector — Built-in (Chromium) or Accelerated (Rust,
 compiled in by default and the default engine — a saved Built-in
 pick is honored) — a connections-per-download
@@ -371,13 +400,28 @@ downloaded packages are hash/structure-verified before they touch
 disk, and applying an update is opt-in: nothing replaces installed
 extension code without a fresh review. CRX3 signature blocks are
 structure-checked only; there is no Chrome Web Store signature
-verification. The Settings → Extensions page lists each extension's
-manifest description and, for installed ones, the on-disk folder —
-installed extensions live under the browsing profile's
-`QtWebEngine/arora/Extensions/` directory (inside the Arora data
-location, e.g. `~/.local/share/Arora/Arora/` on Linux) and can be
-removed with the page's Remove button or by deleting their folder
-while Arora is closed.
+verification. Each install records an integrity pin — a SHA-256 over
+the extension's on-disk files — re-verified at every startup: files
+changed outside the engine mark the row **Tampered** rather than
+loading silently. Update reviews call out permissions and host
+patterns the installed version never declared, and whole-scheme host
+grants (`<all_urls>`, `*://*/*`, `http://*/*` …) get a warning row of
+their own. Each enabled extension is also health-checked once per
+session: a hidden extension-origin page pings its background service
+worker and counts live background contexts, and the result is folded
+together with the manifest's declared-but-missing `chrome.*` APIs
+into the Settings → Extensions status — **Limited** when the worker
+runs but some declared APIs cannot be served, **Not supported** when
+the background worker never became ready — with the reason shown in
+the details pane instead of a naked "Enabled". Clicking a
+Not-supported extension's toolbar action opens a short explanation
+rather than a popup that spins on a dead worker. The page lists each
+extension's manifest description and, for installed ones, the
+on-disk folder — installed extensions live under the browsing
+profile's `QtWebEngine/arora/Extensions/` directory (inside the
+Arora data location, e.g. `~/.local/share/Arora/Arora/` on Linux)
+and can be removed with the page's Remove button or by deleting
+their folder while Arora is closed.
 
 Arora bundles the **Bitwarden password-manager extension** (official
 Chrome build, `src/data/extensions/` — provenance and checksums in
@@ -387,15 +431,28 @@ that already carries extensions it is installed but left disabled —
 flip it on from Settings → Extensions. It installs exactly once:
 uninstalling is never undone, and it is never loaded into private
 or Tor profiles. The bundled build cannot self-update (no
-`update_url`); updates arrive with Arora releases. The Bitwarden
-popup runs its real app under the hosted runtime — extension pages
-(popup, options, extension links in tabs) get the same shim
-injection and chromeBridge channel as the background, and the popup
-reaches its genuine vault login/unlock gate. Actual sign-in needs a
-real Bitwarden account; a few surfaces it touches
-(`chrome.tabs.sendMessage` to content scripts, `chrome.notifications`)
-answer typed errors that show up in its Settings → Extensions
-health row instead of failing silently.
+`update_url`); updates arrive with Arora releases. Qt WebEngine's
+extension API is a tech preview — measured on 6.12: MV3 service
+workers, content scripts, action popups, `storage`, `alarms`,
+`idle`, `offscreen`, `i18n`, observe-only `webRequest` and runtime
+messaging all work, but `chrome.extension`, `tabs.getCurrent/query`
+and tab events, `webNavigation`, `scripting`, `contextMenus`,
+`notifications`, `windows`, `action` and `declarativeNetRequest`
+are not implemented. Bitwarden's background worker needs several of
+the missing namespaces, fails registration
+(`kErrorScriptEvaluateFailed`), and its popup dies on
+`chrome.extension.getBackgroundPage` — so natively it cannot
+function; the health check above therefore reports it **Not
+supported** with the missing APIs listed. See
+`.devin/EXT11-report.md` for the full matrix. Under the hosted
+runtime below, though, the Bitwarden popup runs its real app —
+extension pages (popup, options, extension links in tabs) get the
+same shim injection and chromeBridge channel as the background, and
+the popup reaches its genuine vault login/unlock gate. Actual
+sign-in needs a real Bitwarden account; a few surfaces it touches
+(`chrome.tabs.sendMessage` to content scripts,
+`chrome.notifications`) answer typed errors that show up in its
+Settings → Extensions health row instead of failing silently.
 
 Enabled extensions that declare a background script additionally get
 a hosted background context: a hidden page on the extension's own
@@ -484,7 +541,7 @@ src/                  application sources (flat layout + subdirs)
   sandbox/            declarative policy + per-platform generators
                       (bwrap / Seatbelt / AppContainer / unveil+pledge),
                       runtime re-exec, arora-sandbox launcher script
-  icons/              bundled icon sets (adwaita/breeze/tabler ±dark)
+  icons/              bundled icon sets (adwaita/breeze/tabler/lucide ±dark)
   utils/              shared helpers (SafeText, scope shortcuts, ...)
   rustcore/           shared Rust core crate (credential store, ...)
   data/ htmls/ locale/ icons and bundled pages, translations
@@ -574,7 +631,9 @@ On Windows `nmake`/`jom` replaces `make`; macOS uses `make` as usual.
 
 ## Testing & diagnostics
 
-- `make check` — the qtest suite (offscreen-safe)
+- `make check` — the qtest suite (offscreen-safe); each test binary
+  is capped at 15 minutes (`ARORA_TEST_TIMEOUT` overrides) so a hung
+  test can't stall the run
 - `make check-rustcoverage` — per-crate cargo-llvm-cov line-coverage
   gate for the shipped Rust crates (>=85% each;
   `ARORA_RUST_COVERAGE_MIN` overrides; also a `make check`
@@ -691,6 +750,56 @@ the full transitive list lives in `THIRD-PARTY-NOTICES` §7–9)
 **Experimental** (in-tree, not shipped): libservo (MPL-2.0 —
 https://servo.org) behind the spikes/servo embedding harness and the
 planned selectable engine.
+
+`make pkg-deb` (driver: `./.devin/pkg-deb.sh`) builds a **Debian
+package** at `dist/arora_0.2_amd64.deb`. The same payload is laid out
+on the FHS — `/usr/bin/arora` launcher, bundled Qt 6.12 + QtWebEngine
+under `/usr/lib/arora` (the tree builds against a newer Qt than the
+distro series ships), app data in `/usr/share/arora`, desktop file,
+hicolor icons and man page under `/usr/share`. The optional Rust crates
+(arora-rustdl, arora-rustcore) are statically linked, so the package
+has no rust artifacts to ship. Runtime `Depends` are computed by
+`dpkg-shlibdeps` — real versioned system deps only (libnss3, libdbus,
+libxcb-cursor0, ...). `debian/` carries hand-rolled metadata (no
+debhelper needed): `dpkg-buildpackage -b -us -uc -rfakeroot -d` works
+too and drops the artifacts in the parent dir as usual. The driver
+verifies the package after building: a real `dpkg -i` into a scratch
+instdir, `ldd` clean with the dev Qt masked, and a headless
+`--quit-after-load` launch from the installed layout.
+
+`make pkg-flatpak` (driver: `./.devin/pkg-flatpak.sh`, manifest:
+`io.arora.Arora.yaml`) builds an **installable flatpak** at
+`dist/io.arora.Arora_0.2_x86_64.flatpak` and installs it into the user
+flatpak. The app compiles inside the org.kde 6.11 SDK (newest Qt 6
+runtime on flathub) with QtWebEngine provided by the
+`io.qt.qtwebengine.BaseApp` and cargo by the rust-stable SDK extension —
+both rust crates build in-sandbox from the vendored, sha256-pinned crate
+set in `flatpak/cargo-sources.json` (regenerate it with
+`flatpak/gen-cargo-sources.py` after touching a Cargo.lock). The tor
+expert bundle ships under `/app/lib/tor` so tor windows bootstrap inside
+the sandbox (no host tor needed). Permissions stay honest: ipc, network,
+wayland + fallback-x11, dri, pulseaudio, cups, xdg-download — no session
+bus, no host filesystem, no flatpak-spawn host access. Building needs
+flatpak plus `org.flatpak.Builder` installed `--user` (no root); the
+driver verifies the bundle by installing it and running the offscreen
+`--quit-after-load` + `--tor --tor-window-smoke` paths inside the
+sandbox.
+
+`make pkg-rpm` (driver: `./.devin/pkg-rpm.sh`, spec: `rpm/arora.spec`)
+builds an **openSUSE-compatible RPM** at `dist/arora_0.2-0.*.rpm`.
+Same artifact policy as the deb — identical staged payload
+(`/usr/bin/arora` + private Qt/QtWebEngine under `/usr/lib/arora`,
+statically-linked rust crates), so the spec disables `AutoReqProv` and
+carries an explicit `Requires:` list in SONAME-capability form that the
+driver regenerates and diffs against the staged tree. The `%{qtdir}`
+macro selects the relocatable Qt the payload bundles (defaults to
+`$QTDIR`, then `~/Qt/6.12.0/gcc_64`). Building the rpm itself needs
+`rpmbuild`; on a host without rpm tooling `./.devin/pkg-rpm.sh
+container` prints the openSUSE container command. The driver's verify
+leg checks spec sanity, `%files` coverage and the `Requires` surface
+locally, and — given a built .rpm plus rpm tooling — extracts it and
+runs the same masked-Qt `ldd` + headless `--quit-after-load` checks as
+the deb verifier.
 
 ## License
 

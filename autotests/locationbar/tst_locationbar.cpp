@@ -30,8 +30,11 @@
 #include <qlabel.h>
 #include <qpushbutton.h>
 #include <qtoolbutton.h>
+#include <qmenu.h>
 #include <qmimedata.h>
 #include <qstyleoption.h>
+#include <qtcpserver.h>
+#include <qtcpsocket.h>
 #include <qtooltip.h>
 
 #include <memory>
@@ -43,6 +46,7 @@
 #include "adblockdialog.h"
 #include "adblockmanager.h"
 #include "clearbutton.h"
+#include "sitepadlock.h"
 #include "sitepanel.h"
 #include "siteshield.h"
 #include "webview.h"
@@ -56,6 +60,7 @@
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
 #include "toolbarsearch.h"
+#include "webpermissionmanager.h"
 #include "qtest_arora.h"
 #include "qtry.h"
 
@@ -138,6 +143,7 @@ private slots:
     void siteIcon();
     void privacyIndicator();
     void contentBlockingShield();
+    void shieldPopupFirstShow();
     void omniboxSuggestions();
     void omniboxScopedCompletions();
     void domainEmphasis_data();
@@ -165,9 +171,14 @@ void tst_LocationBar::widgets()
 {
     TestLocationBar bar;
     QVERIFY(bar.findChild<LocationBarSiteIcon*>());
-    QVERIFY(bar.findChild<SiteShieldButton*>());
+    // TRUST14: the in-bar indicator is the trust padlock now — the
+    // site shield moved onto the navigation toolbar next to the bar.
+    QVERIFY(bar.findChild<SitePadlockButton*>());
     QVERIFY(bar.findChild<PrivacyIndicator*>());
     QVERIFY(bar.findChild<ClearButton*>());
+    // TRUST15: the site shield moved out of the bar onto the nav row
+    // (tst_browsermainwindow::siteShieldButton locks the slot).
+    QVERIFY(!bar.findChild<SiteShieldButton*>());
     // SHLD02: one shield only — the separate content-blocker button
     // was merged into the site shield.
     const QList<QToolButton*> buttons = bar.findChildren<QToolButton*>();
@@ -406,54 +417,72 @@ void tst_LocationBar::privacyIndicator()
     QVERIFY(!BrowserApplication::isPrivate());
 }
 
-// SHLD02 + UIP05: the merged site shield — the standalone
-// content-blocker button is gone from the right cluster; the left
-// shield's panel hosts the global toggle, the per-page blocked count
-// and the settings entry, and the shield icon itself carries the
-// blocked-count badge and the disabled/whitelisted states.
+// SHLD02 + TRUST14 + TRUST15: the merged site shield — the standalone
+// content-blocker button is gone from the right cluster; the shield
+// itself rides the navigation bar as the window's shared button
+// (tst_browsermainwindow covers the toolbar placement and active-tab
+// rebinding) and is never hidden — unbound it shows disabled with the
+// honest reason.  The in-bar site-info slot belongs to the trust
+// padlock now; the shield is exercised standalone — the panel surface
+// is identical wherever the button lives.
 void tst_LocationBar::contentBlockingShield()
 {
     TestLocationBar bar;
 
-    SiteShieldButton *shield = bar.findChild<SiteShieldButton*>();
+    SitePadlockButton *padlock = bar.findChild<SitePadlockButton*>();
     LocationBarSiteIcon *siteIcon = bar.findChild<LocationBarSiteIcon*>();
-    QVERIFY(shield);
+    QVERIFY(padlock);
     QVERIFY(siteIcon);
-    QVERIFY(shield->isHidden()); // nothing to report without a view
-    // One shield only — the right cluster has no blocker button.
+    QVERIFY(padlock->isHidden()); // nothing to report without a view
+    // One merged indicator — the right cluster has no blocker button,
+    // and the bar carries no shield child of its own anymore.
     const QList<QToolButton*> buttons = bar.findChildren<QToolButton*>();
     for (QToolButton *candidate : buttons)
         QVERIFY(candidate->accessibleName()
                 != QLatin1String("Content Blocker"));
+    QVERIFY(!bar.findChild<SiteShieldButton*>());
+
+    SiteShieldButton shield;
+    // Unbound: still enabled-state driven, never a hidden gap.
+    QVERIFY(!shield.isEnabled());
+    QVERIFY(shield.toolTip().contains(QLatin1String("not available"),
+                                      Qt::CaseInsensitive));
 
     WebView view(BrowserApplication::webEngineProfile());
     bar.setWebView(&view);
-    QVERIFY(!shield->isHidden());
+    QVERIFY(!padlock->isHidden());
 
-    // Vivaldi order on the left — shield, then site icon, then the
+    // Vivaldi order on the left — padlock, then site icon, then the
     // url text.
     bar.show();
     QTRY_VERIFY_WITH_TIMEOUT(
-        shield->mapTo(&bar, QPoint(0, 0)).x()
+        padlock->mapTo(&bar, QPoint(0, 0)).x()
             < siteIcon->mapTo(&bar, QPoint(0, 0)).x(), 3000);
 
-    // The panel popup still anchors under the shield at its new spot.
-    // showMenu() runs the menu's nested exec() loop, so a timer
-    // captures the geometry and dismisses it from inside.
-    QVERIFY(shield->menu());
+    // Bound, the standalone shield re-enables and drops the reason.
+    shield.setWebView(&view);
+    QVERIFY(shield.isEnabled());
+    QVERIFY(!shield.toolTip().contains(QLatin1String("not available"),
+                                       Qt::CaseInsensitive));
+
+    // The panel popup still anchors under the button.  showMenu()
+    // runs the menu's nested exec() loop, so a timer captures the
+    // geometry and dismisses it from inside.
+    shield.show();
+    QVERIFY(shield.menu());
     QPoint menuPos(-1, -1);
-    QTimer::singleShot(200, shield->menu(), [shield, &menuPos]() {
-        menuPos = shield->menu()->pos();
-        shield->menu()->hide();
+    QTimer::singleShot(200, shield.menu(), [&shield, &menuPos]() {
+        menuPos = shield.menu()->pos();
+        shield.menu()->hide();
     });
-    shield->showMenu();
+    shield.showMenu();
     QVERIFY(menuPos.x() >= 0);
     QVERIFY(qAbs(menuPos.x()
-            - shield->mapToGlobal(QPoint(0, shield->height())).x()) < 16);
+            - shield.mapToGlobal(QPoint(0, shield.height())).x()) < 16);
 
     // The merged panel exposes the global toggle, the per-site row,
     // the live count and the settings entry.
-    SitePanel *panel = shield->panel();
+    SitePanel *panel = shield.panel();
     QVERIFY(panel);
     QCheckBox *global = panel->findChild<QCheckBox*>(
         QLatin1String("siteContentBlocking"));
@@ -475,14 +504,14 @@ void tst_LocationBar::contentBlockingShield()
     QVERIFY(!global->isChecked());
     QVERIFY(count->text().contains(QLatin1String("disabled"),
                                    Qt::CaseInsensitive));
-    QVERIFY(shield->toolTip().contains(QLatin1String("disabled"),
-                                     Qt::CaseInsensitive));
+    QVERIFY(shield.toolTip().contains(QLatin1String("disabled"),
+                                      Qt::CaseInsensitive));
 
     // The global row drives AdBlockManager::setEnabled both ways.
     global->setChecked(true);
     QVERIFY(manager->isEnabled());
-    QVERIFY(!shield->toolTip().contains(QLatin1String("disabled"),
-                                      Qt::CaseInsensitive));
+    QVERIFY(!shield.toolTip().contains(QLatin1String("disabled"),
+                                       Qt::CaseInsensitive));
     // No page host yet — the count line degrades gracefully.
     QVERIFY(!count->text().isEmpty());
 
@@ -499,6 +528,96 @@ void tst_LocationBar::contentBlockingShield()
     dialog->close();
 
     manager->setEnabled(wasEnabled);
+}
+
+// TRUST17: the first click on the shield must open the panel at its
+// real size.  QToolButton's InstantPopup path resolves the menu's
+// sizeHint() BEFORE aboutToShow to position the popup — that flush
+// caches the widget-action rect from the panel's previous render and
+// clears the item layout's dirty flag, and QMenu only re-runs the pass
+// when an item changed since.  A refresh() that resized the panel
+// while the popup was closed (here: a remembered-permission row
+// landing through an out-of-band write) opened inside the stale rect —
+// squashed until click 2.  Replicated by calling sizeHint() before
+// popup(); the shown panel must be sized to its live sizeHint.
+void tst_LocationBar::shieldPopupFirstShow()
+{
+    // A served page gives the view a real http origin the remembered
+    // permission keys on.
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    QObject::connect(&server, &QTcpServer::newConnection, &server,
+                     [&server]() {
+        QTcpSocket *socket = server.nextPendingConnection();
+        socket->setParent(&server);
+        const QByteArray body("<html><body>shield</body></html>");
+        socket->write(QByteArray("HTTP/1.1 200 OK\r\n"
+                                 "Content-Type: text/html\r\n"
+                                 "Connection: close\r\n"
+                                 "Content-Length: ")
+                      + QByteArray::number(body.size()) + "\r\n\r\n"
+                      + body);
+        socket->disconnectFromHost();
+    });
+
+    SiteShieldButton shield;
+    WebView view(BrowserApplication::webEngineProfile());
+    shield.setWebView(&view);
+    view.loadUrl(QUrl(QStringLiteral("http://127.0.0.1:%1/")
+                      .arg(server.serverPort())));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        view.url().host() == QLatin1String("127.0.0.1"), 15000);
+    QTRY_VERIFY_WITH_TIMEOUT(!view.page()->isLoading(), 15000);
+
+    QMenu *menu = shield.menu();
+    QVERIFY(menu);
+    SitePanel *panel = shield.panel();
+    QVERIFY(panel);
+    QWidget *permissions = panel->findChild<QWidget*>(
+        QLatin1String("sitePermissions"));
+    QVERIFY(permissions);
+    QVERIFY(permissions->findChildren<QPushButton*>().isEmpty());
+    const QSize noRowHint = panel->sizeHint();
+
+    // Grow leg: a remembered permission lands while the popup is
+    // closed — written through a non-singleton manager so the panel's
+    // changed() sync stays silent and the flush measures the stale
+    // render (any unsignalled shift reproduces this; the permission
+    // row is the deterministic, size-changing one).
+    const QUrl origin(QStringLiteral("http://127.0.0.1:%1")
+                      .arg(server.serverPort()));
+    {
+        WebPermissionManager outOfBand;
+        outOfBand.setEntry(origin,
+            QWebEnginePermission::PermissionType::Notifications, true);
+    }
+
+    menu->sizeHint();               // the tool button's pre-popup flush
+    menu->popup(QPoint(80, 80));
+    QTRY_VERIFY_WITH_TIMEOUT(menu->isVisible(), 5000);
+    // The panel's minimumWidth clamps the action rect — compare
+    // against the effective hint.
+    QCOMPARE(panel->size(),
+             panel->sizeHint().expandedTo(panel->minimumSize()));
+    QVERIFY(!permissions->findChildren<QPushButton*>().isEmpty());
+    const QSize grownSize = menu->size();
+    menu->hide();
+
+    // Shrink leg: revoking through the singleton emits changed(),
+    // which keeps the closed panel current — the next popup's flush
+    // measures the shrunken panel and it opens back at the no-row
+    // size.
+    WebPermissionManager::instance()->removeEntry(
+        origin, QWebEnginePermission::PermissionType::Notifications);
+    menu->sizeHint();
+    menu->popup(QPoint(80, 80));
+    QTRY_VERIFY_WITH_TIMEOUT(menu->isVisible(), 5000);
+    QCOMPARE(panel->size(),
+             panel->sizeHint().expandedTo(panel->minimumSize()));
+    QVERIFY(permissions->findChildren<QPushButton*>().isEmpty());
+    QCOMPARE(panel->sizeHint(), noRowHint);
+    QVERIFY(menu->size().height() < grownSize.height());
+    menu->hide();
 }
 
 // SRCH01: the location-bar dropdown merges engine suggestions above

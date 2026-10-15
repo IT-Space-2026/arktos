@@ -1,0 +1,118 @@
+# io.arora.Arora — flatpak manifest (PKG02).
+#
+# Builds Arora inside the KDE 6.11 runtime/SDK (Qt 6.11 — the newest Qt 6
+# series flathub ships; the dev tree compiles warning-free against the
+# same Qt6 API surface on 6.12). QtWebEngine is not part of org.kde.Platform,
+# so it comes from the qtwebengine baseapp (matching branch 6.11), which is
+# also where QtWebEngineProcess and the webengine resources are picked up
+# at runtime.
+#
+# Rust crates (src/rustdl, src/rustcore) are built inside the SDK via the
+# freedesktop rust-stable SDK extension. flatpak/cargo-sources.json vendors
+# every crates.io dependency (sha256-pinned, generated from the committed
+# Cargo.locks by flatpak/gen-cargo-sources.py) and flatpak/cargo-config.toml
+# redirects crates.io to the vendor dir, so the build is offline and
+# lockfile-exact — CARGO_NET_OFFLINE makes cargo enforce it.
+# Servo note: libservo_embed does not exist yet (gated on ENG03), so there
+# is no servo module to ship — same decision as the deb (PKG01).
+#
+# Sandbox policy (honest, minimal for a browser):
+#   ipc/network          — X/Qt shared memory; this is a web browser, and
+#                          tor uses ephemeral localhost ports (SocksPort/
+#                          ControlPort "auto") so no fixed port conflicts.
+#   wayland+fallback-x11 — display, native under Wayland with X11 fallback.
+#   dri                  — GPU acceleration for rendering.
+#   pulseaudio           — media audio (QtWebEngine/Chromium).
+#   cups                 — printing (QtPrintSupport -> CUPS socket).
+#   xdg-download         — where downloads are saved; file-open/save
+#                          elsewhere goes through the document portal.
+#   QTWEBENGINEPROCESS_PATH / QTWEBENGINE_DICTIONARIES_PATH —
+#                          where the qtwebengine baseapp puts the helper
+#                          process and the hunspell dictionaries under /app.
+# The baseapp ships Qt's flatpak-aware sandboxing (Qt6 branches spawn
+# renderer sandboxes via flatpak-spawn), so the Chromium sandbox stays ON —
+# flatpak does not need QTWEBENGINE_DISABLE_SANDBOX here.
+# No session-bus ownership, no host filesystem, no org.freedesktop.Flatpak
+# (no host command execution — the bundled tor runs inside the sandbox).
+#
+# Build:  ./.devin/pkg-flatpak.sh           (or `make pkg-flatpak`)
+# Verify: ./.devin/pkg-flatpak.sh verify    (install + offscreen launch
+#         + bundled-tor smoke, see the script for the exact commands)
+
+app-id: io.arora.Arora
+runtime: org.kde.Platform
+runtime-version: '6.11'
+sdk: org.kde.Sdk
+base: io.qt.qtwebengine.BaseApp
+base-version: '6.11'
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: arora
+rename-desktop-file: arora.desktop
+rename-icon: arora
+
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  - --socket=pulseaudio
+  - --socket=cups
+  - --filesystem=xdg-download
+  - --env=QTWEBENGINEPROCESS_PATH=/app/bin/QtWebEngineProcess
+  - --env=QTWEBENGINE_DICTIONARIES_PATH=/app/qtwebengine_dictionaries
+
+# Strip the baseapp's build-only payload (headers/mkspecs/cmake/pkgconfig)
+# from the final image — it is needed at compile time only.
+cleanup-commands:
+  - /app/cleanup-BaseApp.sh
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    # qmake resolves QT+=webenginewidgets through /app/mkspecs/modules —
+    # the qtwebengine baseapp installs its module .pri files there.
+    QMAKEPATH: /app
+    CARGO_HOME: /run/build/arora/cargo-home
+    CARGO_NET_OFFLINE: 'true'
+
+modules:
+  # Tor expert bundle (tor + pluggable transports + geoip), pinned to the
+  # sha256 published on dist.torproject.org — same artifact
+  # BuildProcess/fetch-tor.sh would fetch per-user. Staged at
+  # /app/lib/tor (+ data/ for geoip) so TorManager's bundled-layout search
+  # (<bindir>/../lib/tor, binaryDir/../data) finds it with no code changes.
+  - name: tor
+    buildsystem: simple
+    only-arches:
+      - x86_64
+    build-commands:
+      - install -dm755 /app/lib
+      - cp -a tor /app/lib/tor
+      - cp -a data /app/lib/data
+    sources:
+      - type: archive
+        url: https://dist.torproject.org/torbrowser/15.0.25/tor-expert-bundle-linux-x86_64-15.0.25.tar.gz
+        sha256: 19cf18726eecb362e0f21d27afa9ea9efe5da928bfdfbb1ceb5fe54519e87f4a
+        # multi-top-dir tarball (tor/ data/ docs/ debug/) — keep the
+        # layout, TorManager searches tor/ + ../data relative to the
+        # binary.  flatpak-builder defaults to strip-components: 1 which
+        # would flatten (and collide) everything.
+        strip-components: 0
+
+  - name: arora
+    buildsystem: simple
+    build-commands:
+      - cd src && qmake src.pro PREFIX=/app CONFIG+=rustdl CONFIG+=rustcore
+      - make -C src -j${FLATPAK_BUILDER_N_JOBS}
+      - make -C src install
+      - install -Dm644 flatpak/io.arora.Arora.metainfo.xml /app/share/metainfo/io.arora.Arora.metainfo.xml
+    sources:
+      - type: dir
+        path: .
+      - flatpak/cargo-sources.json
+      - type: file
+        path: flatpak/cargo-config.toml
+        dest: .cargo/
+        dest-filename: config.toml

@@ -58,8 +58,6 @@ protected slots:
 
 private:
     BookmarksModel *m_bookmarksModel;
-
-    QPoint m_dragStartPosition;
 };
 
 #endif // BOOKMARKSTOOLBAR_H

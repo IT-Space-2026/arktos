@@ -28,7 +28,7 @@
 class WebView;
 class LocationBarSiteIcon;
 class PrivacyIndicator;
-class SiteShieldButton;
+class SitePadlockButton;
 class PopupBlockerButton;
 class LocationBar : public LineEdit
 {
@@ -74,7 +74,10 @@ private:
     QPointer<WebView> m_webView;
 
     LocationBarSiteIcon *m_siteIcon;
-    SiteShieldButton *m_shield;
+    // TRUST14: the in-bar indicator is the trust padlock now — the
+    // shield moved onto the navigation toolbar left of the bar (one
+    // shared button rebound per tab switch, see setupToolBar).
+    SitePadlockButton *m_padlock;
     PopupBlockerButton *m_popupBlockerButton;
     PrivacyIndicator *m_privacyIndicator;
 };

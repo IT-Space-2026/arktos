@@ -26,6 +26,8 @@
 
 #include <qapplication.h>
 #include <qcoreapplication.h>
+#include <cstdio>
+#include <unistd.h>
 #include <qfileinfo.h>
 #include <qstandardpaths.h>
 #include <qabstractbutton.h>
@@ -125,7 +127,19 @@ int main(int argc, char *argv[]) \
         QFileInfo(QCoreApplication::applicationFilePath()) \
             .baseName()); \
     TestObject tc; \
-    return QTest::qExec(&tc, argc, argv); \
+    const int rc = QTest::qExec(&tc, argc, argv); \
+    /* QUAL05: QtWebEngine's teardown is not stable under the \
+       offscreen QPA — ~BrowserApplication releasing the profile \
+       while Chromium still has live render objects can put the \
+       crash handler into a "Received signal 11" re-fault loop that \
+       never exits (tst_browsermainwindow burned whole \
+       ARORA_TEST_TIMEOUT windows emitting multi-GB logs before the \
+       guard killed it).  The test verdict is fully reported by the \
+       time qExec returns, and destructors here only release \
+       engine-side resources — flush and exit without running them. */ \
+    fflush(nullptr); \
+    _exit(rc); \
+    return rc; \
 }
 
 #endif

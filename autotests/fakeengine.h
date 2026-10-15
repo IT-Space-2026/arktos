@@ -145,11 +145,15 @@ public:
     qint64 renderProcessId() const override { return m_pid; }
     void setRenderProcessId(qint64 pid) { m_pid = pid; }
 
-    Engine::Page *createWindow(Engine::WebWindowType type) override
+    // ENG26: -1 defers to the base (renderProcessId -> /proc);
+    // a staged value models an in-process engine reporting the
+    // shared host figure.
+    qint64 residentMemoryKb() const override
     {
-        lastWindowType = type;
-        return windowResult;
+        return m_residentKb >= 0 ? m_residentKb
+                               : Engine::Page::residentMemoryKb();
     }
+    bool memoryIsShared() const override { return m_memoryShared; }
 
     void insertScript(const Engine::Script &script) override
     {
@@ -174,14 +178,14 @@ public:
     int lastGoTo = -1;
     LifecycleState m_lifecycle = LifecycleState::Active;
     qint64 m_pid = -1;
+    qint64 m_residentKb = -1;
+    bool m_memoryShared = false;
     QString lastFind;
     Engine::FindFlags lastFindFlags;
     QString lastScript;
     int liftedCalls = 0;
     QString m_markup;
     QHash<QString, bool> attributes;
-    Engine::WebWindowType lastWindowType = Engine::WebWindowType::BrowserWindow;
-    Engine::Page *windowResult = nullptr;
     int loads = 0;
     int stops = 0;
     int reloads = 0;
@@ -207,8 +211,9 @@ public:
         setState(State::InProgress);
     }
     void cancel() override { setState(State::Cancelled); }
-    void pause() override { ++pauses; }
-    void resume() override { ++resumes; }
+    void pause() override { ++pauses; m_paused = true; }
+    void resume() override { ++resumes; m_paused = false; }
+    bool isPaused() const override { return m_paused; }
     qint64 receivedBytes() const override { return m_received; }
     qint64 totalBytes() const override { return m_total; }
     State state() const override { return m_state; }
@@ -256,6 +261,7 @@ public:
     QString acceptedPath;
     int pauses = 0;
     int resumes = 0;
+    bool m_paused = false;
     Engine::Page *m_page = nullptr;
 };
 

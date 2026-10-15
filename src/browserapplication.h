@@ -106,8 +106,16 @@ public:
     // SESS02: termination-signal entry point — flushes every window's
     // pending AutoSaver debounce plus a forced session write, after
     // which the caller re-raises the signal.  See
-    // TerminationSignalHandler.
-    void flushSessionsForTermination();
+    // TerminationSignalHandler.  signalNumber lands in the
+    // browser/lastExit breadcrumb.
+    void flushSessionsForTermination(int signalNumber = 0);
+    // SESS02: never leave a real browsing session windowless — a
+    // session restore that produced zero windows (empty/corrupt blob,
+    // a declined crash-guard prompt) or a window lost before
+    // postLaunch() ran falls back to a normal window on the start
+    // page; a live window whose tab strip came up empty gains a
+    // new-tab page.  Returns true when a window had to be created.
+    bool ensureSessionWindow();
     bool canRestoreSession() const;
 
     static HistoryManager *historyManager();
@@ -170,6 +178,30 @@ public:
     // servo backend cannot render qrc (ENG18 covers that).
     static QUrl startPageUrl(const QString &engineId,
                              bool privateContext = false);
+    // PREF04: General-page Homepage + Startup modes — the General page
+    // radios, the Home button, postLaunch, fileNew and torStartup all
+    // read through these so the persisted keys and their migration
+    // stay in one place.  Keys: MainWindow/homePageMode,
+    // MainWindow/startupMode, MainWindow/startupPages.  The retired
+    // MainWindow/startupBehavior int (0 home / 1 blank / 2 restore) is
+    // folded in by startupMode() when startupMode was never written.
+    enum HomePageMode {
+        StartPageHome = 0,
+        SpecificPageHome
+    };
+    enum StartupMode {
+        LastSessionStartup = 0,
+        HomepageStartup,
+        StartPageStartup,
+        SpecificPagesStartup
+    };
+    static int homePageMode();
+    static int startupMode();
+    static QStringList startupPages();
+    // Opens the Specific Pages list into `window` — first entry in the
+    // current tab, the rest as background tabs; an empty list leaves
+    // the window's fresh tab alone.
+    static void openStartupPages(BrowserMainWindow *window);
     // ENG13: the engine a new tab would run — ENG05's
     // MainWindow/defaultEngine key ("webengine" when unset).  This
     // branch has no EngineRegistry yet, so a non-webengine pick only
@@ -178,6 +210,16 @@ public:
     static QString defaultEngineId();
     // The managed daemon — nullptr unless tor mode is on.
     TorManager *torManager() const;
+#ifdef AUTOTESTS
+    // Test seam: only the --tor constructor path builds a manager —
+    // the autotests inject one (test-owned; it is NOT reparented) so
+    // the bootstrap navigation gate in WebView/WebPage has a daemon
+    // to watch.
+    void setTorManagerForTesting(TorManager *manager)
+    {
+        m_torManager = manager;
+    }
+#endif
     // Spawns an independent `arora --tor` process.  An optional start
     // url (CONT07's 'Open in New Tor Window') rides as its own argv
     // element — never a shell string — and is re-gated as untrusted
@@ -234,6 +276,8 @@ private slots:
     void messageReceived(QLocalSocket *socket);
     void postLaunch();
     void openUrl(const QUrl &url);
+    // SESS02: BrowserMainWindow::destroyed hook — see implementation.
+    void windowDestroyed();
 
 signals:
     void zoomTextOnlyChanged(bool textOnly);

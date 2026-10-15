@@ -271,6 +271,47 @@ private:
 
 };
 
+// HIST03: the sidebar's period combo (Today / This Week / This
+// Month / All) — drops HistoryTreeModel day groups older than the
+// period's first day.  Because every row carries DateRole (day groups
+// report the group date, entries their visit date) an out-of-range
+// group loses its children too, so the day header disappears entirely.
+// Sits between the tree model and the search proxy so text search
+// composes with the range.
+class HistoryPeriodFilterModel : public QSortFilterProxyModel
+{
+    Q_OBJECT
+
+public:
+    enum Period {
+        Today,
+        ThisWeek,
+        ThisMonth,
+        All
+    };
+    Q_ENUM(Period)
+
+    HistoryPeriodFilterModel(QObject *parent = nullptr);
+
+    Period period() const;
+    void setPeriod(Period period);
+
+    // First visible date for a period — Today = the current date (the
+    // model's own "Earlier Today" grouping), ThisWeek = the current
+    // ISO week's Monday, ThisMonth = the first of the month; All
+    // returns an invalid date (no cutoff).
+    static QDate periodStart(Period period,
+                             const QDate &today = QDate::currentDate());
+
+protected:
+    bool filterAcceptsRow(int source_row,
+                          const QModelIndex &source_parent) const override;
+
+private:
+    Period m_period;
+    QDate m_start;
+};
+
 #include "ui_history.h"
 
 // HIST02: despite the historical name this is a QWidget — the history

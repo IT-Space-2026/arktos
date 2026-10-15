@@ -19,14 +19,17 @@
 
 #include "aroraicon.h"
 
+#include "arorastyle.h"
 #include "browsertheme.h"
 
 #include <qapplication.h>
 #include <qdir.h>
 #include <qevent.h>
 #include <qfile.h>
+#include <qiconengine.h>
 #include <qimage.h>
 #include <qpainter.h>
+#include <qpalette.h>
 #include <qpixmap.h>
 #include <qsettings.h>
 #include <qstylehints.h>
@@ -34,9 +37,12 @@
 namespace {
 
 const QLatin1String s_resourcePrefix(":/icons");
-const QLatin1String s_nativeId("native");
+// ICONS10: bundled Tabler is the default set — a sparse desktop
+// theme served missing names as duplicate lookalikes (the "some
+// icons look the same" report).  ICONS12: the "native" option that
+// exposed the OS theme is retired; stored/unknown ids clamp here.
+const QLatin1String s_defaultId("tabler");
 
-QString s_systemTheme;
 QString s_currentId;
 bool s_initialized = false;
 
@@ -62,17 +68,13 @@ void init()
         return;
     s_initialized = true;
 
-    // Capture before anything can call setThemeName — this is what
-    // "native" switches back to.
-    s_systemTheme = QIcon::themeName();
-
     QStringList paths = QIcon::themeSearchPaths();
     if (!paths.contains(s_resourcePrefix))
         paths.append(s_resourcePrefix);
     QIcon::setThemeSearchPaths(paths);
-    // The original 2009 artwork: last resort for every mode, and the
-    // only icon set a theme-less desktop ever misses on.
-    QIcon::setFallbackThemeName(QLatin1String("arora-legacy"));
+    // ICONS13: Tabler ships the full chrome surface — it is the last
+    // resort before hicolor for a name the active bundled set misses.
+    QIcon::setFallbackThemeName(QLatin1String("arora-tabler"));
 
     if (qApp) {
         // A forced light->dark flip (UIP01) and a desktop scheme
@@ -85,41 +87,6 @@ void init()
     }
 
     AroraIcon::applyFromSettings();
-}
-
-// ICONS05: does the captured system theme already serve
-// light-on-dark glyphs?  Name heuristics cannot answer this — some
-// "dark" desktops still ship dark-glyph sets Qt cannot
-// currentColor-recolor (stock Adwaita symbolics stay #222 even when
-// the desktop palette is dark), and a forced dark palette (THEME01)
-// is invisible to the OS icon theme entirely — so render a probe
-// icon through the system theme and measure it.  Cached: the system
-// theme name is itself captured once at init.
-bool systemThemeIsDarkAware()
-{
-    if (s_systemTheme.isEmpty())
-        return false;
-    static int aware = -1;
-    if (aware != -1)
-        return aware == 1;
-    const QString restore = QIcon::themeName();
-    QIcon::setThemeName(s_systemTheme);
-    const QImage probe = QIcon::fromTheme(QLatin1String("go-previous"))
-        .pixmap(QSize(16, 16)).toImage();
-    QIcon::setThemeName(restore);
-    qlonglong luminance = 0;
-    int opaque = 0;
-    for (int y = 0; y < probe.height(); ++y) {
-        for (int x = 0; x < probe.width(); ++x) {
-            const QColor color = probe.pixelColor(x, y);
-            if (color.alpha() > 128) {
-                luminance += qGray(color.rgb());
-                ++opaque;
-            }
-        }
-    }
-    aware = (opaque > 0 && luminance / opaque > 140) ? 1 : 0;
-    return aware == 1;
 }
 
 // ICONS06: repaint `source` as a flat `color` glyph — every pixel
@@ -141,21 +108,93 @@ QPixmap tintedPixmap(const QPixmap &source, const QColor &color)
     return out;
 }
 
-// The bundled -dark set closest to the captured system theme —
-// where "native" resolves under a dark palette when the real system
-// theme cannot serve light glyphs.  An empty/unknown system theme
-// lands on Adwaita, the same set the legacy fallback chain already
-// inherits, so the glyph family stays consistent.
-QString bundledDarkThemeName()
+// ICONS09: chrome icon engine — the themed art serves shape+alpha
+// only; every opaque pixel is re-tinted to the palette's ButtonText
+// (Disabled mode takes the palette's disabled tone rather than Qt's
+// generated ghosting, same lesson as ICONS06; THEM03: Selected takes
+// HighlightedText — the glyph rides a Highlight card on nav rails).
+// The tint is resolved
+// per pixmap() request — not baked at setIcon() — so a runtime
+// light<->dark flip (THEME01 preview, desktop scheme change) or an
+// icon-theme swap reaches already-installed icons without any widget
+// having to listen for it.
+class ChromeIconEngine : public QIconEngine
 {
-    const QString sys = s_systemTheme.toLower();
-    QString id = QLatin1String("adwaita");
-    if (sys.contains(QLatin1String("breeze")))
-        id = QLatin1String("breeze");
-    else if (sys.contains(QLatin1String("tabler")))
-        id = QLatin1String("tabler");
-    return QLatin1String("arora-") + id + QLatin1String("-dark");
-}
+public:
+    explicit ChromeIconEngine(const QString &name)
+        : m_name(name)
+    {
+    }
+
+    // TRUST18: paletteSet resolves the tint from `palette` instead of
+    // the application palette — for buttons living on chrome whose
+    // colors a stylesheet provides (the tor window's violet bar),
+    // where qApp's ButtonText is the wrong surface color.
+    ChromeIconEngine(const QString &name, const QPalette &palette)
+        : m_name(name)
+        , m_palette(palette)
+        , m_hasPalette(true)
+    {
+    }
+
+    QIconEngine *clone() const override
+    {
+        ChromeIconEngine *engine = new ChromeIconEngine(m_name);
+        engine->m_palette = m_palette;
+        engine->m_hasPalette = m_hasPalette;
+        return engine;
+    }
+
+    void paint(QPainter *painter, const QRect &rect, QIcon::Mode mode,
+               QIcon::State state) override
+    {
+        const qreal scale = painter->device()
+            ? painter->device()->devicePixelRatioF() : 1.0;
+        painter->drawPixmap(rect.topLeft(),
+                            scaledPixmap(rect.size(), mode, state, scale));
+    }
+
+    QPixmap pixmap(const QSize &size, QIcon::Mode mode,
+                   QIcon::State state) override
+    {
+        return scaledPixmap(size, mode, state, 1.0);
+    }
+
+    QPixmap scaledPixmap(const QSize &size, QIcon::Mode mode,
+                         QIcon::State state, qreal scale) override
+    {
+        // Always Normal art from the theme — a set's own Disabled
+        // rendering would double-dim under our disabled tint.
+        QPixmap base = AroraIcon::get(m_name).pixmap(size * scale,
+                                                   QIcon::Normal, state);
+        if (base.isNull())
+            return base;
+        base.setDevicePixelRatio(scale);
+        const QPalette palette = m_hasPalette
+            ? m_palette
+            : (qApp ? qApp->palette() : QPalette());
+        if (mode == QIcon::Disabled)
+            return tintedPixmap(base, palette.color(
+                QPalette::Disabled, QPalette::ButtonText));
+        // THEM03: selected chrome glyphs ride a Highlight card (the
+        // prefs nav rail, the sidebar section rail) — ButtonText on
+        // Highlight can sink to unreadable, so the selected request
+        // tints to the matching foreground.  THEM04: through
+        // selectionTextColor, the same pick the sheets give the
+        // card's text — a sub-AA platform pairing can't split the
+        // glyph and label onto different colors.
+        if (mode == QIcon::Selected)
+            return tintedPixmap(base,
+                                AroraStyle::selectionTextColor(palette));
+        return tintedPixmap(base, palette.color(QPalette::Normal,
+                                                QPalette::ButtonText));
+    }
+
+private:
+    const QString m_name;
+    QPalette m_palette;
+    bool m_hasPalette = false;
+};
 
 } // namespace
 
@@ -168,20 +207,17 @@ QIcon AroraIcon::get(const QString &name)
 QIcon AroraIcon::getOnDark(const QString &name)
 {
     init();
-    const QString id = s_currentId;
-    if (id != s_nativeId) {
-        const QString base = s_resourcePrefix + QLatin1Char('/')
-            + QLatin1String("arora-") + id;
-        // File-backed, so it does not follow setThemeName — the tor
-        // window is a separate process whose icon theme never changes
-        // after startup anyway.
-        for (const char *variant : { "-dark", "" }) {
-            const QString path = base + QLatin1String(variant)
-                + QLatin1String("/icons/") + name
-                + QLatin1String(".svg");
-            if (QFile::exists(path))
-                return QIcon(path);
-        }
+    const QString base = s_resourcePrefix + QLatin1Char('/')
+        + QLatin1String("arora-") + s_currentId;
+    // File-backed, so it does not follow setThemeName — the tor
+    // window is a separate process whose icon theme never changes
+    // after startup anyway.
+    for (const char *variant : { "-dark", "" }) {
+        const QString path = base + QLatin1String(variant)
+            + QLatin1String("/icons/") + name
+            + QLatin1String(".svg");
+        if (QFile::exists(path))
+            return QIcon(path);
     }
     return get(name);
 }
@@ -211,47 +247,51 @@ QIcon AroraIcon::getTinted(const QString &name, const QColor &color,
     return tinted(getOnDark(name), color, disabledColor);
 }
 
+QIcon AroraIcon::getChrome(const QString &name)
+{
+    init();
+    return QIcon(new ChromeIconEngine(name));
+}
+
+QIcon AroraIcon::getChrome(const QString &name, const QPalette &palette)
+{
+    init();
+    return QIcon(new ChromeIconEngine(name, palette));
+}
+
 QStringList AroraIcon::themeIds()
 {
-    return { s_nativeId,
-             QLatin1String("adwaita"),
+    return { QLatin1String("adwaita"),
              QLatin1String("breeze"),
-             QLatin1String("tabler") };
+             QLatin1String("tabler"),
+             QLatin1String("lucide") };
 }
 
 QString AroraIcon::themeDisplayName(const QString &id)
 {
-    if (id == s_nativeId)
-        return QCoreApplication::translate("AroraIcon", "Native");
     if (id == QLatin1String("adwaita"))
         return QLatin1String("Adwaita");
     if (id == QLatin1String("breeze"))
         return QLatin1String("Breeze");
     if (id == QLatin1String("tabler"))
         return QLatin1String("Tabler");
+    if (id == QLatin1String("lucide"))
+        return QLatin1String("Lucide");
     return id;
 }
 
 QString AroraIcon::theme()
 {
     const QString id = QSettings()
-        .value(QLatin1String("MainWindow/iconTheme"), s_nativeId)
+        .value(QLatin1String("MainWindow/iconTheme"), s_defaultId)
         .toString();
-    return themeIds().contains(id) ? id : s_nativeId;
+    return themeIds().contains(id) ? id : s_defaultId;
 }
 
 QString AroraIcon::effectiveThemeName(const QString &id)
 {
     init();
     const bool dark = qApp && BrowserTheme::isDarkPalette(qApp->palette());
-    if (id == s_nativeId) {
-        // A dark application palette cannot reach the OS icon theme —
-        // when it is provably still serving dark glyphs the bundled
-        // -dark art takes over so every chrome surface stays legible.
-        if (dark && !systemThemeIsDarkAware())
-            return bundledDarkThemeName();
-        return s_systemTheme;
-    }
     QString name = QLatin1String("arora-") + id;
     if (dark
         && QFile::exists(s_resourcePrefix + QLatin1Char('/')
@@ -264,7 +304,7 @@ QString AroraIcon::effectiveThemeName(const QString &id)
 void AroraIcon::setTheme(const QString &id)
 {
     init();
-    s_currentId = themeIds().contains(id) ? id : s_nativeId;
+    s_currentId = themeIds().contains(id) ? id : s_defaultId;
     QIcon::setThemeName(effectiveThemeName(s_currentId));
 }
 
@@ -276,18 +316,29 @@ void AroraIcon::applyFromSettings()
 QStringList AroraIcon::names()
 {
     init();
-    QStringList out = QDir(QLatin1String(":/icons/arora-adwaita/icons"))
-        .entryList(QStringList(QLatin1String("*.svg")), QDir::Files, QDir::Name);
-    for (QString &n : out)
-        n.chop(4);
+    QStringList out;
+    // The union across every bundled set — ICONS10: tabler ships the
+    // full chrome surface, so reading only one set's directory would
+    // under-report what callers can ask for.
+    for (const char *set : { "arora-adwaita", "arora-breeze",
+                            "arora-tabler", "arora-lucide" }) {
+        QStringList entries = QDir(s_resourcePrefix + QLatin1Char('/')
+            + QLatin1String(set) + QLatin1String("/icons"))
+            .entryList(QStringList(QLatin1String("*.svg")),
+                       QDir::Files, QDir::Name);
+        for (QString &name : entries) {
+            name.chop(4);
+            if (!out.contains(name))
+                out.append(name);
+        }
+    }
+    out.sort();
     return out;
 }
 
 QIcon AroraIcon::iconForTheme(const QString &id, const QString &name)
 {
     init();
-    if (id == s_nativeId)
-        return QIcon::fromTheme(name);
     // effectiveThemeName picks the -dark recolor under a dark
     // palette — previews should show what the set will actually look
     // like once applied.

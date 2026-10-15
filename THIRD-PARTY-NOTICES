@@ -412,9 +412,11 @@ assets of their respective owners.
 14. Bundled icon themes — src/icons/
 ----------------------------------------------------------------------
 
-Curated subsets (35 freedesktop-named icons each, plus mechanically
-recolored -dark variants) are vendored as qrc icon themes. Each
-directory carries its own LICENSE file; summary:
+Curated subsets (freedesktop-named icons — 62 in the Tabler and Lucide
+sets which cover the full chrome surface, ~35 in Adwaita/Breeze which
+inherit uncovered names from Tabler — plus mechanically recolored
+-dark variants) are vendored as qrc icon themes. Each directory
+carries its own LICENSE file; summary:
 
   * arora-adwaita{,-dark} — Adwaita Icon Theme, © the GNOME Project.
     LGPL-3+ or CC-BY-SA-3.0-US at the recipient's choice (newer artwork
@@ -423,10 +425,12 @@ directory carries its own LICENSE file; summary:
     LGPL-3+ (upstream explicitly extends the LGPL to its icon artwork).
     Source: github.com/KDE/breeze-icons.
   * arora-tabler{,-dark} — Tabler Icons, © 2020-2026 Paweł Kuna. MIT.
-    Source: github.com/tabler/tabler-icons.
-  * arora-legacy — the original Arora artwork (see section 5), served
-    in place from src/data/graphics/ via qrc aliases; the last-resort
-    fallback for names the newer sets do not cover.
+    Source: github.com/tabler/tabler-icons. Also the fallback root the
+    other sets inherit and QIcon::setFallbackThemeName resolves.
+  * arora-lucide{,-dark} — Lucide Icons, © Lucide contributors. ISC;
+    some glyphs are derived from Feather (© Cole Bemis, MIT — see the
+    bundled LICENSE). Source: github.com/lucide-icons/lucide
+    (lucide-static 1.53.0).
 
 ----------------------------------------------------------------------
 15. Bitwarden browser extension — src/data/extensions/ (SHIPPED)

@@ -284,6 +284,7 @@ private:
     bool inResizeGrip(const QPoint &pos) const;
     void paintResizeGrip(QPainter *painter);
     void persistStripSize();
+    QRect rowLabelRect(const QRect &rowRect, int index) const;
     void layoutRowTabButtons();
     void hideNativeMovingTab();
     // CONT06: level-1 band helpers — header geometry and painting
@@ -368,6 +369,10 @@ private:
     QPointer<QWidget> m_editPage;
     // TABS15: the in-strip new-tab button — see layoutNewTabButton().
     QToolButton *m_newTabButton;
+    // TABS18: the scroll chrome's band while the '+' is hosted in it
+    // — the re-laid buttons no longer span it, so the rect is
+    // remembered to keep the reflow stable.
+    QRect m_newTabChromeBand;
 };
 
 

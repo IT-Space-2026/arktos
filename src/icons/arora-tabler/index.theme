@@ -2,7 +2,6 @@
 Name=Arora Tabler
 Comment=Bundled Tabler outline icons (MIT)
 Directories=icons
-Inherits=arora-legacy
 
 [icons]
 Size=16
