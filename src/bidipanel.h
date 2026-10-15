@@ -25,7 +25,13 @@
  *            every column, a two-tone waterfall bar split at
  *            time-to-first-byte, and a Chrome-style summary footer
  *            (requests / transferred / Finish / DOMContentLoaded /
- *            Load).  Bodies intentionally out of scope.
+ *            Load).  DEVT11's parity pass added the record/stop
+ *            capture toggle, honestly-disabled throttling and
+ *            response-search controls (the bridge exposes neither),
+ *            per-resource-type waterfall swatches with an ms ruler
+ *            in the column header, CDP-timing phase breakdowns on
+ *            hover, and grayed cache-served rows.  Bodies
+ *            intentionally out of scope.
  *   Storage  cookies via storage.getCookies plus per-context
  *            localStorage via script.evaluate
  *
@@ -41,6 +47,7 @@
 #include <qhash.h>
 #include <qjsonarray.h>
 #include <qpointer.h>
+#include <qvector.h>
 #include <qwidget.h>
 
 class QAbstractTableModel;
@@ -94,6 +101,10 @@ public:
     // without scraping pixels.
     double testWaterfallFullEnd();
     double testWaterfallDisplayEnd();
+    // DEVT11: the absolute-ms tick positions the header ruler and
+    // the cell gridlines draw for the current window — lets the
+    // suite pin the ladder without scraping header pixels.
+    QVector<double> testWaterfallTicks();
 #else
 private:
 #endif
@@ -137,6 +148,12 @@ private:
     QCheckBox *m_preserveLog;
     QCheckBox *m_disableCache;
     QToolButton *m_clearRequests;
+    // DEVT11: Chrome's toolbar row — the record/stop capture toggle,
+    // and the honestly-disabled throttling selector + response-body
+    // search button (the debug channel exposes neither).
+    QToolButton *m_recordToggle;
+    QComboBox *m_throttling;
+    QToolButton *m_responseSearch;
     QButtonGroup *m_typeChips;
     QLabel *m_networkSummary;
     QTableWidget *m_cookieTable;

@@ -40,6 +40,7 @@
 #include "qtest_arora.h"
 #include "qtry.h"
 
+#include "arorastyle.h"
 #include "bidiclient.h"
 #include "bidipanel.h"
 #include "engineregistry.h"
@@ -82,6 +83,7 @@ private slots:
     void bidiPanel();
     void bidiContextSelector();
     void bidiWaterfallLegibility();
+    void bidiNetworkParity();
 };
 
 void tst_DevTools::initTestCase()
@@ -1019,15 +1021,27 @@ static QColor waterfallFailColor()
         ? QColor(0xff, 0x8a, 0x80) : QColor(0xc6, 0x28, 0x28);
 }
 
-// The delegate paints Highlight swatches with a darker(140) edge;
-// failed rows use the same shape in the fail color.  Anything close
-// to one of those four counts as bar ink.
+// The delegate paints per-type swatches (DEVT11) with a darker(140)
+// edge; failed rows use the same shape in the fail color.  Anything
+// close to a swatch, its edge, or the fail pair counts as bar ink.
 static bool isBarPixel(const QColor &c)
 {
-    const QColor hi = qApp->palette().color(QPalette::Highlight);
+    static const QStringList types = {
+        QStringLiteral("document"), QStringLiteral("stylesheet"),
+        QStringLiteral("script"), QStringLiteral("font"),
+        QStringLiteral("image"), QStringLiteral("media"),
+        QStringLiteral("manifest"), QStringLiteral("websocket"),
+        QStringLiteral("wasm"), QStringLiteral("xhr"),
+        QStringLiteral("other")
+    };
+    for (const QString &type : types) {
+        const QColor swatch =
+            AroraStyle::networkTypeSwatch(type, qApp->palette());
+        if (colorClose(c, swatch) || colorClose(c, swatch.darker(140)))
+            return true;
+    }
     const QColor fail = waterfallFailColor();
-    return colorClose(c, hi) || colorClose(c, hi.darker(140))
-        || colorClose(c, fail) || colorClose(c, fail.darker(140));
+    return colorClose(c, fail) || colorClose(c, fail.darker(140));
 }
 
 // visualRect is in viewport coordinates; a widget grab() paints the
@@ -1185,19 +1199,20 @@ void tst_DevTools::bidiWaterfallLegibility()
     QCOMPARE(none.first, -1);
 
     // --- pending beside a completed row still paints, translucent:
-    // its ink is Highlight alpha-120 composited over Base.
+    // its ink is the type swatch alpha-120 composited over Base.
     feed("p2", 100.0, -1.0);
     feed("c1", 0.0, 300.0);
     QVERIFY(rowFor("p2") >= 0);
     regrab();
     const QRect pCell = cellInGrab(
         panel.m_networkView, proxy, rowFor("p2"));
-    const QColor hi = qApp->palette().color(QPalette::Highlight);
+    const QColor swatch = AroraStyle::networkTypeSwatch(
+        QStringLiteral("image"), qApp->palette());
     const QColor base = qApp->palette().color(QPalette::Base);
     const QColor blended(
-        (120 * hi.red() + 135 * base.red()) / 255,
-        (120 * hi.green() + 135 * base.green()) / 255,
-        (120 * hi.blue() + 135 * base.blue()) / 255);
+        (120 * swatch.red() + 135 * base.red()) / 255,
+        (120 * swatch.green() + 135 * base.green()) / 255,
+        (120 * swatch.blue() + 135 * base.blue()) / 255);
     bool sawPending = false;
     for (int x = pCell.left() + 2; x <= pCell.right() - 2 && !sawPending;
          ++x) {
@@ -1238,6 +1253,193 @@ void tst_DevTools::bidiWaterfallLegibility()
     }
     QVERIFY(sawDcl);
     QVERIFY(sawLoad);
+}
+
+// DEVT11: the Chromium parity pass — the toolbar row gains the
+// record/stop toggle plus honestly-disabled throttling and
+// response-search controls, waterfall bars take per-type swatches,
+// an ms ruler rides the column header, the waterfall hover breaks
+// the raw CDP ResourceTiming into phases, and cache-served rows
+// gray out.
+void tst_DevTools::bidiNetworkParity()
+{
+    BidiPanel panel;
+    panel.onConnectionChanged(BidiClient::Connected);
+    panel.onResponse(7777, QByteArray(
+        "{\"result\":{\"contexts\":["
+        "{\"context\":\"ctx1\",\"url\":\"http://a/\"}]}}"));
+
+    QAbstractTableModel *net = panel.m_networkModel;
+
+    // Toolbar: Chrome's row — the record toggle starts recording,
+    // the clear button sits next to it, throttling + response search
+    // occupy their slots honestly disabled with the reason stated.
+    QVERIFY(panel.m_recordToggle);
+    QVERIFY(panel.m_recordToggle->isCheckable());
+    QVERIFY(panel.m_recordToggle->isChecked());
+    QVERIFY(!panel.m_recordToggle->icon().isNull());
+    QVERIFY(panel.m_clearRequests);
+    QVERIFY(panel.m_throttling);
+    QVERIFY(!panel.m_throttling->isEnabled());
+    QVERIFY(panel.m_throttling->toolTip().contains(
+        QStringLiteral("not exposed")));
+    QVERIFY(panel.m_responseSearch);
+    QVERIFY(!panel.m_responseSearch->isEnabled());
+    QVERIFY(panel.m_responseSearch->toolTip().contains(
+        QStringLiteral("response bodies")));
+
+    // Record off is Chrome's stop: network.* events still arrive
+    // but nothing is logged; recording picks up where it left off.
+    panel.m_recordToggle->setChecked(false);
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.beforeRequestSent\",\"params\":{"
+        "\"timestamp\":100.0,\"request\":{\"request\":\"p1\","
+        "\"method\":\"GET\",\"url\":\"http://a/paused\","
+        "\"type\":\"Document\"}}}"));
+    QCOMPARE(net->rowCount(), 0);
+    panel.m_recordToggle->setChecked(true);
+    QVERIFY(panel.m_recordToggle->toolTip().contains(
+        QStringLiteral("Stop recording")));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.beforeRequestSent\",\"params\":{"
+        "\"timestamp\":100.0,\"request\":{\"request\":\"p1\","
+        "\"method\":\"GET\",\"url\":\"http://a/paused\","
+        "\"type\":\"Document\"}}}"));
+    QCOMPARE(net->rowCount(), 1);
+
+    // The raw ResourceTiming block becomes the waterfall hover's
+    // per-segment breakdown — every phase CDP reported.
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.responseStarted\",\"params\":{"
+        "\"timestamp\":140.0,\"type\":\"Document\",\"request\":{"
+        "\"request\":\"p1\"},\"response\":{\"status\":200,"
+        "\"timing\":{\"dnsStart\":1.0,\"dnsEnd\":5.0,"
+        "\"connectStart\":5.0,\"connectEnd\":25.0,"
+        "\"sslStart\":8.0,\"sslEnd\":24.0,"
+        "\"sendStart\":25.0,\"sendEnd\":26.0,"
+        "\"receiveHeadersEnd\":60.0}}}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.responseCompleted\",\"params\":{"
+        "\"timestamp\":200.0,\"request\":{\"request\":\"p1\"},"
+        "\"response\":{\"encodedDataLength\":1024,"
+        "\"decodedDataLength\":4096}}}"));
+    const QString tip =
+        net->data(net->index(0, 6), Qt::ToolTipRole).toString();
+    QVERIFY(tip.contains(QStringLiteral("DNS Lookup: 4 ms")));
+    QVERIFY(tip.contains(
+        QStringLiteral("Initial connection: 20 ms")));
+    QVERIFY(tip.contains(QStringLiteral("SSL: 16 ms")));
+    QVERIFY(tip.contains(QStringLiteral("Request sent: 1 ms")));
+    QVERIFY(tip.contains(QStringLiteral("Waiting (TTFB): 34 ms")));
+    QVERIFY(tip.contains(QStringLiteral("Content Download: 40 ms")));
+
+    // Size hover: wire bytes + the decoded resource size, like
+    // Chrome's "transferred over network, resource size".
+    const QString sizeTip =
+        net->data(net->index(0, 4), Qt::ToolTipRole).toString();
+    QVERIFY(sizeTip.contains(
+        QStringLiteral("1.0 kB transferred over network")));
+    QVERIFY(sizeTip.contains(
+        QStringLiteral("resource size 4.0 kB")));
+
+    // A cache-served row grays out (the request hit no wire) while
+    // the live row keeps the default foreground.
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.beforeRequestSent\",\"params\":{"
+        "\"timestamp\":300.0,\"request\":{\"request\":\"p2\","
+        "\"method\":\"GET\",\"url\":\"http://a/cached.css\","
+        "\"type\":\"Stylesheet\"}}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.requestServedFromCache\",\"params\":{"
+        "\"request\":{\"request\":\"p2\"}}}"));
+    const QVariant grayed =
+        net->data(net->index(1, 0), Qt::ForegroundRole);
+    QVERIFY(grayed.isValid());
+    QVERIFY(grayed.value<QColor>() != waterfallFailColor());
+    QVERIFY(!net->data(net->index(0, 0), Qt::ForegroundRole)
+                .isValid());
+
+    // The ruler's ladder covers the recording window on nice,
+    // evenly-spaced steps (p1 spans 100->300 ms).
+    const QVector<double> ticks = panel.testWaterfallTicks();
+    QVERIFY(ticks.size() >= 3);
+    QVERIFY(qAbs(ticks.first() - 100.0) < 1.0);
+    QVERIFY(ticks.last() <= panel.testWaterfallDisplayEnd() + 0.001);
+    const double step = ticks.at(1) - ticks.at(0);
+    for (int i = 2; i < ticks.size(); ++i)
+        QVERIFY(qAbs(ticks.at(i) - ticks.at(i - 1) - step) < 0.001);
+
+    // Per-type swatches: the Script row's cell paints amber ink the
+    // Image row's does not — Chrome's type-colored waterfall.
+    panel.clearNetworkLog();
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.beforeRequestSent\",\"params\":{"
+        "\"timestamp\":0.0,\"request\":{\"request\":\"t1\","
+        "\"method\":\"GET\",\"url\":\"http://a/app.js\","
+        "\"type\":\"Script\"}}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.responseCompleted\",\"params\":{"
+        "\"timestamp\":100.0,\"request\":{\"request\":\"t1\"},"
+        "\"response\":{\"encodedDataLength\":128}}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.beforeRequestSent\",\"params\":{"
+        "\"timestamp\":0.0,\"request\":{\"request\":\"t2\","
+        "\"method\":\"GET\",\"url\":\"http://a/pic.png\","
+        "\"type\":\"Image\"}}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.responseCompleted\",\"params\":{"
+        "\"timestamp\":150.0,\"request\":{\"request\":\"t2\"},"
+        "\"response\":{\"encodedDataLength\":128}}}"));
+    QTabWidget *tabs = panel.findChild<QTabWidget *>();
+    QVERIFY(tabs);
+    tabs->setCurrentWidget(panel.m_networkView->parentWidget());
+    panel.resize(900, 320);
+    panel.show();
+    QCoreApplication::processEvents();
+    const QImage shot = panel.m_networkView->grab().toImage();
+    QSortFilterProxyModel *proxy = panel.m_networkProxy;
+    const auto rowFor = [proxy](const QString &name) -> int {
+        for (int r = 0; r < proxy->rowCount(); ++r) {
+            if (proxy->index(r, 0).data().toString() == name)
+                return r;
+        }
+        return -1;
+    };
+    const auto cellHas = [&](const QString &name,
+                             const QColor &want) {
+        const int row = rowFor(name);
+        if (row < 0)
+            return false;
+        const QRect cell = cellInGrab(panel.m_networkView, proxy,
+                                      row);
+        const int y = cell.center().y();
+        for (int x = cell.left(); x <= cell.right(); ++x) {
+            if (colorClose(shot.pixelColor(x, y), want))
+                return true;
+        }
+        return false;
+    };
+    const QColor amber = AroraStyle::networkTypeSwatch(
+        QStringLiteral("script"), qApp->palette());
+    const QColor purple = AroraStyle::networkTypeSwatch(
+        QStringLiteral("image"), qApp->palette());
+    QVERIFY(cellHas(QStringLiteral("app.js"), amber));
+    QVERIFY(cellHas(QStringLiteral("pic.png"), purple));
+    QVERIFY(!cellHas(QStringLiteral("app.js"), purple));
+    QVERIFY(!cellHas(QStringLiteral("pic.png"), amber));
+
+    // The ruler section paints too — grab the header once so a
+    // paint-time crash/regression is caught; the ladder math itself
+    // is pinned by testWaterfallTicks above.
+    const QByteArray grabDir = qgetenv("ARORA_DEVTOOLS_GRAB_DIR");
+    if (!grabDir.isEmpty()) {
+        panel.m_networkView->horizontalHeader()->grab().save(
+            QString::fromLocal8Bit(grabDir)
+            + QLatin1String("/bidi-network-ruler.png"));
+        panel.m_networkView->grab().save(
+            QString::fromLocal8Bit(grabDir)
+            + QLatin1String("/bidi-network-parity.png"));
+    }
 }
 
 QTEST_MAIN(tst_DevTools)

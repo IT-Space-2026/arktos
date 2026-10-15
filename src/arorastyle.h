@@ -127,6 +127,21 @@ QColor loadingProgressColor(const QPalette &fieldPalette);
 // caller applies it only where dark text sits on the field.
 QColor secureFieldColor();
 
+// DEVT11: the BiDi network waterfall colors each bar by resource
+// type — approximately Chrome's swatch set (document blue,
+// stylesheet green, script amber, image purple, xhr/fetch light
+// blue, ...).  `type` is the CDP resource type
+// ("Document"/"Stylesheet"/"XHR"/...); unmapped types share the
+// neutral swatch.  Dark palettes get the same hues lifted a step so
+// the bars keep their contrast on the dark field.
+QColor networkTypeSwatch(const QString &type,
+                         const QPalette &palette);
+
+// The record-dot red the BiDi network toolbar's capture toggle
+// paints — the classic "recording" cue, fixed like the secure-field
+// cue above.
+QColor recordDotColor();
+
 // The rate-limit notice WebPage injects into arbitrary page DOM —
 // fixed amber because all:initial cuts it off from the page's own
 // colors and the widget palette alike.

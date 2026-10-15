@@ -536,6 +536,50 @@ QColor AroraStyle::secureFieldColor()
     return QColor(248, 248, 210);
 }
 
+QColor AroraStyle::networkTypeSwatch(const QString &type,
+                                     const QPalette &palette)
+{
+    // Chrome DevTools' per-type waterfall hues, approximately —
+    // fixed identity colors like the container accents.  Keyed on
+    // the CDP resource type (lowercased by the caller or here).
+    const QString t = type.toLower();
+    QColor swatch;
+    if (t == QLatin1String("document"))
+        swatch = QColor(0x1a, 0x73, 0xe8);          // blue
+    else if (t == QLatin1String("stylesheet"))
+        swatch = QColor(0x18, 0x80, 0x38);          // green
+    else if (t == QLatin1String("script"))
+        swatch = QColor(0xf9, 0xab, 0x00);          // amber
+    else if (t == QLatin1String("font"))
+        swatch = QColor(0xd0, 0x18, 0x84);          // magenta
+    else if (t == QLatin1String("image"))
+        swatch = QColor(0x93, 0x34, 0xe6);          // purple
+    else if (t == QLatin1String("media"))
+        swatch = QColor(0x00, 0x83, 0x8f);          // teal
+    else if (t == QLatin1String("manifest"))
+        swatch = QColor(0x5f, 0x63, 0x68);          // gray
+    else if (t == QLatin1String("websocket"))
+        swatch = QColor(0x8e, 0x24, 0xaa);          // deep violet
+    else if (t == QLatin1String("wasm"))
+        swatch = QColor(0x54, 0x6e, 0x7a);          // blue-gray
+    else if (t == QLatin1String("xhr")
+             || t == QLatin1String("fetch"))
+        swatch = QColor(0x03, 0x9b, 0xe5);          // light blue
+    else
+        swatch = QColor(0x9a, 0xa0, 0xa6);          // neutral gray
+    // On a dark field the same hues lift toward white so the bars do
+    // not sink into the background — Chrome keeps the saturated set
+    // in dark mode too, just brighter.
+    if (palette.color(QPalette::Base).lightness() < 128)
+        swatch = blend(swatch, Qt::white, 0.18);
+    return swatch;
+}
+
+QColor AroraStyle::recordDotColor()
+{
+    return QColor(0xd9, 0x30, 0x25);
+}
+
 QColor AroraStyle::warningBannerColor()
 {
     return QColor(0xff, 0xf4, 0xce);

@@ -8,11 +8,13 @@
 
 #include "bidipanel.h"
 
+#include "arorastyle.h"
 #include "bidiclient.h"
 #include "engineinterface.h"
 #include "enginetab.h"
 #include "tabwidget.h"
 #include "webview.h"
+#include "utils/aroraicon.h"
 #include "utils/flowlayout.h"
 
 #include <qabstractitemmodel.h>
@@ -38,6 +40,7 @@
 #include <qstandarditemmodel.h>
 #include <qstyle.h>
 #include <qstyleditemdelegate.h>
+#include <qstyleoption.h>
 #include <qtableview.h>
 #include <qtablewidget.h>
 #include <qtabwidget.h>
@@ -47,6 +50,7 @@
 #include <qvector.h>
 
 #include <algorithm>
+#include <cmath>
 
 // eval tags
 static const quint64 TagConsole = 1;
@@ -85,15 +89,20 @@ static const char kDomHelper[] =
 /*
  * DEVT06 — Chrome DevTools-style Network tab.
  *
- * The tab mirrors the Chrome layout: a toolbar row (filter field,
- * Invert, Preserve log, Disable cache, Clear), a row of type-filter
- * chips, and a table whose columns match Chrome's ordering — Name,
- * Status, Type, Initiator, Size, Time, Waterfall.  One row set lives
- * in BidiNetworkModel; the filter field and chips re-slice it through
- * BidiNetworkProxy, so a chip is a filtered view, not separate data.
- * The Waterfall column is painted by a delegate against the whole
- * recording window — the bridge emits CDP MonotonicTime in ms, so the
- * bars are real timings, not decoration.
+ * The tab mirrors the Chrome layout: a toolbar row (DEVT11: record/
+ * stop + clear leading, the filter field stretching, Invert /
+ * Preserve log / Disable cache trailing, throttling + response
+ * search honestly disabled — the bridge exposes neither), a row of
+ * type-filter chips, and a table whose columns match Chrome's
+ * ordering — Name, Status, Type, Initiator, Size, Time, Waterfall.
+ * One row set lives in BidiNetworkModel; the filter field and chips
+ * re-slice it through BidiNetworkProxy, so a chip is a filtered
+ * view, not separate data.  The Waterfall column is painted by a
+ * delegate against the whole recording window — the bridge emits CDP
+ * MonotonicTime in ms, so the bars are real timings, not decoration.
+ * DEVT11 colors each bar by resource type, runs a shared ms tick
+ * ladder through the header ruler and the cell gridlines, and breaks
+ * the raw CDP ResourceTiming block into per-phase hover lines.
  */
 
 // Chrome's type chips — request.type (CDP ResourceType) buckets onto
@@ -198,6 +207,23 @@ static QColor failColor()
         : QColor(0xc6, 0x28, 0x28);
 }
 
+// DEVT11: the record toggle's dot — red while capturing, the
+// disabled-text grey while paused (Chrome's circle semantics, the
+// same icon at both states so the control reads as a toggle).
+static QIcon recordDotIcon(bool recording, const QPalette &palette)
+{
+    QPixmap dot(16, 16);
+    dot.fill(Qt::transparent);
+    QPainter painter(&dot);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(recording
+        ? AroraStyle::recordDotColor()
+        : palette.color(QPalette::Disabled, QPalette::ButtonText));
+    painter.drawEllipse(QRectF(3.0, 3.0, 10.0, 10.0));
+    return QIcon(dot);
+}
+
 class BidiNetworkModel : public QAbstractTableModel
 {
 public:
@@ -233,10 +259,19 @@ public:
         UrlRole,
         CacheRole,
         TtfbRole,
-        DecodedRole
+        DecodedRole,
+        // DEVT11: the raw CDP type for the waterfall's per-type
+        // swatch (TypeRole) — appended last so the earlier role
+        // numbers the suite mirrors stay put.
+        TypeRole
     };
     struct Row {
         QString requestId, url, name, type, initiator, errorText;
+        // DEVT11: the raw CDP ResourceTiming object — the waterfall
+        // tooltip's per-phase breakdown (dns/connect/ssl/send/
+        // waiting/download) reads it; empty when the engine sent no
+        // timing block.
+        QJsonObject timing;
         int bucket = NetOther;
         int status = -1;
         int state = Pending;
@@ -333,12 +368,64 @@ public:
                 return row.url;
             if (index.column() == StatusColumn && row.state == Failed)
                 return row.errorText;
-            if (index.column() == SizeColumn && row.size >= 0)
-                return tr("%1 transferred over network")
+            if (index.column() == SizeColumn && row.size >= 0) {
+                // Chrome's cell carries the wire size; the tooltip
+                // adds the decoded resource size when the bridge
+                // reported it.
+                QString tip = tr("%1 transferred over network")
                     .arg(formatBytes(row.size));
+                if (row.decodedSize >= 0 && row.decodedSize != row.size)
+                    tip += tr(", resource size %1")
+                        .arg(formatBytes(row.decodedSize));
+                return tip;
+            }
             if (index.column() == WaterfallColumn
                 && row.startMs >= 0.0 && row.endMs >= 0.0) {
                 const double total = row.endMs - row.startMs;
+                // DEVT11: Chrome's hover breakdown — one line per
+                // phase the raw CDP ResourceTiming actually carried.
+                // "Queueing/Stalled" is honestly absent: it needs the
+                // request's wall-clock issue time, which the
+                // monotonic waterfall clock cannot reproduce.
+                QStringList lines;
+                const auto seg = [&lines, this](const QString &label,
+                                                double start,
+                                                double end) {
+                    if (start >= 0.0 && end > start)
+                        lines << label + QLatin1String(": ")
+                                + formatMillis(end - start);
+                };
+                const QJsonObject &t = row.timing;
+                seg(tr("Proxy negotiation"),
+                    t[QStringLiteral("proxyStart")].toDouble(-1.0),
+                    t[QStringLiteral("proxyEnd")].toDouble(-1.0));
+                seg(tr("DNS Lookup"),
+                    t[QStringLiteral("dnsStart")].toDouble(-1.0),
+                    t[QStringLiteral("dnsEnd")].toDouble(-1.0));
+                seg(tr("Initial connection"),
+                    t[QStringLiteral("connectStart")].toDouble(-1.0),
+                    t[QStringLiteral("connectEnd")].toDouble(-1.0));
+                seg(tr("SSL"),
+                    t[QStringLiteral("sslStart")].toDouble(-1.0),
+                    t[QStringLiteral("sslEnd")].toDouble(-1.0));
+                seg(tr("Request sent"),
+                    t[QStringLiteral("sendStart")].toDouble(-1.0),
+                    t[QStringLiteral("sendEnd")].toDouble(-1.0));
+                const double ttfb =
+                    t[QStringLiteral("receiveHeadersEnd")]
+                        .toDouble(-1.0);
+                const double sendEnd =
+                    t[QStringLiteral("sendEnd")].toDouble(-1.0);
+                if (ttfb >= 0.0) {
+                    lines << tr("Waiting (TTFB): %1")
+                        .arg(formatMillis(
+                            sendEnd >= 0.0 ? ttfb - sendEnd : ttfb));
+                    if (ttfb < total)
+                        lines << tr("Content Download: %1")
+                            .arg(formatMillis(total - ttfb));
+                }
+                if (!lines.isEmpty())
+                    return lines.join(QLatin1Char('\n'));
                 if (row.ttfbMs >= 0.0 && row.ttfbMs < total)
                     return tr("Wait %1 · Download %2")
                         .arg(formatMillis(row.ttfbMs),
@@ -349,6 +436,11 @@ public:
         case Qt::ForegroundRole:
             if (row.state == Failed || row.status >= 400)
                 return failColor();
+            // DEVT11: cache-served rows read grayed like Chrome's —
+            // the request hit no wire.
+            if (row.cacheKind != CacheNone || row.cached)
+                return qApp->palette().color(
+                    QPalette::Disabled, QPalette::Text);
             return QVariant();
         case Qt::TextAlignmentRole:
             if (index.column() == StatusColumn
@@ -366,6 +458,7 @@ public:
         case CacheRole: return row.cacheKind;
         case TtfbRole: return row.ttfbMs;
         case DecodedRole: return row.decodedSize;
+        case TypeRole: return row.type;
         }
         return QVariant();
     }
@@ -586,6 +679,38 @@ private:
     int m_bucket = NetAll;
 };
 
+// DEVT11: Chrome's waterfall ruler — a "nice" tick step on the
+// 1/2/5 ladder picked so labels land roughly every 90 px of axis.
+static double waterfallTickStep(double spanMs, int widthPx)
+{
+    if (spanMs <= 0.0 || widthPx <= 0)
+        return -1.0;
+    const double rawStep = spanMs * 90.0 / widthPx;
+    static const double kSteps[] = {
+        1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000,
+        10000, 30000, 60000, 300000, 600000
+    };
+    for (double step : kSteps) {
+        if (step >= rawStep)
+            return step;
+    }
+    return rawStep;
+}
+
+// Tick positions (absolute ms) the ruler and the cell gridlines
+// share — one ladder so a header tick always lands on a cell rule.
+static QVector<double> waterfallTicks(double w0, double w1,
+                                      int widthPx)
+{
+    QVector<double> ticks;
+    const double step = waterfallTickStep(w1 - w0, widthPx);
+    if (step <= 0.0)
+        return ticks;
+    for (double t = std::ceil(w0 / step) * step; t <= w1; t += step)
+        ticks.append(t);
+    return ticks;
+}
+
 // Paints the Chrome-style start+duration bar scaled to the dense
 // display window (DEVT09 — one outlier request can no longer flatten
 // every bar to a hairline); pending rows run to the window end,
@@ -593,6 +718,9 @@ private:
 // notch at the cell edge.
 // DEVT07: when the response timing arrived the bar splits at
 // time-to-first-byte — light segment waiting, solid receiving.
+// DEVT11: the bar takes its resource type's swatch like Chrome
+// (failed keeps the red), and faint tick gridlines run behind the
+// bars on the same ladder as the header ruler.
 class BidiWaterfallDelegate : public QStyledItemDelegate
 {
 public:
@@ -622,6 +750,17 @@ public:
         const double span = w1 - w0;
         const int axisW = area.width() - 1;
 
+        // DEVT11: the ruler's faint column-wide gridlines — the same
+        // tick ladder the header paints, behind the bar.
+        const QColor grid = AroraStyle::blend(
+            option.palette.color(QPalette::Base),
+            option.palette.color(QPalette::Text), 0.14);
+        painter->setPen(grid);
+        for (double t : waterfallTicks(w0, w1, area.width())) {
+            const int gx = area.x() + int((t - w0) / span * axisW);
+            painter->drawLine(gx, area.top(), gx, area.bottom());
+        }
+
         // The bar.  A start mapped past the dense window's edge means
         // the request lives entirely outside the zoomed axis — paint
         // nothing rather than a phantom sliver at x 0.
@@ -644,9 +783,15 @@ public:
                 const bool failed =
                     index.data(BidiNetworkModel::StateRole).toInt()
                     == BidiNetworkModel::Failed;
+                // DEVT11: Chrome colors the bar by resource type;
+                // failed rows stay red.  Typeless rows (the event
+                // never named one) fall back to the neutral swatch.
                 QColor bar = failed
                     ? failColor()
-                    : option.palette.color(QPalette::Highlight);
+                    : AroraStyle::networkTypeSwatch(
+                        index.data(BidiNetworkModel::TypeRole)
+                            .toString(),
+                        option.palette);
                 if (pending)
                     bar.setAlpha(120);
 
@@ -709,6 +854,66 @@ public:
         markerAt(m_model->domContentLoadedMs(),
                  option.palette.color(QPalette::Link));
         markerAt(m_model->loadMs(), failColor());
+    }
+
+private:
+    BidiNetworkModel *m_model;
+};
+
+// DEVT11: Chrome's waterfall ruler — the Waterfall column's header
+// section carries the ms tick ladder ("200 ms", "1.00 s") instead of
+// a text label, drawn on the same scale the delegate uses so a tick
+// always lands on a cell gridline.  Every other section paints
+// stock.
+class BidiNetworkHeader : public QHeaderView
+{
+public:
+    explicit BidiNetworkHeader(BidiNetworkModel *model,
+                               QWidget *parent = nullptr)
+        : QHeaderView(Qt::Horizontal, parent)
+        , m_model(model)
+    {
+    }
+
+protected:
+    void paintSection(QPainter *painter, const QRect &rect,
+                      int logicalIndex) const override
+    {
+        if (logicalIndex != BidiNetworkModel::WaterfallColumn) {
+            QHeaderView::paintSection(painter, rect, logicalIndex);
+            return;
+        }
+        // Stock section chrome, minus the "Waterfall" label — the
+        // ruler owns the space like Chrome's does.
+        QStyleOptionHeader opt;
+        initStyleOptionForIndex(&opt, logicalIndex);
+        opt.text.clear();
+        style()->drawControl(QStyle::CE_Header, &opt, painter, this);
+        if (!m_model)
+            return;
+        const double w0 = m_model->windowStart();
+        const double w1 = m_model->displayWindowEnd();
+        if (w0 < 0.0 || w1 <= w0)
+            return;
+        const double span = w1 - w0;
+        const QRect area = rect.adjusted(2, 0, -2, 0);
+        const int axisW = area.width() - 1;
+        painter->save();
+        painter->setClipRect(rect.adjusted(0, 0, -1, 0));
+        QFont small = font();
+        small.setPointSizeF(qMax(6.0, small.pointSizeF() - 1.0));
+        painter->setFont(small);
+        painter->setPen(palette().color(
+            QPalette::Disabled, QPalette::WindowText));
+        for (double t : waterfallTicks(w0, w1, area.width())) {
+            const int x = area.x() + int((t - w0) / span * axisW);
+            painter->drawLine(x, area.bottom() - 3, x, area.bottom());
+            painter->drawText(
+                QRect(x + 3, rect.top(), 70, rect.height()),
+                int(Qt::AlignVCenter | Qt::AlignLeft),
+                formatMillis(t - w0));
+        }
+        painter->restore();
     }
 
 private:
@@ -784,6 +989,25 @@ BidiPanel::BidiPanel(QWidget *parent)
     QHBoxLayout *nb = new QHBoxLayout(netBar);
     nb->setContentsMargins(4, 2, 4, 2);
     nb->setSpacing(4);
+    // DEVT11: Chrome's row — the record/stop toggle and the clear
+    // button lead on the left, the filter field stretches, the
+    // checkboxes trail, and the throttling + response-search
+    // controls sit at the right edge honestly disabled (the debug
+    // channel exposes neither).
+    m_recordToggle = new QToolButton;
+    m_recordToggle->setObjectName(QLatin1String("bidiNetworkRecord"));
+    m_recordToggle->setAutoRaise(true);
+    m_recordToggle->setCheckable(true);
+    m_recordToggle->setChecked(true);
+    m_recordToggle->setIcon(recordDotIcon(true, palette()));
+    m_recordToggle->setToolTip(tr("Stop recording network log"));
+    nb->addWidget(m_recordToggle);
+    m_clearRequests = new QToolButton;
+    m_clearRequests->setAutoRaise(true);
+    m_clearRequests->setIcon(
+        style()->standardIcon(QStyle::SP_TrashIcon));
+    m_clearRequests->setToolTip(tr("Clear"));
+    nb->addWidget(m_clearRequests);
     m_networkFilter = new QLineEdit;
     m_networkFilter->setClearButtonEnabled(true);
     m_networkFilter->setPlaceholderText(tr("Filter"));
@@ -791,6 +1015,7 @@ BidiPanel::BidiPanel(QWidget *parent)
     m_networkFilter->setSizePolicy(QSizePolicy::Expanding,
                                    QSizePolicy::Fixed);
     nb->addWidget(m_networkFilter);
+    nb->addStretch();
     m_invertFilter = new QCheckBox(tr("Invert"));
     nb->addWidget(m_invertFilter);
     m_preserveLog = new QCheckBox(tr("Preserve log"));
@@ -801,13 +1026,30 @@ BidiPanel::BidiPanel(QWidget *parent)
     m_disableCache->setToolTip(
         tr("Bypass the HTTP cache while the panel is connected"));
     nb->addWidget(m_disableCache);
-    nb->addStretch();
-    m_clearRequests = new QToolButton;
-    m_clearRequests->setAutoRaise(true);
-    m_clearRequests->setIcon(
-        style()->standardIcon(QStyle::SP_TrashIcon));
-    m_clearRequests->setToolTip(tr("Clear"));
-    nb->addWidget(m_clearRequests);
+    // Throttling: Chromium's CDP speaks
+    // Network.emulateNetworkConditions but the bridge has no BiDi
+    // translation for it — the selector shows the slot with the
+    // reason rather than a dead combo or a fake option list.
+    m_throttling = new QComboBox;
+    m_throttling->setObjectName(QLatin1String("bidiNetworkThrottling"));
+    m_throttling->addItem(tr("No throttling"));
+    m_throttling->setEnabled(false);
+    m_throttling->setToolTip(
+        tr("Network throttling is not exposed by the debug channel"));
+    nb->addWidget(m_throttling);
+    // Response search: bodies never reach the panel (a DEVT06 scope
+    // call — the bridge forwards no getResponseBody equivalent).
+    m_responseSearch = new QToolButton;
+    m_responseSearch->setObjectName(
+        QLatin1String("bidiNetworkSearchResponses"));
+    m_responseSearch->setAutoRaise(true);
+    m_responseSearch->setIcon(
+        AroraIcon::getChrome(QLatin1String("edit-find")));
+    m_responseSearch->setEnabled(false);
+    m_responseSearch->setToolTip(
+        tr("Search response bodies — unavailable: the debug channel "
+           "does not expose response bodies"));
+    nb->addWidget(m_responseSearch);
     nv->addWidget(netBar);
 
     // Type chips — an exclusive filtered view over the same rows.
@@ -848,6 +1090,12 @@ BidiPanel::BidiPanel(QWidget *parent)
     m_networkView->verticalHeader()->setVisible(false);
     m_networkView->verticalHeader()->setDefaultSectionSize(
         m_networkView->fontMetrics().height() + 8);
+    // DEVT11: the Waterfall section's header is the ms ruler — the
+    // custom header paints every other section stock.
+    m_networkView->setHorizontalHeader(
+        new BidiNetworkHeader(
+            static_cast<BidiNetworkModel *>(m_networkModel),
+            m_networkView));
     QHeaderView *netHead = m_networkView->horizontalHeader();
     netHead->setSectionResizeMode(QHeaderView::Interactive);
     // DEVT07: every column stays Interactive (user-resizable) with a
@@ -967,6 +1215,16 @@ BidiPanel::BidiPanel(QWidget *parent)
     });
     connect(m_clearRequests, &QToolButton::clicked,
             this, &BidiPanel::clearNetworkLog);
+    // DEVT11: the record toggle's dot swaps red<->grey and the
+    // tooltip flips — the actual event gate lives in onEvent.
+    connect(m_recordToggle, &QToolButton::toggled,
+            this, [this](bool recording) {
+        m_recordToggle->setIcon(
+            recordDotIcon(recording, palette()));
+        m_recordToggle->setToolTip(
+            recording ? tr("Stop recording network log")
+                      : tr("Record network log"));
+    });
     connect(m_disableCache, &QCheckBox::toggled,
             this, [this](bool) { sendCacheBehavior(); });
     // The footer follows the FILTERED row set — proxy signals already
@@ -1609,6 +1867,11 @@ void BidiPanel::onEvent(const QByteArray &json)
     // network.*
     if (!method.startsWith(QLatin1String("network.")))
         return;
+    // DEVT11: the record toggle is Chrome's stop — events keep
+    // arriving from the bridge but nothing new is logged, so the
+    // table, footer and waterfall freeze exactly as they were.
+    if (!m_recordToggle->isChecked())
+        return;
     BidiNetworkModel *model =
         static_cast<BidiNetworkModel *>(m_networkModel);
     const QString requestId = params[QStringLiteral("request")]
@@ -1666,9 +1929,13 @@ void BidiPanel::onEvent(const QByteArray &json)
             data->cacheKind = BidiNetworkModel::CachePrefetch;
         else if (resp[QStringLiteral("fromDiskCache")].toBool())
             data->cacheKind = BidiNetworkModel::CacheDisk;
-        const double ttfb = resp[QStringLiteral("timing")]
-                                .toObject()[QStringLiteral(
-                                    "receiveHeadersEnd")]
+        const QJsonObject timing =
+            resp[QStringLiteral("timing")].toObject();
+        // DEVT11: keep the whole block — the waterfall tooltip's
+        // per-phase breakdown reads past receiveHeadersEnd.
+        data->timing = timing;
+        const double ttfb = timing[QStringLiteral(
+                                     "receiveHeadersEnd")]
                                 .toDouble(-1.0);
         if (ttfb >= 0.0)
             data->ttfbMs = ttfb;
@@ -1746,5 +2013,16 @@ double BidiPanel::testWaterfallDisplayEnd()
 {
     return static_cast<BidiNetworkModel *>(m_networkModel)
         ->displayWindowEnd();
+}
+
+QVector<double> BidiPanel::testWaterfallTicks()
+{
+    BidiNetworkModel *model =
+        static_cast<BidiNetworkModel *>(m_networkModel);
+    // Same rect math the header ruler applies to its section.
+    const int width = m_networkView->horizontalHeader()
+        ->sectionSize(BidiNetworkModel::WaterfallColumn) - 4;
+    return waterfallTicks(model->windowStart(),
+                          model->displayWindowEnd(), width);
 }
 #endif

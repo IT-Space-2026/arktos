@@ -2637,3 +2637,23 @@ BiDi Dev Tools selector lists every tab, not just the debuggable ones (DEVT10):
     ENABLED row, so a strip whose slot 0 is a Servo or widget tab can
     no longer strand the selection on a dead entry — and an ordinary
     WebEngine tab in slot 0 selects and evaluates normally.
+BiDi Dev Tools Network tab gains Chrome's toolbar, colored waterfall, and timing ruler (DEVT11):
+    The Network tab read as a bare table with filter chips while
+    Chromium's reads as one tool — the gap is now closed. The toolbar
+    mirrors Chrome's row: a record/stop capture toggle (red dot while
+    recording) and the clear button lead, the filter field stretches,
+    and Preserve log / Disable cache trail; the two controls the debug
+    channel cannot back — the throttling selector and response-body
+    search — sit in their slots honestly disabled with tooltips that
+    say why instead of pretending to work. Waterfall bars are colored
+    by resource type (documents blue, stylesheets green, scripts
+    amber, images purple, XHR/fetch light blue, and so on — failed
+    requests stay red, pending ones stay translucent), a millisecond
+    tick ruler runs across the top of the Waterfall column, and faint
+    gridlines on the same ladder run behind the bars so every row
+    lines up with the ruler. Hovering a bar breaks the request into
+    Chrome's phase list — DNS, initial connection, SSL, request sent,
+    waiting (TTFB), content download — showing only the phases the
+    engine actually reported; cache-served rows grey out like Chrome's
+    muted '(disk cache)' entries, and the Size hover now names both
+    the wire bytes and the decoded resource size.
