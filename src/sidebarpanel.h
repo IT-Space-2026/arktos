@@ -135,6 +135,10 @@ private:
     // SIDE09 lazy load: swaps a placeholder page for the real one the
     // first time its tab is selected.  No-op on a built page.
     void buildPendingTab(int index);
+    // TRUST20: re-bakes the rail's tab glyphs from the rail's own
+    // resolved palette — driven by SidebarRail on palette/style
+    // moves so the tor strip's light icons survive re-resolves.
+    void refreshRailIcons();
 
     // Registered factories — each builds its page on demand and fills
     // in the matching members (they stay null while the panel is

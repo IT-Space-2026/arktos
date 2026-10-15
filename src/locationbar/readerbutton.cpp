@@ -24,7 +24,96 @@
 #include "readermode.h"
 #include "webview.h"
 
+#include <qevent.h>
+#include <qiconengine.h>
 #include <qpainter.h>
+
+namespace {
+
+// TRUST21: the reader glyph rides the same contract ChromeIconEngine
+// gives the themed nav buttons — painted at the size the bar asks
+// for, tinted from a palette snapshot, per-mode colors.  The old
+// path baked one fixed 16px pixmap: the toolbar's 18px request
+// painted it upscaled and blurred — a visibly grey glyph next to the
+// crisp siblings, most obvious on a dark palette — and its Disabled
+// presentation came from Qt's generated ghosting (near-white on a
+// white glyph) instead of the palette's dimmed tone.  refresh()
+// rebakes the snapshot whenever the palette moves (changeEvent), so
+// the glyph still follows light<->dark flips and the tor seed.
+class ReaderIconEngine : public QIconEngine
+{
+public:
+    ReaderIconEngine(const QPalette &palette, bool active)
+        : m_palette(palette)
+        , m_active(active)
+    {
+        // TRUST20: bake the Normal-mode art from the Normal group —
+        // a refresh while the button sits disabled must not freeze
+        // the dim tone into the Normal presentation.
+        m_palette.setCurrentColorGroup(QPalette::Normal);
+    }
+
+    QIconEngine *clone() const override
+    {
+        return new ReaderIconEngine(m_palette, m_active);
+    }
+
+    void paint(QPainter *painter, const QRect &rect, QIcon::Mode mode,
+               QIcon::State state) override
+    {
+        const qreal scale = painter->device()
+            ? painter->device()->devicePixelRatioF() : 1.0;
+        painter->drawPixmap(rect.topLeft(),
+                            scaledPixmap(rect.size(), mode, state, scale));
+    }
+
+    QPixmap pixmap(const QSize &size, QIcon::Mode mode,
+                   QIcon::State state) override
+    {
+        return scaledPixmap(size, mode, state, 1.0);
+    }
+
+    QPixmap scaledPixmap(const QSize &size, QIcon::Mode mode,
+                         QIcon::State, qreal scale) override
+    {
+        const QSize pixels = size * scale;
+        QPixmap pixmap(pixels.isEmpty() ? QSize(16, 16) : pixels);
+        pixmap.setDevicePixelRatio(scale);
+        pixmap.fill(Qt::transparent);
+        QPainter painter(&pixmap);
+        painter.setRenderHint(QPainter::Antialiasing);
+        // The glyph is drawn on a 16x16 grid, scaled uniformly to the
+        // requested size and centered — page outline + three lines.
+        const qreal k = qMin(pixmap.width(), pixmap.height()) / 16.0;
+        painter.translate((pixmap.width() - 16 * k) / 2.0,
+                          (pixmap.height() - 16 * k) / 2.0);
+        painter.scale(k, k);
+        const QColor fg = mode == QIcon::Disabled
+            ? m_palette.color(QPalette::Disabled, QPalette::ButtonText)
+            : (m_active ? AroraStyle::onAccentColor(m_palette)
+                        : m_palette.color(QPalette::ButtonText));
+        const QRectF page(2.5, 1.5, 11, 13);
+        if (m_active) {
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(AroraStyle::accentFillColor(m_palette));
+            painter.drawRoundedRect(page, 1.5, 1.5);
+        }
+        painter.setPen(QPen(fg, 1.1));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawRoundedRect(page, 1.5, 1.5);
+        painter.drawLine(QPointF(4.5, 5), QPointF(11.5, 5));
+        painter.drawLine(QPointF(4.5, 8), QPointF(11.5, 8));
+        painter.drawLine(QPointF(4.5, 11), QPointF(11.5, 11));
+        painter.end();
+        return pixmap;
+    }
+
+private:
+    QPalette m_palette;
+    bool m_active;
+};
+
+} // namespace
 
 ReaderButton::ReaderButton(QWidget *parent)
     : QToolButton(parent)
@@ -66,31 +155,31 @@ void ReaderButton::setWebView(WebView *webView)
     refresh();
 }
 
+void ReaderButton::changeEvent(QEvent *event)
+{
+    // TRUST20: the glyph is baked from palette() at refresh() time,
+    // and nothing rebaked it afterwards — the same stale-icon class
+    // TRUST18 fixed on the shield.  A stylesheet (un)polish restores
+    // then re-applies the widget palette, so a refresh() landing
+    // inside that transient (or any palette move between refreshes)
+    // pinned a black glyph on the tor bar until the next state
+    // change.  Rebake whenever the palette/style settles — the last
+    // event of a cascade always carries the resolved color.
+    if (event->type() == QEvent::PaletteChange
+            || event->type() == QEvent::StyleChange
+            || event->type() == QEvent::EnabledChange)
+        refresh();
+    QToolButton::changeEvent(event);
+}
+
 QIcon ReaderButton::makeIcon(bool active) const
 {
     // A page-with-lines glyph, painted so no icon theme is required.
-    // Active state fills the page with the accent color.
-    QPixmap pixmap(16, 16);
-    pixmap.fill(Qt::transparent);
-    QPainter painter(&pixmap);
-    painter.setRenderHint(QPainter::Antialiasing);
-    const QColor fg = active
-        ? AroraStyle::onAccentColor(palette())
-        : palette().color(QPalette::ButtonText);
-    const QRectF page(2.5, 1.5, 11, 13);
-    if (active) {
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(AroraStyle::accentFillColor(palette()));
-        painter.drawRoundedRect(page, 1.5, 1.5);
-    }
-    painter.setPen(QPen(fg, 1.1));
-    painter.setBrush(Qt::NoBrush);
-    painter.drawRoundedRect(page, 1.5, 1.5);
-    painter.drawLine(QPointF(4.5, 5), QPointF(11.5, 5));
-    painter.drawLine(QPointF(4.5, 8), QPointF(11.5, 8));
-    painter.drawLine(QPointF(4.5, 11), QPointF(11.5, 11));
-    painter.end();
-    return QIcon(pixmap);
+    // Active state fills the page with the accent color.  The engine
+    // paints at whatever size the surface asks for — a single baked
+    // pixmap upscaled and blurred next to the theme-crisp siblings
+    // (TRUST21).
+    return QIcon(new ReaderIconEngine(palette(), active));
 }
 
 void ReaderButton::refresh()

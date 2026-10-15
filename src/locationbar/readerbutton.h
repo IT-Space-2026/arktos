@@ -37,6 +37,7 @@ public:
     void setWebView(WebView *webView);
 
 private:
+    void changeEvent(QEvent *event) override;
     void refresh();
     QIcon makeIcon(bool active) const;
 

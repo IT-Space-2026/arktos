@@ -20,6 +20,7 @@
 
 #include "arorastyle.h"
 #include "autosaver.h"
+#include "browserapplication.h"
 #include "bookmarksmanager.h"
 #include "bookmarksmodel.h"
 #include "bookmarknode.h"
@@ -268,6 +269,15 @@ public:
         m_toggle->setVisible(visible);
     }
 
+    // TRUST20: the rail's glyphs are baked pixmaps (the fold toggle
+    // paints from palette(), the tab icons carry a palette snapshot),
+    // so the host panel re-bakes the tab icons whenever the resolved
+    // palette moves — the tor chrome seed, a scheme flip, a repolish.
+    void setIconRefresher(std::function<void()> refresher)
+    {
+        m_iconRefresher = std::move(refresher);
+    }
+
     QSize tabSizeHint(int index) const override
     {
         Q_UNUSED(index);
@@ -292,8 +302,20 @@ public:
 
 private:
     QToolButton *m_toggle;
+    std::function<void()> m_iconRefresher;
 
 protected:
+    void changeEvent(QEvent *event) override
+    {
+        if (event->type() == QEvent::PaletteChange
+                || event->type() == QEvent::StyleChange) {
+            m_toggle->setIcon(SidebarPanel::icon(this));
+            if (m_iconRefresher)
+                m_iconRefresher();
+        }
+        QTabBar::changeEvent(event);
+    }
+
     void paintEvent(QPaintEvent *) override
     {
         QPainter painter(this);
@@ -361,6 +383,41 @@ SidebarPanel::SidebarPanel(QWidget *parent)
 
     m_tabs->setObjectName(QLatin1String("sidebarTabs"));
     m_tabs->setDocumentMode(true);
+
+    // TRUST20: rail glyphs now tint from the rail's own resolved
+    // palette instead of qApp's — on the tor window the strip joins
+    // the violet chrome so the icons read light there; on normal
+    // chrome the rail palette is the inherited application one, so
+    // nothing changes.  The rail re-bakes them itself on any later
+    // palette/style move, so the seed below lands before the first
+    // insert either way.
+    SidebarRail *rail = static_cast<SidebarRail *>(m_tabs->tabBar());
+    rail->setIconRefresher([this]() { refreshRailIcons(); });
+    if (BrowserApplication::isTorMode()) {
+        rail->setAutoFillBackground(true);
+        QPalette railPalette = rail->palette();
+        railPalette.setColor(QPalette::Window,
+                             AroraStyle::torChromeColor());
+        railPalette.setColor(QPalette::Button,
+                             AroraStyle::torChromeColor());
+        railPalette.setColor(QPalette::WindowText,
+                             AroraStyle::torTextColor());
+        railPalette.setColor(QPalette::ButtonText,
+                             AroraStyle::torTextColor());
+        railPalette.setColor(QPalette::Disabled, QPalette::WindowText,
+                             AroraStyle::torDimTextColor());
+        railPalette.setColor(QPalette::Disabled, QPalette::ButtonText,
+                             AroraStyle::torDimTextColor());
+        // The rail's hand-painted selected/hover cells read the
+        // Highlight role — give them the raised violet, and pin the
+        // on-card glyph tone so selectionTextColor resolves the
+        // light chrome text.
+        railPalette.setColor(QPalette::Highlight,
+                             AroraStyle::torChromeRaisedColor());
+        railPalette.setColor(QPalette::HighlightedText,
+                             AroraStyle::torTextColor());
+        rail->setPalette(railPalette);
+    }
 
     // Every rail entry is an icon-only tab — the title rides the
     // tooltip + accessible name instead of rendering as rotated text.
@@ -533,7 +590,8 @@ void SidebarPanel::applyPanelVisibility()
                     ++position;
             }
             const int at = m_tabs->insertTab(position, page,
-                AroraIcon::getChrome(QLatin1String(panel.iconName)),
+                AroraIcon::getChrome(QLatin1String(panel.iconName),
+                                     m_tabs->tabBar()->palette()),
                 panel.title);
             m_tabs->setTabToolTip(at, panel.title);
         } else if (index >= 0) {
@@ -559,6 +617,30 @@ void SidebarPanel::applyPanelVisibility()
         if (at != want)
             m_tabs->tabBar()->moveTab(at, want);
         ++want;
+    }
+}
+
+// TRUST20: re-bake every rail tab's glyph from the rail's own
+// resolved palette.  The palette-snapshot icon engine freezes its
+// tint at insert time, so the rail calls this on PaletteChange/
+// StyleChange — the tor chrome seed, a scheme flip, a repolish all
+// land through the same path.
+void SidebarPanel::refreshRailIcons()
+{
+    QTabBar *rail = m_tabs->tabBar();
+    const QList<Panel> all = panels();
+    for (int i = 0; i < m_tabs->count(); ++i) {
+        QWidget *page = m_tabs->widget(i);
+        const QByteArray id = page
+            ? page->property("sidebarPanelId").toByteArray()
+            : QByteArray();
+        for (const Panel &panel : all) {
+            if (panel.id == id) {
+                m_tabs->setTabIcon(i, AroraIcon::getChrome(
+                    QLatin1String(panel.iconName), rail->palette()));
+                break;
+            }
+        }
     }
 }
 
