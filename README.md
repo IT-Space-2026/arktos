@@ -330,7 +330,9 @@ surface in the sidebar's Downloads panel (Ctrl+Y or Tools →
 Downloads) — filterable, sortable, each selected row expands into a
 detail card in the panel's bottom pane, and a compact action row
 offers pause/resume, retry, remove and show-in-folder for the
-selected download. Preferences → Downloads hosts
+selected download; a header button clears all finished entries
+(in-progress downloads and files on disk are kept).
+Preferences → Downloads hosts
 a download-engine selector — Built-in (Chromium) or Accelerated (Rust,
 compiled in by default and the default engine — a saved Built-in
 pick is honored) — a connections-per-download

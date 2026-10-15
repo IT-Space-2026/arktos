@@ -278,6 +278,10 @@ public:
     static DownloadManager *instance();
 
     int activeDownloads() const;
+    // DOWN05: true when cleanup() would actually drop a row — the
+    // sidebar's clear-list button disables itself on an empty list or
+    // when every remaining entry is still in flight.
+    bool hasRemovableItems() const;
     // SLEEP01: true while any in-flight download was initiated by
     // this page — the sleeping-tabs sweep skips such tabs so a
     // suspend can never orphan a stream.

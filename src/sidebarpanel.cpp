@@ -904,6 +904,48 @@ QWidget *SidebarPanel::buildDownloadsPage()
     downloadsTitle->setSizePolicy(QSizePolicy::Ignored,
                                   QSizePolicy::Preferred);
     downloadsHeader->addWidget(downloadsTitle, 1);
+    // DOWN05: clear-list affordance, left of the close X — the same
+    // autoRaise chrome-button shape and the house edit-clear glyph.
+    // cleanup() drops only finished/failed/cancelled entries
+    // (DownloadModel::removeRows never touches an in-flight transfer
+    // or a completed file), so the button tracks the same predicate
+    // and stays disabled while nothing is removable.
+    QToolButton *clearButton = new QToolButton(m_downloadsPage);
+    clearButton->setObjectName(QLatin1String("sidebarClearDownloads"));
+    clearButton->setAccessibleName(tr("Clear download list"));
+    clearButton->setToolTip(tr("Clear download list"));
+    clearButton->setAutoRaise(true);
+    clearButton->setIcon(AroraIcon::getChrome(QLatin1String("edit-clear")));
+    // Same lightweight confirm the History menu's Clear uses — a
+    // one-click whole-list wipe is destructive to the record.
+    connect(clearButton, &QToolButton::clicked, this, [this]() {
+        DownloadManager *manager = DownloadManager::instance();
+        if (!manager->hasRemovableItems())
+            return;
+        if (QMessageBox::question(this, tr("Clear Download List"),
+                tr("Remove all finished downloads from the list?\n"
+                   "Downloaded files are kept on disk."),
+                QMessageBox::Yes | QMessageBox::No,
+                QMessageBox::No) == QMessageBox::Yes)
+            manager->cleanup();
+    });
+    QAbstractItemModel *downloadsModel =
+        DownloadManager::instance()->model();
+    const auto refreshClearButton = [clearButton]() {
+        clearButton->setEnabled(
+            DownloadManager::instance()->hasRemovableItems());
+    };
+    connect(downloadsModel, &QAbstractItemModel::rowsInserted,
+            clearButton, refreshClearButton);
+    connect(downloadsModel, &QAbstractItemModel::rowsRemoved,
+            clearButton, refreshClearButton);
+    connect(downloadsModel, &QAbstractItemModel::modelReset,
+            clearButton, refreshClearButton);
+    // A finishing/failing transfer lands here via updateRow.
+    connect(downloadsModel, &QAbstractItemModel::dataChanged,
+            clearButton, refreshClearButton);
+    refreshClearButton();
+    downloadsHeader->addWidget(clearButton);
     QToolButton *closeButton = new QToolButton(m_downloadsPage);
     closeButton->setObjectName(QLatin1String("sidebarCloseButton"));
     closeButton->setAccessibleName(tr("Close sidebar"));
