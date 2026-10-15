@@ -31,7 +31,7 @@ jobs:
   deb:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: jurplel/install-qt-action@v4
         with:
@@ -50,7 +50,7 @@ jobs:
       - name: Build .deb
         run: ./.devin/pkg-deb.sh
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: arora-deb
           path: dist/*.deb
@@ -58,7 +58,7 @@ jobs:
   rpm:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: jurplel/install-qt-action@v4
         with:
@@ -80,7 +80,7 @@ jobs:
       - name: Build .rpm
         run: ./.devin/pkg-rpm.sh
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: arora-rpm
           path: dist/*.rpm
@@ -91,7 +91,7 @@ jobs:
       image: bilelmoussaoui/flatpak-github-actions:freedesktop-24-08
       options: --privileged
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Build flatpak bundle
         # flatpak-builder handles the KDE 6.11 runtime + qtwebengine
@@ -106,7 +106,7 @@ jobs:
           cache-key: flatpak-builder-${{ github.sha }}
           verbose: true
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: arora-flatpak
           path: io.arora.Arora.flatpak
@@ -114,7 +114,7 @@ jobs:
   windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: jurplel/install-qt-action@v4
         with:
@@ -157,7 +157,7 @@ jobs:
           if ($crt) { $args += " /DVCREDIST=$($crt.FullName)" }
           & makensis $args BuildProcess\windowsinstaller.nsi
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: arora-windows
           path: |
@@ -167,7 +167,7 @@ jobs:
   macos:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: jurplel/install-qt-action@v4
         with:
@@ -192,7 +192,7 @@ jobs:
         run: |
           "$QTDIR/bin/macdeployqt" Arora.app -dmg -verbose=1
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: arora-macos
           path: '*.dmg'
