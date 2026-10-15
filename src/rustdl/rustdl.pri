@@ -50,4 +50,5 @@ rustdl:!no-rust {
         $$PWD/../downloadworker.cpp
     LIBS += $$RUSTDL_LIB
     unix: LIBS += -ldl -lpthread -lm
+    macx: LIBS += -framework Security -framework CoreFoundation
 }

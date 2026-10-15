@@ -45,4 +45,5 @@ rustcore:!no-rust {
         $$PWD/../sitedecisionstore.cpp
     LIBS += $$RUSTCORE_LIB
     unix: LIBS += -ldl -lpthread -lm
+    macx: LIBS += -framework Security -framework CoreFoundation
 }

@@ -509,7 +509,7 @@ void BrowserApplication::messageReceived(QLocalSocket *socket)
 #endif
 #ifdef Q_OS_WIN
         WId wid = (WId)winid.toLongLong();
-        SetForegroundWindow(wid);
+        SetForegroundWindow(reinterpret_cast<HWND>(wid));
 #endif
         return;
     }
