@@ -31,17 +31,20 @@ jobs:
   deb:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: jurplel/install-qt-action@v4
         with:
           version: '6.12.0'
           modules: 'qtwebengine qt5compat'
+          aqtversion: '>=3.3.0'
           cache: true
 
       - name: Derive QTDIR
         run: |
-          QTDIR="$(dirname "$(dirname "$(dirname "$Qt6_DIR")")")"
+          QMAKE="$(command -v qmake || true)"
+          [ -n "$QMAKE" ] || { echo "no qmake on PATH — install-qt did not expose bin" >&2; exit 1; }
+          QTDIR="$(dirname "$(dirname "$(readlink -f "$QMAKE")")")"
           echo "QTDIR=$QTDIR" >> "$GITHUB_ENV"
 
       - name: Build .deb
@@ -55,17 +58,20 @@ jobs:
   rpm:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: jurplel/install-qt-action@v4
         with:
           version: '6.12.0'
           modules: 'qtwebengine qt5compat'
+          aqtversion: '>=3.3.0'
           cache: true
 
       - name: Derive QTDIR
         run: |
-          QTDIR="$(dirname "$(dirname "$(dirname "$Qt6_DIR")")")"
+          QMAKE="$(command -v qmake || true)"
+          [ -n "$QMAKE" ] || { echo "no qmake on PATH — install-qt did not expose bin" >&2; exit 1; }
+          QTDIR="$(dirname "$(dirname "$(readlink -f "$QMAKE")")")"
           echo "QTDIR=$QTDIR" >> "$GITHUB_ENV"
 
       - name: Install rpmbuild
@@ -85,7 +91,7 @@ jobs:
       image: bilelmoussaoui/flatpak-github-actions:freedesktop-24-08
       options: --privileged
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Build flatpak bundle
         # flatpak-builder handles the KDE 6.11 runtime + qtwebengine
@@ -108,13 +114,14 @@ jobs:
   windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: jurplel/install-qt-action@v4
         with:
           version: '6.12.0'
           arch: 'win64_msvc2022_64'
           modules: 'qtwebengine qt5compat'
+          aqtversion: '>=3.3.0'
           cache: true
 
       - uses: ilammy/msvc-dev-cmd@v1
@@ -122,7 +129,9 @@ jobs:
       - name: Derive QTDIR
         shell: pwsh
         run: |
-          $QTDIR = Split-Path (Split-Path (Split-Path $env:Qt6_DIR))
+          $q = (Get-Command qmake -ErrorAction SilentlyContinue).Source
+          if (-not $q) { Write-Error "no qmake on PATH"; exit 1 }
+          $QTDIR = Split-Path (Split-Path $q)
           echo "QTDIR=$QTDIR" >> $env:GITHUB_ENV
 
       - name: Build
@@ -158,7 +167,7 @@ jobs:
   macos:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: jurplel/install-qt-action@v4
         with:
@@ -169,7 +178,9 @@ jobs:
 
       - name: Derive QTDIR
         run: |
-          QTDIR="$(dirname "$(dirname "$(dirname "$Qt6_DIR")")")"
+          QMAKE="$(command -v qmake || true)"
+          [ -n "$QMAKE" ] || { echo "no qmake on PATH — install-qt did not expose bin" >&2; exit 1; }
+          QTDIR="$(dirname "$(dirname "$(readlink -f "$QMAKE")")")"
           echo "QTDIR=$QTDIR" >> "$GITHUB_ENV"
 
       - name: Build
