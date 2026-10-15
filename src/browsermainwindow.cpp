@@ -1230,7 +1230,7 @@ void BrowserMainWindow::setupMenu()
     m_viewMenu->addAction(m_viewSidebarAction);
 
     // DEVT03: dev tools dock — the BiDi panel builds lazily on first
-    // show (ensureBidiPanel).  Its toggle action joins the Tools menu
+    // show (ensureBidiPanel).  Its menu entry joins the Tools menu
     // next to the Chromium inspector entry further down.
     m_bidiPanelDock = new QDockWidget(this);
     m_bidiPanelDock->setObjectName(QLatin1String("bidiPanelDock"));

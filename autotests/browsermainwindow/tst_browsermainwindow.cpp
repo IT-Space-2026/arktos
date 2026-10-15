@@ -1613,6 +1613,10 @@ void tst_BrowserMainWindow::devToolsSubmenu()
     QCOMPARE(entries.size(), 2);
     QVERIFY(bidi);
     QVERIFY(bidi->isEnabled());
+    // DEVT08: neither devtools entry is checkable — these are
+    // open/close actions, not persistent states.
+    QVERIFY(!bidi->isCheckable());
+    QVERIFY(!chromium->isCheckable());
 
     // The BiDi entry is a plain command that still toggles the dock:
     // trigger opens it, trigger again closes it — and a non-checkable
@@ -1634,7 +1638,6 @@ void tst_BrowserMainWindow::devToolsSubmenu()
 
     bidi->trigger();
     QTRY_VERIFY(!dock->isVisible());
-    QVERIFY(!bidi->isChecked());
     closeWindow(window);
 
     // A tor window keeps the entry visible but disabled, with a
@@ -1666,6 +1669,7 @@ void tst_BrowserMainWindow::devToolsSubmenu()
     BrowserApplication::setTorMode(false);
     QVERIFY(torBidi);
     QVERIFY(!torBidi->isEnabled());
+    QVERIFY(!torBidi->isCheckable());
     QVERIFY(!torBidi->toolTip().isEmpty());
     closeWindow(torWindow);
 #else
