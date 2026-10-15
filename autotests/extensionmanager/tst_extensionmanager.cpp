@@ -50,8 +50,10 @@
 #include "tabwidget.h"
 #include "webview.h"
 
+#include <qframe.h>
 #include <qmenu.h>
 #include <qsignalspy.h>
+#include <qwebengineview.h>
 
 class tst_ExtensionManager : public QObject
 {
@@ -2319,6 +2321,38 @@ void tst_ExtensionManager::extensionPopupContext()
         15000);
     QCOMPARE(eval(popup, QStringLiteral("self.__ct")).toString(),
              QStringLiteral("undef"));
+
+    // --- EXT19: the live action-bar path — a plain view + page on
+    // the profile must self-wire: no explicit attachExtensionPage,
+    // the runtime's view watch attaches the channel once the
+    // chrome-extension document commits. --------------------------
+    auto *liveFrame = new QFrame;
+    auto *liveView = new QWebEngineView(liveFrame);
+    QWebEnginePage *livePage =
+        new QWebEnginePage(host->page()->profile(), liveView);
+    liveView->setPage(livePage);
+    livePage->load(QUrl(QStringLiteral("chrome-extension://") + id
+                        + QStringLiteral("/popup.html")));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->hasExtensionPage(livePage), 15000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(livePage, QStringLiteral(
+            "!!(window.__aroraHost&&__aroraHost.bridgeUp"
+            "&&window.__aroraShim)")).toBool(),
+        30000);
+    QCOMPARE(eval(livePage, QStringLiteral(
+                 "self.__popupBootRan===true")).toBool(),
+             true);
+    // Navigating away from the extension document drops the bridge.
+    livePage->load(QUrl(QStringLiteral("about:blank")));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !runtime->hasExtensionPage(livePage), 15000);
+    liveView->deleteLater();
+    liveFrame->deleteLater();
+    // The watch sweeps the host's hidden view too, but a page bridge
+    // must never land on the host's own document — it would replace
+    // the channel the host preamble already connected to.
+    QVERIFY(!runtime->hasExtensionPage(host->page()));
 
     // --- teardown ---------------------------------------------------
     popupView->deleteLater();

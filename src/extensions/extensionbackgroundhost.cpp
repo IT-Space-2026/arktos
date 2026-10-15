@@ -25,9 +25,11 @@
 #include "extensionmanager.h"
 #include "extensionshimbackend.h"
 
+#include <qapplication.h>
 #include <qcoreapplication.h>
 #include <qdebug.h>
 #include <qdir.h>
+#include <qevent.h>
 #include <qfile.h>
 #include <qfileinfo.h>
 #include <qjsonarray.h>
@@ -35,6 +37,7 @@
 #include <qjsonobject.h>
 #include <qregularexpression.h>
 #include <qtimer.h>
+#include <qwidget.h>
 
 #include <qwebchannel.h>
 #include <qwebenginepage.h>
@@ -746,6 +749,8 @@ void ExtensionBackgroundRuntime::attachProfile(QWebEngineProfile *profile)
     m_profiles.append(profile);
     if (!m_heartbeat->isActive())
         m_heartbeat->start();
+    // EXT19: extension pages wire themselves — start watching views.
+    watchExtensionViews();
     // A profile can arrive with extensions already enabled (installed
     // earlier on this session's profile) — reconcile promptly.
     QTimer::singleShot(2000, this,
@@ -863,6 +868,12 @@ void ExtensionBackgroundRuntime::syncNow()
         m_hosts.insert(id, host);
         emit hostChanged(id);
     }
+
+    // EXT19: re-sweep — a popup whose document committed while no
+    // host existed yet retries its attach on this pass, and views an
+    // event could never reach (parentless, never shown) are picked up
+    // each heartbeat.
+    watchExtensionViews();
 #endif // QT_CONFIG(webengine_extensions)
 }
 
@@ -900,6 +911,13 @@ bool ExtensionBackgroundRuntime::attachExtensionPage(
     ExtensionBackgroundHost *host = m_hosts.value(id);
     if (!host || !host->bridge())
         return false;
+    // EXT19: the host's own document already carries the channel its
+    // preamble connected to — installing a page bridge on it would
+    // replace qt.webChannelTransport mid-boot and the register call
+    // would land on the page bridge instead of host->bridge() (the
+    // view watch sweeps hidden host views too — they are widgets).
+    if (page == host->page())
+        return false;
     // Channels only ever bind pages on the host's own profile — a
     // foreign-profile or OTR/tor page never reaches the bridge.
     if (!page->profile() || page->profile()->isOffTheRecord()
@@ -931,6 +949,86 @@ void ExtensionBackgroundRuntime::detachExtensionPage(
         unregisterRelayContext(bridge);
         bridge->deleteLater();
     }
+}
+
+bool ExtensionBackgroundRuntime::hasExtensionPage(
+        QWebEnginePage *page) const
+{
+    return m_pageBridges.contains(page);
+}
+
+// -------------------------------------------------------------------
+// EXT19 — sibling pages self-wire.  The live action popup (EXT08's
+// toolbar strip) creates a plain QWebEngineView + page and loads
+// chrome-extension://<id>/... — nothing on that path remembered to
+// call attachExtensionPage, so the injected preamble's channel poll
+// expired into a blank white popup.  Watch every QWebEngineView the
+// application raises: a committed chrome-extension:// navigation on
+// a hosted profile attaches its own bridge; navigating away detaches
+// it again.  attachExtensionPage remains the explicit path for
+// callers that can wire before the first commit.
+// -------------------------------------------------------------------
+
+bool ExtensionBackgroundRuntime::eventFilter(QObject *watched,
+                                             QEvent *event)
+{
+    if (event->type() == QEvent::ChildAdded) {
+        QWebEngineView *view = qobject_cast<QWebEngineView *>(
+            static_cast<QChildEvent *>(event)->child());
+        if (view)
+            watchView(view);
+    } else if (event->type() == QEvent::Show) {
+        if (QWebEngineView *view =
+                qobject_cast<QWebEngineView *>(watched))
+            watchView(view);
+    }
+    return QObject::eventFilter(watched, event);
+}
+
+void ExtensionBackgroundRuntime::watchExtensionViews()
+{
+    if (!m_viewFilterInstalled) {
+        m_viewFilterInstalled = true;
+        qApp->installEventFilter(this);
+    }
+    const QList<QWidget *> widgets = qApp->allWidgets();
+    for (QWidget *widget : widgets) {
+        if (QWebEngineView *view =
+                qobject_cast<QWebEngineView *>(widget))
+            watchView(view);
+    }
+}
+
+void ExtensionBackgroundRuntime::watchView(QWebEngineView *view)
+{
+    if (!view)
+        return;
+    if (!view->property("aroraExtPageWatch").toBool()) {
+        view->setProperty("aroraExtPageWatch", true);
+        // Context = the view: the hook dies with it.  Both guards are
+        // QPointer — a navigation landing during application teardown
+        // must not touch a gone runtime or view.
+        const QPointer<ExtensionBackgroundRuntime> self(this);
+        const QPointer<QWebEngineView> guard(view);
+        connect(view, &QWebEngineView::urlChanged, view,
+                [self, guard]() {
+            if (self && guard)
+                self->syncPageBridge(guard);
+        });
+    }
+    syncPageBridge(view);
+}
+
+void ExtensionBackgroundRuntime::syncPageBridge(QWebEngineView *view)
+{
+    QWebEnginePage *page = view->page();
+    if (!page)
+        return;
+    const QUrl url = page->url();
+    if (url.scheme() == QLatin1String("chrome-extension"))
+        attachExtensionPage(page, url.host());
+    else
+        detachExtensionPage(page);
 }
 
 QJsonArray ExtensionBackgroundRuntime::contextsJson(

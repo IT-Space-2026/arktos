@@ -98,6 +98,59 @@
     // qt.webChannelTransport appears once the page's QWebChannel is
     // live; poll briefly rather than racing it.
     var channelTries = 0;
+    var channelRetries = 0;
+
+    // EXT19: a sibling document that never gets its channel used to
+    // render a white nothing — surface the honest failure instead.
+    function showBridgeFailure() {
+        if (host.kind === 'background')
+            return;     // the hidden host page renders nothing anyway
+        var render = function () {
+            if (!document.documentElement
+                    || document.getElementById('arora-ext-bridge-fail'))
+                return;
+            var el = document.createElement('div');
+            el.id = 'arora-ext-bridge-fail';
+            el.setAttribute('style',
+                'position:fixed;top:0;left:0;right:0;'
+                + 'z-index:2147483647;background:#7f1d1d;color:#fff;'
+                + 'padding:8px 10px;font:13px/1.4 sans-serif;');
+            el.textContent = (host.name || host.id)
+                + ': extension background not running — '
+                + 'restart the browser or re-enable the extension.';
+            (document.body || document.documentElement)
+                .appendChild(el);
+        };
+        if (document.documentElement)
+            render();
+        else
+            document.addEventListener('DOMContentLoaded', render);
+    }
+
+    // The failure is honest but not final — a channel arriving late
+    // (the view watch attaches on url commit; a host may still be
+    // spawning) can still make this document live.  Slow retries keep
+    // the door open without hot-looping a dead path.
+    function retryBridge() {
+        if (host.bridgeUp || ++channelRetries > 60)
+            return;
+        if (typeof QWebChannel !== 'undefined'
+                && typeof qt !== 'undefined'
+                && qt.webChannelTransport) {
+            channelTries = 0;
+            host.state = 'booting';
+            initBridge();
+            return;
+        }
+        setTimeout(retryBridge, 1000);
+    }
+
+    function bridgeFailed(reason) {
+        host.state = 'failed:' + reason;
+        showBridgeFailure();
+        setTimeout(retryBridge, 1000);
+    }
+
     function initBridge() {
         if (host.bridgeUp || host.state !== 'booting')
             return;
@@ -108,14 +161,14 @@
                 setTimeout(initBridge, 50);
                 return;
             }
-            host.state = 'failed:no-webchannel';
+            bridgeFailed('no-webchannel');
             return;
         }
         try {
             new QWebChannel(qt.webChannelTransport, function (channel) {
                 var bridge = channel.objects.chromeBridge;
                 if (!bridge) {
-                    host.state = 'failed:no-chromeBridge';
+                    bridgeFailed('no-chromeBridge');
                     return;
                 }
                 host.bridge = bridge;
@@ -126,6 +179,14 @@
                     function (reply) {
                         host.bridgeReply = reply;
                         host.bridgeUp = true;
+                        // EXT19: a self-healed channel drops the
+                        // failure panel.
+                        try {
+                            var failEl = document.getElementById(
+                                'arora-ext-bridge-fail');
+                            if (failEl && failEl.parentNode)
+                                failEl.parentNode.removeChild(failEl);
+                        } catch (e) {}
                         // EXT15: the gapfill shim registers a hook so
                         // it can wire hostEvent/relay eagerly — a
                         // setTimeout poll would lose the race once
@@ -140,7 +201,7 @@
                     });
             });
         } catch (e) {
-            host.state = 'failed:channel:' + e;
+            bridgeFailed('channel:' + e);
         }
     }
 
