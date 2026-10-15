@@ -66,6 +66,7 @@
 
 #include <qwebengineview.h>
 #include <qpointer.h>
+#include <qvariant.h>
 
 #include <functional>
 
@@ -217,6 +218,12 @@ private:
             const std::function<void(const QUrl &resolved)> &callback);
     void openContextPosterInTarget(const QPoint &viewPos,
             TabWidget::OpenUrlIn target);
+    // SRCH01: 'Add to the toolbar search' — the input+form the WebKit
+    // hit-test exposed synchronously is resolved in-page through
+    // contextsearch.js at the stored click point; the map then builds
+    // the GET-template engine the same way the old addSearchEngine
+    // slot did.
+    void addSearchEngineFromMap(const QVariantMap &info);
 
     // TOR18: the bootstrap navigation gate.  While the managed daemon
     // is still coming up, a remote loadUrl() is held in the view
@@ -249,6 +256,9 @@ private slots:
     void blockImage();
     void bookmarkLink();
     void searchRequested(QAction *action);
+    // SRCH01: editable-field 'Add to the toolbar search' — probes the
+    // form under the context-menu point and registers the engine.
+    void addSearchEngine(const QPoint &viewPos);
     // NOTE03: 'Add Selection to Notes' — the selection becomes a new
     // note in the window profile's store (the sidebar's model).
     void addSelectionToNote();

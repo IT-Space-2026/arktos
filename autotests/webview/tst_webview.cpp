@@ -39,9 +39,12 @@
 #include <qtoolbutton.h>
 #include <qmenu.h>
 #include <qclipboard.h>
+#include <qinputdialog.h>
+#include <qmessagebox.h>
 #include <qpointer.h>
 #include <qdialog.h>
 #include <qset.h>
+#include <qurlquery.h>
 
 #include <functional>
 #include <memory>
@@ -54,7 +57,10 @@
 #include "browserprofile.h"
 #include "historymanager.h"
 #include "notesmodel.h"
+#include "opensearchengine.h"
+#include "opensearchmanager.h"
 #include "tabwidget.h"
+#include "toolbarsearch.h"
 #include "tormanager.h"
 #include "qtest_arora.h"
 #include "qtry.h"
@@ -251,6 +257,7 @@ private slots:
     void contextMenuCanvasActions();
     void contextMenuVideoPosterActions();
     void contextMenuBlobImage();
+    void contextMenuAddSearchProvider();
 };
 
 // POL01 helpers — the context menu is exec()d inside the right-button
@@ -2079,6 +2086,158 @@ void tst_WebView::contextMenuBlobImage()
     QVERIFY(detached->url().toString().startsWith(
         QLatin1String("blob:")));
     closeDetached(detached);
+}
+
+// SRCH01: 'Add to the toolbar search' on an editable field probes the
+// enclosing GET form in-page (contextsearch.js) and registers a
+// template engine — the clicked input's slot becomes {searchTerms},
+// other fields keep the values a real submission would send.  A
+// textarea (editable but not a search input) and a POST form get the
+// honest failure paths instead.
+void tst_WebView::contextMenuAddSearchProvider()
+{
+    RecordedHttpServer server;
+    QVERIFY(server.start());
+    server.indexHtml = QByteArray(
+        "<html><body style='margin:0'>"
+        "<form action='/find' method='get' "
+        "style='position:fixed;left:0;top:0;margin:0'>"
+        "<label for='q' style='display:block;height:20px'>"
+        "Site Finder</label>"
+        "<input type='search' name='q' id='q' "
+        "style='width:220px;height:30px'>"
+        "<input type='hidden' name='h' value='hid42'>"
+        "<input type='checkbox' name='c' value='yes' checked>"
+        "<input type='checkbox' name='u' value='no'>"
+        "<select name='sel'>"
+        "<option>alpha</option><option selected>beta</option></select>"
+        "<input type='submit' value='Go'>"
+        "</form>"
+        "<form action='/post' method='post' "
+        "style='position:fixed;left:0;top:120px;margin:0'>"
+        "<input type='text' name='p' style='width:220px;height:30px'>"
+        "<input type='submit' value='Send'>"
+        "</form>"
+        "<textarea style='position:fixed;left:0;top:200px;width:220px;"
+        "height:60px'></textarea>"
+        "</body></html>");
+
+    TestWebView view;
+    view.resize(800, 600);
+    view.show();
+    QSignalSpy loaded(&view, SIGNAL(loadFinished(bool)));
+    view.loadUrl(server.url(QLatin1String("/form.html")));
+    QTRY_VERIFY_WITH_TIMEOUT(loaded.count() >= 1, 15000);
+
+    OpenSearchManager *manager = ToolbarSearch::openSearchManager();
+    // The registry persists across runs — clear a leftover from an
+    // earlier aborted attempt so enginesBefore is honest.
+    manager->removeEngine(QLatin1String("Loopback Search"));
+    const int enginesBefore = manager->enginesCount();
+
+    // The probe's follow-ups (engine-name prompt, method warning) are
+    // modal — drive them from a polling timer like the tabbar tests'
+    // rename dialog.
+    int dialogsAccepted = 0;
+    QTimer dialogTimer;
+    QObject::connect(&dialogTimer, &QTimer::timeout, qApp, [&]() {
+        QWidget *modal = QApplication::activeModalWidget();
+        if (QInputDialog *dialog =
+                qobject_cast<QInputDialog *>(modal)) {
+            ++dialogsAccepted;
+            if (QLineEdit *edit = dialog->findChild<QLineEdit *>())
+                edit->setText(QLatin1String("Loopback Search"));
+            dialog->accept();
+        } else if (QMessageBox *box =
+                qobject_cast<QMessageBox *>(modal)) {
+            ++dialogsAccepted;
+            box->accept();
+        }
+    });
+    dialogTimer.start(30);
+
+    // ==== leg 1: GET form — the entry restores the full flow ====
+    bool triggered = false;
+    bool sawEditingCommands = false;
+    const bool popped = driveRightClick(&view, QPoint(60, 35),
+                                        [&](QMenu *menu) {
+        // The provider entry must not cost the standard editing
+        // commands the field's menu used to carry.
+        for (QAction *action : menu->actions()) {
+            const QString text = action->text().remove(QLatin1Char('&'));
+            if (text == QLatin1String("Paste")
+                || text == QLatin1String("Select All")
+                || text == QLatin1String("Copy"))
+                sawEditingCommands = true;
+        }
+        if (QAction *add = findMenuAction(
+                menu, QStringLiteral("Add to the toolbar search"))) {
+            triggered = true;
+            add->trigger();
+        }
+    });
+    QVERIFY2(popped, "no context menu on search-field right-click");
+    QVERIFY(triggered);
+    QVERIFY(sawEditingCommands);
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        manager->enginesCount() == enginesBefore + 1, 15000);
+    QCOMPARE(dialogsAccepted, 1);
+    OpenSearchEngine *engine =
+        manager->engine(QLatin1String("Loopback Search"));
+    QVERIFY(engine);
+    const QString templ = engine->searchUrlTemplate();
+    QVERIFY2(templ.startsWith(server.url(QLatin1String("/find")).toString()),
+             qPrintable(templ));
+    QVERIFY2(templ.contains(QLatin1String("q={searchTerms}")),
+             qPrintable(templ));
+    QVERIFY(templ.contains(QLatin1String("h=hid42")));
+    QVERIFY(templ.contains(QLatin1String("c=yes")));
+    QVERIFY(templ.contains(QLatin1String("sel=beta")));
+    // The unchecked checkbox submits nothing.
+    QVERIFY(!templ.contains(QLatin1String("u=no")));
+    // The template produces a real results url.
+    const QUrl searchUrl = engine->searchUrl(QStringLiteral("hello world"));
+    QCOMPARE(QUrlQuery(searchUrl).queryItemValue(QStringLiteral("q")),
+             QStringLiteral("hello world"));
+
+    manager->removeEngine(QLatin1String("Loopback Search"));
+    QCOMPARE(manager->enginesCount(), enginesBefore);
+
+    // ==== leg 2: a textarea is editable but owns no search form ====
+    bool triggeredTa = false;
+    const bool poppedTa = driveRightClick(&view, QPoint(60, 230),
+                                          [&](QMenu *menu) {
+        if (QAction *add = findMenuAction(
+                menu, QStringLiteral("Add to the toolbar search"))) {
+            triggeredTa = true;
+            add->trigger();
+        }
+    });
+    QVERIFY2(poppedTa, "no context menu on textarea right-click");
+    QVERIFY(triggeredTa);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        view.lastStatusBarText().contains(QLatin1String("No search form")),
+        10000);
+    QTest::qWait(200);
+    QCOMPARE(manager->enginesCount(), enginesBefore);
+    QCOMPARE(dialogsAccepted, 1);
+
+    // ==== leg 3: POST form — the method gate warns ====
+    bool triggeredPost = false;
+    const bool poppedPost = driveRightClick(&view, QPoint(60, 135),
+                                            [&](QMenu *menu) {
+        if (QAction *add = findMenuAction(
+                menu, QStringLiteral("Add to the toolbar search"))) {
+            triggeredPost = true;
+            add->trigger();
+        }
+    });
+    QVERIFY2(poppedPost, "no context menu on post-field right-click");
+    QVERIFY(triggeredPost);
+    QTRY_VERIFY_WITH_TIMEOUT(dialogsAccepted == 2, 10000);
+    QCOMPARE(manager->enginesCount(), enginesBefore);
+    dialogTimer.stop();
 }
 
 int main(int argc, char *argv[])

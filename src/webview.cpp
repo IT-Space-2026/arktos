@@ -94,7 +94,10 @@
 #include <qdebug.h>
 #include <qfile.h>
 #include <qimage.h>
+#include <qinputdialog.h>
+#include <qlineedit.h>
 #include <qmenubar.h>
+#include <qmessagebox.h>
 #include <qevent.h>
 #include <qmenu.h>
 #include <qmimedata.h>
@@ -530,6 +533,32 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
                         this, &WebView::addSelectionToNote);
     }
 
+    // SRCH01: 'Add to the toolbar search' — the WebKit hit-test knew
+    // the clicked element synchronously; under WebEngine the editable
+    // flag is all the request carries, so the entry shows for any
+    // editable spot and the contextsearch.js probe decides on trigger
+    // whether a GET form actually sits there (failures land on the
+    // status bar, never silently).
+    if (info.isContentEditable) {
+        if (menu->isEmpty()) {
+            // A bare editable click used to land on the standard-menu
+            // fallback below — keep Chromium's editing commands
+            // (Cut/Copy/Paste/Select All...) so the provider entry
+            // doesn't cost the user those.
+            if (QMenu *editing = createStandardContextMenu()) {
+                editing->removeAction(enginePage()->action(
+                    Engine::StandardAction::InspectElement));
+                menu->addActions(editing->actions());
+                delete editing;
+            }
+        }
+        if (!menu->isEmpty())
+            menu->addSeparator();
+        const QPoint position = info.position;
+        menu->addAction(tr("Add to the toolbar search"), this,
+                [this, position]() { addSearchEngine(position); });
+    }
+
     if (menu->isEmpty()) {
         delete menu;
         menu = createStandardContextMenu();
@@ -872,6 +901,125 @@ void WebView::imageSearchRequested()
     const QUrl searchUrl = engine->imageSearchUrl(imageUrl.toString());
     if (!searchUrl.isEmpty() && searchUrl.isValid())
         emit search(searchUrl, TabWidget::NewSelectedTab);
+}
+
+static QString contextSearchBundle();
+
+// SRCH01: 'Add to the toolbar search' trigger — probe the form under
+// the stored click point in-page.  JSCTL-blocked pages still render
+// fields, so the call rides the lifted path like the CTX01 resolvers.
+void WebView::addSearchEngine(const QPoint &viewPos)
+{
+    qreal zoom = enginePage()->zoomFactor();
+    if (zoom <= 0)
+        zoom = 1.0;
+    const QString call = QStringLiteral("__aroraCtxSearch.formInfo(%1,%2);")
+        .arg(viewPos.x() / zoom)
+        .arg(viewPos.y() / zoom);
+    QPointer<WebView> self(this);
+    enginePage()->runJavaScriptLifted(
+            contextSearchBundle() + QLatin1Char('\n') + call,
+            [self](const QVariant &result) {
+        if (self)
+            self->addSearchEngineFromMap(result.toMap());
+    });
+}
+
+// The probe's verdict becomes the engine: the GET form's submitted
+// pairs rebuild as the template query, the clicked field's slot
+// carrying a literal {searchTerms} (percent-encoding it would hide it
+// from OpenSearchEngine::parseTemplate).
+void WebView::addSearchEngineFromMap(const QVariantMap &info)
+{
+    if (!info.value(QLatin1String("ok")).toBool()) {
+        const QString reason = info.value(QLatin1String("reason")).toString();
+        if (reason == QLatin1String("method")) {
+            QMessageBox::warning(this, tr("Method not supported"),
+                    tr("%1 method is not supported.")
+                        .arg(info.value(QLatin1String("method")).toString()));
+        } else {
+            setStatusBarText(tr("No search form found at that position."));
+        }
+        return;
+    }
+
+    const QUrl actionUrl(info.value(QLatin1String("action")).toString());
+    if (!actionUrl.isValid() || actionUrl.scheme().isEmpty()) {
+        setStatusBarText(tr("No search form found at that position."));
+        return;
+    }
+    // Fragments never ride a form submission; an existing query keeps
+    // its slot ahead of the fields.
+    QString spec = actionUrl.toString(QUrl::RemoveFragment);
+
+    QStringList pairs;
+    const QVariantList fields = info.value(QLatin1String("fields")).toList();
+    for (const QVariant &entry : fields) {
+        const QVariantMap field = entry.toMap();
+        const QString name = QString::fromUtf8(
+            QUrl::toPercentEncoding(field.value(QLatin1String("n")).toString()));
+        const QString value = field.value(QLatin1String("t")).toBool()
+            ? QLatin1String("{searchTerms}")
+            : QString::fromUtf8(QUrl::toPercentEncoding(
+                field.value(QLatin1String("v")).toString()));
+        pairs.append(name + QLatin1Char('=') + value);
+    }
+
+    // Several submit buttons means the form offers more than one
+    // query shape — ask which one carries the terms, exactly as the
+    // WebKit slot did.
+    const QVariantList submits = info.value(QLatin1String("submits")).toList();
+    if (submits.count() > 1) {
+        QStringList labels;
+        for (const QVariant &entry : submits)
+            labels.append(entry.toMap().value(QLatin1String("label")).toString());
+        bool ok = false;
+        const QString picked = QInputDialog::getItem(this,
+                tr("Search engine"),
+                tr("Choose the desired search engine"),
+                labels, 0, false, &ok);
+        if (!ok)
+            return;
+        for (const QVariant &entry : submits) {
+            const QVariantMap submit = entry.toMap();
+            if (submit.value(QLatin1String("label")).toString() == picked) {
+                const QString name = submit.value(QLatin1String("n")).toString();
+                if (!name.isEmpty())
+                    pairs.append(QString::fromUtf8(QUrl::toPercentEncoding(name))
+                        + QLatin1Char('=')
+                        + QString::fromUtf8(QUrl::toPercentEncoding(picked)));
+                break;
+            }
+        }
+    }
+
+    if (!pairs.isEmpty())
+        spec += QLatin1Char(actionUrl.hasQuery() ? '&' : '?')
+            + pairs.join(QLatin1Char('&'));
+
+    bool ok = false;
+    const QString engineName = QInputDialog::getText(this,
+            tr("Engine name"), tr("Type in a name for the engine"),
+            QLineEdit::Normal,
+            info.value(QLatin1String("label")).toString(), &ok);
+    if (!ok || engineName.isEmpty())
+        return;
+
+    OpenSearchEngine *engine = new OpenSearchEngine();
+    engine->setName(engineName);
+    engine->setDescription(engineName);
+    engine->setSearchUrlTemplate(spec);
+    engine->setImage(icon().pixmap(QSize(16, 16)).toImage());
+
+    if (!ToolbarSearch::openSearchManager()->addEngine(engine)) {
+        // A name collision (or an invalid template) refuses the add —
+        // say so instead of swallowing it.
+        delete engine;
+        setStatusBarText(tr("Could not add the '%1' search engine.")
+                .arg(engineName));
+        return;
+    }
+    setStatusBarText(tr("Added '%1' to the search engines.").arg(engineName));
 }
 
 void WebView::setProgress(int progress)
@@ -1269,6 +1417,21 @@ static QString contextImageBundle()
         QFile file(QLatin1String(":contextimage.js"));
         if (!file.open(QIODevice::ReadOnly)) {
             qWarning() << "WebView: Unable to open :contextimage.js";
+            return QString();
+        }
+        return QString::fromUtf8(file.readAll());
+    }();
+    return bundle;
+}
+
+// SRCH01: the contextsearch.js form introspector — same load-once +
+// per-call-suffix convention as contextimage.js.
+static QString contextSearchBundle()
+{
+    static const QString bundle = [] {
+        QFile file(QLatin1String(":contextsearch.js"));
+        if (!file.open(QIODevice::ReadOnly)) {
+            qWarning() << "WebView: Unable to open :contextsearch.js";
             return QString();
         }
         return QString::fromUtf8(file.readAll());

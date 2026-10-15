@@ -869,6 +869,13 @@ Search & location bar:
   keeps its thin loading strip along the bottom edge as the load cue
   (NAVB02).
 - Search suggestions off by default, opt-in per engine (SEC11).
+- Right-clicking a text or search input offers "Add to the toolbar
+  search" again — the editable-field menu item lost in the WebEngine
+  port. Arora reads the enclosing form in-page and turns a GET form
+  into a {searchTerms} engine template (hidden fields, checked boxes
+  and select values ride along; a multiple-submit form asks which
+  button carries the query, and POST forms get an honest "not
+  supported" warning instead of a silent no-op) (SRCH01).
 
 Security:
 - HTTPS-First upgrades and HTTPS-Only interstitial; real-TLS-failure
