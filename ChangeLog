@@ -661,6 +661,12 @@ UI:
   frame and check badge, and mouse or keyboard (arrows move,
   Enter/Space commits) both work. The pick still previews instantly
   and persists as before (THEM05).
+- The app-menu logo button grows another ~25% — the Arora mark now
+  paints at ~29px against the 18px navigation glyphs (about 1.6x),
+  still scaled uniformly with no stretching. The navigation bar keeps
+  its exact row height: the bigger button face borrows the row's
+  vertical padding instead of pushing it taller, on normal, private,
+  and Tor windows alike (MENU19).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

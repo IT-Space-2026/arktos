@@ -232,16 +232,17 @@ static QIcon torAppMenuIcon()
     return QIcon(new AroraLogoEngine(true));
 }
 
-// MENU17: brand accent — the app-menu button paints its logo ~25%
-// larger than the bar's shared nav glyphs.  A widget added through
-// QToolBar::addWidget keeps its own iconSize property, but
-// QToolButton::initStyleOption unconditionally swaps it for the
-// parent toolbar's, so a plain setIconSize() changes the accessor
-// value and never the pixels.  This button restores its own iconSize
-// on the style option at the two read sites — paint and sizeHint —
-// so the mark grows while every sibling stays at the bar's size.
-// The engine already letterboxes the mark into a centered square, so
-// the bigger cell still cannot deform it.
+// MENU17: brand accent — the app-menu button paints its logo larger
+// than the bar's shared nav glyphs (MENU19: ~1.6x, 29px at the
+// bar's 18px).  A widget added through QToolBar::addWidget keeps its
+// own iconSize property, but QToolButton::initStyleOption
+// unconditionally swaps it for the parent toolbar's, so a plain
+// setIconSize() changes the accessor value and never the pixels.
+// This button restores its own iconSize on the style option at the
+// two read sites — paint and sizeHint — so the mark grows while
+// every sibling stays at the bar's size.  The engine already
+// letterboxes the mark into a centered square, so the bigger cell
+// still cannot deform it.
 class AppMenuButton : public QToolButton
 {
 public:
@@ -287,13 +288,18 @@ public:
         QSize grown = style()->sizeFromContents(QStyle::CT_ToolButton,
                                                 &opt, QSize(w, h), this);
         // The bigger mark fills the face instead of stretching the
-        // row: cap the button at a square one pixel over the standard
-        // toolbar-button height, so the nav bar stays driven by the
-        // location field.  The style only ever clips the pixmap to
-        // the label cell after bounding the request to iconSize, so
-        // a snug face shrinks the glyph a pixel — never deforms it.
-        const int edge = QToolButton::sizeHint().height() + 1;
-        return grown.boundedTo(QSize(edge, edge));
+        // row: the face caps at a square one pixel over the glyph,
+        // and NavBarToolBar's compacted vertical margins hand the
+        // extra pixels back so the bar keeps the height the location
+        // field drove.  The style only ever clips the pixmap to the
+        // label cell after bounding the request to iconSize, so a
+        // snug face shrinks the glyph a pixel — never deforms it.
+        // The iconSize floor guards thin styles: the hit-rect never
+        // drops below the art it paints.
+        const int edge = qMax(QToolButton::sizeHint().height(),
+                              iconSize().height()) + 1;
+        return grown.expandedTo(iconSize())
+            .boundedTo(QSize(edge, edge));
     }
 
 protected:
@@ -307,6 +313,46 @@ protected:
         initStyleOption(&opt);
         opt.iconSize = iconSize();
         p.drawComplexControl(QStyle::CC_ToolButton, opt);
+    }
+};
+
+// MENU19: the grown brand face borrows the row's vertical chrome —
+// the toolbar layout stretches every item to (bar height - layout
+// margins), so shaving the top/bottom margins seats the 30px face
+// inside the same 34px row the location field used to drive.
+// A StyleChange (tor bar stylesheet, theme rewrap, the app chrome
+// sheet) rebuilds the margins and spacing from style metrics, so
+// the bar re-asserts its authored values right after the base class
+// resets them.
+class NavBarToolBar : public QToolBar
+{
+public:
+    explicit NavBarToolBar(QWidget *parent = nullptr)
+        : QToolBar(parent)
+    {
+        compactLayoutMetrics();
+    }
+
+protected:
+    void changeEvent(QEvent *event) override
+    {
+        QToolBar::changeEvent(event);
+        if (event->type() == QEvent::StyleChange)
+            compactLayoutMetrics();
+    }
+
+private:
+    void compactLayoutMetrics()
+    {
+        QLayout *barLayout = layout();
+        if (!barLayout)
+            return;
+        const QMargins margins = barLayout->contentsMargins();
+        barLayout->setContentsMargins(margins.left(),
+                                      qMin(margins.top(), 2),
+                                      margins.right(),
+                                      qMin(margins.bottom(), 2));
+        barLayout->setSpacing(AroraStyle::Spacing::Medium);
     }
 };
 
@@ -1890,7 +1936,7 @@ static void growMenuTreeFont(QMenu *menu, const QFont &font,
 void BrowserMainWindow::setupToolBar()
 {
     setUnifiedTitleAndToolBarOnMac(true);
-    m_navigationBar = new QToolBar(this);
+    m_navigationBar = new NavBarToolBar(this);
     m_navigationBar->setObjectName(QLatin1String("NavigationToolBar"));
     // UIP01: breathing room on the navigation row — the Qt4-era
     // default item density reads cramped on modern displays.  Widget
@@ -1940,11 +1986,12 @@ void BrowserMainWindow::setupToolBar()
     // bar's iconSize, which the MENU07/MENU09 construction (a fixed
     // 36px inside a margin-less host) fought, rendering the logo
     // oversized against the nav glyphs.  With the host gone it
-    // matches the siblings' row; MENU17 then sizes the mark alone up
-    // ~25% (18 -> 22.5 -> 23px) as a Firefox-style brand accent —
-    // AppMenuButton is what lets its own iconSize reach the pixels
-    // under that clamp.  The square request keeps the ratio: the
-    // logo scales uniformly, never stretches.
+    // matches the siblings' row; MENU17 grew the mark alone ~25% as
+    // a Firefox-style brand accent and MENU19 grows it another
+    // quarter to ~1.6x (18 -> 28.8 -> 29px) — AppMenuButton is what
+    // lets its own iconSize reach the pixels under that clamp.
+    // The square request keeps the ratio: the logo scales
+    // uniformly, never stretches.
     m_appMenuButton = new AppMenuButton(m_navigationBar);
     m_appMenuButton->setObjectName(QLatin1String("appMenuButton"));
     m_appMenuButton->setAutoRaise(true);
@@ -1960,8 +2007,8 @@ void BrowserMainWindow::setupToolBar()
     m_appMenuButton->setMenu(m_appMenu);
     const QSize navIconSize = m_navigationBar->iconSize();
     m_appMenuButton->setIconSize(
-        QSize(qRound(navIconSize.width() * 1.25),
-              qRound(navIconSize.height() * 1.25)));
+        QSize(qRound(navIconSize.width() * 1.6),
+              qRound(navIconSize.height() * 1.6)));
     m_navigationBar->addWidget(m_appMenuButton)
         ->setProperty(kNavBarItemIdProperty, QLatin1String("appMenu"));
 

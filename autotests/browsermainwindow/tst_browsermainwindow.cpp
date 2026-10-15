@@ -1010,23 +1010,29 @@ void tst_BrowserMainWindow::appMenuButton()
     QVERIFY(!button->icon().isNull());
     // MENU16: the MENU09 host + fixed 36px extent that rendered the
     // logo oversized are gone; the button is a direct bar child now.
-    // MENU17: brand accent — its glyph rides ~25% over the bar's
-    // shared icon size (18 -> 22.5 -> 23) in a still-square cell,
-    // while the toolbar's own action buttons keep the shared size.
+    // MENU17/MENU19: brand accent — its glyph rides ~60% over the
+    // bar's shared icon size (18 -> 28.8 -> 29) in a still-square
+    // cell, while the toolbar's own action buttons keep the shared
+    // size.
     QCOMPARE(button->iconSize().width(), button->iconSize().height());
     QVERIFY(qAbs(button->iconSize().height()
-                 - navBar->iconSize().height() * 1.25) <= 1.0);
+                 - navBar->iconSize().height() * 1.6) <= 1.0);
     QToolButton *sibling = qobject_cast<QToolButton *>(
         navBar->widgetForAction(navBar->actions().at(1)));
     QVERIFY(sibling);
     QCOMPARE(sibling->iconSize(), navBar->iconSize());
     // The bigger glyph fills the face instead of stretching the row:
-    // the face caps at a square just over the standard button height
-    // so the bar height stays driven by the location field.
+    // the face caps at a square one pixel over the glyph, and the
+    // bar's compacted vertical margins hand back the pixels so the
+    // row keeps the height the location field drove.
     QVERIFY(button->sizeHint().height() > sibling->sizeHint().height());
     QCOMPARE(button->sizeHint().width(), button->sizeHint().height());
     QVERIFY(button->sizeHint().height()
-            <= sibling->sizeHint().height() + 1);
+            <= button->iconSize().height() + 1);
+    QLineEdit *navLocationBar = window->tabWidget()->currentLocationBar();
+    QVERIFY(navLocationBar);
+    QVERIFY(navBar->sizeHint().height()
+            <= navLocationBar->minimumHeight() + 8);
     QVERIFY(!button->icon().pixmap(button->iconSize()).isNull());
     QVERIFY(!button->toolTip().isEmpty());
     QVERIFY(!button->accessibleName().isEmpty());
@@ -1266,10 +1272,10 @@ void tst_BrowserMainWindow::appMenuButton()
     const bool privateMenuFull = privateButton
         && privateButton->menu()
         && privateButton->menu()->actions().count() >= 8;
-    // MENU17: every window type gets the same ~1.25x brand glyph.
+    // MENU19: every window type gets the same ~1.6x brand glyph.
     const bool privateBarIcon = privateButton && privateBar
         && qAbs(privateButton->iconSize().height()
-                - privateBar->iconSize().height() * 1.25) <= 1.0
+                - privateBar->iconSize().height() * 1.6) <= 1.0
         && privateButton->iconSize().width()
             == privateButton->iconSize().height();
     const bool privateBarHidden =
@@ -1328,10 +1334,13 @@ void tst_BrowserMainWindow::appMenuButton()
                        .remove(QLatin1Char('&'))
                    == QLatin1String("Quit");
     }
-    // MENU17: the tor button follows the same ~1.25x accent.
+    // MENU19: the tor button follows the same ~1.6x accent — the
+    // violet bar keeps the row height too (the stylesheet's
+    // StyleChange rebuilds the layout margins and NavBarToolBar
+    // re-compacts them).
     const bool torBarIcon = torButton && torNavBar
         && qAbs(torButton->iconSize().height()
-                - torNavBar->iconSize().height() * 1.25) <= 1.0
+                - torNavBar->iconSize().height() * 1.6) <= 1.0
         && torButton->iconSize().width()
             == torButton->iconSize().height();
     // MENU08: the violet window's dropdown is enlarged identically —
@@ -1660,8 +1669,14 @@ void tst_BrowserMainWindow::chromeMetrics()
     // room contract survives, sourced from the toolbar layout's
     // margins, so assert the effective padding instead.
     const QMargins layoutMargins = navBar->layout()->contentsMargins();
-    QVERIFY(margins.top() + layoutMargins.top() >= 4);
-    QVERIFY(margins.bottom() + layoutMargins.bottom() >= 4);
+    // MENU19: the grown app-menu face borrows 2px of vertical chrome
+    // margin on each side — the layout's own padding runs 4 -> 2 so
+    // the row keeps its height.  The breathing-room contract moves
+    // to the row itself: the bar still clears the field by the old
+    // chrome depth (asserted below once the field is in hand), and a
+    // style reset can never push the margins back out.
+    QVERIFY(margins.top() + layoutMargins.top() >= 2);
+    QVERIFY(margins.bottom() + layoutMargins.bottom() >= 2);
 
     // UIP02: consistent chrome metrics — the nav bar pins one icon
     // size on every platform, the bookmarks bar follows at favicon
@@ -1683,6 +1698,11 @@ void tst_BrowserMainWindow::chromeMetrics()
     QVERIFY(locationBar);
     QVERIFY(locationBar->minimumHeight() >= fontHeight + 12);
     QVERIFY(window->toolbarSearch()->minimumHeight() >= fontHeight + 12);
+    // MENU19: the row still clears the field by the old chrome depth
+    // — the grown app-menu face took the layout margin's room, it
+    // did not grow the bar.
+    QVERIFY(navBar->sizeHint().height()
+            - locationBar->minimumHeight() >= 4);
 
     // TabBar::tabSizeHint() is protected — the bar's aggregate
     // sizeHint height is >= the floored per-tab thickness.
