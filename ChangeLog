@@ -833,6 +833,14 @@ UI:
   adopt the same uniform padding, and when the '+' new-tab button
   parks over a full strip's last tab that tab's close button yields
   rather than sit under a dead click target (TABS19).
+- The site shield is now a permanent member of the navigation bar —
+  one shared button directly left of the address field (right of the
+  reader-mode button) that follows the active tab instead of living
+  inside each tab's location bar.  It can no longer go missing on
+  fresh or session-restored windows, and on tabs without a web page
+  (Preferences, history, engine tabs) it stays in place disabled with
+  an honest "not available on this tab" tooltip instead of leaving a
+  gap (TRUST15).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

@@ -254,6 +254,7 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     , m_engineIndicator(nullptr)
     , m_readerModeButton(nullptr)
     , m_navReaderAction(nullptr)
+    , m_siteShield(nullptr)
     , m_torCircuitButton(nullptr)
     , m_toolbarSearch(nullptr)
 #if defined(Q_OS_MACOS)
@@ -2125,16 +2126,24 @@ void BrowserMainWindow::setupToolBar()
                                 QLatin1String("locationBar"));
 
     // TRUST14: the site shield moved out of the location bar onto the
-    // nav row — one shared button immediately left of the url field.
-    // It keeps the whole SitePanel surface; the rebinding below is the
-    // point of the move — the shield always shows the ACTIVE tab's
-    // site settings, never a background tab's (tab switches, same-index
-    // container refilters and engine swaps all re-point it, and a torn
-    // or new window binds its own button's tab).
+    // nav row — one shared button immediately left of the url field
+    // (right of the reader button / tor circuit).  It keeps the whole
+    // SitePanel surface; the rebinding below is the point of the
+    // move — the shield always shows the ACTIVE tab's site settings,
+    // never a background tab's (tab switches, same-index container
+    // refilters and engine swaps all re-point it, and a torn or new
+    // window binds its own button's tab).  TRUST15: it never leaves
+    // the bar — widget/engine tabs show it disabled with the reason
+    // in its tooltip, and a ctor-hidden widget would latch the
+    // QWidgetAction invisible at insertion (the action's own
+    // visibility is what governs), so the action is pinned here.
     m_siteShield = new SiteShieldButton(m_navigationBar);
     m_siteShield->setObjectName(QLatin1String("navSiteShield"));
-    m_navigationBar->insertWidget(splitterAction, m_siteShield)
-        ->setProperty(kNavBarItemIdProperty, QLatin1String("siteShield"));
+    QAction *navShieldAction =
+        m_navigationBar->insertWidget(splitterAction, m_siteShield);
+    navShieldAction->setProperty(kNavBarItemIdProperty,
+                                 QLatin1String("siteShield"));
+    navShieldAction->setVisible(true);
     const auto rebindTrust = [this]() {
         m_siteShield->setWebView(currentTab());
         // The padlock is per-tab (it lives in each bar), but the front
