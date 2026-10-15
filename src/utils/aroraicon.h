@@ -26,30 +26,31 @@
 #include <qstringlist.h>
 
 // ICONS01: single choke point for chrome icons (toolbar/menu/dialog
-// actions).  Everything resolves through QIcon::fromTheme so the
-// desktop icon theme is honored in "native" mode; the bundled sets
-// are real icon themes embedded under :/icons and selected by
-// switching QIcon::setThemeName() — existing QIcon objects pick the
-// new theme up automatically, which is what makes the Settings combo
-// apply live.
+// actions).  Everything resolves through QIcon::fromTheme; the
+// bundled sets are real icon themes embedded under :/icons and
+// selected by switching QIcon::setThemeName() — existing QIcon
+// objects pick the new theme up automatically, which is what makes
+// the Settings combo apply live.
 //
-// Resolution order for every mode:
+// Resolution order:
 //   active theme -> inherited themes -> arora-legacy (the original
-//   2009 artwork via QIcon::setFallbackThemeName) -> hicolor.
-// "native" maps to whatever theme the platform reported at startup;
-// names the desktop theme lacks fall through to the bundled art, so
-// theme-less systems (Windows/macOS defaults, bare containers) still
-// render a full toolbar.
+//   2009 artwork via QIcon::setFallbackThemeName) -> hicolor (the
+//   desktop's own search paths — kept as the last resort so a name
+//   no bundled set ships still has a chance to resolve rather than
+//   painting a blank hole).
+//
+// ICONS12: the "native" mode (QIcon::fromTheme straight onto the OS
+// theme) is retired — an incomplete desktop theme served missing
+// names as duplicate lookalikes, which is the report the bundled
+// sets fixed.  Every selectable set is now bundled art; a stored
+// "native" id migrates to the default set like any unknown id.
 //
 // Monochrome bundled sets also ship an "-dark" sibling theme that is
 // picked automatically when the application palette is dark — Qt
 // renders SVG currentColor as black rather than recoloring to the
-// palette, so the dark variants are pre-recolored files.  "native"
-// under a dark palette probes the captured system theme for a
-// light-on-dark glyph and falls back to the bundled -dark art when
-// it cannot serve one — a forced dark palette (THEME01) is invisible
-// to the OS icon theme, and some "dark" desktops still ship
-// dark-glyph sets.
+// palette, so the dark variants are pre-recolored files.  A forced
+// dark palette (THEME01) is invisible to the OS icon theme, so the
+// bundled -dark art is what keeps chrome legible there.
 //
 // Page-content glyphs are intentionally NOT routed here: the app
 // window icon, the private-browsing badge, the default page icon,
@@ -86,15 +87,14 @@ QIcon get(const QString &name);
 // ICONS04: same name resolved to the selected set's -dark (light
 // glyph) variant — for icons painted on dark chrome while the
 // application palette is light, e.g. the tor window's violet toolbar.
-// "native" and names with no bundled -dark file fall back to get().
+// Names with no bundled -dark file fall back to get().
 QIcon getOnDark(const QString &name);
 
 // ICONS06: a flat `color` glyph for dark chrome — the shape comes
 // from `icon` (getTinted resolves `name` through getOnDark's light
 // art first), then every opaque pixel is re-tinted with the alpha
 // preserved, so the result matches the palette-painted reader/onion
-// buttons exactly whatever theme served the base art — including
-// "native", which has no -dark variant for getOnDark to pin.  The
+// buttons exactly whatever bundled set served the base art.  The
 // Disabled mode is seeded with `disabledColor` rather than left to
 // Qt's generated ghosting, which is what washed the idle
 // back/forward arrows out on the violet bar.  The default pair is
@@ -119,13 +119,15 @@ QIcon getTinted(const QString &name,
 // in the file comment above.
 QIcon getChrome(const QString &name);
 
-// Selectable sets: "native" first, then the bundled ids.
+// Selectable sets — the bundled ids only (ICONS12: "native" is
+// retired).
 QStringList themeIds();
 QString themeDisplayName(const QString &id);
 
 // The persisted choice ("MainWindow/iconTheme", default "tabler" —
-// ICONS10: bundled so every chrome name resolves to distinct art;
-// "native" stays selectable for the OS look).
+// ICONS10: bundled so every chrome name resolves to distinct art).
+// ICONS12: a stored "native" (or any unknown id) reads back as the
+// default set — old profiles migrate instead of erroring.
 QString theme();
 
 // Applies an id immediately — existing icons refresh.  Persisting
@@ -136,9 +138,9 @@ void setTheme(const QString &id);
 // changes that may flip a bundled set to its "-dark" variant.
 void applyFromSettings();
 
-// The icon theme name an id resolves to right now — the captured
-// system theme for "native", "arora-<id>" or "arora-<id>-dark" for
-// the bundled sets.  Exposed for tests/smokes.
+// The icon theme name an id resolves to right now — "arora-<id>" or
+// "arora-<id>-dark" when a dark palette is active and the set ships
+// the recolor.  Exposed for tests/smokes.
 QString effectiveThemeName(const QString &id);
 
 // The freedesktop names covered by the bundled sets (read from the
@@ -147,8 +149,7 @@ QString effectiveThemeName(const QString &id);
 QStringList names();
 
 // An icon from a specific set without switching the active theme —
-// the Settings combo uses it for per-option previews.  "native" maps
-// to the plain QIcon::fromTheme lookup.
+// the Settings combo uses it for per-option previews.
 QIcon iconForTheme(const QString &id, const QString &name);
 
 } // namespace AroraIcon

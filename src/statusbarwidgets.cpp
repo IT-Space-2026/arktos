@@ -220,8 +220,7 @@ void ZoomControl::setWebView(WebView *view)
 
 void ZoomControl::useOnDarkIcons()
 {
-    // ICONS06: flat-tinted glyphs, same as the nav cluster — the
-    // -dark art getOnDark pins cannot help "native", and Qt's
+    // ICONS06: flat-tinted glyphs, same as the nav cluster — Qt's
     // generated Disabled ghosting washed out on the violet bar.
     m_outButton->setIcon(AroraIcon::getTinted(QLatin1String("zoom-out")));
     m_inButton->setIcon(AroraIcon::getTinted(QLatin1String("zoom-in")));

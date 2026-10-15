@@ -321,8 +321,7 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
 
         // ICONS04/ICONS06: the violet bar sits on the application's
         // light palette, so themed icons resolve their dark-glyph
-        // variants — mud on purple — and under "native" there is no
-        // -dark art to pin at all.  Qt's generated
+        // variants — mud on purple.  Qt's generated
         // Disabled ghosting then rendered the idle back/forward
         // arrows paler than the enabled reload.  Tint every nav
         // glyph to the tor chrome's flat text color — the same value

@@ -34,12 +34,15 @@ UI:
 - Bundled Tabler icons are now the default set — the previous "follow
   the desktop theme" default rendered missing glyphs as duplicate
   lookalikes on sparse themes.  Every chrome icon the browser requests
-  ships inside the bundled set (and its dark variant), and Native
-  remains selectable in Preferences > Appearance (ICONS10).
+  ships inside the bundled set (and its dark variant) (ICONS10).
 - Lucide joins the bundled icon sets — thin rounded strokes close to
   Firefox's Proton icon language, covering the full 62-name chrome
   surface with a generated dark variant.  Selectable in Preferences >
   Appearance; Tabler stays the default (ICONS11).
+- The "Native" (follow-the-desktop-theme) icon option is retired —
+  sparse desktop themes served missing glyphs as duplicate
+  lookalikes.  Profiles that had it selected migrate to Tabler
+  automatically; only the bundled sets remain selectable (ICONS12).
 - Vivaldi-style vertical navigation in Preferences (UIP03).
 - Status-bar load indicator and zoom control (UIP04).
 - Shield icon at the left of the location bar (UIP05).

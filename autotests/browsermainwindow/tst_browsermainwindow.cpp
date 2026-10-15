@@ -2148,8 +2148,7 @@ void tst_BrowserMainWindow::torStatusBarTheme()
 
 // ICONS04/ICONS06: the tor window's violet chrome sits on the light
 // application palette, so the nav cluster's themed icons resolved
-// dark-on-dark — and worse, "native" (the default pick) has no -dark
-// art to pin at all, while Qt's generated Disabled ghosting made the
+// dark-on-dark while Qt's generated Disabled ghosting made the
 // idle arrows read LIGHTER than the enabled reload.  Tor windows now
 // tint every nav glyph flat #eee with a seeded dimmer Disabled mode;
 // menu actions keep the normal icons because their popups stay on
@@ -2280,13 +2279,13 @@ void tst_BrowserMainWindow::torNavIconsDarkChrome()
 
     const TorNavLum bundled = measureTorBar("adwaita");
 
-    // ICONS06: the reported path — "native" has no -dark art for
-    // getOnDark to pin, so the tint must carry the lift alone.
-    // ICONS10: set explicitly — the default pick is now "tabler".
+    // A second bundled family proves the tint is theme-independent
+    // (ICONS12: the old "native" path this leg used to exercise is
+    // retired — every selectable set is bundled now).
     settings.setValue(QLatin1String("MainWindow/iconTheme"),
-                      QLatin1String("native"));
+                      QLatin1String("breeze"));
     AroraIcon::applyFromSettings();
-    const TorNavLum nativeTheme = measureTorBar("native");
+    const TorNavLum breezeTheme = measureTorBar("breeze");
 
     BrowserTheme::applyColorScheme();
     if (savedTheme.isValid())
@@ -2298,7 +2297,7 @@ void tst_BrowserMainWindow::torNavIconsDarkChrome()
     // glyphs — readable on the violet bar under any theme.
     QVERIFY(plainBack >= 0 && plainBack < 140);
     QVERIFY(plainReload >= 0 && plainReload < 140);
-    for (const TorNavLum &lum : { bundled, nativeTheme }) {
+    for (const TorNavLum &lum : { bundled, breezeTheme }) {
         QVERIFY(lum.barFound);
         QVERIFY(lum.back > 140);
         QVERIFY(lum.forward > 140);
@@ -2317,12 +2316,11 @@ void tst_BrowserMainWindow::torNavIconsDarkChrome()
 }
 
 // ICONS05: the normal window's chrome under a dark palette.  The
-// forced dark palette is invisible to the OS icon theme, so "native"
-// resolves to bundled -dark art unless the system theme is provably
-// dark-aware — either way the nav cluster, the status-bar zoom
-// buttons and the palette-painted sidebar glyph must all render
-// light.  Assertions are outcome-only so a genuinely dark-aware
-// native theme keeps passing.
+// forced dark palette cannot recolor monochrome SVG art (Qt renders
+// currentColor black, never palette-recolored), so the active set
+// resolves to its bundled -dark variant — either way the nav
+// cluster, the status-bar zoom buttons and the palette-painted
+// sidebar glyph must all render light.
 void tst_BrowserMainWindow::darkChromeIcons()
 {
     const auto luminance = [](const QIcon &icon) -> qlonglong {
@@ -2340,14 +2338,14 @@ void tst_BrowserMainWindow::darkChromeIcons()
         return opaque ? lum / opaque : -1;
     };
 
-    // Force the "native" icon theme — that is the path the bug
-    // report hit (a bundled pick already flipped to -dark; ICONS10
-    // made bundled the default, so native is pinned explicitly).
+    // Pin the default bundled set explicitly — under the forced dark
+    // palette it must resolve arora-tabler-dark (ICONS12: the
+    // "native" id the bug report hit is retired).
     QSettings settings;
     const QVariant savedTheme =
         settings.value(QLatin1String("MainWindow/iconTheme"));
     settings.setValue(QLatin1String("MainWindow/iconTheme"),
-                      QLatin1String("native"));
+                      QLatin1String("tabler"));
     AroraIcon::applyFromSettings();
 
     SubWindow *window = new SubWindow;
