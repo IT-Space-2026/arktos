@@ -7,11 +7,9 @@
         <key>CFBundlePackageType</key>
         <string>APPL</string>
         <key>CFBundleGetInfoString</key>
-        <string>Created by Qt/QMake</string>
+        <string>Arora web browser</string>
         <key>CFBundleIdentifier</key>
         <string>com.Arora.Arora</string>
-        <key>CFBundleSignature</key>
-        <string>ttxt</string>
         <key>CFBundleExecutable</key>
         <string>@EXECUTABLE@</string>
         <key>CFBundleDocumentTypes</key>
