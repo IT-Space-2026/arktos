@@ -55,5 +55,5 @@ adblock_rust:!no-rust {
     HEADERS += $$PWD/adblockrustengine.h
     SOURCES += $$PWD/adblockrustengine.cpp
     LIBS += $$ADBLOCK_RUST_LIB
-    LIBS += -ldl -lpthread -lm
+    unix: LIBS += -ldl -lpthread -lm
 }
