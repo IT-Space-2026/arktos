@@ -900,6 +900,14 @@ UI:
   shrinks while images and fixed-pixel layout stay put, the change is
   per tab, and it survives reloads and navigations. Text that pins a
   pixel size in CSS does not scale — an honest Chromium limit (VIEW08).
+- Diagnosed the "memory indicator always climbs on article → back"
+  report: the status-bar readout is honest — it polls the real
+  /proc RSS of the tab's renderer — and the climb is real renderer
+  memory. A scripted 20-cycle loopback fixture (tst_memcycle) shows a
+  monotonic ~5.4 MB/cycle climb on every surface including a bare
+  engine control with no Arora wiring, so the retention lives in
+  Chromium's per-navigation session-history handling, not in any
+  Arora object; the fix pass is tracked separately (MEM05/MEM06).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

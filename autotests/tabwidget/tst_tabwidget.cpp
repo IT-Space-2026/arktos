@@ -2187,8 +2187,14 @@ void tst_TabWidget::sleepingTabs()
     QVERIFY(!widget.isTabSleeping(0));
 
     // Selecting a slept tab wakes it.
+    QSignalSpy waked(view1->page(), &QWebEnginePage::loadFinished);
     widget.setCurrentIndex(1);
     QVERIFY(!widget.isTabSleeping(1));
+    // The wake fires a fresh navigation — a load() issued while it is
+    // still in-flight is merged into it by WebEngine and commits
+    // without its own loadStarted.  Wait for the restore to finish so
+    // the clean-navigation leg below exercises a real navigation.
+    QTRY_VERIFY_WITH_TIMEOUT(!waked.isEmpty(), 15000);
     QCOMPARE(widget.sleepingTabCount(), 0);
 
     // Waking an awake tab and sleeping the current tab are no-ops.

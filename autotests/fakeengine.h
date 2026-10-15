@@ -62,8 +62,24 @@ public:
 
     bool canGoBack() const override { return m_canBack; }
     bool canGoForward() const override { return m_canForward; }
-    void back() override { m_canForward = true; m_canBack = false; }
-    void forward() override { m_canBack = true; m_canForward = false; }
+    // MEM05: history navigation emits the same load lifecycle a real
+    // engine does (ServoPage::back emits urlChanged + the page's load
+    // signals) — tests that drive nav->back rhythms need the finished
+    // signal to observe the cycle boundary.
+    void back() override
+    {
+        m_canForward = true;
+        m_canBack = false;
+        emit loadStarted();
+        emit loadFinished(true);
+    }
+    void forward() override
+    {
+        m_canBack = true;
+        m_canForward = false;
+        emit loadStarted();
+        emit loadFinished(true);
+    }
 
     int historyCount() const override { return m_entries.count(); }
     int currentHistoryIndex() const override { return m_current; }

@@ -3154,37 +3154,37 @@ void tst_BrowserMainWindow::darkThemeReaderGlyph()
                           "ex ea commodo consequat.</p>");
         article.write("</article></body></html>");
     }
-    ReaderMode *mode = window->currentTab()->readerMode();
+    WebView *tab = window->currentTab();
+    ReaderMode *mode = tab->readerMode();
     QVERIFY(mode);
+    // Settle on a page that can never probe article-positive —
+    // whatever the default start page's verdict may be is immaterial
+    // once a real navigation bumps the probe generation.
+    tab->loadUrl(QUrl(QLatin1String("about:blank")));
+    QTRY_VERIFY_WITH_TIMEOUT(!mode->isAvailable() && !tab->isLoading(),
+                             20000);
 
     const QSize iconSize(18, 18);
 
-    // Light baseline on the plain start tab (not article-like): the
-    // glyph's ink is exactly ButtonText — the same flat tint the
-    // chrome-tinted siblings carry — and the icon serves the bar's
-    // 18px request at full size (the baked 16px pixmap forced an
-    // upscale, which is what made it read grey).
+    // Light baseline: the glyph's ink is exactly ButtonText — the
+    // same flat tint the chrome-tinted siblings carry — and the icon
+    // serves the bar's 18px request at full size (the baked 16px
+    // pixmap forced an upscale, which is what made it read grey).
+    // Measured BEFORE the article loads: once the Readability verdict
+    // lands the glyph honestly wears the Accent "suggested" mark, so
+    // the ButtonText contract only holds on a non-article page.
     const QColor lightReader = dominantInk(reader->icon(), iconSize);
     const QColor lightSibling = dominantInk(backAction->icon(),
                                             iconSize);
     const QSize lightServed = reader->icon().pixmap(iconSize).size();
 
-    window->currentTab()->loadUrl(QUrl::fromLocalFile(articlePath));
-    // READ04 shows the button on every web tab, so isHidden() can no
-    // longer stand in for "the article loaded and probed readable" —
-    // a click that lands before the verdict extracts the still-empty
-    // pre-commit document and reader mode never activates.
-    QTRY_VERIFY_WITH_TIMEOUT(mode->isAvailable(), 20000);
-
-    // Post-verdict the glyph wears the suggested accent — READ04's
-    // availability affordance (accent outline + dot), not the plain
-    // ButtonText ink.
-    const QColor lightAccent =
-        QApplication::palette().color(QPalette::Normal,
-                                      QPalette::Accent);
-    const QColor lightSuggested = dominantInk(reader->icon(), iconSize);
-
     BrowserTheme::previewColorScheme(Qt::ColorScheme::Dark);
+    // A leg that fails mid-test would otherwise leak the forced dark
+    // palette into every later test in the process (the restore below
+    // never runs on QFAIL) — re-resolve on scope exit instead.
+    struct PaletteGuard {
+        ~PaletteGuard() { BrowserTheme::applyColorScheme(); }
+    } paletteGuard;
     QApplication::processEvents();
     QApplication::processEvents();
 
@@ -3196,7 +3196,11 @@ void tst_BrowserMainWindow::darkThemeReaderGlyph()
     const QColor darkDim =
         darkPalette.color(QPalette::Disabled, QPalette::ButtonText);
 
+    // Still on the non-article page: the dark glyph must match the
+    // siblings' plain ButtonText ink.
     const QColor darkReader = dominantInk(reader->icon(), iconSize);
+    const QColor darkSibling = dominantInk(backAction->icon(),
+                                           iconSize);
     const QColor darkReaderDisabled = dominantInk(
         reader->icon(), iconSize, QIcon::Disabled);
     const QColor darkSiblingDisabled = dominantInk(
@@ -3204,9 +3208,19 @@ void tst_BrowserMainWindow::darkThemeReaderGlyph()
 
     // Active (checked) state keeps its deliberate accent mark — it
     // must not collapse to the plain tint, and the engine still
-    // serves it at the requested size.  The button is checkable so
-    // click() flips its own flag instantly; the icon only rebakes on
+    // serves it at the requested size.  Load the article and gate on
+    // the probe verdict first: a click that outruns the commit enters
+    // on the empty url and is honestly declined, and READ04 keeps the
+    // button present on every engine tab so isHidden is no real gate.
+    // Post-verdict the glyph wears the suggested accent — READ04's
+    // availability affordance (accent outline + dot), not the plain
+    // ButtonText ink.  The button is checkable so click() flips its
+    // own flag instantly; the icon only rebakes on
     // ReaderMode::activeChanged — wait on the mode, not the flag.
+    tab->loadUrl(QUrl::fromLocalFile(articlePath));
+    QTRY_VERIFY_WITH_TIMEOUT(mode->isAvailable(), 20000);
+    QVERIFY(!reader->isHidden());
+    const QColor darkSuggested = dominantInk(reader->icon(), iconSize);
     reader->click();
     QTRY_VERIFY_WITH_TIMEOUT(mode->isActive(), 20000);
     const QColor activeInk = dominantInk(reader->icon(), iconSize);
@@ -3223,12 +3237,26 @@ void tst_BrowserMainWindow::darkThemeReaderGlyph()
     }
 
     // Live flip back — the glyph re-follows the light palette without
-    // a restart or a reload.
+    // a restart or a reload.  Return to a non-article page first so
+    // the comparison is plain-ink vs plain-ink: on the article the
+    // "suggested" state honestly paints Accent, which is not what the
+    // baseline measured.
+    tab->loadUrl(QUrl(QLatin1String("about:blank")));
+    QTRY_VERIFY_WITH_TIMEOUT(!mode->isAvailable(), 20000);
     BrowserTheme::applyColorScheme();
     QApplication::processEvents();
     QApplication::processEvents();
     const QColor lightReaderAgain = dominantInk(reader->icon(),
                                                 iconSize);
+
+    // The suggested affordance under the restored light palette:
+    // reload the article and check the accent mark there too.
+    tab->loadUrl(QUrl::fromLocalFile(articlePath));
+    QTRY_VERIFY_WITH_TIMEOUT(mode->isAvailable(), 20000);
+    const QColor lightAccent =
+        QApplication::palette().color(QPalette::Normal,
+                                      QPalette::Accent);
+    const QColor lightSuggested = dominantInk(reader->icon(), iconSize);
 
     closeWindow(window);
     BrowserTheme::applyColorScheme();
@@ -3237,19 +3265,26 @@ void tst_BrowserMainWindow::darkThemeReaderGlyph()
     QVERIFY2(inkMatch(lightReader, lightSibling),
              qPrintable(QStringLiteral("light ink %1 vs %2")
                         .arg(lightReader.name()).arg(lightSibling.name())));
+    QVERIFY2(inkMatch(darkReader, darkSibling),
+             qPrintable(QStringLiteral("dark ink %1 vs %2")
+                        .arg(darkReader.name()).arg(darkSibling.name())));
+    QVERIFY2(inkMatch(darkReader, darkTint),
+             qPrintable(QStringLiteral("dark ink %1 vs tint %2")
+                        .arg(darkReader.name()).arg(darkTint.name())));
     // The suggested affordance reads as the palette accent — and
     // visibly differs from the plain chrome tint.
     QVERIFY2(inkMatch(lightSuggested, lightAccent),
              qPrintable(QStringLiteral("suggested ink %1 vs accent %2")
                         .arg(lightSuggested.name())
                         .arg(lightAccent.name())));
-    QVERIFY2(inkMatch(darkReader, darkAccent),
+    QVERIFY2(inkMatch(darkSuggested, darkAccent),
              qPrintable(QStringLiteral("dark suggested %1 vs accent %2")
-                        .arg(darkReader.name()).arg(darkAccent.name())));
-    QVERIFY2(!inkMatch(darkReader, darkTint),
+                        .arg(darkSuggested.name())
+                        .arg(darkAccent.name())));
+    QVERIFY2(!inkMatch(darkSuggested, darkTint),
              qPrintable(QStringLiteral("dark suggested %1 matches "
                                        "plain tint %2")
-                        .arg(darkReader.name()).arg(darkTint.name())));
+                        .arg(darkSuggested.name()).arg(darkTint.name())));
     // Disabled reads the palette's dimmed tone like every sibling —
     // not Qt's generated ghosting of a white glyph (a near-white
     // fade that reads *brighter* than the siblings' dimmed tint).
@@ -3265,7 +3300,7 @@ void tst_BrowserMainWindow::darkThemeReaderGlyph()
     // plain chrome tint.
     QVERIFY(activeInk.isValid());
     QVERIFY(activeInk != darkTint);
-    QVERIFY(inkMatch(lightReaderAgain, lightSuggested));
+    QVERIFY(inkMatch(lightReaderAgain, lightReader));
 }
 
 // TOR08: the tor window's nav bar carries a circuit dropdown right

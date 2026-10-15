@@ -174,7 +174,7 @@ This file is the task queue for the Devin CLI task loop
 
 
 
-| MEM05 | Memory climbs on every nav→back cycle — MEASURE ONLY: RSS/heap slope over ~20 cycles on normal window, plateau-vs-leak verdict, indicator honesty — details below | in_progress | 2 | VERDICT pending make check — see details; indicator honest, ~+5.4MB/cycle renderer-side upstream retention |
+| MEM05 | Memory climbs on every nav→back cycle — MEASURE ONLY: RSS/heap slope over ~20 cycles on normal window, plateau-vs-leak verdict, indicator honesty — details below | done | 5 | verdict: LINEAR renderer climb ~+5.4MB/cycle, no plateau @40 cycles; app series flat; indicator honest /proc VmRSS; bare-QWebEngineView control climbs identically → upstream Chromium per-navigation retention, not an Arora object; fixture autotests/memcycle; tst_memcycle 8/8, make check rc=0 offscreen --disable-gpu |
 | MEM06 | Memory climb fix pass — apply MEM05's verdict: fix the growing allocation site OR tune/document bounded caches — details below | pending | 0 | needs:task:MEM05 |
 | MEM07 | Memory coverage matrix — run MEM05's cycle fixture across private/Tor/Servo/background/tear-off surfaces, per-type slope table — details below | pending | 0 | needs:task:MEM05 |
 | MEM08 | Manual memory flush on tab context menu — discard retained WebContents on demand (current tab = discard+reload) — details below | pending | 0 | |
@@ -1077,7 +1077,7 @@ User report: starting from telex.hu, opening an article and going back repeatedl
 - Slope table (renderer kB/cycle / app kB/cycle, 20 cycles): normal 5392/98, private 5202/177, background 8240/2, second-window 4238/24, engine-tab(fake) 0/0, bare-engine 5773/52. MEM07 owns the tor leg (needs faketor SOCKS plumbing) + Servo.
 - Fixture mechanics note: the index gate must wait on `historyCount()>=1` not `url()==index` — `WebView::url()` returns `m_initialUrl` instantly and a loadUrl against an uncommitted load REPLACES the history entry (canGoBack never true).
 - MEM06 guidance: the lever is upstream (cap/flush session-history document retention, e.g. limiting retained entries or recycling renderers), not freeing an Arora object. `ARORA_MEM_LEAK_GATE=1` arms the 1.5MB/cycle renderer assertion for the post-fix comparison; app-series gate (1MB/cycle) is always on.
-- Verify: tst_memcycle 8/8 (6 surface legs + init/cleanup) deterministic offscreen --disable-gpu; make check <pending>.
+- Verify: tst_memcycle 8/8 (6 surface legs + init/cleanup) deterministic offscreen --disable-gpu; make check rc=0 — all gates PASS (warnings/supplychain/engine-audit/rustcoverage) + full suite 0 failed; two interrupted-run test edits were repaired first (browsermainwindow darkThemeReaderGlyph sampled the Accent "suggested" glyph post-availability — baseline legs moved ahead of the article load; webview linkOpenRefererDiscipline's spy attached post-commit — gate now also accepts an already-finished committed load).
 
 ### MEM06
 
