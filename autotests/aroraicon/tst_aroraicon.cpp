@@ -93,7 +93,7 @@ void tst_AroraIcon::cleanupTestCase()
 void tst_AroraIcon::themeIds()
 {
     const QStringList ids = AroraIcon::themeIds();
-    QCOMPARE(ids.count(), 4);
+    QCOMPARE(ids.count(), 5);
     QCOMPARE(ids.first(), QLatin1String("native"));
     for (const QString &id : ids)
         QVERIFY(!AroraIcon::themeDisplayName(id).isEmpty());
@@ -140,6 +140,7 @@ void tst_AroraIcon::bundledCoverage_data()
     QTest::newRow("adwaita") << QStringLiteral("adwaita");
     QTest::newRow("breeze") << QStringLiteral("breeze");
     QTest::newRow("tabler") << QStringLiteral("tabler");
+    QTest::newRow("lucide") << QStringLiteral("lucide");
 }
 
 void tst_AroraIcon::bundledCoverage()
@@ -195,6 +196,9 @@ void tst_AroraIcon::darkVariant()
              QLatin1String("arora-tabler-dark"));
     QCOMPARE(AroraIcon::effectiveThemeName(QLatin1String("adwaita")),
              QLatin1String("arora-adwaita-dark"));
+    // ICONS11: lucide ships the same -dark recolor variant.
+    QCOMPARE(AroraIcon::effectiveThemeName(QLatin1String("lucide")),
+             QLatin1String("arora-lucide-dark"));
 
     AroraIcon::setTheme(QLatin1String("tabler"));
     const QImage darkImage = AroraIcon::get(QLatin1String("go-previous"))
@@ -288,7 +292,8 @@ void tst_AroraIcon::iconForTheme()
     QHash<QString, QImage> previews;
     const QStringList sets = { QLatin1String("adwaita"),
                                QLatin1String("breeze"),
-                               QLatin1String("tabler") };
+                               QLatin1String("tabler"),
+                               QLatin1String("lucide") };
     for (const QString &id : sets) {
         const QIcon icon = AroraIcon::iconForTheme(
             id, QLatin1String("view-refresh"));
@@ -298,6 +303,17 @@ void tst_AroraIcon::iconForTheme()
     }
     QVERIFY(previews.value(QLatin1String("adwaita"))
             != previews.value(QLatin1String("tabler")));
+    // ICONS11: view-refresh is a maintained glyph — tabler and lucide
+    // draw it at identical geometry/color, so the distinctness probe
+    // uses a name where upstream art differs (zoom-original:
+    // zoom-reset vs scan-search).
+    const QImage lucideGlyph = AroraIcon::iconForTheme(
+        QLatin1String("lucide"), QLatin1String("zoom-original"))
+        .pixmap(QSize(24, 24)).toImage();
+    const QImage tablerGlyph = AroraIcon::iconForTheme(
+        QLatin1String("tabler"), QLatin1String("zoom-original"))
+        .pixmap(QSize(24, 24)).toImage();
+    QVERIFY(lucideGlyph != tablerGlyph);
 }
 
 // ICONS09: the chrome contract — getChrome flattens the themed art

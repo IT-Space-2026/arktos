@@ -11,17 +11,22 @@
 #   Tabler    — github.com/tabler/tabler-icons (icons/outline);
 #               stroke=currentColor is bound to a concrete gray for
 #               light and #e8e8e8 for -dark.
+#   Lucide    — github.com/lucide-icons/lucide (icons/, or the
+#               lucide-static npm package); ISC, Feather-descended.
+#               Same 24px/2px currentColor conventions as Tabler, so
+#               the -dark recolor is generated identically.
 #
 # Qt renders currentColor as black (it does not recolor against the
 # widget palette), so every bundled monochrome glyph is pinned to a
 # concrete color per variant.
 #
-# Usage: ./import-icons.sh <adwaita-dir> <breeze-icons-dir> <tabler-dir>
+# Usage: ./import-icons.sh <adwaita-dir> <breeze-icons-dir> <tabler-dir> <lucide-dir>
 set -euo pipefail
 
 ADWAITA=${1:-/usr/share/icons/Adwaita}
-BREEZE=${2:?usage: import-icons.sh <adwaita> <breeze-icons> <tabler>}
-TABLER=${3:?usage: import-icons.sh <adwaita> <breeze-icons> <tabler>}
+BREEZE=${2:?usage: import-icons.sh <adwaita> <breeze-icons> <tabler> <lucide>}
+TABLER=${3:?usage: import-icons.sh <adwaita> <breeze-icons> <tabler> <lucide>}
+LUCIDE=${4:?usage: import-icons.sh <adwaita> <breeze-icons> <tabler> <lucide>}
 OUT=$(dirname "$0")
 
 # freedesktop name -> file per set
@@ -180,6 +185,104 @@ declare -A TABLER_MAP=(
     [view-toolbar]=tools
     [zoom-text]=text-size
 )
+# ICONS11: Lucide covers the same 62-name chrome surface.  Lucide is a
+# Feather descendant at the same conventions as Tabler (24px box, 2px
+# round-cap currentColor strokes), so it is the closest open-source
+# match to Firefox's Proton icon language.  Where Lucide ships no
+# direct equivalent the map picks the documented closest glyph —
+# substitutions are recorded below; the rest are one-to-one.
+declare -A LUCIDE_MAP=(
+    # window-new: lucide has no window-plus — app-window is the bare
+    # window glyph (the "new" is carried by the menu text).
+    [window-new]=app-window
+    [window-close]=x
+    [document-open]=folder-open
+    [document-print]=printer
+    # document-print-preview: file-search = magnifier over a document.
+    [document-print-preview]=file-search
+    # document-save-as: save is the classic floppy.
+    [document-save-as]=save
+    # document-revert: rotate-ccw is the counter-clockwise "revert".
+    [document-revert]=rotate-ccw
+    [application-exit]=log-out
+    [edit-undo]=undo-2
+    [edit-redo]=redo-2
+    [edit-cut]=scissors
+    [edit-copy]=copy
+    # edit-paste: clipboard-paste is a clipboard with an incoming
+    # arrow — the paste action, not the bare clipboard.
+    [edit-paste]=clipboard-paste
+    # edit-select-all: square-dashed is the dashed selection marquee.
+    [edit-select-all]=square-dashed
+    [edit-find]=search
+    [edit-clear]=circle-x
+    [edit-clear-locationbar-ltr]=circle-x
+    [edit-clear-locationbar-rtl]=circle-x
+    [go-previous]=arrow-left
+    [go-next]=arrow-right
+    # go-home: lucide renamed home -> house; house.svg is canonical.
+    [go-home]=house
+    # process-stop: square is lucide's media-stop glyph — kept, not
+    # x, so it stays distinct from window-close (the ICONS10 lesson).
+    [process-stop]=square
+    # view-fullscreen: maximize is the four outward corner brackets.
+    [view-fullscreen]=maximize
+    [zoom-in]=zoom-in
+    [zoom-out]=zoom-out
+    # zoom-original: lucide ships no 1:1 glyph — scan-search is the
+    # magnifier inside the scan frame ("inspect at real size").
+    [zoom-original]=scan-search
+    [bookmark-new]=bookmark-plus
+    # user-bookmarks: lucide has no bookmarks plural — book-marked is
+    # a book carrying a bookmark ribbon, distinct from bookmark-plus.
+    [user-bookmarks]=book-marked
+    [folder-new]=folder-plus
+    [emblem-downloads]=download
+    [preferences-desktop-locale]=languages
+    [tab-new]=plus
+    # tab-close: panel-top-close is a top strip with an x — a closing
+    # tab, distinct from window-close's bare x.
+    [tab-close]=panel-top-close
+    [list-add]=list-plus
+    [system-run]=play
+    [accessories-character-map]=omega
+    # applications-development: braces ({ }) reads as development and
+    # stays distinct from text-html's code (</>) below.
+    [applications-development]=braces
+    [application-x-addon]=puzzle
+    [avatar-default]=circle-user-round
+    [container-tab]=container
+    [document-export]=file-output
+    [document-import]=file-input
+    [go-down]=arrow-down
+    [go-jump]=arrow-right-to-line
+    [go-up]=arrow-up
+    [preferences-system]=settings
+    [security-high]=shield-check
+    [text-html]=code
+    [text-x-generic]=file-text
+    [utilities-terminal]=square-terminal
+    [view-history]=history
+    [view-icon]=layout-grid
+    # The View-menu bar toggles form one positional family:
+    # menubar=layout-panel-top, tabbar=panel-top, statusbar=
+    # panel-bottom — same metaphor, three distinct shapes.
+    [view-menubar]=layout-panel-top
+    [view-pip]=picture-in-picture-2
+    # view-private: hat-glasses is lucide's incognito glyph.
+    [view-private]=hat-glasses
+    # view-restore: archive-restore (tray + upward arrow) is the
+    # bring-back glyph — recently-closed tabs and the PiP
+    # return-to-tab button.
+    [view-restore]=archive-restore
+    [view-statusbar]=panel-bottom
+    [view-tabbar]=panel-top
+    [view-toolbar]=wrench
+    [zoom-text]=a-large-small
+    # view-refresh and tor-onion are maintained glyphs — see
+    # write_reload()/write_onion() below; lucide ships no onion and
+    # its refresh-cw is heavier than the nav arrows.
+)
 
 copy_map() { # assoc-name srcroot outdir [sed-expr...]
     local -n map=$1; local src=$2; local dst=$3; shift 3
@@ -274,10 +377,14 @@ copy_map ADWAITA_MAP "$ADWAITA" "$OUT/arora-adwaita"
 copy_map BREEZE_MAP  "$BREEZE"  "$OUT/arora-breeze"
 copy_map TABLER_MAP  "$TABLER"  "$OUT/arora-tabler" \
     -e 's/stroke="currentColor"/stroke="#3d3d3d"/g'
+copy_map LUCIDE_MAP  "$LUCIDE"  "$OUT/arora-lucide" \
+    -e 's/stroke="currentColor"/stroke="#3d3d3d"/g'
 write_reload "$OUT/arora-adwaita" "#2e3436" 1.7 16 "$RELOAD_ARC16" "$RELOAD_HEAD16"
 write_reload "$OUT/arora-breeze"  "#232629" 1   16 "$RELOAD_ARC16" "$RELOAD_HEAD16"
 write_reload "$OUT/arora-tabler"  "#3d3d3d" 2   24 "$RELOAD_ARC24" "$RELOAD_HEAD24"
+write_reload "$OUT/arora-lucide"  "#3d3d3d" 2   24 "$RELOAD_ARC24" "$RELOAD_HEAD24"
 write_onion  "$OUT/arora-tabler"  "#3d3d3d"
+write_onion  "$OUT/arora-lucide"  "#3d3d3d"
 write_stop   "$OUT/arora-breeze"  "#232629" 1
 
 index_theme "$OUT/arora-adwaita" "Arora Adwaita" \
@@ -286,6 +393,8 @@ index_theme "$OUT/arora-breeze" "Arora Breeze" \
     "Bundled KDE Breeze icons (LGPL-3+)"
 index_theme "$OUT/arora-tabler" "Arora Tabler" \
     "Bundled Tabler outline icons (MIT)"
+index_theme "$OUT/arora-lucide" "Arora Lucide" \
+    "Bundled Lucide icons (ISC; partly derived from Feather, MIT)"
 
 # --- dark variants ----------------------------------------------------
 copy_map ADWAITA_MAP "$ADWAITA" "$OUT/arora-adwaita-dark" \
@@ -294,10 +403,14 @@ copy_map BREEZE_MAP  "$BREEZE"  "$OUT/arora-breeze-dark" \
     -e 's/#232629/#eff0f1/g' -e 's/#666666/#a0a0a0/g'
 copy_map TABLER_MAP  "$TABLER"  "$OUT/arora-tabler-dark" \
     -e 's/stroke="currentColor"/stroke="#e8e8e8"/g'
+copy_map LUCIDE_MAP  "$LUCIDE"  "$OUT/arora-lucide-dark" \
+    -e 's/stroke="currentColor"/stroke="#e8e8e8"/g'
 write_reload "$OUT/arora-adwaita-dark" "#e8e8e8" 1.7 16 "$RELOAD_ARC16" "$RELOAD_HEAD16"
 write_reload "$OUT/arora-breeze-dark"  "#eff0f1" 1   16 "$RELOAD_ARC16" "$RELOAD_HEAD16"
 write_reload "$OUT/arora-tabler-dark"  "#e8e8e8" 2   24 "$RELOAD_ARC24" "$RELOAD_HEAD24"
+write_reload "$OUT/arora-lucide-dark"  "#e8e8e8" 2   24 "$RELOAD_ARC24" "$RELOAD_HEAD24"
 write_onion  "$OUT/arora-tabler-dark"  "#e8e8e8"
+write_onion  "$OUT/arora-lucide-dark"  "#e8e8e8"
 write_stop   "$OUT/arora-breeze-dark"  "#eff0f1" 1
 
 index_theme "$OUT/arora-adwaita-dark" "Arora Adwaita Dark" \
@@ -306,6 +419,8 @@ index_theme "$OUT/arora-breeze-dark" "Arora Breeze Dark" \
     "Dark-scheme recolor of the bundled KDE Breeze icons"
 index_theme "$OUT/arora-tabler-dark" "Arora Tabler Dark" \
     "Dark-scheme recolor of the bundled Tabler outline icons"
+index_theme "$OUT/arora-lucide-dark" "Arora Lucide Dark" \
+    "Dark-scheme recolor of the bundled Lucide icons"
 
 # --- the original 2009 art: final fallback ---------------------------
 mkdir -p "$OUT/arora-legacy/icons" # populated via qrc aliases
