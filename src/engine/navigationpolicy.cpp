@@ -1438,8 +1438,13 @@ static PolicyVerdict evaluateTor(const PolicyRequest &req)
             || req.method == QByteArrayLiteral("HEAD"))
         && hasQuery(url))
         target = NavigationPolicy::strippedUrl(url);
+    // Loopback/private-net hosts stay http: (MEM07): isUpgradeCandidate
+    // exempts them on the https-first path because a local service has
+    // no certificate to upgrade to — the tor path shares that reality
+    // (a relayed LAN request can never exit anyway), and .onion is
+    // already inside isPrivateOrLocalHost.
     if (url.scheme() == QLatin1String("http")
-        && !url.host().endsWith(QLatin1String(".onion"))) {
+        && !NavigationPolicy::isPrivateOrLocalHost(url.host())) {
         target.setScheme(QLatin1String("https"));
         v.action = PolicyVerdict::Action::Redirect;
         v.redirectUrl = target;

@@ -1031,7 +1031,9 @@ fn evaluate_tor(snap: &Snapshot, req: &Request) -> Value {
     // every clearnet http: request upgrades (not just navigations);
     // .onion http: keeps its scheme and still strips.  An unwrapped
     // redirector target gets the same blocklist re-check the privacy
-    // pipeline applies.
+    // pipeline applies.  MEM07: loopback and private/LAN hosts are
+    // exempt the same as the https-first path — a local service has
+    // no TLS to upgrade to and could never exit.
     let cleaned = strip_target(snap, req);
     if cleaned.unwrapped
         && req.resource_type == RT_MAIN_FRAME
@@ -1043,7 +1045,7 @@ fn evaluate_tor(snap: &Snapshot, req: &Request) -> Value {
     }
     let mut target = cleaned.url;
     let host = url_host(&req.url);
-    if url_scheme(&req.url).to_lowercase() == "http" && !host.ends_with(".onion") {
+    if url_scheme(&req.url).to_lowercase() == "http" && !is_private_or_local_host(&host) {
         target = scheme_https(&target);
         return redirect(target, "upgrade", cleaned.removed);
     }
