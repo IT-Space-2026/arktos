@@ -44,7 +44,20 @@
 // (per-navigation vs per-unique-document discrimination);
 // ARORA_MEM_REPORT=<file> also writes a
 // "surface cycle rendererKb anonKb appKb" table for the slope
-// report.
+// report.  ARORA_MEM_GC=1 (MEM06 leg b) forces a full v8/blink GC
+// after every back nav — run the engine with
+// --js-flags=--expose-gc so gc() resolves; if the climb collapses
+// when the renderer is told to collect, the retained bytes were
+// reachable-but-uncollected garbage (soft retention a real memory-
+// pressure signal would reclaim), not a leak.  ARORA_MEM_FREEZE=1
+// (MEM06 leg c) instead drives the shipped
+// TabWidget::purgeInactiveTabs() sweep after every back nav — it
+// freeze-pulses each eligible BACKGROUND page (Active->Frozen->
+// Active), routing a CRITICAL memory-pressure notification through
+// the renderer via the public lifecycle API, no debug flag exposed
+// to web content.  Cycled tabs that are CURRENT in their window
+// are correctly skipped by the sweep (their retention stays soft —
+// the manual flush is MEM08).
 
 #include <QtTest/QtTest>
 #include <QtNetwork/QtNetwork>
@@ -233,6 +246,20 @@ static qint64 procStatusKb(qint64 pid, const QByteArray &field)
 #endif
 }
 
+// MEM06 (b): runJavaScript("gc()") is the reachable proxy for
+// Chromium's memory-pressure purge — a major GC walks the unified
+// v8+oilpan heap, so documents whose only keep-alive was a pending
+// collection die here.  Needs --js-flags=--expose-gc on the engine.
+static void forceRendererGc(QWebEnginePage *page)
+{
+    bool done = false;
+    page->runJavaScript(QStringLiteral("gc()"),
+                        [&done](const QVariant &) { done = true; });
+    QTRY_VERIFY_WITH_TIMEOUT(done, 5000);
+    // Deferred deletion + malloc-release lag after the collect.
+    QTest::qWait(250);
+}
+
 class tst_MemCycle : public QObject
 {
     Q_OBJECT
@@ -247,7 +274,7 @@ private slots:
     void bareEngineCycle();
 
 private:
-    void runCycles(WebView *view, const QString &name,
+    void runCycles(WebView *view, TabWidget *tabs, const QString &name,
                    QList<CycleSample> *samples);
     void runCycles(EngineTab *tab, const QString &name,
                    QList<CycleSample> *samples);
@@ -258,7 +285,9 @@ private:
             const std::function<void()> &goBack,
             const std::function<qint64()> &rendererKb,
             const std::function<qint64()> &rendererAnonKb,
-            QList<CycleSample> *samples);
+            QList<CycleSample> *samples,
+            const std::function<void()> &postBack
+                = std::function<void()>());
     void checkSeries(const char *surface,
                      const QList<CycleSample> &samples);
 
@@ -274,7 +303,8 @@ void tst_MemCycle::initTestCase()
 // index.  RSS is sampled after a settle delay so the renderer's
 // post-load churn (decode caches, font warmup) lands inside the
 // sample it belongs to.
-void tst_MemCycle::runCycles(WebView *view, const QString &name,
+void tst_MemCycle::runCycles(WebView *view, TabWidget *tabs,
+                             const QString &name,
                              QList<CycleSample> *samples)
 {
     const int settleMs = qEnvironmentVariableIntValue("ARORA_MEM_SETTLE_MS") > 0
@@ -300,6 +330,8 @@ void tst_MemCycle::runCycles(WebView *view, const QString &name,
     // a flat same-url slope would instead point at per-request or
     // per-url-keyed state.
     const bool sameUrl = qEnvironmentVariableIsSet("ARORA_MEM_SAMEURL");
+    const bool gcPurge = qEnvironmentVariableIsSet("ARORA_MEM_GC");
+    const bool freezePurge = qEnvironmentVariableIsSet("ARORA_MEM_FREEZE");
     Engine::Page *enginePage = view->enginePage();
     cycleLoop(name, &finishSpy,
               [this, view, sameUrl](int i) {
@@ -311,7 +343,21 @@ void tst_MemCycle::runCycles(WebView *view, const QString &name,
                   return procStatusKb(enginePage->renderProcessId(),
                                       "RssAnon");
               },
-              samples);
+              samples,
+              [view, tabs, gcPurge, freezePurge]() {
+                  if (gcPurge)
+                      forceRendererGc(view->page());
+                  // MEM06's shipped sweep — it freeze-pulses only
+                  // eligible BACKGROUND tabs, so under ARORA_MEM_
+                  // FREEZE the background leg is the one that
+                  // flattens (a cycled current tab is correctly
+                  // left alone).  The 600 ms pulse + a settle margin
+                  // has to elapse before the sample sees the purge.
+                  if (freezePurge && tabs) {
+                      tabs->purgeInactiveTabs();
+                      QTest::qWait(800);
+                  }
+              });
 
     // MEM05 (d): releasability probe — documents retained FOR the
     // session history die with their entries, a genuinely lost
@@ -366,7 +412,8 @@ void tst_MemCycle::cycleLoop(
         const std::function<void()> &goBack,
         const std::function<qint64()> &rendererKb,
         const std::function<qint64()> &rendererAnonKb,
-        QList<CycleSample> *samples)
+        QList<CycleSample> *samples,
+        const std::function<void()> &postBack)
 {
     const int cycles = qEnvironmentVariableIntValue("ARORA_MEM_CYCLES") > 0
         ? qEnvironmentVariableIntValue("ARORA_MEM_CYCLES") : 20;
@@ -382,6 +429,8 @@ void tst_MemCycle::cycleLoop(
         goBack();
         QTRY_VERIFY_WITH_TIMEOUT(finishSpy->count() > expected, 15000);
         QTest::qWait(settleMs);
+        if (postBack)
+            postBack();
 
         CycleSample s;
         s.rendererKb = rendererKb ? rendererKb() : -1;
@@ -501,7 +550,7 @@ void tst_MemCycle::normalTabCycle()
     WebView *view = tabs->currentWebView();
     QVERIFY(view);
     QList<CycleSample> samples;
-    runCycles(view, QStringLiteral("normal"), &samples);
+    runCycles(view, tabs, QStringLiteral("normal"), &samples);
     checkSeries("normal", samples);
 }
 
@@ -518,7 +567,7 @@ void tst_MemCycle::privateTabCycle()
     QVERIFY(view);
     QVERIFY(view->page()->profile()->isOffTheRecord());
     QList<CycleSample> samples;
-    runCycles(view, QStringLiteral("private"), &samples);
+    runCycles(view, tabs, QStringLiteral("private"), &samples);
     checkSeries("private", samples);
 }
 
@@ -536,7 +585,7 @@ void tst_MemCycle::backgroundTabCycle()
     tabs->newTab();
     QVERIFY(tabs->currentWebView() != background);
     QList<CycleSample> samples;
-    runCycles(background, QStringLiteral("background"), &samples);
+    runCycles(background, tabs, QStringLiteral("background"), &samples);
     checkSeries("background", samples);
 }
 
@@ -553,7 +602,7 @@ void tst_MemCycle::secondWindowCycle()
     WebView *view = second->tabWidget()->currentWebView();
     QVERIFY(view);
     QList<CycleSample> samples;
-    runCycles(view, QStringLiteral("second-window"), &samples);
+    runCycles(view, second->tabWidget(), QStringLiteral("second-window"), &samples);
     checkSeries("second-window", samples);
 }
 
@@ -610,6 +659,7 @@ void tst_MemCycle::bareEngineCycle()
     QTest::qWait(settleMs);
 
     const bool sameUrl = qEnvironmentVariableIsSet("ARORA_MEM_SAMEURL");
+    const bool gcPurge = qEnvironmentVariableIsSet("ARORA_MEM_GC");
     QList<CycleSample> samples;
     cycleLoop(QStringLiteral("bare-engine"), &finishSpy,
               [this, &view, sameUrl](int i) {
@@ -624,7 +674,11 @@ void tst_MemCycle::bareEngineCycle()
                   return procStatusKb(page->renderProcessPid(),
                                       "RssAnon");
               },
-              &samples);
+              &samples,
+              [page, gcPurge]() {
+                  if (gcPurge)
+                      forceRendererGc(page);
+              });
     checkSeries("bare-engine", samples);
 }
 

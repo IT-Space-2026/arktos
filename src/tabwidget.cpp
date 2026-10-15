@@ -2485,6 +2485,68 @@ void TabWidget::sleepTab(int index)
     beginTabSleep(index, false);
 }
 
+// MEM06: the periodic low-priority purge.  MEM05/06 established that
+// the renderer's climb on repeated nav->back cycles is upstream soft
+// retention — collectable heap the engine only releases when a
+// memory-pressure signal arrives, and desktop Linux sends none.
+// Freezing a hidden page routes exactly that pressure notification
+// through its renderer (memcycle's ARORA_MEM_FREEZE leg drops the
+// background slope from ~8.2 MB/cycle to ~0.06 MB/cycle), so the
+// sweep pulses each eligible background page Frozen for ~600 ms
+// then restores Active.  Unlike Memory Saver's discard the page
+// stays loaded — no reload on return — which is why the cadence can
+// be short and why the discard-only exemptions (form data, pinned)
+// don't apply: freezing loses nothing.  The exemptions that remain
+// mirror sleepBlockReason's live-activity set.
+void TabWidget::purgeInactiveTabs()
+{
+    for (int i = 0; i < count(); ++i) {
+        if (i == currentIndex())
+            continue;
+        WebView *view = webView(i);
+        if (!view || !view->enginePage() || view->url().isEmpty())
+            continue;
+        Engine::Page *page = view->enginePage();
+        // Only an Active page can freeze — a Discarded (sleeping)
+        // tab already released its renderer, a Frozen one is mid-
+        // pulse.  Loading pages and audible/active-download tabs
+        // keep working undisturbed.
+        if (page->lifecycleState() != Engine::Page::LifecycleState::Active
+                || page->isLoading() || page->recentlyAudible()
+                || DownloadManager::instance()->hasActiveDownloadForPage(
+                    page))
+            continue;
+        page->setLifecycleState(Engine::Page::LifecycleState::Frozen);
+        QPointer<WebView> guard(view);
+        // Long enough for the pressure purge to run inside the
+        // renderer, short enough that a user activating the tab
+        // mid-pulse never notices.  The Frozen check keeps a page
+        // discarded or re-activated meanwhile from being re-frozen
+        // or wrongly revived.
+        QTimer::singleShot(600, this, [guard]() {
+            if (guard && guard->enginePage()
+                    && guard->enginePage()->lifecycleState()
+                           == Engine::Page::LifecycleState::Frozen)
+                guard->enginePage()->setLifecycleState(
+                    Engine::Page::LifecycleState::Active);
+        });
+    }
+}
+
+void TabWidget::updatePurgeTimer()
+{
+    if (m_memoryPurge) {
+        if (!m_purgeTimer) {
+            m_purgeTimer = new QTimer(this);
+            connect(m_purgeTimer, &QTimer::timeout, this,
+                    &TabWidget::purgeInactiveTabs);
+        }
+        m_purgeTimer->start(2 * 60 * 1000);
+    } else if (m_purgeTimer) {
+        m_purgeTimer->stop();
+    }
+}
+
 void TabWidget::wakeTab(int index)
 {
     if (index < 0)
@@ -4009,6 +4071,14 @@ void TabWidget::loadSettings()
         settings.value(QLatin1String("suspendTabsMinutes"), 30).toInt();
     m_suspendIdleMs = suspend ? qint64(suspendMinutes) * 60 * 1000 : 0;
     updateSleepTimer();
+
+    // MEM06: the periodic background purge — on by default.  It is
+    // the light-touch counterpart to suspend above: instead of
+    // unloading the page it freeze-pulses hidden tabs so the engine
+    // reclaims the soft retention MEM05 measured.
+    m_memoryPurge =
+        settings.value(QLatin1String("memoryPurge"), true).toBool();
+    updatePurgeTimer();
 
     // PREFUI04: lazy session restore — restored tabs defer their
     // first load until activation; pinned tabs can be exempted.

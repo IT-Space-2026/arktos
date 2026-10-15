@@ -3494,6 +3494,7 @@ void tst_SettingsDialog::performancePage()
     settings.remove(QLatin1String("performance"));
     settings.remove(QLatin1String("tabs/suspendTabs"));
     settings.remove(QLatin1String("tabs/suspendTabsMinutes"));
+    settings.remove(QLatin1String("tabs/memoryPurge"));
     settings.remove(QLatin1String("privacy/blockPrefetch"));
 
     // Defaults and the single-home invariant.
@@ -3504,6 +3505,9 @@ void tst_SettingsDialog::performancePage()
                  QStringLiteral("Performance"));
         QVERIFY(dialog.hardwareAccel->isChecked());
         QVERIFY(dialog.memorySaverNever->isChecked());
+        // MEM06: the purge checkbox is independent of the saver
+        // radios and on by default.
+        QVERIFY(dialog.backgroundPurge->isChecked());
         QVERIFY(!dialog.lazyRestoreTabs->isChecked());
         // The pinned opt-out only enables while lazy restore is on.
         QVERIFY(!dialog.alwaysLoadPinnedTabs->isEnabled());
@@ -3519,6 +3523,7 @@ void tst_SettingsDialog::performancePage()
 
         dialog.hardwareAccel->setChecked(false);
         dialog.memorySaverMaximum->setChecked(true);
+        dialog.backgroundPurge->setChecked(false);
         dialog.lazyRestoreTabs->setChecked(true);
         QVERIFY(dialog.alwaysLoadPinnedTabs->isEnabled());
         dialog.alwaysLoadPinnedTabs->setChecked(false);
@@ -3538,6 +3543,8 @@ void tst_SettingsDialog::performancePage()
                  .toBool(), true);
     QCOMPARE(settings.value(QLatin1String("tabs/suspendTabsMinutes"))
                  .toInt(), 10);
+    QCOMPARE(settings.value(QLatin1String("tabs/memoryPurge"))
+                 .toBool(), false);
     QCOMPARE(settings.value(QLatin1String("privacy/blockPrefetch"))
                  .toBool(), false);
 
@@ -3546,6 +3553,7 @@ void tst_SettingsDialog::performancePage()
         SettingsDialog dialog;
         QVERIFY(!dialog.hardwareAccel->isChecked());
         QVERIFY(dialog.memorySaverMaximum->isChecked());
+        QVERIFY(!dialog.backgroundPurge->isChecked());
         QVERIFY(dialog.lazyRestoreTabs->isChecked());
         QVERIFY(dialog.alwaysLoadPinnedTabs->isEnabled());
         QVERIFY(!dialog.alwaysLoadPinnedTabs->isChecked());
@@ -3595,6 +3603,7 @@ void tst_SettingsDialog::performancePage()
         dialog.resetPerformanceButton->click();
         QVERIFY(dialog.hardwareAccel->isChecked());
         QVERIFY(dialog.memorySaverNever->isChecked());
+        QVERIFY(dialog.backgroundPurge->isChecked());
         QVERIFY(!dialog.lazyRestoreTabs->isChecked());
         QVERIFY(!dialog.prefetchResources->isChecked());
         dialog.reject();

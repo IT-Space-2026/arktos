@@ -4307,6 +4307,19 @@
            </widget>
           </item>
           <item>
+           <widget class="QCheckBox" name="backgroundPurge">
+            <property name="toolTip">
+             <string>Briefly freezes each inactive tab for a moment so the engine releases memory it keeps for fast back/forward navigation. The page stays loaded — no reload on return — but the tab may pause for a fraction of a second. Tabs that are loading, playing sound, or downloading are skipped. Works with or without the Memory Saver unload schedule above.</string>
+            </property>
+            <property name="text">
+             <string>Reclaim memory from inactive tabs every few minutes</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
            <widget class="QLabel" name="memorySaverNote">
             <property name="text">
              <string>Unload inactive tabs to save memory. Suspended tabs keep their place on the tab strip and reload when you return to them.</string>
@@ -4612,6 +4625,7 @@
   <tabstop>removeAllAddressesButton</tabstop>
   <tabstop>hardwareAccel</tabstop>
   <tabstop>memorySaverNever</tabstop>
+  <tabstop>backgroundPurge</tabstop>
   <tabstop>prefetchResources</tabstop>
   <tabstop>resetPerformanceButton</tabstop>
   <tabstop>buttonBox</tabstop>

@@ -115,6 +115,7 @@ private slots:
     void reopenClosedTab();
     void engineSwapStripState();
     void sleepingTabs();
+    void memoryPurge();
     void containerTabs();
     void tabSlotDrive();
     void newTabStartPage();
@@ -2230,6 +2231,52 @@ void tst_TabWidget::sleepingTabs()
     QVERIFY(!widget.isTabSleeping(2));
     QCOMPARE(widget.sleepingTabCount(), 1);
     widget.wakeTab(1);
+
+    while (widget.count())
+        widget.closeTab(0);
+}
+
+// MEM06: purgeInactiveTabs freeze-pulses eligible background tabs —
+// the page goes Frozen then restores Active a fraction of a second
+// later — while the current tab and never-loaded tabs are skipped.
+void tst_TabWidget::memoryPurge()
+{
+    SubTabWidget widget;
+    widget.newTab();                       // index 0, current
+    widget.newTab();                       // index 1, background
+    widget.newTab();                       // index 2, never loaded
+    widget.setCurrentIndex(0);
+
+    WebView *view0 = widget.webView(0);
+    WebView *view1 = widget.webView(1);
+    QVERIFY(view0 && view1);
+    QSignalSpy loaded(view1->page(), &QWebEnginePage::loadFinished);
+    view1->load(QUrl("data:text/html,<title>t</title>body"));
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded.isEmpty(), 15000);
+    QTRY_VERIFY(!view1->enginePage()->isLoading());
+
+    using LS = Engine::Page::LifecycleState;
+    QCOMPARE(view1->enginePage()->lifecycleState(), LS::Active);
+
+    widget.purgeInactiveTabs();
+    QTRY_COMPARE_WITH_TIMEOUT(
+        view1->enginePage()->lifecycleState(), LS::Frozen, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        view1->enginePage()->lifecycleState(), LS::Active, 10000);
+
+    // The current tab is never frozen by the sweep; an empty tab has
+    // no page to purge.
+    QCOMPARE(view0->enginePage()->lifecycleState(), LS::Active);
+    QVERIFY(widget.webView(2));
+    QCOMPARE(widget.webView(2)->enginePage()->lifecycleState(), LS::Active);
+
+    // A sleeping (discarded) tab is skipped by the sweep and the
+    // deferred unfreeze never revives it.
+    widget.sleepTab(1);
+    QTRY_VERIFY_WITH_TIMEOUT(widget.isTabSleeping(1), 10000);
+    widget.purgeInactiveTabs();
+    QTest::qWait(800);                     // past the ~600ms pulse window
+    QCOMPARE(view1->enginePage()->lifecycleState(), LS::Discarded);
 
     while (widget.count())
         widget.closeTab(0);

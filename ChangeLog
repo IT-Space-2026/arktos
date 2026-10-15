@@ -2804,3 +2804,14 @@ Extension toolbar popups no longer render blank white (EXT19):
     actually rotates. Clicks inside tor's ~10 s NEWNYM rate limit report
     the wait honestly instead of faking another rotation, and a
     greyed-out button now carries the reason on its tooltip.
+Inactive tabs now release memory without being reloaded (MEM06):
+    The renderer kept every visited page for instant back/forward —
+    measured at ~5 MB per navigation and never freed until the OS
+    pressures it. Preferences → Performance → Memory Saver gains
+    "Reclaim memory from inactive tabs every few minutes" (on by
+    default): a short freeze pulse on each idle background tab makes
+    the engine collect those pages while the tab stays loaded, so it
+    never reloads when you return. Tabs that are loading, playing
+    sound, or downloading are skipped. The status-bar memory figure
+    now also says its number is memory the engine reclaims when the
+    system needs it.

@@ -412,6 +412,12 @@ public slots:
     // least idleMs milliseconds.  The settings-driven timer calls
     // this; the smoke test drives it directly.
     void suspendIdleTabs(qint64 idleMs);
+    // MEM06: periodic low-priority purge — freeze-pulses every
+    // eligible background tab so the engine releases soft-retained
+    // memory (the per-navigation heap MEM05 measured) while the
+    // page stays loaded.  The settings-driven timer calls this;
+    // tests drive it directly like suspendIdleTabs.
+    void purgeInactiveTabs();
     // PREFUI05: the effective idle-suspend interval — the Memory
     // Saver setting, or the forced 10-minute cap while Energy Saver
     // is active (0 = the sweep is off).
@@ -503,6 +509,8 @@ private:
                              const QVariant &result);
     void applySleepVisuals(int index, bool sleeping);
     void updateSleepTimer();
+    // MEM06: (re)arm the purge sweep after a settings reload.
+    void updatePurgeTimer();
     // PREFUI05: re-apply the Energy Saver caps live — suspend clock,
     // immediate sweep, loading-spinner pause.
     void applyEnergyCaps();
@@ -690,6 +698,11 @@ private:
     QHash<WebView *, TabSleepState> m_sleepStates;
     QTimer *m_sleepTimer = nullptr;
     qint64 m_suspendIdleMs = 0;
+    // MEM06: the purge sweep's own timer + opt-out.  Unrelated to
+    // the sleep clock — a frozen page keeps its data, so the pulse
+    // can run on a much shorter cadence than idle discard.
+    QTimer *m_purgeTimer = nullptr;
+    bool m_memoryPurge = true;
 
     // PREFUI04: session-restore deferral — the tab keeps its slot,
     // saved title and favicon while its page is never loaded; the
