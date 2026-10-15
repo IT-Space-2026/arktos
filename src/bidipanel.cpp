@@ -18,6 +18,7 @@
 #include "utils/flowlayout.h"
 
 #include <qabstractitemmodel.h>
+#include <qaction.h>
 #include <qapplication.h>
 #include <qboxlayout.h>
 #include <qbuttongroup.h>
@@ -30,10 +31,11 @@
 #include <qjsonobject.h>
 #include <qlabel.h>
 #include <qlineedit.h>
+#include <qmenu.h>
 #include <qpainter.h>
-#include <qplaintextedit.h>
 #include <qpolygon.h>
 #include <qpushbutton.h>
+#include <qscrollbar.h>
 #include <qsortfilterproxymodel.h>
 #include <qsplitter.h>
 #include <qstackedwidget.h>
@@ -205,6 +207,129 @@ static QColor failColor()
     return qApp->palette().color(QPalette::Base).lightness() < 128
         ? QColor(0xff, 0x8a, 0x80)
         : QColor(0xc6, 0x28, 0x28);
+}
+
+/*
+ * DEVT12 — Chromium-parity Console tab.
+ *
+ * The console is a structured list, not a text dump: every row is a
+ * top-level item in a three-column tree — message (with the level's
+ * icon and background wash), a narrow repeat-count badge, and the
+ * source url:line flush right like Chrome.  The bridge normalizes
+ * CDP console/Log levels onto BiDi's four (Level* below) and
+ * forwards the RemoteObject args, so entries with object previews
+ * expand into "name: value" children — entries without previews
+ * stay honestly flat (there is no objectId round-trip to fake a
+ * deeper read with).  Identical consecutive entries collapse into
+ * one row with a count badge, Chrome's repeat marker.  The toolbar
+ * carries the clear button, a live text filter, a checkable
+ * "Default levels" dropdown (Verbose/Info/Warnings/Errors) and a
+ * console-scoped Preserve log, and the REPL sits under a '>' prompt
+ * row with Up/Down history recall.
+ */
+
+// The level buckets the dropdown filters on — bit index into
+// m_consoleLevelMask.  The bridge emits BiDi level strings; the
+// panel normalizes raw names too (tests hand events straight in).
+enum ConsoleLevel {
+    LevelVerbose = 0, // debug/verbose
+    LevelInfo,        // log/info/dir/table/group/trace/count/…
+    LevelWarning,     // warn/warning
+    LevelError,       // error/assert + eval exception replies
+    LevelCount
+};
+
+static int consoleLevelFor(const QString &raw)
+{
+    const QString l = raw.toLower();
+    if (l == QLatin1String("error") || l == QLatin1String("assert"))
+        return LevelError;
+    if (l == QLatin1String("warn") || l == QLatin1String("warning"))
+        return LevelWarning;
+    if (l == QLatin1String("debug") || l == QLatin1String("verbose"))
+        return LevelVerbose;
+    return LevelInfo;
+}
+
+// Chrome's default set — Verbose off, the rest on.
+static const int kDefaultConsoleLevels =
+    (1 << LevelInfo) | (1 << LevelWarning) | (1 << LevelError);
+
+// Item data roles on column 0.
+enum ConsoleRole {
+    ConsoleLevelRole = Qt::UserRole,        // ConsoleLevel
+    ConsoleKeyRole = Qt::UserRole + 1,      // dedupe key, "" = never
+    ConsoleCountRole = Qt::UserRole + 2     // repeat count (default 1)
+};
+
+// Per-level row wash — Chrome's subtle background tint (red for
+// errors, amber for warnings); verbose dims the text instead.
+static QColor consoleWash(int level, const QPalette &pal)
+{
+    switch (level) {
+    case LevelError:
+        return AroraStyle::blend(pal.color(QPalette::Base),
+                                 failColor(), 0.16);
+    case LevelWarning:
+        return AroraStyle::blend(pal.color(QPalette::Base),
+                                 QColor(0xf9, 0xab, 0x00), 0.14);
+    }
+    return QColor();
+}
+
+// One object preview becomes expandable "name: value" children —
+// nested valuePreview recurses (bounded), preview.overflow gets
+// Chrome's trailing "…" row.  Only args carrying a CDP preview
+// produce children; anything else renders flat.
+static void consolePreviewChildren(QTreeWidgetItem *parent,
+                                   const QJsonArray &args,
+                                   const QColor &wash, int depth)
+{
+    if (depth > 4)
+        return;
+    for (const QJsonValue &av : args) {
+        const QJsonObject preview =
+            av.toObject()[QLatin1String("preview")].toObject();
+        const QJsonArray props =
+            preview[QLatin1String("properties")].toArray();
+        if (props.isEmpty())
+            continue;
+        for (const QJsonValue &pv : props) {
+            const QJsonObject prop = pv.toObject();
+            QString line =
+                prop[QLatin1String("name")].toString()
+                + QLatin1String(": ");
+            const QString value =
+                prop[QLatin1String("value")].toString();
+            const QJsonObject nested =
+                prop[QLatin1String("valuePreview")].toObject();
+            if (!value.isEmpty())
+                line += value;
+            else
+                line += nested[QLatin1String("description")].toString();
+            QTreeWidgetItem *child = new QTreeWidgetItem(
+                QStringList(line));
+            if (wash.isValid())
+                child->setBackground(0, wash);
+            parent->addChild(child);
+            const QJsonArray nestedProps =
+                nested[QLatin1String("properties")].toArray();
+            if (!nestedProps.isEmpty()) {
+                consolePreviewChildren(
+                    child,
+                    QJsonArray{QJsonObject{
+                        {QLatin1String("preview"), nested}}},
+                    wash, depth + 1);
+            }
+        }
+        if (preview[QLatin1String("overflow")].toBool()) {
+            QTreeWidgetItem *more = new QTreeWidgetItem(
+                QStringList(QStringLiteral("…")));
+            if (wash.isValid())
+                more->setBackground(0, wash);
+            parent->addChild(more);
+        }
+    }
 }
 
 // DEVT11: the record toggle's dot — red while capturing, the
@@ -954,20 +1079,119 @@ BidiPanel::BidiPanel(QWidget *parent)
     tv->addWidget(tabs);
     m_stack->addWidget(tabsPage);
 
-    // Console
+    // Console — DEVT12: Chrome's shape.  A toolbar row (clear, text
+    // filter, checkable "Default levels" dropdown, console-scoped
+    // Preserve log), the structured entry list, then the REPL under
+    // a '>' prompt row.
     QWidget *consolePage = new QWidget;
     QVBoxLayout *cv = new QVBoxLayout(consolePage);
     cv->setContentsMargins(0, 0, 0, 0);
-    m_console = new QPlainTextEdit;
-    m_console->setReadOnly(true);
-    m_console->setMaximumBlockCount(5000);
+    cv->setSpacing(0);
+
+    QWidget *consoleBar = new QWidget;
+    consoleBar->setObjectName(QLatin1String("bidiConsoleToolbar"));
+    QHBoxLayout *cb = new QHBoxLayout(consoleBar);
+    cb->setContentsMargins(4, 2, 4, 2);
+    cb->setSpacing(4);
+    m_clearConsole = new QToolButton;
+    m_clearConsole->setObjectName(QLatin1String("bidiConsoleClear"));
+    m_clearConsole->setAutoRaise(true);
+    m_clearConsole->setIcon(style()->standardIcon(QStyle::SP_TrashIcon));
+    m_clearConsole->setToolTip(tr("Clear console"));
+    cb->addWidget(m_clearConsole);
+    m_consoleFilter = new QLineEdit;
+    m_consoleFilter->setObjectName(QLatin1String("bidiConsoleFilter"));
+    m_consoleFilter->setClearButtonEnabled(true);
+    m_consoleFilter->setPlaceholderText(tr("Filter"));
+    m_consoleFilter->setSizePolicy(QSizePolicy::Expanding,
+                                   QSizePolicy::Fixed);
+    cb->addWidget(m_consoleFilter);
+    // Chrome's "Default levels" dropdown — the four checkable level
+    // buckets in Chrome's order; the button text reports the set
+    // (All/Default/Custom/No levels).
+    m_consoleLevels = new QToolButton;
+    m_consoleLevels->setObjectName(QLatin1String("bidiConsoleLevels"));
+    m_consoleLevels->setAutoRaise(true);
+    m_consoleLevels->setPopupMode(QToolButton::InstantPopup);
+    m_consoleLevelMask = kDefaultConsoleLevels;
+    {
+        QMenu *levelsMenu = new QMenu(m_consoleLevels);
+        static const struct { const char *label; int level; }
+            kLevels[] = {
+                {"Verbose", LevelVerbose}, {"Info", LevelInfo},
+                {"Warnings", LevelWarning}, {"Errors", LevelError},
+            };
+        for (const auto &entry : kLevels) {
+            QAction *action =
+                levelsMenu->addAction(tr(entry.label));
+            action->setCheckable(true);
+            action->setChecked(entry.level != LevelVerbose);
+            action->setData(entry.level);
+            connect(action, &QAction::toggled,
+                    this, [this](bool) { updateConsoleLevelMask(); });
+        }
+        m_consoleLevels->setMenu(levelsMenu);
+    }
+    m_consoleLevels->setText(tr("Default levels"));
+    m_consoleLevels->setToolTip(
+        tr("Which console message levels are shown"));
+    cb->addWidget(m_consoleLevels);
+    m_consolePreserve = new QCheckBox(tr("Preserve log"));
+    m_consolePreserve->setObjectName(
+        QLatin1String("bidiConsolePreserve"));
+    m_consolePreserve->setToolTip(
+        tr("Do not clear the console on navigation"));
+    cb->addWidget(m_consolePreserve);
+    cv->addWidget(consoleBar);
+
+    // Three header-less columns: message | repeat badge | source.
+    m_console = new QTreeWidget;
+    m_console->setObjectName(QLatin1String("bidiConsoleView"));
+    m_console->setColumnCount(3);
+    m_console->setHeaderHidden(true);
+    m_console->setRootIsDecorated(true);
+    m_console->setUniformRowHeights(false);
+    m_console->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_console->setSelectionMode(QAbstractItemView::NoSelection);
+    m_console->header()->setStretchLastSection(false);
+    m_console->header()->setSectionResizeMode(
+        0, QHeaderView::Stretch);
+    m_console->header()->setSectionResizeMode(1, QHeaderView::Fixed);
+    m_console->header()->resizeSection(1, 32);
+    m_console->header()->setSectionResizeMode(
+        2, QHeaderView::Interactive);
+    m_console->header()->resizeSection(2, 160);
     cv->addWidget(m_console);
+
+    // The REPL sits on a '>' prompt row like Chrome's bottom line;
+    // Up/Down in the field recalls history (eventFilter below).
+    QWidget *prompt = new QWidget;
+    prompt->setObjectName(QLatin1String("bidiConsolePrompt"));
+    prompt->setStyleSheet(QStringLiteral(
+        "border-top: 1px solid palette(mid);"));
+    QHBoxLayout *pr = new QHBoxLayout(prompt);
+    pr->setContentsMargins(8, 1, 4, 1);
+    pr->setSpacing(4);
+    QLabel *glyph = new QLabel(QStringLiteral(">"));
+    glyph->setObjectName(QLatin1String("bidiConsolePromptGlyph"));
+    {
+        QPalette dim = glyph->palette();
+        dim.setColor(QPalette::WindowText,
+                     dim.color(QPalette::Disabled,
+                               QPalette::WindowText));
+        glyph->setPalette(dim);
+    }
+    pr->addWidget(glyph);
     m_evalLine = new QLineEdit;
+    m_evalLine->setFrame(false);
+    m_evalHistoryIndex = -1;
     m_evalLine->setPlaceholderText(
         tr("Evaluate JavaScript in the selected context"));
+    m_evalLine->installEventFilter(this);
     connect(m_evalLine, &QLineEdit::returnPressed,
             this, &BidiPanel::evaluateInput);
-    cv->addWidget(m_evalLine);
+    pr->addWidget(m_evalLine);
+    cv->addWidget(prompt);
     tabs->addTab(consolePage, tr("Console"));
 
     // DOM
@@ -1196,6 +1420,12 @@ BidiPanel::BidiPanel(QWidget *parent)
         updateNetworkSummary();
     });
 
+    // DEVT12: console toolbar.
+    connect(m_clearConsole, &QToolButton::clicked,
+            this, &BidiPanel::clearConsole);
+    connect(m_consoleFilter, &QLineEdit::textChanged,
+            this, [this](const QString &) { applyConsoleFilters(); });
+
     // Network toolbar + chips drive the proxy; the view just follows.
     connect(m_networkFilter, &QLineEdit::textChanged,
             this, [this](const QString &text) {
@@ -1315,7 +1545,150 @@ QString BidiPanel::currentContext() const
 
 void BidiPanel::consoleLine(const QString &prefix, const QString &text)
 {
-    m_console->appendPlainText(prefix + text);
+    // REPL echo/result lines — the "< error:" form takes the error
+    // wash like Chrome's red-thrown reply; none of them dedupe.
+    const int level = prefix.startsWith(QLatin1String("< error"))
+        ? LevelError : LevelInfo;
+    addConsoleRow(level, prefix + text, QJsonObject(), QJsonArray(),
+                  false);
+}
+
+// DEVT12: one row of the structured console list.  Identical
+// consecutive entries (same level + text + source) collapse into
+// the previous row with a count badge — Chrome's repeat marker,
+// which is what keeps a spammed warning readable.
+void BidiPanel::addConsoleRow(int level, const QString &text,
+                              const QJsonObject &source,
+                              const QJsonArray &args,
+                              bool dedupeable)
+{
+    const QString url =
+        source[QLatin1String("url")].toString();
+    const int line = source[QLatin1String("line")].toInt(-1);
+    QString sourceText;
+    if (!url.isEmpty()) {
+        sourceText = requestName(url);
+        if (line > 0)
+            sourceText += QLatin1Char(':') + QString::number(line);
+    }
+
+    QString key;
+    if (dedupeable) {
+        key = QString::number(level) + QLatin1Char('|') + text
+            + QLatin1Char('|') + url + QLatin1Char(':')
+            + QString::number(line);
+        const int rows = m_console->topLevelItemCount();
+        if (rows > 0) {
+            QTreeWidgetItem *last =
+                m_console->topLevelItem(rows - 1);
+            if (last->data(0, ConsoleKeyRole).toString() == key) {
+                const int count =
+                    last->data(0, ConsoleCountRole).toInt() + 1;
+                last->setData(0, ConsoleCountRole, count);
+                last->setText(1, QString::number(count));
+                return;
+            }
+        }
+    }
+
+    // Keep the view's autoscroll-on-new-entry behavior: jump only
+    // when the tail was already in view.
+    QScrollBar *bar = m_console->verticalScrollBar();
+    const bool atBottom = bar->value() >= bar->maximum() - 4;
+    // Same 5000-entry cap the flat text edit enforced.
+    while (m_console->topLevelItemCount() >= 5000)
+        delete m_console->takeTopLevelItem(0);
+
+    QTreeWidgetItem *item = new QTreeWidgetItem;
+    item->setText(0, text);
+    item->setToolTip(0, text);
+    item->setData(0, ConsoleLevelRole, level);
+    item->setData(0, ConsoleCountRole, 1);
+    if (dedupeable)
+        item->setData(0, ConsoleKeyRole, key);
+    if (level == LevelError)
+        item->setIcon(
+            0, style()->standardIcon(QStyle::SP_MessageBoxCritical));
+    else if (level == LevelWarning)
+        item->setIcon(
+            0, style()->standardIcon(QStyle::SP_MessageBoxWarning));
+    const QColor wash = consoleWash(level, palette());
+    if (wash.isValid()) {
+        for (int c = 0; c < 3; ++c)
+            item->setBackground(c, QBrush(wash));
+    } else if (level == LevelVerbose) {
+        item->setForeground(
+            0, palette().color(QPalette::Disabled, QPalette::Text));
+    }
+    if (!sourceText.isEmpty()) {
+        item->setText(2, sourceText);
+        item->setTextAlignment(
+            2, Qt::AlignRight | Qt::AlignVCenter);
+        QString tip = url;
+        if (line > 0)
+            tip += QLatin1Char(':') + QString::number(line);
+        item->setToolTip(2, tip);
+        item->setForeground(2, palette().color(QPalette::Link));
+    }
+    // Expandable "name: value" children only where the event's args
+    // carried a real CDP preview — no objectId round-trip exists to
+    // fake a deeper read.
+    consolePreviewChildren(item, args, wash, 0);
+    m_console->addTopLevelItem(item);
+
+    // Apply the active level/text filters to the fresh row.
+    const int allowed =
+        m_consoleLevelMask & (1 << item->data(0, ConsoleLevelRole)
+                                       .toInt());
+    const QString needle = m_consoleFilter->text();
+    const bool match =
+        needle.isEmpty()
+        || item->text(0).contains(needle, Qt::CaseInsensitive)
+        || item->text(2).contains(needle, Qt::CaseInsensitive);
+    item->setHidden(!allowed || !match);
+    if (atBottom)
+        m_console->scrollToBottom();
+}
+
+void BidiPanel::applyConsoleFilters()
+{
+    const QString needle = m_consoleFilter->text();
+    for (int i = 0; i < m_console->topLevelItemCount(); ++i) {
+        QTreeWidgetItem *item = m_console->topLevelItem(i);
+        const int level =
+            item->data(0, ConsoleLevelRole).toInt();
+        bool ok = (m_consoleLevelMask & (1 << level)) != 0;
+        if (ok && !needle.isEmpty())
+            ok = item->text(0).contains(needle, Qt::CaseInsensitive)
+                || item->text(2).contains(needle,
+                                          Qt::CaseInsensitive);
+        item->setHidden(!ok);
+    }
+}
+
+// Chrome's dropdown label reports the checked set: all -> All
+// levels, the factory set -> Default levels, empty -> No levels,
+// anything else -> Custom levels.
+void BidiPanel::updateConsoleLevelMask()
+{
+    int mask = 0;
+    for (QAction *action : m_consoleLevels->menu()->actions()) {
+        if (action->isChecked())
+            mask |= 1 << action->data().toInt();
+    }
+    m_consoleLevelMask = mask;
+    const int all = (1 << LevelCount) - 1;
+    m_consoleLevels->setText(
+        mask == all ? tr("All levels")
+        : mask == kDefaultConsoleLevels ? tr("Default levels")
+        : mask == 0 ? tr("No levels")
+                    : tr("Custom levels"));
+    applyConsoleFilters();
+}
+
+void BidiPanel::clearConsole()
+{
+    m_console->clear();
 }
 
 void BidiPanel::evaluateInput()
@@ -1324,6 +1697,15 @@ void BidiPanel::evaluateInput()
     if (expr.isEmpty())
         return;
     m_evalLine->clear();
+    // Up/Down recall — newest last, no consecutive duplicates.
+    if (m_evalHistory.isEmpty()
+        || m_evalHistory.constLast() != expr) {
+        m_evalHistory.append(expr);
+        if (m_evalHistory.size() > 100)
+            m_evalHistory.removeFirst();
+    }
+    m_evalHistoryIndex = -1;
+    m_evalDraft.clear();
     consoleLine(QStringLiteral("> "), expr);
     sendEval(currentContext(), expr, TagConsole);
 }
@@ -1496,6 +1878,34 @@ bool BidiPanel::eventFilter(QObject *watched, QEvent *event)
     if (m_networkView && watched == m_networkView->viewport()
         && event->type() == QEvent::Resize)
         fitNetworkColumns();
+    // DEVT12: Up/Down at the REPL prompt walks the eval history —
+    // first Up stashes the in-progress draft, Down past the newest
+    // entry restores it.
+    if (watched == m_evalLine && event->type() == QEvent::KeyPress) {
+        QKeyEvent *key = static_cast<QKeyEvent *>(event);
+        if (key->key() == Qt::Key_Up && !m_evalHistory.isEmpty()) {
+            if (m_evalHistoryIndex < 0) {
+                m_evalDraft = m_evalLine->text();
+                m_evalHistoryIndex = m_evalHistory.size() - 1;
+            } else if (m_evalHistoryIndex > 0) {
+                --m_evalHistoryIndex;
+            }
+            m_evalLine->setText(
+                m_evalHistory.at(m_evalHistoryIndex));
+            return true;
+        }
+        if (key->key() == Qt::Key_Down && m_evalHistoryIndex >= 0) {
+            if (++m_evalHistoryIndex >= m_evalHistory.size()) {
+                m_evalHistoryIndex = -1;
+                m_evalLine->setText(m_evalDraft);
+            } else {
+                m_evalLine->setText(
+                    m_evalHistory.at(m_evalHistoryIndex));
+            }
+            return true;
+        }
+        return false;
+    }
     return QWidget::eventFilter(watched, event);
 }
 
@@ -1708,7 +2118,10 @@ void BidiPanel::onResponse(quint64 id, const QByteArray &json)
                                  .toObject()[QStringLiteral("text")]
                                  .toString();
         if (tag == TagConsole)
-            consoleLine(QStringLiteral("< "), text);
+            // A thrown REPL result reads like Chrome's red
+            // exception line, not a plain reply.
+            addConsoleRow(LevelError, QStringLiteral("< ") + text,
+                          QJsonObject(), QJsonArray(), false);
         return;
     }
     const QJsonObject remote = result[QStringLiteral("result")].toObject();
@@ -1813,10 +2226,21 @@ void BidiPanel::onEvent(const QByteArray &json)
     const QJsonObject params = env[QStringLiteral("params")].toObject();
 
     if (method == QLatin1String("log.entryAdded")) {
-        consoleLine(
-            QStringLiteral("[%1] ")
-                .arg(params[QStringLiteral("level")].toString()),
-            params[QStringLiteral("text")].toString());
+        // The console is scoped to the selected context like
+        // Chrome's frame dropdown — entries from other pages don't
+        // belong here.  An empty context (a bridge that didn't
+        // resolve one) still lands.
+        const QString ctx =
+            params[QStringLiteral("context")].toString();
+        if (!ctx.isEmpty() && ctx != currentContext())
+            return;
+        addConsoleRow(
+            consoleLevelFor(
+                params[QStringLiteral("level")].toString()),
+            params[QStringLiteral("text")].toString(),
+            params[QStringLiteral("source")].toObject(),
+            params[QStringLiteral("args")].toArray(),
+            true);
         return;
     }
     if (method == QLatin1String("browsingContext.contextCreated")
@@ -1838,6 +2262,10 @@ void BidiPanel::onEvent(const QByteArray &json)
             // Preserve log is ticked.
             if (!m_preserveLog->isChecked())
                 clearNetworkLog();
+            // DEVT12: same for the console — its own Preserve log
+            // checkbox gates the wipe.
+            if (!m_consolePreserve->isChecked())
+                clearConsole();
             refreshDom();
             updateNetworkSummary();
         }

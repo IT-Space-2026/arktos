@@ -28,6 +28,7 @@
 #include <QtTest/QtTest>
 #include <QtGui/QtGui>
 #include <qmenubar.h>
+#include <qmenu.h>
 #include <qwebenginepage.h>
 #include <qwebengineprofile.h>
 #include <qwebenginesettings.h>
@@ -82,6 +83,7 @@ private slots:
     void inspectedPageDestroyedClosesWindow();
     void bidiPanel();
     void bidiContextSelector();
+    void bidiConsoleParity();
     void bidiWaterfallLegibility();
     void bidiNetworkParity();
 };
@@ -108,6 +110,16 @@ static void loadTestPage(WebView *view)
                                  "<body><p>inspect me</p></body></html>"),
                   QUrl(QStringLiteral("http://localhost/")));
     QTRY_VERIFY(loaded.count() >= 1);
+}
+
+// DEVT12: the console is a structured tree now — flatten its
+// top-level column-0 texts so assertions can stay one-liners.
+static QString consoleJoined(const BidiPanel &panel)
+{
+    QStringList lines;
+    for (int i = 0; i < panel.m_console->topLevelItemCount(); ++i)
+        lines << panel.m_console->topLevelItem(i)->text(0);
+    return lines.join(QLatin1Char('\n'));
 }
 
 void tst_DevTools::inspectBindsHostPage()
@@ -304,29 +316,27 @@ void tst_DevTools::bidiPanel()
     panel.m_evalLine->setText(QStringLiteral("1+1"));
     emit panel.m_evalLine->returnPressed();
     QVERIFY(panel.m_evalLine->text().isEmpty());
-    QVERIFY(panel.m_console->toPlainText().contains(
-        QStringLiteral("> 1+1")));
+    QVERIFY(consoleJoined(panel).contains(QStringLiteral("> 1+1")));
 
     quint64 id = panel.testRegisterTag(1); // console, plain value
     panel.onResponse(id, ok);
-    QVERIFY(panel.m_console->toPlainText().contains(
-        QStringLiteral("< [1,2]")));
+    QVERIFY(consoleJoined(panel).contains(QStringLiteral("< [1,2]")));
     id = panel.testRegisterTag(1); // console, undefined collapses
     panel.onResponse(id, QByteArray(
         "{\"result\":{\"type\":\"success\",\"result\":"
         "{\"type\":\"undefined\"}}}"));
-    QVERIFY(panel.m_console->toPlainText().contains(
+    QVERIFY(consoleJoined(panel).contains(
         QStringLiteral("< undefined")));
     id = panel.testRegisterTag(1); // console, exceptionDetails text
     panel.onResponse(id, QByteArray(
         "{\"result\":{\"type\":\"exception\",\"exceptionDetails\":"
         "{\"text\":\"ReferenceError: nope\"}}}"));
-    QVERIFY(panel.m_console->toPlainText().contains(
+    QVERIFY(consoleJoined(panel).contains(
         QStringLiteral("< ReferenceError: nope")));
     id = panel.testRegisterTag(1); // console, top-level error envelope
     panel.onResponse(id, QByteArray(
         "{\"error\":{\"message\":\"denied\"}}"));
-    QVERIFY(panel.m_console->toPlainText().contains(
+    QVERIFY(consoleJoined(panel).contains(
         QStringLiteral("< error: denied")));
     id = panel.testRegisterTag(4); // error envelope, non-console tag
     panel.onResponse(id, QByteArray(
@@ -395,8 +405,15 @@ void tst_DevTools::bidiPanel()
     panel.onEvent(QByteArray(
         "{\"method\":\"log.entryAdded\",\"params\":{\"level\":\"warn\""
         ",\"text\":\"hello\"}}"));
-    QVERIFY(panel.m_console->toPlainText().contains(
-        QStringLiteral("[warn] hello")));
+    // DEVT12: the level is the row's wash/icon, not a text prefix.
+    QVERIFY(consoleJoined(panel).contains(QStringLiteral("hello")));
+    {
+        QTreeWidgetItem *row = panel.m_console->topLevelItem(
+            panel.m_console->topLevelItemCount() - 1);
+        QCOMPARE(row->data(0, Qt::UserRole).toInt(), 2); // Warning
+        QVERIFY(!row->icon(0).isNull());
+        QVERIFY(row->background(0).color().isValid());
+    }
     panel.onEvent(QByteArray(
         "{\"method\":\"browsingContext.contextCreated\",\"params\":{}}"));
     panel.onEvent(QByteArray(
@@ -988,8 +1005,7 @@ void tst_DevTools::bidiContextSelector()
     QCOMPARE(panel.currentContext(), QStringLiteral("ctx-first"));
     panel.m_evalLine->setText(QStringLiteral("1+1"));
     emit panel.m_evalLine->returnPressed();
-    QVERIFY(panel.m_console->toPlainText().contains(
-        QStringLiteral("> 1+1")));
+    QVERIFY(consoleJoined(panel).contains(QStringLiteral("> 1+1")));
 
     // All-disabled strip: the combo shows rows but no context.
     TabWidget widgetsOnly;
@@ -1004,6 +1020,213 @@ void tst_DevTools::bidiContextSelector()
     QVERIFY(panel.currentContext().isEmpty());
 
     EngineRegistry::unregisterBackend(&fake);
+}
+
+// DEVT12: the Console's Chromium-parity pass — per-level washes and
+// icons, the checkable "Default levels" dropdown + live text filter,
+// the right-edge source link, Chrome's repeat-count badge on
+// identical consecutive entries, expandable preview children, a
+// console-scoped Preserve log, and Up/Down history on the REPL
+// prompt.
+void tst_DevTools::bidiConsoleParity()
+{
+    BidiPanel panel;
+    panel.onConnectionChanged(BidiClient::Connected);
+    panel.onResponse(7777, QByteArray(
+        "{\"result\":{\"contexts\":["
+        "{\"context\":\"ctx1\",\"url\":\"http://a/\"}]}}"));
+    QCOMPARE(panel.currentContext(), QStringLiteral("ctx1"));
+
+    // Toolbar controls exist — clear, filter, levels dropdown,
+    // console-scoped Preserve log — and the REPL sits on a '>'
+    // prompt row under the view.
+    QVERIFY(panel.findChild<QWidget *>(
+                QStringLiteral("bidiConsoleToolbar")));
+    QVERIFY(panel.m_clearConsole);
+    QVERIFY(panel.m_consoleFilter);
+    QVERIFY(panel.m_consoleLevels);
+    QVERIFY(panel.m_consolePreserve);
+    QVERIFY(panel.findChild<QWidget *>(
+                QStringLiteral("bidiConsolePrompt"))
+            ->findChild<QLabel *>(
+                QStringLiteral("bidiConsolePromptGlyph")));
+    QCOMPARE(panel.m_console->columnCount(), 3);
+
+    const auto feed = [&panel](const QString &level,
+                               const QString &text,
+                               const QByteArray &extra = QByteArray()) {
+        panel.onEvent(QByteArray(
+            "{\"method\":\"log.entryAdded\",\"params\":{\"level\":\"")
+            + level.toUtf8() + QByteArray("\",\"text\":\"")
+            + text.toUtf8() + QByteArray("\"") + extra
+            + QByteArray("}}"));
+    };
+
+    // Levels — each class gets its own chrome: error row washes red
+    // + critical icon, warning washes amber + warning icon, debug
+    // dims to the disabled-text color, info stays plain.
+    feed(QStringLiteral("error"), QStringLiteral("boom"));
+    feed(QStringLiteral("warn"), QStringLiteral("careful"));
+    feed(QStringLiteral("debug"), QStringLiteral("chatty"));
+    feed(QStringLiteral("info"), QStringLiteral("note"));
+    QCOMPARE(panel.m_console->topLevelItemCount(), 4);
+    QTreeWidgetItem *err = panel.m_console->topLevelItem(0);
+    QTreeWidgetItem *wrn = panel.m_console->topLevelItem(1);
+    QTreeWidgetItem *dbg = panel.m_console->topLevelItem(2);
+    QTreeWidgetItem *inf = panel.m_console->topLevelItem(3);
+    QCOMPARE(err->data(0, Qt::UserRole).toInt(), 3);   // LevelError
+    QCOMPARE(wrn->data(0, Qt::UserRole).toInt(), 2);   // LevelWarning
+    QCOMPARE(dbg->data(0, Qt::UserRole).toInt(), 0);   // LevelVerbose
+    QCOMPARE(inf->data(0, Qt::UserRole).toInt(), 1);   // LevelInfo
+    QVERIFY(!err->icon(0).isNull());
+    QVERIFY(!wrn->icon(0).isNull());
+    QVERIFY(err->data(0, Qt::BackgroundRole).isValid());
+    QVERIFY(wrn->data(0, Qt::BackgroundRole).isValid());
+    QVERIFY(!inf->data(0, Qt::BackgroundRole).isValid());
+    QVERIFY(dbg->data(0, Qt::ForegroundRole).isValid());
+    // No textual "[level]" prefix survived the structure.
+    QVERIFY(!err->text(0).startsWith(QLatin1String("[")));
+
+    // "Default levels" hides Verbose out of the box (Chrome's
+    // default set); the debug row is hidden, the rest visible.
+    QCOMPARE(panel.m_consoleLevels->text(),
+             QStringLiteral("Default levels"));
+    QVERIFY(dbg->isHidden());
+    QVERIFY(!err->isHidden());
+
+    // The dropdown's checkable actions re-slice live: Errors off
+    // hides the error row and renames the button like Chrome.
+    QMenu *menu = panel.m_consoleLevels->menu();
+    QAction *verbose = nullptr, *errors = nullptr;
+    for (QAction *action : menu->actions()) {
+        if (action->text() == QLatin1String("Verbose"))
+            verbose = action;
+        if (action->text() == QLatin1String("Errors"))
+            errors = action;
+    }
+    QVERIFY(verbose && errors);
+    errors->setChecked(false);
+    QVERIFY(err->isHidden());
+    QCOMPARE(panel.m_consoleLevels->text(),
+             QStringLiteral("Custom levels"));
+    errors->setChecked(true);
+    QVERIFY(!err->isHidden());
+    verbose->setChecked(true);
+    QVERIFY(!dbg->isHidden());
+    QCOMPARE(panel.m_consoleLevels->text(),
+             QStringLiteral("All levels"));
+    verbose->setChecked(false);
+    QCOMPARE(panel.m_consoleLevels->text(),
+             QStringLiteral("Default levels"));
+
+    // The text filter matches the message and the source column.
+    feed(QStringLiteral("info"), QStringLiteral("needle entry"),
+         QByteArray(",\"source\":{\"url\":\"http://a/app.js\","
+                    "\"line\":6}"));
+    QTreeWidgetItem *src = panel.m_console->topLevelItem(
+        panel.m_console->topLevelItemCount() - 1);
+    QCOMPARE(src->text(2), QStringLiteral("app.js:6"));
+    QCOMPARE(src->toolTip(2),
+             QStringLiteral("http://a/app.js:6"));
+    panel.m_consoleFilter->setText(QStringLiteral("needle"));
+    QVERIFY(!src->isHidden());
+    QVERIFY(err->isHidden());
+    panel.m_consoleFilter->setText(QStringLiteral("app.js"));
+    QVERIFY(!src->isHidden()); // source column matches too
+    panel.m_consoleFilter->clear();
+    QVERIFY(!err->isHidden());
+
+    // Repeat marker: three identical consecutive entries collapse
+    // into one row with a count badge; a different entry in between
+    // restarts the run.
+    feed(QStringLiteral("error"), QStringLiteral("integrity"));
+    feed(QStringLiteral("error"), QStringLiteral("integrity"));
+    feed(QStringLiteral("error"), QStringLiteral("integrity"));
+    QTreeWidgetItem *spam = panel.m_console->topLevelItem(
+        panel.m_console->topLevelItemCount() - 1);
+    QCOMPARE(spam->text(0), QStringLiteral("integrity"));
+    QCOMPARE(spam->text(1), QStringLiteral("3"));
+    feed(QStringLiteral("error"), QStringLiteral("other"));
+    feed(QStringLiteral("error"), QStringLiteral("integrity"));
+    QTreeWidgetItem *tail = panel.m_console->topLevelItem(
+        panel.m_console->topLevelItemCount() - 1);
+    QCOMPARE(tail->text(0), QStringLiteral("integrity"));
+    QCOMPARE(tail->data(0, Qt::UserRole + 2).toInt(), 1);
+    QVERIFY(tail->text(1).isEmpty());
+
+    // Expandable previews: args carrying a CDP preview grow
+    // "name: value" children (nested previews recurse; overflow gets
+    // the "…" row); args without a preview stay flat.
+    panel.onEvent(QByteArray(
+        "{\"method\":\"log.entryAdded\",\"params\":{\"level\":\"log\""
+        ",\"text\":\"Array(2)\",\"args\":[{\"type\":\"object\","
+        "\"description\":\"Array(2)\",\"preview\":{\"type\":\"object\""
+        ",\"subtype\":\"array\",\"overflow\":true,\"properties\":["
+        "{\"name\":\"0\",\"type\":\"number\",\"value\":\"7\"},"
+        "{\"name\":\"meta\",\"type\":\"object\",\"valuePreview\":{"
+        "\"description\":\"Object\",\"properties\":["
+        "{\"name\":\"id\",\"type\":\"number\",\"value\":\"9\"}]}}]}"
+        "}]}}"));
+    QTreeWidgetItem *arr = panel.m_console->topLevelItem(
+        panel.m_console->topLevelItemCount() - 1);
+    QVERIFY(arr->childCount() >= 3);
+    QCOMPARE(arr->child(0)->text(0), QStringLiteral("0: 7"));
+    QCOMPARE(arr->child(1)->text(0), QStringLiteral("meta: Object"));
+    QCOMPARE(arr->child(1)->child(0)->text(0),
+             QStringLiteral("id: 9"));
+    QCOMPARE(arr->child(arr->childCount() - 1)->text(0),
+             QStringLiteral("…"));
+    feed(QStringLiteral("log"), QStringLiteral("flat"));
+    QTreeWidgetItem *flat = panel.m_console->topLevelItem(
+        panel.m_console->topLevelItemCount() - 1);
+    QCOMPARE(flat->childCount(), 0);
+
+    // Context scoping: entries for another page are dropped; a
+    // contextless entry still lands.
+    const int before = panel.m_console->topLevelItemCount();
+    feed(QStringLiteral("info"), QStringLiteral("foreign"),
+         QByteArray(",\"context\":\"other-ctx\""));
+    QCOMPARE(panel.m_console->topLevelItemCount(), before);
+    feed(QStringLiteral("info"), QStringLiteral("ours"),
+         QByteArray(",\"context\":\"ctx1\""));
+    QCOMPARE(panel.m_console->topLevelItemCount(), before + 1);
+
+    // Navigation clears the console unless its own Preserve log is
+    // ticked — independent of the Network tab's checkbox.
+    panel.onEvent(QByteArray(
+        "{\"method\":\"browsingContext.navigationStarted\",\"params\":"
+        "{\"context\":\"ctx1\"}}"));
+    QCOMPARE(panel.m_console->topLevelItemCount(), 0);
+    panel.m_consolePreserve->setChecked(true);
+    feed(QStringLiteral("info"), QStringLiteral("kept"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"browsingContext.navigationStarted\",\"params\":"
+        "{\"context\":\"ctx1\"}}"));
+    QCOMPARE(panel.m_console->topLevelItemCount(), 1);
+    panel.m_consolePreserve->setChecked(false);
+
+    // The REPL prompt recalls history on Up/Down — first Up stashes
+    // the draft, Down past the newest restores it.
+    panel.m_evalLine->setText(QStringLiteral("1+1"));
+    emit panel.m_evalLine->returnPressed();
+    panel.m_evalLine->setText(QStringLiteral("2+2"));
+    emit panel.m_evalLine->returnPressed();
+    panel.m_evalLine->setText(QStringLiteral("draft"));
+    QKeyEvent up(QEvent::KeyPress, Qt::Key_Up, Qt::NoModifier);
+    QCoreApplication::sendEvent(panel.m_evalLine, &up);
+    QCOMPARE(panel.m_evalLine->text(), QStringLiteral("2+2"));
+    QCoreApplication::sendEvent(panel.m_evalLine, &up);
+    QCOMPARE(panel.m_evalLine->text(), QStringLiteral("1+1"));
+    QKeyEvent down(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+    QCoreApplication::sendEvent(panel.m_evalLine, &down);
+    QCOMPARE(panel.m_evalLine->text(), QStringLiteral("2+2"));
+    QCoreApplication::sendEvent(panel.m_evalLine, &down);
+    QCOMPARE(panel.m_evalLine->text(), QStringLiteral("draft"));
+
+    // The Clear button wipes the console regardless of preserve.
+    feed(QStringLiteral("info"), QStringLiteral("wipe"));
+    panel.m_clearConsole->click();
+    QCOMPARE(panel.m_console->topLevelItemCount(), 0);
 }
 
 // DEVT09 helpers — pixel-level checks on the painted waterfall.

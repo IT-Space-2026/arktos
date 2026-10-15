@@ -2673,3 +2673,17 @@ BiDi Dev Tools Network tab gains Chrome's toolbar, colored waterfall, and timing
     engine actually reported; cache-served rows grey out like Chrome's
     muted '(disk cache)' entries, and the Size hover now names both
     the wire bytes and the decoded resource size.
+BiDi Dev Tools Console reads like Chromium's Console (DEVT12):
+    The flat '[error] text' dump is gone — entries are structured rows
+    colored by level (errors wash red, warnings amber, verbose dims,
+    info/log stay plain, with no textual level prefix), each carrying
+    its source url:line on the right edge when the engine reports it.
+    A 'Default levels' dropdown toggles Errors/Warnings/Info/Verbose
+    as a checkable set and a text field filters live; identical
+    consecutive entries collapse into Chrome's repeat-count badge, and
+    objects expand into preview children whenever the bridge payload
+    carries structured arguments (the bridge now forwards the CDP
+    arg previews and the message source for console calls, exceptions
+    and log entries). The eval line sits on a real '>' prompt row with
+    Up/Down history recall, a console-scoped Preserve log keeps
+    entries across navigations, and the clear button empties the view.

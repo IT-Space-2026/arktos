@@ -19,7 +19,10 @@
 //!   network.setCacheBehavior {cacheBehavior:"default"|"bypass",
 //!     contexts?:[...]} — no contexts = global toggle remembered for
 //!     late attaches (maps to CDP Network.setCacheDisabled)
-//!   Events out: browsingContext.*, log.entryAdded (console+log),
+//!   Events out: browsingContext.*, log.entryAdded (console+log —
+//!     DEVT12: BiDi-normalized level, the raw console method name, a
+//!     {url,line} source link from the stack top, and the structured
+//!     RemoteObject args minus session-scoped objectIds),
 //!     network.beforeRequestSent / responseStarted / responseCompleted
 //!     / fetchError / requestServedFromCache — the network events carry
 //!     the CDP extras the panel's Chrome-style view needs: timestamp
@@ -1155,7 +1158,8 @@ impl Core {
                 if !subscribed("log") {
                     return;
                 }
-                let level = params.get("type").and_then(|t| t.as_str()).unwrap_or("log");
+                let raw_method =
+                    params.get("type").and_then(|t| t.as_str()).unwrap_or("log");
                 let text = params
                     .get("args")
                     .and_then(|a| a.as_array())
@@ -1168,6 +1172,13 @@ impl Core {
                                         other => other.to_string(),
                                     })
                                     .or_else(|| {
+                                        // NaN/Infinity/-0 carry their
+                                        // repr in unserializableValue.
+                                        a.get("unserializableValue")
+                                            .and_then(|v| v.as_str())
+                                            .map(String::from)
+                                    })
+                                    .or_else(|| {
                                         a.get("description").and_then(|d| d.as_str()).map(String::from)
                                     })
                                     .unwrap_or_else(|| a.get("type").and_then(|t| t.as_str()).unwrap_or("?").to_string())
@@ -1176,12 +1187,49 @@ impl Core {
                             .join(" ")
                     })
                     .unwrap_or_default();
+                // DEVT12: forward the RemoteObject args (minus the
+                // session-scoped objectId the panel can't resolve) so
+                // console rows can expand object previews; Chromium
+                // attaches preview.properties to console args by
+                // default — when the engine sends none the panel
+                // keeps the row flat, no fake expansion.
+                let args: Vec<Value> = params
+                    .get("args")
+                    .and_then(|a| a.as_array())
+                    .map(|args| {
+                        args.iter()
+                            .take(32)
+                            .map(|a| {
+                                let mut a = a.clone();
+                                if let Some(o) = a.as_object_mut() {
+                                    o.remove("objectId");
+                                    if let Some(props) = o
+                                        .get_mut("preview")
+                                        .and_then(|p| p.as_object_mut())
+                                        .and_then(|p| {
+                                            p.get_mut("properties")
+                                                .and_then(|p| p.as_array_mut())
+                                        })
+                                    {
+                                        props.truncate(64);
+                                    }
+                                }
+                                a
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 self.event(
                     "log.entryAdded",
                     json!({
                         "type": "console",
-                        "level": level,
+                        "level": normalize_level(raw_method),
+                        // The raw console API name (log/dir/table/...)
+                        // — BiDi ConsoleLogEntry calls this "method".
+                        "method": raw_method,
                         "text": text,
+                        "source": stack_source(&params["stackTrace"]),
+                        "args": args,
                         "context": self.context_for_session(session),
                     }),
                 );
@@ -1190,21 +1238,36 @@ impl Core {
                 if !subscribed("log") {
                     return;
                 }
-                let (level, text) = if name == "Log.entryAdded" {
+                let (level, text, source) = if name == "Log.entryAdded" {
                     let e = &params["entry"];
                     (
-                        e.get("level").and_then(|l| l.as_str()).unwrap_or("info").to_string(),
+                        normalize_level(
+                            e.get("level").and_then(|l| l.as_str()).unwrap_or("info"),
+                        ),
                         e.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string(),
+                        url_line_source(
+                            e.get("url").and_then(|u| u.as_str()).unwrap_or(""),
+                            e.get("lineNumber").and_then(|l| l.as_i64()),
+                        ),
                     )
                 } else {
                     let d = &params["exceptionDetails"];
+                    let src = stack_source(&d["stackTrace"]);
                     (
-                        "error".to_string(),
+                        "error",
                         d.get("text")
                             .and_then(|t| t.as_str())
                             .or_else(|| d["exception"].get("description").and_then(|t| t.as_str()))
                             .unwrap_or("exception")
                             .to_string(),
+                        if src.is_null() {
+                            url_line_source(
+                                d.get("url").and_then(|u| u.as_str()).unwrap_or(""),
+                                d.get("lineNumber").and_then(|l| l.as_i64()),
+                            )
+                        } else {
+                            src
+                        },
                     )
                 };
                 self.event(
@@ -1213,6 +1276,7 @@ impl Core {
                         "type": "javascript",
                         "level": level,
                         "text": text,
+                        "source": source,
                         "context": self.context_for_session(session),
                     }),
                 );
@@ -1236,6 +1300,53 @@ impl Core {
 /// Anything non-numeric serializes as null rather than a guess.
 fn millis(v: &Value) -> Value {
     v.as_f64().map(|s| json!(s * 1000.0)).unwrap_or(Value::Null)
+}
+
+/// DEVT12: the console's level buckets are BiDi's four — CDP's
+/// console API names (Log.entryAdded levels too) collapse onto them:
+/// error/assert -> error, warning/warn -> warn, debug/verbose ->
+/// debug, everything else (log/info/dir/table/group/trace/count/
+/// clear/timeEnd) -> info.
+fn normalize_level(raw: &str) -> &'static str {
+    match raw {
+        "error" | "assert" => "error",
+        "warning" | "warn" => "warn",
+        "debug" | "verbose" => "debug",
+        _ => "info",
+    }
+}
+
+/// DEVT12: the console row's right-edge "file.js:line" — the top
+/// frame of a CDP stack trace.  CDP lineNumber is 0-based; the
+/// emitted "line" is 1-based for display.  Null when the event
+/// carries no usable location — the panel then renders no link.
+fn stack_source(trace: &Value) -> Value {
+    let frame = trace
+        .get("callFrames")
+        .and_then(|f| f.as_array())
+        .and_then(|f| f.first());
+    let url = frame
+        .and_then(|f| f.get("url"))
+        .and_then(|u| u.as_str())
+        .unwrap_or("");
+    if url.is_empty() {
+        return Value::Null;
+    }
+    let line = frame
+        .and_then(|f| f.get("lineNumber"))
+        .and_then(|l| l.as_i64())
+        .map(|l| l + 1)
+        .unwrap_or(-1);
+    json!({ "url": url, "line": line })
+}
+
+/// Same shape as stack_source for events that carry a bare
+/// url + 0-based lineNumber instead of a call-frames array.
+fn url_line_source(url: &str, line0: Option<i64>) -> Value {
+    if url.is_empty() {
+        return Value::Null;
+    }
+    json!({ "url": url, "line": line0.map(|l| l + 1).unwrap_or(-1) })
 }
 
 /* -------- CDP -> BiDi translations -------- */
@@ -2485,37 +2596,81 @@ mod tests {
         let e = events_named(&got, "network.responseStarted");
         assert!(e.last().unwrap().contains("\"fromDiskCache\":true"), "{e:?}");
 
-        // console args prefer .value, then .description, then the type
-        // name; non-string values serialize.
+        // console args prefer .value, then unserializableValue, then
+        // .description, then the type name; non-string values
+        // serialize.
         core.on_message(&json!({
             "method": "Runtime.consoleAPICalled", "sessionId": "S2",
             "params": {"type": "warn", "args": [
                 {"value": "hi"}, {"value": 42},
+                {"unserializableValue": "NaN", "type": "number"},
                 {"description": "desc"}, {"type": "object"}
             ]}
         }));
         let e = events_named(&got, "log.entryAdded");
         let console = e.iter().find(|p| p.contains("console")).unwrap();
         assert!(console.contains("\"level\":\"warn\""), "{console}");
-        assert!(console.contains("hi 42 desc object"), "{console}");
+        assert!(console.contains("hi 42 NaN desc object"), "{console}");
+        assert!(console.contains("\"method\":\"warn\""), "{console}");
 
-        // Log.entryAdded and exceptionThrown share the javascript lane.
+        // DEVT12: structured args ride along (objectId stripped —
+        // the panel can't resolve session handles), the top stack
+        // frame becomes the entry's {url, 1-based line} source link,
+        // and CDP's "warning" normalizes onto BiDi's "warn".
         core.on_message(&json!({
-            "method": "Log.entryAdded", "sessionId": "S2",
-            "params": {"entry": {"level": "error", "text": "logline"}}
-        }));
-        core.on_message(&json!({
-            "method": "Runtime.exceptionThrown", "sessionId": "S2",
-            "params": {"exceptionDetails": {"text": "kaboom"}}
-        }));
-        core.on_message(&json!({
-            "method": "Runtime.exceptionThrown", "sessionId": "S2",
-            "params": {"exceptionDetails": {"exception": {"description": "nested"}}}
+            "method": "Runtime.consoleAPICalled", "sessionId": "S2",
+            "params": {"type": "warning", "args": [
+                {"type": "object", "objectId": "oid-secret",
+                 "description": "Array(2)",
+                 "preview": {"type": "object", "subtype": "array",
+                     "properties": [
+                        {"name": "0", "type": "number", "value": "7"},
+                        {"name": "length", "type": "number",
+                         "value": "2"}]}}],
+                "stackTrace": {"callFrames": [
+                    {"url": "http://a/app.js", "lineNumber": 6,
+                     "columnNumber": 4}]}}
         }));
         let e = events_named(&got, "log.entryAdded");
-        assert!(e.iter().any(|p| p.contains("logline") && p.contains("javascript")), "{e:?}");
-        assert!(e.iter().any(|p| p.contains("kaboom")), "{e:?}");
-        assert!(e.iter().any(|p| p.contains("nested")), "{e:?}");
+        let console = e.iter().rev().find(|p| p.contains("console")).unwrap();
+        assert!(console.contains("\"level\":\"warn\""), "{console}");
+        assert!(console.contains("\"method\":\"warning\""), "{console}");
+        assert!(console.contains("\"url\":\"http://a/app.js\""), "{console}");
+        assert!(console.contains("\"line\":7"), "{console}");
+        assert!(console.contains("\"subtype\":\"array\""), "{console}");
+        assert!(!console.contains("oid-secret"), "{console}");
+
+        // Log.entryAdded and exceptionThrown share the javascript
+        // lane — levels normalize the same way and entry.url /
+        // exceptionDetails.url feed the same source link.
+        core.on_message(&json!({
+            "method": "Log.entryAdded", "sessionId": "S2",
+            "params": {"entry": {"level": "warning", "text": "logline",
+                "url": "http://a/page.html", "lineNumber": 3}}
+        }));
+        core.on_message(&json!({
+            "method": "Runtime.exceptionThrown", "sessionId": "S2",
+            "params": {"exceptionDetails": {"text": "kaboom",
+                "url": "http://a/boom.js", "lineNumber": 9}}
+        }));
+        core.on_message(&json!({
+            "method": "Runtime.exceptionThrown", "sessionId": "S2",
+            "params": {"exceptionDetails": {"exception": {"description": "nested"},
+                "stackTrace": {"callFrames": [
+                    {"url": "http://a/inner.js", "lineNumber": 0}]}}}
+        }));
+        let e = events_named(&got, "log.entryAdded");
+        let logline = e.iter()
+            .find(|p| p.contains("logline") && p.contains("javascript"))
+            .unwrap();
+        assert!(logline.contains("\"level\":\"warn\""), "{logline}");
+        assert!(logline.contains("\"url\":\"http://a/page.html\""), "{logline}");
+        assert!(logline.contains("\"line\":4"), "{logline}");
+        let kaboom = e.iter().find(|p| p.contains("kaboom")).unwrap();
+        assert!(kaboom.contains("\"line\":10"), "{kaboom}");
+        let nested = e.iter().find(|p| p.contains("nested")).unwrap();
+        assert!(nested.contains("\"url\":\"http://a/inner.js\""), "{nested}");
+        assert!(nested.contains("\"line\":1"), "{nested}");
 
         // Unknown CDP methods are dropped silently.
         let before = got.lock().unwrap().len();

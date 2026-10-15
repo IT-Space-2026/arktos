@@ -13,7 +13,15 @@
  * DEVT03 — engine-neutral developer-tools dock panel.
  *
  * Four tabs, all fed by the BiDi-shaped channel in BidiClient:
- *   Console  log.entryAdded event stream + script.evaluate REPL
+ *   Console  log.entryAdded event stream + script.evaluate REPL —
+ *            DEVT12's Chromium parity pass: a structured entry list
+ *            (per-level wash + icon, source url:line on the right
+ *            edge, repeat-count badge for identical consecutive
+ *            entries, expandable children when the event's args
+ *            carry object previews), a toolbar with clear, a live
+ *            text filter, Chrome's checkable "Default levels"
+ *            dropdown and a console-scoped Preserve log, and a '>'
+ *            prompt row with Up/Down history recall.
  *   DOM      lazy-loaded element tree (walking happens inside the
  *            page via a JS helper — BiDi has no DOM walker and the
  *            evaluate round-trip keeps this engine-neutral)
@@ -46,7 +54,9 @@
 
 #include <qhash.h>
 #include <qjsonarray.h>
+#include <qjsonobject.h>
 #include <qpointer.h>
+#include <qstringlist.h>
 #include <qvector.h>
 #include <qwidget.h>
 
@@ -57,7 +67,6 @@ class QCheckBox;
 class QComboBox;
 class QLabel;
 class QLineEdit;
-class QPlainTextEdit;
 class QSortFilterProxyModel;
 class QStackedWidget;
 class QTableView;
@@ -123,6 +132,15 @@ private:
     void domItemExpanded(QTreeWidgetItem *item);
     QString currentContext() const;
     void consoleLine(const QString &prefix, const QString &text);
+    // DEVT12: one structured console row — level wash/icon, source
+    // link, repeat badge, preview children.  consoleLine() funnels
+    // the REPL echo/result lines through it too.
+    void addConsoleRow(int level, const QString &text,
+                       const QJsonObject &source,
+                       const QJsonArray &args, bool dedupeable);
+    void applyConsoleFilters();
+    void updateConsoleLevelMask();
+    void clearConsole();
     void ensureDomHelper(const QString &context);
     void sendEval(const QString &context, const QString &expression,
                   quint64 tag);
@@ -135,14 +153,27 @@ private:
     QStackedWidget *m_stack;
     QLabel *m_unavailableLabel;
     QComboBox *m_contextCombo;
-    QPlainTextEdit *m_console;
+    // DEVT12: the Console tab — a structured tree (message | repeat
+    // badge | source link) instead of a flat text dump.
+    QTreeWidget *m_console;
+    QToolButton *m_clearConsole;
+    QLineEdit *m_consoleFilter;
+    QToolButton *m_consoleLevels;
+    QCheckBox *m_consolePreserve;
+    int m_consoleLevelMask = 0;
+    QStringList m_evalHistory;
+    QString m_evalDraft;
+    int m_evalHistoryIndex = -1;
     QLineEdit *m_evalLine;
     QTreeWidget *m_domTree;
     // DEVT06: the Network tab is a model/proxy/view so the toolbar's
     // filter field and the type chips can re-slice one row set.
     QAbstractTableModel *m_networkModel;
     QSortFilterProxyModel *m_networkProxy;
-    QTableView *m_networkView;
+    // nullptr until the Network tab is built — the Console's
+    // installEventFilter(this) runs events through eventFilter()
+    // first, so the member must be defined before then.
+    QTableView *m_networkView = nullptr;
     QLineEdit *m_networkFilter;
     QCheckBox *m_invertFilter;
     QCheckBox *m_preserveLog;
