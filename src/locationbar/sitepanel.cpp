@@ -202,6 +202,18 @@ SitePanel::SitePanel(QWidget *parent)
     buttons->addWidget(m_clearData);
     buttons->addStretch(1);
     layout->addLayout(buttons);
+
+    // TRUST17: keep the panel synced while its popup is closed — the
+    // menu's pre-popup sizeHint flush measures the last render before
+    // aboutToShow runs, so unsignalled state that shifts while closed
+    // (a remembered-permission grant from a page prompt, a whitelist
+    // edit in the settings dialog) is exactly the first-click
+    // wrong-size popup.
+    connect(WebPermissionManager::instance(),
+            &WebPermissionManager::changed, this, &SitePanel::refresh);
+    connect(AdBlockManager::instance(), &AdBlockManager::rulesChanged,
+            this, &SitePanel::refresh);
+    refresh();
 }
 
 void SitePanel::setWebView(WebView *webView)
@@ -377,6 +389,7 @@ void SitePanel::refresh()
 
     rebuildPermissionRows();
     m_refreshing = false;
+    emit refreshed();
 }
 
 void SitePanel::applyCookieRule(int index)
@@ -473,7 +486,17 @@ void SitePanel::toggleHttpAllowance(bool checked)
 
 void SitePanel::rebuildPermissionRows()
 {
+    // Rows are nested layouts — a layout item's widget() is null, so
+    // deleting the item alone orphan-parents the row's widgets to the
+    // box.  Strays stay children of the panel and paint over the popup
+    // on first show (TRUST17).  Drain each row's widgets first.
     while (QLayoutItem *item = m_permissionsLayout->takeAt(0)) {
+        if (QLayout *row = item->layout()) {
+            while (QLayoutItem *child = row->takeAt(0)) {
+                delete child->widget();
+                delete child;
+            }
+        }
         delete item->widget();
         delete item;
     }
@@ -508,6 +531,11 @@ void SitePanel::rebuildPermissionRows()
             tr("No remembered permissions for this site"),
             m_permissionsBox));
     }
+    // TRUST17: swapped rows don't reach the parent layout's per-item
+    // sizeHint cache on their own — a popup measuring the panel mid-
+    // rebuild would read the previous render's size (the first-click
+    // squashed popup).  Mark the box so the next query re-measures.
+    m_permissionsBox->updateGeometry();
 }
 
 void SitePanel::clearSiteData()

@@ -78,6 +78,11 @@ public slots:
     // popup opens and after any control writes through.
     void refresh();
 
+signals:
+    // Emitted at the end of every refresh — the hosting popup re-fits
+    // itself when the content grew while open (TRUST17).
+    void refreshed();
+
 private:
     QString host() const;
     QUrl origin() const;
