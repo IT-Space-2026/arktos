@@ -82,6 +82,10 @@ UI:
   sparse desktop themes served missing glyphs as duplicate
   lookalikes.  Profiles that had it selected migrate to Tabler
   automatically; only the bundled sets remain selectable (ICONS12).
+- The bundled "arora-legacy" icon set (the original 2009 artwork) is
+  removed — Tabler covers its full name list and is now the fallback
+  root every other set inherits.  Nothing user-visible changes;
+  profiles pinned to the old set fall back to Tabler (ICONS13).
 - Vivaldi-style vertical navigation in Preferences (UIP03).
 - Status-bar load indicator and zoom control (UIP04).
 - Shield icon at the left of the location bar (UIP05).

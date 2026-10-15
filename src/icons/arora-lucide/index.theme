@@ -2,7 +2,7 @@
 Name=Arora Lucide
 Comment=Bundled Lucide icons (ISC; partly derived from Feather, MIT)
 Directories=icons
-Inherits=arora-legacy
+Inherits=arora-tabler
 
 [icons]
 Size=16

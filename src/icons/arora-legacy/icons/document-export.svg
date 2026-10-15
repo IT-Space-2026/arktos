@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<!-- ICONS07: arrow leaving a document — File > Export Bookmarks.
-     Mid-grey stays readable on light and dark palettes. -->
-<svg xmlns="http://www.w3.org/2000/svg" height="16" width="16" viewBox="0 0 16 16">
-    <rect x="1.5" y="1.5" width="8" height="13" rx="1" fill="none" stroke="#7a7a7a" stroke-width="1.4"/>
-    <path d="M5.5 6.8H11v2.4H5.5Z" fill="#7a7a7a"/>
-    <path d="M10 4.5 14 8l-4 3.5Z" fill="#7a7a7a"/>
-</svg>

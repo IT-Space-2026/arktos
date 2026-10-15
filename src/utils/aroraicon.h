@@ -33,8 +33,9 @@
 // the Settings combo apply live.
 //
 // Resolution order:
-//   active theme -> inherited themes -> arora-legacy (the original
-//   2009 artwork via QIcon::setFallbackThemeName) -> hicolor (the
+//   active theme -> inherited themes (the sparse sets inherit
+//   arora-tabler; the -dark variants inherit arora-tabler-dark) ->
+//   arora-tabler via QIcon::setFallbackThemeName -> hicolor (the
 //   desktop's own search paths — kept as the last resort so a name
 //   no bundled set ships still has a chance to resolve rather than
 //   painting a blank hole).
@@ -44,6 +45,12 @@
 // names as duplicate lookalikes, which is the report the bundled
 // sets fixed.  Every selectable set is now bundled art; a stored
 // "native" id migrates to the default set like any unknown id.
+//
+// ICONS13: the bundled arora-legacy set (the original 2009 artwork)
+// is retired entirely — the Tabler set covers its whole name list,
+// so the sparse sets now inherit arora-tabler{,-dark} and Tabler is
+// the fallback theme.  A stored "arora-legacy"/"legacy" pick is an
+// unknown id and migrates to the default set like any other.
 //
 // Monochrome bundled sets also ship an "-dark" sibling theme that is
 // picked automatically when the application palette is dark — Qt

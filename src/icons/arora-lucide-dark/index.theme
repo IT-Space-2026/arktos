@@ -2,7 +2,7 @@
 Name=Arora Lucide Dark
 Comment=Dark-scheme recolor of the bundled Lucide icons
 Directories=icons
-Inherits=arora-legacy
+Inherits=arora-tabler-dark
 
 [icons]
 Size=16

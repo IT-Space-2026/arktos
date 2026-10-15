@@ -157,8 +157,8 @@ declare -A TABLER_MAP=(
     [list-add]=playlist-add
     [system-run]=player-play
     # ICONS10 coverage audit — every chrome name the code requests
-    # resolves inside this set; nothing silently falls through to
-    # arora-legacy's 2009 art.
+    # resolves inside this set; tabler is the fallback root every
+    # other set inherits.
     [accessories-character-map]=omega
     [applications-development]=device-desktop-code
     [application-x-addon]=puzzle
@@ -299,13 +299,19 @@ copy_map() { # assoc-name srcroot outdir [sed-expr...]
     done
 }
 
-index_theme() { # dir name comment
-    cat > "$1/index.theme" <<EOF
+index_theme() { # dir name comment [inherits]
+    # ICONS13: sparse sets inherit arora-tabler (the full-coverage
+    # set) — dark variants inherit arora-tabler-dark so a missed name
+    # resolves to light-stroke art on dark chrome.
+    {
+        cat <<EOF
 [Icon Theme]
 Name=$2
 Comment=$3
 Directories=icons
-Inherits=arora-legacy
+EOF
+        [ -n "${4:-}" ] && echo "Inherits=$4"
+        cat <<'EOF'
 
 [icons]
 Size=16
@@ -313,6 +319,7 @@ Type=Scalable
 MinSize=8
 MaxSize=256
 EOF
+    } > "$1/index.theme"
 }
 
 # ICONS04: view-refresh is a maintained glyph, not an upstream copy —
@@ -388,13 +395,16 @@ write_onion  "$OUT/arora-lucide"  "#3d3d3d"
 write_stop   "$OUT/arora-breeze"  "#232629" 1
 
 index_theme "$OUT/arora-adwaita" "Arora Adwaita" \
-    "Bundled Adwaita symbolic icons (CC-BY-SA-3.0/LGPL-3+ or CC-BY-SA-4.0)"
+    "Bundled Adwaita symbolic icons (CC-BY-SA-3.0/LGPL-3+ or CC-BY-SA-4.0)" \
+    arora-tabler
 index_theme "$OUT/arora-breeze" "Arora Breeze" \
-    "Bundled KDE Breeze icons (LGPL-3+)"
+    "Bundled KDE Breeze icons (LGPL-3+)" \
+    arora-tabler
 index_theme "$OUT/arora-tabler" "Arora Tabler" \
     "Bundled Tabler outline icons (MIT)"
 index_theme "$OUT/arora-lucide" "Arora Lucide" \
-    "Bundled Lucide icons (ISC; partly derived from Feather, MIT)"
+    "Bundled Lucide icons (ISC; partly derived from Feather, MIT)" \
+    arora-tabler
 
 # --- dark variants ----------------------------------------------------
 copy_map ADWAITA_MAP "$ADWAITA" "$OUT/arora-adwaita-dark" \
@@ -414,28 +424,16 @@ write_onion  "$OUT/arora-lucide-dark"  "#e8e8e8"
 write_stop   "$OUT/arora-breeze-dark"  "#eff0f1" 1
 
 index_theme "$OUT/arora-adwaita-dark" "Arora Adwaita Dark" \
-    "Dark-scheme recolor of the bundled Adwaita symbolic icons"
+    "Dark-scheme recolor of the bundled Adwaita symbolic icons" \
+    arora-tabler-dark
 index_theme "$OUT/arora-breeze-dark" "Arora Breeze Dark" \
-    "Dark-scheme recolor of the bundled KDE Breeze icons"
+    "Dark-scheme recolor of the bundled KDE Breeze icons" \
+    arora-tabler-dark
 index_theme "$OUT/arora-tabler-dark" "Arora Tabler Dark" \
-    "Dark-scheme recolor of the bundled Tabler outline icons"
+    "Dark-scheme recolor of the bundled Tabler outline icons" \
+    arora-tabler
 index_theme "$OUT/arora-lucide-dark" "Arora Lucide Dark" \
-    "Dark-scheme recolor of the bundled Lucide icons"
-
-# --- the original 2009 art: final fallback ---------------------------
-mkdir -p "$OUT/arora-legacy/icons" # populated via qrc aliases
-cat > "$OUT/arora-legacy/index.theme" <<'EOF'
-[Icon Theme]
-Name=Arora Legacy
-Comment=Original Arora 2009 bundled artwork — final fallback
-Directories=icons
-Inherits=arora-adwaita
-
-[icons]
-Size=16
-Type=Scalable
-MinSize=8
-MaxSize=128
-EOF
+    "Dark-scheme recolor of the bundled Lucide icons" \
+    arora-tabler-dark
 
 echo "bundled icon themes regenerated in $OUT"

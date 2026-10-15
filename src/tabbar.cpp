@@ -410,7 +410,7 @@ void TabBar::installCloseButton(int index)
     button->setToolButtonStyle(Qt::ToolButtonIconOnly);
     // Resolves through AroraIcon: the active icon theme first, the
     // bundled sets' dark variants when the palette is dark, and the
-    // original closetab.png as the last-resort fallback.
+    // bundled Tabler set as the last-resort fallback.
     button->setIcon(AroraIcon::getChrome(QLatin1String("window-close")));
     button->setIconSize(QSize(12, 12));
     // TABS07: an uncapped QToolButton hints ~19px tall, and QTabBar

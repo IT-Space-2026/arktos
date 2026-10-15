@@ -1659,23 +1659,30 @@ void tst_SettingsDialog::iconThemeSelector()
     // ICONS12: the retired OS-theme option is not a row.
     QCOMPARE(dialog.iconThemeCombo->findData(QLatin1String("native")),
              -1);
+    // ICONS13: neither is the removed bundled legacy set.
+    QCOMPARE(dialog.iconThemeCombo->findData(QLatin1String("legacy")),
+             -1);
 }
 
 // ICONS12: a profile pinned to the retired "native" id migrates to
 // the default bundled set — the combo shows the Tabler row selected
-// rather than a dead row or a blank pick.
+// rather than a dead row or a blank pick.  ICONS13: the removed
+// arora-legacy set migrates the same way.
 void tst_SettingsDialog::iconThemeRetiredNative()
 {
     QSettings settings;
     const QVariant saved = settings.value(
         QLatin1String("MainWindow/iconTheme"));
-    settings.setValue(QLatin1String("MainWindow/iconTheme"),
-                      QLatin1String("native"));
 
-    SettingsDialog dialog;
-    QCOMPARE(dialog.iconThemeCombo->currentData().toString(),
-             QLatin1String("tabler"));
-    QCOMPARE(AroraIcon::theme(), QLatin1String("tabler"));
+    for (const char *retired : { "native", "arora-legacy" }) {
+        settings.setValue(QLatin1String("MainWindow/iconTheme"),
+                          QLatin1String(retired));
+
+        SettingsDialog dialog;
+        QCOMPARE(dialog.iconThemeCombo->currentData().toString(),
+                 QLatin1String("tabler"));
+        QCOMPARE(AroraIcon::theme(), QLatin1String("tabler"));
+    }
 
     if (saved.isValid())
         settings.setValue(QLatin1String("MainWindow/iconTheme"), saved);
