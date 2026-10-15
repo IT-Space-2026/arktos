@@ -77,6 +77,7 @@
 #include "webpage.h"
 #include "webviewsearch.h"
 #include "locationbar.h"
+#include "locationbarsiteicon.h"
 #include "siteshield.h"
 #include "toolbarsearch.h"
 #include "torcircuitbutton.h"
@@ -6238,6 +6239,41 @@ void tst_BrowserMainWindow::siteShieldButton()
     QCOMPARE(order.indexOf(QLatin1String("locationBar")),
              order.indexOf(QLatin1String("siteShield")) + 1);
 
+    // TRUST16 lock: exactly one shield exists in the whole window and
+    // it lives on the bar — never inside the url field (a per-tab
+    // LocationBar copy must not resurrect at merge).  The field keeps
+    // its own left-side surface — the site icon here; the padlock's
+    // slot on the merged tree.
+    QCOMPARE(window->findChildren<SiteShieldButton *>().size(), 1);
+    LocationBar *field = qobject_cast<LocationBar *>(
+        window->tabWidget()->currentLocationBar());
+    QVERIFY(field);
+    QVERIFY(field->findChild<LocationBarSiteIcon *>());
+    QVERIFY(!field->findChild<SiteShieldButton *>());
+
+    // Physical adjacency, not just list order: the shield's slot sits
+    // flush against the field's — no other surface may slip between.
+    QAction *fieldAction = nullptr;
+    for (QAction *action : navBar->actions()) {
+        if (action->property("navBarItemId").toString()
+                == QLatin1String("locationBar"))
+            fieldAction = action;
+    }
+    QVERIFY(fieldAction);
+    const QRect shieldRect = navBar->actionGeometry(shieldAction);
+    const QRect fieldRect = navBar->actionGeometry(fieldAction);
+    QVERIFY(shieldRect.isValid() && fieldRect.isValid());
+    QVERIFY(shieldRect.right() <= fieldRect.left());
+    QVERIFY(fieldRect.left() - shieldRect.right() <= 20);
+
+    // Offscreen grab for visual review — [reader][shield][field].
+    const QByteArray grabDir = qgetenv("ARORA_NAVBAR_GRAB_DIR");
+    if (!grabDir.isEmpty()) {
+        QDir().mkpath(QString::fromLocal8Bit(grabDir));
+        navBar->grab().save(QString::fromLocal8Bit(grabDir)
+                            + QLatin1String("/navbar-shield-slot.png"));
+    }
+
     // Web tab: bound and live.
     QVERIFY(window->currentTab());
     QVERIFY(shield->isEnabled());
@@ -6258,6 +6294,34 @@ void tst_BrowserMainWindow::siteShieldButton()
     window->tabWidget()->setCurrentIndex(0);
     QVERIFY(window->currentTab());
     QVERIFY(shield->isEnabled());
+
+    // TRUST16/NAVB03: the shield stays a normal movable item in edit
+    // mode — a drag can park it ahead of Back — but Reset restores
+    // the locked stock slot directly left of the url field.
+    window->navBarEditAction()->setChecked(true);
+    QVERIFY(window->isNavBarEditMode());
+    QAction *backAction = navBar->actions().at(1);
+    QCOMPARE(backAction->property("navBarItemId").toString(),
+             QLatin1String("back"));
+    QTest::mousePress(shield, Qt::LeftButton, Qt::NoModifier,
+                      shield->rect().center());
+    const QPoint shieldDrop = shield->mapFrom(
+        navBar, QPoint(navBar->actionGeometry(backAction).left()
+                       + navBar->actionGeometry(backAction).width() / 4,
+                       navBar->actionGeometry(backAction).center().y()));
+    QTest::mouseMove(shield, shieldDrop);
+    QTest::mouseRelease(shield, Qt::LeftButton, Qt::NoModifier,
+                        shieldDrop);
+    QCOMPARE(window->navBarOrder().indexOf(QLatin1String("siteShield")),
+             1);
+    window->navBarResetAction()->trigger();
+    const QStringList resetOrder = window->navBarOrder();
+    QCOMPARE(resetOrder.indexOf(QLatin1String("siteShield")),
+             resetOrder.indexOf(QLatin1String("reader")) + 1);
+    QCOMPARE(resetOrder.indexOf(QLatin1String("locationBar")),
+             resetOrder.indexOf(QLatin1String("siteShield")) + 1);
+    window->navBarEditAction()->setChecked(false);
+    QVERIFY(!window->isNavBarEditMode());
 
     // Rebuild leg — a stored order performs the remove/add round-trip
     // on every bar action (the QWidgetAction unembed/re-embed path);
