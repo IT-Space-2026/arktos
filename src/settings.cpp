@@ -1459,6 +1459,12 @@ void SettingsDialog::loadFromSettings()
     secureDnsServer->setEnabled(secureDnsMode->currentIndex() >= 2);
     strictTlsCiphers->setChecked(settings.value(QLatin1String("tlsStrictCiphers"), true).toBool());
     blockPings->setChecked(settings.value(QLatin1String("blockPings"), true).toBool());
+    // POL04: canonical key; the SEC17-era stripTrackingParams bool is
+    // the legacy alias older profiles may still carry.
+    urlCleaning->setChecked(
+        settings.value(QLatin1String("urlCleaning"),
+            settings.value(QLatin1String("stripTrackingParams"), true))
+            .toBool());
     // PREFUI04: the toggle moved to the Performance page in its
     // positive form — the persisted privacy/blockPrefetch key (and
     // its default-on semantics) is unchanged.
@@ -1897,6 +1903,12 @@ void SettingsDialog::saveToSettings()
     settings.setValue(QLatin1String("secureDns"), secureDnsMode->currentIndex() != 0);
     settings.setValue(QLatin1String("tlsStrictCiphers"), strictTlsCiphers->isChecked());
     settings.setValue(QLatin1String("blockPings"), blockPings->isChecked());
+    settings.setValue(QLatin1String("urlCleaning"), urlCleaning->isChecked());
+    // The SEC17-era key stays in sync so a profile opened by an older
+    // build (or the interceptor's legacy fallback read) sees the same
+    // toggle state.
+    settings.setValue(QLatin1String("stripTrackingParams"),
+                      urlCleaning->isChecked());
     // PREFUI04: same key, written by the positive-form checkbox that
     // now lives on the Performance page.
     settings.setValue(QLatin1String("blockPrefetch"),

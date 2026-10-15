@@ -1274,7 +1274,7 @@ QString BrowserApplication::installedDataDirectory()
     // Contents/share/arora — and Contents/Resources is the conventional
     // macOS data location, checked first.
     const QString appDir = qApp->applicationDirPath();
-    for (const QString &rel : {
+    for (const QLatin1String rel : {
 #ifdef Q_OS_MACOS
              QLatin1String("/../Resources/share/arora"),
 #endif

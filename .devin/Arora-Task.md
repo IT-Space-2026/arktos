@@ -327,8 +327,8 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | VIEW07 | View Source very slow — 3 sequential async stages; parallelize/trim — details below | done | 0 | moved to UI lane as VIEW09 |
 | DEVT15 | BiDi regressions: web tab shows "no debug target"; Elements empty; Network waterfall graph missing — details below | done | 0 | moved to UI lane as DEVT16 |
 | TRUST22 | Padlock stays yellow on Tor window — decide green-on-verified-TLS vs honest neutral — details below | done | 0 | moved to UI lane as TRUST23 |
-| POL04 | ClearURLs-style cleaning — rules engine + auto-clean on navigation only (shield UI/per-site toggle = POL05) — details below | in_progress | 2 | |
-| POL05 | ClearURLs shield UI — SitePanel per-site toggle, cleaned-count popover, Settings privacy/urlCleaning default — details below | pending | 0 | needs:task:POL04 |
+| POL04 | ClearURLs-style cleaning — rules engine + auto-clean on navigation only (shield UI/per-site toggle = POL05) — details below | blocked | 5 | blocked:exceeded 5 restarts |
+| POL05 | ClearURLs shield UI — SitePanel per-site toggle, cleaned-count popover, Settings privacy/urlCleaning default — details below | in_progress | 0 | needs:task:POL04 (code present in tree; POL04 hit attempt cap on OOM/timeout kills, not feasibility) |
 | QUAL06 | QUAL05 resume — consistency sweep + final all-gates-green closing pass (capped at 5 attempts) — details below | pending | 0 | |
 
 ## Task details

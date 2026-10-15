@@ -2403,6 +2403,19 @@
            </widget>
           </item>
           <item>
+           <widget class="QCheckBox" name="urlCleaning">
+            <property name="toolTip">
+             <string>Remove known tracking parameters (utm_*, fbclid, gclid…) from links as you navigate, and unwrap known redirector links (google.com/url?q=, facebook l.php?u=, …) straight to the real destination — subresource requests are never rewritten, and sites needing a raw link can be exempted per-site from the shield panel.</string>
+            </property>
+            <property name="text">
+             <string>Clean tracking links as you navigate</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
            <widget class="QCheckBox" name="dnsPrefetch">
             <property name="toolTip">
              <string>Resolve the address of every site a page merely links to, before you click — this sends the names of sites you never visit to the DNS resolver. Off by default; enabling it only speeds up link navigation slightly.</string>
@@ -4569,6 +4582,7 @@
   <tabstop>strictTlsCiphers</tabstop>
   <tabstop>secureDnsServer</tabstop>
   <tabstop>blockPings</tabstop>
+  <tabstop>urlCleaning</tabstop>
   <tabstop>dnsPrefetch</tabstop>
   <tabstop>blockRemoteFonts</tabstop>
   <tabstop>blockThirdPartyWebSockets</tabstop>

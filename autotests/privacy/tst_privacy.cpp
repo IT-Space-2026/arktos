@@ -99,6 +99,7 @@ private slots:
     void stripTrackingParams_data();
     void stripTrackingParams();
     void stripToggleAndExceptions();
+    void urlCleanTally();
 
     void thirdPartyCookies();
     void thirdPartyCookieExceptions();
@@ -132,6 +133,7 @@ private:
     QVariant m_savedBlockPrefetch;
     QVariant m_savedBlockThirdPartyWs;
     QVariant m_savedStripTrackingParams;
+    QVariant m_savedUrlCleaning;
     QVariant m_savedAcceptLanguages;
     QVariant m_savedForceDarkMode;
     QVariant m_savedAutoscroll;
@@ -181,6 +183,8 @@ void tst_Privacy::initTestCase()
         settings.value(QLatin1String("privacy/blockThirdPartyWebSockets"));
     m_savedStripTrackingParams =
         settings.value(QLatin1String("privacy/stripTrackingParams"));
+    m_savedUrlCleaning =
+        settings.value(QLatin1String("privacy/urlCleaning"));
     m_savedTzSet = qEnvironmentVariableIsSet("TZ");
     m_savedTz = qgetenv("TZ");
 }
@@ -221,6 +225,7 @@ void tst_Privacy::cleanupTestCase()
     restoreSetting(settings, QLatin1String("privacy/blockPrefetch"), m_savedBlockPrefetch);
     restoreSetting(settings, QLatin1String("privacy/blockThirdPartyWebSockets"), m_savedBlockThirdPartyWs);
     restoreSetting(settings, QLatin1String("privacy/stripTrackingParams"), m_savedStripTrackingParams);
+    restoreSetting(settings, QLatin1String("privacy/urlCleaning"), m_savedUrlCleaning);
     PrivacyRequestInterceptor::loadSettings();
     if (m_savedTzSet)
         qputenv("TZ", m_savedTz);
@@ -244,6 +249,7 @@ void tst_Privacy::init()
     settings.setValue(QLatin1String("blockPrefetch"), true);
     settings.setValue(QLatin1String("blockThirdPartyWebSockets"), false);
     settings.setValue(QLatin1String("stripTrackingParams"), true);
+    settings.setValue(QLatin1String("urlCleaning"), true);
     settings.endGroup();
     PrivacyRequestInterceptor::loadSettings();
     PrivacyRequestInterceptor::clearDowngradedHosts();
@@ -983,10 +989,28 @@ void tst_Privacy::stripToggleAndExceptions()
 
     QSettings settings;
     settings.beginGroup(QLatin1String("privacy"));
+    // POL04: privacy/urlCleaning is the canonical key.
+    settings.setValue(QLatin1String("urlCleaning"), false);
+    settings.endGroup();
+    PrivacyRequestInterceptor::loadSettings();
+    QVERIFY(!PrivacyRequestInterceptor::stripTrackingParamsEnabled());
+    init();
+    QVERIFY(PrivacyRequestInterceptor::stripTrackingParamsEnabled());
+
+    // A profile written by an older build carries only the SEC17-era
+    // key — it still lands as the fallback.
+    settings.beginGroup(QLatin1String("privacy"));
+    settings.remove(QLatin1String("urlCleaning"));
     settings.setValue(QLatin1String("stripTrackingParams"), false);
     settings.endGroup();
     PrivacyRequestInterceptor::loadSettings();
     QVERIFY(!PrivacyRequestInterceptor::stripTrackingParamsEnabled());
+    // …and the canonical key wins over the legacy one.
+    settings.beginGroup(QLatin1String("privacy"));
+    settings.setValue(QLatin1String("urlCleaning"), true);
+    settings.endGroup();
+    PrivacyRequestInterceptor::loadSettings();
+    QVERIFY(PrivacyRequestInterceptor::stripTrackingParamsEnabled());
     init();
     QVERIFY(PrivacyRequestInterceptor::stripTrackingParamsEnabled());
 
@@ -1031,6 +1055,41 @@ void tst_Privacy::stripToggleAndExceptions()
     QCOMPARE(P::strippedUrl(QUrl("https://e.com/?utm_source=x&ok=1")),
              QUrl("https://e.com/?ok=1"));
 #endif
+}
+
+// POL04: the per-page "N trackers removed" tally the shield panel
+// reads — a cleaning redirect's count survives its own follow-up
+// request (the marked clean URL) and settles on the next real
+// navigation.
+void tst_Privacy::urlCleanTally()
+{
+    typedef PrivacyRequestInterceptor P;
+    P::resetTrackerCounts();
+    QCOMPARE(P::trackersRemovedCount(QStringLiteral("example.com")), 0);
+
+    // A cleaning redirect tallies under the destination host and
+    // marks its target — the follow-up request for that URL is the
+    // same page load, so the count survives it.
+    P::noteCleanedRedirect(QUrl("https://example.com/search?q=shoes"),
+                           3);
+    QCOMPARE(P::trackersRemovedCount(QStringLiteral("example.com")), 3);
+    P::noteMainFrameRequest(QUrl("https://example.com/search?q=shoes"));
+    QCOMPARE(P::trackersRemovedCount(QStringLiteral("example.com")), 3);
+
+    // The marker is consumed by that follow-up: a fresh navigation to
+    // any other URL on the host settles the tally to zero — the next
+    // page load reports only what it cleaned itself.
+    P::noteMainFrameRequest(QUrl("https://example.com/other"));
+    QCOMPARE(P::trackersRemovedCount(QStringLiteral("example.com")), 0);
+
+    // Chained redirects accumulate under the final host and re-mark.
+    P::noteCleanedRedirect(QUrl("https://b.example/hop"), 1);
+    P::noteMainFrameRequest(QUrl("https://b.example/hop"));
+    P::noteCleanedRedirect(QUrl("https://b.example/landing"), 2);
+    P::noteMainFrameRequest(QUrl("https://b.example/landing"));
+    QCOMPARE(P::trackersRemovedCount(QStringLiteral("b.example")), 3);
+
+    P::resetTrackerCounts();
 }
 
 // XSLEAK03: loopback fixture for the cross-site e2e checks.  One

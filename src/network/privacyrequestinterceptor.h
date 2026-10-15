@@ -337,6 +337,31 @@ public:
     static bool stripTrackingParamsEnabled();
     static QUrl strippedUrl(const QUrl &url);
 
+    // POL04: per-site link-cleaning exemptions behind the shield
+    // panel's "Clean tracking links" row — same session/persistent
+    // split as allowHttpForHost: the policy keeps the live host sets,
+    // the site-decision store (or QSettings in no-rust builds) keeps
+    // the durable rows loaded into the policy snapshot.
+    static bool isUrlCleanExempt(const QString &host);
+    static void allowUrlCleanExempt(const QString &host, bool persistent);
+    static void clearUrlCleanExempt(const QString &host);
+    static QStringList urlCleanExemptHosts();
+
+    // POL04: per-page cleaning tally behind the shield panel's
+    // "N trackers removed" line.  The cleaning stage reports how many
+    // tracker units a redirect dropped (stripped params + adopted
+    // unwrap hops) on the verdict; each interceptor calls
+    // noteMainFrameRequest() for every top-level request — a request
+    // that is NOT the marked cleaned URL of the previous cleaning
+    // redirect settles that host's count — and noteCleanedRedirect()
+    // whenever a redirect verdict carries one on.  The count a page
+    // displays is therefore exactly what its own navigation cleaned:
+    // self-resetting per load, no GUI-side baseline to race.
+    static void noteMainFrameRequest(const QUrl &url);
+    static void noteCleanedRedirect(const QUrl &to, int removed);
+    static int trackersRemovedCount(const QString &host);
+    static void resetTrackerCounts();   // test seam
+
     // DLACC04: the loopback/private/LAN/.onion classifier behind the
     // https-first/https-only exemptions, shared with the rustdl
     // download gate where it doubles as the SSRF boundary — a

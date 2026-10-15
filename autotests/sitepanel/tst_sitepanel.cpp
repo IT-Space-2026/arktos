@@ -50,6 +50,7 @@
 #include "cookiejar.h"
 #include "fingerprintprotector.h"
 #include "popupblocker.h"
+#include "privacyrequestinterceptor.h"
 #include "sitepadlock.h"
 #include "sitepanel.h"
 #include "siteshield.h"
@@ -166,6 +167,9 @@ void tst_SitePanel::cleanup()
     PopupBlocker::instance()->clearSessionHosts();
     // PRIV06: a failed fingerprint-row leg must not leak an exemption.
     FingerprintProtector::instance()->clearException(
+        QLatin1String("127.0.0.1"));
+    // POL04: same for the link-cleaning exemption.
+    PrivacyRequestInterceptor::clearUrlCleanExempt(
         QLatin1String("127.0.0.1"));
 
     // TRUST03: a gating leg that bailed mid-run must not leave the
@@ -357,6 +361,17 @@ void tst_SitePanel::panelWithoutPage()
     QVERIFY(popups);
     QVERIFY(!popups->isEnabled());
     QVERIFY(!popups->isChecked());
+
+    // POL04: same for link cleaning — and nothing was cleaned, so the
+    // count line stays hidden.
+    QCheckBox *clean = panel.findChild<QCheckBox*>(
+        QLatin1String("siteCleanLinks"));
+    QVERIFY(clean);
+    QVERIFY(!clean->isEnabled());
+    QLabel *cleanedCount = panel.findChild<QLabel*>(
+        QLatin1String("siteCleanedCount"));
+    QVERIFY(cleanedCount);
+    QVERIFY(cleanedCount->isHidden());
 
     QPushButton *clear = panel.findChild<QPushButton*>(
         QLatin1String("siteClearData"));
@@ -553,6 +568,27 @@ void tst_SitePanel::panelForSite()
     panel.refresh();
     QVERIFY(spoof->isChecked());
     protector->clearException(host);
+
+    // POL04: the link-cleaning row mirrors the per-site exemption —
+    // unchecking exempts the host in the policy's live set, rechecking
+    // clears it.  The count line stays hidden: this load cleaned
+    // nothing.  (Session-scoped — the test page is off-the-record.)
+    QCheckBox *clean = panel.findChild<QCheckBox*>(
+        QLatin1String("siteCleanLinks"));
+    QVERIFY(clean);
+    QVERIFY(clean->isEnabled());
+    QVERIFY(clean->isChecked());
+    clean->setChecked(false);
+    QVERIFY(PrivacyRequestInterceptor::isUrlCleanExempt(host));
+    panel.refresh();
+    QVERIFY(!clean->isChecked());
+    clean->setChecked(true);
+    QVERIFY(!PrivacyRequestInterceptor::isUrlCleanExempt(host));
+    QLabel *cleanedCount = panel.findChild<QLabel*>(
+        QLatin1String("siteCleanedCount"));
+    QVERIFY(cleanedCount);
+    QVERIFY(cleanedCount->isHidden());
+    PrivacyRequestInterceptor::clearUrlCleanExempt(host);
 }
 
 // TRUST08: the verdict-to-lines mapping against the live rustcore

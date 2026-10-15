@@ -24,6 +24,7 @@
 #include "scriptcontrolmanager.h"
 
 #include <qatomic.h>
+#include <qmutex.h>
 #include <qsettings.h>
 #include <qwebengineprofile.h>
 #include <qwebengineurlrequestinfo.h>
@@ -53,6 +54,75 @@ using Engine::PolicyVerdict;
 
 // PDF01 audit probe — counts every request the interceptor sees.
 static QAtomicInteger<qint64> s_requestsSeen;
+
+// POL04 per-page cleaning tally — written from the IO thread by the
+// clearnet and tor interceptors, read on the GUI thread by the
+// shield panel.  A cleaning redirect drops N tracker units and
+// records its target as the host's "marked" URL: the follow-up
+// request for that URL is the same navigation, so it keeps the
+// count; any other main-frame request to the host settles the entry
+// (a fresh page load starts from zero).  Chained redirects carry the
+// marker forward — a second redirect leg simply re-marks its target.
+// Bounded like the adblock table.
+struct CleanTally {
+    int removed = 0;
+    QByteArray markedUrl;   // last redirect target — the load's URL
+};
+static QMutex s_cleanedCountLock;
+static QHash<QString, CleanTally> s_cleanedCounts;
+static const int maxCleanedCountHosts = 512;
+
+void PrivacyRequestInterceptor::noteMainFrameRequest(const QUrl &url)
+{
+    const QString host = url.host().toLower();
+    if (host.isEmpty())
+        return;
+    const QMutexLocker lock(&s_cleanedCountLock);
+    auto it = s_cleanedCounts.find(host);
+    if (it == s_cleanedCounts.end())
+        return;
+    if (!it->markedUrl.isEmpty()
+        && it->markedUrl == url.toEncoded()) {
+        // The follow-up request for the URL a cleaning redirect just
+        // produced — same page load; consume the marker, keep count.
+        it->markedUrl.clear();
+    } else {
+        // A navigation that cleaning did not produce — the previous
+        // page's count no longer describes this host's current page.
+        s_cleanedCounts.erase(it);
+    }
+}
+
+void PrivacyRequestInterceptor::noteCleanedRedirect(const QUrl &to,
+                                                    int removed)
+{
+    const QString host = to.host().toLower();
+    if (host.isEmpty())
+        return;
+    const QMutexLocker lock(&s_cleanedCountLock);
+    auto it = s_cleanedCounts.find(host);
+    if (it == s_cleanedCounts.end()) {
+        if (removed <= 0)
+            return;   // a plain redirect carries no tally or marker
+        if (s_cleanedCounts.size() >= maxCleanedCountHosts)
+            return;
+        it = s_cleanedCounts.insert(host, CleanTally());
+    }
+    it->removed += removed;
+    it->markedUrl = to.toEncoded();
+}
+
+int PrivacyRequestInterceptor::trackersRemovedCount(const QString &host)
+{
+    const QMutexLocker lock(&s_cleanedCountLock);
+    return s_cleanedCounts.value(host.toLower()).removed;
+}
+
+void PrivacyRequestInterceptor::resetTrackerCounts()
+{
+    const QMutexLocker lock(&s_cleanedCountLock);
+    s_cleanedCounts.clear();
+}
 
 static HeaderList toHeaderList(const QHash<QByteArray, QByteArray> &headers)
 {
@@ -115,6 +185,17 @@ static bool applyVerdict(const PolicyVerdict &verdict,
                  << verdict.reason;
 #endif
         info.redirect(verdict.redirectUrl);
+        // POL04: tally the cleaning stage's dropped tracker units
+        // under the destination host — the page the user actually
+        // lands on (for an unwrap that is the real target, not the
+        // redirector) — and mark the target so its follow-up request
+        // does not settle the fresh count.  Main-frame only: a
+        // subresource strip is not the page's navigation cleaning,
+        // and its memoized verdict would re-tally on every hit.
+        if (info.resourceType()
+            == QWebEngineUrlRequestInfo::ResourceTypeMainFrame)
+            PrivacyRequestInterceptor::noteCleanedRedirect(
+                verdict.redirectUrl, verdict.cleanedCount);
         return false;
     case PolicyVerdict::Action::Allow:
         if (verdict.refererSet)
@@ -136,6 +217,12 @@ void PrivacyRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
 {
     // PDF01 audit probe — counts every request the interceptor sees.
     s_requestsSeen.fetchAndAddRelaxed(1);
+
+    // POL04: a fresh top-level request settles the host's cleaning
+    // tally — unless it is the marked target a cleaning redirect just
+    // produced (same load; the count carries into the page).
+    if (info.resourceType() == QWebEngineUrlRequestInfo::ResourceTypeMainFrame)
+        noteMainFrameRequest(info.requestUrl());
 
     // Runs on the WebEngine IO thread — only the lock-guarded policy
     // state may be read here (inside NavigationPolicy / rustcore).
@@ -172,8 +259,14 @@ void PrivacyRequestInterceptor::loadSettings()
         settings.value(QLatin1String("blockPrefetch"), true).toBool();
     snap.blockThirdPartyWebSockets =
         settings.value(QLatin1String("blockThirdPartyWebSockets"), false).toBool();
-    snap.stripTrackingParams =
-        settings.value(QLatin1String("stripTrackingParams"), true).toBool();
+    // POL04: privacy/urlCleaning is the canonical toggle (Settings >
+    // Privacy "Clean tracking links"); the SEC17-era
+    // stripTrackingParams key is the legacy alias an older profile
+    // may still carry.
+    snap.stripTrackingParams = settings.value(
+        QLatin1String("urlCleaning"),
+        settings.value(QLatin1String("stripTrackingParams"), true))
+        .toBool();
     snap.domainBlocklist =
         settings.value(QLatin1String("domainBlocklist"), true).toBool();
 #if defined(ARORA_RUSTCORE)
@@ -198,9 +291,20 @@ void PrivacyRequestInterceptor::loadSettings()
         if (!lowered.isEmpty())
             snap.httpsOnlyExceptions.append(lowered);
     }
+    // POL04: per-site link-cleaning exemptions persist as "urlclean"
+    // rows in the same store.
+    const QHash<QString, QString> cleanRows =
+        SiteDecisionStore::entries(SiteDecisionStore::KindUrlClean);
+    for (auto it = cleanRows.constBegin(); it != cleanRows.constEnd(); ++it) {
+        const QString lowered = it.key().toLower();
+        if (!lowered.isEmpty())
+            snap.urlCleanExceptions.append(lowered);
+    }
 #else
     snap.httpsOnlyExceptions =
         settings.value(QLatin1String("httpsOnlyExceptions")).toStringList();
+    snap.urlCleanExceptions =
+        settings.value(QLatin1String("urlCleanExceptions")).toStringList();
 #endif
     settings.endGroup();
 
@@ -469,6 +573,63 @@ void PrivacyRequestInterceptor::clearHttpAllowance(const QString &host)
 QStringList PrivacyRequestInterceptor::httpExceptionHosts()
 {
     return NavigationPolicy::httpExceptionHosts();
+}
+
+// POL04: the shield panel's "Clean tracking links" row — the policy
+// keeps the live host sets, the store (or QSettings in no-rust
+// builds) persists the durable half, exactly like
+// allowHttpForHost/clearHttpAllowance above.
+bool PrivacyRequestInterceptor::isUrlCleanExempt(const QString &host)
+{
+    return NavigationPolicy::isUrlCleanExempt(host);
+}
+
+void PrivacyRequestInterceptor::allowUrlCleanExempt(const QString &host,
+                                                    bool persistent)
+{
+    const QString lowered = host.toLower();
+    if (lowered.isEmpty())
+        return;
+    const bool persistNeeded =
+        NavigationPolicy::allowUrlCleanExempt(lowered, persistent);
+    if (!persistent || !persistNeeded)
+        return;
+#if defined(ARORA_RUSTCORE)
+    SiteDecisionStore::set(SiteDecisionStore::KindUrlClean,
+                           lowered, QLatin1String("exempt"));
+#else
+    QSettings settings;
+    settings.beginGroup(QLatin1String("privacy"));
+    QStringList exceptions =
+        settings.value(QLatin1String("urlCleanExceptions")).toStringList();
+    if (!exceptions.contains(lowered)) {
+        exceptions.append(lowered);
+        settings.setValue(QLatin1String("urlCleanExceptions"), exceptions);
+    }
+    settings.endGroup();
+#endif
+}
+
+void PrivacyRequestInterceptor::clearUrlCleanExempt(const QString &host)
+{
+    const QString lowered = host.toLower();
+    NavigationPolicy::clearUrlCleanExempt(lowered);
+#if defined(ARORA_RUSTCORE)
+    SiteDecisionStore::remove(SiteDecisionStore::KindUrlClean, lowered);
+#else
+    QSettings settings;
+    settings.beginGroup(QLatin1String("privacy"));
+    QStringList exceptions =
+        settings.value(QLatin1String("urlCleanExceptions")).toStringList();
+    if (exceptions.removeAll(lowered) > 0)
+        settings.setValue(QLatin1String("urlCleanExceptions"), exceptions);
+    settings.endGroup();
+#endif
+}
+
+QStringList PrivacyRequestInterceptor::urlCleanExemptHosts()
+{
+    return NavigationPolicy::urlCleanExemptHosts();
 }
 
 void PrivacyRequestInterceptor::recordBlockedHttpNav(const QUrl &url)

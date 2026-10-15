@@ -86,6 +86,7 @@ const MAX_DOWNGRADED_HOSTS: usize = 256;
 const MAX_HTTP_ALLOWED_HOSTS: usize = 256;
 const MAX_BLOCKED_ALLOWED_HOSTS: usize = 256;
 const MAX_BLOCKED_NAVS: usize = 64;
+const MAX_URLCLEAN_EXEMPT: usize = 1024;
 
 fn now_ms() -> i64 {
     SystemTime::now()
@@ -161,6 +162,11 @@ struct PolicyState {
     session_blocked_allowed: HashSet<String>,
     blocked_http_navs: HashSet<String>,
     blocked_domain_navs: HashSet<String>,
+    /// POL04: per-site link-cleaning opt-outs — the persisted half is
+    /// pushed per snapshot from the site-decision store, the session
+    /// half holds off-the-record toggles that never hit disk.
+    session_urlclean_exempt: HashSet<String>,
+    persisted_urlclean_exempt: HashSet<String>,
 }
 
 pub struct Policy {
@@ -182,6 +188,8 @@ impl Policy {
                 session_blocked_allowed: HashSet::new(),
                 blocked_http_navs: HashSet::new(),
                 blocked_domain_navs: HashSet::new(),
+                session_urlclean_exempt: HashSet::new(),
+                persisted_urlclean_exempt: HashSet::new(),
             }),
         }
     }
@@ -864,24 +872,68 @@ fn block(reason: &str) -> Value {
     json!({"action": "block", "reason": reason})
 }
 
-fn redirect(url: String, reason: &str) -> Value {
-    json!({"action": "redirect", "url": url, "reason": reason})
+fn redirect(url: String, reason: &str, removed: usize) -> Value {
+    json!({"action": "redirect", "url": url, "reason": reason,
+           "removed": removed})
 }
 
-/// The strip+upgrade merge both modes share: a tracked URL and an
+/// Exact or parent-suffix membership in a host set — the same
+/// semantics sitedecisions' longest-suffix lookup applies.
+fn host_set_contains(set: &HashSet<String>, host: &str) -> bool {
+    set.iter()
+        .any(|h| host == h.as_str() || host.ends_with(&format!(".{h}")))
+}
+
+/// POL04: a host the user asked the cleaner to leave alone — session
+/// (off-the-record toggles) and persisted (site-decision store) rows
+/// both count.
+fn is_urlclean_exempt(state: &PolicyState, host: &str) -> bool {
+    host_set_contains(&state.session_urlclean_exempt, host)
+        || host_set_contains(&state.persisted_urlclean_exempt, host)
+}
+
+/// The strip+unwrap merge both modes share: a tracked URL and an
 /// upgradable one still cost a single redirect between them.
-fn strip_target(snap: &Snapshot, req: &Request) -> String {
+struct CleanTarget {
+    url: String,
+    /// Tracker units the clean dropped — drives the shield counter.
+    removed: usize,
+    /// A redirector rule fired: the new host earns its own policy
+    /// checks (the domain blocklist must still get its say).
+    unwrapped: bool,
+}
+
+fn strip_target(snap: &Snapshot, req: &Request) -> CleanTarget {
+    let unchanged = || CleanTarget {
+        url: req.url.clone(),
+        removed: 0,
+        unwrapped: false,
+    };
     if !snap.strip_tracking_params
         || (req.method != "GET" && req.method != "HEAD")
         || !url_has_query(&req.url)
     {
-        return req.url.clone();
+        return unchanged();
     }
     let scheme = url_scheme(&req.url).to_lowercase();
     if scheme != "http" && scheme != "https" {
-        return req.url.clone();
+        return unchanged();
     }
-    urlstrip::strip(&req.url)
+    // POL04: redirect unwrapping stays navigation-only — a subresource
+    // hop may depend on the redirector's own response, a link click
+    // never does.  The exemption lookup locks the shared state per
+    // call; callers must NOT hold policy().state() across this call.
+    let navigation = req.resource_type == RT_MAIN_FRAME;
+    match urlstrip::strip_for_request(&req.url, navigation, &|host| {
+        is_urlclean_exempt(&policy().state(), host)
+    }) {
+        Some(out) => CleanTarget {
+            url: out.url,
+            removed: out.removed,
+            unwrapped: out.unwrapped,
+        },
+        None => unchanged(),
+    }
 }
 
 fn evaluate_privacy(snap: &Snapshot, req: &Request) -> Value {
@@ -911,20 +963,34 @@ fn evaluate_privacy(snap: &Snapshot, req: &Request) -> Value {
         record_blocked_nav(&mut state, true, &req.url);
         return block("domain");
     }
+    // SEC17/POL04 + SAFE01 merge: strip fires on GET/HEAD, the
+    // https-first upgrade takes a main-frame http candidate — one
+    // redirect either way.  strip_target consults the exemption sets
+    // through the shared lock, so the state guard is only taken after
+    // it returns.
+    let cleaned = strip_target(snap, req);
     let mut state = policy().state();
-    // SEC17 + SAFE01 merge: strip fires on GET/HEAD, the https-first
-    // upgrade takes a main-frame http candidate — one redirect either
-    // way.
-    let mut target = strip_target(snap, req);
+    // POL04: an unwrap smuggles the request to a host the pipeline
+    // never vetted — the blocklisted-target case dies here like a
+    // direct navigation would.
+    if cleaned.unwrapped
+        && req.resource_type == RT_MAIN_FRAME
+        && should_block_domain(snap, &state, &cleaned.url)
+    {
+        record_blocked_nav(&mut state, true, &cleaned.url);
+        return block("domain");
+    }
+    let mut target = cleaned.url;
     if snap.https_first
         && req.resource_type == RT_MAIN_FRAME
         && is_upgrade_candidate(&mut state, &req.url, &req.scope)
     {
         target = scheme_https(&target);
-        return redirect(target, "https-first");
+        return redirect(target, "https-first", cleaned.removed);
     }
     if target != req.url {
-        return redirect(target, "strip");
+        let reason = if cleaned.unwrapped { "unwrap" } else { "strip" };
+        return redirect(target, reason, cleaned.removed);
     }
     // SAFE01: an http: main frame still standing after the upgrade
     // pass is refused; WebPage consumes the recorded refusal for the
@@ -961,17 +1027,29 @@ fn evaluate_tor(snap: &Snapshot, req: &Request) -> Value {
         record_blocked_nav(&mut state, true, &req.url);
         return block("domain");
     }
-    // SEC17 + tor upgrade merge: tracked clearnet URLs strip, every
-    // clearnet http: request upgrades (not just navigations); .onion
-    // http: keeps its scheme and still strips.
-    let mut target = strip_target(snap, req);
+    // SEC17/POL04 + tor upgrade merge: tracked clearnet URLs clean,
+    // every clearnet http: request upgrades (not just navigations);
+    // .onion http: keeps its scheme and still strips.  An unwrapped
+    // redirector target gets the same blocklist re-check the privacy
+    // pipeline applies.
+    let cleaned = strip_target(snap, req);
+    if cleaned.unwrapped
+        && req.resource_type == RT_MAIN_FRAME
+        && should_block_domain(snap, &policy().state(), &cleaned.url)
+    {
+        let mut state = policy().state();
+        record_blocked_nav(&mut state, true, &cleaned.url);
+        return block("domain");
+    }
+    let mut target = cleaned.url;
     let host = url_host(&req.url);
     if url_scheme(&req.url).to_lowercase() == "http" && !host.ends_with(".onion") {
         target = scheme_https(&target);
-        return redirect(target, "upgrade");
+        return redirect(target, "upgrade", cleaned.removed);
     }
     if target != req.url {
-        return redirect(target, "strip");
+        let reason = if cleaned.unwrapped { "unwrap" } else { "strip" };
+        return redirect(target, reason, cleaned.removed);
     }
     // PING01 / SAFE04 / XSLEAK03 — the shared toggles apply in tor
     // windows identically.
@@ -1113,13 +1191,21 @@ pub fn load_snapshot_json(v: &Value) -> RcResult<()> {
         snap.domain_blocklist = b;
     }
     policy().set_snapshot(snap);
-    if let Some(list) = v.get("https_only_exceptions").and_then(|x| x.as_array()) {
-        let mut state = policy().state();
-        state.persisted_http_allowed = list
-            .iter()
-            .filter_map(|s| s.as_str().map(|h| h.trim().to_lowercase()))
-            .filter(|h| !h.is_empty())
-            .collect();
+    let host_list = |key: &str| -> Option<HashSet<String>> {
+        v.get(key).and_then(|x| x.as_array()).map(|list| {
+            list.iter()
+                .filter_map(|s| s.as_str().map(|h| h.trim().to_lowercase()))
+                .filter(|h| !h.is_empty())
+                .collect()
+        })
+    };
+    if let Some(list) = host_list("https_only_exceptions") {
+        policy().state().persisted_http_allowed = list;
+    }
+    // POL04: the persisted per-site cleaning exemptions ride the same
+    // snapshot — the site-decision store stays the durable home.
+    if let Some(list) = host_list("urlclean_exceptions") {
+        policy().state().persisted_urlclean_exempt = list;
     }
     bump_eval_generation();
     Ok(())
@@ -1247,6 +1333,52 @@ pub fn call_json(v: &Value) -> RcResult<Value> {
         "http_exceptions" => {
             let state = policy().state();
             let mut hosts: Vec<&String> = state.persisted_http_allowed.iter().collect();
+            hosts.sort();
+            Ok(json!(hosts))
+        }
+        // POL04: the shield panel's "Clean tracking links" toggle.
+        // Mirroring allow_http: the policy keeps the live host sets;
+        // {"persist_needed": true} tells the caller a persistent row
+        // still has to be written to the decision store.
+        "is_urlclean_exempt" => {
+            let host = arg_str("host").to_lowercase();
+            let state = policy().state();
+            Ok(json!(is_urlclean_exempt(&state, &host)))
+        }
+        "urlclean_exempt" => {
+            let host = arg_str("host").to_lowercase();
+            if host.is_empty() {
+                return Ok(json!({"persist_needed": false}));
+            }
+            let persistent = arg_bool("persistent");
+            let persist_needed = {
+                let mut state = policy().state();
+                if state.session_urlclean_exempt.len() < MAX_URLCLEAN_EXEMPT {
+                    state.session_urlclean_exempt.insert(host.clone());
+                }
+                persistent && {
+                    let already = state.persisted_urlclean_exempt.contains(&host);
+                    state.persisted_urlclean_exempt.insert(host);
+                    !already
+                }
+            };
+            bump_eval_generation();
+            Ok(json!({"persist_needed": persist_needed}))
+        }
+        "clear_urlclean_exempt" => {
+            let host = arg_str("host").to_lowercase();
+            {
+                let mut state = policy().state();
+                state.session_urlclean_exempt.remove(&host);
+                state.persisted_urlclean_exempt.remove(&host);
+            }
+            bump_eval_generation();
+            Ok(Value::Null)
+        }
+        "urlclean_exempt_hosts" => {
+            let state = policy().state();
+            let mut hosts: Vec<&String> =
+                state.persisted_urlclean_exempt.iter().collect();
             hosts.sort();
             Ok(json!(hosts))
         }
@@ -1430,6 +1562,8 @@ mod tests {
         state.session_blocked_allowed.clear();
         state.blocked_http_navs.clear();
         state.blocked_domain_navs.clear();
+        state.session_urlclean_exempt.clear();
+        state.persisted_urlclean_exempt.clear();
         state.downgrade_ttl_ms = 30 * 60 * 1000;
     }
 
@@ -1493,6 +1627,14 @@ mod tests {
         bumped("clear_blocked_domain_allowance");
         call_json(&json!({"op": "clear_all_blocked_domain"})).unwrap();
         bumped("clear_all_blocked_domain");
+        call_json(&json!({"op": "urlclean_exempt",
+                          "host": "a.example", "persistent": false}))
+            .unwrap();
+        bumped("urlclean_exempt");
+        call_json(&json!({"op": "clear_urlclean_exempt",
+                          "host": "a.example"}))
+            .unwrap();
+        bumped("clear_urlclean_exempt");
         call_json(&json!({"op": "clear_downgraded",
                           "host": "a.example", "scope": "test"}))
             .unwrap();
@@ -1779,6 +1921,117 @@ mod tests {
             "tor_mode": true, "min_referer_level": 1,
         }));
         assert_eq!(v["referer"]["value"], "https://a.example/");
+    }
+
+    /// POL04: the vendored ruleset drives redirect-unwrap and scoped
+    /// params through the request pipeline — navigation-gated, with a
+    /// real removal count for the shield badge.
+    #[test]
+    fn pol04_unwrap_scoped_and_exemptions() {
+        let _g = guard();
+        let _gs = crate::store::test_lock();
+        reset();
+
+        // A google /url redirector unwraps to its real destination on
+        // a main-frame navigation — the wrapper's tracking params die
+        // with it.
+        let v = evaluate_json(&manifest(
+            "https://www.google.com/url?q=https%3A%2F%2Freal.example%2Flanding&sa=U&ved=x",
+            RT_MAIN_FRAME,
+        ));
+        assert_eq!(v["action"], "redirect");
+        assert_eq!(v["url"], "https://real.example/landing");
+        assert_eq!(v["reason"], "unwrap");
+        // 1 hop + 2 stripped google-scoped params on the target host
+        // side is honest either way — the only guarantee is >= 1.
+        assert!(v["removed"].as_i64().unwrap() >= 1);
+
+        // The same URL as a SUBRESOURCE does not unwrap — and the
+        // google-scoped params on the wrapper still strip.
+        let v = evaluate_json(&manifest(
+            "https://www.google.com/url?q=https%3A%2F%2Freal.example%2F&ved=x",
+            4,
+        ));
+        assert_eq!(v["action"], "redirect");
+        assert_eq!(v["reason"], "strip");
+        assert!(v["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("https://www.google.com/url?q="));
+
+        // Scoped params strip only on their tracker domains: 'ref'
+        // survives everywhere except amazon.*.
+        let v = evaluate_json(&manifest(
+            "https://amazon.com/dp/B00?ref_=as_li&x=1",
+            RT_MAIN_FRAME,
+        ));
+        assert_eq!(v["url"], "https://amazon.com/dp/B00?x=1");
+        let v = evaluate_json(&manifest(
+            "https://shop.example/p?ref=affiliatesite&id=7",
+            RT_MAIN_FRAME,
+        ));
+        assert_eq!(v["action"], "allow"); // ref is functional here
+
+        // A functional param on a real site survives alongside a
+        // stripped global tracker.
+        let v = evaluate_json(&manifest(
+            "https://example.com/search?q=shoes&utm_source=n",
+            RT_MAIN_FRAME,
+        ));
+        assert_eq!(v["url"], "https://example.com/search?q=shoes");
+        assert_eq!(v["removed"], 1);
+
+        // Per-site exemption (session) leaves the host's URLs dirty.
+        call_json(&json!({"op": "urlclean_exempt",
+                          "host": "example.com", "persistent": false}))
+            .unwrap();
+        let v = evaluate_json(&manifest(
+            "https://example.com/search?q=shoes&utm_source=n",
+            RT_MAIN_FRAME,
+        ));
+        assert_eq!(v["action"], "allow");
+        assert_eq!(
+            call_json(&json!({"op": "is_urlclean_exempt",
+                              "host": "www.example.com"}))
+                .unwrap(),
+            json!(true)
+        );
+        // An exempt unwrap target keeps the redirector hop.
+        call_json(&json!({"op": "urlclean_exempt",
+                          "host": "real.example", "persistent": false}))
+            .unwrap();
+        let v = evaluate_json(&manifest(
+            "https://duckduckgo.com/l/?uddg=https%3A%2F%2Freal.example%2F",
+            RT_MAIN_FRAME,
+        ));
+        assert_eq!(v["action"], "allow");
+        // Clearing re-enables cleaning.
+        call_json(&json!({"op": "clear_urlclean_exempt",
+                          "host": "real.example"}))
+            .unwrap();
+        let v = evaluate_json(&manifest(
+            "https://duckduckgo.com/l/?uddg=https%3A%2F%2Freal.example%2F",
+            RT_MAIN_FRAME,
+        ));
+        assert_eq!(v["url"], "https://real.example/");
+
+        // The persisted half rides the snapshot.
+        call_json(&json!({"op": "clear_urlclean_exempt",
+                          "host": "example.com"}))
+            .unwrap();
+        load_snapshot_json(
+            &json!({"urlclean_exceptions": ["Saved.Example"]}),
+        )
+        .unwrap();
+        let v = evaluate_json(&manifest(
+            "https://www.saved.example/?utm_source=x",
+            RT_MAIN_FRAME,
+        ));
+        assert_eq!(v["action"], "allow");
+        assert_eq!(
+            call_json(&json!({"op": "urlclean_exempt_hosts"})).unwrap(),
+            json!(["saved.example"])
+        );
     }
 
     #[test]

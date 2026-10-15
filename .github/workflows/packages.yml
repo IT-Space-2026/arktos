@@ -234,14 +234,16 @@ jobs:
 
       - name: Stage payload + bundled tor into the .app
         run: |
-          # make install payload (translations, useragents.xml,
-          # bundled extensions) into a staging root, then into the
-          # bundle where installedDataDirectory() finds it.
-          make -C src install INSTALL_ROOT="$PWD/stage" PREFIX=/usr
-          mkdir -p Arora.app/Contents/Resources/share
-          # qmake may install under /usr or /usr/local — take whichever
-          # share/arora tree the install produced.
-          cp -a stage/usr/*/share/arora Arora.app/Contents/Resources/share/
+          # The unix install block is !mac-gated, so stage the payload
+          # (compiled translations, useragents.xml, bundled extensions)
+          # straight from the source tree into the bundle-relative path
+          # installedDataDirectory() resolves.
+          mkdir -p Arora.app/Contents/Resources/share/arora
+          cp -a src/.qm/locale Arora.app/Contents/Resources/share/arora/
+          cp -a src/useragent/useragents.xml \
+                Arora.app/Contents/Resources/share/arora/
+          cp -a src/data/extensions \
+                Arora.app/Contents/Resources/share/arora/
           # tor expert bundle where TorManager's bundled-layout
           # search (<bindir>/../lib/tor, binaryDir/../data) finds it.
           ARORA_TOR_PREFIX="$PWD/torpayload" sh BuildProcess/fetch-tor.sh

@@ -55,6 +55,10 @@ TorRequestInterceptor::TorRequestInterceptor(AdBlockNetwork *network, QObject *p
 void TorRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
 {
     // Runs on the WebEngine IO thread — no GUI state may be touched.
+    // POL04: settle the host's cleaning tally on every new top-level
+    // request (the marked follow-up of a cleaning redirect keeps it).
+    if (info.resourceType() == QWebEngineUrlRequestInfo::ResourceTypeMainFrame)
+        PrivacyRequestInterceptor::noteMainFrameRequest(info.requestUrl());
     PolicyRequest req;
     req.url = info.requestUrl();
     req.firstPartyUrl = info.firstPartyUrl();
@@ -82,6 +86,13 @@ void TorRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
         return;
     case PolicyVerdict::Action::Redirect:
         info.redirect(verdict.redirectUrl);
+        // POL04: tally the cleaning stage's dropped tracker units for
+        // the shield panel's per-page count — same shared table the
+        // clearnet interceptor writes.  Main-frame only, like there.
+        if (info.resourceType()
+            == QWebEngineUrlRequestInfo::ResourceTypeMainFrame)
+            PrivacyRequestInterceptor::noteCleanedRedirect(
+                verdict.redirectUrl, verdict.cleanedCount);
         return;
     case PolicyVerdict::Action::Allow:
         if (verdict.refererSet)

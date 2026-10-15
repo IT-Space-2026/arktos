@@ -70,6 +70,11 @@ struct PolicyVerdict {
     Action action = Action::Pass;
     QUrl redirectUrl;
     QByteArray reason;
+    // POL04: on a Redirect the cleaning stage reports how many tracker
+    // units it dropped (stripped params + adopted unwrap hops) — the
+    // interceptors tally it per page for the shield panel's
+    // "N trackers removed" line.  0 when no cleaning fired.
+    int cleanedCount = 0;
     bool refererSet = false;       // Allow: write Referer = refererValue
     QByteArray refererValue;       // empty value = header removal
 };
@@ -106,6 +111,10 @@ public:
         bool stripTrackingParams = true;
         bool domainBlocklist = true;
         QStringList httpsOnlyExceptions;
+        // POL04: persisted per-site link-cleaning exemptions — the
+        // loadSettings reader fills this from the site-decision store
+        // (or the legacy QSettings list in no-rust builds).
+        QStringList urlCleanExceptions;
     };
     static void loadSnapshot(const Snapshot &snapshot);
 
@@ -175,6 +184,16 @@ public:
                                   int resourceType, bool scriptAllowed);
     static bool isPrivateOrLocalHost(const QString &host);
     static QUrl strippedUrl(const QUrl &url);
+
+    // POL04: per-site link-cleaning exemptions — the shield panel's
+    // "Clean tracking links" toggle.  allowUrlCleanExempt reports
+    // whether the caller still needs to persist the row (same split
+    // as allowHttpForHost: the policy keeps the live sets, storage
+    // stays Qt-side).
+    static bool isUrlCleanExempt(const QString &host);
+    static bool allowUrlCleanExempt(const QString &host, bool persistent);
+    static void clearUrlCleanExempt(const QString &host);
+    static QStringList urlCleanExemptHosts();
 
     // PERF01: verdict-cache introspection — test/diagnostic seams.
     // evaluate() memoizes non-main-frame verdicts keyed on the whole

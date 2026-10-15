@@ -18,5 +18,128 @@
         "cjevent", "irclickid", "irgwc", "epik", "sccid", "rb_clickid",
         "sscid", "zanpid"
     ],
+    "scoped": [
+        {
+            "hosts": ["amazon.*"],
+            "params": [
+                "ref", "ref_*", "tag", "linkcode", "ascsubtag",
+                "pf_rd_*", "pd_rd_*", "qid", "sr", "srs",
+                "smid", "sprefix", "crid", "th", "dchild"
+            ]
+        },
+        {
+            "hosts": ["imdb.com"],
+            "params": ["ref", "ref_*"]
+        },
+        {
+            "hosts": ["google.*"],
+            "params": [
+                "sa", "sa_*", "ved", "usg", "ei", "iflsig", "ictx",
+                "sxsrf", "psi", "sca_*", "sei", "aqs", "gs_*", "sclient",
+                "oq", "uact", "biw", "bih", "dpr", "cad", "atyp",
+                "zx", "gws_*", "vet", "yil"
+            ]
+        },
+        {
+            "hosts": ["bing.com"],
+            "params": [
+                "cvid", "form", "pq", "qs", "sk", "sc", "sp", "pc",
+                "ocid", "wpc", "rdr", "rdrig"
+            ]
+        },
+        {
+            "hosts": ["x.com", "twitter.com"],
+            "params": ["s", "t", "cn", "sig", "vertical", "ref_*"]
+        },
+        {
+            "hosts": ["youtube.com", "youtu.be"],
+            "params": ["feature", "pp", "kw", "src_vid", "annotation_id"]
+        },
+        {
+            "hosts": ["tiktok.com"],
+            "params": [
+                "_d", "_r", "share_*", "sender_*", "tt_from", "u_code",
+                "checksum", "sec_uid", "aweme_*"
+            ]
+        },
+        {
+            "hosts": ["linkedin.com"],
+            "params": [
+                "lipi", "midtoken", "midsig", "trkemail", "eid",
+                "originalsubdomain", "original_*", "otpToken"
+            ]
+        },
+        {
+            "hosts": ["facebook.com"],
+            "params": [
+                "__tn__", "eav", "paipv", "_rdr", "fref", "hc_location",
+                "dti", "cct", "ara"
+            ]
+        },
+        {
+            "hosts": ["reddit.com"],
+            "params": [
+                "ref_source", "ref_campaign", "correlation_id",
+                "utm_name", "d2x_*"
+            ]
+        },
+        {
+            "hosts": ["ebay.*"],
+            "params": [
+                "_trkparms", "_trksid", "mkevt", "mkcid", "mkrid",
+                "campid", "toolid", "customid"
+            ]
+        },
+        {
+            "hosts": ["twitch.tv"],
+            "params": ["tt_*", "referrer", "deep_link"]
+        },
+        {
+            "hosts": ["baidu.com"],
+            "params": ["rsv_*", "ieid", "fenlei", "oexp", "fr"]
+        },
+        {
+            "hosts": ["wikipedia.org", "wikimedia.org", "wikidata.org",
+                      "mediawiki.org", "wikibooks.org", "wikinews.org",
+                      "wikiquote.org", "wikisource.org", "wikiversity.org",
+                      "wikivoyage.org", "wiktionary.org"],
+            "params": ["wprov"]
+        },
+        {
+            "hosts": ["duckduckgo.com"],
+            "params": ["t", "atb"]
+        },
+        {
+            "hosts": ["yandex.*"],
+            "params": ["clid", "rtt", "redircnt", "wiz_*", "yabs-*"]
+        },
+        {
+            "hosts": ["medium.com"],
+            "params": ["sk"]
+        }
+    ],
+    "unwrap": [
+        {"hosts": ["google.*"], "path": "/url", "param": "q"},
+        {"hosts": ["google.*"], "path": "/url", "param": "url"},
+        {"hosts": ["google.*"], "path": "/imgres", "param": "imgurl"},
+        {"hosts": ["googleadservices.com"],
+         "path": "/pagead/aclk", "param": "adurl"},
+        {"host": "l.facebook.com", "path": "/l.php", "param": "u"},
+        {"host": "lm.facebook.com", "path": "/l.php", "param": "u"},
+        {"host": "l.messenger.com", "path": "/l.php", "param": "u"},
+        {"host": "l.instagram.com", "path": "/", "param": "u"},
+        {"host": "out.reddit.com", "path": "/", "param": "url"},
+        {"host": "duckduckgo.com", "path": "/l/", "param": "uddg"},
+        {"host": "youtube.com", "path": "/redirect", "param": "q"},
+        {"host": "away.vk.com", "path": "/away.php", "param": "to"},
+        {"host": "safelinks.protection.outlook.com",
+         "path": "/", "param": "url"},
+        {"host": "steamcommunity.com",
+         "path": "/linkfilter/", "param": "url"},
+        {"host": "t.umblr.com", "path": "/redirect", "param": "z"},
+        {"host": "disq.us", "path": "/url", "param": "url"},
+        {"host": "href.li", "path": "/", "param": "q"},
+        {"host": "refind.com", "path": "/share/url", "param": "url"}
+    ],
     "exceptions": []
 }

@@ -235,6 +235,23 @@ SitePanel::SitePanel(QWidget *parent)
             this, &SitePanel::toggleHttpAllowance);
     layout->addWidget(m_allowHttp);
 
+    // POL04: per-site exemption from the ClearURLs-style navigation
+    // cleaner — the same host-keyed decision machinery the HTTP
+    // allowance above uses; the count line reports the tracker units
+    // the current page's own navigation actually stripped or
+    // unwrapped (hidden when there is nothing honest to say).
+    m_cleanLinks = new QCheckBox(
+        tr("Clean tracking links on this site"), this);
+    m_cleanLinks->setObjectName(QLatin1String("siteCleanLinks"));
+    connect(m_cleanLinks, &QCheckBox::toggled,
+            this, &SitePanel::toggleUrlCleaning);
+    layout->addWidget(m_cleanLinks);
+
+    m_cleanedCount = plainLabel(QString(), this);
+    m_cleanedCount->setObjectName(QLatin1String("siteCleanedCount"));
+    m_cleanedCount->setVisible(false);
+    layout->addWidget(m_cleanedCount);
+
     // SAFE06: per-site exemption from the injected fingerprint
     // countermeasures — canvas-heavy pages can break under the
     // readout noise.  The exception list is baked into the script
@@ -530,6 +547,30 @@ void SitePanel::refresh()
     m_allowHttp->setChecked(
         webSite && PrivacyRequestInterceptor::isHttpAllowedHost(site));
 
+    // POL04: the per-site link-cleaning exemption is host-keyed like
+    // the HTTP allowance; the global privacy/urlCleaning toggle gates
+    // the row.  The count line only appears when the current page's
+    // navigation really dropped tracker units — no decorative zero.
+    const bool cleaningOn =
+        PrivacyRequestInterceptor::stripTrackingParamsEnabled();
+    m_cleanLinks->setEnabled(webSite && cleaningOn);
+    m_cleanLinks->setChecked(
+        webSite && !PrivacyRequestInterceptor::isUrlCleanExempt(site));
+    m_cleanLinks->setToolTip(
+        !webSite
+            ? tr("Link cleaning applies to web sites")
+            : !cleaningOn
+                ? tr("Link cleaning is off — enable it in "
+                     "Settings > Privacy")
+                : tr("Unchecked, this host's links keep their "
+                     "tracking parameters and redirect hops."));
+    const int removed = (webSite && cleaningOn)
+        ? PrivacyRequestInterceptor::trackersRemovedCount(site)
+        : 0;
+    m_cleanedCount->setVisible(removed > 0);
+    if (removed > 0)
+        m_cleanedCount->setText(tr("%1 trackers removed").arg(removed));
+
     // SAFE06: the row is only meaningful while protection is active
     // on this page's profile — greyed with an explanation otherwise.
     FingerprintProtector *protector = FingerprintProtector::instance();
@@ -643,6 +684,27 @@ void SitePanel::toggleHttpAllowance(bool checked)
         PrivacyRequestInterceptor::allowHttpForHost(site, persistent);
     else
         PrivacyRequestInterceptor::clearHttpAllowance(site);
+    refresh();
+}
+
+void SitePanel::toggleUrlCleaning(bool checked)
+{
+    if (m_refreshing)
+        return;
+    const QString site = host();
+    if (site.isEmpty() || !m_webView || !m_webView->page())
+        return;
+    // Off-the-record pages never write the persistent store — the
+    // exemption lives only for the session, like the other rows.
+    const bool persistent =
+        !m_webView->page()->profile()->isOffTheRecord();
+    if (checked)
+        PrivacyRequestInterceptor::clearUrlCleanExempt(site);
+    else
+        PrivacyRequestInterceptor::allowUrlCleanExempt(site, persistent);
+    // The pipeline consults the exemption per request — a reload
+    // shows the page with its links left dirty again.
+    m_webView->reload();
     refresh();
 }
 

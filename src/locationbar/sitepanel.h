@@ -63,6 +63,10 @@ class WebView;
 //     PopupBlocker per-host exception list,
 //   - a SAFE01 "always allow HTTP" toggle writing the HTTPS-Only
 //     exception list the warning interstitial consults,
+//   - a POL04 "clean tracking links on this site" toggle writing the
+//     per-site exemption from the ClearURLs-style navigation cleaner,
+//     plus a count of the tracker units the current page's
+//     navigation actually stripped or unwrapped,
 //   - the remembered WebPermissionManager grants for the origin with
 //     per-entry revoke buttons (SEC05),
 //   - a "clear site data" button wiping the host's cookies and the
@@ -123,6 +127,7 @@ private:
     void applyJavaScriptRule(int index);
     void togglePopups(bool checked);
     void toggleHttpAllowance(bool checked);
+    void toggleUrlCleaning(bool checked);
     void toggleFingerprintSpoof(bool checked);
     void clearSiteData();
     void rebuildPermissionRows();
@@ -152,6 +157,8 @@ private:
     QLabel *m_javaScriptState;
     QCheckBox *m_allowPopups;
     QCheckBox *m_allowHttp;
+    QCheckBox *m_cleanLinks;
+    QLabel *m_cleanedCount;
     QCheckBox *m_spoofFingerprint;
     QWidget *m_permissionsBox;
     QVBoxLayout *m_permissionsLayout;

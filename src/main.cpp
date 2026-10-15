@@ -4763,6 +4763,7 @@ int main(int argc, char **argv)
         "tor-window-smoke", "tor-circuit-click-smoke", "tor-newtab-smoke",
         "sorry-smoke", "icons-smoke", "seclvl-smoke",
         "ping-smoke", "httpsonly-smoke", "resourceblock-smoke",
+        "urlclean-smoke",
         "fingerprint-smoke", "fingerprint-child-smoke",
         "fingerprint-inject-smoke", "fingerprint-inject-seed",
         "reader-smoke", "reader-live",
@@ -5863,6 +5864,163 @@ int main(int argc, char **argv)
         // The page's own script drives the renderer-initiated
         // cross-site navigation to /nav (the referer probe) after the
         // duplicate subresource fetches complete — see the fixture.
+    }
+
+    // POL04: live ClearURLs verification over real WebEngine
+    // navigations.  A fixture ruleset declares the loopback host a
+    // redirector so the unwrap/restrip pipeline is provable without
+    // hitting google.com: leg A navigates a /redir?u=<target> URL and
+    // the interceptor must rewrite it client-side to the stripped
+    // target (the redirector path never reaches the wire, the URL bar
+    // shows the clean URL, and the removed-tracker tally counts both
+    // the unwrapped hop and the stripped parameter); leg B exempts the
+    // site and proves tracking params then pass through dirty.
+    // Exits 0 on PASS.
+    if (args.contains(QLatin1String("--urlclean-smoke"))) {
+#ifdef ARORA_RUSTCORE
+        for (AdBlockSubscription *s : AdBlockManager::instance()->subscriptions())
+            s->setEnabled(false);
+        // The fixture set replaces the vendored rules for this
+        // process — the run exits when the smoke finishes.
+        const QByteArray rules = QByteArrayLiteral(
+            "{\"version\":1,"
+            "\"params\":[\"utm_*\",\"fbclid\"],"
+            "\"unwrap\":[{\"host\":\"127.0.0.1\",\"path\":\"/redir\","
+            "\"param\":\"u\"}]}");
+        if (rc_urlstrip_load_rules(
+                reinterpret_cast<const uint8_t *>(rules.constData()),
+                size_t(rules.size())) != RC_OK) {
+            qInfo() << "urlclean-smoke: FAIL (ruleset rejected)";
+            return 1;
+        }
+        QTcpServer *server = new QTcpServer(&application);
+        if (!server->listen(QHostAddress::LocalHost)) {
+            qInfo() << "urlclean-smoke: FAIL (listen)"
+                    << server->errorString();
+            return 1;
+        }
+        const quint16 port = server->serverPort();
+        auto observed = std::make_shared<QHash<QString, QByteArray>>();
+        QObject::connect(server, &QTcpServer::newConnection, &application,
+                         [server, observed]() {
+            QTcpSocket *client = server->nextPendingConnection();
+            QObject::connect(client, &QTcpSocket::readyRead, client,
+                             [client, observed]() {
+                const QByteArray request = client->readAll();
+                const int splitAt = request.indexOf("\r\n\r\n");
+                const QByteArray head = splitAt == -1 ? request
+                    : request.left(splitAt);
+                const QList<QByteArray> lines = head.split('\n');
+                for (const QByteArray &line : lines) {
+                    if (line.startsWith("GET ")) {
+                        const QString path = QString::fromLatin1(
+                            line.mid(4, line.indexOf(" HTTP/") - 4)
+                                .trimmed());
+                        const QString key = QLatin1String("path:") + path;
+                        (*observed)[key] = QByteArray::number(
+                            observed->value(key).toInt() + 1);
+                    }
+                }
+                const QByteArray body = "<html><body>ok</body></html>";
+                const QByteArray reply =
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"
+                    "Content-Length: " + QByteArray::number(body.size())
+                    + "\r\nConnection: close\r\n\r\n" + body;
+                client->write(reply);
+                client->disconnectFromHost();
+            });
+        });
+
+        const QString base =
+            QStringLiteral("http://127.0.0.1:%1").arg(port);
+        const QString inner =
+            base + QLatin1String("/target?utm_source=x&keep=1");
+        const QUrl wrapUrl(QString(
+            base + QLatin1String("/redir?u=")
+            + QString::fromLatin1(QUrl::toPercentEncoding(inner))
+            + QLatin1String("&fbclid=w")));
+        const QUrl dirtyUrl(
+            base + QLatin1String("/dirty?utm_source=z&ok=3"));
+
+        auto stage = std::make_shared<int>(0);
+        auto ticks = std::make_shared<int>(0);
+        auto urlBarAtTarget = std::make_shared<QUrl>();
+        // The tally is per-page: it is read once leg A's cleaned
+        // follow-up request commits (still describing that page) and
+        // again after leg B's dirty navigation settles it to zero.
+        auto tallyAtTarget = std::make_shared<int>(-1);
+        QTimer *poll = new QTimer(&application);
+        QObject::connect(poll, &QTimer::timeout, &application,
+                         [&application, view, poll, stage, ticks,
+                          observed, dirtyUrl, urlBarAtTarget,
+                          tallyAtTarget]() {
+            if (++*ticks > 40) {
+                qInfo() << "urlclean-smoke: FAIL (timeout)"
+                        << "stage:" << *stage
+                        << "observed:" << observed->keys();
+                application.exit(1);
+                return;
+            }
+            if (*stage == 0) {
+                // Leg A: /redir?u=<inner>&fbclid=w must reach the wire
+                // only as the unwrapped+stripped /target?keep=1.
+                if (!observed->contains(
+                        QLatin1String("path:/target?keep=1")))
+                    return;
+                *urlBarAtTarget = view->url();
+                // One unwrapped hop + one stripped utm_source on the
+                // unwrapped target = 2.
+                *tallyAtTarget =
+                    PrivacyRequestInterceptor::trackersRemovedCount(
+                        QLatin1String("127.0.0.1"));
+                // Leg B: exempt the site — cleaning must disengage.
+                PrivacyRequestInterceptor::allowUrlCleanExempt(
+                    QLatin1String("127.0.0.1"), false);
+                *stage = 1;
+                view->loadUrl(dirtyUrl);
+                return;
+            }
+            if (!observed->contains(
+                    QLatin1String("path:/dirty?utm_source=z&ok=3")))
+                return;
+            poll->stop();
+            PrivacyRequestInterceptor::clearUrlCleanExempt(
+                QLatin1String("127.0.0.1"));
+            bool redirOnWire = false;
+            bool trackerOnWire = false;
+            for (const QString &key : observed->keys()) {
+                const QString path = key.mid(5);
+                redirOnWire |= path.startsWith(QLatin1String("/redir"));
+                // Leg A's tracker params must never appear; leg B's
+                // utm_source is expected (exempt host).
+                trackerOnWire |= path.contains(QLatin1String("fbclid"))
+                    || (path.startsWith(QLatin1String("/target"))
+                        && path.contains(QLatin1String("utm_source")));
+            }
+            // Leg B's navigation settles the tally: the current page
+            // cleaned nothing, so an honest counter now reads 0.
+            const int tallyAfterDirty =
+                PrivacyRequestInterceptor::trackersRemovedCount(
+                    QLatin1String("127.0.0.1"));
+            const bool pass = !redirOnWire && !trackerOnWire
+                && urlBarAtTarget->path() == QLatin1String("/target")
+                && urlBarAtTarget->query() == QLatin1String("keep=1")
+                && *tallyAtTarget == 2 && tallyAfterDirty == 0;
+            qInfo() << "urlclean-smoke:" << (pass ? "PASS" : "FAIL")
+                    << "redirOnWire:" << redirOnWire
+                    << "trackerOnWire:" << trackerOnWire
+                    << "urlBar:" << *urlBarAtTarget
+                    << "trackersRemoved:" << *tallyAtTarget
+                    << "tallyAfterDirty:" << tallyAfterDirty
+                    << "observed:" << observed->keys();
+            application.exit(pass ? 0 : 1);
+        });
+        poll->start(250);
+        view->loadUrl(wrapUrl);
+#else
+        qInfo() << "urlclean-smoke: SKIP (built without ARORA_RUSTCORE)";
+        return 0;
+#endif
     }
 
     // REF01: deterministic referer matrix over the two loopback

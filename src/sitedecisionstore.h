@@ -46,6 +46,9 @@ inline constexpr char KindAdBlock[] = "adblock";
 // clearnet interceptor applies a hit as the User-Agent request
 // header; tor never consults the kind.
 inline constexpr char KindUserAgent[] = "uaspoof";
+// POL04: per-site link-cleaning exemptions — host -> "" (presence =
+// opt out of the shield's ClearURLs-style cleaner for that host).
+inline constexpr char KindUrlClean[] = "urlclean";
 
 // Fetch the stored value; false when no row exists (or the call
 // failed — callers treat both as "no decision").

@@ -97,9 +97,13 @@ browsing profile:
   Argon2id master passphrase; a Rust implementation (rustcore) is the
   default backend — the crates are default-on, see Build flags —
   byte-compatible with the C++ fallback used in no-rust builds.
-- **Tracking-parameter stripping** — ClearURLs-style rules strip
-  tracking query params from navigations (vendored rules +
-  data-dir override; rustcore backend, C++ fallback).
+- **Tracking-parameter stripping** — ClearURLs-style rules clean
+  top-level navigations: global + domain-scoped tracking params
+  (vendored rules + data-dir override; rustcore backend, C++
+  fallback) and redirect unwrapping that follows known redirector
+  links (google /url, facebook l.php, DDG /l, safelinks…) straight
+  to the real destination. Per-site opt-out + a "N trackers removed"
+  count on the shield panel; master toggle in Preferences → Privacy.
 - **Anti-phishing/malware blocklist** — a vendored domain seed merged
   with a consent-gated URLhaus/OpenPhish feed; listed main-frame
   navigations stop at a warning interstitial with a session-only
