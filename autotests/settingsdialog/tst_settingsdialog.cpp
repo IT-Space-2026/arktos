@@ -113,6 +113,7 @@ private slots:
     void sidebarPanelOptions();
     void settingsFilter();
     void iconThemeSelector();
+    void iconThemeRetiredNative();
     void themeSelector();
     void themePreview();
     void uniformSidebarIcons();
@@ -379,7 +380,7 @@ void tst_SettingsDialog::saveAndReload()
         dialog.homeLineEdit->setText(QLatin1String("http://home.example.com/"));
         dialog.startupLastSessionRadio->setChecked(true);
         dialog.showSearchBox->setChecked(true);
-        // ICONS01: pick a non-native bundled set so the round-trip
+        // ICONS01: pick a bundled set so the round-trip
         // proves the persisted id lands on the right combo row.
         const int tablerRow = dialog.iconThemeCombo->findData(
             QLatin1String("tabler"));
@@ -1655,6 +1656,31 @@ void tst_SettingsDialog::iconThemeSelector()
             != strips.value(QLatin1String("tabler")));
     QVERIFY(strips.value(QLatin1String("adwaita"))
             != strips.value(QLatin1String("breeze")));
+    // ICONS12: the retired OS-theme option is not a row.
+    QCOMPARE(dialog.iconThemeCombo->findData(QLatin1String("native")),
+             -1);
+}
+
+// ICONS12: a profile pinned to the retired "native" id migrates to
+// the default bundled set — the combo shows the Tabler row selected
+// rather than a dead row or a blank pick.
+void tst_SettingsDialog::iconThemeRetiredNative()
+{
+    QSettings settings;
+    const QVariant saved = settings.value(
+        QLatin1String("MainWindow/iconTheme"));
+    settings.setValue(QLatin1String("MainWindow/iconTheme"),
+                      QLatin1String("native"));
+
+    SettingsDialog dialog;
+    QCOMPARE(dialog.iconThemeCombo->currentData().toString(),
+             QLatin1String("tabler"));
+    QCOMPARE(AroraIcon::theme(), QLatin1String("tabler"));
+
+    if (saved.isValid())
+        settings.setValue(QLatin1String("MainWindow/iconTheme"), saved);
+    else
+        settings.remove(QLatin1String("MainWindow/iconTheme"));
 }
 
 // THEME01: the Appearance Theme combo persists browser/colorScheme
@@ -1872,8 +1898,6 @@ void tst_SettingsDialog::uniformSidebarIcons()
     // Re-resolving under each bundled set keeps the pinned extent and
     // uniform row heights.
     for (const QString &id : AroraIcon::themeIds()) {
-        if (id == QLatin1String("native"))
-            continue;
         AroraIcon::setTheme(id);
         QCOMPARE(dialog.pagesList->iconSize(), iconExtent);
         checkRows();
