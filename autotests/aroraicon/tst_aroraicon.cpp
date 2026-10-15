@@ -46,7 +46,7 @@ private slots:
     void liveSwitch();
     void darkVariant();
     void retiredIdMigrates();
-    void legacyFallback();
+    void bundledFallback();
     void iconForTheme();
     void chromeIcon();
 };
@@ -94,10 +94,11 @@ void tst_AroraIcon::themeIds()
 {
     const QStringList ids = AroraIcon::themeIds();
     // ICONS12: "native" is retired — only bundled sets are
-    // selectable.
+    // selectable.  ICONS13: so is the bundled "legacy" set.
     QCOMPARE(ids.count(), 4);
     QCOMPARE(ids.first(), QLatin1String("adwaita"));
     QVERIFY(!ids.contains(QLatin1String("native")));
+    QVERIFY(!ids.contains(QLatin1String("legacy")));
     for (const QString &id : ids)
         QVERIFY(!AroraIcon::themeDisplayName(id).isEmpty());
 }
@@ -159,10 +160,11 @@ void tst_AroraIcon::bundledCoverage()
 }
 
 // ICONS10: the default pick is the bundled Tabler set, and every
-// chrome name the code can ask for ships inside it — a name absent
-// from the set's own directory falls through the Inherits chain to
-// arora-legacy's 2009 art, the mixed-style regression the audit
-// exists to prevent.  The -dark variant must cover the same surface.
+// chrome name the code can ask for ships inside it — ICONS13 made
+// tabler the fallback root every other set inherits (arora-legacy's
+// 2009 art is gone), so a mixed-style fall-through is the regression
+// the audit exists to prevent.  The -dark variant must cover the
+// same surface.
 void tst_AroraIcon::defaultCoverage()
 {
     QCOMPARE(AroraIcon::theme(), QLatin1String("tabler"));
@@ -229,7 +231,8 @@ void tst_AroraIcon::darkVariant()
 
 // ICONS12: the retired "native" id — and any other unknown pick —
 // migrates to the default bundled set instead of erroring, so a
-// profile pinned to it keeps working.  Under a dark palette the
+// profile pinned to it keeps working.  ICONS13: the removed
+// arora-legacy set migrates the same way.  Under a dark palette the
 // migrated pick still engages the -dark recolor.
 void tst_AroraIcon::retiredIdMigrates()
 {
@@ -244,6 +247,18 @@ void tst_AroraIcon::retiredIdMigrates()
     settings.setValue(QLatin1String("MainWindow/iconTheme"),
                       QLatin1String("no-such-set"));
     QCOMPARE(AroraIcon::theme(), QLatin1String("tabler"));
+    // ICONS13: a profile pinned to the removed legacy set (stored
+    // either bare or with the theme-name prefix) reads back as the
+    // default bundled set.
+    settings.setValue(QLatin1String("MainWindow/iconTheme"),
+                      QLatin1String("legacy"));
+    QCOMPARE(AroraIcon::theme(), QLatin1String("tabler"));
+    settings.setValue(QLatin1String("MainWindow/iconTheme"),
+                      QLatin1String("arora-legacy"));
+    QCOMPARE(AroraIcon::theme(), QLatin1String("tabler"));
+    AroraIcon::setTheme(QLatin1String("arora-legacy"));
+    QCOMPARE(QIcon::themeName(),
+             AroraIcon::effectiveThemeName(QLatin1String("tabler")));
 
     // An explicit setTheme on the retired id lands on the default
     // set — no dangling "native" resolution.
@@ -282,20 +297,22 @@ void tst_AroraIcon::retiredIdMigrates()
     AroraIcon::setTheme(AroraIcon::theme());
 }
 
-// With no resolvable theme at all the chain must still reach the
-// original 2009 artwork (arora-legacy) — and names missing there
-// must keep falling through to the bundled Adwaita inheritance.
-void tst_AroraIcon::legacyFallback()
+// ICONS13: with no resolvable theme at all the chain must still
+// reach the bundled fallback (arora-tabler, the full-coverage set
+// that replaced arora-legacy) rather than painting blank.
+void tst_AroraIcon::bundledFallback()
 {
     QIcon::setThemeName(QLatin1String("arora-does-not-exist"));
     QVERIFY(!AroraIcon::get(QLatin1String("tab-new")).pixmap(QSize(16, 16))
                  .isNull());
     QVERIFY(!AroraIcon::get(QLatin1String("window-close")).pixmap(QSize(16, 16))
                  .isNull());
-    // Only in the bundled sets — proves the fallback theme's
-    // Inherits=arora-adwaita is walked.
     QVERIFY(!AroraIcon::get(QLatin1String("go-previous")).pixmap(QSize(16, 16))
                  .isNull());
+    // The retired theme name itself resolves to nothing — it is gone
+    // from the bundle, not shadowed.
+    QVERIFY(QDir(QLatin1String(":/icons/arora-legacy"))
+                .entryList().isEmpty());
 }
 
 // Per-option preview icons for the Settings combo: each bundled set
@@ -345,7 +362,7 @@ void tst_AroraIcon::chromeIcon()
     const QIcon icon =
         AroraIcon::getChrome(QLatin1String("go-previous"));
 
-    // Pin the persisted pick first — legacyFallback deliberately
+    // Pin the persisted pick first — bundledFallback deliberately
     // leaves QIcon::themeName on a nonexistent theme, and the
     // round-trip compare below needs a deterministic base shape.
     AroraIcon::setTheme(AroraIcon::theme());

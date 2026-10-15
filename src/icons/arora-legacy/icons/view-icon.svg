@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<!-- ICONS07: tile grid — View > Icon-Only Tabs (freedesktop "view as
-     icons").  Mid-grey stays readable on light and dark palettes. -->
-<svg xmlns="http://www.w3.org/2000/svg" height="16" width="16" viewBox="0 0 16 16">
-    <rect x="3" y="3" width="4.2" height="4.2" rx="0.8" fill="#7a7a7a"/>
-    <rect x="8.8" y="3" width="4.2" height="4.2" rx="0.8" fill="#7a7a7a"/>
-    <rect x="3" y="8.8" width="4.2" height="4.2" rx="0.8" fill="#7a7a7a"/>
-    <rect x="8.8" y="8.8" width="4.2" height="4.2" rx="0.8" fill="#7a7a7a"/>
-</svg>

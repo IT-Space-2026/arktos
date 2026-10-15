@@ -72,9 +72,9 @@ void init()
     if (!paths.contains(s_resourcePrefix))
         paths.append(s_resourcePrefix);
     QIcon::setThemeSearchPaths(paths);
-    // The original 2009 artwork: last resort before hicolor for a
-    // name the active bundled set misses.
-    QIcon::setFallbackThemeName(QLatin1String("arora-legacy"));
+    // ICONS13: Tabler ships the full chrome surface — it is the last
+    // resort before hicolor for a name the active bundled set misses.
+    QIcon::setFallbackThemeName(QLatin1String("arora-tabler"));
 
     if (qApp) {
         // A forced light->dark flip (UIP01) and a desktop scheme
@@ -297,8 +297,7 @@ QStringList AroraIcon::names()
     // full chrome surface, so reading only one set's directory would
     // under-report what callers can ask for.
     for (const char *set : { "arora-adwaita", "arora-breeze",
-                            "arora-tabler", "arora-lucide",
-                            "arora-legacy" }) {
+                            "arora-tabler", "arora-lucide" }) {
         QStringList entries = QDir(s_resourcePrefix + QLatin1Char('/')
             + QLatin1String(set) + QLatin1String("/icons"))
             .entryList(QStringList(QLatin1String("*.svg")),

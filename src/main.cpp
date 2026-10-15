@@ -10184,8 +10184,9 @@ int main(int argc, char **argv)
     // Headless verification for ICONS01: each bundled set must render
     // every registered icon name, a theme switch must reach already
     // created icons, the -dark recolor variants must engage under a
-    // dark palette, and the 2009 fallback art must resolve when the
-    // active theme misses a name.  Fully synchronous — no event loop.
+    // dark palette, and the bundled fallback (arora-tabler) must
+    // resolve when the active theme misses a name.  Fully
+    // synchronous — no event loop.
     if (args.contains(QLatin1String("--icons-smoke"))) {
         int failures = 0;
         auto check = [&failures](const QString &what, bool ok) {
@@ -10344,15 +10345,14 @@ int main(int argc, char **argv)
               opaque > 0 && luminance / opaque > 140);
         qApp->setPalette(savedPalette);
 
-        // The original 2009 artwork is the last resort: under a theme
-        // that does not exist at all, legacy names still resolve, and
-        // names missing there keep falling through to the bundled
-        // Adwaita inheritance.
+        // ICONS13: the bundled Tabler set is the last resort — under
+        // a theme that does not exist at all, names still resolve
+        // through the fallback theme rather than painting blank.
         QIcon::setThemeName(QLatin1String("arora-does-not-exist"));
-        check(QLatin1String("legacy fallback"),
+        check(QLatin1String("bundled fallback"),
               !AroraIcon::get(QLatin1String("tab-new"))
                    .pixmap(QSize(16, 16)).isNull());
-        check(QLatin1String("inherited fallback"),
+        check(QLatin1String("bundled fallback (nav)"),
               !AroraIcon::get(QLatin1String("go-previous"))
                    .pixmap(QSize(16, 16)).isNull());
 
