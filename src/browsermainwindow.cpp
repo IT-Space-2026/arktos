@@ -131,6 +131,9 @@
 #include <qmessagebox.h>
 #include <qstatusbar.h>
 #include <qtimer.h>
+#include <qstyle.h>
+#include <qstyleoption.h>
+#include <qstylepainter.h>
 #include <qtoolbar.h>
 #include <qtoolbutton.h>
 #include <qinputdialog.h>
@@ -234,6 +237,84 @@ static QIcon torAppMenuIcon()
 {
     return QIcon(new AroraLogoEngine(true));
 }
+
+// MENU17: brand accent — the app-menu button paints its logo ~25%
+// larger than the bar's shared nav glyphs.  A widget added through
+// QToolBar::addWidget keeps its own iconSize property, but
+// QToolButton::initStyleOption unconditionally swaps it for the
+// parent toolbar's, so a plain setIconSize() changes the accessor
+// value and never the pixels.  This button restores its own iconSize
+// on the style option at the two read sites — paint and sizeHint —
+// so the mark grows while every sibling stays at the bar's size.
+// The engine already letterboxes the mark into a centered square, so
+// the bigger cell still cannot deform it.
+class AppMenuButton : public QToolButton
+{
+public:
+    explicit AppMenuButton(QWidget *parent = nullptr)
+        : QToolButton(parent)
+    {
+    }
+
+    QSize sizeHint() const override
+    {
+        // QToolButton::sizeHint() verbatim, except opt.iconSize keeps
+        // this button's own size instead of the toolbar's.
+        ensurePolished();
+        QStyleOptionToolButton opt;
+        initStyleOption(&opt);
+        opt.iconSize = iconSize();
+        int w = 0;
+        int h = 0;
+        const QFontMetrics fm(fontMetrics());
+        if (opt.toolButtonStyle != Qt::ToolButtonTextOnly) {
+            w = opt.iconSize.width();
+            h = opt.iconSize.height();
+        }
+        if (opt.toolButtonStyle != Qt::ToolButtonIconOnly) {
+            QSize textSize = fm.size(Qt::TextShowMnemonic, text());
+            textSize.setWidth(textSize.width()
+                              + fm.horizontalAdvance(QLatin1Char(' ')) * 2);
+            if (opt.toolButtonStyle == Qt::ToolButtonTextUnderIcon) {
+                h += 4 + textSize.height();
+                w = qMax(w, textSize.width());
+            } else if (opt.toolButtonStyle == Qt::ToolButtonTextBesideIcon) {
+                w += 4 + textSize.width();
+                h = qMax(h, textSize.height());
+            } else { // TextOnly
+                w = textSize.width();
+                h = textSize.height();
+            }
+        }
+        opt.rect.setSize(QSize(w, h)); // PM_MenuButtonIndicator needs the height
+        if (popupMode() == QToolButton::MenuButtonPopup)
+            w += style()->pixelMetric(QStyle::PM_MenuButtonIndicator,
+                                      &opt, this);
+        QSize grown = style()->sizeFromContents(QStyle::CT_ToolButton,
+                                                &opt, QSize(w, h), this);
+        // The bigger mark fills the face instead of stretching the
+        // row: cap the button at a square one pixel over the standard
+        // toolbar-button height, so the nav bar stays driven by the
+        // location field.  The style only ever clips the pixmap to
+        // the label cell after bounding the request to iconSize, so
+        // a snug face shrinks the glyph a pixel — never deforms it.
+        const int edge = QToolButton::sizeHint().height() + 1;
+        return grown.boundedTo(QSize(edge, edge));
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        // QToolButton::paintEvent() verbatim plus the same iconSize
+        // restore — this is where the toolbar clamp would otherwise
+        // shrink the glyph back to the shared nav size.
+        QStylePainter p(this);
+        QStyleOptionToolButton opt;
+        initStyleOption(&opt);
+        opt.iconSize = iconSize();
+        p.drawComplexControl(QStyle::CC_ToolButton, opt);
+    }
+};
 
 BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     : QMainWindow(parent, flags)
@@ -1930,22 +2011,28 @@ void BrowserMainWindow::setupToolBar()
     // bar's iconSize, which the MENU07/MENU09 construction (a fixed
     // 36px inside a margin-less host) fought, rendering the logo
     // oversized against the nav glyphs.  With the host gone it
-    // matches the siblings; the property is synced so iconSize()
-    // reads what is painted.
-    m_appMenuButton = new QToolButton(m_navigationBar);
+    // matches the siblings' row; MENU17 then sizes the mark alone up
+    // ~25% (18 -> 22.5 -> 23px) as a Firefox-style brand accent —
+    // AppMenuButton is what lets its own iconSize reach the pixels
+    // under that clamp.  The square request keeps the ratio: the
+    // logo scales uniformly, never stretches.
+    m_appMenuButton = new AppMenuButton(m_navigationBar);
     m_appMenuButton->setObjectName(QLatin1String("appMenuButton"));
     m_appMenuButton->setAutoRaise(true);
     // MENU10: the engine pins the paint to a square — a non-square
     // icon cell under a stylesheet or foreign style can never
     // stretch the mark.  The bundled vector art stays crisp at the
-    // bar's 18px and fractional scale factors.
+    // enlarged size and fractional scale factors.
     m_appMenuButton->setIcon(QIcon(new AroraLogoEngine(false)));
     // MENU13: the button is icon-only; setText still carries "Arora"
     // (retranslate) so screen readers keep a real label.
     m_appMenuButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
     m_appMenuButton->setPopupMode(QToolButton::InstantPopup);
     m_appMenuButton->setMenu(m_appMenu);
-    m_appMenuButton->setIconSize(m_navigationBar->iconSize());
+    const QSize navIconSize = m_navigationBar->iconSize();
+    m_appMenuButton->setIconSize(
+        QSize(qRound(navIconSize.width() * 1.25),
+              qRound(navIconSize.height() * 1.25)));
     m_navigationBar->addWidget(m_appMenuButton)
         ->setProperty(kNavBarItemIdProperty, QLatin1String("appMenu"));
 

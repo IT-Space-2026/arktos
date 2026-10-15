@@ -813,6 +813,11 @@ UI:
   same icon size as the other navigation buttons instead of
   oversized — the bar's right end simply ends at the last real
   control (MENU16).
+- The app-menu logo button is now a deliberate brand accent: the
+  Arora mark paints ~25% larger than the other navigation glyphs,
+  scaled uniformly with no stretching, while the button face and the
+  toolbar's row height stay compact — on normal, private, and Tor
+  windows alike (MENU17).
 - Flatter, more modern chrome from one central style source: sunken
   toolbar/dock/panel frames and hard borders are replaced by subtle
   palette-derived hairlines, toolbars and panels share a consistent
@@ -865,6 +870,10 @@ UI:
   finished, failed or cancelled entry while in-progress downloads and
   the files on disk stay untouched; the button disables itself when
   the list is empty or only active downloads remain (DOWN05).
+- The start pages no longer carry a footer: the "Search results
+  provided by …" attribution and the "About Arora" link are gone from
+  all four variants (standard, private, Tor, Servo) — the page is just
+  the header, the search box and the brand mark (MENU18).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
