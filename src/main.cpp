@@ -10808,10 +10808,12 @@ int main(int argc, char **argv)
                     }
                     closeSmokeWindow();
                     // EXT17 sibling-page leg — load the extension's
-                    // declared action popup in a fresh view, attach
-                    // it BEFORE the document commits so the channel
-                    // is live when the preamble polls for it.  The
-                    // captured host pointer may be stale — re-resolve.
+                    // declared action popup in a fresh view.  EXT19:
+                    // NO explicit attachExtensionPage here — the live
+                    // action-bar path (a plain view + page on the
+                    // profile) is what the user hits, and the
+                    // runtime's view watch must wire the channel
+                    // itself once the document commits.
                     ExtensionBackgroundHost *liveHost =
                         runtime->host(extensionId);
                     QUrl popupUrl;
@@ -10838,9 +10840,11 @@ int main(int argc, char **argv)
                     popupPage = new QWebEnginePage(
                         liveHost->page()->profile(), popupView);
                     popupView->setPage(popupPage);
-                    check(runtime->attachExtensionPage(
-                              popupPage, extensionId),
-                          "attachExtensionPage wires the popup");
+                    // show() is what makes the parentless view visible
+                    // to the runtime's view watch — the live popup
+                    // gets watched at construction (ChildAdded)
+                    // instead; both end at urlChanged.
+                    popupView->show();
                     popupPage->load(popupUrl);
                     *phase = 6;
                     *probeTicks = 0;
@@ -10884,6 +10888,9 @@ int main(int argc, char **argv)
                           "the shim");
                     check(true, "popup chromeBridge handshake "
                                 "completed");
+                    check(runtime->hasExtensionPage(popupPage),
+                          "runtime self-wired the popup channel "
+                          "(no explicit attach)");
                     if (!realExt) {
                         check(o.value(QLatin1String("boot")).toString()
                                   == QLatin1String("ok"),

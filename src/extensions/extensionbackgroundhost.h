@@ -267,6 +267,9 @@ public:
     // The page navigated away from the extension document — its
     // relay context and bridge die with the document it served.
     void detachExtensionPage(QWebEnginePage *page);
+    // EXT19 diagnostics/test seam — true while the page carries a
+    // live chromeBridge.
+    bool hasExtensionPage(QWebEnginePage *page) const;
 
     // EXT15 messaging relay — shimmed contexts (the hosted
     // background page and EXT17's injected sibling pages) register
@@ -326,9 +329,18 @@ public:
 signals:
     void hostChanged(const QString &extensionId);
 
+protected:
+    // EXT19: application-level watch — the live action popup (and
+    // any other extension document embedder that does not know about
+    // attachExtensionPage) self-wires.  See the cpp for the details.
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
 private:
     explicit ExtensionBackgroundRuntime(QObject *parent = nullptr);
     void teardown(const QString &id);
+    void watchExtensionViews();
+    void watchView(QWebEngineView *view);
+    void syncPageBridge(QWebEngineView *view);
 
     QList<QPointer<QWebEngineProfile>> m_profiles;
     QHash<QString, ExtensionBackgroundHost *> m_hosts;
@@ -341,6 +353,7 @@ private:
     QHash<QString, QStringList> m_extPermissions;
     QHash<QString, QStringList> m_extHostPermissions;
     QTimer *m_heartbeat = nullptr;
+    bool m_viewFilterInstalled = false;
 
     int fanOut(const QString &name, const QJsonObject &payload,
                const QString &onlyExtensionId);
