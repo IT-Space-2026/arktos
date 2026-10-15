@@ -337,6 +337,31 @@ static QString cosmeticEngineScript(const QJsonArray &procedures,
     return script;
 }
 
+// A cosmetic-hide selector that targets a document-root element
+// (##body, ##html, ##*, ##:root) collapses the whole page's render
+// tree — every element's layout box goes to zero, so the page looks
+// blank and hit-testing/detectors (e.g. PiP's video scan) see
+// nothing.  No published list hides the root unscoped; a stray rule
+// (corrupt list line, stale custom rule) that tries is dropped
+// rather than blanking the page.  Deliberate per-site styling goes
+// through #$#/scriptlet bodies, not the hide stylesheet.
+static bool isRootHideSelector(const QString &css)
+{
+    QString sel = css.trimmed().toLower();
+    sel.replace(QLatin1String(" > "), QLatin1String(">"));
+    sel.replace(QLatin1String("> "), QLatin1String(">"));
+    sel.replace(QLatin1String(" >"), QLatin1String(">"));
+    static const QStringList roots = {
+        QStringLiteral("html"),
+        QStringLiteral("body"),
+        QStringLiteral("html body"),
+        QStringLiteral("html>body"),
+        QStringLiteral(":root"),
+        QStringLiteral("*"),
+    };
+    return roots.contains(sel);
+}
+
 // Shared injector: appends (or refreshes) the page's arora-adblock
 // <style> element carrying the given css rule set.
 static QString adblockStyleScript(const QStringList &selectors)
@@ -373,8 +398,9 @@ static QString rustCosmeticScript(const QJsonObject &cosmetic)
     for (const QJsonValue &value : hide) {
         const QString css = translateAbpPseudos(value.toString());
         if (css.contains(QLatin1String(":-abp-"))
-            || css.contains(QLatin1String("+js(")))
-            continue; // pseudo we cannot translate
+            || css.contains(QLatin1String("+js("))
+            || isRootHideSelector(css))
+            continue; // pseudo we cannot translate / root hide
         selectors.append(css);
     }
     if (!selectors.isEmpty())
@@ -561,8 +587,9 @@ QString AdBlockPage::cosmeticScriptForUrl(const QUrl &url) const
     for (const QString &body : cssBodies) {
         const QString css = translateAbpPseudos(body);
         if (css.contains(QLatin1String(":-abp-"))
-            || css.contains(QLatin1String("+js(")))
-            continue; // pseudo we cannot translate
+            || css.contains(QLatin1String("+js("))
+            || isRootHideSelector(css))
+            continue; // pseudo we cannot translate / root hide
         cssSelectors.append(css);
     }
 

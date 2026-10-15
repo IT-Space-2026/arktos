@@ -7905,7 +7905,10 @@ int main(int argc, char **argv)
         custom->addRule(AdBlockRule(QLatin1String("||adblock-smoke.invalid^")));
         custom->addRule(AdBlockRule(QLatin1String(".invalid^")));
         custom->addRule(AdBlockRule(QLatin1String("@@||allowed-smoke.invalid^")));
-        custom->addRule(AdBlockRule(QLatin1String("##body")));
+        // A root-element hide selector (##body) is intentionally
+        // dropped by the cosmetic guard now — seed a normal element
+        // rule so the style-element check stays self-contained.
+        custom->addRule(AdBlockRule(QLatin1String("##.smoke-cosmetic")));
 
         // Snapshot-level check of what the IO-thread matcher sees.
         AdBlockNetwork *network = manager->network();
@@ -9532,6 +9535,13 @@ int main(int argc, char **argv)
     // document.exitPictureInPicture() must tear it down again.
     // Exits 0 on PASS.
     if (args.contains(QLatin1String("--pip-smoke"))) {
+        // The smoke data store is shared under ~/.qttest — ambient
+        // subscriptions there (e.g. a stale ##body custom rule left by
+        // --adblock-smoke) run their cosmetic pass on the fixture and
+        // can hide the video/button outright.  PiP coverage has
+        // nothing to do with filtering.
+        AdBlockManager::instance()->setEnabled(false);
+
         const QDir fixtureDir(
             QDir::temp().filePath(QLatin1String("arora-pip-smoke")));
         if (!fixtureDir.mkpath(QLatin1String("."))) {
@@ -9587,6 +9597,12 @@ int main(int argc, char **argv)
                 "<script>"
                 "window.__pipPromise='none';"
                 "window.__pipEntered=0;window.__pipLeft=0;"
+                "window.__clicks=[];"
+                "window.__raf=false;"
+                "requestAnimationFrame(function(){window.__raf=true;});"
+                "document.addEventListener('click',function(e){"
+                "  window.__clicks.push({t:e.target.id||e.target.tagName,"
+                "  x:e.clientX,y:e.clientY});},true);"
                 "var v=document.getElementById('v');"
                 "v.addEventListener('enterpictureinpicture',"
                 "  function(){window.__pipEntered++;});"
@@ -9603,6 +9619,19 @@ int main(int argc, char **argv)
                 "        window.__pipPromise='rejected:'+e.name;});"
                 "  });"
                 "</script></body></html>");
+        }
+        // A media-free page — the no-video leg verifies popOut()
+        // reports an honest reason instead of silently doing nothing.
+        const QString noVideoPath =
+            fixtureDir.filePath(QLatin1String("novideo.html"));
+        {
+            QFile fixture(noVideoPath);
+            if (!fixture.open(QIODevice::WriteOnly)) {
+                qInfo() << "pip-smoke: FAIL (cannot write fixture)";
+                return 1;
+            }
+            fixture.write("<html><body><p>no media here</p>"
+                          "</body></html>");
         }
         const QUrl pageUrl = QUrl::fromLocalFile(pagePath);
         PictureInPicture *pip = view->pictureInPicture();
@@ -9655,6 +9684,7 @@ int main(int argc, char **argv)
         // Mutually-referencing tail stages are declared before use.
         std::function<void()> stageGestureGate;
         std::function<void()> stagePageRequest;
+        std::function<void()> stageNoVideo;
 
         // Stage: a bare requestPictureInPicture() — no transient
         // activation behind a script eval — must be rejected by the
@@ -9702,14 +9732,22 @@ int main(int argc, char **argv)
         // exitPictureInPicture() must close it.
         stagePageRequest = [&]() {
             evalJs(QLatin1String(
-                "(function(){var r=document.getElementById('pop')"
-                ".getBoundingClientRect();"
-                "return {x:r.x+r.width/2,y:r.y+r.height/2};}())"),
+                "(function(){var b=document.getElementById('pop');"
+                "if(!b)return{missing:true};"
+                "var r=b.getBoundingClientRect();"
+                "return {x:r.x+r.width/2,y:r.y+r.height/2,"
+                "rect:[r.x,r.y,r.width,r.height],"
+                "display:getComputedStyle(b).display,"
+                "url:location.href,vis:document.visibilityState,"
+                "iw:innerWidth,ih:innerHeight,"
+                "kids:document.body.children.length};}())"),
                 [&](const QVariant &result) {
                 const QVariantMap rect = result.toMap();
                 const QPoint pos(
                     int(rect[QLatin1String("x")].toDouble()),
                     int(rect[QLatin1String("y")].toDouble()));
+                qInfo() << "pip-smoke: click pos" << pos
+                        << "from rect" << rect;
                 QWidget *proxy = view->focusProxy()
                     ? view->focusProxy() : view;
                 QMouseEvent press(QEvent::MouseButtonPress, pos,
@@ -9731,11 +9769,17 @@ int main(int argc, char **argv)
                             "({promise:window.__pipPromise,"
                             "chan:typeof window.__aroraMainCall,"
                             "uaAtClick:window.__uaAtClick,"
+                            "clicks:window.__clicks,"
                             "tagged:document.querySelectorAll("
                             "'video[data-arora-pip]').length});"),
                             [&, fail](const QVariant &r) {
                             qInfo() << "pip-smoke: page-request diag"
                                     << r.toMap();
+                            if (QWidget *p = view->focusProxy())
+                                qInfo() << "pip-smoke: proxy"
+                                        << p->metaObject()->className()
+                                        << p->geometry() << "view"
+                                        << view->rect();
                             fail("page-request");
                         });
                         return;
@@ -9807,9 +9851,7 @@ int main(int argc, char **argv)
                                         fail("leave-event");
                                         return;
                                     }
-                                    qInfo() << "pip-smoke: DONE";
-                                    // quick_exit — see `fail` above.
-                                    std::quick_exit(0);
+                                    stageNoVideo();
                                 });
                             });
                         });
@@ -9821,6 +9863,43 @@ int main(int argc, char **argv)
             });
         };
 
+        // Stage: a page with no <video> must surface an honest reason
+        // ("No video found on this page.") through the controller's
+        // status message — not silently do nothing.
+        stageNoVideo = [&]() {
+            const QUrl noVideoUrl = QUrl::fromLocalFile(noVideoPath);
+            auto gotMessage = std::make_shared<bool>(false);
+            QTimer::singleShot(15000, qApp, [&, gotMessage]() {
+                if (!*gotMessage)
+                    fail("no-video-timeout");
+            });
+            QObject::connect(pip, &PictureInPicture::message, qApp,
+                [&, gotMessage](const QString &msg) {
+                *gotMessage = true;
+                const bool pass = !msg.isEmpty() && !pip->isActive();
+                qInfo() << "pip-smoke: no-video message"
+                        << msg << (pass ? "PASS" : "FAIL");
+                if (!pass) {
+                    fail("no-video");
+                    return;
+                }
+                qInfo() << "pip-smoke: DONE";
+                // quick_exit — see `fail` above.
+                std::quick_exit(0);
+            });
+            QObject::connect(view, &QWebEngineView::loadFinished, qApp,
+                [&, noVideoUrl](bool ok) {
+                if (view->url() != noVideoUrl)
+                    return;
+                if (!ok) {
+                    fail("no-video-load");
+                    return;
+                }
+                pip->popOut();
+            });
+            view->loadUrl(noVideoUrl);
+        };
+
         // Entry: load the fixture, pop the video out via the menu
         // path, verify the tab side detached and the player is
         // decoding, then return-to-tab and check the position sync.
@@ -9829,8 +9908,25 @@ int main(int argc, char **argv)
             if (!ok || view->url() != pageUrl)
                 return;
             evalJs(QLatin1String(
-                "({videos:document.querySelectorAll('video').length,"
-                "pipEnabled:document.pictureInPictureEnabled});"),
+                "(function(){var b=document.getElementById('pop');"
+                "var v=document.getElementById('v');"
+                "var rb=b.getBoundingClientRect();"
+                "var rv=v.getBoundingClientRect();"
+                "var rh=document.documentElement.getBoundingClientRect();"
+                "var sty=document.querySelectorAll('style,link[rel=stylesheet]');"
+                "var heads=[];for(var si=0;si<sty.length;si++){"
+                "  var n=sty[si];heads.push(n.tagName+':'"
+                "  +(n.textContent||'').substring(0,80));}"
+                "var rbody=document.body.getBoundingClientRect();"
+                "return {videos:document.querySelectorAll('video').length,"
+                "pipEnabled:document.pictureInPictureEnabled,"
+                "btn:[rb.x,rb.y,rb.width,rb.height],"
+                "vid:[rv.x,rv.y,rv.width,rv.height],"
+                "vidOffW:v.offsetWidth,htmlW:rh.width,"
+                "body:[rbody.width,rbody.height,"
+                "getComputedStyle(document.body).display],"
+                "styles:heads,"
+                "raf:window.__raf};}())"),
                 [&](const QVariant &r) {
                 const QVariantMap m = r.toMap();
                 const bool pass =
