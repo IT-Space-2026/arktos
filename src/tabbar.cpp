@@ -104,6 +104,15 @@
 static const int defaultVerticalTabWidth = 180;
 static const int compactVerticalTabWidth = 140;
 
+// TABS19: Firefox's tab metrics — every titled tab shares one 225px
+// width while space allows (the documentMode strip is non-expanding,
+// so the shared hint IS the rendered width), equal-squeezes to the
+// 76px floor, and only then hands off to the scroll buttons.  The
+// face sits at ~33px on a ~36px strip: content + 17 (a 16px
+// favicon / 9pt title lands exactly at 33).
+static const int firefoxTabWidth = 225;
+static const int firefoxTabMinWidth = 76;
+
 // Defined further down — the TABGRP01 drop-zone check in
 // mouseReleaseEvent needs it too.
 static bool verticalTabShape(QTabBar::Shape shape);
@@ -211,6 +220,12 @@ TabBar::TabBar(QWidget *parent)
     setContextMenuPolicy(Qt::CustomContextMenu);
     setAcceptDrops(true);
     setElideMode(Qt::ElideRight);
+    // TABS19: tabs hold their own metric instead of stretching into
+    // the strip's free space — Firefox's left-aligned fixed-width
+    // tabs, not Chrome's fill-the-bar ones.  QTabWidget's
+    // documentMode forces the same for a hosted bar; a standalone
+    // one keeps the contract too.
+    setExpanding(false);
     setUsesScrollButtons(true);
     connect(this, &QTabBar::customContextMenuRequested,
             this, &TabBar::contextMenuRequested);
@@ -451,9 +466,18 @@ void TabBar::updateCloseButtonVisibility()
     for (int i = 0; i < count(); ++i) {
         // TABS04: a pinned tab has no close affordance at all —
         // unpinning is the way to make it closable again.
-        if (QWidget *button = tabButton(i, side))
-            button->setVisible(!isTabPinned(i)
-                               && (i == current || i == m_hoveredTab));
+        QWidget *button = tabButton(i, side);
+        if (!button)
+            continue;
+        // TABS19: on a full strip the '+' parks over the last tab's
+        // trailing edge — the close button yields instead of sitting
+        // under a dead click target (middle-click and the context
+        // menu still close the tab).
+        const bool covered = m_newTabButton && m_newTabButton->isVisible()
+            && button->geometry().isValid()
+            && button->geometry().intersects(m_newTabButton->geometry());
+        button->setVisible(!isTabPinned(i) && !covered
+                           && (i == current || i == m_hoveredTab));
     }
 }
 
@@ -2265,26 +2289,21 @@ QSize TabBar::tabSizeHint(int index) const
 {
     QSize sizeHint = QTabBar::tabSizeHint(index);
     QFontMetrics fm = fontMetrics();
-    const int extent = fm.horizontalAdvance(QLatin1Char('M')) * 18;
-    // QTabBar::tabSizeHint returns a transposed size for vertical
-    // shapes — bound the tab's long axis either way so a long title
-    // can't stretch the whole strip.  UIP01: floor the strip's
-    // thickness so tabs keep modern breathing room.  TABS07: cap it
-    // too — per-tab button widgets and styles with generous padding
-    // pushed a plain tab ~5px past icon+text height; keep the strip
-    // at browser-normal content+padding.  TABS08: tightened — the
-    // user-visible target is the compact ~26-28px band real browsers
-    // sit in, so padding is trimmed to text/icon + 9 (fm+8 floor).
-    // TABS06: a container chip only borrows long-axis extent (accent
-    // line + name pill inside the title's zone) — it never makes the
-    // strip thicker.  RSZ02: a dragged-in strip height
-    // (horizontalTabHeight > 0) overrides the Automatic metrics
-    // bound; 0 keeps the normalized sizing.
-    const int minThickness = fm.height() + 8;
-    const int maxThickness = qMax(fm.height(), iconSize().height()) + 9;
+    // TABS19: the tab face is pinned at Firefox's normal-density
+    // ~33px — content + 17 puts a 16px favicon / desktop title right
+    // at the metric on a ~36px strip, replacing the compact TABS07/08
+    // ~26-28px band.  A generous style hint no longer stretches it
+    // and a lean one no longer shrinks it: UIP01/TABS07's bound is
+    // now a pin.  TABS06: a container chip only borrows long-axis
+    // extent (accent line + name pill inside the title's zone) — it
+    // never makes the strip thicker.  RSZ02: a dragged-in strip
+    // height (horizontalTabHeight > 0) still overrides the Automatic
+    // metrics.
+    const int automaticThickness =
+        qMax(fm.height(), iconSize().height()) + 17;
     const int thickness = m_tabStripHeight > 0
         ? m_tabStripHeight
-        : qBound(minThickness, sizeHint.height(), maxThickness);
+        : automaticThickness;
     const QSize chip = containerChipSize(index);
     const QString gid = groupIdForTab(index);
     // TABS02: vertical strips lay out as horizontal rows — the
@@ -2293,17 +2312,19 @@ QSize TabBar::tabSizeHint(int index) const
     // by the accent line (containerChipSize carries it); a group
     // run's first member keeps the band the name pill paints into.
     if (verticalTabShape(shape())) {
-        // Rows stay one text line tall — the bounded thickness above
+        // Rows stay one uniform height — the bounded thickness above
         // is meaningless here since sizeHint.height() is the
-        // transposed row width for vertical shapes.  TABS09: the
-        // icon-only mode drops the group pill's extra band — the pill
-        // is suppressed while the mode is on.  TABS17: a dragged-in
-        // strip height (horizontalTabHeight > 0) feeds the rows too,
-        // floored at the text line — a too-small persisted value
-        // can't crop the title under the row's clip rect.
+        // transposed row width for vertical shapes.  TABS19: the
+        // rows adopt the same ~33px Firefox pad the horizontal face
+        // uses — uniform per TABS18.  TABS09: the icon-only mode
+        // drops the group pill's extra band — the pill is suppressed
+        // while the mode is on.  TABS17: a dragged-in strip height
+        // (horizontalTabHeight > 0) feeds the rows too, floored at
+        // the automatic height — a too-small persisted value can't
+        // crop the title under the row's clip rect.
         int rowHeight = m_tabStripHeight > 0
-            ? qMax(minThickness, m_tabStripHeight)
-            : minThickness;
+            ? qMax(automaticThickness, m_tabStripHeight)
+            : automaticThickness;
         if (!gid.isEmpty() && !m_iconOnlyTabs) {
             TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
             if (tabWidget && isFirstInGroupRun(index)
@@ -2341,35 +2362,34 @@ QSize TabBar::tabSizeHint(int index) const
                      thickness + chip.height());
     }
     // TABGRP01: a collapsed group's chip shrinks to its label instead
-    // of the member's title; the first member of a run widens to carry
-    // the group name pill paintEvent() draws.
+    // of the member's title — it is not a titled tab and keeps its
+    // own compact sizing.
     if (!gid.isEmpty()) {
         TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
         if (tabWidget && tabWidget->isTabGroupChip(index)) {
             const int labelWidth = QFontMetrics(containerChipFont())
                 .horizontalAdvance(groupChipLabel(index)) + 20;
-            sizeHint.setWidth(qMin(sizeHint.width(), labelWidth));
-        } else if (isFirstInGroupRun(index) && tabWidget) {
-            const QString name = tabWidget->tabGroupName(gid);
-            if (!name.isEmpty()) {
-                const int pillWidth = QFontMetrics(containerChipFont())
-                    .horizontalAdvance(name) + 20;
-                sizeHint.setWidth(sizeHint.width() + pillWidth);
-            }
+            return QSize(qMin(sizeHint.width(), labelWidth),
+                         thickness + chip.height());
         }
     }
-    // RSZ01: the horizontal width bounds — a configured cap replaces
-    // the built-in 18-em extent so tabs cannot balloon; a configured
-    // floor keeps each tab at least that wide (below the collective
-    // fit the scroll buttons take over).  The floor clamps to an
-    // explicit cap but not to the Automatic one — a min wider than
-    // the built-in extent is an explicit request for wider tabs.
-    const int cap = m_tabMaxWidth > 0 ? m_tabMaxWidth : extent;
+    // TABS19: every titled tab — pinned included (TABS14 keeps its
+    // title, not an icon tile), group run leaders included (the name
+    // pill paintEvent() draws shares the card) — reports the shared
+    // 225px Firefox metric.  The non-expanding strip renders the
+    // hint as-is, so tabs left-align at one width like Firefox's and
+    // the squeeze hands off to the scroll buttons at the floor.
+    // RSZ01: configured bounds still override the metric — a
+    // tabs/tabMaxWidth cap narrows the shared 225 (below the
+    // collective fit the scroll buttons take over), a
+    // tabs/tabMinWidth floor wider than it is an explicit request
+    // for wider tabs.
+    const int cap = m_tabMaxWidth > 0 ? m_tabMaxWidth : firefoxTabWidth;
     const int floor = m_tabMinWidth > 0
         ? (m_tabMaxWidth > 0 ? qMin(m_tabMinWidth, m_tabMaxWidth)
                            : m_tabMinWidth)
         : 0;
-    return QSize(qBound(floor, sizeHint.width() + chip.width(),
+    return QSize(qBound(floor, firefoxTabWidth + chip.width(),
                         qMax(cap, floor)),
                  thickness + chip.height());
 }
@@ -2382,29 +2402,34 @@ QSize TabBar::minimumTabSizeHint(int index) const
     // minimum.
     if (verticalTabShape(shape()) || m_iconOnlyTabs)
         return tabSizeHint(index);
+    // TABGRP01: a collapsed group's chip never compresses either —
+    // the chip IS the group's presence on the strip, so squeezing it
+    // under its label would hide the only member still showing.
+    const TabWidget *owner = qobject_cast<TabWidget*>(parentWidget());
+    if (owner && owner->isTabGroupChip(index))
+        return tabSizeHint(index);
     // RSZ01: a configured floor overrides the style's squeeze
     // minimum — tabs never lay out narrower than tabs/tabMinWidth.
     if (m_tabMinWidth > 0) {
         const QSize hint = tabSizeHint(index);
         return QSize(qMin(hint.width(), m_tabMinWidth), hint.height());
     }
-    // TABS14: a pinned tab's floor keeps the favicon plus a stub of
-    // title — under pressure it elides toward that minimum but never
-    // returns to the icon-only tile.
-    if (isTabPinned(index)) {
-        const QSize hint = tabSizeHint(index);
-        const int floorWidth = iconSize().width() + 8
-            + fontMetrics().horizontalAdvance(QLatin1Char('M')) * 5;
-        return QSize(qMin(hint.width(), floorWidth), hint.height());
-    }
+    const QSize hint = QTabBar::minimumTabSizeHint(index);
+    // TABS19: Firefox's squeeze floor — every horizontal tab
+    // equal-shares the strip down to 76px, then the scroll buttons
+    // take over (usesScrollButtons stays on).  Qt's own minimum
+    // derives from the shared 225 hint and is ignored — a uniform
+    // floor is what makes the squeeze equal-width.  A pinned tab
+    // shares the floor: TABS14 keeps its title, and 76px still
+    // carries the favicon plus a stub — it never returns to the
+    // icon-only tile.
+    const int width = firefoxTabMinWidth;
     // RSZ02: a user-set strip height is also the floor — the layout
     // never squeezes a horizontal tab shorter than the drag chose.
-    if (m_tabStripHeight > 0) {
-        const QSize hint = QTabBar::minimumTabSizeHint(index);
-        return QSize(hint.width(),
+    if (m_tabStripHeight > 0)
+        return QSize(width,
                      m_tabStripHeight + containerChipSize(index).height());
-    }
-    return QTabBar::minimumTabSizeHint(index);
+    return QSize(width, hint.height());
 }
 
 void TabBar::tabLayoutChange()
@@ -2779,6 +2804,9 @@ void TabBar::layoutNewTabButton()
     // edge widgets — keep it above what it adjoins.
     m_newTabButton->raise();
     m_newTabButton->show();
+    // TABS19: the parked spot can slide under (or back out from
+    // under) a tab's close button — re-run the yield.
+    updateCloseButtonVisibility();
 }
 
 int TabBar::verticalTabWidth() const
