@@ -182,8 +182,10 @@ and ETA per item, Try Again (re-issues through the page or a hidden
 page), open-folder/open-with actions, server-suggested names sanitized
 and de-duplicated, and an external download-program handoff. Downloads
 surface in the sidebar's Downloads panel (Ctrl+Y or Tools →
-Downloads) — filterable, sortable, and each selected row expands into a
-detail card in the panel's bottom pane. Preferences → Downloads hosts
+Downloads) — filterable, sortable, each selected row expands into a
+detail card in the panel's bottom pane, and a header button clears all
+finished entries (in-progress downloads and files on disk are kept).
+Preferences → Downloads hosts
 a download-engine selector — Built-in (Chromium) or Accelerated (Rust,
 enabled in `CONFIG+=rustdl` builds; Accelerated is the default there
 and a saved Built-in pick is honored) — a connections-per-download

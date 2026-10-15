@@ -1108,6 +1108,19 @@ int DownloadManager::activeDownloads() const
     return count;
 }
 
+bool DownloadManager::hasRemovableItems() const
+{
+    // The same predicate DownloadModel::removeRows clears on — a
+    // finished download or an interrupted/cancelled one offering Try
+    // Again; an in-flight transfer is never removable.
+    for (DownloadItem *item : m_downloads) {
+        if (item->downloadedSuccessfully()
+            || item->tryAgainButton->isEnabled())
+            return true;
+    }
+    return false;
+}
+
 bool DownloadManager::hasActiveDownloadForPage(Engine::Page *page) const
 {
     if (!page)

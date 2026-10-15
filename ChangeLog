@@ -634,6 +634,11 @@ UI:
   also opens at the right size on the very first click now — a stale
   cached geometry could squash it (and leave stale permission-row
   buttons behind) until the second click (TRUST17).
+- The Downloads sidebar's header gains a "Clear download list" button
+  next to the close X: one click (after a confirm) removes every
+  finished, failed or cancelled entry while in-progress downloads and
+  the files on disk stay untouched; the button disables itself when
+  the list is empty or only active downloads remain (DOWN05).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

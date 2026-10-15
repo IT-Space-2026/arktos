@@ -200,6 +200,7 @@ private slots:
     void downloadsSidebarPanel();
     void downloadsSidebarFinishedRows();
     void downloadsSidebarMinWidth();
+    void downloadsSidebarClearList();
     void widgetTabBookmarksSafety();
     void tabStripCompactHeight();
     void stopReloadState();
@@ -5078,6 +5079,146 @@ void tst_BrowserMainWindow::downloadsSidebarMinWidth()
     view->setCurrentIndex(QModelIndex());
     closeWindow(window);
 
+    DownloadManager::instance()->cleanup();
+    DownloadManager::instance()->deleteLater();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+}
+
+// DOWN05: the downloads page header gains a clear-list button left of
+// the close X.  It stays disabled while nothing is removable (empty
+// list, or every remaining row in flight), asks the same Yes/No
+// confirm the History menu's Clear uses, and drops only
+// finished/failed entries — an in-flight transfer and the completed
+// file on disk survive.
+void tst_BrowserMainWindow::downloadsSidebarClearList()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+
+    QTemporaryDir downloadDir;
+    QVERIFY(downloadDir.isValid());
+    DownloadManager::instance()->setDownloadDirectory(
+        downloadDir.path() + QLatin1Char('/'));
+
+    SubWindow *window = new SubWindow;
+    window->show();
+    QVERIFY(QMetaObject::invokeMethod(window, "downloadManager"));
+    SidebarPanel *panel = window->sidebarPanel();
+    QVERIFY(panel);
+    QAbstractItemModel *source = DownloadManager::instance()->model();
+    QVERIFY(source);
+    // The singleton may have carried rows over from an earlier test.
+    DownloadManager::instance()->cleanup();
+    QCOMPARE(source->rowCount(), 0);
+
+    QToolButton *clearButton = panel->findChild<QToolButton *>(
+        QLatin1String("sidebarClearDownloads"));
+    QVERIFY(clearButton);
+    QCOMPARE(clearButton->toolTip(), QLatin1String("Clear download list"));
+    // Header order: the clear button sits immediately left of the X.
+    QToolButton *closeButton = panel->findChild<QToolButton *>(
+        QLatin1String("sidebarCloseButton"));
+    QVERIFY(closeButton);
+    QVERIFY(clearButton->x() < closeButton->x());
+    // Empty list — nothing cleanup() could drop, honestly disabled.
+    QVERIFY(!clearButton->isEnabled());
+
+    // A finished download enables the button.
+    const QUrl url(QString::fromLatin1("data:text/plain;base64,")
+        + QString::fromLatin1(QByteArray("hello world").toBase64()));
+    Engine::Page *page = DownloadManager::instance()->retryPage(false);
+    QVERIFY(page);
+    DownloadManager::instance()->download(page, url);
+    QTRY_COMPARE(source->rowCount(), 1);
+    DownloadItem *item = DownloadManager::instance()->itemAt(0);
+    QVERIFY(item);
+    QTRY_VERIFY(item->downloadedSuccessfully());
+    QTRY_VERIFY(clearButton->isEnabled());
+    const QString savedPath = item->m_outputFileName;
+    QVERIFY(QFileInfo::exists(savedPath));
+
+    // A stalled HTTP transfer joins as a second, in-flight row — the
+    // button stays enabled because a removable row exists.
+    QTcpServer stalled;
+    QVERIFY(stalled.listen(QHostAddress::LocalHost));
+    QObject::connect(&stalled, &QTcpServer::newConnection, &stalled,
+                     [&stalled]() {
+        QTcpSocket *socket = stalled.nextPendingConnection();
+        socket->setParent(&stalled);
+        socket->readAll();
+        socket->write("HTTP/1.1 200 OK\r\n"
+                      "Content-Type: application/octet-stream\r\n"
+                      "Content-Disposition: attachment; "
+                          "filename=\"slow.bin\"\r\n"
+                      "Content-Length: 104857600\r\n\r\n");
+        QTimer *trickle = new QTimer(socket);
+        QObject::connect(trickle, &QTimer::timeout, socket, [socket]() {
+            socket->write("x");
+        });
+        trickle->start(50);
+    });
+    const QUrl stalledUrl(QString::fromLatin1(
+        "http://127.0.0.1:%1/slow.bin").arg(stalled.serverPort()));
+    DownloadManager::instance()->download(page, stalledUrl);
+    QTRY_COMPARE_WITH_TIMEOUT(source->rowCount(), 2, 30000);
+    DownloadItem *activeItem = DownloadManager::instance()->itemAt(1);
+    QVERIFY(activeItem);
+    QVERIFY(activeItem != item);
+    QTRY_VERIFY_WITH_TIMEOUT(activeItem->downloading(), 30000);
+    QVERIFY(clearButton->isEnabled());
+
+    // Offscreen grab for visual review — ARORA_SIDEBAR_GRAB_DIR gets
+    // downloads-clear.png: populated list + enabled header button.
+    const QByteArray grabDir = qgetenv("ARORA_SIDEBAR_GRAB_DIR");
+    if (!grabDir.isEmpty()) {
+        QDir().mkpath(QString::fromLocal8Bit(grabDir));
+        qApp->processEvents();
+        panel->grab().save(QString::fromLocal8Bit(grabDir)
+            + QStringLiteral("/downloads-clear.png"));
+    }
+
+    // "No" on the confirm keeps the whole list.
+    QTimer::singleShot(100, qApp, []() {
+        if (QMessageBox *box = qobject_cast<QMessageBox *>(
+                QApplication::activeModalWidget()))
+            box->button(QMessageBox::No)->animateClick();
+    });
+    clearButton->click();
+    QApplication::processEvents();
+    QCOMPARE(source->rowCount(), 2);
+
+    // "Yes" drops the finished row only — the in-flight transfer is
+    // untouched and the completed file stays on disk.
+    QTimer::singleShot(100, qApp, []() {
+        if (QMessageBox *box = qobject_cast<QMessageBox *>(
+                QApplication::activeModalWidget()))
+            box->button(QMessageBox::Yes)->animateClick();
+    });
+    clearButton->click();
+    QTRY_COMPARE(source->rowCount(), 1);
+    QCOMPARE(DownloadManager::instance()->itemAt(0), activeItem);
+    QVERIFY(QFileInfo::exists(savedPath));
+    // Only an in-flight row remains — disabled again.
+    QVERIFY(!clearButton->isEnabled());
+
+    // Cancelling the straggler makes it removable; a second clear
+    // empties the list (and removes just the partial file).
+    QMetaObject::invokeMethod(activeItem, "stop");
+    QTRY_VERIFY_WITH_TIMEOUT(clearButton->isEnabled(), 30000);
+    QTimer::singleShot(100, qApp, []() {
+        if (QMessageBox *box = qobject_cast<QMessageBox *>(
+                QApplication::activeModalWidget()))
+            box->button(QMessageBox::Yes)->animateClick();
+    });
+    clearButton->click();
+    QTRY_COMPARE(source->rowCount(), 0);
+    QVERIFY(!clearButton->isEnabled());
+
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+    closeWindow(window);
+
+    // Same teardown as downloadsSidebarPanel — the retry pages live
+    // on the singleton manager.
     DownloadManager::instance()->cleanup();
     DownloadManager::instance()->deleteLater();
     QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
