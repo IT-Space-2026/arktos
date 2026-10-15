@@ -152,6 +152,7 @@ This file is the task queue for the Devin CLI task loop
 | TRUST15 | Site shield absent even on WebEngine tabs (user screenshot) + hides on engine tabs — reproduce + always-visible fix — details below | pending | 0 | |
 | ICONS11 | Bundle Lucide icon set (Firefox-Proton-like strokes) + dark variant + prefs option — details below | pending | 0 | |
 | ICONS12 | Remove the native (OS-theme) icon option — pre-Tabler default, source of duplicate-fallback glyphs — details below | pending | 0 | |
+| ICONS13 | Remove arora-legacy icon set entirely — user directive — details below | pending | 0 | |
 
 ## Task details
 
@@ -950,3 +951,7 @@ Bundle Lucide as a new icon set — user: 'add Lucide.' Lucide (ISC license, Fea
 ### ICONS12
 
 Remove the `native` icon set — user: 'remove the old default one, not the one which is the default now, but the original one.' The pre-ICONS10 default was `native` = QIcon::fromTheme on the OS theme — incomplete coverage caused the duplicate/generic-fallback glyphs the user originally complained about. Spec: (a) drop `native` from the selectable sets — Preferences > Appearance combo shows only bundled open-source sets (adwaita/breeze/tabler/legacy + lucide once ICONS11 lands, each with dark variant auto-pick); the combo's 'Native' row goes away; (b) BEHAVIOR — a stored iconTheme=native falls back to the current default (tabler) rather than erroring — existing profiles must not break; treat unknown ids the same; (c) CODE — s_nativeId and the native branch in AroraIcon (the get()/themeFor resolution + the names() entry) removed or retired; any code path that special-cased native (system-theme lookups, fallback ordering) simplified to bundled-only; (d) the underlying OS-theme FALLBACK inside Qt (a bundled glyph missing -> system lookup) — decide and document: keep as last-resort or refuse silently (recommend keep — a wrong-theme glyph beats a blank hole, and the coverage audits keep the miss set empty); (e) arora-legacy STAYS — it is a bundled set, not the thing the user means. Verify: combo has no Native entry; a profile pinned to native migrates to tabler on next run; every bundled set still previews; tst_aroraicon/settingsdialog icon legs updated (remove native assertions, add native->tabler migration leg); make check PASS.
+
+### ICONS13
+
+Remove arora-legacy — user: 'remove the legacy' (confirmed they meant the bundled legacy PNG/SVG set, not native — ICONS12 already removes native). Spec: (a) delete src/icons/arora-legacy/ from the tree + icons.qrc entries + import-icons.sh mapping; (b) the Preferences combo loses the row; stored iconTheme=arora-legacy migrates to tabler like unknown ids; (c) AUDIT call sites — any code that deliberately referenced arora-legacy by name (a glyph the bundled sets borrowed as alias, e.g. the tab-close alias ICONS10 added there) must re-point at a real glyph in another bundled set, not break; (d) license/README listings drop the legacy entry. Verify: combo has no Legacy row; a pinned profile migrates cleanly; no code references the removed set (grep); tst_aroraicon set-list legs updated; make check PASS.
