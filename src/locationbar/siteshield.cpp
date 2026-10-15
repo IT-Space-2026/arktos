@@ -26,6 +26,7 @@
 #include "sitepanel.h"
 #include "webview.h"
 
+#include <qevent.h>
 #include <qmenu.h>
 #include <qpainter.h>
 #include <qwebenginepage.h>
@@ -81,6 +82,18 @@ SiteShieldButton::SiteShieldButton(QWidget *parent)
     // state at insertion — a ctor-hidden widget leaves the item
     // permanently absent no matter how many setVisible(true) calls
     // follow (the action's flag governs, not the widget's).
+}
+
+void SiteShieldButton::changeEvent(QEvent *event)
+{
+    // TRUST18: the glyph tint follows the resolved palette — rebake
+    // when it moves.  The tor window's violet stylesheet lands on the
+    // toolbar AFTER this button is constructed, and palette() only
+    // resolves to the chrome's light text once that polish passes.
+    if (event->type() == QEvent::PaletteChange
+            || event->type() == QEvent::StyleChange)
+        refreshIcon();
+    QToolButton::changeEvent(event);
 }
 
 void SiteShieldButton::populateMenu()
@@ -144,7 +157,13 @@ void SiteShieldButton::setWebView(WebView *webView)
 
 void SiteShieldButton::refreshIcon()
 {
-    const QIcon shield = AroraIcon::getChrome(QLatin1String("security-high"));
+    // TRUST18: tint from THIS surface's resolved palette, not the
+    // application palette — on the tor window's violet bar the
+    // stylesheet lifts ButtonText to the light chrome text color, so
+    // the shield stays legible there and on a forced dark theme
+    // alike, instead of painting the app's dark glyph.
+    const QIcon shield = AroraIcon::getChrome(
+        QLatin1String("security-high"), palette());
 
     // TRUST15: unbound (widget/engine tab, or a window before its
     // first bind) shows the shield disabled with the honest reason —

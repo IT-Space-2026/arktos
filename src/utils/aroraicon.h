@@ -23,6 +23,7 @@
 
 #include <qcolor.h>
 #include <qicon.h>
+#include <qpalette.h>
 #include <qstringlist.h>
 
 // ICONS01: single choke point for chrome icons (toolbar/menu/dialog
@@ -125,6 +126,15 @@ QIcon getTinted(const QString &name,
 // colors with monochrome peers; the identity exceptions are listed
 // in the file comment above.
 QIcon getChrome(const QString &name);
+
+// TRUST18: same chrome glyph, but the tint resolves from the given
+// palette instead of the application palette.  A QIconEngine has no
+// widget context, so getChrome reads qApp's ButtonText — wrong for a
+// button on chrome whose colors come from a stylesheet, e.g. the tor
+// window's violet bar while the app palette stays light.  Pass the
+// widget's resolved palette() so the glyph matches the surface it
+// actually sits on.
+QIcon getChrome(const QString &name, const QPalette &palette);
 
 // Selectable sets — the bundled ids only (ICONS12: "native" is
 // retired).

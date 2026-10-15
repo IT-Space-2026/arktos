@@ -50,6 +50,7 @@ public:
     SitePanel *panel() const { return m_panel; }
 
 private:
+    void changeEvent(QEvent *event) override;
     void refreshIcon();
     void populateMenu();
     void growMenuToFit();
