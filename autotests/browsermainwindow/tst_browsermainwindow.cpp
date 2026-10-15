@@ -997,52 +997,43 @@ void tst_BrowserMainWindow::appMenuButton()
         QLatin1String("appMenuButton"));
     QVERIFY(button);
     QVERIFY(button->autoRaise());
-    // MENU13: icon-only — the wordmark moved to the bar's trailing
-    // edge; the text property stays "Arora" for screen readers.
+    // MENU13: icon-only; the text property stays "Arora" for screen
+    // readers.
     QCOMPARE(button->toolButtonStyle(), Qt::ToolButtonIconOnly);
     QCOMPARE(button->popupMode(), QToolButton::InstantPopup);
     QCOMPARE(button->text(), QLatin1String("Arora"));
     QVERIFY(!button->icon().isNull());
-    // MENU07/MENU09: the logo is bigger than the nav bar's shared
-    // glyph size — the growth is icon-led, the text font is
-    // untouched.
-    QCOMPARE(button->iconSize(), QSize(36, 36));
-    QVERIFY(button->iconSize().height() > navBar->iconSize().height());
+    // MENU16: the logo glyph rides at the nav bar's shared icon size
+    // — the MENU09 host + fixed 36px extent that rendered it
+    // oversized are gone; the button is a direct bar child now.
+    QCOMPARE(button->iconSize(), navBar->iconSize());
     QVERIFY(!button->icon().pixmap(button->iconSize()).isNull());
     QVERIFY(!button->toolTip().isEmpty());
     QVERIFY(!button->accessibleName().isEmpty());
 
-    // MENU09: iconSize is only a property — Qt paints toolbar-hosted
-    // tool buttons at the BAR's iconSize, which is why the MENU07
-    // bump never reached the screen.  The button lives in a
-    // margin-less host so its own extent governs; prove it reached
-    // the layout, not just the getter.
+    // Bar-sized glyph, intact hit-rect — the button is no smaller
+    // than the icon it paints.
     QVERIFY(button->sizeHint().height()
             >= button->iconSize().height());
     QVERIFY(button->size().height()
             >= button->iconSize().height());
 
     // First item on the nav bar, ahead of Back — the action carries
-    // the host container, whose only child is the button.
+    // the button itself (MENU16 removed the host wrapper).
     QVERIFY(!navBar->actions().isEmpty());
-    QWidget *firstWidget = navBar->widgetForAction(
-        navBar->actions().first());
-    QVERIFY(firstWidget);
-    QCOMPARE(firstWidget, button->parentWidget());
+    QCOMPARE(navBar->widgetForAction(navBar->actions().first()),
+             button);
 
-    // MENU13: the 'Arora' wordmark is the bar's fixed trailing
-    // element — a plain label riding as the last toolbar action.  It
-    // carries no navBarItemId, so the persisted order ignores it and
-    // the rebuild's unlisted-tail rule keeps it last; the edit-mode
-    // legs below prove it can't be dragged or dropped past.
-    QLabel *brandLabel = window->findChild<QLabel *>(
-        QLatin1String("navBarBrandLabel"));
-    QVERIFY(brandLabel);
-    QCOMPARE(brandLabel->text(), QLatin1String("Arora"));
-    QCOMPARE(brandLabel->font().letterSpacing(), 1.0);
-    QAction *brandItem = navBar->actions().last();
-    QCOMPARE(navBar->widgetForAction(brandItem), brandLabel);
-    QVERIFY(brandItem->property("navBarItemId").toString().isEmpty());
+    // MENU16: the trailing 'Arora' wordmark is gone — no brand label
+    // child anywhere, and every bar action is a real movable item
+    // carrying a navBarItemId (the unlisted fixed-tail slot no
+    // longer exists).
+    QVERIFY(!window->findChild<QLabel *>(
+        QLatin1String("navBarBrandLabel")));
+    for (QAction *action : navBar->actions())
+        QVERIFY2(!action->property("navBarItemId")
+                     .toString().isEmpty(),
+                 qPrintable(action->text()));
     QVERIFY(!window->navBarOrder().isEmpty());
 
     // The dropdown lists the real top-level menus in menubar order —
@@ -1250,37 +1241,34 @@ void tst_BrowserMainWindow::appMenuButton()
     QToolButton *privateButton =
         privateWindow->findChild<QToolButton *>(
             QLatin1String("appMenuButton"));
+    QToolBar *privateBar = privateWindow->findChild<QToolBar *>(
+        QLatin1String("NavigationToolBar"));
     const bool privateMenuFull = privateButton
         && privateButton->menu()
         && privateButton->menu()->actions().count() >= 8;
-    // MENU07: every window type gets the same bigger button.
-    const bool privateBigIcon = privateButton
-        && privateButton->iconSize() == QSize(36, 36);
+    // MENU16: every window type gets the same bar-sized glyph.
+    const bool privateBarIcon = privateButton && privateBar
+        && privateButton->iconSize() == privateBar->iconSize();
     const bool privateBarHidden =
         !privateWindow->menuBar()->isVisible();
     // MENU08: and the same enlarged menu text.
     const bool privateMenuFont = privateButton
         && privateButton->menu()
         && privateButton->menu()->font() == menuFont;
-    // MENU13: the private bar carries the same icon-only button +
-    // trailing wordmark.
-    QToolBar *privateBar = privateWindow->findChild<QToolBar *>(
-        QLatin1String("NavigationToolBar"));
-    QLabel *privateBrand = privateWindow->findChild<QLabel *>(
-        QLatin1String("navBarBrandLabel"));
-    const bool privateWordmark = privateButton
+    // MENU16: the private bar carries the same icon-only button and
+    // no wordmark label.
+    const bool privateNoWordmark = privateButton
         && privateButton->toolButtonStyle() == Qt::ToolButtonIconOnly
-        && privateBar && privateBrand
-        && privateBar->widgetForAction(privateBar->actions().last())
-               == privateBrand;
+        && !privateWindow->findChild<QLabel *>(
+            QLatin1String("navBarBrandLabel"));
     closeWindow(privateWindow);
     BrowserApplication::setPrivate(false);
     QVERIFY(privateButton);
     QVERIFY(privateMenuFull);
-    QVERIFY(privateBigIcon);
+    QVERIFY(privateBarIcon);
     QVERIFY(privateBarHidden);
     QVERIFY(privateMenuFont);
-    QVERIFY(privateWordmark);
+    QVERIFY(privateNoWordmark);
 
     // Tor window — collect state first so a mid-leg failure cannot
     // leave tor mode armed.  The violet menu row is the drawn
@@ -1293,6 +1281,8 @@ void tst_BrowserMainWindow::appMenuButton()
     QApplication::processEvents();
     QToolButton *torButton = torWindow->findChild<QToolButton *>(
         QLatin1String("appMenuButton"));
+    QToolBar *torNavBar = torWindow->findChild<QToolBar *>(
+        QLatin1String("NavigationToolBar"));
     const bool torRowVisible = torWindow->menuBar()->isVisible();
     const bool torRowBare = torWindow->menuBar()->actions().isEmpty();
     const int torMenuCount = torWindow->appMenu()
@@ -1315,8 +1305,8 @@ void tst_BrowserMainWindow::appMenuButton()
                        .remove(QLatin1Char('&'))
                    == QLatin1String("Quit");
     }
-    const bool torBigIcon = torButton
-        && torButton->iconSize() == QSize(36, 36);
+    const bool torBarIcon = torButton && torNavBar
+        && torButton->iconSize() == torNavBar->iconSize();
     // MENU08: the violet window's dropdown is enlarged identically —
     // tor only re-colors the bar, menus stay on the palette + font.
     const QFont torMenuFont = torWindow->appMenu()
@@ -1339,28 +1329,17 @@ void tst_BrowserMainWindow::appMenuButton()
                 QString::fromLocal8Bit(menuGrabDir)
                 + QLatin1String("/app-menu-navbar-tor.png"));
     }
-    // Grabbed-pixel proof the "Arora" wordmark reads light on
-    // violet — MENU13 moved it off the button to the bar's trailing
-    // edge, where the tor palette lift keeps it legible.
-    QToolBar *torNavBar = torWindow->findChild<QToolBar *>(
-        QLatin1String("NavigationToolBar"));
-    QLabel *torBrand = torWindow->findChild<QLabel *>(
-        QLatin1String("navBarBrandLabel"));
-    int lightPixels = 0;
-    if (torBrand) {
-        const QImage grab = torBrand->grab().toImage();
-        for (int y = 0; y < grab.height(); ++y)
-            for (int x = 0; x < grab.width(); ++x) {
-                const QColor color = grab.pixelColor(x, y);
-                if (color.alpha() > 200 && color.lightness() > 180)
-                    ++lightPixels;
-            }
-    }
-    // The wordmark is still the trailing action — the tor badge
-    // slots in ahead of it like every other movable item.
-    const bool torBrandLast = torNavBar && torBrand
-        && torNavBar->widgetForAction(torNavBar->actions().last())
-               == torBrand;
+    // MENU16: no wordmark on tor either — and every bar action is a
+    // real item carrying a navBarItemId.
+    const bool torNoBrand = torNavBar
+        && !torWindow->findChild<QLabel *>(
+            QLatin1String("navBarBrandLabel"));
+    bool torAllIded = torNavBar != nullptr;
+    if (torNavBar)
+        for (QAction *action : torNavBar->actions())
+            torAllIded = torAllIded
+                && !action->property("navBarItemId")
+                        .toString().isEmpty();
     torWindow->showMenuBarAction()->trigger();
     QApplication::processEvents();
     const bool torRowRepopulated =
@@ -1373,15 +1352,15 @@ void tst_BrowserMainWindow::appMenuButton()
     closeWindow(torWindow);
     BrowserApplication::setTorMode(false);
     QVERIFY(torButton);
-    QVERIFY(torBigIcon);
+    QVERIFY(torBarIcon);
     QCOMPARE(torMenuFont, menuFont);
     QVERIFY(torRowVisible);
     QVERIFY(torRowBare);
     QCOMPARE(torMenuCount, 13);
     QVERIFY(torPrefsLeaf);
     QVERIFY(torQuitLast);
-    QVERIFY(lightPixels > 0);
-    QVERIFY(torBrandLast);
+    QVERIFY(torNoBrand);
+    QVERIFY(torAllIded);
     QVERIFY(torRowRepopulated);
     QVERIFY(torRowBareAgain);
 
@@ -5808,10 +5787,10 @@ void tst_BrowserMainWindow::navBarEditMode()
     QVERIFY(labels.contains(QLatin1String("Bookmarks")));
 
     // Slot identities for the drag legs — the order READ02/HOME01
-    // lock: app-menu host, Back, Forward, Stop/Reload, Home, hidden
-    // reader, splitter, sidebar toggle.  MENU13: the wordmark label
-    // owns the last slot now, so the sidebar toggle resolves by its
-    // stable item id, not by position.
+    // lock: app-menu button, Back, Forward, Stop/Reload, Home, hidden
+    // reader, splitter, sidebar toggle (the stock tail — MENU16
+    // removed the pinned wordmark).  The sidebar toggle resolves by
+    // its stable item id, not by position.
     const QList<QAction *> stock = navBar->actions();
     QAction *back = stock.at(1);
     QAction *stopReload = stock.at(3);
@@ -5892,54 +5871,31 @@ void tst_BrowserMainWindow::navBarEditMode()
     QCOMPARE(navBar->actions().indexOf(sidebarToggle), 1);
     QCOMPARE(navBar->actions().indexOf(stopReload), 2);
 
-    // MENU13: the trailing 'Arora' wordmark is pinned chrome — a
-    // press on it picks nothing (no drag, no gap line), and a drop
-    // past every movable item still lands before it, so it can never
-    // be pushed off the bar's tail.
-    QAction *brandItem = navBar->actions().last();
-    QLabel *brandLabel = qobject_cast<QLabel *>(
-        navBar->widgetForAction(brandItem));
-    QVERIFY(brandLabel);
-    QCOMPARE(brandLabel->objectName(),
-             QLatin1String("navBarBrandLabel"));
-    QTest::mousePress(brandLabel, Qt::LeftButton, Qt::NoModifier,
-                      brandLabel->rect().center());
-    QTest::mouseMove(brandLabel, QPoint(0, brandLabel->rect().center().y()));
-    QVERIFY(indicator->isHidden());
-    QTest::mouseRelease(brandLabel, Qt::LeftButton, Qt::NoModifier,
-                        QPoint(0, brandLabel->rect().center().y()));
-    QCOMPARE(navBar->actions().last(), brandItem);
-    QVERIFY(window->isNavBarEditMode());
-
-    // Drag the sidebar toggle to the bar's right edge — it lands
-    // before the pinned wordmark, which keeps the tail.  Re-fetch the
-    // button: the earlier drags' remove/insert rebuilt its widget, so
-    // the cached pointer's geometry is the pre-drag position.
+    // MENU16: no pinned wordmark anymore — a drop past the last item
+    // appends at the tail instead of clamping before fixed chrome.
+    // Re-fetch the sidebar button: the earlier drags' remove/insert
+    // rebuilt its widget, so the cached pointer's geometry is the
+    // pre-drag position.
     QWidget *freshSidebarButton = navBar->widgetForAction(sidebarToggle);
     QVERIFY(freshSidebarButton);
     QTest::mousePress(freshSidebarButton, Qt::LeftButton, Qt::NoModifier,
                       freshSidebarButton->rect().center());
     const QPoint endDrop = freshSidebarButton->mapFrom(
         navBar, QPoint(navBar->width() - 2,
-                       navBar->actionGeometry(brandItem).center().y()));
+                       navBar->rect().center().y()));
     QTest::mouseMove(freshSidebarButton, endDrop);
     QVERIFY(indicator->isVisible());
     QTest::mouseRelease(freshSidebarButton, Qt::LeftButton, Qt::NoModifier,
                         endDrop);
-    QCOMPARE(navBar->actions().last(), brandItem);
-    QCOMPARE(navBar->actions().indexOf(sidebarToggle),
-             navBar->actions().count() - 2);
+    QCOMPARE(navBar->actions().last(), sidebarToggle);
 
     // Esc exits — the entry unlatches, the sheet restores, the order
-    // the user left stays (sidebar toggle still just ahead of the
-    // pinned wordmark).
+    // the user left stays (sidebar toggle is the tail now).
     QTest::keyClick(window, Qt::Key_Escape);
     QVERIFY(!window->isNavBarEditMode());
     QVERIFY(!editAction->isChecked());
     QVERIFY(!navBar->styleSheet().contains(QLatin1String("dashed")));
-    QCOMPARE(navBar->actions().indexOf(sidebarToggle),
-             navBar->actions().indexOf(brandItem) - 1);
-    QCOMPARE(navBar->actions().last(), brandItem);
+    QCOMPARE(navBar->actions().last(), sidebarToggle);
 
     // Re-enter — a click anywhere outside the bar locks the order
     // and exits (the click itself is passed through).
