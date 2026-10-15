@@ -327,6 +327,19 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
             m_torCircuitButton->setPalette(circuitPalette);
         }
 
+        // TRUST18: the site shield tints its glyph from its own
+        // resolved palette (the stylesheet's `color` already reads as
+        // the light chrome text there).  The sheet sets every group
+        // to the same foreground, so seed the Disabled role with the
+        // dimmed chrome tone — a greyed shield (blocking off, site
+        // whitelisted, unbound tab) must still read as dimmed chrome
+        // instead of a second bright glyph.
+        QPalette shieldPalette = m_siteShield->palette();
+        shieldPalette.setColor(QPalette::Disabled,
+                               QPalette::ButtonText,
+                               AroraStyle::torDimTextColor());
+        m_siteShield->setPalette(shieldPalette);
+
         // ICONS04/ICONS06: the violet bar sits on the application's
         // light palette, so themed icons resolve their dark-glyph
         // variants — mud on purple.  Qt's generated

@@ -2559,6 +2559,12 @@ void tst_BrowserMainWindow::torNavIconsDarkChrome()
     QVERIFY(plainMenuButton);
     const int plainLogoCoverage =
         opaqueCount(plainMenuButton->icon(), 36);
+    // TRUST18: the plain-window shield keeps its dark chrome glyph —
+    // the palette-driven tint must not change normal surfaces.
+    QToolButton *plainShield = plainBar->findChild<QToolButton *>(
+        QLatin1String("navSiteShield"));
+    QVERIFY(plainShield);
+    const qlonglong plainShieldLum = luminance(plainShield->icon());
     closeWindow(plain);
 
     // A tor window's nav-icon measurements — run under each theme so
@@ -2570,6 +2576,10 @@ void tst_BrowserMainWindow::torNavIconsDarkChrome()
         qlonglong reload = -1;
         qlonglong home = -1;
         qlonglong sidebar = -1;
+        qlonglong shield = -1;
+        qlonglong shieldDisabled = -1;
+        qlonglong reader = -1;
+        qlonglong circuit = -1;
         qlonglong menuReload = -1;
         int logoCoverage = -1;
         bool barFound = false;
@@ -2595,6 +2605,26 @@ void tst_BrowserMainWindow::torNavIconsDarkChrome()
             for (QAction *action : navBar->actions())
                 if (action->shortcut() == QKeySequence(Qt::Key_F4))
                     out.sidebar = luminance(action->icon());
+            // TRUST18: the palette-painted and getChrome nav-bar
+            // widgets must read light on the violet bar too — the
+            // shield regressed to the app's dark ButtonText because
+            // getChrome resolves the application palette, not the
+            // widget surface's.
+            QToolButton *shield = navBar->findChild<QToolButton *>(
+                QLatin1String("navSiteShield"));
+            if (shield) {
+                out.shield = luminance(shield->icon());
+                out.shieldDisabled = luminance(shield->icon(),
+                                               QIcon::Disabled);
+            }
+            QToolButton *reader = navBar->findChild<QToolButton *>(
+                QLatin1String("navReaderButton"));
+            if (reader)
+                out.reader = luminance(reader->icon());
+            QToolButton *circuit = navBar->findChild<QToolButton *>(
+                QLatin1String("torCircuitButton"));
+            if (circuit)
+                out.circuit = luminance(circuit->icon());
             QToolButton *menuButton = window->findChild<QToolButton *>(
                 QLatin1String("appMenuButton"));
             if (menuButton)
@@ -2651,6 +2681,7 @@ void tst_BrowserMainWindow::torNavIconsDarkChrome()
     // glyphs — readable on the violet bar under any theme.
     QVERIFY(plainBack >= 0 && plainBack < 140);
     QVERIFY(plainReload >= 0 && plainReload < 140);
+    QVERIFY(plainShieldLum >= 0 && plainShieldLum < 140);
     for (const TorNavLum &lum : { bundled, breezeTheme }) {
         QVERIFY(lum.barFound);
         QVERIFY(lum.back > 140);
@@ -2658,6 +2689,13 @@ void tst_BrowserMainWindow::torNavIconsDarkChrome()
         QVERIFY(lum.reload > 140);
         QVERIFY(lum.home > 140);
         QVERIFY(lum.sidebar > 140);
+        // TRUST18: the widget-hosted glyphs — site shield (Normal
+        // and Disabled modes), reader toggle, circuit onion — stay
+        // light on the violet bar under every bundled theme.
+        QVERIFY(lum.shield > 140);
+        QVERIFY(lum.shieldDisabled > 140);
+        QVERIFY(lum.reader > 140);
+        QVERIFY(lum.circuit > 140);
         // ICONS06: Disabled is seeded, not generated — deliberately
         // dimmer than Normal yet still clearly light on violet.
         QVERIFY(lum.backDisabled > 140

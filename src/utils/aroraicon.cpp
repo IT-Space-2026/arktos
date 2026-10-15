@@ -126,9 +126,23 @@ public:
     {
     }
 
+    // TRUST18: paletteSet resolves the tint from `palette` instead of
+    // the application palette — for buttons living on chrome whose
+    // colors a stylesheet provides (the tor window's violet bar),
+    // where qApp's ButtonText is the wrong surface color.
+    ChromeIconEngine(const QString &name, const QPalette &palette)
+        : m_name(name)
+        , m_palette(palette)
+        , m_hasPalette(true)
+    {
+    }
+
     QIconEngine *clone() const override
     {
-        return new ChromeIconEngine(m_name);
+        ChromeIconEngine *engine = new ChromeIconEngine(m_name);
+        engine->m_palette = m_palette;
+        engine->m_hasPalette = m_hasPalette;
+        return engine;
     }
 
     void paint(QPainter *painter, const QRect &rect, QIcon::Mode mode,
@@ -156,7 +170,9 @@ public:
         if (base.isNull())
             return base;
         base.setDevicePixelRatio(scale);
-        const QPalette palette = qApp ? qApp->palette() : QPalette();
+        const QPalette palette = m_hasPalette
+            ? m_palette
+            : (qApp ? qApp->palette() : QPalette());
         if (mode == QIcon::Disabled)
             return tintedPixmap(base, palette.color(
                 QPalette::Disabled, QPalette::ButtonText));
@@ -176,6 +192,8 @@ public:
 
 private:
     const QString m_name;
+    QPalette m_palette;
+    bool m_hasPalette = false;
 };
 
 } // namespace
@@ -233,6 +251,12 @@ QIcon AroraIcon::getChrome(const QString &name)
 {
     init();
     return QIcon(new ChromeIconEngine(name));
+}
+
+QIcon AroraIcon::getChrome(const QString &name, const QPalette &palette)
+{
+    init();
+    return QIcon(new ChromeIconEngine(name, palette));
 }
 
 QStringList AroraIcon::themeIds()

@@ -1186,6 +1186,12 @@ Tor:
   content before the open-time refresh ran, so the first click could
   show a clipped or mostly empty popup and only the second click
   looked right (TOR19).
+- The site shield on a Tor window's navigation bar now renders in the
+  chrome's light text color instead of an unreadable black outline on
+  the violet bar — the glyph tint follows the button's own resolved
+  palette, so it stays legible on any dark chrome the same way the
+  reader and circuit buttons do, and its dimmed state still reads as
+  dimmed (TRUST18).
 - A Servo-branded start page variant appears when the default engine
   pick is Servo: the same Arora header, search box and default
   coloring, with the official Servo logo centered under the search

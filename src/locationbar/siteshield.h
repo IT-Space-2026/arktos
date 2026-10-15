@@ -78,6 +78,7 @@ public:
                              const QString &level);
 
 private:
+    void changeEvent(QEvent *event) override;
     void refreshIcon();
     void populateMenu();
     void growMenuToFit();
