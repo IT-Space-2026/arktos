@@ -156,6 +156,7 @@ This file is the task queue for the Devin CLI task loop
 | ICONS13 | Remove arora-legacy icon set entirely — user directive — details below | pending | 0 | |
 | TRUST16 | Shield placement lock — padlock stays in URL bar, shield = first button LEFT of the URL field (never inside it) — details below | pending | 0 | |
 | TRUST17 | Shield popover first-click bug — popover does not open correctly on first click — details below | pending | 0 | |
+| TRUST18 | Shield glyph black/unreadable on Tor window dark theme — details below | pending | 0 | |
 
 ## Task details
 
@@ -972,3 +973,7 @@ Two chrome fixes from the user's screenshot (nav bar grab): (a) REMOVE the 'Aror
 ### TRUST17
 
 User report: 'The shield popover not opened up correctly for the first time.' Same symptom class as the earlier Tor-circuit two-click bug (fixed already — see whatever pattern that fix used, likely lazy panel construction on first show / focus event eaten by createPopup). Reproduce first: click the shield on a live HTTPS tab once — expected: SitePanel popover opens positioned under the button; actual: nothing/mispositioned until second click. Audit candidates: (a) popover/panel lazily constructed inside the click handler — first click builds it but show()/positioning runs before polish/layout, second click works; (b) first show mispositions because the panel sizes itself after exec — anchor after adjustSize, not before; (c) WA_StyledBackground/stylesheet first-show flicker; (d) the TRUST15 rebind left the button's popup path unset until first WebView signal. Compare with how TorCircuitButton's popover does it now (that one's verified single-click) and mirror the pattern. Verify: fresh window → single click opens the panel correctly positioned on FIRST click, second click closes, repeat across tab switches/engine tabs-disabled state; tst leg simulating first click if feasible. make check PASS.
+
+### TRUST18
+
+User report: on a Tor window the shield shows as a black contour — invisible against the dark Tor title/toolbar theme. Audit candidates: (a) the shield icon paints the trust-state color but the 'neutral/no-probe' state for Tor uses a near-black/outline-only glyph — check what TorProfile tabs resolve to in refreshIcon(); (b) the glyph isn't theme-aware — AroraIcon returns the light-theme (dark stroke) variant while the Tor window styles the bar dark; check how the button picks icon set (tabler dark variant exists?) and whether TorTheme applies a dark iconTheme to its window; (c) Tor state may need its own honest color (Tor tabs = no site-probe → neutral state must still be LEGIBLE — e.g. theme foreground, not black). Fix: icon color/glyph must follow the window's effective palette — dark Tor bar gets a light/visible shield, same for private windows if themed dark. Verify: grab a Tor window nav bar — shield visibly distinct from bar background in every state; tst asserts icon pixel contrast if feasible; normal-window states unchanged. make check PASS.
