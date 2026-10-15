@@ -785,14 +785,13 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     loadDefaults();
     loadFromSettings();
 
-    // THEME02: instant theme preview — flipping the combo applies the
+    // THEME02: instant theme preview — flipping the tile applies the
     // picked scheme to the running chrome right away (the key is only
     // written by saveToSettings()).  Connected after the initial load
-    // so populating the combo does not re-apply the committed scheme;
+    // so populating the picker does not re-apply the committed scheme;
     // a later loadFromSettings() (reset buttons) previews the
     // reloaded value, which is exactly the palette it should show.
-    connect(themeCombo,
-            QOverload<int>::of(&QComboBox::currentIndexChanged),
+    connect(themePicker, &ThemePicker::positionChanged,
             this, &SettingsDialog::previewTheme);
 }
 
@@ -805,7 +804,7 @@ SettingsDialog::~SettingsDialog()
 
 void SettingsDialog::previewTheme(int index)
 {
-    // Combo order: System default / Light / Dark.  Preview only —
+    // Persisted index order: System / Light / Dark.  Preview only —
     // the persisted key is untouched, so reverting is just
     // applyColorScheme() re-resolving the committed pick.
     m_themePreviewed = true;
@@ -1322,14 +1321,14 @@ void SettingsDialog::loadFromSettings()
     settings.endGroup();
 
     // Appearance
-    // THEME01: chrome color scheme — the combo order is
-    // System default / Light / Dark; anything else falls back to
-    // System.
+    // THEME01: chrome color scheme — the persisted index order is
+    // System / Light / Dark (the tiles display Light / Dark / Auto);
+    // anything else falls back to System.
     {
         const QString colorScheme = settings.value(
             QLatin1String("browser/colorScheme"),
             QLatin1String("system")).toString();
-        themeCombo->setCurrentIndex(
+        themePicker->setCurrentIndex(
             colorScheme == QLatin1String("dark") ? 2
             : colorScheme == QLatin1String("light") ? 1 : 0);
     }
@@ -1723,7 +1722,7 @@ void SettingsDialog::saveToSettings()
     };
     settings.setValue(QLatin1String("browser/colorScheme"),
         QLatin1String(colorSchemeKeys[
-            qBound(0, themeCombo->currentIndex(), 2)]));
+            qBound(0, themePicker->currentIndex(), 2)]));
     BrowserTheme::applyColorScheme();
 
     settings.beginGroup(QLatin1String("downloadmanager"));

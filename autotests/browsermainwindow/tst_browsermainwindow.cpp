@@ -87,6 +87,7 @@
 #include "tabwidget.h"
 #include "tabbar.h"
 #include "readermode.h"
+#include "readerbutton.h"
 #include "readersanitizer.h"
 #include "webview.h"
 #include "webpage.h"
@@ -197,7 +198,9 @@ private slots:
     void torChromeTheme();
     void torStatusBarTheme();
     void torNavIconsDarkChrome();
+    void torChromeGlyphsLegible();
     void darkChromeIcons();
+    void darkThemeReaderGlyph();
     void torCircuitDropdown();
     void torCircuitPopupFirstShow();
     void torStartPage();
@@ -2730,6 +2733,221 @@ void tst_BrowserMainWindow::torNavIconsDarkChrome()
     QVERIFY(bundled.menuReload >= 0 && bundled.menuReload < 140);
 }
 
+// TRUST20: two same-class reports — the reader glyph reverted to
+// black on a state change (a stylesheet repolish restores then
+// re-applies the widget palette, and a refresh() landing in that
+// transient window baked the unthemed tone), and the sidebar rail
+// icons painted unthemed dark glyphs.  Both now rebake on palette/
+// style settles and the rail resolves its own (violet-seeded)
+// palette.  A file:// article bypasses the fail-closed tor proxy, so
+// the real probe-verdict flip drives refresh() here.
+void tst_BrowserMainWindow::torChromeGlyphsLegible()
+{
+    const auto luminance = [](const QIcon &icon,
+                              QIcon::Mode mode = QIcon::Normal)
+            -> qlonglong {
+        const QImage image = icon.pixmap(QSize(18, 18), mode).toImage();
+        qlonglong lum = 0;
+        int opaque = 0;
+        for (int y = 0; y < image.height(); ++y)
+            for (int x = 0; x < image.width(); ++x) {
+                const QColor color = image.pixelColor(x, y);
+                if (color.alpha() > 100) {
+                    lum += qGray(color.rgb());
+                    ++opaque;
+                }
+            }
+        return opaque ? lum / opaque : -1;
+    };
+    const auto isViolet = [](const QColor &c) {
+        return c.isValid() && c.blue() > c.red()
+            && c.red() > c.green() && c.lightness() < 160;
+    };
+
+    QSettings settings;
+    const QVariant savedTheme =
+        settings.value(QLatin1String("MainWindow/iconTheme"));
+    settings.setValue(QLatin1String("MainWindow/iconTheme"),
+                      QLatin1String("adwaita"));
+    AroraIcon::applyFromSettings();
+    BrowserTheme::previewColorScheme(Qt::ColorScheme::Light);
+
+    // Normal-window baseline: the rail keeps the app palette's dark
+    // glyphs on its light strip — the palette-aware icon path must
+    // not change non-tor chrome.
+    SubWindow *plain = new SubWindow;
+    plain->resize(1000, 600);
+    plain->show();
+    plain->sidebarDock()->toggleViewAction()->trigger();
+    QApplication::processEvents();
+    SidebarPanel *plainPanel = plain->sidebarPanel();
+    QVERIFY(plainPanel);
+    const int plainRailLightness = plainPanel->tabs()->tabBar()
+        ->palette().color(QPalette::Window).lightness();
+    QList<qlonglong> plainRailLums;
+    for (int i = 0; i < plainPanel->tabs()->count(); ++i)
+        plainRailLums << luminance(
+            plainPanel->tabs()->tabBar()->tabIcon(i));
+    closeWindow(plain);
+
+    // An article-shaped file — Readability's probe wants a title plus
+    // several dense paragraphs before it reports a verdict.
+    const QString articlePath =
+        QDir::temp().filePath(QLatin1String("arora-trust20-article.html"));
+    {
+        QFile article(articlePath);
+        QVERIFY(article.open(QIODevice::WriteOnly));
+        article.write("<html><head><title>An article</title></head>"
+                      "<body><article><h1>An article</h1>");
+        for (int i = 0; i < 12; ++i)
+            article.write("<p>Lorem ipsum dolor sit amet, consectetur "
+                          "adipiscing elit, sed do eiusmod tempor "
+                          "incididunt ut labore et dolore magna aliqua. "
+                          "Ut enim ad minim veniam, quis nostrud "
+                          "exercitation ullamco laboris nisi ut aliquip "
+                          "ex ea commodo consequat.</p>");
+        article.write("</article></body></html>");
+    }
+
+    BrowserApplication::setTorMode(true);
+    SubWindow *window = new SubWindow;
+    window->resize(1100, 700);
+    window->show();
+    QApplication::processEvents();
+
+    QToolBar *navBar = window->findChild<QToolBar *>(
+        QLatin1String("NavigationToolBar"));
+    QVERIFY(navBar);
+    ReaderButton *reader = navBar->findChild<ReaderButton *>(
+        QLatin1String("navReaderButton"));
+    QVERIFY(reader);
+    WebView *view = window->currentTab();
+    QVERIFY(view);
+
+    window->sidebarDock()->toggleViewAction()->trigger();
+    QApplication::processEvents();
+    SidebarPanel *panel = window->sidebarPanel();
+    QVERIFY(panel);
+    QTabBar *rail = panel->tabs()->tabBar();
+    QVERIFY(rail->count() > 0);
+    QToolButton *fold = rail->findChild<QToolButton *>(
+        QLatin1String("sidebarPanelToggle"));
+    QVERIFY(fold);
+
+    const auto railLums = [&]() -> QList<qlonglong> {
+        QList<qlonglong> lums;
+        for (int i = 0; i < rail->count(); ++i)
+            lums << luminance(rail->tabIcon(i));
+        return lums;
+    };
+
+    // At open: reader glyph light, rail strip violet with light
+    // glyphs, fold toggle light.
+    const qlonglong readerOpen = luminance(reader->icon());
+    const QList<qlonglong> railOpen = railLums();
+    const qlonglong railOpenSelected =
+        luminance(rail->tabIcon(0), QIcon::Selected);
+    const qlonglong foldOpen = luminance(fold->icon());
+    const QColor railBackground =
+        rail->grab().toImage().pixelColor(2, 2);
+
+    // The real verdict path: a file:// page needs no tor circuit —
+    // loadFinished probes Readability and availableChanged flips the
+    // button on, exactly the mid-scroll refresh the report caught.
+    view->load(QUrl::fromLocalFile(articlePath));
+    QTRY_VERIFY_WITH_TIMEOUT(!reader->isHidden(), 20000);
+    const qlonglong readerVerdict = luminance(reader->icon());
+
+    // Rebind/unbind — the tab-switch refresh path.
+    reader->setWebView(nullptr);
+    reader->setWebView(view);
+    const qlonglong readerRebind = luminance(reader->icon());
+
+    // Nav-bar edit mode re-setStyleSheet()s the bar — the repolish
+    // window where the transient dark palette used to bake in.  A
+    // refresh inside the settling window must still land light (or
+    // be rebaked by the PaletteChange that follows).
+    window->navBarEditAction()->trigger();
+    QApplication::processEvents();
+    reader->setWebView(nullptr);
+    reader->setWebView(view);
+    const qlonglong readerEditOn = luminance(reader->icon());
+    window->navBarEditAction()->trigger();
+    QApplication::processEvents();
+    reader->setWebView(nullptr);
+    reader->setWebView(view);
+    const qlonglong readerEditOff = luminance(reader->icon());
+    const QList<qlonglong> railAfterEdit = railLums();
+    const qlonglong foldAfterEdit = luminance(fold->icon());
+
+    // A scheme flip mid-flight — queued scheme signal plus palette
+    // propagation both hit the button and the rail.
+    BrowserTheme::previewColorScheme(Qt::ColorScheme::Dark);
+    QApplication::processEvents();
+    reader->setWebView(nullptr);
+    reader->setWebView(view);
+    const qlonglong readerDark = luminance(reader->icon());
+    const QList<qlonglong> railDark = railLums();
+    BrowserTheme::previewColorScheme(Qt::ColorScheme::Light);
+    QApplication::processEvents();
+    reader->setWebView(nullptr);
+    reader->setWebView(view);
+    const qlonglong readerBackLight = luminance(reader->icon());
+    const QList<qlonglong> railBackLight = railLums();
+
+    // Offscreen grab for visual review — ARORA_TOR_GRAB_DIR picks up
+    // the rail + reader states.
+    const QByteArray grabDir = qgetenv("ARORA_TOR_GRAB_DIR");
+    if (!grabDir.isEmpty()) {
+        QDir().mkpath(QString::fromLocal8Bit(grabDir));
+        rail->grab().save(QString::fromLocal8Bit(grabDir)
+                          + QLatin1String("/tor-sidebar-rail.png"));
+        navBar->grab().save(QString::fromLocal8Bit(grabDir)
+                            + QLatin1String("/tor-nav-reader.png"));
+    }
+
+    closeWindow(window);
+    BrowserApplication::setTorMode(false);
+    BrowserTheme::applyColorScheme();
+    if (savedTheme.isValid())
+        settings.setValue(QLatin1String("MainWindow/iconTheme"),
+                          savedTheme);
+    else
+        settings.remove(QLatin1String("MainWindow/iconTheme"));
+    AroraIcon::applyFromSettings();
+    QFile::remove(articlePath);
+
+    // Normal window unchanged: dark glyphs on a light strip.
+    QVERIFY(plainRailLightness > 160);
+    for (const qlonglong lum : plainRailLums)
+        QVERIFY(lum >= 0 && lum < 140);
+
+    // Tor: the rail strip is violet chrome and every glyph on it —
+    // tab icons in both modes, the fold toggle — reads light.
+    for (const qlonglong lum : railOpen)
+        QVERIFY(lum > 140);
+    QVERIFY(railOpenSelected > 140);
+    QVERIFY(foldOpen > 140);
+    QVERIFY(isViolet(railBackground));
+    // Reader: light at open, and still light through the probe
+    // verdict, tab rebinding, the edit-mode repolish and a live
+    // scheme flip — no path may leave a stale dark bake.
+    QVERIFY(readerOpen > 140);
+    QVERIFY(readerVerdict > 140);
+    QVERIFY(readerRebind > 140);
+    QVERIFY(readerEditOn > 140);
+    QVERIFY(readerEditOff > 140);
+    QVERIFY(readerDark > 140);
+    QVERIFY(readerBackLight > 140);
+    for (const qlonglong lum : railAfterEdit)
+        QVERIFY(lum > 140);
+    QVERIFY(foldAfterEdit > 140);
+    for (const qlonglong lum : railDark)
+        QVERIFY(lum > 140);
+    for (const qlonglong lum : railBackLight)
+        QVERIFY(lum > 140);
+}
+
 // ICONS05: the normal window's chrome under a dark palette.  The
 // forced dark palette cannot recolor monochrome SVG art (Qt renders
 // currentColor black, never palette-recolored), so the active set
@@ -2830,6 +3048,180 @@ void tst_BrowserMainWindow::darkChromeIcons()
     QVERIFY(darkSidebar > 140);
     QCOMPARE(backImage, lightBackImage);
     QVERIFY(backImage != darkBackImage);
+}
+
+// TRUST21: the reader glyph is painted (no bundled set ships a
+// reader mark) and used to be baked once into a fixed 16px pixmap —
+// the nav bar paints buttons at 18px, so the glyph went on screen
+// upscaled and blurred: a visibly grey mark next to the crisp
+// theme-tinted siblings, starkest on the dark palette.  Its Disabled
+// presentation likewise came from Qt's generated ghosting (a
+// near-white fade of the white glyph) instead of the palette's
+// dimmed tone.  The icon is now an engine that paints at the
+// requested size from a palette snapshot with per-mode tints — the
+// same contract ChromeIconEngine gives the themed buttons.
+//
+// The measurement takes the dominant color among the high-alpha
+// pixels of the pixmap a request actually returns: that is the
+// glyph's ink tone, independent of how thin strokes blend against
+// whatever background sits behind the button.
+void tst_BrowserMainWindow::darkThemeReaderGlyph()
+{
+    const auto dominantInk = [](const QIcon &icon, const QSize &size,
+                                QIcon::Mode mode = QIcon::Normal)
+            -> QColor {
+        const QImage image = icon.pixmap(size, mode).toImage();
+        QHash<QRgb, int> counts;
+        int best = 0;
+        QColor dominant;
+        for (int y = 0; y < image.height(); ++y)
+            for (int x = 0; x < image.width(); ++x) {
+                const QColor color = image.pixelColor(x, y);
+                if (color.alpha() > 200) {
+                    const int n = ++counts[color.rgb()];
+                    if (n > best) {
+                        best = n;
+                        dominant = color;
+                    }
+                }
+            }
+        // The glyph hue is what must match the siblings — anti-alias
+        // coverage makes the dominant edge pixel's alpha differ by a
+        // point or two between glyph shapes, so it is stripped here.
+        if (!dominant.isValid())
+            return dominant;
+        return QColor(dominant.red(), dominant.green(),
+                      dominant.blue());
+    };
+    const auto inkMatch = [](const QColor &a, const QColor &b) {
+        return qAbs(a.red() - b.red()) <= 2
+            && qAbs(a.green() - b.green()) <= 2
+            && qAbs(a.blue() - b.blue()) <= 2;
+    };
+
+    SubWindow *window = new SubWindow;
+    window->resize(1000, 600);
+    window->show();
+    QApplication::processEvents();
+
+    QToolBar *navBar = window->findChild<QToolBar *>(
+        QLatin1String("NavigationToolBar"));
+    QVERIFY(navBar);
+    ReaderButton *reader = navBar->findChild<ReaderButton *>(
+        QLatin1String("navReaderButton"));
+    QVERIFY(reader);
+    QAction *backAction = navBar->actions().at(1);
+    QVERIFY(backAction);
+
+    // A file:// article — the real Readability verdict flips the
+    // button visible, no server needed.
+    const QString articlePath = QDir::temp().filePath(
+        QLatin1String("arora-trust21-article.html"));
+    {
+        QFile article(articlePath);
+        QVERIFY(article.open(QIODevice::WriteOnly));
+        article.write("<html><head><title>An article</title></head>"
+                      "<body><article><h1>An article</h1>");
+        for (int i = 0; i < 12; ++i)
+            article.write("<p>Lorem ipsum dolor sit amet, consectetur "
+                          "adipiscing elit, sed do eiusmod tempor "
+                          "incididunt ut labore et dolore magna aliqua. "
+                          "Ut enim ad minim veniam, quis nostrud "
+                          "exercitation ullamco laboris nisi ut aliquip "
+                          "ex ea commodo consequat.</p>");
+        article.write("</article></body></html>");
+    }
+    window->currentTab()->loadUrl(QUrl::fromLocalFile(articlePath));
+    QTRY_VERIFY_WITH_TIMEOUT(!reader->isHidden(), 20000);
+
+    const QSize iconSize(18, 18);
+
+    // Light baseline: the glyph's ink is exactly ButtonText — the
+    // same flat tint the chrome-tinted siblings carry — and the icon
+    // serves the bar's 18px request at full size (the baked 16px
+    // pixmap forced an upscale, which is what made it read grey).
+    const QColor lightReader = dominantInk(reader->icon(), iconSize);
+    const QColor lightSibling = dominantInk(backAction->icon(),
+                                            iconSize);
+    const QSize lightServed = reader->icon().pixmap(iconSize).size();
+
+    BrowserTheme::previewColorScheme(Qt::ColorScheme::Dark);
+    QApplication::processEvents();
+    QApplication::processEvents();
+
+    const QPalette darkPalette = QApplication::palette();
+    const QColor darkTint =
+        darkPalette.color(QPalette::Normal, QPalette::ButtonText);
+    const QColor darkDim =
+        darkPalette.color(QPalette::Disabled, QPalette::ButtonText);
+
+    const QColor darkReader = dominantInk(reader->icon(), iconSize);
+    const QColor darkSibling = dominantInk(backAction->icon(),
+                                           iconSize);
+    const QColor darkReaderDisabled = dominantInk(
+        reader->icon(), iconSize, QIcon::Disabled);
+    const QColor darkSiblingDisabled = dominantInk(
+        backAction->icon(), iconSize, QIcon::Disabled);
+
+    // Active (checked) state keeps its deliberate accent mark — it
+    // must not collapse to the plain tint, and the engine still
+    // serves it at the requested size.  The button is checkable so
+    // click() flips its own flag instantly; the icon only rebakes on
+    // ReaderMode::activeChanged — wait on the mode, not the flag.
+    ReaderMode *mode = window->currentTab()->readerMode();
+    QVERIFY(mode);
+    reader->click();
+    QTRY_VERIFY_WITH_TIMEOUT(mode->isActive(), 20000);
+    const QColor activeInk = dominantInk(reader->icon(), iconSize);
+    const QSize activeServed =
+        reader->icon().pixmap(iconSize).size();
+    reader->click();
+    QTRY_VERIFY_WITH_TIMEOUT(!mode->isActive(), 20000);
+
+    const QByteArray grabDir = qgetenv("ARORA_DARK_GRAB_DIR");
+    if (!grabDir.isEmpty()) {
+        QDir().mkpath(QString::fromLocal8Bit(grabDir));
+        navBar->grab().save(QString::fromLocal8Bit(grabDir)
+                            + QLatin1String("/dark-reader-glyph.png"));
+    }
+
+    // Live flip back — the glyph re-follows the light palette without
+    // a restart or a reload.
+    BrowserTheme::applyColorScheme();
+    QApplication::processEvents();
+    QApplication::processEvents();
+    const QColor lightReaderAgain = dominantInk(reader->icon(),
+                                                iconSize);
+
+    closeWindow(window);
+    BrowserTheme::applyColorScheme();
+    QFile::remove(articlePath);
+
+    QVERIFY2(inkMatch(lightReader, lightSibling),
+             qPrintable(QStringLiteral("light ink %1 vs %2")
+                        .arg(lightReader.name()).arg(lightSibling.name())));
+    QVERIFY2(inkMatch(darkReader, darkSibling),
+             qPrintable(QStringLiteral("dark ink %1 vs %2")
+                        .arg(darkReader.name()).arg(darkSibling.name())));
+    QVERIFY2(inkMatch(darkReader, darkTint),
+             qPrintable(QStringLiteral("dark ink %1 vs tint %2")
+                        .arg(darkReader.name()).arg(darkTint.name())));
+    // Disabled reads the palette's dimmed tone like every sibling —
+    // not Qt's generated ghosting of a white glyph (a near-white
+    // fade that reads *brighter* than the siblings' dimmed tint).
+    QVERIFY2(inkMatch(darkReaderDisabled, darkSiblingDisabled),
+             qPrintable(QStringLiteral("disabled ink %1 vs %2")
+                        .arg(darkReaderDisabled.name())
+                        .arg(darkSiblingDisabled.name())));
+    QVERIFY(darkReaderDisabled.isValid());
+    QVERIFY(darkReaderDisabled.value() <= darkDim.value() + 4);
+    QCOMPARE(lightServed, iconSize);
+    QCOMPARE(activeServed, iconSize);
+    // Active state: the accent page fill — a colored mark, not the
+    // plain chrome tint.
+    QVERIFY(activeInk.isValid());
+    QVERIFY(activeInk != darkTint);
+    QVERIFY(inkMatch(lightReaderAgain, lightReader));
 }
 
 // TOR08: the tor window's nav bar carries a circuit dropdown right

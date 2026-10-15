@@ -563,6 +563,12 @@ UI:
   making buttons unreadable. A desktop icon theme that already ships
   light-on-dark art is kept as-is, and flipping Day/Night in
   Preferences swaps the icon art live (ICONS05).
+- The reader-mode button now matches its nav-bar siblings under the
+  dark theme: its glyph is painted at the size the toolbar asks for
+  with the palette's own button/disabled colors, instead of a fixed
+  16-px bitmap that the bar upscaled into a grey blur and ghosted
+  bright when dimmed. Active reader mode keeps its accent mark, and
+  a Day/Night flip still re-themes it live (TRUST21).
 - Tor circuit dropdown stays put: opening it refreshed the menu on
   every daemon reply and each reply kicked another query, so the
   popup re-laid itself out in an endless loop and crept sideways on
@@ -874,6 +880,13 @@ UI:
   provided by …" attribution and the "About Arora" link are gone from
   all four variants (standard, private, Tor, Servo) — the page is just
   the header, the search box and the brand mark (MENU18).
+- The window-theme choice on Preferences → Appearance is now a row of
+  clickable preview tiles — Light, Dark and Auto each sketch a small
+  page in the scheme they commit (Auto paints a half-light/half-dark
+  split for "follow the desktop"), the selection carries a highlighted
+  frame and check badge, and mouse or keyboard (arrows move,
+  Enter/Space commits) both work. The pick still previews instantly
+  and persists as before (THEM05).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
@@ -1231,6 +1244,13 @@ Tor:
   and while a warm-up retry is armed the tab shows a "Tor is still
   starting" pending page that resolves on its own — the error page
   only commits once the retry budget is honestly spent (TOR14).
+- Tor window polish: the reader-mode button can no longer revert to a
+  black glyph when a state change lands inside a stylesheet repolish —
+  it re-bakes its icon whenever the palette/style settles, the way the
+  site shield already did.  The sidebar's icon rail joins the violet
+  chrome too: its strip, tab glyphs and fold button now resolve
+  against the rail's own light-on-violet palette instead of the
+  application's (TRUST20).
 - A Servo-branded start page variant appears when the default engine
   pick is Servo: the same Arora header, search box and default
   coloring, with the official Servo logo centered under the search
