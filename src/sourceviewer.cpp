@@ -20,6 +20,7 @@
 
 #include "sourceviewer.h"
 
+#include <qdebug.h>
 #include <qlayout.h>
 #include <qmenubar.h>
 #include <qnetworkcookie.h>
@@ -37,10 +38,55 @@
 #include "sourcehighlighter.h"
 #include "webenginebackend.h"
 
-SourceViewer::SourceViewer(const QString &source, const QString &title,
-                           const QUrl &url, QWidget *parent)
+namespace {
+
+/* A fetch that hangs used to hold the viewer open forever — give up
+   and let the DOM serialization answer instead.  The env override
+   keeps the failure path testable without a fifteen-second fixture
+   stall. */
+qint64 fetchTimeoutMs()
+{
+    bool ok = false;
+    const qint64 overrideMs = qEnvironmentVariableIntValue(
+        "ARORA_SOURCE_FETCH_TIMEOUT_MS", &ok);
+    return ok && overrideMs > 0 ? overrideMs : 15000;
+}
+
+/* The wire-vs-DOM probe spawns a throwaway engine page whose
+   setContent + parse + re-serialize can cost seconds on multi-
+   megabyte documents, so pristine wire bytes win outright once the
+   payload is large.  Smaller HTML still needs the probe: a mutated
+   document (POST result, scripted rewrite) must not be replaced by
+   stale wire source. */
+const qint64 kProbeMaxBytes = 4 * 1024 * 1024;
+
+bool isHtmlMime(const QString &mime)
+{
+    return mime == QLatin1String("text/html")
+        || mime == QLatin1String("application/xhtml+xml");
+}
+
+/* A non-HTML reply needs no probe — text bytes are their own source
+   (json/xml/css/plain), while a NUL-pocked payload is binary and the
+   DOM dump (the image/object document) reads better. */
+bool looksLikeText(const QByteArray &bytes)
+{
+    return !bytes.left(4096).contains('\0');
+}
+
+bool timingEnabled()
+{
+    static const bool enabled =
+        qEnvironmentVariableIsSet("ARORA_SOURCE_TIMING");
+    return enabled;
+}
+
+}
+
+SourceViewer::SourceViewer(const QString &title, const QUrl &url,
+                           QWidget *parent)
     : QDialog(parent)
-    , m_edit(new QPlainTextEdit(tr("Loading..."), this))
+    , m_edit(new QPlainTextEdit(tr("Fetching source..."), this))
     , m_highlighter(new SourceHighlighter(m_edit->document()))
     , m_plainTextEditSearch(new PlainTextEditSearch(m_edit, this))
     , m_layout(new QVBoxLayout(this))
@@ -48,7 +94,13 @@ SourceViewer::SourceViewer(const QString &source, const QString &title,
     , m_editMenu(new QMenu(tr("&Edit"), m_menuBar))
     , m_findAction(new QAction(tr("&Find"), m_editMenu))
     , m_reply(nullptr)
-    , m_source(source)
+    , m_fetchDone(false)
+    , m_fetchOk(false)
+    , m_domDone(false)
+    , m_resolved(false)
+    , m_fetchMs(-1)
+    , m_domMs(-1)
+    , m_probeStartMs(-1)
 {
     setWindowTitle(tr("Source of Page %1").arg(title));
 
@@ -85,7 +137,41 @@ SourceViewer::SourceViewer(const QString &source, const QString &title,
     request.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::PreferCache);
     m_reply = NetworkAccessManager::instance()->get(request);
     connect(m_reply, &QNetworkReply::finished, this, &SourceViewer::loadingFinished);
+    connect(m_reply, &QNetworkReply::downloadProgress, this,
+            [this](qint64 received, qint64 total) {
+        if (m_resolved || m_fetchDone)
+            return;
+        if (total > 0)
+            m_edit->setPlainText(
+                tr("Fetching source... %1%").arg(received * 100 / total));
+        else
+            m_edit->setPlainText(
+                tr("Fetching source... %1 KB").arg(received / 1024));
+    });
     m_reply->setParent(this);
+    m_clock.start();
+
+    QPointer<SourceViewer> self(this);
+    const qint64 timeout = fetchTimeoutMs();
+    QTimer::singleShot(timeout, this, [self]() {
+        if (self && self->m_reply)
+            self->m_reply->abort();  // finished() reports the failure
+    });
+    // If neither stage answers (the page died before its toHtml
+    // returned) surface whatever arrived instead of loading forever.
+    QTimer::singleShot(timeout + 15000, this, [self]() {
+        if (!self || self->m_resolved)
+            return;
+        if (self->m_fetchDone && self->m_fetchOk
+            && looksLikeText(self->m_wire)) {
+            self->showSource(QString::fromUtf8(self->m_wire),
+                             "watchdog/wire");
+        } else if (self->m_domDone) {
+            self->showSource(self->m_source, "watchdog/dom");
+        } else {
+            self->showSource(tr("Source unavailable."), "watchdog/none");
+        }
+    });
 }
 
 SourceViewer::~SourceViewer()
@@ -95,51 +181,114 @@ SourceViewer::~SourceViewer()
     settings.setValue(QLatin1String("size"), size());
 }
 
+bool SourceViewer::isResolved() const
+{
+    return m_resolved;
+}
+
+void SourceViewer::setDomSource(const QString &markup)
+{
+    if (m_domDone || m_resolved)
+        return;
+    m_source = markup;
+    m_domDone = true;
+    m_domMs = m_clock.elapsed();
+    maybeResolve();
+}
+
 void SourceViewer::loadingFinished()
 {
-    const QByteArray response = m_reply->readAll();
-    const QUrl url = m_reply->request().url();
-    const bool failed = m_reply->error() != QNetworkReply::NoError;
+    m_wire = m_reply->readAll();
+    m_wireUrl = m_reply->request().url();
+    m_fetchOk = m_reply->error() == QNetworkReply::NoError;
     // Qt 6's setContent treats an empty mime type as text/plain;
     // without a reply Content-Type assume the page was HTML.
-    QString mimeType =
+    m_wireMime =
         m_reply->header(QNetworkRequest::ContentTypeHeader).toString()
             .section(QLatin1Char(';'), 0, 0);
-    if (mimeType.isEmpty())
-        mimeType = QLatin1String("text/html");
+    if (m_wireMime.isEmpty())
+        m_wireMime = QLatin1String("text/html");
     m_reply->close();
     m_reply->deleteLater();
     m_reply = nullptr;
+    m_fetchDone = true;
+    m_fetchMs = m_clock.elapsed();
+    if (!m_fetchOk && !m_domDone)
+        m_edit->setPlainText(tr("Reading page DOM..."));
+    maybeResolve();
+}
 
-    if (failed) {
-        m_edit->setPlainText(m_source);
+void SourceViewer::maybeResolve()
+{
+    if (m_resolved || !m_fetchDone || !m_domDone)
+        return;
+
+    if (!m_fetchOk) {
+        showSource(m_source, "fetch-failed/dom");
         return;
     }
+    if (m_wire == m_source.toUtf8()) {
+        showSource(QString::fromUtf8(m_wire), "exact-match/wire");
+        return;
+    }
+    // The probe only runs where it can change the answer.
+    if (isHtmlMime(m_wireMime) && m_wire.size() <= kProbeMaxBytes) {
+        probeWireSource();
+        return;
+    }
+    const bool text = looksLikeText(m_wire);
+    showSource(text ? QString::fromUtf8(m_wire) : m_source,
+               text ? "text/wire" : "binary/dom");
+}
 
+void SourceViewer::showSource(const QString &text, const char *decision)
+{
+    m_resolved = true;
+    m_edit->setPlainText(text);
+    if (timingEnabled()) {
+        const qint64 total = m_clock.elapsed();
+        qInfo() << "SourceViewer timing: decision" << decision
+                << "fetch" << m_fetchMs << "ms"
+                << "dom" << m_domMs << "ms"
+                << "probe"
+                << (m_probeStartMs >= 0 ? total - m_probeStartMs : -1)
+                << "ms total" << total << "ms";
+    }
+}
+
+void SourceViewer::probeWireSource()
+{
     /* If the raw bytes parse to the same DOM the page reported, show
        the pristine wire source; otherwise (POST result, a document the
        page rewrote...) fall back to the DOM serialization the caller
        passed in.  WebEngine has no synchronous HTML parser like
        QWebFrame::setContent, so the comparison runs on a throwaway
        page asynchronously. */
+    m_probeStartMs = m_clock.elapsed();
     QWebEnginePage *probe = new QWebEnginePage(this);
     // The probe is engine-bound infra (a throwaway DOM parser) — its
     // serialization still goes through the interface surface.
     WebEnginePageAdapter *probeAdapter = new WebEnginePageAdapter(probe, probe);
     QPointer<SourceViewer> self(this);
     connect(probe, &QWebEnginePage::loadFinished, this,
-            [self, probe, probeAdapter, response](bool ok) {
-        if (!ok) {
-            self->m_edit->setPlainText(self->m_source);
+            [self, probe, probeAdapter](bool ok) {
+        if (!self || self->m_resolved) {
             probe->deleteLater();
             return;
         }
-        probeAdapter->toHtml([self, probe, response](const QString &markup) {
-            if (self) {
-                self->m_edit->setPlainText(
-                    markup == self->m_source
-                        ? QString::fromUtf8(response)
-                        : self->m_source);
+        if (!ok) {
+            self->showSource(self->m_source, "probe-failed/dom");
+            probe->deleteLater();
+            return;
+        }
+        probeAdapter->toHtml([self, probe](const QString &markup) {
+            if (self && !self->m_resolved) {
+                const bool same = markup == self->m_source;
+                self->showSource(same
+                                     ? QString::fromUtf8(self->m_wire)
+                                     : self->m_source,
+                                 same ? "probe-same/wire"
+                                      : "probe-diff/dom");
             }
             delete probe;
         });
@@ -148,10 +297,10 @@ void SourceViewer::loadingFinished()
     // the DOM dump is a valid fallback.
     QPointer<QWebEnginePage> probeGuard(probe);
     QTimer::singleShot(5000, this, [self, probeGuard]() {
-        if (self && probeGuard) {
-            self->m_edit->setPlainText(self->m_source);
+        if (self && !self->m_resolved && probeGuard) {
+            self->showSource(self->m_source, "probe-timeout/dom");
             delete probeGuard.data();
         }
     });
-    probe->setContent(response, mimeType, url);
+    probe->setContent(m_wire, m_wireMime, m_wireUrl);
 }

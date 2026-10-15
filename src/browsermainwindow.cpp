@@ -3578,12 +3578,19 @@ void BrowserMainWindow::viewPageSource()
 
     QString title = currentTab()->title();
     QUrl url = currentTab()->url();
-    // toHtml answers asynchronously — the viewer opens once the
-    // serialized DOM arrives from the render process.
-    currentTab()->enginePage()->toHtml([title, url](const QString &markup) {
-        SourceViewer *viewer = new SourceViewer(markup, title, url);
-        viewer->setAttribute(Qt::WA_DeleteOnClose);
-        viewer->show();
+    // The viewer opens right away and starts the wire re-fetch while
+    // the DOM serialization travels back from the render process —
+    // the two used to run one after another, so a slow network
+    // stacked on a slow render round-trip.  A closed viewer just
+    // drops the late DOM answer.
+    SourceViewer *viewer = new SourceViewer(title, url);
+    viewer->setAttribute(Qt::WA_DeleteOnClose);
+    viewer->show();
+    QPointer<SourceViewer> guard(viewer);
+    currentTab()->enginePage()->toHtml(
+            [guard](const QString &markup) {
+        if (guard)
+            guard->setDomSource(markup);
     });
 }
 

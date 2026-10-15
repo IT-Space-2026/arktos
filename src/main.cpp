@@ -8698,14 +8698,17 @@ int main(int argc, char **argv)
         view->loadUrl(fixtureUrl);
     }
 
-    // Headless verification for MIG12 (view source): the viewer
-    // re-fetches the page through the app-side NAM and shows the raw
-    // wire bytes when they parse to the same DOM the page serialized
-    // — otherwise the DOM dump is shown.  A second viewer fed a bogus
-    // dump exercises the fallback branch.  The syntax highlighter is
-    // checked on a standalone document (no renderer needed) and the
-    // in-viewer find bar exercises PlainTextEditSearch.  Exits 0 on
-    // PASS.
+    // Headless verification for MIG12/VIEW09 (view source): the
+    // viewer re-fetches the page through the app-side NAM in parallel
+    // with the DOM serialization and shows the raw wire bytes when
+    // they parse to the same DOM the page serialized — otherwise the
+    // DOM dump is shown.  A second viewer fed a bogus dump exercises
+    // the fallback branch, a delayed fixture server proves the fetch
+    // and the DOM dump overlap instead of serializing, and a server
+    // that never answers exercises the fetch timeout.  The syntax
+    // highlighter is checked on a standalone document (no renderer
+    // needed) and the in-viewer find bar exercises
+    // PlainTextEditSearch.  Exits 0 on PASS.
     if (args.contains(QLatin1String("--source-smoke"))) {
         const QString fixturePath = QDir::temp().filePath(
             QLatin1String("arora-source-smoke.html"));
@@ -8721,6 +8724,12 @@ int main(int argc, char **argv)
             fixture.write(bytes);
         }
         const QUrl fixtureUrl = QUrl::fromLocalFile(fixturePath);
+
+        // The dead-fetch leg must reach the viewer's fetch timeout in
+        // seconds, not the 15s production bound; per-stage timings go
+        // to the log so the parallel leg's numbers stay visible.
+        qputenv("ARORA_SOURCE_FETCH_TIMEOUT_MS", "5000");
+        qputenv("ARORA_SOURCE_TIMING", "1");
 
         // Cosmetic adblock rules would be injected into the serialized
         // DOM the viewer compares against (see --find-smoke); suspend
@@ -8772,9 +8781,9 @@ int main(int argc, char **argv)
             auto ticks = std::make_shared<int>(0);
             QTimer *poll = new QTimer(viewer);
             QObject::connect(poll, &QTimer::timeout, viewer,
-                [edit, search, searchEdit, expected, what,
+                [viewer, edit, search, searchEdit, expected, what,
                  ticks, poll, finish]() {
-                if (edit->toPlainText() == QLatin1String("Loading...")) {
+                if (!viewer->isResolved()) {
                     if (++*ticks > 100) {
                         poll->stop();
                         qInfo() << "source-smoke:" << what
@@ -8814,28 +8823,129 @@ int main(int argc, char **argv)
             poll->start(100);
         };
 
+        // VIEW09 legs — the re-fetch and the DOM dump must overlap.
+        // A fixture server delays its reply and the DOM source is
+        // handed over on the same delay, so a parallel pipeline
+        // resolves near ONE delay while a serialized one stacks two.
+        // text/plain keeps the probe out of the measured leg (the
+        // raw/fallback legs already cover it) so the bound stays
+        // tight on slow machines; a second server accepts and never
+        // replies, driving the fetch-timeout fallback.
+        QTcpServer *slowServer = new QTcpServer(&application);
+        QTcpServer *deadServer = new QTcpServer(&application);
+        if (!slowServer->listen(QHostAddress::LocalHost, 0)
+            || !deadServer->listen(QHostAddress::LocalHost, 0)) {
+            qInfo() << "source-smoke: FAIL (fixture servers)";
+            QFile::remove(fixturePath);
+            return 1;
+        }
+        *pending += 2;
+        const int serveDelayMs = 1500;
+        QObject::connect(slowServer, &QTcpServer::newConnection,
+                         slowServer, [slowServer, bytes,
+                                      serveDelayMs]() {
+            QTcpSocket *socket = slowServer->nextPendingConnection();
+            auto request = std::make_shared<QByteArray>();
+            auto served = std::make_shared<bool>(false);
+            QObject::connect(socket, &QTcpSocket::readyRead, socket,
+                [socket, bytes, serveDelayMs, request, served]() {
+                if (*served)
+                    return;
+                request->append(socket->readAll());
+                if (!request->contains("\r\n\r\n"))
+                    return;
+                *served = true;
+                QTimer::singleShot(serveDelayMs, socket,
+                    [socket, bytes]() {
+                    socket->write("HTTP/1.1 200 OK\r\n"
+                                  "Content-Type: text/plain\r\n"
+                                  "Content-Length: "
+                        + QByteArray::number(bytes.size())
+                        + "\r\nConnection: close\r\n\r\n" + bytes);
+                    socket->disconnectFromHost();
+                });
+            });
+        });
+        QObject::connect(deadServer, &QTcpServer::newConnection,
+                         deadServer, [deadServer]() {
+            // Accept and hold — the socket stays parented to the
+            // server and never produces a reply.
+            deadServer->nextPendingConnection();
+        });
+
+        const QUrl slowUrl(QStringLiteral("http://127.0.0.1:%1/slow")
+                           .arg(slowServer->serverPort()));
+        const QString slowExpected = QString::fromUtf8(bytes);
+        auto legClock = std::make_shared<QElapsedTimer>();
+        legClock->start();
+        SourceViewer *slowViewer = new SourceViewer(
+            QLatin1String("slow"), slowUrl, view);
+        QTimer::singleShot(serveDelayMs, slowViewer, [slowViewer]() {
+            slowViewer->setDomSource(QLatin1String("slow-dom-dump"));
+        });
+        QTimer *parallelPoll = new QTimer(slowViewer);
+        auto parallelTicks = std::make_shared<int>(0);
+        QObject::connect(parallelPoll, &QTimer::timeout, slowViewer,
+            [slowViewer, legClock, parallelPoll, parallelTicks,
+             slowExpected, serveDelayMs, finish]() {
+            if (!slowViewer->isResolved()) {
+                if (++*parallelTicks > 200) {
+                    parallelPoll->stop();
+                    qInfo() << "source-smoke: parallel FAIL (timeout)";
+                    finish(false);
+                }
+                return;
+            }
+            parallelPoll->stop();
+            QPlainTextEdit *slowEdit =
+                slowViewer->findChild<QPlainTextEdit*>();
+            const qint64 elapsed = legClock->elapsed();
+            const qint64 bound = serveDelayMs + 900;
+            const bool contentOk =
+                slowEdit && slowEdit->toPlainText() == slowExpected;
+            const bool pass = contentOk && elapsed < bound;
+            qInfo() << "source-smoke: parallel"
+                    << (pass ? "PASS" : "FAIL") << "(elapsed:" << elapsed
+                    << "bound:" << bound << "content:" << contentOk << ")";
+            finish(pass);
+        });
+        parallelPoll->start(25);
+
+        const QUrl deadUrl(QStringLiteral("http://127.0.0.1:%1/dead")
+                           .arg(deadServer->serverPort()));
+        SourceViewer *deadViewer = new SourceViewer(
+            QLatin1String("dead"), deadUrl, view);
+        deadViewer->setDomSource(QLatin1String("dead-dom-dump"));
+        checkViewer(deadViewer, QLatin1String("dead-dom-dump"),
+                    "fetch-timeout");
+
         QObject::connect(view, &QWebEngineView::loadFinished, &application,
             [view, fixtureUrl, bytes, pending, checkViewer](bool ok) {
             if (!ok || view->url() != fixtureUrl)
                 return;
             // Serialize the loaded DOM exactly like
-            // BrowserMainWindow::viewPageSource() does.
+            // BrowserMainWindow::viewPageSource() hands it to the
+            // already-fetching viewer.
             view->webPage()->toHtml(
                 [view, fixtureUrl, bytes, pending, checkViewer](const QString &markup) {
                 // The faithful DOM dump: the probe must judge the raw
                 // bytes equivalent and show them verbatim.
                 *pending += 2;
-                checkViewer(new SourceViewer(markup, view->title(),
-                                             fixtureUrl, view),
+                SourceViewer *rawViewer = new SourceViewer(
+                    view->title(), fixtureUrl, view);
+                rawViewer->setDomSource(markup);
+                checkViewer(rawViewer,
                             QString::fromUtf8(bytes), "raw");
                 // A mismatched dump must be shown as-is (probe's
                 // toHtml never equals it).
-                checkViewer(new SourceViewer(QLatin1String("bogus-dom-dump"),
-                                             view->title(), fixtureUrl, view),
+                SourceViewer *bogusViewer = new SourceViewer(
+                    view->title(), fixtureUrl, view);
+                bogusViewer->setDomSource(QLatin1String("bogus-dom-dump"));
+                checkViewer(bogusViewer,
                             QLatin1String("bogus-dom-dump"), "fallback");
             });
         });
-        QTimer::singleShot(30000, &application, [&application]() {
+        QTimer::singleShot(45000, &application, [&application]() {
             qInfo() << "source-smoke: FAIL (timeout)";
             application.exit(1);
         });
