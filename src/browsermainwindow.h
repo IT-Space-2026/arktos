@@ -450,12 +450,6 @@ private:
     QWidget *m_navBarDropIndicator = nullptr;
     QString m_navBarSavedStyleSheet;
     QStringList m_navBarDefaultOrder;
-    // MENU13: trailing 'Arora' wordmark — a fixed QLabel riding as a
-    // toolbar widget action with no navBarItemId: the persisted order
-    // ignores it (unlisted items tail the rebuild) and edit mode
-    // refuses to pick it or drop past it — brand is not a control.
-    QLabel *m_navBarBrandLabel = nullptr;
-    QAction *m_navBarBrandAction = nullptr;
 #if defined(Q_OS_MACOS)
     QFrame *m_bookmarksToolbarFrame;
 #endif

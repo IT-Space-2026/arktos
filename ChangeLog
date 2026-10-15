@@ -801,6 +801,11 @@ UI:
 - "Quit" moved out of the File menu — it is now the last entry in
   the Arora app-menu dropdown, below Help, on every window type.
   Ctrl+Q is unchanged (MENU15).
+- The "Arora" wordmark is gone from the right end of the navigation
+  bar, and the app-menu logo button on the left now renders at the
+  same icon size as the other navigation buttons instead of
+  oversized — the bar's right end simply ends at the last real
+  control (MENU16).
 - Flatter, more modern chrome from one central style source: sunken
   toolbar/dock/panel frames and hard borders are replaced by subtle
   palette-derived hairlines, toolbars and panels share a consistent
