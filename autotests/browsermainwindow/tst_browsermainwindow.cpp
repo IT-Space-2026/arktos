@@ -1005,10 +1005,25 @@ void tst_BrowserMainWindow::appMenuButton()
     QCOMPARE(button->popupMode(), QToolButton::InstantPopup);
     QCOMPARE(button->text(), QLatin1String("Arora"));
     QVERIFY(!button->icon().isNull());
-    // MENU16: the logo glyph rides at the nav bar's shared icon size
-    // — the MENU09 host + fixed 36px extent that rendered it
-    // oversized are gone; the button is a direct bar child now.
-    QCOMPARE(button->iconSize(), navBar->iconSize());
+    // MENU16: the MENU09 host + fixed 36px extent that rendered the
+    // logo oversized are gone; the button is a direct bar child now.
+    // MENU17: brand accent — its glyph rides ~25% over the bar's
+    // shared icon size (18 -> 22.5 -> 23) in a still-square cell,
+    // while the toolbar's own action buttons keep the shared size.
+    QCOMPARE(button->iconSize().width(), button->iconSize().height());
+    QVERIFY(qAbs(button->iconSize().height()
+                 - navBar->iconSize().height() * 1.25) <= 1.0);
+    QToolButton *sibling = qobject_cast<QToolButton *>(
+        navBar->widgetForAction(navBar->actions().at(1)));
+    QVERIFY(sibling);
+    QCOMPARE(sibling->iconSize(), navBar->iconSize());
+    // The bigger glyph fills the face instead of stretching the row:
+    // the face caps at a square just over the standard button height
+    // so the bar height stays driven by the location field.
+    QVERIFY(button->sizeHint().height() > sibling->sizeHint().height());
+    QCOMPARE(button->sizeHint().width(), button->sizeHint().height());
+    QVERIFY(button->sizeHint().height()
+            <= sibling->sizeHint().height() + 1);
     QVERIFY(!button->icon().pixmap(button->iconSize()).isNull());
     QVERIFY(!button->toolTip().isEmpty());
     QVERIFY(!button->accessibleName().isEmpty());
@@ -1248,9 +1263,12 @@ void tst_BrowserMainWindow::appMenuButton()
     const bool privateMenuFull = privateButton
         && privateButton->menu()
         && privateButton->menu()->actions().count() >= 8;
-    // MENU16: every window type gets the same bar-sized glyph.
+    // MENU17: every window type gets the same ~1.25x brand glyph.
     const bool privateBarIcon = privateButton && privateBar
-        && privateButton->iconSize() == privateBar->iconSize();
+        && qAbs(privateButton->iconSize().height()
+                - privateBar->iconSize().height() * 1.25) <= 1.0
+        && privateButton->iconSize().width()
+            == privateButton->iconSize().height();
     const bool privateBarHidden =
         !privateWindow->menuBar()->isVisible();
     // MENU08: and the same enlarged menu text.
@@ -1307,8 +1325,12 @@ void tst_BrowserMainWindow::appMenuButton()
                        .remove(QLatin1Char('&'))
                    == QLatin1String("Quit");
     }
+    // MENU17: the tor button follows the same ~1.25x accent.
     const bool torBarIcon = torButton && torNavBar
-        && torButton->iconSize() == torNavBar->iconSize();
+        && qAbs(torButton->iconSize().height()
+                - torNavBar->iconSize().height() * 1.25) <= 1.0
+        && torButton->iconSize().width()
+            == torButton->iconSize().height();
     // MENU08: the violet window's dropdown is enlarged identically —
     // tor only re-colors the bar, menus stay on the palette + font.
     const QFont torMenuFont = torWindow->appMenu()
