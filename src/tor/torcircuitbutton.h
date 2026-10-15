@@ -82,6 +82,11 @@ public:
     // Where the "Circuit for <host>" header/site node gets its host
     // — the window wires this to the current tab's url().host().
     void setSiteHostProvider(const std::function<QString()> &provider);
+    // TOR13: invoked on an acked NEWNYM so the site's tab reloads —
+    // tor only re-homes NEW streams, so without the reload the page
+    // would keep riding the dirty circuit and nothing observable
+    // would change (Tor Browser's identical flow).
+    void setSiteReloader(const std::function<void()> &reloader);
 
     // ISO-3166 alpha-2 -> English country name; empty for unknown
     // codes ("ZZ", malformed input).
@@ -110,6 +115,7 @@ private:
     TorCircuitPanel *m_panel;
     QWidgetAction *m_panelAction;
     std::function<QString()> m_siteHostProvider;
+    std::function<void()> m_siteReloader;
     // Result text shown under the New-circuit button ("requested",
     // "failed", "unavailable"); cleared on each open.
     QString m_statusText;

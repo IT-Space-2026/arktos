@@ -509,6 +509,14 @@ void tst_TorManager::circuitMenuNoRequeryLoop()
         return false;
     }(), 10000);
 
+    auto statusQueryCount = [&dir]() -> int {
+        QFile log(dir.path() + QLatin1String("/circuit-status-log"));
+        if (!log.open(QIODevice::ReadOnly))
+            return -1;
+        return QString::fromLatin1(log.readAll())
+            .split(QLatin1Char('\n'), Qt::SkipEmptyParts).size();
+    };
+
     TorCircuitButton button(&manager);
     QMenu *menu = button.menu();
     // TOR19: flush the menu's action rects before the popup, exactly
@@ -533,13 +541,11 @@ void tst_TorManager::circuitMenuNoRequeryLoop()
         QStringLiteral("This browser")));
 
     const QStringList settledContent = panel->contentLines();
-    auto statusQueryCount = [&dir]() -> int {
-        QFile log(dir.path() + QLatin1String("/circuit-status-log"));
-        if (!log.open(QIODevice::ReadOnly))
-            return -1;
-        return QString::fromLatin1(log.readAll())
-            .split(QLatin1Char('\n'), Qt::SkipEmptyParts).size();
-    };
+    // The open's populate issues at most one fresh query — it can be
+    // coalesced with a refresh already in flight, and even when sent
+    // it can land a beat after the popup is up.  Drain the window
+    // before the baseline or the dwell check below races the wire.
+    QTest::qWait(1200);
     const int baseline = statusQueryCount();
     QVERIFY(baseline >= 1);
 
@@ -607,8 +613,11 @@ void tst_TorManager::newNymSignal()
     // The CIRC event drives a refresh: the display circuit becomes
     // the new id with rotated middle+exit and the SAME guard
     // fingerprint — the honest "your guard node may not change"
-    // behavior.
-    QTRY_VERIFY_WITH_TIMEOUT(manager.displayCircuitId() == 4, 15000);
+    // behavior.  TOR13: the dirty circuit 3 stays BUILT and still
+    // carries the attached streams (the busiest pick would pin it
+    // forever), so id 6 surfacing here is precisely the post-NEWNYM
+    // preference the display needed for the rotation to be visible.
+    QTRY_VERIFY_WITH_TIMEOUT(manager.displayCircuitId() == 6, 15000);
     QList<TorCircuitHop> hops;
     for (const TorCircuit &circuit : manager.circuits()) {
         if (circuit.id == manager.displayCircuitId())
@@ -619,6 +628,19 @@ void tst_TorManager::newNymSignal()
              QLatin1String("AA11AA11AA11AA11AA11AA11AA11AA11AA11AA11"));
     QCOMPARE(hops.at(1).nickname, QLatin1String("MiddleFour"));
     QCOMPARE(hops.at(2).nickname, QLatin1String("ExitFour"));
+
+    // TOR13: a second request inside tor's rate-limit window is an
+    // honest client-side refusal — it never reaches the wire, and it
+    // must not be mistaken for a success by the caller.
+    replyCode = -1;
+    manager.signalNewNym([&replyCode](int code, const QStringList &) {
+        replyCode = code;
+    });
+    QCOMPARE(replyCode, -2);
+    QVERIFY(manager.newNymCooldownMs() > 0);
+    QTest::qWait(100);
+    QCOMPARE(signalLog().split(QLatin1Char('\n'),
+                               Qt::SkipEmptyParts).size(), 1);
 
     // A dead control connection is an honest failure, not a hang.
     manager.stop();
@@ -632,7 +654,12 @@ void tst_TorManager::newNymSignal()
 // TOR15: the popup's "New Tor circuit for this site" button drives
 // the whole NEWNYM path without dismissing the menu — the status
 // line reports the outcome and the chain repaints on the rotated
-// circuit once the CIRC-event refresh lands.
+// circuit once the CIRC-event refresh lands.  TOR13: the ack also
+// fires the wired site-reload hook (tor re-homes NEW streams only,
+// so the tab must reload for the site's path to change), the fresh
+// circuit surfaces over the dirty-but-busiest old one, and a second
+// click inside tor's rate limit is an honest refusal rather than a
+// fake "requested".
 void tst_TorManager::circuitPanelNewCircuit()
 {
     const QString fake = fakeTorPath();
@@ -656,6 +683,11 @@ void tst_TorManager::circuitPanelNewCircuit()
     button.setSiteHostProvider([]() {
         return QStringLiteral("check.torproject.org");
     });
+    // TOR13: an acked NEWNYM reloads the site's tab so its streams
+    // actually land on the fresh circuit — otherwise nothing about
+    // the page's path changes.
+    int reloads = 0;
+    button.setSiteReloader([&reloads]() { ++reloads; });
     QMenu *menu = button.menu();
     menu->popup(QPoint(80, 80));
     QTRY_VERIFY_WITH_TIMEOUT(menu->isVisible(), 5000);
@@ -673,23 +705,48 @@ void tst_TorManager::circuitPanelNewCircuit()
     QVERIFY(before.contains(
         QStringLiteral("Your guard node may not change.")));
 
+    auto signalLogLines = [&dir]() -> int {
+        QFile log(dir.path() + QLatin1String("/signal-log"));
+        if (!log.open(QIODevice::ReadOnly))
+            return 0;
+        return QString::fromLatin1(log.readAll())
+            .split(QLatin1Char('\n'), Qt::SkipEmptyParts).size();
+    };
+
     QPushButton *newCircuit = panel->findChild<QPushButton *>(
         QLatin1String("newCircuitButton"));
     QVERIFY(newCircuit);
     QVERIFY(newCircuit->isEnabled());
     newCircuit->click();
-    QTRY_VERIFY_WITH_TIMEOUT(panel->contentLines().contains(
-        QStringLiteral("New circuit requested")), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(panel->contentLines().join(
+        QLatin1Char(' ')).contains(
+            QStringLiteral("New circuit requested")), 10000);
     QVERIFY(menu->isVisible());
+    QTRY_COMPARE(reloads, 1);
 
     // The rotated circuit repaints the open popup: same guard node,
-    // new middle+exit.
+    // new middle+exit — even though the dirty circuit 3 still pins
+    // the stream count, the post-NEWNYM preference surfaces the
+    // replacement.
     QTRY_VERIFY_WITH_TIMEOUT(panel->contentLines().contains(
         QStringLiteral("United States (exit)")), 15000);
     QVERIFY(panel->contentLines().contains(
         QStringLiteral("Switzerland (middle)")));
     QVERIFY(panel->contentLines().contains(
         QStringLiteral("Germany (guard)")));
+
+    // TOR13: a second click inside tor's NEWNYM rate limit is an
+    // honest refusal — the status line says so and nothing reaches
+    // the wire (the old flow would have printed another fake
+    // "New circuit requested").
+    const int sent = signalLogLines();
+    QVERIFY(sent >= 1);
+    newCircuit->click();
+    QTRY_VERIFY_WITH_TIMEOUT(panel->contentLines().join(
+        QLatin1Char(' ')).contains(
+            QStringLiteral("rate-limits")), 5000);
+    QTest::qWait(200);
+    QCOMPARE(signalLogLines(), sent);
 
     menu->hide();
     manager.stop();

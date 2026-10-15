@@ -153,6 +153,15 @@ public:
     // The circuit the UI should surface: the BUILT circuit carrying
     // the most streams, else the newest BUILT PURPOSE=GENERAL, else
     // the newest BUILT at all; -1 when none qualify.
+    //
+    // TOR13: after an acked NEWNYM the preference runs over the
+    // circuits created since the request first (ids are monotonic —
+    // the floor is the highest id the snapshot held at ack time),
+    // falling back to the unrestricted pick until a replacement
+    // lands.  Without it the busiest-stream pin keeps surfacing the
+    // dirty pre-NEWNYM circuit — its streams never detach — so the
+    // panel's hop chain never visibly rotates and "new circuit"
+    // reads as a no-op.
     int displayCircuitId() const;
     // TOR12: whether the snapshot carries a circuit a user stream can
     // ride.  state() == Ready only means the SOCKS listener answers —
@@ -166,13 +175,21 @@ public:
     // TOR15: SIGNAL NEWNYM — tor marks live circuits dirty and builds
     // clean ones; new streams get a fresh exit/middle while the entry
     // guard persists.  The callback fires with the control reply code
-    // (250 on success) or -1 when there is no live control
-    // connection.  The replacement circuits land through the CIRC
-    // events -> circuitsChanged like any other rotation.  (A plain
-    // method, not a slot — moc cannot parse the std::function.)
+    // (250 on success), -1 when there is no live control connection,
+    // or -2 when the request is inside the client-side cooldown (see
+    // newNymCooldownMs()) without ever reaching the wire.  The
+    // replacement circuits land through the CIRC events ->
+    // circuitsChanged like any other rotation.  (A plain method, not
+    // a slot — moc cannot parse the std::function.)
     void signalNewNym(
             const std::function<void(int code,
                                      const QStringList &lines)> &callback);
+    // TOR13: tor rate-limits NEWNYM to one request per ~10s yet still
+    // answers "250 OK" when it ignores one, so a repeat click inside
+    // the window would report a success the daemon never acted on.
+    // The manager mirrors the limit client-side: ms until the next
+    // request will actually be sent, 0 when free.
+    qint64 newNymCooldownMs() const;
 
 public slots:
     void start();
@@ -194,6 +211,12 @@ public slots:
     {
         m_circuits = circuits;
         emit circuitsChanged(m_circuits);
+    }
+    // Test seam: shrinks the NEWNYM cooldown so a test can re-arm
+    // without a real 10s wait.
+    void setNewNymWindowForTesting(qint64 ms)
+    {
+        m_newNymWindowMs = ms;
     }
 #endif
 
@@ -244,6 +267,14 @@ private:
 
     QList<TorCircuit> m_circuits;
     int m_streamCircuitId;          // busiest attached circuit, -1
+    // TOR13: highest circuit id the snapshot held when the last NEWNYM
+    // was acked — displayCircuitId prefers ids above it so the fresh
+    // chain surfaces instead of the dirty-but-busiest old one.  -1
+    // until the first acked request.
+    int m_newNymFloor;
+    int pickDisplayCircuit(int floorId) const;
+    QElapsedTimer m_lastNewNymAt;   // running since the last NEWNYM send
+    qint64 m_newNymWindowMs;        // client-side NEWNYM rate limit
     bool m_circuitQueryInFlight;
     QTimer *m_circuitRefreshTimer;  // debounces bursts of 650 CIRC lines
     int m_startRetries;             // respawns used in this launch series

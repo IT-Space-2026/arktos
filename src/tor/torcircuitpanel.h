@@ -64,7 +64,11 @@ public:
     void setCircuit(const QString &siteHost,
                     const QList<Node> &nodes);
     void setInfo(const QString &siteHost, const QString &text);
-    void setNewCircuitEnabled(bool enabled);
+    // enabled state plus WHY it is disabled — a greyed button with no
+    // explanation reads as a dead control (TOR13), so the reason rides
+    // the button's tooltip.
+    void setNewCircuitEnabled(bool enabled,
+                              const QString &disabledReason = QString());
     void setStatusText(const QString &text);
 
     QString titleText() const;

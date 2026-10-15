@@ -2023,6 +2023,18 @@ void BrowserMainWindow::setupToolBar()
             WebView *tab = currentTab();
             return tab ? tab->url().host() : QString();
         });
+        // TOR13: tor re-homes NEW streams only — an acked NEWNYM
+        // reloads the site's tab so its traffic actually lands on the
+        // fresh circuit (Tor Browser's identical flow), and the
+        // status-bar toast keeps the feedback visible after the
+        // dropdown closes.
+        m_torCircuitButton->setSiteReloader([this]() {
+            statusBar()->showMessage(
+                tr("New Tor circuit requested — reloading this site"),
+                5000);
+            if (WebView *tab = currentTab())
+                tab->reload();
+        });
         m_navigationBar->addWidget(m_torCircuitButton)
             ->setProperty(kNavBarItemIdProperty,
                           QLatin1String("torCircuit"));

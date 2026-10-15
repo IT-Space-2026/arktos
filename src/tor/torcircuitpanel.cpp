@@ -289,9 +289,14 @@ void TorCircuitPanel::setInfo(const QString &siteHost,
     updateGeometry();
 }
 
-void TorCircuitPanel::setNewCircuitEnabled(bool enabled)
+void TorCircuitPanel::setNewCircuitEnabled(bool enabled,
+                                             const QString &disabledReason)
 {
     m_newCircuit->setEnabled(enabled);
+    m_newCircuit->setToolTip(enabled || disabledReason.isEmpty()
+        ? tr("Ask tor for a fresh circuit; this site is reloaded "
+             "onto it.")
+        : disabledReason);
 }
 
 void TorCircuitPanel::setStatusText(const QString &text)

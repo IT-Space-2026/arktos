@@ -2740,3 +2740,13 @@ BiDi Dev Tools now carries Chrome's full top tab row (DEVT13):
     with the reason — never a fake.
 Extension toolbar popups no longer render blank white (EXT19):
     Clicking an extension's toolbar action (e.g. Bitwarden) opened a popup that stayed white — the popup's shim preamble waited for a bridge channel that the live code path never attached. Extension pages now wire themselves: the hosted-extension runtime watches every web view the application raises and attaches the chromeBridge channel as soon as a chrome-extension:// document commits (and detaches it again on navigation away), so any popup, options page, or extension tab gets a working chrome.* surface without the embedder needing to know about it. If the extension's background context genuinely cannot be reached, the popup shows a real "extension background not running" panel instead of silent white, and keeps retrying so it recovers on its own when the background finishes starting.
+"New Tor circuit for this site" now visibly rotates the circuit (TOR13):
+    The panel's New-circuit button read as a no-op — SIGNAL NEWNYM only
+    re-homes NEW streams, so the page kept riding the dirty old circuit
+    and the busiest-circuit display kept showing the same hops. An
+    acknowledged NEWNYM now reloads the site's tab (Tor Browser's flow)
+    so its traffic lands on a fresh circuit, and the hop-chain display
+    prefers circuits created after the request, so the rendered chain
+    actually rotates. Clicks inside tor's ~10 s NEWNYM rate limit report
+    the wait honestly instead of faking another rotation, and a
+    greyed-out button now carries the reason on its tooltip.
