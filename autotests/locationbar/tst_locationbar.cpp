@@ -577,6 +577,13 @@ void tst_LocationBar::shieldPopupFirstShow()
         QLatin1String("sitePermissions"));
     QVERIFY(permissions);
     QVERIFY(permissions->findChildren<QPushButton*>().isEmpty());
+    // The baseline must be a settled render: the panel's first
+    // populate runs on the web-view load signals, which can land
+    // after the isLoading gate above — a late refresh flips the Trust
+    // section on for the now-resolved host and the shrink leg then
+    // diffs against a stale hint.  Evaluate once up front so both
+    // legs measure the same chrome.
+    panel->refresh();
     const QSize noRowHint = panel->sizeHint();
 
     // Grow leg: a remembered permission lands while the popup is

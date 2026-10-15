@@ -3151,8 +3151,15 @@ void tst_BrowserMainWindow::darkThemeReaderGlyph()
                           "ex ea commodo consequat.</p>");
         article.write("</article></body></html>");
     }
-    window->currentTab()->loadUrl(QUrl::fromLocalFile(articlePath));
-    QTRY_VERIFY_WITH_TIMEOUT(!reader->isHidden(), 20000);
+    WebView *tab = window->currentTab();
+    ReaderMode *mode = tab->readerMode();
+    QVERIFY(mode);
+    // Settle on a page that can never probe article-positive —
+    // whatever the default start page's verdict may be is immaterial
+    // once a real navigation bumps the probe generation.
+    tab->loadUrl(QUrl(QLatin1String("about:blank")));
+    QTRY_VERIFY_WITH_TIMEOUT(!mode->isAvailable() && !tab->isLoading(),
+                             20000);
 
     const QSize iconSize(18, 18);
 
@@ -3160,12 +3167,21 @@ void tst_BrowserMainWindow::darkThemeReaderGlyph()
     // same flat tint the chrome-tinted siblings carry — and the icon
     // serves the bar's 18px request at full size (the baked 16px
     // pixmap forced an upscale, which is what made it read grey).
+    // Measured BEFORE the article loads: once the Readability verdict
+    // lands the glyph honestly wears the Accent "suggested" mark, so
+    // the ButtonText contract only holds on a non-article page.
     const QColor lightReader = dominantInk(reader->icon(), iconSize);
     const QColor lightSibling = dominantInk(backAction->icon(),
                                             iconSize);
     const QSize lightServed = reader->icon().pixmap(iconSize).size();
 
     BrowserTheme::previewColorScheme(Qt::ColorScheme::Dark);
+    // A leg that fails mid-test would otherwise leak the forced dark
+    // palette into every later test in the process (the restore below
+    // never runs on QFAIL) — re-resolve on scope exit instead.
+    struct PaletteGuard {
+        ~PaletteGuard() { BrowserTheme::applyColorScheme(); }
+    } paletteGuard;
     QApplication::processEvents();
     QApplication::processEvents();
 
@@ -3185,11 +3201,16 @@ void tst_BrowserMainWindow::darkThemeReaderGlyph()
 
     // Active (checked) state keeps its deliberate accent mark — it
     // must not collapse to the plain tint, and the engine still
-    // serves it at the requested size.  The button is checkable so
-    // click() flips its own flag instantly; the icon only rebakes on
-    // ReaderMode::activeChanged — wait on the mode, not the flag.
-    ReaderMode *mode = window->currentTab()->readerMode();
-    QVERIFY(mode);
+    // serves it at the requested size.  Load the article and gate on
+    // the probe verdict first: a click that outruns the commit enters
+    // on the empty url and is honestly declined, and READ04 keeps the
+    // button present on every engine tab so isHidden is no real gate.
+    // The button is checkable so click() flips its own flag
+    // instantly; the icon only rebakes on ReaderMode::activeChanged —
+    // wait on the mode, not the flag.
+    tab->loadUrl(QUrl::fromLocalFile(articlePath));
+    QTRY_VERIFY_WITH_TIMEOUT(mode->isAvailable(), 20000);
+    QVERIFY(!reader->isHidden());
     reader->click();
     QTRY_VERIFY_WITH_TIMEOUT(mode->isActive(), 20000);
     const QColor activeInk = dominantInk(reader->icon(), iconSize);
@@ -3206,7 +3227,12 @@ void tst_BrowserMainWindow::darkThemeReaderGlyph()
     }
 
     // Live flip back — the glyph re-follows the light palette without
-    // a restart or a reload.
+    // a restart or a reload.  Return to a non-article page first so
+    // the comparison is plain-ink vs plain-ink: on the article the
+    // "suggested" state honestly paints Accent, which is not what the
+    // baseline measured.
+    tab->loadUrl(QUrl(QLatin1String("about:blank")));
+    QTRY_VERIFY_WITH_TIMEOUT(!mode->isAvailable(), 20000);
     BrowserTheme::applyColorScheme();
     QApplication::processEvents();
     QApplication::processEvents();

@@ -33,6 +33,7 @@ SUBDIRS  = \
     htmlbookmarks \
     httponly \
     locationbar \
+    memcycle \
     modelmenu \
     modeltoolbar \
     navigationpolicy \

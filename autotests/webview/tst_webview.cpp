@@ -1882,6 +1882,21 @@ void tst_WebView::linkOpenRefererDiscipline()
             awaitDetachedView(&view, QLatin1String("http"));
         QVERIFY2(detached,
                  qPrintable(entry + QLatin1String(" produced no view")));
+        // The request hitting the server only means headers were
+        // received — the load can still be in-flight, and closing the
+        // view then aborts it ("Discarded") so loadFinished(true) and
+        // the history insert below never happen.  Wait for the load
+        // to finish before the request/close checks race it.  The
+        // page's committed url (not the view's m_initialUrl echo)
+        // distinguishes "finished before the spy attached" from
+        // "load not started yet".
+        QSignalSpy detachedFin(detached->page(),
+                               &QWebEnginePage::loadFinished);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            !detachedFin.isEmpty()
+            || (detached->webPage()->url() == server.url(target)
+                && !detached->isLoading()),
+            15000);
         const bool sameProfile =
             detached->webPage()->profile() == view.webPage()->profile();
         const bool got = awaitRequest(target, 1);
