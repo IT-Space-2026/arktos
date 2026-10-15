@@ -44,11 +44,11 @@ TorManager::TorManager(QObject *parent)
     , m_streamCircuitId(-1)
     , m_circuitQueryInFlight(false)
     , m_circuitRefreshTimer(nullptr)
+    , m_startRetries(0)
+    , m_retryTimer(nullptr)
     , m_process(nullptr)
     , m_control(nullptr)
     , m_portFileTimer(nullptr)
-    , m_startRetries(0)
-    , m_retryTimer(nullptr)
 {
     // Needed by QSignalSpy/queued consumers of circuitsChanged.
     qRegisterMetaType<TorCircuit>("TorCircuit");

@@ -106,8 +106,16 @@ public:
     // SESS02: termination-signal entry point — flushes every window's
     // pending AutoSaver debounce plus a forced session write, after
     // which the caller re-raises the signal.  See
-    // TerminationSignalHandler.
-    void flushSessionsForTermination();
+    // TerminationSignalHandler.  signalNumber lands in the
+    // browser/lastExit breadcrumb.
+    void flushSessionsForTermination(int signalNumber = 0);
+    // SESS02: never leave a real browsing session windowless — a
+    // session restore that produced zero windows (empty/corrupt blob,
+    // a declined crash-guard prompt) or a window lost before
+    // postLaunch() ran falls back to a normal window on the start
+    // page; a live window whose tab strip came up empty gains a
+    // new-tab page.  Returns true when a window had to be created.
+    bool ensureSessionWindow();
     bool canRestoreSession() const;
 
     static HistoryManager *historyManager();
@@ -268,6 +276,8 @@ private slots:
     void messageReceived(QLocalSocket *socket);
     void postLaunch();
     void openUrl(const QUrl &url);
+    // SESS02: BrowserMainWindow::destroyed hook — see implementation.
+    void windowDestroyed();
 
 signals:
     void zoomTextOnlyChanged(bool textOnly);

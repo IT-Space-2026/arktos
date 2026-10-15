@@ -555,6 +555,10 @@ void BrowserApplication::quitBrowser()
 
     saveSession();
     clearPrivateDataOnExit();
+    // SESS02: ::exit() never unwinds to main()'s markSessionCleanExit,
+    // so an explicit Quit would leave the sentinel armed and score as
+    // a crash on the next start — record the clean exit first.
+    BrowserProfile::markSessionCleanExit(0);
     exit(0);
 }
 
@@ -628,6 +632,14 @@ void BrowserApplication::postLaunch()
         }
     }
     StartupProfile::mark("postLaunch: navigation dispatched");
+
+    // SESS02: the dispatch above must never leave a real session
+    // windowless — an empty/corrupt session blob, a declined
+    // crash-guard restore prompt, or a window lost between its
+    // creation and this queued slot all land here without a live
+    // BrowserMainWindow.  Standalone runs manage their own windows.
+    if (!isStandalone() || isTorMode())
+        ensureSessionWindow();
 
     // PERF03: the heavyweight stores were forced synchronously here —
     // after the first window painted but before the startup
@@ -836,13 +848,18 @@ void BrowserApplication::saveSession()
     m_lastSession = data;
 }
 
-void BrowserApplication::flushSessionsForTermination()
+void BrowserApplication::flushSessionsForTermination(int signalNumber)
 {
     // CRASH01: a signal-driven shutdown is a clean exit — clear the
     // crash-loop sentinel/counter so logoff/service-stop kills aren't
-    // scored against the next run's GPU safe-mode check.  Done first:
-    // the watchdog may kill the process mid-flush.
-    BrowserProfile::markSessionCleanExit();
+    // scored against the next run's GPU safe-mode check.  SESS02: the
+    // lastExit record still says 'terminated by signal N' rather than
+    // 'clean rc=0' — a signal death must not masquerade as a normal
+    // exit.  Done first: the watchdog may kill the process mid-flush.
+    if (signalNumber)
+        BrowserProfile::markSessionTerminated(signalNumber);
+    else
+        BrowserProfile::markSessionCleanExit();
     clean();
     for (int i = 0; i < m_mainWindows.count(); ++i) {
         if (BrowserMainWindow *window = m_mainWindows.at(i))
@@ -854,6 +871,29 @@ void BrowserApplication::flushSessionsForTermination()
     // browsing stays excluded: saveSession() writes nothing while
     // isPrivate().
     saveSession();
+}
+
+bool BrowserApplication::ensureSessionWindow()
+{
+    clean();
+    bool created = false;
+    if (m_mainWindows.isEmpty()) {
+        qWarning() << "BrowserApplication: startup produced no browser"
+                      " window — opening a fallback";
+        BrowserMainWindow *window = newMainWindow();
+        window->tabWidget()->loadUrl(startPageUrl(),
+                                     TabWidget::CurrentTab);
+        created = true;
+    }
+    // The same blank-ness one level down: a window whose strip ended
+    // empty (e.g. every restored tab detached into a filtered
+    // container level) still needs one live tab.
+    for (const QPointer<BrowserMainWindow> &window :
+             std::as_const(m_mainWindows)) {
+        if (window && window->tabWidget()->totalTabCount() == 0)
+            window->tabWidget()->newTabPage();
+    }
+    return created;
 }
 
 bool BrowserApplication::canRestoreSession() const
@@ -1063,10 +1103,60 @@ BrowserMainWindow *BrowserApplication::newMainWindow()
     m_mainWindows.prepend(browser);
     connect(this, &BrowserApplication::privacyChanged,
             browser, &BrowserMainWindow::privacyChanged);
+#ifndef AUTOTESTS
+    // SESS02: if this turns out to be the last browser window, a stray
+    // visible top-level (a dialog outliving its parent window) would
+    // keep the process running windowless — windowDestroyed() forces
+    // the clean exit the close was meant to be.
+    connect(browser, &QObject::destroyed,
+            this, &BrowserApplication::windowDestroyed);
+#endif
     browser->show();
     if (m_mainWindows.count() == 1)
         StartupProfile::mark("first window shown");
     return browser;
+}
+
+void BrowserApplication::windowDestroyed()
+{
+    // Defer past the destroyed() emission — the QPointer in
+    // m_mainWindows does not clear until ~QObject unwinds.
+    QTimer::singleShot(0, this, [this]() {
+        if (quitting)
+            return;
+        // Standalone smokes open and close windows in scripted order —
+        // their harness owns the lifetime.
+        if (isStandalone() && !isTorMode())
+            return;
+        clean();
+        if (!m_mainWindows.isEmpty())
+            return;
+        // If no visible top-level survived, quitOnLastWindowClosed is
+        // already unwinding exec() — nothing to do.  The zombie case
+        // is a stray VISIBLE top-level keeping the event loop alive
+        // with no browser chrome left (observed live: a session
+        // restore whose pages died under it left a process only a
+        // second launch could rouse).
+        bool strayVisible = false;
+        for (QWidget *top : QApplication::topLevelWidgets()) {
+            if (top->isVisible()
+                && !qobject_cast<BrowserMainWindow*>(top)) {
+                strayVisible = true;
+                break;
+            }
+        }
+        if (!strayVisible)
+            return;
+        // The dying window's ~BrowserMainWindow already flushed the
+        // session through its AutoSaver.  exit() on the application —
+        // NOT ::exit() — lets exec() unwind so main() still records
+        // the 'clean rc=0' breadcrumb; a bare ::exit() here would
+        // leave the sentinel armed and read as a crash next start.
+        qWarning() << "BrowserApplication: last browser window is gone"
+                      " but a stray top-level kept the process alive"
+                      " — exiting instead of running windowless";
+        QCoreApplication::exit(0);
+    });
 }
 
 BrowserMainWindow *BrowserApplication::newMainWindowInContainer(const QString &containerId)

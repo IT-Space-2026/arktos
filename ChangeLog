@@ -28,6 +28,15 @@ Core / Qt 6 port:
   flush the pending session save before the process dies, instead of
   losing changes still inside the debounce window (SESS02). SIGKILL
   remains unflushed by design — it cannot be caught.
+- The browser can no longer start windowless or die silently: a
+  session restore that yields no windows (empty or corrupt session,
+  a declined restore prompt) now opens a normal window instead of
+  leaving a running process with nothing to show, and a stray
+  surviving dialog can no longer keep the process alive after the
+  last browser window is gone (SESS02). Every exit is also
+  accounted for — the next start reports whether the previous run
+  exited cleanly, was terminated by a signal, or died uncleanly, so
+  a crash never masquerades as a normal quit or vice versa.
 - Command-line URL arguments treated as untrusted input (SEC09).
 - GPU crash safe mode: Qt 6.12's WebEngine can trap (SIGTRAP) on a
   display-compositor CHECK on some driver stacks, killing the whole

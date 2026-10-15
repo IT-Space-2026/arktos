@@ -131,7 +131,9 @@ browsing profile:
   legacy QDataStream file on first run. The crate also owns session
   save/restore serialization: a versioned session.dat written
   atomically and bounds-checked on decode, so a corrupt file is
-  rejected whole instead of looping the crash-restore prompt —
+  rejected whole instead of looping the crash-restore prompt — and a
+  restore that still yields zero windows (empty, corrupt or declined)
+  falls back to a normal window so the app never runs windowless;
   per-tab records carry url, container binding, tab group and an
   engine tag beside an opaque engine-state blob, keeping the format
   engine-neutral (a pre-Rust QSettings session still restores once

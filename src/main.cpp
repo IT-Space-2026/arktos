@@ -3069,6 +3069,14 @@ static int engineSmoke()
                 << " find:" << trace.findMatches
                 << " script:" << trace.scriptResult;
         traces.append(trace);
+
+        // Teardown order: the profile adapter must outlive the page —
+        // ~host frees children in insertion order (profile first),
+        // which leaves a live WebEnginePage on a dead profile and
+        // crashes Chromium's teardown.  Take the view and page down
+        // by hand so the profile releases last.
+        delete view;
+        delete page;
     }
 
     // Pairwise diff: the load-family event kinds and the terminal
@@ -4181,8 +4189,8 @@ int main(int argc, char **argv)
     QObject::connect(&signalFlush,
                      &TerminationSignalHandler::terminateRequested,
                      &application,
-                     [&application]() {
-        application.flushSessionsForTermination();
+                     [&application](int signalNumber) {
+        application.flushSessionsForTermination(signalNumber);
     });
 #endif
 
@@ -4233,7 +4241,8 @@ int main(int argc, char **argv)
         "bitwarden-smoke",
         "mv3-health-smoke", "extension-health-smoke",
         "ua-smoke", "perf-smoke",
-        "session-smoke", "restore-smoke", "tor-smoke", "privacy-smoke",
+        "session-smoke", "restore-smoke", "session-floor-smoke",
+        "tor-smoke", "privacy-smoke",
         "sigterm-smoke", "sigterm-child-smoke",
         "referer-smoke", "container-smoke",
         "tor-window-smoke", "tor-circuit-click-smoke", "tor-newtab-smoke",
@@ -4272,20 +4281,26 @@ int main(int argc, char **argv)
     // exit() inside the parser and must not score as a browser run —
     // and after the single-instance arbitration above, so a
     // url-forwarding helper can neither set nor clear the sentinel.
-    // The guard marks the exit clean on every normal return below; a
-    // fatal GPU CHECK kills the process without unwinding, which is
-    // precisely how the next start tells a crash from a clean exit.
-    BrowserProfile::markSessionStart();
-    const auto cleanExitGuard = qScopeGuard(
-        [] { BrowserProfile::markSessionCleanExit(); });
-
+    // SESS02: session bookkeeping brackets only real browsing
+    // sessions — a standalone smoke that dies mid-run or quick_exit()s
+    // past teardown must not leave the sentinel armed (which would
+    // read as a user crash on the next launch and inflate
+    // gpuCrashCount).  The tor window process is a real session and
+    // takes its marks at the exec() site below.
     if (!application.isStandalone()) {
+        // CRASH01: the sentinel arms here — after single-instance
+        // arbitration and the parser's --help/--version exits — and a
+        // fatal GPU CHECK dies without unwinding, so only crashes
+        // leave it set for the next start's breadcrumb/counter.
+        BrowserProfile::markSessionStart();
         // Normal launch: postLaunch() (queued by the constructor)
         // applies the startup behavior — homepage, last-session
         // restore or the url operand — to this first window.
         application.newMainWindow();
         StartupProfile::mark("newMainWindow returned");
-        return application.exec();
+        const int sessionRc = application.exec();
+        BrowserProfile::markSessionCleanExit(sessionRc);
+        return sessionRc;
     }
 
     // Standalone development harness: a stub window hosting a WebView
@@ -4335,7 +4350,10 @@ int main(int argc, char **argv)
     // diffs (title/url/progress sequences), so backend parity is
     // asserted rather than assumed.
     if (args.contains(QLatin1String("--engine-smoke")))
-        return engineSmoke();
+        // quick_exit, not return: the probe leaves a live Servo
+        // instance behind, and libservo_embed's static teardown
+        // segfaults the process (die after PASS -> FAIL verdict).
+        std::quick_exit(engineSmoke());
 
     // ENG12: the servo lifecycle guard — swap/reload/refusal matrix
     // over the real backend (skips when the artifact is absent).
@@ -4353,8 +4371,14 @@ int main(int argc, char **argv)
             && !args.contains(
                    QLatin1String("--tor-circuit-click-smoke"))
             && !args.contains(QLatin1String("--tor-newtab-smoke"))) {
+        // A tor window is a real browsing session — it takes the
+        // same crash-loop sentinel (its own key) + exit breadcrumb
+        // as the normal path above.
+        BrowserProfile::markSessionStart();
         application.newMainWindow();
-        return application.exec();
+        const int sessionRc = application.exec();
+        BrowserProfile::markSessionCleanExit(sessionRc);
+        return sessionRc;
     }
 
     // Headless verification for SRCH07: the omnibox resolver.  Single
@@ -4703,8 +4727,10 @@ int main(int argc, char **argv)
                     qgetenv("ARORA_CLIENTCERT_PASSPHRASE"))) {
             qInfo() << "clientcert-smoke: FAIL (cannot install"
                     << certFile << ")";
-            application.exit(1);
-            return application.exec();
+            // exit() before exec() is a no-op — the probe must fail
+            // fast, not park in an event loop until the harness's
+            // timeout kills it.
+            return 1;
         }
         qputenv("ARORA_CLIENTCERT_AUTOSELECT", "1");
         const QUrl certUrl(qEnvironmentVariable("ARORA_CLIENTCERT_URL",
@@ -5078,6 +5104,12 @@ int main(int argc, char **argv)
     // reopen-in-container must swap the profile in place, and the
     // session blob must round-trip the binding.  Exits 0 on PASS.
     if (args.contains(QLatin1String("--container-smoke"))) {
+        // CONT06 made the two-level strip the default — under it
+        // count()/webView(i) only cover the ACTIVE container level,
+        // so the flat-strip assertions below miscount.  Pin the
+        // single-row mode, same as tst_containermanager's pre-CONT06
+        // legs.
+        QSettings().setValue(QLatin1String("tabs/containerDisplay"), 0);
         ContainerManager *manager = ContainerManager::instance();
         const QString cid = manager->createContainer(
             QLatin1String("container-smoke"),
@@ -5097,6 +5129,11 @@ int main(int argc, char **argv)
         };
 
         BrowserMainWindow *window = application.newMainWindow();
+        // postLaunch() is queued on the event loop — it loads the
+        // start page into whatever tab is current when it fires.
+        // Let it land on the placeholder tab now; left pending it
+        // hijacks the first tab the smoke raises.
+        pumpEvents(200);
         TabWidget *tabs = window->tabWidget();
         QWebEngineProfile *containerProfile = manager->profileFor(cid);
         expect(containerProfile != nullptr, "container profile resolves");
@@ -5156,7 +5193,10 @@ int main(int argc, char **argv)
         // no live pages pin the container profile.
         expect(manager->deleteContainer(cid), "container cleanup");
         qInfo() << "container-smoke:" << (ok ? "PASS" : "FAIL");
-        return ok ? 0 : 1;
+        // quick_exit, not return: deleting the container profile under
+        // live WebEnginePage delegates wedges Chromium's teardown —
+        // the verdict is already printed.
+        std::quick_exit(ok ? 0 : 1);
     }
 
     // Headless verification for PRIV01: a loopback e2e over two
@@ -8898,9 +8938,11 @@ int main(int argc, char **argv)
         view->window()->resize(1280, 800);
         view->window()->show();
 
-        auto fail = [&application](const char *stage) {
+        auto fail = [](const char *stage) {
             qInfo() << "pip-smoke: FAIL at" << stage;
-            application.exit(1);
+            // quick_exit, not exit(): the PiP window's QQuickWidget
+            // delegate wedges Chromium's static teardown.
+            std::quick_exit(1);
         };
         auto pollUntil = [](std::function<bool()> condition,
                             std::function<void(bool)> finished) {
@@ -9092,7 +9134,8 @@ int main(int argc, char **argv)
                                         return;
                                     }
                                     qInfo() << "pip-smoke: DONE";
-                                    application.exit(0);
+                                    // quick_exit — see `fail` above.
+                                    std::quick_exit(0);
                                 });
                             });
                         });
@@ -9500,9 +9543,11 @@ int main(int argc, char **argv)
         check(sawClearData > 0,
               "Clear Private Data executes (dialog dismissed)");
 
-        // 5. Open tabs are items and execute as a tab switch.
-        tabWidget->setTabText(0, QLatin1String("smoke-alpha-tab"));
-        tabWidget->setTabText(1, QLatin1String("smoke-beta-tab"));
+        // 5. Open tabs are items and execute as a tab switch.  Rename
+        //    through the TABS12 override path — a bare setTabText gets
+        //    stomped by the next title refresh.
+        tabWidget->setTabTitleOverride(0, QLatin1String("smoke-alpha-tab"));
+        tabWidget->setTabTitleOverride(1, QLatin1String("smoke-beta-tab"));
         tabWidget->setCurrentIndex(0);
         palette->openPalette();
         palette->setQuery(QLatin1String("smoke-beta"));
@@ -9533,8 +9578,15 @@ int main(int argc, char **argv)
             palette->executeRow(bookmarkRow);
             pump();
         }
-        check(tabWidget->currentWebView()->url()
-                  == QUrl(QLatin1String("http://127.0.0.1:9/palette")),
+        // 127.0.0.1:9 refuses instantly, but the error page still has
+        // to commit before url() reports the navigation — poll.
+        const QUrl paletteNav(QStringLiteral("http://127.0.0.1:9/palette"));
+        QElapsedTimer navWait;
+        navWait.start();
+        while (navWait.elapsed() < 2000
+               && tabWidget->currentWebView()->url() != paletteNav)
+            QCoreApplication::processEvents();
+        check(tabWidget->currentWebView()->url() == paletteNav,
               "bookmark navigates current tab");
         bookmarks->removeBookmark(smokeBookmark);
 
@@ -9586,7 +9638,10 @@ int main(int argc, char **argv)
                 << (failures == 0 ? "PASS" : "FAIL")
                 << "failures:" << failures;
         delete browserWindow;
-        return failures == 0 ? 0 : 1;
+        // quick_exit, not return: the smoke's extra WebEngine views
+        // wedge Chromium's static teardown — the verdict is already
+        // printed.
+        std::quick_exit(failures == 0 ? 0 : 1);
     }
 
     // Headless verification for POL02: (a) the Ctrl+Shift+A tab
@@ -9601,6 +9656,15 @@ int main(int argc, char **argv)
     if (args.contains(QLatin1String("--tabstrip-smoke"))) {
         BrowserMainWindow *browserWindow = new BrowserMainWindow();
         browserWindow->show();
+        // Let the queued postLaunch() start-page navigation land on
+        // the placeholder tab before the smoke relabels/loads tabs.
+        {
+            QElapsedTimer settle;
+            settle.start();
+            while (settle.elapsed() < 200)
+                QCoreApplication::processEvents(
+                    QEventLoop::AllEvents, 20);
+        }
         TabWidget *tabWidget = browserWindow->tabWidget();
         TabBar *tabBar = tabWidget->tabBar();
         CommandPalette *palette = browserWindow->commandPalette();
@@ -9634,9 +9698,12 @@ int main(int argc, char **argv)
         tabWidget->newTabAction()->trigger();
         tabWidget->newTabAction()->trigger();
         check(tabWidget->count() == 3, "three tabs");
-        tabWidget->setTabText(0, QLatin1String("strip-alpha"));
-        tabWidget->setTabText(1, QLatin1String("strip-beta"));
-        tabWidget->setTabText(2, QLatin1String("strip-gamma"));
+        // Rename through the real override API — tabDisplayTitle()
+        // (and the palette) read the override, while a bare
+        // setTabText() is masked by the view's url() for untitled
+        // pages.  Only tab 1 is renamed: tabs 0/2 must keep their
+        // fixture <title> for the preview assertions below.
+        tabWidget->setTabTitleOverride(1, QLatin1String("strip-beta"));
 
         // (a) Ctrl+Shift+A — the discoverable Window-menu action opens
         //     the palette restricted to Tab items.
@@ -9826,7 +9893,10 @@ int main(int argc, char **argv)
                 << "failures:" << failures;
         QFile::remove(fixturePath);
         delete browserWindow;
-        return failures == 0 ? 0 : 1;
+        // quick_exit, not return: the smoke's extra WebEngine views
+        // wedge Chromium's static teardown — the verdict is already
+        // printed.
+        std::quick_exit(failures == 0 ? 0 : 1);
     }
 
     // Headless verification for SLEEP01: a real BrowserMainWindow
@@ -14251,6 +14321,11 @@ int main(int argc, char **argv)
 #endif
             BrowserMainWindow *browserWindow =
                 application.newMainWindow();
+            // Flush the queued postLaunch() — it loads the start page
+            // into whatever tab is current when it fires, which would
+            // otherwise hijack one of the fixture tabs below.
+            for (int i = 0; i < 10; ++i)
+                QCoreApplication::processEvents();
             TabWidget *tabWidget = browserWindow->tabWidget();
             tabWidget->loadUrl(QUrl(fixtureUrls.at(0)),
                                TabWidget::CurrentTab);
@@ -14303,6 +14378,19 @@ int main(int argc, char **argv)
             sigtermCheck(finished
                              && child.exitStatus() == QProcess::CrashExit,
                          "child died by signal");
+
+            // SESS02: the flush must also record HOW the run ended —
+            // the breadcrumb proves the signal number survived the
+            // terminateRequested -> flushSessionsForTermination wire.
+            const QString expectedExit = QStringLiteral(
+                "terminated by signal %1").arg(
+                signal == QLatin1String("hup") ? 1
+                    : signal == QLatin1String("int") ? 2 : 15);
+            sigtermCheck(QSettings()
+                             .value(QLatin1String("browser/lastExit"))
+                             .toString()
+                             .startsWith(expectedExit),
+                         "exit breadcrumb records the signal");
 
             QStringList restoredUrls;
             qint64 restoredCurrent = -1;
@@ -14373,6 +14461,224 @@ int main(int argc, char **argv)
         qInfo() << "sigterm-smoke:"
                 << (sigtermFailures ? "FAIL" : "PASS");
         return sigtermFailures ? 1 : 0;
+    }
+
+    // SESS02: --session-floor-smoke drives the window/tab floor and
+    // the exit breadcrumb without spinning the event loop — every leg
+    // calls the production entry points directly so the checks are
+    // deterministic.  Covered: restore that yields zero windows must
+    // still leave one window with a tab, a zero-tab window gets a
+    // start tab, and lastExit records clean vs signal vs unclean.
+    if (args.contains(QLatin1String("--session-floor-smoke"))) {
+        int floorFailures = 0;
+        const auto floorCheck =
+            [&floorFailures](bool ok, const char *what) {
+            qInfo() << "session-floor-smoke:" << what
+                    << (ok ? "PASS" : "FAIL");
+            if (!ok)
+                ++floorFailures;
+        };
+        window.hide();
+        QSettings().setValue(
+            QLatin1String("tabs/confirmClosingMultipleTabs"), false);
+        QSettings().setValue(QLatin1String("MainWindow/restoring"),
+                             false);
+        // Pin startup to a no-navigation mode so the queued
+        // postLaunch() never moves the fixture windows.
+        QSettings().setValue(QLatin1String("MainWindow/startupMode"),
+                             int(BrowserApplication::SpecificPagesStartup));
+        QSettings().setValue(QLatin1String("MainWindow/startupPages"),
+                             QStringList());
+        QSettings().remove(QLatin1String("sessions"));
+#ifdef ARORA_RUSTCORE
+        rustCoreEnsureDataDir();
+        rc_session_clear();
+#endif
+        // Flush the queued postLaunch() before the legs start — the
+        // floor there must not pre-create the window the legs are
+        // about to assert on.
+        for (int i = 0; i < 10; ++i)
+            QCoreApplication::processEvents();
+
+        // A dying window's in-flight page can still fire a deferred
+        // createWindow (window.open) while events drain — keep
+        // deleting until the list stays empty across a drain.
+        const auto dropWindows = [&application]() {
+            for (int pass = 0; pass < 8; ++pass) {
+                const QList<BrowserMainWindow*> wins =
+                    application.mainWindows();
+                if (wins.isEmpty())
+                    break;
+                for (BrowserMainWindow *w : wins)
+                    delete w;
+                QCoreApplication::processEvents();
+            }
+        };
+
+        // Leg 1 — nothing restored, no window at all: the floor must
+        // open a fallback window carrying at least one tab.
+        floorCheck(application.mainWindows().isEmpty(),
+                   "fixture starts with zero windows");
+        floorCheck(application.ensureSessionWindow(),
+                   "floor reports a created window");
+        BrowserMainWindow *floorWindow = application.mainWindow();
+        floorCheck(floorWindow != nullptr,
+                   "fallback window exists");
+        floorCheck(floorWindow
+                       && floorWindow->tabWidget()->totalTabCount() >= 1,
+                   "fallback window carries a tab");
+        dropWindows();
+        floorCheck(application.mainWindows().isEmpty(),
+                   "windows dropped for next leg");
+
+#ifdef ARORA_RUSTCORE
+        // Leg 2 — a session manifest with a valid header but an empty
+        // window list: restore succeeds yet leaves zero windows; the
+        // floor must still produce one.
+        {
+            const QByteArray emptyManifest(
+                "{\"version\":1,\"windows\":[]}");
+            const RcStatus saved = rc_session_save(
+                reinterpret_cast<const uint8_t *>(
+                    emptyManifest.constData()),
+                size_t(emptyManifest.size()));
+            floorCheck(saved == RC_OK, "empty manifest seeded");
+            const bool restored = application.restoreLastSession();
+            floorCheck(restored
+                           && application.mainWindows().isEmpty(),
+                       "empty manifest restores zero windows");
+            floorCheck(application.ensureSessionWindow(),
+                       "floor covers empty-manifest restore");
+            floorCheck(application.mainWindow()
+                           && application.mainWindow()->tabWidget()
+                                  ->totalTabCount() >= 1,
+                       "post-restore window carries a tab");
+            dropWindows();
+        }
+
+        // Leg 3 — a corrupt session blob must fail whole and the
+        // floor still leaves a live window (the store fails
+        // RC_CORRUPT before any partial window set materializes).
+        {
+            QFile sessionFile(BrowserPaths::dataFilePath(
+                QLatin1String(RC_SESSION_FILE)));
+            floorCheck(sessionFile.open(QIODevice::WriteOnly),
+                       "session file writable for corrupt leg");
+            sessionFile.write("ARSS\xff\xff not a real session");
+            sessionFile.close();
+            const bool restored = application.restoreLastSession();
+            floorCheck(!restored, "corrupt session blob rejected");
+            floorCheck(application.ensureSessionWindow(),
+                       "floor covers corrupt restore");
+            floorCheck(application.mainWindow()
+                           && application.mainWindow()->tabWidget()
+                                  ->totalTabCount() >= 1,
+                       "post-corrupt window carries a tab");
+            dropWindows();
+        }
+        rc_session_clear();
+#endif
+
+        // Leg 4 — a live window whose strip has emptied (every tab
+        // detached into filtered stores): no new window, but the tab
+        // floor opens one tab inside it.  removeTab() bypasses
+        // lastTabClosed so the window survives at zero tabs.
+        {
+            BrowserMainWindow *bare = application.newMainWindow();
+            bare->tabWidget()->removeTab(0);
+            floorCheck(bare->tabWidget()->totalTabCount() == 0,
+                       "fixture window has zero tabs");
+            floorCheck(!application.ensureSessionWindow(),
+                       "floor adds no extra window for zero tabs");
+            floorCheck(application.mainWindows().contains(bare),
+                       "same window kept");
+            floorCheck(bare->tabWidget()->totalTabCount() == 1,
+                       "zero-tab window grew a tab");
+            dropWindows();
+        }
+
+        // Leg 5 — the exit breadcrumb.  A clean exit writes 'clean
+        // rc=N' and disarms the sentinel; a handled signal writes the
+        // signal name; a start that finds the sentinel armed reads
+        // the previous run as unclean and counts it.
+        const QLatin1String sentinelKey(
+            "browser/sessionActive");
+        BrowserProfile::markSessionCleanExit(0);
+        {
+            QSettings s;
+            floorCheck(s.value(QLatin1String("browser/lastExit"))
+                           .toString() == QLatin1String("clean rc=0"),
+                       "clean exit records rc");
+            floorCheck(!s.value(sentinelKey, true).toBool(),
+                       "clean exit disarms sentinel");
+        }
+        BrowserProfile::markSessionTerminated(SIGHUP);
+        {
+            QSettings s;
+            const QString exit = s.value(
+                QLatin1String("browser/lastExit")).toString();
+            floorCheck(exit.contains(QLatin1String("terminated"))
+                           && exit.contains(QLatin1String("SIGHUP")),
+                       "signal exit records the signal");
+            floorCheck(!s.value(sentinelKey, true).toBool(),
+                       "signal exit disarms sentinel");
+        }
+        // Arm then re-arm: the second start must score one unclean
+        // exit against the counter.
+        BrowserProfile::markSessionStart();
+        BrowserProfile::markSessionStart();
+        {
+            QSettings s;
+            floorCheck(s.value(QLatin1String("browser/gpuCrashCount"), 0)
+                           .toInt() == 1,
+                       "armed sentinel counts as unclean");
+            floorCheck(s.value(QLatin1String("browser/lastExit"))
+                           .toString() == QLatin1String(
+                               "unclean (crash or external kill)"),
+                       "unclean breadcrumb written by next start");
+        }
+        BrowserProfile::markSessionCleanExit(7);
+        {
+            QSettings s;
+            floorCheck(s.value(QLatin1String("browser/lastExit"))
+                           .toString() == QLatin1String("clean rc=7"),
+                       "nonzero clean rc recorded");
+            floorCheck(s.value(
+                           QLatin1String("browser/gpuCrashCount"), -1)
+                           .toInt() == 0,
+                       "clean exit resets crash counter");
+            floorCheck(!s.value(sentinelKey, true).toBool(),
+                       "sentinel left disarmed");
+        }
+
+        // Leg 6 — flushSessionsForTermination(signal) records the
+        // signal breadcrumb AND writes the live session
+        // synchronously, the same path the real signal handler takes.
+        {
+            application.ensureSessionWindow();
+            BrowserProfile::markSessionStart();
+            application.flushSessionsForTermination(SIGTERM);
+            QSettings s;
+            const QString exit = s.value(
+                QLatin1String("browser/lastExit")).toString();
+            floorCheck(exit.contains(QLatin1String("terminated"))
+                           && exit.contains(QLatin1String("SIGTERM")),
+                       "termination flush records SIGTERM");
+            floorCheck(!s.value(sentinelKey, true).toBool(),
+                       "termination flush disarms sentinel");
+#ifdef ARORA_RUSTCORE
+            floorCheck(rc_session_exists() == 1,
+                       "termination flush wrote the session");
+#endif
+        }
+        dropWindows();
+        // Leave the settings store clean for the next run.
+        BrowserProfile::markSessionCleanExit(0);
+
+        qInfo() << "session-floor-smoke:"
+                << (floorFailures ? "FAIL" : "PASS");
+        fflush(nullptr);
+        return floorFailures ? 1 : 0;
     }
 
     // CRASH02: --crash-smoke dies deliberately by the fault named in

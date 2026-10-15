@@ -79,8 +79,10 @@ done
 
 # gcc/clang diagnostics look like  file:line:col: warning|error: ...
 # uic/rcc/moc noise uses different phrasing; count only compiler
-# diagnostics so the gate tracks the source baseline.
-DIAGS=$(grep -E ':(warning|error):' "$LOG" | sort -u || true)
+# diagnostics so the gate tracks the source baseline.  The tag must
+# be preceded by line (and optional column) numbers, which also keeps
+# make's own 'make[N]: warning:' lines out of the count.
+DIAGS=$(grep -E ':[0-9]+(:[0-9]+)?: (warning|error):' "$LOG" | sort -u || true)
 COUNT=$(printf '%s\n' "$DIAGS" | grep -c . || true)
 
 if [ "$COUNT" -gt 0 ]; then

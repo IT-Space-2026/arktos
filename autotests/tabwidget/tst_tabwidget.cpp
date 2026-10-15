@@ -3034,11 +3034,19 @@ void tst_TabWidget::tabTransfer()
     WebView *torn = source.webView(1);
     source.tearTabToNewWindow(1);
     QCOMPARE(source.count(), 1);
+    // The leg's earlier NewWindow drops leave other browser windows
+    // on the top-level list — pick the one that actually holds the
+    // torn view, not just the last BrowserMainWindow.
     BrowserMainWindow *tornWindow = nullptr;
-    for (QWidget *top : QApplication::topLevelWidgets())
-        if (BrowserMainWindow *mw =
-                qobject_cast<BrowserMainWindow*>(top))
-            tornWindow = mw;
+    for (QWidget *top : QApplication::topLevelWidgets()) {
+        BrowserMainWindow *mw = qobject_cast<BrowserMainWindow*>(top);
+        if (!mw || !mw->tabWidget())
+            continue;
+        for (int i = 0; i < mw->tabWidget()->count(); ++i) {
+            if (mw->tabWidget()->webView(i) == torn)
+                tornWindow = mw;
+        }
+    }
     QVERIFY(tornWindow);
     QCOMPARE(tornWindow->tabWidget()->count(), 1);
     QCOMPARE(tornWindow->tabWidget()->webView(0), torn);

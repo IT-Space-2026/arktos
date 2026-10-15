@@ -53,6 +53,7 @@
 #include <rustcore.h>
 #endif
 
+#include <csignal>
 #include <ctime>
 
 namespace BrowserProfile {
@@ -1092,16 +1093,50 @@ void applyChromiumFlags()
 // The tor window gets its own sentinel: it is a second committed
 // browser process on the same settings store, and sharing one key
 // would read the main window's healthy run as a tor crash.
+static QLatin1String sessionSentinelKey()
+{
+    return BrowserApplication::isTorMode()
+        ? QLatin1String("browser/sessionActiveTor")
+        : QLatin1String("browser/sessionActive");
+}
+
+static const char *terminationSignalName(int signalNumber)
+{
+    switch (signalNumber) {
+    case SIGTERM:
+        return "SIGTERM";
+    case SIGINT:
+        return "SIGINT";
+    case SIGHUP:
+        return "SIGHUP";
+    default:
+        return "signal";
+    }
+}
+
 void markSessionStart()
 {
     QSettings settings;
-    const QLatin1String sentinel = BrowserApplication::isTorMode()
-        ? QLatin1String("browser/sessionActiveTor")
-        : QLatin1String("browser/sessionActive");
+    const QLatin1String sentinel = sessionSentinelKey();
     if (settings.value(sentinel, false).toBool()) {
         settings.setValue(QLatin1String("browser/gpuCrashCount"),
             settings.value(QLatin1String("browser/gpuCrashCount"), 0)
                 .toInt() + 1);
+        // SESS02: the sentinel survived — the previous run died before
+        // any exit path could record how it ended.  Write the record
+        // the dead run couldn't and warn: a crash must never leave
+        // zero trace.
+        settings.setValue(QLatin1String("browser/lastExit"),
+            QLatin1String("unclean (crash or external kill)"));
+        qWarning("arora: previous session ended uncleanly "
+                 "(crash or external kill)");
+    } else {
+        // The 'arora exited, rc=X' breadcrumb — the record the last
+        // run's exit path wrote, echoed on the next start.
+        const QString lastExit =
+            settings.value(QLatin1String("browser/lastExit")).toString();
+        if (!lastExit.isEmpty())
+            qInfo("arora: last exit: %s", qPrintable(lastExit));
     }
     settings.setValue(sentinel, true);
     // The crash this detects never lets a destructor flush — force the
@@ -1109,18 +1144,35 @@ void markSessionStart()
     settings.sync();
 }
 
-void markSessionCleanExit()
+void markSessionCleanExit(int exitCode)
 {
     QSettings settings;
     // Only this process's own sentinel — a clean tor exit must not
     // clear the still-running main window's marker.  The shared
     // counter does reset on any clean run: one healthy session proves
     // the current configuration works.
-    const QLatin1String sentinel = BrowserApplication::isTorMode()
-        ? QLatin1String("browser/sessionActiveTor")
-        : QLatin1String("browser/sessionActive");
-    settings.setValue(sentinel, false);
+    settings.setValue(sessionSentinelKey(), false);
     settings.setValue(QLatin1String("browser/gpuCrashCount"), 0);
+    // SESS02: the exit breadcrumb the next start reports — a clean
+    // last-window-close is then distinguishable from a crash.
+    settings.setValue(QLatin1String("browser/lastExit"),
+        QStringLiteral("clean rc=%1").arg(exitCode));
+    settings.sync();
+}
+
+void markSessionTerminated(int signalNumber)
+{
+    // SESS02: a handled termination (the SIGTERM/SIGINT/SIGHUP flush
+    // ran, so this counts as clean for crash-loop purposes) still
+    // records HOW it died — a signal death must not read as a normal
+    // 'rc=0' exit.
+    QSettings settings;
+    settings.setValue(sessionSentinelKey(), false);
+    settings.setValue(QLatin1String("browser/gpuCrashCount"), 0);
+    settings.setValue(QLatin1String("browser/lastExit"),
+        QStringLiteral("terminated by signal %1 (%2)")
+            .arg(signalNumber)
+            .arg(QLatin1String(terminationSignalName(signalNumber))));
     settings.sync();
 }
 

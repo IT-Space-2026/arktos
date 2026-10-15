@@ -365,7 +365,10 @@ void CommandPalette::collectTabs()
             WebView *view = tabWidget->webView(i);
             if (!view)
                 continue;
-            QString title = view->title();
+            // tabDisplayTitle() is what the strip shows — a TABS12
+            // rename must be reachable in the palette, and the strip
+            // text still backs the lookup when a page has no title.
+            QString title = tabWidget->tabDisplayTitle(i);
             if (title.isEmpty())
                 title = tabWidget->tabText(i);
             const QString url = view->url().toString();

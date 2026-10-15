@@ -243,13 +243,22 @@ void applyChromiumFlags();
 
 // CRASH01: crash-loop bookkeeping feeding the compositor safe mode in
 // applyChromiumFlags().  markSessionStart() runs once per committed
-// browser process (after single-instance arbitration and the parser's
-// --help/--version exits); markSessionCleanExit() runs on every
-// normal exit path.  A fatal engine CHECK kills the process without
-// unwinding, so only crashes leave the sentinel set for the next
-// start to count into browser/gpuCrashCount.
+// browser session — a real (non-standalone) launch or a --tor window
+// process; standalone smoke runs never take the sentinel, so a smoke
+// that dies or quick_exit()s past teardown cannot masquerade as a user
+// crash.  A fatal engine CHECK kills the process without unwinding,
+// so only crashes leave the sentinel set for the next start to count
+// into browser/gpuCrashCount.
+//
+// SESS02: browser/lastExit breadcrumbs how the previous session ended
+// — "clean rc=N", "terminated by signal N (NAME)", or "unclean (crash
+// or external kill)" written by the NEXT start when it finds the
+// sentinel still armed.  markSessionStart() logs the record (warns on
+// unclean) so a clean last-window-close can no longer masquerade as a
+// crash and an un-caught death leaves a trace.
 void markSessionStart();
-void markSessionCleanExit();
+void markSessionCleanExit(int exitCode = 0);
+void markSessionTerminated(int signalNumber);
 
 // DOH01: pushes the privacy/secureDns* settings to
 // QWebEngineGlobalSettings::setDnsMode — the Qt6.6+ API for
