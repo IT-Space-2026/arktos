@@ -25,11 +25,12 @@ use dpi::PhysicalSize;
 use glow::HasContext;
 use http::{header, HeaderValue, StatusCode};
 use servo::{
-    opts::Opts, ConsoleLogLevel, DeviceIntRect, DevicePoint, EventLoopWaker, InputEvent, Key,
-    KeyState, KeyboardEvent, LoadStatus, MouseButton, MouseButtonAction, MouseButtonEvent,
-    MouseMoveEvent, NavigationRequest, RenderingContext, RgbaImage, Servo, ServoBuilder,
-    SoftwareRenderingContext, UserAgentPlatform, WebResourceLoad, WebResourceResponse, WebView,
-    WebViewBuilder, WebViewDelegate, WebViewPoint, WheelDelta, WheelEvent, WheelMode,
+    opts::Opts, ConsoleLogLevel, DeviceIntRect, DevicePoint, DeviceVector2D, EventLoopWaker,
+    InputEvent, Key, KeyState, KeyboardEvent, LoadStatus, MouseButton, MouseButtonAction,
+    MouseButtonEvent, MouseMoveEvent, NavigationRequest, RenderingContext, RgbaImage, Scroll,
+    Servo, ServoBuilder, SoftwareRenderingContext, UserAgentPlatform, WebResourceLoad,
+    WebResourceResponse, WebView, WebViewBuilder, WebViewDelegate, WebViewPoint, WheelDelta,
+    WheelEvent, WheelMode,
 };
 use url::Url;
 
@@ -944,6 +945,45 @@ pub extern "C" fn se_wheel(instance: *mut SeInstance, dx: f64, dy: f64, x: f32, 
                 },
                 webview_point(x, y),
             )));
+    });
+}
+
+/// Scroll the scrollable area under (x, y) — the compositor-direct
+/// path (ENG32).  `WebView::notify_scroll_event` feeds the painter's
+/// scroll tree straight into a webrender APZ scroll-offset
+/// transaction: the delta lands on the next painter update, damage-
+/// limited to what actually moved, with no re-layout.
+///
+/// se_wheel takes the LONG way: InputEvent::Wheel parks in
+/// webview_renderer's pending_wheel_events, rides the constellation
+/// to the script thread for DOM wheel dispatch, and only when the
+/// handled-result comes back un-prevented does the SAME scroll fire —
+/// a per-notch script round-trip on top of the raster frame.
+///
+/// Same delta convention as se_wheel (wheel motion — positive dy
+/// scrolls up); the wheel path negates it into scroll space and so
+/// does this.  The trade-off the host accepts by calling it: DOM
+/// wheel listeners never fire and preventDefault cannot veto — pages
+/// that intercept the wheel for their own zoom/scroll widgets degrade
+/// to a normal scroll.  se_wheel stays the DOM-correct path.
+///
+/// libservo's Paint::notify_scroll_event only QUEUES onto the
+/// renderer's pending_scroll_zoom_events — unlike the input-event
+/// path it never wakes the embedder loop, so without the explicit
+/// wake below the delta would sit undrained on an idle page until
+/// unrelated traffic happened to spin the loop (a scroll that looks
+/// frozen).  Waking schedules the host's se_spin, whose
+/// spin_event_loop → perform_updates drains the queue into the APZ
+/// transaction and produces the frame_ready that paces the next
+/// slice.
+#[no_mangle]
+pub extern "C" fn se_scroll(instance: *mut SeInstance, dx: f64, dy: f64, x: f32, y: f32) {
+    ffi_guard(instance, (), |instance| {
+        instance.webview.notify_scroll_event(
+            Scroll::Delta(DeviceVector2D::new(-dx as f32, -dy as f32).into()),
+            webview_point(x, y),
+        );
+        (instance.shared.cbs.wake)(instance.shared.cbs.userdata);
     });
 }
 

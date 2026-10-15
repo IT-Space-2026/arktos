@@ -48,6 +48,16 @@ void se_resize(SeInstance instance, unsigned width, unsigned height);
 void se_mouse_move(SeInstance instance, float x, float y);
 void se_mouse_button(SeInstance instance, int down, int button, float x, float y);
 void se_wheel(SeInstance instance, double dx, double dy, float x, float y);
+/* ENG32: scroll the area under (x,y) by the same delta convention as
+ * se_wheel (wheel motion — positive dy scrolls up) but through the
+ * compositor-direct path: the delta lands in the painter's scroll
+ * tree on the next update (webrender APZ transaction, no re-layout,
+ * damage-limited repaint) instead of round-tripping the script
+ * thread for DOM wheel dispatch + preventDefault.  Trade-off: DOM
+ * wheel listeners do not fire and preventDefault cannot veto —
+ * se_wheel stays the DOM-correct path.  Absent on artifacts
+ * predating ENG32 — resolve optionally, fall back to se_wheel. */
+void se_scroll(SeInstance instance, double dx, double dy, float x, float y);
 void se_key(SeInstance instance, const char *utf8);
 void se_go_back(SeInstance instance);
 /* ENG16: reload the current page without pushing a history entry.

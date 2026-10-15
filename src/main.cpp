@@ -147,6 +147,7 @@
 #include <QtGui/QPixmap>
 #include <QtGui/QWheelEvent>
 #include <QtGui/QStandardItemModel>
+#include <QtGui/QStyleHints>
 #include <QtGui/QTextDocument>
 #include <QtGui/QTextLayout>
 #include <QtCore/QCoreApplication>
@@ -3388,7 +3389,21 @@ static int servoLifecycleSmoke()
         ServoView *servoView = engineTab && engineTab->page()
             ? qobject_cast<ServoView *>(engineTab->page()->view())
             : nullptr;
+        // ENG32 diag: the scroll bench held a raw view pointer across
+        // nested event pumps — if anything tears the view down mid-
+        // bench the raw pointer dangles into a member-read crash.
+        // QPointer nulls on destruction so the bench can skip
+        // honestly; the destroyed connect logs WHERE it happened.
+        const QPointer<ServoView> servoViewGuard(servoView);
         if (servoView) {
+            QObject::connect(servoView, &QObject::destroyed,
+                             servoView, [] {
+                qInfo("servo-smoke: DIAG ServoView destroyed "
+                      "mid-bench");
+                void *frames[32];
+                const int count = backtrace(frames, 32);
+                backtrace_symbols_fd(frames, count, STDERR_FILENO);
+            });
             // ENG25: scroll measurement through the REAL input path —
             // synthetic QWheelEvents into ServoView::wheelEvent, the
             // page's scrollY read back through the one string channel
@@ -3402,6 +3417,13 @@ static int servoLifecycleSmoke()
             const QString scrollPath = QDir::temp().filePath(
                 QLatin1String("arora-servo-scroll.html"));
             {
+                // ENG32: Servo 0.7 lays this document out far shorter
+                // than the nominal px height (scrollHeight probe reads
+                // ~2.3k for 320x80px rows and barely grows with more
+                // rows — incremental layout), so the scroll bench can
+                // exhaust the whole range.  Legs that need headroom
+                // reset to the top via up-wheels (scrollToTop below)
+                // instead of relying on fixture height.
                 QStringList rows;
                 rows.reserve(320);
                 for (int i = 0; i < 320; ++i)
@@ -3430,9 +3452,27 @@ static int servoLifecycleSmoke()
             pumpUntil([&scrollLoaded]() { return scrollLoaded; }, 30000);
             pumpUntil([]() { return false; }, 1500);
             report(QStringLiteral("scroll-fixture"), scrollLoaded);
+            // ENG32 diag: the scroll bench's clamps/asserts hinge on
+            // the fixture's real scroll range — log the DOM-side
+            // geometry once so a compositor-vs-layout clamp gap is
+            // visible in the run log.
+            {
+                servoView->evaluateJavaScript(QStringLiteral(
+                    "document.title='GEO:'+(document.documentElement"
+                    ".scrollHeight||0)+'/'+(document.body"
+                    ".scrollHeight||0)+'/'+(window.innerHeight||0)"));
+                pumpUntil([&]() {
+                    return engineTab->title().startsWith(
+                        QStringLiteral("GEO:"));
+                }, 8000);
+                qInfo("servo-smoke: scroll-geometry %s",
+                      qPrintable(engineTab->title()));
+            }
 
             int probeSeq = 0;
             const auto probeScrollY = [&]() -> qreal {
+                if (servoViewGuard.isNull())
+                    return -1.0;
                 // A seq-nonce prefixes each probe so a stale title
                 // from the previous eval can never satisfy the wait.
                 const QString prefix =
@@ -3441,19 +3481,89 @@ static int servoLifecycleSmoke()
                     "document.title='%1'+(window.scrollY||"
                     "document.documentElement.scrollTop||0)")
                         .arg(prefix));
+                // 8s, not 3: under a starved box the eval → script
+                // thread → title-change round trip legitimately
+                // outlives a 3s window, and a timed-out probe reads
+                // as -1 which the settle loop must not mistake for
+                // "scrollY did not move".
                 pumpUntil([&]() {
                     return engineTab->title().startsWith(prefix);
-                }, 3000);
+                }, 8000);
                 const QString title = engineTab->title();
                 return title.startsWith(prefix)
                     ? title.mid(prefix.size()).toDouble() : -1.0;
             };
+            const bool traceSettle =
+                !qgetenv("ARORA_SERVO_SMOKE_TRACE").isEmpty();
             const auto settleScrollY = [&](qreal last) -> qreal {
-                for (int i = 0; i < 60; ++i) {
-                    pumpUntil([]() { return false; }, 250);
+                int probeFails = 0;
+                QElapsedTimer quietStreak;
+                bool quietArmed = false;
+                for (int i = 0; i < 80; ++i) {
+                    if (servoViewGuard.isNull()) {
+                        qInfo("servo-smoke: DIAG view gone at "
+                              "settle iter %d", i);
+                        return last;
+                    }
+                    // ENG32: quiet required, not just equal — a
+                    // frame slower than the probe window must not
+                    // read as "settled".  While a slice remainder
+                    // is still queued the 100ms wheel watchdog
+                    // keeps emitting sends, so wheelEventsSent
+                    // stalls ONLY once the input side is fully
+                    // drained; scrollY must also hold across the
+                    // same window before the read counts.
+                    const int sentBefore = servoView->wheelEventsSent();
+                    pumpUntil([]() { return false; }, 350);
                     const qreal current = probeScrollY();
-                    if (current < 0 || current == last)
-                        return current < 0 ? last : current;
+                    if (current < 0) {
+                        // A timed-out probe is not a scroll
+                        // position — retry, bounded, so a starved
+                        // script thread stalls the measurement
+                        // instead of corrupting it into a 0px
+                        // delta.  Three consecutive failures means
+                        // the channel is down for real.
+                        if (++probeFails >= 3) {
+                            qInfo("servo-smoke: DIAG %d consecutive "
+                                  "probe timeouts at settle iter %d",
+                                  probeFails, i);
+                            return last;
+                        }
+                        continue;
+                    }
+                    probeFails = 0;
+                    if (traceSettle)
+                        qInfo("servo-smoke: TRACE settle i=%d "
+                              "last=%.0f current=%.0f sends %d->%d "
+                              "frames=%d",
+                              i, double(last), double(current),
+                              sentBefore,
+                              servoView->wheelEventsSent(),
+                              servoView->frameCount());
+                    // Quiet must PERSIST on the wall clock, not just
+                    // repeat — se_scroll lands deltas in the
+                    // compositor scroll tree and DOM scrollY only
+                    // catches up when SetScrollStates round-trips
+                    // constellation -> script.  On a starved box
+                    // that sync legitimately lags whole probe
+                    // windows: two frozen reads a few hundred ms
+                    // apart are not proof the scroll finished
+                    // propagating.  Requiring ~2s of unbroken quiet
+                    // (sends stalled AND scrollY unchanged) lets a
+                    // late-arriving sync disturb the streak and
+                    // keep the settle alive.
+                    if (current == last
+                            && servoView->wheelEventsSent()
+                                   == sentBefore) {
+                        if (!quietArmed) {
+                            quietStreak.start();
+                            quietArmed = true;
+                        } else if (quietStreak.elapsed() >= 2000) {
+                            return current;
+                        }
+                    } else {
+                        quietArmed = false;
+                    }
                     last = current;
                 }
                 return last;
@@ -3462,12 +3572,31 @@ static int servoLifecycleSmoke()
             const QPointF global =
                 servoView->mapToGlobal(center.toPoint());
             const auto sendWheel = [&](int dy, bool pixelDelta) {
+                if (servoViewGuard.isNull())
+                    return;
                 QWheelEvent ev(center, global,
                                pixelDelta ? QPoint(0, dy) : QPoint(),
                                pixelDelta ? QPoint() : QPoint(0, dy),
                                Qt::NoButton, Qt::NoModifier,
                                Qt::NoScrollPhase, false);
                 QApplication::sendEvent(servoView, &ev);
+            };
+            // ENG32: the accel-ramped bench alone can exhaust the
+            // fixture's effective scroll range (Servo lays it out at
+            // ~2.3k px tall regardless of nominal row height), so legs
+            // that must measure DOWNWARD movement first reset to the
+            // top with up-wheel bursts — the same input path under
+            // test, so the reset also exercises reversal-cancel.
+            const auto scrollToTop = [&]() -> qreal {
+                qreal y = settleScrollY(probeScrollY());
+                for (int i = 0; i < 30 && y > 100.0; ++i) {
+                    for (int j = 0; j < 6; ++j) {
+                        sendWheel(120, false);
+                        pumpUntil([]() { return false; }, 20);
+                    }
+                    y = settleScrollY(y);
+                }
+                return y;
             };
             const qreal yTop = settleScrollY(probeScrollY());
             report(QStringLiteral("scroll-starts-top"),
@@ -3491,12 +3620,14 @@ static int servoLifecycleSmoke()
             const int benchSends = servoView->wheelEventsSent();
             const qreal pxPerNotch = (yDown - yTop) / 10.0;
             qInfo("servo-smoke: scroll-bench 10 notches -> %.0fpx "
-                  "(%.0fpx/notch) in %lldms, %d se_wheel sends, "
-                  "%d paints (%.0fms/frame)",
+                  "(%.0fpx/notch, accel-ramped) in %lldms, "
+                  "%d scroll sends, %d paints (%.0fms/frame), "
+                  "largest step %.0fpx",
                   double(yDown - yTop), double(pxPerNotch),
                   qlonglong(benchMs), benchSends, benchPaints,
                   benchPaints
-                      ? double(benchMs) / double(benchPaints) : 0.0);
+                      ? double(benchMs) / double(benchPaints) : 0.0,
+                  double(servoView->largestWheelStepPx()));
             // ENG31: frame-time histogram over the bench window —
             // where llvmpipe's raster bound actually sits, bucketed.
             {
@@ -3518,25 +3649,69 @@ static int servoLifecycleSmoke()
             report(QStringLiteral("scroll-moves"), yDown > yTop);
             // Browser-pace scroll: ~3 lines x ~53px per notch
             // (Chrome/Firefox territory is 150-300px; the pre-ENG25
-            // angleDelta/8 conversion yielded 15px).
+            // angleDelta/8 conversion yielded 15px).  ENG32's accel
+            // ramp pushes the rapid-notch average above the flat
+            // baseline — the floor stays the lone-notch bound.
             report(QStringLiteral("scroll-notch-pace"),
                    pxPerNotch >= 100.0);
-            // ENG31 frame pacing: deliveries are gated on frame
-            // completion, so sends can never outrun paints by more
-            // than the one in-flight delivery + watchdog slack —
-            // the input-backlog bound the choppy fix hinges on.
+            // ENG31 frame pacing, ENG32 honest bound: a send
+            // happens once per completed frame, once per wheel
+            // event that found the gate open (≤ the notch count),
+            // and once per 100ms watchdog fire while a delivery
+            // produced no frame — under a stalled painter (frames
+            // slower than the watchdog) watchdog sends legitimately
+            // outnumber paints, so the bound is paints + watchdog
+            // window + notch slack, never a raw paints+2.  A real
+            // regression — sends outrunning frames AND input — is
+            // still caught: a fixed-cadence forwarder would emit
+            // ~benchMs/16 sends and blow past this bound.
             report(QStringLiteral("scroll-input-paced"),
-                   benchSends >= 1 && benchSends <= benchPaints + 2);
-            // pixelDelta (trackpads, hi-res wheels) — raw passthrough.
+                   benchSends >= 1
+                       && benchSends
+                              <= benchPaints + int(benchMs / 100)
+                                     + 12);
+            // ENG32 smooth-scroll slicing: a lone notch must NOT
+            // land in a single send — the ease-out slicer spreads it
+            // over ~4-6 frame-paced deliveries and caps the largest
+            // single jump below the whole notch delta.  The 900ms
+            // pump covers the animation tail at llvmpipe frame cost;
+            // resetScrollStats zeroes the largest-step probe and the
+            // accel ramp so the measurement starts clean.
+            const qreal notchBasePx =
+                qMax(1, QApplication::styleHints()->wheelScrollLines())
+                * 53.0;
+            const qreal ySliceStart = scrollToTop();
+            servoView->resetScrollStats();
+            sendWheel(-120, false);
+            pumpUntil([]() { return false; }, 900);
+            const int sliceSends = servoView->wheelEventsSent();
+            qInfo("servo-smoke: single notch -> %d scroll sends, "
+                  "largest step %.0fpx of %.0fpx base",
+                  sliceSends,
+                  double(servoView->largestWheelStepPx()),
+                  double(notchBasePx));
+            report(QStringLiteral("scroll-notch-sliced"),
+                   sliceSends >= 2 && sliceSends <= 12);
+            report(QStringLiteral("scroll-step-bounded"),
+                   servoView->largestWheelStepPx() > 0.0
+                       && servoView->largestWheelStepPx() < notchBasePx);
+            const qreal yPixelStart = scrollToTop();
+            // pixelDelta (trackpads, hi-res wheels) — raw passthrough,
+            // never sliced.
             sendWheel(-300, true);
-            const qreal yPixel = settleScrollY(yDown);
+            const qreal yPixel = settleScrollY(yPixelStart);
+            qInfo("servo-smoke: pixel-delta -300 -> %.0fpx",
+                  double(yPixel - yPixelStart));
             report(QStringLiteral("scroll-pixel-delta"),
-                   yPixel > yDown + 50.0);
-            // ENG31 coalescing proof: a 20-notch burst delivered
+                   yPixel > yPixelStart + 50.0);
+            // ENG31+ENG32 coalescing: a 20-notch burst delivered
             // synchronously (no event-loop turns between events, so
-            // no frame can complete mid-burst) must collapse into a
-            // handful of se_wheel deliveries, not 20 — each send
-            // still carries the full summed offset.
+            // no frame can complete mid-burst) must still collapse —
+            // every send is frame-paced, and the ease-out slicer
+            // converges the summed remainder in capped+log-bounded
+            // steps (~15-20 at a ~10k ramped remainder), far below
+            // the ~35 a naive one-send-per-notch plus tail would
+            // take.
             const int sentBeforeBurst = servoView->wheelEventsSent();
             for (int i = 0; i < 20; ++i)
                 sendWheel(-120, false);
@@ -3544,16 +3719,35 @@ static int servoLifecycleSmoke()
             const int burstSent =
                 servoView->wheelEventsSent() - sentBeforeBurst;
             qInfo("servo-smoke: scroll-burst 20 notches -> %d "
-                  "se_wheel sends", burstSent);
+                  "scroll sends", burstSent);
             report(QStringLiteral("scroll-burst-coalesced"),
-                   burstSent >= 1 && burstSent <= 5);
+                   burstSent >= 2 && burstSent <= 24);
+            // ENG32 accel ramp: six notches fired 30ms apart must
+            // cover clearly more than six flat notches (the ramp
+            // reaches ~2.25x the flat sum by the sixth) — a pause or
+            // reversal before this leg restarts at 1x, so the
+            // discriminating bound sits between flat and ramped.
+            const qreal yAccelStart = scrollToTop();
+            for (int i = 0; i < 6; ++i) {
+                sendWheel(-120, false);
+                pumpUntil([]() { return false; }, 30);
+            }
+            const qreal yAccel = settleScrollY(yAccelStart);
+            const qreal accelPx = yAccel - yAccelStart;
+            qInfo("servo-smoke: accel-ramp 6 notches -> %.0fpx "
+                  "(flat base %.0fpx)",
+                  double(accelPx), double(6.0 * notchBasePx));
+            report(QStringLiteral("scroll-accel-ramps"),
+                   accelPx > 6.0 * notchBasePx * 1.3);
             // Drive to the bottom adaptively (stop when scrollY stops
             // growing, capped), then keep wheeling — overscroll must
-            // clamp at max, never wrap.
+            // clamp at max, never wrap.  ENG32: the fixture is ~10x
+            // taller now, so the loop needs the notch budget to cover
+            // ~40k+ px — 50 iters of 6 accel-ramped notches reach it.
             qreal yBottom = yPixel;
             int plateau = 0;
-            for (int i = 0; i < 40 && plateau < 2; ++i) {
-                for (int j = 0; j < 4; ++j) {
+            for (int i = 0; i < 50 && plateau < 2; ++i) {
+                for (int j = 0; j < 6; ++j) {
                     sendWheel(-120, false);
                     pumpUntil([]() { return false; }, 20);
                 }

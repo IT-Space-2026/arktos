@@ -60,6 +60,10 @@ struct ServoApi {
     void (*mouseMove)(SeInstance, float, float) = nullptr;
     void (*mouseButton)(SeInstance, int, int, float, float) = nullptr;
     void (*wheel)(SeInstance, double, double, float, float) = nullptr;
+    // ENG32: optional — the compositor-direct scroll export.  A
+    // missing se_scroll keeps deliveries on se_wheel, the DOM-
+    // correct but script-round-tripping path older artifacts have.
+    void (*scroll)(SeInstance, double, double, float, float) = nullptr;
     void (*key)(SeInstance, const char *) = nullptr;
     void (*goBack)(SeInstance) = nullptr;
     void (*setZoom)(SeInstance, float) = nullptr;
@@ -241,6 +245,11 @@ bool resolve()
             library().resolve("se_instance_active"));
     api().canInit = reinterpret_cast<decltype(api().canInit)>(
         library().resolve("se_can_init"));
+    // Optional ENG32 addition — compositor-direct scroll.  Missing
+    // on older artifacts: sendScrollStep falls back to se_wheel and
+    // scroll keeps its DOM-dispatch cost, exactly as before.
+    api().scroll = reinterpret_cast<decltype(api().scroll)>(
+        library().resolve("se_scroll"));
     state = ok ? 1 : -1;
     if (!ok)
         qWarning("servo-embed: artifact at %s is missing symbols",
@@ -763,31 +772,128 @@ static QPointF servoWheelPixels(const QWheelEvent &event)
 // to something imperceptible.
 static constexpr int kWheelFrameGuardMs = 100;
 
+// ENG32 — the smooth-scroll slice curve.  Each frame-paced delivery
+// sends an ease-out fraction of the REMAINING delta instead of the
+// whole sum: a ~145px notch lands over ~4-6 paints (~150-200ms at
+// llvmpipe's ~34ms/frame) as 64/38/24/24/9px rather than one hard
+// jump — the shape real smooth-scroll animations produce.  Being
+// proportional, the same curve covers a huge queued burst quickly
+// (big remainders take big first slices) without ever teleporting:
+// the per-step cap of 1.5 viewport heights keeps a burst reading as
+// fast scrolling, not a page cut.  The finishing step ends the
+// asymptotic tail in one send.
+static constexpr qreal kWheelSliceFraction = 0.4;
+static constexpr qreal kWheelMinStepPx = 24.0;
+static constexpr qreal kWheelMaxViewportFraction = 1.5;
+
+static qreal servoWheelSliceAxis(qreal remaining, qreal viewport)
+{
+    if (qAbs(remaining) <= kWheelMinStepPx)
+        return remaining;
+    const qreal step = qBound(kWheelMinStepPx,
+                              qAbs(remaining) * kWheelSliceFraction,
+                              qMax(kWheelMinStepPx,
+                                   viewport * kWheelMaxViewportFraction));
+    return remaining < 0 ? -step : step;
+}
+
+QPointF ServoView::wheelSliceStep(const QPointF &remaining) const
+{
+    return QPointF(servoWheelSliceAxis(remaining.x(), width()),
+                   servoWheelSliceAxis(remaining.y(), height()));
+}
+
+// ENG32 — notch acceleration (the "still slow" half).  A lone notch
+// keeps the wheelScrollLines x ~53px baseline (~145-160px, Firefox
+// territory); each notch inside the window of the previous one
+// raises the multiplier by the step, capped — rapid flicks cover
+// progressively more ground, like the system-scroll acceleration
+// Chrome/Firefox apply.  A dominant-axis reversal restarts the ramp
+// (and cancels the in-flight remainder on the opposed axis, handled
+// in wheelEvent) so a flick back is crisp instead of mushy.
+static constexpr int kWheelAccelWindowMs = 400;
+static constexpr qreal kWheelAccelStep = 0.5;
+static constexpr qreal kWheelAccelMax = 3.5;
+
+static int servoWheelDominantSign(const QPointF &delta)
+{
+    const qreal axis =
+        qAbs(delta.y()) >= qAbs(delta.x()) ? delta.y() : delta.x();
+    return axis > 0 ? 1 : axis < 0 ? -1 : 0;
+}
+
 void ServoView::wheelEvent(QWheelEvent *event)
 {
     if (!m_instance || isPoisoned())
         return;
-    // Pace deliveries on frame COMPLETION, not a wall-clock cadence.
-    // ENG25's 16ms flush timer still outran the rasterizer — at
-    // ~35ms/frame it queued ~2 se_wheel per paint, each a full-
-    // viewport raster inside se_spin, so a sustained burst fell
-    // further and further behind live input (the choppy/slow report
-    // behind ENG31).  Now the first delta of a burst still goes out
-    // immediately (a lone notch stays low-latency), but while its
-    // frame is in flight later deltas accumulate and flush once per
-    // frame_ready — input rate locks to paint rate and the queue
-    // depth is bounded at one delivery.  Servo already sums same-mode
-    // pending wheel deltas internally (document_event_handler.rs),
-    // so merging here bounds IPC without changing scroll semantics.
+    // Pace deliveries on frame COMPLETION, not a wall-clock cadence
+    // (ENG31): the first slice of a burst still goes out immediately
+    // (a lone notch stays low-latency), but while its frame is in
+    // flight later deltas accumulate and flush once per frame_ready —
+    // input rate locks to paint rate and the queue depth is bounded
+    // at one delivery.
     const QPointF delta = servoWheelPixels(*event);
     if (!m_pendingWheelDelta.isNull()
             && event->modifiers() != m_pendingWheelMods)
-        flushWheelDelta();  // modifier change ends the burst
-    m_pendingWheelDelta += delta;
+        drainWheelDelta();  // modifier change ends the burst
+    const bool highRes = !event->pixelDelta().isNull();
+    QPointF scaled = delta;
+    if (!highRes) {
+        const qint64 now = m_frameClock.elapsed();
+        const int dominant = servoWheelDominantSign(delta);
+        const bool reversed = dominant != 0 && m_lastNotchDominant != 0
+            && dominant != m_lastNotchDominant;
+        if (reversed) {
+            // Turn the wheel and the view must turn — cancel the
+            // queued remainder on the opposed axis instead of
+            // gliding out the old direction first.
+            if (delta.y() * m_pendingWheelDelta.y() < 0)
+                m_pendingWheelDelta.setY(0);
+            if (delta.x() * m_pendingWheelDelta.x() < 0)
+                m_pendingWheelDelta.setX(0);
+        }
+        const bool rapid = m_lastNotchMs >= 0
+            && now - m_lastNotchMs <= kWheelAccelWindowMs;
+        m_notchAccel = rapid && !reversed
+            ? qMin(m_notchAccel + kWheelAccelStep, kWheelAccelMax)
+            : 1.0;
+        m_lastNotchMs = now;
+        if (dominant != 0)
+            m_lastNotchDominant = dominant;
+        scaled *= m_notchAccel;
+    }
+    m_pendingWheelDelta += scaled;
+    m_pendingWheelHiRes = m_pendingWheelHiRes || highRes;
     m_pendingWheelPos = event->position();
     m_pendingWheelMods = event->modifiers();
     if (!m_wheelInFlight)
         flushWheelDelta();
+}
+
+void ServoView::sendScrollStep(const QPointF &delta)
+{
+    // ENG32: prefer the compositor-direct export — se_scroll lands
+    // the delta in the painter's scroll tree on the next update (a
+    // webrender APZ scroll-offset transaction — no re-layout, a
+    // damage-limited repaint), while se_wheel round-trips the
+    // constellation + script thread for DOM wheel dispatch and its
+    // preventDefault wait BEFORE the same scroll is allowed to run.
+    // Per notch that is the difference between scroll bounded by the
+    // raster frame alone and scroll bounded by raster PLUS script
+    // latency — the chubby half of the report.  Trade-off, accepted
+    // for this experimental backend and documented in the shim:
+    // DOM wheel listeners do not fire and preventDefault cannot
+    // veto, so wheel-intercepting widgets degrade to a normal
+    // scroll.  Artifacts predating se_scroll keep the DOM path.
+    if (api().scroll) {
+        api().scroll(m_instance,
+                     delta.x(), delta.y(),
+                     m_pendingWheelPos.x(), m_pendingWheelPos.y());
+        return;
+    }
+    api().wheel(m_instance,
+                delta.x(), delta.y(),
+                m_pendingWheelPos.x(), m_pendingWheelPos.y());
 }
 
 void ServoView::flushWheelDelta()
@@ -796,14 +902,22 @@ void ServoView::flushWheelDelta()
         return;
     if (!m_instance || isPoisoned()) {
         m_pendingWheelDelta = QPointF();
+        m_pendingWheelHiRes = false;
         return;
     }
-    api().wheel(m_instance,
-                m_pendingWheelDelta.x(), m_pendingWheelDelta.y(),
-                m_pendingWheelPos.x(), m_pendingWheelPos.y());
+    // Hi-res remainders (trackpads, pixel wheels) deliver whole —
+    // they are already continuous; slicing only delays them.
+    const QPointF step = m_pendingWheelHiRes
+        ? m_pendingWheelDelta
+        : wheelSliceStep(m_pendingWheelDelta);
+    sendScrollStep(step);
+    m_pendingWheelDelta -= step;
+    if (m_pendingWheelDelta.isNull())
+        m_pendingWheelHiRes = false;
     ++m_wheelEventsSent;
+    m_wheelLargestStepPx = qMax(m_wheelLargestStepPx,
+                                qMax(qAbs(step.x()), qAbs(step.y())));
     m_wheelInFlight = true;
-    m_pendingWheelDelta = QPointF();
     // The watchdog releases the gate if this delivery never produces
     // a frame_ready; when frames ARE flowing it never gets to fire
     // ahead of the real pacing path.
@@ -811,11 +925,41 @@ void ServoView::flushWheelDelta()
         m_wheelTimer.start(kWheelFrameGuardMs, this);
 }
 
+void ServoView::drainWheelDelta()
+{
+    // Whole-remainder delivery — the burst ends here (a modifier
+    // change), so there is nothing left to animate.  Same guards and
+    // bookkeeping as the sliced flush.
+    if (m_pendingWheelDelta.isNull())
+        return;
+    if (!m_instance || isPoisoned()) {
+        m_pendingWheelDelta = QPointF();
+        m_pendingWheelHiRes = false;
+        return;
+    }
+    const QPointF step = m_pendingWheelDelta;
+    sendScrollStep(step);
+    m_pendingWheelDelta = QPointF();
+    m_pendingWheelHiRes = false;
+    ++m_wheelEventsSent;
+    m_wheelLargestStepPx = qMax(m_wheelLargestStepPx,
+                                qMax(qAbs(step.x()), qAbs(step.y())));
+    m_wheelInFlight = true;
+    if (!m_wheelTimer.isActive())
+        m_wheelTimer.start(kWheelFrameGuardMs, this);
+}
+
 void ServoView::resetScrollStats()
 {
     m_wheelEventsSent = 0;
+    m_wheelLargestStepPx = 0;
     m_frameIntervalsMs.clear();
     m_lastFrameReadyMs = -1;
+    // Bench runs get a deterministic accel ramp — the previous leg's
+    // notches must not pre-load this one's multiplier.
+    m_notchAccel = 1.0;
+    m_lastNotchMs = -1;
+    m_lastNotchDominant = 0;
 }
 
 void ServoView::timerEvent(QTimerEvent *event)
@@ -823,8 +967,10 @@ void ServoView::timerEvent(QTimerEvent *event)
     if (event->timerId() == m_wheelTimer.timerId()) {
         // Watchdog — the last delivered delta produced no frame inside
         // the guard window, so its gate would otherwise latch.  Clear
-        // and push anything queued; keep running while in flight or
-        // pending so a later delivery stays covered.
+        // and push the NEXT SLICE (not the whole remainder — a merely
+        // slow frame must not turn the ease-out tail into a jump);
+        // keep running while in flight or pending so a later delivery
+        // stays covered.
         m_wheelInFlight = false;
         flushWheelDelta();
         if (!m_wheelInFlight && m_pendingWheelDelta.isNull())
