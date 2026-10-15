@@ -610,7 +610,7 @@ void tst_BrowserMainWindow::menuIcons()
         QApplication::processEvents();
         containerMenu->hide();
     }
-    for (QAction *action : menus.value(QLatin1String("View"))->actions()) {
+    for (QAction *action : menus.value(QLatin1String("Tools"))->actions()) {
         if (action->menu()
                 && action->menu()->title().remove(QLatin1Char('&'))
                        == QLatin1String("Development Tools"))
@@ -649,7 +649,7 @@ void tst_BrowserMainWindow::menuIcons()
             QVERIFY2(!action->icon().isNull(), qPrintable(action->text()));
     }
 
-    // View > Development Tools is a static submenu.
+    // Tools > Development Tools is a static submenu.
     QVERIFY(devToolsMenu);
     for (QAction *action : devToolsMenu->actions()) {
         if (!action->isSeparator())
@@ -1018,10 +1018,10 @@ void tst_BrowserMainWindow::downloadsMenuHome()
 
 // DEVT04/DEVT05: Tools > Development Tools holds the engine-tool
 // entries — "Chromium Dev Tool" (the working inspector) and, under
-// rustcore, "BiDi Dev &Tools" (the dock's own checkable
-// toggleViewAction — the dead placeholder and the separate top-level
-// tickbox are gone).  The View menu keeps Page Source + Text
-// Encoding and carries no dev-tools entry.
+// rustcore, "BiDi Dev &Tools" (a plain open/close action for the
+// dock — DEVT08: no tick box, the dead placeholder and the separate
+// top-level tickbox are gone).  The View menu keeps Page Source +
+// Text Encoding and carries no dev-tools entry.
 void tst_BrowserMainWindow::devToolsSubmenu()
 {
     SubWindow *window = new SubWindow;
@@ -1101,7 +1101,7 @@ void tst_BrowserMainWindow::devToolsSubmenu()
     }
 
     // The submenu holds the live inspector plus the working
-    // checkable BiDi dock toggle — and no separators.
+    // BiDi dock toggle — and no separators.
     QStringList entries;
     QAction *chromium = nullptr;
     QAction *bidi = nullptr;
@@ -1120,18 +1120,20 @@ void tst_BrowserMainWindow::devToolsSubmenu()
 #if defined(ARORA_RUSTCORE)
     QCOMPARE(entries.size(), 2);
     QVERIFY(bidi);
-    QVERIFY(bidi->isCheckable());
     QVERIFY(bidi->isEnabled());
+    // DEVT08: neither devtools entry is checkable — these are
+    // open/close actions, not persistent states.
+    QVERIFY(!bidi->isCheckable());
+    QVERIFY(!chromium->isCheckable());
 
-    // The submenu BiDi entry is the dock's toggleViewAction: tick
-    // opens the dock, untick closes it.
+    // The submenu BiDi entry toggles the dock: trigger opens it,
+    // triggering again closes it.
     QDockWidget *dock = window->findChild<QDockWidget *>(
         QLatin1String("bidiPanelDock"));
     QVERIFY(dock);
     QVERIFY(!dock->isVisible());
     bidi->trigger();
     QTRY_VERIFY(dock->isVisible());
-    QVERIFY(bidi->isChecked());
 
     // SIDE05: exactly one title bar — the lazily-built panel inside
     // is plain dock content, never a nested QDockWidget drawing a
@@ -1142,16 +1144,16 @@ void tst_BrowserMainWindow::devToolsSubmenu()
 
     bidi->trigger();
     QTRY_VERIFY(!dock->isVisible());
-    QVERIFY(!bidi->isChecked());
     closeWindow(window);
 
     // A tor window keeps the entry visible but disabled, with a
-    // tooltip explaining why.
+    // tooltip explaining why.  Tor windows strip the menubar (menus
+    // ride the app-menu button), so the lookup walks appMenu().
     BrowserApplication::setTorMode(true);
     SubWindow *torWindow = new SubWindow;
     torWindow->show();
     QAction *torBidi = nullptr;
-    for (QAction *menuAction : torWindow->menuBar()->actions()) {
+    for (QAction *menuAction : torWindow->appMenu()->actions()) {
         if (!menuAction->menu()
             || !menuAction->text().contains(QLatin1String("Tools")))
             continue;
@@ -1169,6 +1171,7 @@ void tst_BrowserMainWindow::devToolsSubmenu()
     BrowserApplication::setTorMode(false);
     QVERIFY(torBidi);
     QVERIFY(!torBidi->isEnabled());
+    QVERIFY(!torBidi->isCheckable());
     QVERIFY(!torBidi->toolTip().isEmpty());
     closeWindow(torWindow);
 #else

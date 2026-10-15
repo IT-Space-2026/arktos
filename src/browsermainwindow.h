@@ -341,6 +341,9 @@ private:
     // DEVT04: engine-facing tools under Tools > Development Tools.
     QMenu *m_toolsDevToolsMenu;
     QAction *m_toolsChromiumDevToolAction;
+    // DEVT08: plain open/close entry for the BiDi dock — created only
+    // in rustcore builds, null otherwise.
+    QAction *m_toolsBidiDevToolAction = nullptr;
     UserAgentMenu *m_toolsUserAgentMenu;
 
     QMenu *m_helpMenu;
