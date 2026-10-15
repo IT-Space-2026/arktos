@@ -145,6 +145,7 @@
 #include <QtGui/QImage>
 #include <QtGui/QMouseEvent>
 #include <QtGui/QPageLayout>
+#include <QtGui/QPainter>
 #include <QtGui/QPixmap>
 #include <QtGui/QWheelEvent>
 #include <QtGui/QStandardItemModel>
@@ -14515,6 +14516,82 @@ int main(int argc, char **argv)
         qInfo() << "perf-smoke: flat-menu 10000 rows —"
                 << "first open" << flatFirstMs << "ms,"
                 << "reopen" << flatSecondMs << "ms";
+
+        // QUAL04: chrome icon paint throughput — the path every
+        // toolbar/button/menu repaint takes.  ChromeIconEngine
+        // re-resolves and re-tints the themed art per pixmap request;
+        // this times both the steady repaint mix (12 live icons x
+        // 300 passes) and the worst case of a fresh engine per paint
+        // (the model data() pattern that news up a QIcon per row).
+        QImage iconCanvas(400, 64,
+                          QImage::Format_ARGB32_Premultiplied);
+        static const char *iconNames[] = {
+            "go-previous", "go-next", "view-refresh", "go-home",
+            "tab-new", "window-close", "view-history",
+            "user-bookmarks", "edit-clear", "document-open",
+            "preferences-system", "emblem-downloads"
+        };
+        QList<QIcon> perfIcons;
+        for (const char *name : iconNames)
+            perfIcons.append(AroraIcon::getChrome(QLatin1String(name)));
+        const int iconPasses = 300;
+        step.restart();
+        {
+            QPainter iconPainter(&iconCanvas);
+            for (int pass = 0; pass < iconPasses; ++pass) {
+                int x = 0;
+                for (const QIcon &icon : perfIcons) {
+                    icon.paint(&iconPainter, QRect(x, 0, 24, 24));
+                    x += 30;
+                }
+            }
+        }
+        const qint64 iconPaintMs = step.elapsed();
+        step.restart();
+        {
+            QPainter iconPainter(&iconCanvas);
+            for (int i = 0; i < iconPasses; ++i) {
+                const QIcon icon = AroraIcon::getChrome(
+                    QLatin1String("view-history"));
+                icon.paint(&iconPainter, QRect(0, 0, 24, 24));
+            }
+        }
+        const qint64 iconChurnMs = step.elapsed();
+        qInfo() << "perf-smoke: chrome-icons —"
+                << (iconPasses * int(sizeof(iconNames)
+                                     / sizeof(iconNames[0])))
+                << "icon paints" << iconPaintMs << "ms,"
+                << iconPasses << "fresh-icon paints" << iconChurnMs
+                << "ms";
+
+        // QUAL04: tab-switch latency — currentChanged rewires the
+        // page->chrome signal set, the action mappers and the
+        // location-bar stack on every hop.
+        const int switches = 60;
+        step.restart();
+        for (int i = 0; i < switches; ++i)
+            perfTabs->setCurrentIndex(i % perfTabs->count());
+        const qint64 switchMs = step.elapsed();
+        qInfo() << "perf-smoke: tab-switch avg"
+                << qRound(switchMs / double(switches) * 10) / 10.0
+                << "ms over" << switches << "switches";
+
+        // QUAL04: tab-strip repaint — TabBar::paintEvent re-elides
+        // every visible title and re-draws the shape per repaint;
+        // hover/drag move storms hit it many times a second.
+        {
+            QImage strip(perfTabs->tabBar()->size(), 
+                         QImage::Format_ARGB32_Premultiplied);
+            const int repaints = 200;
+            step.restart();
+            for (int i = 0; i < repaints; ++i)
+                perfTabs->tabBar()->render(&strip);
+            const qint64 stripMs = step.elapsed();
+            qInfo() << "perf-smoke: tabstrip-repaint avg"
+                    << qRound(stripMs / double(repaints) * 100) / 100.0
+                    << "ms over" << repaints << "repaints,"
+                    << perfTabs->tabBar()->count() << "tabs";
+        }
 
         // SEC12 profile-tree sweep: recursive owner-only enforcement
         // runs on the startup path (applySettings) — measure it on a

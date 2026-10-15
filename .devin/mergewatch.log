@@ -3097,3 +3097,18 @@ Starting the merge pass. First, let me fetch and check the state of the reposito
 - **ui-work** touches `src/browsermainwindow.{cpp,h}` — both dirty.
 
 Per the rules, a dirty file that conflicts with the merge means skip the lane. Let me verify git actually refuses rather than assuming — a dry attempt is safe since git aborts before touching anything when unstaged changes would be overwritten.[2026-10-15 00:35:07] merge run exited rc=124
+[2026-10-15 00:40:08] merge due: rust-work(3) ui-work(1) — spawning devin merge run
+Working tree has some uncommitted log/task-file changes — I'll leave them alone unless a merge touches them. Now fetching and checking lane counts.Both lanes ahead. Dirty files here don't overlap with either lane's changes, so it's safe to proceed. Merging rust-work first.Conflicts are parallel-feature additions. Let me check the merged .cpp files to see which implementations exist so the headers match.The .cpp merged with both sides' implementations, so headers need unions. Let me check master's recent commits to understand the README contradiction.Let me check `m_backend` usage in the merged cpp for type-compatibility before resolving.All compatible — resolve headers as unions (rust-work supersedes the inline `backend()`/raw pointer since the .cpp has its out-of-line versions).rust-work merged. Now ui-work.ui-work merged cleanly. Now the build verification.Build passed (linked `../arora`). Now appending WORKLOG entries, committing, and pushing.Merge run complete. Summary:
+
+**rust-work** (3 commits: EXT17 WIP preserve, ENG29 servo-debug marker, EXT18 Bitwarden e2e) — merged `84ade39b` with 4 conflicts:
+- `src/extensions/extensionbackgroundhost.h` — union: kept lane's `handshakeDone`/`setContextPage`/`contextPage` + QPointer members alongside master's `seesUrls`; lane's out-of-line `backend()` supersedes master's inline version (matching the merged .cpp)
+- `src/extensions/extensionshimbackend.h` — union: master's `shapedTab` + lane's `invokeWindows`
+- `README.md` — union in both spots: lane's servo-debug-build note + master's shared-memory readout; master's native-API EXT11 paragraph + lane's hosted-runtime Bitwarden paragraph (both true — native fails, hosted runtime works)
+- `.devin/COVERAGE.md` — took lane's newer generated values
+
+**ui-work** (1 commit: MENU15 Quit to app-menu bottom) — merged `031ab30d` cleanly.
+
+**Build**: `make -C src -j2` passed, `arora` binary linked.
+
+**Pushed** `ca32ddab..70d40de2` (two merge commits + WORKLOG log commit). Pre-existing dirty files (`.devin/Arora-Task.md`, `mergewatch.log`, `taskloop.log`) left untouched — they didn't intersect either lane. Stopping after this pass.
+[2026-10-15 00:43:44] merge run exited rc=0

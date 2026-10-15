@@ -2557,6 +2557,18 @@ Memory and lifetime fixes (QUAL02):
     checks that both still exist first.  Sidebar notes stores are now
     bound to their profile's lifetime instead of the application's,
     so a discarded private profile takes its notes model with it.
+Performance audit and reliability fixes (QUAL04):
+    Measured baselines across startup, tab and paint paths are all
+    inside their targets — cold start to first window ~200 ms, new
+    tab ~1.5 ms, tab switch ~0.6 ms, themed chrome icons ~2 us per
+    paint — so no speculative changes landed.  The History window no
+    longer rebuilds a themed icon per row on every repaint.  An
+    extension whose background worker dies is once more correctly
+    reported "not supported": the hosted-runtime page shim no longer
+    lands on the health probe's own page, and a stale queued probe can
+    no longer overwrite a measured verdict.  The test suite now kills
+    a hung test binary after a timeout instead of stalling the whole
+    run.
 
 Extension popups and pages get the hosted runtime too, and Bitwarden reaches its real login gate (EXT17/EXT18):
     Any extension document the browser renders — an action popup, an options page opened via chrome.runtime.openOptionsPage or tabs.create, an extension link in a tab — now gets the same DocumentCreation shim injection and its own chromeBridge channel wired to the hosted background's backend, so chrome.* calls from those pages work identically to the background's. The channel binds only same-profile, non-private extension pages; navigating across extension boundaries detaches the old bridge so contexts never cross. The bundled Bitwarden popup now boots its real Angular app end-to-end: the extension's i18n message map is embedded into its injected preamble (its flat lookup is what Angular's bootstrap awaited), its intro carousel clicks through, and the popup presents the genuine vault login gate — email and password inputs, "Log in with passkey", single-sign-on — verified headless. Remaining limits are honest rather than hidden: unlocking the vault itself requires real Bitwarden account credentials (server-authenticated, then client-side key derivation — nothing in the browser blocks it), chrome.tabs.sendMessage to content scripts and chrome.notifications answer typed errors that surface in the extension's health row, and the Settings details pane lists the degraded surfaces by name ("Enabled (hosted, degraded)") when the shim answers a typed error. chrome.extension.getBackgroundPage() returning null for a hosted service-worker background matches Chrome's own MV3 behavior.

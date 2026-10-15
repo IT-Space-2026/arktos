@@ -771,10 +771,16 @@ QVariant HistoryTreeModel::data(const QModelIndex &index, int role) const
         Q_FALLTHROUGH();
     }
     case Qt::DecorationRole: {
-        if (index.column() == 0 && !index.parent().isValid())
+        if (index.column() == 0 && !index.parent().isValid()) {
             // ICONS09: the day-group header is chrome — the themed
             // monochrome glyph, not the colorful legacy pixmap.
-            return AroraIcon::getChrome(QLatin1String("view-history"));
+            // Shared: data() runs per row per repaint, and the engine
+            // re-resolves the theme live at paint time so a static
+            // copy still follows icon-theme switches.
+            static const QIcon icon =
+                AroraIcon::getChrome(QLatin1String("view-history"));
+            return icon;
+        }
         Q_FALLTHROUGH();
     }
     case HistoryModel::DateRole: {

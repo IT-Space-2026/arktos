@@ -304,7 +304,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | QUAL01 | Audit 1/5: dead code + redundant-implementation sweep, fix findings — details below | done | 3 | ~20 dead methods/signals/members removed (Engine::Page createWindow+signal surface, ChromeBridge handshake plumbing, ext-host accessors); setHomeToCurrentPage rewired to currentTab() + test re-pointed at a real window; dupes audited = intentional, documented. Verified: 0-warning build, 4 check gates PASS, suite 82 programs green except 5 documented pre-existing browsermainwindow legs, --quit-after-load rc=0 |
 | QUAL02 | Audit 2/5: memory leaks — check-leaks + ownership/FFI-boundary audit, fix findings — details below | done | 1 | LSan suite our-code blocks 53→0, all 18 smoke flags clean; valgrind top smokes our-code records 3→0 (2,848B→0 definite); audits found+fixed: unparented EngineTab profiles, parentless ServoBackend probe, drag mime data, ext-popup UAF, notes-model profile lifetime; suite green standalone except 5 documented bmw legs; gates PASS |
 | QUAL03 | Audit 3/5: security — channels, injection, isolation, fail-closed, secrets — details below | done | 3 | 5 findings fixed (ext nav-lock, relay key ownership, tabs-reply scrub, PiP script-breakout, cookie-value log) + 4 UBSan teardown fixes incl late navBarEditEvent cast; gates PASS, suite green except documented pre-existing legs, ext 26/26, instrumented re-run zero our-code reports |
-| QUAL04 | Audit 4/5: performance — baseline measurements then fix real regressions — details below | pending | 0 | |
+| QUAL04 | Audit 4/5: performance — baseline measurements then fix real regressions — details below | done | 1 | Baselines: ctor 184ms, first window 19ms, tab 1.5ms/switch 0.6ms, icons ~2us, idle ~232MB/loaded ~522MB, servo 145px/notch=ENG25 — all bounded, no speculative fixes. Landed: static day-group icon in HistoryTreeModel::data, runTests.sh per-binary timeout guard (ARORA_TEST_TIMEOUT) for the known bmw teardown loop, ext health-probe merge-regression fix (probe page marker skips page-shim + queue dedup). Suite green except 5 documented bmw legs; tabTransfer flake PASS standalone; ext 27/27; --quit-after-load rc=0 |
 | QUAL05 | Audit 5/5: consistency sweep + final all-gates-green closing pass — details below | pending | 0 | |
 | SRCH01 | Restore editable-field "Add search provider" context menu (dropped at MIG08 — needs runJavaScript form introspection) | pending | 0 | |
 | PRINT02 | Merge Print + Print Preview into single Firefox-style Print->preview flow — details below | pending | 0 | |
@@ -1836,6 +1836,75 @@ the new navBarEditEvent site re-verified clean after its fix.
 ### QUAL04
 
 Quality sweep 4/5 — performance audit (user: 'performance issues'). (a) BASELINE FIRST — measure before touching: cold startup to first paint, tab create/switch latency, idle + loaded memory footprint, Servo frame time (ENG25's bench numbers are the reference — confirm no regression), scroll smoothness; (b) known suspect areas — icon/theme re-resolution on paint paths (AroraIcon lookups), QSettings churn in hot paths, debounced savers' intervals, per-tab widget re-creation on switch, startup work that could defer; (c) fix clear wins only — measurable improvement or leave it; no speculative optimization without a measured baseline; (d) findings + numbers in the notes. Verify: benchmarks before/after recorded; no functional regression; make check PASS.
+
+Findings (recorded during the audit):
+
+Baselines (isolated HOME, offscreen, Qt 6.12):
+- Cold start (--profile-startup): app-ctor 182ms, first window shown
+  206ms, warmup done 220ms — PERF03's deferral work is holding.
+- --perf-smoke (new legs added this task): app-ctor 184ms,
+  first-window 19ms, new-tab avg 1.5ms (8 tabs), 40k-entry history
+  load/filter/tree/add 0ms, 40k history-menu first open 0ms, 10k-row
+  flat menu first open 53ms / reopen 0ms, 3600 chrome-icon paints 7ms
+  (~2us/icon), 300 fresh-icon paints 0ms, tab-switch avg 0.6ms (60
+  hops), tabstrip repaint 0.34ms (200 repaints, 9 tabs), 5k-file
+  permission sweep 19ms/17ms.
+- Memory: idle process tree ~232MB RSS; heavy loaded page ~522MB RSS.
+- Servo scroll bench: 145px/notch, ~32ms/frame — identical to ENG25's
+  reference numbers, no regression.
+
+Suspect audit (b): every named suspect is already bounded —
+- ChromeIconEngine re-tints per pixmap request, but Qt's pixmap cache
+  covers the themed load; steady repaint ~2us/icon. No fix needed.
+- QSettings: no hits on per-event/paint paths.
+- Debounced savers, extension host timers (45s watchdog, 15s nudge),
+  DownloadGraph repaints, completer sorting (Rust suggest model caps
+  at 500 rows + 150ms debounce), TabBar::paintEvent re-elision
+  (0.34ms/strip) — all bounded.
+- Tab switch: stacked widgets + connect/disconnect only, 0.6ms — no
+  per-switch widget re-creation.
+- Startup: nothing eager left worth deferring (PERF03).
+
+Fixes landed (c):
+- HistoryTreeModel::data() built a fresh AroraIcon::getChrome QIcon +
+  engine on every DecorationRole query (per row, per repaint) — the
+  only strictly-wasteful call found. Now a static shared icon; the
+  engine re-resolves the theme at paint time so icon-theme switches
+  still propagate. (Alloc-level win — below bench resolution; after
+  numbers are flat, honestly.)
+- autotests/runTests.sh: per-binary timeout guard
+  (ARORA_TEST_TIMEOUT, default 900s) — tst_browsermainwindow's
+  documented post-Totals WebEngine teardown SIGSEGV loop spun forever
+  and killed the previous run at the loop timeout; now a hung binary
+  is killed and reported 'TIMED OUT' while the suite continues.
+- autotests/extensionmanager/tst_extensionmanager.cpp: updated to the
+  merged 5-arg relayPortConnect signature + asserts the delivered
+  sender carries the connecting document url (rust-work merge left
+  the tree unbuildable).
+
+Merge-regression found while verifying (fixed, not perf):
+- tst_ExtensionManager::backgroundHealthProbe started failing only
+  post-merge: the EXT17 sibling-page shim injects into every top-level
+  chrome-extension://<id>/ document — including the EXT12 health
+  probe's bare manifest.json page — where it broke the native
+  chrome.* bindings, so the dead-worker measurement never ran
+  ("the probe page got no chrome.* bindings" → verdict None →
+  Limited instead of NotSupported).  Fix: the probe page now loads
+  manifest.json#arora-healthprobe and the page-shim gate skips that
+  fragment, keeping pristine native bindings.  Second bug in the same
+  path: enqueuePendingProbes only checked m_healthVerdicts, so ids
+  queued-but-not-started by requestHealthProbe were re-queued by the
+  deferred scan — the duplicate probe overwrote a measured verdict
+  (seen live: Responsive → None).  Queue now dedupes against
+  queued/in-flight ids.  Result: dead ext measures verdict Dead in
+  ~12s (was a 186s timeout-fail), tst_extensionmanager 27/27.
+
+Regression check: suite green except the documented pre-existing
+tst_browsermainwindow legs (privateStartPage, homeButton, chromeSlots,
+extensionActionButtons, navBarOrderPersistence — 63/68) and its
+post-Totals teardown SIGSEGV loop (timeout-killed at 300s by the new
+guard, no signal lost — Totals already printed).  The other in-suite
+extra, tst_TabWidget::tabTransfer, passes standalone (load flake).
 
 ### QUAL05
 

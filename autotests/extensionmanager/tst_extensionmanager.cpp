@@ -1742,7 +1742,7 @@ void tst_ExtensionManager::extensionMessageRelay()
         QStringLiteral("relayext0000000001#p9");
     QCOMPARE(runtime->relayPortConnect(
                  &other, foreignChan, QStringLiteral("pX"),
-                 QString()), 0);
+                 QString(), QString()), 0);
     runtime->relayPortAccept(&other, foreignChan,
                              QStringLiteral("pX"));
     QCOMPARE(runtime->relayPortMessage(
@@ -1754,10 +1754,19 @@ void tst_ExtensionManager::extensionMessageRelay()
     const QString chan = QStringLiteral("relayext0000000001#p1");
     QCOMPARE(runtime->relayPortConnect(
                  &bg, chan, QStringLiteral("p1"),
-                 QStringLiteral("named")), 1);
+                 QStringLiteral("named"),
+                 QStringLiteral("chrome-extension://relayext0000000001/"
+                                "popup.html")), 1);
     QCOMPARE(popupEvents.size(), 3);
     QCOMPARE(popupEvents.last().at(0).toString(),
              QStringLiteral("__arora.portConnect"));
+    // EXT18: the delivered sender carries the connecting document's
+    // url — Bitwarden's internal-sender gate keys on it.
+    QCOMPARE(popupEvents.last().at(1).toJsonObject()
+             .value(QLatin1String("sender")).toObject()
+             .value(QLatin1String("url")).toString(),
+             QStringLiteral("chrome-extension://relayext0000000001/"
+                            "popup.html"));
     runtime->relayPortAccept(&popup, chan, QStringLiteral("pA"));
     QCOMPARE(runtime->relayPortMessage(
                  &bg, chan, QStringLiteral("p1"),

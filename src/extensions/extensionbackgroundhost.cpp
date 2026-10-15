@@ -386,6 +386,9 @@ QString pageInjectionSource(const QString &extensionId,
 
     const QString origin =
         QStringLiteral("chrome-extension://") + extensionId;
+    // The EXT12 health probe measures the REAL engine worker from a
+    // bare extension-origin page — it must keep pristine native
+    // chrome.* bindings, so its marker fragment skips this shim.
     QString source = QStringLiteral("(function(){")
         + QLatin1String("if(window.top!==window)return;"
                         "var l=location;if(l.origin!==")
@@ -393,7 +396,8 @@ QString pageInjectionSource(const QString &extensionId,
         + QLatin1String("||l.href===")
         + jsLiteral(ExtensionBackgroundHost::hostUrl(extensionId)
                         .toString())
-        + QLatin1String(")return;window.__ARORA_HOST_CONFIG=")
+        + QLatin1String("||l.hash==='#arora-healthprobe'"
+                        ")return;window.__ARORA_HOST_CONFIG=")
         + QString::fromUtf8(
             QJsonDocument(config).toJson(QJsonDocument::Compact))
         + QLatin1Char(';');

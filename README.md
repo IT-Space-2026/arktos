@@ -615,7 +615,9 @@ On Windows `nmake`/`jom` replaces `make`; macOS uses `make` as usual.
 
 ## Testing & diagnostics
 
-- `make check` — the qtest suite (offscreen-safe)
+- `make check` — the qtest suite (offscreen-safe); each test binary
+  is capped at 15 minutes (`ARORA_TEST_TIMEOUT` overrides) so a hung
+  test can't stall the run
 - `make check-rustcoverage` — per-crate cargo-llvm-cov line-coverage
   gate for the shipped Rust crates (>=85% each;
   `ARORA_RUST_COVERAGE_MIN` overrides; also a `make check`

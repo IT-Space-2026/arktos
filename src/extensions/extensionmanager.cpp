@@ -1291,8 +1291,21 @@ void ExtensionManager::enqueuePendingProbes()
         // A stored verdict (Pending in-flight, Responsive, Dead, or
         // None for the no-background/inconclusive cases) means the
         // extension was already measured this session — enable-
-        // toggles clear it before re-queueing.
-        if (m_healthVerdicts.contains(info.id))
+        // toggles clear it before re-queueing.  Queued-but-not-
+        // started ids carry no verdict yet, so the queue itself must
+        // be deduped or a direct requestHealthProbe races this scan
+        // into a second probe that overwrites the measured verdict.
+        if (m_healthVerdicts.contains(info.id)
+                || m_healthProbeId == info.id)
+            continue;
+        bool queued = false;
+        for (const auto &entry : m_healthQueue) {
+            if (entry.first == info.id) {
+                queued = true;
+                break;
+            }
+        }
+        if (queued)
             continue;
         if (inspectManifest(info.path).hasBackground)
             m_healthQueue.append(
@@ -1409,7 +1422,12 @@ void ExtensionManager::startNextHealthProbe()
     });
     connect(profile, &QObject::destroyed, this,
             [this]() { abandonHealthProbe(); });
-    page->load(QUrl(QStringLiteral("chrome-extension://%1/manifest.json")
+    // The marker fragment exempts this document from the hosted
+    // runtime's sibling-page shim (extensionbackgroundhost.cpp's
+    // pageInjectionSource gate) — the probe measures the engine's
+    // real worker and needs pristine chrome.* bindings.
+    page->load(QUrl(QStringLiteral(
+        "chrome-extension://%1/manifest.json#arora-healthprobe")
                         .arg(info.id)));
     // Watchdog: a wedged load or a dropped eval must not stall the
     // queue — an unmeasurable extension stays static-classified.
