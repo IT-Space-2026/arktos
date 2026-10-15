@@ -597,6 +597,16 @@ UI:
   icons on selections and accent fills pick their foreground by
   measured WCAG contrast, fixing unreadable cases like white labels
   on bright container chips (THEM04).
+- Firefox-matching tab size: tabs are now ~33px tall on a ~36px
+  strip (up from the compact ~26-28px band), every titled tab —
+  pinned tabs included — holds the same 225px width while space
+  allows, they squeeze to equal widths down to a 76px floor, and
+  only then do the scroll buttons take over instead of the strip
+  stretching or scrolling early.  A strip height you dragged to
+  yourself still wins over the automatic size, vertical-rail rows
+  adopt the same uniform padding, and when the '+' new-tab button
+  parks over a full strip's last tab that tab's close button yields
+  rather than sit under a dead click target (TABS19).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

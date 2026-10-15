@@ -947,9 +947,11 @@ void tst_TabWidget::verticalTabDefaultWidth()
         QCOMPARE(bar->verticalTabWidth(), 180);
         QVERIFY(bar->width() >= 180 && bar->width() <= 190);
         QCOMPARE(bar->tabRect(0).width(), 180);
-        // A plain row is a single text line tall.
-        QVERIFY(bar->tabRect(0).height()
-                <= bar->fontMetrics().height() + 12);
+        // A plain row is the uniform TABS19 face — content + 17,
+        // the same ~33px pad the horizontal strip uses.
+        QCOMPARE(bar->tabRect(0).height(),
+                 qMax(bar->fontMetrics().height(),
+                      bar->iconSize().height()) + 17);
     }
 
     // Stored past defaults migrate — TABS10's compact 140, and the
@@ -1536,13 +1538,15 @@ void tst_TabWidget::pinnedTabs()
              "no title text painted inside a plain tab (baseline)");
 
     // A renamed pinned tab wears the override on the strip — the
-    // same display title an unpinned tab would show.
+    // same display title an unpinned tab would show.  TABS19: the
+    // title elides inside the shared 225px metric — a longer title
+    // no longer stretches the tab.
     widget.setTabTitleOverride(
         0, QLatin1String("A Much Longer Pinned Title"));
     QApplication::processEvents();
     QCOMPARE(bar->tabText(0),
              QLatin1String("A Much Longer Pinned Title"));
-    QVERIFY(bar->tabRect(0).width() > pinnedWidth);
+    QVERIFY(qAbs(bar->tabRect(0).width() - pinnedWidth) <= 4);
     widget.setTabTitleOverride(0, QString());
     QApplication::processEvents();
 
@@ -2664,7 +2668,10 @@ void tst_TabWidget::verticalTabRowTextBounds()
     const auto verifyRail = [&inkBounds](TabBar *bar, const QString &leg,
                                          QImage &image) {
         image = bar->grab().toImage();
-        const int bandFloor = bar->fontMetrics().height() + 8;
+        // TABS19: the uniform row face is content + 17 (~33px) — the
+        // reserve above a group run's pill is whatever exceeds it.
+        const int bandFloor = qMax(bar->fontMetrics().height(),
+                                   bar->iconSize().height()) + 17;
         for (int i = 0; i < bar->count(); ++i) {
             const QRect row = bar->tabRect(i);
             QVERIFY2(row.height() >= bandFloor,

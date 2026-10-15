@@ -1854,9 +1854,10 @@ void tst_BrowserMainWindow::torTabStripLayout()
     const bool iconInsideTab = icon
         && bar->tabRect(0).contains(icon->geometry());
     const int torStripHeight = bar->height();
-    // The TABS07 thickness cap — icon+text line plus modest padding.
+    // The TABS19 thickness cap — Firefox's ~33px face (content +
+    // 17) plus a few px of stylesheet border/frame headroom.
     const int cap = qMax(bar->fontMetrics().height(),
-                         bar->iconSize().height()) + 12;
+                         bar->iconSize().height()) + 21;
     closeWindow(window);
     BrowserApplication::setTorMode(false);
 
@@ -5148,11 +5149,11 @@ void tst_BrowserMainWindow::widgetTabBookmarksSafety()
     closeWindow(window);
 }
 
-// TABS08: the rendered tab strip stays in the compact ~26-28px
-// browser band even at desktop-size fonts, and a container tab no
-// longer doubles the row — the regression this fixes: the CONT02
-// name chip reserved a second row (~18px) per container tab and
-// QTabBar sizes every tab to the tallest hint.
+// TABS19: the rendered tab strip sits at Firefox's normal-density
+// metrics — a ~33px face (content + 17) even at desktop-size fonts —
+// and a container tab no longer doubles the row — the regression
+// this fixes: the CONT02 name chip reserved a second row (~18px)
+// per container tab and QTabBar sizes every tab to the tallest hint.
 void tst_BrowserMainWindow::tabStripCompactHeight()
 {
     // The offscreen fallback 'Sans Serif 9' understates fm.height() —
@@ -5169,10 +5170,10 @@ void tst_BrowserMainWindow::tabStripCompactHeight()
     TabBar *bar = window->tabWidget()->findChild<TabBar *>();
     QVERIFY(bar);
     const int cap = qMax(bar->fontMetrics().height(),
-                         bar->iconSize().height()) + 9;
+                         bar->iconSize().height()) + 17;
     QVERIFY2(bar->height() <= cap,
              qPrintable(QStringLiteral(
-                 "strip height %1 exceeds the compact cap %2")
+                 "strip height %1 exceeds the Firefox face %2")
                 .arg(bar->height()).arg(cap)));
     QCOMPARE(bar->tabRect(0).height(), bar->height());
 
@@ -5213,11 +5214,13 @@ void tst_BrowserMainWindow::tabStripCompactHeight()
     for (int i = 0; i < 10; ++i)
         QApplication::processEvents();
     QVERIFY2(bar->tabRect(0).height()
-                 <= bar->fontMetrics().height() + 12,
+                 <= qMax(bar->fontMetrics().height(),
+                         bar->iconSize().height()) + 17,
              qPrintable(QStringLiteral(
-                 "vertical row height %1 exceeds one text line (%2)")
+                 "vertical row height %1 exceeds the ~33px face (%2)")
                  .arg(bar->tabRect(0).height())
-                 .arg(bar->fontMetrics().height() + 12)));
+                 .arg(qMax(bar->fontMetrics().height(),
+                           bar->iconSize().height()) + 17)));
     QVERIFY(bar->width() >= 180 && bar->width() <= 190);
 
     // TABS11: the selected row must not paint below its rect —

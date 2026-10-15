@@ -59,6 +59,7 @@ private slots:
     void iconOnlyTabs();
     void newTabButton();
     void verticalRowHeight();
+    void firefoxTabMetrics();
 };
 
 // Subclass that exposes the protected functions.
@@ -106,6 +107,9 @@ public:
 
     QSize call_tabSizeHint(int index) const
         { return SubTabBar::tabSizeHint(index); }
+
+    QSize call_minimumTabSizeHint(int index) const
+        { return SubTabBar::minimumTabSizeHint(index); }
 
     QSize call_baseTabSizeHint(int index) const
         { return QTabBar::tabSizeHint(index); }
@@ -204,7 +208,9 @@ void tst_TabBar::tabSizeHint()
 
     SubTabBar bar;
 
-    QVERIFY(bar.call_tabSizeHint(index).width() <= 250);
+    // TABS19: every titled tab reports the shared 225px Firefox
+    // metric — a long title elides inside it instead of growing.
+    QCOMPARE(bar.call_tabSizeHint(index).width(), 225);
 }
 
 // UIP02: per-tab close buttons live on the style's close-button side
@@ -272,16 +278,14 @@ void tst_TabBar::perTabCloseButtons()
         QVERIFY(!bar.tabButton(i, side));
 }
 
-// TABS07: the strip stays at browser-normal icon+text height — per-tab
-// button widgets (favicon label, close button) and generous style
-// padding must not stretch it.  The thickness is floored at one text
-// line plus breathing room and capped at the content line plus modest
-// padding.
+// TABS19: the strip sits at Firefox's normal-density metrics — the
+// tab face is pinned at content + 17 (a ~33px face on a ~36px
+// strip), so per-tab button widgets (favicon label, close button)
+// and generous style padding neither stretch nor shrink it.
 void tst_TabBar::tabStripHeight()
 {
     SubTabBar bar;
     bar.setDocumentMode(true);
-    bar.setExpanding(false);
     bar.setPerTabCloseButtons(true);
     bar.addTab(QLatin1String("Untitled"));
 
@@ -293,15 +297,14 @@ void tst_TabBar::tabStripHeight()
     bar.setTabButton(0, bar.freeSide(), favicon);
 
     const int fmH = bar.fontMetrics().height();
-    const int floorH = fmH + 8;
-    const int capH = qMax(fmH, bar.iconSize().height()) + 9;
-    const QSize natural = bar.call_baseTabSizeHint(0);
+    const int face = qMax(fmH, bar.iconSize().height()) + 17;
     const QSize hint = bar.call_tabSizeHint(0);
-    QCOMPARE(hint.height(), qBound(floorH, natural.height(), capH));
-    QVERIFY2(hint.height() <= capH,
+    QCOMPARE(hint.height(), face);
+    // Standard-DPI sanity: 9pt text / 16px favicon lands at ~33px.
+    QVERIFY2(face >= 30 && face <= 40,
              qPrintable(QStringLiteral(
-                 "tab height %1 exceeds the icon+text cap %2")
-                .arg(hint.height()).arg(capH)));
+                 "tab face %1 outside the ~33px Firefox band")
+                .arg(face)));
 
     // The installed close button is bounded to the text line and both
     // buttons stay vertically centered inside the tab rect.
@@ -377,10 +380,13 @@ void tst_TabBar::verticalTabRows()
     // TABS16: the roomier 180px default is back — TABS10's 140
     // clipped typical titles at ~10-12 chars.
     QCOMPARE(bar.verticalTabWidth(), 180);
-    // Rows: full strip width, one text line tall, stacked.
+    // Rows: full strip width, one uniform-height band, stacked.
+    // TABS19: the row adopts the same ~33px pad the horizontal face
+    // uses — content + 17.
     const int rowHeight = bar.tabRect(0).height();
-    QVERIFY(rowHeight >= bar.fontMetrics().height());
-    QVERIFY(rowHeight <= bar.fontMetrics().height() + 12);
+    const int rowFace = qMax(bar.fontMetrics().height(),
+                             bar.iconSize().height()) + 17;
+    QCOMPARE(rowHeight, rowFace);
     QCOMPARE(bar.tabRect(0).width(), bar.verticalTabWidth());
     QCOMPARE(bar.tabRect(0).width(), bar.tabRect(1).width());
     QCOMPARE(bar.tabRect(1).top(), bar.tabRect(0).bottom() + 1);
@@ -792,7 +798,9 @@ void tst_TabBar::newTabButton()
     bar.show();
     bar.addTab(QLatin1String("one"));
     bar.addTab(QLatin1String("two"));
-    bar.resize(400, bar.sizeHint().height());
+    // TABS19: 225px tabs — give the strip room past the run so the
+    // '+' trails it in free space.
+    bar.resize(560, bar.sizeHint().height());
     QApplication::processEvents();
 
     QToolButton *button = bar.newTabButton();
@@ -813,7 +821,7 @@ void tst_TabBar::newTabButton()
 
     // Bottom strip keeps the same after-last-tab anchor.
     bar.setShape(QTabBar::RoundedSouth);
-    bar.resize(400, bar.sizeHint().height());
+    bar.resize(560, bar.sizeHint().height());
     QApplication::processEvents();
     QVERIFY(button->isVisible());
     const QRect slast = bar.tabRect(bar.count() - 1);
@@ -847,6 +855,26 @@ void tst_TabBar::newTabButton()
     button->click();
     QCOMPARE(spy.count(), 4);
 
+    // TABS19: when the tabs fill the strip the '+' parks on its
+    // right edge — and the last tab's close button, which would sit
+    // under it, yields rather than overlap a dead click target.
+    bar.setShape(QTabBar::RoundedNorth);
+    bar.setPerTabCloseButtons(true);
+    bar.resize(448, bar.sizeHint().height());   // 2 * 225 squeezes
+    bar.setCurrentIndex(bar.count() - 1);
+    QApplication::processEvents();
+    const QRect full = bar.tabRect(bar.count() - 1);
+    QVERIFY(full.right() >= bar.width() - 2);
+    QVERIFY(button->isVisible());
+    QVERIFY(button->x() + button->width() <= bar.width());
+    QVERIFY(button->x() < full.right());   // parked over the edge
+    QWidget *lastClose = bar.tabButton(
+        bar.count() - 1,
+        bar.freeSide() == QTabBar::LeftSide ? QTabBar::RightSide
+                                            : QTabBar::LeftSide);
+    QVERIFY(lastClose);
+    QVERIFY(!lastClose->isVisible());
+
     // Offscreen grabs for visual review — set ARORA_TABBAR_GRAB_DIR.
     const QByteArray grabDir = qgetenv("ARORA_TABBAR_GRAB_DIR");
     if (!grabDir.isEmpty()) {
@@ -869,11 +897,13 @@ void tst_TabBar::newTabButton()
 }
 
 // TABS17: a Left/Right rail's rows never render shorter than the
-// horizontal automatic path's text line + padding — and a dragged-in
-// strip height (tabs/horizontalTabHeight, clamped 20-64 by the
-// setter) feeds the rows only down to that same floor, so a
-// too-small persisted value can't crop the title under the row's
-// clip rect.  Icon-only tiles keep their favicon sizing either way.
+// horizontal automatic path's thickness — and a dragged-in strip
+// height (tabs/horizontalTabHeight, clamped 20-64 by the setter)
+// feeds the rows only down to that same floor, so a too-small
+// persisted value can't crop the title under the row's clip rect.
+// TABS19: the floor is now Firefox's ~33px face (content + 17),
+// shared with the horizontal strip; icon-only tiles keep their
+// favicon sizing either way.
 void tst_TabBar::verticalRowHeight()
 {
     QSettings settings;
@@ -891,7 +921,8 @@ void tst_TabBar::verticalRowHeight()
         bar.resize(200, 300);
         QApplication::processEvents();
 
-        const int floor = bar.fontMetrics().height() + 8;
+        const int floor = qMax(bar.fontMetrics().height(),
+                               bar.iconSize().height()) + 17;
         QCOMPARE(bar.call_tabSizeHint(0).height(), floor);
         for (int i = 0; i < bar.count(); ++i) {
             QVERIFY(bar.tabRect(i).height() >= floor);
@@ -942,6 +973,93 @@ void tst_TabBar::verticalRowHeight()
     QCOMPARE(hbar.call_tabSizeHint(0).height(), natural);
 
     settings.endGroup();
+}
+
+// TABS19: Firefox's tab geometry — every titled tab is 225px wide
+// while space allows (a lone tab included, left-aligned with free
+// strip behind it), the squeeze shares the strip equally down to
+// the 76px floor, and only then do the scroll buttons take over.
+// The non-expanding documentMode strip is what makes the shared
+// hint the rendered width.
+void tst_TabBar::firefoxTabMetrics()
+{
+    SubTabBar bar;
+    bar.setDocumentMode(true);
+    bar.show();
+    bar.addTab(QLatin1String("one"));
+    QCOMPARE(bar.call_tabSizeHint(0).width(), 225);
+    QCOMPARE(bar.call_tabSizeHint(0).height(),
+             qMax(bar.fontMetrics().height(),
+                  bar.iconSize().height()) + 17);
+    QCOMPARE(bar.call_minimumTabSizeHint(0).width(), 76);
+
+    // A lone tab keeps the Firefox metric — it does not stretch to
+    // fill the strip the way an expanding bar would.
+    bar.resize(800, bar.sizeHint().height());
+    QApplication::processEvents();
+    QCOMPARE(bar.tabRect(0).width(), 225);
+    QCOMPARE(bar.tabRect(0).x(), 0);
+
+    // Ample space: every tab — whatever its title length — gets the
+    // same 225px, left-aligned with the free run after the last.
+    bar.addTab(QLatin1String("A medium length title"));
+    bar.addTab(QLatin1String(
+        "A much longer tab title that would have stretched"));
+    bar.resize(800, bar.sizeHint().height());
+    QApplication::processEvents();
+    for (int i = 0; i < bar.count(); ++i)
+        QCOMPARE(bar.tabRect(i).width(), 225);
+    QCOMPARE(bar.tabRect(0).x(), 0);
+    QCOMPARE(bar.tabRect(1).x(), 225);
+    QCOMPARE(bar.tabRect(2).x(), 450);
+
+    // The squeeze: tabs shrink to equal widths sharing the strip
+    // until the 76px floor, then the scroll path takes over.
+    bar.resize(500, bar.sizeHint().height());
+    QApplication::processEvents();
+    const int w0 = bar.tabRect(0).width();
+    QVERIFY(w0 > 76 && w0 < 225);
+    // The share-out may hand a remainder pixel to one tab.
+    QVERIFY(qAbs(bar.tabRect(1).width() - w0) <= 1);
+    QVERIFY(qAbs(bar.tabRect(2).width() - w0) <= 1);
+    // 3 * 76 = 228 barely fits a 230px strip — no squeeze below the
+    // ~76px floor (Qt may hand out a remainder pixel); tighter still
+    // and the scroll path takes over.
+    bar.resize(230, bar.sizeHint().height());
+    QApplication::processEvents();
+    for (int i = 0; i < bar.count(); ++i) {
+        QVERIFY(bar.tabRect(i).width() >= 76);
+        QVERIFY(bar.tabRect(i).width() <= 78);
+    }
+    bar.resize(150, bar.sizeHint().height());
+    QApplication::processEvents();
+    for (int i = 0; i < bar.count(); ++i)
+        QVERIFY(bar.tabRect(i).width() >= 76);
+    // Tabs past the visible run scrolled off the left edge.
+    QVERIFY(bar.tabRect(bar.count() - 1).right()
+            > bar.width() || bar.tabRect(0).x() < 0);
+
+    // Offscreen grabs for visual review — 1 tab at the metric,
+    // many in equal-width squeeze.  ARORA_TABBAR_GRAB_DIR to save.
+    const QByteArray grabDir = qgetenv("ARORA_TABBAR_GRAB_DIR");
+    if (!grabDir.isEmpty()) {
+        const QString base = QString::fromLocal8Bit(grabDir);
+        SubTabBar lone;
+        lone.setDocumentMode(true);
+        lone.show();
+        lone.addTab(QLatin1String("Lone tab"));
+        lone.resize(800, lone.sizeHint().height());
+        QApplication::processEvents();
+        lone.grab().save(base + QLatin1String("/ff-one.png"));
+        SubTabBar many;
+        many.setDocumentMode(true);
+        many.show();
+        for (int i = 0; i < 8; ++i)
+            many.addTab(QStringLiteral("Tab %1").arg(i + 1));
+        many.resize(800, many.sizeHint().height());
+        QApplication::processEvents();
+        many.grab().save(base + QLatin1String("/ff-many.png"));
+    }
 }
 
 QTEST_MAIN(tst_TabBar)
