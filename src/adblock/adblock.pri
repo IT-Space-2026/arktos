@@ -56,4 +56,7 @@ adblock_rust:!no-rust {
     SOURCES += $$PWD/adblockrustengine.cpp
     LIBS += $$ADBLOCK_RUST_LIB
     unix: LIBS += -ldl -lpthread -lm
+    # Rust std on MSVC needs these (home_dir, named pipes, sockets,
+    # crypto) — the .lib's /DEFAULTLIB directives don't cover them.
+    win32: LIBS += -ladvapi32 -lbcrypt -lntdll -luserenv -lws2_32
 }
