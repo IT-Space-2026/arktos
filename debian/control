@@ -14,7 +14,8 @@ Build-Depends: qt6-base-dev, qt6-webengine-dev, qt6-tools-dev,
 Package: arora
 Architecture: any
 Depends: ${shlibs:Depends}
-Suggests: tor
+# tor daemon + geoip are bundled under /usr/lib/arora/lib/tor — no
+# external Suggests needed.
 Description: experimental Qt 6 / QtWebEngine web browser
  Arora is a Qt 6 / QtWebEngine (Chromium) web browser — a maintained
  continuation of the 2009 Qt/WebKit Arora. The shell has been rebuilt

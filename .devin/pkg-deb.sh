@@ -91,6 +91,20 @@ cmd_stage() {
     cp -a "$B/share/arora/." "$D/usr/share/arora/"
     ln -s ../../../share/arora "$D/$LIBDIR/share/arora"
 
+    # Bundled tor expert bundle -> $LIBDIR/lib/tor (+ lib/data geoip),
+    # matching TorManager's <bindir>/../lib/tor and binaryDir/../data
+    # searches.  ARORA_SKIP_TOR_BUNDLE=1 opts out (offline builds).
+    if [ -z "${ARORA_SKIP_TOR_BUNDLE:-}" ]; then
+        T="$(mktemp -d /tmp/arora-tor.XXXXXX)"
+        ARORA_TOR_PREFIX="$T" sh "$SRCROOT/BuildProcess/fetch-tor.sh" >/dev/null \
+            || fail "tor expert bundle fetch failed"
+        install -d "$D/$LIBDIR/lib"
+        cp -a "$T/tor" "$D/$LIBDIR/lib/tor"
+        cp -a "$T/data" "$D/$LIBDIR/lib/data" 2>/dev/null || true
+        rm -rf "$T"
+        [ -x "$D/$LIBDIR/lib/tor/tor" ] || fail "staged tor missing"
+    fi
+
     # freedesktop + doc payload
     install -d "$D/usr/share/applications" "$D/usr/share/pixmaps" \
                "$D/usr/share/man/man1" "$D/usr/share/doc/$PKG"
@@ -249,6 +263,11 @@ cmd_verify() {
         || fail "no pixmap icon installed"
     [ -f "$root/usr/share/doc/$PKG/copyright" ] \
         || fail "no copyright installed"
+    if [ -x "$root/$LIBDIR/lib/tor/tor" ]; then
+        "$root/$LIBDIR/lib/tor/tor" --version | grep -q "^Tor version" \
+            || fail "bundled tor does not execute"
+        note "bundled tor: $("$root/$LIBDIR/lib/tor/tor" --version | head -1)"
+    fi
     note "dpkg install: $(dpkg --admindir="$db" -s "$PKG" | grep '^Status:')"
 
     # -- ldd clean with the dev Qt hidden --------------------------------

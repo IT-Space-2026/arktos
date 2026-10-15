@@ -71,8 +71,8 @@ BuildRequires:  file
 BuildRequires:  update-desktop-files
 %endif
 
-# Mirrors the deb's Suggests: tor — a tor daemon for --tor windows.
-Suggests:       tor
+# tor daemon + geoip are bundled under %{_libdir}/arora/lib/tor —
+# no external tor dependency needed.
 
 # --- NEEDED-minus-bundled SONAME surface of the staged payload -------
 # Regenerate/diff: ./.devin/pkg-rpm.sh requires <staged-root>
