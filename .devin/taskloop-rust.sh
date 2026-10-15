@@ -38,7 +38,7 @@ STOPFILE="$REPO/.devin/STOP_TASKLOOP_RUST"
 MAX_ATTEMPTS="${MAX_ATTEMPTS:-5}"
 RUN_TIMEOUT="${RUN_TIMEOUT:-3600}"
 COOLDOWN="${COOLDOWN:-10}"
-MEM_LIMIT_MB="${MEM_LIMIT_MB:-2048}"   # RSS cap for the devin child; kill+restart beyond this
+MEM_LIMIT_MB="${MEM_LIMIT_MB:-4096}"   # RSS cap (4GB) for the devin child; kill+restart beyond this
 DEVIN_MODEL="${DEVIN_MODEL:-swe-2-high}"          # e.g. swe-2-high; empty = account default
 
 DEVIN="${DEVIN_BIN:-$(command -v devin 2>/dev/null || true)}"
