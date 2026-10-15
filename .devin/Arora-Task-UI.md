@@ -157,6 +157,8 @@ This file is the task queue for the Devin CLI task loop
 | TRUST16 | Shield placement lock — padlock stays in URL bar, shield = first button LEFT of the URL field (never inside it) — details below | pending | 0 | |
 | TRUST17 | Shield popover first-click bug — popover does not open correctly on first click — details below | pending | 0 | |
 | TRUST18 | Shield glyph black/unreadable on Tor window dark theme — details below | pending | 0 | |
+| TABS20 | Tab site icon vertically out of the tab face — clipped/offset at top edge — details below | pending | 0 | |
+
 
 ## Task details
 
@@ -977,3 +979,7 @@ User report: 'The shield popover not opened up correctly for the first time.' Sa
 ### TRUST18
 
 User report: on a Tor window the shield shows as a black contour — invisible against the dark Tor title/toolbar theme. Audit candidates: (a) the shield icon paints the trust-state color but the 'neutral/no-probe' state for Tor uses a near-black/outline-only glyph — check what TorProfile tabs resolve to in refreshIcon(); (b) the glyph isn't theme-aware — AroraIcon returns the light-theme (dark stroke) variant while the Tor window styles the bar dark; check how the button picks icon set (tabler dark variant exists?) and whether TorTheme applies a dark iconTheme to its window; (c) Tor state may need its own honest color (Tor tabs = no site-probe → neutral state must still be LEGIBLE — e.g. theme foreground, not black). Fix: icon color/glyph must follow the window's effective palette — dark Tor bar gets a light/visible shield, same for private windows if themed dark. Verify: grab a Tor window nav bar — shield visibly distinct from bar background in every state; tst asserts icon pixel contrast if feasible; normal-window states unchanged. make check PASS.
+
+### TABS20
+
+User screenshot: tab favicon sits visibly ABOVE/OUTSIDE the tab face — glyph's top edge sticks past the tab's top border (looks clipped). Likely a TABS19 fallout: the tab face grew to ~33px but the icon's vertical centering didn't follow — audit the TabBar paint path: is the icon rect computed with hardcoded y-offset from the old 26-28px face, or is iconRect centered on the old band height instead of the new face rect? Check both horizontal-mode face paint AND dragged-strip height (the dragged-height override may use a different centering path — user's screenshot may be a dragged-height strip). Also verify against the THEM02 rounded-card margins — if the face is drawn inset but the icon is centered on the full rect, the icon clears the card's visual top. Fix so the icon is optically centered inside the PAINTED face (the card), not the layout rect. Check title baseline too while there. Verify: grab a horizontal strip — favicon vertically centered inside the card at default AND dragged heights; tst leg asserts icon rect within face rect + symmetric margins; vertical rail unaffected. make check PASS.
