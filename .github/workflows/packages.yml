@@ -232,7 +232,9 @@ jobs:
           # bundle where installedDataDirectory() finds it.
           make -C src install INSTALL_ROOT="$PWD/stage" PREFIX=/usr
           mkdir -p Arora.app/Contents/Resources/share
-          cp -a stage/usr/share/arora Arora.app/Contents/Resources/share/
+          # qmake may install under /usr or /usr/local — take whichever
+          # share/arora tree the install produced.
+          cp -a stage/usr/*/share/arora Arora.app/Contents/Resources/share/
           # tor expert bundle where TorManager's bundled-layout
           # search (<bindir>/../lib/tor, binaryDir/../data) finds it.
           ARORA_TOR_PREFIX="$PWD/torpayload" sh BuildProcess/fetch-tor.sh
