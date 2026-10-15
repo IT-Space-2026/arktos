@@ -274,6 +274,40 @@ void tst_AdBlockPage::cosmeticScript_data()
         << QStringList{":is(.ad)"}
         << QStringList{};
 
+    // PIP03: a hide rule targeting a document-root element (##body,
+    // ##html, ##*, ##:root) blanks the whole page — every element's
+    // layout box goes to zero (this broke PiP's fixture: the video
+    // and its button became unclickable, hit-tests landed on the
+    // HTML root).  Dropped whether the rule is generic or scoped;
+    // sibling selectors in the same list still apply.
+    QTest::newRow("root-hide-body-dropped")
+        << QStringList{"##body"}
+        << QString("http://site.test/")
+        << QStringList{}
+        << QStringList{"body", ":is("};
+    QTest::newRow("root-hide-scoped-dropped")
+        << QStringList{"site.test##body"}
+        << QString("http://site.test/")
+        << QStringList{}
+        << QStringList{"body", ":is("};
+    QTest::newRow("root-hide-variants-dropped")
+        << QStringList{"##html", "##*", "##:root", "##html body",
+                       "##html>body", "##BODY"}
+        << QString("http://site.test/")
+        << QStringList{}
+        << QStringList{":is("};
+    QTest::newRow("root-hide-mixed-keeps-rest")
+        << QStringList{"##body", "##.ad"}
+        << QString("http://site.test/")
+        << QStringList{":is(.ad)"}
+        << QStringList{"body"};
+    QTest::newRow("root-hide-lookalikes-kept")
+        << QStringList{"##bodytext", "##.body", "##body .ad",
+                       "##body.ad", "##*#sponsorad"}
+        << QString("http://site.test/")
+        << QStringList{":is(bodytext,.body,body .ad,body.ad,*#sponsorad)"}
+        << QStringList{};
+
     // Cosmetic exceptions remove same-body rules, whether they were
     // parsed before or after the rule they cancel.
     QTest::newRow("exception-after-rule")
