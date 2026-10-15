@@ -248,8 +248,16 @@ bool resolve()
     // Optional ENG32 addition — compositor-direct scroll.  Missing
     // on older artifacts: sendScrollStep falls back to se_wheel and
     // scroll keeps its DOM-dispatch cost, exactly as before.
-    api().scroll = reinterpret_cast<decltype(api().scroll)>(
-        library().resolve("se_scroll"));
+    // ENG34 diagnostic: ARORA_SERVO_SCROLL_PATH=wheel suppresses the
+    // resolve so the smoke bench can A/B both paths on one artifact
+    // (the repaint-cost measurement needs same-build numbers), and
+    // doubles as a live kill-switch — the compositor path skips DOM
+    // wheel dispatch, so a page whose wheel-intercepting widget
+    // regresses gets the DOM-correct path back without a rebuild.
+    api().scroll = qgetenv("ARORA_SERVO_SCROLL_PATH") == "wheel"
+        ? nullptr
+        : reinterpret_cast<decltype(api().scroll)>(
+              library().resolve("se_scroll"));
     state = ok ? 1 : -1;
     if (!ok)
         qWarning("servo-embed: artifact at %s is missing symbols",
