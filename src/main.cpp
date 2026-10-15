@@ -201,12 +201,12 @@
 #include <cmath>
 #include <memory>
 #include <stdexcept>
+#include <atomic>
+#include <csignal>
 
 #if defined(Q_OS_UNIX)
 #include <arpa/inet.h>
-#include <atomic>
 #include <cerrno>
-#include <csignal>
 #include <execinfo.h>
 #include <fcntl.h>
 #include <netdb.h>
@@ -309,6 +309,28 @@ static QList<quint16> tlsClientHelloCiphers(const QByteArray &record)
     return ciphers;
 }
 
+// TELEM01: telemetry state shared by the capture proxy and the smoke
+// polling legs below.  These are plain Qt/std types — kept outside the
+// platform guard so the non-Unix smoke legs still compile (they simply
+// never observe a hit where the proxy machinery is absent).
+static QMutex s_telemetryMutex;
+static QStringList s_telemetryHits;
+static QStringList s_telemetryHosts;
+// ip:port of every upstream the forwarding proxy dialed — the /proc
+// socket scan sees these as process-owned remote sockets, so the
+// browse smoke must not count them as proxy bypasses.
+static QSet<QString> s_telemetryUpstream;
+static std::atomic<bool> s_telemetryForward{false};
+
+// Spins the event loop for ms — the smoke polling loop's QTest-free
+// wait (src does not link testlib).
+static void telemetryWait(int ms)
+{
+    QEventLoop loop;
+    QTimer::singleShot(ms, &loop, &QEventLoop::quit);
+    loop.exec();
+}
+
 #if defined(Q_OS_UNIX)
 // TELEM01: --telemetry-smoke's capture proxy is a raw loopback socket
 // with a blocking accept loop on a detached thread — it must already
@@ -321,14 +343,6 @@ static QList<quint16> tlsClientHelloCiphers(const QByteArray &record)
 // (s_telemetryForward) it is forwarded so real browsing works through
 // the tap and every CONNECT/Host target lands in s_telemetryHosts for
 // the after-session classification.
-static QMutex s_telemetryMutex;
-static QStringList s_telemetryHits;
-static QStringList s_telemetryHosts;
-// ip:port of every upstream the forwarding proxy dialed — the /proc
-// socket scan sees these as process-owned remote sockets, so the
-// browse smoke must not count them as proxy bypasses.
-static QSet<QString> s_telemetryUpstream;
-static std::atomic<bool> s_telemetryForward{false};
 
 static void telemetryRecord(const QByteArray &head, const QString &target)
 {
@@ -580,15 +594,6 @@ static void telemetryAcceptLoop(int listenFd)
         }
         std::thread(telemetryConnection, fd).detach();
     }
-}
-
-// Spins the event loop for ms — the smoke polling loop's QTest-free
-// wait (src does not link testlib).
-static void telemetryWait(int ms)
-{
-    QEventLoop loop;
-    QTimer::singleShot(ms, &loop, &QEventLoop::quit);
-    loop.exec();
 }
 
 // Opens the capture proxy: binds + listens on an ephemeral loopback
@@ -6381,7 +6386,7 @@ int main(int argc, char **argv)
         qInfo() << "httpsonly-smoke: FAIL (proxy unsupported here)";
         finish(1);
         return application.exec();
-#endif
+#else
         if (httpOnlyProxyPort == 0) {
             qInfo() << "httpsonly-smoke: FAIL (proxy listen)";
             finish(1);
@@ -6574,6 +6579,7 @@ int main(int argc, char **argv)
             qInfo() << "httpsonly-smoke: FAIL (overall timeout)";
             finish(1);
         });
+#endif
     }
 
     // SECLVL e2e: the Mullvad-style security tiers against a local
@@ -14935,6 +14941,7 @@ int main(int argc, char **argv)
             floorCheck(!s.value(sentinelKey, true).toBool(),
                        "clean exit disarms sentinel");
         }
+#if defined(SIGHUP)
         BrowserProfile::markSessionTerminated(SIGHUP);
         {
             QSettings s;
@@ -14946,6 +14953,7 @@ int main(int argc, char **argv)
             floorCheck(!s.value(sentinelKey, true).toBool(),
                        "signal exit disarms sentinel");
         }
+#endif
         // Arm then re-arm: the second start must score one unclean
         // exit against the counter.
         BrowserProfile::markSessionStart();
@@ -15012,7 +15020,7 @@ int main(int argc, char **argv)
     if (args.contains(QLatin1String("--crash-smoke"))) {
         const QByteArray kind = qgetenv("ARORA_CRASH_SMOKE");
         qInfo() << "crash-smoke: log" << CrashReporter::logPath()
-                << "kind" << (kind.isEmpty() ? "segv" : kind);
+                << "kind" << (kind.isEmpty() ? QByteArray("segv") : kind);
         fflush(nullptr);
         if (kind == "abrt")
             std::abort();
