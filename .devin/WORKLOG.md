@@ -1012,3 +1012,4 @@
 - 2026-10-15 MERGEWATCH: ui-work skipped — merge of bcbe58b4 (MENU17+MENU18) would overwrite dirty .devin/WORKLOG.md, ChangeLog, src/browsermainwindow.cpp (agent mid-run on tor work, still dirty); rust-work at 0 commits, skipped; no merge => build not run
 - 2026-10-15 MERGEWATCH: ui-work skipped — merge of bcbe58b4 (MENU17+MENU18) would overwrite dirty .devin/WORKLOG.md, ChangeLog, src/browsermainwindow.cpp (agent mid-run, still dirty); rust-work at 0 commits, skipped; no merge => build not run
 - 2026-10-15 MERGEWATCH: ui-work skipped — merge of bcbe58b4 (MENU17+MENU18) would overwrite dirty ChangeLog, src/browsermainwindow.cpp (agent mid-run on tor work, still dirty); rust-work at 0 commits, skipped; no merge => build not run
+- 2026-10-15 MERGEWATCH: ui-work skipped — merge of bcbe58b4 (MENU17+MENU18) would overwrite dirty ChangeLog (agent mid-run, still dirty); rust-work at 0 commits, skipped; no merge => build not run
