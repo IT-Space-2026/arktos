@@ -144,9 +144,7 @@ JavaScriptAroraObject::JavaScriptAroraObject(QObject *parent)
     static const char *translations[] = {
         QT_TR_NOOP("Welcome to Arora!"),
         QT_TR_NOOP("Arora Start"),
-        QT_TR_NOOP("Search!"),
-        QT_TR_NOOP("Search results provided by"),
-        QT_TR_NOOP("About Arora")
+        QT_TR_NOOP("Search!")
     };
     Q_UNUSED(translations);
 

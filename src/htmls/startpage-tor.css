@@ -11,7 +11,7 @@
 
 /* The gradient lives on a viewport-height <html>: the canvas
    background covers the whole window, so short content leaves
-   no white band under the footer (the body's own box still ends
+   no white band at the bottom (the body's own box still ends
    at content).  min-height keeps it stretching if the content
    ever grows past one screen. */
 html {
@@ -24,7 +24,7 @@ body {
     color: #efe9f7;
 }
 
-#header, #search, #torlogo, #footer {
+#header, #search, #torlogo {
     width: 500px;
     margin: 10px auto;
 }
@@ -81,20 +81,6 @@ body {
     height: 160px;
 }
 
-#footer {
-    text-align: center;
-    color: #c4b2e0;
-}
-
-#footer a {
-    color: #e0d4f5;
-    text-decoration: none;
-}
-
-#footer a:hover {
-    text-decoration: underline;
-}
-
 /* THEME01: the start page adds the arora-dark class on <html> from
    the arora channel's darkChrome property — the app chrome palette,
    not the OS's prefers-color-scheme. */
@@ -108,9 +94,4 @@ html.arora-dark #search {
     background: linear-gradient(to right, #3d2f5e 0%, #4d3b73 50%, #3d2f5e 100%);
     color: #ece5f7;
 }
-html.arora-dark #footer {
-    color: #8f7cb8;
-}
-html.arora-dark #footer a {
-    color: #b7a4de;
-}
+
