@@ -113,6 +113,7 @@ private slots:
     void newTabButton();
     void verticalTabRowTextBounds();
     void verticalRailRowOverlap();
+    void tabButtonBandAnchor();
 };
 
 // Subclass that exposes the protected functions.
@@ -3008,6 +3009,114 @@ void tst_TabWidget::verticalRailRowOverlap()
         settings.remove(QLatin1String("tabBarPosition"));
         settings.endGroup();
     }
+}
+
+// TABS20: with the CONT06 level-1 band up, the favicon label floated
+// up into the header band — its top edge sat above the tab face's top
+// border.  Qt repositions per-tab side buttons in strip space on
+// several paths that never reach tabLayoutChange() (setCurrentIndex,
+// move drags, scroll reflows), so the band shift has to re-derive the
+// anchor, not incrementally offset: the button's strip-space y comes
+// from the style's sub-element rect and the band is added on top.
+// Asserts the favicon sits inside the painted face with symmetric
+// margins — at Automatic height, at a dragged height, and after a
+// tab switch.
+void tst_TabWidget::tabButtonBandAnchor()
+{
+    QSettings settings;
+    settings.setValue(QLatin1String("tabs/containerDisplay"), 1);
+    settings.beginGroup(QLatin1String("tabs"));
+    settings.remove(QLatin1String("tabBarPosition"));
+    settings.remove(QLatin1String("horizontalTabHeight"));
+    settings.endGroup();
+
+    ContainerManager *manager = ContainerManager::instance();
+    const QString cid = manager->createContainer(
+        tr("Work"), QColor(0x37, 0xad, 0xff)).id;
+
+    SubTabWidget widget;
+    for (int i = 0; i < 3; ++i)
+        widget.newTab();
+    // A second level's tab raises the header band; it stays filtered
+    // off the visible row.
+    widget.makeNewTabInContainer(cid, false);
+    TabBar *bar = widget.bar();
+    bar->setPerTabCloseButtons(true);
+    for (int i = 0; i < widget.count(); ++i) {
+        QLabel *label = new QLabel(&widget);
+        label->setFixedSize(16, 16);
+        QPixmap pm(16, 16);
+        pm.fill(QColor(200, 40 + i * 60, 90));
+        label->setPixmap(pm);
+        bar->setTabButton(i, bar->freeSide(), label);
+    }
+    widget.resize(720, 480);
+    widget.show();
+    QApplication::processEvents();
+
+    const int band = bar->containerStripHeight();
+    QVERIFY(band > 0);
+
+    const auto verifyAnchors = [&widget, &bar,
+                                band](const QString &leg) {
+        for (int i = 0; i < bar->count(); ++i) {
+            // The face paints the strip-space rect translated down by
+            // the band — the physical rect the buttons must sit in.
+            const QRect face = bar->tabRect(i).translated(0, band);
+            QWidget *favicon = bar->tabButton(i, bar->freeSide());
+            QVERIFY2(favicon,
+                     qPrintable(QStringLiteral("%1: tab %2 has no "
+                                "favicon widget").arg(leg).arg(i)));
+            QVERIFY2(face.contains(favicon->geometry()),
+                     qPrintable(QStringLiteral(
+                         "%1: tab %2 favicon %3 floats outside the "
+                         "face %4")
+                         .arg(leg).arg(i)
+                         .arg(QLatin1String(QTest::toString(
+                             favicon->geometry())))
+                         .arg(QLatin1String(QTest::toString(face)))));
+            // Optically centered: top and bottom margins differ by
+            // the style's selected-tab nudge at most.
+            const int topMargin = favicon->geometry().top() - face.top();
+            const int bottomMargin =
+                face.bottom() - favicon->geometry().bottom();
+            QVERIFY2(qAbs(topMargin - bottomMargin) <= 4,
+                     qPrintable(QStringLiteral(
+                         "%1: tab %2 favicon margins %3/%4 not "
+                         "symmetric")
+                         .arg(leg).arg(i).arg(topMargin)
+                         .arg(bottomMargin)));
+        }
+    };
+
+    verifyAnchors(QStringLiteral("initial"));
+
+    // setCurrentIndex re-lays only the two touched tabs' buttons in
+    // strip space — the path that parked the favicon in the band.
+    widget.setCurrentIndex(0);
+    widget.setCurrentIndex(1);
+    QApplication::processEvents();
+    verifyAnchors(QStringLiteral("after tab switch"));
+
+    // A dragged-in strip height grew past the band: the strip-space
+    // button y could land >= band and the old incremental shift would
+    // skip it entirely.
+    bar->setTabStripHeight(56);
+    widget.resize(720, 480);
+    QApplication::processEvents();
+    verifyAnchors(QStringLiteral("dragged height 56"));
+
+    // Back to Automatic.
+    bar->setTabStripHeight(0);
+    QApplication::processEvents();
+    verifyAnchors(QStringLiteral("automatic again"));
+
+    const QByteArray grabDir = qgetenv("ARORA_TABWIDGET_GRAB_DIR");
+    if (!grabDir.isEmpty())
+        bar->grab().save(QString::fromLocal8Bit(grabDir)
+                         + QLatin1String("/band-anchor.png"));
+
+    settings.remove(QLatin1String("tabs/containerDisplay"));
 }
 
 QTEST_MAIN(tst_TabWidget)

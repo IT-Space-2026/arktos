@@ -260,6 +260,11 @@ TabBar::TabBar(QWidget *parent)
             this, [this](int) {
         updateCloseButtonVisibility();
         hideTabPreview();
+        // CONT06: setCurrentIndex() re-anchors the two touched tabs'
+        // side buttons in strip space — with the band up that parks
+        // them inside it.  Re-seat them immediately so hit-testing
+        // stays right before the next repaint.
+        shiftChildrenBelowStrip();
     });
 
     // POL02: resting the pointer on a tab for a beat pops the hover
@@ -1630,8 +1635,16 @@ void TabBar::paintContainerStrip(QPainter *painter)
 
 // QTabBar lays per-tab side buttons and its scroll buttons out in
 // strip space — with the band up everything sits containerStripHeight()
-// pixels too high.  Qt repositions them on every layout, so any child
-// still inside the band zone shifts down by the band height.
+// pixels too high.  Qt repositions them on every layout, and several
+// of its paths never reach tabLayoutChange() — setCurrentIndex() and
+// move drags call layoutTab() directly, scroll-offset changes call
+// layoutWidgets() — so an incremental shift can silently lose a
+// button to the band (and a strip-space y >= band read as "already
+// shifted" on tall dragged strips).  Per-tab buttons re-anchor
+// deterministically instead: their y is the style's strip-space
+// sub-element rect plus the band, the x Qt chose (drag offsets
+// included) is kept.  paintEvent() re-runs this so a layoutTab-only
+// path still lands on the face on the next repaint.
 void TabBar::shiftChildrenBelowStrip()
 {
     const int band = containerStripHeight();
@@ -1643,22 +1656,42 @@ void TabBar::shiftChildrenBelowStrip()
     const QObjectList kids = children();
     for (QObject *kid : kids) {
         QWidget *child = qobject_cast<QWidget*>(kid);
-        if (!child || child == m_preview || child->y() >= band)
+        // The preview, the '+' and the rename editor all manage their
+        // own band-aware positions.
+        if (!child || child == m_preview || child == m_newTabButton
+            || child == m_titleEditor)
             continue;
-        bool isTabButton = false;
-        for (int i = 0; i < count() && !isTabButton; ++i) {
+        int buttonIndex = -1;
+        QTabBar::ButtonPosition buttonSide = QTabBar::LeftSide;
+        for (int i = 0; i < count() && buttonIndex < 0; ++i) {
             for (const QTabBar::ButtonPosition side : sides) {
                 if (tabButton(i, side) == child) {
-                    isTabButton = true;
+                    buttonIndex = i;
+                    buttonSide = side;
                     break;
                 }
             }
         }
-        // Vertical tab buttons are placed by layoutRowTabButtons(),
-        // which already knows about the band.
-        if (isTabButton && vertical)
+        if (buttonIndex >= 0) {
+            // Vertical tab buttons are placed by layoutRowTabButtons(),
+            // which already knows about the band.
+            if (vertical)
+                continue;
+            QStyleOptionTab option;
+            initStyleOption(&option, buttonIndex);
+            const QRect rect = style()->subElementRect(
+                buttonSide == QTabBar::LeftSide
+                    ? QStyle::SE_TabBarTabLeftButton
+                    : QStyle::SE_TabBarTabRightButton,
+                &option, this);
+            if (child->y() != rect.top() + band)
+                child->move(child->x(), rect.top() + band);
             continue;
-        child->move(child->x(), child->y() + band);
+        }
+        // Qt's scroll buttons (any other strip-space child) shift
+        // once per placement — they always anchor at the strip's top.
+        if (child->y() < band)
+            child->move(child->x(), child->y() + band);
     }
 }
 
@@ -1837,6 +1870,10 @@ void TabBar::paintEvent(QPaintEvent *event)
     layoutNewTabButton();
     const int band = containerStripHeight();
     if (band > 0) {
+        // Qt re-anchors side buttons in strip space on several
+        // tabLayoutChange()-free paths — re-seat them on the face
+        // before the tab row (and the children above it) paint.
+        shiftChildrenBelowStrip();
         QPainter bandPainter(this);
         paintContainerStrip(&bandPainter);
     }
