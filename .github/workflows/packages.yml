@@ -50,6 +50,9 @@ jobs:
           QTDIR="$(dirname "$(dirname "$(readlink -f "$QMAKE")")")"
           echo "QTDIR=$QTDIR" >> "$GITHUB_ENV"
 
+      - name: Install tor runtime deps (bundled tor's ldd targets)
+        run: sudo apt-get update -qq && sudo apt-get install -y libevent-2.1-7
+
       - name: Build .deb
         run: ./.devin/pkg-deb.sh
 

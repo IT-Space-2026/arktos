@@ -139,6 +139,7 @@ EOF
 soname_package() {
     case "$1" in
         libxcb-cursor.so.0) echo libxcb-cursor0 ;;
+        libevent-2.1.so.7) echo libevent-2.1-7 ;;
         *) return 1 ;;
     esac
 }
