@@ -174,9 +174,9 @@ This file is the task queue for the Devin CLI task loop
 
 
 
-| MEM05 | Memory climbs on every nav→back cycle, never released — leak audit across ALL window/tab types incl Tor — details below | in_progress | 0 | |
-| TRUST23 | Padlock stays yellow on Tor window — decide green-on-verified-TLS vs honest neutral — details below | pending | 0 | |
-| DEVT16 | BiDi regressions: web tab shows "no debug target"; Elements empty; Network waterfall graph missing — details below | pending | 0 | |
+| MEM05 | Memory climbs on every nav→back cycle, never released — leak audit across ALL window/tab types incl Tor — details below | pending | 0 | retry after 4GB cap raise — 5 prior runs died to 3072MB watchdog during builds, not task failure |
+| TRUST23 | Padlock stays yellow on Tor window — decide green-on-verified-TLS vs honest neutral — details below | pending | 0 | retry after 4GB cap raise — 5 prior runs died to 3072MB watchdog during builds, not task failure |
+| DEVT16 | BiDi regressions: web tab shows "no debug target"; Elements empty; Network waterfall graph missing — details below | in_progress | 0 | |
 | VIEW08 | "Zoom text only" toggle does nothing — details below | pending | 0 | |
 | PIP03 | Picture-in-Picture does nothing when triggered — popOut path broken — details below | pending | 0 | |
 | VIEW09 | View Source very slow — 3 sequential async stages; parallelize/trim — details below | pending | 0 | |
