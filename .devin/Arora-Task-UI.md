@@ -156,7 +156,7 @@ This file is the task queue for the Devin CLI task loop
 | ICONS13 | Remove arora-legacy icon set entirely — user directive — details below | pending | 0 | |
 | TRUST16 | Shield placement lock — padlock stays in URL bar, shield = first button LEFT of the URL field (never inside it) — details below | pending | 0 | |
 | TRUST17 | Shield popover first-click bug — popover does not open correctly on first click — details below | pending | 0 | |
-| TRUST18 | Shield glyph black/unreadable on Tor window dark theme — details below | pending | 0 | |
+| TRUST18 | Nav-bar glyphs black/unreadable on Tor window dark theme (shield + reader button confirmed) — details below | pending | 0 | |
 | TABS20 | Tab site icon vertically out of the tab face — clipped/offset at top edge — details below | pending | 0 | |
 
 
@@ -978,7 +978,7 @@ User report: 'The shield popover not opened up correctly for the first time.' Sa
 
 ### TRUST18
 
-User report: on a Tor window the shield shows as a black contour — invisible against the dark Tor title/toolbar theme. Audit candidates: (a) the shield icon paints the trust-state color but the 'neutral/no-probe' state for Tor uses a near-black/outline-only glyph — check what TorProfile tabs resolve to in refreshIcon(); (b) the glyph isn't theme-aware — AroraIcon returns the light-theme (dark stroke) variant while the Tor window styles the bar dark; check how the button picks icon set (tabler dark variant exists?) and whether TorTheme applies a dark iconTheme to its window; (c) Tor state may need its own honest color (Tor tabs = no site-probe → neutral state must still be LEGIBLE — e.g. theme foreground, not black). Fix: icon color/glyph must follow the window's effective palette — dark Tor bar gets a light/visible shield, same for private windows if themed dark. Verify: grab a Tor window nav bar — shield visibly distinct from bar background in every state; tst asserts icon pixel contrast if feasible; normal-window states unchanged. make check PASS.
+User reports BOTH the shield AND the reader-mode button render as black contours on a Tor window — invisible against the dark Tor title/toolbar theme. Treat this as a WHOLE-BAR theme-awareness bug, not a shield-specific one: audit EVERY nav-bar button glyph (reader, shield, tor circuit, engine indicator, any extension action icons too) — the fix belongs wherever the icon/palette resolution happens, not per-button. Audit candidates: (a) the shield icon paints the trust-state color but the 'neutral/no-probe' state for Tor uses a near-black/outline-only glyph — check what TorProfile tabs resolve to in refreshIcon(); (b) the glyph isn't theme-aware — AroraIcon returns the light-theme (dark stroke) variant while the Tor window styles the bar dark; check how the button picks icon set (tabler dark variant exists?) and whether TorTheme applies a dark iconTheme to its window; (c) Tor state may need its own honest color (Tor tabs = no site-probe → neutral state must still be LEGIBLE — e.g. theme foreground, not black). Fix: icon color/glyph must follow the window's effective palette — dark Tor bar gets a light/visible shield, same for private windows if themed dark. Verify: grab a Tor window nav bar — shield visibly distinct from bar background in every state; tst asserts icon pixel contrast if feasible; normal-window states unchanged. make check PASS.
 
 ### TABS20
 
