@@ -54,6 +54,7 @@
 #include <qstackedwidget.h>
 #include <qstatusbar.h>
 #include <qtextbrowser.h>
+#include <qthreadpool.h>
 #include <qtabwidget.h>
 #include <qtcpserver.h>
 #include <qtcpsocket.h>
@@ -166,6 +167,7 @@ class tst_BrowserMainWindow : public QObject
 
 private slots:
     void initTestCase();
+    void cleanupTestCase();
 
     void chromeBasics();
     void statusAndTitle();
@@ -247,6 +249,20 @@ void tst_BrowserMainWindow::initTestCase()
     qputenv("ARORA_PDF_INPROC", "1");
     qRegisterMetaType<QWebEnginePage *>("QWebEnginePage*");
     qRegisterMetaType<QAction *>("QAction*");
+}
+
+void tst_BrowserMainWindow::cleanupTestCase()
+{
+    // Legs that pass early can leave a window, a popup or a detached
+    // page standing — drop them all before teardown so the profiles
+    // release while the event loop is still around to deliver the
+    // WebEngine-side shutdown round-trips.
+    const QWidgetList tops = QApplication::topLevelWidgets();
+    for (QWidget *top : tops)
+        top->close();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QApplication::processEvents();
+    QThreadPool::globalInstance()->waitForDone(5000);
 }
 
 
@@ -4802,6 +4818,13 @@ void tst_BrowserMainWindow::sidebarPanel()
     QVERIFY(notesStack && notesList && addNoteButton && removeNoteButton);
     QVERIFY(panel->notesModel());
     QVERIFY(panel->notes());
+    // The shared per-profile store can carry leftovers — a migrated
+    // scratch note from another leg, or a stale on-disk file — so the
+    // empty-state check starts from an actually-empty model.
+    if (panel->notesModel()->rowCount() > 0) {
+        panel->notesModel()->removeRows(0, panel->notesModel()->rowCount());
+        panel->notesModel()->save();
+    }
     // Zero notes renders the empty state and disables delete.
     QCOMPARE(notesStack->currentIndex(), 0);
     QVERIFY(!removeNoteButton->isEnabled());
@@ -5783,19 +5806,33 @@ void tst_BrowserMainWindow::chromeSlots()
     QSignalSpy loaded(view->page(), &QWebEnginePage::loadFinished);
     view->load(QUrl("about:blank"));
     QTRY_VERIFY_WITH_TIMEOUT(!loaded.isEmpty(), 15000);
-    // Print paths — the print machinery stands up even when the
-    // dialog is rejected.  The preview's paintRequested drives an
-    // asynchronous WebView::print on the dialog-owned printer, so the
-    // dialog must stay open until printFinished lands — rejecting
-    // mid-flight frees the printer under the running job.
-    QSignalSpy printed(view, &QWebEngineView::printFinished);
-    QObject::connect(view, &QWebEngineView::printFinished, view, [](bool) {
-        if (QWidget *modal = QApplication::activeModalWidget())
+    // Print paths — the machinery stands up even when the dialog is
+    // rejected.  PRINT01: the preview renders the page's printToPdf
+    // output in an in-process PdfView — no borrowed printer and no
+    // printFinished.  Poll the modal dialog until the generated
+    // document is ready (or generation reports failure), then close.
+    QString previewState;
+    QTimer previewPoll;
+    previewPoll.setInterval(50);
+    QObject::connect(&previewPoll, &QTimer::timeout, qApp,
+            [&previewState]() {
+        PrintPreviewDialog *modal =
+            qobject_cast<PrintPreviewDialog *>(
+                QApplication::activeModalWidget());
+        if (!modal || !previewState.isEmpty())
+            return;
+        if (modal->isReady())
+            previewState = QLatin1String("ready");
+        else if (modal->hasFailed())
+            previewState = modal->failureMessage();
+        if (!previewState.isEmpty())
             modal->close();
     });
-    rejectModal(10000); // backstop if the print pipeline never answers
+    previewPoll.start();
+    rejectModal(20000); // backstop if the print pipeline never answers
     QVERIFY(QMetaObject::invokeMethod(window, "filePrintPreview"));
-    QVERIFY(!printed.isEmpty());
+    previewPoll.stop();
+    QCOMPARE(previewState, QLatin1String("ready"));
     rejectModal(); // QPrintDialog — rejected before print() starts
     QVERIFY(QMetaObject::invokeMethod(window, "filePrint"));
 
@@ -6811,6 +6848,7 @@ void tst_BrowserMainWindow::extensionActionButtons()
         return QString();
     };
 
+    extensions->grantConsent(fixture.path());
     extensions->loadExtension(fixture.path());
     QString extensionId;
     QTRY_VERIFY_WITH_TIMEOUT(!(extensionId = findId()).isEmpty(),
@@ -7366,7 +7404,8 @@ void tst_BrowserMainWindow::navBarOrderPersistence()
         QStringLiteral("appMenu"), QStringLiteral("back"),
         QStringLiteral("forward"), QStringLiteral("stopReload"),
         QStringLiteral("home"), QStringLiteral("reader"),
-        QStringLiteral("locationBar"), QStringLiteral("sidebar")};
+        QStringLiteral("siteShield"), QStringLiteral("locationBar"),
+        QStringLiteral("sidebar")};
 
     SubWindow *window = new SubWindow;
     window->resize(1400, 700);
@@ -7400,7 +7439,8 @@ void tst_BrowserMainWindow::navBarOrderPersistence()
         QStringLiteral("appMenu"), QStringLiteral("stopReload"),
         QStringLiteral("back"), QStringLiteral("forward"),
         QStringLiteral("home"), QStringLiteral("reader"),
-        QStringLiteral("locationBar"), QStringLiteral("sidebar")};
+        QStringLiteral("siteShield"), QStringLiteral("locationBar"),
+        QStringLiteral("sidebar")};
     QCOMPARE(window->navBarOrder(), draggedOrder);
     {
         QSettings settings;
@@ -7440,7 +7480,8 @@ void tst_BrowserMainWindow::navBarOrderPersistence()
         QStringLiteral("back"), QStringLiteral("appMenu"),
         QStringLiteral("stopReload"), QStringLiteral("forward"),
         QStringLiteral("home"), QStringLiteral("reader"),
-        QStringLiteral("locationBar"), QStringLiteral("sidebar")};
+        QStringLiteral("siteShield"), QStringLiteral("locationBar"),
+        QStringLiteral("sidebar")};
     QCOMPARE(window->navBarOrder(), resyncedOrder);
     QCOMPARE(second->navBarOrder(), resyncedOrder);
     {
@@ -7483,6 +7524,7 @@ void tst_BrowserMainWindow::navBarOrderPersistence()
                           QStringLiteral("stopReload"),
                           QStringLiteral("home"),
                           QStringLiteral("reader"),
+                          QStringLiteral("siteShield"),
                           QStringLiteral("locationBar")}));
     closeWindow(third);
 
@@ -7526,6 +7568,7 @@ void tst_BrowserMainWindow::navBarOrderPersistence()
                           QStringLiteral("home"),
                           QStringLiteral("reader"),
                           QStringLiteral("torCircuit"),
+                          QStringLiteral("siteShield"),
                           QStringLiteral("locationBar")}));
     QVERIFY(torBar->styleSheet().contains(QLatin1String("#4a3372")));
     closeWindow(torWindow);

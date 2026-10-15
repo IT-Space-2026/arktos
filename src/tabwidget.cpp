@@ -3749,8 +3749,12 @@ QUrl TabWidget::guessUrlFromStringRust(const QString &string, bool privateContex
         if (url.scheme() == QLatin1String("about")
             && url.path() == QLatin1String("home"))
             // TOR09/ENG13: same branded pick the C++ path makes —
-            // tor/servo start pages ride the about:home alias.
-            url = BrowserApplication::startPageUrl();
+            // tor/servo start pages ride the about:home alias.  The
+            // pick must take privateContext, not the app-global flag:
+            // a private tab's about:home (typed or Home) is the
+            // private variant.
+            url = BrowserApplication::startPageUrl(
+                BrowserApplication::defaultEngineId(), privateContext);
         return url;
     }
     if (kind == QLatin1String("file"))
