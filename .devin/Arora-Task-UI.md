@@ -158,6 +158,8 @@ This file is the task queue for the Devin CLI task loop
 | TRUST17 | Shield popover first-click bug — popover does not open correctly on first click — details below | pending | 0 | |
 | TRUST18 | Nav-bar glyphs black/unreadable on Tor window dark theme (shield + reader button confirmed) — details below | pending | 0 | |
 | TABS20 | Tab site icon vertically out of the tab face — clipped/offset at top edge — details below | pending | 0 | |
+| DOWN05 | Downloads sidebar missing "clear entire list" button at top — details below | pending | 0 | |
+
 
 
 ## Task details
@@ -983,3 +985,7 @@ User reports BOTH the shield AND the reader-mode button render as black contours
 ### TABS20
 
 User screenshot: tab favicon sits visibly ABOVE/OUTSIDE the tab face — glyph's top edge sticks past the tab's top border (looks clipped). Likely a TABS19 fallout: the tab face grew to ~33px but the icon's vertical centering didn't follow — audit the TabBar paint path: is the icon rect computed with hardcoded y-offset from the old 26-28px face, or is iconRect centered on the old band height instead of the new face rect? Check both horizontal-mode face paint AND dragged-strip height (the dragged-height override may use a different centering path — user's screenshot may be a dragged-height strip). Also verify against the THEM02 rounded-card margins — if the face is drawn inset but the icon is centered on the full rect, the icon clears the card's visual top. Fix so the icon is optically centered inside the PAINTED face (the card), not the layout rect. Check title baseline too while there. Verify: grab a horizontal strip — favicon vertically centered inside the card at default AND dragged heights; tst leg asserts icon rect within face rect + symmetric margins; vertical rail unaffected. make check PASS.
+
+### DOWN05
+
+User report: 'On the Downloads sidebar the clean entire list (remove all) button is not there at the top.' The buildDownloadsPage header currently holds only the section title + close button — no clear-list control. Add a clear-all affordance to the downloads header row (left of the close button, icon-button style matching sidebarCloseButton — use the AroraIcon trash/clear glyph, accessible name + tooltip 'Clear download list'). Semantics: removes completed/failed/cancelled entries via DownloadManager::cleanup() or the model's clear path — it must NEVER delete the downloaded FILES and must NOT remove in-progress downloads (only finished states); if a removal could kill an active download, exclude it. If the action is destructive to list history, a lightweight confirm (or undo toast if a pattern exists) is fine — check what History sidebar's Clear does for the affordance pattern. Button disables itself honestly when the list is empty or only active downloads remain. Verify: sidebar grab — clear button visible in header; click with mixed entries → finished ones gone, active ones untouched, files on disk untouched; empty list → disabled. tst leg covering the model clear. make check PASS.
