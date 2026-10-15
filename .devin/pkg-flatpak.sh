@@ -127,6 +127,15 @@ cmd_verify() {
     flatpak info "$APPID" >/dev/null 2>&1 \
         || fail "$APPID not installed — run install first"
 
+    # -- icons: rename-icon must have produced app-id-named icons ---------
+    fp_run --command=/bin/sh "$APPID" -c \
+        'ls /app/share/icons/hicolor/*/apps/io.arora.Arora.* >/dev/null 2>&1' \
+        || fail "no io.arora.Arora icons in the flatpak (rename-icon failed)"
+    fp_run --command=/bin/sh "$APPID" -c \
+        'grep -q "^Icon=io.arora.Arora$" /app/share/applications/io.arora.Arora.desktop' \
+        || fail "desktop file Icon= not rewritten to io.arora.Arora"
+    note "icons + desktop Icon= present (renamed to $APPID)"
+
     # -- payload: bundled tor present + runs in the sandbox ----------------
     fp_run --command=/bin/sh "$APPID" -c \
         'test -x /app/lib/tor/tor && test -f /app/lib/data/geoip' \

@@ -241,6 +241,12 @@ cmd_verify() {
     [ -f "$root/$LIBDIR/bin/qt.conf" ] || fail "no qt.conf installed"
     [ -f "$root/usr/share/applications/arora.desktop" ] \
         || fail "no desktop file installed"
+    [ -f "$root/usr/share/icons/hicolor/128x128/apps/arora.png" ] \
+        || fail "no hicolor icon installed"
+    [ -f "$root/usr/share/icons/hicolor/scalable/apps/arora.svg" ] \
+        || fail "no scalable icon installed"
+    [ -f "$root/usr/share/pixmaps/arora.xpm" ] \
+        || fail "no pixmap icon installed"
     [ -f "$root/usr/share/doc/$PKG/copyright" ] \
         || fail "no copyright installed"
     note "dpkg install: $(dpkg --admindir="$db" -s "$PKG" | grep '^Status:')"
