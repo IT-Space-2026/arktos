@@ -271,6 +271,7 @@ private slots:
 
     void zoom();
     void wheelZoom();
+    void textZoom();
     void loadUrl();
     void torQueuedNavigation();
     void torWarmupNavigationGate();
@@ -501,6 +502,139 @@ void tst_WebView::wheelZoom()
     // No modifier: handled by the base class, zoom untouched.
     view.sendWheel(120, Qt::NoModifier);
     QCOMPARE(view.zoomFactor(), qreal(1.0));
+}
+
+// VIEW08 helpers — a synchronous JS probe so the text-zoom legs can
+// read real computed styles back out of the renderer.
+static QVariant evalJsSync(QWebEnginePage *page, const QString &source,
+                           int timeoutMs = 5000)
+{
+    QVariant result;
+    bool done = false;
+    page->runJavaScript(source,
+                        [&result, &done](const QVariant &value) {
+        result = value;
+        done = true;
+    });
+    const auto deadline =
+        QDateTime::currentMSecsSinceEpoch() + timeoutMs;
+    while (!done && QDateTime::currentMSecsSinceEpoch() < deadline)
+        QTest::qWait(20);
+    return result;
+}
+
+// {relative-text px, pixel-pinned-text px, fixed-box width}.
+static QVariantList measureTextZoom(WebView *view)
+{
+    return evalJsSync(view->page(), QStringLiteral(
+        "[parseFloat(getComputedStyle("
+        "document.getElementById('rel')).fontSize),"
+        " parseFloat(getComputedStyle("
+        "document.getElementById('px')).fontSize),"
+        " document.getElementById('box')"
+        ".getBoundingClientRect().width]")).toList();
+}
+
+// 'Zoom Text Only' used to be a dead checkbox — WebEngine has no
+// text-zoom factor, so the toggle scales the page's own default font
+// sizes instead: relative text grows while pixel-pinned text and
+// layout stay put, and the scaling survives a reload.
+void tst_WebView::textZoom()
+{
+    const QString fixture = QStringLiteral(
+        "<html><body>"
+        "<p id='rel'>relative text</p>"
+        "<p id='px' style='font-size:12px'>fixed text</p>"
+        "<div id='box' style='width:200px;height:40px'></div>"
+        "</body></html>");
+    struct ZoomTextOnlyReset {
+        ~ZoomTextOnlyReset() { BrowserApplication::setZoomTextOnly(false); }
+    } reset;
+
+    BrowserApplication::setZoomTextOnly(false);
+    TestWebView view;
+    view.resize(800, 600);
+    view.show();
+    std::shared_ptr<bool> loaded(new bool(false));
+    QObject::connect(&view, &QWebEngineView::loadFinished, &view,
+                     [loaded](bool) { *loaded = true; });
+    view.setHtml(fixture);
+    QTRY_VERIFY_WITH_TIMEOUT(*loaded, 15000);
+
+    const QVariantList base = measureTextZoom(&view);
+    QVERIFY(base.value(0).toDouble() > 0);
+    const int baseFont = view.page()->settings()->fontSize(
+        QWebEngineSettings::DefaultFontSize);
+    const int baseFixed = view.page()->settings()->fontSize(
+        QWebEngineSettings::DefaultFixedFontSize);
+
+    // Off: the ladder walks the whole-page factor as before.
+    view.zoomIn();
+    QVERIFY(view.zoomFactor() > 1.0);
+    view.resetZoom();
+    QCOMPARE(view.zoomFactor(), qreal(1.0));
+
+    // On: page zoom stays flat while the page's default fonts scale —
+    // two ladder steps to 120%.
+    BrowserApplication::setZoomTextOnly(true);
+    view.zoomIn();
+    view.zoomIn();
+    QCOMPARE(view.currentZoom(), 120);
+    QCOMPARE(view.zoomFactor(), qreal(1.0));
+    QCOMPARE(view.page()->settings()->fontSize(
+                 QWebEngineSettings::DefaultFontSize),
+             qRound(baseFont * 1.2));
+    QCOMPARE(view.page()->settings()->fontSize(
+                 QWebEngineSettings::DefaultFixedFontSize),
+             qRound(baseFixed * 1.2));
+
+    // Rendered check: default-size text grew; pixel-pinned text and
+    // the fixed-width box did not move.
+    QVariantList scaled;
+    const auto scaledDeadline =
+        QDateTime::currentMSecsSinceEpoch() + 5000;
+    do {
+        scaled = measureTextZoom(&view);
+        if (scaled.value(0).toDouble() > base.value(0).toDouble())
+            break;
+        QTest::qWait(50);
+    } while (QDateTime::currentMSecsSinceEpoch() < scaledDeadline);
+    QVERIFY2(scaled.value(0).toDouble() > base.value(0).toDouble(),
+             qPrintable(QStringLiteral("text-only zoom did not grow "
+                                       "relative text (%1 -> %2)")
+                        .arg(base.value(0).toDouble())
+                        .arg(scaled.value(0).toDouble())));
+    QCOMPARE(scaled.value(1).toDouble(), base.value(1).toDouble());
+    QCOMPARE(scaled.value(2).toDouble(), base.value(2).toDouble());
+
+    // Page settings live on the page object — the scaling survives a
+    // reload without being re-applied.
+    *loaded = false;
+    view.setHtml(fixture);
+    QTRY_VERIFY_WITH_TIMEOUT(*loaded, 15000);
+    QCOMPARE(measureTextZoom(&view).value(0).toDouble(),
+             scaled.value(0).toDouble());
+
+    // Toggling off restores the inherited font sizes and hands the
+    // pending zoom back to the whole-page factor.
+    BrowserApplication::setZoomTextOnly(false);
+    QCOMPARE(view.page()->settings()->fontSize(
+                 QWebEngineSettings::DefaultFontSize), baseFont);
+    QCOMPARE(view.page()->settings()->fontSize(
+                 QWebEngineSettings::DefaultFixedFontSize), baseFixed);
+    QVERIFY(qAbs(view.zoomFactor() - 1.2) < 0.01);
+
+    QVariantList restored;
+    const auto restoredDeadline =
+        QDateTime::currentMSecsSinceEpoch() + 5000;
+    do {
+        restored = measureTextZoom(&view);
+        if (qAbs(restored.value(0).toDouble()
+                 - base.value(0).toDouble()) < 0.01)
+            break;
+        QTest::qWait(50);
+    } while (QDateTime::currentMSecsSinceEpoch() < restoredDeadline);
+    QCOMPARE(restored.value(0).toDouble(), base.value(0).toDouble());
 }
 
 void tst_WebView::loadUrl()

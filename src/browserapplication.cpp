@@ -1291,8 +1291,8 @@ QString BrowserApplication::dataFilePath(const QString &fileName)
 }
 
 // Qt WebEngine has no text-only zoom attribute — Chromium zoom applies
-// to the whole page.  Keep the preference stored anyway so the menu
-// action stays in sync and the value survives the migration.
+// to the whole page — so the preference selects which path
+// WebView::applyZoom drives (per-page font scaling vs page factor).
 static bool s_zoomTextOnly = false;
 
 bool BrowserApplication::zoomTextOnly()
