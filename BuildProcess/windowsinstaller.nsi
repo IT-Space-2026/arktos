@@ -1,14 +1,26 @@
-; Copyright 2008 Jason A. Donenfeld <Jason@zx2c4.com>
+; Arora Windows installer — Qt6 port.
+;
+; The script no longer enumerates Qt DLLs: CI (and local builds) stage a
+; complete runtime with windeployqt into deploy\ and this installer just
+; packages that tree recursively. That keeps the payload correct for
+; Qt6/QtWebEngine without a hand-maintained file list — whatever
+; windeployqt resolved (Qt6*.dll, QtWebEngineProcess, plugins/,
+; resources/, translations/) ships verbatim.
+;
+;   makensis /DDEPLOYDIR=deploy /DPRODUCT_VERSION=0.2 BuildProcess\windowsinstaller.nsi
 
 SetCompressor /SOLID /FINAL lzma
 
 !define PRODUCT_NAME "Arora"
-!define /date PRODUCT_VERSION "0.11.0"
-;!define /date PRODUCT_VERSION "Snapshot (%#m-%#d-%#Y)"
+!ifndef PRODUCT_VERSION
+  !define PRODUCT_VERSION "0.2"
+!endif
+!ifndef DEPLOYDIR
+  !define DEPLOYDIR "deploy"
+!endif
 !define PRODUCT_DIR_REGKEY "Software\Microsoft\Windows\CurrentVersion\App Paths\arora.exe"
 !define PRODUCT_UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}"
 !define PRODUCT_UNINST_ROOT_KEY "HKLM"
-!define QTDIR "C:\Qt\qt-all-opensource-src-4.5.3"
 
 !include "MUI.nsh"
 !define MUI_ABORTWARNING
@@ -27,61 +39,43 @@ SetCompressor /SOLID /FINAL lzma
 !insertmacro MUI_LANGUAGE "English"
 Name "${PRODUCT_NAME} ${PRODUCT_VERSION}"
 OutFile "${PRODUCT_NAME} ${PRODUCT_VERSION} Installer.exe"
-InstallDir "$PROGRAMFILES\${PRODUCT_NAME}"
+InstallDir "$PROGRAMFILES64\${PRODUCT_NAME}"
 InstallDirRegKey HKLM "${PRODUCT_DIR_REGKEY}" ""
 ShowInstDetails show
 ShowUnInstDetails show
+RequestExecutionLevel admin
 
 Section "Main Components"
-  KillProcDLL::KillProc "arora.exe"
-  Sleep 100
   SetOverwrite on
 
   SetOutPath "$INSTDIR"
-  File "arora.exe"
-  File "tools\htmlToXbel\release\htmlToXBel.exe"
-  File "tools\cacheinfo\release\arora-cacheinfo.exe"
-  File "tools\placesimport\release\arora-placesimport.exe"
-  File "${QTDIR}\lib\QtCore4.dll"
-  File "${QTDIR}\lib\QtGui4.dll"
-  File "${QTDIR}\lib\QtNetwork4.dll"
-  File "${QTDIR}\lib\QtWebKit4.dll"
-  File "${QTDIR}\lib\QtScript4.dll"
-  File "${QTDIR}\lib\QtSql4.dll"
-  ;File "${QTDIR}\lib\phonon4.dll"
-  File "C:\Qt\openssl-0.9.8j\out32dll\ssleay32.dll"
-  File "C:\Qt\openssl-0.9.8j\out32dll\libeay32.dll"
+  File /r "${DEPLOYDIR}\*.*"
 
   SetOutPath "$INSTDIR\locale"
-  File "src\.qm\locale\*.qm"
-  File "${QTDIR}\translations\qt*.qm"
+  File /nonfatal "src\.qm\locale\*.qm"
 
-  SetOutPath "$INSTDIR\plugins\sqldrivers"
-  File "${QTDIR}\plugins\sqldrivers\qsqlite4.dll"
-
-  SetOutPath "$INSTDIR\imageformats"
-  File "${QTDIR}\plugins\imageformats\qtiff4.dll"
-  File "${QTDIR}\plugins\imageformats\qsvg4.dll"
-  File "${QTDIR}\plugins\imageformats\qmng4.dll"
-  File "${QTDIR}\plugins\imageformats\qjpeg4.dll"
-  File "${QTDIR}\plugins\imageformats\qico4.dll"
-  File "${QTDIR}\plugins\imageformats\qgif4.dll"
-
-  SetOutPath "$INSTDIR\iconengines"
-  File "${QTDIR}\plugins\iconengines\qsvgicon4.dll"
-
-  SetOutPath "$INSTDIR\codecs"
-  File "${QTDIR}\plugins\codecs\qtwcodecs4.dll"
-  File "${QTDIR}\plugins\codecs\qkrcodecs4.dll"
-  File "${QTDIR}\plugins\codecs\qjpcodecs4.dll"
-  File "${QTDIR}\plugins\codecs\qcncodecs4.dll"
-
-  SetOutPath "$INSTDIR\phonon_backend"
-;  File "${QTDIR}\plugins\phonon_backend\phonon_ds94.dll"
+  ; MSVC runtime — windeployqt deliberately does NOT ship the VC++
+  ; redistributable. The build machine passes its redist dir via
+  ;   makensis /DVCREDIST="%VCToolsRedistDir%x64\Microsoft.VC*.CRT"
+  ; (%VCToolsRedistDir% is set by the MSVC dev environment); if the
+  ; define is absent the installer just skips the DLLs rather than
+  ; failing — arora.exe will then need a system-installed redist.
+  !ifdef VCREDIST
+    SetOutPath "$INSTDIR"
+    File /nonfatal "${VCREDIST}\vcruntime140.dll"
+    File /nonfatal "${VCREDIST}\vcruntime140_1.dll"
+    File /nonfatal "${VCREDIST}\msvcp140.dll"
+    File /nonfatal "${VCREDIST}\msvcp140_1.dll"
+    File /nonfatal "${VCREDIST}\msvcp140_2.dll"
+    File /nonfatal "${VCREDIST}\msvcp140_atomic_wait.dll"
+    File /nonfatal "${VCREDIST}\concrt140.dll"
+    File /nonfatal "${VCREDIST}\vcamp140.dll"
+  !endif
 SectionEnd
 
 Section Icons
   CreateShortCut "$SMPROGRAMS\Arora.lnk" "$INSTDIR\arora.exe"
+  CreateShortCut "$DESKTOP\Arora.lnk" "$INSTDIR\arora.exe"
 SectionEnd
 
 Section Uninstaller
@@ -93,18 +87,9 @@ Section Uninstaller
   WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "DisplayVersion" "${PRODUCT_VERSION}"
 SectionEnd
 
-Section MSVC
-  InitPluginsDir
-  SetOutPath $PLUGINSDIR
-  File "C:\Program Files\Microsoft Visual Studio 8\SDK\v2.0\BootStrapper\Packages\vcredist_x86\vcredist_x86.exe"
-  DetailPrint "Installing Visual C++ 2005 Libraries"
-  ExecWait '"$PLUGINSDIR\vcredist_x86.exe" /q:a /c:"msiexec /i vcredist.msi /quiet"'
-SectionEnd
-
 Section Uninstall
-  KillProcDLL::KillProc "arora.exe"
-  Sleep 100
-  Delete $SMPROGRAMS\Arora.lnk
+  Delete "$SMPROGRAMS\Arora.lnk"
+  Delete "$DESKTOP\Arora.lnk"
   RMDir /r "$INSTDIR"
   DeleteRegKey ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}"
   DeleteRegKey HKLM "${PRODUCT_DIR_REGKEY}"

@@ -139,15 +139,21 @@ jobs:
           & "$env:QTDIR\bin\windeployqt.exe" --release --no-translations deploy\arora.exe
           Compress-Archive -Path deploy\* -DestinationPath arora-windows.zip
 
+      - name: Installer (NSIS)
+        shell: pwsh
+        run: |
+          choco install nsis -y --no-progress
+          $crt = Get-ChildItem "$env:VCToolsRedistDir\x64" -Directory -Filter 'Microsoft.VC*.CRT' | Select-Object -Last 1
+          $args = "/DDEPLOYDIR=deploy"
+          if ($crt) { $args += " /DVCREDIST=$($crt.FullName)" }
+          & makensis $args BuildProcess\windowsinstaller.nsi
+
       - uses: actions/upload-artifact@v4
         with:
           name: arora-windows
-          path: arora-windows.zip
-
-      # NOTE: BuildProcess/windowsinstaller.nsi is a stale Qt4-era script
-      # (references QtCore4.dll/QtWebKit4.dll) — until it's ported to the
-      # Qt6/windeployqt payload this job ships a portable zip, no
-      # installer exe.
+          path: |
+            arora-windows.zip
+            *Installer*.exe
 
   macos:
     runs-on: macos-latest
