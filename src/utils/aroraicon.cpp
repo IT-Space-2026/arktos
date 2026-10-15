@@ -231,6 +231,8 @@ QString bundledDarkThemeName()
         id = QLatin1String("breeze");
     else if (sys.contains(QLatin1String("tabler")))
         id = QLatin1String("tabler");
+    else if (sys.contains(QLatin1String("lucide")))
+        id = QLatin1String("lucide");
     return QLatin1String("arora-") + id + QLatin1String("-dark");
 }
 
@@ -299,7 +301,8 @@ QStringList AroraIcon::themeIds()
     return { s_nativeId,
              QLatin1String("adwaita"),
              QLatin1String("breeze"),
-             QLatin1String("tabler") };
+             QLatin1String("tabler"),
+             QLatin1String("lucide") };
 }
 
 QString AroraIcon::themeDisplayName(const QString &id)
@@ -312,6 +315,8 @@ QString AroraIcon::themeDisplayName(const QString &id)
         return QLatin1String("Breeze");
     if (id == QLatin1String("tabler"))
         return QLatin1String("Tabler");
+    if (id == QLatin1String("lucide"))
+        return QLatin1String("Lucide");
     return id;
 }
 
@@ -364,7 +369,8 @@ QStringList AroraIcon::names()
     // full chrome surface, so reading only one set's directory would
     // under-report what callers can ask for.
     for (const char *set : { "arora-adwaita", "arora-breeze",
-                            "arora-tabler", "arora-legacy" }) {
+                            "arora-tabler", "arora-lucide",
+                            "arora-legacy" }) {
         QStringList entries = QDir(s_resourcePrefix + QLatin1Char('/')
             + QLatin1String(set) + QLatin1String("/icons"))
             .entryList(QStringList(QLatin1String("*.svg")),

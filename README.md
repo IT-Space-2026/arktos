@@ -115,7 +115,7 @@ browsing profile:
   instead of a floating window; entries open in new tabs.
 - **Look & feel** — Theme selector (System default / Light / Dark,
   `ARORA_COLOR_SCHEME` override), bundled icon sets
-  (Adwaita/Breeze/Tabler, light+dark variants — Tabler is the default
+  (Adwaita/Breeze/Tabler/Lucide, light+dark variants — Tabler is the default
   so every menu glyph ships in the bundle; Native still follows the
   desktop theme and falls back to bundled dark glyphs when it can't
   serve light-on-dark art), flat palette-aware chrome with a consistent
@@ -226,7 +226,7 @@ src/                  application sources (flat layout + subdirs)
   bookmarks/ history/ stores, models, dialogs
   locationbar/        omnibox, shield panel, domain emphasis
   extensions/         MV3 plumbing
-  icons/              bundled icon sets (adwaita/breeze/tabler ±dark)
+  icons/              bundled icon sets (adwaita/breeze/tabler/lucide ±dark)
   utils/              shared helpers (SafeText, scope shortcuts, ...)
   rustcore/           shared Rust core crate (credential store, ...)
   data/ htmls/ locale/ icons and bundled pages, translations

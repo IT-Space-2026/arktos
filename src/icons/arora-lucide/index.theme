@@ -1,0 +1,11 @@
+[Icon Theme]
+Name=Arora Lucide
+Comment=Bundled Lucide icons (ISC; partly derived from Feather, MIT)
+Directories=icons
+Inherits=arora-legacy
+
+[icons]
+Size=16
+Type=Scalable
+MinSize=8
+MaxSize=256
