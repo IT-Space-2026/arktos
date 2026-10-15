@@ -604,13 +604,19 @@ void tst_WebView::torWarmupNavigationGate()
         {
             WebView::setTorQueueGraceMsForTesting(-1);
             WebView::setTorQueueWarmupMsForTesting(-1);
+            WebPage::setTorWarmupMsForTesting(-1);
         }
     } grace;
     // Both bounds are wall-clock from `ready` — a suite-load stall
     // must not let the real values expire mid-leg, so the warm-up is
-    // stretched and the grace is staged per phase.
+    // stretched and the grace is staged per phase.  The PAGE warm-up
+    // is closed (0): dispatched leg failures should commit their
+    // honest error pages instead of arming the warm-up retry, whose
+    // fallback clock and pending-page commits would add dispatch
+    // noise the startedSpy counts cannot attribute.
     WebView::setTorQueueWarmupMsForTesting(10 * 60 * 1000);
     WebView::setTorQueueGraceMsForTesting(20000);
+    WebPage::setTorWarmupMsForTesting(0);
 
     // Ready but zero circuit evidence — the nav still holds, and the
     // pending state is announced rather than silent.
@@ -658,6 +664,46 @@ void tst_WebView::torWarmupNavigationGate()
         view.torQueuedUrlForTesting().isEmpty(), 8000);
     QTRY_VERIFY_WITH_TIMEOUT(startedSpy.count() > startedBefore,
                              8000);
+
+    // TOR14: a page-initiated navigation — the tor start page's
+    // search assigns window.location.href, which never reaches
+    // loadUrl — is refused into the same hold instead of dying at
+    // the cold proxy: no dispatch, no error page, and the same
+    // usable-circuit evidence flushes it.  Settle the grace leg's
+    // error-page commit first so its loadStarted is already counted
+    // in the snapshot below — the committed title is the proof it
+    // landed (isLoading can read false in the gap between the failed
+    // load and the generated commit).
+    WebView::setTorQueueGraceMsForTesting(20000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        view.title().startsWith(QLatin1String("Error loading page")),
+        15000);
+    tor.setCircuitsForTesting({
+        makeCircuit(5, QLatin1String("BUILT"), 1,
+                    QLatin1String("DIR_FETCH")),
+    });
+    const QUrl pageNav(QStringLiteral("https://pageinit.example/"));
+    view.webPage()->load(pageNav);
+    // acceptNavigationRequest runs a turn after page->load() — the
+    // hold lands through the event loop rather than synchronously.
+    QTRY_VERIFY_WITH_TIMEOUT(view.torQueuedUrlForTesting() == pageNav,
+                             15000);
+    QTest::qWait(400);
+    // A refused navigation still surfaces loadStarted + a swallowed
+    // LoadFailed for the aborted target (Chromium starts the load
+    // before the refusal aborts it), so the started-spy count is not
+    // the signal here — the hold's proof is that no error page ever
+    // commits for it: a real dispatch into the cold proxy fails and
+    // setHtml()s the notfound page under the target's url, moving
+    // both url() and title to pageNav.
+    QVERIFY(view.url() != pageNav);
+    QVERIFY(!view.title().contains(pageNav.host()));
+    const int startedAfterHold = startedSpy.count();
+    tor.setCircuitsForTesting({ makeCircuit(6, QLatin1String("BUILT"),
+                                            3, QLatin1String("GENERAL")) });
+    QVERIFY(view.torQueuedUrlForTesting().isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(startedSpy.count() > startedAfterHold,
+                             15000);
 }
 
 // TOR12: a navigation that does dispatch into the cold window and
@@ -675,10 +721,19 @@ void tst_WebView::torWarmupRetry()
     // load four fire->fail->re-arm round-trips can out-last the real
     // 45s bound, after which torArmRetry honestly refuses and the
     // leg would wait forever; stretch it for the duration.
+    // TOR14: page-level loads are now held by the view's queue too
+    // — the retry only ever sees a failure the gate released, so the
+    // view's warm-up bound is closed (0 = never holds) to simulate
+    // the post-gate race this leg exercises.
     struct WarmupGuard {
-        ~WarmupGuard() { WebPage::setTorWarmupMsForTesting(-1); }
+        ~WarmupGuard()
+        {
+            WebPage::setTorWarmupMsForTesting(-1);
+            WebView::setTorQueueWarmupMsForTesting(-1);
+        }
     } warmup;
     WebPage::setTorWarmupMsForTesting(10 * 60 * 1000);
+    WebView::setTorQueueWarmupMsForTesting(0);
     tor.setStateForTesting(TorManager::Ready);
 
     TestWebView view;
@@ -700,15 +755,28 @@ void tst_WebView::torWarmupRetry()
         if (!ok)
             ++failures;
     });
-    // A page-level load bypasses the view's queue gate — the
-    // warm-up retry is the fallback for exactly those paths.
+    QStringList titles;
+    QObject::connect(&view, &QWebEngineView::titleChanged,
+                     &view, [&titles](const QString &title) {
+        titles.append(title);
+    });
+    // A page-level load with the view gate open dispatches straight
+    // into the dead proxy — the warm-up retry is the fallback for
+    // exactly those post-gate failures.
     view.webPage()->load(target);
     QTRY_VERIFY_WITH_TIMEOUT(dispatches == 1, 15000);
     // Armed once the failure lands — torArmRetry runs inside the
-    // failed load's handling, before the error page commits.
+    // failed load's handling.
     QTRY_VERIFY_WITH_TIMEOUT(
         view.webPage()->torPendingRetryForTesting() == target,
         30000);
+
+    // TOR14: while the retry is armed the committed document is the
+    // "Tor is still starting" pending page — the notfound error page
+    // the report saw flash never commits at all.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        view.title().contains(QLatin1String("Connecting to the Tor")),
+        15000);
 
     // Past the cold-circuit dwell each usable-circuit snapshot fires
     // the armed retry; every retry fails again and re-arms while the
@@ -728,26 +796,40 @@ void tst_WebView::torWarmupRetry()
             30000);
         // That fire's own failure re-arms the url while attempts
         // remain — the only honest alternative is the budget
-        // already spent by a double-fire.
+        // already spent by a double-fire.  The failure round-trip
+        // (dispatch → dead-proxy refuse → LoadFailed → re-arm) runs
+        // through the event loop, so under suite load this needs the
+        // same slack the tail's failure count gets.
         if (attempt < 4)
             QTRY_VERIFY_WITH_TIMEOUT(
                 view.webPage()->torPendingRetryForTesting() == target
                     || view.webPage()
                            ->torRetryAttemptsForTesting() >= 4,
-                30000);
+                60000);
     }
 
     // Budget spent — the last failure lands without re-arming (the
     // fifth refusal is counted so this does not pass vacuously), a
     // further usable snapshot fires nothing, and the honest error
-    // page stays.
-    QTRY_VERIFY_WITH_TIMEOUT(failures >= 5, 30000);
+    // page finally commits — it is the ONLY one the leg saw.
+    // The fifth failure lands a beat after the fourth attempt fires
+    // — the dispatch runs through acceptNavigationRequest on a later
+    // event-loop turn, so under suite load this bound needs slack.
+    QTRY_VERIFY_WITH_TIMEOUT(failures >= 5, 60000);
     QVERIFY(view.webPage()->torPendingRetryForTesting().isEmpty());
     QCOMPARE(view.webPage()->torRetryAttemptsForTesting(), 4);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        view.title().startsWith(QLatin1String("Error loading page")),
+        15000);
     tor.setCircuitsForTesting({ makeCircuit(99, QLatin1String("BUILT"),
                                             3, QLatin1String("GENERAL")) });
     QTest::qWait(300);
     QCOMPARE(dispatches, 5);
+    int errorPages = 0;
+    for (const QString &title : titles)
+        if (title.startsWith(QLatin1String("Error loading page")))
+            ++errorPages;
+    QCOMPARE(errorPages, 1);
 }
 
 void tst_WebView::statusBarText()

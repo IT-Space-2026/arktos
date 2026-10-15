@@ -1225,6 +1225,46 @@ void WebView::torArmQueueGrace()
         m_torQueueGrace->start(torQueueGraceMs());
 }
 
+// The queue step both entry points share — the typed path
+// (loadUrl) and the page-initiated hold (torHoldNavigation).
+// Newest intent wins; the status line names the pending state so the
+// hold never looks like a dead tab.
+void WebView::torQueueLoad(const QUrl &url, const QString &title)
+{
+    m_torQueuedUrl = url;
+    m_torQueuedTitle = title;
+    // A queued intent supersedes a grace release that never reached
+    // its navigation — the stale one-shot must not free a later hold.
+    m_torGraceReleaseUrl.clear();
+    torArmWakeup();
+    torArmQueueGrace();
+    setStatusBarText(
+        tr("Tor is still starting — the page will load "
+           "automatically when it is ready"));
+}
+
+bool WebView::torHoldNavigation(const QUrl &url)
+{
+    // The grace dispatch's one-shot release — torGraceDispatch only
+    // fires after the wait bound expired, so re-holding the url it
+    // just dispatched would loop the hold forever.
+    if (url == m_torGraceReleaseUrl) {
+        m_torGraceReleaseUrl.clear();
+        return false;
+    }
+    if (!torMustQueue(url))
+        return false;
+    torQueueLoad(url, QString());
+    return true;
+}
+
+void WebView::torWarmupNotice()
+{
+    setStatusBarText(
+        tr("Tor is still starting — the page will load "
+           "automatically when it is ready"));
+}
+
 void WebView::torFlushQueuedLoad()
 {
     if (m_torQueuedUrl.isEmpty())
@@ -1250,11 +1290,15 @@ void WebView::torGraceDispatch()
         return;
     // Ready but no circuit evidence inside the grace — dispatch
     // anyway; the warm-up retry covers a failure and the error page
-    // is honest about it.
+    // is honest about it.  TOR14: the dispatch still runs through
+    // acceptNavigationRequest, whose page-level hold would re-queue
+    // it and loop the grace forever — the released url passes the
+    // gate once; a redirect hop off it is judged on its own merits.
     const QUrl url = m_torQueuedUrl;
     const QString title = m_torQueuedTitle;
     m_torQueuedUrl.clear();
     m_torQueuedTitle.clear();
+    m_torGraceReleaseUrl = url;
     load(url);
 }
 
@@ -1270,22 +1314,16 @@ void WebView::loadUrl(const QUrl &url, const QString &title)
         emit titleChanged(tr("Loading..."));
     else
         emit titleChanged(title);
-    // TOR18/TOR12: a remote navigation issued while the daemon is
-    // still bootstrapping — or inside the post-ready window before a
-    // stream-ridable circuit exists — would die at the fail-closed
+    // TOR18/TOR12/TOR14: a remote navigation issued while the daemon
+    // is still bootstrapping — or inside the post-ready window before
+    // a stream-ridable circuit exists — would die at the fail-closed
     // proxy and just sit on the error page; hold it in the view until
     // Tor can actually carry it.  The location bar already shows the
     // url (TabWidget writes it before calling here), TOR17's banner
     // explains the wait, and the status-bar line names the pending
     // state so the hold never looks like a dead tab.
     if (torMustQueue(url)) {
-        m_torQueuedUrl = url;
-        m_torQueuedTitle = title;
-        torArmWakeup();
-        torArmQueueGrace();
-        setStatusBarText(
-            tr("Tor is still starting — the page will load "
-               "automatically when it is ready"));
+        torQueueLoad(url, title);
         return;
     }
     m_torQueuedUrl.clear();

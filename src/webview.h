@@ -104,6 +104,17 @@ public:
     void loadSettings();
 
     void loadUrl(const QUrl &url, const QString &title = QString());
+    // TOR14: routes a page-initiated remote navigation — the tor
+    // start page's search assigns window.location, link clicks and
+    // JS redirects land the same way — into the same bootstrap hold
+    // loadUrl() uses.  Returns true when the url was queued (the
+    // caller must then refuse the navigation); false when the daemon
+    // can already carry it and the navigation should proceed.
+    bool torHoldNavigation(const QUrl &url);
+    // TOR14: names the warm-up pending state on the status bar —
+    // called when a transient tor failure is being auto-retried so
+    // the chrome shows the wait, not just the pending page.
+    void torWarmupNotice();
 #ifdef AUTOTESTS
     // Test seam: the url loadUrl() is holding until the tor daemon
     // reports ready — empty when nothing is queued.  Lets the
@@ -245,6 +256,9 @@ private:
     // ride SOCKS and always dispatch immediately.
     TorManager *torManager() const;
     bool torMustQueue(const QUrl &url) const;
+    // TOR14: the shared queue step — stores the newest intent, arms
+    // the wake-ups + grace, and announces the wait on the status bar.
+    void torQueueLoad(const QUrl &url, const QString &title);
     void torArmWakeup();
     void torArmQueueGrace();
     void torFlushQueuedLoad();
@@ -302,6 +316,11 @@ private:
     // must not be stranded there.
     QUrl m_torQueuedUrl;
     QString m_torQueuedTitle;
+    // TOR14: the one-shot release torGraceDispatch stamps on the url
+    // it is sending — that dispatch goes back through
+    // acceptNavigationRequest, where the page-level hold would just
+    // re-queue it; the matching hold call clears the token instead.
+    QUrl m_torGraceReleaseUrl;
     bool m_torWakeupArmed = false;
     QTimer *m_torQueueGrace = nullptr;
 };

@@ -234,18 +234,25 @@ private:
     // holds a candidate, declines otherwise.
     void handleClientCertificateSelection(
             QWebEngineClientCertificateSelection selection);
-    // TOR18: the bounded bootstrap auto-retry.  A genuine main-frame
-    // failure while the daemon is still coming up (or inside the
-    // cold-circuit stretch right after `ready`) is almost always
-    // bootstrap-transient — torArmRetry() holds the failed url and
-    // re-issues it exactly once when the network can plausibly serve
-    // it: the first BUILT circuit reported, else a bounded grace
-    // timer after `ready`.  A settled Failed/Stopped daemon never
-    // arms, so the honest error page stays.
-    void torArmRetry(const QUrl &url);
+    // TOR18/TOR14: the bounded bootstrap auto-retry.  A genuine
+    // main-frame failure while the daemon is still coming up (or
+    // inside the cold-circuit stretch right after `ready`) is almost
+    // always bootstrap-transient — torArmRetry() holds the failed url
+    // and re-issues it when the network can plausibly serve it: the
+    // first stream-ridable circuit reported, else a bounded fallback
+    // clock.  Returns whether the retry armed — while it is armed the
+    // caller shows the "Tor is starting" pending page instead of the
+    // error page, so a transient failure never flashes an error the
+    // retry then clears.  A settled Failed/Stopped daemon never arms,
+    // so the honest error page stays.
+    bool torArmRetry(const QUrl &url);
     void torDisarmRetry();
     void torStartRetryFallback();
     void torFireRetry();
+    // TOR14: the pending page shown while a warm-up retry is armed —
+    // "Tor is still starting, the page loads automatically" — in
+    // place of the error page the armed retry would only replace.
+    void showTorWarmupPending(const QUrl &url);
     static TorManager *torManager();
 
 protected:
@@ -309,6 +316,12 @@ protected:
     int m_torRetryAttempts = 0;
     QPointer<TorManager> m_torRetryManager;
     QTimer *m_torRetryTimer = nullptr;
+    // TOR14: remote urls whose navigation was refused into the
+    // view's tor hold (acceptNavigationRequest).  A refused request
+    // can still surface a LoadFailed under the aborted target — the
+    // set lets handleLoadingChanged swallow exactly those reports
+    // instead of arming a retry for a nav that was never dispatched.
+    QSet<QUrl> m_torHeldNavs;
 };
 
 #endif // WEBPAGE_H

@@ -18,15 +18,18 @@
 # `cargo deny` policy lives in $$PWD/deny.toml.
 
 rustcore:!no-rust {
-    CARGO = $$system(command -v cargo || echo $$(HOME)/.cargo/bin/cargo)
-    RUSTCORE_LIB = $$PWD/target/release/libarora_rustcore.a
+    CARGO = $$ARORA_CARGO
+    isEmpty(CARGO): CARGO = cargo
+    win32: RUSTCORE_LIB = $$PWD/target/release/arora_rustcore.lib
+    else:  RUSTCORE_LIB = $$PWD/target/release/libarora_rustcore.a
 
     cargo_rustcore.target = $$RUSTCORE_LIB
     # See rustdl.pri: scrub flag env vars a parent build system may
     # re-export into the recipe (flatpak-builder CFLAGS/CXXFLAGS leak).
-    cargo_rustcore.commands = cd $$PWD && \
+    unix: cargo_rustcore.commands = cd $$PWD && \
         env -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS \
         $$CARGO build --release
+    win32: cargo_rustcore.commands = cd $$PWD && $$CARGO build --release
     cargo_rustcore.depends = $$PWD/Cargo.toml $$PWD/Cargo.lock \
         $$files($$PWD/src/*.rs, true) $$files($$PWD/data/*)
     QMAKE_EXTRA_TARGETS += cargo_rustcore

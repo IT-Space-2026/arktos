@@ -1222,6 +1222,15 @@ Tor:
   data.  Navigations that do race the cold window and fail now get
   several warm-up retries instead of one, still stopping honestly on
   the error page once the budget is spent (TOR12).
+- The Tor start page's own search — and any link click or redirect a
+  page kicks off — now joins the bootstrap hold instead of slipping
+  past it: page-initiated navigations never reached the location-bar
+  queue, so the first search on a fresh Tor window still died at the
+  cold proxy and briefly showed an error page before the retry
+  cleared it.  Such navigations are now refused into the same hold,
+  and while a warm-up retry is armed the tab shows a "Tor is still
+  starting" pending page that resolves on its own — the error page
+  only commits once the retry budget is honestly spent (TOR14).
 - A Servo-branded start page variant appears when the default engine
   pick is Servo: the same Arora header, search box and default
   coloring, with the official Servo logo centered under the search

@@ -15531,6 +15531,87 @@ int main(int argc, char **argv)
         }
         qInfo() << "tor-window-smoke: tor start page on first tab";
 
+        // TOR14: the page-initiated twin of the TOR18/TOR12 hold —
+        // the tor start page's search assigns window.location.href,
+        // which enters acceptNavigationRequest directly and never
+        // reaches loadUrl, so the typed-path queue could not see it
+        // and the first search died at the fail-closed proxy with a
+        // visible error page that the armed retry then cleared.
+        // page()->load() is that same entry point: while the daemon
+        // is still coming up the nav must be refused into the view's
+        // hold.  The title watch stays armed for the rest of the run
+        // — an "Error loading page" commit on this tab is exactly
+        // the regression; the warm-up pending page is the honest
+        // intermediate state.
+        if (!torManager->isReady()) {
+            WebView *pageNavTab =
+                torWindow->tabWidget()->makeNewTab(false);
+            const QUrl pageNavUrl(
+                QStringLiteral("https://www.torproject.org/"));
+            pageNavTab->enginePage()->load(pageNavUrl);
+            QObject::connect(
+                pageNavTab, &QWebEngineView::loadStarted, &application,
+                [torManager]() {
+                // loadStarted also fires for a refused navigation —
+                // the hold proof is the status line + the absent
+                // error page below, not this signal.
+                qInfo() << "tor-window-smoke: page-initiated nav"
+                           " signalled loadStarted, daemon ready ="
+                        << torManager->isReady();
+            });
+            // The regression signature is an error page committing
+            // while the nav can still be carried: pre-ready, or
+            // before the warm-up retry has shown its pending page.
+            // Once the daemon is ready the armed retry is the only
+            // thing between the dispatch and an error page — a late
+            // error after the pending page is the honest
+            // budget-exhausted end state (faketor refuses every
+            // CONNECT), not the flash.
+            bool *pageNavResolved = new bool(false);
+            QObject::connect(
+                pageNavTab, &QWebEngineView::titleChanged, &application,
+                [torWinFail, torManager, pageNavResolved](
+                    const QString &title) {
+                if (title.startsWith(
+                        QLatin1String("Connecting to the Tor"))) {
+                    *pageNavResolved = true;
+                    qInfo() << "tor-window-smoke: held page nav"
+                               " shows the warm-up pending page";
+                    return;
+                }
+                if (!title.startsWith(
+                        QLatin1String("Error loading page")))
+                    return;
+                if (*pageNavResolved || torManager->isReady()) {
+                    qInfo() << "tor-window-smoke: post-warm-up error"
+                               " page is the honest dead-path end"
+                               " state";
+                    return;
+                }
+                torWinFail(QLatin1String(
+                    "held page nav committed an error page"));
+            });
+            // The hold's positive proof — not just "no error page":
+            // acceptNavigationRequest refuses the nav into the view's
+            // queue, which names the wait on the status line.  A
+            // dispatch instead (the regression) never sets it.
+            QElapsedTimer holdDeadline;
+            holdDeadline.start();
+            while (!pageNavTab->lastStatusBarText().contains(
+                       QLatin1String("Tor is still starting"))
+                   && holdDeadline.elapsed() < 10000)
+                application.processEvents(QEventLoop::AllEvents, 50);
+            if (!pageNavTab->lastStatusBarText().contains(
+                    QLatin1String("Tor is still starting"))) {
+                torWinFail(QLatin1String(
+                    "page-initiated nav was not held — it dispatched "
+                    "into the cold proxy"));
+                return application.exec();
+            }
+            qInfo() << "tor-window-smoke: page-initiated nav held"
+                       " while the daemon starts";
+        }
+
         // ENG17: the user-facing New Tab command — Ctrl+T, the
         // strip's "+" corner button, File > New Tab — must land on
         // the same tor start page, not a blank Untitled.  Every one
@@ -15545,9 +15626,12 @@ int main(int argc, char **argv)
             return application.exec();
         }
         bool newTabCommitted = false;
+        int newTabFinishedSignals = 0;
         QObject::connect(newTabPageTab, &QWebEngineView::loadFinished,
                          &application,
-                         [&newTabCommitted](bool ok) {
+                         [&newTabCommitted, &newTabFinishedSignals](
+                             bool ok) {
+            ++newTabFinishedSignals;
             newTabCommitted = ok;
         });
         QElapsedTimer newTabDeadline;
@@ -15560,9 +15644,22 @@ int main(int argc, char **argv)
                 "tor window's New Tab did not open the tor start page"));
             return application.exec();
         }
+        // The committed title lands a beat after loadFinished — the
+        // qrc page's translate() sets document.title asynchronously
+        // once the channel handshake resolves, so poll it rather
+        // than racing the signal.
+        while (newTabPageTab->title()
+                       != QLatin1String("Welcome to Arora!")
+               && newTabDeadline.elapsed() < 15000)
+            application.processEvents(QEventLoop::AllEvents, 50);
         if (newTabPageTab->title() != QLatin1String("Welcome to Arora!")) {
-            torWinFail(QLatin1String(
-                "tor start page on a New Tab never committed"));
+            torWinFail(QString::fromLatin1(
+                "tor start page on a New Tab never committed —"
+                " url=%1 title=%2 committed=%3 signals=%4")
+                    .arg(newTabPageTab->url().toString(),
+                         newTabPageTab->title())
+                    .arg(newTabCommitted)
+                    .arg(newTabFinishedSignals));
             return application.exec();
         }
         qInfo() << "tor-window-smoke: New Tab lands on the tor start page";

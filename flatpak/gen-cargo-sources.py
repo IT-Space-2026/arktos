@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Generate flatpak-builder 'archive' sources for Arora's vendored Rust deps.
 
-Reads src/rustdl/Cargo.lock and src/rustcore/Cargo.lock and emits
+Reads src/rustdl/Cargo.lock, src/rustcore/Cargo.lock and
+src/adblock/rust/Cargo.lock and emits
 cargo-sources.json: one archive source per registry crate, unpacked under
 cargo/vendor/ in the module build dir.  flatpak/cargo-config.toml (installed
 as .cargo/config.toml by the manifest) then redirects crates.io to that
@@ -20,7 +21,11 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOCKS = [ROOT / "src/rustdl/Cargo.lock", ROOT / "src/rustcore/Cargo.lock"]
+LOCKS = [
+    ROOT / "src/rustdl/Cargo.lock",
+    ROOT / "src/rustcore/Cargo.lock",
+    ROOT / "src/adblock/rust/Cargo.lock",
+]
 CRATE_URL = "https://static.crates.io/crates/{name}/{name}-{version}.crate"
 DEST = "cargo/vendor"
 

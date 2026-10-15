@@ -20,8 +20,10 @@
 # `cargo deny` policy lives in $$PWD/deny.toml.
 
 rustdl:!no-rust {
-    CARGO = $$system(command -v cargo || echo $$(HOME)/.cargo/bin/cargo)
-    RUSTDL_LIB = $$PWD/target/release/libarora_rustdl.a
+    CARGO = $$ARORA_CARGO
+    isEmpty(CARGO): CARGO = cargo
+    win32: RUSTDL_LIB = $$PWD/target/release/arora_rustdl.lib
+    else:  RUSTDL_LIB = $$PWD/target/release/libarora_rustdl.a
 
     cargo_rustdl.target = $$RUSTDL_LIB
     # Scrub the parent build system's flag env vars: make re-exports
@@ -29,9 +31,10 @@ rustdl:!no-rust {
     # overrides (e.g. -O2 -DQT_* under flatpak-builder), and cc-built
     # crates (aws-lc-sys's jitterentropy requires -O0) break on them.
     # Cargo/rustc do not consume those vars anyway.
-    cargo_rustdl.commands = cd $$PWD && \
+    unix: cargo_rustdl.commands = cd $$PWD && \
         env -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS \
         $$CARGO build --release
+    win32: cargo_rustdl.commands = cd $$PWD && $$CARGO build --release
     cargo_rustdl.depends = $$PWD/Cargo.toml $$PWD/Cargo.lock \
         $$files($$PWD/src/*.rs, true)
     QMAKE_EXTRA_TARGETS += cargo_rustdl
