@@ -153,6 +153,7 @@ This file is the task queue for the Devin CLI task loop
 | ICONS11 | Bundle Lucide icon set (Firefox-Proton-like strokes) + dark variant + prefs option — details below | pending | 0 | |
 | ICONS12 | Remove the native (OS-theme) icon option — pre-Tabler default, source of duplicate-fallback glyphs — details below | pending | 0 | |
 | ICONS13 | Remove arora-legacy icon set entirely — user directive — details below | pending | 0 | |
+| TRUST16 | Shield placement lock — padlock stays in URL bar, shield = first button LEFT of the URL field (never inside it) — details below | pending | 0 | |
 
 ## Task details
 
@@ -955,3 +956,7 @@ Remove the `native` icon set — user: 'remove the old default one, not the one 
 ### ICONS13
 
 Remove arora-legacy — user: 'remove the legacy' (confirmed they meant the bundled legacy PNG/SVG set, not native — ICONS12 already removes native). Spec: (a) delete src/icons/arora-legacy/ from the tree + icons.qrc entries + import-icons.sh mapping; (b) the Preferences combo loses the row; stored iconTheme=arora-legacy migrates to tabler like unknown ids; (c) AUDIT call sites — any code that deliberately referenced arora-legacy by name (a glyph the bundled sets borrowed as alias, e.g. the tab-close alias ICONS10 added there) must re-point at a real glyph in another bundled set, not break; (d) license/README listings drop the legacy entry. Verify: combo has no Legacy row; a pinned profile migrates cleanly; no code references the removed set (grep); tst_aroraicon set-list legs updated; make check PASS.
+
+### TRUST16
+
+Shield placement, user's exact words: 'the shield should be the first button on the left next to the URL bar. Put it next to the reader button but NOT in the url bar — keep the padlock as well.' Final layout: [reader][SHIELD][URL bar with padlock inside]. Note the branch reality: TRUST14's nav-bar shield exists on master but ui-work still has the shield INSIDE LocationBar per-tab — whatever TRUST15 fixes, THIS task enforces the final shape post-merge: (a) shield = one shared nav-bar widget inserted immediately before the location-bar splitter (the 'siteShield' navBarItemId, TRUST14 shape — not a per-tab LocationBar child); (b) padlock untouched inside the URL bar (SitePadlockButton LeftSide) — both surfaces coexist; (c) shield rebinds to the ACTIVE tab's WebView on every tab switch/new window/tear-off (TRUST14 contract); on engine/widget tabs it stays visible-but-disabled per TRUST15; (d) ui-work's per-LocationBar shield instance must not resurrect as a second copy at merge — if the merge leaves both, the location-bar copy goes; (e) NAVB edit-mode: the shield stays a normal movable item but its DEFAULT slot is locked in as directly-left-of-url. Verify: grab the bar — reader button, then shield, then URL field (padlock inside); no shield inside the URL bar, no second shield; tst leg asserts action order (siteShield between reader and locationBar ids); make check PASS.
