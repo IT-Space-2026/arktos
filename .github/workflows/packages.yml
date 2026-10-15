@@ -25,6 +25,13 @@ on:
   workflow_dispatch:
   push:
     branches: [master]
+    # lane bookkeeping (task tables, worklog, loop logs) must not
+    # trigger — or cancel — packaging runs.  .devin/pkg-*.sh stays a
+    # real trigger since it IS the packaging logic.
+    paths-ignore:
+      - '.devin/WORKLOG.md'
+      - '.devin/Arora-Task*.md'
+      - '.devin/*.log'
 
 concurrency:
   group: packages-${{ github.ref }}
