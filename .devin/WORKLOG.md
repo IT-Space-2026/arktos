@@ -965,3 +965,5 @@
 - 2026-10-15 MERGEWATCH: ui-work merged — no conflicts (Arora-Task-UI.md +5), build ok
 - 2026-10-15 MERGEWATCH: ui-work merged — clean ort, no conflicts (ICONS12+ICONS13 queued; Arora-Task-UI.md +10), build ok; rust-work 0 commits ahead
 - 2026-10-15 MERGEWATCH: ui-work merged — clean ort, no conflicts (e55968b8 TRUST16 queued; Arora-Task-UI.md +5), build ok; rust-work 0 commits ahead
+- 2026-10-15 ENG30: newTab() loads the engine's branded start page on a fresh servo tab; reloadTabInEngine re-resolves carried branded start pages/about:home to the destination engine's variant; loadUrl re-picks for a foreign-engine current tab (Home/typed about:home) — --servo-smoke all legs PASS incl new newtab-shows-startpage + swap-rebrand legs, --quit-after-load rc=0, tst_tabwidget 31/31 + engineswitch 26/26 + omnibox 87/87, 4 check gates PASS
+- 2026-10-15 MERGEWATCH: rust-work skipped — dirty .devin/WORKLOG.md + ChangeLog in main tree (agent mid-run, ENG30 entries), merge refused; ui-work 0 commits ahead

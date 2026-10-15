@@ -3239,12 +3239,15 @@ static int servoLifecycleSmoke()
                              engineTab,
                              [&finished](bool) { finished = true; });
             // ENG18: the swap's qrc: start page must commit on Servo —
-            // url preserved, real content rendered.  The title only
-            // reaches "Welcome to Arora!" if startpage.js loaded (a
-            // qrc: SUBresource fetch through the same resolver) AND
-            // the injected arora shim drove update() — one assert
-            // that covers the whole stack.
-            const QUrl startQrc(QLatin1String("qrc:/startpage.html"));
+            // real content rendered.  ENG30 re-brands the carried url
+            // at swap time: the source tab's chromium start page
+            // re-resolves to the servo variant, still a qrc: fetch
+            // through the same host resolver.  The title only reaches
+            // "Welcome to Arora!" if startpage.js loaded (a qrc:
+            // SUBresource fetch) AND the injected arora shim drove
+            // update() — one assert that covers the whole stack.
+            const QUrl startQrc(
+                QLatin1String("qrc:/startpage-servo.html"));
             pumpUntil([page, &startQrc]() {
                 return page->url() == startQrc;
             }, 30000);
@@ -3738,6 +3741,78 @@ static int servoLifecycleSmoke()
         pumpDeletes();
         report(QStringLiteral("original-kept"),
                tabs.webView(0) != nullptr);
+    }
+
+    // ENG30: the reported "start page can not be changed to servo /
+    // the servo start page is never viewable" — newTab() created the
+    // engine tab but never navigated it, and a swapped tab kept the
+    // SOURCE engine's branded start page.
+    {
+        const QVariant savedDefault = QSettings().value(
+            QLatin1String("MainWindow/defaultEngine"));
+        EngineRegistry::setDefaultBackendId(QStringLiteral("servo"));
+
+        const QUrl servoStart(
+            QStringLiteral("qrc:/startpage-servo.html"));
+        const QUrl chromiumStart(
+            QStringLiteral("qrc:/startpage.html"));
+        TabWidget tabs;
+        tabs.newTab();   // default engine pick -> servo tab
+        EngineTab *tab = tabs.engineTab(0);
+        report(QStringLiteral("newtab-is-servo"), tab != nullptr);
+        if (tab && tab->page()) {
+            pumpUntil([tab, &servoStart]() {
+                return tab->url() == servoStart;
+            }, 30000);
+            report(QStringLiteral("newtab-shows-startpage"),
+                   tab->url() == servoStart);
+
+            // (c): Home on the servo tab must land the SERVO variant
+            // even when the app default flips back to chromium — the
+            // about:home pick is re-resolved for the destination
+            // engine at dispatch, not taken from the default.
+            EngineRegistry::setDefaultBackendId(
+                QStringLiteral("webengine"));
+            tabs.loadString(QStringLiteral("about:home"));
+            pumpUntil([tab, &servoStart]() {
+                return tab->url() == servoStart;
+            }, 30000);
+            report(QStringLiteral("home-keeps-servo-branding"),
+                   tab->url() == servoStart);
+
+            // (b): a swapped tab's carried start page re-brands to
+            // the destination engine in both directions.
+            report(QStringLiteral("swap-servo-to-chromium"),
+                   tabs.reloadTabInEngine(0, QStringLiteral("webengine")));
+            pumpDeletes();
+            if (WebView *view = tabs.webView(0)) {
+                pumpUntil([view, &chromiumStart]() {
+                    return view->url() == chromiumStart;
+                }, 30000);
+                report(QStringLiteral("swap-brands-chromium"),
+                       view->url() == chromiumStart);
+            }
+            report(QStringLiteral("swap-chromium-to-servo"),
+                   tabs.reloadTabInEngine(0, QStringLiteral("servo")));
+            tab = tabs.engineTab(0);
+            if (tab) {
+                pumpUntil([tab, &servoStart]() {
+                    return tab->url() == servoStart;
+                }, 30000);
+                report(QStringLiteral("swap-brands-servo"),
+                       tab->url() == servoStart);
+            }
+            // End on chromium — the swap destroys the servo view, and
+            // the slot checks below need the instance freed.
+            report(QStringLiteral("swap-back-brands-chromium"),
+                   tabs.reloadTabInEngine(0, QStringLiteral("webengine")));
+            pumpDeletes();
+        }
+
+        if (savedDefault.isValid())
+            EngineRegistry::setDefaultBackendId(savedDefault.toString());
+        else
+            QSettings().remove(QLatin1String("MainWindow/defaultEngine"));
     }
 
 #ifdef ARORA_SERVO

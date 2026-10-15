@@ -231,7 +231,11 @@ browsing profile:
   browser down, and the notice offers "Try Servo Again" — the
   crashed web view is torn down and a fresh one is created on the
   still-running engine (switching the tab to Chromium and back
-  recovers the same way). Servo renders in-process, so its
+  recovers the same way). Branded start pages follow the tab's
+  engine: a new tab with Servo as the default engine lands on the
+  Servo-branded start page, and a start page carried through an
+  engine swap (or reached via the Home button) re-resolves to the
+  destination engine's own variant. Servo renders in-process, so its
   status-bar memory readout shows the shared whole-app figure
   marked "(shared)" rather than a per-tab number.
 - **Reader mode** (Ctrl+Alt+R) and **Picture-in-Picture** on videos.
