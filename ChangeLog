@@ -1098,6 +1098,11 @@ Containers:
   the tab row to the selected container; header click switches, tab
   drag onto a header rebinds, headers reorder, and the single-row
   inline-chips mode remains a setting (CONT06).
+- On that two-level container strip, tab favicons no longer ride up
+  into the header row above the tab — they stay vertically centered
+  inside the tab card at the automatic strip height and at any height
+  you dragged the strip to, across tab switches and scrolling
+  (TABS20).
 
 Tor:
 - Managed tor daemon plumbing (TOR01).
