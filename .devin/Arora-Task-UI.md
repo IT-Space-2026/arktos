@@ -160,6 +160,8 @@ This file is the task queue for the Devin CLI task loop
 | TABS20 | Tab site icon vertically out of the tab face — clipped/offset at top edge — details below | pending | 0 | |
 | DOWN05 | Downloads sidebar missing "clear entire list" button at top — details below | pending | 0 | |
 | MENU17 | Enlarge app-menu logo button ~25% (18px→~22-23px), keep aspect ratio — details below | pending | 0 | |
+| MENU18 | Strip start-page footer — remove "About Arora" link AND the provider/URL text — details below | pending | 0 | |
+
 
 
 
@@ -1005,3 +1007,7 @@ User report: 'On the Downloads sidebar the clean entire list (remove all) button
 ### MENU17
 
 User: 'make the logo bigger but keep the ratio — let's say 25%.' After MENU16 the app-menu button inherits the nav bar's 18px iconSize. Bump JUST the app-menu button to ~22-23px (18 * 1.25 = 22.5 — round to the value that renders cleanly, e.g. 22 or 24; prefer the SVG-native size that avoids scaling blur if the glyph has one). Constraints: (a) only the app-menu button — siblings stay 18px, this is a deliberate brand-button accent like Firefox's app menu; (b) 'keep the ratio' = scale the glyph uniformly, never stretch — the SVG scales anyway but verify no fixed W/H override distorts; (c) keep the button square/compact — grow the icon, not gratuitous padding; check the button doesn't grow the nav bar's row height beyond what it is now (bar height should stay driven by the URL field); (d) private/Tor window variants must follow (torAppMenuIcon path too). Verify: grab the nav bar — logo glyph visibly ~25% larger than sibling buttons but the bar height and sibling sizes unchanged; tst asserts the button's iconSize ≈ 1.25× bar iconSize. make check PASS.
+
+### MENU18
+
+User: 'Remove About Arora from the start page, and remove the URL as well.' The footer in startpage.js (~line 21) writes 'Search results provided by <engine> | <a href=arora-browser.org>About Arora</a>' into #footer. Remove BOTH: the About Arora anchor (with its arora-browser.org URL) AND the 'Search results provided by …' provider text — the user wants that whole attribution line gone. If #footer ends up empty, drop the <div id=footer> from the HTML too so no stray spacing/border remains, and clean the now-unused translate() calls. Apply to EVERY variant — startpage.html/js, startpage-private, startpage-tor, startpage-servo (each has own html/css; check whether they share startpage.js or inline it). Don't touch the search box or header logo. Verify: grab all four variants — header + search only, no footer line, no dead gap at the bottom; smoke legs for the branded pages still pass. make check PASS.
