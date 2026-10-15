@@ -3909,7 +3909,7 @@ static int servoLifecycleSmoke()
             const qreal notchBasePx =
                 qMax(1, QApplication::styleHints()->wheelScrollLines())
                 * 53.0;
-            const qreal ySliceStart = scrollToTop();
+            scrollToTop();
             servoView->resetScrollStats();
             sendWheel(-120, false);
             pumpUntil([]() { return false; }, 900);

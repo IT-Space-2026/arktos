@@ -305,7 +305,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | QUAL02 | Audit 2/5: memory leaks — check-leaks + ownership/FFI-boundary audit, fix findings — details below | done | 1 | LSan suite our-code blocks 53→0, all 18 smoke flags clean; valgrind top smokes our-code records 3→0 (2,848B→0 definite); audits found+fixed: unparented EngineTab profiles, parentless ServoBackend probe, drag mime data, ext-popup UAF, notes-model profile lifetime; suite green standalone except 5 documented bmw legs; gates PASS |
 | QUAL03 | Audit 3/5: security — channels, injection, isolation, fail-closed, secrets — details below | done | 3 | 5 findings fixed (ext nav-lock, relay key ownership, tabs-reply scrub, PiP script-breakout, cookie-value log) + 4 UBSan teardown fixes incl late navBarEditEvent cast; gates PASS, suite green except documented pre-existing legs, ext 26/26, instrumented re-run zero our-code reports |
 | QUAL04 | Audit 4/5: performance — baseline measurements then fix real regressions — details below | done | 1 | Baselines: ctor 184ms, first window 19ms, tab 1.5ms/switch 0.6ms, icons ~2us, idle ~232MB/loaded ~522MB, servo 145px/notch=ENG25 — all bounded, no speculative fixes. Landed: static day-group icon in HistoryTreeModel::data, runTests.sh per-binary timeout guard (ARORA_TEST_TIMEOUT) for the known bmw teardown loop, ext health-probe merge-regression fix (probe page marker skips page-shim + queue dedup). Suite green except 5 documented bmw legs; tabTransfer flake PASS standalone; ext 27/27; --quit-after-load rc=0 |
-| QUAL05 | Audit 5/5: consistency sweep + final all-gates-green closing pass — details below | blocked | 5 | blocked:exceeded 5 restarts |
+| QUAL05 | Audit 5/5: consistency sweep + final all-gates-green closing pass — details below | blocked | 5 | blocked:exceeded 5 restarts — partial landing in 57171cec (5 stale bmw legs + teardown SIGSEGV loop); resumed+closed by QUAL06 |
 | SRCH01 | Restore editable-field "Add search provider" context menu (dropped at MIG08 — needs runJavaScript form introspection) | done | 1 | Restored as "Add to the toolbar search" (historical string, translations intact) on any isContentEditable click — bare editable clicks now inline Chromium's standard editing menu instead of losing it. New src/data/contextsearch.js (qrc, contextimage.js pattern) resolves the input+form at the click point via elementFromPoint/activeElement/rect-sweep; C++ addSearchEngineFromMap rebuilds the WebKit flow: GET-only (POST warns), text/search field clicked => {searchTerms}, hidden/checked/select values ride along, >1 submit asks which, label seeds the engine-name prompt, addEngine refusal surfaces on the status bar. Passwords never captured. Verified: clean build 0 warnings; tst_webview 26/26 incl new contextMenuAddSearchProvider (GET e2e engine add + template pairs + textarea/POST honest failures) offscreen; --quit-after-load rc=0; 4 check gates + all opensearch/toolbarsearch tests PASS |
 | PRINT02 | Merge Print + Print Preview into single Firefox-style Print->preview flow — details below | done | 1 | Single 'Print...' (Ctrl+P) + window.print() open PrintPreviewDialog; preview's Print action runs native QPrintDialog on the generated PDF (range/copies preserved in printPages); direct-print path dropped, engine tabs refuse honestly, doc tabs preview staged PDF — verified: bmw 68/68, --printpreview-smoke PASS, make check green |
 | SESS02 | Windowless-start + silent-exit cluster — restore must never leave zero windows, exits must not masquerade as crashes — details below | done | 1 | ensureSessionWindow() floor on postLaunch (real sessions only) covers empty/corrupt/declined restore + zero-tab windows; windowDestroyed() kills the stray-visible-top-level zombie case via QCoreApplication::exit so main() still logs rc; quitBrowser() + standalone/tor sentinel scoping fix exit-bookkeeping lies; browser/lastExit breadcrumb ('clean rc=N' / 'terminated by signal N (NAME)' / 'unclean (crash or external kill)') echoed+warned on next start — verified: --session-floor-smoke 30/30 x3, --sigterm-smoke 3 signals + breadcrumb leg PASS, session/restore smokes PASS, make check: 4 gates PASS + suite 0 failed except in-suite torStartPage load flake (tst_browsermainwindow 68/68 standalone) |
@@ -327,9 +327,9 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | VIEW07 | View Source very slow — 3 sequential async stages; parallelize/trim — details below | done | 0 | moved to UI lane as VIEW09 |
 | DEVT15 | BiDi regressions: web tab shows "no debug target"; Elements empty; Network waterfall graph missing — details below | done | 0 | moved to UI lane as DEVT16 |
 | TRUST22 | Padlock stays yellow on Tor window — decide green-on-verified-TLS vs honest neutral — details below | done | 0 | moved to UI lane as TRUST23 |
-| POL04 | ClearURLs-style cleaning — rules engine + auto-clean on navigation only (shield UI/per-site toggle = POL05) — details below | blocked | 5 | blocked:exceeded 5 restarts |
+| POL04 | ClearURLs-style cleaning — rules engine + auto-clean on navigation only (shield UI/per-site toggle = POL05) — details below | done | 5 | capped mid-verify, but the staged code landed via the POL05 lane merge and POL05's verification covers this scope: per-domain scoped params + redirect-unwrap table + auto-clean top-level navs via PrivacyRequestInterceptor + per-host tally; --urlclean-smoke PASS (live unwrap+strip, exempt host dirty), tst_urlcleaner 26/26 |
 | POL05 | ClearURLs shield UI — SitePanel per-site toggle, cleaned-count popover, Settings privacy/urlCleaning default — details below | done | 2 | SitePanel 'Clean tracking links' toggle (urlclean site-decision rows, session-only on OTR) + honest 'N trackers removed' line + Preferences>Privacy urlCleaning default-on (legacy stripTrackingParams kept in sync). Verified: --urlclean-smoke PASS (live unwrap+strip, exempt host dirty, tally 2→0), --quit-after-load rc0, navpolicy/sitepanel/privacy/torinterceptor/urlcleaner/settingsdialog suites green, engine-audit+supplychain+rustcov gates PASS; check-warnings+full runTests don't fit the 3600s budget |
-| QUAL06 | QUAL05 resume — consistency sweep + final all-gates-green closing pass (capped at 5 attempts) — details below | pending | 0 | |
+| QUAL06 | QUAL05 resume — consistency sweep + final all-gates-green closing pass (capped at 5 attempts) — details below | done | 1 | Sweep clean (no stale MIG-TODOs/SIGNAL/foreach/QRegExp/webkit refs; i18n no placeholders; SUBDIRS complete). Fixed: ySliceStart unused-var, killed-run truncated artifacts (tst_csp.o/0-byte tst_domainblock), and 2 real test regressions — darkThemeReaderGlyph+torChromeGlyphsLegible raced READ04's always-visible reader button (vacuous !isHidden() wait → click hit pre-commit doc; now waits on isAvailable + asserts plain/suggested/active states honestly). Queue accuracy: POL04→done (work landed via POL05 merge), QUAL05 notes record partial landing, retro QUAL05 WORKLOG line added. Gates: build 0 warnings, engine-audit+supplychain+rustcov PASS, quit-after-load+servo-smoke PASS, tst_browsermainwindow 72/72. Deferred w/ reasons in .devin/QUAL06-progress.md |
 
 ## Task details
 
@@ -1966,6 +1966,32 @@ Full DevTools tab parity — user: 'Elements, Sources, Performance, Memory, Appl
 ### QUAL06
 
 QUAL05 resume — the closing-pass audit hit its 5-attempt cap with no landing. Instruction: do NOT re-run the whole sweep blindly — check git log and the working tree for what the prior runs already did (consistency fixes may be partially landed or stashed; preserve/resume, never restart from zero). Scope per QUAL05's spec, sliced to fit a run: (a) consistency sweep leftovers — stale comments vs code, i18n placeholders, naming drift across merged lanes; (b) ChangeLog/WORKLOG/queue-file accuracy; (c) the final clean-tree gate — if the full qmake+make+check sequence can't fit one run under the mem/time caps, split verification: record which gates ran green and which remain, commit partial progress, and let a second attempt continue from the notes (write a .devin/QUAL06-progress.md checklist so restarts resume instead of redoing); (d) any loose ends QUAL01-04 deferred — land them or spawn proper follow-up rows. Verify: every gate that can run in scope is green, the checklist file says exactly what's verified vs deferred, notes committed.
+
+- Resolution (attempt 1): closed the sweep — full audit trail in
+  `.devin/QUAL06-progress.md`. Consistency scan found the tree clean
+  (no stale MIG-TODOs, legacy Qt4 idioms, i18n placeholders, or
+  .pro/.pri drift). Three real defects fixed: (1) an unused-variable
+  warning in servoLifecycleSmoke; (2) truncated build artifacts left
+  by a killed run breaking tst_csp's link; (3) two latent test
+  regressions — `darkThemeReaderGlyph` and `torChromeGlyphsLegible`
+  waited on `!reader->isHidden()`, which READ04 made vacuous (the
+  reader button shows on every web tab now): the click raced the
+  article commit and extracted an empty document, and every
+  post-verdict luminance measurement could flake whenever the probe
+  landed mid-leg. Both legs now wait on `ReaderMode::isAvailable()`
+  and assert the honest three-state glyph model (plain ButtonText →
+  suggested Accent → active accent-fill). Queue corrections: POL04
+  flipped blocked→done (its scope landed and verified through POL05),
+  QUAL05's Notes record the 57171cec partial landing, retro QUAL05
+  WORKLOG line added. Gates run green: whole-tree qmake+make 0
+  warnings, check-engine-audit, check-supplychain, check-rustcoverage
+  (90.50/91.89/89.25), --quit-after-load, --servo-smoke all legs, and
+  tst_browsermainwindow 72/72 — every leg QUAL04 documented as
+  failing now passes. Deferred-with-reason: check-warnings cold
+  no-rust rebuild and full runTests.sh don't fit the 3600s run cap;
+  instrumented gates (static/tidy/leaks/sanitize/coverage) were last
+  green per QUAL01-04 and are noted as optional re-runs in the
+  checklist.
 
 ### PRIV06
 
