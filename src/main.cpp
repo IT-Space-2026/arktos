@@ -3498,9 +3498,11 @@ static int servoLifecycleSmoke()
             report(QStringLiteral("scroll-starts-top"),
                    yTop >= 0 && yTop <= 1.0);
             // The bench itself: 10 down-notches, timed.  The logged
-            // line is the input-vs-paint measurement this task exists
-            // for — px/notch pins the input delta, ms/frame exposes a
-            // paint-path bottleneck.
+            // line is the input-vs-paint measurement ENG25/ENG31
+            // exist for — px/notch pins the input delta, se_wheel
+            // sends vs paints exposes the pacing ratio, ms/frame and
+            // the interval histogram expose the paint-path bound.
+            servoView->resetScrollStats();
             QElapsedTimer bench;
             bench.start();
             const int framesBefore = servoView->frameCount();
@@ -3511,25 +3513,65 @@ static int servoLifecycleSmoke()
             const qreal yDown = settleScrollY(probeScrollY());
             const qint64 benchMs = bench.elapsed();
             const int benchPaints = servoView->frameCount() - framesBefore;
+            const int benchSends = servoView->wheelEventsSent();
             const qreal pxPerNotch = (yDown - yTop) / 10.0;
             qInfo("servo-smoke: scroll-bench 10 notches -> %.0fpx "
-                  "(%.0fpx/notch) in %lldms, %d paints "
-                  "(%.0fms/frame)",
+                  "(%.0fpx/notch) in %lldms, %d se_wheel sends, "
+                  "%d paints (%.0fms/frame)",
                   double(yDown - yTop), double(pxPerNotch),
-                  qlonglong(benchMs), benchPaints,
+                  qlonglong(benchMs), benchSends, benchPaints,
                   benchPaints
                       ? double(benchMs) / double(benchPaints) : 0.0);
+            // ENG31: frame-time histogram over the bench window —
+            // where llvmpipe's raster bound actually sits, bucketed.
+            {
+                int lt16 = 0, lt33 = 0, lt66 = 0, lt120 = 0, over = 0;
+                const QList<qint64> intervals =
+                    servoView->frameIntervalsMs();
+                for (qint64 ms : intervals) {
+                    if (ms < 16)       ++lt16;
+                    else if (ms < 33)  ++lt33;
+                    else if (ms < 66)  ++lt66;
+                    else if (ms < 120) ++lt120;
+                    else               ++over;
+                }
+                qInfo("servo-smoke: frame-histogram %d frames: "
+                      "<16ms:%d 16-33:%d 33-66:%d 66-120:%d >120:%d",
+                      int(intervals.size()), lt16, lt33, lt66,
+                      lt120, over);
+            }
             report(QStringLiteral("scroll-moves"), yDown > yTop);
             // Browser-pace scroll: ~3 lines x ~53px per notch
             // (Chrome/Firefox territory is 150-300px; the pre-ENG25
             // angleDelta/8 conversion yielded 15px).
             report(QStringLiteral("scroll-notch-pace"),
                    pxPerNotch >= 100.0);
+            // ENG31 frame pacing: deliveries are gated on frame
+            // completion, so sends can never outrun paints by more
+            // than the one in-flight delivery + watchdog slack —
+            // the input-backlog bound the choppy fix hinges on.
+            report(QStringLiteral("scroll-input-paced"),
+                   benchSends >= 1 && benchSends <= benchPaints + 2);
             // pixelDelta (trackpads, hi-res wheels) — raw passthrough.
             sendWheel(-300, true);
             const qreal yPixel = settleScrollY(yDown);
             report(QStringLiteral("scroll-pixel-delta"),
                    yPixel > yDown + 50.0);
+            // ENG31 coalescing proof: a 20-notch burst delivered
+            // synchronously (no event-loop turns between events, so
+            // no frame can complete mid-burst) must collapse into a
+            // handful of se_wheel deliveries, not 20 — each send
+            // still carries the full summed offset.
+            const int sentBeforeBurst = servoView->wheelEventsSent();
+            for (int i = 0; i < 20; ++i)
+                sendWheel(-120, false);
+            pumpUntil([]() { return false; }, 1500);
+            const int burstSent =
+                servoView->wheelEventsSent() - sentBeforeBurst;
+            qInfo("servo-smoke: scroll-burst 20 notches -> %d "
+                  "se_wheel sends", burstSent);
+            report(QStringLiteral("scroll-burst-coalesced"),
+                   burstSent >= 1 && burstSent <= 5);
             // Drive to the bottom adaptively (stop when scrollY stops
             // growing, capped), then keep wheeling — overscroll must
             // clamp at max, never wrap.

@@ -66,8 +66,10 @@
 #include "engineinterface.h"
 
 #include <qbasictimer.h>
+#include <qelapsedtimer.h>
 #include <qhash.h>
 #include <qimage.h>
+#include <qlist.h>
 #include <qpointer.h>
 #include <qpoint.h>
 #include <qurl.h>
@@ -129,6 +131,12 @@ public:
     // smoke's scroll bench uses it to split paint cost (frames/s)
     // from input pace (px/notch) without intercepting events.
     int frameCount() const { return m_frameCount; }
+    // ENG31: the rest of the scroll instrumentation — se_wheel
+    // deliveries since the last reset (input-side rate) and the
+    // inter-frame_ready interval histogram (paint-side pacing).
+    int wheelEventsSent() const { return m_wheelEventsSent; }
+    QList<qint64> frameIntervalsMs() const { return m_frameIntervalsMs; }
+    void resetScrollStats();
 
 signals:
     void urlChanged(const QUrl &url);
@@ -178,15 +186,28 @@ private:
     QString m_title;
     bool m_loading;
     QPushButton *m_retryButton = nullptr;
-    // ENG25: wheel events coalesce into one se_wheel per ~frame —
-    // every notify_input_event ends in a full-viewport software
-    // raster + readback on this display path, so raw 1:1 forwarding
-    // of a notch burst outruns the rasterizer and reads as molasses.
+    // ENG25+ENG31: wheel deltas coalesce into one se_wheel per
+    // COMPLETED frame.  Every notify_input_event ends in a full-
+    // viewport software raster + readback on this display path, so
+    // any fixed-cadence forwarding outruns llvmpipe (~35ms/frame on
+    // the release artifact) and queues stale deltas — the choppy
+    // half of ENG31.  m_wheelInFlight gates delivery: set when a
+    // summed delta is sent, cleared by the next frame_ready inside
+    // grabFrame, which then flushes whatever accumulated.  The
+    // timer is only a watchdog for a delivered delta that produces
+    // no frame at all (overscroll clamp, deduped input) — it is not
+    // the pacing mechanism.  m_wheelEventsSent + m_frameIntervalsMs
+    // feed the smoke's events-vs-frames and frame-time histogram.
     QPointF m_pendingWheelDelta;
     QPointF m_pendingWheelPos;
     Qt::KeyboardModifiers m_pendingWheelMods = Qt::NoModifier;
     QBasicTimer m_wheelTimer;
+    bool m_wheelInFlight = false;
     int m_frameCount = 0;
+    int m_wheelEventsSent = 0;
+    QElapsedTimer m_frameClock;
+    qint64 m_lastFrameReadyMs = -1;
+    QList<qint64> m_frameIntervalsMs;
 
     friend class ServoPage;
 };
