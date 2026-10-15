@@ -246,13 +246,16 @@ cmd_verify() {
     note "dpkg install: $(dpkg --admindir="$db" -s "$PKG" | grep '^Status:')"
 
     # -- ldd clean with the dev Qt hidden --------------------------------
-    missing=$(bwrap --dev-bind / / --tmpfs "$QTDIR" -- \
+    lddout=$(bwrap --dev-bind / / --tmpfs "$QTDIR" -- \
         env -i PATH=/usr/bin:/bin \
         LD_LIBRARY_PATH="$root/$LIBDIR/lib" \
         ldd "$root/$LIBDIR/bin/arora" \
-            "$root/$LIBDIR/libexec/QtWebEngineProcess" 2>&1 \
-        | grep -cE 'not found' || true)
-    [ "$missing" -eq 0 ] || fail "$missing unresolved libs in package"
+            "$root/$LIBDIR/libexec/QtWebEngineProcess" 2>&1)
+    missing=$(printf '%s\n' "$lddout" | grep -cE 'not found' || true)
+    if [ "$missing" -ne 0 ]; then
+        printf '%s\n' "$lddout" | grep -E 'not found' >&2
+        fail "$missing unresolved libs in package"
+    fi
 
     # -- launch from the installed layout, headless ----------------------
     # dpkg -i into / needs root, so the wrapper's /usr/lib/arora prefix is

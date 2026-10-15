@@ -315,7 +315,10 @@ cmd_pack() {
     mkdir -p "$T/BUILD" "$T/RPMS" "$T/SOURCES" "$T/SPECS" "$T/SRPMS"
     cp "$DIST/$PKG-$VER.tar.gz" "$T/SOURCES/"
     cp "$SPEC" "$T/SPECS/$PKG.spec"
-    (cd "$SRCROOT" && rpmbuild -bb \
+    # --nodeps: the spec's BuildRequires are system-Qt/Fedora package names
+    # kept for documentation/OBS; the payload uses $QTDIR (aqt-installed Qt),
+    # so on hosts like Ubuntu CI none of them can be satisfied.
+    (cd "$SRCROOT" && rpmbuild -bb --nodeps \
         --define "_topdir $T" \
         --define "qtdir $QTDIR" \
         "$T/SPECS/$PKG.spec")

@@ -533,14 +533,12 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     m_bookmarksToolbarFrame->setFrameShadow(QFrame::Plain);
     QPalette fp = m_bookmarksToolbarFrame->palette();
     AroraStyle::macToolbarFramePalette(fp);
-    m_bookmarksToolbarFrame->setAttribute(Qt::WA_MacNoClickThrough, true);
     m_bookmarksToolbarFrame->setPalette(fp);
     layout->addWidget(m_bookmarksToolbarFrame);
 
     layout->addWidget(m_bookmarksToolbar);
     QPalette p = m_bookmarksToolbar->palette();
     AroraStyle::macToolbarSurfacePalette(p);
-    m_bookmarksToolbar->setAttribute(Qt::WA_MacNoClickThrough, true);
     m_bookmarksToolbar->setAutoFillBackground(true);
     m_bookmarksToolbar->setPalette(p);
     m_bookmarksToolbar->setBackgroundRole(QPalette::Window);
