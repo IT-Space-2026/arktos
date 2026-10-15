@@ -63,12 +63,19 @@ SiteShieldButton::SiteShieldButton(QWidget *parent)
     // frame would reimplement all three badly.
     m_menu = new QMenu(this);
     m_panel = new SitePanel(m_menu);
-    QWidgetAction *panelAction = new QWidgetAction(m_menu);
-    panelAction->setDefaultWidget(m_panel);
-    m_menu->addAction(panelAction);
+    m_panelAction = new QWidgetAction(m_menu);
+    m_panelAction->setDefaultWidget(m_panel);
+    m_menu->addAction(m_panelAction);
     setMenu(m_menu);
     setPopupMode(QToolButton::InstantPopup);
-    connect(m_menu, &QMenu::aboutToShow, m_panel, &SitePanel::refresh);
+    connect(m_menu, &QMenu::aboutToShow,
+            this, &SiteShieldButton::populateMenu);
+    // The panel refreshes itself on web-view signals and its own
+    // control writes; a refresh that lands while the popup is open can
+    // grow the content (TOR16's rule — a shown QMenu never re-fits a
+    // hosted widget on its own).
+    connect(m_panel, &SitePanel::refreshed,
+            this, &SiteShieldButton::growMenuToFit);
     connect(AdBlockManager::instance(), &AdBlockManager::rulesChanged,
             this, &SiteShieldButton::refreshIcon);
     // ICONS05: the icon is baked to a pixmap while the badges are
@@ -93,6 +100,39 @@ SiteShieldButton::SiteShieldButton(QWidget *parent)
     // state at insertion — a ctor-hidden widget leaves the item
     // permanently absent no matter how many setVisible(true) calls
     // follow (the action's flag governs, not the widget's).
+}
+
+void SiteShieldButton::populateMenu()
+{
+    m_panel->refresh();
+    // TRUST17 — same InstantPopup size race as the tor circuit popup
+    // (TOR19): the tool button resolves the menu's sizeHint() BEFORE
+    // aboutToShow to position the popup, which caches the
+    // widget-action rect from the panel's previous render and clears
+    // the item layout's dirty flag.  QMenu::popup re-runs that pass
+    // only when an item changed since, so a refresh() that resized
+    // the panel (a permission row appearing, a longer host or count
+    // line) still opened inside the stale rect — the first-click
+    // squashed popup.  Mutating the action re-dirties the item layout
+    // so the post-aboutToShow pass re-measures the fresh content; the
+    // panel side of the fix lives in rebuildPermissionRows, which
+    // marks its geometry stale so this re-measure reads a real hint.
+    // Cheap: one action-rect pass over a single-item menu.
+    m_panelAction->setVisible(false);
+    m_panelAction->setVisible(true);
+}
+
+// Grow only, never shrink — shrinking a popup under the cursor is the
+// "creeping popup" class of bug; spare room is harmless.
+void SiteShieldButton::growMenuToFit()
+{
+    if (!m_menu->isVisible())
+        return;
+    const QSize chrome = m_menu->size() - m_panel->size();
+    const QSize grow = (m_panel->sizeHint() + chrome)
+        .expandedTo(m_menu->size());
+    if (grow != m_menu->size())
+        m_menu->resize(grow);
 }
 
 void SiteShieldButton::setWebView(WebView *webView)

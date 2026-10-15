@@ -30,8 +30,11 @@
 #include <qlabel.h>
 #include <qpushbutton.h>
 #include <qtoolbutton.h>
+#include <qmenu.h>
 #include <qmimedata.h>
 #include <qstyleoption.h>
+#include <qtcpserver.h>
+#include <qtcpsocket.h>
 #include <qtooltip.h>
 
 #include <memory>
@@ -57,6 +60,7 @@
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
 #include "toolbarsearch.h"
+#include "webpermissionmanager.h"
 #include "qtest_arora.h"
 #include "qtry.h"
 
@@ -139,6 +143,7 @@ private slots:
     void siteIcon();
     void privacyIndicator();
     void contentBlockingShield();
+    void shieldPopupFirstShow();
     void omniboxSuggestions();
     void omniboxScopedCompletions();
     void domainEmphasis_data();
@@ -523,6 +528,96 @@ void tst_LocationBar::contentBlockingShield()
     dialog->close();
 
     manager->setEnabled(wasEnabled);
+}
+
+// TRUST17: the first click on the shield must open the panel at its
+// real size.  QToolButton's InstantPopup path resolves the menu's
+// sizeHint() BEFORE aboutToShow to position the popup — that flush
+// caches the widget-action rect from the panel's previous render and
+// clears the item layout's dirty flag, and QMenu only re-runs the pass
+// when an item changed since.  A refresh() that resized the panel
+// while the popup was closed (here: a remembered-permission row
+// landing through an out-of-band write) opened inside the stale rect —
+// squashed until click 2.  Replicated by calling sizeHint() before
+// popup(); the shown panel must be sized to its live sizeHint.
+void tst_LocationBar::shieldPopupFirstShow()
+{
+    // A served page gives the view a real http origin the remembered
+    // permission keys on.
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    QObject::connect(&server, &QTcpServer::newConnection, &server,
+                     [&server]() {
+        QTcpSocket *socket = server.nextPendingConnection();
+        socket->setParent(&server);
+        const QByteArray body("<html><body>shield</body></html>");
+        socket->write(QByteArray("HTTP/1.1 200 OK\r\n"
+                                 "Content-Type: text/html\r\n"
+                                 "Connection: close\r\n"
+                                 "Content-Length: ")
+                      + QByteArray::number(body.size()) + "\r\n\r\n"
+                      + body);
+        socket->disconnectFromHost();
+    });
+
+    SiteShieldButton shield;
+    WebView view(BrowserApplication::webEngineProfile());
+    shield.setWebView(&view);
+    view.loadUrl(QUrl(QStringLiteral("http://127.0.0.1:%1/")
+                      .arg(server.serverPort())));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        view.url().host() == QLatin1String("127.0.0.1"), 15000);
+    QTRY_VERIFY_WITH_TIMEOUT(!view.page()->isLoading(), 15000);
+
+    QMenu *menu = shield.menu();
+    QVERIFY(menu);
+    SitePanel *panel = shield.panel();
+    QVERIFY(panel);
+    QWidget *permissions = panel->findChild<QWidget*>(
+        QLatin1String("sitePermissions"));
+    QVERIFY(permissions);
+    QVERIFY(permissions->findChildren<QPushButton*>().isEmpty());
+    const QSize noRowHint = panel->sizeHint();
+
+    // Grow leg: a remembered permission lands while the popup is
+    // closed — written through a non-singleton manager so the panel's
+    // changed() sync stays silent and the flush measures the stale
+    // render (any unsignalled shift reproduces this; the permission
+    // row is the deterministic, size-changing one).
+    const QUrl origin(QStringLiteral("http://127.0.0.1:%1")
+                      .arg(server.serverPort()));
+    {
+        WebPermissionManager outOfBand;
+        outOfBand.setEntry(origin,
+            QWebEnginePermission::PermissionType::Notifications, true);
+    }
+
+    menu->sizeHint();               // the tool button's pre-popup flush
+    menu->popup(QPoint(80, 80));
+    QTRY_VERIFY_WITH_TIMEOUT(menu->isVisible(), 5000);
+    // The panel's minimumWidth clamps the action rect — compare
+    // against the effective hint.
+    QCOMPARE(panel->size(),
+             panel->sizeHint().expandedTo(panel->minimumSize()));
+    QVERIFY(!permissions->findChildren<QPushButton*>().isEmpty());
+    const QSize grownSize = menu->size();
+    menu->hide();
+
+    // Shrink leg: revoking through the singleton emits changed(),
+    // which keeps the closed panel current — the next popup's flush
+    // measures the shrunken panel and it opens back at the no-row
+    // size.
+    WebPermissionManager::instance()->removeEntry(
+        origin, QWebEnginePermission::PermissionType::Notifications);
+    menu->sizeHint();
+    menu->popup(QPoint(80, 80));
+    QTRY_VERIFY_WITH_TIMEOUT(menu->isVisible(), 5000);
+    QCOMPARE(panel->size(),
+             panel->sizeHint().expandedTo(panel->minimumSize()));
+    QVERIFY(permissions->findChildren<QPushButton*>().isEmpty());
+    QCOMPARE(panel->sizeHint(), noRowHint);
+    QVERIFY(menu->size().height() < grownSize.height());
+    menu->hide();
 }
 
 // SRCH01: the location-bar dropdown merges engine suggestions above

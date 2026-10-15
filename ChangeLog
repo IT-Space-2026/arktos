@@ -856,7 +856,10 @@ UI:
   fresh or session-restored windows, and on tabs without a web page
   (Preferences, history, engine tabs) it stays in place disabled with
   an honest "not available on this tab" tooltip instead of leaving a
-  gap (TRUST15, placement locked in TRUST16).
+  gap (TRUST15, placement locked in TRUST16).  The shield's popover
+  also opens at the right size on the very first click now — a stale
+  cached geometry could squash it (and leave stale permission-row
+  buttons behind) until the second click (TRUST17).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

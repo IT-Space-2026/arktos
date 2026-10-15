@@ -27,6 +27,7 @@
 class QMenu;
 class SitePanel;
 class WebView;
+class QWidgetAction;
 
 // SHLD01: the site shield indicator — a single shared button on the
 // navigation bar (immediately left of the url field) that follows the
@@ -78,11 +79,14 @@ public:
 
 private:
     void refreshIcon();
+    void populateMenu();
+    void growMenuToFit();
 
     QPointer<WebView> m_webView;
     QMenu *m_menu;
     SitePanel *m_panel;
     QString m_trustLevel;
+    QWidgetAction *m_panelAction;
 };
 
 #endif // SITESHIELD_H
