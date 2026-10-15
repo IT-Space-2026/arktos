@@ -204,6 +204,21 @@ jobs:
           "$QTDIR/bin/qmake" -o Makefile arora.pro
           make -j"$(sysctl -n hw.ncpu)"
 
+      - name: Stage payload + bundled tor into the .app
+        run: |
+          # make install payload (translations, useragents.xml,
+          # bundled extensions) into a staging root, then into the
+          # bundle where installedDataDirectory() finds it.
+          make -C src install INSTALL_ROOT="$PWD/stage" PREFIX=/usr
+          mkdir -p Arora.app/Contents/Resources/share
+          cp -a stage/usr/share/arora Arora.app/Contents/Resources/share/
+          # tor expert bundle where TorManager's bundled-layout
+          # search (<bindir>/../lib/tor, binaryDir/../data) finds it.
+          ARORA_TOR_PREFIX="$PWD/torpayload" sh BuildProcess/fetch-tor.sh
+          mkdir -p Arora.app/Contents/lib
+          cp -a torpayload/tor Arora.app/Contents/lib/tor
+          cp -a torpayload/data Arora.app/Contents/lib/data
+
       - name: Package .dmg
         run: |
           "$QTDIR/bin/macdeployqt" Arora.app -dmg -verbose=1
