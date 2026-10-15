@@ -126,6 +126,7 @@ HEADERS += \
     $$PWD/tabbar.h \
     $$PWD/tabpositionpicker.h \
     $$PWD/tabpreview.h \
+    $$PWD/themepicker.h \
     $$PWD/tabwidget.h \
     $$PWD/toolbarsearch.h \
     $$PWD/urlcleaner.h \
@@ -194,6 +195,7 @@ SOURCES += \
     $$PWD/tabbar.cpp \
     $$PWD/tabpositionpicker.cpp \
     $$PWD/tabpreview.cpp \
+    $$PWD/themepicker.cpp \
     $$PWD/tabwidget.cpp \
     $$PWD/toolbarsearch.cpp \
     $$PWD/urlcleaner.cpp \

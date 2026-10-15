@@ -654,6 +654,13 @@ UI:
   provided by …" attribution and the "About Arora" link are gone from
   all four variants (standard, private, Tor, Servo) — the page is just
   the header, the search box and the brand mark (MENU18).
+- The window-theme choice on Preferences → Appearance is now a row of
+  clickable preview tiles — Light, Dark and Auto each sketch a small
+  page in the scheme they commit (Auto paints a half-light/half-dark
+  split for "follow the desktop"), the selection carries a highlighted
+  frame and check badge, and mouse or keyboard (arrows move,
+  Enter/Space commits) both work. The pick still previews instantly
+  and persists as before (THEM05).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

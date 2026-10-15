@@ -69,6 +69,7 @@
 #include "sidebarpositionpicker.h"
 #include "tabpositionpicker.h"
 #include "tabwidget.h"
+#include "themepicker.h"
 #include "toolbarsearch.h"
 #include "webview.h"
 #include "qtest_arora.h"
@@ -102,6 +103,7 @@ private slots:
     void iconThemeRetiredNative();
     void themeSelector();
     void themePreview();
+    void themePicker();
     void uniformSidebarIcons();
     void scrollablePages();
     void densityAndFooter();
@@ -1526,10 +1528,11 @@ void tst_SettingsDialog::iconThemeRetiredNative()
         settings.remove(QLatin1String("MainWindow/iconTheme"));
 }
 
-// THEME01: the Appearance Theme combo persists browser/colorScheme
-// and applies live — accept() flips the palette mid-session; picking
-// System again restores the captured platform palette even though the
-// offscreen QPA reports Qt::ColorScheme::Unknown.
+// THEME01/THEM05: the Appearance Theme tile picker persists
+// browser/colorScheme and applies live — accept() flips the palette
+// mid-session; picking Auto again restores the captured platform
+// palette even though the offscreen QPA reports
+// Qt::ColorScheme::Unknown.
 void tst_SettingsDialog::themeSelector()
 {
     // Sits on the Appearance page (sidebar row 2), next to the
@@ -1537,19 +1540,24 @@ void tst_SettingsDialog::themeSelector()
     // with — the note label underneath keeps the split honest.
     {
         SettingsDialog dialog;
-        QWidget *host = dialog.themeCombo;
+        QWidget *host = dialog.themePicker;
         while (host && host->parentWidget() != dialog.tabWidget)
             host = host->parentWidget();
         QVERIFY(host);
         QCOMPARE(dialog.tabWidget->indexOf(host), 2);
-        QCOMPARE(dialog.themeCombo->count(), 3);
-        QCOMPARE(dialog.themeCombo->itemText(0),
-                 QStringLiteral("System default"));
+        QCOMPARE(dialog.themePicker->count(), 3);
+        // Tiles display Light / Dark / Auto.
+        const QList<QWidget *> tiles =
+            dialog.themePicker->findChildren<QWidget *>();
+        QCOMPARE(tiles.count(), 3);
+        QCOMPARE(tiles.at(0)->accessibleName(), QLatin1String("Light"));
+        QCOMPARE(tiles.at(1)->accessibleName(), QLatin1String("Dark"));
+        QCOMPARE(tiles.at(2)->accessibleName(), QLatin1String("Auto"));
         QCOMPARE(dialog.themeLabel->buddy(),
-                 static_cast<QWidget *>(dialog.themeCombo));
+                 static_cast<QWidget *>(dialog.themePicker));
         QVERIFY(!dialog.themeNoteLabel->text().isEmpty());
-        // Default with no stored key is System.
-        QCOMPARE(dialog.themeCombo->currentIndex(), 0);
+        // Default with no stored key is System (the Auto tile).
+        QCOMPARE(dialog.themePicker->currentIndex(), 0);
     }
 
     const QColor platformWindow =
@@ -1557,7 +1565,7 @@ void tst_SettingsDialog::themeSelector()
 
     {
         SettingsDialog dialog;
-        dialog.themeCombo->setCurrentIndex(2);   // Dark
+        dialog.themePicker->setCurrentIndex(2);   // Dark
         dialog.accept();
     }
     QCOMPARE(QSettings().value(
@@ -1569,8 +1577,8 @@ void tst_SettingsDialog::themeSelector()
     // Reloaded dialog shows the stored pick; Light applies live too.
     {
         SettingsDialog dialog;
-        QCOMPARE(dialog.themeCombo->currentIndex(), 2);
-        dialog.themeCombo->setCurrentIndex(1);   // Light
+        QCOMPARE(dialog.themePicker->currentIndex(), 2);
+        dialog.themePicker->setCurrentIndex(1);   // Light
         dialog.accept();
     }
     QCOMPARE(QSettings().value(
@@ -1584,13 +1592,13 @@ void tst_SettingsDialog::themeSelector()
     // path rather than an explicit Light.
     {
         SettingsDialog dialog;
-        dialog.themeCombo->setCurrentIndex(2);
+        dialog.themePicker->setCurrentIndex(2);
         dialog.accept();
     }
     QVERIFY(BrowserTheme::isDarkPalette(QApplication::palette()));
     {
         SettingsDialog dialog;
-        dialog.themeCombo->setCurrentIndex(0);   // System default
+        dialog.themePicker->setCurrentIndex(0);   // System default
         dialog.accept();
     }
     QCOMPARE(QSettings().value(
@@ -1621,14 +1629,14 @@ void tst_SettingsDialog::themePreview()
     // nothing is persisted yet.
     {
         SettingsDialog dialog;
-        dialog.themeCombo->setCurrentIndex(2);   // Dark
+        dialog.themePicker->setCurrentIndex(2);   // Dark
         QVERIFY(BrowserTheme::paletteIsForced());
         QVERIFY(BrowserTheme::isDarkPalette(QApplication::palette()));
         QCOMPARE(QSettings().value(
                      QLatin1String("browser/colorScheme")).toString(),
                  QLatin1String("system"));
         // Reverting the combo before Apply restores the prior scheme.
-        dialog.themeCombo->setCurrentIndex(0);   // System default
+        dialog.themePicker->setCurrentIndex(0);   // System default
         QVERIFY(!BrowserTheme::paletteIsForced());
         QCOMPARE(QApplication::palette().color(QPalette::Window),
                  platformWindow);
@@ -1637,7 +1645,7 @@ void tst_SettingsDialog::themePreview()
     // Cancel discards the preview, not just the widget state.
     {
         SettingsDialog dialog;
-        dialog.themeCombo->setCurrentIndex(2);
+        dialog.themePicker->setCurrentIndex(2);
         QVERIFY(BrowserTheme::isDarkPalette(QApplication::palette()));
         dialog.reject();
     }
@@ -1648,7 +1656,7 @@ void tst_SettingsDialog::themePreview()
     // Closing the page outright (tab close — no reject()) reverts too.
     {
         SettingsDialog *dialog = new SettingsDialog;
-        dialog->themeCombo->setCurrentIndex(2);
+        dialog->themePicker->setCurrentIndex(2);
         QVERIFY(BrowserTheme::isDarkPalette(QApplication::palette()));
         delete dialog;
     }
@@ -1660,14 +1668,14 @@ void tst_SettingsDialog::themePreview()
     // scheme comes back, not the platform palette.
     {
         SettingsDialog dialog;
-        dialog.themeCombo->setCurrentIndex(2);
+        dialog.themePicker->setCurrentIndex(2);
         dialog.accept();
     }
     QVERIFY(BrowserTheme::isDarkPalette(QApplication::palette()));
     {
         SettingsDialog *dialog = new SettingsDialog;
-        QCOMPARE(dialog->themeCombo->currentIndex(), 2);
-        dialog->themeCombo->setCurrentIndex(1);   // Light
+        QCOMPARE(dialog->themePicker->currentIndex(), 2);
+        dialog->themePicker->setCurrentIndex(1);   // Light
         QVERIFY(!BrowserTheme::isDarkPalette(QApplication::palette()));
         delete dialog;
     }
@@ -1676,12 +1684,80 @@ void tst_SettingsDialog::themePreview()
     // Restore "system" + the platform palette for the following legs.
     {
         SettingsDialog dialog;
-        dialog.themeCombo->setCurrentIndex(0);
+        dialog.themePicker->setCurrentIndex(0);
         dialog.accept();
     }
     QVERIFY(!BrowserTheme::paletteIsForced());
     QCOMPARE(QApplication::palette().color(QPalette::Window),
              platformWindow);
+}
+
+// THEM05: the theme tiles are an exclusive control with radio
+// semantics — click and keyboard commits emit positionChanged with
+// the persisted combo index (the Auto tile displays third but still
+// writes index 0 — System), so browser/colorScheme keeps the values
+// the combo wrote.
+void tst_SettingsDialog::themePicker()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("browser/colorScheme"));
+
+    {
+        SettingsDialog dialog;
+        // The tiles can only take focus while their page is current —
+        // navigate there instead of relying on a persisted currentTab.
+        dialog.tabWidget->setCurrentIndex(
+            int(SettingsDialog::AppearancePage));
+        const QList<QWidget *> tiles =
+            dialog.themePicker->findChildren<QWidget *>();
+        QCOMPARE(tiles.count(), 3);
+        QCOMPARE(dialog.themePicker->currentIndex(), 0);
+
+        dialog.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+        // Focus asserts need the window ACTIVE, not just exposed —
+        // the offscreen platform can lag activation past the expose
+        // event.
+        dialog.activateWindow();
+        QVERIFY(QTest::qWaitForWindowActive(&dialog));
+
+        QSignalSpy spy(dialog.themePicker,
+                       &ThemePicker::positionChanged);
+
+        // Clicking Dark (display slot 1) commits persisted index 2;
+        // clicking Auto (slot 2) commits persisted index 0.
+        QTest::mouseClick(tiles.at(1), Qt::LeftButton);
+        QCOMPARE(dialog.themePicker->currentIndex(), 2);
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.takeFirst().at(0).toInt(), 2);
+        QTest::mouseClick(tiles.at(2), Qt::LeftButton);
+        QCOMPARE(dialog.themePicker->currentIndex(), 0);
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.takeFirst().at(0).toInt(), 0);
+        // Re-clicking the selected tile is a no-op.
+        QTest::mouseClick(tiles.at(2), Qt::LeftButton);
+        QCOMPARE(spy.count(), 0);
+
+        // Keyboard: arrows move focus between tiles in display order
+        // (wrapping); Enter commits the focused tile's persisted
+        // index.
+        tiles.at(0)->setFocus();
+        QVERIFY(tiles.at(0)->hasFocus());
+        QTest::keyClick(tiles.at(0), Qt::Key_Left);   // wraps to Auto
+        QVERIFY(tiles.at(2)->hasFocus());
+        QTest::keyClick(tiles.at(2), Qt::Key_Right);  // wraps to Light
+        QVERIFY(tiles.at(0)->hasFocus());
+        QTest::keyClick(tiles.at(0), Qt::Key_Return); // Light -> 1
+        QCOMPARE(dialog.themePicker->currentIndex(), 1);
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.last().at(0).toInt(), 1);
+        dialog.close();
+    }
+
+    // Nothing was committed — the tile flips were previews; the dtor
+    // reverts the Light preview back onto the platform palette.
+    QVERIFY(!BrowserTheme::paletteIsForced());
+    QVERIFY(!BrowserTheme::isDarkPalette(QApplication::palette()));
 }
 
 // ICONS02: the sidebar, the theme-preview combo and the engine list
@@ -3727,12 +3803,19 @@ void tst_SettingsDialog::appearanceFieldBounds()
     }
 
     // The page's combos stay content-sized too — same defect class.
-    for (QComboBox *combo : {dialog.iconThemeCombo, dialog.themeCombo}) {
+    for (QComboBox *combo : {dialog.iconThemeCombo}) {
         QCOMPARE(combo->sizePolicy().horizontalPolicy(),
                  QSizePolicy::Maximum);
         QVERIFY2(combo->width() <= combo->sizeHint().width() + 4,
                  qPrintable(combo->objectName()));
     }
+    // The theme tile picker is content-sized as well — three fixed
+    // tiles, never a full-width band.
+    QCOMPARE(dialog.themePicker->sizePolicy().horizontalPolicy(),
+             QSizePolicy::Maximum);
+    QVERIFY2(dialog.themePicker->width()
+                 <= dialog.themePicker->sizeHint().width() + 4,
+             qPrintable(dialog.themePicker->objectName()));
 
     // Narrow case: the fields stay capped and nothing forces a
     // horizontal scrollbar.

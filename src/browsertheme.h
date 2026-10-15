@@ -38,7 +38,7 @@ class QDialog;
 // mainly useful on desktops that do not report a scheme and for
 // headless testing (the offscreen QPA reports Unknown).
 //
-// THEME01: the Appearance page's Theme combo persists
+// THEME01/THEM05: the Appearance page's theme tiles persist
 // "browser/colorScheme" = system|light|dark (default system).  An
 // explicit light/dark pick wins outright; "system" falls through to
 // the env override, then the platform's reported scheme.
@@ -51,7 +51,7 @@ Qt::ColorScheme preferredColorScheme();
 
 // What "System default" resolves to right now — the env override if
 // set, else the platform's reported scheme (may be Unknown).  The
-// Preferences page previews the combo's System row with this since
+// Preferences page previews the picker's Auto tile with this since
 // preferredColorScheme() would consult the not-yet-committed pick.
 Qt::ColorScheme systemColorScheme();
 
