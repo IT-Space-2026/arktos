@@ -319,8 +319,8 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | TOR13 | "New circuit for this site" does nothing on Tor window — details below | done | 0 | NEWNYM ack now reloads the site's tab + display prefers post-NEWNYM circuits so the chain rotates; 10s client NEWNYM cooldown reports the wait honestly — tst_tormanager 22/22+1skip, click-smoke PASS, check gates PASS, suite clean except stash-verified load flakes (torWarmupRetry, shieldPopupFirstShow) |
 | TOR14 | TOR12 fix incomplete — first search still error-flashes, works seconds later — details below | pending | 0 | |
 | PRIV06 | Fingerprint spoofing ON by default — flip privacy/fingerprintProtection default + migrate — details below | in_progress | 1 | |
-| PIP02 | Picture-in-Picture does nothing when triggered — popOut path broken — details below | pending | 0 | |
 | VIEW06 | "Zoom text only" toggle does nothing — details below | pending | 0 | |
+| PIP02 | Picture-in-Picture does nothing when triggered — popOut path broken — details below | pending | 0 | |
 | VIEW07 | View Source very slow — 3 sequential async stages; parallelize/trim — details below | pending | 0 | |
 | QUAL06 | QUAL05 resume — consistency sweep + final all-gates-green closing pass (capped at 5 attempts) — details below | pending | 0 | |
 
