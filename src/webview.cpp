@@ -793,6 +793,14 @@ void WebView::loadUrlInView(WebView *newView, const QUrl &linkUrl)
     const QString scheme = linkUrl.scheme();
     if (scheme == QLatin1String("http")
         || scheme == QLatin1String("https")) {
+        // TOR12: a link open in a tor window while the daemon is
+        // still starting must queue like a typed url — loadUrl()
+        // drops the Referer header the request form carries, which is
+        // strictly safer than dispatching into the fail-closed proxy.
+        if (newView->torMustQueue(linkUrl)) {
+            newView->loadUrl(linkUrl);
+            return;
+        }
         QWebEngineHttpRequest request(linkUrl);
         if (newView->webPage()->profile() == m_page->profile())
             request.setHeader("Referer", url().toEncoded());
@@ -1110,6 +1118,42 @@ TorManager *WebView::torManager() const
     return app ? app->torManager() : nullptr;
 }
 
+// TOR12: the cold-circuit stretch after the SOCKS listener goes live
+// — same bound WebPage's warm-up retry uses; inside it a remote nav
+// with no stream-ridable circuit is still racing the daemon.
+static const qint64 kTorQueueWarmupMs = 45 * 1000;
+// A daemon at Ready that never shares circuit data (dead control
+// channel — SOCKS itself still proxies) cannot hold a nav forever;
+// after this grace the queued url is dispatched anyway and WebPage's
+// warm-up retry covers a failure.
+static const int kTorQueueGraceMs = 10000;
+
+#ifdef AUTOTESTS
+static int s_torQueueGraceMs = -1;
+void WebView::setTorQueueGraceMsForTesting(int ms)
+{
+    s_torQueueGraceMs = ms;
+}
+static int torQueueGraceMs()
+{
+    return s_torQueueGraceMs >= 0 ? s_torQueueGraceMs
+                                  : kTorQueueGraceMs;
+}
+static qint64 s_torQueueWarmupMs = -1;
+void WebView::setTorQueueWarmupMsForTesting(qint64 ms)
+{
+    s_torQueueWarmupMs = ms;
+}
+static qint64 torQueueWarmupMs()
+{
+    return s_torQueueWarmupMs >= 0 ? s_torQueueWarmupMs
+                                   : kTorQueueWarmupMs;
+}
+#else
+static int torQueueGraceMs() { return kTorQueueGraceMs; }
+static qint64 torQueueWarmupMs() { return kTorQueueWarmupMs; }
+#endif
+
 // Whether a loadUrl() must hold for the daemon.  Only schemes that
 // ride the SOCKS listener are queued — qrc:/about:/data:/file: pages
 // resolve locally and must never stall behind bootstrap (the tor
@@ -1127,12 +1171,25 @@ bool WebView::torMustQueue(const QUrl &url) const
         && scheme != QLatin1String("ftp"))
         return false;
     TorManager *tor = torManager();
-    return tor && !tor->isReady();
+    if (!tor)
+        return false;
+    if (!tor->isReady())
+        return true;
+    // TOR12: `ready` alone is not the end of the wait — it only means
+    // the SOCKS listener answers; the first stream-ridable circuit
+    // can land seconds after it, and a nav dispatched into that cold
+    // window is the "first Enter does nothing" report.  Hold until
+    // circuit evidence arrives; past the warm-up bound the daemon is
+    // settled and the nav takes its chances honestly.
+    const qint64 elapsed = tor->readyElapsed();
+    return elapsed >= 0 && elapsed < torQueueWarmupMs()
+        && !tor->hasUsableCircuit();
 }
 
-// The only wake-up the queue needs — `ready` is the first moment a
-// remote dispatch can succeed.  The connection is armed lazily on the
-// first queued load.
+// The wake-ups the queue needs: `ready` ends the bootstrap hold and
+// circuitsChanged ends the post-ready cold-circuit hold the moment a
+// usable path exists instead of at the grace bound.  Armed lazily on
+// the first queued load.
 void WebView::torArmWakeup()
 {
     if (m_torWakeupArmed)
@@ -1143,11 +1200,29 @@ void WebView::torArmWakeup()
     m_torWakeupArmed = true;
     connect(tor, &TorManager::ready, this,
             [this](const QNetworkProxy &) { torFlushQueuedLoad(); });
+    connect(tor, &TorManager::circuitsChanged, this,
+            [this](const QList<TorCircuit> &) { torFlushQueuedLoad(); });
     // A replaced manager (the autotest seam swaps the pointer) must
     // earn a fresh wakeup — the armed flag tracks the object it was
     // connected to.
     connect(tor, &QObject::destroyed, this,
             [this]() { m_torWakeupArmed = false; });
+}
+
+// Bounds the post-ready wait for circuit evidence.  The timer is
+// anchored on the first hold and never restarted by a re-queue —
+// circuit churn reporting unusable snapshots cannot push the
+// deadline out forever.
+void WebView::torArmQueueGrace()
+{
+    if (!m_torQueueGrace) {
+        m_torQueueGrace = new QTimer(this);
+        m_torQueueGrace->setSingleShot(true);
+        connect(m_torQueueGrace, &QTimer::timeout,
+                this, [this]() { torGraceDispatch(); });
+    }
+    if (!m_torQueueGrace->isActive())
+        m_torQueueGrace->start(torQueueGraceMs());
 }
 
 void WebView::torFlushQueuedLoad()
@@ -1159,9 +1234,28 @@ void WebView::torFlushQueuedLoad()
     m_torQueuedUrl.clear();
     m_torQueuedTitle.clear();
     // Back through loadUrl() — a daemon that somehow is still not
-    // ready re-queues instead of dispatching into the fail-closed
-    // proxy.
+    // ready (or has no usable circuit yet) re-queues instead of
+    // dispatching into the fail-closed proxy.
     loadUrl(url, title);
+}
+
+void WebView::torGraceDispatch()
+{
+    if (m_torQueuedUrl.isEmpty())
+        return;
+    TorManager *tor = torManager();
+    if (tor && !tor->isReady())
+        // Still bootstrapping — `ready` stays the wake-up; the grace
+        // restarts when the flush there re-queues the url.
+        return;
+    // Ready but no circuit evidence inside the grace — dispatch
+    // anyway; the warm-up retry covers a failure and the error page
+    // is honest about it.
+    const QUrl url = m_torQueuedUrl;
+    const QString title = m_torQueuedTitle;
+    m_torQueuedUrl.clear();
+    m_torQueuedTitle.clear();
+    load(url);
 }
 
 void WebView::loadUrl(const QUrl &url, const QString &title)
@@ -1176,19 +1270,28 @@ void WebView::loadUrl(const QUrl &url, const QString &title)
         emit titleChanged(tr("Loading..."));
     else
         emit titleChanged(title);
-    // TOR18: a remote navigation issued while the daemon is still
-    // bootstrapping would die at the fail-closed proxy and just sit
-    // on the error page — hold it in the view until `ready` instead.
-    // The location bar already shows the url (TabWidget writes it
-    // before calling here) and TOR17's banner explains the wait.
+    // TOR18/TOR12: a remote navigation issued while the daemon is
+    // still bootstrapping — or inside the post-ready window before a
+    // stream-ridable circuit exists — would die at the fail-closed
+    // proxy and just sit on the error page; hold it in the view until
+    // Tor can actually carry it.  The location bar already shows the
+    // url (TabWidget writes it before calling here), TOR17's banner
+    // explains the wait, and the status-bar line names the pending
+    // state so the hold never looks like a dead tab.
     if (torMustQueue(url)) {
         m_torQueuedUrl = url;
         m_torQueuedTitle = title;
         torArmWakeup();
+        torArmQueueGrace();
+        setStatusBarText(
+            tr("Tor is still starting — the page will load "
+               "automatically when it is ready"));
         return;
     }
     m_torQueuedUrl.clear();
     m_torQueuedTitle.clear();
+    if (m_torQueueGrace)
+        m_torQueueGrace->stop();
     load(url);
 }
 

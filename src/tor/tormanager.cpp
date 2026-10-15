@@ -250,6 +250,29 @@ QList<TorCircuit> TorManager::parseCircuitStatus(const QStringList &lines)
     return circuits;
 }
 
+// TOR12: a stream-ridable circuit is fully BUILT with the real
+// three-hop chain.  Bootstrap's earliest BUILT reports are mostly
+// directory or one-hop internal circuits (PURPOSE=DIR_FETCH & co.)
+// that still refuse a CONNECT — anything with an explicit non-GENERAL
+// purpose or a short chain does not count.
+bool TorManager::isUsableCircuit(const TorCircuit &circuit)
+{
+    if (circuit.status != QLatin1String("BUILT"))
+        return false;
+    if (!circuit.purpose.isEmpty()
+        && circuit.purpose != QLatin1String("GENERAL"))
+        return false;
+    return circuit.hops.size() >= 3;
+}
+
+bool TorManager::hasUsableCircuit() const
+{
+    for (const TorCircuit &circuit : m_circuits)
+        if (isUsableCircuit(circuit))
+            return true;
+    return false;
+}
+
 int TorManager::displayCircuitId() const
 {
     const TorCircuit *byStreams = nullptr;

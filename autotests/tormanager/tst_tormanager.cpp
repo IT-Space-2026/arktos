@@ -54,6 +54,7 @@ private slots:
     void readyElapsed();
     void controlProtocol();
     void circuitStatusParsing();
+    void usableCircuit();
     void nsAddressParsing();
     void socks5RejectsBadGreeting();
     void fakeDaemonLifecycle();
@@ -280,6 +281,59 @@ void tst_TorManager::circuitStatusParsing()
     QVERIFY(TorManager::parseCircuitStatus(QStringList()).isEmpty());
     QVERIFY(TorManager::parseCircuitStatus(
         { QStringLiteral("OK") }).isEmpty());
+}
+
+// TOR12: isUsableCircuit is the gate the navigation hold waits on —
+// only a fully BUILT three-hop client path counts; the early BUILT
+// reports bootstrap produces (directory fetches, one-hop internals,
+// onion-service setup) still refuse a CONNECT.
+void tst_TorManager::usableCircuit()
+{
+    const QList<TorCircuit> circuits = TorManager::parseCircuitStatus({
+        QStringLiteral(
+            "1 BUILT $7BE683E65D48141321C5ED92F075C55364AC7123~GuardOne,"
+            "$BE2E0F2E1F52A24110E79D52D32FB42F46805DBA=MiddleTwo,"
+            "$ABCDEF0123456789ABCDEF0123456789ABCDEF01~ExitThree "
+            "BUILD_FLAGS=NEED_CAPACITY PURPOSE=GENERAL"),
+        QStringLiteral(
+            "2 BUILT $1111111111111111111111111111111111111111 "
+            "PURPOSE=DIR_FETCH"),
+        QStringLiteral(
+            "3 EXTENDED $2222222222222222222222222222222222222222,"
+            "$3333333333333333333333333333333333333333,"
+            "$4444444444444444444444444444444444444444 "
+            "PURPOSE=GENERAL"),
+        QStringLiteral(
+            "4 BUILT $5555555555555555555555555555555555555555 "
+            "PURPOSE=GENERAL"),
+        QStringLiteral(
+            "5 BUILT $6666666666666666666666666666666666666666,"
+            "$7777777777777777777777777777777777777777,"
+            "$8888888888888888888888888888888888888888"),
+        QStringLiteral(
+            "6 BUILT $9999999999999999999999999999999999999999,"
+            "$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA,"
+            "$BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB "
+            "PURPOSE=HS_CLIENT_REND"),
+    });
+    QCOMPARE(circuits.size(), 6);
+    QVERIFY(TorManager::isUsableCircuit(circuits.at(0)));   // canonical
+    QVERIFY(!TorManager::isUsableCircuit(circuits.at(1)));  // dir fetch
+    QVERIFY(!TorManager::isUsableCircuit(circuits.at(2)));  // not built
+    QVERIFY(!TorManager::isUsableCircuit(circuits.at(3)));  // one-hop
+    QVERIFY(TorManager::isUsableCircuit(circuits.at(4)));   // no purpose
+    QVERIFY(!TorManager::isUsableCircuit(circuits.at(5)));  // hs rend
+
+    // hasUsableCircuit() scans the manager's snapshot — empty or
+    // internal-only snapshots hold, one usable entry frees the gate.
+    TorManager manager;
+    QVERIFY(!manager.hasUsableCircuit());
+    manager.setCircuitsForTesting({ circuits.at(1), circuits.at(3) });
+    QVERIFY(!manager.hasUsableCircuit());
+    QSignalSpy spy(&manager, &TorManager::circuitsChanged);
+    manager.setCircuitsForTesting({ circuits.at(1), circuits.at(0) });
+    QVERIFY(manager.hasUsableCircuit());
+    QCOMPARE(spy.count(), 1);
 }
 
 // TOR05: the ns/id reply's 'r' line carries the OR address as its

@@ -953,13 +953,15 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
         // retry — even a manual re-issue of the dead url, which IS
         // the retry the user asked for.  The same data: carve-out
         // keeps the error page's own commit from disarming it.  The
-        // one-retry bound is per navigation: a different target earns
-        // its own retry, but a url that was retried and failed again
+        // retry budget is per navigation (TOR12): a different target
+        // earns its own attempts, and a url that spent all of them
         // stays bound until the user loads something else.
         if (url.scheme() != QLatin1String("data")) {
             torDisarmRetry();
-            if (url != m_torRetriedUrl)
+            if (url != m_torRetriedUrl) {
                 m_torRetriedUrl.clear();
+                m_torRetryAttempts = 0;
+            }
         }
         m_requestedUrl = url;
         emit aboutToLoadUrl(url);
@@ -1311,10 +1313,30 @@ static const qint64 kTorWarmupMs = 45 * 1000;
 // retry after this grace instead of stranding the error page.
 static const int kTorRetryFallbackMs = 15000;
 // Tor reports its first BUILT circuits moments into Ready — often
-// directory/internal paths, or exits still mid-churn — so a BUILT
+// directory/internal paths, or exits still mid-churn — so a snapshot
 // arriving before this dwell defers to the fallback clock instead of
-// spending the one retry on a path that is still cold.
+// spending a retry on a path that is still cold.
 static const qint64 kTorRetryMinDwellMs = 3000;
+// TOR12: retries a failed navigation may spend inside the warm-up
+// window.  One was not enough — the first usable-circuit snapshot is
+// often still a cold path — so a retry that fails again re-arms
+// while the budget and the window allow; past it the error page
+// stays honest and TOR17's banner carries the manual Retry.
+static const int kTorMaxRetryAttempts = 4;
+
+#ifdef AUTOTESTS
+static qint64 s_torWarmupMs = -1;
+void WebPage::setTorWarmupMsForTesting(qint64 ms)
+{
+    s_torWarmupMs = ms;
+}
+static qint64 torWarmupMs()
+{
+    return s_torWarmupMs >= 0 ? s_torWarmupMs : kTorWarmupMs;
+}
+#else
+static qint64 torWarmupMs() { return kTorWarmupMs; }
+#endif
 
 TorManager *WebPage::torManager()
 {
@@ -1325,7 +1347,7 @@ TorManager *WebPage::torManager()
 void WebPage::torArmRetry(const QUrl &url)
 {
     TorManager *tor = torManager();
-    if (!tor || url.isEmpty() || m_torRetriedUrl == url)
+    if (!tor || url.isEmpty())
         return;
     // Arm only while the failure is plausibly bootstrap-transient:
     // the daemon is still coming up (the fail-closed proxy refuses
@@ -1338,20 +1360,26 @@ void WebPage::torArmRetry(const QUrl &url)
         || state == TorManager::Connecting
         || state == TorManager::Bootstrapping;
     const qint64 elapsed = tor->readyElapsed();
-    const bool warmup = elapsed >= 0 && elapsed < kTorWarmupMs;
+    const bool warmup = elapsed >= 0 && elapsed < torWarmupMs();
     if (!connecting && !warmup)
         return;
+    // The retry budget rides with the url it was spent on — a
+    // different target earns a fresh one; this url re-arms while it
+    // has attempts left (TOR12).
+    if (m_torRetriedUrl != url) {
+        m_torRetriedUrl = url;
+        m_torRetryAttempts = 0;
+    } else if (m_torRetryAttempts >= kTorMaxRetryAttempts) {
+        return;
+    }
     m_torRetryUrl = url;
-    // The bound is spent on the arm, not the fire — a retry that
-    // fails again never re-arms, so it can never loop.
-    m_torRetriedUrl = url;
     if (m_torRetryManager != tor) {
         m_torRetryManager = tor;
         connect(tor, &TorManager::ready, this,
                 [this](const QNetworkProxy &) {
             // `ready` alone still races cold exits — it only arms the
             // no-circuit-evidence fallback; the retry prefers to wait
-            // for a BUILT circuit.
+            // for a usable circuit.
             torStartRetryFallback();
         });
         connect(tor, &TorManager::circuitsChanged, this,
@@ -1360,17 +1388,20 @@ void WebPage::torArmRetry(const QUrl &url)
             if (!manager || !manager->isReady()
                     || m_torRetryUrl.isEmpty())
                 return;
-            // A BUILT inside the first seconds of Ready is usually a
-            // directory/internal path or an exit still mid-churn —
-            // keep waiting on the fallback clock rather than spend
-            // the retry on it.
+            // A snapshot inside the first seconds of Ready is usually
+            // all internal paths or exits still mid-churn — keep
+            // waiting on the fallback clock rather than spend a retry
+            // on it.
             const qint64 elapsed = manager->readyElapsed();
             if (elapsed >= 0 && elapsed < kTorRetryMinDwellMs) {
                 torStartRetryFallback();
                 return;
             }
+            // TOR12: only a stream-ridable circuit earns the fire —
+            // a snapshot of directory/one-hop internals just leaves
+            // the fallback running.
             for (const TorCircuit &circuit : circuits) {
-                if (circuit.status == QLatin1String("BUILT")) {
+                if (TorManager::isUsableCircuit(circuit)) {
                     torFireRetry();
                     return;
                 }
@@ -1409,6 +1440,11 @@ void WebPage::torFireRetry()
         return;
     const QUrl url = m_torRetryUrl;
     torDisarmRetry();
+    // TOR12: the attempt is spent on the fire — a retry that fails
+    // again re-arms in torArmRetry while the budget and the warm-up
+    // window allow, and a url whose budget is gone keeps its honest
+    // error page.
+    ++m_torRetryAttempts;
     // No "still on the error page" url() check — the fire can land
     // between setHtml() and the error page's commit, when url() still
     // names the previous document, and a user who navigated away has

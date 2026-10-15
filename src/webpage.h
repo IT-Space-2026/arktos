@@ -178,6 +178,18 @@ public:
     // engine-originated window.open.
     QWebEnginePage *testCreateWindow(QWebEnginePage::WebWindowType type)
         { return createWindow(type); }
+    // TOR12: the url the warm-up retry is armed for — empty when
+    // nothing is pending.  The multi-attempt legs poll it to sync on
+    // failure -> re-arm instead of guessing at timings.
+    QUrl torPendingRetryForTesting() const { return m_torRetryUrl; }
+    // TOR12: how many retry fires the armed url's budget has spent —
+    // exact fire accounting, unlike counting dispatch signals that
+    // the fallback timer can also produce.
+    int torRetryAttemptsForTesting() const { return m_torRetryAttempts; }
+    // TOR12: overrides the wall-clock warm-up window torArmRetry
+    // gates on — a large value keeps a slow suite run from expiring
+    // the real bound mid-leg; -1 restores the default.
+    static void setTorWarmupMsForTesting(qint64 ms);
 #endif
 
 private slots:
@@ -286,12 +298,15 @@ protected:
     // records "send nothing" — a negotiation's repeated challenges
     // reuse the decision instead of re-prompting.
     QHash<QString, QSslCertificate> m_clientCertChoices;
-    // TOR18: m_torRetryUrl is the failed navigation waiting for its
-    // wake-up (empty = none armed); m_torRetriedUrl records the url
-    // that already spent its one retry — the bound is spent on the
-    // arm, not the fire, so a retry that fails again can never loop.
+    // TOR18/TOR12: m_torRetryUrl is the failed navigation waiting for
+    // its wake-up (empty = none armed); m_torRetriedUrl owns the
+    // retry budget and m_torRetryAttempts counts the fires spent on
+    // it — a retry that fails again inside the warm-up window re-arms
+    // while attempts remain, and a url whose budget is gone keeps its
+    // honest error page instead of looping.
     QUrl m_torRetryUrl;
     QUrl m_torRetriedUrl;
+    int m_torRetryAttempts = 0;
     QPointer<TorManager> m_torRetryManager;
     QTimer *m_torRetryTimer = nullptr;
 };

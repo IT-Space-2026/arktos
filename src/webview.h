@@ -74,6 +74,7 @@
 
 namespace Engine { class Page; class Profile; }
 class QWebEngineProfile;
+class QTimer;
 class BrowserMainWindow;
 class PdfView;
 class PictureInPicture;
@@ -109,6 +110,14 @@ public:
     // bootstrap-gate tests assert the nav never reached the network
     // stack.
     QUrl torQueuedUrlForTesting() const { return m_torQueuedUrl; }
+    // Test seam: overrides the post-ready grace that bounds the wait
+    // for circuit evidence — a small value keeps the grace-expiry leg
+    // off the real multi-second clock; -1 restores the default.
+    static void setTorQueueGraceMsForTesting(int ms);
+    // Test seam: overrides the wall-clock warm-up window that ends
+    // the cold-circuit hold — a large value keeps a slow suite run
+    // from expiring the real bound mid-leg; -1 restores the default.
+    static void setTorQueueWarmupMsForTesting(qint64 ms);
 #endif
     // Whether a url that arrived from outside the browser chrome — the
     // command line, a forwarded second-instance message, a drop, a
@@ -225,16 +234,21 @@ private:
     // slot did.
     void addSearchEngineFromMap(const QVariantMap &info);
 
-    // TOR18: the bootstrap navigation gate.  While the managed daemon
-    // is still coming up, a remote loadUrl() is held in the view
-    // (m_torQueuedUrl) and dispatched when `ready` lands instead of
-    // dying at the fail-closed proxy — the user no longer has to
-    // reload a dead tab by hand.  Local schemes (qrc:/about:/data:/
-    // file:) never ride SOCKS and always dispatch immediately.
+    // TOR18/TOR12: the bootstrap navigation gate.  While the managed
+    // daemon is still coming up — and during the cold-circuit window
+    // just after `ready`, when the SOCKS listener answers but no
+    // stream-ridable circuit exists yet — a remote loadUrl() is held
+    // in the view (m_torQueuedUrl) and dispatched on `ready`,
+    // usable-circuit evidence, or the grace timer instead of dying at
+    // the fail-closed proxy — the user no longer has to reload a dead
+    // tab by hand.  Local schemes (qrc:/about:/data:/file:) never
+    // ride SOCKS and always dispatch immediately.
     TorManager *torManager() const;
     bool torMustQueue(const QUrl &url) const;
     void torArmWakeup();
+    void torArmQueueGrace();
     void torFlushQueuedLoad();
+    void torGraceDispatch();
 
 private slots:
     void setProgress(int progress);
@@ -279,11 +293,17 @@ private:
     // (no WebViewWithSearch parent) path; inside a tab the
     // WebViewWithSearch owns it and pdfView() resolves up the chain.
     QPointer<PdfView> m_pdfView;
-    // TOR18: a remote navigation held until TorManager::ready — the
-    // newest intent wins, so a second loadUrl() simply replaces it.
+    // TOR18/TOR12: a remote navigation held until the daemon can
+    // actually carry it — the newest intent wins, so a second
+    // loadUrl() simply replaces it.  m_torQueueGrace bounds the
+    // post-ready wait for circuit evidence: a daemon whose control
+    // channel is dead can sit at Ready with an empty circuits()
+    // snapshot forever while SOCKS still proxies, and the held nav
+    // must not be stranded there.
     QUrl m_torQueuedUrl;
     QString m_torQueuedTitle;
     bool m_torWakeupArmed = false;
+    QTimer *m_torQueueGrace = nullptr;
 };
 
 #endif

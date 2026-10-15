@@ -226,6 +226,42 @@ struct WindowListGuard {
     }
 };
 
+// TOR12: builds a TorManager circuit-status entry for the warm-up
+// gate legs — BUILT + three hops + empty/GENERAL purpose is what the
+// gate counts as a stream-ridable path.
+static TorCircuit makeCircuit(int id, const QString &status, int hops,
+                              const QString &purpose)
+{
+    TorCircuit circuit;
+    circuit.id = id;
+    circuit.status = status;
+    circuit.purpose = purpose;
+    for (int i = 0; i < hops; ++i) {
+        TorCircuitHop hop;
+        hop.fingerprint = QStringLiteral("%1").arg(id * 10 + i);
+        hop.nickname = QStringLiteral("hop%1").arg(i);
+        circuit.hops << hop;
+    }
+    return circuit;
+}
+
+// Test-owned inert manager — the ctor spawns nothing until start(),
+// so the tests drive the state machine by hand.  The injection guard
+// returns the app seam to nullptr: a dangling pointer would poison
+// every later case.
+struct TorManagerInjection {
+    TorManager *tor;
+    explicit TorManagerInjection(TorManager *manager) : tor(manager)
+    {
+        BrowserApplication::instance()->setTorManagerForTesting(tor);
+    }
+    ~TorManagerInjection()
+    {
+        if (BrowserApplication *app = BrowserApplication::instance())
+            app->setTorManagerForTesting(nullptr);
+    }
+};
+
 class tst_WebView : public QObject
 {
     Q_OBJECT
@@ -237,6 +273,8 @@ private slots:
     void wheelZoom();
     void loadUrl();
     void torQueuedNavigation();
+    void torWarmupNavigationGate();
+    void torWarmupRetry();
     void statusBarText();
     void mouseButtons();
     void dropUrl();
@@ -503,14 +541,7 @@ void tst_WebView::torQueuedNavigation()
     // guarded back to nullptr: a dangling pointer in
     // m_torManager would poison every later case.
     TorManager tor;
-    struct TorManagerGuard {
-        ~TorManagerGuard()
-        {
-            if (BrowserApplication *app = BrowserApplication::instance())
-                app->setTorManagerForTesting(nullptr);
-        }
-    } injected;
-    BrowserApplication::instance()->setTorManagerForTesting(&tor);
+    TorManagerInjection injected(&tor);
     tor.setStateForTesting(TorManager::Bootstrapping);
 
     TestWebView view;
@@ -533,13 +564,19 @@ void tst_WebView::torQueuedNavigation()
         view.url().toString().startsWith(QLatin1String("data:")),
         15000);
 
-    // Re-queue, drive the daemon to Ready, emit `ready` — the held
-    // url flushes into a real load on its own.
+    // Re-queue, drive the daemon to Ready — TOR12: `ready` alone does
+    // not free the hold while no stream-ridable circuit exists yet;
+    // the nav flushes into a real load when usable-circuit evidence
+    // arrives.
     view.loadUrl(queued);
     QCOMPARE(view.torQueuedUrlForTesting(), queued);
-    QSignalSpy startedSpy(&view, &QWebEngineView::loadStarted);
     tor.setStateForTesting(TorManager::Ready);
     tor.ready(QNetworkProxy());
+    QCOMPARE(view.torQueuedUrlForTesting(), queued);
+    QVERIFY(!view.isLoading());
+    QSignalSpy startedSpy(&view, &QWebEngineView::loadStarted);
+    tor.setCircuitsForTesting({ makeCircuit(1, QLatin1String("BUILT"),
+                                            3, QLatin1String("GENERAL")) });
     QVERIFY(view.torQueuedUrlForTesting().isEmpty());
     QTRY_VERIFY_WITH_TIMEOUT(startedSpy.count() >= 1, 15000);
 
@@ -548,6 +585,169 @@ void tst_WebView::torQueuedNavigation()
     tor.setStateForTesting(TorManager::Failed);
     view.loadUrl(newer);
     QCOMPARE(view.torQueuedUrlForTesting(), newer);
+}
+
+// TOR12: the post-ready cold-circuit window — `ready` means the
+// SOCKS listener answers, not that a stream-ridable circuit exists.
+// A nav issued while Ready is still held until circuit evidence
+// arrives, and a daemon that never shares circuit data (dead control
+// channel — SOCKS still proxies) hits the bounded grace instead of
+// stranding the tab.
+void tst_WebView::torWarmupNavigationGate()
+{
+    PrivacyFlagGuard flags;
+    BrowserApplication::setTorMode(true);
+    TorManager tor;
+    TorManagerInjection injected(&tor);
+    struct GraceGuard {
+        ~GraceGuard()
+        {
+            WebView::setTorQueueGraceMsForTesting(-1);
+            WebView::setTorQueueWarmupMsForTesting(-1);
+        }
+    } grace;
+    // Both bounds are wall-clock from `ready` — a suite-load stall
+    // must not let the real values expire mid-leg, so the warm-up is
+    // stretched and the grace is staged per phase.
+    WebView::setTorQueueWarmupMsForTesting(10 * 60 * 1000);
+    WebView::setTorQueueGraceMsForTesting(20000);
+
+    // Ready but zero circuit evidence — the nav still holds, and the
+    // pending state is announced rather than silent.
+    tor.setStateForTesting(TorManager::Ready);
+    TestWebView view;
+    const QUrl target(QStringLiteral("https://warmup.example/"));
+    view.loadUrl(target);
+    QCOMPARE(view.torQueuedUrlForTesting(), target);
+    QVERIFY(!view.isLoading());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        view.lastStatusBarText().contains(
+            QLatin1String("Tor is still starting")), 5000);
+
+    // Snapshots carrying only internal or unfinished paths do not
+    // free it.
+    tor.setCircuitsForTesting({
+        makeCircuit(1, QLatin1String("BUILT"), 1,
+                    QLatin1String("DIR_FETCH")),
+        makeCircuit(2, QLatin1String("EXTENDED"), 3,
+                    QLatin1String("GENERAL")),
+    });
+    QCOMPARE(view.torQueuedUrlForTesting(), target);
+
+    // A real three-hop BUILT client circuit flushes it into a load.
+    QSignalSpy startedSpy(&view, &QWebEngineView::loadStarted);
+    tor.setCircuitsForTesting({ makeCircuit(3, QLatin1String("BUILT"),
+                                            3, QLatin1String("GENERAL")) });
+    QVERIFY(view.torQueuedUrlForTesting().isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(startedSpy.count() >= 1, 15000);
+
+    // Grace expiry: a Ready daemon that never reports a usable
+    // circuit still dispatches after the bound rather than holding
+    // the nav forever.  The grace timer stopped on the first
+    // dispatch, so this phase gets a fresh, small bound.
+    WebView::setTorQueueGraceMsForTesting(1500);
+    tor.setCircuitsForTesting({
+        makeCircuit(4, QLatin1String("BUILT"), 1,
+                    QLatin1String("DIR_FETCH")),
+    });
+    const QUrl second(QStringLiteral("https://grace.example/"));
+    view.loadUrl(second);
+    QCOMPARE(view.torQueuedUrlForTesting(), second);
+    const int startedBefore = startedSpy.count();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        view.torQueuedUrlForTesting().isEmpty(), 8000);
+    QTRY_VERIFY_WITH_TIMEOUT(startedSpy.count() > startedBefore,
+                             8000);
+}
+
+// TOR12: a navigation that does dispatch into the cold window and
+// fails (page-level navs, link clicks, a grace-expired dispatch)
+// gets bounded auto-retries — not one, since the first usable
+// circuit is often still cold — and stops honestly once the budget
+// is spent.
+void tst_WebView::torWarmupRetry()
+{
+    PrivacyFlagGuard flags;
+    BrowserApplication::setTorMode(true);
+    TorManager tor;
+    TorManagerInjection injected(&tor);
+    // The warm-up window is wall-clock from `ready` — under suite
+    // load four fire->fail->re-arm round-trips can out-last the real
+    // 45s bound, after which torArmRetry honestly refuses and the
+    // leg would wait forever; stretch it for the duration.
+    struct WarmupGuard {
+        ~WarmupGuard() { WebPage::setTorWarmupMsForTesting(-1); }
+    } warmup;
+    WebPage::setTorWarmupMsForTesting(10 * 60 * 1000);
+    tor.setStateForTesting(TorManager::Ready);
+
+    TestWebView view;
+    // A guaranteed-refused target — the loopback port-1 listener does
+    // not exist, so every dispatch fails fast like the cold-circuit
+    // CONNECT failures this path covers.  https: keeps the tor
+    // interceptor's http->https upgrade from renaming the url the
+    // retry arms for.
+    const QUrl target(QStringLiteral("https://127.0.0.1:1/"));
+    int dispatches = 0;
+    QObject::connect(view.webPage(), &WebPage::aboutToLoadUrl,
+                     &view, [&dispatches, &target](const QUrl &url) {
+        if (url == target)
+            ++dispatches;
+    });
+    int failures = 0;
+    QObject::connect(&view, &QWebEngineView::loadFinished,
+                     &view, [&failures](bool ok) {
+        if (!ok)
+            ++failures;
+    });
+    // A page-level load bypasses the view's queue gate — the
+    // warm-up retry is the fallback for exactly those paths.
+    view.webPage()->load(target);
+    QTRY_VERIFY_WITH_TIMEOUT(dispatches == 1, 15000);
+    // Armed once the failure lands — torArmRetry runs inside the
+    // failed load's handling, before the error page commits.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        view.webPage()->torPendingRetryForTesting() == target,
+        30000);
+
+    // Past the cold-circuit dwell each usable-circuit snapshot fires
+    // the armed retry; every retry fails again and re-arms while the
+    // budget allows — the first Enter no longer needs a human second
+    // one.  The attempts counter is the deterministic sync point —
+    // torFireRetry increments it synchronously inside the snapshot
+    // or fallback handler, and `>=` absorbs a fallback-clock fire
+    // that beat our snapshot to the armed url.
+    for (int attempt = 1; attempt <= 4; ++attempt) {
+        if (attempt == 1)
+            QTest::qWait(3500);   // past the cold-circuit dwell
+        tor.setCircuitsForTesting({ makeCircuit(10 + attempt,
+                        QLatin1String("BUILT"), 3,
+                        QLatin1String("GENERAL")) });
+        QTRY_VERIFY_WITH_TIMEOUT(
+            view.webPage()->torRetryAttemptsForTesting() >= attempt,
+            30000);
+        // That fire's own failure re-arms the url while attempts
+        // remain — the only honest alternative is the budget
+        // already spent by a double-fire.
+        if (attempt < 4)
+            QTRY_VERIFY_WITH_TIMEOUT(
+                view.webPage()->torPendingRetryForTesting() == target
+                    || view.webPage()
+                           ->torRetryAttemptsForTesting() >= 4,
+                30000);
+    }
+
+    // Budget spent — the last failure lands without re-arming (the
+    // fifth refusal is counted so this does not pass vacuously), a
+    // further usable snapshot fires nothing, and the honest error
+    // page stays.
+    QTRY_VERIFY_WITH_TIMEOUT(failures >= 5, 30000);
+    QVERIFY(view.webPage()->torPendingRetryForTesting().isEmpty());
+    QCOMPARE(view.webPage()->torRetryAttemptsForTesting(), 4);
+    tor.setCircuitsForTesting({ makeCircuit(99, QLatin1String("BUILT"),
+                                            3, QLatin1String("GENERAL")) });
+    QTest::qWait(300);
+    QCOMPARE(dispatches, 5);
 }
 
 void tst_WebView::statusBarText()

@@ -318,6 +318,11 @@ hover. New tabs land on a Tor-branded start page: the usual Arora
 header and search box on a purple background with the official Tor
 onion centered — bundled in the binary, so the page never touches the
 network; a configured custom homepage still takes precedence.
+Navigations typed while the daemon is still starting are held rather
+than dropped: the window waits for the SOCKS listener and the first
+stream-ridable circuit (with a status-bar note explaining the wait),
+and a page that still races a cold circuit retries itself inside a
+bounded warm-up window before showing an honest error.
 
 ### Downloads
 

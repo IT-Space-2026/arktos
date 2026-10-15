@@ -154,6 +154,14 @@ public:
     // the most streams, else the newest BUILT PURPOSE=GENERAL, else
     // the newest BUILT at all; -1 when none qualify.
     int displayCircuitId() const;
+    // TOR12: whether the snapshot carries a circuit a user stream can
+    // ride.  state() == Ready only means the SOCKS listener answers —
+    // the first usable exit path can land seconds (or a stretch)
+    // after it, and a navigation dispatched into that window is the
+    // "first Enter never loads" report, so the navigation gate waits
+    // for this rather than `ready` alone.
+    bool hasUsableCircuit() const;
+    static bool isUsableCircuit(const TorCircuit &circuit);
 
     // TOR15: SIGNAL NEWNYM — tor marks live circuits dirty and builds
     // clean ones; new streams get a fresh exit/middle while the entry
@@ -179,6 +187,14 @@ public slots:
     // the bootstrap navigation-gate tests flip Ready/Bootstrapping to
     // exercise the queue and warm-up retry paths.
     void setStateForTesting(State state) { setState(state); }
+    // Test seam: installs a circuit snapshot and fires
+    // circuitsChanged — the TOR12 warm-up gate tests drive the
+    // post-ready cold-circuit window without a live daemon.
+    void setCircuitsForTesting(const QList<TorCircuit> &circuits)
+    {
+        m_circuits = circuits;
+        emit circuitsChanged(m_circuits);
+    }
 #endif
 
 signals:

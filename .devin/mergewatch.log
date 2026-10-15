@@ -3336,3 +3336,50 @@ The lane merge needs to write `WORKLOG.md`, so git will refuse while it's dirty.
 
 Stopping after this one pass.
 [2026-10-15 11:23:44] merge run exited rc=0
+[2026-10-15 11:38:46] merge due: rust-work(1) — spawning devin merge run
+Starting merge run. First, checking the state of this tree and fetching.Tree has dirty log files (`.devin/mergewatch.log`, `.devin/taskloop.log`) — I'll leave those alone and stage only merge-resolution files. Now checking lane status.`rust-work` is 1 commit ahead; `ui-work` is at 0 (skip). Checking what rust-work contains before merging.One conflict in `.devin/COVERAGE.md`. Inspecting it.Conflict resolved. Let me spot-check the auto-merged files for sanity before committing.Auto-merges look clean (WORKLOG/ChangeLog appended, main.cpp took the lane's changes). Staging the resolved file and committing the merge.Merge committed. Now verifying the build.Build is running (compiling merged sources). Waiting for it to finish.Build succeeded — `arora` linked cleanly. Now appending the MERGEWATCH line to WORKLOG.md. First, checking how a previous run handled the log commit.Prior runs commit the log line separately after the merge — I'll follow that. Appending the line now.Merge run complete. Summary:
+
+- **rust-work** (1 commit, `77d00241` EXT19 popup self-wire): merged. One conflict in `.devin/COVERAGE.md` — resolved by keeping master's newer rust-coverage snapshot (commit `39bbf9b2`, 09:20 vs lane's 09:11). `WORKLOG.md`, `ChangeLog`, and all `src/` files auto-merged cleanly.
+- **ui-work**: 0 commits ahead, skipped.
+- **Build**: `make -C src -j2` passed, `arora` binary linked.
+- **Pushed**: `master` `eb4077e6..d04a9c6c`, including the merge commit and a `MERGEWATCH` log entry in `.devin/WORKLOG.md`.
+- Pre-existing dirty files (`.devin/mergewatch.log`, `.devin/taskloop.log`) left untouched.
+
+Stopping here per the one-pass rule.
+[2026-10-15 11:41:50] merge run exited rc=0
+[2026-10-15 11:51:51] merge due: ui-work(1) — spawning devin merge run
+I'll start by checking the current state of the repository and fetching from origin.Working tree has dirty log files (mergewatch.log, taskloop.log) — likely watchdog output. I'll leave them alone. Now checking lane status.rust-work is at 0 (skip). ui-work is 1 ahead — let me inspect that commit before merging.The dirty files (mergewatch.log, taskloop.log) don't overlap with the lane's changes (taskloop-ui.log is different), so the merge is safe to proceed.One conflict in siteshield.cpp. Let me examine it.Simple conflict — both sides added different includes, both needed (QHash for the trust cache, QEvent for `changeEvent`). Keeping both.Now staging the resolution and verifying the auto-merged files kept both sides.Auto-merge handled WORKLOG, ChangeLog, and the task table correctly (lane's TRUST18 row flipped to done — correct per rules). Committing the merge.Merge committed. Now verifying the build.Build is compiling. Waiting for it to finish.Build succeeded — `arora` binary linked cleanly. Let me check how previous MERGEWATCH entries were committed, then push and log.The pattern is: append the MERGEWATCH line as its own commit, then push. Let me append the line.Committing only the WORKLOG line (dirty watchdog logs stay untouched), then pushing.Merge run complete.
+
+**Summary:**
+- `rust-work`: 0 commits ahead — skipped
+- `ui-work`: 1 commit (`2d7612d3` TRUST18 tor nav-bar glyph palette) — merged as `3df75860`
+  - One conflict: `siteshield.cpp` include block — kept both `qevent.h` (lane) and `qhash.h` (master)
+  - WORKLOG.md, ChangeLog, Arora-Task-UI.md auto-unioned correctly (TRUST18 row flipped to done by its own queue file)
+- Build: **ok** — `make -C src -j2` linked `../arora` cleanly
+- Pushed `d04a9c6c..a3a2e0c4` to origin/master
+- MERGEWATCH line appended to `.devin/WORKLOG.md` in commit `a3a2e0c4`
+
+The pre-existing dirty files (`mergewatch.log`, `taskloop.log` — watchdog logs) were left untouched.
+[2026-10-15 11:53:56] merge run exited rc=0
+[2026-10-15 12:29:00] merge due: ui-work(1) — spawning devin merge run
+I'll start by checking the current state of the repository and fetching from origin.Working tree has uncommitted changes (an agent appears mid-run). Now let me check how far ahead each lane is.`rust-work` is even with master (skip). `ui-work` is 1 commit ahead. Let me inspect that commit and check for overlap with the dirty files.That diff is `master..ui-work` (huge divergence), not the lane's own commit. Let me look at what the single lane commit actually touches.The lane commit touches only: `.devin/Arora-Task-UI.md`, `.devin/WORKLOG.md`, `.devin/taskloop-ui.log`, `ChangeLog`, `autotests/tabwidget/tst_tabwidget.cpp`, `src/tabbar.cpp` — none of which are dirty in this tree. Safe to proceed with the merge.Clean merge, no conflicts. Now verifying the build.Build succeeded (linked `../arora` cleanly). Now let me check the WORKLOG format, push, and append the log line.Merge is committed and the build is green. Now I'll append the MERGEWATCH line to WORKLOG, commit just that file (leaving the agent's mid-run dirty files untouched), and push.Merge run complete:
+
+- **rust-work**: 0 commits ahead of master — skipped
+- **ui-work**: 1 commit ahead (`9b064cb4` TABS20: favicons floated into the container strip's header band) — merged cleanly, zero conflicts (WORKLOG/ChangeLog/Task-UI auto-unioned)
+- **Build**: `make -C src -j2` succeeded, linked `arora` binary
+- **Push**: master pushed (`a3a2e0c4..fb361979`), including the merge commit and the MERGEWATCH log line
+- **Pre-existing dirty files** (tor/webpage/webview agent mid-run work) left untouched — no overlap with the lane's files, so the merge proceeded safely
+
+Stopping after this one pass as instructed.
+[2026-10-15 12:30:05] merge run exited rc=0
+[2026-10-15 12:45:07] merge due: ui-work(1) — spawning devin merge run
+Starting merge run. First, checking the working tree state and fetching.Working tree is dirty — I'll check which files differ vs. what the lanes touch. Checking lane aheadness:`rust-work` is at 0 — skip. `ui-work` is ahead by 1. Checking which files it touches vs. the dirty tree:The two-dot diff is misleading (master is far ahead of the lane's base). Checking what the single lane commit actually touches:No overlap between the lane's touched files and the dirty files — safe to merge `ui-work`:Two conflicts: `README.md` and `tst_browsermainwindow.cpp`. Inspecting both:README conflict is a union case — keep both descriptions. Now the bigger test-file conflict at line ~6259:This is an interleaved conflict — two new test functions sharing a common prologue. Reading the full region to reconstruct:I see the shape — two sibling test functions both added at the same spot sharing a common prologue/teardown. The clean union is to keep master's stage-2 file and splice in ui-work's complete `downloadsSidebarClearList`. Let me verify no other clean hunks from ui-work exist in this file first:All of ui-work's changes to this file are inside the conflict regions, so I'll keep HEAD's function and append ui-work's complete function extracted from stage 3. Finding its boundaries there:I have the full picture. Resolving the test file: keep HEAD's `downloadsSidebarActions` complete, and turn the "theirs" hunk into a complete `downloadsSidebarClearList` by giving it its own header+prologue (the shared teardown already follows it). Four edits:Test file spliced. Verifying no markers remain and the DOWN05 body matches stage 3 exactly:Only a trailing blank-line diff — the function body is identical to the lane's. Now the README conflict — union of both descriptions:Verifying all markers are gone and checking the auto-merged files got the lane's lines:Clean. Staging only the two resolved files and committing the merge:Merge committed. Now the build verification:Build linked `../arora` successfully — build ok. Pushing master and logging:Merge run complete.
+
+- **rust-work**: 0 commits ahead — skipped.
+- **ui-work**: merged `927d9724` (DOWN05 clear-download-list button) into master as `772403c1`.
+  - `README.md` — unioned the Downloads paragraph: kept master's action-row description plus the lane's header clear-button sentence.
+  - `tst_browsermainwindow.cpp` — interleaved conflict (two tests added at the same site sharing a prologue/teardown): kept master's `downloadsSidebarActions` intact and reconstructed the lane's `downloadsSidebarClearList` as a complete sibling function, verbatim from stage 3.
+  - `WORKLOG.md`, `ChangeLog`, `Arora-Task-UI.md`, `taskloop-ui.log` — auto-merged cleanly.
+- **Build**: `make -C src -j2` linked `../arora`, exit 0 — ok.
+- **Pushed**: `fb361979 → acf12da6` (merge + WORKLOG line). Pre-existing dirty files in this tree were left untouched.
+[2026-10-15 12:47:53] merge run exited rc=0
