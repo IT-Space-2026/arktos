@@ -69,6 +69,9 @@ LanguageManager *LanguageManager::instance()
         // PACK01: relocatable-bundle layout (<bindir>/../share/arora/locale).
         manager->addLocaleDirectory(qApp->applicationDirPath()
                                     + QLatin1String("/../share/arora/locale"));
+        // Windows deploy layout: payload beside arora.exe (appDir/locale).
+        manager->addLocaleDirectory(qApp->applicationDirPath()
+                                    + QLatin1String("/locale"));
 #ifdef PKGDATADIR
         manager->addLocaleDirectory(QLatin1String(PKGDATADIR) + QLatin1String("/locale"));
 #endif

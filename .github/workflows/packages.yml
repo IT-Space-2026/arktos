@@ -162,6 +162,24 @@ jobs:
           New-Item -ItemType Directory -Path deploy | Out-Null
           Copy-Item arora.exe deploy\
           & "$env:QTDIR\bin\windeployqt.exe" --release --no-translations deploy\arora.exe
+          # Arora data payload — installedDataDirectory() resolves to
+          # the exe dir on Windows, so stage beside it.
+          Copy-Item -Recurse src\.qm\locale deploy\locale
+          Copy-Item src\useragent\useragents.xml deploy\
+          if (Test-Path src\data\extensions) { Copy-Item -Recurse src\data\extensions deploy\extensions }
+          # Tor expert bundle (windows-x86_64) — same artifact+pin as
+          # BuildProcess/fetch-tor.sh, which is sh-only.
+          $tv = "15.0.25"
+          $tb = "tor-expert-bundle-windows-x86_64-$tv.tar.gz"
+          $base = "https://dist.torproject.org/torbrowser/$tv"
+          Invoke-WebRequest "$base/$tb" -OutFile $tb
+          Invoke-WebRequest "$base/sha256sums-unsigned-build.txt" -OutFile tor-sums.txt
+          $expected = (Select-String -Path tor-sums.txt -Pattern " $([regex]::Escape($tb))$").Line.Split(' ')[0]
+          $actual = (Get-FileHash $tb -Algorithm SHA256).Hash.ToLower()
+          if ($expected -ne $actual) { throw "tor bundle sha256 mismatch: $actual != $expected" }
+          tar -xzf $tb
+          Copy-Item -Recurse tor deploy\tor
+          Copy-Item -Recurse data deploy\data
           Compress-Archive -Path deploy\* -DestinationPath arora-windows.zip
 
       - name: Installer (NSIS)
