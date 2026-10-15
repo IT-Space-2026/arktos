@@ -1108,8 +1108,10 @@ static const char *terminationSignalName(int signalNumber)
         return "SIGTERM";
     case SIGINT:
         return "SIGINT";
+#ifdef SIGHUP
     case SIGHUP:
         return "SIGHUP";
+#endif
     default:
         return "signal";
     }
