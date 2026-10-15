@@ -134,8 +134,12 @@ public:
     // ENG31: the rest of the scroll instrumentation — se_wheel
     // deliveries since the last reset (input-side rate) and the
     // inter-frame_ready interval histogram (paint-side pacing).
+    // ENG32: largest single delivered step — the jump-size half of
+    // the smoothness story (a notch now lands as an ease-out series
+    // of slices instead of one hard jump).
     int wheelEventsSent() const { return m_wheelEventsSent; }
     QList<qint64> frameIntervalsMs() const { return m_frameIntervalsMs; }
+    qreal largestWheelStepPx() const { return m_wheelLargestStepPx; }
     void resetScrollStats();
 
 signals:
@@ -163,6 +167,9 @@ protected:
 private:
     void grabFrame();
     void flushWheelDelta();
+    void drainWheelDelta();
+    void sendScrollStep(const QPointF &delta);
+    QPointF wheelSliceStep(const QPointF &remaining) const;
     void setUrl(const QUrl &url);
     void setTitle(const QString &title);
     void onLoadStatus(int status);
@@ -186,25 +193,50 @@ private:
     QString m_title;
     bool m_loading;
     QPushButton *m_retryButton = nullptr;
-    // ENG25+ENG31: wheel deltas coalesce into one se_wheel per
-    // COMPLETED frame.  Every notify_input_event ends in a full-
-    // viewport software raster + readback on this display path, so
-    // any fixed-cadence forwarding outruns llvmpipe (~35ms/frame on
-    // the release artifact) and queues stale deltas — the choppy
-    // half of ENG31.  m_wheelInFlight gates delivery: set when a
-    // summed delta is sent, cleared by the next frame_ready inside
-    // grabFrame, which then flushes whatever accumulated.  The
-    // timer is only a watchdog for a delivered delta that produces
-    // no frame at all (overscroll clamp, deduped input) — it is not
-    // the pacing mechanism.  m_wheelEventsSent + m_frameIntervalsMs
-    // feed the smoke's events-vs-frames and frame-time histogram.
+    // ENG25+ENG31+ENG32: wheel deltas coalesce into one scroll
+    // delivery per COMPLETED frame.  Every scroll ends in a
+    // software raster + readback on this display path, so any
+    // fixed-cadence forwarding outruns llvmpipe (~35ms/frame on the
+    // release artifact) and queues stale deltas — the choppy half of
+    // ENG31.  m_wheelInFlight gates delivery: set when a slice is
+    // sent, cleared by the next frame_ready inside grabFrame, which
+    // then flushes the next slice.  The timer is only a watchdog
+    // for a delivered delta that produces no frame at all
+    // (overscroll clamp, deduped input) — it is not the pacing
+    // mechanism.
+    //
+    // ENG32 adds DISTANCE and SMOOTHNESS on top of that pacing:
+    //  * m_notchAccel — a notch arriving within the accel window of
+    //    the previous notch bumps the px multiplier by the step
+    //    (capped), the system-scroll acceleration Firefox/Chrome
+    //    run for rapid flicks; a pause or a dominant-axis reversal
+    //    restarts the ramp.  m_lastNotchMs/Dominant track it.
+    //  * m_pendingWheelDelta is now a REMAINDER — each frame
+    //    delivers an ease-out slice (a fraction of what is left,
+    //    floored by a finishing step and capped below a teleport)
+    //    so a notch lands over ~4-6 paints like a native smooth-
+    //    scroll animation instead of one hard jump.  A dominant-
+    //    axis reversal cancels the in-flight remainder on the
+    //    opposed axis — the view turns, it does not glide home.
+    //  * m_pendingWheelHiRes marks a remainder containing raw
+    //    pixelDelta (trackpad) input — those stay whole-delta:
+    //    hi-res deltas are already continuous, slicing them would
+    //    only add latency.
+    // m_wheelEventsSent + m_frameIntervalsMs + m_wheelLargestStepPx
+    // feed the smoke's events-vs-frames, frame-time and jump-size
+    // instrumentation.
     QPointF m_pendingWheelDelta;
     QPointF m_pendingWheelPos;
     Qt::KeyboardModifiers m_pendingWheelMods = Qt::NoModifier;
     QBasicTimer m_wheelTimer;
     bool m_wheelInFlight = false;
+    bool m_pendingWheelHiRes = false;
+    qreal m_notchAccel = 1.0;
+    qint64 m_lastNotchMs = -1;
+    int m_lastNotchDominant = 0;
     int m_frameCount = 0;
     int m_wheelEventsSent = 0;
+    qreal m_wheelLargestStepPx = 0;
     QElapsedTimer m_frameClock;
     qint64 m_lastFrameReadyMs = -1;
     QList<qint64> m_frameIntervalsMs;

@@ -229,6 +229,7 @@ private:
     void openPageUrlInPrivateWindow(const QUrl &linkUrl);
     void openPageUrlInTorWindow(const QUrl &linkUrl);
     void updateScriptBlockBar(bool blocked);
+    void restoreTextZoomFonts();
     void allowScriptsOnThisSite(bool persistent);
     // CTX01: context-menu shapes Chromium's request cannot express —
     // <canvas> pixels (no url), <video> posters and <img>s whose
@@ -300,6 +301,10 @@ private:
     QUrl m_initialUrl;
     int m_progress;
     int m_currentZoom;
+    // Font sizes captured before text-only zoom scales them, restored
+    // on toggle-off — 0 means no text zoom is currently applied.
+    int m_textZoomBaseFontSize;
+    int m_textZoomBaseFixedFontSize;
     QList<int> m_zoomLevels;
     WebPage *m_page;
     mutable WebEnginePageAdapter *m_enginePage;

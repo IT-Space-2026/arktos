@@ -114,6 +114,8 @@ WebView::WebView(QWidget *parent)
     : QWebEngineView(parent)
     , m_progress(0)
     , m_currentZoom(100)
+    , m_textZoomBaseFontSize(0)
+    , m_textZoomBaseFixedFontSize(0)
     , m_page(new WebPage(this))
     , m_enginePage(nullptr)
     , m_scriptBlockBar(nullptr)
@@ -125,6 +127,8 @@ WebView::WebView(QWebEngineProfile *profile, QWidget *parent)
     : QWebEngineView(parent)
     , m_progress(0)
     , m_currentZoom(100)
+    , m_textZoomBaseFontSize(0)
+    , m_textZoomBaseFixedFontSize(0)
     , m_page(new WebPage(profile, this))
     , m_enginePage(nullptr)
     , m_scriptBlockBar(nullptr)
@@ -212,9 +216,9 @@ void WebView::init()
             this, [this]() { allowScriptsOnThisSite(false); });
     connect(m_scriptBlockBar, &ScriptBlockInfoBar::allowAlways,
             this, [this]() { allowScriptsOnThisSite(true); });
-    // Qt WebEngine has no text-only zoom mode (Chromium zooms the whole
-    // page), but keep the zoom-text-only toggle re-applying the zoom so
-    // the preference stays wired to something visible.
+    // The zoom-text-only preference selects which path applyZoom()
+    // drives — per-page font scaling vs whole-page factor — so a
+    // retoggle just re-applies the current zoom.
     if (BrowserApplication *application = BrowserApplication::instance())
         connect(application, &BrowserApplication::zoomTextOnlyChanged,
                 this, &WebView::applyZoom);
@@ -1060,8 +1064,44 @@ int WebView::levelForZoom(int zoom)
 
 void WebView::applyZoom()
 {
-    enginePage()->setZoomFactor(qreal(m_currentZoom) / 100.0);
+    if (BrowserApplication::zoomTextOnly()) {
+        // Qt WebEngine has no text-zoom factor — Chromium's zoom scales
+        // the whole page.  Scale the page's own default font sizes
+        // instead: Qt 6 page settings are per-page, so the change is
+        // live, stays with this tab, survives reloads and navigations,
+        // and leaves fixed-pixel layout and media untouched.  Text
+        // that pins a pixel size in CSS honestly does not scale.
+        enginePage()->setZoomFactor(1.0);
+        QWebEngineSettings *pageSettings = m_page->settings();
+        if (!m_textZoomBaseFontSize) {
+            m_textZoomBaseFontSize = pageSettings->fontSize(
+                QWebEngineSettings::DefaultFontSize);
+            m_textZoomBaseFixedFontSize = pageSettings->fontSize(
+                QWebEngineSettings::DefaultFixedFontSize);
+        }
+        const qreal factor = qreal(m_currentZoom) / 100.0;
+        pageSettings->setFontSize(QWebEngineSettings::DefaultFontSize,
+                qMax(1, qRound(m_textZoomBaseFontSize * factor)));
+        pageSettings->setFontSize(QWebEngineSettings::DefaultFixedFontSize,
+                qMax(1, qRound(m_textZoomBaseFixedFontSize * factor)));
+    } else {
+        restoreTextZoomFonts();
+        enginePage()->setZoomFactor(qreal(m_currentZoom) / 100.0);
+    }
     emit zoomChanged(m_currentZoom);
+}
+
+// Restores the font sizes a text-only zoom scaled — the values this
+// page's settings inherited from the profile at creation.
+void WebView::restoreTextZoomFonts()
+{
+    if (!m_textZoomBaseFontSize)
+        return;
+    m_page->settings()->setFontSize(QWebEngineSettings::DefaultFontSize,
+                                    m_textZoomBaseFontSize);
+    m_page->settings()->setFontSize(QWebEngineSettings::DefaultFixedFontSize,
+                                    m_textZoomBaseFixedFontSize);
+    m_textZoomBaseFontSize = m_textZoomBaseFixedFontSize = 0;
 }
 
 void WebView::zoomIn()

@@ -893,6 +893,13 @@ UI:
   its exact row height: the bigger button face borrows the row's
   vertical padding instead of pushing it taller, on normal, private,
   and Tor windows alike (MENU19).
+- View > Zoom Text Only finally zooms text: the checkbox used to check
+  and uncheck without changing anything (Chromium has no text-zoom
+  factor). With it on, zoom steps scale the page's default and
+  fixed-pitch font sizes instead of the whole page — text grows or
+  shrinks while images and fixed-pixel layout stay put, the change is
+  per tab, and it survives reloads and navigations. Text that pins a
+  pixel size in CSS does not scale — an honest Chromium limit (VIEW08).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
@@ -1483,7 +1490,7 @@ View source + page search (MIG12):
 Browser chrome (MIG14):
     Port the assembled browser window, tab widget, tab bar and the user-agent menu to Qt 6 / WebEngine. Menus, toolbars and shortcuts drive the page through QWebEnginePage::WebAction; history navigation uses QWebEngineHistory; printing goes through QWebEngineView::print(QPrinter*); View Source uses the asynchronous page::toHtml.
     The application class (BrowserApplication) is now compiled in and supplies the profile-aware new window/tab plumbing: target=_blank links and Ctrl/Shift-modified link clicks open background or foreground tabs through WebPage::createWindow, and private-browsing windows run on the off-the-record WebEngine profile.
-    Feature deltas vs the WebKit version: "zoom text only" is kept as a preference but WebEngine always zooms the whole page; the WebKit page inspector shortcut and global icon database are gone; the text-encoding menu still applies per page via QWebEngineSettings; session save/restore serializes each tab's WebEngine history items explicitly since they have no stream operators.
+    Feature deltas vs the WebKit version: "zoom text only" maps to per-page default-font-size scaling instead of WebKit's text-zoom factor (made functional by VIEW08 — text that pins a pixel size in CSS does not scale); the WebKit page inspector shortcut and global icon database are gone; the text-encoding menu still applies per page via QWebEngineSettings; session save/restore serializes each tab's WebEngine history items explicitly since they have no stream operators.
 
 App entry (MIG15):
     `arora` runs as the real application again instead of the migration skeleton: main() constructs BrowserApplication, single-instance forwarding is back (a second `arora <url>` hands the url to the running instance and exits), session save/restore works, and the startup-behavior preference (homepage / blank page / restore session / url operand) is honored. Command-line handling uses QCommandLineParser — `--help` and `--version` work, and any `--option` run is standalone and never forwarded to a running instance.
@@ -2792,6 +2799,14 @@ BiDi Dev Tools now carries Chrome's full top tab row (DEVT13):
     with the reason — never a fake.
 Extension toolbar popups no longer render blank white (EXT19):
     Clicking an extension's toolbar action (e.g. Bitwarden) opened a popup that stayed white — the popup's shim preamble waited for a bridge channel that the live code path never attached. Extension pages now wire themselves: the hosted-extension runtime watches every web view the application raises and attaches the chromeBridge channel as soon as a chrome-extension:// document commits (and detaches it again on navigation away), so any popup, options page, or extension tab gets a working chrome.* surface without the embedder needing to know about it. If the extension's background context genuinely cannot be reached, the popup shows a real "extension background not running" panel instead of silent white, and keeps retrying so it recovers on its own when the background finishes starting.
+
+Servo wheel scrolling uses the compositor fast path with smooth easing (ENG33):
+    Wheel scrolling on a Servo tab still felt slow and "chubby" after frame pacing landed (ENG31): every delivered delta still round-tripped through Servo's script thread for DOM wheel dispatch before the scroll was allowed to run, each notch landed as a single hard jump, and rapid notches never accelerated. Wheel input now rides a new compositor-direct export in the servo-embed shim — se_scroll feeds the delta straight into the painter's scroll tree, where it lands as a webrender APZ scroll-offset transaction on the next update (no script round-trip, no re-layout, damage-limited repaint) — and an explicit event-loop wake in the shim keeps a queued scroll from stalling on an idle page, which libservo's queue-only notify_scroll_event would otherwise allow. On top of the faster path, each notch eases out across about 4–6 frames as proportional slices of the remaining distance (the shape of native smooth-scroll animations, capped well below a teleport), and repeated notches inside a short window ramp the multiplier to 3.5x like the system-scroll acceleration Chrome and Firefox apply — a flick covers real ground instead of crawling at one notch-distance per frame. Trade-off, documented in the shim and accepted for this experimental backend: DOM wheel listeners do not fire and preventDefault cannot veto on the fast path, so wheel-intercepting widgets degrade to a normal scroll; hosts on older artifacts keep the DOM-correct se_wheel route automatically. The --servo-smoke scroll bench gained largest-step and settle instrumentation plus slice/accel/pixel-delta legs; on the llvmpipe release build a lone notch now lands over ~5 paints instead of one jump and a rapid 6-notch flick covers roughly 2.3x the flat distance. The honest ceiling is unchanged: every frame is still a full-surface llvmpipe raster, so peak scroll rate stays bounded by paint cost.
+- The compositor scroll path gained a live kill-switch (ENG34): setting
+  ARORA_SERVO_SCROLL_PATH=wheel before launch returns Servo wheel input
+  to the DOM-correct se_wheel route — DOM wheel listeners and
+  preventDefault work again — for pages whose wheel-intercepting
+  widgets regress on the fast path, without a rebuild.
 "New Tor circuit for this site" now visibly rotates the circuit (TOR13):
     The panel's New-circuit button read as a no-op — SIGNAL NEWNYM only
     re-homes NEW streams, so the page kept riding the dirty old circuit
@@ -2802,3 +2817,8 @@ Extension toolbar popups no longer render blank white (EXT19):
     actually rotates. Clicks inside tor's ~10 s NEWNYM rate limit report
     the wait honestly instead of faking another rotation, and a
     greyed-out button now carries the reason on its tooltip.
+- Lane sync (SYNC01): the rust-work branch absorbed 381 commits of
+  master, so all of master's current features — packaging scripts
+  (deb/rpm/flatpak), Picture-in-Picture plumbing, zoom wiring and the
+  SourceViewer pipeline — are now present on this lane alongside the
+  Rust components and Servo scroll work.

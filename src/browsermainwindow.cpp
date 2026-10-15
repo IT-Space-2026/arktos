@@ -1401,6 +1401,7 @@ void BrowserMainWindow::setupMenu()
 
     m_viewZoomTextOnlyAction = new QAction(m_viewMenu);
     m_viewZoomTextOnlyAction->setCheckable(true);
+    m_viewZoomTextOnlyAction->setChecked(BrowserApplication::zoomTextOnly());
     connect(m_viewZoomTextOnlyAction, &QAction::toggled,
             this, [](bool checked) { BrowserApplication::setZoomTextOnly(checked); });
     if (BrowserApplication *application = BrowserApplication::instance())
@@ -1917,6 +1918,8 @@ void BrowserMainWindow::retranslate()
     m_viewZoomNormalAction->setText(tr("Zoom &Normal"));
     m_viewZoomOutAction->setText(tr("Zoom &Out"));
     m_viewZoomTextOnlyAction->setText(tr("Zoom &Text Only"));
+    m_viewZoomTextOnlyAction->setStatusTip(
+        tr("Scale the page's text without enlarging images and layout"));
     m_viewReaderAction->setText(tr("&Reader Mode"));
     m_viewPipAction->setText(tr("Picture-&in-Picture"));
     m_sidebarDock->setWindowTitle(tr("Sidebar"));
