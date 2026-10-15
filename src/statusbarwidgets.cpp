@@ -336,7 +336,9 @@ void MemIndicator::refresh()
              "tab too.")
         : tr("Resident memory of the current tab's renderer "
              "process, read from /proc/<pid>/status every "
-             "2 seconds."));
+             "2 seconds. It rises as you navigate — the engine "
+             "holds the pages for fast back/forward and reclaims "
+             "the memory when the system needs it."));
 }
 
 qint64 MemIndicator::residentMemoryKb(qint64 pid)

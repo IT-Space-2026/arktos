@@ -1596,6 +1596,11 @@ void SettingsDialog::loadFromSettings()
                                     : memorySaverMaximum;
         }
         saverPick->setChecked(true);
+        // MEM06: the purge checkbox sits in the Memory Saver group
+        // but is independent of the radios — it is on by default
+        // and works even when the unload schedule is "Never".
+        backgroundPurge->setChecked(settings.value(
+            QLatin1String("tabs/memoryPurge"), true).toBool());
     }
     settings.beginGroup(QLatin1String("performance"));
     hardwareAccel->setChecked(settings.value(
@@ -2030,6 +2035,10 @@ void SettingsDialog::saveToSettings()
         settings.setValue(QLatin1String("suspendTabsMinutes"), 30);
     else if (memorySaverMaximum->isChecked())
         settings.setValue(QLatin1String("suspendTabsMinutes"), 10);
+    // MEM06: applies live through the same per-TabWidget
+    // loadSettings() fan-out -> updatePurgeTimer().
+    settings.setValue(QLatin1String("memoryPurge"),
+                      backgroundPurge->isChecked());
     settings.setValue(QLatin1String("openTargetBlankLinksIn"), openTargetBlankLinksIn->currentIndex());
     settings.setValue(QLatin1String("openLinksFromAppsIn"), openLinksFromAppsIn->currentIndex());
     settings.setValue(QLatin1String("containerDisplay"), containerDisplayCombo->currentIndex());
@@ -2234,6 +2243,7 @@ void SettingsDialog::resetPerformanceSettings()
     settings.beginGroup(QLatin1String("tabs"));
     settings.remove(QLatin1String("suspendTabs"));
     settings.remove(QLatin1String("suspendTabsMinutes"));
+    settings.remove(QLatin1String("memoryPurge"));
     settings.endGroup();
     settings.beginGroup(QLatin1String("privacy"));
     settings.remove(QLatin1String("blockPrefetch"));
