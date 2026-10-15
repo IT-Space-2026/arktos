@@ -961,10 +961,12 @@ Security:
   Sec-Fetch-Dest: report tripwire in case they ever do (PING02).
 - Real pop-up blocker for shaped window.open (POPUP01).
 - Fingerprint-resistance countermeasures (PRIV02).
-- Injected fingerprint spoofing (SAFE06) — opt-in per-page script that
-  adds canvas-readout noise, masks WebGL vendor/renderer and normalizes
+- Injected fingerprint spoofing (SAFE06) — per-page script that adds
+  canvas-readout noise, masks WebGL vendor/renderer and normalizes
   navigator.hardwareConcurrency/deviceMemory/plugins; always on in Tor
   windows, per-site exemption on the shield panel. Noise, not anonymity.
+  Now enabled by default (PRIV06) — a stored opt-out from before the
+  flip is migrated on once, and turning it off afterwards stays off.
 - Third-party-cookie and connection/storage privacy group (PRIV01).
 - Zero telemetry verified by capture proxy (TELEM01) — extended to a
   forwarding capture that drives a real browsing session (navigation,

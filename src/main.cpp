@@ -16686,6 +16686,14 @@ int main(int argc, char **argv)
         FingerprintProtector *protector =
             FingerprintProtector::instance();
 
+        // PRIV06: with no stored key the toggle defaults on — the
+        // explicit false written for the baseline leg below is a
+        // deliberate opt-out and must stay off.
+        if (!settings.contains(
+                QLatin1String("privacy/fingerprintProtection")))
+            check(protector->isEnabled(),
+                  QLatin1String("protection defaults on (no stored key)"));
+
         // The seed is process-lifetime — two fresh children must
         // embed different values.
         QStringList seeds;

@@ -48,6 +48,7 @@
 #include "adblocksubscription.h"
 #include "aroraicon.h"
 #include "cookiejar.h"
+#include "fingerprintprotector.h"
 #include "popupblocker.h"
 #include "sitepadlock.h"
 #include "sitepanel.h"
@@ -163,6 +164,9 @@ void tst_SitePanel::cleanup()
     PopupBlocker::instance()->removeAllowedHost(QLatin1String("127.0.0.1"));
     PopupBlocker::instance()->removeAllowedHost(QLatin1String("example.com"));
     PopupBlocker::instance()->clearSessionHosts();
+    // PRIV06: a failed fingerprint-row leg must not leak an exemption.
+    FingerprintProtector::instance()->clearException(
+        QLatin1String("127.0.0.1"));
 
     // TRUST03: a gating leg that bailed mid-run must not leave the
     // trust switches off for the other tests in this binary.
@@ -527,6 +531,28 @@ void tst_SitePanel::panelForSite()
 #else
     QVERIFY(trust->isHidden());
 #endif
+
+    // PRIV06: fingerprint spoofing is on by default — the per-site
+    // exemption row is live on an http tab and drives the protector's
+    // exception list (session-scoped here: the test view's page is
+    // off-the-record, so nothing persists).
+    QCheckBox *spoof = panel.findChild<QCheckBox*>(
+        QLatin1String("siteFingerprintSpoof"));
+    QVERIFY(spoof);
+    QVERIFY(spoof->isEnabled());
+    QVERIFY(spoof->isChecked());
+    FingerprintProtector *protector = FingerprintProtector::instance();
+    QVERIFY(!protector->isExempt(host));
+    spoof->setChecked(false);
+    QVERIFY(protector->isExempt(host));
+    panel.refresh();
+    QVERIFY(spoof->isEnabled());
+    QVERIFY(!spoof->isChecked());
+    spoof->setChecked(true);
+    QVERIFY(!protector->isExempt(host));
+    panel.refresh();
+    QVERIFY(spoof->isChecked());
+    protector->clearException(host);
 }
 
 // TRUST08: the verdict-to-lines mapping against the live rustcore

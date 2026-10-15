@@ -73,14 +73,14 @@ browsing profile:
   Safest) for script and media handling on insecure pages.
 - **Fingerprint resistance** — normalization (vanilla-Chrome user
   agent + client hints, UTC timezone, generic Accept-Language) plus an
-  opt-in injected layer (Settings > Privacy, "Spoof canvas/WebGL
-  fingerprints"; always on in Tor windows): canvas readouts get
-  per-session noise, WebGL reports a generic vendor/renderer and
-  navigator.hardwareConcurrency/deviceMemory/plugins are uniform.
-  Honest caveat: this is noise, not anonymity — sites can detect the
-  spoofing and canvas-heavy pages can break, so the shield panel has a
-  per-site "Spoof fingerprints on this site" switch that exempts a
-  misbehaving site on reload.
+  injected layer that is on by default (Settings > Privacy, "Spoof
+  canvas/WebGL fingerprints"; always on in Tor windows): canvas
+  readouts get per-session noise, WebGL reports a generic
+  vendor/renderer and navigator.hardwareConcurrency/deviceMemory/
+  plugins are uniform. Honest caveat: this is noise, not anonymity —
+  sites can detect the spoofing and canvas-heavy pages can break, so
+  the shield panel has a per-site "Spoof fingerprints on this site"
+  switch that exempts a misbehaving site on reload.
 - **Zero telemetry, verified** — launch *and* real browsing sessions
   produce no unsolicited connections; Chromium's background networking,
   component updates, domain reliability, metrics and sync are disabled,

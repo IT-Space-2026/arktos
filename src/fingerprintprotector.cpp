@@ -39,6 +39,7 @@ FingerprintProtector::FingerprintProtector(QObject *parent)
     : QObject(parent)
     , m_seed(QRandomGenerator::global()->generate())
 {
+    migrateToDefaultOn();
     const QStringList persisted = QSettings().value(
         QLatin1String("privacy/fingerprintExceptions")).toStringList();
     for (const QString &host : persisted) {
@@ -57,7 +58,25 @@ FingerprintProtector *FingerprintProtector::instance()
 bool FingerprintProtector::isEnabled() const
 {
     return QSettings().value(
-        QLatin1String("privacy/fingerprintProtection"), false).toBool();
+        QLatin1String("privacy/fingerprintProtection"), true).toBool();
+}
+
+void FingerprintProtector::migrateToDefaultOn()
+{
+    QSettings settings;
+    if (settings.value(
+            QLatin1String("privacy/fingerprintMigrationV1"),
+            false).toBool())
+        return;
+    // Only a stored explicit false is a pre-PRIV06 opt-out needing
+    // the flip — an absent key already resolves to the new default.
+    const QVariant stored = settings.value(
+        QLatin1String("privacy/fingerprintProtection"));
+    if (stored.isValid() && !stored.toBool())
+        settings.setValue(
+            QLatin1String("privacy/fingerprintProtection"), true);
+    settings.setValue(
+        QLatin1String("privacy/fingerprintMigrationV1"), true);
 }
 
 bool FingerprintProtector::isActiveForProfile(

@@ -84,6 +84,7 @@
 #include "engineregistry.h"
 #include "extensionmanager.h"
 #include "extensionreviewdialog.h"
+#include "fingerprintprotector.h"
 #include "historymanager.h"
 #include "languagemanager.h"
 #include "networkaccessmanager.h"
@@ -1479,9 +1480,11 @@ void SettingsDialog::loadFromSettings()
     // PRIV02 fingerprint normalization.
     reportUtcTimezone->setChecked(settings.value(QLatin1String("reportUtcTimezone"), false).toBool());
     normalizeAcceptLanguage->setChecked(settings.value(QLatin1String("normalizeAcceptLanguage"), false).toBool());
-    // SAFE06: opt-in injection — off by default because the spoofing
-    // is detectable and canvas-heavy sites can break.
-    fingerprintProtection->setChecked(settings.value(QLatin1String("fingerprintProtection"), false).toBool());
+    // SAFE06/PRIV06: on by default — read through the protector so the
+    // one-time false->true migration has already run by the time the
+    // checkbox state is shown.
+    fingerprintProtection->setChecked(
+        FingerprintProtector::instance()->isEnabled());
     securityLevelCombo->setCurrentIndex(qBound(
         int(PrivacyRequestInterceptor::Standard),
         settings.value(QLatin1String("securityLevel"),

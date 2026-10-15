@@ -40,6 +40,7 @@
 #include <browserapplication.h>
 #include <browserprofile.h>
 #include <cookiejar.h>
+#include <fingerprintprotector.h>
 #include <privacyrequestinterceptor.h>
 #include <webpage.h>
 
@@ -111,6 +112,7 @@ private slots:
     void chromiumFlags();
     void secureDnsTorGate();
     void fingerprintNormalization();
+    void fingerprintDefaultOnMigration();
 
 private:
     QByteArray m_savedFlags;
@@ -1702,6 +1704,54 @@ void tst_Privacy::fingerprintNormalization()
              QStringList({QLatin1String("Klingon [tlh]")}));
 
     settings.remove(QLatin1String("network/acceptLanguages"));
+    init();
+}
+
+// PRIV06: the spoofing toggle defaults on; a stored explicit false
+// from before the flip is migrated to true exactly once, and a
+// deliberate opt-out written afterwards is never re-flipped.
+void tst_Privacy::fingerprintDefaultOnMigration()
+{
+    QSettings settings;
+    const QLatin1String key("privacy/fingerprintProtection");
+    const QLatin1String flag("privacy/fingerprintMigrationV1");
+    const QVariant savedKey = settings.value(key);
+    const QVariant savedFlag = settings.value(flag);
+
+    // Fresh profile: no stored key -> on.
+    settings.remove(key);
+    settings.remove(flag);
+    FingerprintProtector::migrateToDefaultOn();
+    QVERIFY(FingerprintProtector::instance()->isEnabled());
+    QVERIFY(settings.value(flag).toBool());
+
+    // A stored explicit false predates the flip -> migrated to true.
+    settings.remove(flag);
+    settings.setValue(key, false);
+    FingerprintProtector::migrateToDefaultOn();
+    QVERIFY(settings.value(key).toBool());
+    QVERIFY(FingerprintProtector::instance()->isEnabled());
+    QVERIFY(settings.value(flag).toBool());
+
+    // Running it again is a no-op.
+    FingerprintProtector::migrateToDefaultOn();
+    QVERIFY(settings.value(key).toBool());
+
+    // A deliberate opt-out after the migration stays off.
+    settings.setValue(key, false);
+    FingerprintProtector::migrateToDefaultOn();
+    QVERIFY(!settings.value(key).toBool());
+    QVERIFY(!FingerprintProtector::instance()->isEnabled());
+
+    // And a fresh-flag store that already reads false still migrates —
+    // the flag alone is what suppresses future flips.
+    settings.remove(flag);
+    settings.setValue(key, false);
+    FingerprintProtector::migrateToDefaultOn();
+    QVERIFY(settings.value(key).toBool());
+
+    restoreSetting(settings, key, savedKey);
+    restoreSetting(settings, flag, savedFlag);
     init();
 }
 

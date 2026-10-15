@@ -400,9 +400,10 @@ void installFingerprintProtection(QWebEngineProfile *profile)
             scripts->remove(script);
     }
 
-    // Opt-in per the privacy toggle; the tor profile gets the
-    // countermeasures unconditionally — fingerprint resistance is the
-    // point of that window, and every tor window should look alike.
+    // On by default since PRIV06 via the privacy toggle; the tor
+    // profile gets the countermeasures unconditionally — fingerprint
+    // resistance is the point of that window, and every tor window
+    // should look alike.
     FingerprintProtector *protector = FingerprintProtector::instance();
     if (!protector->isEnabled() && profile != s_torProfile)
         return;
