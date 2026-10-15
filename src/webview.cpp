@@ -1269,6 +1269,12 @@ void WebView::torFlushQueuedLoad()
 {
     if (m_torQueuedUrl.isEmpty())
         return;
+    // TOR14: a generated commit still in flight (the warm-up pending
+    // page or the error page) can swallow a raced load() whole — the
+    // queue stays put and the page's commit-landed edge calls back
+    // in here.
+    if (m_page->generatedPageCommitPending())
+        return;
     const QUrl url = m_torQueuedUrl;
     const QString title = m_torQueuedTitle;
     m_torQueuedUrl.clear();
@@ -1287,6 +1293,11 @@ void WebView::torGraceDispatch()
     if (tor && !tor->isReady())
         // Still bootstrapping — `ready` stays the wake-up; the grace
         // restarts when the flush there re-queues the url.
+        return;
+    // A generated commit in flight swallows a raced dispatch — keep
+    // the queue; the commit-landed edge flushes it and the re-queued
+    // path re-arms the grace.
+    if (m_page->generatedPageCommitPending())
         return;
     // Ready but no circuit evidence inside the grace — dispatch
     // anyway; the warm-up retry covers a failure and the error page
@@ -1330,6 +1341,15 @@ void WebView::loadUrl(const QUrl &url, const QString &title)
     m_torQueuedTitle.clear();
     if (m_torQueueGrace)
         m_torQueueGrace->stop();
+    // TOR14: under tor a warm-up pending/error page may still be
+    // committing — a load() fired now can be swallowed whole by the
+    // engine.  Queue it instead; the page's commit-landed edge
+    // flushes it moments later.
+    if (BrowserApplication::isTorMode()
+        && m_page->generatedPageCommitPending()) {
+        torQueueLoad(url, title);
+        return;
+    }
     load(url);
 }
 

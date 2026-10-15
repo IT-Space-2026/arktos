@@ -1165,6 +1165,21 @@ void WebPage::handleLoadingChanged(const QWebEngineLoadingInfo &loadingInfo)
                  && !loadingInfo.isErrorPage())
             PrivacyRequestInterceptor::clearDowngradedHost(
                 loadingInfo.url().host(), downgradeScope);
+        // TOR14: a generated commit that just landed releases the
+        // work deferred behind it — the warm-up retry's re-issue and
+        // any tor nav the view was holding.  A load() fired while the
+        // setHtml commit is still in flight can be swallowed whole by
+        // the engine — no LoadStarted, no LoadFailed — so both wait
+        // for this edge instead of racing the commit.
+        if (m_pendingErrorPages == 0) {
+            if (m_torDeferredFire) {
+                m_torDeferredFire = false;
+                torFireRetry();
+            }
+            if (WebView *webView = qobject_cast<WebView *>(
+                    WebEnginePageAdapter::forPage(this)->view()))
+                webView->torFlushQueuedLoad();
+        }
         return;
     }
 
@@ -1519,6 +1534,7 @@ void WebPage::showTorWarmupPending(const QUrl &url)
 void WebPage::torDisarmRetry()
 {
     m_torRetryUrl.clear();
+    m_torDeferredFire = false;
     if (m_torRetryTimer)
         m_torRetryTimer->stop();
 }
@@ -1540,6 +1556,17 @@ void WebPage::torFireRetry()
 {
     if (m_torRetryUrl.isEmpty())
         return;
+    // TOR14: firing while a generated commit (the warm-up pending
+    // page or the error page) is still in flight races it — the
+    // engine can swallow the re-issued load whole: no LoadStarted,
+    // no LoadFailed, and the armed retry is gone, leaving the tab
+    // stuck on the pending page forever.  Wait out the commit — its
+    // LoadSucceeded edge in handleLoadingChanged re-enters here;
+    // the arm stays so the intent is not lost.
+    if (m_pendingErrorPages > 0) {
+        m_torDeferredFire = true;
+        return;
+    }
     const QUrl url = m_torRetryUrl;
     torDisarmRetry();
     // TOR12: the attempt is spent on the fire — a retry that fails

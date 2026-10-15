@@ -167,6 +167,17 @@ public:
     // once the engine navigates it — records the pop-up's target url.
     void noteBlockedPopupTarget(const QUrl &url);
 
+    // TOR14: a generated commit — the not-found error page or the
+    // tor warm-up pending page setHtml()s — is on its way to the
+    // renderer but has not reported its LoadSucceeded yet.  A load()
+    // fired into this window can be swallowed whole by the engine
+    // (no LoadStarted, no LoadFailed), so the tor retry fire and the
+    // view's queued-navigation flush wait it out.
+    bool generatedPageCommitPending() const
+    {
+        return m_pendingErrorPages > 0;
+    }
+
 protected:
     bool acceptNavigationRequest(const QUrl &url, NavigationType type, bool isMainFrame) override;
     QWebEnginePage *createWindow(QWebEnginePage::WebWindowType type) override;
@@ -322,6 +333,11 @@ protected:
     // set lets handleLoadingChanged swallow exactly those reports
     // instead of arming a retry for a nav that was never dispatched.
     QSet<QUrl> m_torHeldNavs;
+    // TOR14: the armed retry asked to fire while a generated commit
+    // was still in flight — the fire is deferred to the commit's
+    // LoadSucceeded edge so the re-issued load() cannot be swallowed
+    // by the engine mid-commit.
+    bool m_torDeferredFire = false;
 };
 
 #endif // WEBPAGE_H

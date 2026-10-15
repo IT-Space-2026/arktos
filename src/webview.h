@@ -115,6 +115,10 @@ public:
     // called when a transient tor failure is being auto-retried so
     // the chrome shows the wait, not just the pending page.
     void torWarmupNotice();
+    // TOR14: flushes a held tor navigation once the daemon can carry
+    // it — also called by the page when an in-flight generated commit
+    // lands, since dispatching into that window could lose the load.
+    void torFlushQueuedLoad();
 #ifdef AUTOTESTS
     // Test seam: the url loadUrl() is holding until the tor daemon
     // reports ready — empty when nothing is queued.  Lets the
@@ -261,7 +265,6 @@ private:
     void torQueueLoad(const QUrl &url, const QString &title);
     void torArmWakeup();
     void torArmQueueGrace();
-    void torFlushQueuedLoad();
     void torGraceDispatch();
 
 private slots:

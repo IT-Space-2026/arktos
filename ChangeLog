@@ -1250,6 +1250,12 @@ Tor:
   and while a warm-up retry is armed the tab shows a "Tor is still
   starting" pending page that resolves on its own — the error page
   only commits once the retry budget is honestly spent (TOR14).
+- A warm-up retry's reload could be silently swallowed while the
+  "Tor is still starting" pending page was still committing, leaving
+  the tab stuck on the pending page instead of retrying — the retry
+  now waits for the generated page commit to land before it
+  re-dispatches, so the bounded retry chain actually runs to its
+  honest end (TOR14).
 - Tor window polish: the reader-mode button can no longer revert to a
   black glyph when a state change lands inside a stylesheet repolish —
   it re-bakes its icon whenever the palette/style settles, the way the
