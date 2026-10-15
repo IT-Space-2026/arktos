@@ -75,6 +75,7 @@ class QHBoxLayout;
 class QLabel;
 class QTimer;
 class ReaderButton;
+class SiteShieldButton;
 class SidebarGrip;
 class SidebarPanel;
 class TabWidget;
@@ -382,6 +383,10 @@ private:
     QSplitter *m_navigationSplitter;
     ReaderButton *m_readerModeButton;
     QAction *m_navReaderAction;
+    // TRUST15: shared site-shield button on the nav row (id
+    // "siteShield"), bound to the current tab — never hidden, disabled
+    // with reason on tabs that have no web view.
+    SiteShieldButton *m_siteShield;
     // TOR08: circuit dropdown next to the reader button — tor windows
     // only, never constructed otherwise.
     TorCircuitButton *m_torCircuitButton;

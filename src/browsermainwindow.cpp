@@ -94,6 +94,7 @@
 #include "settings.h"
 #include "sidebargrip.h"
 #include "sidebarpanel.h"
+#include "siteshield.h"
 #include "sourceviewer.h"
 #include "statusbarwidgets.h"
 #include "tabbar.h"
@@ -245,6 +246,7 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     , m_navigationSplitter(nullptr)
     , m_readerModeButton(nullptr)
     , m_navReaderAction(nullptr)
+    , m_siteShield(nullptr)
     , m_torCircuitButton(nullptr)
     , m_toolbarSearch(nullptr)
 #if defined(Q_OS_MACOS)
@@ -1972,6 +1974,29 @@ void BrowserMainWindow::setupToolBar()
             ->setProperty(kNavBarItemIdProperty,
                           QLatin1String("torCircuit"));
     }
+
+    // TRUST15: the site shield rides the nav row itself — one shared
+    // button immediately left of the url field (right of the reader
+    // button / tor circuit), rebound to the ACTIVE tab on every
+    // switch, window and tear-off via the signals below.  It never
+    // leaves the bar: widget/engine tabs show it disabled with the
+    // reason in its tooltip.  A ctor-hidden widget would latch the
+    // QWidgetAction invisible at insertion — the action's own
+    // visibility is what governs — so the action is pinned here.
+    m_siteShield = new SiteShieldButton(m_navigationBar);
+    m_siteShield->setObjectName(QLatin1String("navSiteShield"));
+    QAction *navShieldAction =
+        m_navigationBar->addWidget(m_siteShield);
+    navShieldAction->setProperty(kNavBarItemIdProperty,
+                                 QLatin1String("siteShield"));
+    navShieldAction->setVisible(true);
+    const auto rebindShield = [this]() {
+        m_siteShield->setWebView(currentTab());
+    };
+    connect(m_tabWidget, &QTabWidget::currentChanged, this,
+            [rebindShield](int) { rebindShield(); });
+    connect(m_tabWidget, &TabWidget::tabsChanged, this, rebindShield);
+    rebindShield();
 
     m_navigationSplitter = new QSplitter(m_navigationBar);
     m_navigationSplitter->addWidget(m_tabWidget->locationBarStack());

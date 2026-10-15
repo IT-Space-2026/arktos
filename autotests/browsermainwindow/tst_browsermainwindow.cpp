@@ -77,6 +77,7 @@
 #include "webpage.h"
 #include "webviewsearch.h"
 #include "locationbar.h"
+#include "siteshield.h"
 #include "toolbarsearch.h"
 #include "torcircuitbutton.h"
 #include "torcircuitpanel.h"
@@ -204,6 +205,7 @@ private slots:
     void extensionActionButtons();
     void navBarEditMode();
     void navBarOrderPersistence();
+    void siteShieldButton();
 };
 
 void tst_BrowserMainWindow::initTestCase()
@@ -3402,7 +3404,8 @@ void tst_BrowserMainWindow::readerModeButton()
 
     // Slot order in the toolbar's action list: the MENU06 app-menu
     // button leads, then Back, Forward, Stop/Reload, the HOME01 Home
-    // button, the reader button, then the location-bar splitter.
+    // button, the reader button, the TRUST15 site shield, then the
+    // location-bar splitter.
     const QList<QAction *> barActions = navBar->actions();
     int readerIndex = -1;
     int splitterIndex = -1;
@@ -3414,7 +3417,7 @@ void tst_BrowserMainWindow::readerModeButton()
             splitterIndex = i;
     }
     QCOMPARE(readerIndex, 5);
-    QCOMPARE(splitterIndex, readerIndex + 1);
+    QCOMPARE(splitterIndex, readerIndex + 2);
 
     // The View-menu action shares the same ReaderMode state.
     QAction *viewAction = nullptr;
@@ -6042,7 +6045,8 @@ void tst_BrowserMainWindow::navBarOrderPersistence()
         QStringLiteral("appMenu"), QStringLiteral("back"),
         QStringLiteral("forward"), QStringLiteral("stopReload"),
         QStringLiteral("home"), QStringLiteral("reader"),
-        QStringLiteral("locationBar"), QStringLiteral("sidebar")};
+        QStringLiteral("siteShield"), QStringLiteral("locationBar"),
+        QStringLiteral("sidebar")};
 
     SubWindow *window = new SubWindow;
     window->resize(1400, 700);
@@ -6076,7 +6080,8 @@ void tst_BrowserMainWindow::navBarOrderPersistence()
         QStringLiteral("appMenu"), QStringLiteral("stopReload"),
         QStringLiteral("back"), QStringLiteral("forward"),
         QStringLiteral("home"), QStringLiteral("reader"),
-        QStringLiteral("locationBar"), QStringLiteral("sidebar")};
+        QStringLiteral("siteShield"), QStringLiteral("locationBar"),
+        QStringLiteral("sidebar")};
     QCOMPARE(window->navBarOrder(), draggedOrder);
     {
         QSettings settings;
@@ -6116,7 +6121,8 @@ void tst_BrowserMainWindow::navBarOrderPersistence()
         QStringLiteral("back"), QStringLiteral("appMenu"),
         QStringLiteral("stopReload"), QStringLiteral("forward"),
         QStringLiteral("home"), QStringLiteral("reader"),
-        QStringLiteral("locationBar"), QStringLiteral("sidebar")};
+        QStringLiteral("siteShield"), QStringLiteral("locationBar"),
+        QStringLiteral("sidebar")};
     QCOMPARE(window->navBarOrder(), resyncedOrder);
     QCOMPARE(second->navBarOrder(), resyncedOrder);
     {
@@ -6159,6 +6165,7 @@ void tst_BrowserMainWindow::navBarOrderPersistence()
                           QStringLiteral("stopReload"),
                           QStringLiteral("home"),
                           QStringLiteral("reader"),
+                          QStringLiteral("siteShield"),
                           QStringLiteral("locationBar")}));
     closeWindow(third);
 
@@ -6202,6 +6209,7 @@ void tst_BrowserMainWindow::navBarOrderPersistence()
                           QStringLiteral("home"),
                           QStringLiteral("reader"),
                           QStringLiteral("torCircuit"),
+                          QStringLiteral("siteShield"),
                           QStringLiteral("locationBar")}));
     QVERIFY(torBar->styleSheet().contains(QLatin1String("#4a3372")));
     closeWindow(torWindow);
@@ -6215,6 +6223,121 @@ void tst_BrowserMainWindow::navBarOrderPersistence()
         settings.remove(key);
         settings.sync();
     }
+}
+
+// TRUST15: the site shield is a permanent nav-row item — one shared
+// button immediately right of the reader button (left of the url
+// field's splitter slot), bound to the ACTIVE tab.  It is never
+// hidden: a widget/engine tab shows it disabled with the reason in
+// its tooltip.  The leg exists because a ctor-hidden widget inserted
+// via QToolBar::addWidget latches its QWidgetAction invisible and no
+// later widget-side setVisible(true) unlatches it — the shield was
+// silently absent from the live bar.
+void tst_BrowserMainWindow::siteShieldButton()
+{
+    const QLatin1String key("navbar/order");
+    {
+        QSettings settings;
+        settings.remove(key);
+        settings.sync();
+    }
+
+    SubWindow *window = new SubWindow;
+    window->resize(1400, 700);
+    window->show();
+    QApplication::processEvents();
+
+    QToolBar *navBar = window->findChild<QToolBar *>(
+        QLatin1String("NavigationToolBar"));
+    QVERIFY(navBar);
+    SiteShieldButton *shield = navBar->findChild<SiteShieldButton *>(
+        QLatin1String("navSiteShield"));
+    QVERIFY(shield);
+
+    // Presence — the widget AND its toolbar action are both visible;
+    // the action's flag is what actually controls the slot.
+    QAction *shieldAction = nullptr;
+    for (QAction *action : navBar->actions()) {
+        if (navBar->widgetForAction(action) == shield)
+            shieldAction = action;
+    }
+    QVERIFY(shieldAction);
+    QVERIFY(shieldAction->isVisible());
+    QVERIFY(!shield->isHidden());
+    QVERIFY(!shield->icon().isNull());
+    QVERIFY(!shield->icon().pixmap(shield->iconSize()).isNull());
+
+    // The themed glyph resolves in the dark set too — a light<->dark
+    // flip re-bakes the icon through the queued scheme-change hook.
+    BrowserTheme::previewColorScheme(Qt::ColorScheme::Dark);
+    QApplication::processEvents();
+    QVERIFY(!shield->icon().isNull());
+    QVERIFY(!shield->icon().pixmap(shield->iconSize()).isNull());
+    BrowserTheme::applyColorScheme();
+    QApplication::processEvents();
+
+    // Position: stock order parks it immediately after "reader" and
+    // immediately before "locationBar" — directly left of the field.
+    const QStringList order = window->navBarOrder();
+    QCOMPARE(order.indexOf(QLatin1String("siteShield")),
+             order.indexOf(QLatin1String("reader")) + 1);
+    QCOMPARE(order.indexOf(QLatin1String("locationBar")),
+             order.indexOf(QLatin1String("siteShield")) + 1);
+
+    // Web tab: bound and live.
+    QVERIFY(window->currentTab());
+    QVERIFY(shield->isEnabled());
+    QVERIFY(!shield->toolTip().contains(QLatin1String("not available"),
+                                        Qt::CaseInsensitive));
+
+    // Widget tab: the shield stays put — disabled with the honest
+    // reason — rather than disappearing from the row.
+    QVERIFY(QMetaObject::invokeMethod(window, "preferences"));
+    QVERIFY(!window->currentTab());
+    QVERIFY(!shield->isHidden());
+    QVERIFY(shieldAction->isVisible());
+    QVERIFY(!shield->isEnabled());
+    QVERIFY(shield->toolTip().contains(QLatin1String("not available"),
+                                       Qt::CaseInsensitive));
+
+    // Back on a web tab the same button rebinds live.
+    window->tabWidget()->setCurrentIndex(0);
+    QVERIFY(window->currentTab());
+    QVERIFY(shield->isEnabled());
+
+    // Rebuild leg — a stored order performs the remove/add round-trip
+    // on every bar action (the QWidgetAction unembed/re-embed path);
+    // a fresh window on that order is also the session-restore shape.
+    {
+        QSettings settings;
+        settings.setValue(key, QStringList{
+            QStringLiteral("locationBar"), QStringLiteral("back"),
+            QStringLiteral("appMenu"), QStringLiteral("sidebar")});
+        settings.sync();
+    }
+    SubWindow *restored = new SubWindow;
+    restored->resize(1200, 700);
+    restored->show();
+    QApplication::processEvents();
+    QToolBar *restoredBar = restored->findChild<QToolBar *>(
+        QLatin1String("NavigationToolBar"));
+    QVERIFY(restoredBar);
+    SiteShieldButton *restoredShield =
+        restoredBar->findChild<SiteShieldButton *>(
+            QLatin1String("navSiteShield"));
+    QVERIFY(restoredShield);
+    QVERIFY(!restoredShield->isHidden());
+    QVERIFY(restoredShield->isEnabled());
+    QVERIFY(restored->navBarOrder().contains(
+        QLatin1String("siteShield")));
+    closeWindow(restored);
+    {
+        QSettings settings;
+        settings.remove(key);
+        settings.sync();
+    }
+
+    closeWindow(window);
 }
 
 QTEST_MAIN(tst_BrowserMainWindow)

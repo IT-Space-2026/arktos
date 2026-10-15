@@ -26,7 +26,6 @@
 #include "privacyindicator.h"
 #include "readerbutton.h"
 #include "searchlineedit.h"
-#include "siteshield.h"
 #include "twoleveldomains_p.h"
 #include "webview.h"
 
@@ -45,7 +44,6 @@ LocationBar::LocationBar(QWidget *parent)
     : LineEdit(parent)
     , m_webView(nullptr)
     , m_siteIcon(nullptr)
-    , m_shield(nullptr)
     , m_popupBlockerButton(nullptr)
     , m_privacyIndicator(nullptr)
     , m_readerButton(nullptr)
@@ -59,12 +57,10 @@ LocationBar::LocationBar(QWidget *parent)
     setMinimumHeight(fontMetrics().height() + 12);
 
     setUpdatesEnabled(false);
-    // UIP05: the shield indicator opens the per-site privacy panel —
-    // leftmost of the leading site-info zone, Vivaldi-style.
-    m_shield = new SiteShieldButton(this);
-    addWidget(m_shield, LeftSide);
-
-    // site icon on the left, next to the shield
+    // TRUST15: the site shield moved out of the bar onto the
+    // navigation row (BrowserMainWindow hosts the single shared
+    // button left of this field), so the leading zone is the site
+    // icon alone.
     m_siteIcon = new LocationBarSiteIcon(this);
     addWidget(m_siteIcon, LeftSide);
 
@@ -102,7 +98,6 @@ void LocationBar::setWebView(WebView *webView)
     Q_ASSERT(webView);
     m_webView = webView;
     m_siteIcon->setWebView(webView);
-    m_shield->setWebView(webView);
     m_popupBlockerButton->setWebView(webView);
     m_privacyIndicator->setWebView(webView);
     m_readerButton->setWebView(webView);

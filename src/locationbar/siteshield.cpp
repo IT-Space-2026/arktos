@@ -69,7 +69,11 @@ SiteShieldButton::SiteShieldButton(QWidget *parent)
             this, &SiteShieldButton::refreshIcon, Qt::QueuedConnection);
 
     refreshIcon();
-    setVisible(m_webView != nullptr);
+    // TRUST15: never hide the button.  It rides the navigation bar as
+    // a QWidgetAction, whose visibility is latched from the widget's
+    // state at insertion — a ctor-hidden widget leaves the item
+    // permanently absent no matter how many setVisible(true) calls
+    // follow (the action's flag governs, not the widget's).
 }
 
 void SiteShieldButton::setWebView(WebView *webView)
@@ -95,7 +99,6 @@ void SiteShieldButton::setWebView(WebView *webView)
         connect(webView, &QWebEngineView::loadFinished,
                 this, [this](bool) { refreshIcon(); });
     }
-    setVisible(webView != nullptr);
     refreshIcon();
 }
 
@@ -103,10 +106,16 @@ void SiteShieldButton::refreshIcon()
 {
     const QIcon shield = AroraIcon::getChrome(QLatin1String("security-high"));
 
+    // TRUST15: unbound (widget/engine tab, or a window before its
+    // first bind) shows the shield disabled with the honest reason —
+    // the row keeps its shape instead of gaining a gap.
     if (!m_webView) {
         setIcon(shield);
+        setEnabled(false);
+        setToolTip(tr("Site privacy — not available on this tab"));
         return;
     }
+    setEnabled(true);
 
     // Badge art is authored in 16x16 space; scale it to the button's
     // icon size so the overlay follows the icon growth.

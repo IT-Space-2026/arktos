@@ -163,9 +163,11 @@ void tst_LocationBar::widgets()
 {
     TestLocationBar bar;
     QVERIFY(bar.findChild<LocationBarSiteIcon*>());
-    QVERIFY(bar.findChild<SiteShieldButton*>());
     QVERIFY(bar.findChild<PrivacyIndicator*>());
     QVERIFY(bar.findChild<ClearButton*>());
+    // TRUST15: the site shield moved out of the bar onto the nav row
+    // (tst_browsermainwindow::siteShieldButton locks the slot).
+    QVERIFY(!bar.findChild<SiteShieldButton*>());
     // SHLD02: one shield only — the separate content-blocker button
     // was merged into the site shield.
     const QList<QToolButton*> buttons = bar.findChildren<QToolButton*>();
@@ -343,54 +345,55 @@ void tst_LocationBar::privacyIndicator()
     QVERIFY(!BrowserApplication::isPrivate());
 }
 
-// SHLD02 + UIP05: the merged site shield — the standalone
-// content-blocker button is gone from the right cluster; the left
-// shield's panel hosts the global toggle, the per-page blocked count
-// and the settings entry, and the shield icon itself carries the
-// blocked-count badge and the disabled/whitelisted states.
+// SHLD02 + TRUST15: the merged site shield — the standalone
+// content-blocker button is gone from the right cluster; the shield
+// itself rides the navigation bar as the window's shared button
+// (tst_browsermainwindow::siteShieldButton locks the slot) and is
+// never hidden — unbound it shows disabled with the honest reason.
+// Its panel hosts the global toggle, the per-page blocked count and
+// the settings entry, and the icon carries the blocked-count badge
+// and the disabled/whitelisted states.
 void tst_LocationBar::contentBlockingShield()
 {
     TestLocationBar bar;
-
-    SiteShieldButton *shield = bar.findChild<SiteShieldButton*>();
-    LocationBarSiteIcon *siteIcon = bar.findChild<LocationBarSiteIcon*>();
-    QVERIFY(shield);
-    QVERIFY(siteIcon);
-    QVERIFY(shield->isHidden()); // nothing to report without a view
-    // One shield only — the right cluster has no blocker button.
+    // One shield only — the right cluster has no blocker button, and
+    // the bar carries no shield child of its own anymore.
     const QList<QToolButton*> buttons = bar.findChildren<QToolButton*>();
     for (QToolButton *candidate : buttons)
         QVERIFY(candidate->accessibleName()
                 != QLatin1String("Content Blocker"));
+    QVERIFY(!bar.findChild<SiteShieldButton*>());
+
+    SiteShieldButton shield;
+    // Unbound: still enabled-state driven, never a hidden gap.
+    QVERIFY(!shield.isEnabled());
+    QVERIFY(shield.toolTip().contains(QLatin1String("not available"),
+                                      Qt::CaseInsensitive));
 
     WebView view(BrowserApplication::webEngineProfile());
-    bar.setWebView(&view);
-    QVERIFY(!shield->isHidden());
+    shield.setWebView(&view);
+    QVERIFY(shield.isEnabled());
+    QVERIFY(!shield.toolTip().contains(QLatin1String("not available"),
+                                       Qt::CaseInsensitive));
 
-    // Vivaldi order on the left — shield, then site icon, then the
-    // url text.
-    bar.show();
-    QTRY_VERIFY_WITH_TIMEOUT(
-        shield->mapTo(&bar, QPoint(0, 0)).x()
-            < siteIcon->mapTo(&bar, QPoint(0, 0)).x(), 3000);
-
-    // The panel popup still anchors under the shield at its new spot.
+    // The panel popup still anchors under the button.
     // showMenu() runs the menu's nested exec() loop, so a timer
     // captures the geometry and dismisses it from inside.
-    QVERIFY(shield->menu());
+    shield.show();
+    QVERIFY(shield.menu());
     QPoint menuPos(-1, -1);
-    QTimer::singleShot(200, shield->menu(), [shield, &menuPos]() {
-        menuPos = shield->menu()->pos();
-        shield->menu()->hide();
+    QTimer::singleShot(200, shield.menu(), [&shield, &menuPos]() {
+        menuPos = shield.menu()->pos();
+        shield.menu()->hide();
     });
-    shield->showMenu();
+    shield.showMenu();
     QVERIFY(menuPos.x() >= 0);
     QVERIFY(qAbs(menuPos.x()
-            - shield->mapToGlobal(QPoint(0, shield->height())).x()) < 16);
+            - shield.mapToGlobal(QPoint(0, shield.height())).x()) < 16);
 
     // The merged panel exposes the global toggle, the per-site row,
     // the live count and the settings entry.
-    SitePanel *panel = shield->panel();
+    SitePanel *panel = shield.panel();
     QVERIFY(panel);
     QCheckBox *global = panel->findChild<QCheckBox*>(
         QLatin1String("siteContentBlocking"));
@@ -412,14 +415,14 @@ void tst_LocationBar::contentBlockingShield()
     QVERIFY(!global->isChecked());
     QVERIFY(count->text().contains(QLatin1String("disabled"),
                                    Qt::CaseInsensitive));
-    QVERIFY(shield->toolTip().contains(QLatin1String("disabled"),
-                                     Qt::CaseInsensitive));
+    QVERIFY(shield.toolTip().contains(QLatin1String("disabled"),
+                                      Qt::CaseInsensitive));
 
     // The global row drives AdBlockManager::setEnabled both ways.
     global->setChecked(true);
     QVERIFY(manager->isEnabled());
-    QVERIFY(!shield->toolTip().contains(QLatin1String("disabled"),
-                                      Qt::CaseInsensitive));
+    QVERIFY(!shield.toolTip().contains(QLatin1String("disabled"),
+                                       Qt::CaseInsensitive));
     // No page host yet — the count line degrades gracefully.
     QVERIFY(!count->text().isEmpty());
 
