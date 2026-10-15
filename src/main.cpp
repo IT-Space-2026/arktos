@@ -2204,7 +2204,26 @@ static int bidiSmoke(BrowserApplication &application, WebView *view)
         bool sawNetTiming = false;
         bool sawCookies = false;
         bool sawCache = false;
+        // DEVT13: per-domain probe verdicts through the arora.cdp
+        // passthrough — id -> domain name.
+        QHash<quint64, QString> probes;
+        int probesAnswered = 0;
+        bool runtimeProbeUp = false;
+        // DEVT13: functional chain — the tabs' backing calls, not
+        // just enables: resource tree -> content, CPU capture,
+        // allocation sampling.  id -> step name.
+        QHash<quint64, QString> funcs;
+        QString funcFrameId;
+        QStringList funcUrls; // content candidates, tried in order
+        bool funcStarted = false;
+        bool sawFunc = false;
         bool done = false;
+        // Sends one step of the functional CDP chain — needs
+        // client/context/funcs, so it lives on the struct and is
+        // assigned after sm exists.
+        std::function<void(const QString &, const QJsonObject &,
+                           const QString &)>
+            funcSend;
     };
     Smoke *sm = new Smoke;
 
@@ -2214,6 +2233,23 @@ static int bidiSmoke(BrowserApplication &application, WebView *view)
         sm->done = true;
         qInfo() << "bidi-smoke:" << (pass ? "PASS" : "FAIL") << why;
         application.exit(pass ? 0 : 1);
+    };
+
+    // Evaluate completion only once the functional CDP chain has
+    // finished — it's the last leg started and answers slowest, so
+    // the old "all event flags set" trigger raced it and failed.
+    const auto checkDone = [sm, finish]() {
+        if (sm->sawTree && sm->sawEval && sm->sawLog && sm->sawNetRequest
+            && sm->sawCookies && sm->sawCache && sm->sawFunc) {
+            const bool ok = sm->sawNetResponse && sm->sawNetTiming
+                && sm->runtimeProbeUp
+                && sm->probesAnswered >= sm->probes.size();
+            finish(ok, ok ? QStringLiteral("all checks green")
+                          : QStringLiteral("network event missing "
+                                           "terminal/timing data, or "
+                                           "arora.cdp probes "
+                                           "unanswered/failed"));
+        }
     };
 
     QObject::connect(&sm->client, &BidiClient::connectionChanged,
@@ -2239,13 +2275,131 @@ static int bidiSmoke(BrowserApplication &application, WebView *view)
         Q_UNUSED(view);
     });
 
+    sm->funcSend = [sm](const QString &method,
+                        const QJsonObject &params,
+                        const QString &next) {
+        QJsonObject wrap;
+        wrap[QStringLiteral("method")] = method;
+        wrap[QStringLiteral("params")] = params;
+        wrap[QStringLiteral("context")] = sm->context;
+        const quint64 nid = sm->client.sendCommand(
+            QStringLiteral("arora.cdp"),
+            QJsonDocument(wrap).toJson(QJsonDocument::Compact));
+        if (nid)
+            sm->funcs.insert(nid, next);
+    };
+
     QObject::connect(&sm->client, &BidiClient::responseReceived,
-                     &application, [sm, view, finish](quint64 id,
+                     &application, [sm, view, finish, checkDone](quint64 id,
                                                const QByteArray &json) {
         const QJsonObject root =
             QJsonDocument::fromJson(json).object();
         const QJsonObject result =
             root[QStringLiteral("result")].toObject();
+
+        // DEVT13: domain probe answers — any envelope (result or a
+        // clean CDP error) proves the passthrough works; the verdict
+        // itself is up/down for the panel's honest-disabled tabs.
+        const QString probeDomain = sm->probes.value(id);
+        if (!probeDomain.isEmpty()) {
+            ++sm->probesAnswered;
+            const bool up = !root.contains(QStringLiteral("error"));
+            if (probeDomain == QLatin1String("Runtime") && up)
+                sm->runtimeProbeUp = true;
+            qInfo() << "bidi-smoke: probe" << probeDomain
+                    << (up ? QStringLiteral("up")
+                           : QStringLiteral("down (")
+                                 + root[QStringLiteral("error")]
+                                       .toObject()
+                                       [QStringLiteral("message")]
+                                       .toString()
+                                 + QLatin1String(")"));
+            checkDone();
+            return;
+        }
+
+        // DEVT13: the functional chain — the calls the new tabs
+        // actually make, in order.  A hard error fails the smoke.
+        const QString step = sm->funcs.value(id);
+        if (!step.isEmpty()) {
+            const auto &cdpSend = sm->funcSend;
+            if (root.contains(QStringLiteral("error"))) {
+                // Not every tree url is retrievable (data:, about:) —
+                // walk to the next candidate before declaring a miss.
+                if (step == QLatin1String("content")
+                    && sm->funcUrls.size() > 1) {
+                    sm->funcUrls.removeFirst();
+                    cdpSend(QStringLiteral("Page.getResourceContent"),
+                            QJsonObject{
+                                {QStringLiteral("frameId"),
+                                 sm->funcFrameId},
+                                {QStringLiteral("url"),
+                                 sm->funcUrls.first()}},
+                            QStringLiteral("content"));
+                    return;
+                }
+                qInfo() << "bidi-smoke: func" << step << "FAILED"
+                        << root[QStringLiteral("error")].toObject()
+                               [QStringLiteral("message")].toString();
+                finish(false, QStringLiteral("functional CDP %1 "
+                                             "failed").arg(step));
+                return;
+            }
+            qInfo() << "bidi-smoke: func" << step << "ok";
+            if (step == QLatin1String("tree")) {
+                const QJsonObject tree =
+                    result[QStringLiteral("frameTree")].toObject();
+                const QJsonObject frame =
+                    tree[QStringLiteral("frame")].toObject();
+                sm->funcFrameId =
+                    frame[QStringLiteral("id")].toString();
+                // data: documents sometimes register no resource —
+                // try the frame url, then every tree resource.
+                sm->funcUrls << frame[QStringLiteral("url")].toString();
+                for (const QJsonValue &r :
+                     tree[QStringLiteral("resources")].toArray())
+                    sm->funcUrls << r.toObject()
+                                        [QStringLiteral("url")]
+                                        .toString();
+                sm->funcUrls.removeAll(QString());
+                if (sm->funcFrameId.isEmpty()
+                    || sm->funcUrls.isEmpty()) {
+                    finish(false, QStringLiteral(
+                               "resource tree carried no frame"));
+                    return;
+                }
+                cdpSend(QStringLiteral("Page.getResourceContent"),
+                        QJsonObject{
+                            {QStringLiteral("frameId"),
+                             sm->funcFrameId},
+                            {QStringLiteral("url"),
+                             sm->funcUrls.first()}},
+                        QStringLiteral("content"));
+            } else if (step == QLatin1String("content")) {
+                if (result[QStringLiteral("content")].toString()
+                        .isEmpty()) {
+                    finish(false, QStringLiteral(
+                               "resource content empty"));
+                    return;
+                }
+                cdpSend(QStringLiteral("Profiler.start"),
+                        QJsonObject(), QStringLiteral("profStart"));
+            } else if (step == QLatin1String("profStart")) {
+                cdpSend(QStringLiteral("Profiler.stop"),
+                        QJsonObject(), QStringLiteral("profStop"));
+            } else if (step == QLatin1String("profStop")) {
+                cdpSend(QStringLiteral("HeapProfiler.startSampling"),
+                        QJsonObject(), QStringLiteral("heapStart"));
+            } else if (step == QLatin1String("heapStart")) {
+                cdpSend(QStringLiteral("HeapProfiler.stopSampling"),
+                        QJsonObject(), QStringLiteral("heapStop"));
+            } else if (step == QLatin1String("heapStop")) {
+                sm->sawFunc = true;
+                qInfo() << "bidi-smoke: functional chain complete";
+                checkDone();
+            }
+            return;
+        }
 
         if (id == sm->cacheId && sm->cacheId) {
             if (json.contains(QByteArray("\"error\""))) {
@@ -2284,6 +2438,45 @@ static int bidiSmoke(BrowserApplication &application, WebView *view)
             sm->client.sendCommand(QStringLiteral("storage.getCookies"),
                 QByteArray("{\"context\":\"") + pick.toUtf8()
                 + QByteArray("\"}"));
+            // DEVT13: probe each CDP domain the panel cares about
+            // through the arora.cdp passthrough — cheapest real method
+            // per domain, session-scoped (page domains only exist on
+            // the page session; Tracing lives on the browser target).
+            static const struct {
+                const char *domain;
+                const char *method;
+                const char *params;
+                bool session;
+            } kProbes[] = {
+                {"Runtime", "Runtime.evaluate",
+                 "{\"expression\":\"1\"}", true},
+                {"DOM", "DOM.getDocument", "{\"depth\":0}", true},
+                {"CSS", "CSS.enable", "{}", true},
+                {"Debugger", "Debugger.enable", "{}", true},
+                {"Profiler", "Profiler.enable", "{}", true},
+                {"HeapProfiler", "HeapProfiler.enable", "{}", true},
+                {"Page", "Page.getResourceTree", "{}", true},
+                {"Security", "Security.enable", "{}", true},
+                {"Storage", "Storage.getCookies", "{}", true},
+                {"Performance", "Performance.getMetrics", "{}", true},
+                {"Tracing", "Tracing.getCategories", "{}", false},
+            };
+            for (const auto &probe : kProbes) {
+                QJsonObject params;
+                params[QStringLiteral("method")] =
+                    QString::fromLatin1(probe.method);
+                params[QStringLiteral("params")] =
+                    QJsonDocument::fromJson(probe.params).object();
+                if (probe.session)
+                    params[QStringLiteral("context")] = pick;
+                const quint64 id = sm->client.sendCommand(
+                    QStringLiteral("arora.cdp"),
+                    QJsonDocument(params).toJson(
+                        QJsonDocument::Compact));
+                if (id)
+                    sm->probes.insert(
+                        id, QString::fromLatin1(probe.domain));
+            }
             // navigate to a page that logs and fetches
             sm->client.sendCommand(QStringLiteral("browsingContext.navigate"),
                 QByteArray("{\"context\":\"") + pick.toUtf8()
@@ -2310,12 +2503,23 @@ static int bidiSmoke(BrowserApplication &application, WebView *view)
     });
 
     QObject::connect(&sm->client, &BidiClient::eventReceived,
-                     &application, [sm, finish](const QByteArray &json) {
+                     &application, [sm, checkDone](const QByteArray &json) {
         const QJsonObject env = QJsonDocument::fromJson(json).object();
         const QString method =
             env[QStringLiteral("method")].toString();
         const QJsonObject params =
             env[QStringLiteral("params")].toObject();
+        // DEVT13: start the functional chain once the page has
+        // loaded — earlier, the resource tree is still about:blank
+        // and getResourceContent has nothing to return.
+        if (method == QLatin1String("browsingContext.load")
+            && params[QStringLiteral("context")].toString()
+                   == sm->context
+            && !sm->funcStarted) {
+            sm->funcStarted = true;
+            sm->funcSend(QStringLiteral("Page.getResourceTree"),
+                         QJsonObject(), QStringLiteral("tree"));
+        }
         if (method == QLatin1String("log.entryAdded")
             && params[QStringLiteral("text")].toString()
                    .contains(QLatin1String("bidi-marker"))) {
@@ -2332,13 +2536,7 @@ static int bidiSmoke(BrowserApplication &application, WebView *view)
         if (method == QLatin1String("network.responseCompleted")
             || method == QLatin1String("network.fetchError"))
             sm->sawNetResponse = true;
-        if (sm->sawTree && sm->sawEval && sm->sawLog && sm->sawNetRequest
-            && sm->sawCookies && sm->sawCache) {
-            const bool ok = sm->sawNetResponse && sm->sawNetTiming;
-            finish(ok, ok ? QStringLiteral("all checks green")
-                          : QStringLiteral("network event missing "
-                                           "terminal/timing data"));
-        }
+        checkDone();
     });
 
     sm->client.connectToEngine();
@@ -2359,11 +2557,12 @@ static int bidiSmoke(BrowserApplication &application, WebView *view)
     QTimer::singleShot(20000, &application, [sm, finish]() {
         finish(false, QStringLiteral(
                    "timeout tree=%1 eval=%2 log=%3 net=%4/%5/%6 "
-                   "cookies=%7 cache=%8")
+                   "cookies=%7 cache=%8 probes=%9/%10")
                    .arg(sm->sawTree).arg(sm->sawEval).arg(sm->sawLog)
                    .arg(sm->sawNetRequest).arg(sm->sawNetResponse)
                    .arg(sm->sawNetTiming).arg(sm->sawCookies)
-                   .arg(sm->sawCache));
+                   .arg(sm->sawCache).arg(sm->probesAnswered)
+                   .arg(sm->probes.size()));
     });
     const int rc = application.exec();
     delete sm;

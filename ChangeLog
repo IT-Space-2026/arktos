@@ -2693,3 +2693,23 @@ BiDi Dev Tools Console reads like Chromium's Console (DEVT12):
 
 Servo wheel scrolling is frame-paced instead of backlog-prone (ENG31):
     Sustained wheel scrolling on a Servo tab felt choppy because scroll deliveries ran on a fixed 16ms timer while every delivered delta costs a full-viewport software raster (about 34ms per frame on llvmpipe) — input queued up to twice as fast as frames could paint, so a burst ground through stale deltas while live input waited. Wheel deltas are now gated on frame completion: the first notch of a burst still goes out immediately, but while its frame is in flight later deltas accumulate and flush as one summed scroll per completed frame, locking input rate to paint rate and bounding the queue at a single delivery. A watchdog releases the gate when a delivered delta produces no frame at all (overscroll clamp or a deduped input), so scrolling never latches. The --servo-smoke scroll bench now reports both sides — se_wheel deliveries versus frames painted plus a frame-time histogram — and asserts that sends can never outrun paints by more than one in-flight delivery; a synchronous 20-notch burst now collapses to about 2 deliveries carrying the full summed distance. The honest ceiling stands: llvmpipe full-surface repaints cap Servo scrolling near 30fps on heavy pages — smoother than a stalled backlog, never Chromium-compositor smooth.
+
+BiDi Dev Tools now carries Chrome's full top tab row (DEVT13):
+    Elements, Console, Sources, Network, Performance, Memory,
+    Application, Security — the old DOM and Storage tabs are gone,
+    folded into Elements and Application. A new arora.cdp bridge
+    command passes raw CDP calls onto the page session, so the panel
+    probes each domain live and only ships what actually answers:
+    Elements keeps the lazy DOM tree and adds Chrome's breadcrumb
+    trail, a click-to-inspect highlight overlay, and a styles pane
+    (real computed styles when the CSS domain responds, an honest
+    attribute/inline-style readout when it does not); Sources lists
+    the page's resources with a read-only syntax-highlighted view
+    and working URL:line breakpoints through the Debugger domain;
+    Performance shows a live metrics table plus CPU profiles
+    summarized by self time; Memory aggregates allocation samples
+    by function; Application grows a storage tree over cookies,
+    local/session storage and IndexedDB; Security reports the page
+    scheme, the TlsVerifier verdict and mixed-content counts from
+    our own data. A domain that refuses reads as a disabled tab
+    with the reason — never a fake.

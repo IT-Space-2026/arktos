@@ -56,6 +56,7 @@
 #include <qheaderview.h>
 #include <qlabel.h>
 #include <qlineedit.h>
+#include <qlistwidget.h>
 #include <qplaintextedit.h>
 #include <qscrollbar.h>
 #include <qsortfilterproxymodel.h>
@@ -86,6 +87,7 @@ private slots:
     void bidiConsoleParity();
     void bidiWaterfallLegibility();
     void bidiNetworkParity();
+    void bidiFullTabSet();
 };
 
 void tst_DevTools::initTestCase()
@@ -1663,6 +1665,294 @@ void tst_DevTools::bidiNetworkParity()
             QString::fromLocal8Bit(grabDir)
             + QLatin1String("/bidi-network-parity.png"));
     }
+}
+
+// DEVT13 — the full tab set: Chrome's row order, every new page's
+// widgets present, the DOM/Storage tabs retired into Elements/
+// Application, and the arora.cdp verdicts driving the honest-
+// disabled states.  CdpKind numbers mirror bidipanel.cpp's enum
+// (it is file-local there).
+void tst_DevTools::bidiFullTabSet()
+{
+    BidiPanel panel;
+    panel.show();
+
+    // Tab order: Elements Console Sources Network Performance
+    // Memory Application Security — DOM and Storage are gone.
+    const char *want[] = {
+        "Elements", "Console", "Sources", "Network",
+        "Performance", "Memory", "Application", "Security",
+    };
+    QCOMPARE(panel.m_tabs->count(), 8);
+    for (int i = 0; i < 8; ++i)
+        QCOMPARE(panel.m_tabs->tabText(i),
+                 QString::fromLatin1(want[i]));
+
+    // Elements: tree + toolbar + crumbs + styles pane.
+    QVERIFY(panel.findChild<QWidget *>(
+                QStringLiteral("bidiElementsToolbar")));
+    QVERIFY(panel.findChild<QWidget *>(
+                QStringLiteral("bidiElementsCrumbs")));
+    QVERIFY(panel.m_inspectToggle && panel.m_inspectToggle->isCheckable());
+    QVERIFY(panel.m_stylesView);
+    QVERIFY(panel.m_stylesTitle);
+
+    // Sources: resource tree, read-only view, breakpoint row + list.
+    QVERIFY(panel.m_sourcesTree);
+    QVERIFY(panel.m_sourceView->isReadOnly());
+    QVERIFY(panel.m_bpBar && panel.m_bpLine && panel.m_bpList);
+
+    // Performance / Memory controls exist.
+    QVERIFY(panel.m_cpuToggle && panel.m_cpuToggle->isCheckable());
+    QVERIFY(panel.m_metricsTable && panel.m_cpuTable);
+    QVERIFY(panel.m_heapButton && panel.m_heapTable);
+    QVERIFY(panel.m_perfOffline && panel.m_memOffline);
+    QVERIFY(panel.m_perfOffline->isHidden());
+    QVERIFY(panel.m_memOffline->isHidden());
+
+    // Application: nav tree + four stacked value pages.
+    QVERIFY(panel.m_appTree && panel.m_appStack);
+    QCOMPARE(panel.m_appStack->count(), 4);
+    QVERIFY(panel.m_cookieTable && panel.m_localStorageTable);
+    QVERIFY(panel.m_sessionStorageTable && panel.m_idbTable);
+
+    // Security page labels.
+    QVERIFY(panel.m_secHeadline && panel.m_secDetail);
+    QVERIFY(panel.m_secMixed);
+
+    // Unprobed = not up.
+    QVERIFY(!panel.domainUp(QStringLiteral("CSS")));
+    QCOMPARE(panel.domainReason(QStringLiteral("CSS")),
+             QStringLiteral("not probed"));
+
+    // Drive the probe verdicts: everything up except Profiler and
+    // HeapProfiler — Performance/Memory must disable WITH a reason,
+    // the rest stays up.
+    auto probe = [&panel](const char *domain, bool up) {
+        const quint64 id = panel.testRegisterCdp(
+            1 /*CdpProbe*/, QString::fromLatin1(domain));
+        panel.onResponse(id, up
+            ? QByteArray("{\"result\":{}}")
+            : QByteArray("{\"error\":{\"message\":\"'")
+                  + QByteArray(domain)
+                  + QByteArray("' wasn't found\"}}"));
+    };
+    probe("Runtime", true);
+    probe("DOM", true);
+    probe("CSS", true);
+    probe("Page", true);
+    probe("Debugger", true);
+    probe("Security", true);
+    probe("Performance", true);
+    probe("Profiler", false);
+    probe("HeapProfiler", false);
+    QVERIFY(panel.domainUp(QStringLiteral("CSS")));
+    QVERIFY(panel.domainUp(QStringLiteral("Debugger")));
+    QVERIFY(!panel.domainUp(QStringLiteral("Profiler")));
+    QCOMPARE(panel.domainReason(QStringLiteral("Profiler")),
+             QStringLiteral("'Profiler' wasn't found"));
+
+    // Perf needs Performance+Profiler: Profiler's miss disables it
+    // and explains itself; Memory's HeapProfiler miss does the same.
+    QVERIFY(!panel.m_perfBody->isEnabled());
+    QVERIFY(!panel.m_perfOffline->isHidden());
+    QVERIFY(panel.m_perfOffline->text().contains(
+        QStringLiteral("Profiler")));
+    QVERIFY(!panel.m_memBody->isEnabled());
+    QVERIFY(!panel.m_memOffline->isHidden());
+    QVERIFY(panel.m_memOffline->text().contains(
+        QStringLiteral("HeapProfiler")));
+    // Sources is up (Page answered) and the bp bar is live
+    // (Debugger answered).
+    QVERIFY(panel.m_sourcesTree->isEnabled());
+    QVERIFY(panel.m_bpBar->isEnabled());
+    QCOMPARE(panel.m_stylesTitle->text(),
+             QStringLiteral("Computed styles"));
+
+    // Flip both verdicts up — the bodies re-enable, no fake UI.
+    probe("Profiler", true);
+    probe("HeapProfiler", true);
+    QVERIFY(panel.m_perfBody->isEnabled());
+    QVERIFY(panel.m_memBody->isEnabled());
+    QVERIFY(panel.m_perfOffline->isHidden());
+    QVERIFY(panel.m_memOffline->isHidden());
+
+    // Sources: a canned resource tree builds the grouped nav.
+    {
+        const quint64 id = panel.testRegisterCdp(2 /*CdpResourceTree*/);
+        panel.onResponse(id, QByteArray(
+            "{\"result\":{\"frameTree\":{\"frame\":{\"id\":\"f1\","
+            "\"url\":\"http://a/page.html\"},\"resources\":["
+            "{\"url\":\"http://a/app.js\",\"type\":\"Script\","
+            "\"mimeType\":\"text/javascript\"},"
+            "{\"url\":\"http://a/site.css\",\"type\":\"Stylesheet\","
+            "\"mimeType\":\"text/css\"}]}}}"));
+        QTreeWidgetItem *frame =
+            panel.m_sourcesTree->topLevelItem(0);
+        QVERIFY(frame);
+        QCOMPARE(frame->text(0), QStringLiteral("http://a/page.html"));
+        QCOMPARE(frame->childCount(), 2); // Scripts + Stylesheets
+        QCOMPARE(frame->child(0)->text(0), QStringLiteral("Scripts"));
+        QTreeWidgetItem *js = frame->child(0)->child(0);
+        QCOMPARE(js->text(0), QStringLiteral("app.js"));
+        QCOMPARE(js->data(0, Qt::UserRole + 1).toString(),
+                 QStringLiteral("f1"));
+
+        // Content: raw and base64 bodies both decode.
+        const quint64 cid = panel.testRegisterCdp(
+            3 /*CdpResourceContent*/, QStringLiteral("f1"),
+            QStringLiteral("http://a/app.js"));
+        panel.onResponse(cid, QByteArray(
+            "{\"result\":{\"content\":\"var x=1;\","
+            "\"base64Encoded\":false}}"));
+        QCOMPARE(panel.m_sourceView->toPlainText(),
+                 QStringLiteral("var x=1;"));
+        const quint64 cid2 = panel.testRegisterCdp(
+            3, QStringLiteral("f1"), QStringLiteral("http://a/x"));
+        panel.onResponse(cid2, QByteArray(
+            "{\"result\":{\"content\":\"PGI+bGk8L2I+\","
+            "\"base64Encoded\":true}}"));
+        QCOMPARE(panel.m_sourceView->toPlainText(),
+                 QStringLiteral("<b>li</b>"));
+        // A CDP error lands as readable text, not a crash.
+        const quint64 cid3 = panel.testRegisterCdp(
+            3, QStringLiteral("f1"), QStringLiteral("http://a/gone"));
+        panel.onResponse(cid3, QByteArray(
+            "{\"error\":{\"message\":\"no resource\"}}"));
+        QVERIFY(panel.m_sourceView->toPlainText().contains(
+            QStringLiteral("no resource")));
+    }
+
+    // Breakpoints: a set answer registers a list row keyed by the
+    // real breakpointId; remove clears it.
+    {
+        const quint64 bid = panel.testRegisterCdp(
+            12 /*CdpBpSet*/, QString(), QStringLiteral("http://a/app.js"),
+            7);
+        panel.onResponse(bid, QByteArray(
+            "{\"result\":{\"breakpointId\":\"b1\",\"locations\":[]}}"));
+        QCOMPARE(panel.m_bpList->count(), 1);
+        QVERIFY(panel.m_bpList->item(0)->text().contains(
+            QStringLiteral("app.js:7")));
+        QVERIFY(panel.m_breakpoints.contains(
+            QStringLiteral("b1")));
+        const quint64 rid = panel.testRegisterCdp(
+            13 /*CdpBpRemove*/, QStringLiteral("b1"));
+        panel.onResponse(rid, QByteArray("{\"result\":{}}"));
+        QCOMPARE(panel.m_bpList->count(), 0);
+        QVERIFY(panel.m_breakpoints.isEmpty());
+    }
+
+    // Metrics: the table fills and JSHeapUsedSize feeds the Memory
+    // status line.
+    {
+        const quint64 id = panel.testRegisterCdp(7 /*CdpMetrics*/);
+        panel.onResponse(id, QByteArray(
+            "{\"result\":{\"metrics\":["
+            "{\"name\":\"TaskDuration\",\"value\":0.5},"
+            "{\"name\":\"JSHeapUsedSize\",\"value\":2097152}]}}"));
+        QCOMPARE(panel.m_metricsTable->rowCount(), 2);
+        QCOMPARE(panel.m_metricsTable->item(1, 1)->text(),
+                 QStringLiteral("2.0 MB"));
+        QVERIFY(panel.m_memStatus->text().contains(
+            QStringLiteral("2.0 MB")));
+    }
+
+    // CPU profile: nodes + samples + timeDeltas aggregate into the
+    // top-self table.
+    {
+        const quint64 id = panel.testRegisterCdp(9 /*CdpProfStop*/);
+        panel.onResponse(id, QByteArray(
+            "{\"result\":{\"profile\":{\"nodes\":["
+            "{\"id\":1,\"callFrame\":{\"functionName\":\"root\","
+            "\"url\":\"http://a/app.js\",\"lineNumber\":0},"
+            "\"children\":[2]},"
+            "{\"id\":2,\"callFrame\":{\"functionName\":\"hot\","
+            "\"url\":\"http://a/app.js\",\"lineNumber\":40}}],"
+            "\"samples\":[2,2,1],"
+            "\"timeDeltas\":[1000,2000,500]}}}"));
+        // hot: 3ms self; root: 0.5ms self / 3.5ms total.
+        QCOMPARE(panel.m_cpuTable->rowCount(), 2);
+        QCOMPARE(panel.m_cpuTable->item(0, 0)->text(),
+                 QStringLiteral("hot"));
+        QCOMPARE(panel.m_cpuTable->item(0, 1)->text(),
+                 QStringLiteral("3.0 ms"));
+        QCOMPARE(panel.m_cpuTable->item(1, 0)->text(),
+                 QStringLiteral("root"));
+        QCOMPARE(panel.m_cpuTable->item(1, 2)->text(),
+                 QStringLiteral("3.5 ms"));
+        QVERIFY(panel.m_perfStatus->text().contains(
+            QStringLiteral("2 functions")));
+    }
+
+    // Heap sampling: profile.head flattens to self size per fn.
+    {
+        const quint64 id = panel.testRegisterCdp(11 /*CdpHeapStop*/);
+        panel.onResponse(id, QByteArray(
+            "{\"result\":{\"profile\":{\"head\":{\"callFrame\":"
+            "{\"functionName\":\"\",\"url\":\"\",\"lineNumber\":-1},"
+            "\"selfSize\":0,\"children\":["
+            "{\"callFrame\":{\"functionName\":\"make\","
+            "\"url\":\"http://a/app.js\",\"lineNumber\":3},"
+            "\"selfSize\":4096,\"children\":[]}]}}}}"));
+        QCOMPARE(panel.m_heapTable->rowCount(), 2);
+        QCOMPARE(panel.m_heapTable->item(0, 0)->text(),
+                 QStringLiteral("make"));
+        QCOMPARE(panel.m_heapTable->item(0, 1)->text(),
+                 QStringLiteral("4.0 kB"));
+    }
+
+    // Security: http page reads "Not secure", https picks up the
+    // TlsVerifier text path (no probe data recorded for the fake
+    // host, so it lands on the "no probe" branch).
+    panel.m_contexts = QJsonArray{QJsonObject{
+        {QStringLiteral("context"), QStringLiteral("ctx1")},
+        {QStringLiteral("url"),
+         QStringLiteral("http://site/page.html")}}};
+    panel.m_contextCombo->clear();
+    panel.m_contextCombo->addItem(QStringLiteral("one"),
+                                  QStringLiteral("ctx1"));
+    panel.refreshSecurity();
+    QVERIFY(panel.m_secHeadline->text().contains(
+        QStringLiteral("Not secure")));
+    QVERIFY(panel.m_secDetail->text().contains(
+        QStringLiteral("http://site/page.html")));
+    panel.m_contexts = QJsonArray{QJsonObject{
+        {QStringLiteral("context"), QStringLiteral("ctx1")},
+        {QStringLiteral("url"),
+         QStringLiteral("https://site/page.html")}}};
+    panel.refreshSecurity();
+    QVERIFY(panel.m_secHeadline->text().contains(
+        QStringLiteral("Encrypted")));
+    QVERIFY(panel.m_secMixed->text().contains(
+        QStringLiteral("No insecure")));
+
+    // Breadcrumbs: pick the deepest element, the bar gets the
+    // root..leaf chain as buttons.
+    panel.m_domTree->clear();
+    QTreeWidgetItem *root = new QTreeWidgetItem(
+        QStringList(QStringLiteral("html")));
+    root->setData(0, Qt::UserRole, QString());
+    QTreeWidgetItem *body = new QTreeWidgetItem(
+        QStringList(QStringLiteral("body")));
+    body->setData(0, Qt::UserRole, QStringLiteral("0"));
+    QTreeWidgetItem *div = new QTreeWidgetItem(
+        QStringList(QStringLiteral("div#main")));
+    div->setData(0, Qt::UserRole, QStringLiteral("0/0"));
+    body->addChild(div);
+    root->addChild(body);
+    panel.m_domTree->addTopLevelItem(root);
+    panel.updateCrumbs(div);
+    const QList<QWidget *> crumbs =
+        panel.m_crumbBar->findChildren<QWidget *>(
+            QString(), Qt::FindDirectChildrenOnly);
+    QCOMPARE(crumbs.size(), 5); // html › body › div#main
+    // domItemForPath / domSelectPath: selecting a path lands the
+    // current item on the deepest materialized hop.
+    QCOMPARE(panel.domItemForPath(QStringLiteral("0/0")), div);
+    panel.domSelectPath(QStringLiteral("0/0"));
+    QCOMPARE(panel.m_domTree->currentItem(), div);
+    QVERIFY(!panel.m_selectActive);
 }
 
 QTEST_MAIN(tst_DevTools)

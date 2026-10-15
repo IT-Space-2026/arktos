@@ -3265,3 +3265,74 @@ Stopping after this one pass as instructed.
 [2026-10-15 09:49:52] merge run exited rc=0
 [2026-10-15 10:04:53] merge due: rust-work(1) ui-work(1) — spawning devin merge run
 I'll start by checking the repo state and fetching.Working tree has uncommitted changes (likely an agent mid-run). I'll keep them untouched and check lane ahead-counts.Both lanes are 1 commit ahead. Let me inspect what each commit touches.rust-work touches `.devin/COVERAGE.md`, which is dirty in this tree — git may refuse. ui-work doesn't touch any dirty files. Let me try rust-work first.[2026-10-15 10:08:40] merge run exited rc=0
+[2026-10-15 10:13:40] merge due: rust-work(1) — spawning devin merge run
+I'll start by checking the current state of the repository and fetching.Working tree has only watchdog log changes — safe to proceed. Now checking how far ahead each lane is.Only `rust-work` is ahead (1 commit). Let me inspect it before merging.That stat shows full divergence (master's work appears as deletions relative to the lane). Let me look at just the single rust-work commit.The lane commit is small — 8 files. Checking which of those master has also touched since the merge-base (predicts conflicts).Master touched 6 of the 8 files — conflicts likely. Running the merge now.Only one conflict: `.devin/COVERAGE.md`. Everything else auto-merged cleanly.Trivial conflict — a coverage generation timestamp. Master's is newer (07:47 vs 07:37 UTC), so I'll keep it.Conflict resolved. Now verifying the auto-merged files kept both sides' changes (WORKLOG, ChangeLog, and the src files).Auto-merge looks correct — union appends preserved, lane changes applied on master's structure. Checking for any leftover conflict markers, then staging and committing.The remaining `<<<<<<<` hits are just log-file text and binaries — not real conflicts. Staging the resolution and committing.Merge committed. Now verifying the build per the runbook.Build is running — waiting for it to complete.Build succeeded — `arora` linked cleanly. Now appending the MERGEWATCH line to WORKLOG and checking how previous runs committed it.Previous runs commit the MERGEWATCH line separately. Appending mine and committing only that file.Done. One-pass merge run complete:
+
+- **rust-work** (1 ahead, `a517e653` ENG31 frame-paced Servo wheel delivery): merged. Single conflict in `.devin/COVERAGE.md` — just the `Generated:` timestamp line; kept master's newer stamp. `WORKLOG.md`/`ChangeLog` union-appended correctly, `servobackend.{cpp,h}` and `main.cpp` auto-merged with both sides' changes intact.
+- **ui-work** (0 ahead): skipped.
+- **Build**: `make -C src -j2` succeeded, `arora` linked cleanly.
+- **Pushed**: `59edf290..41213897 master -> master` (merge + MERGEWATCH log commit, matching prior convention).
+- Left the watchdog's dirty `mergewatch.log`/`taskloop.log` untouched.
+[2026-10-15 10:16:06] merge run exited rc=0
+[2026-10-15 10:31:07] merge due: ui-work(1) — spawning devin merge run
+I'll start by checking the current state of the repository and fetching from origin.The working tree has uncommitted changes. Let me check lane status and look at the dirty files.`rust-work` is at 0 (skip). `ui-work` is 1 commit ahead. Let me check what that commit touches vs. the dirty files here.No overlap between the lane's files and the dirty files — safe to merge. Proceeding with `ui-work`.Two conflicts to resolve. Let me examine them.Both conflicts look like additive changes. Let me check whether master already uses `SiteShieldButton` elsewhere in the file (to avoid a duplicate), and what master has around the test includes.Master already constructs `m_siteShield` at line 2138 — the lane's block would create a duplicate. Let me read master's version.Master already implements the shield on the nav row (TRUST14/15) via `insertWidget(splitterAction, ...)`. The lane's block would duplicate it. Let me see exactly what the lane's commit changed to understand its intent.Let me see the full lane diff and check what auto-merged.Now let me check the lane's full test-file diff and confirm what auto-merged there.The test now expects a `LocationBarSiteIcon` inside the location bar. Master's field surface is the padlock — let me verify `LocationBarSiteIcon` still exists in master's LocationBar.Both surfaces exist on master — union resolution is correct for the includes. Resolving the test file first (keep all three includes).Conflicts resolved. Verifying no markers remain and checking the auto-merged files briefly.Auto-merged files look correct. Staging the resolved files and committing the merge.Merge committed. Now verifying the build.Build succeeded. Pushing master.Push succeeded. Now appending the MERGEWATCH line to the worklog.Merge pass complete. Summary:
+
+**Lanes**
+- `rust-work` — 0 commits ahead of master, skipped.
+- `ui-work` — 1 commit ahead (`907f0c22` TRUST16 shield nav-bar slot lock), merged as `2d56c8f4`.
+
+**Conflicts resolved (2)**
+- `src/browsermainwindow.cpp` — the lane added a second `SiteShieldButton` construction where master had already moved the shield to `insertWidget(splitterAction, …)` (directly left of the url field, exactly the TRUST16 shape). Kept master's single-shield structure and re-applied the lane's TRUST16 comment onto master's block; the lane's NAVB03 comment fix auto-merged.
+- `tst_browsermainwindow.cpp` — union of includes: kept master's `sitepadlock.h`/`sitepanel.h` plus the lane's `locationbarsiteicon.h` (verified `LocationBarSiteIcon` exists and is instantiated in master's `LocationBar`, so the new test leg holds).
+- `WORKLOG.md`, `ChangeLog`, `Arora-Task-UI.md` — union-appended cleanly, no markers.
+
+**Verify/push**
+- `make -C src -j2` under `.devin/qt-env.sh`: build ok (`../arora` linked).
+- Pushed `master`: `2d56c8f4` (merge) + `3ef3f76c` (worklog note). No other branches touched.
+- Pre-existing dirty files (`Arora-Task.md`, `mergewatch.log`, `taskloop.log`, `main.cpp`, `bidi.rs`) had no overlap with the merge and were left untouched.
+
+Stopping after this one pass as instructed.
+[2026-10-15 10:33:44] merge run exited rc=0
+[2026-10-15 11:08:48] merge due: ui-work(1) — spawning devin merge run
+Starting merge run. First, check the current tree state and fetch.Tree has uncommitted changes (agent mid-run likely). Checking lane divergence:`rust-work` is fully merged (0 ahead). `ui-work` has 2 commits. Checking what files they touch vs. the dirty files:Lane only touches `.devin/Arora-Task-UI.md` — no overlap with dirty files. Safe to merge.Clean merge. Now verifying the build:Build OK (no-op — merge touched only a task file). Pushing master and logging:Logging appended. Committing the worklog entry so it doesn't sit dirty:Merge run complete:
+
+- **rust-work**: 0 commits ahead — skipped.
+- **ui-work**: 2 commits ahead (TRUST18 bump + MENU17 queue), touched only `.devin/Arora-Task-UI.md` — merged clean, no conflicts. Dirty files in this tree (bidipanel, bidi.rs, etc.) didn't overlap.
+- **Build**: `make -C src -j2` — ok (nothing to rebuild; merge was docs-only).
+- **Pushed**: `f8afd43b` merge + `d657644d` worklog entry to `origin/master`.
+- **WORKLOG**: appended MERGEWATCH line.
+
+Stopping after this pass per the rules.
+[2026-10-15 11:10:03] merge run exited rc=0
+[2026-10-15 11:15:03] merge due: ui-work(2) — spawning devin merge run
+I'll start by checking the state of this checkout and fetching.The working tree is dirty — let me see the full status.Working tree has modified files — an agent may be mid-run. Let me compute lane counts.rust-work is at 0 (skip). ui-work is 2 ahead. Let me see what files it touched before merging.Clean merge. Now verifying the build.`make` says nothing to do — but dirty src files exist in the tree, which should normally trigger a rebuild. Let me verify the Makefile actually tracks those sources.Build is genuinely up to date — the lane only touched `.devin/` docs, and the mid-run agent's dirty files were already compiled (`.obj/main.o` 11:05 > `main.cpp` 11:04). Build ok. Now pushing master.Pushed. Now appending the merge log line — checking WORKLOG format first.Merge run complete. Summary:
+
+- **rust-work**: 0 commits ahead — skipped.
+- **ui-work**: 2 commits ahead (`78c0fc28` TRUST17 reorder, `16b0d93c` MENU18 queue). Merged cleanly via `ort` — only `.devin/Arora-Task-UI.md` changed, no conflicts. The dirty files in this tree (agent mid-run: `bidipanel.*`, `main.cpp`, `bidi.rs`, task/coverage logs) did not overlap, so no skip was needed.
+- **Build**: `make -C src -j2` → "Nothing to be done" — merge touched only docs, and the mid-run agent's object files are already newer than its sources. Build ok.
+- **Push**: `master` pushed `c409554e..39bbf9b2`.
+- **WORKLOG**: appended one MERGEWATCH line (left uncommitted in-tree per step ordering — push precedes logging).
+
+Stopping after this single pass.
+[2026-10-15 11:16:36] merge run exited rc=0
+[2026-10-15 11:21:37] merge due: ui-work(1) — spawning devin merge run
+I'll start by checking the repo state and fetching.Working tree has uncommitted changes (likely an agent mid-run). Checking lane divergence now.`rust-work` is at 0 — skip. `ui-work` is 1 ahead. Let me inspect that commit and check for overlap with dirty files.The lane's commit touches `.devin/WORKLOG.md`, which is dirty locally. Let me see what the dirty change is before deciding.The dirty WORKLOG.md contains an uncommitted MERGEWATCH line from a previous run. Let me verify whether the merge it describes is already in history, and check the merge base for ui-work.The dirty `WORKLOG.md` line is a stale artifact from the previous merge run — it describes merge `39bbf9b2`, which is already committed and pushed. It just never got committed itself. That's mergewatch bookkeeping, not the active agent's work (which is the bidi/devtools files).
+
+The lane merge needs to write `WORKLOG.md`, so git will refuse while it's dirty. The safe fix: commit that stale log line alone (completing the prior run's step), then merge.WORKLOG.md is clean now, and no remaining dirty file overlaps with the lane's changes. Merging ui-work.One conflict in `src/locationbar/siteshield.h`. Examining it.Both sides added a member — union resolution: keep `m_trustLevel` (master) and `m_panelAction` (lane).Conflict resolved. Verifying auto-merged files kept both sides and no markers remain.Auto-merge kept both sides correctly — lane's TRUST17 wiring and master's TRUST09 code coexist; WORKLOG/ChangeLog unioned. Committing the merge.Merge committed. Now the build verification.Build succeeded — `arora` linked cleanly. Pushing master.Pushed. Appending the MERGEWATCH line to WORKLOG.md and committing it alone.Merge run complete. Summary:
+
+**Lanes**
+- `rust-work` — 0 commits ahead, skipped.
+- `ui-work` — 1 commit ahead (`19a068cc` TRUST17 shield popover first-click fix), merged as `63b3aef6`.
+
+**Conflict (1)**
+- `src/locationbar/siteshield.h` — both sides appended a member; union-kept master's `m_trustLevel` and the lane's `m_panelAction`. Everything else (`WORKLOG.md`, `ChangeLog`, `Arora-Task-UI.md`, `siteshield.cpp`, `sitepanel.*`, `tst_locationbar.cpp`) auto-unioned cleanly; verified no markers and that both TRUST09 and TRUST17 code paths are intact.
+
+**Housekeeping**
+- The tree's dirty `WORKLOG.md` was a stale, never-committed MERGEWATCH line from the previous run describing already-pushed merge `39bbf9b2` — committed it alone first (`fee84c52`) to unblock the merge. The active agent's mid-run files (`bidipanel.*`, `main.cpp`, `bidi.rs`, `tst_devtools.cpp`, `Arora-Task.md`, `COVERAGE.md`, logs) were left untouched.
+
+**Verify / push**
+- `make -C src -j2` under `.devin/qt-env.sh`: build ok, `arora` linked.
+- Pushed `master` only: `fee84c52`, `63b3aef6`, `48aacb87` (MERGEWATCH log line).
+
+Stopping after this one pass.
+[2026-10-15 11:23:44] merge run exited rc=0

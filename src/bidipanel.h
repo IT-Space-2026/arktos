@@ -12,36 +12,64 @@
 /*
  * DEVT03 — engine-neutral developer-tools dock panel.
  *
- * Four tabs, all fed by the BiDi-shaped channel in BidiClient:
- *   Console  log.entryAdded event stream + script.evaluate REPL —
- *            DEVT12's Chromium parity pass: a structured entry list
- *            (per-level wash + icon, source url:line on the right
- *            edge, repeat-count badge for identical consecutive
- *            entries, expandable children when the event's args
- *            carry object previews), a toolbar with clear, a live
- *            text filter, Chrome's checkable "Default levels"
- *            dropdown and a console-scoped Preserve log, and a '>'
- *            prompt row with Up/Down history recall.
- *   DOM      lazy-loaded element tree (walking happens inside the
- *            page via a JS helper — BiDi has no DOM walker and the
- *            evaluate round-trip keeps this engine-neutral)
- *   Network  Chrome-DevTools-style request table (DEVT06): filter
- *            field, type-filter chips, Preserve log / Disable cache
- *            toggles, a Name/Status/Type/Initiator/Size/Time/
- *            Waterfall model fed by the network.* event stream, and
- *            (DEVT07) per-column minimum widths so narrow docks keep
- *            every column, a two-tone waterfall bar split at
- *            time-to-first-byte, and a Chrome-style summary footer
- *            (requests / transferred / Finish / DOMContentLoaded /
- *            Load).  DEVT11's parity pass added the record/stop
- *            capture toggle, honestly-disabled throttling and
- *            response-search controls (the bridge exposes neither),
- *            per-resource-type waterfall swatches with an ms ruler
- *            in the column header, CDP-timing phase breakdowns on
- *            hover, and grayed cache-served rows.  Bodies
- *            intentionally out of scope.
- *   Storage  cookies via storage.getCookies plus per-context
- *            localStorage via script.evaluate
+ * DEVT13's full tab set (Chrome order), all fed by the BiDi-shaped
+ * channel in BidiClient plus the vendor arora.cdp passthrough that
+ * carries raw CDP commands onto a page session:
+ *   Elements   lazy DOM tree (the old DOM tab, renamed), Chrome's
+ *              breadcrumb trail along the bottom, a click-to-inspect
+ *              overlay driven by Runtime.evaluate, and a right-side
+ *              styles pane — real CSS.getComputedStyleForNode output
+ *              when the CSS domain answers, an honest DOM attributes/
+ *              inline-style readout when it does not.
+ *   Console    log.entryAdded event stream + script.evaluate REPL —
+ *              DEVT12's Chromium parity pass: a structured entry list
+ *              (per-level wash + icon, source url:line on the right
+ *              edge, repeat-count badge for identical consecutive
+ *              entries, expandable children when the event's args
+ *              carry object previews), a toolbar with clear, a live
+ *              text filter, Chrome's checkable "Default levels"
+ *              dropdown and a console-scoped Preserve log, and a '>'
+ *              prompt row with Up/Down history recall.
+ *   Sources    Page.getResourceTree resource list, read-only source
+ *              view fed by Page.getResourceContent, and URL:line
+ *              breakpoints through Debugger.setBreakpointByUrl when
+ *              the Debugger domain answers.
+ *   Network    Chrome-DevTools-style request table (DEVT06): filter
+ *              field, type-filter chips, Preserve log / Disable cache
+ *              toggles, a Name/Status/Type/Initiator/Size/Time/
+ *              Waterfall model fed by the network.* event stream, and
+ *              (DEVT07) per-column minimum widths so narrow docks keep
+ *              every column, a two-tone waterfall bar split at
+ *              time-to-first-byte, and a Chrome-style summary footer
+ *              (requests / transferred / Finish / DOMContentLoaded /
+ *              Load).  DEVT11's parity pass added the record/stop
+ *              capture toggle, honestly-disabled throttling and
+ *              response-search controls (the bridge exposes neither),
+ *              per-resource-type waterfall swatches with an ms ruler
+ *              in the column header, CDP-timing phase breakdowns on
+ *              hover, and grayed cache-served rows.  Bodies
+ *              intentionally out of scope.
+ *   Performance  live Performance.getMetrics table plus a
+ *              Profiler.start/stop CPU profile summarized as top
+ *              functions by self time.  Disabled-with-reason when
+ *              the domains don't answer.
+ *   Memory     HeapProfiler.startSampling/stopSampling allocation
+ *              profile aggregated by function, plus the JS heap
+ *              figure from the metrics poll.  Disabled-with-reason
+ *              when HeapProfiler doesn't answer.
+ *   Application  (was Storage) — a Chrome-style storage tree over
+ *              cookies (storage.getCookies), localStorage and
+ *              sessionStorage (script.evaluate), and an IndexedDB
+ *              database list (indexedDB.databases()).
+ *   Security   built from Arora's own data, no CDP needed — the
+ *              page scheme, the TlsVerifier second-opinion verdict
+ *              (status, TLS version, chain detail), and a mixed-
+ *              content count observed from the Network rows.
+ *
+ * On connect (and on each context switch) the panel probes the CDP
+ * domains the tabs depend on; a domain that answers "not found /
+ * not implemented" flips its feature to the honest-disabled state
+ * instead of a fake.
  *
  * When the debug channel is unavailable (tor window, setting off, or
  * the engine lacks it) the panel shows a readable unavailable page
@@ -67,10 +95,16 @@ class QCheckBox;
 class QComboBox;
 class QLabel;
 class QLineEdit;
+class QListWidget;
+class QPlainTextEdit;
 class QSortFilterProxyModel;
+class SourceHighlighter;
+class QSpinBox;
 class QStackedWidget;
 class QTableView;
 class QTableWidget;
+class QTabWidget;
+class QTimer;
 class QToolButton;
 class QTreeWidget;
 class QTreeWidgetItem;
@@ -114,6 +148,10 @@ public:
     // the cell gridlines draw for the current window — lets the
     // suite pin the ladder without scraping header pixels.
     QVector<double> testWaterfallTicks();
+    // DEVT13: register a pending arora.cdp tag the way sendCdp
+    // would, so the suite can drive raw result/error handling.
+    quint64 testRegisterCdp(int tag, const QString &a = QString(),
+                            const QString &b = QString(), int n = 0);
 #else
 private:
 #endif
@@ -148,6 +186,49 @@ private:
     void sendCacheBehavior();
     void fitNetworkColumns();
     void updateNetworkSummary();
+
+    // DEVT13 — the full tab set.
+    // arora.cdp passthrough plumbing: sendCdp returns the bidi id
+    // and registers CdpReq so the raw result/error routes back to
+    // the right handler in onResponse.
+    struct CdpReq {
+        int tag = 0;
+        QString a;   // domain name / frame id / object id by tag
+        QString b;   // url / extra payload
+        int n = 0;   // line number, misc int
+    };
+    quint64 sendCdp(const QString &context, const QString &method,
+                    const QJsonObject &params, int tag,
+                    const QString &a = QString(),
+                    const QString &b = QString(), int n = 0);
+    void onCdpResponse(quint64 id, const QJsonObject &root);
+    // Probe the CDP domains the tabs depend on once per context;
+    // verdicts land in m_domainErr (empty string = up) and
+    // applyDomainSupport() turns them into tab state.
+    void probeDomains();
+    void applyDomainSupport();
+    bool domainUp(const QString &domain) const;
+    QString domainReason(const QString &domain) const;
+    // Elements: breadcrumbs under the tree, click-to-inspect
+    // overlay, computed styles (or the DOM-derived fallback), and
+    // select-by-path for the inspect pick.
+    void updateCrumbs(QTreeWidgetItem *item);
+    void requestStylesFor(QTreeWidgetItem *item);
+    void setInspecting(bool on);
+    void domSelectPath(const QString &path);
+    void advanceDomSelect();
+    QTreeWidgetItem *domItemForPath(const QString &path) const;
+    // Sources / Application / Security / Performance / Memory.
+    void refreshSources();
+    void sourceSelected(QTreeWidgetItem *item);
+    void toggleBreakpoint();
+    void rebuildBreakpointList();
+    void refreshApplication();
+    void refreshSecurity();
+    void requestMetrics();
+    void setCpuProfiling(bool on);
+    void collectHeapSample();
+    void stopHeapSample();
 
     BidiClient *m_client;
     QStackedWidget *m_stack;
@@ -187,8 +268,75 @@ private:
     QToolButton *m_responseSearch;
     QButtonGroup *m_typeChips;
     QLabel *m_networkSummary;
+
+    // DEVT13: the tab strip itself, kept for verdict tooltips and
+    // the tests' order assertions.
+    QTabWidget *m_tabs;
+
+    // DEVT13 — Elements (the old DOM page, plus chrome).
+    QToolButton *m_inspectToggle;
+    QToolButton *m_domRefresh;
+    QWidget *m_crumbBar;
+    QLabel *m_stylesTitle;
+    QTreeWidget *m_stylesView;
+    // Plain pointer: guarded by m_stylesSerial — a stale styles
+    // reply is dropped before it can paint over a newer selection,
+    // and refreshDom clears it with the tree.
+    QTreeWidgetItem *m_propsItem = nullptr;
+    QString m_pendingSelectPath;
+    bool m_selectActive = false;
+    // Serial so a late computed-styles reply can't paint over the
+    // styles of a newer selection.
+    int m_stylesSerial = 0;
+
+    // DEVT13 — Sources.
+    QTreeWidget *m_sourcesTree;
+    QPlainTextEdit *m_sourceView;
+    SourceHighlighter *m_srcHl = nullptr;
+    QWidget *m_bpBar;
+    QSpinBox *m_bpLine;
+    QListWidget *m_bpList;
+    QString m_sourceFrameId;
+    QString m_sourceUrl;
+    // breakpointId -> (url, line) — Debugger answers the real ids.
+    QHash<QString, QPair<QString, int>> m_breakpoints;
+
+    // DEVT13 — Performance.
+    QWidget *m_perfBody;
+    QToolButton *m_cpuToggle;
+    QLabel *m_perfStatus;
+    QLabel *m_perfOffline;
+    QTableWidget *m_metricsTable;
+    QTableWidget *m_cpuTable;
+    QTimer *m_metricsTimer;
+
+    // DEVT13 — Memory.
+    QWidget *m_memBody;
+    QLabel *m_memOffline;
+    QToolButton *m_heapButton;
+    QLabel *m_memStatus;
+    QTableWidget *m_heapTable;
+    bool m_heapSampling = false;
+    QString m_heapContext;
+
+    // DEVT13 — Application (was Storage).
+    QTreeWidget *m_appTree;
+    QStackedWidget *m_appStack;
     QTableWidget *m_cookieTable;
     QTableWidget *m_localStorageTable;
+    QTableWidget *m_sessionStorageTable;
+    QTableWidget *m_idbTable;
+
+    // DEVT13 — Security.
+    QLabel *m_secHeadline;
+    QLabel *m_secDetail;
+    QLabel *m_secMixed;
+
+    // DEVT13: domain verdicts — domain -> "" when up, else the CDP
+    // error text; a missing key means "not probed yet".
+    QHash<QString, QString> m_domainErr;
+    QString m_probedContext;
+    QHash<quint64, CdpReq> m_cdpReqs;
 
     // DEVT10: the owning window's strip (not owned) and the cached
     // browsingContext.getTree answer the selector merges against.

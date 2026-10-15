@@ -764,6 +764,62 @@ impl Core {
                 self.answer(bidi_id, json!({}));
                 Ok(())
             }
+            // DEVT13 — vendor extension "arora.cdp": a raw CDP
+            // passthrough so the panel can probe + use domains the
+            // BiDi surface does not model (Page.getResourceTree for
+            // Sources, Performance.getMetrics, domain availability
+            // probes).  params: {method, params?, context?} — a
+            // context routes the command onto that page's session
+            // (attaching first if needed); no context sends it at
+            // browser level.  The CDP result passes back verbatim as
+            // the BiDi result; a CDP error surfaces as the error
+            // envelope so "wasn't found" reads as a real answer, not
+            // silence.
+            "arora.cdp" => {
+                let context = params
+                    .get("context")
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let cdp_method = params
+                    .get("method")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if cdp_method.is_empty() {
+                    self.answer_err(bidi_id, "arora.cdp: missing method");
+                    return Ok(());
+                }
+                if context.is_empty() {
+                    let inner = params
+                        .get("params")
+                        .cloned()
+                        .unwrap_or(json!({}));
+                    self.cdp_call(
+                        None,
+                        &cdp_method,
+                        inner,
+                        CdpAction::Answer {
+                            bidi_id,
+                            kind: AnswerKind::Raw,
+                        },
+                    )?;
+                    Ok(())
+                } else {
+                    self.with_session(
+                        &context,
+                        FollowUp::Command {
+                            bidi_id,
+                            // The second stage matches on the WRAPPER
+                            // name; the real CDP method rides inside
+                            // params.
+                            method: method.to_string(),
+                            params,
+                        },
+                    )?;
+                    Ok(())
+                }
+            }
             _ => Err(Fail {
                 status: RcStatus::InvalidArgument,
                 msg: format!("bidi: unsupported method {method}"),
@@ -838,6 +894,30 @@ impl Core {
                     CdpAction::Answer {
                         bidi_id,
                         kind: AnswerKind::Cookies,
+                    },
+                )
+            }
+            // DEVT13: the session-scoped half of the arora.cdp
+            // passthrough — forward the wrapped method verbatim on
+            // this page's session and answer with the raw CDP result.
+            "arora.cdp" => {
+                let cdp_method = params
+                    .get("method")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if cdp_method.is_empty() {
+                    self.answer_err(bidi_id, "arora.cdp: missing method");
+                    return Ok(());
+                }
+                let inner = params.get("params").cloned().unwrap_or(json!({}));
+                self.cdp_call(
+                    Some(session),
+                    &cdp_method,
+                    inner,
+                    CdpAction::Answer {
+                        bidi_id,
+                        kind: AnswerKind::Raw,
                     },
                 )
             }
@@ -2383,6 +2463,71 @@ mod tests {
         core.dispatch(16, "session.end", json!({})).unwrap();
         assert!(!core.alive.load(Ordering::SeqCst));
         assert!(response_for(&got, 16).is_some());
+    }
+
+    // DEVT13: the arora.cdp passthrough — browser-level when no
+    // context is named, session-scoped (with lazy attach) when one
+    // is.  Results and CDP errors both pass back untranslated.
+    #[test]
+    fn cdp_passthrough() {
+        let (core, mut peer, got) = mkcore();
+
+        // Browser-level: no context -> no sessionId on the wire.
+        core.dispatch(
+            1,
+            "arora.cdp",
+            json!({"method": "Browser.getVersion", "params": {}}),
+        )
+        .unwrap();
+        let m = read_wire(&mut peer);
+        assert_eq!(m["method"], "Browser.getVersion");
+        assert!(m.get("sessionId").is_none());
+        core.on_message(&json!({"id": m["id"], "result": {"product": "fake/1"}}));
+        let r = response_for(&got, 1).expect("browser-level response");
+        assert!(r.contains("fake/1"), "{r}");
+
+        // Missing method is a local error, not a wire frame.
+        core.dispatch(2, "arora.cdp", json!({"params": {}})).unwrap();
+        let r = response_for(&got, 2).expect("missing-method response");
+        assert!(r.contains("missing method"), "{r}");
+
+        // Session-scoped: context -> attach first, then the wrapped
+        // command rides that session verbatim.
+        core.dispatch(
+            3,
+            "arora.cdp",
+            json!({"context": "CTX", "method": "Page.getResourceTree",
+                   "params": {}}),
+        )
+        .unwrap();
+        let m = read_wire(&mut peer);
+        assert_eq!(m["method"], "Target.attachToTarget");
+        assert_eq!(m["params"]["targetId"], "CTX");
+        core.on_message(
+            &json!({"id": m["id"], "result": {"sessionId": "S9"}}),
+        );
+        let m = read_wire(&mut peer);
+        assert_eq!(m["method"], "Page.getResourceTree");
+        assert_eq!(m["sessionId"], "S9");
+        core.on_message(&json!({"id": m["id"], "result": {"frameTree": {"frame": {"id": "F"}}}}));
+        let r = response_for(&got, 3).expect("session response");
+        assert!(r.contains("frameTree"), "{r}");
+
+        // A CDP "not found" error is itself a useful answer (the
+        // panel's domain probes read it) — forwarded verbatim.
+        core.dispatch(
+            4,
+            "arora.cdp",
+            json!({"context": "CTX", "method": "Debugger.enable"}),
+        )
+        .unwrap();
+        let m = read_wire(&mut peer);
+        assert_eq!(m["method"], "Debugger.enable");
+        assert_eq!(m["sessionId"], "S9"); // session reused, no re-attach
+        core.on_message(&json!({"id": m["id"],
+            "error": {"code": -32601, "message": "'Debugger.enable' wasn't found"}}));
+        let r = response_for(&got, 4).expect("error response");
+        assert!(r.contains("wasn't found"), "{r}");
     }
 
     #[test]
