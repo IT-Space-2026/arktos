@@ -2810,3 +2810,8 @@ Servo wheel scrolling uses the compositor fast path with smooth easing (ENG33):
     actually rotates. Clicks inside tor's ~10 s NEWNYM rate limit report
     the wait honestly instead of faking another rotation, and a
     greyed-out button now carries the reason on its tooltip.
+- Lane sync (SYNC01): the rust-work branch absorbed 381 commits of
+  master, so all of master's current features — packaging scripts
+  (deb/rpm/flatpak), Picture-in-Picture plumbing, zoom wiring and the
+  SourceViewer pipeline — are now present on this lane alongside the
+  Rust components and Servo scroll work.
