@@ -1138,3 +1138,4 @@
 - 2026-10-16 MERGEWATCH: rust-work merged — conflicts COVERAGE.md/autotests.pro/src.pri resolved and committed by concurrent in-tree agent (87d8e4ac), build ok
 - 2026-10-16 MERGEWATCH: ui-work merged — conflicts COVERAGE.md (kept newer Generated line), src.pri (union of source lists), src/profileidentity.{h,cpp} add/add (master's PROF02 write pipeline + lane's PROF01 avatarPixmap/avatarSource, dual cache invalidated on all mutators), build ok
 - 2026-10-16 MERGEWATCH: rust-work skipped — 0 ahead; ui-work skipped — merge refused: dirty autotests/browsermainwindow/tst_browsermainwindow.cpp (agent mid-run in this tree, profilecontext/profileregistry work); no merges, build not attempted
+- 2026-10-16 MERGEWATCH: rust-work skipped — 0 ahead; ui-work skipped — merge refused: dirty autotests/browsermainwindow/tst_browsermainwindow.cpp (agent still mid-run in this tree, profilecontext/profileregistry work); no merges, build not attempted
