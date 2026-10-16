@@ -946,6 +946,17 @@ UI:
   shared registry, ready for per-profile windows once that layer
   lands; until then, opening a window on another profile is disabled
   with an explanation rather than silently falling back (MPROF05).
+- The profile menu also carries the hygiene actions now: Clear
+  History, Clear Cookies and Clear Cache each wipe exactly their
+  category through the same plan engine as Clear Private Data (one
+  confirmation apiece), and a red "Delete Profile" row wipes the
+  whole persona — the confirm dialog itemizes what goes (history,
+  cookies, cache, settings, extensions state, sessions, name and
+  avatar) and makes you type the profile name, then arms a
+  wipe-pending marker, restarts the browser and erases the data and
+  cache roots plus settings before any profile exists again, so a
+  live profile can never be deleted out from under a running window
+  (PROF03).
 - Tab strips no longer draw a line under resting tabs: the thin seam
   that ran along the strip's page-facing edge (and gapped under the
   active tab, so some tabs looked underlined and some didn't) is gone

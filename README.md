@@ -212,7 +212,13 @@ browsing profile:
   window and picked from clickable preview tiles in Preferences.
   A Vivaldi-style **'+' button** sits right after the last tab in
   every orientation (an appended row on vertical rails).
-- **Tab groups** — named, color-coded groups on the strip.
+- **Tab groups** — drag a tab onto the middle of another to group
+  them (the strip previews the stack while hovering; edge drops
+  still reorder). Groups are named and color-coded, collapse to a
+  Vivaldi/Firefox-style chip that expands on click, and the context
+  menu can rename, recolor, add/remove members, ungroup, or close the
+  whole group — closed members stay recoverable through Reopen
+  Closed Tab.
 - **Sidebar dock** — optional Vivaldi-style side panel (bookmarks,
   history, downloads, notes), lazily built and off by default; the
   bookmarks rail doubles as the manager — "Show All Bookmarks"
@@ -260,9 +266,23 @@ browsing profile:
   Tools > Profiles... and Preferences > General — which creates,
   renames, deletes (type-to-confirm; the default profile cannot be
   deleted) and opens windows on profiles kept under their own data
-  folders. A neutral silhouette is the default face until a custom
-  picture is chosen; it is a normal navigation-bar item, so Edit
-  Navigation Bar can reorder it.
+  folders. The menu also carries the hygiene actions — Clear
+  History, Clear Cookies, Clear Cache (each wipes only its own
+  category) and Clear Private Data — plus a red **Delete Profile**
+  that itemizes what is destroyed, requires typing the profile name,
+  and wipes the data and settings roots at restart so a live profile
+  is never deleted out from under a running window. A neutral
+  silhouette is the default face until a custom picture is chosen;
+  it is a normal navigation-bar item, so Edit Navigation Bar can
+  reorder it.
+- **Profile vaults (in progress)** — password-sealed profile storage:
+  a profile's whole data folder is packed into a single tamper-evident
+  encrypted archive when locked. AES-256-GCM per chunk with
+  HMAC-SHA-512 integrity and an Argon2id password key is the default;
+  an opt-in Threefish-1024 lane rides the same format. Wrong-password
+  and tampered-vault failures are distinct and an unlock never leaves
+  partial plaintext behind. The crypto core lives in rustcore; the
+  seal engine and lock/unlock UI are landing in the same work series.
 - **Sharing** — "Copy Clean Link" strips tracking parameters;
   "Show QR" renders a link as a QR code.
 - **Preferences** — opens as a tab (one per window), Vivaldi-style
