@@ -102,6 +102,7 @@
 #endif
 
 #include <qabstractproxymodel.h>
+#include <qapplication.h>
 #include <qcompleter.h>
 #include <qdatetime.h>
 #include <qdir.h>
@@ -1968,6 +1969,81 @@ void TabWidget::ungroupTabs(const QString &groupId)
     m_tabGroupInfo.remove(groupId);
     m_tabBar->updateGeometry();
     m_tabBar->update();
+}
+
+// TABGRP02: "Close Group" — every member dies through closeTab() (or
+// the hidden-store counterpart for a tab filtered into a non-active
+// container level), so each one lands on the recently-closed stack
+// the same way an individually closed tab does.
+void TabWidget::closeTabGroup(const QString &groupId)
+{
+    if (!m_tabGroupInfo.contains(groupId))
+        return;
+    // tabGroupSize() counts collapsed-hidden members too — the
+    // confirm must state the real count, not just the chip.
+    const int size = tabGroupSize(groupId);
+    if (size <= 0)
+        return;
+    if (size > 1) {
+        // The same multi-close confirm the window close path uses —
+        // one prompt, one preference key.
+        QSettings settings;
+        settings.beginGroup(QLatin1String("tabs"));
+        if (settings.value(QLatin1String("confirmClosingMultipleTabs"),
+                           true).toBool()) {
+            const QString name = tabGroupName(groupId);
+            const QString question = name.isEmpty()
+                ? tr("Are you sure you want to close this tab group?"
+                     "  There are %1 tabs in it").arg(size)
+                : tr("Are you sure you want to close the group \"%1\"?"
+                     "  There are %2 tabs in it").arg(name).arg(size);
+            QApplication::alert(this);
+            const int ret = QMessageBox::warning(
+                this, QString(), question,
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+            if (ret != QMessageBox::Yes)
+                return;
+        }
+    }
+    // A collapsed group's members are detached, not on the strip —
+    // expand it first so they rejoin and die through the normal
+    // closeTab() path like the rest.
+    if (m_tabGroupInfo.value(groupId).collapsed)
+        setTabGroupCollapsed(groupId, false);
+    // The final member's closeTab() emits lastTabClosed, which can
+    // close the window this widget lives in — re-verify survival and
+    // the group record after every close.
+    QPointer<TabWidget> guard(this);
+    while (m_tabGroupInfo.contains(groupId)) {
+        const QList<int> members = tabGroupMembers(groupId);
+        if (!members.isEmpty()) {
+            closeTab(members.last());
+            if (!guard)
+                return;
+            continue;
+        }
+        // Remaining members are detached into a filtered container
+        // level (CONT06) — close them out of the hidden store.
+        WebView *stray = nullptr;
+        for (auto it = m_containerHidden.begin();
+             it != m_containerHidden.end() && !stray; ++it) {
+            for (const HiddenGroupTab &hidden : it.value()) {
+                WebViewWithSearch *withSearch =
+                    qobject_cast<WebViewWithSearch*>(hidden.tab);
+                if (withSearch
+                    && m_tabGroups.value(withSearch->m_webView)
+                       == groupId) {
+                    stray = withSearch->m_webView;
+                    break;
+                }
+            }
+        }
+        if (!stray)
+            break;
+        closeHiddenTab(stray);
+        if (!guard)
+            return;
+    }
 }
 
 // Post-drag membership normalization, called from moveTab() after the

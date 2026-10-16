@@ -101,6 +101,14 @@ UI:
   or unpins it, and pin state is restored with the session
   (TABS04, TABS14).
 - Named, color-coded tab groups (TABGRP01).
+- Tab groups gained a Close Group context-menu action that closes
+  every member — including a collapsed group's hidden tabs — through
+  the normal close path so Recently Closed Tab can restore them, with
+  a confirmation naming the real member count above the multi-close
+  threshold; and dragging a tab now previews the drop-to-group stack
+  by tinting the hovered tab's middle band (or a collapsed group's
+  chip) with the group color while the edge quarters keep the reorder
+  meaning (TABGRP02).
 - Compact tab strip: a container tab no longer inflates the whole
   bar — the container's accent line and name chip now paint inside a
   standard-height tab row instead of stacking a chip band on top of

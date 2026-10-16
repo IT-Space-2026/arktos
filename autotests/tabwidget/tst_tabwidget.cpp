@@ -111,6 +111,7 @@ private slots:
     void omniboxEnterDispatch();
     void omniboxTabScope();
     void tabGroups();
+    void closeTabGroup();
     void pinnedTabs();
     void iconOnlyTabStrip();
     void reopenClosedTab();
@@ -1584,6 +1585,112 @@ void tst_TabWidget::tabGroups()
         QCOMPARE(w4.count(), 1);
         QVERIFY(w4.tabGroupIds().isEmpty());
     }
+}
+
+// TABGRP02: "Close Group" — every member (a collapsed group's hidden
+// ones included) dies through the normal close path and lands on the
+// recently-closed stack; the shared confirmClosingMultipleTabs pref
+// gates groups above one member and reports the real,
+// hidden-inclusive count.
+void tst_TabWidget::closeTabGroup()
+{
+    QSettings settings;
+    settings.setValue(QLatin1String("tabs/confirmClosingMultipleTabs"),
+                      false);
+
+    SubTabWidget widget;
+    for (int i = 0; i < 4; ++i)
+        widget.newTab();
+    WebView *v2 = widget.webView(2);
+    WebView *v3 = widget.webView(3);
+    QVERIFY(v2 && v3);
+
+    // Unknown ids are a no-op.
+    widget.closeTabGroup(QStringLiteral("no-such-group"));
+    QCOMPARE(widget.count(), 4);
+    QVERIFY(!widget.hasRecentlyClosedTabs());
+
+    const QString gid = widget.createTabGroup(0);
+    widget.addTabToGroup(1, gid);
+    QCOMPARE(widget.tabGroupSize(gid), 2);
+    // Blank tabs never enter the recently-closed stack by design —
+    // give the members real urls so the undo leg can land.
+    const QUrl u0(QLatin1String("data:text/plain,grp-a"));
+    const QUrl u1(QLatin1String("data:text/plain,grp-b"));
+    widget.webView(0)->loadUrl(u0);
+    widget.webView(1)->loadUrl(u1);
+    QTRY_COMPARE_WITH_TIMEOUT(widget.webView(0)->url(), u0, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(widget.webView(1)->url(), u1, 5000);
+
+    // Collapse to the chip — the close takes the hidden member too
+    // and leaves the ungrouped tabs standing.
+    widget.setTabGroupCollapsed(gid, true);
+    QCOMPARE(widget.count(), 3);
+    QVERIFY(widget.isTabGroupChip(0));
+    widget.closeTabGroup(gid);
+    QCOMPARE(widget.count(), 2);
+    QCOMPARE(widget.webView(0), v2);
+    QCOMPARE(widget.webView(1), v3);
+    QVERIFY(widget.tabGroupIds().isEmpty());
+    // Both members went through pushRecentlyClosedTab — undo works.
+    QVERIFY(widget.hasRecentlyClosedTabs());
+    QVERIFY(widget.recentlyClosedTabsAction()->isEnabled());
+    emit widget.recentlyClosedTabsAction()->menu()->aboutToShow();
+    QCOMPARE(widget.recentlyClosedTabsAction()->menu()
+                 ->actions().count(), 2);
+
+    // The confirm path: pref on, a collapsed two-member group must
+    // ask and report the hidden-inclusive count.
+    settings.setValue(QLatin1String("tabs/confirmClosingMultipleTabs"),
+                      true);
+    const QString g2 = widget.createTabGroup(0);
+    widget.addTabToGroup(1, g2);
+    widget.setTabGroupCollapsed(g2, true);
+    QCOMPARE(widget.count(), 1);   // just the chip
+    QCOMPARE(widget.tabGroupSize(g2), 2);
+
+    const auto answerNextBox = [](QMessageBox::StandardButton button,
+                                  QString *captured) {
+        QTimer::singleShot(120, qApp, [button, captured]() {
+            QMessageBox *box = qobject_cast<QMessageBox *>(
+                QApplication::activeModalWidget());
+            if (!box)
+                return;
+            *captured = box->text();
+            if (QAbstractButton *b = box->button(button))
+                b->click();
+            else
+                box->reject();
+        });
+    };
+
+    // "No" keeps everything — group, chip and hidden member alike.
+    QString boxText;
+    answerNextBox(QMessageBox::No, &boxText);
+    widget.closeTabGroup(g2);
+    QVERIFY(boxText.contains(QLatin1String("2 tabs")));
+    QCOMPARE(widget.count(), 1);
+    QCOMPARE(widget.tabGroupSize(g2), 2);
+    QVERIFY(widget.tabGroupIsCollapsed(g2));
+
+    // "Yes" closes all members — the hidden one included.
+    boxText.clear();
+    answerNextBox(QMessageBox::Yes, &boxText);
+    widget.closeTabGroup(g2);
+    QVERIFY(boxText.contains(QLatin1String("2 tabs")));
+    QCOMPARE(widget.count(), 0);
+    QVERIFY(widget.tabGroupIds().isEmpty());
+
+    // A one-member group sits under the confirm threshold — it must
+    // close without prompting.  rejectModal is only a safety net for
+    // a wrongly-opened box (which would deadlock the test).
+    widget.newTab();
+    const QString lone = widget.createTabGroup(0);
+    rejectModal();
+    widget.closeTabGroup(lone);
+    QCOMPARE(widget.count(), 0);
+
+    settings.remove(QLatin1String("tabs/confirmClosingMultipleTabs"));
 }
 
 // TABS04: pinned tabs — a contiguous leading prefix that keeps its

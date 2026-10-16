@@ -76,6 +76,7 @@ private slots:
     void contextMenuContainerEntries();
     void chipsPaint();
     void tabMouseAndDragEvents();
+    void groupDropAffordance();
     void tabKeyShortcuts();
     void previewDwell();
     void iconOnlyTabs();
@@ -1185,6 +1186,51 @@ void tst_TabBar::contextMenuGroupEntries()
     QVERIFY(triggerContextEntry(bar, bar->tabRect(1).center(),
                                 QLatin1String("ngroup")));
     QVERIFY(widget.tabGroupIds().isEmpty());
+
+    // TABGRP02: "Close Group" — a solo member is under the confirm
+    // threshold and closes outright.
+    const QString g2 = widget.createTabGroup(0);
+    QVERIFY(triggerContextEntry(bar, bar->tabRect(0).center(),
+                                QLatin1String("Close Group")));
+    QCOMPARE(widget.count(), 2);
+    QVERIFY(widget.tabGroupIds().isEmpty());
+
+    // A collapsed multi-member group prompts (the shared multi-close
+    // confirm, real count including the hidden member); answering Yes
+    // closes them all.
+    QSettings settings;
+    settings.setValue(QLatin1String("tabs/confirmClosingMultipleTabs"),
+                      true);
+    const QString g3 = widget.createTabGroup(0);
+    widget.addTabToGroup(1, g3);
+    widget.setTabGroupCollapsed(g3, true);
+    QCOMPARE(widget.count(), 1);   // just the chip
+    QCOMPARE(widget.tabGroupSize(g3), 2);
+    QString confirmText;
+    QTimer *clicker = new QTimer(qApp);
+    clicker->setInterval(50);
+    QObject::connect(clicker, &QTimer::timeout, qApp,
+                     [&confirmText, clicker]() {
+        QMessageBox *box = qobject_cast<QMessageBox *>(
+            QApplication::activeModalWidget());
+        if (!box)
+            return;
+        confirmText = box->text();
+        if (QAbstractButton *b = box->button(QMessageBox::Yes))
+            b->click();
+        else
+            box->reject();
+        clicker->stop();
+        clicker->deleteLater();
+    });
+    clicker->start();
+    QVERIFY(triggerContextEntry(bar, bar->tabRect(0).center(),
+                                QLatin1String("Close Group")));
+    clicker->stop();
+    clicker->deleteLater();
+    QVERIFY(confirmText.contains(QLatin1String("2 tabs")));
+    QCOMPARE(widget.count(), 0);
+    settings.remove(QLatin1String("tabs/confirmClosingMultipleTabs"));
 }
 
 // The container submenu (non-private/non-tor build): reopen entries,
@@ -1474,6 +1520,97 @@ void tst_TabBar::tabMouseAndDragEvents()
     QApplication::sendEvent(bar, &wheel);
     QEvent leave(QEvent::Leave);
     QApplication::sendEvent(bar, &leave);
+}
+
+// TABGRP02: the drop-to-group affordance — during a left-button tab
+// drag, hovering another tab's middle band marks it as the stack
+// target (groupDropIndex()) and paints the tint/badge overlay, the
+// edge quarters keep the reorder zone clear, a collapsed group's
+// chip previews on its whole rect, and the release performs exactly
+// the drop the affordance promised.
+void tst_TabBar::groupDropAffordance()
+{
+    TabWidget widget;
+    widget.resize(800, 240);
+    widget.show();
+    TabBar *bar = widget.tabBar();
+    // Fixed geometry, no native mid-drag reorder — the affordance
+    // tracks the hover position, not Qt's swaps.
+    bar->setMovable(false);
+    widget.newTab();
+    widget.newTab();
+    widget.newTab();
+    QCOMPARE(widget.count(), 3);
+    QApplication::processEvents();
+
+    auto sendMouse = [bar](QEvent::Type type, const QPoint &pos,
+                           Qt::MouseButton button,
+                           Qt::MouseButtons buttons) {
+        QMouseEvent event(type, QPointF(pos), QPointF(pos),
+                          button, buttons, Qt::NoModifier);
+        QApplication::sendEvent(bar, &event);
+    };
+
+    QCOMPARE(bar->groupDropIndex(), -1);
+
+    // Press tab 0 and drag onto tab 2's edge quarter first — the
+    // reorder zone stays dark; that grab is the paint baseline.
+    sendMouse(QEvent::MouseButtonPress, bar->tabRect(0).center(),
+              Qt::LeftButton, Qt::LeftButton);
+    const QRect target = bar->tabRect(2);
+    sendMouse(QEvent::MouseMove,
+              QPoint(target.left() + 2, target.center().y()),
+              Qt::NoButton, Qt::LeftButton);
+    QCOMPARE(bar->groupDropIndex(), -1);
+    const QImage edgeZone = bar->grab().toImage();
+
+    // Hovering the middle band lights the target up — the flag plus
+    // the tint/badge overlay both land.
+    sendMouse(QEvent::MouseMove, target.center(),
+              Qt::NoButton, Qt::LeftButton);
+    QCOMPARE(bar->groupDropIndex(), 2);
+    const QImage during = bar->grab().toImage();
+    QVERIFY(edgeZone.pixelColor(target.center())
+            != during.pixelColor(target.center()));
+
+    // Sliding back to the edge drops the preview again.
+    sendMouse(QEvent::MouseMove,
+              QPoint(target.left() + 2, target.center().y()),
+              Qt::NoButton, Qt::LeftButton);
+    QCOMPARE(bar->groupDropIndex(), -1);
+
+    // Back to the middle — releasing performs the promised stack.
+    sendMouse(QEvent::MouseMove, target.center(),
+              Qt::NoButton, Qt::LeftButton);
+    QCOMPARE(bar->groupDropIndex(), 2);
+    sendMouse(QEvent::MouseButtonRelease, target.center(),
+              Qt::LeftButton, Qt::NoButton);
+    QCOMPARE(bar->groupDropIndex(), -1);
+    // The dragged tab slides into the run — strip is [v1, v2, v0]
+    // with the trailing pair grouped.
+    const QString gid = widget.tabGroupId(2);
+    QVERIFY(!gid.isEmpty());
+    QCOMPARE(widget.tabGroupId(1), gid);
+    QCOMPARE(widget.tabGroupMembers(gid), QList<int>() << 1 << 2);
+
+    // A collapsed group's chip is a whole-rect stack target — even
+    // hovering its edge previews, and the drop adds the dragged tab
+    // straight into the hidden member list.
+    widget.setTabGroupCollapsed(gid, true);
+    QCOMPARE(widget.count(), 2);
+    QVERIFY(widget.isTabGroupChip(1));
+    const QRect chip = bar->tabRect(1);
+    sendMouse(QEvent::MouseButtonPress, bar->tabRect(0).center(),
+              Qt::LeftButton, Qt::LeftButton);
+    sendMouse(QEvent::MouseMove,
+              QPoint(chip.left() + 2, chip.center().y()),
+              Qt::NoButton, Qt::LeftButton);
+    QCOMPARE(bar->groupDropIndex(), 1);
+    sendMouse(QEvent::MouseButtonRelease,
+              QPoint(chip.left() + 2, chip.center().y()),
+              Qt::LeftButton, Qt::NoButton);
+    QCOMPARE(widget.count(), 1);   // the lone ungrouped tab joined
+    QCOMPARE(widget.tabGroupSize(gid), 3);
 }
 
 // Ctrl+1..9 TabShortcuts select tabs by index; the view-tab-bar
