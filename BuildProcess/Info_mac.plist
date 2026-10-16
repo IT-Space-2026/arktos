@@ -12,6 +12,12 @@
         <string>com.Arora.Arora</string>
         <key>CFBundleExecutable</key>
         <string>@EXECUTABLE@</string>
+        <key>NSPrincipalClass</key>
+        <string>NSApplication</string>
+        <key>NSHighResolutionCapable</key>
+        <true/>
+        <key>LSMinimumSystemVersion</key>
+        <string>13.0</string>
         <key>CFBundleDocumentTypes</key>
         <array>
                 <dict>

@@ -285,7 +285,16 @@ jobs:
 
       - name: Package .dmg
         run: |
-          "$QTDIR/bin/macdeployqt" Arora.app -dmg -verbose=1
+          "$QTDIR/bin/macdeployqt" Arora.app -verbose=1
+          # macdeployqt's own -dmg output is a bare volume — no
+          # /Applications link, no install affordance. Build the
+          # classic drag-to-Applications layout ourselves: a staging
+          # dir holding the .app beside an Applications symlink, then
+          # a compressed UDZO image of it.
+          mkdir dmg-root
+          cp -R Arora.app dmg-root/
+          ln -s /Applications dmg-root/Applications
+          hdiutil create -volname "Arora" -srcfolder dmg-root -ov -format UDZO Arora.dmg
 
       - uses: actions/upload-artifact@v7
         with:

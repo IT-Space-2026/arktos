@@ -3,6 +3,8 @@ TEMPLATE = app
 TARGET = arora
 mac {
     TARGET = Arora
+    ICON = $$PWD/../BuildProcess/browser.icns
+    QMAKE_INFO_PLIST = $$PWD/../BuildProcess/Info_mac.plist
 }
 
 DEFINES += \
