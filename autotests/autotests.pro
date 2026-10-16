@@ -48,6 +48,7 @@ SUBDIRS  = \
     popupblocker \
     privatebrowsing \
     privacy \
+    profileavatar \
     qrcode \
     rustdownload \
     safetext \

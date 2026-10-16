@@ -900,6 +900,17 @@ UI:
   shrinks while images and fixed-pixel layout stay put, the change is
   per tab, and it survives reloads and navigations. Text that pins a
   pixel size in CSS does not scale — an honest Chromium limit (VIEW08).
+- Profile picture pipeline: a qApp-owned ProfileIdentity owns the
+  display name ("profile/name", default "Profile") and the custom
+  avatar at <data-dir>/profile-avatar.png, emitting nameChanged /
+  avatarChanged so chrome repaints live; the Firefox/Vivaldi-style
+  editor dialog crops through a square viewport with a cover-fit
+  zoom slider (1x-4x, wheel zoom too), clamped drag-pan and a
+  circular mask preview, and saves a 128px PNG atomically.
+  'Remove Picture' deletes the file and falls back to the bundled
+  silhouette.  Ready-made 'Change Picture...' / 'Remove Picture'
+  actions ship via ProfileAvatarActions for the profile menu to
+  pick up (PROF04) (PROF02).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
