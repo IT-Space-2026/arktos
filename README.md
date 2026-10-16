@@ -526,96 +526,96 @@ core landed and UX/completion work still landing.
 
 - **Transport & connection security**
   - HTTPS-First upgrades; HTTPS-Only mode blocks plain-HTTP navigations
-  behind a warning interstitial with per-site exceptions
+    behind a warning interstitial with per-site exceptions
   - Weak cipher suites removed from the TLS ClientHello; real
-  certificate-error interstitial
+    certificate-error interstitial
   - Independent second-opinion TLS verification: rustls+webpki
-  re-validates the chain on https commits (advisory chip, never
-  blocks; skipped on Tor/proxied/private hosts)
+    re-validates the chain on https commits (advisory chip, never
+    blocks; skipped on Tor/proxied/private hosts)
   - Verified WebRTC/DNS leak behavior; DNS prefetch off by default
 
 - **Anti-tracking & fingerprinting**
   - Third-party cookie blocking; referrer-level control
   - Tracking-parameter stripping (ClearURLs rules) + known-redirector
-  unwrapping, with per-site opt-out
+    unwrapping, with per-site opt-out
   - Fingerprint spoofing on by default (per-session canvas noise,
-  uniform WebGL/navigator signals), always-on in Tor windows, per-site
-  exemption on the shield panel
+    uniform WebGL/navigator signals), always-on in Tor windows, per-site
+    exemption on the shield panel
   - Remote-font, tracking ping/beacon, prefetch and third-party
-  WebSocket blocking controls; per-origin storage grants
+    WebSocket blocking controls; per-origin storage grants
   - Zero unsolicited telemetry — proven by a capture-proxy smoke test,
-  not just flags
+    not just flags
 
 - **Site trust & anti-phishing**
   - Composite site-trust verdict feeding the padlock badge: Tranco
-  rank, threat blocklist, IDN/homograph lookalike probe, HTTPS state,
-  first-seen
+    rank, threat blocklist, IDN/homograph lookalike probe, HTTPS state,
+    first-seen
   - Vendored anti-phishing/malware blocklist seed + consent-gated
-  URLhaus/OpenPhish feeds; listed navigations stop at a warning
-  interstitial
+    URLhaus/OpenPhish feeds; listed navigations stop at a warning
+    interstitial
   - Domain-emphasized address bar with IDN punycode display
 
 - **Content & script control**
   - Per-site JavaScript allow/block with blocked-scripts bar
   - Three security tiers (Standard/Safer/Safest) for script and media
-  on insecure pages
+    on insecure pages
   - Consent gates for external protocols, adblock-list downloads and
-  remote trust-list refreshes; command-line URLs treated as untrusted
+    remote trust-list refreshes; command-line URLs treated as untrusted
   - In-browser PDFs sanitized before render: a confined `arora
-  --pdf-worker` subprocess runs the pure-Rust `hayro` renderer under
-  a bubblewrap allowlist; a Rust policy pass strips JavaScript,
-  /Launch, auto-actions, embedded files and XFA/AcroForm remnants
+    --pdf-worker` subprocess runs the pure-Rust `hayro` renderer under
+    a bubblewrap allowlist; a Rust policy pass strips JavaScript,
+    /Launch, auto-actions, embedded files and XFA/AcroForm remnants
   - Per-site fingerprint-spoof exemptions so hardening degrades
-  gracefully instead of breaking pages
+    gracefully instead of breaking pages
 
 - **Data at rest**
   - Encrypted credential store: AES-256-GCM with optional Argon2id
-  master passphrase (Rust backend, C++ fallback)
+    master passphrase (Rust backend, C++ fallback)
   - Autofill records (including passwords/card numbers) in the same
-  sealed custody, with one-shot migration of the legacy store
+    sealed custody, with one-shot migration of the legacy store
   - Multi-profile isolation: each profile's settings, history,
-  bookmarks, cookies, extensions and containers live under its own
-  `profiles/<id>/` directory with its own settings.ini — private and
-  Tor sessions write nothing to any profile store
+    bookmarks, cookies, extensions and containers live under its own
+    `profiles/<id>/` directory with its own settings.ini — private and
+    Tor sessions write nothing to any profile store
   - Profile vaults *(in progress)* — whole-profile sealed archives
-  (ARV1): Argon2id KEK wrapping a random 512-bit vault key,
-  AES-256-GCM chunks + HMAC-SHA-512 integrity, optional
-  Threefish-1024 lane, distinct wrong-password/tamper errors,
-  verify-before-unpack with zero partial plaintext
+    (ARV1): Argon2id KEK wrapping a random 512-bit vault key,
+    AES-256-GCM chunks + HMAC-SHA-512 integrity, optional
+    Threefish-1024 lane, distinct wrong-password/tamper errors,
+    verify-before-unpack with zero partial plaintext
 
 - **Deletion & data hygiene**
   - Clear Private Data categories via a planned-operation engine
-  (history, downloads, cookies, site data, cache, icons, session,
-  full wipe) with optional clear-on-exit
+    (history, downloads, cookies, site data, cache, icons, session,
+    full wipe) with optional clear-on-exit
   - Profile-menu quick clears (History / Cookies / Cache) scoped to
-  their category
+    their category
   - Red Delete Profile: itemized confirm + type-to-confirm + restart
-  wipe of the data and settings roots; the default profile cannot
-  be deleted, and a live profile is never deleted under a running
-  window
+    wipe of the data and settings roots; the default profile cannot
+    be deleted, and a live profile is never deleted under a running
+    window
 
 - **Process & parsing hardening**
   - Filesystem sandbox: declarative policy with per-platform generators
-  — bubblewrap on Linux (credential stores and other browsers' data
-  masked, system paths read-only), Seatbelt on macOS, AppContainer on
-  Windows, unveil/pledge on OpenBSD
+    — bubblewrap on Linux (credential stores and other browsers' data
+    masked, system paths read-only), Seatbelt on macOS, AppContainer on
+    Windows, unveil/pledge on OpenBSD
   - Untrusted-input parsing in memory-safe Rust behind the FFI:
-  OpenSearch descriptors, extension update manifests, suggestion
-  replies, bookmarks/history/session serialization (bounds-checked,
-  atomic writes, corrupt files rejected whole)
+    OpenSearch descriptors, extension update manifests, suggestion
+    replies, bookmarks/history/session serialization (bounds-checked,
+    atomic writes, corrupt files rejected whole)
   - Hardened C++ parsers: size-capped DTD-free OpenSearch, sanitized
-  download filenames, no page-controlled markup in chrome
+    download filenames, no page-controlled markup in chrome
   - Supply chain: crypto crates exact-pinned with a committed
-  Cargo.lock, vendored flatpak cargo sources, minimum-release-age
-  gate for new dependencies
+    Cargo.lock, vendored flatpak cargo sources, minimum-release-age
+    gate for new dependencies
 
 - **Tor isolation**
   - Dedicated off-the-record profile per Tor window — separate cookie
-  jar, cache and state, nothing persists to any profile store
+    jar, cache and state, nothing persists to any profile store
   - SOCKS routing per window with circuit rotation ("New circuit for
-  this site"), Tor-aware trust UI (violet chrome, honest padlock),
-  first-search retry hardening, and the second-opinion TLS probe
-  disabled so no direct handshake can bypass Tor
+    this site"), Tor-aware trust UI (violet chrome, honest padlock),
+    first-search retry hardening, and the second-opinion TLS probe
+    disabled so no direct handshake can bypass Tor
 
 **Honest-by-design gaps** — the same codebase documents what is
 *not* protected: a profile lock without the vault is cosmetic
