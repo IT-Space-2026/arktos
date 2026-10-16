@@ -113,6 +113,7 @@
 #include "tormanager.h"
 #include "torstatusbanner.h"
 #include "tortitlebar.h"
+#include "updatedialog.h"
 #include "useragentmenu.h"
 #include "webenginebackend.h"
 #include "webview.h"
@@ -1710,6 +1711,17 @@ void BrowserMainWindow::setupMenu()
     m_helpMenu->addAction(m_helpChangeLanguageAction);
     m_helpMenu->addSeparator();
 
+    m_helpCheckUpdatesAction = new QAction(m_helpMenu);
+    connect(m_helpCheckUpdatesAction, &QAction::triggered,
+            this, &BrowserMainWindow::checkForUpdates);
+    m_helpMenu->addAction(m_helpCheckUpdatesAction);
+    if (BrowserApplication::isTorMode()) {
+        // UPD01: the releases lookup is a direct github.com API call —
+        // in a tor process that would leak the real IP next to the
+        // anonymized session, so the entry refuses honestly instead.
+        m_helpCheckUpdatesAction->setEnabled(false);
+    }
+
     m_helpAboutQtAction = new QAction(m_helpMenu);
     connect(m_helpAboutQtAction, &QAction::triggered,
             qApp, &QApplication::aboutQt);
@@ -1722,6 +1734,7 @@ void BrowserMainWindow::setupMenu()
 
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
     m_helpChangeLanguageAction->setIcon(AroraIcon::getChrome(QLatin1String("preferences-desktop-locale")));
+    m_helpCheckUpdatesAction->setIcon(AroraIcon::getChrome(QLatin1String("view-refresh")));
     // ICONS09 identity exceptions: the Qt mark and the app mark keep
     // their brand colors — chrome glyphs go through getChrome.
     m_helpAboutQtAction->setIcon(QPixmap(QLatin1String(":/qt-project.org/qmessagebox/images/qtlogo-64.png")));
@@ -1930,6 +1943,13 @@ void BrowserMainWindow::retranslate()
 
     m_helpMenu->setTitle(tr("&Help"));
     m_helpChangeLanguageAction->setText(tr("Switch application language "));
+    m_helpCheckUpdatesAction->setText(tr("Check for Updates..."));
+    // UPD01: the tooltip doubles as the honest disabled reason on tor
+    // windows — a direct github.com call would bypass the proxy.
+    m_helpCheckUpdatesAction->setToolTip(BrowserApplication::isTorMode()
+        ? tr("Update checks are disabled in Tor windows — the check "
+             "contacts github.com directly.")
+        : tr("Check github.com for a newer Arora release"));
     m_helpAboutQtAction->setText(tr("About &Qt"));
     m_helpAboutApplicationAction->setText(tr("About &%1", "About Browser").arg(QApplication::applicationName()));
 
@@ -3315,6 +3335,20 @@ void BrowserMainWindow::aboutApplication()
     AboutDialog *aboutDialog = new AboutDialog(this);
     aboutDialog->setAttribute(Qt::WA_DeleteOnClose);
     aboutDialog->show();
+}
+
+void BrowserMainWindow::checkForUpdates()
+{
+    // UPD01: one shared dialog per window — a second trigger raises
+    // the in-flight one instead of starting a parallel check.
+    if (m_updateDialog) {
+        m_updateDialog->raise();
+        m_updateDialog->activateWindow();
+        return;
+    }
+    m_updateDialog = new UpdateDialog(this);
+    m_updateDialog->setAttribute(Qt::WA_DeleteOnClose);
+    m_updateDialog->show();
 }
 
 void BrowserMainWindow::fileNew()

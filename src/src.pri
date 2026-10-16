@@ -150,6 +150,8 @@ HEADERS += \
     $$PWD/themepicker.h \
     $$PWD/tabwidget.h \
     $$PWD/toolbarsearch.h \
+    $$PWD/updatechecker.h \
+    $$PWD/updatedialog.h \
     $$PWD/urlcleaner.h \
     $$PWD/vaultdialogs.h \
     $$PWD/webactionmapper.h \
@@ -235,6 +237,8 @@ SOURCES += \
     $$PWD/themepicker.cpp \
     $$PWD/tabwidget.cpp \
     $$PWD/toolbarsearch.cpp \
+    $$PWD/updatechecker.cpp \
+    $$PWD/updatedialog.cpp \
     $$PWD/urlcleaner.cpp \
     $$PWD/vaultdialogs.cpp \
     $$PWD/webactionmapper.cpp \

@@ -953,6 +953,18 @@ UI:
   carry a bottom hairline, and the page content is no longer boxed by
   a frame under the strip.  Tab-to-tab separators and group/container
   accent stripes are unchanged (TABS10).
+- Help > "Check for Updates..." asks github.com for the newest Arora
+  release and reports the honest outcome — up to date, newer version,
+  no releases published yet, or couldn't check.  The dialog always
+  links the full releases page, and its download button picks the
+  package matching the host OS (Windows installer .exe, macOS .dmg,
+  distro-appropriate .deb/.rpm on Linux with .flatpak as the generic
+  fallback, explicit choice when the distro can't be detected) and
+  runs it through the normal download manager; releases without a
+  matching package fall back to opening the release page.  The check
+  is manual-only — nothing ever phones home on its own — and the
+  entry is disabled on Tor windows so no direct github.com request
+  can leak out of a Tor session (UPD01).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
