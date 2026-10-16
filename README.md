@@ -526,6 +526,15 @@ that swap means in practice:
   First launch copies existing values into the default profile,
   leaving the old file as a read fallback (MPROF04 — groundwork for
   multiple browsing profiles).
+- **Password-sealed profile vaults** — a profile can be locked into a
+  tamper-evident encrypted archive (`<id>.vault/vault.arv`,
+  AES-256-GCM + HMAC-SHA-512 under an Argon2id KEK): locking
+  secure-erases the plaintext tree, unlocking restores it
+  byte-for-byte, auto-lock re-seals on shutdown, a crash while
+  unlocked is detected and offered for re-seal on next boot, and a
+  locked profile can be deleted without the password. Groundwork
+  (PVAULT01-04) — the lock/unlock UI lands with the profile
+  manager.
 - **Privacy-first direction** — everything in the
   [feature tour](#feature-tour) is new since the Qt 4 series:
   zero-telemetry launch, HTTPS-Only, per-site JS/cookie/permission

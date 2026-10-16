@@ -2872,6 +2872,26 @@ Password-sealed profile vaults in the Rust core (PVAULT01):
     export/import UI consumes it in a follow-up task.  No-Rust builds
     are unaffected.
 
+Profile vault end-to-end lifecycle + delete path (PVAULT04):
+    The vault pipeline now runs verifiably end to end on this lane:
+    a profile can be sealed, unlocked through the same call the
+    unlock prompt will drive, and re-sealed by the auto-lock when
+    the app shuts down — a real crash between unlock and shutdown
+    leaves an armed dirty marker that the next boot reports so a
+    re-seal can be offered, and repeated wrong passwords each pay
+    the honest Argon2id cost with no lockout counter.  A new
+    ProfileVault::wipeVault is the Delete Profile backend: a locked
+    profile's vault artifacts can be destroyed without the password
+    (owner-host honesty — the local operator can always delete
+    their own data; demanding the password first would be lockout
+    theater, not protection), while live plaintext is left for the
+    caller's ordinary profile-directory removal.  New --vault-smoke*
+    flags drive the lifecycle in real app processes: seed+seal, a
+    locked-profile boot that provably unpacks nothing (even
+    --quit-after-load leaves the blob byte-identical), the unlock
+    path, and a hard-_exit crash plant whose next boot detects the
+    dirty state and accepts the re-seal offer.
+
 Profile vault seal/unseal engine (PVAULT02):
     The Qt side of the profile vault now exists: a ProfileVault
     singleton orchestrates PVAULT01's ARV1 FFI into the lock/unlock

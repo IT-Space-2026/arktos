@@ -807,6 +807,25 @@ void ProfileVault::disarmDirty(const QString &profileId)
                             QLatin1String("unlocked.dirty")));
 }
 
+ProfileVault::Error ProfileVault::wipeVault(const QString &profileId)
+{
+    const QString id = normalizedId(profileId);
+    m_lastError.clear();
+    if (hasOpenWindows(id))
+        return fail(HasOpenWindows, QStringLiteral(
+            "refusing to wipe the vault of profile %1 while it has "
+            "open windows").arg(id));
+    QString error;
+    // Secure-erase, not removeRecursively: the held exclusions and
+    // any parked pre-unlock copy are live plaintext — they get the
+    // same "no readable plaintext at the path" guarantee the seal
+    // path gives.
+    if (!secureEraseTree(vaultDirFor(id), &error))
+        return fail(Io, error);
+    dropPassword(id); // any unlock custody dies with the vault
+    return fail(NoError, QString());
+}
+
 void ProfileVault::checkForDirtyProfiles()
 {
     const QStringList dirty = dirtyProfiles();

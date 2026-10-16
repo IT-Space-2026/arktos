@@ -51,6 +51,7 @@ SUBDIRS  = \
     profileavatar \
     profilesettings \
     profilevault \
+    vaulte2e \
     vaultengine \
     qrcode \
     rustdownload \

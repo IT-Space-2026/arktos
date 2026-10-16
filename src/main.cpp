@@ -103,6 +103,7 @@
 #ifdef ARORA_RUSTDL
 #include "downloadworker.h"
 #endif
+#include "profilevault.h"
 // EngineTab is engine-layer, not rust-layer — --servo-smoke needs it
 // in no-rust builds too (ENG12).
 #include "enginetab.h"
@@ -4284,6 +4285,144 @@ static int servoLifecycleSmoke()
     return ok ? 0 : 1;
 }
 
+// PVAULT04: --vault-smoke* exercises the profile vault across the
+// real app lifecycle, no stub WebView needed — the legs are
+// filesystem + ProfileVault calls only.  --vault-smoke-seed creates,
+// seeds and seals a dedicated profile id; --vault-smoke-dirty-seed
+// additionally re-opens it then dies hard (_exit: no destructors,
+// no auto-lock) to plant the crash-survivor DirtyUnlocked state a
+// real kill leaves; --vault-smoke runs against the planted state —
+// a locked profile must boot without unpacking anything (then the
+// prompt path's unseal() runs and a normal exit lets the teardown
+// auto-lock re-seal, which the driver verifies on disk after the
+// process is gone), a dirty profile must surface in the boot scan
+// and accept the re-seal offer.
+static int vaultSmoke(BrowserApplication &application,
+                      const QStringList &args)
+{
+    const QLatin1String id("vsmoke");
+    const QByteArray password("vault-smoke-pw");
+    ProfileVault *vault = ProfileVault::instance();
+    bool ok = true;
+    const auto check = [&ok](const QString &what, bool pass) {
+        qInfo() << "vault-smoke:" << (pass ? "PASS" : "FAIL") << what;
+        ok = ok && pass;
+    };
+    const auto verdict = [&ok]() {
+        qInfo() << "vault-smoke:" << (ok ? "PASS" : "FAIL");
+        return ok ? 0 : 1;
+    };
+
+    const QString dir = ProfileVault::profileDirFor(id);
+    const QString vdir = ProfileVault::vaultDirFor(id);
+    const auto vaultPath = [&vdir](const QString &name) {
+        return vdir + QLatin1Char('/') + name;
+    };
+    const auto dirIsEmpty = [&dir]() {
+        return QDir(dir).entryList(
+                   QDir::AllEntries | QDir::NoDotAndDotDot
+                       | QDir::Hidden | QDir::System)
+            .isEmpty();
+    };
+
+    if (args.contains(QLatin1String("--vault-smoke-seed"))
+            || args.contains(QLatin1String("--vault-smoke-dirty-seed"))) {
+        check(QLatin1String("rustcore vault available"),
+              ProfileVault::isAvailable());
+        if (!ok)
+            return verdict();
+        QDir().mkpath(dir + QLatin1String("/cache"));
+        const auto seed = [&dir](const QString &rel,
+                                 const QByteArray &bytes) {
+            QFile f(dir + QLatin1Char('/') + rel);
+            if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate))
+                return false;
+            return f.write(bytes) == bytes.size();
+        };
+        check(QLatin1String("seed history.db"),
+              seed(QLatin1String("history.db"),
+                   "VSMOKE-CANARY history"));
+        check(QLatin1String("seed cookies"),
+              seed(QLatin1String("cookies"), "VSMOKE-CANARY cookies"));
+        check(QLatin1String("seed settings.ini"),
+              seed(QLatin1String("settings.ini"),
+                   "VSMOKE-CANARY settings"));
+        check(QLatin1String("seed cache/blob.bin"),
+              seed(QLatin1String("cache/blob.bin"), "cached"));
+        check(QLatin1String("seal"),
+              vault->seal(id, password) == ProfileVault::NoError);
+        check(QLatin1String("locked after seed"),
+              vault->state(id) == ProfileVault::Locked);
+        if (!args.contains(QLatin1String("--vault-smoke-dirty-seed")))
+            return verdict();
+        check(QLatin1String("unseal for dirty plant"),
+              vault->unseal(id, password) == ProfileVault::NoError);
+        check(QLatin1String("dirty state planted"),
+              vault->state(id) == ProfileVault::DirtyUnlocked);
+        const int rc = verdict();
+        // The crash: _exit skips ~BrowserApplication AND the
+        // qAddPostRoutine auto-lock, leaving plaintext + the armed
+        // dirty marker exactly as a kill would.
+        fflush(nullptr);
+        ::_exit(rc);
+    }
+
+    const ProfileVault::State state = vault->state(id);
+    if (state == ProfileVault::Locked) {
+        // Locked-profile boot: the ctor already ran the dirty scan —
+        // nothing unpacked, the blob + marker are intact, no canary
+        // materialized as plaintext.
+        check(QLatin1String("blob + marker present"),
+              QFile::exists(vaultPath(QLatin1String("vault.arv")))
+                  && QFile::exists(
+                         vaultPath(QLatin1String("vault.lock"))));
+        check(QLatin1String("no plaintext unpacked on boot"),
+              dirIsEmpty());
+        check(QLatin1String("dirty scan quiet on locked"),
+              vault->dirtyProfiles().isEmpty());
+        // The unlock prompt's call (PVAULT03's dialog drives this
+        // same unseal); a normal exit then lets ~BrowserApplication's
+        // auto-lock re-seal from custody — verified on disk after
+        // the process exits.
+        check(QLatin1String("unseal (prompt path)"),
+              vault->unseal(id, password) == ProfileVault::NoError);
+        QFile canary(dir + QLatin1String("/history.db"));
+        check(QLatin1String("canary restored"),
+              canary.open(QIODevice::ReadOnly)
+                  && canary.readAll().contains("VSMOKE-CANARY"));
+        check(QLatin1String("dirty marker armed post-unlock"),
+              vault->state(id) == ProfileVault::DirtyUnlocked);
+        const int rc = verdict();
+        QTimer::singleShot(500, &application,
+                           [&application, rc]() {
+                               application.exit(rc);
+                           });
+        return application.exec();
+    }
+    if (state == ProfileVault::DirtyUnlocked) {
+        // Dirty boot: the ctor's checkForDirtyProfiles already
+        // qWarned + emitted — the scan result is the offer's input.
+        check(QLatin1String("dirty detected at boot"),
+              vault->dirtyProfiles().contains(id));
+        check(QLatin1String("crash plaintext still live"),
+              !dirIsEmpty());
+        // Accept "Re-seal now": a fresh process holds no password
+        // custody, so the offer re-collects it — seal() is the call
+        // the offer's handler makes.
+        check(QLatin1String("re-seal needs a password"),
+              vault->lockProfile(id) == ProfileVault::NoPassword);
+        check(QLatin1String("re-seal offer accepted"),
+              vault->seal(id, password) == ProfileVault::NoError);
+        check(QLatin1String("locked after offer"),
+              vault->state(id) == ProfileVault::Locked);
+        return verdict();
+    }
+    qInfo() << "vault-smoke: FAIL (unexpected state" << int(state)
+            << "— run --vault-smoke-seed or --vault-smoke-dirty-seed"
+               " first)";
+    return 1;
+}
+
 int main(int argc, char **argv)
 {
     // SAND01: a browsing launch re-execs itself inside the filesystem
@@ -4371,7 +4510,9 @@ int main(int argc, char **argv)
         // Test hooks that don't carry the -smoke suffix — both run the
         // app's write paths, so they isolate like the smokes.
         if (arg == "--quit-after-load"
-                || arg == "--fingerprint-inject-seed")
+                || arg == "--fingerprint-inject-seed"
+                || arg == "--vault-smoke-seed"
+                || arg == "--vault-smoke-dirty-seed")
             smokeRun = true;
         if (arg == "--telemetry-smoke")
             telemetrySmoke = true;
@@ -4777,6 +4918,7 @@ int main(int argc, char **argv)
         "parallel-download-smoke", "parallel-download-off-smoke",
         "ingress-smoke",
         "engine-list", "engine-smoke", "servo-smoke",
+        "vault-smoke", "vault-smoke-seed", "vault-smoke-dirty-seed",
     };
     for (const char *option : internalOptions)
         parser.addOption(QCommandLineOption(QLatin1String(option)));
@@ -5072,6 +5214,13 @@ int main(int argc, char **argv)
         });
         return application.exec();
     }
+
+    // PVAULT04: the profile-vault e2e — seeds and lifecycle legs run
+    // without the stub WebView (pure filesystem + ProfileVault).
+    if (args.contains(QLatin1String("--vault-smoke"))
+            || args.contains(QLatin1String("--vault-smoke-seed"))
+            || args.contains(QLatin1String("--vault-smoke-dirty-seed")))
+        return vaultSmoke(application, args);
 
     QWebEngineProfile *profile = BrowserApplication::webEngineProfile();
     CookieJar *cookieJar = CookieJar::instance(profile);

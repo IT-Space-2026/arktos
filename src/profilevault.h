@@ -177,6 +177,19 @@ public:
     // Acknowledge plaintext on a clean shutdown without sealing —
     // clears the armed dirty marker for this id.
     void disarmDirty(const QString &profileId);
+    // PVAULT04: Delete-Profile backend — wipes every vault artifact
+    // for the id (blob, registry, markers, held exclusions, parking
+    // slot) WITHOUT needing the password.  Owner-host honesty: the
+    // local operator can always delete their own data — a locked
+    // profile's blob is ciphertext either way, so demanding the
+    // password before deletion would be lockout theater, not
+    // protection.  Refuses while the profile has open windows.  The
+    // live plaintext tree (unlocked / dirty-crash survivors) is NOT
+    // touched — the caller's ordinary profile-dir removal covers it.
+    // Works without rustcore: artifacts from a rust-enabled build
+    // still have to be deletable on a no-rust one.  No-op success
+    // when the id has no vault.
+    Error wipeVault(const QString &profileId);
 
     // Boot-time crash-dirty scan — qWarning plus dirtyDetected() per
     // hit; the "Re-seal now" offer UI (PVAULT03/04) connects here.
