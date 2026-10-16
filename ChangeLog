@@ -1271,6 +1271,15 @@ Tor:
   now waits for the generated page commit to land before it
   re-dispatches, so the bounded retry chain actually runs to its
   honest end (TOR14).
+- The first search on a fresh Tor window no longer fails once more:
+  the bootstrap-and-circuit hold was already right — the last
+  failure sat one layer lower, in the engine's proxy switch itself.
+  The real SOCKS endpoint is now applied the moment the daemon
+  reports its listener (during bootstrap, not at the end) and a
+  throwaway warm-up request makes the network layer notice the
+  switch, so a navigation released on the first usable circuit can
+  no longer resolve against the dead placeholder proxy and flash an
+  error page (TOR17).
 - Tor window polish: the reader-mode button can no longer revert to a
   black glyph when a state change lands inside a stylesheet repolish —
   it re-bakes its icon whenever the palette/style settles, the way the

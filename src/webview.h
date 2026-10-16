@@ -330,6 +330,10 @@ private:
     // re-queue it; the matching hold call clears the token instead.
     QUrl m_torGraceReleaseUrl;
     bool m_torWakeupArmed = false;
+    // TOR17: tracks the once-per-view connect to the app's
+    // torProxyWarmed signal inside torArmWakeup — unlike the manager
+    // connections it survives a manager swap, hence its own flag.
+    bool m_torWarmWakeupArmed = false;
     QTimer *m_torQueueGrace = nullptr;
 };
 

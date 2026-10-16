@@ -753,6 +753,8 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
             // under the aborted target — it is neither an error nor
             // retry-worthy; the queued load is the pending intent.
             m_torHeldNavs.insert(url);
+            if (torDebugEnabled())
+                qInfo() << "tor-debug: page nav held, refusing" << url;
             return false;
         }
     }
@@ -1173,6 +1175,9 @@ void WebPage::handleLoadingChanged(const QWebEngineLoadingInfo &loadingInfo)
         // for this edge instead of racing the commit.
         if (m_pendingErrorPages == 0) {
             if (m_torDeferredFire) {
+                if (torDebugEnabled())
+                    qInfo() << "tor-debug: generated commit landed —"
+                               " firing deferred retry";
                 m_torDeferredFire = false;
                 torFireRetry();
             }
@@ -1185,6 +1190,13 @@ void WebPage::handleLoadingChanged(const QWebEngineLoadingInfo &loadingInfo)
 
     if (loadingInfo.status() != QWebEngineLoadingInfo::LoadFailedStatus)
         return;
+
+    if (torDebugEnabled() && BrowserApplication::isTorMode())
+        qInfo() << "tor-debug: LoadFailed url" << loadingInfo.url()
+                << "domain" << int(loadingInfo.errorDomain())
+                << "code" << loadingInfo.errorCode()
+                << "isErrorPage" << loadingInfo.isErrorPage()
+                << '-' << loadingInfo.errorString();
 
     // Certificate failures are presented by the interstitial page
     // (handleCertificateError), not by the generic notfound page — and
@@ -1203,8 +1215,12 @@ void WebPage::handleLoadingChanged(const QWebEngineLoadingInfo &loadingInfo)
     // report a failed load under the aborted target — it is neither
     // an error nor retry-worthy; the queued load is the pending
     // intent.
-    if (m_torHeldNavs.remove(errorUrl))
+    if (m_torHeldNavs.remove(errorUrl)) {
+        if (torDebugEnabled())
+            qInfo() << "tor-debug: swallowed held-nav failure report"
+                    << errorUrl;
         return;
+    }
 
     // SEC18: a main-frame request the interceptor just refused under
     // the domain blocklist arrives here as a failed load — swap in
@@ -1263,8 +1279,12 @@ void WebPage::handleLoadingChanged(const QWebEngineLoadingInfo &loadingInfo)
         QUrl downgraded = errorUrl;
         downgraded.setScheme(QLatin1String("http"));
         if (errorUrl.scheme() != QLatin1String("https")
-            || downgraded != m_requestedUrl)
+            || downgraded != m_requestedUrl) {
+            if (torDebugEnabled())
+                qInfo() << "tor-debug: LoadFailed" << errorUrl
+                        << "ignored — requested is" << m_requestedUrl;
             return;
+        }
     }
     // SAFE07: mark the host http: only when the failure is genuine
     // TLS/connectivity evidence (a refused/reset/timed-out connection
@@ -1292,6 +1312,9 @@ void WebPage::handleLoadingChanged(const QWebEngineLoadingInfo &loadingInfo)
         showTorWarmupPending(errorUrl);
         return;
     }
+    if (torDebugEnabled() && BrowserApplication::isTorMode())
+        qInfo() << "tor-debug: retry not armed for" << errorUrl
+                << "— committing the honest error page";
 
     showErrorPage(errorUrl, loadingInfo.errorString(),
                   downgraded || PrivacyRequestInterceptor::isDowngraded(
@@ -1413,6 +1436,11 @@ bool WebPage::torArmRetry(const QUrl &url)
         || state == TorManager::Bootstrapping;
     const qint64 elapsed = tor->readyElapsed();
     const bool warmup = elapsed >= 0 && elapsed < torWarmupMs();
+    if (torDebugEnabled())
+        qInfo() << "tor-debug: arm-retry?" << url
+                << "state" << int(state) << "connecting" << connecting
+                << "readyElapsed" << elapsed << "warmup" << warmup
+                << "attempts spent" << m_torRetryAttempts;
     if (!connecting && !warmup)
         return false;
     // The retry budget rides with the url it was spent on — a
@@ -1422,6 +1450,8 @@ bool WebPage::torArmRetry(const QUrl &url)
         m_torRetriedUrl = url;
         m_torRetryAttempts = 0;
     } else if (m_torRetryAttempts >= kTorMaxRetryAttempts) {
+        if (torDebugEnabled())
+            qInfo() << "tor-debug: retry budget spent for" << url;
         return false;
     }
     m_torRetryUrl = url;
@@ -1564,6 +1594,9 @@ void WebPage::torFireRetry()
     // LoadSucceeded edge in handleLoadingChanged re-enters here;
     // the arm stays so the intent is not lost.
     if (m_pendingErrorPages > 0) {
+        if (torDebugEnabled())
+            qInfo() << "tor-debug: retry fire deferred — generated"
+                       " commit in flight for" << m_torRetryUrl;
         m_torDeferredFire = true;
         return;
     }
@@ -1574,6 +1607,9 @@ void WebPage::torFireRetry()
     // window allow, and a url whose budget is gone keeps its honest
     // error page.
     ++m_torRetryAttempts;
+    if (torDebugEnabled())
+        qInfo() << "tor-debug: firing retry attempt"
+                << m_torRetryAttempts << "->" << url;
     // No "still on the error page" url() check — the fire can land
     // between setHtml() and the error page's commit, when url() still
     // names the previous document, and a user who navigated away has

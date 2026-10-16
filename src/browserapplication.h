@@ -81,6 +81,7 @@ class LanguageManager;
 class QLocalSocket;
 class QTemporaryDir;
 class TorManager;
+class QWebEnginePage;
 class QWebEngineProfile;
 class BrowserApplication : public SingleApplication
 {
@@ -235,6 +236,16 @@ public:
     // operand — the same page-link discipline the sender enforced.
     static bool isUrlAllowedOnTorArgv(const QString &operand);
 
+    // TOR17: false from the moment the managed daemon's SOCKS endpoint
+    // is applied to QNetworkProxy until a probe request has made the
+    // WebEngine network service re-read it — Chromium only re-fetches
+    // the config from a lazy poll inside proxy resolution, and the
+    // request that triggers the poll still resolves on the STALE
+    // endpoint (the ERR_PROXY_CONNECTION_FAILED the first post-ready
+    // navigation used to die on).  True outside tor mode and before
+    // the first endpoint discovery.  WebView::torMustQueue reads it.
+    bool isTorProxyWarmed() const;
+
     // TRUST06: master switch for the site-trust surface (Preferences
     // > Privacy > Site Trust).  The toolbar badge and every
     // per-signal lookup gate on this — consumers read it live so a
@@ -282,12 +293,21 @@ private slots:
 signals:
     void zoomTextOnlyChanged(bool textOnly);
     void privacyChanged(bool isPrivate);
+    // TOR17: the warm-up request settled — held navigations may flush.
+    void torProxyWarmed();
 
 private:
     QString parseArgumentUrl(const QString &string) const;
     QString argumentUrl() const;
     void clean();
     void torStartup(const QString &url);
+    // TOR17: fires the sacrificial first request through the tor
+    // profile so the network service's lazy proxy poll refreshes the
+    // config before any user navigation reaches it; markTorProxyWarmed
+    // releases the navigation gate on the probe's settle or a bounded
+    // fallback.
+    void warmTorProxy();
+    void markTorProxyWarmed();
     // PRIV01: opt-in full private-data wipe at quit — runs SEC12's
     // categories (history, cookies, site data, caches) and drops the
     // deferred sentinels so Chromium's on-disk state goes away at the
@@ -305,6 +325,12 @@ private:
     // a page so teardown stops the daemon before the dir vanishes.
     TorManager *m_torManager;
     QScopedPointer<QTemporaryDir> m_torDataDir;
+    // TOR17: warm-up state for the process-global SOCKS switch — see
+    // isTorProxyWarmed()/warmTorProxy().  m_torProxyWarmSeq invalidates
+    // stale probe completions when a daemon restart re-warms.
+    bool m_torProxyWarmed;
+    qint64 m_torProxyWarmSeq;
+    QWebEnginePage *m_torProxyProbe;
 
     Qt::MouseButtons m_eventMouseButtons;
     Qt::KeyboardModifiers m_eventKeyboardModifiers;

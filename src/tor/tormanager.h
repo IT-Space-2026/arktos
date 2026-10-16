@@ -35,6 +35,18 @@ class QProcess;
 class QTimer;
 class TorControl;
 
+// TOR17: ARORA_TOR_DEBUG=1 turns on hold/retry state-machine tracing
+// (queue/refuse/dispatch/fire-retry decisions with reason codes) on
+// stderr — the live cold-start repro needs the decisions a unit seam
+// cannot show.  Free function so WebView/WebPage/TorManager share one
+// switch.
+inline bool torDebugEnabled()
+{
+    static const bool enabled =
+        qEnvironmentVariableIsSet("ARORA_TOR_DEBUG");
+    return enabled;
+}
+
 // TOR04: one parsed line of GETINFO circuit-status — the path column
 // is the hop chain (guard -> middle -> exit).  ServerIDs arrive as
 // "$FP~Nick" / "$FP=Nick" / "$FP" / bare nickname; the '$' is
@@ -80,6 +92,16 @@ struct TorCircuit
 // STATUS_CLIENT for bootstrap progress, GETINFO net/listeners/socks
 // for the SOCKS endpoint.  state() becomes Ready only after bootstrap
 // PROGRESS=100.
+//
+// TOR17: the SOCKS endpoint is queried right after authentication —
+// the listener is bound at daemon startup, so the answer lands during
+// bootstrap rather than at its end.  socksListenerDiscovered fires
+// the moment the endpoint is known (ready() still waits for
+// PROGRESS=100) so the application proxy can be re-pointed while
+// bootstrap runs: Chromium's network service picks the new
+// QNetworkProxy up on a poll that lags the setter by seconds, and a
+// first navigation released right at Ready raced that lag into
+// net::ERR_PROXY_CONNECTION_FAILED on the fail-closed port.
 class TorManager : public QObject
 {
     Q_OBJECT
@@ -224,6 +246,13 @@ signals:
     void stateChanged(TorManager::State state);
     void bootstrapProgressChanged(int progress, const QString &summary);
     void ready(const QNetworkProxy &proxy);
+    // TOR17: fired the moment GETINFO net/listeners/socks answers —
+    // well before ready() on a cold bootstrap.  The argument is the
+    // usable SOCKS5 proxy (host-name forwarding set); receivers should
+    // re-point QNetworkProxy::setApplicationProxy immediately so the
+    // WebEngine-side config propagation finishes before the first
+    // held navigation is released.
+    void socksListenerDiscovered(const QNetworkProxy &proxy);
     void failed(const QString &reason);
     void stopped();
     void logLine(const QString &line);         // notice-level tor output

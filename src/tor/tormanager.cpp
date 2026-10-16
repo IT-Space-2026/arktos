@@ -164,20 +164,25 @@ QString TorManager::bootstrapSummary() const
     return m_bootstrapSummary;
 }
 
+// DNS goes to the resolver at the exit, not to the local resolver —
+// SOCKS5 host-name forwarding is what keeps lookups off the ISP.
+// OR into (never replace) the type defaults — setCapabilities()
+// wholesale-overwrites TunnelingCapability, which QNAM requires to
+// even attempt a CONNECT through the proxy.
+static QNetworkProxy torSocksProxy(const QHostAddress &host, quint16 port)
+{
+    QNetworkProxy proxy(QNetworkProxy::Socks5Proxy,
+                        host.toString(), port);
+    proxy.setCapabilities(proxy.capabilities()
+                          | QNetworkProxy::HostNameLookupCapability);
+    return proxy;
+}
+
 QNetworkProxy TorManager::socksProxy() const
 {
     if (m_state != Ready)
         return QNetworkProxy();
-    QNetworkProxy proxy(QNetworkProxy::Socks5Proxy,
-                        m_socksHost.toString(), m_socksPort);
-    // DNS goes to the resolver at the exit, not to the local resolver —
-    // SOCKS5 host-name forwarding is what keeps lookups off the ISP.
-    // OR into (never replace) the type defaults — setCapabilities()
-    // wholesale-overwrites TunnelingCapability, which QNAM requires to
-    // even attempt a CONNECT through the proxy.
-    proxy.setCapabilities(proxy.capabilities()
-                          | QNetworkProxy::HostNameLookupCapability);
-    return proxy;
+    return torSocksProxy(m_socksHost, m_socksPort);
 }
 
 quint16 TorManager::socksPort() const
@@ -363,6 +368,15 @@ void TorManager::requestCircuitInfo()
                      [this](int code, const QStringList &lines) {
         m_circuits = (code == 250) ? parseCircuitStatus(lines)
                                    : QList<TorCircuit>();
+        if (torDebugEnabled()) {
+            int usable = 0;
+            for (const TorCircuit &circuit : m_circuits)
+                if (isUsableCircuit(circuit))
+                    ++usable;
+            qInfo() << "tor-debug: circuit snapshot" << code
+                    << "circuits" << m_circuits.size()
+                    << "usable" << usable;
+        }
         // The connection can die between the two commands — a blind
         // m_control->getInfo() here would queue a command that never
         // completes and latch m_circuitQueryInFlight forever.
@@ -537,6 +551,9 @@ void TorManager::setState(State state)
         m_readyClock.start();
     else
         m_readyClock.invalidate();
+    if (torDebugEnabled())
+        qInfo() << "tor-debug: daemon state ->" << int(state)
+                << "bootstrap" << m_bootstrapProgress;
     emit stateChanged(state);
     if (state == Ready) {
         // A finished launch series — the retry budget is whole again
@@ -828,6 +845,17 @@ void TorManager::onControlConnected()
         m_control->setEvents(QStringList()
                              << QLatin1String("STATUS_CLIENT")
                              << QLatin1String("CIRC"));
+        // TOR17: the SOCKS listener binds at daemon startup — asking
+        // for it here (rather than at PROGRESS=100) lets the browser
+        // re-point QNetworkProxy::setApplicationProxy while bootstrap
+        // still runs.  Chromium's network service polls the Qt proxy
+        // config with a lag measured in seconds; before this, a
+        // navigation released by the first usable circuit could race
+        // that lag and die with net::ERR_PROXY_CONNECTION_FAILED on
+        // the fail-closed loopback port.  The query below runs before
+        // PROGRESS reaches 100, so a failure is soft — the >=100 call
+        // site remains the authoritative retry.
+        querySocksListener();
         m_control->getInfo(QLatin1String("status/bootstrap-phase"),
                            [this](int code, const QStringList &lines) {
             if (code == 250 && !lines.isEmpty())
@@ -887,8 +915,12 @@ void TorManager::querySocksListener()
         return;
     m_control->getInfo(QLatin1String("net/listeners/socks"),
                        [this](int code, const QStringList &lines) {
+        const bool readyPath = m_bootstrapProgress >= 100
+                && (m_state == Connecting || m_state == Bootstrapping
+                    || m_state == Ready);
         if (code != 250 || lines.isEmpty()) {
-            fail(QLatin1String("tor did not report a socks listener"));
+            if (readyPath)
+                fail(QLatin1String("tor did not report a socks listener"));
             return;
         }
         // "net/listeners/socks=\"127.0.0.1:39237\"" — may list several.
@@ -896,13 +928,29 @@ void TorManager::querySocksListener()
             QLatin1String("\"?([0-9a-fA-F.:]+):(\\d+)\"?"));
         const QRegularExpressionMatch match = re.match(lines.first());
         if (!match.hasMatch()) {
-            fail(QLatin1String("cannot parse tor socks listener"));
+            if (readyPath)
+                fail(QLatin1String("cannot parse tor socks listener"));
             return;
         }
-        m_socksHost = QHostAddress(match.captured(1));
-        m_socksPort = quint16(match.captured(2).toUInt());
-        setState(Ready);
-        emit ready(socksProxy());
+        const QHostAddress host(match.captured(1));
+        const quint16 port = quint16(match.captured(2).toUInt());
+        if (host != m_socksHost || port != m_socksPort) {
+            m_socksHost = host;
+            m_socksPort = port;
+            if (torDebugEnabled())
+                qInfo() << "tor-debug: socks listener" << host << port
+                        << "bootstrap" << m_bootstrapProgress;
+            // The endpoint signal is separate from ready(): the
+            // browser re-points the application proxy the moment the
+            // listener is known so the WebEngine-side config update
+            // lands well before the first navigation dispatch.
+            emit socksListenerDiscovered(torSocksProxy(host, port));
+        }
+        if (m_bootstrapProgress >= 100
+                && (m_state == Connecting || m_state == Bootstrapping)) {
+            setState(Ready);
+            emit ready(socksProxy());
+        }
     });
 }
 

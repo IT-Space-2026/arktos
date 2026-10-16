@@ -121,6 +121,8 @@
 #include <qstatusbar.h>
 #include <qstylehints.h>
 #include <qtemporarydir.h>
+#include <qtimer.h>
+#include <qwebenginepage.h>
 #include <qwebengineprofile.h>
 #include <qwebenginesettings.h>
 
@@ -219,6 +221,9 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
     , m_standalone(false)
     , quitting(false)
     , m_torManager(nullptr)
+    , m_torProxyWarmed(true)
+    , m_torProxyWarmSeq(0)
+    , m_torProxyProbe(nullptr)
 {
     QCoreApplication::setOrganizationName(QLatin1String("Arora"));
     QCoreApplication::setOrganizationDomain(QLatin1String("arora-browser.org"));
@@ -304,6 +309,23 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
         m_torManager = new TorManager(this);
         if (m_torDataDir->isValid())
             m_torManager->setDataDirectory(m_torDataDir->path());
+        // TOR17: re-point the application proxy the moment the control
+        // channel learns the SOCKS endpoint — the listener is bound at
+        // daemon startup, long before ready().  A request that does
+        // reach the listener early just dies inside tor — fail-closed
+        // is preserved either way.  Chromium's network service,
+        // though, re-reads QNetworkProxy only from a lazy poll inside
+        // proxy resolution: the first request after every switch
+        // still resolves on the STALE endpoint (the live-trace
+        // signature was a first-search ERR_PROXY_CONNECTION_FAILED on
+        // the fail-closed port at ready+0.5s).  warmTorProxy() feeds
+        // that stale read a sacrificial probe instead of the user's
+        // search.
+        connect(m_torManager, &TorManager::socksListenerDiscovered,
+                this, [this](const QNetworkProxy &proxy) {
+            QNetworkProxy::setApplicationProxy(proxy);
+            warmTorProxy();
+        });
         connect(m_torManager, &TorManager::ready,
                 this, [this](const QNetworkProxy &proxy) {
             QNetworkProxy::setApplicationProxy(proxy);
@@ -1436,6 +1458,62 @@ QString BrowserApplication::defaultEngineId()
 TorManager *BrowserApplication::torManager() const
 {
     return m_torManager;
+}
+
+bool BrowserApplication::isTorProxyWarmed() const
+{
+    return m_torProxyWarmed;
+}
+
+// TOR17: Chromium's network service re-reads QNetworkProxy only from a
+// lazy poll inside proxy resolution — and the request that triggers
+// the poll still resolves on the STALE endpoint, so the first
+// navigation after every setApplicationProxy() eats a
+// net::ERR_PROXY_CONNECTION_FAILED on the fail-closed port (measured
+// on 6.12: the sacrificial request at +490ms post-switch still failed;
+// every later one used the new config).  Feed that stale read a
+// probe on the tor profile instead of the user's search; the queue
+// gate (WebView::torMustQueue) holds remote navigations until the
+// probe settles so the stale read is never user-facing.
+void BrowserApplication::warmTorProxy()
+{
+    m_torProxyWarmed = false;
+    const qint64 seq = ++m_torProxyWarmSeq;
+    if (m_torProxyProbe) {
+        // A restart re-points the proxy and re-warms — a still-flying
+        // probe from the last round must not settle this one.
+        m_torProxyProbe->disconnect(this);
+        m_torProxyProbe->triggerAction(QWebEnginePage::Stop);
+        m_torProxyProbe->deleteLater();
+    }
+    QWebEngineProfile *profile = BrowserProfile::torProfile();
+    prepareProfile(profile);
+    m_torProxyProbe = new QWebEnginePage(profile, this);
+    connect(m_torProxyProbe, &QWebEnginePage::loadFinished,
+            this, [this, seq](bool) {
+        if (seq == m_torProxyWarmSeq)
+            markTorProxyWarmed();
+    });
+    // check.torproject.org is the canonical "is tor working" endpoint;
+    // the probe's own outcome is irrelevant — its resolution refreshes
+    // the proxy config either way.
+    m_torProxyProbe->load(QUrl(QStringLiteral(
+        "https://check.torproject.org/api/ip")));
+    // The resolution runs within milliseconds of the request entering
+    // the network service — never hold user navigations on the rest
+    // of the probe's lifecycle.
+    QTimer::singleShot(3000, this, [this, seq]() {
+        if (seq == m_torProxyWarmSeq)
+            markTorProxyWarmed();
+    });
+}
+
+void BrowserApplication::markTorProxyWarmed()
+{
+    if (m_torProxyWarmed)
+        return;
+    m_torProxyWarmed = true;
+    emit torProxyWarmed();
 }
 
 bool BrowserApplication::isUrlAllowedOnTorArgv(const QString &operand)

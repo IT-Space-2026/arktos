@@ -1208,13 +1208,24 @@ bool WebView::torMustQueue(const QUrl &url) const
         && scheme != QLatin1String("https")
         && scheme != QLatin1String("ws")
         && scheme != QLatin1String("wss")
-        && scheme != QLatin1String("ftp"))
+        && scheme != QLatin1String("ftp")) {
+        if (torDebugEnabled())
+            qInfo() << "tor-debug: gate pass (local scheme"
+                    << scheme + QLatin1Char(')') << url;
         return false;
+    }
     TorManager *tor = torManager();
-    if (!tor)
+    if (!tor) {
+        if (torDebugEnabled())
+            qInfo() << "tor-debug: gate pass (no manager)" << url;
         return false;
-    if (!tor->isReady())
+    }
+    if (!tor->isReady()) {
+        if (torDebugEnabled())
+            qInfo() << "tor-debug: gate HOLD (daemon state"
+                    << int(tor->state()) << QLatin1Char(')') << url;
         return true;
+    }
     // TOR12: `ready` alone is not the end of the wait — it only means
     // the SOCKS listener answers; the first stream-ridable circuit
     // can land seconds after it, and a nav dispatched into that cold
@@ -1222,8 +1233,23 @@ bool WebView::torMustQueue(const QUrl &url) const
     // circuit evidence arrives; past the warm-up bound the daemon is
     // settled and the nav takes its chances honestly.
     const qint64 elapsed = tor->readyElapsed();
-    return elapsed >= 0 && elapsed < torQueueWarmupMs()
-        && !tor->hasUsableCircuit();
+    // TOR17: a usable circuit is still not sufficient right after the
+    // SOCKS switch — Chromium re-reads QNetworkProxy from a lazy poll
+    // inside proxy resolution and the first request after the switch
+    // resolves on the STALE endpoint (ERR_PROXY_CONNECTION_FAILED on
+    // the fail-closed port).  BrowserApplication::warmTorProxy feeds
+    // that read a sacrificial probe; until it settles, keep holding.
+    const BrowserApplication *app = BrowserApplication::instance();
+    const bool proxyWarmed = !app || app->isTorProxyWarmed();
+    const bool hold = elapsed >= 0 && elapsed < torQueueWarmupMs()
+        && (!tor->hasUsableCircuit() || !proxyWarmed);
+    if (torDebugEnabled())
+        qInfo() << "tor-debug: gate" << (hold ? "HOLD" : "pass")
+                << "(readyElapsed" << elapsed
+                << "usableCircuit" << tor->hasUsableCircuit()
+                << "proxyWarmed" << proxyWarmed
+                << QLatin1Char(')') << url;
+    return hold;
 }
 
 // The wake-ups the queue needs: `ready` ends the bootstrap hold and
@@ -1247,6 +1273,15 @@ void WebView::torArmWakeup()
     // connected to.
     connect(tor, &QObject::destroyed, this,
             [this]() { m_torWakeupArmed = false; });
+    // TOR17: the proxy warm-up edge — the sacrificial probe settled,
+    // so the network service now resolves on the live SOCKS endpoint.
+    // The app object outlives any manager swap; arm once per view.
+    BrowserApplication *app = BrowserApplication::instance();
+    if (app && !m_torWarmWakeupArmed) {
+        m_torWarmWakeupArmed = true;
+        connect(app, &BrowserApplication::torProxyWarmed,
+                this, [this]() { torFlushQueuedLoad(); });
+    }
 }
 
 // Bounds the post-ready wait for circuit evidence.  The timer is
@@ -1281,6 +1316,8 @@ void WebView::torQueueLoad(const QUrl &url, const QString &title)
     setStatusBarText(
         tr("Tor is still starting — the page will load "
            "automatically when it is ready"));
+    if (torDebugEnabled())
+        qInfo() << "tor-debug: queued" << url;
 }
 
 bool WebView::torHoldNavigation(const QUrl &url)
@@ -1290,11 +1327,16 @@ bool WebView::torHoldNavigation(const QUrl &url)
     // just dispatched would loop the hold forever.
     if (url == m_torGraceReleaseUrl) {
         m_torGraceReleaseUrl.clear();
+        if (torDebugEnabled())
+            qInfo() << "tor-debug: grace release lets" << url
+                    << "through the hold once";
         return false;
     }
     if (!torMustQueue(url))
         return false;
     torQueueLoad(url, QString());
+    if (torDebugEnabled())
+        qInfo() << "tor-debug: page nav refused into the hold" << url;
     return true;
 }
 
@@ -1313,12 +1355,18 @@ void WebView::torFlushQueuedLoad()
     // page or the error page) can swallow a raced load() whole — the
     // queue stays put and the page's commit-landed edge calls back
     // in here.
-    if (m_page->generatedPageCommitPending())
+    if (m_page->generatedPageCommitPending()) {
+        if (torDebugEnabled())
+            qInfo() << "tor-debug: flush of" << m_torQueuedUrl
+                    << "deferred — generated commit in flight";
         return;
+    }
     const QUrl url = m_torQueuedUrl;
     const QString title = m_torQueuedTitle;
     m_torQueuedUrl.clear();
     m_torQueuedTitle.clear();
+    if (torDebugEnabled())
+        qInfo() << "tor-debug: flushing queued" << url;
     // Back through loadUrl() — a daemon that somehow is still not
     // ready (or has no usable circuit yet) re-queues instead of
     // dispatching into the fail-closed proxy.
@@ -1330,15 +1378,25 @@ void WebView::torGraceDispatch()
     if (m_torQueuedUrl.isEmpty())
         return;
     TorManager *tor = torManager();
-    if (tor && !tor->isReady())
+    if (tor && !tor->isReady()) {
         // Still bootstrapping — `ready` stays the wake-up; the grace
         // restarts when the flush there re-queues the url.
+        if (torDebugEnabled())
+            qInfo() << "tor-debug: grace fired while still starting"
+                    << "(state" << int(tor->state())
+                    << ") — keep holding" << m_torQueuedUrl;
         return;
+    }
     // A generated commit in flight swallows a raced dispatch — keep
     // the queue; the commit-landed edge flushes it and the re-queued
     // path re-arms the grace.
-    if (m_page->generatedPageCommitPending())
+    if (m_page->generatedPageCommitPending()) {
+        if (torDebugEnabled())
+            qInfo() << "tor-debug: grace dispatch of"
+                    << m_torQueuedUrl
+                    << "deferred — generated commit in flight";
         return;
+    }
     // Ready but no circuit evidence inside the grace — dispatch
     // anyway; the warm-up retry covers a failure and the error page
     // is honest about it.  TOR14: the dispatch still runs through
@@ -1350,6 +1408,9 @@ void WebView::torGraceDispatch()
     m_torQueuedUrl.clear();
     m_torQueuedTitle.clear();
     m_torGraceReleaseUrl = url;
+    if (torDebugEnabled())
+        qInfo() << "tor-debug: grace dispatch (no circuit evidence)"
+                << url;
     load(url);
 }
 
@@ -1387,9 +1448,14 @@ void WebView::loadUrl(const QUrl &url, const QString &title)
     // flushes it moments later.
     if (BrowserApplication::isTorMode()
         && m_page->generatedPageCommitPending()) {
+        if (torDebugEnabled())
+            qInfo() << "tor-debug: loadUrl" << url
+                    << "re-queued — generated commit in flight";
         torQueueLoad(url, title);
         return;
     }
+    if (torDebugEnabled() && BrowserApplication::isTorMode())
+        qInfo() << "tor-debug: dispatching" << url;
     load(url);
 }
 

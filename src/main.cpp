@@ -65,6 +65,7 @@
 #include "pipwindow.h"
 #include "plaintexteditsearch.h"
 #include "printpreviewdialog.h"
+#include "profilemenuactions.h"
 #include "navigationpolicy.h"
 #include "privacyrequestinterceptor.h"
 #include "readermode.h"
@@ -4789,6 +4790,18 @@ int main(int argc, char **argv)
         }
     }
 
+    // PROF03: a 'Delete Profile' request survives the requested
+    // process exit as arora-profile-wipe.pending in the data dir.
+    // Apply it HERE — before the application object exists, so before
+    // any settings read, before the named QtWebEngine profile and
+    // before the first WebContents.  The wiping process is waited out
+    // (the marker carries its pid) so teardown writes cannot land in
+    // the fresh tree; then data + cache roots, the settings file and
+    // the marker itself are removed and the boot continues clean.
+    // Downloads (user files), packages and the system tor binary are
+    // outside those roots and never touched.
+    ProfileMenuActions::applyPendingProfileWipe();
+
     // CRASH02: install the crash reporter as early as the data dir
     // resolves (smoke runs land it in their isolated store).  A fatal
     // signal or std::terminate now leaves marker + backtrace in
@@ -4931,7 +4944,8 @@ int main(int argc, char **argv)
     for (int i = 1; i < argc; ++i) {
         const QByteArray arg(argv[i]);
         if (arg == "--tor" || arg == "--tor-window-smoke"
-            || arg == "--tor-newtab-smoke") {
+            || arg == "--tor-newtab-smoke"
+            || arg == "--tor-firstsearch-smoke") {
             BrowserApplication::setTorMode(true);
             break;
         }
@@ -5042,6 +5056,7 @@ int main(int argc, char **argv)
         "sigterm-smoke", "sigterm-child-smoke",
         "referer-smoke", "container-smoke",
         "tor-window-smoke", "tor-circuit-click-smoke", "tor-newtab-smoke",
+        "tor-firstsearch-smoke",
         "sorry-smoke", "icons-smoke", "seclvl-smoke",
         "ping-smoke", "httpsonly-smoke", "resourceblock-smoke",
         "urlclean-smoke",
@@ -5064,6 +5079,8 @@ int main(int argc, char **argv)
         "pdfview-smoke", "printpreview-smoke",
         "parallel-download-smoke", "parallel-download-off-smoke",
         "ingress-smoke",
+        "profile-wipe-smoke", "profile-wipe-child-smoke",
+        "profile-wipe-arm-smoke",
         "engine-list", "engine-smoke", "servo-smoke",
     };
     for (const char *option : internalOptions)
@@ -5159,6 +5176,150 @@ int main(int argc, char **argv)
     if (args.contains(QLatin1String("--servo-smoke")))
         return servoLifecycleSmoke();
 
+    // PROF03: 'Delete Profile' end-to-end — three processes on one
+    // isolated smoke store (the children inherit ARORA_SMOKE_STORE).
+    // The orchestrator seeds settings + data/cache files, the arm
+    // child schedules the wipe and exits (the marker's pid dies with
+    // it, so the wipe child's liveness wait skips), and the wipe
+    // child's boot sees the marker and wipes in main() before the
+    // application object — and therefore any profile or WebContents —
+    // exists.  Its assertions below then run on the fresh boot.
+    if (args.contains(QLatin1String("--profile-wipe-arm-smoke"))) {
+        int failures = 0;
+        const auto wipeCheck = [&failures](bool ok, const char *what) {
+            qInfo() << "profile-wipe-smoke:" << what
+                    << (ok ? "PASS" : "FAIL");
+            if (!ok)
+                ++failures;
+        };
+        // Seed the stores a profile wipe must catch — history writes
+        // through to the data-dir store, the cookie lands in the
+        // persistent profile's Network/ tree.
+        HistoryManager::instance()->addHistoryEntry(
+            QLatin1String("http://wipe-seed.test/"));
+        CookieJar *jar =
+            CookieJar::instance(BrowserProfile::normalProfile());
+        jar->setCookies({QNetworkCookie("wipe-seed", "1")});
+        // setCookie is async IPC into the profile's network context —
+        // give it a beat to land before this process exits.
+        QEventLoop flushLoop;
+        QTimer::singleShot(600, &flushLoop, &QEventLoop::quit);
+        flushLoop.exec();
+        wipeCheck(ProfileMenuActions::scheduleProfileWipe()
+                      && ProfileMenuActions::wipePending(),
+                  "arm wrote the wipe marker");
+        return failures ? 1 : 0;
+    }
+
+    if (args.contains(QLatin1String("--profile-wipe-child-smoke"))) {
+        int failures = 0;
+        const auto wipeCheck = [&failures](bool ok, const char *what) {
+            qInfo() << "profile-wipe-smoke:" << what
+                    << (ok ? "PASS" : "FAIL");
+            if (!ok)
+                ++failures;
+        };
+        // The wipe ran before the application object existed — every
+        // store that outlived it is a bug.
+        wipeCheck(!ProfileMenuActions::wipePending(),
+                  "marker consumed by the boot wipe");
+        wipeCheck(QSettings()
+                      .value(QLatin1String("profilewipe/seed")).isNull(),
+                  "settings wiped");
+        wipeCheck(!QFile::exists(BrowserPaths::dataFilePath(
+                      QLatin1String("profile-wipe-seed.txt"))),
+                  "data-dir seed file removed");
+        const QString cacheRoot = QStandardPaths::writableLocation(
+            QStandardPaths::CacheLocation);
+        wipeCheck(!QFile::exists(cacheRoot
+                      + QLatin1String("/profile-wipe-seed.txt")),
+                  "cache-dir seed file removed");
+        wipeCheck(!HistoryManager::instance()->historyContains(
+                      QLatin1String("http://wipe-seed.test/")),
+                  "history wiped");
+        const QString profileStorage =
+            BrowserProfile::normalProfile()->persistentStoragePath();
+        wipeCheck(!QFile::exists(profileStorage
+                      + QLatin1String("/Network/Cookies")),
+                  "cookie store wiped");
+        wipeCheck(CookieJar::instance(BrowserProfile::normalProfile())
+                      ->cookies().isEmpty(),
+                  "cookie mirror empty");
+        return failures ? 1 : 0;
+    }
+
+    if (args.contains(QLatin1String("--profile-wipe-smoke"))) {
+        int failures = 0;
+        const auto wipeCheck = [&failures](bool ok, const char *what) {
+            qInfo() << "profile-wipe-smoke:" << what
+                    << (ok ? "PASS" : "FAIL");
+            if (!ok)
+                ++failures;
+        };
+        // Seed the store the children inherit — a settings key plus
+        // marker files in the data and cache roots.
+        {
+            QSettings settings;
+            settings.setValue(QLatin1String("profilewipe/seed"),
+                              QLatin1String("present"));
+            settings.sync();
+        }
+        const QString dataSeed = BrowserPaths::dataFilePath(
+            QLatin1String("profile-wipe-seed.txt"));
+        {
+            QFile file(dataSeed);
+            if (file.open(QIODevice::WriteOnly))
+                file.write("seed\n");
+        }
+        const QString cacheRoot = QStandardPaths::writableLocation(
+            QStandardPaths::CacheLocation);
+        QDir().mkpath(cacheRoot);
+        const QString cacheSeed =
+            cacheRoot + QLatin1String("/profile-wipe-seed.txt");
+        {
+            QFile file(cacheSeed);
+            if (file.open(QIODevice::WriteOnly))
+                file.write("seed\n");
+        }
+        wipeCheck(QFile::exists(dataSeed) && QFile::exists(cacheSeed),
+                  "seed files landed");
+
+        const auto runChild = [](const QString &flag) {
+            QProcess child;
+            child.setProcessChannelMode(QProcess::ForwardedChannels);
+            child.start(QCoreApplication::applicationFilePath(),
+                        QStringList() << flag);
+            if (!child.waitForFinished(120000))
+                return -1;
+            return child.exitStatus() == QProcess::NormalExit
+                ? child.exitCode() : -1;
+        };
+        wipeCheck(runChild(QLatin1String("--profile-wipe-arm-smoke"))
+                      == 0,
+                  "arm child scheduled the wipe and exited");
+        wipeCheck(ProfileMenuActions::wipePending(),
+                  "marker survived the arm child's exit");
+        wipeCheck(runChild(QLatin1String("--profile-wipe-child-smoke"))
+                      == 0,
+                  "wipe child booted onto the marker and wiped");
+        wipeCheck(!ProfileMenuActions::wipePending(), "marker removed");
+        wipeCheck(!QFile::exists(dataSeed), "data seed removed");
+        wipeCheck(!QFile::exists(cacheSeed), "cache seed removed");
+        // The child's fresh boot may have re-created the settings
+        // file — the seeded key is what must not survive.  Read the
+        // file directly so a stale conf cache cannot mask the wipe.
+        QString settingsContent;
+        QFile settingsFile(QSettings().fileName());
+        if (settingsFile.open(QIODevice::ReadOnly))
+            settingsContent = QString::fromUtf8(settingsFile.readAll());
+        wipeCheck(!settingsContent.contains(
+                      QLatin1String("profilewipe")),
+                  "seeded settings key gone");
+        qInfo() << "profile-wipe-smoke:"
+                << (failures == 0 ? "PASS" : "FAIL");
+        return failures ? 1 : 0;
+    }
+
     // TOR02: `arora --tor` is a standalone process running the real
     // browser UI — every request exits through the managed daemon's
     // SOCKS5 listener (the application proxy is process-global, hence
@@ -5169,7 +5330,8 @@ int main(int argc, char **argv)
             && !args.contains(QLatin1String("--tor-window-smoke"))
             && !args.contains(
                    QLatin1String("--tor-circuit-click-smoke"))
-            && !args.contains(QLatin1String("--tor-newtab-smoke"))) {
+            && !args.contains(QLatin1String("--tor-newtab-smoke"))
+            && !args.contains(QLatin1String("--tor-firstsearch-smoke"))) {
         // A tor window is a real browsing session — it takes the
         // same crash-loop sentinel (its own key) + exit breadcrumb
         // as the normal path above.
@@ -16938,6 +17100,249 @@ int main(int argc, char **argv)
             newtabFail(QLatin1String(
                 "timeout waiting for the new tab to commit"));
         });
+    }
+
+    // Live reproduction + verification for TOR17 — the third "first
+    // search fails on a fresh tor window" report, on a build that
+    // already carries the TOR12/14 hold machinery.  The faketor seams
+    // could not reproduce the failure, so this leg drives the user
+    // flow verbatim against the REAL bundled daemon: a cold window,
+    // then the omnibox path (loadString — the exact call
+    // lineEditReturnPressed makes) fired the moment the window
+    // exists, plus the start page's window.location.href search on a
+    // second tab.  An "Error loading page" commit on either tab is
+    // the regression signature — the allowed intermediate state is
+    // the honest "Tor is still starting" pending page, which must
+    // resolve on its own.  PASS when both searches commit a real
+    // remote document.  Run with ARORA_TOR_DEBUG=1 for the
+    // hold/retry state-machine trace.  Needs the real daemon +
+    // outbound connectivity: `arora --tor --tor-firstsearch-smoke`,
+    // exit 0 on PASS.
+    if (args.contains(QLatin1String("--tor-firstsearch-smoke"))) {
+        auto fsFail = [&application](const QString &why) {
+            qInfo() << "tor-firstsearch-smoke: FAIL" << why;
+            application.exit(1);
+        };
+        TorManager *torManager = application.torManager();
+        if (!BrowserApplication::isTorMode() || !torManager) {
+            fsFail(QLatin1String(
+                "tor mode not armed — run "
+                "`arora --tor --tor-firstsearch-smoke`"));
+            return application.exec();
+        }
+        if (TorManager::resolveBinary().isEmpty()) {
+            fsFail(QLatin1String(
+                "no tor binary — run BuildProcess/fetch-tor.sh"));
+            return application.exec();
+        }
+
+        BrowserMainWindow *torWindow = application.newMainWindow();
+        torWindow->show();
+        TabWidget *tabWidget = torWindow->tabWidget();
+        WebView *omniTab = torWindow->currentTab();
+        if (!omniTab) {
+            fsFail(QLatin1String("no first tab on the tor window"));
+            return application.exec();
+        }
+
+        // Resolve the targets exactly the way the user's input would.
+        const QUrl omniTarget = TabWidget::guessUrlFromString(
+            QStringLiteral("arora browser"), true);
+        const QUrl pageTarget = TabWidget::guessUrlFromString(
+            QStringLiteral("tor project"), true);
+        if (!omniTarget.isValid()
+                || !(omniTarget.scheme() == QLatin1String("https")
+                     || omniTarget.scheme() == QLatin1String("http"))) {
+            fsFail(QLatin1String(
+                "omnibox did not resolve the search to a remote url"));
+            return application.exec();
+        }
+        qInfo() << "tor-firstsearch-smoke: omnibox target" << omniTarget
+                << "page target" << pageTarget;
+
+        // Per-leg state — committed flips on the first loadFinished
+        // that lands a real remote document under the leg's tab.
+        struct LegState {
+            WebView *tab = nullptr;
+            QUrl target;
+            const char *name = "";
+            bool committed = false;
+            bool errorFlashed = false;
+            QString lastError;
+        };
+        auto *omniLeg = new LegState{omniTab, omniTarget, "omnibox",
+                                     false, false, QString()};
+        auto *pageLeg = new LegState{nullptr, pageTarget, "page-form",
+                                     false, false, QString()};
+
+        const auto watchTab = [&application, fsFail](
+                WebView *tab, LegState *leg) {
+            leg->tab = tab;
+            QObject::connect(tab, &QWebEngineView::loadStarted,
+                             &application, [leg]() {
+                qInfo() << "tor-firstsearch-smoke:" << leg->name
+                        << "loadStarted";
+            });
+            QObject::connect(tab, &QWebEngineView::urlChanged,
+                             &application, [leg](const QUrl &u) {
+                qInfo() << "tor-firstsearch-smoke:" << leg->name
+                        << "url ->" << u;
+            });
+            QObject::connect(tab, &QWebEngineView::loadFinished,
+                             &application, [leg, fsFail](bool ok) {
+                qInfo() << "tor-firstsearch-smoke:" << leg->name
+                        << "loadFinished" << ok << leg->tab->url();
+                const QString scheme = leg->tab->url().scheme();
+                const bool remote = scheme == QLatin1String("https")
+                        || scheme == QLatin1String("http");
+                if (!ok) {
+                    // A failed commit on a remote url is the live
+                    // regression itself — Chromium's net::ERR_* page
+                    // flashed (the pending page only masks it after).
+                    // Held navigations are refused before load() and
+                    // never emit this.
+                    if (remote)
+                        fsFail(QString::fromLatin1(
+                            "%1 search navigation failed at "
+                            "commit-time (url %2)")
+                            .arg(QLatin1String(leg->name),
+                                 leg->tab->url().toString()));
+                    return;
+                }
+                // The warm-up pending page is a setHtml() — its commit
+                // reports a phantom loadFinished(true) under the FAILED
+                // url, so "ok + remote scheme" alone cannot tell a real
+                // document from the pending page.  The generated docs
+                // carry fixed titles; only a foreign title counts.
+                if (remote)
+                    leg->committed = true;   // provisional — the verdict
+                                             // poll re-checks the title
+            });
+            // The regression signature: an error-page commit on the
+            // searching tab.  The warm-up pending page ("Connecting
+            // to the Tor network") is the allowed honest state — it
+            // must resolve without user action; the deadline below
+            // enforces that part.
+            QObject::connect(tab, &QWebEngineView::titleChanged,
+                             &application, [leg, fsFail](
+                                 const QString &title) {
+                qInfo() << "tor-firstsearch-smoke:" << leg->name
+                        << "title ->" << title;
+                if (title.startsWith(QLatin1String("Error loading page"))
+                        && !leg->errorFlashed) {
+                    leg->errorFlashed = true;
+                    fsFail(QString::fromLatin1(
+                        "%1 search committed an error page — the "
+                        "error-flash regression (url %2)")
+                        .arg(QLatin1String(leg->name),
+                             leg->tab->url().toString()));
+                }
+            });
+            QObject::connect(tab, &WebView::statusBarMessage,
+                             &application, [leg](const QString &text) {
+                if (!text.isEmpty())
+                    qInfo() << "tor-firstsearch-smoke:" << leg->name
+                            << "status:" << text;
+            });
+        };
+
+        watchTab(omniTab, omniLeg);
+
+        // Leg 1 — the omnibox: fire immediately, at the coldest point
+        // a user can reach (window up, daemon still bootstrapping).
+        qInfo() << "tor-firstsearch-smoke: firing omnibox search,"
+                   " daemon state" << int(torManager->state())
+                << "readyElapsed" << torManager->readyElapsed();
+        tabWidget->loadString(QStringLiteral("arora browser"));
+
+        // Leg 2 — the start-page form: a second tab on the tor start
+        // page, then the same window.location.href hop its
+        // formSubmitted() makes once the qrc document commits.
+        tabWidget->newTabPage();
+        WebView *pageTab = torWindow->currentTab();
+        if (!pageTab || pageTab == omniTab) {
+            fsFail(QLatin1String("newTabPage made no second tab"));
+            return application.exec();
+        }
+        watchTab(pageTab, pageLeg);
+        auto *pageFired = new bool(false);
+        QTimer *pagePoll = new QTimer(&application);
+        pagePoll->setInterval(200);
+        QObject::connect(pagePoll, &QTimer::timeout, &application,
+                         [pageTab, pageTarget, pagePoll, pageFired]() {
+            if (*pageFired
+                    || pageTab->url()
+                           != QUrl(QStringLiteral(
+                                   "qrc:/startpage-tor.html")))
+                return;
+            *pageFired = true;
+            pagePoll->stop();
+            qInfo() << "tor-firstsearch-smoke: firing start-page"
+                       " search via window.location.href";
+            pageTab->enginePage()->runJavaScript(
+                QStringLiteral("window.location.href = '")
+                + pageTarget.toString() + QLatin1Char('\''));
+        });
+        pagePoll->start();
+
+        // Verdict poll: both legs committed a REAL document — the
+        // pending page's phantom success carries its fixed title, so
+        // the title must read foreign before the leg counts — or the
+        // deadline dumps the hold state and fails.
+        const auto legDone = [](const LegState *leg) {
+            const QString title = leg->tab->title();
+            return leg->committed && !title.isEmpty()
+                && !title.startsWith(
+                       QLatin1String("Connecting to the Tor"))
+                && !title.startsWith(
+                       QLatin1String("Error loading page"));
+        };
+        QTimer *verdictPoll = new QTimer(&application);
+        verdictPoll->setInterval(500);
+        QObject::connect(verdictPoll, &QTimer::timeout, &application,
+                         [&application, omniLeg, pageLeg, legDone,
+                          verdictPoll]() {
+            if (!legDone(omniLeg) || !legDone(pageLeg))
+                return;
+            verdictPoll->stop();
+            qInfo() << "tor-firstsearch-smoke: PASS —"
+                       " omnibox:" << omniLeg->tab->url()
+                    << "| page-form:" << pageLeg->tab->url();
+            application.exit(0);
+        });
+        verdictPoll->start();
+
+        QElapsedTimer *firstsearchClock = new QElapsedTimer();
+        firstsearchClock->start();
+        QTimer::singleShot(240000, &application,
+                           [fsFail, omniLeg, pageLeg, torManager,
+                            firstsearchClock]() {
+            const QString state = QString::fromLatin1(
+                "omnibox: committed=%1 url=%2 title=%3 status='%4' | "
+                "page-form: committed=%5 url=%6 title=%7 status='%8' | "
+                "daemon state=%9 readyElapsed=%10 usableCircuit=%11 "
+                "circuits=%12")
+                .arg(omniLeg->committed)
+                .arg(omniLeg->tab ? omniLeg->tab->url().toString()
+                                  : QString())
+                .arg(omniLeg->tab ? omniLeg->tab->title() : QString())
+                .arg(omniLeg->tab ? omniLeg->tab->lastStatusBarText()
+                                  : QString())
+                .arg(pageLeg->committed)
+                .arg(pageLeg->tab ? pageLeg->tab->url().toString()
+                                  : QString())
+                .arg(pageLeg->tab ? pageLeg->tab->title() : QString())
+                .arg(pageLeg->tab ? pageLeg->tab->lastStatusBarText()
+                                  : QString())
+                .arg(int(torManager->state()))
+                .arg(torManager->readyElapsed())
+                .arg(torManager->hasUsableCircuit())
+                .arg(torManager->circuits().size());
+            fsFail(QLatin1String("timeout after ")
+                   + QString::number(firstsearchClock->elapsed())
+                   + QLatin1String("ms — ") + state);
+        });
+        return application.exec();
     }
 
     // Headless reproduction/verification for TOR10: a real user click
