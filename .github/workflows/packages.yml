@@ -164,7 +164,10 @@ jobs:
         shell: cmd
         run: |
           "%QTDIR%\bin\qmake.exe" -o Makefile arora.pro
-          nmake
+          rem Packaging only needs the app — autotests/tools aren't
+          rem deployed, and serial nmake over ~65 test binaries stalls
+          rem the job for hours. Build just the src subdir target.
+          nmake sub-src
 
       - name: Deploy
         shell: pwsh
