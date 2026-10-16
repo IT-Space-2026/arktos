@@ -22,7 +22,7 @@
 # sandbox build). `--clean` instead exports `git archive HEAD`, proving
 # the committed tree is what a flathub-style build would see.
 #
-# Env: ARORA_PKG_JOBS (default 2), ARORA_VERSION (default 0.2),
+# Env: ARORA_PKG_JOBS (default 2), ARORA_VERSION (default 0.12),
 #      ARORA_PKG_KEEP=1 keeps the export dir, SKIP_TOR_SMOKE=1 skips the
 #      real-tor bootstrap check in verify.
 
@@ -32,7 +32,7 @@ SRCROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APPID=io.arora.Arora
 MANIFEST=$APPID.yaml
 BUILDER=org.flatpak.Builder
-VER="${ARORA_VERSION:-0.2}"
+VER="${ARORA_VERSION:-0.12}"
 JOBS="${ARORA_PKG_JOBS:-2}"
 BUILDTOP="$SRCROOT/flatpak/.build"
 STATE="$BUILDTOP/state"          # persistent flatpak-builder state (dl cache)

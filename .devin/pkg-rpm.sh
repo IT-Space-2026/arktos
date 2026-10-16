@@ -33,7 +33,7 @@
 # the local verification is the spec+stage legs; the binary rpm build
 # is verified via the container path.
 #
-# Env: QTDIR, ARORA_PKG_JOBS (default 2), ARORA_VERSION (default 0.2),
+# Env: QTDIR, ARORA_PKG_JOBS (default 2), ARORA_VERSION (default 0.12),
 #      ARORA_QMAKE_CONFIG, ARORA_PKG_KEEP=1.
 
 set -euo pipefail
@@ -41,7 +41,7 @@ set -euo pipefail
 SRCROOT="$(cd "$(dirname "$0")/.." && pwd)"
 QTDIR="${QTDIR:-$HOME/Qt/6.12.0/gcc_64}"
 JOBS="${ARORA_PKG_JOBS:-2}"
-VER="${ARORA_VERSION:-0.2}"
+VER="${ARORA_VERSION:-0.12}"
 PKG=arora
 SPEC="$SRCROOT/rpm/arora.spec"
 BUILDROOT="$SRCROOT/rpm/buildroot"

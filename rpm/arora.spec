@@ -41,7 +41,7 @@
 %{!?qtdir:%global qtdir %(echo "${QTDIR:-$HOME/Qt/6.12.0/gcc_64}")}
 
 Name:           arora
-Version:        0.2
+Version:        0.12
 # openSUSE convention: Release 0, the build service increments it.
 Release:        0
 Summary:        Experimental Qt 6 / QtWebEngine web browser

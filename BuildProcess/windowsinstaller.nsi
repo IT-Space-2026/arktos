@@ -7,13 +7,13 @@
 ; windeployqt resolved (Qt6*.dll, QtWebEngineProcess, plugins/,
 ; resources/, translations/) ships verbatim.
 ;
-;   makensis /DDEPLOYDIR=deploy /DPRODUCT_VERSION=0.2 BuildProcess\windowsinstaller.nsi
+;   makensis /DDEPLOYDIR=deploy /DPRODUCT_VERSION=0.12 BuildProcess\windowsinstaller.nsi
 
 SetCompressor /SOLID /FINAL lzma
 
 !define PRODUCT_NAME "Arora"
 !ifndef PRODUCT_VERSION
-  !define PRODUCT_VERSION "0.2"
+  !define PRODUCT_VERSION "0.12"
 !endif
 !ifndef DEPLOYDIR
   !define DEPLOYDIR "deploy"
