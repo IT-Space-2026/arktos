@@ -99,7 +99,8 @@ Rules for the agent working this file:
 
 | PROF02 | Profile avatar components: ProfileIdentity avatar/name storage + Firefox/Vivaldi-style crop dialog (zoom + drag-pan, circular preview) — details below | done | 1 | landed src/profileidentity (qApp-owned singleton: profile/name QSettings default "Profile", lazy profile-avatar.png load, atomic 128px QSaveFile PNG via setAvatarImage, removeAvatar/reloadAvatar, nameChanged/avatarChanged) + profileavatardialog (ProfileAvatarCropWidget 200px viewport: cover-fit zoom 1-4x slider+wheel, clamped drag-pan, circular mask preview; size-capped QImageReader decode 64MB/8192px, in-dialog error banner on unreadable/corrupt, accept() saves via identity) + profileavataractions seam (Change Picture.../Remove Picture QActions, Remove enabled only w/ custom avatar — no profile menu on this lane, PROF04 wires); ClearPrivateData untouched — avatar is PROF03 wipe territory — verified: tst_profileavatar 17/17 (cover at both zoom extremes, pan clamps, drag/wheel paths, 128px PNG on disk, load→remove round-trip, corrupt-file banner, accept-saves, actions seam enable-state), make check 4 gates PASS + suite green except documented env flakes darkThemeReaderGlyph/stopReloadState/shieldPopupFirstShow/linkOpenRefererDiscipline, offscreen --disable-gpu |
 
-| MPROF04 | Multi-profile: QSettings scoping — per-profile settings store + global-vs-profile split + key migration — details below | pending | 0 | parallel stream — plain C++/Qt; needs MPROF01's profiles/<id>/ layout (standalone fallback in spec) |
+| MPROF04 | Multi-profile: QSettings scoping — per-profile settings store + global-vs-profile split + key migration — details below | in_progress | 1 | parallel stream — plain C++/Qt; needs MPROF01's profiles/<id>/ layout (standalone fallback in spec) |
+| PVAULT01 | Profile vault crypto: rustcore profilevault module — Argon2id KDF + algo-agility (AES-256-GCM+HMAC-SHA-512 default, Threefish-1024-XEX+Skein-MAC optional) + C FFI — details below | pending | 0 | user-approved; genuine Rust host (audited crates, zeroize); standalone — no deps |
 
 ## Task details
 
@@ -500,3 +501,25 @@ Build: (a) PROFILE IDENTITY — a small qApp-owned singleton (LanguageManager pa
 Multi-profile QSettings scoping — runs on this lane as a parallel stream (plain C++/Qt — no Rust needed; the lane is a parallel worktree). RUNS IN PARALLEL with main lane's MPROF01/02/03 and UI lane's MPROF05 — see the standalone-fallback note at the end.
 
 Spec: decide + implement the settings split honestly. (a) PER-PROFILE keys: anything persona-flavored — privacy toggles, homepage/startup pages, search engine choice, UI prefs users expect to differ (cookie policy, downloads dir). Store as `profiles/<id>/settings.ini` — recommend a `SettingsForProfile(id)` accessor (LanguageManager-style per-id QSettings IniFormat objects, qApp-owned map) rather than global setPath hacks: the QSettings::setPath latch is process-global and CANNOT be switched live — per-profile IniFormat objects are the honest way. (b) GLOBAL keys stay on the plain QSettings: app-level things — tor binary prefs, crash-consent, engine defaults, the profile registry itself, anything licensing/paths. (c) MIGRATION: on first boot, copy existing matching keys into profiles/default/settings.ini (copy not move — old keys stay as harmless fallback; or move-and-mark — pick one and document). (d) AUDIT the whole QSettings keyspace — every `settings.value/setValue` site classified global-vs-profile; the classification table lands in .devin/MPROF04-settings.md — that audit IS the deliverable that makes the split defensible. (e) The SettingsDialog edits the CALLING window's profile settings — read/write through SettingsForProfile(currentId); while window-binding (MPROF03) hasn't merged, all windows resolve to 'default'. STANDALONE FALLBACK: if MPROF01's `profiles/<id>/` helpers aren't in this tree yet (check for profileDataFilePath/ProfileRegistry), implement the path resolution against the documented contract — `AppDataLocation/profiles/<id>/` with id 'default' — as a small local helper (e.g. ProfilePaths::dirFor(id)) and note the duplicate in the commit message; whoever merges second deletes their copy. Do NOT invent a different layout. Verify: tst legs — profile B's privacy toggle doesn't leak into A's ini; migration populates default's ini; global keys still resolve on plain QSettings; make check PASS. Tests: REQUIRED — dedicated autotest coverage (per-profile ini isolation, migration copy, global-key resolution); smoke-only does not count as done.
+
+### PVAULT01
+
+Profile vault crypto module — genuine Rust task (audited crypto crates, zeroize), standalone, no deps. New `profilevault` module inside `rustcore` exposed over the existing C FFI.
+
+**Vault format** `vault.arv` (single file, streamable):
+- header: magic `ARV1` | algo_id | argon2id params (m,t,p) | salt(32B) | chunk_size | chunk_count
+- HMAC-SHA-512 over header (keyed by mac_key)
+- payload: tar-style pack of the profile dir, chunked (16MB); each chunk independently encrypted + tagged
+- HMAC-SHA-512 over full ciphertext
+
+**Key schedule:** Argon2id (default 64MB / t=3 / p=4, params stored in header for future tuning) → 512-bit output → `enc_key`(256b) + `mac_key`(256b) — the "AES-512-class" composite the user asked for (AES is only standardized to 256-bit keys; 512-bit composite = what vendors mean by it). `zeroize` everything; password bytes never persisted.
+
+**Algorithm agility (user-requested):** `algo_id` field selects:
+- `0x01` = AES-256-GCM per chunk + HMAC-SHA-512 — **default** (AES-NI, audited, boring)
+- `0x02` = Threefish-1024 in XEX-style tweakable mode + Skein-MAC — optional; use RustCrypto `threefish`/`skein` crates, document in-code that these are unaudited upstream (honest caveat; the primitive is sound — designed for tweakable disk encryption)
+
+Per-chunk nonces/tweaks = `salt_prefix || chunk_index`; **fresh salt every seal** — never reuse key+nonce across re-seals.
+
+**FFI surface:** `rv_seal(dir, password, algo, out_path) -> rc`, `rv_unseal(blob, password, out_dir) -> rc`, `rv_verify(blob, password) -> rc` (fast header+HMAC check without unpack), `rv_inspect(blob) -> {algo, kdf params}` for UI display. Error codes honest: WrongPassword / Tampered / IoError / UnsupportedAlgo — never conflate. C++ callers must be able to stream progress (chunk callback or progress counter) for UI progress bars.
+
+**Verify:** legs — round-trip both algos byte-identical; wrong password → WrongPassword; flipped ciphertext byte → Tampered with zero partial output; header tamper caught by header MAC; zeroize confirmed (no key material in freed buffers); make check PASS on this lane. Tests: REQUIRED — dedicated rust-side unit tests + at least one FFI-level C++ autotest leg; smoke-only does not count as done.
