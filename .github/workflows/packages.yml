@@ -162,11 +162,18 @@ jobs:
         shell: cmd
         run: |
           rem MSVC env without ilammy/msvc-dev-cmd (it still targets
-          rem Node 20): vswhere ships on every Windows runner and
-          rem resolves the installed VS's vcvars64.bat edition-agnostic.
-          for /f "usebackq delims=" %%i in (`""C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath"`) do set "VSPATH=%%i"
-          if not defined VSPATH (echo vswhere found no VS installation & exit /b 1)
-          call "%VSPATH%\VC\Auxiliary\Build\vcvars64.bat"
+          rem Node 20): glob for vcvars64.bat under the VS install root.
+          rem (vswhere lives under "Program Files (x86)" — a literal ')'
+          rem inside a for-in () clause breaks cmd parsing, so glob the
+          rem paren-free path instead of invoking it.)
+          set "VCVARS="
+          for /d %%v in ("C:\Program Files\Microsoft Visual Studio\*") do (
+            for /d %%e in ("%%v\*") do (
+              if not defined VCVARS if exist "%%e\VC\Auxiliary\Build\vcvars64.bat" set "VCVARS=%%e\VC\Auxiliary\Build\vcvars64.bat"
+            )
+          )
+          if not defined VCVARS (echo vcvars64.bat not found & exit /b 1)
+          call "%VCVARS%"
           rem vcvars env dies with this step — re-export the piece the
           rem NSIS step needs (CRT redist dir for the installer payload).
           echo VCToolsRedistDir=%VCToolsRedistDir%>> %GITHUB_ENV%
