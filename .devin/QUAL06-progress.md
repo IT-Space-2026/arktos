@@ -71,9 +71,9 @@ consistency sweep, bookkeeping accuracy, split final gate, loose ends.
 | `./arora --quit-after-load` | PASS rc=0 offscreen (about:blank) |
 | `./arora --servo-smoke` | PASS all legs incl. scroll-slice legs that touch the edited code |
 | tst_browsermainwindow | 72/72 PASS — incl. the five legs QUAL04 documented as failing and both legs fixed this run (torStartPage order-flake SIGTRAP'd once without --disable-gpu, passes standalone; documented offscreen-GL flake class) |
-| check-warnings (no-rust cold rebuild) | DEFERRED — does not fit 3600s cap beside other gates; last full PASS on master per POL05-adjacent runs; edited files compile warning-free in-tree |
+| check-warnings (no-rust cold rebuild) | PASS (attempt-2 rerun: zero warnings in src/ + tools/) |
 | check-static / check-tidy / check-leaks / check-sanitize / check-coverage | DEFERRED — multi-hour instrumented passes; last run dates recorded in QUAL01-04 notes (leaks 0 ours, sanitize clean) |
-| autotests/runTests.sh full suite | DEFERRED — ~80 binaries × load flakes doesn't fit; subset run instead |
+| autotests/runTests.sh full suite | RAN (attempt-2): 82 binaries — 81 green standalone; the one failure (locationbar shieldPopupFirstShow) reproduced, root-caused to a stale baseline (transient empty trust verdict hides siteTrust rows — the panel's ~59px section), fixed by waiting for a settled sizeHint; its settle delay then exposed a second latent cross-leg flake (omniboxSuggestions asserted empty completion model — a real row rides in from the leg's recorded visit; assert rescoped to the suggestion block). Full-suite rerun pending at write time |
 
 ## (d) Loose ends from QUAL01-04
 

@@ -577,14 +577,28 @@ void tst_LocationBar::shieldPopupFirstShow()
         QLatin1String("sitePermissions"));
     QVERIFY(permissions);
     QVERIFY(permissions->findChildren<QPushButton*>().isEmpty());
-    // The baseline must be a settled render: the panel's first
-    // populate runs on the web-view load signals, which can land
-    // after the isLoading gate above — a late refresh flips the Trust
-    // section on for the now-resolved host and the shrink leg then
-    // diffs against a stale hint.  Evaluate once up front so both
-    // legs measure the same chrome.
-    panel->refresh();
-    const QSize noRowHint = panel->sizeHint();
+    // The baseline must be a settled render: the panel's populate
+    // runs on the web-view load signals, which can land after the
+    // isLoading gate above, and the view's url() can still be a
+    // transient about:blank (empty host -> empty trust verdict ->
+    // hidden Trust section) when it runs.  A late refresh then
+    // flips the Trust section on for the now-resolved host and the
+    // shrink leg diffs against a stale hint.  Refresh until the hint
+    // survives an event-pump window unchanged so both legs measure
+    // the same chrome.
+    QSize noRowHint;
+    QElapsedTimer settle;
+    settle.start();
+    for (;;) {
+        panel->refresh();
+        const QSize hint = panel->sizeHint();
+        QTest::qWait(100);
+        panel->refresh();
+        noRowHint = panel->sizeHint();
+        if (hint == noRowHint)
+            break;
+        QVERIFY(settle.elapsed() < 10000);
+    }
 
     // Grow leg: a remembered permission lands while the popup is
     // closed — written through a non-singleton manager so the panel's
@@ -675,7 +689,12 @@ void tst_LocationBar::omniboxSuggestions()
     OmniboxSuggestions provider(&model, &completer, this);
     connect(&bar, &QLineEdit::textEdited,
             &provider, &OmniboxSuggestions::scheduleSuggestions);
-    QCOMPARE(model.data(model.index(0, 1)).toString(), QString());
+    // The leg asserts suggestion behavior, not a pristine history:
+    // earlier legs that served a real page (shieldPopupFirstShow)
+    // leave the visited URL in the shared HistoryManager, and the
+    // completer stack legitimately surfaces it below the suggestion
+    // block.  What must start empty is the suggestion block itself.
+    QVERIFY(model.suggestions().isEmpty());
 
     // Every app-side request the NAM creates reports through this
     // signal — a suggest fetch cannot hide from it.
