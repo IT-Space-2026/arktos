@@ -200,6 +200,7 @@ private slots:
     void privateProfileSelection();
     void privateTabInNormalWindow();
     void otrPageDoesNotFeedHistory();
+    void otrErrorPageDoesNotScrubDefaultHistory();
     void otrTabsExcludedFromSaveState();
     void otrTabSkippedByRecentlyClosed();
     void privateSearchNotRecorded();
@@ -367,6 +368,29 @@ void tst_PrivateBrowsing::otrPageDoesNotFeedHistory()
     QVERIFY(!normalPage.profile()->isOffTheRecord());
     QVERIFY(loadSync(&normalPage, QUrl(normalUrl)));
     QTRY_VERIFY(HistoryManager::instance()->historyContains(normalUrl));
+}
+
+// VSEC01 regression: WebPage::showErrorPage removes the failed url
+// from the resolved persona's store — and profileIdFor() maps the
+// unnamed OTR profile to "default", so an unguarded call let a
+// private error page scrub a REAL entry out of persistent history.
+void tst_PrivateBrowsing::otrErrorPageDoesNotScrubDefaultHistory()
+{
+    HistoryManager *history = HistoryManager::instance();
+    // Port 1 is closed — the navigation fails and the error-page
+    // bookkeeping path is exactly what regressed.
+    const QString victim = QStringLiteral(
+        "http://127.0.0.1:1/vsec01-otr-scrub.html");
+    history->addHistoryEntry(victim);
+    QVERIFY(history->historyContains(victim));
+
+    WebPage otrPage(BrowserProfile::privateProfile());
+    QVERIFY(otrPage.profile()->isOffTheRecord());
+    // The load fails on purpose — do NOT QVERIFY the result.
+    loadSync(&otrPage, QUrl(victim));
+    QTest::qWait(200);
+    QVERIFY2(history->historyContains(victim),
+             "OTR error page scrubbed a persistent history entry");
 }
 
 // Decodes a TabWidget::saveState() blob back into every url it

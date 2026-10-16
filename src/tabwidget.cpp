@@ -4408,6 +4408,11 @@ WebView *TabWidget::getView(OpenUrlIn tab, WebView *currentView)
                         currentView ? currentView->containerId()
                                     : ContainerManager::defaultContainerId(),
                         openerPersona);
+                // VSEC01: null when the opener's persona is sealed —
+                // the link is dropped rather than opened on a locked
+                // vault.
+                if (!newMainWindow)
+                    break;
                 webView = newMainWindow->currentTab();
                 // PTAB01: a window spawned from a private tab browses
                 // privately too — the ctor's fresh first tab is

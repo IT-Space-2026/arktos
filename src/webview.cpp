@@ -746,15 +746,20 @@ void WebView::openPageUrlInPrivateWindow(const QUrl &linkUrl)
         BrowserMainWindow *window = application->newMainWindow(
             BrowserProfile::profileIdFor(
                 m_page ? m_page->profile() : nullptr));
-        if (WebView *privateTab =
-                window->tabWidget()->makeNewPrivateTab(true)) {
-            window->tabWidget()->closeTab(0);
-            newView = privateTab;
-        } else {
-            // The OTR tab could not be bound — closing the window is
-            // safer than letting the link land in its default tab.
-            window->close();
+        if (window) {
+            if (WebView *privateTab =
+                    window->tabWidget()->makeNewPrivateTab(true)) {
+                window->tabWidget()->closeTab(0);
+                newView = privateTab;
+            } else {
+                // The OTR tab could not be bound — closing the window
+                // is safer than letting the link land in its default
+                // tab.
+                window->close();
+            }
         }
+        // VSEC01: null window = the source persona's vault is sealed —
+        // fall through to the standalone OTR view below.
     }
     if (!newView) {
         newView = new WebView(BrowserApplication::isTorMode()

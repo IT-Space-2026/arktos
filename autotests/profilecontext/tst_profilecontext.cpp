@@ -44,10 +44,12 @@ private slots:
     void pathLayout();
     void freshBootCreatesLayout();
     void migratesSeededPayloads();
+    void migrationRefusesSymlinks();
     void resumeAfterPartialMove();
     void doubleRunIsNoOp();
     void registryBasics();
     void registryIdValidation();
+    void registryDropsTraversalAvatar();
     void identityDelegatesToRegistry();
 
 private:
@@ -275,6 +277,54 @@ void tst_ProfileContext::migratesSeededPayloads()
     QVERIFY(QFile::exists(markerPath()));
 }
 
+void tst_ProfileContext::migrationRefusesSymlinks()
+{
+    // VSEC01: a planted link must never ride into profiles/default —
+    // QFile::rename moves the LINK, and every later open() resolves
+    // to the attacker's target.  The pass must fail closed.
+#ifndef Q_OS_UNIX
+    QSKIP("symlink migration legs are unix-only");
+#endif
+    // A payload-named link: exists() follows it, so without the guard
+    // the pass would happily carry it.
+    writeFile(root() + QLatin1String("/escape-target"), "planted");
+    QVERIFY(QFile::link(root() + QLatin1String("/escape-target"),
+                        root() + QLatin1String("/history")));
+    writeFile(root() + QLatin1String("/bookmarks.xbel"), "b");
+
+    QString error;
+    QVERIFY2(!BrowserPaths::ensureDataLayout(&error),
+             qPrintable(error));
+    // The link was NOT moved into the profile tree and the real
+    // payloads stayed put — nothing is migrated under a hostile dir.
+    QVERIFY(!QFile::exists(profileDir() + QLatin1String("/history")));
+    QVERIFY(QFileInfo(root() + QLatin1String("/history")).isSymLink());
+    QVERIFY(QFile::exists(root() + QLatin1String("/bookmarks.xbel")));
+    QVERIFY(!QFile::exists(markerPath()));
+
+    QFile::remove(root() + QLatin1String("/history"));
+    QFile::remove(root() + QLatin1String("/escape-target"));
+    QFile::remove(root() + QLatin1String("/bookmarks.xbel"));
+
+    // A link AS the profiles container is refused before mkpath or
+    // any rename could follow it out of the data root.  Leg 1's
+    // failed pass still created the real profiles/ dir — clear it so
+    // the link can stand in its place.
+    QDir(root() + QLatin1String("/profiles")).removeRecursively();
+    QTemporaryDir outside;
+    QVERIFY(outside.isValid());
+    QVERIFY(QFile::link(outside.path(),
+                        root() + QLatin1String("/profiles")));
+    writeFile(root() + QLatin1String("/history"), "h");
+    QVERIFY2(!BrowserPaths::ensureDataLayout(&error),
+             qPrintable(error));
+    QVERIFY(QFileInfo(root() + QLatin1String("/profiles")).isSymLink());
+    QVERIFY(!QFile::exists(outside.filePath(
+        QLatin1String("default/history"))));
+    QVERIFY(QFile::exists(root() + QLatin1String("/history")));
+    QFile::remove(root() + QLatin1String("/profiles"));
+}
+
 void tst_ProfileContext::resumeAfterPartialMove()
 {
     // A crashed first boot: one payload moved by hand, no marker —
@@ -373,6 +423,60 @@ void tst_ProfileContext::registryIdValidation()
              QStringLiteral("work-stuff"));
     QCOMPARE(ProfileRegistry::slugify(QStringLiteral("  ")),
              QStringLiteral("profile"));
+}
+
+void tst_ProfileContext::registryDropsTraversalAvatar()
+{
+    // VSEC01: the avatar field is joined under profiles/<id>/ — a
+    // crafted registry value must not survive load or update as a
+    // path that escapes the profile dir.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString filePath = dir.filePath(QLatin1String("profiles.json"));
+
+    // Load-time: a traversal-shaped avatar drops to empty.
+    writeFile(filePath,
+        "{\"version\":1,\"profiles\":[{\"id\":\"work\",\"name\":\"W\","
+        "\"avatar\":\"../../outside.png\",\"createdAt\":"
+        "\"2026-01-01T00:00:00Z\"}]}");
+    {
+        ProfileRegistry registry(filePath);
+        const ProfileContext work =
+            registry.profile(QStringLiteral("work"));
+        QVERIFY(work.isValid());
+        QVERIFY2(work.avatar.isEmpty(), qPrintable(work.avatar));
+    }
+
+    // Update-time: a caller handing a traversal value gets it
+    // stripped before it can reach disk.
+    {
+        ProfileRegistry registry(filePath);
+        ProfileContext work = registry.profile(QStringLiteral("work"));
+        work.avatar = QStringLiteral("../evil.png");
+        QVERIFY(registry.updateProfile(work));
+        QFile file(filePath);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QVERIFY2(!file.readAll().contains("evil.png"),
+                 "traversal avatar must never reach the file");
+    }
+    {
+        ProfileRegistry registry(filePath);
+        QVERIFY(registry.profile(QStringLiteral("work"))
+                    .avatar.isEmpty());
+    }
+
+    // A plain basename survives both directions.
+    {
+        ProfileRegistry registry(filePath);
+        ProfileContext work = registry.profile(QStringLiteral("work"));
+        work.avatar = QStringLiteral("me.png");
+        QVERIFY(registry.updateProfile(work));
+    }
+    {
+        ProfileRegistry registry(filePath);
+        QCOMPARE(registry.profile(QStringLiteral("work")).avatar,
+                 QStringLiteral("me.png"));
+    }
 }
 
 void tst_ProfileContext::identityDelegatesToRegistry()

@@ -256,12 +256,19 @@ void ProfileButton::populateNewWindowMenu()
         action->setData(context.id);
         // MPROF03: every registered persona can host a window now —
         // the window binds the row's id and its tabs/stores follow.
-        connect(action, &QAction::triggered, this, [context]() {
+        connect(action, &QAction::triggered, this, [this, context]() {
             if (BrowserApplication *application =
                     BrowserApplication::instance()) {
-                BrowserMainWindow *window =
-                    application->newMainWindow(context.id);
-                window->goHome();
+                // VSEC01: the menu is a real prompt context — a
+                // sealed persona gets the unlock dialog here; the
+                // factory's own gate is the last word either way.
+                ProfileVault *vault = ProfileVault::instance();
+                if (vault->isLocked(context.id)
+                    && !VaultUi::ensureUnlocked(vault, context.id, this))
+                    return;
+                if (BrowserMainWindow *window =
+                        application->newMainWindow(context.id))
+                    window->goHome();
             }
         });
         if (context.id == activeId) {

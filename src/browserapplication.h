@@ -307,7 +307,10 @@ private slots:
     void postLaunch();
     void openUrl(const QUrl &url);
     // SESS02: BrowserMainWindow::destroyed hook — see implementation.
-    void windowDestroyed();
+    // VSEC01: carries the closing window's persona (captured at
+    // construction) — auto-lock must fire on the profile that lost a
+    // window, not the ambient ProfileStore::activeProfileId().
+    void windowDestroyed(const QString &profileId);
 
 signals:
     void zoomTextOnlyChanged(bool textOnly);

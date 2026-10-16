@@ -3177,3 +3177,31 @@ Profile vault seal/unseal engine (PVAULT02):
     to lock a profile that still has open windows, and refuses to
     unseal over existing plaintext without explicit confirmation.
     No-Rust builds keep the class compiled but inert.
+
+Security audit of the multi-profile + vault stack (VSEC01):
+    A post-landing adversarial review of the merged multi-profile and
+    profile-vault code (full report: .devin/security/VSEC01-report.md)
+    closed six real holes. The first-boot data-layout migration now
+    refuses to move symlinked payloads or into a symlinked profiles/
+    tree — a planted link can no longer be carried into
+    profiles/default/ where every later open() would resolve to the
+    attacker's target. Error pages shown in private windows can no
+    longer scrub entries out of the default profile's persistent
+    history. Auto-lock now keys off the closing window's own persona
+    instead of whichever profile happens to hold focus, so locking on
+    last-window-close actually fires for the right profile. No path
+    can open a window on a sealed profile anymore — session restore,
+    the profile menu and the profile manager offer an unlock prompt
+    instead, and the window factory itself fails closed. The
+    profiles.json avatar field is sanitized to a plain basename on
+    load and on write, closing a path-traversal primitive that could
+    steer avatar reads and deletes outside the profile directory. And
+    the secure-store KDF parameter file is now bounds-checked before
+    Argon2 runs, so a hand-edited securestore.kdf can no longer abort
+    the process with an arbitrary memory demand. The audit also
+    verified the vault crypto (fresh key+salt per seal, per-chunk
+    nonces, MAC-before-plaintext unseal, algo_id under the header MAC)
+    and the FFI panic surface clean; the one headline gap — a locked
+    profile still leaves Chromium's own on-disk storage (cookies,
+    localStorage, disk cache) outside the sealed set — is filed as
+    follow-up task VSEC02.

@@ -4241,6 +4241,48 @@ mod tests {
     }
 
     #[test]
+    fn kdf_params_from_untrusted_file_are_bounded() {
+        // VSEC01: securestore.kdf carries no MAC — a byte-edit can ask
+        // for gigabytes of Argon2 memory and abort the process inside
+        // the allocator.  parse_kdf must reject out-of-envelope params
+        // BEFORE any derive runs.
+        let _g = guard();
+        let dir = tmpdir("kdfbound");
+        init(&dir);
+        let pass = b"passphrase1";
+        assert_eq!(
+            unsafe { rc_kdf_create(pass.as_ptr(), pass.len()) },
+            RcStatus::Ok
+        );
+        let path = format!("{dir}/securestore.kdf");
+        let good = std::fs::read(&path).unwrap();
+
+        for (offset, bad) in [
+            (6usize, u32::MAX),  // memory_kib — allocator DoS
+            (6usize, 0),         // below argon2's floor too
+            (10usize, u32::MAX), // passes
+            (14usize, 0),        // lanes
+        ] {
+            let mut data = good.clone();
+            data[offset..offset + 4].copy_from_slice(&bad.to_le_bytes());
+            std::fs::write(&path, &data).unwrap();
+            assert_eq!(
+                unsafe { rc_unlock(pass.as_ptr(), pass.len()) },
+                RcStatus::Corrupt,
+                "byte-offset {offset} = {bad} must fail closed"
+            );
+        }
+
+        // The honest file still unlocks — the bounds didn't break the
+        // real envelope.
+        std::fs::write(&path, &good).unwrap();
+        assert_eq!(
+            unsafe { rc_unlock(pass.as_ptr(), pass.len()) },
+            RcStatus::Ok
+        );
+    }
+
+    #[test]
     fn argon2_matches_bundled_c_vector() {
         let _g = guard();
         // Pinned against src/argon2id.c (which is itself verified

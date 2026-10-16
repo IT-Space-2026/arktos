@@ -64,6 +64,20 @@ class QTimer;
 //                 vaults).  Post-MPROF the profile dir IS
 //                 profiles/<id> and the exclusion is a harmless no-op.
 //
+// VSEC01 boundary amendment — the vault seals the APP-SIDE store
+// tree only.  The engine's own persistence never enters the sealed
+// set: the named QWebEngineProfile for persona <id> stores cookies,
+// localStorage/IndexedDB, service workers, the HTTP disk cache and
+// visited-link state in its own QtWebEngine/arora[-<id>]/ dir at the
+// data root, and that dir is neither under profiles/<id> nor in the
+// exclusion list — it simply isn't in scope.  A "locked" profile
+// therefore still leaves every Chromium-side record on disk in
+// cleartext; sealing is an app-store guarantee, not a browsing-data
+// guarantee.  Closing that needs setPersistentStoragePath()/
+// setCachePath() relocated inside the sealed tree (plus migration of
+// existing dirs and a story for cache-held exclusions) — tracked as
+// follow-up task VSEC02.
+//
 // Secure erase is ONE zero overwrite + fsync per file, then unlink.
 // On SSD/CoW media wear-leveling and snapshots mean old blocks may
 // survive — the guarantee is "no readable plaintext at the path",
@@ -85,6 +99,13 @@ class QTimer;
 // teardown ordering either way.  Never lock a profile with open
 // windows (seal refuses HasOpenWindows); never unseal over existing
 // plaintext without allowOverwrite.
+//
+// VSEC01: with MPROF03 live the window gate is per-persona —
+// BrowserApplication::newMainWindow fails closed on a Locked id,
+// and the closing window's OWN bound id drives noteWindowClosed
+// (the ambient persona is not a substitute).  "Never lock a profile
+// with open windows" is enforced by openWindowCount() counting
+// windows by their bound persona.
 //
 // Without CONFIG+=rustcore the class still compiles — isAvailable()
 // is false and every operation returns Unavailable, so call sites

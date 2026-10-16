@@ -3342,6 +3342,10 @@ void BrowserMainWindow::fileNew()
     if (!application)
         return;
     BrowserMainWindow *window = application->newMainWindow();
+    // VSEC01: null when the ambient persona's vault is sealed — the
+    // factory refused rather than mint a window on packed-away data.
+    if (!window)
+        return;
 
     // PREF04: the Startup-with pick governs first launch only — a New
     // Window always opens the homepage (whose own mode decides start

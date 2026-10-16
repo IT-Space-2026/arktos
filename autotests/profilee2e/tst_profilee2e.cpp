@@ -35,6 +35,7 @@
 #include <profileregistry.h>
 #include <profilesettings.h>
 #include <profilestore.h>
+#include <profilevault.h>
 
 #if defined(ARORA_RUSTCORE)
 #include <sitedecisionstore.h>
@@ -92,6 +93,7 @@ private slots:
     void settingsIsolation();
     void identityIsolation();
     void containersPerProfile();
+    void sealedPersonaRefusesWindow();
     void otrWritesNothing();
     void torModeLevelStore();
 
@@ -728,6 +730,35 @@ void tst_ProfileE2E::containersPerProfile()
     QVERIFY(!containersB->isContainerId(workA.id));
     QVERIFY(containersA->storagePath(workA.id)
             != containersB->storagePath(workB.id));
+}
+
+void tst_ProfileE2E::sealedPersonaRefusesWindow()
+{
+    // VSEC01: vault.lock alone makes the persona Locked (state is
+    // marker-derived, no password needed) — and the window factory
+    // must fail closed on it.  A window on a sealed profile would
+    // mint empty plaintext stores the next unseal then refuses to
+    // overwrite.
+    const QString vaultDir = ProfileVault::vaultDirFor(m_beta);
+    QVERIFY(QDir().mkpath(vaultDir));
+    writeFile(vaultDir + QLatin1String("/vault.lock"), "locked");
+    QCOMPARE(ProfileVault::instance()->state(m_beta),
+             ProfileVault::Locked);
+
+    BrowserApplication *app = BrowserApplication::instance();
+    QVERIFY(app);
+    QVERIFY(!app->newMainWindow(m_beta));
+
+    // An unsealed persona still opens normally — the gate is scoped
+    // to the sealed id only.
+    BrowserMainWindow *window = app->newMainWindow(m_alpha);
+    QVERIFY(window);
+    QCOMPARE(window->profileId(), m_alpha);
+    window->close();
+    QCoreApplication::processEvents();
+
+    QDir(vaultDir).removeRecursively();
+    BrowserPaths::setActiveProfileId(QStringLiteral("default"));
 }
 
 void tst_ProfileE2E::otrWritesNothing()

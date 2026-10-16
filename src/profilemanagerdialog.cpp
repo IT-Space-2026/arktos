@@ -564,8 +564,10 @@ void ProfileManagerDialog::openWindow()
     // honestly inside newMainWindow().
     if (BrowserApplication *application =
             BrowserApplication::instance()) {
-        BrowserMainWindow *window = application->newMainWindow(id);
-        window->goHome();
+        // Still null-checked — a lock can land between the prompt
+        // above and the factory's own seal gate.
+        if (BrowserMainWindow *window = application->newMainWindow(id))
+            window->goHome();
     }
 }
 

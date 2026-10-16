@@ -42,6 +42,16 @@ pub const KDF_SALT_SIZE: usize = 16;
 pub const KDF_MEMORY_KIB: u32 = 65536;
 pub const KDF_PASSES: u32 = 3;
 pub const KDF_LANES: u32 = 4;
+// VSEC01: securestore.kdf is a user-modifiable FILE in the profile
+// dir — nothing authenticates it.  Derive parameters therefore come
+// from an untrusted byte stream, and an unbounded argon2() call lets
+// a 6-byte edit demand arbitrary memory (alloc abort, not a
+// recoverable error).  Clamp to the same envelope profilevault.rs
+// declares for ARV1 headers before any derive runs.
+pub const KDF_MIN_MEMORY_KIB: u32 = 8192;
+pub const KDF_MAX_MEMORY_KIB: u32 = 4 * 1024 * 1024;
+pub const KDF_MAX_PASSES: u32 = 16;
+pub const KDF_MAX_LANES: u32 = 16;
 pub const VERIFIER_MESSAGE: &[u8] = b"ARORA-KDF-VERIFY";
 
 pub const KEY_FILE: &str = "securestore.key";
@@ -390,6 +400,16 @@ fn parse_kdf(data: &[u8]) -> RcResult<KdfParams> {
         return fail(RcStatus::Corrupt, "malformed kdf file");
     }
     let u32le = |at: usize| u32::from_le_bytes(data[at..at + 4].try_into().unwrap());
+    let memory_kib = u32le(6);
+    let passes = u32le(10);
+    let lanes = u32le(14);
+    // Untrusted-file bounds check BEFORE argon2 ever sees the values.
+    if memory_kib < KDF_MIN_MEMORY_KIB || memory_kib > KDF_MAX_MEMORY_KIB {
+        return fail(RcStatus::Corrupt, "kdf memory cost out of bounds");
+    }
+    if passes == 0 || passes > KDF_MAX_PASSES || lanes == 0 || lanes > KDF_MAX_LANES {
+        return fail(RcStatus::Corrupt, "kdf pass/lane count out of bounds");
+    }
     let mut salt = [0u8; KDF_SALT_SIZE];
     salt.copy_from_slice(&data[18..34]);
     let verifier = data[34..].to_vec();
@@ -397,9 +417,9 @@ fn parse_kdf(data: &[u8]) -> RcResult<KdfParams> {
         return fail(RcStatus::Corrupt, "malformed kdf verifier");
     }
     Ok(KdfParams {
-        memory_kib: u32le(6),
-        passes: u32le(10),
-        lanes: u32le(14),
+        memory_kib,
+        passes,
+        lanes,
         salt,
         verifier,
     })

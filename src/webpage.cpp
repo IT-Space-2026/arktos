@@ -1390,8 +1390,14 @@ void WebPage::showErrorPage(const QUrl &errorUrl, const QString &errorString,
     // A failed load is normally never recorded (only loadFinished(true)
     // feeds the manager), but a page that loaded and then errored —
     // e.g. a navigation interrupted mid-way — may have gotten in.
-    HistoryManager::instanceFor(BrowserProfile::profileIdFor(profile()))
-        ->removeHistoryEntry(errorUrl, this->title());
+    // VSEC01: gate on the PROFILE, not the resolved persona — the
+    // off-the-record profiles have no aroraProfileId tag, so
+    // profileIdFor() resolves them to "default" and an unguarded
+    // removeHistoryEntry would let a private error page scrub the
+    // persistent store it never wrote to.
+    if (!profile()->isOffTheRecord())
+        HistoryManager::instanceFor(BrowserProfile::profileIdFor(profile()))
+            ->removeHistoryEntry(errorUrl, this->title());
 }
 
 // TOR18: the cold-circuit stretch after the SOCKS listener goes
@@ -1571,9 +1577,11 @@ void WebPage::showTorWarmupPending(const QUrl &url)
                            // showErrorPage.
     setHtml(html, url);
     // Same bookkeeping as the error page: a failed url that already
-    // reached the store is removed.
-    HistoryManager::instanceFor(BrowserProfile::profileIdFor(profile()))
-        ->removeHistoryEntry(url, title());
+    // reached the store is removed.  VSEC01: off-the-record pages
+    // never touch the store — profileIdFor() maps them to "default".
+    if (!profile()->isOffTheRecord())
+        HistoryManager::instanceFor(BrowserProfile::profileIdFor(profile()))
+            ->removeHistoryEntry(url, title());
     if (WebView *webView = qobject_cast<WebView *>(
             WebEnginePageAdapter::forPage(this)->view()))
         webView->torWarmupNotice();

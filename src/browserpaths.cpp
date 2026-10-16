@@ -23,8 +23,10 @@
 #include <qdebug.h>
 #include <qdir.h>
 #include <qfile.h>
+#include <qfileinfo.h>
 #include <qmutex.h>
 #include <qsavefile.h>
+#include <qset.h>
 #include <qstandardpaths.h>
 
 namespace BrowserPaths {
@@ -171,6 +173,19 @@ QString profileDataDir(const QString &profileId)
     }
     const QString directory =
         dataRoot() + QLatin1String("/profiles/") + id;
+    // VSEC01: a symlinked profile dir is never legitimate — every
+    // store would follow it outside the profiles/ tree.  The path
+    // contract can't fail here (every caller needs somewhere to
+    // resolve), so the honest treatment is a loud once-per-path
+    // warning rather than a silent follow.
+    static QSet<QString> symlinkWarned;
+    if (!symlinkWarned.contains(directory)
+        && QFileInfo(directory).isSymLink()) {
+        symlinkWarned.insert(directory);
+        qWarning() << "BrowserPaths: profile dir is a symlink and its"
+                      " stores will follow it outside the profiles"
+                      " tree:" << directory;
+    }
     if (!QFile::exists(directory)) {
         QDir dir;
         dir.mkpath(directory);
@@ -197,6 +212,17 @@ bool ensureDataLayout(QString *error)
 
     const QString defaultDir =
         root + QLatin1String("/profiles/default");
+    // VSEC01: the destination must be a real directory too — a
+    // planted symlink at profiles/ or profiles/default would route
+    // every rename (and mkpath's descent) to the attacker's target.
+    if (QFileInfo(root + QLatin1String("/profiles")).isSymLink()
+        || QFileInfo(defaultDir).isSymLink()) {
+        reportMigrationFailure(
+            root, QStringLiteral(
+                "refusing to migrate into a symlinked profiles tree"),
+            error);
+        return false;
+    }
     QDir dir;
     if (!dir.mkpath(defaultDir)) {
         reportMigrationFailure(
@@ -220,6 +246,21 @@ bool ensureDataLayout(QString *error)
 
     for (const QString &name : names) {
         const QString src = root + QLatin1Char('/') + name;
+        // VSEC01: a symlinked payload is never legitimate — nothing in
+        // Arora creates links at these names.  QFile::exists() follows
+        // the link and QFile::rename() would carry the LINK intact
+        // into profiles/default, where every later open() resolves to
+        // the attacker's target.  Fail the pass loudly instead:
+        // nothing moves, nothing follows the link, and the report
+        // names the artifact so the user can remove it.  isSymLink()
+        // is lstat-based, so a dangling link is caught too.
+        if (QFileInfo(src).isSymLink()) {
+            reportMigrationFailure(
+                root, QStringLiteral(
+                    "refusing to migrate symlinked payload %1").arg(src),
+                error);
+            return false;
+        }
         if (!QFile::exists(src))
             continue;
         const QString dst = defaultDir + QLatin1Char('/') + name;

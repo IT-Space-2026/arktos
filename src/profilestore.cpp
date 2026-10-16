@@ -100,6 +100,21 @@ bool ProfileStore::isValidProfileId(const QString &id)
     return true;
 }
 
+// VSEC01: the registry's avatar field is a FILENAME joined under
+// profiles/<id>/ — a value carrying separators or dot segments would
+// turn avatar reads, the PNG write and the remove into path
+// traversal.  Only a plain basename survives.
+static QString sanitizedAvatarName(const QString &name)
+{
+    if (name.isEmpty() || name.size() > 255
+        || name.contains(QLatin1Char('/'))
+        || name.contains(QLatin1Char('\\'))
+        || name == QLatin1String(".")
+        || name == QLatin1String(".."))
+        return QString();
+    return name;
+}
+
 QString ProfileStore::slugify(const QString &displayName)
 {
     QString slug;
@@ -185,8 +200,8 @@ void ProfileStore::load()
             ProfileContext context;
             context.id = entry.value(QLatin1String("id")).toString();
             context.name = entry.value(QLatin1String("name")).toString();
-            context.avatar =
-                entry.value(QLatin1String("avatar")).toString();
+            context.avatar = sanitizedAvatarName(
+                entry.value(QLatin1String("avatar")).toString());
             context.createdAt = QDateTime::fromString(
                 entry.value(QLatin1String("createdAt")).toString(),
                 Qt::ISODate);
@@ -236,11 +251,15 @@ bool ProfileStore::updateProfile(const ProfileContext &context)
 {
     if (!isValidProfileId(context.id))
         return false;
+    // A traversal-shaped avatar must never reach the file even when a
+    // caller hands updateProfile one directly.
+    ProfileContext clean = context;
+    clean.avatar = sanitizedAvatarName(clean.avatar);
     for (int i = 0; i < m_profiles.size(); ++i) {
-        if (m_profiles.at(i).id == context.id) {
-            if (m_profiles.at(i) == context)
+        if (m_profiles.at(i).id == clean.id) {
+            if (m_profiles.at(i) == clean)
                 return true;
-            m_profiles[i] = context;
+            m_profiles[i] = clean;
             if (!save())
                 return false;
             emit profileChanged(context.id);

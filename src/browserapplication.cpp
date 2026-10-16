@@ -541,7 +541,11 @@ void BrowserApplication::messageReceived(QLocalSocket *socket)
             qWarning() << "Possible recursive openUrl called, ignoring url:" << m_lastAskedUrl;
             return;
         }
-        mainWindow()->tabWidget()->loadStringFromUntrustedSource(message, tab);
+        // VSEC01: mainWindow() may return null when every manifest
+        // persona is sealed — a forwarded url has no prompt context,
+        // so the message is dropped rather than crashing.
+        if (BrowserMainWindow *mw = mainWindow())
+            mw->tabWidget()->loadStringFromUntrustedSource(message, tab);
         return;
     }
 
@@ -549,11 +553,14 @@ void BrowserApplication::messageReceived(QLocalSocket *socket)
 #ifdef Q_OS_WIN
         QString winid = QString(QLatin1String("%1")).arg((qlonglong)mainWindow()->winId());
 #else
-        mainWindow()->show();
-        mainWindow()->setFocus();
-        mainWindow()->raise();
-        mainWindow()->activateWindow();
-        alert(mainWindow());
+        BrowserMainWindow *mw = mainWindow();
+        if (!mw)
+            return;
+        mw->show();
+        mw->setFocus();
+        mw->raise();
+        mw->activateWindow();
+        alert(mw);
         QString winid;
 #endif
 #ifdef BROWSERAPPLICATION_DEBUG
@@ -699,6 +706,17 @@ void BrowserApplication::postLaunch()
                 break;
             }
         }
+    } else if (!isTorMode()) {
+        // VSEC01: no window at all means the launch placeholder was
+        // refused by the seal gate — the ambient persona is Locked.
+        // Session restore owns the per-persona unlock prompt, so it
+        // still runs windowless; a declined manifest simply skips its
+        // windows and the vault bring-up below offers the unlock.
+        if (startupMode() == LastSessionStartup)
+            restoreLastSession();
+        const QString url = argumentUrl();
+        if (!url.isEmpty() && !m_mainWindows.isEmpty())
+            mainWindow()->tabWidget()->loadStringFromUntrustedSource(url);
     }
     StartupProfile::mark("postLaunch: navigation dispatched");
 
@@ -718,10 +736,21 @@ void BrowserApplication::postLaunch()
     if (!isTorMode()) {
         QTimer::singleShot(0, this, [this]() {
             ProfileVault *vault = ProfileVault::instance();
+            // mainWindow() would auto-create on an empty list — the
+            // seal gate makes that return null, so pass the parent
+            // explicitly instead.
+            BrowserMainWindow *parent =
+                m_mainWindows.isEmpty() ? nullptr : mainWindow();
             for (const QString &id : vault->dirtyProfiles())
-                VaultUi::offerReseal(vault, id, mainWindow());
-            VaultUi::ensureUnlocked(
-                vault, ProfileStore::activeProfileId(), mainWindow());
+                VaultUi::offerReseal(vault, id, parent);
+            const QString active = ProfileStore::activeProfileId();
+            if (!VaultUi::ensureUnlocked(vault, active, parent))
+                return;
+            // VSEC01: when every manifest window sat on the sealed
+            // persona, restore skipped them all — the just-unlocked
+            // profile still needs a window.
+            if (m_mainWindows.isEmpty())
+                newMainWindow(active);
         });
     }
 
@@ -898,6 +927,27 @@ static bool isPristineSessionWindow(BrowserMainWindow *window)
             || window->tabWidget()->currentWebView()->url().isEmpty());
 }
 
+// VSEC01: a session manifest can name any registry persona —
+// including a sealed one.  A Locked profile must never reopen
+// silently: its plaintext is packed away, and stores would mint
+// empty files the next unseal then refuses to overwrite.  Restore
+// gets one unlock prompt per sealed persona; a decline is remembered
+// so a manifest with several windows on it prompts once, not N times.
+static bool vaultUnlockForRestore(const QString &persona,
+                                  QSet<QString> *declined,
+                                  QWidget *parent)
+{
+    ProfileVault *vault = ProfileVault::instance();
+    if (!vault->isLocked(persona))
+        return true;
+    if (declined->contains(persona))
+        return false;
+    if (VaultUi::ensureUnlocked(vault, persona, parent))
+        return true;
+    declined->insert(persona);
+    return false;
+}
+
 void BrowserApplication::saveSession()
 {
     if (quitting)
@@ -1012,9 +1062,14 @@ bool BrowserApplication::ensureSessionWindow()
         qWarning() << "BrowserApplication: startup produced no browser"
                       " window — opening a fallback";
         BrowserMainWindow *window = newMainWindow();
-        window->tabWidget()->loadUrl(startPageUrl(),
-                                     TabWidget::CurrentTab);
-        created = true;
+        if (window) {
+            window->tabWidget()->loadUrl(startPageUrl(),
+                                         TabWidget::CurrentTab);
+            created = true;
+        }
+        // VSEC01: null means the ambient persona is sealed — the
+        // postLaunch bring-up owns the unlock prompt and re-creates
+        // the window on success.
     }
     // The same blank-ness one level down: a window whose strip ended
     // empty (e.g. every restored tab detached into a filtered
@@ -1103,6 +1158,7 @@ bool BrowserApplication::restoreLastSession()
                 // session can never loop the crash prompt.
                 settings.setValue(QLatin1String("restoring"), true);
             }
+            QSet<QString> declinedUnlock;
             for (int i = 0; i < windows.count(); ++i) {
                 const QJsonObject win = windows.at(i).toObject();
                 // MPROF03: each window restores on the persona it was
@@ -1123,7 +1179,14 @@ bool BrowserApplication::restoreLastSession()
                 if (preExisting && preExisting->profileId() == persona) {
                     newWindow = preExisting;
                 } else {
+                    // VSEC01: a sealed persona unlocks on request
+                    // (one prompt each) or the window is skipped.
+                    if (!vaultUnlockForRestore(
+                            persona, &declinedUnlock, preExisting))
+                        continue;
                     newWindow = newMainWindow(persona);
+                    if (!newWindow)
+                        continue;
                     // The launch placeholder stays a pristine blank —
                     // close it so a non-default session doesn't leave a
                     // stray default window behind.
@@ -1183,6 +1246,7 @@ bool BrowserApplication::restoreLastSession()
         windows.append(windowState);
         windowProfiles.append(profileId);
     }
+    QSet<QString> declinedUnlock;
     {
         ProfileSettings settings;
         settings.beginGroup(QLatin1String("MainWindow"));
@@ -1206,7 +1270,14 @@ bool BrowserApplication::restoreLastSession()
         if (preExisting && preExisting->profileId() == persona) {
             newWindow = preExisting;
         } else {
+            // VSEC01: sealed personas get one unlock prompt each; a
+            // decline or a refused window skips that manifest slot.
+            if (!vaultUnlockForRestore(
+                    persona, &declinedUnlock, preExisting))
+                continue;
             newWindow = newMainWindow(persona);
+            if (!newWindow)
+                continue;
             if (preExisting && isPristineSessionWindow(preExisting))
                 preExisting->close();
         }
@@ -1263,7 +1334,10 @@ void BrowserApplication::openUrl(const QUrl &url)
                       " from the QDesktopServices handler:" << url;
         return;
     }
-    mainWindow()->tabWidget()->loadUrl(url);
+    // VSEC01: null when the ambient persona is sealed — the url is
+    // dropped rather than silently minting a window on a vault.
+    if (BrowserMainWindow *mw = mainWindow())
+        mw->tabWidget()->loadUrl(url);
 }
 
 BrowserMainWindow *BrowserApplication::newMainWindow(const QString &profileId)
@@ -1271,6 +1345,16 @@ BrowserMainWindow *BrowserApplication::newMainWindow(const QString &profileId)
     if (!m_mainWindows.isEmpty())
         mainWindow()->m_autoSaver->saveIfNeccessary();
     const QString bound = normalizedWindowProfileId(profileId);
+    // VSEC01: hard seal gate — a window must never exist on a Locked
+    // persona.  Its app-side stores would mint fresh plaintext into a
+    // dir the vault believes is packed away (the next unseal then
+    // refuses to overwrite it), while the user's sealed data stays
+    // unread.  The factory fails closed; the callers that own a
+    // prompt context — session restore, the postLaunch bring-up, the
+    // profile manager — run VaultUi::ensureUnlocked first.  Every
+    // caller MUST handle a null return.
+    if (!isTorMode() && ProfileVault::instance()->isLocked(bound))
+        return nullptr;
     BrowserMainWindow *browser =
         new BrowserMainWindow(nullptr, Qt::WindowFlags(), bound);
     m_mainWindows.prepend(browser);
@@ -1280,9 +1364,13 @@ BrowserMainWindow *BrowserApplication::newMainWindow(const QString &profileId)
     // SESS02: if this turns out to be the last browser window, a stray
     // visible top-level (a dialog outliving its parent window) would
     // keep the process running windowless — windowDestroyed() forces
-    // the clean exit the close was meant to be.
-    connect(browser, &QObject::destroyed,
-            this, &BrowserApplication::windowDestroyed);
+    // the clean exit the close was meant to be.  VSEC01: the lambda
+    // pins the CLOSING window's persona — the ambient
+    // activeProfileId() could be a different profile entirely, and
+    // auto-lock keyed to it would both miss this persona's last
+    // window and spuriously count against the focused one.
+    connect(browser, &QObject::destroyed, this,
+            [this, bound]() { windowDestroyed(bound); });
 #endif
     browser->show();
     if (m_mainWindows.count() == 1)
@@ -1290,11 +1378,11 @@ BrowserMainWindow *BrowserApplication::newMainWindow(const QString &profileId)
     return browser;
 }
 
-void BrowserApplication::windowDestroyed()
+void BrowserApplication::windowDestroyed(const QString &profileId)
 {
     // Defer past the destroyed() emission — the QPointer in
     // m_mainWindows does not clear until ~QObject unwinds.
-    QTimer::singleShot(0, this, [this]() {
+    QTimer::singleShot(0, this, [this, profileId]() {
         if (quitting)
             return;
         // Standalone smokes open and close windows in scripted order —
@@ -1302,15 +1390,18 @@ void BrowserApplication::windowDestroyed()
         if (isStandalone() && !isTorMode())
             return;
         clean();
+        // PVAULT03 + VSEC01: auto-lock runs on EVERY destroyed
+        // window, keyed to the persona the closing window was bound
+        // to — not just when the process goes windowless and not the
+        // ambient persona.  The vault itself decides whether that
+        // persona's last window is gone (openWindowCount counts live
+        // windows by binding), so closing a "work" window while a
+        // "default" window still stands locks "work" on schedule and
+        // never touches "default".
+        if (!isTorMode())
+            ProfileVault::instance()->noteWindowClosed(profileId);
         if (!m_mainWindows.isEmpty())
             return;
-        // PVAULT03: the last window of the profile just went away —
-        // run the auto-lock seal now whether the process is unwinding
-        // (aboutToQuit covers it too) or a stray top-level keeps it
-        // alive.
-        if (!isTorMode())
-            ProfileVault::instance()->noteWindowClosed(
-                ProfileStore::activeProfileId());
         // If no visible top-level survived, quitOnLastWindowClosed is
         // already unwinding exec() — nothing to do.  The zombie case
         // is a stray VISIBLE top-level keeping the event loop alive
@@ -1343,7 +1434,7 @@ BrowserMainWindow *BrowserApplication::newMainWindowInContainer(
     const QString &containerId, const QString &profileId)
 {
     BrowserMainWindow *browser = newMainWindow(profileId);
-    if (containerId.isEmpty() || isPrivate() || isTorMode())
+    if (!browser || containerId.isEmpty() || isPrivate() || isTorMode())
         return browser;
     TabWidget *tabs = browser->tabWidget();
     // The window constructor already made a default (inheriting) first
