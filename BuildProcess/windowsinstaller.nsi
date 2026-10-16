@@ -20,9 +20,20 @@ SetCompressor /SOLID /FINAL lzma
 !endif
 !define PRODUCT_DIR_REGKEY "Software\Microsoft\Windows\CurrentVersion\App Paths\arora.exe"
 !define PRODUCT_UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}"
-!define PRODUCT_UNINST_ROOT_KEY "HKLM"
+
+; Dual-mode install: MultiUser adds an "all users vs just me" page —
+; all-users lands in %ProgramFiles% (elevates via runas only when that
+; mode is picked), just-me lands in %LOCALAPPDATA%\Programs with no
+; UAC prompt at all. SHCTX resolves to HKLM or HKCU per the choice,
+; and the shell vars ($SMPROGRAMS/$DESKTOP/$PROGRAMFILES64) follow the
+; same context.
+!define MULTIUSER_EXECUTIONLEVEL Highest
+!define MULTIUSER_MUI
+!define MULTIUSER_INSTALLMODE_COMMANDLINE
+!define MULTIUSER_INSTALLMODE_INSTDIR "Arora"
 
 !include "MUI.nsh"
+!include "MultiUser.nsh"
 !define MUI_ABORTWARNING
 ; makensis cd's into the script's directory, so paths must be either
 ; script-relative or passed in absolute via /D. ICONFILE/OUTDIR/SRCDIR
@@ -37,6 +48,7 @@ SetCompressor /SOLID /FINAL lzma
 !define MUI_UNICON "${ICONFILE}"
 
 !insertmacro MUI_PAGE_WELCOME
+!insertmacro MULTIUSER_PAGE_INSTALLMODE
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !define MUI_FINISHPAGE_RUN "$INSTDIR\arora.exe"
@@ -46,13 +58,15 @@ SetCompressor /SOLID /FINAL lzma
 !insertmacro MUI_UNPAGE_INSTFILES
 
 !insertmacro MUI_LANGUAGE "English"
+!insertmacro MULTIUSER_INSTALLMODE
+!insertmacro MULTIUSER_UNINSTALLMODE
 Name "${PRODUCT_NAME} ${PRODUCT_VERSION}"
 OutFile "${OUTDIR}\${PRODUCT_NAME} ${PRODUCT_VERSION} Installer.exe"
-InstallDir "$PROGRAMFILES64\${PRODUCT_NAME}"
-InstallDirRegKey HKLM "${PRODUCT_DIR_REGKEY}" ""
+InstallDirRegKey SHCTX "${PRODUCT_DIR_REGKEY}" ""
 ShowInstDetails show
 ShowUnInstDetails show
-RequestExecutionLevel admin
+; RequestExecutionLevel is owned by MultiUser (it elevates only when
+; the all-users mode is chosen).
 
 Section "Main Components"
   SetOverwrite on
@@ -91,19 +105,19 @@ SectionEnd
 
 Section Uninstaller
   WriteUninstaller "$INSTDIR\uninst.exe"
-  WriteRegStr HKLM "${PRODUCT_DIR_REGKEY}" "" "$INSTDIR\arora.exe"
-  WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "DisplayName" "$(^Name)"
-  WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "UninstallString" "$INSTDIR\uninst.exe"
-  WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "DisplayIcon" "$INSTDIR\arora.exe"
-  WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "DisplayVersion" "${PRODUCT_VERSION}"
+  WriteRegStr SHCTX "${PRODUCT_DIR_REGKEY}" "" "$INSTDIR\arora.exe"
+  WriteRegStr SHCTX "${PRODUCT_UNINST_KEY}" "DisplayName" "$(^Name)"
+  WriteRegStr SHCTX "${PRODUCT_UNINST_KEY}" "UninstallString" "$INSTDIR\uninst.exe"
+  WriteRegStr SHCTX "${PRODUCT_UNINST_KEY}" "DisplayIcon" "$INSTDIR\arora.exe"
+  WriteRegStr SHCTX "${PRODUCT_UNINST_KEY}" "DisplayVersion" "${PRODUCT_VERSION}"
 SectionEnd
 
 Section Uninstall
   Delete "$SMPROGRAMS\Arora.lnk"
   Delete "$DESKTOP\Arora.lnk"
   RMDir /r "$INSTDIR"
-  DeleteRegKey ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}"
-  DeleteRegKey HKLM "${PRODUCT_DIR_REGKEY}"
+  DeleteRegKey SHCTX "${PRODUCT_UNINST_KEY}"
+  DeleteRegKey SHCTX "${PRODUCT_DIR_REGKEY}"
 SectionEnd
 
 BrandingText "arora-browser.org"
