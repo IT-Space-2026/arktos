@@ -40,18 +40,17 @@ class ProfileStore;
 // MPROF01's profiles.json + profiles/<id>/ layout, so what the dialog
 // writes survives the real-registry merge untouched.
 //
-// Window binding is the honest limitation until MPROF03 lands: every
-// window on this lane runs the default profile, so "Open Window" is
-// enabled for the window's own profile only and stays disabled (with
-// the reason in the tooltip) for the rest — no fake binding.
+// Window binding is live (MPROF03): every BrowserMainWindow carries a
+// bound persona, so "Open Window" is enabled for any registered
+// profile and opens a real window on it.
 class ProfileManagerDialog : public QDialog
 {
     Q_OBJECT
 
 public:
     // `store` is the registry the dialog edits; `windowProfileId` is
-    // the calling window's bound profile (ProfileStore::
-    // activeProfileId() until MPROF03 makes it a real per-window id).
+    // the calling window's bound profile (its BrowserMainWindow::
+    // profileId()).
     ProfileManagerDialog(ProfileStore *store,
                          const QString &windowProfileId,
                          QWidget *parent = nullptr);

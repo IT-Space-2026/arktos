@@ -70,6 +70,7 @@
 #include "bookmarksmodel.h"
 #include "browserapplication.h"
 #include "browsermainwindow.h"
+#include "browserprofile.h"
 #include "browsertheme.h"
 #include "containermanager.h"
 #include "downloadmanager.h"
@@ -242,7 +243,7 @@ TabWidget::TabWidget(QWidget *parent)
 
     m_locationBars = new QStackedWidget(this);
 
-    connect(BrowserApplication::historyManager(), &HistoryManager::historyCleared,
+    connect(HistoryManager::instanceFor(profileId()), &HistoryManager::historyCleared,
         this, &TabWidget::historyCleared);
 
     // PREFUI05: Energy Saver flips live — re-evaluate the suspend
@@ -253,7 +254,7 @@ TabWidget::TabWidget(QWidget *parent)
     // CONT02: a container rename/recolor/delete must repaint the tab
     // strip's chips and recompute the size hints the chip feeds.
     // CONT06: the same change renames/recolors a level-1 header.
-    connect(ContainerManager::instance(), &ContainerManager::containersChanged,
+    connect(ContainerManager::instanceFor(profileId()), &ContainerManager::containersChanged,
             m_tabBar, [this]() {
         m_tabBar->updateGeometry();
         m_tabBar->update();
@@ -646,6 +647,17 @@ QString TabWidget::containerIdForTab(int index) const
     return view->containerId();
 }
 
+QString TabWidget::profileId() const
+{
+    // The owning BrowserMainWindow's persona binding — fixed at
+    // window construction (MPROF03).  A bare TabWidget (autotests)
+    // resolves "default" like every other unscoped context.
+    if (BrowserMainWindow *window =
+            qobject_cast<BrowserMainWindow*>(QWidget::window()))
+        return window->profileId();
+    return QStringLiteral("default");
+}
+
 bool TabWidget::isTabPrivate(int index) const
 {
     WebView *view = webView(index);
@@ -838,7 +850,7 @@ void TabWidget::applyTabTitle(int index)
     QString toolTip = tabTitle;
     const QString containerId = containerIdForTab(index);
     if (!containerId.isEmpty()) {
-        const QString name = ContainerManager::instance()
+        const QString name = ContainerManager::instanceFor(profileId())
             ->containerForId(containerId).name;
         if (!name.isEmpty())
             toolTip = QStringLiteral("[%1] %2").arg(name, tabTitle);
@@ -865,7 +877,7 @@ WebView *TabWidget::makeNewTabInContainer(const QString &containerId, bool makeC
 {
     // webview — bound to the container's profile (CONT02).  The
     // default container and private browsing both resolve to
-    // BrowserApplication::webEngineProfile() (the normal "arora"
+    // BrowserApplication::webEngineProfileFor(profileId()) (the normal "arora"
     // profile, or the off-the-record profile while private browsing
     // is on) — containers are persistent state and can never take
     // over a private tab, and ContainerManager::profileFor() refuses
@@ -875,10 +887,10 @@ WebView *TabWidget::makeNewTabInContainer(const QString &containerId, bool makeC
     // wrapped in their canonical Engine::Profile adapters — the tab
     // layer stays on the neutral side of the boundary.
     Engine::Profile *profile = WebEngineProfileAdapter::forProfile(
-        BrowserApplication::webEngineProfile());
+        BrowserApplication::webEngineProfileFor(profileId()));
     if (!containerId.isEmpty() && !BrowserApplication::isPrivate()) {
         if (auto *containerProfile =
-                ContainerManager::instance()->profileFor(containerId))
+                ContainerManager::instanceFor(profileId())->profileFor(containerId))
             profile = WebEngineProfileAdapter::forProfile(containerProfile);
     }
     return makeNewTabOnProfile(profile, makeCurrent);
@@ -1498,7 +1510,7 @@ void TabWidget::reopenTabInContainer(int index, const QString &containerId)
         || isTabPrivate(index))
         return;
     if (!containerId.isEmpty()
-        && !ContainerManager::instance()->isContainerId(containerId))
+        && !ContainerManager::instanceFor(profileId())->isContainerId(containerId))
         return;
 
     const QUrl url = tab->url();
@@ -2179,7 +2191,7 @@ QStringList TabWidget::containerHeaders() const
     // of the strip entirely — there is no pinned state yet).
     QStringList headers;
     headers.append(ContainerManager::defaultContainerId());
-    ContainerManager *manager = ContainerManager::instance();
+    ContainerManager *manager = ContainerManager::instanceFor(profileId());
     for (const QString &id : std::as_const(m_containerHeaderOrder)) {
         if (containerTabCount(id) > 0 && manager->isContainerId(id)
             && !headers.contains(id))
@@ -2307,7 +2319,7 @@ void TabWidget::setActiveContainerHeader(const QString &containerId)
 {
     QString resolved = containerId;
     if (!resolved.isEmpty()
-        && !ContainerManager::instance()->isContainerId(resolved))
+        && !ContainerManager::instanceFor(profileId())->isContainerId(resolved))
         resolved = ContainerManager::defaultContainerId();
     if (m_activeContainerHeader == resolved)
         return;
@@ -3841,7 +3853,7 @@ void TabWidget::aboutToShowRecentTabsMenu()
         action->setData(i);
         QString label = closed.title;
         if (!closed.containerId.isEmpty()) {
-            const QString name = ContainerManager::instance()
+            const QString name = ContainerManager::instanceFor(profileId())
                 ->containerForId(closed.containerId).name;
             if (!name.isEmpty())
                 label = QStringLiteral("[%1] %2").arg(name, label);
@@ -4374,18 +4386,28 @@ WebView *TabWidget::getView(OpenUrlIn tab, WebView *currentView)
             if (!application) {
                 WebView *detachedView = new WebView(WebEngineProfileAdapter::forProfile(
                     currentView ? currentView->webPage()->profile()
-                                : BrowserApplication::webEngineProfile()));
+                                : BrowserApplication::webEngineProfileFor(profileId())));
                 detachedView->setAttribute(Qt::WA_DeleteOnClose);
                 detachedView->show();
                 webView = detachedView;
             } else {
                 // CONT02: a window opened from a container tab keeps
                 // the opener's container — the new window's first tab
-                // binds to the same container profile.
+                // binds to the same container profile.  MPROF03: the
+                // window itself binds to the OPENER'S persona (a
+                // container profile reports its owner id) — a link
+                // can never spawn a window on another profile's
+                // browsing context.
+                const QString openerPersona =
+                    (currentView && currentView->webPage())
+                    ? BrowserProfile::profileIdFor(
+                          currentView->webPage()->profile())
+                    : profileId();
                 BrowserMainWindow *newMainWindow =
                     application->newMainWindowInContainer(
                         currentView ? currentView->containerId()
-                                    : ContainerManager::defaultContainerId());
+                                    : ContainerManager::defaultContainerId(),
+                        openerPersona);
                 webView = newMainWindow->currentTab();
                 // PTAB01: a window spawned from a private tab browses
                 // privately too — the ctor's fresh first tab is
@@ -4713,7 +4735,7 @@ bool TabWidget::restoreSessionSnapshot(const TabSessionSnapshot &snap)
         // never dropped.
         QString containerId = tabContainers.value(i);
         if (!containerId.isEmpty()
-            && !ContainerManager::instance()->isContainerId(containerId))
+            && !ContainerManager::instanceFor(profileId())->isContainerId(containerId))
             containerId = ContainerManager::defaultContainerId();
         const bool reusePlaceholder = i == 0
             && currentWebView() && currentWebView()->url() == QUrl()
@@ -4852,7 +4874,7 @@ bool TabWidget::restoreSessionSnapshot(const TabSessionSnapshot &snap)
                 header = current->containerId();
         }
         if (!header.isEmpty()
-            && !ContainerManager::instance()->isContainerId(header))
+            && !ContainerManager::instanceFor(profileId())->isContainerId(header))
             header = ContainerManager::defaultContainerId();
         if (header != m_activeContainerHeader
             || containerTabCount(m_activeContainerHeader) < count()) {

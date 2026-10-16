@@ -68,7 +68,7 @@ QByteArray open(const QByteArray &blob, bool *ok = nullptr);
 // profiles/<id>/ (securestore.key, securestore.kdf, the rust-side
 // credentials and autofill stores), so sealing under one profile can
 // never open data sealed under another.  The no-id overloads operate
-// on the active profile — "default" until MPROF03.
+// on the ambient (focused window's) profile.
 QByteArray seal(const QString &profileId, const QByteArray &plain);
 QByteArray open(const QString &profileId, const QByteArray &blob,
                 bool *ok = nullptr);

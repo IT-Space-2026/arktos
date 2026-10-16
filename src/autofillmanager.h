@@ -139,8 +139,8 @@ public:
     QString profileId() const { return m_profileId; }
 
     // profileId names the registry profile whose store this manager
-    // owns (MPROF02); an empty or non-slug id binds the active
-    // profile — "default" until MPROF03.
+    // owns (MPROF02); an empty or non-slug id binds the ambient
+    // (focused window's) profile.
     AutoFillManager(QObject *parent = nullptr,
                     const QString &profileId = QString());
     ~AutoFillManager();

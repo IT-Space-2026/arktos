@@ -121,9 +121,19 @@ public:
 
     static HistoryManager *historyManager();
     static CookieJar *cookieJar();
-    // The profile pages are created on: the default profile normally, an
-    // off-the-record profile while private browsing is enabled (MIG03).
+    // The profile pages are created on: the ambient persona's named
+    // profile normally, an off-the-record profile while private
+    // browsing is enabled (MIG03).
     static QWebEngineProfile *webEngineProfile();
+    // MPROF03: the persona-aware spelling — resolves the given profile
+    // id through BrowserProfile::profileFor() and attaches the app
+    // services via prepareProfile().  Mode profiles still win
+    // outright: a tor process takes the dedicated tor profile and a
+    // private process the shared OTR overlay regardless of the id —
+    // OTR is memory-only, so one unnamed profile safely serves every
+    // persona (documented decision: no per-id OTR clones; the app-side
+    // stores have their own isOffTheRecord gates).
+    static QWebEngineProfile *webEngineProfileFor(const QString &profileId);
     // PTAB01: the prepared off-the-record profile regardless of the
     // global private flag — a private TAB inside a normal window needs
     // it while webEngineProfile() still hands out the normal profile.
@@ -267,11 +277,20 @@ public:
     // bound to the given container's profile — a window spawned from
     // a container tab (window.open, ctrl+alt+click) stays in the
     // opener's container.  The default id, private browsing and tor
-    // mode just produce a normal window.
-    BrowserMainWindow *newMainWindowInContainer(const QString &containerId);
+    // mode just produce a normal window.  MPROF03: profileId binds the
+    // window's persona (the opener's); an empty id inherits the
+    // ambient persona like newMainWindow().
+    BrowserMainWindow *newMainWindowInContainer(const QString &containerId,
+                                                const QString &profileId = QString());
 
 public slots:
-    BrowserMainWindow *newMainWindow();
+    // MPROF03: profileId binds the window to a registry persona —
+    // every WebView it creates browses on that persona's named
+    // QWebEngineProfile and its app-side stores follow.  An empty id
+    // inherits the ambient persona (the focused window's — a File>New
+    // Window stays on the opener's profile); an id the registry does
+    // not carry falls back to "default".
+    BrowserMainWindow *newMainWindow(const QString &profileId = QString());
     bool restoreLastSession();
 #if defined(Q_OS_MACOS)
     void lastWindowClosed();

@@ -117,8 +117,8 @@ signals:
 
 public:
     // profileId names the registry profile whose store this manager
-    // owns (MPROF02); an empty or non-slug id binds the active
-    // profile — "default" until MPROF03.
+    // owns (MPROF02); an empty or non-slug id binds the ambient
+    // (focused window's) profile.
     HistoryManager(QObject *parent = nullptr,
                    const QString &profileId = QString());
     ~HistoryManager();

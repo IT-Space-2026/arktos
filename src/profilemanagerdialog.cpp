@@ -335,12 +335,17 @@ QString ProfileManagerDialog::selectedProfileId() const
 
 int ProfileManagerDialog::openWindowCount(const QString &id) const
 {
-    // MPROF03 seam: nothing but the default profile can own a window
-    // on this lane, so every open window counts against the caller's
-    // bound profile and the rest honestly read 0.
-    if (id != m_windowProfileId || !BrowserApplication::instance())
+    // MPROF03: real per-persona counts — each window reports its bound
+    // profile id.
+    if (!BrowserApplication::instance())
         return 0;
-    return BrowserApplication::instance()->mainWindows().count();
+    int count = 0;
+    for (BrowserMainWindow *window
+         : BrowserApplication::instance()->mainWindows()) {
+        if (window && window->profileId() == id)
+            ++count;
+    }
+    return count;
 }
 
 void ProfileManagerDialog::reloadProfiles()
@@ -394,8 +399,8 @@ void ProfileManagerDialog::updateButtons()
     removePictureButton->setEnabled(
         hasSelection
         && QFile::exists(m_store->profileFilePath(id, avatarName)));
-    // Window binding is MPROF03's — until it lands, a window can only
-    // ever be opened on the profile this window already runs.
+    // MPROF03: per-persona window binding is live — any registered
+    // profile can host a window.
     const bool canOpen = hasSelection
         && (id == m_windowProfileId
             || ProfileStore::windowBindingAvailable());
@@ -494,22 +499,15 @@ void ProfileManagerDialog::openWindow()
     const QString id = selectedProfileId();
     if (id.isEmpty())
         return;
-    if (id == m_windowProfileId) {
-        // Every window is bound to the default profile on this lane —
-        // a plain new window honestly IS a window on this profile.
-        if (BrowserApplication *application =
-                BrowserApplication::instance()) {
-            BrowserMainWindow *window = application->newMainWindow();
-            window->goHome();
-        }
-        return;
+    // MPROF03: the window binds to the SELECTED persona — its tabs
+    // browse on that profile's named engine profile and its stores
+    // follow.  An id the registry no longer carries binds "default"
+    // honestly inside newMainWindow().
+    if (BrowserApplication *application =
+            BrowserApplication::instance()) {
+        BrowserMainWindow *window = application->newMainWindow(id);
+        window->goHome();
     }
-    // MPROF03 hasn't merged — no honest way to bind a window to
-    // another profile yet (the button is disabled; this is the guard).
-    QMessageBox::information(
-        this, tr("Open Window"),
-        tr("Opening a window on another profile needs per-profile "
-           "window support — not available yet."));
 }
 
 #include "profilemanagerdialog.moc"

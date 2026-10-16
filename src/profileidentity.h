@@ -51,10 +51,19 @@ signals:
     void avatarChanged();
 
 public:
-    explicit ProfileIdentity(QObject *parent = nullptr);
+    // MPROF03: identity is persona-bound — each profile id gets its
+    // own instance whose name/avatar reads its registry row and whose
+    // caches and change-filtered signals stay inside the persona.
+    explicit ProfileIdentity(const QString &profileId,
+                             QObject *parent = nullptr);
 
-    // Lazy qApp-owned singleton (LanguageManager pattern).
+    // Lazy qApp-owned singletons keyed by persona — instance() is the
+    // ambient (focused window's) persona for context-less callers.
     static ProfileIdentity *instance();
+    static ProfileIdentity *instanceFor(const QString &profileId);
+
+    // The persona this identity is bound to.
+    QString profileId() const;
 
     // On-disk avatar edge length written by setAvatarImage().
     static constexpr int AvatarSize = 128;
@@ -90,6 +99,7 @@ private:
     QImage avatarSource() const;
     QString avatarFileName() const;
 
+    QString m_profileId;
     QString m_name;
     QString m_avatarFileName;
     QPixmap m_avatar;

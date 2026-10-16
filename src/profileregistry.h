@@ -30,7 +30,7 @@
 // registry always describes at least the "default" profile (a missing
 // or corrupt file synthesizes one).  ProfileIdentity delegates the
 // active profile's name/avatar here so the PROF01/02 UI keeps working
-// unchanged while MPROF03+ adds real per-window profile binding.
+// unchanged now that MPROF03 binds windows to real profile ids.
 class ProfileRegistry : public QObject
 {
     Q_OBJECT
@@ -57,8 +57,8 @@ public:
     // Unknown or invalid id -> invalid ProfileContext.
     ProfileContext profile(const QString &id) const;
     ProfileContext activeProfile() const;
-    // Always the default profile today — MPROF03 binds windows (and
-    // their stores) to real profile ids.
+    // The ambient persona — the focused window's bound profile id
+    // (MPROF03).
     QString activeProfileId() const;
 
     // name/avatar/createdAt are mutable through the context; the id

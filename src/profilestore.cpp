@@ -153,15 +153,15 @@ QString ProfileStore::profileFilePath(const QString &id,
 
 bool ProfileStore::windowBindingAvailable()
 {
-    // MPROF03 (window<->profile binding) has not merged into this
-    // lane — every window runs the default profile, so a per-profile
-    // "open window here" is disabled rather than faked.
-    return false;
+    // MPROF03: windows bind to registry personas now — the profile
+    // manager's "Open Window" entry is honest.
+    return true;
 }
 
 QString ProfileStore::activeProfileId()
 {
-    return defaultProfileId();
+    // MPROF03: the ambient persona — the focused window's binding.
+    return BrowserPaths::activeProfileId();
 }
 
 ProfileContext ProfileStore::activeProfile() const

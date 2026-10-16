@@ -56,6 +56,7 @@ SUBDIRS  = \
     profilemenu \
     profilesettings \
     profilevault \
+    profilewindow \
     qrcode \
     rustdownload \
     safetext \

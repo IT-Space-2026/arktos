@@ -25,6 +25,7 @@
 class QAction;
 class QLabel;
 class QMenu;
+class ProfileIdentity;
 
 // PROF01: shared base for the nav bar's oversized-face buttons —
 // the app-menu logo (MENU17/MENU19) and the profile avatar.  A
@@ -75,6 +76,11 @@ protected:
 private:
     void retranslateUi();
     void renameProfile();
+    // MPROF03: the persona this button belongs to — its owning
+    // window's binding, so a work-profile window shows the work
+    // identity rather than the ambient one.
+    QString personaId() const;
+    ProfileIdentity *identity() const;
     // MPROF05: rebuilds the 'New Window' switcher submenu from the
     // profile registry on every open.
     void populateNewWindowMenu();

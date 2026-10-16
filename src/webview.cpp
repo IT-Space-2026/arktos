@@ -740,8 +740,12 @@ void WebView::openPageUrlInPrivateWindow(const QUrl &linkUrl)
         // off-the-record source: a page's profile is fixed at
         // creation, so the fresh window's default tab is replaced by
         // an off-the-record one — which also means no container
-        // binding is carried across.
-        BrowserMainWindow *window = application->newMainWindow();
+        // binding is carried across.  MPROF03: the window binds to the
+        // SOURCE page's persona — the link's origin decides which
+        // profile's private overlay the new window browses in.
+        BrowserMainWindow *window = application->newMainWindow(
+            BrowserProfile::profileIdFor(
+                m_page ? m_page->profile() : nullptr));
         if (WebView *privateTab =
                 window->tabWidget()->makeNewPrivateTab(true)) {
             window->tabWidget()->closeTab(0);

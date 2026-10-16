@@ -987,6 +987,19 @@ UI:
   reaches any profile's store. Still no visible change: every window
   runs the default profile until window↔profile binding lands
   (MPROF02).
+- Windows bind to profiles for real: every browser window carries the
+  profile it was opened on — its tabs browse on that profile's own
+  WebEngine profile (separate cookies, cache and storage) and its
+  history, bookmarks, settings, containers and download history write
+  under `profiles/<id>/`. The profile menu's "New Window" submenu and
+  the Profile Manager's Open Window open a window on any profile;
+  File > New Window and link-spawned windows inherit the opener's
+  profile, and a saved session restores every window on the profile
+  it was saved under — a deleted profile's windows come back on
+  default rather than resurrecting its data folder. Private windows
+  on any profile share one memory-only off-the-record overlay that
+  writes nothing to disk; site trust and permission decisions stay
+  global — they are not persona data (MPROF03).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

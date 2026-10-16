@@ -108,9 +108,24 @@ class BrowserMainWindow : public QMainWindow
     Q_OBJECT
 
 public:
-    BrowserMainWindow(QWidget *parent = nullptr, Qt::WindowFlags flags = Qt::WindowFlags());
+    // MPROF03: profileId binds the window to a registry persona.
+    // Normalization here is slug-only (BrowserPaths::isProfileId,
+    // non-slug -> "default") — BrowserApplication::newMainWindow is
+    // the honest entry point that additionally verifies the id
+    // against ProfileRegistry; the raw ctor stays the test seam.
+    // The binding is fixed at construction: every WebView the window
+    // creates browses on the persona's named QWebEngineProfile (a
+    // private window/tab swaps onto the shared OTR overlay, a tor
+    // window onto the tor profile, a container tab onto the
+    // container profile), and the window's app-side stores — history,
+    // bookmarks, settings, cookies — resolve the same id.
+    BrowserMainWindow(QWidget *parent = nullptr,
+                      Qt::WindowFlags flags = Qt::WindowFlags(),
+                      const QString &profileId = QString());
     ~BrowserMainWindow();
     QSize sizeHint() const override;
+    // The persona this window is bound to ("default" when unbound).
+    QString profileId() const;
 
 public:
     static BrowserMainWindow *parentWindow(QWidget *widget);
@@ -463,6 +478,10 @@ private:
 #endif
     BookmarksToolBar *m_bookmarksToolbar;
 
+    // MPROF03: the persona binding — declared ahead of m_tabWidget so
+    // the init list sets it before any widget the window constructs
+    // can resolve the window's profile.
+    QString m_profileId;
     TabWidget *m_tabWidget;
 
     // UIP04: permanent status-bar widgets bound to the current tab.

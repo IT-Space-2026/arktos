@@ -64,7 +64,7 @@ public:
 
     // profileId names the registry profile whose containers this
     // manager owns (MPROF02); an empty or non-slug id binds the
-    // active profile — "default" until MPROF03.
+    // ambient (focused window's) profile.
     explicit ContainerManager(QObject *parent = nullptr,
                               const QString &profileId = QString());
     ~ContainerManager();

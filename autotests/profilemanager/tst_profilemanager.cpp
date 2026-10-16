@@ -30,6 +30,7 @@
 #include "profilecontext.h"
 #include "profileidentity.h"
 #include "profilemanagerdialog.h"
+#include "profileregistry.h"
 #include "profilestore.h"
 
 #include <qapplication.h>
@@ -112,8 +113,9 @@ void tst_ProfileManager::registryBasics()
     QCOMPARE(store.profileDir(QLatin1String("../escape")),
              store.profileDir(ProfileStore::defaultProfileId()));
 
-    // The seams MPROF03 rewires are honest about this lane's limits.
-    QVERIFY(!ProfileStore::windowBindingAvailable());
+    // MPROF03: window↔profile binding is live — the ambient persona
+    // defaults to "default" when no window is bound.
+    QVERIFY(ProfileStore::windowBindingAvailable());
     QCOMPARE(ProfileStore::activeProfileId(), QLatin1String("default"));
     QVERIFY(store.activeProfile().isValid());
 }
@@ -237,8 +239,11 @@ void tst_ProfileManager::identitySync()
     QCOMPARE(ProfileIdentity::instance()->name(),
              QLatin1String("Managed"));
     {
-        QSettings settings;
-        QCOMPARE(settings.value(QLatin1String("profile/name")).toString(),
+        // The registry is the identity's single truth since MPROF01 —
+        // the PROF01-era QSettings key stays a one-shot import and is
+        // never written back.
+        QCOMPARE(ProfileRegistry::instance()
+                     ->profile(QLatin1String("default")).name,
                  QLatin1String("Managed"));
     }
     store.reload();
@@ -297,11 +302,11 @@ void tst_ProfileManager::managerDialogLegs()
     QCOMPARE(dialog.profileTree->topLevelItemCount(), 2);
 
     // The new row selects itself — its buttons tell the honest state:
-    // deletable, not window-openable (binding hasn't merged).
+    // deletable, and window-openable on its own persona now that
+    // MPROF03 binds windows to profiles.
     QCOMPARE(dialog.selectedProfileId(), QLatin1String("evening"));
     QVERIFY(dialog.deleteButton->isEnabled());
-    QVERIFY(!dialog.openWindowButton->isEnabled());
-    QVERIFY(!dialog.openWindowButton->toolTip().isEmpty());
+    QVERIFY(dialog.openWindowButton->isEnabled());
 
     // Rename through the dialog (QInputDialog modal).
     QTimer::singleShot(150, qApp, []() {

@@ -157,10 +157,12 @@ ProfileContext ProfileRegistry::profile(const QString &id) const
 
 QString ProfileRegistry::activeProfileId() const
 {
-    // MPROF01 is plumbing only: every window resolves to the default
-    // profile.  MPROF03 replaces this with the caller's window-bound
-    // id.
-    return defaultProfileId();
+    // MPROF03: the ambient persona follows the focused window — the
+    // window pushes its bound id via BrowserPaths at construction and
+    // on activation, so registry consumers (ProfileIdentity, profile
+    // pickers) read the right persona without threading a window
+    // pointer through every call.
+    return BrowserPaths::activeProfileId();
 }
 
 ProfileContext ProfileRegistry::activeProfile() const

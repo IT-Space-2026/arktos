@@ -86,6 +86,7 @@
 #include "networkaccessmanager.h"
 #include "pdfsupport.h"
 #include "privacyrequestinterceptor.h"
+#include "profileregistry.h"
 #include "webenginebackend.h"
 #include "schemeaccesshandler.h"
 #include "securestore.h"
@@ -390,7 +391,11 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
     webEngineProfile();
     StartupProfile::mark("ctor: browsing profile + services prepared");
 
-    ProfileSettings settings;
+    // MPROF03: the app session manifest anchors to the PRIMARY
+    // persona's store — the blob enumerates windows across every
+    // persona, so it must not drift with whichever window was last
+    // focused.
+    ProfileSettings settings(ProfileSettings::defaultId());
     settings.beginGroup(QLatin1String("sessions"));
     m_lastSession = settings.value(QLatin1String("lastSession")).toByteArray();
     settings.endGroup();
@@ -817,11 +822,49 @@ void BrowserApplication::clean()
 
 static const qint32 BrowserApplicationMagic = 0xec;
 
+// MPROF03: the one honest normalization for a window's persona
+// binding — the id must be a valid slug AND a persona the registry
+// still carries.  A deleted profile or a crafted session blob
+// degrades to "default" rather than reviving a stale profiles/<id>/
+// tree; an empty id inherits the ambient persona (the focused
+// window's, so File>New Window and link-spawned windows stay on the
+// opener's profile).
+static QString normalizedWindowProfileId(const QString &profileId)
+{
+    const QString id = profileId.isEmpty()
+        ? BrowserPaths::activeProfileId() : profileId;
+    if (!BrowserPaths::isProfileId(id))
+        return QStringLiteral("default");
+    if (!ProfileRegistry::instance()->profile(id).isValid()) {
+        // The UI lane's ProfileStore writes the same profiles.json —
+        // a persona created this session may not be in our cached
+        // read yet; one fresh read before declaring the id missing.
+        ProfileRegistry::instance()->reload();
+        if (!ProfileRegistry::instance()->profile(id).isValid())
+            return QStringLiteral("default");
+    }
+    return id;
+}
+
+// The pre-existing window a session restore is allowed to reuse: only
+// a pristine placeholder (a single never-navigated tab).  Anything
+// with real state is never disturbed by a restore.
+static bool isPristineSessionWindow(BrowserMainWindow *window)
+{
+    return window && window->tabWidget()
+        && window->tabWidget()->totalTabCount() <= 1
+        && (!window->tabWidget()->currentWebView()
+            || window->tabWidget()->currentWebView()->url().isEmpty());
+}
+
 void BrowserApplication::saveSession()
 {
     if (quitting)
         return;
-    ProfileSettings settings;
+    // MPROF03: the session manifest is app-level state spanning every
+    // persona's windows — pin it to the primary persona's store rather
+    // than letting it follow the ambient (focused) window.
+    ProfileSettings settings(ProfileSettings::defaultId());
     settings.beginGroup(QLatin1String("MainWindow"));
     settings.setValue(QLatin1String("restoring"), false);
     settings.endGroup();
@@ -838,16 +881,23 @@ void BrowserApplication::saveSession()
     // file — a JSON manifest per window (opaque shell blob, structured
     // tab records with container binding + engine tag + opaque
     // engine-state blob), atomically installed as session.dat.
-    rustCoreEnsureDataDir();
+    // Anchored to the primary persona's rust store like the QSettings
+    // manifest above.
+    rustCoreEnsureDataDirFor(QStringLiteral("default"));
     QJsonArray windows;
     for (int i = 0; i < m_mainWindows.count(); ++i) {
         BrowserMainWindow *window = m_mainWindows.at(i);
         QJsonObject win = window->tabWidget()->sessionStateJson();
         win.insert(QLatin1String("shell"), QString::fromLatin1(
             window->saveState(false).toBase64()));
+        // MPROF03: the window's persona binding restores it on the
+        // right named profile — a missing key reads as "default".
+        win.insert(QLatin1String("profile"), window->profileId());
         windows.append(win);
     }
     QJsonObject root;
+    // Manifest schema v1 — the per-window "profile" key is an optional
+    // extension the rust core preserves verbatim.
     root.insert(QLatin1String("version"), 1);
     root.insert(QLatin1String("windows"), windows);
     const QByteArray manifest =
@@ -868,7 +918,7 @@ void BrowserApplication::saveSession()
     rc_string_free(err);
 #endif
 
-    int version = 2;
+    int version = 3; // MPROF03: v3 tails each window with its persona id
 
     QByteArray data;
     QBuffer buffer(&data);
@@ -879,8 +929,10 @@ void BrowserApplication::saveSession()
     stream << qint32(version);
 
     stream << qint32(m_mainWindows.count());
-    for (int i = 0; i < m_mainWindows.count(); ++i)
+    for (int i = 0; i < m_mainWindows.count(); ++i) {
+        stream << m_mainWindows.at(i)->profileId();
         stream << m_mainWindows.at(i)->saveState();
+    }
     settings.setValue(QLatin1String("lastSession"), data);
     settings.endGroup();
     m_lastSession = data;
@@ -937,7 +989,9 @@ bool BrowserApplication::ensureSessionWindow()
 bool BrowserApplication::canRestoreSession() const
 {
 #ifdef ARORA_RUSTCORE
-    rustCoreEnsureDataDir();
+    // Session manifests anchor to the primary persona's rust store —
+    // see saveSession().
+    rustCoreEnsureDataDirFor(QStringLiteral("default"));
     if (rc_session_exists())
         return true;
 #endif
@@ -986,7 +1040,8 @@ bool BrowserApplication::restoreLastSession()
     // RCORE03: the canonical store is the rustcore session file — the
     // crate validated the whole blob before it reached us, so RC_OK
     // means the window set is complete and safe to arm the guard on.
-    rustCoreEnsureDataDir();
+    // Anchored to the primary persona's store like saveSession().
+    rustCoreEnsureDataDirFor(QStringLiteral("default"));
     {
         RcBuffer stored{nullptr, 0};
         const RcStatus sessionStatus = rc_session_load(&stored);
@@ -1009,11 +1064,31 @@ bool BrowserApplication::restoreLastSession()
             }
             for (int i = 0; i < windows.count(); ++i) {
                 const QJsonObject win = windows.at(i).toObject();
+                // MPROF03: each window restores on the persona it was
+                // saved under — a missing key or a since-deleted
+                // profile degrades to "default" honestly (empty never
+                // inherits the ambient persona here — the manifest
+                // predates the binding, so "default" is the only
+                // honest reading).
+                const QString rawPersona =
+                    win.value(QLatin1String("profile")).toString();
+                const QString persona = normalizedWindowProfileId(
+                    rawPersona.isEmpty() ? QStringLiteral("default")
+                                         : rawPersona);
+                BrowserMainWindow *preExisting =
+                    (i == 0 && m_mainWindows.count() >= 1)
+                    ? mainWindow() : nullptr;
                 BrowserMainWindow *newWindow = nullptr;
-                if (i == 0 && m_mainWindows.count() >= 1) {
-                    newWindow = mainWindow();
+                if (preExisting && preExisting->profileId() == persona) {
+                    newWindow = preExisting;
                 } else {
-                    newWindow = newMainWindow();
+                    newWindow = newMainWindow(persona);
+                    // The launch placeholder stays a pristine blank —
+                    // close it so a non-default session doesn't leave a
+                    // stray default window behind.
+                    if (preExisting
+                            && isPristineSessionWindow(preExisting))
+                        preExisting->close();
                 }
                 // The shell blob carries no tabs (saveState(false));
                 // the structured record set restores them.
@@ -1031,8 +1106,8 @@ bool BrowserApplication::restoreLastSession()
         // the old reader, and the next save writes the new file.
     }
 #endif
-    int version = 2;
     QList<QByteArray> windows;
+    QStringList windowProfiles;
     QBuffer buffer(&m_lastSession);
     QDataStream stream(&buffer);
     buffer.open(QIODevice::ReadOnly);
@@ -1041,7 +1116,9 @@ bool BrowserApplication::restoreLastSession()
     qint32 v;
     stream >> marker;
     stream >> v;
-    if (marker != BrowserApplicationMagic || v != version)
+    // v3 adds the per-window persona id ahead of each state blob; a v2
+    // blob (or older) restores every window on the default persona.
+    if (marker != BrowserApplicationMagic || (v != 2 && v != 3))
         return false;
 
     qint32 windowCount;
@@ -1055,11 +1132,15 @@ bool BrowserApplication::restoreLastSession()
     if (windowCount < 0 || windowCount > maxWindows)
         return false;
     for (qint32 i = 0; i < windowCount; ++i) {
+        QString profileId;
+        if (v >= 3)
+            stream >> profileId;
         QByteArray windowState;
         stream >> windowState;
         if (stream.status() != QDataStream::Ok)
             return false;
         windows.append(windowState);
+        windowProfiles.append(profileId);
     }
     {
         ProfileSettings settings;
@@ -1071,11 +1152,22 @@ bool BrowserApplication::restoreLastSession()
         settings.setValue(QLatin1String("restoring"), true);
     }
     for (int i = 0; i < windows.count(); ++i) {
+        // A v2 blob (or a truncated v3 tail) leaves the id empty —
+        // restore on "default", never the ambient persona.
+        const QString rawPersona = windowProfiles.at(i);
+        const QString persona = normalizedWindowProfileId(
+            rawPersona.isEmpty() ? QStringLiteral("default")
+                                 : rawPersona);
+        BrowserMainWindow *preExisting =
+            (i == 0 && m_mainWindows.count() >= 1)
+            ? mainWindow() : nullptr;
         BrowserMainWindow *newWindow = nullptr;
-        if (i == 0 && m_mainWindows.count() >= 1) {
-            newWindow = mainWindow();
+        if (preExisting && preExisting->profileId() == persona) {
+            newWindow = preExisting;
         } else {
-            newWindow = newMainWindow();
+            newWindow = newMainWindow(persona);
+            if (preExisting && isPristineSessionWindow(preExisting))
+                preExisting->close();
         }
         newWindow->restoreState(windows.at(i));
     }
@@ -1133,11 +1225,13 @@ void BrowserApplication::openUrl(const QUrl &url)
     mainWindow()->tabWidget()->loadUrl(url);
 }
 
-BrowserMainWindow *BrowserApplication::newMainWindow()
+BrowserMainWindow *BrowserApplication::newMainWindow(const QString &profileId)
 {
     if (!m_mainWindows.isEmpty())
         mainWindow()->m_autoSaver->saveIfNeccessary();
-    BrowserMainWindow *browser = new BrowserMainWindow();
+    const QString bound = normalizedWindowProfileId(profileId);
+    BrowserMainWindow *browser =
+        new BrowserMainWindow(nullptr, Qt::WindowFlags(), bound);
     m_mainWindows.prepend(browser);
     connect(this, &BrowserApplication::privacyChanged,
             browser, &BrowserMainWindow::privacyChanged);
@@ -1197,9 +1291,10 @@ void BrowserApplication::windowDestroyed()
     });
 }
 
-BrowserMainWindow *BrowserApplication::newMainWindowInContainer(const QString &containerId)
+BrowserMainWindow *BrowserApplication::newMainWindowInContainer(
+    const QString &containerId, const QString &profileId)
 {
-    BrowserMainWindow *browser = newMainWindow();
+    BrowserMainWindow *browser = newMainWindow(profileId);
     if (containerId.isEmpty() || isPrivate() || isTorMode())
         return browser;
     TabWidget *tabs = browser->tabWidget();
@@ -1235,6 +1330,25 @@ CookieJar *BrowserApplication::cookieJar()
     return CookieJar::instance(webEngineProfile());
 }
 
+QWebEngineProfile *BrowserApplication::webEngineProfileFor(const QString &profileId)
+{
+    // MPROF03: window-bound spelling of webEngineProfile() — the
+    // caller's persona resolves through BrowserProfile::profileFor so
+    // a "work"-bound window browses on "arora-work" instead of the
+    // default "arora" profile.  Mode profiles still win outright:
+    // tor takes the dedicated tor profile and private browsing the
+    // shared OTR overlay (memory-only — one unnamed profile safely
+    // serves every persona; the app-side stores gate on
+    // isOffTheRecord themselves).
+    QWebEngineProfile *profile = isTorMode()
+        ? BrowserProfile::torProfile()
+        : isPrivate()
+            ? BrowserProfile::privateProfile()
+            : BrowserProfile::profileFor(profileId);
+    prepareProfile(profile);
+    return profile;
+}
+
 QWebEngineProfile *BrowserApplication::webEngineProfile()
 {
     // MIG11: the lazy profile singletons live in BrowserProfile so
@@ -1242,14 +1356,10 @@ QWebEngineProfile *BrowserApplication::webEngineProfile()
     // prepareProfile() attaches the app-level services the first time a
     // profile is handed out — this is where the off-the-record profile
     // picks up its cookie jar, scheme handlers, download manager and
-    // adblock interceptor when private browsing starts.
-    QWebEngineProfile *profile = isTorMode()
-        ? BrowserProfile::torProfile()
-        : isPrivate()
-            ? BrowserProfile::privateProfile()
-            : BrowserProfile::normalProfile();
-    prepareProfile(profile);
-    return profile;
+    // adblock interceptor when private browsing starts.  MPROF03: the
+    // ambient spelling — context-less callers get the focused window's
+    // persona.
+    return webEngineProfileFor(BrowserPaths::activeProfileId());
 }
 
 QWebEngineProfile *BrowserApplication::privateWebEngineProfile()

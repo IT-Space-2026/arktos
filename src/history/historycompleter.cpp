@@ -223,7 +223,7 @@ void RustHistorySuggestModel::refresh()
     // Anchor the process-global rust history store to the active
     // profile's database — per-profile HistoryManager instances
     // re-bind it as they run (MPROF02); the window's completer follows
-    // the window profile, which is the active profile until MPROF03.
+    // the window profile — the ambient persona (MPROF03).
     const QByteArray dbPath = BrowserPaths::profileDataFilePath(
         BrowserPaths::activeProfileId(),
         QLatin1String("history.db")).toUtf8();

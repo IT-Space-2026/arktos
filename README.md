@@ -262,12 +262,16 @@ browsing profile:
 - **Profile button** — a round avatar at the right edge of the
   navigation bar drops the profile menu: avatar and profile name on
   top, "Edit Profile Name..." to rename (the name persists and
-  repaints on every open window), a "New Window" submenu listing
-  every profile, and "Profile Manager..." — also reachable from
-  Tools > Profiles... and Preferences > General — which creates,
-  renames, deletes (type-to-confirm; the default profile cannot be
-  deleted) and opens windows on profiles kept under their own data
-  folders. The menu also carries the hygiene actions — Clear
+  repaints on every open window), a "New Window" submenu that opens
+  a window bound to any profile, and "Profile Manager..." — also
+  reachable from Tools > Profiles... and Preferences > General —
+  which creates, renames, deletes (type-to-confirm; the default
+  profile cannot be deleted) and opens windows on profiles kept
+  under their own data folders. Each window stays bound to its
+  profile: its tabs browse on that profile's engine profile, its
+  history/bookmarks/settings write under `profiles/<id>/`, and a
+  restored session reopens every window on the profile it was saved
+  under (a deleted profile falls back to default). The menu also carries the hygiene actions — Clear
   History, Clear Cookies, Clear Cache (each wipes only its own
   category) and Clear Private Data — plus a red **Delete Profile**
   that itemizes what is destroyed, requires typing the profile name,
@@ -575,8 +579,9 @@ core landed and UX/completion work still landing.
     sealed custody, with one-shot migration of the legacy store
   - Multi-profile isolation: each profile's settings, history,
     bookmarks, cookies, extensions and containers live under its own
-    `profiles/<id>/` directory with its own settings.ini — private and
-    Tor sessions write nothing to any profile store
+    `profiles/<id>/` directory with its own settings.ini, and every
+    window is bound to one profile — private and Tor sessions write
+    nothing to any profile store
   - Profile vaults *(in progress)* — whole-profile sealed archives
     (ARV1): Argon2id KEK wrapping a random 512-bit vault key,
     AES-256-GCM chunks + HMAC-SHA-512 integrity, optional
@@ -672,8 +677,8 @@ that swap means in practice:
   directory instead of the single shared QSettings file; app-level
   keys (Tor prefs, crash sentinels, engine defaults) stay global.
   First launch copies existing values into the default profile,
-  leaving the old file as a read fallback (MPROF04 — groundwork for
-  multiple browsing profiles).
+  leaving the old file as a read fallback (MPROF04; windows bind
+  real profiles since MPROF03).
 - **Privacy-first direction** — everything in the
   [feature tour](#feature-tour) is new since the Qt 4 series:
   zero-telemetry launch, HTTPS-Only, per-site JS/cookie/permission

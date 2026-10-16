@@ -6,7 +6,7 @@
 //!
 //! ```text
 //!   magic   "ARSS" (4 bytes)
-//!   version u32 = 1
+//!   version u32 = 2        (v1 blobs — no profile tail — still decode)
 //!   windows u32 count, then per window:
 //!     shell   u32 len + bytes   — opaque window-chrome blob (the
 //!                               Qt shell's own serialization; the
@@ -27,6 +27,8 @@
 //!       name   u32 len + utf8
 //!       color  u32 len + utf8 — "#aarrggbb"
 //!       collapsed u8 (0/1)
+//!     profile u32 len + utf8    — v2 tail: the window's persona id
+//!                                 ("" = "default"; MPROF03)
 //! ```
 //!
 //! The C ABI carries the same structure as a JSON manifest — opaque
@@ -38,7 +40,8 @@
 //!   "tabs":[{"url":"","container":"","group":"",
 //!            "engine":"webengine","state":"<b64>"}],
 //!   "groups":[{"id":"","name":"","color":"#aarrggbb",
-//!              "collapsed":false}]}]}
+//!              "collapsed":false}],
+//!   "profile":"<persona-id>"}]}
 //! ```
 //!
 //! Corrupt-blob resilience is a core property: every count is bounds-
@@ -59,7 +62,15 @@ use crate::store;
 
 /// On-disk magic — "Arora RuSt Session".
 pub const MAGIC: &[u8; 4] = b"ARSS";
+/// Manifest schema version — the JSON side.  Adding the optional
+/// per-window "profile" persona id stayed backwards compatible, so it
+/// did not bump this; readers ignore unknown window keys.
 pub const VERSION: u32 = 1;
+/// Binary blob version — the on-disk side.  v2 appends the per-window
+/// profile id string to each window record; v1 blobs (written before
+/// MPROF03 window binding) still decode with profile "".
+const BIN_VERSION: u32 = 2;
+const BIN_VERSION_V1: u32 = 1;
 pub const FILE_NAME: &str = "session.dat";
 
 // Bounds — generous enough for real sessions (data: urls, long
@@ -179,6 +190,9 @@ struct WindowRec {
     current: i32,
     tabs: Vec<TabRec>,
     groups: Vec<GroupRec>,
+    // MPROF03: the persona the window is bound to — "" reads as the
+    // "default" profile on the C++ side.
+    profile: String,
 }
 
 fn jstr(obj: &Map<String, Value>, key: &str) -> RcResult<String> {
@@ -233,6 +247,7 @@ fn manifest_to_model(json: &[u8]) -> RcResult<Vec<WindowRec>> {
             current: -1,
             tabs: Vec::new(),
             groups: Vec::new(),
+            profile: jstr(w, "profile")?,
         };
         if let Some(c) = w.get("current") {
             match c.as_i64() {
@@ -309,7 +324,7 @@ fn manifest_to_model(json: &[u8]) -> RcResult<Vec<WindowRec>> {
 fn model_to_binary(windows: &[WindowRec]) -> Vec<u8> {
     let mut p = Put(Vec::with_capacity(1024));
     p.0.extend_from_slice(MAGIC);
-    p.u32(VERSION);
+    p.u32(BIN_VERSION);
     p.u32(windows.len() as u32);
     for w in windows {
         p.bytes(&w.shell);
@@ -329,6 +344,8 @@ fn model_to_binary(windows: &[WindowRec]) -> Vec<u8> {
             p.str(&g.color);
             p.u8(g.collapsed as u8);
         }
+        // v2 tail: the window's persona id.
+        p.str(&w.profile);
     }
     p.0
 }
@@ -339,7 +356,8 @@ fn binary_to_model(blob: &[u8]) -> RcResult<Vec<WindowRec>> {
         return corrupt("session: bad magic");
     }
     r.pos = 4;
-    if r.u32()? != VERSION {
+    let bin_version = r.u32()?;
+    if bin_version != BIN_VERSION && bin_version != BIN_VERSION_V1 {
         return corrupt("session: unsupported version");
     }
     let window_count = r.u32()? as usize;
@@ -377,11 +395,19 @@ fn binary_to_model(blob: &[u8]) -> RcResult<Vec<WindowRec>> {
                 collapsed: r.u8()? != 0,
             });
         }
+        // v1 records end at the group list — their windows predate the
+        // persona binding and read as "default" upstream.
+        let profile = if bin_version >= 2 {
+            r.str()?.to_owned()
+        } else {
+            String::new()
+        };
         windows.push(WindowRec {
             shell,
             current,
             tabs,
             groups,
+            profile,
         });
     }
     if r.remaining() != 0 {
@@ -419,12 +445,18 @@ fn model_to_manifest(windows: &[WindowRec]) -> Vec<u8> {
                     })
                 })
                 .collect();
-            json!({
+            let mut win = json!({
                 "shell": String::from_utf8_lossy(&w.shell),
                 "current": w.current,
                 "tabs": tabs,
                 "groups": groups,
-            })
+            });
+            // Emit the persona only when bound — a "default" window's
+            // manifest stays identical to the pre-MPROF03 shape.
+            if !w.profile.is_empty() {
+                win["profile"] = json!(w.profile);
+            }
+            win
         })
         .collect();
     serde_json::to_vec(&json!({
@@ -518,7 +550,8 @@ mod tests {
                     "shell": "",
                     "current": -1,
                     "tabs": [],
-                    "groups": []
+                    "groups": [],
+                    "profile": "work"
                 }
             ]
         }))
@@ -548,6 +581,36 @@ mod tests {
         assert_eq!(groups[0]["name"], "research");
         assert_eq!(groups[0]["collapsed"], false);
         assert_eq!(wins[1]["tabs"].as_array().unwrap().len(), 0);
+        assert_eq!(wins[1]["profile"], "work");
+    }
+
+    #[test]
+    fn profile_roundtrips_and_omits_when_default() {
+        let v = roundtrip(&manifest());
+        // The persona-bound window keeps its id; the unbound one stays
+        // key-free so a default window's manifest is unchanged.
+        assert_eq!(v["windows"][1]["profile"], "work");
+        assert!(v["windows"][0].get("profile").is_none());
+    }
+
+    #[test]
+    fn decodes_v1_blobs_as_default_profile() {
+        // A pre-MPROF03 session.dat (bin v1: no profile tail) still
+        // restores — every window reads as persona "".
+        let mut blob = Vec::new();
+        blob.extend_from_slice(MAGIC);
+        blob.extend_from_slice(&BIN_VERSION_V1.to_le_bytes());
+        blob.extend_from_slice(&1u32.to_le_bytes()); // 1 window
+        blob.extend_from_slice(&4u32.to_le_bytes()); // shell len
+        blob.extend_from_slice(b"shll");
+        blob.extend_from_slice(&(-1i32).to_le_bytes()); // current
+        blob.extend_from_slice(&0u32.to_le_bytes()); // 0 tabs
+        blob.extend_from_slice(&0u32.to_le_bytes()); // 0 groups
+        let out = decode(&blob).expect("v1 blob decodes");
+        let v: Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(v["windows"].as_array().unwrap().len(), 1);
+        assert!(v["windows"][0].get("profile").is_none());
+        assert_eq!(v["windows"][0]["shell"], "shll");
     }
 
     #[test]

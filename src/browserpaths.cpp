@@ -132,12 +132,33 @@ bool isProfileId(const QString &id)
     return true;
 }
 
+// MPROF03: the ambient persona the process's unscoped stores belong
+// to.  BrowserMainWindow pushes its bound id at construction (so the
+// widgets it builds bind the right persona) and on every activation
+// (so focus switching keeps ambient resolution honest); when the
+// focused window dies the destructor re-anchors to whatever window
+// holds focus next.  Between pushes this is simply the last active
+// window's persona — an empty value only exists before the first
+// window is constructed, so it aliases "default".
+static QString s_activeProfileId;
+
 QString activeProfileId()
 {
-    // MPROF01 is plumbing only: every unscoped store belongs to the
-    // default profile.  MPROF03 replaces this with the caller's
-    // window-bound profile id.
-    return QStringLiteral("default");
+    if (s_activeProfileId.isEmpty())
+        return QStringLiteral("default");
+    return s_activeProfileId;
+}
+
+void setActiveProfileId(const QString &profileId)
+{
+    if (!isProfileId(profileId)) {
+        if (!profileId.isEmpty())
+            qWarning() << "BrowserPaths: refusing non-slug active"
+                          "profile id" << profileId << "- using default";
+        s_activeProfileId = QStringLiteral("default");
+        return;
+    }
+    s_activeProfileId = profileId;
 }
 
 QString profileDataDir(const QString &profileId)

@@ -47,14 +47,20 @@ QWebEngineProfile *privateProfile();
 // normalized UA, no extensions, no WebChannel bridges).
 QWebEngineProfile *torProfile();
 
-// MPROF02: the persistent named profile for a registry persona —
+// MPROF03: the persistent named profile for a registry persona —
 // storageName "arora-<id>" (id "default" resolves to normalProfile()).
 // Lazily created, qApp-owned, tagged "aroraProfileId" so profileIdFor
-// resolves it without parsing.  This is the minimal profile-object
-// seam profile-aware stores need now; MPROF03's window binding will
-// extend it into the full persona factory (service attachment, OTR
-// sibling, session binding).
-QWebEngineProfile *namedProfile(const QString &profileId);
+// resolves it without parsing.  This is the full persona factory
+// window binding uses: a first-created profile also runs the
+// deferred site-storage sweep, and service attachment rides along
+// through BrowserApplication::prepareProfile() (called from
+// BrowserApplication::webEngineProfileFor).
+QWebEngineProfile *profileFor(const QString &profileId);
+
+// The already-materialized named persona profiles (never creates —
+// for broadcast sweeps like WebPage::setUserAgent that must reach
+// every live profile without spinning up dormant personas).
+QList<QWebEngineProfile *> createdPersonaProfiles();
 
 // The private profile only if it has already been brought up —
 // nullptr otherwise.  For callers that want to adjust an existing
@@ -76,8 +82,7 @@ QWebEngineProfile *torProfileIfCreated();
 // storageName is parsed — "arora" is id "default", "arora-<id>" is id
 // <id>.  Unnamed (off-the-record) profiles, container profiles that
 // were never tagged and anything else resolve to "default": a
-// profile with no declared persona must never alias a real one, and
-// until MPROF03 binds windows every live profile IS the default.
+// profile with no declared persona must never alias a real one.
 // App-side stores have their own isOffTheRecord() gates, so the
 // fallback cannot leak private browsing state to disk either.
 QString profileIdFor(QWebEngineProfile *profile);

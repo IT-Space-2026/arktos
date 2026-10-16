@@ -8936,10 +8936,8 @@ void tst_BrowserMainWindow::profileButton()
 // MPROF05: the profile menu carries the switcher submenu and the
 // Profile Manager entry; the manager is also reachable from Tools so
 // it is discoverable without the nav button (the app menu embeds the
-// shared Tools menu).  Until MPROF03's window binding merges, 'New
-// Window' enables only this window's own (default) profile — a plain
-// new window honestly is bound to it — and leaves the rest disabled
-// with the reason in the tooltip.
+// shared Tools menu).  Since MPROF03's window binding, every 'New
+// Window' row is enabled and opens a window bound to that profile.
 void tst_BrowserMainWindow::profileMenuEntries()
 {
     SubWindow *window = new SubWindow;
@@ -8978,8 +8976,8 @@ void tst_BrowserMainWindow::profileMenuEntries()
     QVERIFY(defaultEntry->isEnabled());
     QVERIFY(defaultEntry->isChecked());
 
-    // A second profile lists as disabled — binding hasn't merged, so
-    // the tooltip carries the honest reason rather than a fake window.
+    // A second profile lists as an enabled row — triggering it opens
+    // a real window bound to that persona (MPROF03).
     ProfileStore *store = ProfileStore::instance();
     QVERIFY(store->createProfile(QLatin1String("Suite")).isValid());
     newWindowMenu->show();
@@ -8991,8 +8989,22 @@ void tst_BrowserMainWindow::profileMenuEntries()
             suiteEntry = action;
     }
     QVERIFY(suiteEntry);
-    QVERIFY(!suiteEntry->isEnabled());
-    QVERIFY(!suiteEntry->toolTip().isEmpty());
+    QVERIFY(suiteEntry->isEnabled());
+    const int windowsBefore =
+        BrowserApplication::instance()->mainWindows().count();
+    suiteEntry->trigger();
+    QApplication::processEvents();
+    BrowserMainWindow *suiteWindow = nullptr;
+    for (BrowserMainWindow *candidate
+         : BrowserApplication::instance()->mainWindows()) {
+        if (candidate && candidate->profileId()
+                == QLatin1String("suite"))
+            suiteWindow = candidate;
+    }
+    QVERIFY(suiteWindow);
+    QCOMPARE(BrowserApplication::instance()->mainWindows().count(),
+             windowsBefore + 1);
+    closeWindow(suiteWindow);
     store->deleteProfile(QLatin1String("suite"));
 
     // Triggering the manager action opens the shared dialog; closing

@@ -119,19 +119,31 @@ QWebEngineProfile *torProfileIfCreated()
     return s_torProfile;
 }
 
-QWebEngineProfile *namedProfile(const QString &profileId)
+// MPROF03: created named persona profiles, keyed by id — "default"
+// is never an entry (it aliases normalProfile()).
+static QHash<QString, QWebEngineProfile *> s_personaProfiles;
+
+QWebEngineProfile *profileFor(const QString &profileId)
 {
     if (!BrowserPaths::isProfileId(profileId)
             || profileId == QLatin1String("default"))
         return normalProfile();
-    static QHash<QString, QWebEngineProfile *> profiles;
-    QWebEngineProfile *&profile = profiles[profileId];
+    QWebEngineProfile *&profile = s_personaProfiles[profileId];
     if (!profile) {
         profile = new QWebEngineProfile(
             QLatin1String("arora-") + profileId, qApp);
         profile->setProperty("aroraProfileId", profileId);
+        // HARD01: same first-bring-up contract as normalProfile() — a
+        // deferred clear targeted THIS profile's storage tree, so it
+        // has to be swept before any page binds the services.
+        clearDeferredSiteStorage(profile->persistentStoragePath());
     }
     return profile;
+}
+
+QList<QWebEngineProfile *> createdPersonaProfiles()
+{
+    return s_personaProfiles.values();
 }
 
 QString profileIdFor(QWebEngineProfile *profile)
@@ -474,7 +486,17 @@ void applySettings(QWebEngineProfile *profile)
 {
     QWebEngineSettings *engineSettings = profile->settings();
 
-    ProfileSettings settings;
+    // MPROF03: bind the persona the profile OBJECT belongs to, not the
+    // ambient one — engine settings applied to profile "alpha" must
+    // come from profiles/alpha/settings.ini regardless of which window
+    // happened to trigger the (re)application.  Container profiles
+    // resolve to their owner's id through the tag; the shared OTR and
+    // tor profiles have no persona and read the default's websettings.
+    ProfileSettings settings(profileIdFor(profile));
+    // Root-scoped sibling for the keys that live outside the
+    // websettings/network groups (privacy/*, userAgent) — same
+    // persona binding, no group prefix.
+    ProfileSettings rootSettings(profileIdFor(profile));
     settings.beginGroup(QLatin1String("websettings"));
 
     QFont standardFont(engineSettings->fontFamily(QWebEngineSettings::StandardFont),
@@ -514,7 +536,7 @@ void applySettings(QWebEngineProfile *profile)
     // outside the tunnel).  Opt-in only; tor pins it off
     // unconditionally in prepareProfile regardless of this setting.
     engineSettings->setAttribute(QWebEngineSettings::DnsPrefetchEnabled,
-        ProfileSettings().value(QLatin1String("privacy/dnsPrefetch"), false).toBool());
+        rootSettings.value(QLatin1String("privacy/dnsPrefetch"), false).toBool());
 
     // POL03: Chromium's auto-dark for web contents — pages that ship
     // their own dark scheme (prefers-color-scheme: dark) use it, and
@@ -536,7 +558,7 @@ void applySettings(QWebEngineProfile *profile)
     // Chromium's own store out of the loop.
     const int securityLevel = qBound(
         int(PrivacyRequestInterceptor::Standard),
-        ProfileSettings().value(QLatin1String("privacy/securityLevel"),
+        rootSettings.value(QLatin1String("privacy/securityLevel"),
                           int(PrivacyRequestInterceptor::Standard)).toInt(),
         int(PrivacyRequestInterceptor::Safest));
     engineSettings->setAttribute(
@@ -567,14 +589,14 @@ void applySettings(QWebEngineProfile *profile)
     // on); applyChromiumFlags() couples the same setting to the
     // stronger Chromium IP-handling policy at process level.
     engineSettings->setAttribute(QWebEngineSettings::WebRTCPublicInterfacesOnly,
-        ProfileSettings().value(QLatin1String("privacy/webrtcIpProtection"), true).toBool());
+        rootSettings.value(QLatin1String("privacy/webrtcIpProtection"), true).toBool());
 
     // PING01: <a ping> auditing rides the same privacy/blockPings
     // toggle as the interceptor's sendBeacon/CSP-report drop — with
     // the attribute off Chromium never initiates the ping, and the
     // interceptor catches anything that still slips.
     engineSettings->setAttribute(QWebEngineSettings::HyperlinkAuditingEnabled,
-        !ProfileSettings().value(QLatin1String("privacy/blockPings"), true).toBool());
+        !rootSettings.value(QLatin1String("privacy/blockPings"), true).toBool());
 
     // PDF01: Chromium's built-in PDFium viewer, bound to the
     // privacy/pdfViewer toggle (default on) — PDFium parses inside
@@ -583,7 +605,7 @@ void applySettings(QWebEngineProfile *profile)
     // Applied per profile, so normal, private, tor and container
     // profiles all follow the toggle.
     engineSettings->setAttribute(QWebEngineSettings::PdfViewerEnabled,
-        ProfileSettings().value(QLatin1String("privacy/pdfViewer"), true).toBool());
+        rootSettings.value(QLatin1String("privacy/pdfViewer"), true).toBool());
 
     // PRIV01: refresh the request interceptor's IO-thread snapshot
     // (https-first upgrade, referrer trim) alongside the profile
@@ -639,7 +661,7 @@ void applySettings(QWebEngineProfile *profile)
     // unset, send the de-badged vanilla UA rather than Qt's factory
     // default — the "QtWebEngine/<ver>" token trips Google's bot check.
     const QString userAgent =
-        settings.value(QLatin1String("userAgent")).toString();
+        rootSettings.value(QLatin1String("userAgent")).toString();
     profile->setHttpUserAgent(effectiveHttpUserAgent(userAgent));
     applyClientHints(profile);
 

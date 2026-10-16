@@ -88,9 +88,9 @@ public:
 
     // The id of the only profile guaranteed to exist.
     static QString defaultId();
-    // Resolves the calling context's profile — "default" until MPROF03
-    // lands window->profile binding; the SettingsDialog (and any other
-    // profile-affine reader) binds this at construction.
+    // Resolves the calling context's profile — the ambient (focused
+    // window's) bound persona since MPROF03; the SettingsDialog (and
+    // any other profile-affine reader) binds this at construction.
     static QString currentId();
 
     // profiles/<id>/settings.ini (parent dir created on demand).

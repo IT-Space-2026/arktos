@@ -55,7 +55,7 @@ class tst_ProfileManagers : public QObject
 private slots:
     void initTestCase();
 
-    void namedProfileTagging();
+    void personaProfileTagging();
     void profileIdForFallbacks();
     void instanceForStability();
     void instanceAliasDefault();
@@ -93,18 +93,18 @@ void tst_ProfileManagers::initTestCase()
     QVERIFY(BrowserPaths::ensureDataLayout());
 }
 
-void tst_ProfileManagers::namedProfileTagging()
+void tst_ProfileManagers::personaProfileTagging()
 {
     QWebEngineProfile *normal = BrowserProfile::normalProfile();
     QCOMPARE(BrowserProfile::profileIdFor(normal),
              QStringLiteral("default"));
 
-    QWebEngineProfile *work = BrowserProfile::namedProfile(kAlpha);
+    QWebEngineProfile *work = BrowserProfile::profileFor(kAlpha);
     QVERIFY(work);
     QCOMPARE(work->storageName(), QStringLiteral("arora-alpha"));
     QCOMPARE(BrowserProfile::profileIdFor(work), kAlpha);
     // Lazily created once — repeat lookups return the same object.
-    QCOMPARE(BrowserProfile::namedProfile(kAlpha), work);
+    QCOMPARE(BrowserProfile::profileFor(kAlpha), work);
 }
 
 void tst_ProfileManagers::profileIdForFallbacks()
@@ -184,8 +184,8 @@ void tst_ProfileManagers::instanceForStability()
 
 void tst_ProfileManagers::instanceAliasDefault()
 {
-    // The legacy instance() API aliases the active profile — until
-    // MPROF03 binds windows, that is always "default".
+    // The legacy instance() API aliases the active profile — with no
+    // window bound (MPROF03), the ambient persona is "default".
     QCOMPARE(BrowserPaths::activeProfileId(),
              QStringLiteral("default"));
     QCOMPARE(HistoryManager::instance(),

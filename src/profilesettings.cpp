@@ -19,6 +19,8 @@
 
 #include "profilesettings.h"
 
+#include "browserpaths.h"
+
 #include <qcoreapplication.h>
 #include <qdir.h>
 #include <qfile.h>
@@ -129,10 +131,12 @@ QString ProfileSettings::defaultId()
 
 QString ProfileSettings::currentId()
 {
-    // MPROF03 retargets this: windows bind to a profile id, profile-
-    // affine readers resolve the window's id here.  Until then every
-    // context resolves to the single profile that exists.
-    return defaultId();
+    // MPROF03: the ambient persona is window-bound — BrowserMainWindow
+    // pushes its profile id on construction and activation, so a
+    // context-less ProfileSettings() resolves the focused window's
+    // persona.  Readers that own their context (panels, stores) bind
+    // an explicit id instead.
+    return BrowserPaths::activeProfileId();
 }
 
 QString ProfileSettings::fileFor(const QString &id)

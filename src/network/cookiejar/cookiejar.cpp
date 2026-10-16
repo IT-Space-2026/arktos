@@ -144,7 +144,7 @@ CookieJar *CookieJar::instance(QWebEngineProfile *profile)
 
 CookieJar *CookieJar::instanceFor(const QString &profileId)
 {
-    return instance(BrowserProfile::namedProfile(profileId));
+    return instance(BrowserProfile::profileFor(profileId));
 }
 
 CookieJar::~CookieJar()

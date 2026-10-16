@@ -131,7 +131,7 @@ public:
     // resolves to BrowserProfile::normalProfile().
     static CookieJar *instance(QWebEngineProfile *profile = nullptr);
     // MPROF02: the jar for a registry persona — resolves the persona's
-    // named QWebEngineProfile through BrowserProfile::namedProfile and
+    // named QWebEngineProfile through BrowserProfile::profileFor and
     // shares its cookie store, while the jar's own policy + exception
     // lists persist under profiles/<id>/.
     static CookieJar *instanceFor(const QString &profileId);

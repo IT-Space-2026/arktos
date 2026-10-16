@@ -36,6 +36,7 @@
 #include "pdfsupport.h"
 #include "popupblocker.h"
 #include "privacyrequestinterceptor.h"
+#include "profileregistry.h"
 #include "schemeaccesshandler.h"
 #include "scriptcontrolmanager.h"
 #include "tabwidget.h"
@@ -560,18 +561,26 @@ void WebPage::setUserAgent(const QString &userAgent)
         BrowserProfile::applyClientHints(profile);
     };
     applyTo(BrowserProfile::normalProfile());
+    // MPROF03: every persona can have a live named profile — sweep
+    // the materialized ones without spinning up dormant personas.
+    for (QWebEngineProfile *personaProfile
+         : BrowserProfile::createdPersonaProfiles())
+        applyTo(personaProfile);
     if (QWebEngineProfile *otrProfile = BrowserProfile::privateProfileIfCreated())
         applyTo(otrProfile);
     // CONT01: a UA override applies on materialized container profiles
     // too — containers send the same UA as the rest of the browser.
-    // MPROF02: instance() covers the active persona's containers; a
-    // sweep across every persona's managers lands with MPROF03's
-    // window binding (only the default persona can have live
-    // container profiles until then).
-    const QList<QWebEngineProfile*> containerProfiles =
-        ContainerManager::instance()->createdProfiles();
-    for (QWebEngineProfile *containerProfile : containerProfiles)
-        applyTo(containerProfile);
+    // MPROF03: sweep every persona's container manager — containers
+    // are persona state, so instance() alone would miss profiles
+    // another window's profile brought up.
+    const QList<ProfileContext> personas =
+        ProfileRegistry::instance()->profiles();
+    for (const ProfileContext &persona : personas) {
+        const QList<QWebEngineProfile*> containerProfiles =
+            ContainerManager::instanceFor(persona.id)->createdProfiles();
+        for (QWebEngineProfile *containerProfile : containerProfiles)
+            applyTo(containerProfile);
+    }
 }
 
 // Schemes Chromium renders itself plus the ones this application

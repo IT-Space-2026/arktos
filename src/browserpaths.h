@@ -62,9 +62,18 @@ QString profileDataDir(const QString &profileId);
 QString profileDataFilePath(const QString &profileId,
                             const QString &fileName);
 
-// Profile id the process's unscoped stores belong to.  Always
-// "default" until MPROF03 binds windows to real ids.
+// Profile id the process's unscoped stores belong to (MPROF03):
+// the "ambient" persona — pushed by BrowserMainWindow at construction
+// and again on every window activation so call sites without their
+// own profile context (menus, dialogs, lazy panels) follow the
+// focused window.  Non-window callers see the last active window's
+// persona; before any window exists it is "default".
 QString activeProfileId();
+
+// Pushes the ambient persona.  Only profile-slug ids are honored —
+// anything else (including an empty string) resolves to "default" so
+// a bogus id can never steer unscoped stores outside profiles/.
+void setActiveProfileId(const QString &profileId);
 
 // Slug check shared with ProfileRegistry: lowercase letters, digits,
 // '-'/'_' — an id is a path segment, so anything else is refused.

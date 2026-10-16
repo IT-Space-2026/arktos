@@ -75,6 +75,7 @@
 #include "bookmarksmodel.h"
 #include "bookmarkstoolbar.h"
 #include "browserapplication.h"
+#include "browserpaths.h"
 #include "browsertheme.h"
 #include "clearprivatedata.h"
 #include "commandpalette.h"
@@ -299,7 +300,8 @@ private:
     }
 };
 
-BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
+BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags,
+                                     const QString &profileId)
     : QMainWindow(parent, flags)
     , m_sidebarGrip(nullptr)
     , m_sidebarGripLayout(nullptr)
@@ -320,6 +322,8 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     , m_bookmarksToolbarFrame(0)
 #endif
     , m_bookmarksToolbar(nullptr)
+    , m_profileId(BrowserPaths::isProfileId(profileId)
+                  ? profileId : QStringLiteral("default"))
     , m_tabWidget(new TabWidget(this))
     , m_loadingIndicator(new LoadingIndicator(this))
     , m_zoomControl(new ZoomControl(this))
@@ -327,6 +331,11 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     , m_netIndicator(new NetIndicator(this))
     , m_autoSaver(new AutoSaver(this))
 {
+    // MPROF03: construction-time ambient push — every widget/menu/
+    // lazy singleton built below resolves context-less ProfileSettings
+    // and instance() calls to THIS window's persona, not whatever
+    // window happened to be active.
+    BrowserPaths::setActiveProfileId(m_profileId);
     setAttribute(Qt::WA_DeleteOnClose, true);
     statusBar()->setSizeGripEnabled(true);
     // fixes https://bugzilla.mozilla.org/show_bug.cgi?id=219070
@@ -504,7 +513,7 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     }
 
     QWidget *centralWidget = new QWidget(this);
-    BookmarksModel *boomarksModel = BrowserApplication::bookmarksManager()->bookmarksModel();
+    BookmarksModel *boomarksModel = BookmarksManager::instanceFor(m_profileId)->bookmarksModel();
     m_bookmarksToolbar = new BookmarksToolBar(boomarksModel, this);
     m_bookmarksToolbar->setObjectName(QLatin1String("BookmarksToolbar"));
     // UIP02: bookmark buttons are favicon-sized — pin the bar's icon
@@ -669,13 +678,13 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
             this, [this](bool visible) {
         if (visible)
             ensureSidebarPanel();
-        ProfileSettings settings;
+        ProfileSettings settings(m_profileId);
         settings.setValue(QLatin1String("MainWindow/showSidebar"), visible);
         m_autoSaver->changeOccurred();
     });
     connect(m_sidebarDock, &QDockWidget::dockLocationChanged,
             this, [this](Qt::DockWidgetArea area) {
-        ProfileSettings settings;
+        ProfileSettings settings(m_profileId);
         settings.setValue(QLatin1String("MainWindow/sidebarDockArea"),
                           int(area));
         // SIDE06: the rail follows the dock to the other edge.
@@ -727,7 +736,7 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     // Downloads section is selected when the dock is already up, and
     // the window flashes so the arrival is still noticeable when the
     // panel is hidden.
-    connect(BrowserApplication::downloadManager(),
+    connect(DownloadManager::instanceFor(m_profileId),
             &DownloadManager::itemAdded, this, [this]() {
         if (m_sidebarPanel)
             m_sidebarPanel->showDownloads();
@@ -780,6 +789,12 @@ BrowserMainWindow::~BrowserMainWindow()
     setNavBarEditMode(false);
     m_autoSaver->changeOccurred();
     m_autoSaver->saveIfNeccessary();
+    // MPROF03: the ambient persona must not stay pinned to a dying
+    // window — re-anchor to whichever window still holds focus (the
+    // ActivationChange hook cannot fire for us once we're gone).
+    if (BrowserMainWindow *active =
+            qobject_cast<BrowserMainWindow*>(QApplication::activeWindow()))
+        BrowserPaths::setActiveProfileId(active->profileId());
 }
 
 void BrowserMainWindow::keyPressEvent(QKeyEvent *event)
@@ -825,7 +840,7 @@ BrowserMainWindow *BrowserMainWindow::parentWindow(QWidget *widget)
 
 void BrowserMainWindow::loadDefaultState()
 {
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     settings.beginGroup(QLatin1String("BrowserMainWindow"));
     QByteArray data = settings.value(QLatin1String("defaultState")).toByteArray();
     restoreState(data);
@@ -845,7 +860,7 @@ void BrowserMainWindow::save()
     if (BrowserApplication *application = BrowserApplication::instance())
         application->saveSession();
 
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     settings.beginGroup(QLatin1String("BrowserMainWindow"));
     QByteArray data = saveState(false);
     settings.setValue(QLatin1String("defaultState"), data);
@@ -998,7 +1013,7 @@ bool BrowserMainWindow::restoreState(const QByteArray &state)
 
 void BrowserMainWindow::lastTabClosed()
 {
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     settings.beginGroup(QLatin1String("tabs"));
     bool quit = settings.value(QLatin1String("quitAsLastTabClosed"), true).toBool();
 
@@ -1101,7 +1116,7 @@ void BrowserMainWindow::setupMenu()
     m_fileMenu->addAction(m_fileSaveAsAction);
     m_fileMenu->addSeparator();
 
-    BookmarksManager *bookmarksManager = BrowserApplication::bookmarksManager();
+    BookmarksManager *bookmarksManager = BookmarksManager::instanceFor(m_profileId);
     m_fileImportBookmarksAction = new QAction(m_fileMenu);
     connect(m_fileImportBookmarksAction, &QAction::triggered,
             bookmarksManager, &BookmarksManager::importBookmarks);
@@ -1620,8 +1635,8 @@ void BrowserMainWindow::setupMenu()
     });
     connect(m_toolsMenu, &QMenu::aboutToShow, this, [this]() {
         m_toolsLockStoreAction->setEnabled(
-            SecureStore::passphraseProtectionEnabled()
-            && SecureStore::isUnlocked());
+            SecureStore::passphraseProtectionEnabled(m_profileId)
+            && SecureStore::isUnlocked(m_profileId));
     });
     m_toolsMenu->addAction(m_toolsLockStoreAction);
 
@@ -2349,7 +2364,7 @@ void BrowserMainWindow::applySearchBoxVisibility()
         m_toolbarSearch->setVisible(false);
         return;
     }
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     const bool field = settings.value(
         QLatin1String("MainWindow/showSearchBox"), false).toBool();
     m_toolbarSearch->setButtonMode(false);
@@ -2460,7 +2475,7 @@ void BrowserMainWindow::ensureBidiPanel()
 
 void BrowserMainWindow::applySidebarSettings()
 {
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     const int storedArea =
         settings.value(QLatin1String("MainWindow/sidebarDockArea"),
                        int(Qt::LeftDockWidgetArea)).toInt();
@@ -2503,7 +2518,7 @@ void BrowserMainWindow::applySidebarWidth()
 {
     if (!m_sidebarDock)
         return;
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     const int stored =
         settings.value(QLatin1String("MainWindow/sidebarWidth"),
                        SidebarGrip::defaultWidth()).toInt();
@@ -2518,7 +2533,7 @@ void BrowserMainWindow::persistSidebarWidth(int width)
 {
     // Same convention as the dock-area write above — an immediate
     // QSettings key, no autosaver churn.
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     settings.setValue(QLatin1String("MainWindow/sidebarWidth"), width);
 }
 
@@ -2565,7 +2580,7 @@ void BrowserMainWindow::updateSidebarCloseButton()
             QLatin1String("qt_dockwidget_closebutton")))
         closeButton->setVisible(
             m_sidebarDock->isFloating()
-            && ProfileSettings().value(QLatin1String("sidebar/showCloseButton"),
+            && ProfileSettings(m_profileId).value(QLatin1String("sidebar/showCloseButton"),
                                  true).toBool());
 }
 
@@ -2688,7 +2703,7 @@ void BrowserMainWindow::applyNavBarOrder(const QStringList &order)
 
 void BrowserMainWindow::applyStoredNavBarOrder()
 {
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     const QStringList order = settings.value(
         QLatin1String("navbar/order")).toStringList();
     applyNavBarOrder(order.isEmpty() ? m_navBarDefaultOrder : order);
@@ -2700,7 +2715,7 @@ void BrowserMainWindow::applyStoredNavBarOrder()
 // never yanked mid-gesture; it resyncs when edit mode exits.
 void BrowserMainWindow::saveNavBarOrder()
 {
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     settings.setValue(QLatin1String("navbar/order"), navBarOrder());
     syncNavBarOrderToWindows();
 }
@@ -2725,7 +2740,7 @@ void BrowserMainWindow::syncNavBarOrderToWindows()
 // tor windows, so a single literal default list couldn't serve both.
 void BrowserMainWindow::resetNavBarOrder()
 {
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     settings.remove(QLatin1String("navbar/order"));
     applyNavBarOrder(m_navBarDefaultOrder);
     syncNavBarOrderToWindows();
@@ -2989,7 +3004,7 @@ void BrowserMainWindow::addSidebarBookmark(const QModelIndex &folder)
         dialog.setTitle(webView->title());
     }
     BookmarksManager *bookmarksManager =
-        BrowserApplication::bookmarksManager();
+        BookmarksManager::instanceFor(m_profileId);
     QModelIndex index = folder;
     if (!index.isValid())
         index = bookmarksManager->bookmarksModel()
@@ -3011,8 +3026,8 @@ void BrowserMainWindow::addBookmark()
     AddBookmarkDialog dialog;
     dialog.setUrl(url);
     dialog.setTitle(title);
-    BookmarkNode *menu = BrowserApplication::bookmarksManager()->menu();
-    QModelIndex index = BrowserApplication::bookmarksManager()->bookmarksModel()->index(menu);
+    BookmarkNode *menu = BookmarksManager::instanceFor(m_profileId)->menu();
+    QModelIndex index = BookmarksManager::instanceFor(m_profileId)->bookmarksModel()->index(menu);
     dialog.setCurrentIndex(index);
     dialog.exec();
 }
@@ -3020,7 +3035,7 @@ void BrowserMainWindow::addBookmark()
 void BrowserMainWindow::addBookmarkFolder()
 {
     AddBookmarkDialog dialog;
-    BookmarksManager *bookmarksManager = BrowserApplication::bookmarksManager();
+    BookmarksManager *bookmarksManager = BookmarksManager::instanceFor(m_profileId);
     BookmarkNode *menu = bookmarksManager->menu();
     QModelIndex index = bookmarksManager->bookmarksModel()->index(menu);
     dialog.setCurrentIndex(index);
@@ -3125,7 +3140,7 @@ void BrowserMainWindow::fileSaveAs()
 {
     if (!currentTab())
         return;
-    BrowserApplication::downloadManager()->download(
+    DownloadManager::instanceFor(m_profileId)->download(
         currentTab()->enginePage(), currentTab()->url(), true);
 }
 
@@ -3439,7 +3454,7 @@ void BrowserMainWindow::closeEvent(QCloseEvent *event)
     // filtered levels still die with the window, so they must count.
     const int openTabs = m_tabWidget->totalTabCount();
     if (openTabs > 1) {
-        ProfileSettings settings;
+        ProfileSettings settings(m_profileId);
         settings.beginGroup(QLatin1String("tabs"));
         const bool confirmWindow = settings.value(
             QLatin1String("confirmClosingMultipleTabs"), true).toBool();
@@ -3495,6 +3510,12 @@ void BrowserMainWindow::changeEvent(QEvent *event)
 {
     if (event->type() == QEvent::LanguageChange)
         retranslate();
+    // MPROF03: focus follows persona — the ambient profile id is the
+    // focused window's, so unscoped stores (ProfileSettings(),
+    // *Manager::instance()) keep resolving the window the user is
+    // actually working in.
+    if (event->type() == QEvent::ActivationChange && isActiveWindow())
+        BrowserPaths::setActiveProfileId(m_profileId);
     QMainWindow::changeEvent(event);
 }
 
@@ -3586,7 +3607,7 @@ void BrowserMainWindow::goHome()
     QString home = QLatin1String("about:home");
     if (BrowserApplication::homePageMode()
             == BrowserApplication::SpecificPageHome) {
-        ProfileSettings settings;
+        ProfileSettings settings(m_profileId);
         settings.beginGroup(QLatin1String("MainWindow"));
         home = settings.value(QLatin1String("home"),
                               QLatin1String("about:home")).toString();
@@ -3649,6 +3670,11 @@ void BrowserMainWindow::swapFocus()
     } else {
         currentTab()->setFocus();
     }
+}
+
+QString BrowserMainWindow::profileId() const
+{
+    return m_profileId;
 }
 
 TabWidget *BrowserMainWindow::tabWidget() const
@@ -3720,7 +3746,7 @@ void BrowserMainWindow::populateNewContainerTabMenu()
         unavailable->setEnabled(false);
         return;
     }
-    ContainerManager *manager = ContainerManager::instance();
+    ContainerManager *manager = ContainerManager::instanceFor(m_profileId);
     // ICONS07: the container rows all carry color chips, so the static
     // entries get icons too — a grey chip keeps "No Container" in
     // column with them.  ICONS09: the chips are identity art, not
@@ -3744,7 +3770,7 @@ void BrowserMainWindow::populateNewContainerTabMenu()
     m_fileNewContainerTabMenu->addSeparator();
     QAction *newContainer = m_fileNewContainerTabMenu->addAction(
         tr("New &Container..."), this, [this]() {
-        const QString id = ContainerManager::instance()
+        const QString id = ContainerManager::instanceFor(m_profileId)
             ->createContainerInteractive(this);
         if (!id.isEmpty())
             m_tabWidget->newTabPageInContainer(id);

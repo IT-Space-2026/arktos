@@ -145,10 +145,8 @@ ProfileButton::ProfileButton(QWidget *parent)
             this, &ProfileButton::renameProfile);
 
     // MPROF05: profile switcher + manager entry in the identity
-    // block.  'New Window' lists every registry profile; on this lane
-    // only the window's own profile can actually bind a window
-    // (MPROF03 hasn't merged), so the rest stay disabled with the
-    // reason in their tooltip rather than faking a binding.  The
+    // block.  'New Window' lists every registry profile — each row
+    // opens a window bound to that persona (MPROF03).  The
     // menu rebuilds on open so manager edits show immediately.
     m_newWindowMenu = new QMenu(m_menu);
     m_newWindowMenu->menuAction()->setObjectName(
@@ -164,8 +162,7 @@ ProfileButton::ProfileButton(QWidget *parent)
     m_managerAction->setObjectName(
         QLatin1String("profileManagerAction"));
     connect(m_managerAction, &QAction::triggered, this, [this]() {
-        ProfileManagerDialog::showManager(
-            this, ProfileStore::activeProfileId());
+        ProfileManagerDialog::showManager(this, personaId());
     });
 
     m_menu->addSeparator();
@@ -174,7 +171,7 @@ ProfileButton::ProfileButton(QWidget *parent)
     // PROF03: the Clear-* hygiene section and 'Delete Profile'
     // insert below, under their own separator.
 
-    ProfileIdentity *identity = ProfileIdentity::instance();
+    ProfileIdentity *identity = this->identity();
     connect(identity, &ProfileIdentity::nameChanged,
             this, [this](const QString &) { refreshIdentity(); });
     connect(identity, &ProfileIdentity::avatarChanged,
@@ -208,43 +205,51 @@ void ProfileButton::retranslateUi()
     m_managerAction->setText(tr("Profile Manager..."));
 }
 
+QString ProfileButton::personaId() const
+{
+    if (BrowserMainWindow *window = BrowserMainWindow::parentWindow(
+            const_cast<ProfileButton*>(this)))
+        return window->profileId();
+    return ProfileStore::activeProfileId();
+}
+
+ProfileIdentity *ProfileButton::identity() const
+{
+    return ProfileIdentity::instanceFor(personaId());
+}
+
 void ProfileButton::populateNewWindowMenu()
 {
     m_newWindowMenu->clear();
     ProfileStore *store = ProfileStore::instance();
-    const QString activeId = ProfileStore::activeProfileId();
+    const QString activeId = personaId();
     for (const ProfileContext &context : store->profiles()) {
         QAction *action = m_newWindowMenu->addAction(
             QIcon(store->avatarPixmap(context, 16)),
             context.name.isEmpty() ? context.id : context.name);
         action->setData(context.id);
+        // MPROF03: every registered persona can host a window now —
+        // the window binds the row's id and its tabs/stores follow.
+        connect(action, &QAction::triggered, this, [context]() {
+            if (BrowserApplication *application =
+                    BrowserApplication::instance()) {
+                BrowserMainWindow *window =
+                    application->newMainWindow(context.id);
+                window->goHome();
+            }
+        });
         if (context.id == activeId) {
-            // This window's profile — a plain new window honestly is
-            // a window bound to it.
+            // This window's profile — marked so the row reads as
+            // "current"; the new window still inherits it.
             action->setCheckable(true);
             action->setChecked(true);
-            connect(action, &QAction::triggered, this, []() {
-                if (BrowserApplication *application =
-                        BrowserApplication::instance()) {
-                    BrowserMainWindow *window =
-                        application->newMainWindow();
-                    window->goHome();
-                }
-            });
-        } else {
-            // MPROF03's per-window binding hasn't merged — no honest
-            // way to open a window on another profile yet.
-            action->setEnabled(false);
-            action->setToolTip(
-                tr("Opening a window on another profile needs "
-                   "per-profile window support — not available yet."));
         }
     }
 }
 
 void ProfileButton::refreshIdentity()
 {
-    ProfileIdentity *identity = ProfileIdentity::instance();
+    ProfileIdentity *identity = this->identity();
     // Bake at 2x the face size (min 64) so the icon stays crisp when
     // the caller's setIconSize lands after construction and on
     // fractional scale factors.
@@ -256,7 +261,7 @@ void ProfileButton::refreshIdentity()
 
 void ProfileButton::renameProfile()
 {
-    ProfileIdentity *identity = ProfileIdentity::instance();
+    ProfileIdentity *identity = this->identity();
     bool ok = false;
     const QString name = QInputDialog::getText(
         this, tr("Profile Name"), tr("Profile name:"),

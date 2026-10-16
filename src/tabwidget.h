@@ -186,6 +186,13 @@ public:
     // The container the tab at index belongs to — the default
     // container id for normal and off-the-record pages.
     QString containerIdForTab(int index) const;
+    // MPROF03: the persona this strip is bound to — the owning
+    // BrowserMainWindow's profile binding.  A bare TabWidget (some
+    // autotests) has no window and resolves "default".  Tab creation
+    // resolves engine profiles and persona-scoped stores (container
+    // registry, history) through this id — NOT the ambient one — so
+    // background work in an unfocused window can never cross personas.
+    QString profileId() const;
     // PTAB01: true when the tab's page browses off-the-record — the
     // tab marker, the menu gates and the child-tab inheritance all
     // key on the page profile, not the window-global private flag.

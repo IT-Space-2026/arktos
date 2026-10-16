@@ -39,19 +39,17 @@
 //     is a filesystem slug (isValidProfileId), immutable once created.
 //   - The registry always describes at least "default"; its display
 //     name seeds from the PROF01-era QSettings "profile/name" key and
-//     stays live-synced with ProfileIdentity while this lane's
-//     windows can only bind the default profile.
+//     stays live-synced with ProfileIdentity.
 //
-// Seam helpers MPROF03/MPROF06 rewire after the merge:
-//   - windowBindingAvailable() is false here — no per-window profile
-//     binding exists on this lane, so callers disable and explain.
-//   - activeProfileId() is always "default" (MPROF03 returns the
-//     window's bound id).
+// Seam helpers after the MPROF03 merge:
+//   - windowBindingAvailable() is true — windows bind registry
+//     personas, so per-profile "Open Window" entries are honest.
+//   - activeProfileId() returns the ambient persona — the focused
+//     window's bound id (BrowserPaths::activeProfileId).
 //   - deleteProfile() removes the registry row and the profile dir
-//     in place — honest today because nothing on this lane writes
-//     live state under profiles/<id>/; once MPROF02/03 put real
-//     per-profile stores there the integration pass moves delete to
-//     PROF03's marker-and-restart wipe path.
+//     in place; PROF03's marker-and-restart wipe path covers the
+//     live-profile case (a running window's persona is never deleted
+//     out from under it).
 //   - For the default profile, name/avatar writes are mirrored into
 //     the PROF01-era locations (QSettings "profile/name" and the
 //     data-root profile-avatar.png) so the existing ProfileIdentity
@@ -90,10 +88,9 @@ public:
     QString profileDir(const QString &id) const;
     QString profileFilePath(const QString &id, const QString &fileName) const;
 
-    // MPROF03 seam: no window can bind a non-default profile on this
-    // lane, so every window's profile is the default.  The dialog and
-    // menu disable their per-profile window entries off this flag and
-    // explain why in the tooltip.
+    // MPROF03: window↔profile binding is live — every window carries
+    // its bound persona, so this is true and per-profile window
+    // entries stay enabled.
     static bool windowBindingAvailable();
     static QString activeProfileId();
     ProfileContext activeProfile() const;
