@@ -2871,3 +2871,28 @@ Password-sealed profile vaults in the Rust core (PVAULT01):
     byte-progress callback for UI progress bars; the Qt-side profile
     export/import UI consumes it in a follow-up task.  No-Rust builds
     are unaffected.
+
+Profile vault seal/unseal engine (PVAULT02):
+    The Qt side of the profile vault now exists: a ProfileVault
+    singleton orchestrates PVAULT01's ARV1 FFI into the lock/unlock
+    lifecycle.  Locking a profile packs its data directory into a
+    sibling "<id>.vault/vault.arv" (atomically committed before any
+    plaintext is touched), secure-erases the plaintext tree — one
+    zero overwrite plus fsync per file, with the honest caveat that
+    SSD wear-leveling can retain stale blocks — and leaves a
+    vault.lock marker plus a vault.conf registry entry recording the
+    algo, Argon2id parameters, sealed-at time and the auto_lock flag.
+    Unlocking verifies the whole payload MAC before a single byte of
+    plaintext lands, restores the tree, and re-arms an unlocked.dirty
+    marker; a boot that finds that marker with no sealed blob means
+    the last run died with plaintext live, and checkForDirtyProfiles
+    reports it so a re-seal can be offered.  The disposable cache/
+    directory is deliberately excluded from the vault and stays on
+    disk unsealed (held aside in the vault dir, restored on unlock);
+    the nested profiles/ directory is likewise excluded so sealing
+    one profile never swallows another's vault.  The auto-lock
+    trigger re-seals unlocked auto_lock profiles when the app shuts
+    down (the pre-MPROF03 meaning of "last window closed"), refuses
+    to lock a profile that still has open windows, and refuses to
+    unseal over existing plaintext without explicit confirmation.
+    No-Rust builds keep the class compiled but inert.
