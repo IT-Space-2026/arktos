@@ -24,8 +24,17 @@ SetCompressor /SOLID /FINAL lzma
 
 !include "MUI.nsh"
 !define MUI_ABORTWARNING
-!define MUI_ICON ".\BuildProcess\browser.ico"
-!define MUI_UNICON ".\BuildProcess\browser.ico"
+; makensis cd's into the script's directory, so paths must be either
+; script-relative or passed in absolute via /D. ICONFILE/OUTDIR/SRCDIR
+; are overridable for callers compiling from elsewhere.
+!ifndef ICONFILE
+  !define ICONFILE "browser.ico"
+!endif
+!ifndef OUTDIR
+  !define OUTDIR "."
+!endif
+!define MUI_ICON "${ICONFILE}"
+!define MUI_UNICON "${ICONFILE}"
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
@@ -38,7 +47,7 @@ SetCompressor /SOLID /FINAL lzma
 
 !insertmacro MUI_LANGUAGE "English"
 Name "${PRODUCT_NAME} ${PRODUCT_VERSION}"
-OutFile "${PRODUCT_NAME} ${PRODUCT_VERSION} Installer.exe"
+OutFile "${OUTDIR}\${PRODUCT_NAME} ${PRODUCT_VERSION} Installer.exe"
 InstallDir "$PROGRAMFILES64\${PRODUCT_NAME}"
 InstallDirRegKey HKLM "${PRODUCT_DIR_REGKEY}" ""
 ShowInstDetails show
@@ -52,7 +61,9 @@ Section "Main Components"
   File /r "${DEPLOYDIR}\*.*"
 
   SetOutPath "$INSTDIR\locale"
-  File /nonfatal "src\.qm\locale\*.qm"
+  !ifdef SRCDIR
+    File /nonfatal "${SRCDIR}\.qm\locale\*.qm"
+  !endif
 
   ; MSVC runtime — windeployqt deliberately does NOT ship the VC++
   ; redistributable. The build machine passes its redist dir via
