@@ -192,6 +192,13 @@ public:
     static void beginTabDragSession(TabBar *source, QWidget *page);
     static void endTabDragSession();
 
+    // TABGRP02: the tab a live in-bar drag would drop-stack into —
+    // the one whose middle band sits under the cursor, or a
+    // collapsed group's chip (whole rect).  -1 while no drop-stack
+    // target is hovered; paintEvent tints it as the merge preview.
+    // Exposed for the autotests' affordance legs.
+    int groupDropIndex() const { return m_groupDropIndex; }
+
 #ifdef AUTOTESTS
     // Test seam: drive a synthesized drop through dropEvent() — a
     // plain QApplication::sendEvent never reaches it because QWidget
@@ -321,6 +328,8 @@ private:
     // tell a middle-of-tab drop (stack into a group) from a reorder.
     bool m_dragTracking;
     int m_draggedIndex;
+    // TABGRP02: the drop-to-group hover target — see groupDropIndex().
+    int m_groupDropIndex = -1;
     QAction *m_viewTabBarAction;
     QAction *m_iconOnlyTabsAction;
     bool m_showTabBarWhenOneTab;

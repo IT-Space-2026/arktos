@@ -293,6 +293,12 @@ public:
     void setTabGroupColor(const QString &groupId, const QColor &color);
     void setTabGroupCollapsed(const QString &groupId, bool collapsed);
     void ungroupTabs(const QString &groupId);
+    // TABGRP02: closes every member of the group — visible, collapsed-
+    // hidden and container-level-hidden alike — through the normal
+    // close path so each lands on the recently-closed stack.  Above
+    // one member the shared tabs/confirmClosingMultipleTabs pref gates
+    // a warning that reports the real (hidden-inclusive) count.
+    void closeTabGroup(const QString &groupId);
 
     QByteArray saveState() const;
     bool restoreState(const QByteArray &state);

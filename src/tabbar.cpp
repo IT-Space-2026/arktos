@@ -504,6 +504,10 @@ void TabBar::leaveEvent(QEvent *event)
         m_bandDropHeader = -1;
         update();
     }
+    if (m_groupDropIndex != -1) {
+        m_groupDropIndex = -1;
+        update();
+    }
     m_previewTimer->stop();
     hideTabPreview();
     QTabBar::leaveEvent(event);
@@ -791,6 +795,13 @@ void TabBar::contextMenuRequested(const QPoint &position)
                            [tabWidget, groupId]() {
                 tabWidget->ungroupTabs(groupId);
             });
+            // TABGRP02: destructive close of the whole group — every
+            // member (a collapsed group's hidden ones included) goes
+            // through the normal close path so undo still works.
+            menu.addAction(tr("Close &Group"), this,
+                           [tabWidget, groupId]() {
+                tabWidget->closeTabGroup(groupId);
+            });
         }
 
         menu.addSeparator();
@@ -889,6 +900,12 @@ void TabBar::mouseReleaseEvent(QMouseEvent *event)
     const int band = containerStripHeight();
     const QPoint pos = event->position().toPoint();
     const bool inBand = band > 0 && pos.y() >= 0 && pos.y() < band;
+    // TABGRP02: the press index clears below before the drop-stacking
+    // leg runs — snapshot the drag source now so a drag whose tab
+    // never swapped (it stayed in its own slot) still resolves the
+    // dragged tab.  Same resolution the band-rebind leg uses.
+    const int dragSource = m_draggedIndex >= 0
+        ? m_draggedIndex : m_pressedTabIndex;
     if (event->button() == Qt::LeftButton) {
         // CONT06: a release in the header band finishes one of two
         // gestures — a tab drag landing on a header rebinds the tab
@@ -904,6 +921,7 @@ void TabBar::mouseReleaseEvent(QMouseEvent *event)
                 && tabWidget) {
                 m_dragTracking = false;
                 m_draggedIndex = -1;
+                m_groupDropIndex = -1;
                 m_bandDropHeader = -1;
                 tabWidget->reopenTabInContainer(
                     dragged, tabWidget->containerHeaders().value(header));
@@ -971,26 +989,32 @@ void TabBar::mouseReleaseEvent(QMouseEvent *event)
     // stacks into its group — Chrome's drop-to-group gesture.  The
     // middle quarter bands at the run's edges still mean "reorder to
     // this slot" so a drop on a tab's edge is never misread.
+    // TABGRP02: a collapsed group's chip is the whole group rendered
+    // as a pill — its entire rect is the stack zone, and the same
+    // zone is what mouseMoveEvent previews with m_groupDropIndex.
     if (event->button() == Qt::LeftButton && m_dragTracking) {
-        const int dragged = m_draggedIndex;
+        const int dragged = dragSource;
         m_dragTracking = false;
+        m_groupDropIndex = -1;
         if (dragged >= 0) {
             const QPoint pos = stripPos(event->position().toPoint());
             const int over = tabAt(pos);
             if (over != -1 && over != dragged) {
+                TabWidget *tabWidget =
+                    qobject_cast<TabWidget*>(parentWidget());
                 const QRect r = tabRect(over);
                 const bool middle = verticalTabShape(shape())
                     ? (pos.y() > r.top() + r.height() / 4
                        && pos.y() < r.bottom() - r.height() / 4)
                     : (pos.x() > r.left() + r.width() / 4
                        && pos.x() < r.right() - r.width() / 4);
-                if (middle) {
-                    if (TabWidget *tabWidget =
-                            qobject_cast<TabWidget*>(parentWidget()))
-                        tabWidget->groupTabWith(dragged, over);
-                }
+                const bool chip =
+                    tabWidget && tabWidget->isTabGroupChip(over);
+                if ((chip || middle) && tabWidget)
+                    tabWidget->groupTabWith(dragged, over);
             }
         }
+        update();
     }
 
     if (band > 0) {
@@ -1053,6 +1077,7 @@ void TabBar::mousePressEvent(QMouseEvent *event)
         // tabMoved tracker so the release can see where the tab went.
         m_dragTracking = true;
         m_draggedIndex = -1;
+        m_groupDropIndex = -1;
         // TABGRP01: clicking a collapsed group's chip expands it.
         TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
         const int index = tabAt(m_dragStartPos);
@@ -1200,8 +1225,10 @@ void TabBar::mouseMoveEvent(QMouseEvent *event)
             }
             drag->setMimeData(mimeData);
             // TABGRP01: a tear-off leaves the bar — the in-bar
-            // drop-stack tracking stops here.
+            // drop-stack tracking stops here, and so does the
+            // TABGRP02 hover affordance (the drop can't stack).
             m_dragTracking = false;
+            m_groupDropIndex = -1;
             // TABS02: and so does the move-drag tracking — the bar is
             // about to spend the drag inside QDrag::exec().
             m_moveDragActive = false;
@@ -1248,6 +1275,39 @@ void TabBar::mouseMoveEvent(QMouseEvent *event)
             hideNativeMovingTab();
             update();
         }
+    }
+
+    // TABGRP02: while a left-button tab drag is live, mark the tab
+    // whose middle band sits under the cursor — or a collapsed
+    // group's chip, whose whole rect stacks — so paintEvent can
+    // preview the merge instead of leaving the gesture blind.
+    // Edge quarters stay reorder zones and never light up.  The
+    // hover test mirrors the release path's drop rule exactly, so
+    // the affordance can never promise a stack the drop won't do.
+    int groupTarget = -1;
+    if (!inBand && m_dragTracking
+        && (event->buttons() & Qt::LeftButton)) {
+        const int dragged = m_draggedIndex >= 0
+            ? m_draggedIndex : m_pressedTabIndex;
+        const int over = tabAt(spos);
+        if (dragged >= 0 && over >= 0 && over != dragged) {
+            const QRect r = tabRect(over);
+            const TabWidget *tabWidget =
+                qobject_cast<TabWidget*>(parentWidget());
+            const bool chip =
+                tabWidget && tabWidget->isTabGroupChip(over);
+            const bool middle = verticalTabShape(shape())
+                ? (spos.y() > r.top() + r.height() / 4
+                   && spos.y() < r.bottom() - r.height() / 4)
+                : (spos.x() > r.left() + r.width() / 4
+                   && spos.x() < r.right() - r.width() / 4);
+            if (chip || middle)
+                groupTarget = over;
+        }
+    }
+    if (groupTarget != m_groupDropIndex) {
+        m_groupDropIndex = groupTarget;
+        update();
     }
 }
 
@@ -2303,6 +2363,41 @@ void TabBar::paintEvent(QPaintEvent *event)
                              Qt::AlignCenter | Qt::AlignVCenter, elided);
             painter.restore();
         }
+    }
+
+    // TABGRP02: drop-to-group affordance — the tracked hover target
+    // previews the merge: a translucent tint in the color the group
+    // would wear (its real color when the target is grouped, the
+    // palette accent otherwise) plus a small '+' badge marking the
+    // stack.  Painted last so it reads over the group rails and the
+    // collapsed chip's pill.
+    if (m_groupDropIndex >= 0 && m_groupDropIndex < count()) {
+        QColor accent = palette().color(QPalette::Highlight);
+        if (tabWidget) {
+            const QColor groupColor = tabWidget->tabGroupColor(
+                tabWidget->tabGroupId(m_groupDropIndex));
+            if (groupColor.isValid())
+                accent = groupColor;
+        }
+        const QRect rect = tabRect(m_groupDropIndex);
+        painter.save();
+        painter.setRenderHint(QPainter::Antialiasing);
+        QColor fill = accent;
+        fill.setAlpha(70);
+        painter.setBrush(fill);
+        painter.setPen(QPen(accent, 2));
+        painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), 6, 6);
+        const int badge = 14;
+        const QRect badgeRect(rect.center().x() - badge / 2,
+                              rect.center().y() - badge / 2,
+                              badge, badge);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(accent);
+        painter.drawEllipse(badgeRect);
+        painter.setPen(AroraStyle::contrastTextColor(accent));
+        painter.drawText(badgeRect, Qt::AlignCenter,
+                         QLatin1String("+"));
+        painter.restore();
     }
 
     // RSZ02: the grip affordance paints in physical space — the
