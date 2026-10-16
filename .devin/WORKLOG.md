@@ -1110,3 +1110,4 @@
 - 2026-10-16 MERGEWATCH: ui-work merged — 01891ba2 (tasks: queue PROF01-03 profile button/avatar/clear-data), 0 conflicts (clean ort merge), build ok; rust-work at 0 commits, skipped
 - 2026-10-16 MERGEWATCH: rust-work merged — e5512f54 (tasks: queue PROF02 profile avatar storage + crop dialog), 0 conflicts (clean ort merge), build ok
 - 2026-10-16 MERGEWATCH: ui-work merged — c0fb3287 (tasks: PROF01 button+menu + PROF04 integration; PROF02/03 moved to rust/main lanes), 0 conflicts (clean ort merge), build ok
+- 2026-10-16 MERGEWATCH: ui-work merged — 423ac601 (tasks: queue TABS10 no tab underlines + TABGRP02 close-group/drag affordance), 0 conflicts (clean ort merge), build ok; rust-work at 0 commits, skipped
