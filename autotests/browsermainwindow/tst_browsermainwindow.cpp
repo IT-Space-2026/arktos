@@ -234,6 +234,7 @@ private slots:
     void downloadsSidebarClearList();
     void widgetTabBookmarksSafety();
     void tabStripCompactHeight();
+    void tabStripNoUnderlines();
     void stopReloadState();
     void extensionActionButtons();
     void navShieldPadlock();
@@ -7203,6 +7204,77 @@ void tst_BrowserMainWindow::tabStripCompactHeight()
     settings.remove(QLatin1String("tabs/tabBarPosition"));
 
     settings.remove(QLatin1String("tabs/containerDisplay"));
+    closeWindow(window);
+}
+
+// TABS10: a resting tab must not read as underlined — the strip's
+// resting edge seam is gone, and the pane's top border (the same
+// seam continued under the page) no longer boxes the browser's tab
+// widget.  Probe each resting tab's bottom-edge row for a run of
+// pixels darker than the strip background; a painted hairline is
+// tens of px while text/dots never reach that row.
+void tst_BrowserMainWindow::tabStripNoUnderlines()
+{
+    SubWindow *window = new SubWindow;
+    window->resize(900, 600);
+    window->show();
+    TabWidget *tabWidget = window->tabWidget();
+    tabWidget->newTabAction()->trigger();
+    tabWidget->newTabAction()->trigger();
+    for (int i = 0; i < 20; ++i)
+        QApplication::processEvents();
+
+    TabBar *bar = tabWidget->findChild<TabBar *>();
+    QVERIFY(bar);
+    QVERIFY(bar->count() >= 3);
+    bar->setCurrentIndex(0);
+    QApplication::processEvents();
+
+    const int bgGray = qGray(bar->palette().color(QPalette::Window).rgb());
+    const QImage strip = bar->grab().toImage();
+    for (int i = 1; i < bar->count(); ++i) {
+        const QRect rect = bar->tabRect(i);
+        int run = 0;
+        int best = 0;
+        for (int x = rect.left() + 6; x <= rect.right() - 6; ++x) {
+            if (qGray(strip.pixel(x, rect.bottom())) < bgGray - 12) {
+                ++run;
+                best = qMax(best, run);
+            } else {
+                run = 0;
+            }
+        }
+        QVERIFY2(best < 30, qPrintable(QStringLiteral(
+            "resting tab %1 carries a %2px underline").arg(i).arg(best)));
+    }
+
+    // The pane's 1px border is gone on the browser's tab widget: the
+    // seam band between the strip and the view carries no line —
+    // every row there is plain background (the pane border used to
+    // paint one separator-colored row across the full width).
+    QWidget *view = tabWidget->currentWidget();
+    QVERIFY(view);
+    const int viewTop = view->mapTo(tabWidget, QPoint(0, 0)).y();
+    const int barBottom = bar->geometry().bottom();
+    const QImage pane = tabWidget->grab().toImage();
+    const int paneGray = qGray(tabWidget->palette()
+                               .color(QPalette::Window).rgb());
+    for (int y = barBottom + 1; y < viewTop && y < pane.height(); ++y) {
+        int run = 0;
+        int best = 0;
+        for (int x = 0; x < pane.width(); ++x) {
+            if (qGray(pane.pixel(x, y)) < paneGray - 12) {
+                ++run;
+                best = qMax(best, run);
+            } else {
+                run = 0;
+            }
+        }
+        QVERIFY2(best < 30, qPrintable(QStringLiteral(
+            "pane seam row %1 still paints a %2px line")
+            .arg(y).arg(best)));
+    }
+
     closeWindow(window);
 }
 

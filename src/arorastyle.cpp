@@ -301,18 +301,19 @@ private:
         if (!selected && !hovered && !pressed) {
             // Flat resting tab — only a hairline marks the boundary
             // with a resting neighbor (a card edge needs no help).
+            // A horizontal strip's separator is the right-edge line;
+            // rail rows paint nothing — a line under each row read as
+            // a per-tab underline, which users asked to remove.
             if (bar) {
                 const int index = bar->tabAt(rect.center());
                 if (index >= 0 && index + 1 < bar->count()
-                        && bar->currentIndex() != index + 1) {
+                        && bar->currentIndex() != index + 1
+                        && !railRow
+                        && !verticalTabCardShape(tab->shape)) {
                     const QColor line =
                         AroraStyle::separatorColor(tab->palette);
-                    if (railRow || verticalTabCardShape(tab->shape))
-                        painter->fillRect(rect.left() + 8, rect.bottom(),
-                                          rect.width() - 16, 1, line);
-                    else
-                        painter->fillRect(rect.right(), rect.top() + 5,
-                                          1, rect.height() - 10, line);
+                    painter->fillRect(rect.right(), rect.top() + 5,
+                                      1, rect.height() - 10, line);
                 }
             }
             painter->restore();
@@ -668,9 +669,13 @@ QString AroraStyle::chromeStyleSheet()
         "QDockWidget { border: 1px solid %1; }"
         // The dock title reads as a header row on the spacing scale.
         "QDockWidget::title { padding: %2px %4px; }"
-        // The tab pane's seam is the same hairline; the tor window
-        // overrides the pane to borderless violet itself.
+        // The tab pane's seam is the same hairline — except on the
+        // browser's own tab widget: a border at the pane's top edge
+        // lands as a line under every resting tab (the lifted card
+        // gaps it), which users read as per-tab underlines.  The tor
+        // window already ships the pane borderless.
         "QTabWidget::pane { border: 1px solid %1; }"
+        "QTabWidget#mainTabWidget::pane { border: none; }"
         // THEM03 §c — menus and dropdown popovers share one flat
         // treatment app-wide (the tor window's menus included — the
         // rules resolve from the palette, not the chrome color):

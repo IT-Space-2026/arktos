@@ -64,7 +64,6 @@
 
 #include "addbookmarkdialog.h"
 #include "aroraicon.h"
-#include "arorastyle.h"
 #include "bookmarknode.h"
 #include "bookmarksmanager.h"
 #include "bookmarksmodel.h"
@@ -3820,31 +3819,6 @@ void TabWidget::changeEvent(QEvent *event)
     if (event->type() == QEvent::LanguageChange)
         retranslate();
     QTabWidget::changeEvent(event);
-}
-
-void TabWidget::paintEvent(QPaintEvent *event)
-{
-    QTabWidget::paintEvent(event);
-    // THEM02: the selected card merges into the page — the pane's
-    // hairline row next to the strip takes the card's color where
-    // the card lands, so no seam boxes the lifted tab.  Vertical
-    // rails keep floating cards and need no gap; the strip's own
-    // edge line opens its matching segment in paintResizeGrip().
-    if (!m_tabBar || !m_tabBar->isVisible() || currentIndex() < 0)
-        return;
-    const bool south = tabPosition() == QTabWidget::South;
-    if (tabPosition() == QTabWidget::West
-            || tabPosition() == QTabWidget::East)
-        return;
-    const QRect sel = m_tabBar->tabRect(currentIndex())
-        .translated(m_tabBar->pos());
-    QPainter painter(this);
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(AroraStyle::tabActiveColor(palette()));
-    painter.drawRect(sel.left() - 1,
-                     south ? m_tabBar->geometry().top() - 1
-                           : m_tabBar->geometry().bottom() + 1,
-                     sel.width() + 2, 1);
 }
 
 /*
