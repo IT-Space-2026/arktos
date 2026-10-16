@@ -49,6 +49,7 @@ SUBDIRS  = \
     popupblocker \
     privatebrowsing \
     privacy \
+    profileavatar \
     profilemenu \
     qrcode \
     rustdownload \
