@@ -901,6 +901,14 @@ UI:
   engine control with no Arora wiring, so the retention lives in
   Chromium's per-navigation session-history handling, not in any
   Arora object; the fix pass is tracked separately (MEM05/MEM06).
+- Profile button on the navigation bar: a round avatar now closes the
+  bar's right edge (mirroring the Arora logo button on the left) and
+  drops a menu showing the profile avatar and name — "Edit Profile
+  Name..." renames it and the new name shows on every open window
+  right away and is kept across restarts. Until you pick a picture
+  the face is a neutral silhouette that stays readable on the
+  violet Tor bar too; the button is a normal navigation-bar item, so
+  Edit Navigation Bar can move it like any other (PROF01).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

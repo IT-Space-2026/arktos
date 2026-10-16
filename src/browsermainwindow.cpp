@@ -90,6 +90,8 @@
 #include "pdfview.h"
 #include "pictureinpicture.h"
 #include "printpreviewdialog.h"
+#include "profilebutton.h"
+#include "profileidentity.h"
 #include "readerbutton.h"
 #include "readermode.h"
 #include "safetext.h"
@@ -240,85 +242,17 @@ static QIcon torAppMenuIcon()
 
 // MENU17: brand accent — the app-menu button paints its logo larger
 // than the bar's shared nav glyphs (MENU19: ~1.6x, 29px at the
-// bar's 18px).  A widget added through QToolBar::addWidget keeps its
-// own iconSize property, but QToolButton::initStyleOption
-// unconditionally swaps it for the parent toolbar's, so a plain
-// setIconSize() changes the accessor value and never the pixels.
-// This button restores its own iconSize on the style option at the
-// two read sites — paint and sizeHint — so the mark grows while
-// every sibling stays at the bar's size.  The engine already
-// letterboxes the mark into a centered square, so the bigger cell
-// still cannot deform it.
-class AppMenuButton : public QToolButton
+// bar's 18px).  The iconSize-restore machinery that lets an own
+// iconSize reach the pixels under the toolbar clamp lives on
+// NavBarAccentButton (profilebutton.h) — PROF01's profile button is
+// the second consumer.  The engine already letterboxes the mark
+// into a centered square, so the bigger cell still cannot deform it.
+class AppMenuButton : public NavBarAccentButton
 {
 public:
     explicit AppMenuButton(QWidget *parent = nullptr)
-        : QToolButton(parent)
+        : NavBarAccentButton(parent)
     {
-    }
-
-    QSize sizeHint() const override
-    {
-        // QToolButton::sizeHint() verbatim, except opt.iconSize keeps
-        // this button's own size instead of the toolbar's.
-        ensurePolished();
-        QStyleOptionToolButton opt;
-        initStyleOption(&opt);
-        opt.iconSize = iconSize();
-        int w = 0;
-        int h = 0;
-        const QFontMetrics fm(fontMetrics());
-        if (opt.toolButtonStyle != Qt::ToolButtonTextOnly) {
-            w = opt.iconSize.width();
-            h = opt.iconSize.height();
-        }
-        if (opt.toolButtonStyle != Qt::ToolButtonIconOnly) {
-            QSize textSize = fm.size(Qt::TextShowMnemonic, text());
-            textSize.setWidth(textSize.width()
-                              + fm.horizontalAdvance(QLatin1Char(' ')) * 2);
-            if (opt.toolButtonStyle == Qt::ToolButtonTextUnderIcon) {
-                h += 4 + textSize.height();
-                w = qMax(w, textSize.width());
-            } else if (opt.toolButtonStyle == Qt::ToolButtonTextBesideIcon) {
-                w += 4 + textSize.width();
-                h = qMax(h, textSize.height());
-            } else { // TextOnly
-                w = textSize.width();
-                h = textSize.height();
-            }
-        }
-        opt.rect.setSize(QSize(w, h)); // PM_MenuButtonIndicator needs the height
-        if (popupMode() == QToolButton::MenuButtonPopup)
-            w += style()->pixelMetric(QStyle::PM_MenuButtonIndicator,
-                                      &opt, this);
-        QSize grown = style()->sizeFromContents(QStyle::CT_ToolButton,
-                                                &opt, QSize(w, h), this);
-        // The bigger mark fills the face instead of stretching the
-        // row: the face caps at a square one pixel over the glyph,
-        // and NavBarToolBar's compacted vertical margins hand the
-        // extra pixels back so the bar keeps the height the location
-        // field drove.  The style only ever clips the pixmap to the
-        // label cell after bounding the request to iconSize, so a
-        // snug face shrinks the glyph a pixel — never deforms it.
-        // The iconSize floor guards thin styles: the hit-rect never
-        // drops below the art it paints.
-        const int edge = qMax(QToolButton::sizeHint().height(),
-                              iconSize().height()) + 1;
-        return grown.expandedTo(iconSize())
-            .boundedTo(QSize(edge, edge));
-    }
-
-protected:
-    void paintEvent(QPaintEvent *) override
-    {
-        // QToolButton::paintEvent() verbatim plus the same iconSize
-        // restore — this is where the toolbar clamp would otherwise
-        // shrink the glyph back to the shared nav size.
-        QStylePainter p(this);
-        QStyleOptionToolButton opt;
-        initStyleOption(&opt);
-        opt.iconSize = iconSize();
-        p.drawComplexControl(QStyle::CC_ToolButton, opt);
     }
 };
 
@@ -433,7 +367,10 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
         QLabel *badge = new QLabel(QLatin1String(" Tor "), m_navigationBar);
         badge->setStyleSheet(AroraStyle::torBadgeStyleSheet());
         badge->setToolTip(tr("This window browses through the Tor network"));
-        QAction *badgeAction = m_navigationBar->addWidget(badge);
+        // PROF01: insert ahead of the profile button — the avatar
+        // keeps the bar's right edge on every window type.
+        QAction *badgeAction =
+            m_navigationBar->insertWidget(m_profileButtonAction, badge);
         badgeAction->setProperty(kNavBarItemIdProperty,
                                  QLatin1String("torBadge"));
 
@@ -2293,6 +2230,25 @@ void BrowserMainWindow::setupToolBar()
     m_navigationBar->addAction(m_viewSidebarAction);
     m_viewSidebarAction->setProperty(kNavBarItemIdProperty,
                                      QLatin1String("sidebar"));
+
+    // PROF01: the profile button closes the bar — the LAST widget on
+    // the right edge, face-matched to the app-menu logo on the left
+    // (~1.6x the bar's glyph size, same NavBarAccentButton face).
+    // Its dropdown scaffolds the single-profile identity menu
+    // (avatar + editable name now; picture and hygiene entries land
+    // with PROF02/PROF03).  On tor windows the badge inserts ahead
+    // of it below so the avatar keeps the right edge.
+    m_profileButton = new ProfileButton(m_navigationBar);
+    m_profileButton->setObjectName(QLatin1String("profileButton"));
+    m_profileButton->setIconSize(
+        QSize(qRound(navIconSize.width() * 1.6),
+              qRound(navIconSize.height() * 1.6)));
+    // The ctor baked the avatar at the default iconSize — rebake at
+    // the final face size.
+    m_profileButton->refreshIdentity();
+    m_profileButtonAction = m_navigationBar->addWidget(m_profileButton);
+    m_profileButtonAction->setProperty(
+        kNavBarItemIdProperty, QLatin1String("profileButton"));
 
     int splitterWidth = m_navigationSplitter->width();
     QList<int> sizes;

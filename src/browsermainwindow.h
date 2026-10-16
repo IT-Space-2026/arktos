@@ -96,6 +96,7 @@ class LoadingIndicator;
 class ZoomControl;
 class MemIndicator;
 class NetIndicator;
+class ProfileButton;
 
 /*!
     The MainWindow of the Browser Application.
@@ -442,6 +443,10 @@ private:
     // built with, captured before the stored order is applied).
     QAction *m_navBarEditAction = nullptr;
     QAction *m_navBarResetAction = nullptr;
+    // PROF01: single-profile identity button — the rightmost nav-bar
+    // item, dropdown scaffolded by ProfileButton/ProfileIdentity.
+    ProfileButton *m_profileButton = nullptr;
+    QAction *m_profileButtonAction = nullptr;
     bool m_navBarEditMode = false;
     bool m_navBarDragging = false;
     QPointer<QAction> m_navBarDragAction;

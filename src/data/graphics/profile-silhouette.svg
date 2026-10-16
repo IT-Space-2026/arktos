@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- PROF01: the default profile avatar — a neutral head-and-shoulders
+     silhouette on a mid-grey disc.  Neutral greys so it stays legible
+     on the light chrome and on the tor window's violet bar alike.
+     The disc fills the whole canvas; the figure is clipped to it. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <clipPath id="disc">
+      <circle cx="64" cy="64" r="64"/>
+    </clipPath>
+  </defs>
+  <circle cx="64" cy="64" r="64" fill="#8b93a1"/>
+  <g clip-path="url(#disc)" fill="#eceff3">
+    <circle cx="64" cy="46" r="23"/>
+    <path d="M 12 128 C 14 96 37 79 64 79 C 91 79 114 96 116 128 Z"/>
+  </g>
+  <circle cx="64" cy="64" r="62.5" fill="none" stroke="#6f7683" stroke-width="3" opacity="0.45"/>
+</svg>

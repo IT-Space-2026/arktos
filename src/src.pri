@@ -117,6 +117,8 @@ HEADERS += \
     $$PWD/popupblocker.h \
     $$PWD/positionpicker.h \
     $$PWD/printpreviewdialog.h \
+    $$PWD/profilebutton.h \
+    $$PWD/profileidentity.h \
     $$PWD/qrcodedialog.h \
     $$PWD/qrcodegen.hpp \
     $$PWD/readermode.h \
@@ -198,6 +200,8 @@ SOURCES += \
     $$PWD/popupblocker.cpp \
     $$PWD/positionpicker.cpp \
     $$PWD/printpreviewdialog.cpp \
+    $$PWD/profilebutton.cpp \
+    $$PWD/profileidentity.cpp \
     $$PWD/qrcodedialog.cpp \
     $$PWD/qrcodegen.cpp \
     $$PWD/readermode.cpp \
