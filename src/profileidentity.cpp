@@ -23,10 +23,16 @@
 
 #include <qapplication.h>
 #include <qfile.h>
+#include <qguiapplication.h>
 #include <qimage.h>
 #include <qimagereader.h>
+#include <qpainter.h>
+#include <qpainterpath.h>
 #include <qsavefile.h>
 #include <qsettings.h>
+
+static const char kSilhouetteResource[] =
+    ":/graphics/profile-silhouette.svg";
 
 ProfileIdentity::ProfileIdentity(QObject *parent)
     : QObject(parent)
@@ -94,6 +100,64 @@ bool ProfileIdentity::loadAvatar()
     return true;
 }
 
+QImage ProfileIdentity::avatarSource() const
+{
+    if (!m_sourceLoaded) {
+        m_sourceLoaded = true;
+        if (QFile::exists(avatarFilePath())) {
+            QImageReader reader(avatarFilePath());
+            // A user-dropped file can be arbitrarily large — cap the
+            // decode so a giant photo cannot balloon memory.  PROF02's
+            // writer produces 128px PNGs; this bound only guards
+            // hand-placed files.
+            const QSize size = reader.size();
+            if (size.width() > 2048 || size.height() > 2048)
+                reader.setScaledSize(
+                    size.scaled(512, 512, Qt::KeepAspectRatio));
+            m_source = reader.read();
+        }
+        // PROF02: an unreadable/corrupt avatar file falls back to the
+        // silhouette rather than painting nothing.
+        if (m_source.isNull())
+            m_source = QImageReader(
+                QLatin1String(kSilhouetteResource)).read();
+    }
+    return m_source;
+}
+
+QPixmap ProfileIdentity::avatarPixmap(int extent) const
+{
+    const QImage source = avatarSource();
+    if (source.isNull() || extent <= 0)
+        return QPixmap();
+    QGuiApplication *guiApp =
+        qobject_cast<QGuiApplication *>(QCoreApplication::instance());
+    const qreal dpr = guiApp ? guiApp->devicePixelRatio() : 1.0;
+    const int side = qMax(1, qRound(extent * dpr));
+    QImage out(side, side, QImage::Format_ARGB32_Premultiplied);
+    out.fill(Qt::transparent);
+    QPainter painter(&out);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform);
+    QPainterPath clip;
+    clip.addEllipse(QRectF(0, 0, side, side));
+    painter.setClipPath(clip);
+    // Cover-fit: scale the source so the square is fully painted —
+    // a non-square crop can letterbox, never leave transparent
+    // wedges inside the disc.
+    const QSize scaled = source.size().scaled(
+        side, side, Qt::KeepAspectRatioByExpanding);
+    painter.drawImage(
+        QRect((side - scaled.width()) / 2,
+              (side - scaled.height()) / 2,
+              scaled.width(), scaled.height()),
+        source);
+    painter.end();
+    QPixmap pixmap = QPixmap::fromImage(out);
+    pixmap.setDevicePixelRatio(dpr);
+    return pixmap;
+}
+
 bool ProfileIdentity::setAvatarImage(const QImage &image)
 {
     if (image.isNull())
@@ -110,6 +174,8 @@ bool ProfileIdentity::setAvatarImage(const QImage &image)
         return false;
     m_avatar = QPixmap::fromImage(scaled);
     m_avatarLoaded = true;
+    m_sourceLoaded = false;
+    m_source = QImage();
     emit avatarChanged();
     return true;
 }
@@ -123,6 +189,8 @@ bool ProfileIdentity::removeAvatar()
         return false;
     m_avatar = QPixmap();
     m_avatarLoaded = true;
+    m_sourceLoaded = false;
+    m_source = QImage();
     if (hadAvatar)
         emit avatarChanged();
     return true;
@@ -131,5 +199,7 @@ bool ProfileIdentity::removeAvatar()
 void ProfileIdentity::reloadAvatar()
 {
     loadAvatar();
+    m_sourceLoaded = false;
+    m_source = QImage();
     emit avatarChanged();
 }

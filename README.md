@@ -252,6 +252,12 @@ browsing profile:
 - **Reader mode** (Ctrl+Alt+R) and **Picture-in-Picture** on videos.
 - **Command palette** — Ctrl+Shift+P fuzzy search over browser
   commands.
+- **Profile button** — a round avatar at the right edge of the
+  navigation bar drops the single-profile menu: avatar and profile
+  name on top, "Edit Profile Name..." to rename (the name persists
+  and repaints on every open window). A neutral silhouette is the
+  default face until a custom picture is chosen; it is a normal
+  navigation-bar item, so Edit Navigation Bar can reorder it.
 - **Sharing** — "Copy Clean Link" strips tracking parameters;
   "Show QR" renders a link as a QR code.
 - **Preferences** — opens as a tab (one per window), Vivaldi-style

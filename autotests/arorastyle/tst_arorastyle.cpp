@@ -651,11 +651,13 @@ void tst_Arorastyle::roundedTabChrome()
     QVERIFY(nearColor(
         railImage.pixelColor(row.center().x(), row.top() + 2),
         AroraStyle::tabActiveColor(rpal)));
-    // The resting row separates from its resting neighbor below
-    // with a hairline; the row before the active one needs none.
+    // TABS10: resting rail rows carry no bottom hairline — a line
+    // under each resting row read as a per-tab underline (user
+    // report), so neighbors sit bare against each other and the row
+    // before the active one behaves no differently.
     QVERIFY(nearColor(
         railImage.pixelColor(restRow.center().x(), restRow.bottom()),
-        AroraStyle::separatorColor(rpal)));
+        rpal.color(QPalette::Window)));
     const QRect rowBefore = rail.tabRect(0);
     QVERIFY(nearColor(
         railImage.pixelColor(rowBefore.center().x(),

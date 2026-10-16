@@ -37,6 +37,7 @@
 #include <qframe.h>
 #include <qhash.h>
 #include <qheaderview.h>
+#include <qinputdialog.h>
 #include <qlabel.h>
 #include <qlineedit.h>
 #include <qlistview.h>
@@ -78,6 +79,7 @@
 #include "fakeengine.h"
 #include "history.h"
 #include "historymanager.h"
+#include "profileidentity.h"
 #include "notesmodel.h"
 #include "pdfview.h"
 #include "printpreviewdialog.h"
@@ -232,12 +234,14 @@ private slots:
     void downloadsSidebarClearList();
     void widgetTabBookmarksSafety();
     void tabStripCompactHeight();
+    void tabStripNoUnderlines();
     void stopReloadState();
     void extensionActionButtons();
     void navShieldPadlock();
     void navBarEditMode();
     void navBarOrderPersistence();
     void siteShieldButton();
+    void profileButton();
 };
 
 void tst_BrowserMainWindow::initTestCase()
@@ -7236,6 +7240,77 @@ void tst_BrowserMainWindow::tabStripCompactHeight()
     closeWindow(window);
 }
 
+// TABS10: a resting tab must not read as underlined — the strip's
+// resting edge seam is gone, and the pane's top border (the same
+// seam continued under the page) no longer boxes the browser's tab
+// widget.  Probe each resting tab's bottom-edge row for a run of
+// pixels darker than the strip background; a painted hairline is
+// tens of px while text/dots never reach that row.
+void tst_BrowserMainWindow::tabStripNoUnderlines()
+{
+    SubWindow *window = new SubWindow;
+    window->resize(900, 600);
+    window->show();
+    TabWidget *tabWidget = window->tabWidget();
+    tabWidget->newTabAction()->trigger();
+    tabWidget->newTabAction()->trigger();
+    for (int i = 0; i < 20; ++i)
+        QApplication::processEvents();
+
+    TabBar *bar = tabWidget->findChild<TabBar *>();
+    QVERIFY(bar);
+    QVERIFY(bar->count() >= 3);
+    bar->setCurrentIndex(0);
+    QApplication::processEvents();
+
+    const int bgGray = qGray(bar->palette().color(QPalette::Window).rgb());
+    const QImage strip = bar->grab().toImage();
+    for (int i = 1; i < bar->count(); ++i) {
+        const QRect rect = bar->tabRect(i);
+        int run = 0;
+        int best = 0;
+        for (int x = rect.left() + 6; x <= rect.right() - 6; ++x) {
+            if (qGray(strip.pixel(x, rect.bottom())) < bgGray - 12) {
+                ++run;
+                best = qMax(best, run);
+            } else {
+                run = 0;
+            }
+        }
+        QVERIFY2(best < 30, qPrintable(QStringLiteral(
+            "resting tab %1 carries a %2px underline").arg(i).arg(best)));
+    }
+
+    // The pane's 1px border is gone on the browser's tab widget: the
+    // seam band between the strip and the view carries no line —
+    // every row there is plain background (the pane border used to
+    // paint one separator-colored row across the full width).
+    QWidget *view = tabWidget->currentWidget();
+    QVERIFY(view);
+    const int viewTop = view->mapTo(tabWidget, QPoint(0, 0)).y();
+    const int barBottom = bar->geometry().bottom();
+    const QImage pane = tabWidget->grab().toImage();
+    const int paneGray = qGray(tabWidget->palette()
+                               .color(QPalette::Window).rgb());
+    for (int y = barBottom + 1; y < viewTop && y < pane.height(); ++y) {
+        int run = 0;
+        int best = 0;
+        for (int x = 0; x < pane.width(); ++x) {
+            if (qGray(pane.pixel(x, y)) < paneGray - 12) {
+                ++run;
+                best = qMax(best, run);
+            } else {
+                run = 0;
+            }
+        }
+        QVERIFY2(best < 30, qPrintable(QStringLiteral(
+            "pane seam row %1 still paints a %2px line")
+            .arg(y).arg(best)));
+    }
+
+    closeWindow(window);
+}
+
 // NAVB01: the toolbar's combined Stop/Reload action must follow the
 // engine page's load lifecycle — a held-open response keeps progress
 // at 0 forever under Qt 6.12, yet the face must still flip to Stop on
@@ -7961,8 +8036,8 @@ void tst_BrowserMainWindow::navBarEditMode()
     QVERIFY(indicator->isHidden());
     QCOMPARE(reloadSpy.count(), 0);
 
-    // Second leg: the last item (sidebar toggle) can move into the
-    // middle — drops are not tail/boundary special cases.
+    // Second leg: the tail item (sidebar toggle, resolved by id) can
+    // move into the middle — drops are not boundary special cases.
     QWidget *sidebarButton = navBar->widgetForAction(sidebarToggle);
     QVERIFY(sidebarButton);
     QTest::mousePress(sidebarButton, Qt::LeftButton, Qt::NoModifier,
@@ -8110,7 +8185,7 @@ void tst_BrowserMainWindow::navBarOrderPersistence()
         QStringLiteral("forward"), QStringLiteral("stopReload"),
         QStringLiteral("home"), QStringLiteral("reader"),
         QStringLiteral("siteShield"), QStringLiteral("locationBar"),
-        QStringLiteral("sidebar")};
+        QStringLiteral("sidebar"), QStringLiteral("profileButton")};
 
     SubWindow *window = new SubWindow;
     window->resize(1400, 700);
@@ -8145,7 +8220,7 @@ void tst_BrowserMainWindow::navBarOrderPersistence()
         QStringLiteral("back"), QStringLiteral("forward"),
         QStringLiteral("home"), QStringLiteral("reader"),
         QStringLiteral("siteShield"), QStringLiteral("locationBar"),
-        QStringLiteral("sidebar")};
+        QStringLiteral("sidebar"), QStringLiteral("profileButton")};
     QCOMPARE(window->navBarOrder(), draggedOrder);
     {
         QSettings settings;
@@ -8186,7 +8261,7 @@ void tst_BrowserMainWindow::navBarOrderPersistence()
         QStringLiteral("stopReload"), QStringLiteral("forward"),
         QStringLiteral("home"), QStringLiteral("reader"),
         QStringLiteral("siteShield"), QStringLiteral("locationBar"),
-        QStringLiteral("sidebar")};
+        QStringLiteral("sidebar"), QStringLiteral("profileButton")};
     QCOMPARE(window->navBarOrder(), resyncedOrder);
     QCOMPARE(second->navBarOrder(), resyncedOrder);
     {
@@ -8230,7 +8305,8 @@ void tst_BrowserMainWindow::navBarOrderPersistence()
                           QStringLiteral("home"),
                           QStringLiteral("reader"),
                           QStringLiteral("siteShield"),
-                          QStringLiteral("locationBar")}));
+                          QStringLiteral("locationBar"),
+                          QStringLiteral("profileButton")}));
     closeWindow(third);
 
     // A corrupt non-list value falls back to stock entirely.
@@ -8274,7 +8350,8 @@ void tst_BrowserMainWindow::navBarOrderPersistence()
                           QStringLiteral("reader"),
                           QStringLiteral("torCircuit"),
                           QStringLiteral("siteShield"),
-                          QStringLiteral("locationBar")}));
+                          QStringLiteral("locationBar"),
+                          QStringLiteral("profileButton")}));
     QVERIFY(torBar->styleSheet().contains(QLatin1String("#4a3372")));
     closeWindow(torWindow);
     BrowserApplication::setTorMode(false);
@@ -8465,6 +8542,196 @@ void tst_BrowserMainWindow::siteShieldButton()
     }
 
     closeWindow(window);
+}
+
+// PROF01: the profile button is the rightmost nav-bar widget — its
+// face matched to the app-menu logo on the left — dropping the
+// single-profile identity menu (circular avatar + editable name).
+// The name persists in QSettings "profile/name" and repaints live on
+// every window through the shared ProfileIdentity; the default
+// avatar is the bundled silhouette until PROF02 lets the user pick a
+// picture.
+void tst_BrowserMainWindow::profileButton()
+{
+    {
+        QSettings settings;
+        settings.remove(QLatin1String("navbar/order"));
+        settings.remove(QLatin1String("profile/name"));
+        settings.sync();
+    }
+
+    SubWindow *window = new SubWindow;
+    window->resize(1400, 700);
+    window->show();
+    QApplication::processEvents();
+    QToolBar *navBar = window->findChild<QToolBar *>(
+        QLatin1String("NavigationToolBar"));
+    QVERIFY(navBar);
+    QToolButton *button = window->findChild<QToolButton *>(
+        QLatin1String("profileButton"));
+    QVERIFY(button);
+    QVERIFY(button->autoRaise());
+    QCOMPARE(button->toolButtonStyle(), Qt::ToolButtonIconOnly);
+    QCOMPARE(button->popupMode(), QToolButton::InstantPopup);
+    QCOMPARE(button->text(), QLatin1String("Profile"));
+    QVERIFY(!button->toolTip().isEmpty());
+    QVERIFY(!button->accessibleName().isEmpty());
+    QVERIFY(!button->icon().isNull());
+
+    // Rightmost: the button's own action is the bar's last item and
+    // carries the stable NAVB04 id so edit mode covers it.
+    QAction *profileAction = nullptr;
+    for (QAction *action : navBar->actions()) {
+        if (navBar->widgetForAction(action) == button)
+            profileAction = action;
+    }
+    QVERIFY(profileAction);
+    QCOMPARE(navBar->actions().last(), profileAction);
+    QCOMPARE(profileAction->property("navBarItemId").toString(),
+             QLatin1String("profileButton"));
+
+    // Face-matched to the app-menu logo on the left — same oversized
+    // iconSize (~1.6x the bar's 18px) and the same capped square
+    // face one pixel over the glyph.
+    QToolButton *appButton = window->findChild<QToolButton *>(
+        QLatin1String("appMenuButton"));
+    QVERIFY(appButton);
+    QCOMPARE(button->iconSize(), appButton->iconSize());
+    QCOMPARE(button->sizeHint().width(), button->sizeHint().height());
+    QVERIFY(button->sizeHint().height()
+            >= button->iconSize().height());
+    QVERIFY(button->sizeHint().height()
+            <= button->iconSize().height() + 1);
+
+    // The dropdown scaffolds the identity menu: a header row with a
+    // 32px circular avatar + the persisted profile name, then the
+    // rename entry — PROF02/PROF03 append below.
+    QMenu *menu = button->menu();
+    QVERIFY(menu);
+    QLabel *nameLabel = menu->findChild<QLabel *>(
+        QLatin1String("profileMenuName"));
+    QVERIFY(nameLabel);
+    QCOMPARE(nameLabel->text(), QLatin1String("Profile"));
+    QLabel *avatarLabel = menu->findChild<QLabel *>(
+        QLatin1String("profileMenuAvatar"));
+    QVERIFY(avatarLabel);
+    QVERIFY(!avatarLabel->pixmap().isNull());
+    QAction *rename = menu->findChild<QAction *>(
+        QLatin1String("profileRenameAction"));
+    QVERIFY(rename);
+
+    // No custom avatar under the isolated test profile — the face is
+    // the bundled silhouette, a real mostly-painted disc.
+    QVERIFY(!ProfileIdentity::instance()->hasCustomAvatar());
+    const QImage face =
+        button->icon().pixmap(button->iconSize()).toImage();
+    int opaque = 0;
+    for (int y = 0; y < face.height(); ++y)
+        for (int x = 0; x < face.width(); ++x)
+            if (face.pixelColor(x, y).alpha() > 100)
+                ++opaque;
+    QVERIFY(opaque > face.width() * face.height() / 2);
+
+    // Rename leg: the dialog persists "profile/name" and the shared
+    // ProfileIdentity repaints every window's header live.
+    SubWindow *second = new SubWindow;
+    second->show();
+    QApplication::processEvents();
+    QToolButton *secondButton = second->findChild<QToolButton *>(
+        QLatin1String("profileButton"));
+    QVERIFY(secondButton);
+    QMenu *secondMenu = secondButton->menu();
+    QVERIFY(secondMenu);
+    QLabel *secondName = secondMenu->findChild<QLabel *>(
+        QLatin1String("profileMenuName"));
+    QVERIFY(secondName);
+    QCOMPARE(secondName->text(), QLatin1String("Profile"));
+
+    QTimer::singleShot(150, qApp, []() {
+        if (QInputDialog *dialog = qobject_cast<QInputDialog *>(
+                QApplication::activeModalWidget())) {
+            dialog->setTextValue(QLatin1String("Ada"));
+            dialog->accept();
+        }
+    });
+    rename->trigger();
+    QTRY_COMPARE_WITH_TIMEOUT(
+        ProfileIdentity::instance()->name(), QLatin1String("Ada"),
+        5000);
+    {
+        QSettings settings;
+        QCOMPARE(settings.value(QLatin1String("profile/name"))
+                     .toString(),
+                 QLatin1String("Ada"));
+    }
+    QCOMPARE(nameLabel->text(), QLatin1String("Ada"));
+    QCOMPARE(secondName->text(), QLatin1String("Ada"));
+
+    // A blank rename falls back to the default — no empty header.
+    QTimer::singleShot(150, qApp, []() {
+        if (QInputDialog *dialog = qobject_cast<QInputDialog *>(
+                QApplication::activeModalWidget())) {
+            dialog->setTextValue(QLatin1String("   "));
+            dialog->accept();
+        }
+    });
+    rename->trigger();
+    QTRY_COMPARE_WITH_TIMEOUT(
+        ProfileIdentity::instance()->name(), QLatin1String("Profile"),
+        5000);
+    QCOMPARE(nameLabel->text(), QLatin1String("Profile"));
+
+    closeWindow(second);
+    closeWindow(window);
+
+    // Tor window: the button keeps the bar's right edge — the "Tor"
+    // badge parks one slot left of it — and the neutral silhouette
+    // stays legible on the violet chrome (the disc's ~150 luminance
+    // reads far above the ~55 violet).
+    BrowserApplication::setTorMode(true);
+    SubWindow *torWindow = new SubWindow;
+    torWindow->resize(1200, 700);
+    torWindow->show();
+    QApplication::processEvents();
+    QToolBar *torBar = torWindow->findChild<QToolBar *>(
+        QLatin1String("NavigationToolBar"));
+    QVERIFY(torBar);
+    QToolButton *torButton = torWindow->findChild<QToolButton *>(
+        QLatin1String("profileButton"));
+    QVERIFY(torButton);
+    QAction *torProfile = nullptr;
+    QAction *torBadge = nullptr;
+    for (QAction *action : torBar->actions()) {
+        if (torBar->widgetForAction(action) == torButton)
+            torProfile = action;
+        if (action->property("navBarItemId").toString()
+                == QLatin1String("torBadge"))
+            torBadge = action;
+    }
+    QVERIFY(torProfile);
+    QCOMPARE(torBar->actions().last(), torProfile);
+    QVERIFY(torBadge);
+    QCOMPARE(torBar->actions().indexOf(torBadge),
+             torBar->actions().indexOf(torProfile) - 1);
+    const QImage torFace =
+        torButton->icon().pixmap(QSize(29, 29)).toImage();
+    qlonglong lum = 0;
+    int torOpaque = 0;
+    for (int y = 0; y < torFace.height(); ++y)
+        for (int x = 0; x < torFace.width(); ++x) {
+            const QColor color = torFace.pixelColor(x, y);
+            if (color.alpha() > 100) {
+                lum += qGray(color.rgb());
+                ++torOpaque;
+            }
+        }
+    QVERIFY(torOpaque > 0);
+    QVERIFY(lum / torOpaque > 100);
+
+    closeWindow(torWindow);
+    BrowserApplication::setTorMode(false);
+
+    QSettings().remove(QLatin1String("profile/name"));
 }
 
 QTEST_MAIN(tst_BrowserMainWindow)

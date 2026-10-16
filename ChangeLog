@@ -919,6 +919,21 @@ UI:
   silhouette.  Ready-made 'Change Picture...' / 'Remove Picture'
   actions ship via ProfileAvatarActions for the profile menu to
   pick up (PROF04) (PROF02).
+- Profile button on the navigation bar: a round avatar now closes the
+  bar's right edge (mirroring the Arora logo button on the left) and
+  drops a menu showing the profile avatar and name — "Edit Profile
+  Name..." renames it and the new name shows on every open window
+  right away and is kept across restarts. Until you pick a picture
+  the face is a neutral silhouette that stays readable on the
+  violet Tor bar too; the button is a normal navigation-bar item, so
+  Edit Navigation Bar can move it like any other (PROF01).
+- Tab strips no longer draw a line under resting tabs: the thin seam
+  that ran along the strip's page-facing edge (and gapped under the
+  active tab, so some tabs looked underlined and some didn't) is gone
+  on Top/Bottom bars, resting rows on the Left/Right rail no longer
+  carry a bottom hairline, and the page content is no longer boxed by
+  a frame under the strip.  Tab-to-tab separators and group/container
+  accent stripes are unchanged (TABS10).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

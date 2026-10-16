@@ -2576,34 +2576,17 @@ void TabBar::paintResizeGrip(QPainter *painter)
     const bool active = m_gripHovered || m_resizing;
     if (active)
         painter->fillRect(zone, palette().color(QPalette::Mid));
-    painter->setPen(palette().color(
-        active ? QPalette::Dark : QPalette::Mid));
+    // No resting edge line on a horizontal strip: a seam that gaps
+    // under the selected card reads as an underline under every
+    // resting tab.  The vertical rail keeps its continuous inner-edge
+    // divider — one line beside the whole rail, not under the rows.
     if (verticalTabShape(shape())) {
+        painter->setPen(palette().color(
+            active ? QPalette::Dark : QPalette::Mid));
         const int x = (shape() == QTabBar::RoundedEast
                        || shape() == QTabBar::TriangularEast)
             ? zone.left() : zone.right();
         painter->drawLine(x, zone.top(), x, zone.bottom());
-    } else {
-        const int y = (shape() == QTabBar::RoundedSouth
-                       || shape() == QTabBar::TriangularSouth)
-            ? zone.top() : zone.bottom();
-        // THEM02: the edge line opens under the selected card so
-        // the active tab merges into the page instead of being
-        // boxed by the grip's resting line.  Vertical rails keep
-        // the divider behind their floating cards.
-        const QRect sel = currentIndex() >= 0
-            ? tabRect(currentIndex()) : QRect();
-        if (sel.isValid()
-                && sel.intersects(zone.adjusted(0, -1, 0, 1))) {
-            const int gapLeft = sel.left() - 1;
-            const int gapRight = sel.right() + 1;
-            if (zone.left() < gapLeft)
-                painter->drawLine(zone.left(), y, gapLeft - 1, y);
-            if (gapRight < zone.right())
-                painter->drawLine(gapRight + 1, y, zone.right(), y);
-        } else {
-            painter->drawLine(zone.left(), y, zone.right(), y);
-        }
     }
     // The handle rides the zone's center — a vertical stack for
     // vertical strips, a horizontal run for horizontal ones.

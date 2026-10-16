@@ -82,6 +82,7 @@ private slots:
     void newTabButton();
     void verticalRowHeight();
     void firefoxTabMetrics();
+    void noTabUnderlines();
 };
 
 // Subclass that exposes the protected functions.
@@ -2092,6 +2093,100 @@ void tst_TabBar::firefoxTabMetrics()
         QApplication::processEvents();
         many.grab().save(base + QLatin1String("/ff-many.png"));
     }
+}
+
+// TABS10: no tab carries a line along its content-facing edge — the
+// strip's resting edge seam and the rail rows' bottom hairlines are
+// both gone (user report: "some tabs are underlined some are not").
+// Probe each resting tab's edge row for a run of pixels darker than
+// the strip's window color: label text never reaches that row, the
+// grip dots are ~3px, and a painted hairline is tens of px long.
+void tst_TabBar::noTabUnderlines()
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("tabs"));
+    settings.remove(QLatin1String("verticalTabWidth"));
+    settings.remove(QLatin1String("horizontalTabHeight"));
+
+    const auto longestDarkRun = [](const QImage &image, int y,
+                                   int left, int right, int bgGray) {
+        int best = 0;
+        int run = 0;
+        for (int x = left; x <= right; ++x) {
+            if (qGray(image.pixel(x, y)) < bgGray - 12) {
+                ++run;
+                best = qMax(best, run);
+            } else {
+                run = 0;
+            }
+        }
+        return best;
+    };
+
+    for (const QTabBar::Shape shape :
+         { QTabBar::RoundedNorth, QTabBar::RoundedSouth,
+           QTabBar::RoundedWest, QTabBar::RoundedEast }) {
+        SubTabBar bar;
+        bar.setShape(shape);
+        // Production strips are documentMode + non-expanding.
+        bar.setDocumentMode(true);
+        bar.setExpanding(false);
+        bar.show();
+        for (int i = 0; i < 4; ++i)
+            bar.addTab(QStringLiteral("Welcome to Arora! %1").arg(i));
+        const bool vertical =
+            shape == QTabBar::RoundedWest || shape == QTabBar::RoundedEast;
+        bar.resize(vertical ? QSize(220, 400)
+                          : QSize(600, bar.sizeHint().height()));
+        bar.setCurrentIndex(1);   // resting tabs on both sides
+        QApplication::processEvents();
+
+        const int bgGray =
+            qGray(bar.palette().color(QPalette::Window).rgb());
+        QImage image = bar.grab().toImage();
+        for (int i = 0; i < bar.count(); ++i) {
+            if (i == bar.currentIndex())
+                continue;   // the active card owns its outline
+            const QRect rect = bar.tabRect(i);
+            // North/rows underline at the bottom edge; a bottom
+            // strip's seam sat at the top.
+            const int y = (shape == QTabBar::RoundedSouth)
+                ? rect.top() : rect.bottom();
+            QVERIFY(y >= 0 && y < image.height());
+            const int run = longestDarkRun(image, y,
+                                           rect.left() + 6,
+                                           rect.right() - 6, bgGray);
+            QVERIFY2(run < 30, qPrintable(QStringLiteral(
+                "shape %1 tab %2 edge row %3: %4px line")
+                .arg(shape).arg(i).arg(y).arg(run)));
+        }
+
+        // Hovered resting tab: the wash card stops inside the row,
+        // the edge row stays clean.
+        const QPoint hover = bar.tabRect(3).center();
+        QMouseEvent move(QEvent::MouseMove, QPointF(hover),
+                         QPointF(bar.mapToGlobal(hover)),
+                         Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(&bar, &move);
+        QApplication::processEvents();
+        image = bar.grab().toImage();
+        const QRect rect = bar.tabRect(3);
+        const int y = (shape == QTabBar::RoundedSouth)
+            ? rect.top() : rect.bottom();
+        const int run = longestDarkRun(image, y,
+                                       rect.left() + 6,
+                                       rect.right() - 6, bgGray);
+        QVERIFY2(run < 30, qPrintable(QStringLiteral(
+            "shape %1 hovered tab edge run %2px").arg(shape).arg(run)));
+
+        // Offscreen grab for visual review — ARORA_TABBAR_GRAB_DIR.
+        const QByteArray grabDir = qgetenv("ARORA_TABBAR_GRAB_DIR");
+        if (!grabDir.isEmpty())
+            image.save(QString::fromLocal8Bit(grabDir)
+                + QStringLiteral("/underline-%1.png").arg(int(shape)));
+    }
+
+    settings.endGroup();
 }
 
 QTEST_MAIN(tst_TabBar)

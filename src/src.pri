@@ -119,6 +119,7 @@ HEADERS += \
     $$PWD/printpreviewdialog.h \
     $$PWD/profileavataractions.h \
     $$PWD/profileavatardialog.h \
+    $$PWD/profilebutton.h \
     $$PWD/profileidentity.h \
     $$PWD/profilemenuactions.h \
     $$PWD/qrcodedialog.h \
@@ -204,6 +205,7 @@ SOURCES += \
     $$PWD/printpreviewdialog.cpp \
     $$PWD/profileavataractions.cpp \
     $$PWD/profileavatardialog.cpp \
+    $$PWD/profilebutton.cpp \
     $$PWD/profileidentity.cpp \
     $$PWD/profilemenuactions.cpp \
     $$PWD/qrcodedialog.cpp \

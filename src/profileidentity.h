@@ -35,6 +35,11 @@ class QImage;
 // the custom-avatar pipeline).  The avatar file is user data:
 // single-category ClearPrivateData clears must NOT remove it; only the
 // PROF03 full-profile wipe does.
+//
+// PROF01: avatarPixmap(extent) returns the identity's face the way the
+// nav-bar profile button and menu header render it — circular-cropped
+// and cover-scaled, custom avatar when present else the bundled
+// silhouette graphic.
 class ProfileIdentity : public QObject
 {
     Q_OBJECT
@@ -63,6 +68,11 @@ public:
 
     QString avatarFilePath() const;
 
+    // Circular-cropped, cover-scaled avatar at `extent` logical
+    // pixels — the custom file when present, else the bundled
+    // silhouette.  A null pixmap means even the fallback failed.
+    QPixmap avatarPixmap(int extent) const;
+
     // Scales image to AvatarSize and writes the avatar PNG atomically
     // (QSaveFile's temp+rename).  Returns false on a null image or a
     // write failure; emits avatarChanged() on success.
@@ -76,10 +86,13 @@ public:
 
 private:
     bool loadAvatar();
+    QImage avatarSource() const;
 
     QString m_name;
     QPixmap m_avatar;
     bool m_avatarLoaded;
+    mutable bool m_sourceLoaded = false;
+    mutable QImage m_source;
 };
 
 #endif // PROFILEIDENTITY_H
