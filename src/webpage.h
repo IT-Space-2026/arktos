@@ -139,6 +139,14 @@ public:
     // the navigation commits so the page can carry a readable notice.
     static bool isRateLimitInterstitialUrl(const QUrl &url);
 
+    // TRUST23: true while a session cert-error override (the
+    // interstitial's "proceed anyway" path) covers host on any
+    // profile of this process — the committed chain FAILED engine
+    // validation, so trust surfaces must show it as a warning, never
+    // verified.  Session-scoped like the whitelist it reads; nothing
+    // is persisted.
+    static bool certificateErrorOverridden(const QString &host);
+
     // JSCTL: whether the current page's scripts are blocked by the
     // per-site rules/security tier (meaningful for http/https pages).
     bool isJavaScriptBlocked() const { return m_javaScriptBlocked; }
@@ -190,6 +198,12 @@ public:
     // gates on — a large value keeps a slow suite run from expiring
     // the real bound mid-leg; -1 restores the default.
     static void setTorWarmupMsForTesting(qint64 ms);
+    // TRUST23: records a session cert-error override exactly as the
+    // interstitial's "proceed" path does — lets the padlock's
+    // override-red leg be exercised without a live handshake.
+    static void addCertErrorOverrideForTesting(QWebEngineProfile *profile,
+                                               const QString &host,
+                                               const QString &fingerprint);
 #endif
 
 private slots:

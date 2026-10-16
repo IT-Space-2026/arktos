@@ -63,7 +63,11 @@ browsing profile:
   end of the address bar renders the verdict at a glance (green /
   amber / red, locked on https and unlocked on http), while the
   per-site privacy shield sits on the toolbar just left of the bar
-  and always reflects the active tab. The group also has an "Update
+  and always reflects the active tab. On Tor windows the
+  second-opinion TLS probe cannot run (a direct handshake would
+  bypass Tor), so the engine's own end-to-end chain validation stands
+  in for it; anywhere, a page committed via "proceed anyway" on a
+  certificate error shows red for the rest of the session. The group also has an "Update
   Now" button that refreshes both remote trust lists (Tranco ranks,
   threat blocklist) on demand, with a last-updated status line; it
   stays disabled until remote list downloads are consented to.

@@ -26,6 +26,7 @@
 #include "siteshield.h"
 #include "tlsverifier.h"
 #include "trancolist.h"
+#include "webpage.h"
 #include "webview.h"
 
 #include <qframe.h>
@@ -184,17 +185,28 @@ SitePadlockButton::State SitePadlockButton::stateFor(const QUrl &url)
         const TlsVerifier::Status tls =
             TlsVerifier::instance()->statusFor(host, port);
         // A chain the second opinion evaluated and rejected is a red
-        // verdict regardless of what the lists say.
-        if (tls == TlsVerifier::Status::Warning)
+        // verdict regardless of what the lists say — and so is one
+        // the ENGINE rejected: an https page riding a session
+        // cert-error override ("proceed anyway") committed over a
+        // failed chain.
+        if (tls == TlsVerifier::Status::Warning
+            || WebPage::certificateErrorOverridden(host))
             return State::LockedRed;
         // Green needs BOTH signals positive: the site provably known
         // (the verdict's green — Tranco rank or equivalent) AND the
-        // chain independently verified.  Pending/Unverified/Refused/
-        // None — the latter covering tor and proxied pages, which are
-        // never probed — can only ever claim neutral, so a tor page
-        // can never wear a misleading green.
-        if (tls == TlsVerifier::Status::Verified
-            && level == QLatin1String("green"))
+        // chain verified.  The TLS leg is the second-opinion probe
+        // where it may run; tor forbids the probe outright (a direct
+        // handshake would bypass the managed SOCKS route and
+        // de-anonymize the user), so under tor the leg is the
+        // engine's own validation — TLS rides the tunnel end-to-end
+        // and a failed chain never commits as https (the override
+        // check above covers the "proceed" exception).
+        // Pending/Unverified/Refused and None on non-tor pages can
+        // only ever claim neutral — an absent verdict never wears
+        // green.
+        const bool tlsVerified = tls == TlsVerifier::Status::Verified
+            || BrowserApplication::isTorMode();
+        if (tlsVerified && level == QLatin1String("green"))
             return State::LockedGreen;
         return State::LockedYellow;
     }
@@ -355,14 +367,27 @@ void SitePadlockButton::rebuildPopup()
         m_popupSecurity->setText(tr("Local content"));
 
     // The TLS chip mirrors the site panel's: the second-opinion verdict
-    // for the current host, hidden when nothing was ever probed.
+    // for the current host, hidden when nothing was ever probed.  A
+    // session cert-error override outranks it — the committed chain
+    // FAILED the engine's check and the user proceeded anyway.
     TlsVerifier::Status tls = TlsVerifier::Status::None;
     quint16 tlsPort = 443;
+    bool certOverridden = false;
     if (https && !host.isEmpty()) {
         tlsPort = quint16(url.port(443));
         tls = TlsVerifier::instance()->statusFor(host, tlsPort);
+        certOverridden = WebPage::certificateErrorOverridden(host);
     }
-    switch (tls) {
+    if (certOverridden) {
+        m_popupTls->setText(
+            tr("Certificate check failed — you chose to proceed"));
+        m_popupTls->setToolTip(QString());
+        QPalette warning = palette();
+        warning.setColor(QPalette::WindowText,
+                         warning.color(QPalette::BrightText));
+        m_popupTls->setPalette(warning);
+        m_popupTls->setVisible(true);
+    } else switch (tls) {
     case TlsVerifier::Status::Verified: {
         const QString version =
             TlsVerifier::instance()->tlsVersion(host, tlsPort);
@@ -408,7 +433,20 @@ void SitePadlockButton::rebuildPopup()
         break;
     case TlsVerifier::Status::Refused:
     case TlsVerifier::Status::None:
-        m_popupTls->setVisible(false);
+        // TRUST23: under tor the probe can never run, so None is the
+        // steady state — but an https page committed, meaning the
+        // engine verified the chain end-to-end through the tunnel.
+        // Report that instead of hiding the chip.
+        if (https && BrowserApplication::isTorMode()) {
+            m_popupTls->setText(
+                tr("TLS verified by the engine — the independent "
+                   "check cannot run over Tor"));
+            m_popupTls->setToolTip(QString());
+            m_popupTls->setPalette(palette());
+            m_popupTls->setVisible(true);
+        } else {
+            m_popupTls->setVisible(false);
+        }
         break;
     }
 

@@ -47,6 +47,7 @@
 #include "adblockrule.h"
 #include "adblocksubscription.h"
 #include "aroraicon.h"
+#include "browserapplication.h"
 #include "cookiejar.h"
 #include "fingerprintprotector.h"
 #include "popupblocker.h"
@@ -55,6 +56,7 @@
 #include "siteshield.h"
 #include "tlsverifier.h"
 #include "tlsfixture.h"
+#include "webpage.h"
 #include "webpermissionmanager.h"
 #include "webview.h"
 #include "qtest_arora.h"
@@ -126,6 +128,7 @@ private slots:
     void padlockStateMatrix();
     void padlockFollowsPage();
     void padlockPopup();
+    void padlockTorStates();
 };
 
 void tst_SitePanel::initTestCase()
@@ -1185,6 +1188,81 @@ void tst_SitePanel::padlockPopup()
         trust->findChild<QLabel*>(QLatin1String("padlockPopupTrustOff"));
     QVERIFY(off);
     settings.remove(QLatin1String("trust/enabled"));
+}
+
+// TRUST23: on a tor window the second-opinion probe is forbidden (a
+// direct handshake would bypass the managed SOCKS route and
+// de-anonymize the user), so the padlock's TLS leg is the engine's
+// own chain validation — a committed https page means the chain
+// verified.  Tranco-known https -> green, the same tier a normal
+// window reaches through the probe; unranked -> neutral yellow;
+// flagged -> red.  The verdict read happens inside the mode flip so
+// a failing QCOMPARE can never leak setTorMode(true) into later
+// tests.
+void tst_SitePanel::padlockTorStates()
+{
+    typedef SitePadlockButton::State S;
+
+#if defined(ARORA_RUSTCORE)
+    const QByteArray tranco = "4,tor-known-fixture.test\n";
+    QCOMPARE(rc_tranco_load(
+                 reinterpret_cast<const uint8_t *>(tranco.constData()),
+                 size_t(tranco.size())),
+             RC_OK);
+    const QByteArray block = "tor-threat-fixture.test\n";
+    QCOMPARE(rc_blocklist_load(
+                 reinterpret_cast<const uint8_t *>(block.constData()),
+                 size_t(block.size())),
+             RC_OK);
+    SiteShieldButton::clearTrustCache();
+
+    BrowserApplication::setTorMode(true);
+    // No probe ever lands under tor — the status cache stays empty.
+    const int tlsStatus = int(TlsVerifier::instance()->statusFor(
+        QLatin1String("tor-known-fixture.test")));
+    const int known = int(SitePadlockButton::stateFor(QUrl(
+        QLatin1String("https://tor-known-fixture.test/"))));
+    const int obscure = int(SitePadlockButton::stateFor(QUrl(
+        QLatin1String("https://tor-obscure-fixture.test/"))));
+    const int threat = int(SitePadlockButton::stateFor(QUrl(
+        QLatin1String("https://tor-threat-fixture.test/"))));
+    const int plain = int(SitePadlockButton::stateFor(QUrl(
+        QLatin1String("http://tor-known-fixture.test/"))));
+    BrowserApplication::setTorMode(false);
+
+    QCOMPARE(tlsStatus, int(TlsVerifier::Status::None));
+    QCOMPARE(known, int(S::LockedGreen));
+    QCOMPARE(obscure, int(S::LockedYellow));
+    QCOMPARE(threat, int(S::LockedRed));
+    QCOMPARE(plain, int(S::UnlockedYellow));
+
+    // A user proceeding past the cert interstitial on a ranked host
+    // is the one tor page that must NOT wear green — the committed
+    // chain failed the engine's own check.  The override is injected
+    // through the WebPage test seam rather than a live handshake.
+    QWebEngineProfile profile;
+    WebPage::addCertErrorOverrideForTesting(&profile,
+        QLatin1String("tor-known-fixture.test"),
+        QLatin1String("deadbeef"));
+    QVERIFY(WebPage::certificateErrorOverridden(
+        QLatin1String("tor-known-fixture.test")));
+    BrowserApplication::setTorMode(true);
+    const int overridden = int(SitePadlockButton::stateFor(QUrl(
+        QLatin1String("https://tor-known-fixture.test/"))));
+    BrowserApplication::setTorMode(false);
+    QCOMPARE(overridden, int(S::LockedRed));
+
+    SiteShieldButton::clearTrustCache();
+    rc_sitetrust_reload();
+#else
+    // No crate: no verdict and no probe — every web page lands on the
+    // neutral tier even under tor, locked iff https.
+    BrowserApplication::setTorMode(true);
+    const int locked = int(SitePadlockButton::stateFor(QUrl(
+        QLatin1String("https://a.example/"))));
+    BrowserApplication::setTorMode(false);
+    QCOMPARE(locked, int(S::LockedYellow));
+#endif
 }
 
 QTEST_MAIN(tst_SitePanel)
