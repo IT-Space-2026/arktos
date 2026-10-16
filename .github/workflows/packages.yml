@@ -158,11 +158,18 @@ jobs:
           "QTDIR=$qt" >> $env:GITHUB_ENV
           "$qt\bin" >> $env:GITHUB_PATH
 
-      - uses: ilammy/msvc-dev-cmd@v1
-
       - name: Build
         shell: cmd
         run: |
+          rem MSVC env without ilammy/msvc-dev-cmd (it still targets
+          rem Node 20): vswhere ships on every Windows runner and
+          rem resolves the installed VS's vcvars64.bat edition-agnostic.
+          for /f "usebackq delims=" %%i in (`""C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath"`) do set "VSPATH=%%i"
+          if not defined VSPATH (echo vswhere found no VS installation & exit /b 1)
+          call "%VSPATH%\VC\Auxiliary\Build\vcvars64.bat"
+          rem vcvars env dies with this step — re-export the piece the
+          rem NSIS step needs (CRT redist dir for the installer payload).
+          echo VCToolsRedistDir=%VCToolsRedistDir%>> %GITHUB_ENV%
           "%QTDIR%\bin\qmake.exe" -o Makefile arora.pro
           rem Packaging only needs the app — autotests/tools aren't
           rem deployed, and serial nmake over ~65 test binaries stalls
@@ -200,14 +207,16 @@ jobs:
         run: |
           choco install nsis -y --no-progress
           # choco's PATH refresh does not propagate between steps —
-          # resolve makensis from its install dir explicitly.
-          $makensis = Get-ChildItem 'C:\Program Files (x86)\NSIS\makensis.exe', 'C:\Program Files\NSIS\makensis.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $makensis) { $makensis = Get-Command makensis -ErrorAction SilentlyContinue }
-          if (-not $makensis) { throw "makensis not found after choco install" }
-          $crt = Get-ChildItem "$env:VCToolsRedistDir\x64" -Directory -Filter 'Microsoft.VC*.CRT' | Select-Object -Last 1
+          # resolve makensis from its install dir explicitly (a plain
+          # path string — $cmd.Source only exists on CommandInfo).
+          $makensis = 'C:\Program Files (x86)\NSIS\makensis.exe'
+          if (-not (Test-Path $makensis)) { $makensis = 'C:\Program Files\NSIS\makensis.exe' }
+          if (-not (Test-Path $makensis)) { $makensis = (Get-Command makensis -ErrorAction Stop).Source }
+          $crt = Get-ChildItem "$env:VCToolsRedistDir\x64" -Directory -Filter 'Microsoft.VC*.CRT' -ErrorAction SilentlyContinue | Select-Object -Last 1
           $nsisArgs = @('/DDEPLOYDIR=deploy')
           if ($crt) { $nsisArgs += "/DVCREDIST=$($crt.FullName)" }
-          & $makensis.Source @nsisArgs BuildProcess\windowsinstaller.nsi
+          & $makensis @nsisArgs BuildProcess\windowsinstaller.nsi
+          if ($LASTEXITCODE -ne 0) { throw "makensis failed ($LASTEXITCODE)" }
 
       - uses: actions/upload-artifact@v7
         with:
