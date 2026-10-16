@@ -20,6 +20,8 @@
 #include "profileidentity.h"
 
 #include "browserpaths.h"
+#include "profilecontext.h"
+#include "profileregistry.h"
 
 #include <qapplication.h>
 #include <qfile.h>
@@ -29,7 +31,6 @@
 #include <qpainter.h>
 #include <qpainterpath.h>
 #include <qsavefile.h>
-#include <qsettings.h>
 
 static const char kSilhouetteResource[] =
     ":/graphics/profile-silhouette.svg";
@@ -38,9 +39,31 @@ ProfileIdentity::ProfileIdentity(QObject *parent)
     : QObject(parent)
     , m_avatarLoaded(false)
 {
-    m_name = QSettings()
-        .value(QLatin1String("profile/name"), tr("Profile"))
-        .toString();
+    m_name = name();
+    m_avatarFileName = avatarFileName();
+    // MPROF01: the profile registry is the single source of truth for
+    // name/avatar — an updateProfile() from anywhere (e.g. MPROF05's
+    // manager UI) repaints through the usual signals.
+    connect(ProfileRegistry::instance(), &ProfileRegistry::profileChanged,
+            this, [this](const QString &id) {
+        ProfileRegistry *registry = ProfileRegistry::instance();
+        if (id != registry->activeProfileId())
+            return;
+        const QString current = name();
+        if (current != m_name) {
+            m_name = current;
+            emit nameChanged(m_name);
+        }
+        const QString file = avatarFileName();
+        if (file != m_avatarFileName) {
+            m_avatarFileName = file;
+            m_avatarLoaded = false;
+            m_avatar = QPixmap();
+            m_sourceLoaded = false;
+            m_source = QImage();
+            emit avatarChanged();
+        }
+    });
 }
 
 ProfileIdentity *ProfileIdentity::instance()
@@ -53,23 +76,38 @@ ProfileIdentity *ProfileIdentity::instance()
 
 QString ProfileIdentity::name() const
 {
-    return m_name;
+    const QString name =
+        ProfileRegistry::instance()->activeProfile().name;
+    return name.isEmpty() ? tr("Profile") : name;
 }
 
 void ProfileIdentity::setName(const QString &name)
 {
     const QString trimmed = name.trimmed();
     const QString effective = trimmed.isEmpty() ? tr("Profile") : trimmed;
-    if (effective == m_name)
+    ProfileRegistry *registry = ProfileRegistry::instance();
+    ProfileContext context = registry->activeProfile();
+    if (!context.isValid() || effective == this->name())
         return;
+    context.name = effective;
     m_name = effective;
-    QSettings().setValue(QLatin1String("profile/name"), m_name);
+    registry->updateProfile(context);
     emit nameChanged(m_name);
+}
+
+QString ProfileIdentity::avatarFileName() const
+{
+    const QString file =
+        ProfileRegistry::instance()->activeProfile().avatar;
+    return file.isEmpty() ? QStringLiteral("profile-avatar.png") : file;
 }
 
 QString ProfileIdentity::avatarFilePath() const
 {
-    return BrowserPaths::dataFilePath(QLatin1String("profile-avatar.png"));
+    QString id = ProfileRegistry::instance()->activeProfile().id;
+    if (id.isEmpty())
+        id = ProfileRegistry::defaultProfileId();
+    return BrowserPaths::profileDataFilePath(id, avatarFileName());
 }
 
 QPixmap ProfileIdentity::avatar()

@@ -242,7 +242,7 @@ QAction *ProfileMenuActions::deleteProfileAction()
 
 QString ProfileMenuActions::wipeMarkerPath()
 {
-    return BrowserPaths::dataFilePath(
+    return BrowserPaths::globalDataFilePath(
         QLatin1String("arora-profile-wipe.pending"));
 }
 

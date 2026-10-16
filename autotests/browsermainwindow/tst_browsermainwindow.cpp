@@ -79,7 +79,9 @@
 #include "fakeengine.h"
 #include "history.h"
 #include "historymanager.h"
+#include "profilecontext.h"
 #include "profileidentity.h"
+#include "profileregistry.h"
 #include "notesmodel.h"
 #include "pdfview.h"
 #include "printpreviewdialog.h"
@@ -8547,7 +8549,7 @@ void tst_BrowserMainWindow::siteShieldButton()
 // PROF01: the profile button is the rightmost nav-bar widget — its
 // face matched to the app-menu logo on the left — dropping the
 // single-profile identity menu (circular avatar + editable name).
-// The name persists in QSettings "profile/name" and repaints live on
+// The name persists in the profile registry and repaints live on
 // every window through the shared ProfileIdentity; the default
 // avatar is the bundled silhouette until PROF02 lets the user pick a
 // picture.
@@ -8556,8 +8558,13 @@ void tst_BrowserMainWindow::profileButton()
     {
         QSettings settings;
         settings.remove(QLatin1String("navbar/order"));
-        settings.remove(QLatin1String("profile/name"));
         settings.sync();
+        // MPROF01: the display name lives in the profile registry —
+        // reset it there, not in QSettings.
+        ProfileContext context =
+            ProfileRegistry::instance()->activeProfile();
+        context.name = QStringLiteral("Profile");
+        ProfileRegistry::instance()->updateProfile(context);
     }
 
     SubWindow *window = new SubWindow;
@@ -8632,7 +8639,7 @@ void tst_BrowserMainWindow::profileButton()
                 ++opaque;
     QVERIFY(opaque > face.width() * face.height() / 2);
 
-    // Rename leg: the dialog persists "profile/name" and the shared
+    // Rename leg: the dialog persists the registry name and the shared
     // ProfileIdentity repaints every window's header live.
     SubWindow *second = new SubWindow;
     second->show();
@@ -8658,12 +8665,8 @@ void tst_BrowserMainWindow::profileButton()
     QTRY_COMPARE_WITH_TIMEOUT(
         ProfileIdentity::instance()->name(), QLatin1String("Ada"),
         5000);
-    {
-        QSettings settings;
-        QCOMPARE(settings.value(QLatin1String("profile/name"))
-                     .toString(),
-                 QLatin1String("Ada"));
-    }
+    QCOMPARE(ProfileRegistry::instance()->activeProfile().name,
+             QLatin1String("Ada"));
     QCOMPARE(nameLabel->text(), QLatin1String("Ada"));
     QCOMPARE(secondName->text(), QLatin1String("Ada"));
 
@@ -8731,7 +8734,12 @@ void tst_BrowserMainWindow::profileButton()
     closeWindow(torWindow);
     BrowserApplication::setTorMode(false);
 
-    QSettings().remove(QLatin1String("profile/name"));
+    {
+        ProfileContext context =
+            ProfileRegistry::instance()->activeProfile();
+        context.name = QStringLiteral("Profile");
+        ProfileRegistry::instance()->updateProfile(context);
+    }
 }
 
 QTEST_MAIN(tst_BrowserMainWindow)

@@ -120,7 +120,7 @@ QString TorManager::dataDirectory() const
 {
     if (!m_dataDirectory.isEmpty())
         return m_dataDirectory;
-    return BrowserPaths::dataFilePath(QLatin1String("tor"));
+    return BrowserPaths::globalDataFilePath(QLatin1String("tor"));
 }
 
 void TorManager::setDataDirectory(const QString &dir)

@@ -4806,8 +4806,17 @@ int main(int argc, char **argv)
     // resolves (smoke runs land it in their isolated store).  A fatal
     // signal or std::terminate now leaves marker + backtrace in
     // crashreport.log and on stderr instead of a silent exit.
-    CrashReporter::install(BrowserPaths::dataFilePath(
+    CrashReporter::install(BrowserPaths::globalDataFilePath(
         QLatin1String("crashreport.log")));
+
+    // MPROF01: first-boot profile layout.  Runs before the application
+    // object — hence before any manager resolves a store path — so the
+    // migration is deterministic rather than triggered lazily by the
+    // first dataFilePath() call.  On failure ensureDataLayout reports
+    // loudly (qCritical + migration-v1.failed at the data root); the
+    // boot continues since nothing was deleted and the next run
+    // retries, but a colliding payload is never silently split.
+    BrowserPaths::ensureDataLayout();
 
     // DOH01: --doh-smoke seeds the strict custom-DoH mode with a dead
     // loopback endpoint BEFORE applyChromiumFlags reads the keys, so

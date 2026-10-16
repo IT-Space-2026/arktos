@@ -24,25 +24,65 @@
 #include <qdir.h>
 #include <qfile.h>
 #include <qstandardpaths.h>
+#include <qstring.h>
 
 // Application data-directory helpers that used to live on
-// BrowserApplication.  They are header-inline so ported modules can use
-// them while browserapplication.cpp is still uncompiled (MIG15).
+// BrowserApplication.
+//
+// MPROF01 layout: the data root holds machine-global payloads plus a
+// profiles/<id>/ directory per browser profile.
+//   - dataFilePath() resolves INSIDE the active profile's dir
+//     (profiles/default/ today) so every existing call site lands in
+//     the profile-owned store untouched — that redirect is the single
+//     mechanism chosen by the MPROF01 spec; call sites for
+//     machine-global files were moved to globalDataFilePath()
+//     instead.  MPROF02+ migrates profile call sites to real
+//     per-profile lookups.
+//   - globalDataFilePath() stays at the root for shared, persona-free
+//     state (the tor bundle + its data/docs dirs, locale drops, the
+//     crash log, the profile-wipe marker, QtWebEngine/'s Chromium-
+//     namespaced stores, profiles.json).  Note the tranco/blocklist
+//     caches live INSIDE the profile dir instead — rustcore reads
+//     them from its single data dir, which anchors to the profile
+//     store.
 namespace BrowserPaths {
 
-// Returns <app data dir>/<fileName>, creating the directory if needed.
-// Was BrowserApplication::dataFilePath(); MIG15 should delegate to this.
-inline QString dataFilePath(const QString &fileName)
-{
-    QString directory = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    if (directory.isEmpty())
-        directory = QDir::homePath() + QLatin1String("/.") + QCoreApplication::applicationName();
-    if (!QFile::exists(directory)) {
-        QDir dir;
-        dir.mkpath(directory);
-    }
-    return directory + QLatin1Char('/') + fileName;
-}
+// Root of the app's writable data store
+// (QStandardPaths::AppDataLocation), created on demand.
+QString dataRoot();
+
+// <data root>/<fileName> — machine-global payloads that must NOT move
+// into a profile.
+QString globalDataFilePath(const QString &fileName);
+
+// <data root>/profiles/<profileId>/ — a browser profile's private
+// store.  An id that fails isProfileId() falls back to "default" so a
+// bad id can never escape the profiles/ tree.
+QString profileDataDir(const QString &profileId);
+QString profileDataFilePath(const QString &profileId,
+                            const QString &fileName);
+
+// Profile id the process's unscoped stores belong to.  Always
+// "default" until MPROF03 binds windows to real ids.
+QString activeProfileId();
+
+// Slug check shared with ProfileRegistry: lowercase letters, digits,
+// '-'/'_' — an id is a path segment, so anything else is refused.
+bool isProfileId(const QString &id);
+
+// <active profile dir>/<fileName>.  Was
+// BrowserApplication::dataFilePath(); MIG15 should delegate to this.
+QString dataFilePath(const QString &fileName);
+
+// Idempotent first-boot migration to the profiles/<id>/ layout:
+// creates profiles/default/, renames the pre-MPROF01 profile-owned
+// payloads into it (resumable — a missing source means already moved
+// or never existed), and writes the migration-v1.done marker only on
+// a clean pass.  dataFilePath()/profileDataFilePath() run it lazily
+// once per process; tests may call it directly to re-verify after
+// reseeding the root.  Returns false and fills *error when a move
+// fails — treat a false return as LOUD, never as split state.
+bool ensureDataLayout(QString *error = nullptr);
 
 } // namespace BrowserPaths
 

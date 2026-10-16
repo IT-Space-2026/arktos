@@ -2958,3 +2958,20 @@ BiDi Dev Tools Network waterfall stays on screen in narrow docks (DEVT18):
     pressure the fixed columns now give up their slack down to their
     floors, and the Initiator column yields before the graph can leave
     the viewport; it returns once the table fits it again.
+
+Multi-profile foundation — data layout is now per-profile (MPROF01):
+    The application's data directory gains a profiles/<id>/ layout
+    with a profiles.json registry (id, display name, avatar, created
+    timestamp; the id is an immutable filesystem slug). On first boot
+    the existing single-profile stores — history (including the live
+    SQLite WAL sidecars), bookmarks, autofill, adblock subscriptions,
+    containers, userscripts, extension data, notes, secure-store keys,
+    session and download parts — are moved into profiles/default/ by
+    rename, never copy-then-delete, and a migration-v1.done marker
+    records the clean pass; a partial move resumes on the next boot
+    and a colliding payload is reported loudly instead of silently
+    splitting state. Machine-global state (crash log, Tor bundle,
+    QtWebEngine's own namespaced stores, the wipe marker, the
+    registry itself) stays at the data root. There is no visible
+    behavior change yet: every window still runs the default profile
+    until the per-profile managers and window binding land.

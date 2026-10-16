@@ -28,13 +28,14 @@
 class QImage;
 
 // PROF02: qApp-owned profile identity — display name + custom avatar.
-// The custom avatar lives at BrowserPaths::dataFilePath(
-// "profile-avatar.png"); when the file is absent or undecodable
-// avatar() returns a null pixmap and callers render the bundled
-// silhouette instead (that graphic is PROF01's — this class only owns
-// the custom-avatar pipeline).  The avatar file is user data:
-// single-category ClearPrivateData clears must NOT remove it; only the
-// PROF03 full-profile wipe does.
+// MPROF01: both delegate to the active profile's ProfileRegistry
+// entry — the name lives in profiles.json and the avatar file under
+// the profile's own dir (profiles/<id>/).  When the file is absent
+// or undecodable avatar() returns a null pixmap and callers render
+// the bundled silhouette instead (that graphic is PROF01's — this
+// class only owns the custom-avatar pipeline).  The avatar file is
+// user data: single-category ClearPrivateData clears must NOT remove
+// it; only the PROF03 full-profile wipe does.
 //
 // PROF01: avatarPixmap(extent) returns the identity's face the way the
 // nav-bar profile button and menu header render it — circular-cropped
@@ -87,8 +88,10 @@ public:
 private:
     bool loadAvatar();
     QImage avatarSource() const;
+    QString avatarFileName() const;
 
     QString m_name;
+    QString m_avatarFileName;
     QPixmap m_avatar;
     bool m_avatarLoaded;
     mutable bool m_sourceLoaded = false;

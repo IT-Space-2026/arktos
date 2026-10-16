@@ -50,6 +50,7 @@ SUBDIRS  = \
     privatebrowsing \
     privacy \
     profileavatar \
+    profilecontext \
     profilemenu \
     qrcode \
     rustdownload \

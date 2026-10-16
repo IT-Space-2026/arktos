@@ -120,8 +120,10 @@ HEADERS += \
     $$PWD/profileavataractions.h \
     $$PWD/profileavatardialog.h \
     $$PWD/profilebutton.h \
+    $$PWD/profilecontext.h \
     $$PWD/profileidentity.h \
     $$PWD/profilemenuactions.h \
+    $$PWD/profileregistry.h \
     $$PWD/qrcodedialog.h \
     $$PWD/qrcodegen.hpp \
     $$PWD/readermode.h \
@@ -180,6 +182,7 @@ SOURCES += \
     $$PWD/autosaver.cpp \
     $$PWD/browserapplication.cpp \
     $$PWD/browsermainwindow.cpp \
+    $$PWD/browserpaths.cpp \
     $$PWD/browserprofile.cpp \
     $$PWD/browsertheme.cpp \
     $$PWD/clearbutton.cpp \
@@ -208,6 +211,7 @@ SOURCES += \
     $$PWD/profilebutton.cpp \
     $$PWD/profileidentity.cpp \
     $$PWD/profilemenuactions.cpp \
+    $$PWD/profileregistry.cpp \
     $$PWD/qrcodedialog.cpp \
     $$PWD/qrcodegen.cpp \
     $$PWD/readermode.cpp \
