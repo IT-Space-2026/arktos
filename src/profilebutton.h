@@ -75,11 +75,16 @@ protected:
 private:
     void retranslateUi();
     void renameProfile();
+    // MPROF05: rebuilds the 'New Window' switcher submenu from the
+    // profile registry on every open.
+    void populateNewWindowMenu();
 
     QMenu *m_menu;
     QLabel *m_headerAvatar;
     QLabel *m_headerName;
     QAction *m_renameAction;
+    QMenu *m_newWindowMenu;
+    QAction *m_managerAction;
 };
 
 #endif // PROFILEBUTTON_H

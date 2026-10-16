@@ -118,7 +118,10 @@ HEADERS += \
     $$PWD/positionpicker.h \
     $$PWD/printpreviewdialog.h \
     $$PWD/profilebutton.h \
+    $$PWD/profilecontext.h \
     $$PWD/profileidentity.h \
+    $$PWD/profilemanagerdialog.h \
+    $$PWD/profilestore.h \
     $$PWD/qrcodedialog.h \
     $$PWD/qrcodegen.hpp \
     $$PWD/readermode.h \
@@ -202,6 +205,8 @@ SOURCES += \
     $$PWD/printpreviewdialog.cpp \
     $$PWD/profilebutton.cpp \
     $$PWD/profileidentity.cpp \
+    $$PWD/profilemanagerdialog.cpp \
+    $$PWD/profilestore.cpp \
     $$PWD/qrcodedialog.cpp \
     $$PWD/qrcodegen.cpp \
     $$PWD/readermode.cpp \

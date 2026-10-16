@@ -378,6 +378,9 @@ private:
     QAction *m_toolsCommandPaletteAction;
     QAction *m_toolsWebSearchAction;
     QAction *m_toolsDownloadsAction;
+    // MPROF05: Tools > Profiles… — the manager reachable without the
+    // nav-bar button (the app menu embeds the shared Tools menu).
+    QAction *m_toolsProfilesAction;
     QAction *m_toolsClearPrivateDataAction;
     QAction *m_toolsLockStoreAction;
     // DEVT04: engine-facing tools under Tools > Development Tools.
