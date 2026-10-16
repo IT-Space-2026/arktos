@@ -48,11 +48,17 @@ class WebView;
 //      shows red — while internal/local pages carry no verdict)
 //
 // Honesty rules inherited from TlsVerifier: a Pending probe renders
-// neutral/yellow, never red; tor/proxied pages are never probed and
-// can therefore never reach green — they honestly show "no probe"
-// neutral rather than a misleading trusted mark.  Chromium's own
-// cert-error interstitial still owns the invalid-https UX; the padlock
-// only reflects the verdict.
+// neutral/yellow, never red.  Tor/proxied pages are never probed —
+// the second-opinion handshake is a direct connection that would
+// bypass the managed route — but under tor the lock is NOT stuck
+// neutral (TRUST23): an https page only commits once the engine
+// validated the chain, TLS rides the tunnel end-to-end, so the
+// engine's verification stands in for the probe leg and a ranked
+// site earns green the same as on a normal window.  The exception
+// stays honest: a session cert-error override ("proceed anyway")
+// means the chain FAILED — the lock goes red on every window.
+// Chromium's own cert-error interstitial still owns the
+// invalid-https UX; the padlock only reflects the verdict.
 //
 // BrowserApplication::siteTrustEnabled() gates the whole trust
 // surface: off means the padlock makes NO trust claim at all — it

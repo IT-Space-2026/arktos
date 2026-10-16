@@ -1589,13 +1589,20 @@ void WebPage::torFireRetry()
 // second WebPage on the same profile go straight through — matching
 // the in-memory policy Chromium records on acceptCertificate().
 // Nothing is ever persisted; the whitelist dies with the process.
+static QHash<QWebEngineProfile *, QSet<QString> > &certErrorWhitelists()
+{
+    static QHash<QWebEngineProfile *, QSet<QString> > whitelists;
+    return whitelists;
+}
+
 static QSet<QString> &certErrorWhitelistFor(QWebEngineProfile *profile)
 {
-    static QHash<QWebEngineProfile *, QSet<QString> > whitelist;
+    QHash<QWebEngineProfile *, QSet<QString> > &whitelist =
+        certErrorWhitelists();
     if (!whitelist.contains(profile)) {
         whitelist.insert(profile, QSet<QString>());
         QObject::connect(profile, &QObject::destroyed, profile, [profile]() {
-            whitelist.remove(profile);
+            certErrorWhitelists().remove(profile);
         });
     }
     return whitelist[profile];
@@ -1612,6 +1619,39 @@ static QString certErrorKey(const QWebEngineCertificateError &error)
                 chain.first().digest(QCryptographicHash::Sha256).toHex());
     return error.url().host() + QLatin1Char('|') + fingerprint;
 }
+
+// TRUST23: the inverse view of the whitelist for trust surfaces —
+// true while ANY profile in this process holds a session cert-error
+// override for host.  Process-wide on purpose: a tor window lives in
+// its own process, and on a shared one the same host serves the same
+// chain to every profile, so the conservative false-red beats a
+// false green on a bypassed certificate.  The fingerprint half of
+// the key cannot be matched post-hoc (Qt never sees the committed
+// chain), so host granularity it is.
+bool WebPage::certificateErrorOverridden(const QString &host)
+{
+    if (host.isEmpty())
+        return false;
+    const QString prefix = host.toLower() + QLatin1Char('|');
+    const QHash<QWebEngineProfile *, QSet<QString> > &whitelist =
+        certErrorWhitelists();
+    for (const QSet<QString> &entries : whitelist) {
+        for (const QString &key : entries) {
+            if (key.startsWith(prefix))
+                return true;
+        }
+    }
+    return false;
+}
+
+#ifdef AUTOTESTS
+void WebPage::addCertErrorOverrideForTesting(QWebEngineProfile *profile,
+        const QString &host, const QString &fingerprint)
+{
+    certErrorWhitelistFor(profile).insert(
+        host + QLatin1Char('|') + fingerprint);
+}
+#endif
 
 // SEC06: certificate failures arrive here instead of becoming a
 // generic load failure.  The request is rejected outright — a deferred

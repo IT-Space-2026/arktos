@@ -2875,3 +2875,17 @@ Manual memory flush on the tab context menu (MEM08):
     Background Tabs" flushes every quiet background tab at once
     (skipping the current tab, pinned tabs, loading/audible/
     downloading tabs and dirty forms).
+Padlock verdict on Tor windows (TRUST23):
+    The address-bar padlock used to sit amber on every Tor-window
+    page: its green tier needs an independent TLS second opinion,
+    and that probe is a direct handshake that can never run over Tor
+    without de-anonymizing the user. The padlock now lets the
+    engine's own chain validation stand in for the probe on Tor
+    windows — TLS still rides the tunnel end-to-end, and a page only
+    commits once the chain verifies — so a known, verified HTTPS site
+    earns the same green it would on a normal window. Little-known
+    sites stay honest amber, and one new red applies everywhere:
+    proceeding past a certificate-error page means the committed
+    chain FAILED the engine's check, so the padlock (and its popover,
+    which now says so outright) renders red for the rest of the
+    session.

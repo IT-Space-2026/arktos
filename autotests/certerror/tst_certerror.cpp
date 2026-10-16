@@ -45,8 +45,10 @@
 #include <qtcpsocket.h>
 #include <qwebengineprofile.h>
 
+#include "browserapplication.h"
 #include "browserprofile.h"
 #include "schemeaccesshandler.h"
+#include "sitepadlock.h"
 #include "webpage.h"
 #include "webview.h"
 #include "qtest_arora.h"
@@ -231,6 +233,7 @@ private slots:
     void backFallsBackToStartPage();
     void forgedProceedLinkIgnored();
     void sessionPolicyAndRePrompt();
+    void padlockReadsOverride();
     void subframeDeniedSilently();
 
 private:
@@ -510,6 +513,49 @@ void tst_CertError::sessionPolicyAndRePrompt()
             SIGNAL(certificateErrorInterstitial(QUrl)));
     page3->load(server.url());
     QTRY_VERIFY_WITH_TIMEOUT(interstitial3.count() == 1, 15000);
+}
+
+// TRUST23: a page committed over a session cert-error override must
+// never render "verified" — the engine REJECTED the chain and the
+// user proceeded anyway.  certificateErrorOverridden() exposes the
+// session whitelist to the padlock, which answers red — including in
+// tor mode, where the second-opinion probe is forbidden entirely and
+// the engine's validation is the only TLS leg.
+void tst_CertError::padlockReadsOverride()
+{
+    LocalTlsServer server;
+    QVERIFY(server.start());
+
+    QWebEngineProfile profile;
+    WebView view(&profile);
+    view.resize(800, 600);
+    view.show();
+    WebPage *page = view.webPage();
+    QSignalSpy interstitial(page,
+            SIGNAL(certificateErrorInterstitial(QUrl)));
+    QSignalSpy loaded(page, SIGNAL(loadFinished(bool)));
+
+    const QString host = server.url().host();
+    QVERIFY(!WebPage::certificateErrorOverridden(host));
+
+    page->load(server.url());
+    QVERIFY(waitInterstitialCommit(interstitial, loaded, 0));
+    QVERIFY(clickElement(&view, QLatin1String("proceed")));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        domText(page).contains(QLatin1String("secure-ok")), 15000);
+    QCOMPARE(page->url(), server.url());
+
+    QVERIFY(WebPage::certificateErrorOverridden(host));
+    QCOMPARE(int(SitePadlockButton::stateFor(page->url())),
+             int(SitePadlockButton::State::LockedRed));
+
+    // Tor windows can't run the second-opinion probe at all — the
+    // override still forces red there.
+    BrowserApplication::setTorMode(true);
+    const int torState =
+        int(SitePadlockButton::stateFor(page->url()));
+    BrowserApplication::setTorMode(false);
+    QCOMPARE(torState, int(SitePadlockButton::State::LockedRed));
 }
 
 void tst_CertError::subframeDeniedSilently()
