@@ -182,6 +182,10 @@ TabWidget::TabWidget(QWidget *parent)
             this, &TabWidget::reopenTabInContainer);
     connect(m_tabBar, &TabBar::sleepTab, this, &TabWidget::sleepTab);
     connect(m_tabBar, &TabBar::wakeTab, this, &TabWidget::wakeTab);
+    connect(m_tabBar, &TabBar::freeTabMemory,
+            this, &TabWidget::freeTabMemory);
+    connect(m_tabBar, &TabBar::freeBackgroundTabsMemory,
+            this, &TabWidget::freeBackgroundTabsMemory);
     setTabBar(m_tabBar);
     m_tabBar->setAccessibleName(tr("Tabs"));
     setDocumentMode(true);
@@ -2656,6 +2660,119 @@ void TabWidget::applySleepVisuals(int index, bool sleeping)
     m_tabBar->setTabTextColor(index,
         m_tabBar->palette().color(group, QPalette::WindowText));
     m_tabBar->update();
+}
+
+// MEM08: the manual flush from the tab context menu.  MEM05 pinned
+// the nav->back climb on renderer-side per-navigation retention that
+// only a WebContents teardown releases (history()->clear() freed
+// nothing), so a background tab flushes through the SLEEP01 discard
+// path — the unsaved-form refusal still applies since the discard
+// would silently eat the input.  The current tab can't stay
+// discarded while visible, so it gets a discard+reactivate pulse
+// that rebuilds the WebContents and reloads the current entry — the
+// menu labels it as the reload it is.
+void TabWidget::freeTabMemory(int index)
+{
+    WebView *view = (index >= 0 && index < count())
+        ? webView(index) : nullptr;
+    Engine::Page *page = view ? view->enginePage() : nullptr;
+    if (!page || view->url().isEmpty()) {
+        emit showStatusBarMessage(tr("Nothing to free on this tab"));
+        return;
+    }
+    if (isTabSleeping(index)
+        || page->lifecycleState()
+               == Engine::Page::LifecycleState::Discarded) {
+        emit showStatusBarMessage(
+            tr("Tab is already asleep — nothing to free"));
+        return;
+    }
+    const qint64 beforeKb = page->residentMemoryKb();
+    if (index == currentIndex())
+        flushCurrentTabMemory(view);
+    else
+        beginTabSleep(index, false);
+    reportFreedMemory(view, beforeKb);
+}
+
+// The window-level leg: hand every eligible background tab to the
+// discard path.  sleepBlockReason carries the live-activity
+// exemptions (current, pinned, sleeping, in-flight, loading, audible,
+// downloading, dirty-form) so a bulk flush only ever takes quiet
+// tabs — same gate the idle sweep applies.
+void TabWidget::freeBackgroundTabsMemory()
+{
+    int attempted = 0;
+    for (int i = 0; i < count(); ++i) {
+        if (!sleepBlockReason(i).isEmpty())
+            continue;
+        beginTabSleep(i, true);
+        ++attempted;
+    }
+    emit showStatusBarMessage(attempted
+        ? tr("Suspending %1 background tab(s) to free memory")
+              .arg(attempted)
+        : tr("No background tabs to free"));
+}
+
+// Qt's lifecycle setter keeps a visible page Active — a hard limit
+// (the docs also refuse Discarded under a devtools page).  The view
+// only re-asserts its own visibility on show/hide events, so flagging
+// the page hidden for the discard window is enough; the last
+// composited frame stays on screen meanwhile, so nothing visibly
+// flickers.  If the engine still refuses, the flag is restored and
+// the deferred report lands as "no memory freed".
+void TabWidget::flushCurrentTabMemory(WebView *view)
+{
+    WebEnginePageAdapter *adapter =
+        WebEnginePageAdapter::of(view->enginePage());
+    QWebEnginePage *page = adapter ? adapter->webEnginePage()
+                                 : nullptr;
+    if (!page) {
+        emit showStatusBarMessage(
+            tr("This tab's engine cannot be flushed"));
+        return;
+    }
+    const bool wasVisible = page->isVisible();
+    page->setVisible(false);
+    page->setLifecycleState(QWebEnginePage::LifecycleState::Discarded);
+    if (page->lifecycleState()
+            != QWebEnginePage::LifecycleState::Discarded) {
+        page->setVisible(wasVisible);
+        emit showStatusBarMessage(
+            tr("The engine refused to discard the visible tab"));
+        return;
+    }
+    QPointer<QWebEnginePage> guard(page);
+    QTimer::singleShot(300, this, [guard, wasVisible]() {
+        if (!guard)
+            return;
+        // Active out of Discarded rebuilds the WebContents and reloads
+        // the current entry — dropping every retained session document.
+        guard->setLifecycleState(QWebEnginePage::LifecycleState::Active);
+        guard->setVisible(wasVisible);
+    });
+}
+
+// ~2s after the flush the renderer has either died (a discarded
+// tab's pid reads -1 — everything it held is freed) or respawned a
+// fresh WebContents whose RSS makes the honest delta.
+void TabWidget::reportFreedMemory(WebView *view, qint64 beforeKb)
+{
+    if (beforeKb <= 0)
+        return;   // no baseline — nothing honest to compare against
+    QPointer<WebView> guard(view);
+    QTimer::singleShot(2000, this, [this, guard, beforeKb]() {
+        if (!guard || !guard->enginePage())
+            return;
+        const qint64 afterKb = guard->enginePage()->residentMemoryKb();
+        const qint64 freedKb =
+            afterKb < 0 ? beforeKb : beforeKb - afterKb;
+        emit showStatusBarMessage(
+            freedKb >= 1024
+                ? tr("Freed ~%1 MB").arg(freedKb / 1024)
+                : tr("No memory freed"));
+    });
 }
 
 // POL02: QtWebEngine paints each page into a QQuickWidget delegate

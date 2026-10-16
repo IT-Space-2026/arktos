@@ -2858,3 +2858,20 @@ Memory coverage audit across every tab surface (MEM07):
     profile or interceptor path. The audit also fixed Tor mode
     force-upgrading plain HTTP on localhost/LAN addresses to HTTPS,
     which made local services unreachable in Tor windows.
+Manual memory flush on the tab context menu (MEM08):
+    The tab right-click menu gains "Free Memory" next to Sleep/Wake.
+    On a background tab it discards the page outright — the only
+    honest release of the renderer's per-navigation retention — while
+    keeping the slot, title and favicon (the same machinery as Sleep
+    Tab, including the unsaved-form refusal). The current tab can't
+    stay discarded while visible, so its entry reads "Reload & Free
+    Memory" and runs a discard+reactivate pulse that rebuilds the
+    page's web contents and reloads the current entry — briefly, the
+    tab's last painted frame stays on screen, so the only visible
+    effect is the reload itself. Roughly two seconds later the status
+    bar reports the measured result — "Freed ~N MB" from the tab's
+    renderer RSS before and after — or "No memory freed" / "already
+    asleep" when nothing moved. The same menu's "Free Memory in
+    Background Tabs" flushes every quiet background tab at once
+    (skipping the current tab, pinned tabs, loading/audible/
+    downloading tabs and dirty forms).

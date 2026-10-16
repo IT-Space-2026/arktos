@@ -116,6 +116,7 @@ private slots:
     void engineSwapStripState();
     void sleepingTabs();
     void memoryPurge();
+    void freeTabMemory();
     void containerTabs();
     void tabSlotDrive();
     void newTabStartPage();
@@ -127,6 +128,17 @@ private slots:
     void verticalRailRowOverlap();
     void tabButtonBandAnchor();
 };
+
+// MEM08: does any captured emission carry needle — the statusbar
+// report assertions keep re-scanning a growing spy.
+static bool spyHasText(const QSignalSpy &spy, const QString &needle)
+{
+    for (const QList<QVariant> &args : spy) {
+        if (args.value(0).toString().contains(needle))
+            return true;
+    }
+    return false;
+}
 
 // Subclass that exposes the protected functions.
 class SubTabWidget : public TabWidget
@@ -2277,6 +2289,108 @@ void tst_TabWidget::memoryPurge()
     widget.purgeInactiveTabs();
     QTest::qWait(800);                     // past the ~600ms pulse window
     QCOMPARE(view1->enginePage()->lifecycleState(), LS::Discarded);
+
+    while (widget.count())
+        widget.closeTab(0);
+}
+
+// MEM08: the manual flush — a background tab discards outright via
+// the sleep path (its renderer association drops to nothing); the
+// current tab takes a discard+reactivate pulse that reloads the
+// entry; and the deferred statusbar report measures the real RSS
+// delta instead of claiming a figure.
+void tst_TabWidget::freeTabMemory()
+{
+    SubTabWidget widget;
+    widget.newTab();                        // 0 — current, cycled
+    widget.newTab();                        // 1 — background, cycled
+    widget.newTab();                        // 2 — never loaded
+    widget.setCurrentIndex(0);
+    WebView *view0 = widget.webView(0);
+    WebView *view1 = widget.webView(1);
+    QVERIFY(view0 && view1 && widget.webView(2));
+
+    // A few unique real documents per tab — the retained session
+    // documents are what the flush releases.
+    const QString pad(96 * 1024, QLatin1Char('x'));
+    for (int i = 0; i < 6; ++i) {
+        for (WebView *view : {view0, view1}) {
+            QSignalSpy loaded(view->page(),
+                              &QWebEnginePage::loadFinished);
+            view->load(QUrl(QLatin1String("data:text/html,<p>")
+                            + QString::number(i) + pad));
+            QTRY_VERIFY_WITH_TIMEOUT(!loaded.isEmpty(), 15000);
+        }
+    }
+
+    using LS = Engine::Page::LifecycleState;
+    const qint64 beforeBgKb =
+        view1->enginePage()->residentMemoryKb();
+    const qint64 beforeFgKb =
+        view0->enginePage()->residentMemoryKb();
+    qInfo() << "freeTabMemory: rendererKb before" << beforeFgKb
+            << beforeBgKb;
+
+    QSignalSpy statusSpy(&widget, &TabWidget::showStatusBarMessage);
+
+    // Background leg — the flush IS the discard; the page's renderer
+    // association drops to nothing.
+    widget.freeTabMemory(1);
+    QTRY_VERIFY_WITH_TIMEOUT(widget.isTabSleeping(1), 10000);
+    QCOMPARE(view1->enginePage()->lifecycleState(), LS::Discarded);
+    if (beforeBgKb > 0) {
+        QTRY_VERIFY_WITH_TIMEOUT(
+            view1->enginePage()->residentMemoryKb() <= 0, 10000);
+    }
+
+    // A second click on the slept tab reports the state rather than
+    // re-discarding.
+    widget.freeTabMemory(1);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        spyHasText(statusSpy, QLatin1String("asleep")), 5000);
+
+    // ~2s out the first flush's measured report lands — the renderer
+    // is gone, so it reads as a real freed figure.
+    if (beforeBgKb > 0) {
+        QTRY_VERIFY_WITH_TIMEOUT(
+            spyHasText(statusSpy, QLatin1String("Freed")), 6000);
+    }
+
+    // Current leg — discard+reactivate reloads the entry in place.
+    QSignalSpy reloaded(view0->page(), &QWebEnginePage::loadFinished);
+    widget.freeTabMemory(0);
+    // The discard lands synchronously; reactivation follows ~300ms
+    // later and drives the reload.
+    QCOMPARE(view0->enginePage()->lifecycleState(), LS::Discarded);
+    QTRY_VERIFY_WITH_TIMEOUT(!reloaded.isEmpty(), 15000);
+    QTRY_COMPARE_WITH_TIMEOUT(view0->enginePage()->lifecycleState(),
+                              LS::Active, 10000);
+    QVERIFY(!widget.isTabSleeping(0));
+    if (beforeFgKb > 0) {
+        // The fresh WebContents' renderer reads below the cycled
+        // figure — retained session documents are gone.
+        QTRY_VERIFY_WITH_TIMEOUT(
+            view0->enginePage()->residentMemoryKb() > 0
+                && view0->enginePage()->residentMemoryKb()
+                       < beforeFgKb,
+            15000);
+    }
+
+    // Window-level leg — every eligible background tab at once; the
+    // empty tab is skipped by sleepBlockReason.
+    widget.wakeTab(1);
+    QTRY_VERIFY_WITH_TIMEOUT(!widget.isTabSleeping(1), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !view1->enginePage()->isLoading(), 15000);
+    widget.freeBackgroundTabsMemory();
+    QTRY_VERIFY_WITH_TIMEOUT(widget.isTabSleeping(1), 10000);
+    QVERIFY(!widget.isTabSleeping(0));
+    QVERIFY(!widget.isTabSleeping(2));
+    // Nothing left to take — the aggregate reports it honestly.
+    widget.freeBackgroundTabsMemory();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        spyHasText(statusSpy, QLatin1String("No background tabs")),
+        5000);
 
     while (widget.count())
         widget.closeTab(0);

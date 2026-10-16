@@ -697,6 +697,24 @@ void TabBar::contextMenuRequested(const QPoint &position)
                 emit sleepTab(index);
         });
 
+        // MEM08: the manual flush.  A background tab discards through
+        // the SLEEP01 path; the current tab can't stay discarded while
+        // visible, so its entry is a discard+reactivate — labeled as
+        // the reload the user will see.  A slept tab's renderer is
+        // already gone; the entry stays live so the click reports
+        // that instead of pretending to do work.
+        const WebView *flushView = tabWidget->webView(index);
+        QAction *freeAction = menu.addAction(
+            !sleeping && index == tabWidget->currentIndex()
+                ? tr("Reload && Free Memory")
+                : tr("Free Memory"));
+        freeAction->setEnabled(
+            sleeping
+            || (flushView && flushView->enginePage()
+                && !flushView->url().isEmpty()));
+        connect(freeAction, &QAction::triggered, this,
+                [this, index]() { emit freeTabMemory(index); });
+
         // TABGRP01: tab groups — an ungrouped tab gets "Add Tab to
         // Group" (new group or any existing one); a grouped tab gets
         // the group-level actions plus a way out.
@@ -792,6 +810,12 @@ void TabBar::contextMenuRequested(const QPoint &position)
         action->setData(index);
     }
     menu.addAction(tr("Reload All Tabs"), this, &TabBar::reloadAllTabs);
+    // MEM08: the window-level leg — every discardable background tab
+    // goes through the same sleep path; the handler reports the count.
+    QAction *freeAll = menu.addAction(
+        tr("Free Memory in &Background Tabs"), this,
+        [this]() { emit freeBackgroundTabsMemory(); });
+    freeAll->setEnabled(tabWidget->count() > 1);
     menu.addSeparator();
     menu.addAction(tabWidget->bookmarkTabsAction());
     // TABS09: the icon-only view toggle is a strip-level entry — it

@@ -246,6 +246,21 @@ void tst_TorInterceptor::init()
     ScriptControlManager::instance()->clearSessionRules();
 }
 
+// MEM07 exempts private/local/loopback hosts from the upgrade (a
+// local service has no TLS to upgrade to), so the fixture can't be
+// addressed as 127.0.0.1 any more.  cov10-upgrade.test reads as a
+// public host to the policy and --host-resolver-rules (main below)
+// still lands it on the loopback server: if the upgrade stopped
+// firing, the plain http request would reach the fixture and be
+// recorded — the leg keeps its teeth.
+static QUrl upgradeFixtureUrl(const LocalHttpServer *server,
+                              const QString &path)
+{
+    QUrl url = server->url(path);
+    url.setHost(QStringLiteral("cov10-upgrade.test"));
+    return url;
+}
+
 // The core TOR02 guarantee: ANY clearnet http request is redirected
 // to https before the wire.  The plain-HTTP fixture never sees the
 // request, and the rewritten https hop dies in the TLS handshake —
@@ -253,7 +268,8 @@ void tst_TorInterceptor::init()
 void tst_TorInterceptor::clearnetHttpUpgrade()
 {
     QWebEnginePage page(m_profile);
-    QVERIFY(loadAndFail(&page, m_server->url(QLatin1String("/index.html"))));
+    QVERIFY(loadAndFail(&page, upgradeFixtureUrl(
+                               m_server, QLatin1String("/index.html"))));
     QVERIFY(m_server->requests.isEmpty());
 }
 
@@ -270,7 +286,7 @@ void tst_TorInterceptor::httpSubresourcesUpgrade()
             "<img src=\"/sub.png\">"
             "<script src=\"/sub.js\"></script>"
             "</body></html>"),
-            m_server->url(QLatin1String("/")));
+            upgradeFixtureUrl(m_server, QLatin1String("/")));
     }));
     QVERIFY(m_server->requests.isEmpty());
 }
@@ -376,6 +392,13 @@ int main(int argc, char *argv[])
 {
     Q_INIT_RESOURCE(htmls);
     Q_INIT_RESOURCE(data);
+    // Route the upgrade legs' fake public host at the loopback
+    // fixture — the env must land before WebEngine init reads it,
+    // i.e. before the app object exists (same ordering constraint as
+    // the scheme registration below).
+    qputenv("QTWEBENGINE_CHROMIUM_FLAGS",
+            qgetenv("QTWEBENGINE_CHROMIUM_FLAGS")
+            + " --host-resolver-rules=MAP cov10-upgrade.test 127.0.0.1");
     // arora-* schemes must be registered before the browsing profile
     // spins up (same order as main.cpp).
     SchemeAccessHandler::registerUrlSchemes();

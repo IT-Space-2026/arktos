@@ -367,6 +367,15 @@ public slots:
     // the page and restores the scroll position.
     void sleepTab(int index = -1);
     void wakeTab(int index = -1);
+    // MEM08: the manual memory flush — a background tab discards
+    // through the sleep path (the only honest release of the
+    // renderer's per-navigation retention); the current tab can't
+    // stay discarded while visible, so it gets a discard+reactivate
+    // pulse that reloads the current entry instead.  freeBackground-
+    // TabsMemory() is the window-level leg — every eligible
+    // background tab through the same discard.
+    void freeTabMemory(int index);
+    void freeBackgroundTabsMemory();
     // TABS13: move the tab at index into target's strip at
     // targetIndex (-1 appends) — the tear-off and cross-window-merge
     // back end of the bar's arora-tab drags.  The page widget itself
@@ -508,6 +517,14 @@ private:
     void finishTabSleepCapture(WebView *webView, bool automatic,
                              const QVariant &result);
     void applySleepVisuals(int index, bool sleeping);
+    // MEM08: the current-tab half of freeTabMemory — Qt refuses to
+    // discard a visible page, so the page is flagged hidden for the
+    // discard window and reactivated right after (the last composited
+    // frame stays put; the engine reloads the current entry).
+    // reportFreedMemory re-samples the tab's renderer RSS ~2s after
+    // the flush so the statusbar figure is measured, not assumed.
+    void flushCurrentTabMemory(WebView *webView);
+    void reportFreedMemory(WebView *webView, qint64 beforeKb);
     void updateSleepTimer();
     // MEM06: (re)arm the purge sweep after a settings reload.
     void updatePurgeTimer();

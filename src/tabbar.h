@@ -98,6 +98,10 @@ signals:
     // SLEEP01: the tab context menu's Sleep/Wake entries.
     void sleepTab(int index);
     void wakeTab(int index);
+    // MEM08: the tab context menu's memory flush — see
+    // TabWidget::freeTabMemory for the current-tab discard+reload.
+    void freeTabMemory(int index);
+    void freeBackgroundTabsMemory();
 
 public:
     TabBar(QWidget *parent = nullptr);
