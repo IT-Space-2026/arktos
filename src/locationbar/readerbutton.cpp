@@ -186,6 +186,14 @@ void ReaderButton::changeEvent(QEvent *event)
     QToolButton::changeEvent(event);
 }
 
+void ReaderButton::setAccentOverride(const QColor &color)
+{
+    if (m_accentOverride == color)
+        return;
+    m_accentOverride = color;
+    refresh();
+}
+
 QIcon ReaderButton::makeIcon(bool active, bool suggested) const
 {
     // A page-with-lines glyph, painted so no icon theme is required.
@@ -195,7 +203,10 @@ QIcon ReaderButton::makeIcon(bool active, bool suggested) const
     // paints at whatever size the surface asks for — a single baked
     // pixmap upscaled and blurred next to the theme-crisp siblings
     // (TRUST21).
-    return QIcon(new ReaderIconEngine(palette(), active, suggested));
+    QPalette palette = this->palette();
+    if (m_accentOverride.isValid())
+        palette.setColor(QPalette::Accent, m_accentOverride);
+    return QIcon(new ReaderIconEngine(palette, active, suggested));
 }
 
 void ReaderButton::refresh()

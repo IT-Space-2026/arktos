@@ -2988,3 +2988,14 @@ Multi-profile foundation — data layout is now per-profile (MPROF01):
     registry itself) stays at the data root. There is no visible
     behavior change yet: every window still runs the default profile
     until the per-profile managers and window binding land.
+Reader-mode button no longer paints blue on Tor windows (THEM06):
+    On a Tor window's violet navigation bar the reader-mode icon kept
+    the application palette's blue accent: its "suggested" outline+dot
+    and its active page-fill both resolved QPalette::Accent, which the
+    tor stylesheet never reseeds (a stylesheet repolish rebuilds the
+    widget palette, so a palette-level seed cannot survive anyway).
+    The button now carries an accent override applied to the icon's
+    palette snapshot at paint time, and Tor windows set it to the tor
+    raised violet — the same family the Tor badge pill and sidebar
+    selection already wear. Suggested and active states stay
+    distinguishable but in-theme; normal windows are unchanged.
