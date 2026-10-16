@@ -18,6 +18,7 @@
  */
 
 #include "scopeshortcuts.h"
+#include "profilesettings.h"
 
 #include "opensearchmanager.h"
 #include "toolbarsearch.h"
@@ -40,7 +41,7 @@ bool ScopeShortcuts::enabled(Scope scope)
     const char *key = scopeKey(scope);
     if (!key)
         return false;
-    QSettings settings;
+    ProfileSettings settings;
     return settings.value(QLatin1String("searchShortcuts/")
                           + QLatin1String(key), true).toBool();
 }
@@ -50,7 +51,7 @@ void ScopeShortcuts::setEnabled(Scope scope, bool enabled)
     const char *key = scopeKey(scope);
     if (!key)
         return;
-    QSettings settings;
+    ProfileSettings settings;
     settings.setValue(QLatin1String("searchShortcuts/")
                       + QLatin1String(key), enabled);
 }
@@ -70,7 +71,7 @@ QString ScopeShortcuts::token(Scope scope)
     const char *key = scopeKey(scope);
     if (!key)
         return QString();
-    QSettings settings;
+    ProfileSettings settings;
     return settings.value(
         QLatin1String("searchShortcuts/") + QLatin1String(key)
             + QLatin1String("Token"),
@@ -82,7 +83,7 @@ void ScopeShortcuts::setToken(Scope scope, const QString &token)
     const char *key = scopeKey(scope);
     if (!key)
         return;
-    QSettings settings;
+    ProfileSettings settings;
     settings.setValue(
         QLatin1String("searchShortcuts/") + QLatin1String(key)
             + QLatin1String("Token"),
@@ -121,6 +122,6 @@ ScopeShortcuts::Scope ScopeShortcuts::parse(const QString &text, QString *rest)
 
 void ScopeShortcuts::reset()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.remove(QLatin1String("searchShortcuts"));
 }

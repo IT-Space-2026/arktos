@@ -61,6 +61,7 @@
 ****************************************************************************/
 
 #include "settings.h"
+#include "profilesettings.h"
 
 #include "acceptlanguagedialog.h"
 #include "adblockmanager.h"
@@ -829,7 +830,7 @@ void SettingsDialog::revertThemePreview()
 // explicit English row, anything else an installed locale code.
 static QString storedLanguagePick()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("LanguageManager"));
     return settings.contains(QLatin1String("language"))
         ? settings.value(QLatin1String("language")).toString()
@@ -1099,7 +1100,7 @@ void SettingsDialog::loadDefaults()
 
 void SettingsDialog::loadFromSettings()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("Settings"));
     tabWidget->setCurrentIndex(settings.value(QLatin1String("currentTab"), 0).toInt());
     settings.endGroup();
@@ -1642,7 +1643,7 @@ void SettingsDialog::loadFromSettings()
 
 void SettingsDialog::saveToSettings()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("Settings"));
     settings.setValue(QLatin1String("currentTab"), tabWidget->currentIndex());
     settings.endGroup();
@@ -2197,7 +2198,7 @@ void SettingsDialog::resetSearchSettings()
     m_privateEngineComboDirty = false;
     m_imageEngineComboDirty = false;
 
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("urlloading"));
     settings.remove(QLatin1String("searchEngineFallback"));
     settings.remove(QLatin1String("searchInAddressField"));
@@ -2236,7 +2237,7 @@ void SettingsDialog::resetPerformanceSettings()
     // PREFUI04: every key this page owns — the migrated
     // SLEEP01/prefetch keys included; nothing on other pages is
     // touched (same pattern as resetSearchSettings).
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("performance"));
     settings.remove(QLatin1String(""));
     settings.endGroup();

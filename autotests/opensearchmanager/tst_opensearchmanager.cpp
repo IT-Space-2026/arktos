@@ -21,6 +21,7 @@
 
 #include <memory>
 
+#include "profilesettings.h"
 #include "qtest_arora.h"
 
 #include "opensearchengine.h"
@@ -57,7 +58,7 @@ private slots:
     void convertKeywordSearchToUrl();
     void convertKeywordSearchToUrl_data();
 #if defined(ARORA_RUSTCORE)
-    // OSE01: the legacy descriptor dir + QSettings keys move into
+    // OSE01: the legacy descriptor dir + ProfileSettings keys move into
     // searchengines.json exactly once — keep last: it rebuilds the
     // store from scratch.
     void legacyMigration();
@@ -91,7 +92,7 @@ void tst_OpenSearchManager::initTestCase()
 
     // Persisted keywords from an earlier run would leak into the
     // assertions below; start from a clean settings slate.
-    QSettings settings;
+    ProfileSettings settings;
     settings.clear();
 
     SubOpenSearchManager manager;
@@ -661,7 +662,7 @@ void tst_OpenSearchManager::convertKeywordSearchToUrl()
 
 #if defined(ARORA_RUSTCORE)
 // OSE01: the legacy layout — the searchengines/ descriptor directory
-// plus the openSearch QSettings keys — migrates into
+// plus the openSearch ProfileSettings keys — migrates into
 // searchengines.json exactly once, then the legacy paths retire.
 void tst_OpenSearchManager::legacyMigration()
 {
@@ -694,7 +695,7 @@ void tst_OpenSearchManager::legacyMigration()
     file.close();
 
     {
-        QSettings settings;
+        ProfileSettings settings;
         settings.beginGroup(QLatin1String("openSearch"));
         settings.setValue(QLatin1String("removedBundledEngines"),
                           QStringList() << QLatin1String("Yahoo!"));
@@ -725,11 +726,11 @@ void tst_OpenSearchManager::legacyMigration()
              QLatin1String("Foo Search"));
 
     // The legacy paths retired: the descriptor dir moved aside and
-    // the migrated QSettings keys are gone — a second manager sees
+    // the migrated ProfileSettings keys are gone — a second manager sees
     // the canonical store, not a re-import.
     QVERIFY(!QDir(dirName).exists());
     QVERIFY(QDir(migratedDir).exists());
-    QSettings settings;
+    ProfileSettings settings;
     QVERIFY(!settings.contains(QLatin1String("openSearch/keywords")));
     QVERIFY(!settings.contains(QLatin1String("openSearch/engineOrder")));
     QVERIFY(!settings.contains(

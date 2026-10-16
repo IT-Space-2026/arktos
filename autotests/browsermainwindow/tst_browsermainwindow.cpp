@@ -111,6 +111,7 @@
 #include "commandpalette.h"
 #include "extensionactionbar.h"
 #include "extensionmanager.h"
+#include "profilesettings.h"
 #include "qtest_arora.h"
 #include "qtry.h"
 
@@ -249,7 +250,7 @@ private slots:
 void tst_BrowserMainWindow::initTestCase()
 {
     QCoreApplication::setApplicationName("tst_browsermainwindow");
-    QSettings settings;
+    ProfileSettings settings;
     settings.clear();
     // Keep close() free of the multi-tab confirmation prompt; the
     // prompt's two branches get explicit coverage in closeConfirm().
@@ -561,12 +562,12 @@ void tst_BrowserMainWindow::toolsMenuDedup()
                      window->tabWidget()->currentLocationBar()));
 
     // Field mode goes back to selecting the box text.
-    QSettings().setValue(QLatin1String("MainWindow/showSearchBox"), true);
+    ProfileSettings().setValue(QLatin1String("MainWindow/showSearchBox"), true);
     window->applySearchBoxVisibility();
     window->toolbarSearch()->setText(QLatin1String("arora"));
     webSearch->trigger();
     QVERIFY(window->toolbarSearch()->hasSelectedText());
-    QSettings().remove(QLatin1String("MainWindow/showSearchBox"));
+    ProfileSettings().remove(QLatin1String("MainWindow/showSearchBox"));
     closeWindow(window);
 }
 
@@ -688,7 +689,7 @@ void tst_BrowserMainWindow::menuIcons()
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
     // ICONS10: pin the bundled default — the duplicate-glyph audit
     // below is about what a fresh profile actually renders.
-    QSettings iconSettings;
+    ProfileSettings iconSettings;
     const QVariant savedIconTheme =
         iconSettings.value(QLatin1String("MainWindow/iconTheme"));
     iconSettings.setValue(QLatin1String("MainWindow/iconTheme"),
@@ -1733,7 +1734,7 @@ void tst_BrowserMainWindow::iconOnlyTabsMenu()
     QVERIFY(!bar->iconOnlyTabs());
     QVERIFY(!iconOnly->isChecked());
 
-    QSettings settings;
+    ProfileSettings settings;
     settings.remove(QLatin1String("tabs/iconOnlyTabs"));
     closeWindow(window);
 }
@@ -1980,7 +1981,7 @@ void tst_BrowserMainWindow::printPaths()
 // warning box — cover both answers.
 void tst_BrowserMainWindow::closeConfirm()
 {
-    QSettings().setValue(QLatin1String("tabs/confirmClosingMultipleTabs"), true);
+    ProfileSettings().setValue(QLatin1String("tabs/confirmClosingMultipleTabs"), true);
 
     QPointer<SubWindow> window = new SubWindow;
     window->tabWidget()->newTab();
@@ -2007,7 +2008,7 @@ void tst_BrowserMainWindow::closeConfirm()
     QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     QVERIFY(window.isNull());
 
-    QSettings().setValue(QLatin1String("tabs/confirmClosingMultipleTabs"), false);
+    ProfileSettings().setValue(QLatin1String("tabs/confirmClosingMultipleTabs"), false);
 }
 
 // UIP01: the modernized chrome metrics — padded navigation toolbar,
@@ -2091,7 +2092,7 @@ void tst_BrowserMainWindow::searchBoxVisibility()
     QVERIFY(QApplication::focusWidget() != window->toolbarSearch());
 
     // Field mode applies live and the shortcut selects the box text.
-    QSettings().setValue(QLatin1String("MainWindow/showSearchBox"), true);
+    ProfileSettings().setValue(QLatin1String("MainWindow/showSearchBox"), true);
     window->applySearchBoxVisibility();
     QVERIFY(!window->toolbarSearch()->isButtonMode());
     QVERIFY(!window->toolbarSearch()->isHidden());
@@ -2111,7 +2112,7 @@ void tst_BrowserMainWindow::searchBoxVisibility()
     // Back to hidden live — the toggle works in both directions.
     SubWindow *off = new SubWindow;
     off->show();
-    QSettings().remove(QLatin1String("MainWindow/showSearchBox"));
+    ProfileSettings().remove(QLatin1String("MainWindow/showSearchBox"));
     off->applySearchBoxVisibility();
     QVERIFY(off->toolbarSearch()->isHidden());
     closeWindow(off);
@@ -2144,7 +2145,7 @@ void tst_BrowserMainWindow::torSearchBoxHidden()
     const bool hiddenAtConstruction = search->isHidden();
 
     // The opt-in field preference must not resurrect it in tor mode.
-    QSettings().setValue(QLatin1String("MainWindow/showSearchBox"), true);
+    ProfileSettings().setValue(QLatin1String("MainWindow/showSearchBox"), true);
     window->applySearchBoxVisibility();
     const bool hiddenAfterPref = search->isHidden();
 
@@ -2159,7 +2160,7 @@ void tst_BrowserMainWindow::torSearchBoxHidden()
 
     closeWindow(window);
     BrowserApplication::setTorMode(false);
-    QSettings().remove(QLatin1String("MainWindow/showSearchBox"));
+    ProfileSettings().remove(QLatin1String("MainWindow/showSearchBox"));
 
     QVERIFY(hiddenAtConstruction);
     QVERIFY(hiddenAfterPref);
@@ -2430,7 +2431,7 @@ void tst_BrowserMainWindow::torStatusBarTheme()
     // Deterministic icon art: getOnDark only differs from get()
     // under a bundled theme, and a light palette keeps the normal
     // window on the dark-glyph variants.
-    QSettings settings;
+    ProfileSettings settings;
     const QVariant savedTheme =
         settings.value(QLatin1String("MainWindow/iconTheme"));
     settings.setValue(QLatin1String("MainWindow/iconTheme"),
@@ -2589,7 +2590,7 @@ void tst_BrowserMainWindow::torNavIconsDarkChrome()
         return count;
     };
 
-    QSettings settings;
+    ProfileSettings settings;
     const QVariant savedTheme =
         settings.value(QLatin1String("MainWindow/iconTheme"));
     settings.setValue(QLatin1String("MainWindow/iconTheme"),
@@ -2790,7 +2791,7 @@ void tst_BrowserMainWindow::torChromeGlyphsLegible()
             && c.red() > c.green() && c.lightness() < 160;
     };
 
-    QSettings settings;
+    ProfileSettings settings;
     const QVariant savedTheme =
         settings.value(QLatin1String("MainWindow/iconTheme"));
     settings.setValue(QLatin1String("MainWindow/iconTheme"),
@@ -3003,7 +3004,7 @@ void tst_BrowserMainWindow::darkChromeIcons()
     // Pin the default bundled set explicitly — under the forced dark
     // palette it must resolve arora-tabler-dark (ICONS12: the
     // "native" id the bug report hit is retired).
-    QSettings settings;
+    ProfileSettings settings;
     const QVariant savedTheme =
         settings.value(QLatin1String("MainWindow/iconTheme"));
     settings.setValue(QLatin1String("MainWindow/iconTheme"),
@@ -3990,7 +3991,7 @@ void tst_BrowserMainWindow::servoStartPage()
 
     // Collect state first — a mid-test QVERIFY abort must not leave
     // the servo engine pick armed for the remaining functions.
-    QSettings().setValue(engineKey, QStringLiteral("servo"));
+    ProfileSettings().setValue(engineKey, QStringLiteral("servo"));
     const QUrl mapped = BrowserApplication::startPageUrl();
     const QUrl guessed =
         TabWidget::guessUrlFromString(QLatin1String("about:home"));
@@ -4068,7 +4069,7 @@ void tst_BrowserMainWindow::servoStartPage()
     }
 
     closeWindow(window);
-    QSettings().remove(engineKey);
+    ProfileSettings().remove(engineKey);
 
     QCOMPARE(mapped, servoStart);
     QCOMPARE(guessed, servoStart);
@@ -4951,7 +4952,7 @@ void tst_BrowserMainWindow::homeButton()
 // stored url — and the startup Specific Pages list opens fully.
 void tst_BrowserMainWindow::homePageModes()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.remove(QLatin1String("MainWindow/homePageMode"));
     settings.remove(QLatin1String("MainWindow/home"));
     settings.remove(QLatin1String("MainWindow/startupPages"));
@@ -5236,7 +5237,7 @@ void tst_BrowserMainWindow::statusBarIndicators()
 // sidebarDockArea, all four sections functional.
 void tst_BrowserMainWindow::sidebarPanel()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.remove(QLatin1String("MainWindow/showSidebar"));
     settings.remove(QLatin1String("MainWindow/sidebarDockArea"));
     settings.remove(QLatin1String("sidebar/notes"));
@@ -5585,7 +5586,7 @@ void tst_BrowserMainWindow::sidebarPanel()
 // sidebar show.
 void tst_BrowserMainWindow::sidebarResize()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.remove(QLatin1String("MainWindow/showSidebar"));
     settings.remove(QLatin1String("MainWindow/sidebarDockArea"));
     settings.remove(QLatin1String("MainWindow/sidebarWidth"));
@@ -5695,7 +5696,7 @@ void tst_BrowserMainWindow::sidebarResize()
 // window.  Ids the key doesn't mention append in registry order.
 void tst_BrowserMainWindow::sidebarPanelOrder()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.remove(QLatin1String("MainWindow/showSidebar"));
     settings.remove(QLatin1String("sidebar/panelOrder"));
     settings.remove(QLatin1String("sidebar/panels"));
@@ -5763,7 +5764,7 @@ void tst_BrowserMainWindow::sidebarPanelOrder()
 // counters all flip live through applySidebarSettings.
 void tst_BrowserMainWindow::sidebarPanelOptions()
 {
-    QSettings settings;
+    ProfileSettings settings;
     const char *const optionKeys[] = {
         "sidebar/showPanelToggle", "sidebar/showCloseButton",
         "sidebar/autoCloseInactive", "sidebar/folderCounters",
@@ -5944,7 +5945,7 @@ void tst_BrowserMainWindow::sidebarPanelOptions()
 // hides while the dock floats.
 void tst_BrowserMainWindow::sidebarGripResize()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.remove(QLatin1String("MainWindow/showSidebar"));
     settings.remove(QLatin1String("MainWindow/sidebarDockArea"));
     settings.remove(QLatin1String("MainWindow/sidebarWidth"));
@@ -6012,7 +6013,7 @@ void tst_BrowserMainWindow::sidebarGripResize()
 // card, and the header X folds the dock away.
 void tst_BrowserMainWindow::downloadsSidebarPanel()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.remove(QLatin1String("MainWindow/showSidebar"));
 
     QTemporaryDir downloadDir;
@@ -6117,7 +6118,7 @@ void tst_BrowserMainWindow::downloadsSidebarPanel()
 // HistoryManager::confirmClear path.
 void tst_BrowserMainWindow::sidebarHistoryControls()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.remove(QLatin1String("MainWindow/showSidebar"));
     settings.remove(QLatin1String("sidebar/historyPeriod"));
 
@@ -6230,7 +6231,7 @@ void tst_BrowserMainWindow::sidebarHistoryControls()
 // menu's "Remove Entry" is the same delete.
 void tst_BrowserMainWindow::bookmarksSidebarPanel()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.remove(QLatin1String("MainWindow/showSidebar"));
 
     BookmarksManager *manager = BookmarksManager::instance();
@@ -6385,7 +6386,7 @@ void tst_BrowserMainWindow::chromeSlots()
     // The CONT06 strip (default on) filters tabs to the active
     // container level — pin inline mode so the count assertions
     // below see every tab.
-    QSettings settings;
+    ProfileSettings settings;
     const QVariant savedDisplay =
         settings.value(QLatin1String("tabs/containerDisplay"));
     settings.setValue(QLatin1String("tabs/containerDisplay"), 0);
@@ -6485,12 +6486,12 @@ void tst_BrowserMainWindow::chromeSlots()
 
     // quitAsLastTabClosed=off: the last close opens a fresh tab
     // instead of closing the window.
-    QSettings().setValue(QLatin1String("tabs/quitAsLastTabClosed"), false);
+    ProfileSettings().setValue(QLatin1String("tabs/quitAsLastTabClosed"), false);
     while (window->tabWidget()->count() > 1)
         window->tabWidget()->closeTab(0);
     QVERIFY(QMetaObject::invokeMethod(window, "lastTabClosed"));
     QVERIFY(window->tabWidget()->count() >= 1);
-    QSettings().setValue(QLatin1String("tabs/quitAsLastTabClosed"), true);
+    ProfileSettings().setValue(QLatin1String("tabs/quitAsLastTabClosed"), true);
 
     // updateReaderState runs on every view-menu show — here with a
     // real tab so both reader + PiP wiring execute.
@@ -6522,7 +6523,7 @@ void tst_BrowserMainWindow::chromeSlots()
 // still dropped on finish — the documented rule, re-confirmed.
 void tst_BrowserMainWindow::downloadsSidebarFinishedRows()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.remove(QLatin1String("MainWindow/showSidebar"));
 
     QTemporaryDir downloadDir;
@@ -6640,7 +6641,7 @@ void tst_BrowserMainWindow::downloadsSidebarFinishedRows()
 // compress, so at the floor all controls stay fully inside the page.
 void tst_BrowserMainWindow::downloadsSidebarMinWidth()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.remove(QLatin1String("MainWindow/showSidebar"));
 
     QTemporaryDir downloadDir;
@@ -6759,7 +6760,7 @@ void tst_BrowserMainWindow::downloadsSidebarMinWidth()
 // removing an in-flight row.
 void tst_BrowserMainWindow::downloadsSidebarActions()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.remove(QLatin1String("MainWindow/showSidebar"));
     // The fake requests below carry http urls — keep the rustdl
     // takeover and the external handler from claiming them.
@@ -6920,7 +6921,7 @@ void tst_BrowserMainWindow::downloadsSidebarActions()
 // file on disk survive.
 void tst_BrowserMainWindow::downloadsSidebarClearList()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.remove(QLatin1String("MainWindow/showSidebar"));
 
     QTemporaryDir downloadDir;
@@ -7060,7 +7061,7 @@ void tst_BrowserMainWindow::downloadsSidebarClearList()
 // dereferencing the missing page.
 void tst_BrowserMainWindow::widgetTabBookmarksSafety()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.remove(QLatin1String("MainWindow/showSidebar"));
     settings.remove(QLatin1String("sidebar/panels/bookmarks"));
 
@@ -7167,7 +7168,7 @@ void tst_BrowserMainWindow::tabStripCompactHeight()
 
     // Inline-chips mode (tabs/containerDisplay=0, what the reporter
     // runs): a container tab must not stretch the strip.
-    QSettings settings;
+    ProfileSettings settings;
     settings.setValue(QLatin1String("tabs/containerDisplay"), 0);
     window->tabWidget()->loadSettings();
     const ContainerManager::Container container =
@@ -7882,7 +7883,7 @@ void tst_BrowserMainWindow::navBarEditMode()
     // NAVB04: drags persist through the shared settings store —
     // start from a clean key so both legs see the stock order.
     {
-        QSettings settings;
+        ProfileSettings settings;
         settings.remove(QLatin1String("navbar/order"));
         settings.sync();
     }
@@ -8103,7 +8104,7 @@ void tst_BrowserMainWindow::navBarEditMode()
     // first window's drags wrote the shared order — clear it so this
     // leg exercises stock positions like the assertions assume.
     {
-        QSettings settings;
+        ProfileSettings settings;
         settings.remove(QLatin1String("navbar/order"));
         settings.sync();
     }
@@ -8178,7 +8179,7 @@ void tst_BrowserMainWindow::navBarOrderPersistence()
 {
     const QLatin1String key("navbar/order");
     {
-        QSettings settings;
+        ProfileSettings settings;
         settings.remove(key);
         settings.sync();
     }
@@ -8200,7 +8201,7 @@ void tst_BrowserMainWindow::navBarOrderPersistence()
     QCOMPARE(window->navBarOrder(), stockOrder);
 
     // A real edit-mode drag — Stop/Reload ahead of Back — lands in
-    // QSettings on release, not on edit-mode exit or window close.
+    // ProfileSettings on release, not on edit-mode exit or window close.
     window->navBarEditAction()->setChecked(true);
     QVERIFY(window->isNavBarEditMode());
     const QList<QAction *> actions = navBar->actions();
@@ -8225,7 +8226,7 @@ void tst_BrowserMainWindow::navBarOrderPersistence()
         QStringLiteral("sidebar"), QStringLiteral("profileButton")};
     QCOMPARE(window->navBarOrder(), draggedOrder);
     {
-        QSettings settings;
+        ProfileSettings settings;
         QCOMPARE(settings.value(key).toStringList(), draggedOrder);
     }
     window->navBarEditAction()->setChecked(false);
@@ -8267,7 +8268,7 @@ void tst_BrowserMainWindow::navBarOrderPersistence()
     QCOMPARE(window->navBarOrder(), resyncedOrder);
     QCOMPARE(second->navBarOrder(), resyncedOrder);
     {
-        QSettings settings;
+        ProfileSettings settings;
         QCOMPARE(settings.value(key).toStringList(), resyncedOrder);
     }
     window->navBarEditAction()->setChecked(false);
@@ -8280,7 +8281,7 @@ void tst_BrowserMainWindow::navBarOrderPersistence()
     QCOMPARE(window->navBarOrder(), stockOrder);
     QCOMPARE(second->navBarOrder(), stockOrder);
     {
-        QSettings settings;
+        ProfileSettings settings;
         QVERIFY(!settings.value(key).isValid());
     }
 
@@ -8289,7 +8290,7 @@ void tst_BrowserMainWindow::navBarOrderPersistence()
     // torBadge) drop, and items the list doesn't name keep their
     // stock sequence at the end — the bar can never corrupt.
     {
-        QSettings settings;
+        ProfileSettings settings;
         settings.setValue(key, QStringList{
             QStringLiteral("bogus"), QStringLiteral("torBadge"),
             QStringLiteral("back"), QStringLiteral("sidebar")});
@@ -8313,7 +8314,7 @@ void tst_BrowserMainWindow::navBarOrderPersistence()
 
     // A corrupt non-list value falls back to stock entirely.
     {
-        QSettings settings;
+        ProfileSettings settings;
         settings.setValue(key, 42);
         settings.sync();
     }
@@ -8327,7 +8328,7 @@ void tst_BrowserMainWindow::navBarOrderPersistence()
     // tor-only ids resolve only there — and the chrome sheet is
     // untouched by the rebuild.
     {
-        QSettings settings;
+        ProfileSettings settings;
         settings.setValue(key, QStringList{
             QStringLiteral("torBadge"), QStringLiteral("appMenu"),
             QStringLiteral("sidebar"), QStringLiteral("back")});
@@ -8362,7 +8363,7 @@ void tst_BrowserMainWindow::navBarOrderPersistence()
     closeWindow(window);
     // Leave the store clean for whatever runs next.
     {
-        QSettings settings;
+        ProfileSettings settings;
         settings.remove(key);
         settings.sync();
     }
@@ -8380,7 +8381,7 @@ void tst_BrowserMainWindow::siteShieldButton()
 {
     const QLatin1String key("navbar/order");
     {
-        QSettings settings;
+        ProfileSettings settings;
         settings.remove(key);
         settings.sync();
     }
@@ -8515,7 +8516,7 @@ void tst_BrowserMainWindow::siteShieldButton()
     // on every bar action (the QWidgetAction unembed/re-embed path);
     // a fresh window on that order is also the session-restore shape.
     {
-        QSettings settings;
+        ProfileSettings settings;
         settings.setValue(key, QStringList{
             QStringLiteral("locationBar"), QStringLiteral("back"),
             QStringLiteral("appMenu"), QStringLiteral("sidebar")});
@@ -8538,7 +8539,7 @@ void tst_BrowserMainWindow::siteShieldButton()
         QLatin1String("siteShield")));
     closeWindow(restored);
     {
-        QSettings settings;
+        ProfileSettings settings;
         settings.remove(key);
         settings.sync();
     }

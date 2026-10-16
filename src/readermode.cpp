@@ -18,6 +18,7 @@
  */
 
 #include "readermode.h"
+#include "profilesettings.h"
 
 #include "browserapplication.h"
 #include "engineinterface.h"
@@ -232,14 +233,14 @@ ReaderMode::ReaderMode(WebView *view)
 
 int ReaderMode::fontSize()
 {
-    QSettings settings;
+    ProfileSettings settings;
     return qBound(12, settings.value(QLatin1String("reader/fontSize"), 19)
                       .toInt(), 30);
 }
 
 QString ReaderMode::theme()
 {
-    QSettings settings;
+    ProfileSettings settings;
     const QString stored =
         settings.value(QLatin1String("reader/theme")).toString();
     if (stored == QLatin1String("light") || stored == QLatin1String("dark"))
@@ -358,7 +359,7 @@ void ReaderMode::scriptExited()
 
 void ReaderMode::scriptPreference(const QString &key, const QVariant &value)
 {
-    QSettings settings;
+    ProfileSettings settings;
     if (key == QLatin1String("fontSize")) {
         settings.setValue(QLatin1String("reader/fontSize"),
                           qBound(12, value.toInt(), 30));
@@ -592,20 +593,20 @@ void ReaderMode::showOverlay(const QVariantMap &article)
     connect(fontDec, &QToolButton::clicked, this,
             [this, readerView]() {
         const int px = qBound(12, fontSize() - 1, 30);
-        QSettings().setValue(QLatin1String("reader/fontSize"), px);
+        ProfileSettings().setValue(QLatin1String("reader/fontSize"), px);
         readerView->setZoomFactor(px / 19.0);
     });
     connect(fontInc, &QToolButton::clicked, this,
             [this, readerView]() {
         const int px = qBound(12, fontSize() + 1, 30);
-        QSettings().setValue(QLatin1String("reader/fontSize"), px);
+        ProfileSettings().setValue(QLatin1String("reader/fontSize"), px);
         readerView->setZoomFactor(px / 19.0);
     });
     connect(themeBtn, &QToolButton::clicked, this,
             [this, bar, readerView, themeBtn]() {
         const QString next = theme() == QLatin1String("dark")
             ? QStringLiteral("light") : QStringLiteral("dark");
-        QSettings().setValue(QLatin1String("reader/theme"), next);
+        ProfileSettings().setValue(QLatin1String("reader/theme"), next);
         const bool darkNext = next == QLatin1String("dark");
         themeBtn->setText(darkNext ? QStringLiteral("\u2600")
                                    : QStringLiteral("\u263E"));

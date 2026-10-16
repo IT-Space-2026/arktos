@@ -19,6 +19,7 @@
  */
 
 #include "sourceviewer.h"
+#include "profilesettings.h"
 
 #include <qdebug.h>
 #include <qlayout.h>
@@ -104,7 +105,7 @@ SourceViewer::SourceViewer(const QString &title, const QUrl &url,
 {
     setWindowTitle(tr("Source of Page %1").arg(title));
 
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("SourceViewer"));
     QSize size = settings.value(QLatin1String("size"), QSize(640, 480)).toSize();
     resize(size);
@@ -176,7 +177,7 @@ SourceViewer::SourceViewer(const QString &title, const QUrl &url,
 
 SourceViewer::~SourceViewer()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("SourceViewer"));
     settings.setValue(QLatin1String("size"), size());
 }

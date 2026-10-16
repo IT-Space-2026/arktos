@@ -18,6 +18,7 @@
  */
 
 #include "webpermissionmanager.h"
+#include "profilesettings.h"
 
 #include <qapplication.h>
 #include <qcheckbox.h>
@@ -37,7 +38,7 @@
 // than migrated — no valid decision is ever lost.
 static void importLegacyWebPermissions()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("webpermissions"));
     const QStringList origins = settings.childGroups();
     if (origins.isEmpty()) {
@@ -208,7 +209,7 @@ QList<WebPermissionManager::Entry> WebPermissionManager::entries() const
         result.append(entry);
     }
 #else
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("webpermissions"));
     const QStringList origins = settings.childGroups();
     for (const QString &originKey : origins) {
@@ -239,7 +240,7 @@ void WebPermissionManager::setEntry(const QUrl &origin,
                            keyFor(origin, type),
                            QLatin1String(granted ? "grant" : "deny"));
 #else
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("webpermissions"));
     settings.setValue(keyFor(origin, type),
                       QLatin1String(granted ? "grant" : "deny"));
@@ -255,7 +256,7 @@ void WebPermissionManager::removeEntry(const QUrl &origin,
     SiteDecisionStore::remove(SiteDecisionStore::KindWebPermission,
                               keyFor(origin, type));
 #else
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("webpermissions"));
     settings.remove(keyFor(origin, type));
     settings.endGroup();
@@ -270,7 +271,7 @@ void WebPermissionManager::clearEntries()
 #if defined(ARORA_RUSTCORE)
     SiteDecisionStore::clear(SiteDecisionStore::KindWebPermission);
 #else
-    QSettings settings;
+    ProfileSettings settings;
     settings.remove(QLatin1String("webpermissions"));
 #endif
     m_sessionDecisions.clear();
@@ -297,7 +298,7 @@ bool WebPermissionManager::storedDecision(const QUrl &origin,
         return true;
     }
 #else
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("webpermissions"));
     if (settings.contains(key)) {
         *granted = settings.value(key).toString() == QLatin1String("grant");

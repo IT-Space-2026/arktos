@@ -18,6 +18,7 @@
  */
 
 #include "clearprivatedata.h"
+#include "profilesettings.h"
 
 #include "autofillmanager.h"
 #include "browserapplication.h"
@@ -78,7 +79,7 @@ ClearPrivateData::ClearPrivateData(QWidget *parent)
     itemLayout->setContentsMargins(16, 0, 0, 0);
     layout->addLayout(itemLayout);
 
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("clearprivatedata"));
 
     m_browsingHistory = new QCheckBox(tr("&Browsing History"));
@@ -410,7 +411,7 @@ void ClearPrivateData::executePlan(const QJsonArray &ops)
         } else if (name == QLatin1String("session.clear")) {
             // The saved session blob is browsing history — leaving
             // it behind would undo the wipe.
-            QSettings settings;
+            ProfileSettings settings;
             settings.beginGroup(QLatin1String("sessions"));
             settings.remove(QLatin1String("lastSession"));
             settings.endGroup();
@@ -437,7 +438,7 @@ void ClearPrivateData::executePlan(const QJsonArray &ops)
 
 void ClearPrivateData::accept()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("clearprivatedata"));
 
     settings.setValue(QLatin1String("browsingHistory"), m_browsingHistory->isChecked());

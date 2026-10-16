@@ -18,6 +18,7 @@
  */
 
 #include "popupblocker.h"
+#include "profilesettings.h"
 
 #include <qapplication.h>
 #include <qsettings.h>
@@ -33,7 +34,7 @@ PopupBlocker::PopupBlocker(QObject *parent)
 #if defined(ARORA_RUSTCORE)
     // SITED01: one-shot import of the legacy "popupExceptions" list —
     // replayed into the Rust store and retired after the writes land.
-    QSettings legacy;
+    ProfileSettings legacy;
     const QStringList legacyAllowed = legacy
         .value(QLatin1String("popupExceptions/allowed")).toStringList();
     if (!legacyAllowed.isEmpty()) {
@@ -56,7 +57,7 @@ PopupBlocker::PopupBlocker(QObject *parent)
             m_allowed.append(normalized);
     }
 #else
-    const QStringList allowed = QSettings()
+    const QStringList allowed = ProfileSettings()
         .value(QLatin1String("popupExceptions/allowed")).toStringList();
     for (const QString &host : allowed) {
         const QString normalized = normalizeHost(host);
@@ -74,13 +75,13 @@ PopupBlocker *PopupBlocker::instance()
 
 bool PopupBlocker::isEnabled() const
 {
-    return QSettings().value(QLatin1String("websettings/blockPopupWindows"),
+    return ProfileSettings().value(QLatin1String("websettings/blockPopupWindows"),
                              true).toBool();
 }
 
 void PopupBlocker::setEnabled(bool enabled)
 {
-    QSettings().setValue(QLatin1String("websettings/blockPopupWindows"),
+    ProfileSettings().setValue(QLatin1String("websettings/blockPopupWindows"),
                          enabled);
     emit changed();
 }
@@ -201,7 +202,7 @@ void PopupBlocker::save() const
         rows.insert(host, QLatin1String("allow"));
     SiteDecisionStore::replace(SiteDecisionStore::KindPopup, rows);
 #else
-    QSettings settings;
+    ProfileSettings settings;
     if (m_allowed.isEmpty())
         settings.remove(QLatin1String("popupExceptions/allowed"));
     else

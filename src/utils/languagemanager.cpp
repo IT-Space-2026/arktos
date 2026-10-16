@@ -28,6 +28,7 @@
  */
 
 #include "languagemanager.h"
+#include "profilesettings.h"
 
 #include "browserpaths.h"
 
@@ -179,7 +180,7 @@ bool LanguageManager::setCurrentLanguage(const QString &language)
     m_currentLanguage = effective;
     m_followsSystem = followsSystem;
 
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("LanguageManager"));
     settings.setValue(QLatin1String("language"),
                       followsSystem ? language : m_currentLanguage);
@@ -246,7 +247,7 @@ void LanguageManager::loadLanguageFromSettings()
     qDebug() << "LanguageManager::" << __FUNCTION__;
 #endif
 
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("LanguageManager"));
     if (settings.contains(QLatin1String("language"))) {
         QString selectedLanguage = settings.value(QLatin1String("language")).toString();

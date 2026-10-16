@@ -36,6 +36,7 @@
 #include "adblockpresets.h"
 #include "adblockpresetsdialog.h"
 #include "adblocksubscription.h"
+#include "profilesettings.h"
 
 #if defined(ARORA_RUSTCORE)
 #include "sitedecisionstore.h"
@@ -113,7 +114,7 @@ void tst_AdBlockManager::init()
     // subscription so subscriptions() is deterministic.  The temporary
     // manager's destructor persists enabled=false plus an emptied list,
     // so the seed is written only after it is gone.
-    QSettings settings;
+    ProfileSettings settings;
     settings.clear();
 #if defined(ARORA_RUSTCORE)
     // The site whitelist moved out of the custom-rules file into the
@@ -378,9 +379,9 @@ void tst_AdBlockManager::subscribeRemoteList()
     serveList();
     QTRY_VERIFY(changedSpy.count() >= 3);
 
-    // The subscription persists into the QSettings list.
+    // The subscription persists into the ProfileSettings list.
     QMetaObject::invokeMethod(manager, "save", Qt::DirectConnection);
-    const QStringList stored = QSettings()
+    const QStringList stored = ProfileSettings()
         .value(QLatin1String("AdBlock/subscriptions")).toStringList();
     bool found = false;
     for (const QString &entry : stored) {
@@ -474,11 +475,11 @@ void tst_AdBlockManager::engineSelection()
     // Re-selecting the default is a no-op: no signal, no key written.
     manager->setEngine(AdBlockManager::RustEngine);
     QCOMPARE(spy.count(), 0);
-    QVERIFY(!QSettings().contains(QLatin1String("AdBlock/engine")));
+    QVERIFY(!ProfileSettings().contains(QLatin1String("AdBlock/engine")));
 
     // The explicit opt-out persists "cpp" and flips the pick.
     manager->setEngine(AdBlockManager::NativeEngine);
-    QCOMPARE(QSettings().value(QLatin1String("AdBlock/engine")).toString(),
+    QCOMPARE(ProfileSettings().value(QLatin1String("AdBlock/engine")).toString(),
              QLatin1String("cpp"));
     QCOMPARE(int(AdBlockManager::storedEngine()),
              int(AdBlockManager::NativeEngine));
@@ -508,7 +509,7 @@ void tst_AdBlockManager::engineSelection()
     QVERIFY(!manager->network()->rustEngineActive());
     manager->setEngine(AdBlockManager::NativeEngine);
 #endif
-    QCOMPARE(QSettings().value(QLatin1String("AdBlock/engine")).toString(),
+    QCOMPARE(ProfileSettings().value(QLatin1String("AdBlock/engine")).toString(),
              QLatin1String("cpp"));
     // No signal when the pick does not actually change.
     const int settled = spy.count();

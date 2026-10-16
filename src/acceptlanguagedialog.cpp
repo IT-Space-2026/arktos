@@ -18,6 +18,7 @@
  */
 
 #include "acceptlanguagedialog.h"
+#include "profilesettings.h"
 
 #include "languagemanager.h"
 
@@ -102,7 +103,7 @@ QStringList AcceptLanguageDialog::normalizedAcceptLanguages()
 
 QStringList AcceptLanguageDialog::acceptLanguages()
 {
-    QSettings settings;
+    ProfileSettings settings;
     // PRIV02: fingerprint normalization — the fixed list replaces the
     // configured one on the wire (Accept-Language header and
     // navigator.languages both derive from it) while the toggle is
@@ -139,7 +140,7 @@ void AcceptLanguageDialog::accept()
 
 QStringList AcceptLanguageDialog::storedAcceptLanguages()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("network"));
     return settings.value(QLatin1String("acceptLanguages"), defaultAcceptList()).toStringList();
 }
@@ -151,7 +152,7 @@ void AcceptLanguageDialog::load()
 
 void AcceptLanguageDialog::save()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("network"));
     QStringList result = m_model.stringList();
     if (result == defaultAcceptList() || result.isEmpty())

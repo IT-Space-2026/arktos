@@ -61,6 +61,7 @@
 ****************************************************************************/
 
 #include "browserapplication.h"
+#include "profilesettings.h"
 
 #include "acceptlanguagedialog.h"
 #include "adblockmanager.h"
@@ -234,6 +235,12 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
 #endif
     ));
 
+    // MPROF04: first boot with the split store — copy the classified
+    // persona keys from the global file into
+    // profiles/default/settings.ini (copy, not move — the old keys stay
+    // as the read fallback).  Marker inside the ini makes re-runs free.
+    ProfileSettings::migrateFromGlobal();
+
 #ifndef AUTOTESTS
     // Any option-style argument makes the run standalone: smoke tests
     // and --quit-after-load must always run locally, and --help /
@@ -374,7 +381,7 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
     webEngineProfile();
     StartupProfile::mark("ctor: browsing profile + services prepared");
 
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("sessions"));
     m_lastSession = settings.value(QLatin1String("lastSession")).toByteArray();
     settings.endGroup();
@@ -491,7 +498,7 @@ void BrowserApplication::messageReceived(QLocalSocket *socket)
         // anything running as this user.  The javascript: check moved
         // into loadStringFromUntrustedSource, which gates the
         // *resolved* url so normalization tricks are still caught.
-        QSettings settings;
+        ProfileSettings settings;
         settings.beginGroup(QLatin1String("tabs"));
         TabWidget::OpenUrlIn tab = TabWidget::OpenUrlIn(settings.value(QLatin1String("openLinksFromAppsIn"), TabWidget::NewSelectedTab).toInt());
         settings.endGroup();
@@ -547,7 +554,7 @@ void BrowserApplication::quitBrowser()
     // it inherits the migrated close-window confirm's value, so a user
     // who turned that off is not surprised by a new prompt — while the
     // old default (on) keeps the quit warning alive.
-    QSettings settings;
+    ProfileSettings settings;
     const bool confirmWindow = settings.value(
         QLatin1String("tabs/confirmClosingMultipleTabs"), true).toBool();
     clean();
@@ -805,7 +812,7 @@ void BrowserApplication::saveSession()
 {
     if (quitting)
         return;
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("MainWindow"));
     settings.setValue(QLatin1String("restoring"), false);
     settings.endGroup();
@@ -934,7 +941,7 @@ void BrowserApplication::clearPrivateDataOnExit()
     // is off-the-record — nothing to remove.
     if (isTorMode())
         return;
-    if (!QSettings().value(QLatin1String("privacy/clearOnExit"), false).toBool())
+    if (!ProfileSettings().value(QLatin1String("privacy/clearOnExit"), false).toBool())
         return;
 
     // CLR01: the exit wipe is the full category set at persistent
@@ -957,7 +964,7 @@ void BrowserApplication::clearPrivateDataOnExit()
 bool BrowserApplication::restoreLastSession()
 {
     {
-        QSettings settings;
+        ProfileSettings settings;
         settings.beginGroup(QLatin1String("MainWindow"));
         if (settings.value(QLatin1String("restoring"), false).toBool()) {
             QMessageBox::StandardButton result = QMessageBox::question(nullptr, tr("Restore failed"),
@@ -985,7 +992,7 @@ bool BrowserApplication::restoreLastSession()
             const QJsonArray windows = doc.object()
                 .value(QLatin1String("windows")).toArray();
             {
-                QSettings settings;
+                ProfileSettings settings;
                 settings.beginGroup(QLatin1String("MainWindow"));
                 // Armed only once the blob has validated — a corrupt
                 // session can never loop the crash prompt.
@@ -1046,7 +1053,7 @@ bool BrowserApplication::restoreLastSession()
         windows.append(windowState);
     }
     {
-        QSettings settings;
+        ProfileSettings settings;
         settings.beginGroup(QLatin1String("MainWindow"));
         // saveSession will be called by an AutoSaver timer from the set
         // tabs and in saveSession we will reset this flag back to false —
@@ -1389,7 +1396,7 @@ QUrl BrowserApplication::startPageUrl(const QString &engineId,
 // a user-picked specific page.
 int BrowserApplication::homePageMode()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("MainWindow"));
     const QVariant mode = settings.value(QLatin1String("homePageMode"));
     if (mode.isValid())
@@ -1407,7 +1414,7 @@ int BrowserApplication::homePageMode()
 // the start page), 2 "restore" -> Last Session.
 int BrowserApplication::startupMode()
 {
-    QSettings settings;
+    ProfileSettings settings;
     const QVariant mode =
         settings.value(QLatin1String("MainWindow/startupMode"));
     if (mode.isValid())
@@ -1429,7 +1436,7 @@ int BrowserApplication::startupMode()
 
 QStringList BrowserApplication::startupPages()
 {
-    return QSettings()
+    return ProfileSettings()
         .value(QLatin1String("MainWindow/startupPages")).toStringList();
 }
 
@@ -1451,7 +1458,7 @@ void BrowserApplication::openStartupPages(BrowserMainWindow *window)
 
 QString BrowserApplication::defaultEngineId()
 {
-    return QSettings().value(QLatin1String("MainWindow/defaultEngine"),
+    return ProfileSettings().value(QLatin1String("MainWindow/defaultEngine"),
                              QStringLiteral("webengine")).toString();
 }
 
@@ -1523,19 +1530,19 @@ bool BrowserApplication::isUrlAllowedOnTorArgv(const QString &operand)
 
 bool BrowserApplication::siteTrustEnabled()
 {
-    return QSettings().value(QLatin1String("trust/enabled"), true)
+    return ProfileSettings().value(QLatin1String("trust/enabled"), true)
             .toBool();
 }
 
 bool BrowserApplication::siteTrustLookalikeEnabled()
 {
-    return QSettings().value(QLatin1String("trust/lookalike"), true)
+    return ProfileSettings().value(QLatin1String("trust/lookalike"), true)
             .toBool();
 }
 
 bool BrowserApplication::siteTrustThreatlistEnabled()
 {
-    return QSettings().value(QLatin1String("trust/threatlist"), true)
+    return ProfileSettings().value(QLatin1String("trust/threatlist"), true)
             .toBool();
 }
 

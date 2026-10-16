@@ -18,6 +18,7 @@
  */
 
 #include "rustdownloadengine.h"
+#include "profilesettings.h"
 
 #include "adblockmanager.h"
 #include "adblocknetwork.h"
@@ -367,7 +368,7 @@ bool RustDownloadEngine::isSelected()
 {
     if (!isAvailable())
         return false;
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("downloadmanager"));
     const QVariant v = settings.value(QLatin1String("engine"));
     const QString s = v.toString().toLower();
@@ -473,7 +474,7 @@ void RustDownloadEngine::accept()
 
     // User-configurable 4-16 segments (0/empty = engine default 8);
     // the DLACC01 settings page owns the visible control.
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("downloadmanager"));
     const int connections = settings.value(QLatin1String("connections"), 0).toInt();
 
@@ -659,7 +660,7 @@ bool RustDownloadEngine::sandboxedWorkerEnabled()
     // developers and a settings key for users; both default on.
     if (!qgetenv("ARORA_DL_NO_SANDBOX").isEmpty())
         return false;
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("downloadmanager"));
     if (!settings.value(QLatin1String("sandboxedWorker"), true).toBool())
         return false;
@@ -732,7 +733,7 @@ bool RustDownloadEngine::startWorkerProcess()
     removeCookieFile();
     m_cookieFile = exportCookieFileTo(m_workDir);
 
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("downloadmanager"));
     QJsonObject job;
     job.insert(QLatin1String("cmd"), QLatin1String("job"));

@@ -37,6 +37,7 @@
 #include "webview.h"
 #include "browserapplication.h"
 #include "tabwidget.h"
+#include "profilesettings.h"
 #include "qtest_arora.h"
 #include "qtry.h"
 
@@ -75,7 +76,7 @@ void tst_ToolbarSearch::initTestCase()
 {
     QCoreApplication::setApplicationName("tst_toolbarsearch");
     QStandardPaths::setTestModeEnabled(true);
-    QSettings settings;
+    ProfileSettings settings;
     settings.clear();
     ToolbarSearch::openSearchManager()->restoreDefaults();
 }
@@ -172,7 +173,7 @@ void tst_ToolbarSearch::searchEmitsUrlWithBrokenEngine()
 // the re-extension that stalled deletion.
 void tst_ToolbarSearch::backspaceClearsField()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.setValue(QLatin1String("toolbarsearch/recentSearches"),
                       QStringList() << QLatin1String("persisted")
                                     << QLatin1String("older"));
@@ -253,7 +254,7 @@ void tst_ToolbarSearch::completerPaths()
 {
     // Seed a deterministic history so the model always has a header row
     // plus at least one selectable entry.
-    QSettings settings;
+    ProfileSettings settings;
     settings.setValue(QLatin1String("toolbarsearch/recentSearches"),
                       QStringList() << QLatin1String("persisted")
                                     << QLatin1String("older"));
@@ -335,8 +336,8 @@ void tst_ToolbarSearch::fieldEnginePrefs()
 
     // alwaysNewTab forces a new-tab target; keepTypedText off clears
     // the field after the search is dispatched.
-    QSettings().setValue(QLatin1String("toolbarsearch/alwaysNewTab"), true);
-    QSettings().setValue(QLatin1String("toolbarsearch/keepTypedText"), false);
+    ProfileSettings().setValue(QLatin1String("toolbarsearch/alwaysNewTab"), true);
+    ProfileSettings().setValue(QLatin1String("toolbarsearch/keepTypedText"), false);
     {
         ToolbarSearch search;
         search.setText(QLatin1String("terms"));
@@ -347,8 +348,8 @@ void tst_ToolbarSearch::fieldEnginePrefs()
                  TabWidget::NewSelectedTab);
         QVERIFY(search.text().isEmpty());
     }
-    QSettings().remove(QLatin1String("toolbarsearch/alwaysNewTab"));
-    QSettings().remove(QLatin1String("toolbarsearch/keepTypedText"));
+    ProfileSettings().remove(QLatin1String("toolbarsearch/alwaysNewTab"));
+    ProfileSettings().remove(QLatin1String("toolbarsearch/keepTypedText"));
 
     // Private contexts search through the private engine — here the
     // app-level flag stands in for a bound off-the-record view.
@@ -379,7 +380,7 @@ void tst_ToolbarSearch::fieldEnginePrefs()
     }
 
     manager->setCurrentEngineName(defaultName);
-    QSettings().remove(QLatin1String("toolbarsearch/recentSearches"));
+    ProfileSettings().remove(QLatin1String("toolbarsearch/recentSearches"));
 }
 
 // SEC11: suggestions are a per-engine opt-in — with the flag off (the
@@ -480,7 +481,7 @@ void tst_ToolbarSearch::suggestionsOptIn()
     // Persistence: save() serializes the opt-in list under openSearch.
     manager->setSuggestionsEnabledForEngine(capable->name(), true);
     manager->save();
-    QCOMPARE(QSettings().value(QLatin1String("openSearch/suggestions"))
+    QCOMPARE(ProfileSettings().value(QLatin1String("openSearch/suggestions"))
                  .toStringList(),
              QStringList() << capable->name());
     manager->setSuggestionsEnabledForEngine(capable->name(), false);

@@ -18,6 +18,7 @@
  */
 
 #include "adblockmanager.h"
+#include "profilesettings.h"
 #include "adblocknetwork.h"
 #include "adblockpage.h"
 #include "adblockresourcehandler.h"
@@ -1367,7 +1368,7 @@ static int anonSmoke(BrowserApplication &application, WebView *view)
                         // Record the effective privacy posture so the
                         // report ties each flagged item to the setting
                         // that covers it.
-                        const QSettings settings;
+                        const ProfileSettings settings;
                         QJsonObject posture;
                         static const char *const keys[] = {
                             "privacy/webrtcIpProtection",
@@ -4470,7 +4471,7 @@ static int servoLifecycleSmoke()
     // engine tab but never navigated it, and a swapped tab kept the
     // SOURCE engine's branded start page.
     {
-        const QVariant savedDefault = QSettings().value(
+        const QVariant savedDefault = ProfileSettings().value(
             QLatin1String("MainWindow/defaultEngine"));
         EngineRegistry::setDefaultBackendId(QStringLiteral("servo"));
 
@@ -4534,7 +4535,7 @@ static int servoLifecycleSmoke()
         if (savedDefault.isValid())
             EngineRegistry::setDefaultBackendId(savedDefault.toString());
         else
-            QSettings().remove(QLatin1String("MainWindow/defaultEngine"));
+            ProfileSettings().remove(QLatin1String("MainWindow/defaultEngine"));
     }
 
 #ifdef ARORA_SERVO
@@ -4824,7 +4825,7 @@ int main(int argc, char **argv)
     // configured profile would.  The smoke handler rewrites the
     // endpoint per stage.
     if (dohSmoke) {
-        QSettings settings;
+        ProfileSettings settings;
         settings.beginGroup(QLatin1String("privacy"));
         settings.setValue(QLatin1String("secureDnsMode"), 3);
         settings.setValue(QLatin1String("secureDnsServer"),
@@ -4838,7 +4839,7 @@ int main(int argc, char **argv)
     // --tls-off-smoke forces it off for the differential control.
     // The pin lands in the per-run settings store.
     if (tlsSmoke || tlsOffSmoke) {
-        QSettings settings;
+        ProfileSettings settings;
         settings.beginGroup(QLatin1String("privacy"));
         settings.setValue(QLatin1String("tlsStrictCiphers"), tlsSmoke);
         settings.endGroup();
@@ -4851,7 +4852,7 @@ int main(int argc, char **argv)
     // produce candidates, else a "no leak" verdict proves nothing).
     // The pin lands in the per-run settings store.
     if (webrtcSmoke || webrtcOffSmoke) {
-        QSettings settings;
+        ProfileSettings settings;
         settings.beginGroup(QLatin1String("privacy"));
         settings.setValue(QLatin1String("webrtcIpProtection"),
                           webrtcSmoke);
@@ -4870,7 +4871,7 @@ int main(int argc, char **argv)
         httpOnlyProxyPort = startHttpOnlyProxy();
 #endif
     if (httpOnlySmoke) {
-        QSettings settings;
+        ProfileSettings settings;
         settings.beginGroup(QLatin1String("privacy"));
         settings.setValue(QLatin1String("httpsFirst"), true);
         settings.setValue(QLatin1String("httpsOnly"), true);
@@ -4906,7 +4907,7 @@ int main(int argc, char **argv)
     if (telemetrySmoke || telemetryBrowseSmoke)
         telemetryProxyPort = startTelemetryCapture();
     if (telemetryBrowseSmoke) {
-        QSettings settings;
+        ProfileSettings settings;
         settings.beginGroup(QLatin1String("privacy"));
         settings.setValue(QLatin1String("dnsPrefetch"),
                           qEnvironmentVariableIntValue(
@@ -4923,7 +4924,7 @@ int main(int argc, char **argv)
             flags += ' ';
         flags += "--proxy-server=" + endpoint;
         qputenv("QTWEBENGINE_CHROMIUM_FLAGS", flags);
-        QSettings settings;
+        ProfileSettings settings;
         settings.beginGroup(QLatin1String("proxy"));
         settings.setValue(QLatin1String("enabled"), true);
         settings.setValue(QLatin1String("type"), 1);
@@ -4939,7 +4940,7 @@ int main(int argc, char **argv)
     // BEFORE the browsing profile and its interceptor snapshot exist.
     // The pins land in the per-run settings store.
     if (xsleakOpen) {
-        QSettings settings;
+        ProfileSettings settings;
         settings.setValue(QLatin1String("websettings/blockPopupWindows"),
                           false);
         settings.setValue(QLatin1String("privacy/blockPings"), false);
@@ -4967,7 +4968,7 @@ int main(int argc, char **argv)
     // armed (or, for the -off control, disarmed) configuration.
     // The pin lands in the per-run settings store.
     if (parallelDownloadSmoke || parallelDownloadOffSmoke) {
-        QSettings settings;
+        ProfileSettings settings;
         settings.setValue(
             QLatin1String("downloadmanager/parallelSegments"),
             parallelDownloadSmoke);
@@ -5375,7 +5376,7 @@ int main(int argc, char **argv)
                     || url.scheme() == QLatin1String("https"));
         };
 
-        QSettings settings;
+        ProfileSettings settings;
 
         // Phase 1 — SRCH07(b): a stale saved engine name must not
         // degrade to a bogus http://<term> navigation.  The seed has
@@ -5483,7 +5484,7 @@ int main(int argc, char **argv)
               optedOutMulti);
         settings.setValue(QLatin1String("urlloading/searchInAddressField"), true);
         settings.sync();
-        QSettings verify;
+        ProfileSettings verify;
         check(QLatin1String("searchInAddressField persists"),
               verify.value(QLatin1String("urlloading/searchInAddressField"))
                       .toBool() == true);
@@ -5567,9 +5568,9 @@ int main(int argc, char **argv)
         // session restore / start page) so the fixture load is the
         // only navigation — Specific Pages with an empty list opens
         // nothing.
-        QSettings().setValue(QLatin1String("MainWindow/startupMode"),
+        ProfileSettings().setValue(QLatin1String("MainWindow/startupMode"),
                              int(BrowserApplication::SpecificPagesStartup));
-        QSettings().setValue(QLatin1String("MainWindow/startupPages"),
+        ProfileSettings().setValue(QLatin1String("MainWindow/startupPages"),
                              QStringList());
         BrowserMainWindow *browserWindow = application.newMainWindow();
         WebView *tab = browserWindow->currentTab();
@@ -5790,7 +5791,7 @@ int main(int argc, char **argv)
         QDir().mkpath(smokeDir);
         downloadManager->setDownloadDirectory(smokeDir);
         // A save-as prompt can't be answered under offscreen QPA.
-        QSettings().setValue(
+        ProfileSettings().setValue(
             QLatin1String("downloadmanager/alwaysPromptForFileName"), false);
         QObject::connect(WebEngineProfileAdapter::forProfile(profile),
                          &Engine::Profile::downloadRequested,
@@ -5957,7 +5958,7 @@ int main(int argc, char **argv)
         QDir().mkpath(smokeDir);
         downloadManager->setDownloadDirectory(smokeDir);
         // A save-as prompt can't be answered under offscreen QPA.
-        QSettings().setValue(
+        ProfileSettings().setValue(
             QLatin1String("downloadmanager/alwaysPromptForFileName"),
             false);
         QObject::connect(WebEngineProfileAdapter::forProfile(profile),
@@ -6086,7 +6087,7 @@ int main(int argc, char **argv)
         // so the flat-strip assertions below miscount.  Pin the
         // single-row mode, same as tst_containermanager's pre-CONT06
         // legs.
-        QSettings().setValue(QLatin1String("tabs/containerDisplay"), 0);
+        ProfileSettings().setValue(QLatin1String("tabs/containerDisplay"), 0);
         ContainerManager *manager = ContainerManager::instance();
         const QString cid = manager->createContainer(
             QLatin1String("container-smoke"),
@@ -6604,7 +6605,7 @@ int main(int argc, char **argv)
 
         // Phase 1 pins the Trimmed level — the smoke grades the
         // recommended policy.  The pin lands in the per-run store.
-        QSettings().setValue(QLatin1String("privacy/refererPolicy"),
+        ProfileSettings().setValue(QLatin1String("privacy/refererPolicy"),
                              int(PrivacyRequestInterceptor::RefererTrimmed));
         PrivacyRequestInterceptor::loadSettings();
         // The level also drives the injected referrer-meta script —
@@ -6706,7 +6707,7 @@ int main(int argc, char **argv)
                 // Phase 2: the Never level must silence every referer,
                 // proven on a fresh page (n-* paths).
                 *phase = 1;
-                QSettings().setValue(
+                ProfileSettings().setValue(
                     QLatin1String("privacy/refererPolicy"),
                     int(PrivacyRequestInterceptor::RefererNever));
                 PrivacyRequestInterceptor::loadSettings();
@@ -6792,7 +6793,7 @@ int main(int argc, char **argv)
             s->setEnabled(false);
 
         auto armPings = [](bool on) {
-            QSettings().setValue(QLatin1String("privacy/blockPings"), on);
+            ProfileSettings().setValue(QLatin1String("privacy/blockPings"), on);
             PrivacyRequestInterceptor::loadSettings();
             // The profile attribute decides whether <a ping> requests
             // are initiated at all — re-apply the way a settings
@@ -7009,7 +7010,7 @@ int main(int argc, char **argv)
             s->setEnabled(false);
 
         auto armToggles = [](bool fonts, bool prefetch) {
-            QSettings settings;
+            ProfileSettings settings;
             settings.setValue(QLatin1String("privacy/blockRemoteFonts"), fonts);
             settings.setValue(QLatin1String("privacy/blockPrefetch"), prefetch);
             PrivacyRequestInterceptor::loadSettings();
@@ -7363,7 +7364,7 @@ int main(int argc, char **argv)
                 qInfo() << "httpsonly-smoke: stage5 loopback exempt";
                 advance();
                 {
-                    QSettings settings;
+                    ProfileSettings settings;
                     settings.beginGroup(QLatin1String("privacy"));
                     settings.setValue(QLatin1String("httpsOnly"), false);
                     settings.setValue(QLatin1String("httpsFirst"), false);
@@ -7477,7 +7478,7 @@ int main(int argc, char **argv)
         }
 
         auto applyLevel = [profile](int level) {
-            QSettings().setValue(QLatin1String("privacy/securityLevel"), level);
+            ProfileSettings().setValue(QLatin1String("privacy/securityLevel"), level);
             PrivacyRequestInterceptor::loadSettings();
             BrowserProfile::applySettings(profile);
         };
@@ -7619,7 +7620,7 @@ int main(int argc, char **argv)
         auto controlOk = std::make_shared<bool>(false);
 
         const auto setDoh = [](int mode, const QString &server) {
-            QSettings settings;
+            ProfileSettings settings;
             settings.beginGroup(QLatin1String("privacy"));
             settings.setValue(QLatin1String("secureDnsMode"), mode);
             settings.setValue(QLatin1String("secureDnsServer"), server);
@@ -8218,7 +8219,7 @@ int main(int argc, char **argv)
         // Fresh profiles default to DuckDuckGo; a saved choice is
         // always respected (a stale saved name falls back to the first
         // available engine).
-        QSettings engineSettings;
+        ProfileSettings engineSettings;
         const QVariant savedEngine = engineSettings.value(
             QLatin1String("openSearch/engine"));
         ok = ok && (savedEngine.isValid()
@@ -8972,7 +8973,7 @@ int main(int argc, char **argv)
 
         // Leave no residue: drop the keys the dialog wrote and
         // re-apply defaults (also exercises the reset path).
-        QSettings().clear();
+        ProfileSettings().clear();
         BrowserProfile::applySettings(profile);
         QFile::remove(cssPath);
 
@@ -9482,7 +9483,7 @@ int main(int argc, char **argv)
         // Start from the reader-pref defaults — the in-overlay
         // controls' writes land in the per-run store.
         {
-            QSettings settings;
+            ProfileSettings settings;
             settings.remove(QLatin1String("reader/fontSize"));
             settings.remove(QLatin1String("reader/theme"));
         }
@@ -9769,7 +9770,7 @@ int main(int argc, char **argv)
                 // and persists; the theme button flips to dark.
 #ifdef ARORA_RUSTCORE
                 overlayFontSizeBefore =
-                    QSettings().value(QLatin1String("reader/fontSize"), 19)
+                    ProfileSettings().value(QLatin1String("reader/fontSize"), 19)
                         .toInt();
                 clickControls([&]() {
 #else
@@ -9784,7 +9785,7 @@ int main(int argc, char **argv)
 #endif
                         // The bridge round-trip to QSettings is async.
                         pollUntil([&]() {
-                            QSettings s;
+                            ProfileSettings s;
                             return s.value(QLatin1String("reader/fontSize"))
                                     .toInt() == overlayFontSizeBefore + 1
                                 && s.value(QLatin1String("reader/theme"))
@@ -13528,7 +13529,7 @@ int main(int argc, char **argv)
                       .arg(row.actionPopupUrl.toString()));
             check(!bwManager->hasConsent(bwZipPath),
                   QStringLiteral("internal consent grant consumed"));
-            const QStringList marker = QSettings().value(
+            const QStringList marker = ProfileSettings().value(
                 QLatin1String("extensions/bundled/")
                 + profile->storageName()).toStringList();
             check(marker.contains(QFileInfo(bwZipPath).fileName()),
@@ -15376,10 +15377,10 @@ int main(int argc, char **argv)
         // so closing the real browser window still counts as the last
         // window and ends the run.
         window.hide();
-        QSettings().setValue(
+        ProfileSettings().setValue(
             QLatin1String("tabs/confirmClosingMultipleTabs"), false);
         // A leftover crash-loop flag would open a modal prompt.
-        QSettings().setValue(QLatin1String("MainWindow/restoring"), false);
+        ProfileSettings().setValue(QLatin1String("MainWindow/restoring"), false);
 
         QStringList fixtureUrls;
         for (int i = 1; i <= 3; ++i) {
@@ -15398,11 +15399,11 @@ int main(int argc, char **argv)
             // postLaunch runs inside exec() — pin the startup pick to
             // Specific Pages with an empty list so it does not
             // navigate the window away.
-            QSettings().setValue(QLatin1String("MainWindow/startupMode"),
+            ProfileSettings().setValue(QLatin1String("MainWindow/startupMode"),
                                  int(BrowserApplication::SpecificPagesStartup));
-            QSettings().setValue(QLatin1String("MainWindow/startupPages"),
+            ProfileSettings().setValue(QLatin1String("MainWindow/startupPages"),
                                  QStringList());
-            QSettings().remove(QLatin1String("sessions"));
+            ProfileSettings().remove(QLatin1String("sessions"));
 #ifdef ARORA_RUSTCORE
             rustCoreEnsureDataDir();
             rc_session_clear();
@@ -15438,7 +15439,7 @@ int main(int argc, char **argv)
             }
             application.saveSession();
             sessionCheck(
-                QSettings().value(QLatin1String("sessions/lastSession"))
+                ProfileSettings().value(QLatin1String("sessions/lastSession"))
                     .isNull()
 #ifdef ARORA_RUSTCORE
                     && rc_session_exists() == 0
@@ -15515,7 +15516,7 @@ int main(int argc, char **argv)
                 // magic, version, window count, then per-window states
                 // carrying a tab state of url list + current index.
                 const QByteArray blob =
-                    QSettings()
+                    ProfileSettings()
                         .value(QLatin1String("sessions/lastSession"))
                         .toByteArray();
                 QDataStream stream(blob);
@@ -15572,7 +15573,7 @@ int main(int argc, char **argv)
         }
 
         if (sessionRestoreSmoke) {
-            QSettings().setValue(QLatin1String("MainWindow/startupMode"),
+            ProfileSettings().setValue(QLatin1String("MainWindow/startupMode"),
                                  int(BrowserApplication::LastSessionStartup));
             BrowserMainWindow *browserWindow = application.newMainWindow();
 
@@ -15633,11 +15634,11 @@ int main(int argc, char **argv)
         args.contains(QLatin1String("--sigterm-child-smoke"));
     if (sigtermSmoke || sigtermChildSmoke) {
         window.hide();
-        QSettings().setValue(
+        ProfileSettings().setValue(
             QLatin1String("tabs/confirmClosingMultipleTabs"), false);
-        QSettings().setValue(
+        ProfileSettings().setValue(
             QLatin1String("MainWindow/restoring"), false);
-        QSettings().setValue(
+        ProfileSettings().setValue(
             QLatin1String("MainWindow/startupBehavior"), 1);
 
         QStringList fixtureUrls;
@@ -15662,7 +15663,7 @@ int main(int argc, char **argv)
         };
 
         if (sigtermChildSmoke) {
-            QSettings().remove(QLatin1String("sessions"));
+            ProfileSettings().remove(QLatin1String("sessions"));
 #ifdef ARORA_RUSTCORE
             rustCoreEnsureDataDir();
             rc_session_clear();
@@ -15711,7 +15712,7 @@ int main(int argc, char **argv)
                                          QStringLiteral("hup"),
                                          QStringLiteral("int")};
         for (const QString &signal : signalNames) {
-            QSettings().remove(QLatin1String("sessions"));
+            ProfileSettings().remove(QLatin1String("sessions"));
 #ifdef ARORA_RUSTCORE
             rustCoreEnsureDataDir();
             rc_session_clear();
@@ -15734,7 +15735,7 @@ int main(int argc, char **argv)
                 "terminated by signal %1").arg(
                 signal == QLatin1String("hup") ? 1
                     : signal == QLatin1String("int") ? 2 : 15);
-            sigtermCheck(QSettings()
+            sigtermCheck(ProfileSettings()
                              .value(QLatin1String("browser/lastExit"))
                              .toString()
                              .startsWith(expectedExit),
@@ -15774,7 +15775,7 @@ int main(int argc, char **argv)
                 }
             }
 #else
-            const QByteArray blob = QSettings()
+            const QByteArray blob = ProfileSettings()
                 .value(QLatin1String("sessions/lastSession"))
                 .toByteArray();
             QDataStream stream(blob);
@@ -15827,17 +15828,17 @@ int main(int argc, char **argv)
                 ++floorFailures;
         };
         window.hide();
-        QSettings().setValue(
+        ProfileSettings().setValue(
             QLatin1String("tabs/confirmClosingMultipleTabs"), false);
-        QSettings().setValue(QLatin1String("MainWindow/restoring"),
+        ProfileSettings().setValue(QLatin1String("MainWindow/restoring"),
                              false);
         // Pin startup to a no-navigation mode so the queued
         // postLaunch() never moves the fixture windows.
-        QSettings().setValue(QLatin1String("MainWindow/startupMode"),
+        ProfileSettings().setValue(QLatin1String("MainWindow/startupMode"),
                              int(BrowserApplication::SpecificPagesStartup));
-        QSettings().setValue(QLatin1String("MainWindow/startupPages"),
+        ProfileSettings().setValue(QLatin1String("MainWindow/startupPages"),
                              QStringList());
-        QSettings().remove(QLatin1String("sessions"));
+        ProfileSettings().remove(QLatin1String("sessions"));
 #ifdef ARORA_RUSTCORE
         rustCoreEnsureDataDir();
         rc_session_clear();
@@ -15953,7 +15954,7 @@ int main(int argc, char **argv)
             "browser/sessionActive");
         BrowserProfile::markSessionCleanExit(0);
         {
-            QSettings s;
+            ProfileSettings s;
             floorCheck(s.value(QLatin1String("browser/lastExit"))
                            .toString() == QLatin1String("clean rc=0"),
                        "clean exit records rc");
@@ -15963,7 +15964,7 @@ int main(int argc, char **argv)
 #if defined(SIGHUP)
         BrowserProfile::markSessionTerminated(SIGHUP);
         {
-            QSettings s;
+            ProfileSettings s;
             const QString exit = s.value(
                 QLatin1String("browser/lastExit")).toString();
             floorCheck(exit.contains(QLatin1String("terminated"))
@@ -15978,7 +15979,7 @@ int main(int argc, char **argv)
         BrowserProfile::markSessionStart();
         BrowserProfile::markSessionStart();
         {
-            QSettings s;
+            ProfileSettings s;
             floorCheck(s.value(QLatin1String("browser/gpuCrashCount"), 0)
                            .toInt() == 1,
                        "armed sentinel counts as unclean");
@@ -15989,7 +15990,7 @@ int main(int argc, char **argv)
         }
         BrowserProfile::markSessionCleanExit(7);
         {
-            QSettings s;
+            ProfileSettings s;
             floorCheck(s.value(QLatin1String("browser/lastExit"))
                            .toString() == QLatin1String("clean rc=7"),
                        "nonzero clean rc recorded");
@@ -16008,7 +16009,7 @@ int main(int argc, char **argv)
             application.ensureSessionWindow();
             BrowserProfile::markSessionStart();
             application.flushSessionsForTermination(SIGTERM);
-            QSettings s;
+            ProfileSettings s;
             const QString exit = s.value(
                 QLatin1String("browser/lastExit")).toString();
             floorCheck(exit.contains(QLatin1String("terminated"))
@@ -17759,7 +17760,7 @@ int main(int argc, char **argv)
                 ++failures;
         };
 
-        QSettings settings;
+        ProfileSettings settings;
 
         // (b) Accept-Language normalization — a distinctive stored
         // list proves the toggle replaces it rather than appending or
@@ -18049,7 +18050,7 @@ int main(int argc, char **argv)
                 ++failures;
         };
 
-        QSettings settings;
+        ProfileSettings settings;
         FingerprintProtector *protector =
             FingerprintProtector::instance();
 
@@ -18513,7 +18514,7 @@ int main(int argc, char **argv)
                                : QLatin1String("off")));
             QFile::remove(logPath);
 
-            QSettings settings;
+            ProfileSettings settings;
             settings.setValue(QLatin1String("privacy/dnsPrefetch"),
                               armed);
             settings.sync();
@@ -18587,7 +18588,7 @@ int main(int argc, char **argv)
         // PDF01's assertions cover the engine-viewer hand-off —
         // PDF02's shell view is pinned off here so the staged
         // file:// path stays what this smoke measures.
-        QSettings().setValue(QLatin1String("privacy/pdfShellView"), false);
+        ProfileSettings().setValue(QLatin1String("privacy/pdfShellView"), false);
         bool ok = true;
         const auto check = [&ok](const QString &what, bool pass) {
             qInfo() << "pdf-smoke:" << (pass ? "PASS" : "FAIL") << what;
@@ -18656,7 +18657,7 @@ int main(int argc, char **argv)
                   QUrl(QLatin1String("http://h/a.txt"))));
 
         // (a) defaults + toggle round-trips.
-        QSettings settings;
+        ProfileSettings settings;
         check(QStringLiteral("viewer+sanitize default on"),
               PdfSupport::viewerEnabled() && PdfSupport::sanitizeEnabled());
         check(QStringLiteral("profile PdfViewerEnabled on"),
@@ -18829,9 +18830,9 @@ int main(int argc, char **argv)
                           QUrl(QLatin1String("https://example.com/")),
                           QUrl(QLatin1String("file:///etc/passwd"))));
                 // (d) the download path keeps raw bytes.
-                QSettings().setValue(
+                ProfileSettings().setValue(
                     QLatin1String("downloadmanager/alwaysPromptForFileName"), false);
-                QSettings().setValue(
+                ProfileSettings().setValue(
                     QLatin1String("downloadmanager/external"), false);
                 downloadManager->setDownloadDirectory(downloadDir);
                 // A user "save" from a pdf page is issued by the shell,
@@ -18861,7 +18862,7 @@ int main(int argc, char **argv)
                       bytes.contains("app.alert")
                           && bytes.contains("/Launch"));
                 // sanitize off -> the raw viewer path is unchanged.
-                QSettings().setValue(QLatin1String("privacy/pdfSanitize"), false);
+                ProfileSettings().setValue(QLatin1String("privacy/pdfSanitize"), false);
                 *gotLoad = false;
                 *phase = 2;
                 view->loadUrl(pdfUrl);
@@ -18872,7 +18873,7 @@ int main(int argc, char **argv)
                     return;
                 check(QStringLiteral("sanitize off -> raw viewer at url"),
                       view->url() == pdfUrl);
-                QSettings().setValue(QLatin1String("privacy/pdfSanitize"), true);
+                ProfileSettings().setValue(QLatin1String("privacy/pdfSanitize"), true);
                 *gotLoad = false;
                 *phase = 3;
                 view->loadUrl(fakeUrl);
@@ -19689,7 +19690,7 @@ int main(int argc, char **argv)
             // Undo the capture-proxy settings so a dead port does not
             // leak into later smoke runs sharing this test profile.
             {
-                QSettings settings;
+                ProfileSettings settings;
                 settings.beginGroup(QLatin1String("proxy"));
                 settings.setValue(QLatin1String("enabled"), false);
                 settings.endGroup();
@@ -19952,7 +19953,7 @@ int main(int argc, char **argv)
             check(privWindow->tabWidget()->currentWebView()
                       ->enginePage()->isOffTheRecord(),
                   QStringLiteral("private window creates OTR first tab"));
-            QSettings().setValue(
+            ProfileSettings().setValue(
                 QLatin1String("tabs/openLinksFromAppsIn"),
                 int(TabWidget::NewSelectedTab));
             const int tabsBefore = privWindow->tabWidget()->count();
@@ -19964,7 +19965,7 @@ int main(int argc, char **argv)
             // A NewWindow target spawns an OTR window too — the
             // opener's private context is never dropped.
             const int windowsBefore = application.mainWindows().count();
-            QSettings().setValue(
+            ProfileSettings().setValue(
                 QLatin1String("tabs/openLinksFromAppsIn"),
                 int(TabWidget::NewWindow));
             feed(QByteArrayLiteral("about:blank"));

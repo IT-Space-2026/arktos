@@ -63,6 +63,7 @@
 ****************************************************************************/
 
 #include "browsermainwindow.h"
+#include "profilesettings.h"
 
 #include "aboutdialog.h"
 #include "addbookmarkdialog.h"
@@ -657,13 +658,13 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
             this, [this](bool visible) {
         if (visible)
             ensureSidebarPanel();
-        QSettings settings;
+        ProfileSettings settings;
         settings.setValue(QLatin1String("MainWindow/showSidebar"), visible);
         m_autoSaver->changeOccurred();
     });
     connect(m_sidebarDock, &QDockWidget::dockLocationChanged,
             this, [this](Qt::DockWidgetArea area) {
-        QSettings settings;
+        ProfileSettings settings;
         settings.setValue(QLatin1String("MainWindow/sidebarDockArea"),
                           int(area));
         // SIDE06: the rail follows the dock to the other edge.
@@ -813,7 +814,7 @@ BrowserMainWindow *BrowserMainWindow::parentWindow(QWidget *widget)
 
 void BrowserMainWindow::loadDefaultState()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("BrowserMainWindow"));
     QByteArray data = settings.value(QLatin1String("defaultState")).toByteArray();
     restoreState(data);
@@ -833,7 +834,7 @@ void BrowserMainWindow::save()
     if (BrowserApplication *application = BrowserApplication::instance())
         application->saveSession();
 
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("BrowserMainWindow"));
     QByteArray data = saveState(false);
     settings.setValue(QLatin1String("defaultState"), data);
@@ -986,7 +987,7 @@ bool BrowserMainWindow::restoreState(const QByteArray &state)
 
 void BrowserMainWindow::lastTabClosed()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("tabs"));
     bool quit = settings.value(QLatin1String("quitAsLastTabClosed"), true).toBool();
 
@@ -2322,7 +2323,7 @@ void BrowserMainWindow::applySearchBoxVisibility()
         m_toolbarSearch->setVisible(false);
         return;
     }
-    QSettings settings;
+    ProfileSettings settings;
     const bool field = settings.value(
         QLatin1String("MainWindow/showSearchBox"), false).toBool();
     m_toolbarSearch->setButtonMode(false);
@@ -2433,7 +2434,7 @@ void BrowserMainWindow::ensureBidiPanel()
 
 void BrowserMainWindow::applySidebarSettings()
 {
-    QSettings settings;
+    ProfileSettings settings;
     const int storedArea =
         settings.value(QLatin1String("MainWindow/sidebarDockArea"),
                        int(Qt::LeftDockWidgetArea)).toInt();
@@ -2476,7 +2477,7 @@ void BrowserMainWindow::applySidebarWidth()
 {
     if (!m_sidebarDock)
         return;
-    QSettings settings;
+    ProfileSettings settings;
     const int stored =
         settings.value(QLatin1String("MainWindow/sidebarWidth"),
                        SidebarGrip::defaultWidth()).toInt();
@@ -2491,7 +2492,7 @@ void BrowserMainWindow::persistSidebarWidth(int width)
 {
     // Same convention as the dock-area write above — an immediate
     // QSettings key, no autosaver churn.
-    QSettings settings;
+    ProfileSettings settings;
     settings.setValue(QLatin1String("MainWindow/sidebarWidth"), width);
 }
 
@@ -2538,7 +2539,7 @@ void BrowserMainWindow::updateSidebarCloseButton()
             QLatin1String("qt_dockwidget_closebutton")))
         closeButton->setVisible(
             m_sidebarDock->isFloating()
-            && QSettings().value(QLatin1String("sidebar/showCloseButton"),
+            && ProfileSettings().value(QLatin1String("sidebar/showCloseButton"),
                                  true).toBool());
 }
 
@@ -2661,7 +2662,7 @@ void BrowserMainWindow::applyNavBarOrder(const QStringList &order)
 
 void BrowserMainWindow::applyStoredNavBarOrder()
 {
-    QSettings settings;
+    ProfileSettings settings;
     const QStringList order = settings.value(
         QLatin1String("navbar/order")).toStringList();
     applyNavBarOrder(order.isEmpty() ? m_navBarDefaultOrder : order);
@@ -2673,7 +2674,7 @@ void BrowserMainWindow::applyStoredNavBarOrder()
 // never yanked mid-gesture; it resyncs when edit mode exits.
 void BrowserMainWindow::saveNavBarOrder()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.setValue(QLatin1String("navbar/order"), navBarOrder());
     syncNavBarOrderToWindows();
 }
@@ -2698,7 +2699,7 @@ void BrowserMainWindow::syncNavBarOrderToWindows()
 // tor windows, so a single literal default list couldn't serve both.
 void BrowserMainWindow::resetNavBarOrder()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.remove(QLatin1String("navbar/order"));
     applyNavBarOrder(m_navBarDefaultOrder);
     syncNavBarOrderToWindows();
@@ -3412,7 +3413,7 @@ void BrowserMainWindow::closeEvent(QCloseEvent *event)
     // filtered levels still die with the window, so they must count.
     const int openTabs = m_tabWidget->totalTabCount();
     if (openTabs > 1) {
-        QSettings settings;
+        ProfileSettings settings;
         settings.beginGroup(QLatin1String("tabs"));
         const bool confirmWindow = settings.value(
             QLatin1String("confirmClosingMultipleTabs"), true).toBool();
@@ -3559,7 +3560,7 @@ void BrowserMainWindow::goHome()
     QString home = QLatin1String("about:home");
     if (BrowserApplication::homePageMode()
             == BrowserApplication::SpecificPageHome) {
-        QSettings settings;
+        ProfileSettings settings;
         settings.beginGroup(QLatin1String("MainWindow"));
         home = settings.value(QLatin1String("home"),
                               QLatin1String("about:home")).toString();

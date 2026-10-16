@@ -18,6 +18,7 @@
  */
 
 #include "browsertheme.h"
+#include "profilesettings.h"
 
 #include "arorastyle.h"
 
@@ -64,7 +65,7 @@ Qt::ColorScheme BrowserTheme::preferredColorScheme()
     // default ("system", or an absent key) falls through to the env
     // override then the platform — so ARORA_COLOR_SCHEME keeps driving
     // headless/testing runs exactly as before.
-    const QString choice = QSettings()
+    const QString choice = ProfileSettings()
         .value(QLatin1String("browser/colorScheme"),
                QLatin1String("system")).toString();
     if (choice == QLatin1String("dark"))

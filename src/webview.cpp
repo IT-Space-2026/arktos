@@ -63,6 +63,7 @@
 ****************************************************************************/
 
 #include "webview.h"
+#include "profilesettings.h"
 
 #include "adblockdialog.h"
 #include "adblockmanager.h"
@@ -865,7 +866,7 @@ void WebView::searchRequested(QAction *action)
         return;
     // SRCH04: selection search can open in a background tab instead
     // of stealing focus.
-    QSettings settings;
+    ProfileSettings settings;
     const bool background = settings.value(
         QLatin1String("urlloading/selectionSearchInBackground"),
         false).toBool();

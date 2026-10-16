@@ -30,7 +30,7 @@
 
 class QNetworkReply;
 class QNetworkRequest;
-class QSettings;
+class ProfileSettings;
 
 class AutoSaver;
 class OpenSearchEngine;
@@ -175,7 +175,7 @@ private:
     // OSE01: one-shot migration of the legacy descriptor dir +
     // QSettings openSearch keys into the rustcore searchengines.json
     // store — runs once on first load, then retires the old paths.
-    void importLegacyRegistry(QSettings &settings);
+    void importLegacyRegistry(ProfileSettings &settings);
 #endif
 
 protected slots:

@@ -33,6 +33,7 @@
 #include <containermanager.h>
 #include <browserapplication.h>
 #include <engineinterface.h>
+#include "profilesettings.h"
 #include "qtest_arora.h"
 #include "qtry.h"
 
@@ -149,7 +150,7 @@ void tst_TabBar::initTestCase()
     // (containers, site rules, history); a per-suite application name
     // keeps them out of the real profile's settings.
     QCoreApplication::setApplicationName("tst_tabbar");
-    QSettings settings;
+    ProfileSettings settings;
     settings.clear();
 }
 
@@ -170,7 +171,7 @@ void tst_TabBar::cleanup()
     // A mid-test QVERIFY exit would otherwise leak the icon-only key
     // into the shared store — later tests' bars would build at the
     // icon tile width and fail their geometry legs.
-    QSettings settings;
+    ProfileSettings settings;
     settings.remove(QLatin1String("tabs/iconOnlyTabs"));
 }
 
@@ -391,7 +392,7 @@ void tst_TabBar::middleClickPaste()
 // painted left-to-right instead of Qt's rotated West/East text.
 void tst_TabBar::verticalTabRows()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("tabs"));
     settings.remove(QLatin1String("verticalTabWidth"));
 
@@ -474,7 +475,7 @@ void tst_TabBar::verticalTabRows()
 // tabs/verticalTabWidth.
 void tst_TabBar::verticalTabResize()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("tabs"));
     settings.remove(QLatin1String("verticalTabWidth"));
 
@@ -552,7 +553,7 @@ void tst_TabBar::verticalTabResize()
 // set after the migration — stays untouched.
 void tst_TabBar::verticalTabWidthMigration()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("tabs"));
 
     // No key at all -> the default.
@@ -598,7 +599,7 @@ void tst_TabBar::verticalTabWidthMigration()
 // release.
 void tst_TabBar::verticalGripReset()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("tabs"));
     settings.setValue(QLatin1String("verticalTabWidth"), 300);
 
@@ -631,7 +632,7 @@ void tst_TabBar::verticalGripReset()
 // style's squeeze minimum, 0 means Automatic, and both reload live.
 void tst_TabBar::horizontalTabWidths()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("tabs"));
     settings.remove(QLatin1String("tabMinWidth"));
     settings.remove(QLatin1String("tabMaxWidth"));
@@ -685,7 +686,7 @@ void tst_TabBar::horizontalTabWidths()
 // as a resize cursor, and a double-click restores Automatic.
 void tst_TabBar::horizontalTabResize()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("tabs"));
     settings.remove(QLatin1String("horizontalTabHeight"));
 
@@ -774,7 +775,7 @@ void tst_TabBar::horizontalTabResize()
 // top/bottom positions Qt computes for West/East shapes.
 void tst_TabBar::verticalTabButtons()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("tabs"));
     settings.remove(QLatin1String("verticalTabWidth"));
 
@@ -1193,7 +1194,7 @@ void tst_TabBar::contextMenuContainerEntries()
     // The CONT06 strip (default on) filters tabs to the active
     // container level — pin inline mode so the strip indices the
     // context-menu drives below stay stable.
-    QSettings settings;
+    ProfileSettings settings;
     const QVariant savedDisplay =
         settings.value(QLatin1String("tabs/containerDisplay"));
     settings.setValue(QLatin1String("tabs/containerDisplay"), 0);
@@ -1276,7 +1277,7 @@ void tst_TabBar::chipsPaint()
     // The CONT06 two-level strip (default on) filters the container
     // tab into its own level — pin inline mode so the chip-bearing
     // tab is what paintEvent draws.
-    QSettings settings;
+    ProfileSettings settings;
     const QVariant savedDisplay =
         settings.value(QLatin1String("tabs/containerDisplay"));
     settings.setValue(QLatin1String("tabs/containerDisplay"), 0);
@@ -1560,7 +1561,7 @@ void tst_TabBar::previewDwell()
 // restores on untoggle, and fans out to every live strip.
 void tst_TabBar::iconOnlyTabs()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("tabs"));
     settings.remove(QLatin1String("iconOnlyTabs"));
 
@@ -1644,7 +1645,7 @@ void tst_TabBar::iconOnlyTabs()
 // drive them at the physical band row so every arm runs.
 void tst_TabBar::containerBandEvents()
 {
-    QSettings settings;
+    ProfileSettings settings;
     const QVariant savedDisplay =
         settings.value(QLatin1String("tabs/containerDisplay"));
     settings.setValue(QLatin1String("tabs/containerDisplay"), 1);
@@ -1939,7 +1940,7 @@ void tst_TabBar::newTabButton()
 // favicon sizing either way.
 void tst_TabBar::verticalRowHeight()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("tabs"));
     settings.remove(QLatin1String("horizontalTabHeight"));
 

@@ -19,6 +19,7 @@
  */
 
 #include "webpage.h"
+#include "profilesettings.h"
 
 #include "adblockmanager.h"
 #include "adblockpage.h"
@@ -535,7 +536,7 @@ void WebPage::setUserAgent(const QString &userAgent)
     if (userAgent == s_userAgent)
         return;
 
-    QSettings settings;
+    ProfileSettings settings;
     if (userAgent.isEmpty()) {
         settings.remove(QLatin1String("userAgent"));
     } else {
@@ -2216,7 +2217,7 @@ void WebPage::showRateLimitNoticeIfNeeded()
 
 void WebPage::loadSettings()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("tabs"));
     m_openTargetBlankLinksIn = (TabWidget::OpenUrlIn)settings.value(QLatin1String("openTargetBlankLinksIn"),
                                                                     TabWidget::NewSelectedTab).toInt();

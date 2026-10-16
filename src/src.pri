@@ -124,6 +124,7 @@ HEADERS += \
     $$PWD/profileidentity.h \
     $$PWD/profilemenuactions.h \
     $$PWD/profileregistry.h \
+    $$PWD/profilesettings.h \
     $$PWD/qrcodedialog.h \
     $$PWD/qrcodegen.hpp \
     $$PWD/readermode.h \
@@ -212,6 +213,7 @@ SOURCES += \
     $$PWD/profileidentity.cpp \
     $$PWD/profilemenuactions.cpp \
     $$PWD/profileregistry.cpp \
+    $$PWD/profilesettings.cpp \
     $$PWD/qrcodedialog.cpp \
     $$PWD/qrcodegen.cpp \
     $$PWD/readermode.cpp \

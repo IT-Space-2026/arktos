@@ -18,6 +18,7 @@
  */
 
 #include "privacyrequestinterceptor.h"
+#include "profilesettings.h"
 
 #include "adblockrequestinterceptor.h"
 #include "navigationpolicy.h"
@@ -240,7 +241,7 @@ void PrivacyRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
 
 void PrivacyRequestInterceptor::loadSettings()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("privacy"));
 
     NavigationPolicy::Snapshot snap;
@@ -326,7 +327,7 @@ QString PrivacyRequestInterceptor::downgradeScope(
 
 int PrivacyRequestInterceptor::storedRefererPolicy()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("privacy"));
     // REF01: the PRIV01 bool folds into the level selector — an old
     // "trimReferer = false" maps to EngineDefault, anything else to
@@ -541,7 +542,7 @@ void PrivacyRequestInterceptor::allowHttpForHost(const QString &host,
     SiteDecisionStore::set(SiteDecisionStore::KindHttpAllow,
                            lowered, QLatin1String("allow"));
 #else
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("privacy"));
     QStringList exceptions =
         settings.value(QLatin1String("httpsOnlyExceptions")).toStringList();
@@ -560,7 +561,7 @@ void PrivacyRequestInterceptor::clearHttpAllowance(const QString &host)
 #if defined(ARORA_RUSTCORE)
     SiteDecisionStore::remove(SiteDecisionStore::KindHttpAllow, lowered);
 #else
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("privacy"));
     QStringList exceptions =
         settings.value(QLatin1String("httpsOnlyExceptions")).toStringList();

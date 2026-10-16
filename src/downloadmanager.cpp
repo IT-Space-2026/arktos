@@ -57,6 +57,7 @@
 ****************************************************************************/
 
 #include "downloadmanager.h"
+#include "profilesettings.h"
 
 #include "autosaver.h"
 #include "browserprofile.h"
@@ -194,7 +195,7 @@ DownloadItem::DownloadItem(Engine::DownloadRequest *download, bool requestFileNa
     updateDetails();
 
     if (!requestFileName) {
-        QSettings settings;
+        ProfileSettings settings;
         settings.beginGroup(QLatin1String("downloadmanager"));
         m_requestFileName = settings.value(QLatin1String("alwaysPromptForFileName"), false).toBool();
     }
@@ -1292,7 +1293,7 @@ DownloadManager::DownloadManager(QWidget *parent)
     , m_removePolicy(Never)
     , m_requestFileNameNext(false)
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("downloadmanager"));
     QString defaultLocation = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
     if (defaultLocation.isEmpty())
@@ -1385,7 +1386,7 @@ bool DownloadManager::allowQuit()
 
 bool DownloadManager::externalDownload(const QUrl &url)
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("downloadmanager"));
     if (!settings.value(QLatin1String("external"), false).toBool())
         return false;
@@ -1620,7 +1621,7 @@ void DownloadManager::setRemovePolicy(RemovePolicy policy)
 
 void DownloadManager::save() const
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("downloadmanager"));
     QMetaEnum removePolicyEnum = staticMetaObject.enumerator(staticMetaObject.indexOfEnumerator("RemovePolicy"));
     settings.setValue(QLatin1String("removeDownloadsPolicy"), QLatin1String(removePolicyEnum.valueToKey(m_removePolicy)));
@@ -1659,7 +1660,7 @@ void DownloadManager::save() const
 
 void DownloadManager::load()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("downloadmanager"));
     QByteArray value = settings.value(QLatin1String("removeDownloadsPolicy"), QLatin1String("Never")).toByteArray();
     QMetaEnum removePolicyEnum = staticMetaObject.enumerator(staticMetaObject.indexOfEnumerator("RemovePolicy"));

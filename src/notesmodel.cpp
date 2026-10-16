@@ -18,6 +18,7 @@
  */
 
 #include "notesmodel.h"
+#include "profilesettings.h"
 
 #include "autosaver.h"
 #include "browserpaths.h"
@@ -88,7 +89,7 @@ void NotesModel::migrateLegacyScratch(NotesModel *model)
 {
     if (!model)
         return;
-    QSettings settings;
+    ProfileSettings settings;
     if (!settings.contains(QLatin1String("sidebar/notes")))
         return;
     const QString legacy =

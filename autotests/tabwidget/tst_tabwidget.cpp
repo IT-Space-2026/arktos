@@ -19,6 +19,7 @@
 
 #include <QtTest/QtTest>
 #include <QtGui/QtGui>
+#include "profilesettings.h"
 #include "qtest_arora.h"
 
 #include <browserapplication.h>
@@ -187,7 +188,7 @@ void tst_TabWidget::cleanup()
     // A mid-test QVERIFY exit would otherwise leak the lazy-restore
     // keys into the shared store and turn every later restoreState()
     // lazy (saveState's restored urls then never load).
-    QSettings settings;
+    ProfileSettings settings;
     settings.remove(QLatin1String("performance/lazyRestoreTabs"));
     settings.remove(QLatin1String("performance/alwaysLoadPinnedTabs"));
     // Same guard for the icon-only mode (TABS09) — a leaked key would
@@ -860,14 +861,14 @@ void tst_TabWidget::loadStringFromUntrustedSource()
     widget.closeTab();
 }
 
-// TABS01: the tabs/tabBarPosition QSettings value maps to the
+// TABS01: the tabs/tabBarPosition ProfileSettings value maps to the
 // QTabWidget position (Top/Bottom/Left/Right -> North/South/West/
 // East), applies on construction and on live loadSettings() (the call
 // SettingsDialog::saveToSettings makes on every open window), and
 // keeps movable tabs/context-menu wiring intact in vertical mode.
 void tst_TabWidget::tabBarPositionSetting()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("tabs"));
 
     settings.remove(QLatin1String("tabBarPosition"));
@@ -906,7 +907,7 @@ void tst_TabWidget::tabBarPositionSetting()
 // calls on every window), and reflected in the tab rects.
 void tst_TabWidget::verticalTabStripWidth()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("tabs"));
     settings.setValue(QLatin1String("tabBarPosition"), 2);   // Left
     settings.setValue(QLatin1String("verticalTabWidth"), 200);
@@ -957,7 +958,7 @@ void tst_TabWidget::verticalTabStripWidth()
 // width survives the same construction path untouched.
 void tst_TabWidget::verticalTabDefaultWidth()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("tabs"));
     settings.setValue(QLatin1String("tabBarPosition"), 2);   // Left
 
@@ -1011,7 +1012,7 @@ void tst_TabWidget::verticalTabDefaultWidth()
 // to every window), and opting out while a card is up drops it.
 void tst_TabWidget::tabHoverPreviews()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("tabs"));
     settings.setValue(QLatin1String("tabHoverPreviews"), false);
 
@@ -1161,7 +1162,7 @@ void tst_TabWidget::tabThumbnailStaleness()
 // searchInAddressField opt-out restores the historic bare-http guess.
 void tst_TabWidget::omnibox()
 {
-    QSettings settings;
+    ProfileSettings settings;
     // SRCH09: this key used to leak — the test disabled it below and
     // never restored it, which broke search for the real profile when
     // the test ran against the live config.  SRCH12 renamed it to
@@ -1303,7 +1304,7 @@ void tst_TabWidget::omnibox()
 // activating a "Search %engine" suggestion row searches that text.
 void tst_TabWidget::omniboxEnterDispatch()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.setValue(QLatin1String("urlloading/searchInAddressField"), true);
     settings.setValue(QLatin1String("privacy/httpsFirst"), false);
     settings.setValue(QLatin1String("privacy/httpsOnly"), false);
@@ -1813,7 +1814,7 @@ void tst_TabWidget::pinnedTabs()
     // Vertical strip: pinned rows stay on top and new tabs still
     // seat right behind them.
     {
-        QSettings settings;
+        ProfileSettings settings;
         settings.beginGroup(QLatin1String("tabs"));
         settings.setValue(QLatin1String("tabBarPosition"), 2);   // Left
         SubTabWidget wv;
@@ -1857,7 +1858,7 @@ void tst_TabWidget::pinnedTabs()
 // loadSettings fan-out re-reads the persisted key.
 void tst_TabWidget::iconOnlyTabStrip()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("tabs"));
     settings.remove(QLatin1String("iconOnlyTabs"));
 
@@ -1931,7 +1932,7 @@ void tst_TabWidget::reopenClosedTab()
     // The CONT06 strip (default on) only engages once a second
     // container owns tabs — pin the inline mode anyway so the index
     // assertions below are immune to the setting.
-    QSettings settings;
+    ProfileSettings settings;
     const QVariant savedDisplay =
         settings.value(QLatin1String("tabs/containerDisplay"));
     settings.setValue(QLatin1String("tabs/containerDisplay"), 0);
@@ -2404,7 +2405,7 @@ void tst_TabWidget::containerTabs()
     // The CONT06 strip (default on) filters tabs to the active
     // container level once a second container owns tabs — pin inline
     // mode so the index assertions below see every tab.
-    QSettings settings;
+    ProfileSettings settings;
     const QVariant savedDisplay =
         settings.value(QLatin1String("tabs/containerDisplay"));
     settings.setValue(QLatin1String("tabs/containerDisplay"), 0);
@@ -2597,7 +2598,7 @@ void tst_TabWidget::tabSlotDrive()
 // so startup/session-restore paths keep their own say.
 void tst_TabWidget::newTabStartPage()
 {
-    QSettings settings;
+    ProfileSettings settings;
     const QString savedHome =
         settings.value(QLatin1String("MainWindow/home")).toString();
     const auto restoreHome = [&settings, &savedHome]() {
@@ -2655,7 +2656,7 @@ void tst_TabWidget::newTabStartPage()
 // url + history blob so saveState() loses nothing.
 void tst_TabWidget::lazySessionRestore()
 {
-    QSettings settings;
+    ProfileSettings settings;
     const QUrl url1(QLatin1String("data:text/html,one"));
     const QUrl url2(QLatin1String("data:text/html,two"));
     const QUrl url3(QLatin1String("data:text/html,three"));
@@ -3000,7 +3001,7 @@ void tst_TabWidget::renameTab()
 
     // Same gesture on a vertical (West) strip.
     {
-        QSettings settings;
+        ProfileSettings settings;
         settings.beginGroup(QLatin1String("tabs"));
         settings.setValue(QLatin1String("tabBarPosition"), 2);   // Left
         SubTabWidget wv;
@@ -3255,7 +3256,7 @@ void tst_TabWidget::newTabButton()
     QCOMPARE(widget.count(), 3);
 
     // Left rail — an appended row under the last tab.
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("tabs"));
     settings.setValue(QLatin1String("tabBarPosition"), 2);
     widget.loadSettings();
@@ -3438,7 +3439,7 @@ void tst_TabWidget::verticalTabRowTextBounds()
     };
 
     for (const int position : { 2, 3 }) {   // Left rail, Right rail
-        QSettings settings;
+        ProfileSettings settings;
         settings.beginGroup(QLatin1String("tabs"));
         settings.setValue(QLatin1String("tabBarPosition"), position);
         settings.remove(QLatin1String("verticalTabWidth"));
@@ -3489,7 +3490,7 @@ void tst_TabWidget::verticalTabRowTextBounds()
     const QPalette appPalette = QApplication::palette();
     QApplication::setPalette(BrowserTheme::darkPalette());
     {
-        QSettings settings;
+        ProfileSettings settings;
         settings.beginGroup(QLatin1String("tabs"));
         settings.setValue(QLatin1String("tabBarPosition"), 2);
         SubTabWidget widget;
@@ -3551,7 +3552,7 @@ void tst_TabWidget::verticalRailRowOverlap()
     };
 
     for (const int position : { 2, 3 }) {   // Left rail, Right rail
-        QSettings settings;
+        ProfileSettings settings;
         settings.beginGroup(QLatin1String("tabs"));
         settings.setValue(QLatin1String("tabBarPosition"), position);
         settings.remove(QLatin1String("verticalTabWidth"));
@@ -3672,7 +3673,7 @@ void tst_TabWidget::verticalRailRowOverlap()
     // scroll chrome ever engaged: the '+' hides rather than cover
     // the last row.
     {
-        QSettings settings;
+        ProfileSettings settings;
         settings.beginGroup(QLatin1String("tabs"));
         settings.setValue(QLatin1String("tabBarPosition"), 2);
         settings.remove(QLatin1String("verticalTabWidth"));
@@ -3727,7 +3728,7 @@ void tst_TabWidget::verticalRailRowOverlap()
 // tab switch.
 void tst_TabWidget::tabButtonBandAnchor()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.setValue(QLatin1String("tabs/containerDisplay"), 1);
     settings.beginGroup(QLatin1String("tabs"));
     settings.remove(QLatin1String("tabBarPosition"));

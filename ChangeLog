@@ -934,6 +934,19 @@ UI:
   carry a bottom hairline, and the page content is no longer boxed by
   a frame under the strip.  Tab-to-tab separators and group/container
   accent stripes are unchanged (TABS10).
+- Settings split for the coming multi-profile support: every
+  persona-flavored preference — privacy toggles, homepage and
+  startup pages, search-engine choice, cookie policy, downloads
+  directory, tab/sidebar/UI prefs, containers, per-site grants —
+  now persists to `profiles/<id>/settings.ini` under the data
+  directory instead of the shared QSettings file, while app-level
+  keys (Tor binary prefs, crash consent and crash sentinels, engine
+  defaults, CA trust exceptions, machine-wide blocklist metadata)
+  stay on the global file. The first launch copies existing values
+  into the default profile's store — a copy, not a move, so the old
+  file remains a harmless read fallback. Only the "default" profile
+  exists today; this is the storage plumbing the profile switching
+  work binds to (MPROF04).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

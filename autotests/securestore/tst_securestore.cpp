@@ -18,6 +18,7 @@
  */
 
 #include <QtTest/QtTest>
+#include "profilesettings.h"
 #include "qtest_arora.h"
 
 #include <argon2id.h>
@@ -89,7 +90,7 @@ static QString autofillPath()
 void tst_SecureStore::initTestCase()
 {
     QStandardPaths::setTestModeEnabled(true);
-    // Keep proxy/password QSettings out of the user's real ini files.
+    // Keep proxy/password ProfileSettings out of the user's real ini files.
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                        m_settingsDir.path());
@@ -320,7 +321,7 @@ void tst_SecureStore::autofillDatResealed()
 
 void tst_SecureStore::proxyPasswordResealed()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.setValue(QLatin1String("proxy/password"),
                       SecureStore::sealString(
                           QLatin1String("s3cret")));
@@ -329,7 +330,7 @@ void tst_SecureStore::proxyPasswordResealed()
     QVERIFY(SecureStore::enablePassphraseProtection(
         QLatin1String("passphrase1")));
 
-    QSettings verify;
+    ProfileSettings verify;
     const QString stored = verify.value(
         QLatin1String("proxy/password")).toString();
     QVERIFY(stored.startsWith(QLatin1String("arsec1:")));

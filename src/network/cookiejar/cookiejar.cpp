@@ -63,6 +63,7 @@
 ****************************************************************************/
 
 #include "cookiejar.h"
+#include "profilesettings.h"
 
 #include "autosaver.h"
 #include "browserprofile.h"
@@ -172,7 +173,7 @@ void CookieJar::clear()
 
 void CookieJar::loadSettings()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("cookies"));
     QByteArray value = settings.value(QLatin1String("acceptCookies"),
                                       QLatin1String("AcceptOnlyFromSitesNavigatedTo")).toByteArray();
@@ -269,7 +270,7 @@ void CookieJar::save()
     // The cookies themselves are persisted by the WebEngine profile
     // (setPersistentCookiesPolicy); only the policy and the exception
     // lists are ours to store.
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("cookies"));
 
     QMetaEnum acceptPolicyEnum = staticMetaObject.enumerator(staticMetaObject.indexOfEnumerator("AcceptPolicy"));

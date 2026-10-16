@@ -18,6 +18,7 @@
  */
 
 #include "energysaver.h"
+#include "profilesettings.h"
 
 #include <qcoreapplication.h>
 #include <qdir.h>
@@ -87,7 +88,7 @@ int EnergySaver::batteryPercent() const
 
 void EnergySaver::loadSettings()
 {
-    const int stored = QSettings().value(
+    const int stored = ProfileSettings().value(
         QLatin1String("performance/energySaver"), int(Never)).toInt();
     m_mode = (stored >= int(Never) && stored <= int(Always))
         ? Mode(stored) : Never;

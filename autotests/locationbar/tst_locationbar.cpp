@@ -61,6 +61,7 @@
 #include "opensearchmanager.h"
 #include "toolbarsearch.h"
 #include "webpermissionmanager.h"
+#include "profilesettings.h"
 #include "qtest_arora.h"
 #include "qtry.h"
 
@@ -155,7 +156,7 @@ private slots:
 void tst_LocationBar::initTestCase()
 {
     QCoreApplication::setApplicationName("tst_locationbar");
-    QSettings settings;
+    ProfileSettings settings;
     settings.clear();
     // Dead local list keeps AdBlockManager away from the live remote
     // defaults — adBlockButton() exercises the enable toggle, which
