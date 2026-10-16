@@ -22,6 +22,8 @@
 #include "browserapplication.h"
 #include "browsermainwindow.h"
 #include "profilestore.h"
+#include "profilevault.h"
+#include "vaultdialogs.h"
 
 #include <qdialogbuttonbox.h>
 #include <qfile.h>
@@ -207,9 +209,11 @@ public:
 
 ProfileManagerDialog::ProfileManagerDialog(ProfileStore *store,
                                            const QString &windowProfileId,
-                                           QWidget *parent)
+                                           QWidget *parent,
+                                           ProfileVault *vault)
     : QDialog(parent)
     , m_store(store)
+    , m_vault(vault ? vault : ProfileVault::instance())
     , m_windowProfileId(windowProfileId.isEmpty()
                             ? ProfileStore::activeProfileId()
                             : windowProfileId)
@@ -254,6 +258,14 @@ ProfileManagerDialog::ProfileManagerDialog(ProfileStore *store,
     removePictureButton = new QPushButton(tr("R&emove Picture"));
     removePictureButton->setObjectName(
         QLatin1String("profileManagerRemovePicture"));
+    // PVAULT03: the vault row — Set/Change Password... plus the
+    // Lock/Unlock toggle.  Enablement and wording follow the
+    // selection's vault state in updateButtons().
+    passwordButton = new QPushButton;
+    passwordButton->setObjectName(
+        QLatin1String("profileManagerPassword"));
+    vaultButton = new QPushButton;
+    vaultButton->setObjectName(QLatin1String("profileManagerLock"));
     deleteButton = new QPushButton(tr("&Delete..."));
     deleteButton->setObjectName(QLatin1String("profileManagerDelete"));
     QFrame *rule = new QFrame;
@@ -268,12 +280,15 @@ ProfileManagerDialog::ProfileManagerDialog(ProfileStore *store,
                                  QSizePolicy::Fixed);
     for (QPushButton *button :
          { newButton, renameButton, pictureButton, removePictureButton,
-           deleteButton, openWindowButton, closeButton })
+           passwordButton, vaultButton, deleteButton, openWindowButton,
+           closeButton })
         button->setSizePolicy(fixedWidth);
     buttons->addWidget(newButton);
     buttons->addWidget(renameButton);
     buttons->addWidget(pictureButton);
     buttons->addWidget(removePictureButton);
+    buttons->addWidget(passwordButton);
+    buttons->addWidget(vaultButton);
     buttons->addWidget(deleteButton);
     buttons->addWidget(rule);
     buttons->addStretch(1);
@@ -300,10 +315,16 @@ ProfileManagerDialog::ProfileManagerDialog(ProfileStore *store,
             this, &ProfileManagerDialog::updateButtons);
     connect(profileTree, &QTreeWidget::itemDoubleClicked,
             this, [this](QTreeWidgetItem *, int) { openWindow(); });
+    connect(passwordButton, &QPushButton::clicked,
+            this, &ProfileManagerDialog::editPassword);
+    connect(vaultButton, &QPushButton::clicked,
+            this, &ProfileManagerDialog::toggleVaultLock);
     connect(m_store, &ProfileStore::profilesChanged,
             this, &ProfileManagerDialog::reloadProfiles);
     connect(m_store, &ProfileStore::profileChanged,
             this, &ProfileManagerDialog::reloadProfiles);
+    connect(m_vault, &ProfileVault::vaultChanged,
+            this, [this](const QString &) { reloadProfiles(); });
 
     reloadProfiles();
 }
@@ -358,9 +379,16 @@ void ProfileManagerDialog::reloadProfiles()
             status = tr("This window");
         else if (openWindowCount(context.id) > 0)
             status = tr("In use");
+        if (m_vault->isLocked(context.id))
+            status = status.isEmpty() ? tr("Locked")
+                                      : status + tr(" — locked");
         row->setText(1, status);
         row->setText(2, QString::number(openWindowCount(context.id)));
-        const qint64 bytes = m_store->profileDataSize(context.id);
+        // A sealed profile's data is its blob — the dir is gone.
+        const qint64 bytes = m_vault->isLocked(context.id)
+            ? QFileInfo(ProfileVault::blobPath(
+                  m_store->profileDir(context.id))).size()
+            : m_store->profileDataSize(context.id);
         row->setText(3, bytes < 0 ? tr("—")
                                 : DeleteProfileDialog::formatDataSize(
                                       bytes));
@@ -394,6 +422,35 @@ void ProfileManagerDialog::updateButtons()
     removePictureButton->setEnabled(
         hasSelection
         && QFile::exists(m_store->profileFilePath(id, avatarName)));
+    // PVAULT03: the vault row — Set Password... until vaulted, then
+    // Change Password...; the lock button toggles Lock/Unlock and
+    // carries the blocking reason on its tooltip.
+    passwordButton->setText(m_vault->isVaulted(id)
+        ? tr("Change Pass&word...")
+        : tr("Set Pass&word..."));
+    passwordButton->setEnabled(hasSelection
+                               && m_vault->engineAvailable());
+    passwordButton->setToolTip(
+        m_vault->engineAvailable()
+            ? tr("Encrypt this profile's data at rest.")
+            : ProfileVault::statusText(
+                  ProfileVaultEngine::EngineUnavailable));
+    if (m_vault->isLocked(id)) {
+        vaultButton->setText(tr("&Unlock..."));
+        vaultButton->setEnabled(m_vault->engineAvailable());
+        vaultButton->setToolTip(
+            m_vault->engineAvailable()
+                ? tr("Open this profile's sealed data.")
+                : ProfileVault::statusText(
+                      ProfileVaultEngine::EngineUnavailable));
+    } else {
+        vaultButton->setText(tr("&Lock"));
+        QString reason;
+        const bool canLock = hasSelection
+            && m_vault->canLockNow(id, &reason);
+        vaultButton->setEnabled(canLock);
+        vaultButton->setToolTip(reason);
+    }
     // Window binding is MPROF03's — until it lands, a window can only
     // ever be opened on the profile this window already runs.
     const bool canOpen = hasSelection
@@ -494,6 +551,11 @@ void ProfileManagerDialog::openWindow()
     const QString id = selectedProfileId();
     if (id.isEmpty())
         return;
+    // A sealed profile can't serve a window — unlock prompt first;
+    // canceling leaves it sealed and no window opens.
+    if (m_vault->isLocked(id)
+        && !VaultUi::ensureUnlocked(m_vault, id, this))
+        return;
     if (id == m_windowProfileId) {
         // Every window is bound to the default profile on this lane —
         // a plain new window honestly IS a window on this profile.
@@ -510,6 +572,24 @@ void ProfileManagerDialog::openWindow()
         this, tr("Open Window"),
         tr("Opening a window on another profile needs per-profile "
            "window support — not available yet."));
+}
+
+void ProfileManagerDialog::editPassword()
+{
+    const QString id = selectedProfileId();
+    if (!id.isEmpty())
+        VaultUi::changePassword(m_vault, id, this);
+}
+
+void ProfileManagerDialog::toggleVaultLock()
+{
+    const QString id = selectedProfileId();
+    if (id.isEmpty())
+        return;
+    if (m_vault->isLocked(id))
+        VaultUi::ensureUnlocked(m_vault, id, this);
+    else
+        VaultUi::lockNow(m_vault, id, this);
 }
 
 #include "profilemanagerdialog.moc"

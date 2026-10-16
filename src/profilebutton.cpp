@@ -24,6 +24,8 @@
 #include "profileidentity.h"
 #include "profilemanagerdialog.h"
 #include "profilestore.h"
+#include "profilevault.h"
+#include "vaultdialogs.h"
 
 #include <qboxlayout.h>
 #include <qevent.h>
@@ -168,6 +170,21 @@ ProfileButton::ProfileButton(QWidget *parent)
             this, ProfileStore::activeProfileId());
     });
 
+    // PVAULT03: 'Lock Profile' in the identity block — disabled with
+    // the reason on the tooltip whenever the seal can't run (engine
+    // missing, not vaulted, already locked, windows still open).
+    m_lockAction = m_menu->addAction(QString());
+    m_lockAction->setObjectName(QLatin1String("profileLockAction"));
+    connect(m_lockAction, &QAction::triggered, this, [this]() {
+        VaultUi::lockNow(ProfileVault::instance(),
+                         ProfileStore::activeProfileId(), this);
+    });
+    connect(m_menu, &QMenu::aboutToShow,
+            this, &ProfileButton::updateLockAction);
+    connect(ProfileVault::instance(), &ProfileVault::vaultChanged,
+            this, [this](const QString &) { updateLockAction(); });
+    updateLockAction();
+
     m_menu->addSeparator();
     // PROF02: 'Change Picture…' + 'Remove Picture' insert here,
     // directly under the identity block.
@@ -206,6 +223,17 @@ void ProfileButton::retranslateUi()
     m_renameAction->setText(tr("Edit Profile Name..."));
     m_newWindowMenu->setTitle(tr("New Window"));
     m_managerAction->setText(tr("Profile Manager..."));
+    m_lockAction->setText(tr("Lock Profile"));
+}
+
+void ProfileButton::updateLockAction()
+{
+    ProfileVault *vault = ProfileVault::instance();
+    QString reason;
+    const bool canLock =
+        vault->canLockNow(ProfileStore::activeProfileId(), &reason);
+    m_lockAction->setEnabled(canLock);
+    m_lockAction->setToolTip(reason);
 }
 
 void ProfileButton::populateNewWindowMenu()

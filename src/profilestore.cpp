@@ -21,6 +21,7 @@
 
 #include "browserpaths.h"
 #include "profileidentity.h"
+#include "profilevault.h"
 
 #include <qcoreapplication.h>
 #include <qdatetime.h>
@@ -373,6 +374,10 @@ bool ProfileStore::deleteProfile(const QString &id)
         if (m_profiles.at(i).id != id)
             continue;
         const QString dir = profileDir(id);
+        // PVAULT03/PVAULT04: deleting a profile wipes its sealed
+        // vault too — the owner can always remove their own data, no
+        // password needed (documented in the PVAULT04 spec).
+        ProfileVault::removeSidecars(dir);
         if (QFile::exists(dir) && !QDir(dir).removeRecursively())
             return false;
         const ProfileContext removed = m_profiles.at(i);

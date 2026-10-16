@@ -94,6 +94,7 @@
 #include "privacyrequestinterceptor.h"
 #include "profilemanagerdialog.h"
 #include "profilestore.h"
+#include "profilevault.h"
 #include "safetext.h"
 #include "scopeshortcuts.h"
 #include "scriptcontrolmanager.h"
@@ -1191,6 +1192,35 @@ void SettingsDialog::loadFromSettings()
     const int engineIndex =
         renderEngineCombo->findData(EngineRegistry::defaultBackendId());
     renderEngineCombo->setCurrentIndex(engineIndex < 0 ? 0 : engineIndex);
+
+    // PVAULT03: the vault prefs are per-profile — they live in
+    // profiles/<id>.vault.conf, not QSettings, and only mean
+    // something once a password has vaulted the active profile.
+    {
+        ProfileVault *vault = ProfileVault::instance();
+        const QString id = ProfileStore::activeProfileId();
+        const bool vaulted = vault->isVaulted(id);
+        vaultAutoLockCheck->setChecked(vault->autoLock(id));
+        vaultIdleSpin->setValue(vault->idleLockMinutes(id));
+        vaultAutoLockCheck->setEnabled(vaulted);
+        vaultIdleSpin->setEnabled(vaulted);
+        vaultIdleLabel->setEnabled(vaulted);
+        // Keep the .ui tooltips around — the unvaulted hint replaces
+        // them and a later vaulted load must restore, not stack.
+        for (QWidget *widget : { static_cast<QWidget *>(
+                 vaultAutoLockCheck),
+                 static_cast<QWidget *>(vaultIdleSpin) }) {
+            if (widget->property("vaultBaseTip").isNull())
+                widget->setProperty("vaultBaseTip", widget->toolTip());
+            const QString baseTip =
+                widget->property("vaultBaseTip").toString();
+            widget->setToolTip(
+                vaulted ? baseTip
+                        : tr("Set a password on the profile in the "
+                             "Profile Manager to lock its data at "
+                             "rest."));
+        }
+    }
     settings.endGroup();
 
     // SIDE09: the working panel options live under sidebar/ (outside
@@ -1685,6 +1715,17 @@ void SettingsDialog::saveToSettings()
                       sidebarDockArea->currentIndex() == 1
                       ? int(Qt::RightDockWidgetArea)
                       : int(Qt::LeftDockWidgetArea));
+    // PVAULT03: the auto-lock prefs persist into profiles/<id>/
+    // vault.conf — only when the profile is vaulted; writing the
+    // conf for an unvaulted profile would mark it vaulted.
+    {
+        ProfileVault *vault = ProfileVault::instance();
+        const QString id = ProfileStore::activeProfileId();
+        if (vault->isVaulted(id)) {
+            vault->setAutoLock(id, vaultAutoLockCheck->isChecked());
+            vault->setIdleLockMinutes(id, vaultIdleSpin->value());
+        }
+    }
     // SIDE02: persist the rail's per-panel checkboxes (the keys live
     // under sidebar/panels/, not this group — write through the
     // panel's own helpers).  Live application happens below via each

@@ -72,6 +72,7 @@ SUBDIRS  = \
     useragent \
     urlcleaner \
     utils \
+    vaultui \
     webactionmapper \
     webpage \
     webpermissions \

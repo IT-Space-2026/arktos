@@ -85,6 +85,9 @@
 #include "networkaccessmanager.h"
 #include "pdfsupport.h"
 #include "privacyrequestinterceptor.h"
+#include "profilestore.h"
+#include "profilevault.h"
+#include "vaultdialogs.h"
 #include "webenginebackend.h"
 #include "schemeaccesshandler.h"
 #include "securestore.h"
@@ -362,6 +365,15 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
             this, &BrowserApplication::lastWindowClosed);
 #endif
 
+    // PVAULT03: every exec()-unwinding quit (last window closed,
+    // qApp->quit()) takes this hook; quitBrowser's ::exit() calls
+    // noteSessionEnding() directly since it never gets here.
+    connect(this, &QCoreApplication::aboutToQuit, this, []() {
+        if (BrowserApplication::instance()
+            && !BrowserApplication::isTorMode())
+            ProfileVault::instance()->noteSessionEnding();
+    });
+
     // setting this in the postLaunch actually takes a lot more time
     // because the event has to be propagated to everyone.
     setWindowIcon(QIcon(QLatin1String(":128x128/arora.png")));
@@ -555,6 +567,12 @@ void BrowserApplication::quitBrowser()
 
     saveSession();
     clearPrivateDataOnExit();
+    // PVAULT03: auto-lock vaulted profiles whose last window just
+    // closed (that is: all of them) and clear dirty markers — before
+    // the clean-exit record, so a crash mid-seal still reports a
+    // dirty boot rather than a clean one.
+    if (!isTorMode())
+        ProfileVault::instance()->noteSessionEnding();
     // SESS02: ::exit() never unwinds to main()'s markSessionCleanExit,
     // so an explicit Quit would leave the sentinel armed and score as
     // a crash on the next start — record the clean exit first.
@@ -640,6 +658,21 @@ void BrowserApplication::postLaunch()
     // BrowserMainWindow.  Standalone runs manage their own windows.
     if (!isStandalone() || isTorMode())
         ensureSessionWindow();
+
+    // PVAULT03: vault bring-up, queued past the first window so the
+    // dialogs have a parent — the dirty-boot re-seal offer for every
+    // profile the last run left in plaintext, then the unlock prompt
+    // if the active profile is still sealed.  Tor processes never
+    // touch the vault (OTR — nothing persists to seal).
+    if (!isTorMode()) {
+        QTimer::singleShot(0, this, [this]() {
+            ProfileVault *vault = ProfileVault::instance();
+            for (const QString &id : vault->dirtyProfiles())
+                VaultUi::offerReseal(vault, id, mainWindow());
+            VaultUi::ensureUnlocked(
+                vault, ProfileStore::activeProfileId(), mainWindow());
+        });
+    }
 
     // PERF03: the heavyweight stores were forced synchronously here —
     // after the first window painted but before the startup
@@ -1131,6 +1164,13 @@ void BrowserApplication::windowDestroyed()
         clean();
         if (!m_mainWindows.isEmpty())
             return;
+        // PVAULT03: the last window of the profile just went away —
+        // run the auto-lock seal now whether the process is unwinding
+        // (aboutToQuit covers it too) or a stray top-level keeps it
+        // alive.
+        if (!isTorMode())
+            ProfileVault::instance()->noteWindowClosed(
+                ProfileStore::activeProfileId(), nullptr);
         // If no visible top-level survived, quitOnLastWindowClosed is
         // already unwinding exec() — nothing to do.  The zombie case
         // is a stray VISIBLE top-level keeping the event loop alive

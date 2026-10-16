@@ -122,6 +122,7 @@ HEADERS += \
     $$PWD/profileidentity.h \
     $$PWD/profilemanagerdialog.h \
     $$PWD/profilestore.h \
+    $$PWD/profilevault.h \
     $$PWD/qrcodedialog.h \
     $$PWD/qrcodegen.hpp \
     $$PWD/readermode.h \
@@ -150,6 +151,7 @@ HEADERS += \
     $$PWD/tabwidget.h \
     $$PWD/toolbarsearch.h \
     $$PWD/urlcleaner.h \
+    $$PWD/vaultdialogs.h \
     $$PWD/webactionmapper.h \
     $$PWD/webpage.h \
     $$PWD/webpermissionmanager.h \
@@ -207,6 +209,7 @@ SOURCES += \
     $$PWD/profileidentity.cpp \
     $$PWD/profilemanagerdialog.cpp \
     $$PWD/profilestore.cpp \
+    $$PWD/profilevault.cpp \
     $$PWD/qrcodedialog.cpp \
     $$PWD/qrcodegen.cpp \
     $$PWD/readermode.cpp \
@@ -233,6 +236,7 @@ SOURCES += \
     $$PWD/tabwidget.cpp \
     $$PWD/toolbarsearch.cpp \
     $$PWD/urlcleaner.cpp \
+    $$PWD/vaultdialogs.cpp \
     $$PWD/webactionmapper.cpp \
     $$PWD/webpage.cpp \
     $$PWD/webpermissionmanager.cpp \

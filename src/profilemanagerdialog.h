@@ -31,6 +31,7 @@ class QTreeWidget;
 class QTreeWidgetItem;
 
 class ProfileStore;
+class ProfileVault;
 
 // MPROF05: the dedicated Profile Manager — Firefox about:profiles
 // parity.  A profile list (avatar + name + this-window/in-use marker
@@ -52,9 +53,12 @@ public:
     // `store` is the registry the dialog edits; `windowProfileId` is
     // the calling window's bound profile (ProfileStore::
     // activeProfileId() until MPROF03 makes it a real per-window id).
+    // `vault` is the PVAULT03 facade — nullptr takes the singleton;
+    // tests inject a stub-engined one bound to the same store.
     ProfileManagerDialog(ProfileStore *store,
                          const QString &windowProfileId,
-                         QWidget *parent = nullptr);
+                         QWidget *parent = nullptr,
+                         ProfileVault *vault = nullptr);
 
     // Single shared manager — a second request raises the open one
     // instead of stacking dialogs.  `profileId` defaults to the
@@ -75,6 +79,8 @@ public:
     QPushButton *renameButton;
     QPushButton *pictureButton;
     QPushButton *removePictureButton;
+    QPushButton *passwordButton;
+    QPushButton *vaultButton;
     QPushButton *deleteButton;
     QPushButton *openWindowButton;
     QPushButton *closeButton;
@@ -89,11 +95,14 @@ private slots:
     void removePicture();
     void deleteSelected();
     void openWindow();
+    void editPassword();
+    void toggleVaultLock();
 
 private:
     void updateButtons();
 
     ProfileStore *m_store;
+    ProfileVault *m_vault;
     QString m_windowProfileId;
 
     static QPointer<ProfileManagerDialog> s_instance;
