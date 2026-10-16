@@ -868,6 +868,22 @@ void tst_DevTools::bidiPanel()
     QVERIFY(nh->sectionSize(5) > 0);
     QTRY_VERIFY(
         panel.m_networkView->horizontalScrollBar()->isVisible());
+
+    // DEVT18: under floor-width the Initiator column yields before
+    // the waterfall is pushed off the right edge — the old fit kept
+    // every column at its preferred width, which is what hid the
+    // graph at a real right-dock width.
+    panel.resize(500, 320);
+    QCoreApplication::processEvents();
+    QVERIFY(nh->isSectionHidden(3)); // Initiator yielded
+    const int fallX = nh->sectionViewportPosition(6);
+    QVERIFY(fallX >= 0);
+    QVERIFY(fallX + nh->sectionSize(6)
+            <= panel.m_networkView->viewport()->width());
+    panel.resize(760, 320);
+    QCoreApplication::processEvents();
+    QVERIFY(!nh->isSectionHidden(3)); // room returns it
+
     panel.resize(700, 300);
     QCoreApplication::processEvents();
 

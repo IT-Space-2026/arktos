@@ -2914,3 +2914,12 @@ BiDi Dev Tools Elements tab shows the selected page's real DOM tree (DEVT17):
     it is still empty), every selection change repopulates it, real
     replies can no longer clobber the tab list, and a failed fetch
     shows an honest error row that re-expanding retries.
+
+BiDi Dev Tools Network waterfall stays on screen in narrow docks (DEVT18):
+    The timing bars themselves were arriving fine — the Waterfall
+    column was being pushed entirely off the right edge at real dock
+    widths because the request table kept every fixed column at its
+    preferred width before falling back to horizontal scrolling. Under
+    pressure the fixed columns now give up their slack down to their
+    floors, and the Initiator column yields before the graph can leave
+    the viewport; it returns once the table fits it again.

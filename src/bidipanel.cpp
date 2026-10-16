@@ -2598,6 +2598,13 @@ bool BidiPanel::eventFilter(QObject *watched, QEvent *event)
 // Waterfall, keeping the user's width ratio and every column's floor.
 // Numeric columns keep their widths; when the floors alone don't fit
 // the table shows a horizontal scrollbar instead of hiding columns.
+// DEVT18: under pressure the fixed columns now give up their slack
+// down to their floors before the Waterfall is allowed off the right
+// edge — at a real right-dock width the old "keep current widths"
+// rule pushed it entirely past the viewport (the "no graph" report).
+// The Initiator column, the least-essential and widest fixed column,
+// auto-hides when even the floor layout can't fit; it comes back once
+// the table fits it again with slack to spare.
 void BidiPanel::fitNetworkColumns()
 {
     if (m_fittingColumns)
@@ -2606,13 +2613,52 @@ void BidiPanel::fitNetworkColumns()
     const int avail = m_networkView->viewport()->width();
     if (avail <= 0)
         return;
-    int fixed = 0;
-    for (int c = BidiNetworkModel::StatusColumn;
-         c <= BidiNetworkModel::TimeColumn; ++c)
-        fixed += head->sectionSize(c);
     const int nameMin = kNetColumnMin[BidiNetworkModel::NameColumn];
     const int fallMin = kNetColumnMin[BidiNetworkModel::WaterfallColumn];
-    const int elastic = avail - fixed;
+
+    m_fittingColumns = true;
+
+    int floorTotal = 0;
+    for (int c = 0; c < BidiNetworkModel::ColumnCount; ++c)
+        floorTotal += kNetColumnMin[c];
+    const int initCol = BidiNetworkModel::InitiatorColumn;
+    if (avail < floorTotal) {
+        if (!head->isSectionHidden(initCol))
+            head->setSectionHidden(initCol, true);
+    } else if (head->isSectionHidden(initCol)
+               && avail >= floorTotal + kNetColumnMin[initCol] + 40) {
+        // The +40 hysteresis keeps a boundary resize from flickering
+        // the column on and off.
+        head->setSectionHidden(initCol, false);
+    }
+
+    int fixed = 0;
+    for (int c = BidiNetworkModel::StatusColumn;
+         c <= BidiNetworkModel::TimeColumn; ++c) {
+        if (!head->isSectionHidden(c))
+            fixed += head->sectionSize(c);
+    }
+    int elastic = avail - fixed;
+    if (elastic < nameMin + fallMin) {
+        // Not enough room even for the elastic pair's floors — the
+        // fixed columns shrink toward their own floors first so the
+        // waterfall stays on screen as long as it possibly can.
+        int deficit = (nameMin + fallMin) - elastic;
+        for (int c = BidiNetworkModel::StatusColumn;
+             c <= BidiNetworkModel::TimeColumn && deficit > 0; ++c) {
+            if (head->isSectionHidden(c))
+                continue;
+            const int spare =
+                head->sectionSize(c) - kNetColumnMin[c];
+            if (spare <= 0)
+                continue;
+            const int take = qMin(spare, deficit);
+            head->resizeSection(c, head->sectionSize(c) - take);
+            fixed -= take;
+            deficit -= take;
+        }
+        elastic = avail - fixed;
+    }
     int name, fall;
     if (elastic < nameMin + fallMin) {
         name = nameMin;
@@ -2628,7 +2674,6 @@ void BidiPanel::fitNetworkColumns()
                       elastic - fallMin);
         fall = elastic - name;
     }
-    m_fittingColumns = true;
     if (head->sectionSize(BidiNetworkModel::NameColumn) != name)
         head->resizeSection(BidiNetworkModel::NameColumn, name);
     if (head->sectionSize(BidiNetworkModel::WaterfallColumn) != fall)

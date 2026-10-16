@@ -189,9 +189,13 @@
 #include <QtWidgets/QMenuBar>
 #include <QtWidgets/QMessageBox>
 #include <QtWidgets/QPlainTextEdit>
+#include <QtWidgets/QHeaderView>
 #include <QtWidgets/QMenu>
 #include <QtWidgets/QPushButton>
+#include <QtWidgets/QScrollBar>
+#include <QtWidgets/QTableView>
 #include <QtWidgets/QStatusBar>
+#include <QtWidgets/QTabWidget>
 #include <QtWidgets/QToolButton>
 #include <QtWidgets/QTreeWidget>
 #include <QtPrintSupport/QPrinter>
@@ -2643,6 +2647,215 @@ static int bidiElementsSmoke(BrowserApplication &application,
     return application.exec();
 }
 
+// DEVT18: --bidi-network-smoke drives the REAL BidiPanel's Network
+// tab against a live in-process HTTP server — tst_devtools feeds
+// onEvent synthesized JSON, which can't catch a live-delivery gap in
+// the waterfall's timing fields (the bug report: no vertical graph
+// in the live panel).  An in-flight poll waits for the context
+// selector to attach (that is what arms CDP Network.enable on the
+// page session), then navigates the real WebView to the fixture.
+// PASS when real requests land with start/end times, at least one
+// row carries the response.timing TTFB split, and the Waterfall
+// column both sits inside the viewport and paints colored bars.
+static int bidiNetworkSmoke(BrowserApplication &application,
+                            WebView *view)
+{
+#ifndef ARORA_RUSTCORE
+    // Same convention as --bidi-smoke: an absent backend is a skip,
+    // not a failure.
+    Q_UNUSED(application);
+    Q_UNUSED(view);
+    qInfo() << "bidi-network-smoke: SKIP (built without rustcore)";
+    return 0;
+#else
+    auto done = std::make_shared<bool>(false);
+    const auto finish = [&application, done](bool pass,
+                                             const QString &why) {
+        if (*done)
+            return;
+        *done = true;
+        qInfo().noquote() << "bidi-network-smoke:"
+                          << (pass ? "PASS" : "FAIL") << why;
+        application.exit(pass ? 0 : 1);
+    };
+
+    // The fixture page plus typed subresources — Document/Stylesheet/
+    // Script/Image/XHR hit different waterfall swatches, and /slow.png
+    // stretches the window so the zoomed axis gets exercised too.
+    QTcpServer *server = new QTcpServer(&application);
+    if (!server->listen(QHostAddress::LocalHost)) {
+        finish(false, QStringLiteral("listen: %1")
+                          .arg(server->errorString()));
+        return application.exec();
+    }
+    const quint16 port = server->serverPort();
+    const QByteArray indexBody = QByteArray(
+        "<html><head><link rel=\"stylesheet\" href=\"/style.css\">"
+        "<script src=\"/app.js\"></script></head><body>"
+        "<img src=\"/img.png\"><img src=\"/slow.png\">"
+        "<script>fetch('/api.json')</script></body></html>");
+    const auto respond = [](QTcpSocket *client, const QByteArray &mime,
+                            const QByteArray &body) {
+        client->write("HTTP/1.1 200 OK\r\nContent-Type: " + mime
+                      + "\r\nContent-Length: "
+                      + QByteArray::number(body.size())
+                      + "\r\nConnection: close\r\n\r\n" + body);
+        client->disconnectFromHost();
+    };
+    QObject::connect(server, &QTcpServer::newConnection, &application,
+                     [server, indexBody, respond]() {
+        QTcpSocket *client = server->nextPendingConnection();
+        auto header = std::make_shared<QByteArray>();
+        auto served = std::make_shared<bool>(false);
+        QObject::connect(client, &QTcpSocket::readyRead, client,
+                         [client, header, served, indexBody, respond]() {
+            if (*served)
+                return;
+            header->append(client->readAll());
+            const int end = header->indexOf("\r\n\r\n");
+            if (end < 0)
+                return;
+            *served = true;
+            const QByteArray line = header->left(end).split('\n')
+                                        .first().simplified();
+            const QByteArray path = line.split(' ').value(1, "/");
+            if (path == "/")
+                respond(client, "text/html", indexBody);
+            else if (path == "/style.css")
+                respond(client, "text/css",
+                        "body{background:#fff;margin:0}");
+            else if (path == "/app.js")
+                respond(client, "application/javascript",
+                        "window.__ns=1;");
+            else if (path == "/img.png")
+                respond(client, "image/png",
+                        QByteArray("\x89PNG\r\n\x1a\n", 8)
+                        + QByteArray(64, 'p'));
+            else if (path == "/api.json")
+                respond(client, "application/json", "{\"ok\":true}");
+            else if (path == "/slow.png") {
+                // A ~900ms straggler so the waterfall window spans
+                // long enough for tick steps and the dense zoom.
+                QTimer::singleShot(900, client, [client, respond]() {
+                    respond(client, "image/png",
+                            QByteArray(64, 's'));
+                });
+            } else {
+                respond(client, "text/plain", "nf");
+            }
+        });
+        QObject::connect(client, &QTcpSocket::disconnected, client,
+                         &QTcpSocket::deleteLater);
+    });
+
+    BidiPanel *panel = new BidiPanel;
+    const int panelWidth =
+        qEnvironmentVariableIntValue("ARORA_BIDI_NET_W");
+    panel->resize(panelWidth > 0 ? panelWidth : 980, 460);
+    panel->show();
+
+    auto navigated = std::make_shared<bool>(false);
+    QTimer *poll = new QTimer(panel);
+    QObject::connect(poll, &QTimer::timeout, panel, [=]() mutable {
+        QComboBox *combo = panel->findChild<QComboBox *>(
+            QStringLiteral("bidiContextCombo"));
+        QTableView *netView = panel->findChild<QTableView *>(
+            QStringLiteral("bidiNetworkView"));
+        if (!combo || !netView)
+            return;
+        if (!*navigated) {
+            // The combo selection is what fires the context-scoped
+            // probe commands the bridge attaches on — wait for it,
+            // then give attach + Network.enable a beat before the
+            // page load so the Document row is captured too.
+            if (combo->currentData().toString().isEmpty())
+                return;
+            *navigated = true;
+            const QUrl page(QStringLiteral(
+                "http://127.0.0.1:%1/").arg(port));
+            QTimer::singleShot(1500, panel, [view, page]() {
+                view->loadUrl(page);
+            });
+            return;
+        }
+        QAbstractItemModel *model = netView->model();
+        if (!model)
+            return;
+        // Roles mirror BidiNetworkModel::Role (Qt::UserRole + n).
+        const int rows = model->rowCount();
+        int started = 0, finished = 0, timed = 0;
+        QStringList detail;
+        for (int r = 0; r < rows; ++r) {
+            const double s = model->data(model->index(r, 0),
+                                         Qt::UserRole + 1).toDouble();
+            const double e = model->data(model->index(r, 0),
+                                         Qt::UserRole + 2).toDouble();
+            const double t = model->data(model->index(r, 0),
+                                         Qt::UserRole + 9).toDouble();
+            if (s >= 0.0)
+                ++started;
+            if (e >= 0.0)
+                ++finished;
+            if (t >= 0.0)
+                ++timed;
+            detail << QStringLiteral("%1[s=%2 e=%3 t=%4]")
+                          .arg(model->data(model->index(r, 0)).toString(),
+                               QString::number(s, 'f', 1),
+                               QString::number(e, 'f', 1),
+                               QString::number(t, 'f', 1));
+        }
+        // Wait for the straggler to complete so the verdict runs on
+        // a settled recording.
+        if (rows < 4 || finished < 4)
+            return;
+        // The real user path: switch to the Network tab — the page's
+        // first show is what should run the column fit before the
+        // waterfall is ever looked at.
+        QTabWidget *tabs = panel->findChild<QTabWidget *>();
+        for (int i = 0; tabs && i < tabs->count(); ++i) {
+            if (tabs->widget(i)->isAncestorOf(netView))
+                tabs->setCurrentIndex(i);
+        }
+        QCoreApplication::processEvents();
+        QHeaderView *head = netView->horizontalHeader();
+        const int fallCol = model->columnCount() - 1;
+        const int fx = head->sectionViewportPosition(fallCol);
+        const int fw = head->sectionSize(fallCol);
+        const int vw = netView->viewport()->width();
+        const QScrollBar *hsb = netView->horizontalScrollBar();
+        const QImage shot = netView->viewport()->grab().toImage();
+        int colored = 0;
+        const int x0 = qMax(0, fx), x1 = qMin(shot.width(), fx + fw);
+        for (int y = 0; y < shot.height(); ++y) {
+            for (int x = x0; x < x1; ++x) {
+                const QRgb p = shot.pixel(x, y);
+                const int spread =
+                    qMax(qMax(qRed(p), qGreen(p)), qBlue(p))
+                    - qMin(qMin(qRed(p), qGreen(p)), qBlue(p));
+                if (spread > 40)
+                    ++colored;
+            }
+        }
+        const bool onScreen = fx >= 0 && fx < vw;
+        const bool ok = started >= 4 && finished >= 4 && timed >= 1
+            && onScreen && colored > 40;
+        finish(ok, QStringLiteral(
+                   "rows=%1 start=%2 end=%3 ttfb=%4 fall[x=%5 w=%6 "
+                   "vw=%7 hscroll=%8/%9] barPx=%10 %11")
+                   .arg(rows).arg(started).arg(finished).arg(timed)
+                   .arg(fx).arg(fw).arg(vw)
+                   .arg(hsb ? hsb->value() : -1)
+                   .arg(hsb ? hsb->maximum() : -1)
+                   .arg(colored).arg(detail.join(QLatin1Char(' '))));
+    });
+    poll->start(250);
+    QTimer::singleShot(45000, panel, [finish]() {
+        finish(false, QStringLiteral("timeout waiting for network rows"));
+    });
+    return application.exec();
+#endif
+}
+
 static int startPageSmoke(BrowserApplication &application, WebView *view)
 {
     AdBlockManager *manager = AdBlockManager::instance();
@@ -4846,7 +5059,8 @@ int main(int argc, char **argv)
         "sleep-smoke", "palette-smoke", "pip-smoke", "tabstrip-smoke",
         "startpage-smoke", "crash-smoke",
         "sandbox-smoke", "write-sandbox-launcher",
-        "bidi-smoke", "bidi-elements-smoke", "pdf-smoke",
+        "bidi-smoke", "bidi-elements-smoke", "bidi-network-smoke",
+        "pdf-smoke",
         "pdfview-smoke", "printpreview-smoke",
         "parallel-download-smoke", "parallel-download-off-smoke",
         "ingress-smoke",
@@ -5283,6 +5497,10 @@ int main(int argc, char **argv)
     // DEVT17: the Elements tree through the real panel UI.
     if (args.contains(QLatin1String("--bidi-elements-smoke")))
         return bidiElementsSmoke(application, view);
+    // DEVT18: the Network tab's waterfall through the real panel UI
+    // plus a live wire — the gap fixture tests can't cover.
+    if (args.contains(QLatin1String("--bidi-network-smoke")))
+        return bidiNetworkSmoke(application, view);
 
     // BADSSL02: live-site measurement — loads every badssl.com
     // matrix case on the browsing profile and records per-case
