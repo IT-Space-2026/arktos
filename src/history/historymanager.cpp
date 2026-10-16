@@ -61,6 +61,7 @@
 ****************************************************************************/
 
 #include "historymanager.h"
+#include "profilesettings.h"
 
 #include "autosaver.h"
 #include "browserpaths.h"
@@ -489,7 +490,7 @@ void HistoryManager::clearSince(qint64 sinceMs)
 void HistoryManager::loadSettings()
 {
     // load settings
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("history"));
     m_daysToExpire = settings.value(QLatin1String("historyLimit"), 30).toInt();
 }
@@ -604,7 +605,7 @@ QString HistoryManager::atomicString(const QString &string) {
 
 void HistoryManager::save()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("history"));
     settings.setValue(QLatin1String("historyLimit"), m_daysToExpire);
 

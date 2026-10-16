@@ -18,6 +18,7 @@
  */
 
 #include "extensionmanager.h"
+#include "profilesettings.h"
 
 #include "browserapplication.h"
 #include "extensionbackgroundhost.h"
@@ -344,7 +345,7 @@ void ExtensionManager::installOnProfile(QWebEngineProfile *profile)
             this, [this, profile](const QWebEngineExtensionInfo &info) {
         const ExtensionInfo plain = infoFrom(info);
         // SEC25: the pin and any tamper flag die with the extension.
-        QSettings().remove(integritySettingsKey(
+        ProfileSettings().remove(integritySettingsKey(
             profile->storageName(), plain.id));
         m_tamperedIds.remove(plain.id);
         // EXT12: its health verdict too.
@@ -651,7 +652,7 @@ void ExtensionManager::installBundledExtensions(QWebEngineProfile *profile)
     const QString settingsKey = QLatin1String("extensions/bundled/")
         + (profile->storageName().isEmpty()
            ? QStringLiteral("default") : profile->storageName());
-    QSettings settings;
+    ProfileSettings settings;
     const QStringList consumed = settings.value(settingsKey).toStringList();
     QStringList satisfied;
 
@@ -728,7 +729,7 @@ void ExtensionManager::finishBundledInstall(const ExtensionInfo &info)
         m_bundledPending.removeAt(i);
         if (!info.error.isEmpty() || !info.installed)
             return;
-        QSettings settings;
+        ProfileSettings settings;
         QStringList consumed =
             settings.value(pending.settingsKey).toStringList();
         if (!consumed.contains(pending.fileName)) {
@@ -1100,7 +1101,7 @@ void ExtensionManager::pinInstalledExtension(QWebEngineProfile *profile,
     const QByteArray hash = extensionTreeHash(info.path);
     if (hash.isEmpty())
         return;
-    QSettings().setValue(
+    ProfileSettings().setValue(
         integritySettingsKey(profile->storageName(), info.id),
         QString::fromLatin1(hash));
 }
@@ -1150,7 +1151,7 @@ void ExtensionManager::verifyInstalledIntegrity(QWebEngineProfile *profile)
         if (plain.builtin)
             continue;
         const QString key = integritySettingsKey(storage, info.id());
-        QSettings settings;
+        ProfileSettings settings;
         const QString pinned = settings.value(key).toString();
         const QString current =
             QString::fromLatin1(extensionTreeHash(info.path()));
@@ -1843,13 +1844,13 @@ bool ExtensionManager::parseUpdateManifest(const QByteArray &xml,
 
 bool ExtensionManager::updateCheckEnabled()
 {
-    return QSettings().value(QLatin1String("extensions/autoUpdateCheck"),
+    return ProfileSettings().value(QLatin1String("extensions/autoUpdateCheck"),
                              false).toBool();
 }
 
 void ExtensionManager::setUpdateCheckEnabled(bool enabled)
 {
-    QSettings().setValue(QLatin1String("extensions/autoUpdateCheck"),
+    ProfileSettings().setValue(QLatin1String("extensions/autoUpdateCheck"),
                          enabled);
 }
 
@@ -2129,7 +2130,7 @@ void ExtensionManager::finishUpdateCheck()
 {
     if (m_updateJobs.isEmpty() && m_updateCheckRunning) {
         m_updateCheckRunning = false;
-        QSettings().setValue(QLatin1String("extensions/lastUpdateCheck"),
+        ProfileSettings().setValue(QLatin1String("extensions/lastUpdateCheck"),
                              QDateTime::currentSecsSinceEpoch());
         emit updateCheckFinished(m_updateResults);
     }
@@ -2157,7 +2158,7 @@ void ExtensionManager::maybeAutoUpdateCheck()
 {
     if (!updateCheckEnabled() || m_updateCheckRunning)
         return;
-    const qint64 last = QSettings()
+    const qint64 last = ProfileSettings()
         .value(QLatin1String("extensions/lastUpdateCheck"), 0).toLongLong();
     if (QDateTime::currentSecsSinceEpoch() - last < 20 * 60 * 60)
         return;

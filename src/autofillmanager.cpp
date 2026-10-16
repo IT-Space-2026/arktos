@@ -27,6 +27,7 @@
  */
 
 #include "autofillmanager.h"
+#include "profilesettings.h"
 
 #include "addressdialog.h"
 #include "autosaver.h"
@@ -237,7 +238,7 @@ void AutoFillManager::clearData()
 
 void AutoFillManager::loadSettings()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("autofill"));
     m_savePasswordForms = settings.value(QLatin1String("passwordForms"), m_savePasswordForms).toBool();
     m_allowAutoCompleteOff = settings.value(QLatin1String("ignoreAutoCompleteOff"), m_allowAutoCompleteOff).toBool();

@@ -85,6 +85,7 @@
 #include "toolbarsearch.h"
 #include "trancolist.h"
 #include "webview.h"
+#include "profilesettings.h"
 #include "qtest_arora.h"
 #include "qtry.h"
 
@@ -332,10 +333,10 @@ static void answerModalPassphrase(const QString &text, int attempts = 150,
 void tst_SettingsDialog::initTestCase()
 {
     QCoreApplication::setApplicationName("tst_settingsdialog");
-    QSettings settings;
+    ProfileSettings settings;
     settings.clear();
 #if defined(ARORA_RUSTCORE)
-    // Site decisions outlive QSettings cleanup — clear them too.
+    // Site decisions outlive ProfileSettings cleanup — clear them too.
     SiteDecisionStore::reset();
 #endif
 
@@ -426,7 +427,7 @@ void tst_SettingsDialog::saveAndReload()
         dialog.accept();
     }
 
-    QSettings settings;
+    ProfileSettings settings;
     QCOMPARE(settings.value(QLatin1String("MainWindow/home")).toString(),
              QLatin1String("http://home.example.com/"));
     QCOMPARE(settings.value(QLatin1String("MainWindow/showSearchBox")).toBool(), true);
@@ -465,7 +466,7 @@ void tst_SettingsDialog::saveAndReload()
 // exit confirm's fallback to the migrated window key.
 void tst_SettingsDialog::generalPageModes()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.remove(QLatin1String("MainWindow/startupMode"));
     settings.remove(QLatin1String("MainWindow/startupBehavior"));
     settings.remove(QLatin1String("MainWindow/startupPages"));
@@ -609,7 +610,7 @@ void tst_SettingsDialog::generalPageModes()
 // applying.  closeRequested replaces QDialog::done().
 void tst_SettingsDialog::buttonBoxCloseRequest()
 {
-    const QString original = QSettings().value(
+    const QString original = ProfileSettings().value(
         QLatin1String("MainWindow/home")).toString();
 
     SettingsDialog dialog;
@@ -619,14 +620,14 @@ void tst_SettingsDialog::buttonBoxCloseRequest()
     dialog.homeLineEdit->setText(QLatin1String("http://discarded.example/"));
     dialog.buttonBox->button(QDialogButtonBox::Cancel)->click();
     QCOMPARE(spy.count(), 1);
-    QCOMPARE(QSettings().value(QLatin1String("MainWindow/home")).toString(),
+    QCOMPARE(ProfileSettings().value(QLatin1String("MainWindow/home")).toString(),
              original);
 
     // OK persists the edit + closes.
     dialog.homeLineEdit->setText(QLatin1String("http://kept.example/"));
     dialog.buttonBox->button(QDialogButtonBox::Ok)->click();
     QCOMPARE(spy.count(), 2);
-    QCOMPARE(QSettings().value(QLatin1String("MainWindow/home")).toString(),
+    QCOMPARE(ProfileSettings().value(QLatin1String("MainWindow/home")).toString(),
              QLatin1String("http://kept.example/"));
 
     SettingsDialog restore;
@@ -734,7 +735,7 @@ void tst_SettingsDialog::searchContextControls()
     QVERIFY(!manager->suggestionsInAddressField());
     QVERIFY(manager->suggestionsOnlyWithKeyword());
 
-    QSettings settings;
+    ProfileSettings settings;
     QCOMPARE(settings.value(QLatin1String("MainWindow/showSearchBox")).toBool(),
              false);
     QCOMPARE(settings.value(QLatin1String("toolbarsearch/alwaysNewTab")).toBool(),
@@ -1047,7 +1048,7 @@ void tst_SettingsDialog::resetSearchSettings()
                              QLatin1String("@hh"));
     ScopeShortcuts::setEnabled(ScopeShortcuts::TabsScope, false);
 
-    QSettings settings;
+    ProfileSettings settings;
     settings.setValue(QLatin1String("urlloading/searchInAddressField"), false);
     // SRCH12: legacy residue — the reset must clear the retired key
     // alongside the live one.
@@ -1190,7 +1191,7 @@ void tst_SettingsDialog::sidebarNavigation()
 // persists each registered section under sidebar/panels/<id>.
 void tst_SettingsDialog::sidebarSettings()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.remove(QLatin1String("MainWindow/showSidebar"));
     settings.remove(QLatin1String("MainWindow/sidebarDockArea"));
     settings.remove(QLatin1String("sidebar/panels"));
@@ -1266,7 +1267,7 @@ void tst_SettingsDialog::sidebarSettings()
 // MainWindow/sidebarDockArea so applySidebarSettings moves the dock.
 void tst_SettingsDialog::sidebarPositionPicker()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.remove(QLatin1String("MainWindow/sidebarDockArea"));
 
     SettingsDialog dialog;
@@ -1323,7 +1324,7 @@ void tst_SettingsDialog::sidebarPositionPicker()
         SettingsDialog persist;
         persist.sidebarDockArea->setCurrentIndex(1);
         persist.accept();
-        QCOMPARE(QSettings().value(QLatin1String("MainWindow/sidebarDockArea"))
+        QCOMPARE(ProfileSettings().value(QLatin1String("MainWindow/sidebarDockArea"))
                      .toInt(), int(Qt::RightDockWidgetArea));
     }
     {
@@ -1331,7 +1332,7 @@ void tst_SettingsDialog::sidebarPositionPicker()
         QCOMPARE(reload.sidebarDockArea->currentIndex(), 1);
         reload.sidebarDockArea->setCurrentIndex(0);
         reload.accept();
-        QCOMPARE(QSettings().value(QLatin1String("MainWindow/sidebarDockArea"))
+        QCOMPARE(ProfileSettings().value(QLatin1String("MainWindow/sidebarDockArea"))
                      .toInt(), int(Qt::LeftDockWidgetArea));
     }
 
@@ -1419,7 +1420,7 @@ void tst_SettingsDialog::sidebarPanelsListGeometry()
 // reopened dialog shows it, and Cancel leaves the key alone.
 void tst_SettingsDialog::sidebarPanelReorder()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.remove(QLatin1String("sidebar/panelOrder"));
 
     {
@@ -1493,7 +1494,7 @@ void tst_SettingsDialog::sidebarPanelReorder()
 // tst_BrowserMainWindow::sidebarPanelOptions).
 void tst_SettingsDialog::sidebarPanelOptions()
 {
-    QSettings settings;
+    ProfileSettings settings;
     const char *const keys[] = {
         "sidebar/showPanelToggle", "sidebar/showCloseButton",
         "sidebar/autoCloseInactive", "sidebar/folderCounters",
@@ -1672,7 +1673,7 @@ void tst_SettingsDialog::iconThemeSelector()
 // arora-legacy set migrates the same way.
 void tst_SettingsDialog::iconThemeRetiredNative()
 {
-    QSettings settings;
+    ProfileSettings settings;
     const QVariant saved = settings.value(
         QLatin1String("MainWindow/iconTheme"));
 
@@ -1732,7 +1733,7 @@ void tst_SettingsDialog::themeSelector()
         dialog.themePicker->setCurrentIndex(2);   // Dark
         dialog.accept();
     }
-    QCOMPARE(QSettings().value(
+    QCOMPARE(ProfileSettings().value(
                  QLatin1String("browser/colorScheme")).toString(),
              QLatin1String("dark"));
     QVERIFY(BrowserTheme::paletteIsForced());
@@ -1745,7 +1746,7 @@ void tst_SettingsDialog::themeSelector()
         dialog.themePicker->setCurrentIndex(1);   // Light
         dialog.accept();
     }
-    QCOMPARE(QSettings().value(
+    QCOMPARE(ProfileSettings().value(
                  QLatin1String("browser/colorScheme")).toString(),
              QLatin1String("light"));
     QVERIFY(!BrowserTheme::paletteIsForced());
@@ -1765,7 +1766,7 @@ void tst_SettingsDialog::themeSelector()
         dialog.themePicker->setCurrentIndex(0);   // System default
         dialog.accept();
     }
-    QCOMPARE(QSettings().value(
+    QCOMPARE(ProfileSettings().value(
                  QLatin1String("browser/colorScheme")).toString(),
              QLatin1String("system"));
     QVERIFY(!BrowserTheme::paletteIsForced());
@@ -1782,7 +1783,7 @@ void tst_SettingsDialog::themePreview()
 {
     // themeSelector (previous leg) leaves "system" persisted and the
     // platform palette restored.
-    QCOMPARE(QSettings().value(
+    QCOMPARE(ProfileSettings().value(
                  QLatin1String("browser/colorScheme")).toString(),
              QLatin1String("system"));
     const QColor platformWindow =
@@ -1796,7 +1797,7 @@ void tst_SettingsDialog::themePreview()
         dialog.themePicker->setCurrentIndex(2);   // Dark
         QVERIFY(BrowserTheme::paletteIsForced());
         QVERIFY(BrowserTheme::isDarkPalette(QApplication::palette()));
-        QCOMPARE(QSettings().value(
+        QCOMPARE(ProfileSettings().value(
                      QLatin1String("browser/colorScheme")).toString(),
                  QLatin1String("system"));
         // Reverting the combo before Apply restores the prior scheme.
@@ -1863,7 +1864,7 @@ void tst_SettingsDialog::themePreview()
 // the combo wrote.
 void tst_SettingsDialog::themePicker()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.remove(QLatin1String("browser/colorScheme"));
 
     {
@@ -2410,7 +2411,7 @@ void tst_SettingsDialog::autoFillAddressesPage()
 // macOS) round-trip through the websettings group.
 void tst_SettingsDialog::pagePolishSettings()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.remove(QLatin1String("websettings/forceDarkMode"));
     settings.remove(QLatin1String("websettings/middleClickAutoscroll"));
 
@@ -2460,7 +2461,7 @@ void tst_SettingsDialog::downloadsPage()
 {
     // DLACC06: the fresh-profile default is only provable with no
     // persisted pick — drop any engine key an earlier leg wrote.
-    QSettings().remove(QLatin1String("downloadmanager/engine"));
+    ProfileSettings().remove(QLatin1String("downloadmanager/engine"));
     {
         SettingsDialog dialog;
         dialog.openAtPage(SettingsDialog::DownloadsPage);
@@ -2505,7 +2506,7 @@ void tst_SettingsDialog::downloadsPage()
         dialog.accept();
     }
 
-    QSettings settings;
+    ProfileSettings settings;
     QCOMPARE(settings.value(QLatin1String("downloadmanager/engine")).toString(),
              QLatin1String("builtin"));
     QCOMPARE(settings.value(QLatin1String("downloadmanager/connections")).toInt(),
@@ -2544,7 +2545,7 @@ void tst_SettingsDialog::downloadsPage()
 // click, keyboard and clamp paths all prove the decoupled order.
 void tst_SettingsDialog::tabPositionPicker()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.remove(QLatin1String("tabs/tabBarPosition"));
 
     SettingsDialog dialog;
@@ -2609,7 +2610,7 @@ void tst_SettingsDialog::tabPositionPicker()
         SettingsDialog persist;
         persist.tabBarPosition->setCurrentIndex(3);  // Right
         persist.accept();
-        QCOMPARE(QSettings().value(QLatin1String("tabs/tabBarPosition"))
+        QCOMPARE(ProfileSettings().value(QLatin1String("tabs/tabBarPosition"))
                      .toInt(), 3);
     }
 
@@ -2639,7 +2640,7 @@ void tst_SettingsDialog::contentBlockerEngine()
     // ADBLK01: start from a genuinely unset key — earlier legs'
     // accept()s may already have persisted a pick — so the dialog
     // shows the new Brave default, not leftovers.
-    QSettings().remove(QLatin1String("AdBlock/engine"));
+    ProfileSettings().remove(QLatin1String("AdBlock/engine"));
     {
         SettingsDialog dialog;
         dialog.openAtPage(SettingsDialog::PrivacyPage);
@@ -2677,7 +2678,7 @@ void tst_SettingsDialog::contentBlockerEngine()
         // Accepting the default writes nothing — the absent key IS
         // the Brave pick.
         dialog.accept();
-        QVERIFY(!QSettings().contains(QLatin1String("AdBlock/engine")));
+        QVERIFY(!ProfileSettings().contains(QLatin1String("AdBlock/engine")));
         QCOMPARE(AdBlockManager::instance()->engine(),
                  AdBlockManager::RustEngine);
 
@@ -2685,7 +2686,7 @@ void tst_SettingsDialog::contentBlockerEngine()
         SettingsDialog reloaded;
         reloaded.adblockEngineCombo->setCurrentIndex(0);
         reloaded.accept();
-        QCOMPARE(QSettings().value(QLatin1String("AdBlock/engine"))
+        QCOMPARE(ProfileSettings().value(QLatin1String("AdBlock/engine"))
                      .toString(), QLatin1String("cpp"));
         QCOMPARE(AdBlockManager::instance()->engine(),
                  AdBlockManager::NativeEngine);
@@ -2696,7 +2697,7 @@ void tst_SettingsDialog::contentBlockerEngine()
         // Picking Brave again writes the explicit id back.
         reloaded2.adblockEngineCombo->setCurrentIndex(1);
         reloaded2.accept();
-        QCOMPARE(QSettings().value(QLatin1String("AdBlock/engine"))
+        QCOMPARE(ProfileSettings().value(QLatin1String("AdBlock/engine"))
                      .toString(), QLatin1String("rust"));
         // Restore the opt-out so the shared config ends native.
         SettingsDialog reloaded3;
@@ -2714,25 +2715,25 @@ void tst_SettingsDialog::contentBlockerEngine()
         // Accepting keeps the default absent — nothing materializes
         // a key the user never picked.
         dialog.accept();
-        QVERIFY(!QSettings().contains(QLatin1String("AdBlock/engine")));
+        QVERIFY(!ProfileSettings().contains(QLatin1String("AdBlock/engine")));
         QCOMPARE(AdBlockManager::storedEngine(),
                  AdBlockManager::RustEngine);
 
         // A persisted rust pick round-trips through the disabled row
         // the same way the default does.
-        QSettings().setValue(QLatin1String("AdBlock/engine"),
+        ProfileSettings().setValue(QLatin1String("AdBlock/engine"),
                              QLatin1String("rust"));
         SettingsDialog reloaded;
         QCOMPARE(reloaded.adblockEngineCombo->currentIndex(), 1);
         QVERIFY(reloaded.adblockEngineStatus->text().contains(
             QStringLiteral("not compiled")));
         reloaded.accept();
-        QCOMPARE(QSettings().value(QLatin1String("AdBlock/engine"))
+        QCOMPARE(ProfileSettings().value(QLatin1String("AdBlock/engine"))
                      .toString(), QLatin1String("rust"));
         // Switch back to Built-in and persist that.
         reloaded.adblockEngineCombo->setCurrentIndex(0);
         reloaded.accept();
-        QCOMPARE(QSettings().value(QLatin1String("AdBlock/engine"))
+        QCOMPARE(ProfileSettings().value(QLatin1String("AdBlock/engine"))
                      .toString(), QLatin1String("cpp"));
 #endif
     }
@@ -3381,7 +3382,7 @@ void tst_SettingsDialog::extensionVersionColumn()
     // Earlier suite legs may persist proxy/enabled — the gupdate
     // fetch would route through the dead proxy.  Neutralize it for
     // this leg and restore the saved value afterwards.
-    QSettings settings;
+    ProfileSettings settings;
     const QVariant savedProxy =
         settings.value(QLatin1String("proxy/enabled"));
     settings.setValue(QLatin1String("proxy/enabled"), false);
@@ -3490,7 +3491,7 @@ void tst_SettingsDialog::extensionColumnSizing()
 // the page's reset restores compiled defaults only.
 void tst_SettingsDialog::performancePage()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.remove(QLatin1String("performance"));
     settings.remove(QLatin1String("tabs/suspendTabs"));
     settings.remove(QLatin1String("tabs/suspendTabsMinutes"));
@@ -3620,7 +3621,7 @@ void tst_SettingsDialog::performancePage()
 // no-battery degrade.
 void tst_SettingsDialog::energySaver()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.remove(QLatin1String("performance"));
 
     // Fake sysfs tree: one battery on AC power.
@@ -3765,7 +3766,7 @@ void tst_SettingsDialog::energySaver()
 // save/reload.
 void tst_SettingsDialog::tabHoverPreviews()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.remove(QLatin1String("tabs/tabHoverPreviews"));
 
     // The control lives on the Tab Settings page (sidebar row 4).
@@ -3993,7 +3994,7 @@ void tst_SettingsDialog::fieldWidthCaps()
 // badge and the per-signal lookups gate on) round-trip a restart.
 void tst_SettingsDialog::siteTrustToggle()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.remove(QLatin1String("trust/enabled"));
 
     // The group box lives on the Privacy page.
@@ -4037,7 +4038,7 @@ void tst_SettingsDialog::siteTrustToggle()
 // gate on) round-trips a restart.
 void tst_SettingsDialog::siteTrustSignalToggles()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.remove(QLatin1String("trust/lookalike"));
     settings.remove(QLatin1String("trust/threatlist"));
 
@@ -4166,7 +4167,7 @@ private:
 // label, and honest failure reporting.
 void tst_SettingsDialog::siteTrustUpdateControls()
 {
-    QSettings settings;
+    ProfileSettings settings;
     const QVariant savedConsent = settings.value(
         QLatin1String("AdBlock/remoteListsConsent"));
     const QVariant savedTranco = settings.value(
@@ -4348,7 +4349,7 @@ void tst_SettingsDialog::languageSelector()
         QLatin1String("hu_HU"));
     QVERIFY(huRow > 0);
     dialog.languageCombo->setCurrentIndex(huRow);
-    QCOMPARE(QSettings().value(QLatin1String("LanguageManager/language"))
+    QCOMPARE(ProfileSettings().value(QLatin1String("LanguageManager/language"))
                  .toString(),
              QLatin1String("hu_HU"));
     qApp->processEvents();
@@ -4358,8 +4359,8 @@ void tst_SettingsDialog::languageSelector()
     // The trailing English row writes the explicit no-translation pick.
     dialog.languageCombo->setCurrentIndex(
         dialog.languageCombo->count() - 1);
-    QVERIFY(QSettings().contains(QLatin1String("LanguageManager/language")));
-    QCOMPARE(QSettings().value(QLatin1String("LanguageManager/language"))
+    QVERIFY(ProfileSettings().contains(QLatin1String("LanguageManager/language")));
+    QCOMPARE(ProfileSettings().value(QLatin1String("LanguageManager/language"))
                  .toString(),
              QString());
     qApp->processEvents();
@@ -4369,7 +4370,7 @@ void tst_SettingsDialog::languageSelector()
     // System default persists the "system" sentinel — never a resolved
     // code — so an OS-language change still wins on the next launch.
     dialog.languageCombo->setCurrentIndex(0);
-    QCOMPARE(QSettings().value(QLatin1String("LanguageManager/language"))
+    QCOMPARE(ProfileSettings().value(QLatin1String("LanguageManager/language"))
                  .toString(),
              QLatin1String("system"));
 
@@ -4524,7 +4525,7 @@ void tst_SettingsDialog::privacyGroupAlignment()
 // never a full-width band stranding the button at the page edge.
 void tst_SettingsDialog::appearanceFieldBounds()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.setValue(QLatin1String("network/acceptLanguages"),
         QStringList{QLatin1String("French [fr]"),
                     QLatin1String("German/Austria [de-at]")});

@@ -61,6 +61,7 @@
 ****************************************************************************/
 
 #include "tabbar.h"
+#include "profilesettings.h"
 
 #include "aroraicon.h"
 #include "arorastyle.h"
@@ -2601,7 +2602,7 @@ void TabBar::paintResizeGrip(QPainter *painter)
 // differently-shaped bar ignores is harmless).
 void TabBar::persistStripSize()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("tabs"));
     settings.setValue(QLatin1String("verticalTabWidth"),
                       m_verticalTabWidth);
@@ -2873,7 +2874,7 @@ void TabBar::setVerticalTabWidth(int width)
 
 void TabBar::reloadVerticalTabWidth()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("tabs"));
     const QVariant stored =
         settings.value(QLatin1String("verticalTabWidth"));
@@ -2935,7 +2936,7 @@ void TabBar::setTabStripHeight(int height)
 
 void TabBar::reloadTabWidths()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("tabs"));
     setTabWidths(
         settings.value(QLatin1String("tabMinWidth"), 0).toInt(),
@@ -2944,7 +2945,7 @@ void TabBar::reloadTabWidths()
 
 void TabBar::reloadTabStripHeight()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("tabs"));
     setTabStripHeight(
         settings.value(QLatin1String("horizontalTabHeight"), 0).toInt());
@@ -2970,7 +2971,7 @@ void TabBar::setTabPreviewsEnabled(bool enabled)
 
 void TabBar::reloadTabHoverPreviews()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("tabs"));
     setTabPreviewsEnabled(
         settings.value(QLatin1String("tabHoverPreviews"), true).toBool());
@@ -2991,7 +2992,7 @@ QAction *TabBar::iconOnlyTabsAction() const
 // all-widgets pattern), so a flip on one window reaches them all.
 void TabBar::toggleIconOnlyMode()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("tabs"));
     settings.setValue(QLatin1String("iconOnlyTabs"), !m_iconOnlyTabs);
     const QWidgetList widgets = qApp->allWidgets();
@@ -3018,7 +3019,7 @@ void TabBar::setIconOnlyTabs(bool enabled)
 
 void TabBar::reloadIconOnlyTabs()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("tabs"));
     setIconOnlyTabs(
         settings.value(QLatin1String("iconOnlyTabs"), false).toBool());

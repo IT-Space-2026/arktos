@@ -18,6 +18,7 @@
  */
 
 #include "fingerprintprotector.h"
+#include "profilesettings.h"
 
 #include "browserapplication.h"
 #include "browserprofile.h"
@@ -40,7 +41,7 @@ FingerprintProtector::FingerprintProtector(QObject *parent)
     , m_seed(QRandomGenerator::global()->generate())
 {
     migrateToDefaultOn();
-    const QStringList persisted = QSettings().value(
+    const QStringList persisted = ProfileSettings().value(
         QLatin1String("privacy/fingerprintExceptions")).toStringList();
     for (const QString &host : persisted) {
         const QString normalized = normalizeHost(host);
@@ -57,13 +58,13 @@ FingerprintProtector *FingerprintProtector::instance()
 
 bool FingerprintProtector::isEnabled() const
 {
-    return QSettings().value(
+    return ProfileSettings().value(
         QLatin1String("privacy/fingerprintProtection"), true).toBool();
 }
 
 void FingerprintProtector::migrateToDefaultOn()
 {
-    QSettings settings;
+    ProfileSettings settings;
     if (settings.value(
             QLatin1String("privacy/fingerprintMigrationV1"),
             false).toBool())
@@ -129,7 +130,7 @@ void FingerprintProtector::addException(const QString &host,
     if (m_persistent.contains(normalized))
         return;
     m_persistent.append(normalized);
-    QSettings settings;
+    ProfileSettings settings;
     settings.setValue(QLatin1String("privacy/fingerprintExceptions"),
                       m_persistent);
 }
@@ -141,7 +142,7 @@ void FingerprintProtector::clearException(const QString &host)
         return;
     m_session.remove(normalized);
     if (m_persistent.removeAll(normalized) > 0) {
-        QSettings settings;
+        ProfileSettings settings;
         settings.setValue(QLatin1String("privacy/fingerprintExceptions"),
                           m_persistent);
     }

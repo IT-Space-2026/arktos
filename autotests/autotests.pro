@@ -49,6 +49,7 @@ SUBDIRS  = \
     privatebrowsing \
     privacy \
     profileavatar \
+    profilesettings \
     qrcode \
     rustdownload \
     safetext \

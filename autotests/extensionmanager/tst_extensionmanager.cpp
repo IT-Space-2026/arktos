@@ -45,6 +45,7 @@
 #include "extensionreviewdialog.h"
 #include "extensionshimbackend.h"
 #include "engineinterface.h"
+#include "profilesettings.h"
 #include "qtest_arora.h"
 #include "qtry.h"
 #include "tabwidget.h"
@@ -527,7 +528,7 @@ void tst_ExtensionManager::bundledInstall()
     {
         const QString key = QStringLiteral("extensions/bundled/")
             + profile->storageName();
-        QSettings settings;
+        ProfileSettings settings;
         QStringList consumed = settings.value(key).toStringList();
         consumed.removeAll(QLatin1String("tst-bundle"));
         consumed.removeAll(QLatin1String("tst-bundle-zip.zip"));
@@ -599,7 +600,7 @@ void tst_ExtensionManager::bundledInstall()
                  .arg(expectEnabled).arg(seen)));
 
     // Both basenames recorded as consumed; a second run is a no-op.
-    const QStringList consumed = QSettings().value(
+    const QStringList consumed = ProfileSettings().value(
         QStringLiteral("extensions/bundled/") + profile->storageName())
         .toStringList();
     QVERIFY(consumed.contains(QLatin1String("tst-bundle")));

@@ -18,6 +18,7 @@
  */
 
 #include "commandpalette.h"
+#include "profilesettings.h"
 
 #include "arorastyle.h"
 #include "bookmarknode.h"
@@ -230,7 +231,7 @@ int CommandPalette::fuzzyScoreCpp(const QString &query, const QString &candidate
 
 QStringList CommandPalette::mruIds()
 {
-    return QSettings().value(QLatin1String("commandPalette/mru")).toStringList();
+    return ProfileSettings().value(QLatin1String("commandPalette/mru")).toStringList();
 }
 
 void CommandPalette::recordMru(const QString &id)
@@ -242,7 +243,7 @@ void CommandPalette::recordMru(const QString &id)
     mru.prepend(id);
     while (mru.size() > 32)
         mru.removeLast();
-    QSettings().setValue(QLatin1String("commandPalette/mru"), mru);
+    ProfileSettings().setValue(QLatin1String("commandPalette/mru"), mru);
 }
 
 void CommandPalette::openPalette()

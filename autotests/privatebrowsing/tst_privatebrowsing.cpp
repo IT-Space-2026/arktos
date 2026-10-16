@@ -47,6 +47,7 @@
 #include "downloadmanager.h"
 #include "historymanager.h"
 #include "opensearchmanager.h"
+#include "profilesettings.h"
 #include "qtest_arora.h"
 #include "qtry.h"
 #include "tabwidget.h"
@@ -216,7 +217,7 @@ void tst_PrivateBrowsing::initTestCase()
     QCoreApplication::setApplicationName("tst_privatebrowsing");
     QStandardPaths::setTestModeEnabled(true);
 
-    QSettings settings;
+    ProfileSettings settings;
     settings.clear();
     // A dead local list keeps AdBlockManager::load() off the network.
     settings.setValue(QLatin1String("AdBlock/subscriptions"),
@@ -233,10 +234,10 @@ void tst_PrivateBrowsing::initTestCase()
 
 void tst_PrivateBrowsing::init()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.clear();
 #if defined(ARORA_RUSTCORE)
-    // Per-site decisions outlive the QSettings wipe — start clean.
+    // Per-site decisions outlive the ProfileSettings wipe — start clean.
     SiteDecisionStore::reset();
 #endif
     // DLACC06: download legs drive the built-in Chromium path; pin
@@ -464,7 +465,7 @@ void tst_PrivateBrowsing::privateSearchNotRecorded()
         search.searchNow();
     }   // ~ToolbarSearch flushes the AutoSaver through save()
     {
-        QSettings settings;
+        ProfileSettings settings;
         QVERIFY(!settings.value(QLatin1String("toolbarsearch/recentSearches"))
                      .toStringList().contains(QLatin1String("sec07-otr-search")));
     }
@@ -477,7 +478,7 @@ void tst_PrivateBrowsing::privateSearchNotRecorded()
     }
     BrowserApplication::setPrivate(false);
     {
-        QSettings settings;
+        ProfileSettings settings;
         QVERIFY(!settings.value(QLatin1String("toolbarsearch/recentSearches"))
                      .toStringList().contains(QLatin1String("sec07-flag-search")));
     }
@@ -489,7 +490,7 @@ void tst_PrivateBrowsing::privateSearchNotRecorded()
         search.searchNow();
     }
     {
-        QSettings settings;
+        ProfileSettings settings;
         QVERIFY(settings.value(QLatin1String("toolbarsearch/recentSearches"))
                     .toStringList().contains(QLatin1String("sec07-normal-search")));
     }
@@ -520,7 +521,7 @@ void tst_PrivateBrowsing::otrDownloadNotPersisted()
 
     forceSave(&manager);
     {
-        QSettings settings;
+        ProfileSettings settings;
         settings.beginGroup(QLatin1String("downloadmanager"));
         QVERIFY(!settings.contains(QLatin1String("download_0_url")));
     }
@@ -539,7 +540,7 @@ void tst_PrivateBrowsing::otrDownloadNotPersisted()
     QTRY_COMPARE_WITH_TIMEOUT(model->rowCount(), 2, 30000);
 
     forceSave(&manager);
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("downloadmanager"));
     QCOMPARE(settings.value(QLatin1String("download_0_url")).toUrl(), normalUrl);
     QVERIFY(!settings.contains(QLatin1String("download_1_url")));

@@ -61,6 +61,7 @@
 ****************************************************************************/
 
 #include "tabwidget.h"
+#include "profilesettings.h"
 
 #include "addbookmarkdialog.h"
 #include "aroraicon.h"
@@ -593,7 +594,7 @@ void TabWidget::loadNewTabPageUrl()
     // startup tab, session restore, link/context spawns) go through
     // newTab()/makeNewTab() and stay bare, leaving the
     // startupBehavior preference authoritative at launch.
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("MainWindow"));
     const QString home = settings.value(QLatin1String("home"),
                                         QLatin1String("about:home"))
@@ -3737,7 +3738,7 @@ static bool looksLikeAddress(const QString &text)
 // guess re-unchecks the box once.
 static bool searchInAddressFieldEnabled()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("urlloading"));
     if (settings.contains(QLatin1String("searchEngineFallback")))
         settings.remove(QLatin1String("searchEngineFallback"));
@@ -3937,7 +3938,7 @@ void TabWidget::loadSettings()
             v->loadSettings();
     }
 
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("tabs"));
 
     // Tab bar position — the settings combo indexes North/South/
@@ -4041,7 +4042,7 @@ TabWidget::OpenUrlIn TabWidget::modifyWithUserBehavior(OpenUrlIn tab) {
         if (modifiers & Qt::AltModifier) {
             tab = NewWindow;
         } else {
-            QSettings settings;
+            ProfileSettings settings;
             settings.beginGroup(QLatin1String("tabs"));
             bool select = settings.value(QLatin1String("selectNewTabs"), false).toBool();
             if (modifiers & Qt::ShiftModifier)

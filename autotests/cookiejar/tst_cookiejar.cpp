@@ -28,6 +28,7 @@
 
 #if defined(ARORA_RUSTCORE)
 #include "sitedecisionstore.h"
+#include "profilesettings.h"
 #endif
 
 class tst_CookieJar : public QObject
@@ -97,7 +98,7 @@ static QNetworkCookie makeCookie(const QString &domain, const QByteArray &name =
 void tst_CookieJar::initTestCase()
 {
     QCoreApplication::setApplicationName("tst_cookiejar");
-    QSettings settings;
+    ProfileSettings settings;
     settings.clear();
 }
 
@@ -112,7 +113,7 @@ void tst_CookieJar::init()
 {
     // Prior tests may have persisted policy/exception settings via the
     // AutoSaver in ~CookieJar; start each test from a clean slate.
-    QSettings settings;
+    ProfileSettings settings;
     settings.clear();
 #if defined(ARORA_RUSTCORE)
     // Per-site cookie rules live in the decision store now.
@@ -255,7 +256,7 @@ void tst_CookieJar::keepPolicy()
 // public void loadSettings()
 void tst_CookieJar::loadSettings()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("cookies"));
     settings.setValue(QLatin1String("acceptCookies"), QLatin1String("AcceptAlways"));
     settings.setValue(QLatin1String("keepCookiesUntil"), QLatin1String("KeepUntilExit"));

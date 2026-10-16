@@ -18,6 +18,7 @@
  */
 
 #include "profileidentity.h"
+#include "profilesettings.h"
 
 #include "browserpaths.h"
 
@@ -32,7 +33,7 @@ ProfileIdentity::ProfileIdentity(QObject *parent)
     : QObject(parent)
     , m_avatarLoaded(false)
 {
-    m_name = QSettings()
+    m_name = ProfileSettings()
         .value(QLatin1String("profile/name"), tr("Profile"))
         .toString();
 }
@@ -57,7 +58,7 @@ void ProfileIdentity::setName(const QString &name)
     if (effective == m_name)
         return;
     m_name = effective;
-    QSettings().setValue(QLatin1String("profile/name"), m_name);
+    ProfileSettings().setValue(QLatin1String("profile/name"), m_name);
     emit nameChanged(m_name);
 }
 

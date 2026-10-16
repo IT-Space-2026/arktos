@@ -18,6 +18,7 @@
  */
 
 #include "aroraicon.h"
+#include "profilesettings.h"
 
 #include "arorastyle.h"
 #include "browsertheme.h"
@@ -282,7 +283,7 @@ QString AroraIcon::themeDisplayName(const QString &id)
 
 QString AroraIcon::theme()
 {
-    const QString id = QSettings()
+    const QString id = ProfileSettings()
         .value(QLatin1String("MainWindow/iconTheme"), s_defaultId)
         .toString();
     return themeIds().contains(id) ? id : s_defaultId;

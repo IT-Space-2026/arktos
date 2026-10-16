@@ -518,6 +518,14 @@ that swap means in practice:
 - **Self-contained installs** — `make bundle` produces a relocatable
   directory shipping the Qt/WebEngine runtime, so Arora runs on a
   system with no Qt installed (see [Packaging](#packaging)).
+- **Per-profile settings store** — persona preferences (privacy
+  toggles, homepage, search engine, cookie policy, downloads dir,
+  UI prefs) persist to `profiles/<id>/settings.ini` under the data
+  directory instead of the single shared QSettings file; app-level
+  keys (Tor prefs, crash sentinels, engine defaults) stay global.
+  First launch copies existing values into the default profile,
+  leaving the old file as a read fallback (MPROF04 — groundwork for
+  multiple browsing profiles).
 - **Privacy-first direction** — everything in the
   [feature tour](#feature-tour) is new since the Qt 4 series:
   zero-telemetry launch, HTTPS-Only, per-site JS/cookie/permission

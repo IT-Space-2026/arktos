@@ -18,6 +18,7 @@
  */
 
 #include "browserprofile.h"
+#include "profilesettings.h"
 
 #include "acceptlanguagedialog.h"
 #include "browserapplication.h"
@@ -424,7 +425,7 @@ void applySettings(QWebEngineProfile *profile)
 {
     QWebEngineSettings *engineSettings = profile->settings();
 
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("websettings"));
 
     QFont standardFont(engineSettings->fontFamily(QWebEngineSettings::StandardFont),
@@ -464,7 +465,7 @@ void applySettings(QWebEngineProfile *profile)
     // outside the tunnel).  Opt-in only; tor pins it off
     // unconditionally in prepareProfile regardless of this setting.
     engineSettings->setAttribute(QWebEngineSettings::DnsPrefetchEnabled,
-        QSettings().value(QLatin1String("privacy/dnsPrefetch"), false).toBool());
+        ProfileSettings().value(QLatin1String("privacy/dnsPrefetch"), false).toBool());
 
     // POL03: Chromium's auto-dark for web contents — pages that ship
     // their own dark scheme (prefers-color-scheme: dark) use it, and
@@ -486,7 +487,7 @@ void applySettings(QWebEngineProfile *profile)
     // Chromium's own store out of the loop.
     const int securityLevel = qBound(
         int(PrivacyRequestInterceptor::Standard),
-        QSettings().value(QLatin1String("privacy/securityLevel"),
+        ProfileSettings().value(QLatin1String("privacy/securityLevel"),
                           int(PrivacyRequestInterceptor::Standard)).toInt(),
         int(PrivacyRequestInterceptor::Safest));
     engineSettings->setAttribute(
@@ -517,14 +518,14 @@ void applySettings(QWebEngineProfile *profile)
     // on); applyChromiumFlags() couples the same setting to the
     // stronger Chromium IP-handling policy at process level.
     engineSettings->setAttribute(QWebEngineSettings::WebRTCPublicInterfacesOnly,
-        QSettings().value(QLatin1String("privacy/webrtcIpProtection"), true).toBool());
+        ProfileSettings().value(QLatin1String("privacy/webrtcIpProtection"), true).toBool());
 
     // PING01: <a ping> auditing rides the same privacy/blockPings
     // toggle as the interceptor's sendBeacon/CSP-report drop — with
     // the attribute off Chromium never initiates the ping, and the
     // interceptor catches anything that still slips.
     engineSettings->setAttribute(QWebEngineSettings::HyperlinkAuditingEnabled,
-        !QSettings().value(QLatin1String("privacy/blockPings"), true).toBool());
+        !ProfileSettings().value(QLatin1String("privacy/blockPings"), true).toBool());
 
     // PDF01: Chromium's built-in PDFium viewer, bound to the
     // privacy/pdfViewer toggle (default on) — PDFium parses inside
@@ -533,7 +534,7 @@ void applySettings(QWebEngineProfile *profile)
     // Applied per profile, so normal, private, tor and container
     // profiles all follow the toggle.
     engineSettings->setAttribute(QWebEngineSettings::PdfViewerEnabled,
-        QSettings().value(QLatin1String("privacy/pdfViewer"), true).toBool());
+        ProfileSettings().value(QLatin1String("privacy/pdfViewer"), true).toBool());
 
     // PRIV01: refresh the request interceptor's IO-thread snapshot
     // (https-first upgrade, referrer trim) alongside the profile
@@ -811,10 +812,10 @@ bool clearSiteStorageNow(const QString &storagePath)
 static int secureDnsModeSetting()
 {
     const QVariant stored =
-        QSettings().value(QLatin1String("privacy/secureDnsMode"));
+        ProfileSettings().value(QLatin1String("privacy/secureDnsMode"));
     if (stored.isValid())
         return qBound(0, stored.toInt(), 3);
-    return QSettings().value(QLatin1String("privacy/secureDns"), false)
+    return ProfileSettings().value(QLatin1String("privacy/secureDns"), false)
         .toBool() ? 1 : 0;
 }
 
@@ -824,7 +825,7 @@ static int secureDnsModeSetting()
 // fallback" guarantee of mode 3.
 static QString secureDnsServerSetting()
 {
-    QString server = QSettings().value(
+    QString server = ProfileSettings().value(
         QLatin1String("privacy/secureDnsServer")).toString().trimmed();
     const QUrl url(server);
     if (!server.isEmpty() && url.scheme() == QLatin1String("https")
@@ -876,7 +877,7 @@ void applySecureDns()
 
 void applyChromiumFlags()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("privacy"));
     const bool webrtcProtection =
         settings.value(QLatin1String("webrtcIpProtection"), true).toBool();
@@ -1117,7 +1118,7 @@ static const char *terminationSignalName(int signalNumber)
 
 void markSessionStart()
 {
-    QSettings settings;
+    ProfileSettings settings;
     const QLatin1String sentinel = sessionSentinelKey();
     if (settings.value(sentinel, false).toBool()) {
         settings.setValue(QLatin1String("browser/gpuCrashCount"),
@@ -1147,7 +1148,7 @@ void markSessionStart()
 
 void markSessionCleanExit(int exitCode)
 {
-    QSettings settings;
+    ProfileSettings settings;
     // Only this process's own sentinel — a clean tor exit must not
     // clear the still-running main window's marker.  The shared
     // counter does reset on any clean run: one healthy session proves
@@ -1167,7 +1168,7 @@ void markSessionTerminated(int signalNumber)
     // ran, so this counts as clean for crash-loop purposes) still
     // records HOW it died — a signal death must not read as a normal
     // 'rc=0' exit.
-    QSettings settings;
+    ProfileSettings settings;
     settings.setValue(sessionSentinelKey(), false);
     settings.setValue(QLatin1String("browser/gpuCrashCount"), 0);
     settings.setValue(QLatin1String("browser/lastExit"),
@@ -1189,7 +1190,7 @@ QString bidiDebugOrigin()
 
 void applyFingerprintEnvironment()
 {
-    const bool wantUtc = QSettings().value(
+    const bool wantUtc = ProfileSettings().value(
         QLatin1String("privacy/reportUtcTimezone"), false).toBool();
 
     // Remember the caller's own TZ once so toggling the setting off

@@ -61,6 +61,7 @@
 ****************************************************************************/
 
 #include "networkaccessmanager.h"
+#include "profilesettings.h"
 
 #include "acceptlanguagedialog.h"
 #include "browserapplication.h"
@@ -128,7 +129,7 @@ void NetworkAccessManager::privacyChanged(bool isPrivate)
 
 void NetworkAccessManager::loadSettings()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("proxy"));
     QNetworkProxy proxy;
     // TOR02: a tor process must not honor a configured clearnet proxy —
@@ -287,7 +288,7 @@ void NetworkAccessManager::sslErrors(QNetworkReply *reply, const QList<QSslError
         if (!application->mainWindows().isEmpty())
             mainWindow = application->mainWindow();
 
-    QSettings settings;
+    ProfileSettings settings;
     QList<QSslCertificate> ca_merge = QSslCertificate::fromData(settings.value(QLatin1String("CaCertificates")).toByteArray());
 
     QList<QSslCertificate> ca_new;

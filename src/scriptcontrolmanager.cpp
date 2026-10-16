@@ -18,6 +18,7 @@
  */
 
 #include "scriptcontrolmanager.h"
+#include "profilesettings.h"
 
 #include "privacyrequestinterceptor.h"
 
@@ -41,7 +42,7 @@ static QStringList s_allowedSnapshot;
 // land so an interrupted run re-imports on next start.
 static void importLegacyScriptRules()
 {
-    QSettings settings;
+    ProfileSettings settings;
     // Same normalization the loader applies: lowercase, trim edge
     // dots, drop empties.
     const auto normalize = [](const QString &host) {
@@ -119,7 +120,7 @@ ScriptControlManager::ScriptControlManager(QObject *parent)
         // after the next mirror-write.
     }
 #else
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("scriptcontrol"));
     const QStringList allowed =
         settings.value(QLatin1String("allowed")).toStringList();
@@ -250,7 +251,7 @@ void ScriptControlManager::setRuleForHost(const QString &host, Rule rule,
 #if defined(ARORA_RUSTCORE)
         persistScriptRules(m_allowed, m_blocked);
 #else
-        QSettings settings;
+        ProfileSettings settings;
         settings.beginGroup(QLatin1String("scriptcontrol"));
         if (m_allowed.isEmpty())
             settings.remove(QLatin1String("allowed"));
@@ -282,7 +283,7 @@ void ScriptControlManager::clearPersistentRules()
 #if defined(ARORA_RUSTCORE)
     SiteDecisionStore::clear(SiteDecisionStore::KindJavaScript);
 #else
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("scriptcontrol"));
     settings.remove(QLatin1String("allowed"));
     settings.remove(QLatin1String("blocked"));
@@ -369,6 +370,6 @@ bool ScriptControlManager::isJavaScriptEnabledFor(const QUrl &url) const
 
     // The profile-level user preference is the baseline.  Note the
     // Allow check already returned above — a grant overrides this too.
-    return QSettings().value(QLatin1String("websettings/enableJavascript"),
+    return ProfileSettings().value(QLatin1String("websettings/enableJavascript"),
                              true).toBool();
 }

@@ -20,6 +20,7 @@
  */
 
 #include "opensearchmanager.h"
+#include "profilesettings.h"
 
 #include "autosaver.h"
 #include "browserapplication.h"
@@ -651,13 +652,13 @@ void OpenSearchManager::save()
     rc_ose_reorder(reinterpret_cast<const uint8_t *>(order.constData()),
                    size_t(order.size()));
 
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("openSearch"));
     settings.setValue(QLatin1String("engine"), m_current);
 #else
     saveDirectory(enginesDirectory());
 
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("openSearch"));
     settings.setValue(QLatin1String("engine"), m_current);
     settings.setValue(QLatin1String("removedBundledEngines"), m_removedBundled);
@@ -718,7 +719,7 @@ bool OpenSearchManager::loadDirectory(const QString &dirName)
 // directory, the openSearch/keywords array, engineOrder and
 // removedBundledEngines all move into searchengines.json, then the
 // legacy paths retire so a second run imports nothing.
-void OpenSearchManager::importLegacyRegistry(QSettings &settings)
+void OpenSearchManager::importLegacyRegistry(ProfileSettings &settings)
 {
     // The blocklist first — it gates the bundled seed below.
     const QStringList removed = settings.value(
@@ -795,7 +796,7 @@ void OpenSearchManager::load()
     // the legacy descriptor dir + QSettings openSearch keys.
     rustCoreEnsureDataDir();
 
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("openSearch"));
 
     if (!rc_ose_store_present())
@@ -854,7 +855,7 @@ void OpenSearchManager::load()
     loadDirectory(enginesDirectory());
 
     // get current engine
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("openSearch"));
     m_removedBundled = settings.value(
         QLatin1String("removedBundledEngines")).toStringList();

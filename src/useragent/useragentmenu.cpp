@@ -28,6 +28,7 @@
  */
 
 #include "useragentmenu.h"
+#include "profilesettings.h"
 
 #include "browserapplication.h"
 #include "safetext.h"
@@ -63,7 +64,7 @@ void UserAgentMenu::populateMenu()
     defaultUserAgent->setText(tr("Default"));
     defaultUserAgent->setCheckable(true);
     connect(defaultUserAgent, &QAction::triggered, this, &UserAgentMenu::switchToDefaultUserAgent);
-    QSettings settings;
+    ProfileSettings settings;
     defaultUserAgent->setChecked(settings.value(QLatin1String("userAgent")).toString().isEmpty());
     addAction(defaultUserAgent);
 

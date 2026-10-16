@@ -27,6 +27,7 @@
  */
 
 #include "networkdiskcache.h"
+#include "profilesettings.h"
 
 #include <qsettings.h>
 #include <qstandardpaths.h>
@@ -42,7 +43,7 @@ NetworkDiskCache::NetworkDiskCache(QObject *parent)
 
 void NetworkDiskCache::loadSettings()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("network"));
     qint64 maximumCacheSize = settings.value(QLatin1String("maximumCacheSize"), 50).toInt();
     maximumCacheSize = maximumCacheSize * 1024 * 1024;

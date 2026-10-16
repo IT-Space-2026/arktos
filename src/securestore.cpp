@@ -18,6 +18,7 @@
  */
 
 #include "securestore.h"
+#include "profilesettings.h"
 
 #include "browserpaths.h"
 
@@ -134,7 +135,7 @@ bool resealConsumers(const QByteArray &oldKey, const QByteArray &newKey,
         }
     }
 
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("proxy"));
     const QString stored =
         settings.value(QLatin1String("password")).toString();

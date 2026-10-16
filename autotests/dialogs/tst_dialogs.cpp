@@ -70,6 +70,7 @@
 #include "useragentmenu.h"
 #include "webpage.h"
 #include "modeltest.h"
+#include "profilesettings.h"
 #include "qtest_arora.h"
 #include "qtry.h"
 
@@ -159,10 +160,10 @@ private slots:
 void tst_Dialogs::initTestCase()
 {
     QCoreApplication::setApplicationName("tst_dialogs");
-    QSettings settings;
+    ProfileSettings settings;
     settings.clear();
 #if defined(ARORA_RUSTCORE)
-    // Per-site decisions outlive the QSettings wipe — start clean.
+    // Per-site decisions outlive the ProfileSettings wipe — start clean.
     SiteDecisionStore::reset();
 #endif
     // Keep AdBlockManager away from live subscription URLs — point the
@@ -214,7 +215,7 @@ void tst_Dialogs::clearPrivateData()
 {
     ClearPrivateData dialog;
     dialog.accept();
-    QSettings settings;
+    ProfileSettings settings;
     QVERIFY(settings.contains(QLatin1String("clearprivatedata/browsingHistory")));
 }
 
@@ -722,7 +723,7 @@ void tst_Dialogs::adBlockDialog()
     QVERIFY(menu->actions().count() >= 4);
 
     // Toggling a subscription checkbox writes straight through to the
-    // subscription and round-trips through QSettings on save.
+    // subscription and round-trips through ProfileSettings on save.
     AdBlockSubscription *dead = manager->subscriptions().first();
     QTreeWidgetItem *firstItem = dialog.subscriptionsTree->topLevelItem(0);
     QVERIFY(firstItem);
@@ -1091,7 +1092,7 @@ void tst_Dialogs::colorSchemeApply()
 // falls through to ARORA_COLOR_SCHEME then the platform.
 void tst_Dialogs::themeSettingPrecedence()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.remove(QLatin1String("browser/colorScheme"));
 
     qputenv("ARORA_COLOR_SCHEME", "dark");

@@ -18,6 +18,7 @@
  */
 
 #include "urlcleaner.h"
+#include "profilesettings.h"
 
 #include <qsettings.h>
 #include <qurlquery.h>
@@ -62,7 +63,7 @@ QStringList UrlCleaner::trackingParameters()
     // User-facing extension point: a QStringList or comma-separated
     // string of extra names/prefixes to strip.
     const QStringList extra =
-        QSettings().value(QLatin1String("urlcleaner/extraParams"))
+        ProfileSettings().value(QLatin1String("urlcleaner/extraParams"))
             .toStringList();
     params += extra;
     params += s_additionalParams;

@@ -33,6 +33,7 @@
 // --privacy-smoke and --referer-smoke modes.
 
 #include <QtTest/QtTest>
+#include "profilesettings.h"
 #include <qtest_arora.h>
 
 #include <acceptlanguagedialog.h>
@@ -152,7 +153,7 @@ void tst_Privacy::initTestCase()
     m_savedFlags = qgetenv("QTWEBENGINE_CHROMIUM_FLAGS");
     // The tests run against the real settings store — remember every
     // key touched so cleanupTestCase() leaves the profile unchanged.
-    QSettings settings;
+    ProfileSettings settings;
     m_savedHttpsFirst = settings.value(QLatin1String("privacy/httpsFirst"));
     m_savedTrimReferer = settings.value(QLatin1String("privacy/trimReferer"));
     m_savedRefererPolicy =
@@ -185,7 +186,7 @@ void tst_Privacy::initTestCase()
     m_savedTz = qgetenv("TZ");
 }
 
-static void restoreSetting(QSettings &settings, const QString &key,
+static void restoreSetting(ProfileSettings &settings, const QString &key,
                          const QVariant &saved)
 {
     if (saved.isValid())
@@ -201,7 +202,7 @@ void tst_Privacy::cleanupTestCase()
     else
         qputenv("QTWEBENGINE_CHROMIUM_FLAGS", m_savedFlags);
 
-    QSettings settings;
+    ProfileSettings settings;
     restoreSetting(settings, QLatin1String("privacy/httpsFirst"), m_savedHttpsFirst);
     restoreSetting(settings, QLatin1String("privacy/trimReferer"), m_savedTrimReferer);
     restoreSetting(settings, QLatin1String("privacy/refererPolicy"), m_savedRefererPolicy);
@@ -232,7 +233,7 @@ void tst_Privacy::init()
 {
     // Pin the interceptor policy so the tests don't depend on the
     // developer machine's real Arora settings.
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("privacy"));
     settings.setValue(QLatin1String("httpsFirst"), true);
     settings.setValue(QLatin1String("trimReferer"), true);
@@ -251,7 +252,7 @@ void tst_Privacy::init()
 
 static void setSecurityLevel(PrivacyRequestInterceptor::SecurityLevel level)
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("privacy"));
     settings.setValue(QLatin1String("securityLevel"), int(level));
     settings.endGroup();
@@ -486,7 +487,7 @@ void tst_Privacy::downgradeSelfHeal()
 
 void tst_Privacy::settingsRoundTrip()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("privacy"));
     settings.setValue(QLatin1String("httpsFirst"), false);
     settings.setValue(QLatin1String("refererPolicy"),
@@ -508,7 +509,7 @@ void tst_Privacy::settingsRoundTrip()
 
 void tst_Privacy::refererPolicyMigration()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("privacy"));
 
     // Selector wins over the legacy bool — Strict selected while an
@@ -710,7 +711,7 @@ void tst_Privacy::securityLevelAttributes()
     QWebEngineProfile profile;
     QWebEngineSettings *engineSettings = profile.settings();
 
-    QSettings settings;
+    ProfileSettings settings;
     settings.setValue(QLatin1String("websettings/enableJavascript"), true);
 
     setSecurityLevel(PrivacyRequestInterceptor::Standard);
@@ -744,7 +745,7 @@ void tst_Privacy::forceDarkMode()
     QWebEngineProfile profile;
     QWebEngineSettings *engineSettings = profile.settings();
 
-    QSettings settings;
+    ProfileSettings settings;
     settings.remove(QLatin1String("websettings/forceDarkMode"));
     BrowserProfile::applySettings(&profile);
     QVERIFY(!engineSettings->testAttribute(
@@ -769,7 +770,7 @@ void tst_Privacy::resourceBlockToggles()
 {
     typedef QWebEngineUrlRequestInfo I;
     typedef PrivacyRequestInterceptor P;
-    QSettings settings;
+    ProfileSettings settings;
     const QHash<QByteArray, QByteArray> noHeaders;
     // Chromium marks every prefetch flavor with a purpose header —
     // <link rel=prefetch> arrives typed ResourceTypePrefetch, while
@@ -829,7 +830,7 @@ void tst_Privacy::resourceBlockToggles()
 void tst_Privacy::thirdPartyCookies()
 {
     SubCookieJar jar;
-    // The jar loads the real QSettings in its ctor — pin every input
+    // The jar loads the real ProfileSettings in its ctor — pin every input
     // it reads so a developer profile can't steer the assertions.
     jar.setBlockedCookies(QStringList());
     jar.setAllowedCookies(QStringList());
@@ -894,7 +895,7 @@ void tst_Privacy::webSocketBlockDecision()
     QVERIFY(!P::shouldBlockWebSocket(pageUrl, crossSiteSocket,
                                      I::ResourceTypeWebSocket));
 
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("privacy"));
     settings.setValue(QLatin1String("blockThirdPartyWebSockets"), true);
     settings.endGroup();
@@ -981,7 +982,7 @@ void tst_Privacy::stripToggleAndExceptions()
     // The toggle is on by default (init pins it).
     QVERIFY(PrivacyRequestInterceptor::stripTrackingParamsEnabled());
 
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("privacy"));
     settings.setValue(QLatin1String("stripTrackingParams"), false);
     settings.endGroup();
@@ -1282,7 +1283,7 @@ void tst_Privacy::thirdPartyWebSocketEndToEnd()
     profile->setUrlRequestInterceptor(new PrivacyRequestInterceptor(
         new AdBlockNetwork(profile), profile));
 
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("privacy"));
     settings.setValue(QLatin1String("blockThirdPartyWebSockets"), true);
     settings.endGroup();
@@ -1402,7 +1403,7 @@ void tst_Privacy::deferredExitWipe()
 
 void tst_Privacy::chromiumFlags()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("privacy"));
     settings.setValue(QLatin1String("webrtcIpProtection"), true);
     settings.setValue(QLatin1String("secureDns"), true);
@@ -1501,7 +1502,7 @@ void tst_Privacy::chromiumFlags()
     // --enable-blink-features switch, never append a shadowing second
     // occurrence (Chromium's last-switch-wins parse would drop the
     // operator's list).
-    QSettings().remove(
+    ProfileSettings().remove(
         QLatin1String("websettings/middleClickAutoscroll"));
 #if defined(Q_OS_MACOS)
     const bool autoscrollDefault = false;
@@ -1531,14 +1532,14 @@ void tst_Privacy::chromiumFlags()
     // puts it back.  The same merge covers --enable-features:
     // DnsOverHttps joins the operator's list rather than clobbering
     // it.
-    QSettings().setValue(QLatin1String("websettings/middleClickAutoscroll"),
+    ProfileSettings().setValue(QLatin1String("websettings/middleClickAutoscroll"),
                          false);
     qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
     BrowserProfile::applyChromiumFlags();
     QVERIFY(!QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
                  .contains(QLatin1String("MiddleClickAutoscroll")));
 
-    QSettings().setValue(QLatin1String("websettings/middleClickAutoscroll"),
+    ProfileSettings().setValue(QLatin1String("websettings/middleClickAutoscroll"),
                          true);
     qputenv("QTWEBENGINE_CHROMIUM_FLAGS", "--enable-features=Foo");
     BrowserProfile::applyChromiumFlags();
@@ -1556,18 +1557,18 @@ void tst_Privacy::chromiumFlags()
     settings.beginGroup(QLatin1String("privacy"));
     settings.setValue(QLatin1String("secureDnsMode"), 0);
     settings.endGroup();
-    QSettings().remove(QLatin1String("websettings/middleClickAutoscroll"));
+    ProfileSettings().remove(QLatin1String("websettings/middleClickAutoscroll"));
 
     // DLACC02: a stored "off" leaves ParallelDownloading out of the
     // merged switch entirely; removing the key restores the
     // default-on.
-    QSettings().setValue(
+    ProfileSettings().setValue(
         QLatin1String("downloadmanager/parallelSegments"), false);
     qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
     BrowserProfile::applyChromiumFlags();
     QVERIFY(!QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
                  .contains(QLatin1String("ParallelDownloading")));
-    QSettings().remove(
+    ProfileSettings().remove(
         QLatin1String("downloadmanager/parallelSegments"));
     qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
     BrowserProfile::applyChromiumFlags();
@@ -1581,15 +1582,15 @@ void tst_Privacy::chromiumFlags()
     // unclean start (a stored 1 already means two consecutive
     // crashes: the counter is written by the crashed run's SUCCESSOR,
     // after applyChromiumFlags already read it).
-    QSettings().remove(QLatin1String("websettings/disableGpuCompositing"));
-    QSettings().remove(QLatin1String("browser/gpuCrashCount"));
+    ProfileSettings().remove(QLatin1String("websettings/disableGpuCompositing"));
+    ProfileSettings().remove(QLatin1String("browser/gpuCrashCount"));
     qunsetenv("ARORA_DISABLE_GPU_COMPOSITING");
     qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
     BrowserProfile::applyChromiumFlags();
     QVERIFY(!QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
                  .contains(QLatin1String("--disable-gpu-compositing")));
 
-    QSettings().setValue(QLatin1String("websettings/disableGpuCompositing"),
+    ProfileSettings().setValue(QLatin1String("websettings/disableGpuCompositing"),
                          true);
     qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
     BrowserProfile::applyChromiumFlags();
@@ -1607,25 +1608,25 @@ void tst_Privacy::chromiumFlags()
     QVERIFY(QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
                 .contains(QLatin1String("--disable-gpu-compositing")));
     qunsetenv("ARORA_DISABLE_GPU_COMPOSITING");
-    QSettings().remove(QLatin1String("websettings/disableGpuCompositing"));
+    ProfileSettings().remove(QLatin1String("websettings/disableGpuCompositing"));
 
     // No recorded crash leaves it off; a recorded one — which only
     // exists after two consecutive unclean exits — engages the safe
     // mode and persists the toggle so the settings dialog reflects it.
-    QSettings().setValue(QLatin1String("browser/gpuCrashCount"), 0);
+    ProfileSettings().setValue(QLatin1String("browser/gpuCrashCount"), 0);
     qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
     BrowserProfile::applyChromiumFlags();
     QVERIFY(!QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
                  .contains(QLatin1String("--disable-gpu-compositing")));
-    QSettings().setValue(QLatin1String("browser/gpuCrashCount"), 1);
+    ProfileSettings().setValue(QLatin1String("browser/gpuCrashCount"), 1);
     qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
     BrowserProfile::applyChromiumFlags();
     QVERIFY(QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
                 .contains(QLatin1String("--disable-gpu-compositing")));
-    QVERIFY(QSettings().value(
+    QVERIFY(ProfileSettings().value(
         QLatin1String("websettings/disableGpuCompositing")).toBool());
-    QSettings().remove(QLatin1String("websettings/disableGpuCompositing"));
-    QSettings().remove(QLatin1String("browser/gpuCrashCount"));
+    ProfileSettings().remove(QLatin1String("websettings/disableGpuCompositing"));
+    ProfileSettings().remove(QLatin1String("browser/gpuCrashCount"));
 
     // Leave the privacy group at the shipped defaults for any
     // post-test settings writes elsewhere in the suite.
@@ -1639,7 +1640,7 @@ void tst_Privacy::secureDnsTorGate()
     // mode is forced off regardless of what normal-window settings
     // say.  Covers both surfaces that read it: the feature switch in
     // applyChromiumFlags() and the resolver mode in applySecureDns().
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("privacy"));
     settings.setValue(QLatin1String("secureDnsMode"), 3);
     settings.setValue(QLatin1String("secureDnsServer"),
@@ -1672,7 +1673,7 @@ void tst_Privacy::secureDnsTorGate()
 
 void tst_Privacy::fingerprintNormalization()
 {
-    QSettings settings;
+    ProfileSettings settings;
 
     // PRIV02 (a): TZ is forced to UTC, then the caller's original
     // env is restored verbatim — an exported user TZ is never lost.
@@ -1712,7 +1713,7 @@ void tst_Privacy::fingerprintNormalization()
 // deliberate opt-out written afterwards is never re-flipped.
 void tst_Privacy::fingerprintDefaultOnMigration()
 {
-    QSettings settings;
+    ProfileSettings settings;
     const QLatin1String key("privacy/fingerprintProtection");
     const QLatin1String flag("privacy/fingerprintMigrationV1");
     const QVariant savedKey = settings.value(key);

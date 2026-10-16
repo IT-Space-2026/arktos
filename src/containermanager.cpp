@@ -18,6 +18,7 @@
  */
 
 #include "containermanager.h"
+#include "profilesettings.h"
 
 #include "arorastyle.h"
 #include "browserapplication.h"
@@ -102,7 +103,7 @@ ContainerManager::Container ContainerManager::createContainer(
     m_containers.append(container);
     saveRegistry(container);
 
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("containers"));
     QStringList order = settings.value(QLatin1String("order")).toStringList();
     order.append(container.id);
@@ -513,7 +514,7 @@ void ContainerManager::saveSiteRules(const QString &id) const
 #else
     if (!isContainerId(id))
         return;
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("containers"));
     settings.beginGroup(id);
     settings.setValue(QLatin1String("sites"), siteRules(id));
@@ -529,7 +530,7 @@ void ContainerManager::saveSiteRules(const QString &id) const
 // Ids are generated uuids, so they are always safe group names.
 void ContainerManager::loadRegistry()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("containers"));
     const QStringList order =
         settings.value(QLatin1String("order")).toStringList();
@@ -595,7 +596,7 @@ void ContainerManager::loadRegistry()
 
 void ContainerManager::saveRegistry(const Container &container) const
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("containers"));
     settings.beginGroup(container.id);
     settings.setValue(QLatin1String("name"), container.name);
@@ -604,7 +605,7 @@ void ContainerManager::saveRegistry(const Container &container) const
 
 void ContainerManager::removeRegistry(const QString &id) const
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("containers"));
     settings.remove(id);
     QStringList order = settings.value(QLatin1String("order")).toStringList();

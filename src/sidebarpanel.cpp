@@ -17,6 +17,7 @@
  * Boston, MA  02110-1301  USA
  */
 #include "sidebarpanel.h"
+#include "profilesettings.h"
 
 #include "arorastyle.h"
 #include "autosaver.h"
@@ -433,7 +434,7 @@ SidebarPanel::SidebarPanel(QWidget *parent)
     // The option reads run before the population so lazy load can
     // park placeholders (s_folderCounters syncs for the model's
     // first fetch too).
-    const QSettings bootSettings;
+    const ProfileSettings bootSettings;
     m_lazyLoad = bootSettings.value(QLatin1String("sidebar/lazyLoad"),
                                     false).toBool();
     s_folderCounters = bootSettings.value(
@@ -455,7 +456,7 @@ SidebarPanel::SidebarPanel(QWidget *parent)
     connect(static_cast<SidebarRail *>(m_tabs->tabBar())->toggleButton(),
             &QToolButton::clicked, this, &SidebarPanel::closeRequested);
 
-    QSettings settings;
+    ProfileSettings settings;
     const int tab = settings.value(QLatin1String("sidebar/currentTab"), 0)
                         .toInt();
     if (tab >= 0 && tab < m_tabs->count())
@@ -527,23 +528,23 @@ static QString sidebarPanelKey(const QByteArray &id)
 
 bool SidebarPanel::isPanelVisible(const QByteArray &id)
 {
-    return QSettings().value(sidebarPanelKey(id), true).toBool();
+    return ProfileSettings().value(sidebarPanelKey(id), true).toBool();
 }
 
 void SidebarPanel::setPanelVisible(const QByteArray &id, bool visible)
 {
-    QSettings().setValue(sidebarPanelKey(id), visible);
+    ProfileSettings().setValue(sidebarPanelKey(id), visible);
 }
 
 QStringList SidebarPanel::panelOrder()
 {
-    return QSettings().value(QLatin1String("sidebar/panelOrder"))
+    return ProfileSettings().value(QLatin1String("sidebar/panelOrder"))
         .toStringList();
 }
 
 void SidebarPanel::setPanelOrder(const QStringList &order)
 {
-    QSettings().setValue(QLatin1String("sidebar/panelOrder"), order);
+    ProfileSettings().setValue(QLatin1String("sidebar/panelOrder"), order);
 }
 
 // Registered panels re-sequenced by the persisted order — the rail
@@ -708,7 +709,7 @@ void SidebarPanel::buildPendingTab(int index)
 // BrowserMainWindow, which calls this).
 void SidebarPanel::applyOptions()
 {
-    const QSettings settings;
+    const ProfileSettings settings;
     // 'Show Panel Toggle' — the rail's fold button.
     static_cast<SidebarRail *>(m_tabs->tabBar())->setToggleVisible(
         settings.value(QLatin1String("sidebar/showPanelToggle"), true)
@@ -902,7 +903,7 @@ QWidget *SidebarPanel::buildHistoryPage()
             static_cast<HistoryPeriodFilterModel::Period>(
                 m_historyPeriod->itemData(index).toInt());
         m_historyPeriodFilter->setPeriod(period);
-        QSettings().setValue(QLatin1String("sidebar/historyPeriod"),
+        ProfileSettings().setValue(QLatin1String("sidebar/historyPeriod"),
                              int(period));
         // A narrower range can hide the day group holding the view's
         // current row — the first (newest) group is always in range.
@@ -913,7 +914,7 @@ QWidget *SidebarPanel::buildHistoryPage()
     m_historyView->setExpanded(m_historyProxy->index(0, 0), true);
     // Persisted like the rest of the panel state; the default is All
     // so a first run hides nothing.
-    const int savedPeriod = QSettings().value(
+    const int savedPeriod = ProfileSettings().value(
         QLatin1String("sidebar/historyPeriod"),
         int(HistoryPeriodFilterModel::All)).toInt();
     int periodRow = m_historyPeriod->findData(savedPeriod);
@@ -1688,7 +1689,7 @@ NotesModel *SidebarPanel::notesModel() const
 
 void SidebarPanel::save()
 {
-    QSettings settings;
+    ProfileSettings settings;
     // NOTE02: the notes text is the NotesModel's own file-backed
     // store now — flush it here so callers that force a save (window
     // teardown, tests) can't strand a pending debounce.

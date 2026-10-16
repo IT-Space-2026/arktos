@@ -18,6 +18,7 @@
  */
 
 #include "pdfsupport.h"
+#include "profilesettings.h"
 
 #include "browserpaths.h"
 #include "webenginebackend.h"
@@ -53,13 +54,13 @@ namespace PdfSupport {
 
 bool viewerEnabled()
 {
-    return QSettings().value(QLatin1String("privacy/pdfViewer"), true).toBool();
+    return ProfileSettings().value(QLatin1String("privacy/pdfViewer"), true).toBool();
 }
 
 bool sanitizeEnabled()
 {
 #ifdef ARORA_RUSTCORE
-    return QSettings().value(QLatin1String("privacy/pdfSanitize"), true).toBool();
+    return ProfileSettings().value(QLatin1String("privacy/pdfSanitize"), true).toBool();
 #else
     return false;
 #endif
@@ -68,7 +69,7 @@ bool sanitizeEnabled()
 bool shellViewEnabled()
 {
 #ifdef ARORA_RUSTCORE
-    return QSettings().value(QLatin1String("privacy/pdfShellView"), true).toBool();
+    return ProfileSettings().value(QLatin1String("privacy/pdfShellView"), true).toBool();
 #else
     return false;
 #endif

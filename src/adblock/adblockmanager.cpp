@@ -27,6 +27,7 @@
  */
 
 #include "adblockmanager.h"
+#include "profilesettings.h"
 
 #include "autosaver.h"
 #include "adblockdialog.h"
@@ -120,7 +121,7 @@ bool AdBlockManager::rustEngineAvailable()
 
 AdBlockManager::Engine AdBlockManager::storedEngine()
 {
-    const QString value = QSettings().value(
+    const QString value = ProfileSettings().value(
         QLatin1String("AdBlock/engine")).toString();
     // ADBLK01: Brave adblock-rust is the default — an absent or empty
     // key selects it.  Only an explicit opt-out (a persisted "cpp" or
@@ -141,7 +142,7 @@ void AdBlockManager::setEngine(Engine engine)
 {
     if (storedEngine() == engine)
         return;
-    QSettings().setValue(QLatin1String("AdBlock/engine"),
+    ProfileSettings().setValue(QLatin1String("AdBlock/engine"),
                          engine == RustEngine
                          ? QLatin1String("rust") : QLatin1String("cpp"));
     // rulesChanged rebuilds the matcher snapshot; the Rust engine is
@@ -157,7 +158,7 @@ bool AdBlockManager::rustEngineInUse() const
 
 AdBlockManager::RemoteListsConsent AdBlockManager::remoteListsConsent()
 {
-    const int value = QSettings().value(
+    const int value = ProfileSettings().value(
         QLatin1String("AdBlock/remoteListsConsent"),
         int(RemoteListsUndecided)).toInt();
     if (value < int(RemoteListsUndecided) || value > int(RemoteListsGranted))
@@ -167,7 +168,7 @@ AdBlockManager::RemoteListsConsent AdBlockManager::remoteListsConsent()
 
 void AdBlockManager::setRemoteListsConsent(RemoteListsConsent consent)
 {
-    QSettings().setValue(QLatin1String("AdBlock/remoteListsConsent"),
+    ProfileSettings().setValue(QLatin1String("AdBlock/remoteListsConsent"),
                          int(consent));
 }
 
@@ -398,7 +399,7 @@ void AdBlockManager::save()
     if (!m_loaded)
         return;
 
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("AdBlock"));
     settings.setValue(QLatin1String("enabled"), m_enabled);
     QStringList subscriptions;
@@ -421,7 +422,7 @@ void AdBlockManager::load()
         return;
     m_loaded = true;
 
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("AdBlock"));
     m_enabled = settings.value(QLatin1String("enabled"), m_enabled).toBool();
 

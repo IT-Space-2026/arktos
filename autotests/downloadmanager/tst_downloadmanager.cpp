@@ -35,6 +35,7 @@
 #include "downloadmanager.h"
 #include "squeezelabel.h"
 #include "qtry.h"
+#include "profilesettings.h"
 
 class tst_DownloadManager : public QObject
 {
@@ -189,7 +190,7 @@ void tst_DownloadManager::cleanupTestCase()
 // This will be called before each test function is executed.
 void tst_DownloadManager::init()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.clear();
     // DLACC06: these legs drive the built-in Chromium path; pin the
     // engine or the rust default claims every http(s) fixture url on
@@ -731,7 +732,7 @@ void tst_DownloadManager::externalHandler()
     QVERIFY(QFile::setPermissions(scriptPath, QFileDevice::ReadOwner
             | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
 
-    QSettings settings;
+    ProfileSettings settings;
     // A quoted path plus a user-defined flag exercises the argv split.
     settings.setValue(QLatin1String("downloadmanager/external"), true);
     settings.setValue(QLatin1String("downloadmanager/externalPath"),

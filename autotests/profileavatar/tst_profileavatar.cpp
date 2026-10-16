@@ -18,6 +18,7 @@
  */
 
 #include <QtTest/QtTest>
+#include "profilesettings.h"
 #include "qtest_arora.h"
 
 #include <profileavataractions.h>
@@ -123,7 +124,7 @@ void tst_ProfileAvatar::namePersistence()
     identity->setName(QStringLiteral("  Work  "));
     QCOMPARE(identity->name(), QStringLiteral("Work"));
     QCOMPARE(spy.count(), 1);
-    QCOMPARE(QSettings().value(QLatin1String("profile/name")).toString(),
+    QCOMPARE(ProfileSettings().value(QLatin1String("profile/name")).toString(),
              QStringLiteral("Work"));
 
     // An empty name falls back to the default rather than persisting

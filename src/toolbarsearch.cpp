@@ -62,6 +62,7 @@
 ****************************************************************************/
 
 #include "toolbarsearch.h"
+#include "profilesettings.h"
 
 #include "autosaver.h"
 #include "browserapplication.h"
@@ -238,7 +239,7 @@ void ToolbarSearch::currentEngineChanged()
 // magnifier glyph (a null image regenerates the built-in one).
 void ToolbarSearch::updateEngineIcon()
 {
-    QSettings settings;
+    ProfileSettings settings;
     const bool showIcon = settings.value(
         QLatin1String("toolbarsearch/showEngineIcon"), true).toBool();
     OpenSearchEngine *engine = fieldEngine();
@@ -314,7 +315,7 @@ ToolbarSearch::~ToolbarSearch()
 
 void ToolbarSearch::save()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("toolbarsearch"));
     settings.setValue(QLatin1String("recentSearches"), m_recentSearches);
     settings.setValue(QLatin1String("maximumSaved"), m_maxSavedSearches);
@@ -323,7 +324,7 @@ void ToolbarSearch::save()
 
 void ToolbarSearch::load()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("toolbarsearch"));
     m_recentSearches = settings.value(QLatin1String("recentSearches")).toStringList();
     m_maxSavedSearches = settings.value(QLatin1String("maximumSaved"), m_maxSavedSearches).toInt();
@@ -401,7 +402,7 @@ void ToolbarSearch::searchNow()
     QUrl searchUrl = openSearchManager()->searchUrlForEngine(
         fieldEngine(), searchText);
 
-    QSettings settings;
+    ProfileSettings settings;
     settings.beginGroup(QLatin1String("toolbarsearch"));
     // SRCH04: "always search in a new tab" joins Alt as a way to
     // leave the current page alone.
@@ -475,7 +476,7 @@ void ToolbarSearch::showEnginesMenu()
         menu->addSeparator();
     }
 
-    QSettings settings;
+    ProfileSettings settings;
     const bool showNicknames = settings.value(
         QLatin1String("toolbarsearch/showEngineNickname"), true).toBool();
     const bool showIcons = settings.value(
