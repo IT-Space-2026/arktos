@@ -57,7 +57,10 @@ typedef enum RcStatus {
     RC_NOT_ENABLED = 9,
     RC_UNAVAILABLE = 10,        /* RNG or platform facility missing */
     RC_NOT_FOUND = 11,          /* no such credential name */
-    RC_EMPTY_PASSPHRASE = 12
+    RC_EMPTY_PASSPHRASE = 12,
+    RC_WRONG_PASSWORD = 13,     /* vault: password rejected by the wrap */
+    RC_TAMPERED = 14,           /* vault: MAC check failed */
+    RC_UNSUPPORTED_ALGO = 15    /* vault: unknown algo_id */
 } RcStatus;
 
 typedef struct RcBuffer {
@@ -1015,6 +1018,69 @@ char *rc_ua_spoof_list(void);
  * "week" windows; NULL or an unknown name -> NULL + error. */
 char *rc_clearplan(const char *periodUtf8, uint32_t categories,
                    int otrActive);
+
+/* ------------------------------------------------------------------ */
+/* PVAULT01: password-sealed profile vaults ("ARV1")                    */
+/*                                                                      */
+/* A vault.arv is a chunked, streamable archive of a profile           */
+/* directory: a random 512-bit vault key (enc + mac halves) wrapped    */
+/* by an Argon2id-derived KEK; a tar-style pack encrypted in 16 MiB    */
+/* chunks; HMAC-SHA-512 over the header and over the whole payload.    */
+/* Because the vault key is wrapped rather than password-derived, a   */
+/* password change only re-wraps the header — no re-encrypt.          */
+/*                                                                      */
+/* Algorithms: RC_VAULT_ALGO_AES256_GCM is the default (AES-256-GCM   */
+/* per chunk + HMAC-SHA-512).  RC_VAULT_ALGO_THREEFISH_XEX is the      */
+/* opt-in lane (Threefish-1024 XEX-style + Skein-MAC) — the crates    */
+/* are unaudited upstream, see the module docs.                        */
+/*                                                                      */
+/* Errors are honest and distinct: RC_WRONG_PASSWORD means the wrap   */
+/* rejected the password; RC_TAMPERED means a MAC failed after a      */
+/* successful unwrap; RC_CORRUPT means malformed structure;           */
+/* RC_UNSUPPORTED_ALGO means the algo_id is not implemented.  Unseal  */
+/* is two-pass — the whole payload MAC verifies before any plaintext  */
+/* is written — so a failed restore leaves zero artifacts.            */
+/*                                                                      */
+/* These calls are stateless (no rc_set_data_dir needed) and may run  */
+/* on any thread.  The optional progress callback fires synchronously */
+/* on the calling thread: (bytes_done, bytes_total) — queue onto the  */
+/* GUI thread for widgets.                                            */
+
+#define RC_VAULT_ALGO_AES256_GCM    0x01u
+#define RC_VAULT_ALGO_THREEFISH_XEX 0x02u
+
+typedef void (*RvProgressCallback)(uint64_t done, uint64_t total,
+                                   void *userdata);
+
+/* Seal dir -> outPath (atomic temp+rename, 0600).  cb may be NULL. */
+RcStatus rv_seal(const char *dirUtf8,
+                 const uint8_t *pass, size_t passLen,
+                 uint8_t algo, const char *outPathUtf8,
+                 RvProgressCallback cb, void *userdata);
+
+/* Verify + unpack blobPath into outDir (absent or empty).  Two-pass;
+ * a failure leaves no partial output. */
+RcStatus rv_unseal(const char *blobPathUtf8,
+                   const uint8_t *pass, size_t passLen,
+                   const char *outDirUtf8,
+                   RvProgressCallback cb, void *userdata);
+
+/* Password + authenticity check without unpacking. */
+RcStatus rv_verify(const char *blobPathUtf8,
+                   const uint8_t *pass, size_t passLen);
+
+/* Header summary JSON for UI display — UNVERIFIED fields (no
+ * password): {"format","algo","algo_name","kdf","memory_kib",
+ * "passes","lanes","chunk_size","chunk_count","payload_bytes",
+ * "authenticated":false}.  NULL on error; rc_string_free(). */
+char *rv_inspect(const char *blobPathUtf8);
+
+/* Cheap password change: re-wraps the vault key (~217 bytes
+ * rewritten; the payload never moves).  RC_WRONG_PASSWORD when
+ * oldPass does not open the vault. */
+RcStatus rv_rewrap(const char *blobPathUtf8,
+                   const uint8_t *oldPass, size_t oldLen,
+                   const uint8_t *newPass, size_t newLen);
 
 #ifdef __cplusplus
 }

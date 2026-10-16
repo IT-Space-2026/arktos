@@ -3046,3 +3046,26 @@ Per-profile app singletons (MPROF02):
     tst_profilemanagers suite: two personas write disjoint stores,
     seeded history/bookmarks/notes/secrets stay invisible across ids,
     and the off-the-record legs confirm nothing persists.
+
+Password-sealed profile vaults in the Rust core (PVAULT01):
+    The rustcore crate gains a profilevault module behind the C ABI:
+    an "ARV1" vault file packs a whole profile directory into a
+    chunked, streamable, tamper-evident archive sealed under a
+    password.  The vault key is a fresh random 512-bit enc+mac
+    composite per seal, itself wrapped by an Argon2id-derived KEK
+    (64MiB/t3/p4), so changing the password only re-wraps a ~200-byte
+    header field — the payload never moves.  AES-256-GCM per 16MiB
+    chunk plus HMAC-SHA-512 over the header and the whole payload is
+    the default lane; an opt-in Threefish-1024 XEX-style lane with
+    Skein-MAC chunk tags (algorithm agility — the RustCrypto crates
+    are unaudited upstream, documented in-tree) rides the same
+    container.  Errors stay honest and distinct: a wrong password is
+    WrongPassword, a damaged vault is Tampered, an unknown algo_id is
+    UnsupportedAlgo — and unseal stream-verifies the entire payload
+    MAC before a single plaintext byte is written, extracting into a
+    staging dir that only atomically renames into place on success,
+    so a failed restore leaves zero partial output.  The FFI surface
+    is rv_seal / rv_unseal / rv_verify / rv_inspect / rv_rewrap with a
+    byte-progress callback for UI progress bars; the Qt-side profile
+    export/import UI consumes it in a follow-up task.  No-Rust builds
+    are unaffected.

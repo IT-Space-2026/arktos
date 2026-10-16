@@ -95,6 +95,13 @@
 //!     state and history first-seen folded into one advisory
 //!     green/amber/red JSON verdict for the lock-icon badge.  A
 //!     warning signal only; it never blocks.
+//!   * profilevault (PVAULT01): password-sealed profile archives
+//!     ("ARV1") — a two-tier wrapped vault key (random vault_key under
+//!     an Argon2id-derived KEK, so a password change is a re-wrap),
+//!     chunked streaming encryption (AES-256-GCM default;
+//!     Threefish-1024-XEX + Skein-MAC opt-in), honest distinct
+//!     WrongPassword / Tampered errors, and a two-pass unseal that
+//!     cannot leave partial output.
 //!
 mod autofill;
 mod bidi;
@@ -116,6 +123,7 @@ mod parsers;
 mod pdfdoc;
 mod pdfsanitize;
 mod policy;
+mod profilevault;
 mod qrcode;
 mod readability;
 mod session;
@@ -3902,6 +3910,191 @@ pub unsafe extern "C" fn rc_clearplan(
         }
     }))
     .unwrap_or(ptr::null_mut())
+}
+
+// ---- profile vault (PVAULT01) ---------------------------------------------
+//
+// Password-sealed, chunked, streamable archives of a profile dir —
+// see profilevault.rs for the ARV1 wire format, the two-tier key
+// schedule and the no-partial-unpack guarantee.  Unlike the store
+// modules these calls are stateless: they take explicit paths, touch
+// no data dir and may run on any thread.  Progress rides an optional
+// (done, total) byte callback fired on the calling thread.
+
+/// Seal `dir` into `out_path` under `pass`.  `algo` is 0x01
+/// (AES-256-GCM + HMAC-SHA-512, the default) or 0x02
+/// (Threefish-1024-XEX + Skein-MAC).  The output lands atomically
+/// (temp + rename, 0600) or not at all.
+///
+/// # Safety
+/// `dir`/`out_path` must be NUL-terminated UTF-8; `pass` must point
+/// to `pass_len` readable bytes.  `cb`/`userdata` are called back on
+/// this thread — queue onto the GUI thread, never touch widgets.
+#[no_mangle]
+pub unsafe extern "C" fn rv_seal(
+    dir: *const c_char,
+    pass: *const u8,
+    pass_len: usize,
+    algo: u8,
+    out_path: *const c_char,
+    cb: Option<profilevault::ProgressCallback>,
+    userdata: *mut c_void,
+) -> RcStatus {
+    status_of(|| {
+        let dir = unsafe { util::cstr(dir) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad dir pointer".into(),
+        })?;
+        let out = unsafe { util::cstr(out_path) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad out path pointer".into(),
+        })?;
+        let pass = unsafe { util::bytes(pass, pass_len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad password pointer".into(),
+        })?;
+        let pass = zeroize::Zeroizing::new(pass.to_vec());
+        let mut progress = profilevault::Progress::new(cb, userdata);
+        profilevault::seal_dir(
+            std::path::Path::new(dir),
+            &pass,
+            algo,
+            std::path::Path::new(out),
+            &mut progress,
+        )
+    })
+}
+
+/// Verify + unpack `blob_path` into `out_dir` — two passes, zero
+/// partial output on failure.  RC_WRONG_PASSWORD when the password is
+/// wrong, RC_TAMPERED when authenticity fails, RC_CORRUPT when the
+/// file is malformed, RC_UNSUPPORTED_ALGO for an unknown algo_id.
+///
+/// # Safety
+/// Same contract as rv_seal.
+#[no_mangle]
+pub unsafe extern "C" fn rv_unseal(
+    blob_path: *const c_char,
+    pass: *const u8,
+    pass_len: usize,
+    out_dir: *const c_char,
+    cb: Option<profilevault::ProgressCallback>,
+    userdata: *mut c_void,
+) -> RcStatus {
+    status_of(|| {
+        let blob = unsafe { util::cstr(blob_path) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad vault path pointer".into(),
+        })?;
+        let out = unsafe { util::cstr(out_dir) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad out dir pointer".into(),
+        })?;
+        let pass = unsafe { util::bytes(pass, pass_len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad password pointer".into(),
+        })?;
+        let pass = zeroize::Zeroizing::new(pass.to_vec());
+        let mut progress = profilevault::Progress::new(cb, userdata);
+        profilevault::unseal_file(
+            std::path::Path::new(blob),
+            &pass,
+            std::path::Path::new(out),
+            &mut progress,
+        )
+    })
+}
+
+/// Password + authenticity check without unpacking — the fast leg a
+/// UI runs to validate a vault before offering a restore.
+///
+/// # Safety
+/// `blob_path` must be NUL-terminated UTF-8; `pass` must point to
+/// `pass_len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rv_verify(
+    blob_path: *const c_char,
+    pass: *const u8,
+    pass_len: usize,
+) -> RcStatus {
+    status_of(|| {
+        let blob = unsafe { util::cstr(blob_path) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad vault path pointer".into(),
+        })?;
+        let pass = unsafe { util::bytes(pass, pass_len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad password pointer".into(),
+        })?;
+        let pass = zeroize::Zeroizing::new(pass.to_vec());
+        let mut progress = profilevault::Progress::new(None, ptr::null_mut());
+        profilevault::verify_file(std::path::Path::new(blob), &pass, &mut progress)
+    })
+}
+
+/// Unauthenticated header summary for UI display — JSON:
+///   {"format":"ARV1","algo":N,"algo_name":...,"kdf":"argon2id",
+///    "memory_kib","passes","lanes","chunk_size","chunk_count",
+///    "payload_bytes","authenticated":false}
+/// Fields are unverified until a password-bearing call succeeds —
+/// display them as claims, not facts.  NULL on error; free the result
+/// with rc_string_free().
+///
+/// # Safety
+/// `blob_path` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rv_inspect(blob_path: *const c_char) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let blob = match unsafe { util::cstr(blob_path) } {
+            Some(s) => s,
+            None => {
+                error::set_error("bad vault path pointer");
+                return ptr::null_mut();
+            }
+        };
+        match profilevault::inspect_file(std::path::Path::new(blob)) {
+            Ok(json) => util::to_c_string(json),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Re-wrap the vault key under `new_pass` — the cheap password change
+/// (~217 bytes rewritten; the payload never moves).  RC_WRONG_PASSWORD
+/// when `old_pass` does not open the vault.
+///
+/// # Safety
+/// `blob_path` must be NUL-terminated UTF-8; both passwords must point
+/// to their `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rv_rewrap(
+    blob_path: *const c_char,
+    old_pass: *const u8,
+    old_len: usize,
+    new_pass: *const u8,
+    new_len: usize,
+) -> RcStatus {
+    status_of(|| {
+        let blob = unsafe { util::cstr(blob_path) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad vault path pointer".into(),
+        })?;
+        let old = unsafe { util::bytes(old_pass, old_len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad old password pointer".into(),
+        })?;
+        let new = unsafe { util::bytes(new_pass, new_len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad new password pointer".into(),
+        })?;
+        let old = zeroize::Zeroizing::new(old.to_vec());
+        let new = zeroize::Zeroizing::new(new.to_vec());
+        profilevault::rewrap_file(std::path::Path::new(blob), &old, &new)
+    })
 }
 
 #[cfg(test)]
