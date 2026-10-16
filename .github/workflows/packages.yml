@@ -199,10 +199,15 @@ jobs:
         shell: pwsh
         run: |
           choco install nsis -y --no-progress
+          # choco's PATH refresh does not propagate between steps —
+          # resolve makensis from its install dir explicitly.
+          $makensis = Get-ChildItem 'C:\Program Files (x86)\NSIS\makensis.exe', 'C:\Program Files\NSIS\makensis.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $makensis) { $makensis = Get-Command makensis -ErrorAction SilentlyContinue }
+          if (-not $makensis) { throw "makensis not found after choco install" }
           $crt = Get-ChildItem "$env:VCToolsRedistDir\x64" -Directory -Filter 'Microsoft.VC*.CRT' | Select-Object -Last 1
-          $args = "/DDEPLOYDIR=deploy"
-          if ($crt) { $args += " /DVCREDIST=$($crt.FullName)" }
-          & makensis $args BuildProcess\windowsinstaller.nsi
+          $nsisArgs = @('/DDEPLOYDIR=deploy')
+          if ($crt) { $nsisArgs += "/DVCREDIST=$($crt.FullName)" }
+          & $makensis.Source @nsisArgs BuildProcess\windowsinstaller.nsi
 
       - uses: actions/upload-artifact@v7
         with:
