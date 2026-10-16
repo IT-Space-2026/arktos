@@ -32,6 +32,7 @@
 #include <webview.h>
 #include <containermanager.h>
 #include <browserapplication.h>
+#include <engineinterface.h>
 #include "qtest_arora.h"
 #include "qtry.h"
 
@@ -69,6 +70,7 @@ private slots:
     void horizontalTabResize();
     void verticalTabButtons();
     void contextMenuBaseEntries();
+    void freeMemoryMenuEntries();
     void contextMenuGroupEntries();
     void contextMenuContainerEntries();
     void chipsPaint();
@@ -896,6 +898,54 @@ static bool triggerContextEntry(TabBar *bar, const QPoint &pos,
     return invoked && fired;
 }
 
+// Does any captured emission carry needle.
+static bool spyHasText(const QSignalSpy &spy, const QString &needle)
+{
+    for (const QList<QVariant> &args : spy) {
+        if (args.value(0).toString().contains(needle))
+            return true;
+    }
+    return false;
+}
+
+// Same dance as triggerContextEntry but inspects instead of firing —
+// copies the matched action's text/enabled and closes the menu.
+static bool inspectContextEntry(TabBar *bar, const QPoint &pos,
+                                const QString &label, QString *text,
+                                bool *enabled)
+{
+    bool found = false;
+    int tries = 0;
+    QTimer *timer = new QTimer(qApp);
+    timer->setInterval(80);
+    QObject::connect(timer, &QTimer::timeout, qApp,
+                     [label, text, enabled, &found, &tries, timer]() {
+        QMenu *menu = findPopupMenu();
+        if (!menu) {
+            if (++tries > 25)
+                timer->stop();
+            return;
+        }
+        timer->stop();
+        for (QAction *action : menu->actions()) {
+            if (QString(action->text()).remove(QLatin1Char('&'))
+                    .contains(label)) {
+                *text = action->text();
+                *enabled = action->isEnabled();
+                found = true;
+                break;
+            }
+        }
+        menu->close();
+    });
+    timer->start();
+    const bool invoked = QMetaObject::invokeMethod(
+        bar, "contextMenuRequested", Q_ARG(QPoint, pos));
+    timer->stop();
+    timer->deleteLater();
+    return invoked && found;
+}
+
 // The ungrouped-tab and empty-strip menus: action signal fan-out plus
 // the Sleep entry's enabled gate.
 void tst_TabBar::contextMenuBaseEntries()
@@ -967,6 +1017,100 @@ void tst_TabBar::contextMenuBaseEntries()
                                 QLatin1String("Close Tab")));
     QCOMPARE(closed.count(), 1);
     QCOMPARE(widget.count(), 0);
+}
+
+// MEM08: the flush entries — per-tab "Free Memory" on a background
+// tab vs the honest "Reload & Free Memory" on the current one,
+// disabled on a never-loaded tab, live on a slept tab so the click
+// can report that, plus the window-level background-tabs leg.
+void tst_TabBar::freeMemoryMenuEntries()
+{
+    TabWidget widget;
+    widget.resize(800, 240);
+    widget.show();
+    TabBar *bar = widget.tabBar();
+    widget.newTab();                        // 0 — stays current
+    widget.newTab();                        // 1 — loaded background
+    widget.newTab();                        // 2 — never loaded
+    widget.webView(0)->loadUrl(
+        QUrl(QLatin1String("data:text/html,<p>fg</p>")));
+    widget.webView(1)->loadUrl(
+        QUrl(QLatin1String("data:text/html,<p>bg</p>")));
+    widget.setCurrentIndex(0);
+    QCOMPARE(widget.count(), 3);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !widget.webView(0)->isLoading()
+            && !widget.webView(1)->isLoading(), 15000);
+    QApplication::processEvents();
+
+    QString text;
+    bool enabled = false;
+
+    // Current tab: enabled, labeled as the reload it performs.
+    QVERIFY(inspectContextEntry(bar, bar->tabRect(0).center(),
+                                QLatin1String("Free Memory"),
+                                &text, &enabled));
+    QVERIFY(enabled);
+    QVERIFY(text.contains(QLatin1String("Reload")));
+    QVERIFY(text.contains(QLatin1String("Free Memory")));
+
+    // Background loaded tab: plain wording, enabled, and triggering
+    // it runs the real discard — the tab sleeps.
+    QVERIFY(inspectContextEntry(bar, bar->tabRect(1).center(),
+                                QLatin1String("Free Memory"),
+                                &text, &enabled));
+    QVERIFY(enabled);
+    QVERIFY(!text.contains(QLatin1String("Reload")));
+    QSignalSpy freed(bar, &TabBar::freeTabMemory);
+    QVERIFY(triggerContextEntry(bar, bar->tabRect(1).center(),
+                                QLatin1String("Free Memory")));
+    QCOMPARE(freed.count(), 1);
+    QCOMPARE(freed.takeFirst().at(0).toInt(), 1);
+    QTRY_VERIFY_WITH_TIMEOUT(widget.isTabSleeping(1), 10000);
+
+    // The slept tab keeps the entry — its click reports the tab is
+    // already discarded rather than discarding again.
+    QVERIFY(inspectContextEntry(bar, bar->tabRect(1).center(),
+                                QLatin1String("Free Memory"),
+                                &text, &enabled));
+    QVERIFY(enabled);
+    QSignalSpy statusSpy(&widget, &TabWidget::showStatusBarMessage);
+    QVERIFY(triggerContextEntry(bar, bar->tabRect(1).center(),
+                                QLatin1String("Free Memory")));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        spyHasText(statusSpy, QLatin1String("asleep")), 5000);
+
+    // The never-loaded tab's entry is disabled — nothing to free.
+    QVERIFY(inspectContextEntry(bar, bar->tabRect(2).center(),
+                                QLatin1String("Free Memory"),
+                                &text, &enabled));
+    QVERIFY(!enabled);
+
+    // The current tab's entry fires freeTabMemory(0) — the
+    // discard+reactivate reloads the page in place.
+    QSignalSpy fgFreed(bar, &TabBar::freeTabMemory);
+    QVERIFY(triggerContextEntry(bar, bar->tabRect(0).center(),
+                                QLatin1String("Free Memory")));
+    QCOMPARE(fgFreed.count(), 1);
+    QCOMPARE(fgFreed.takeFirst().at(0).toInt(), 0);
+    QVERIFY(!widget.isTabSleeping(0));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        widget.webView(0)->enginePage()->lifecycleState(),
+        Engine::Page::LifecycleState::Active, 15000);
+
+    // Window level: present even on an empty-strip click, emits the
+    // aggregate signal once.
+    const QRect lastRect = bar->tabRect(bar->count() - 1);
+    QVERIFY(lastRect.right() + 2 < bar->rect().right());
+    const QPoint emptyPoint(lastRect.right() + 2,
+                            lastRect.center().y());
+    QSignalSpy freedAll(bar, &TabBar::freeBackgroundTabsMemory);
+    QVERIFY(triggerContextEntry(bar, emptyPoint,
+                                QLatin1String("Background Tabs")));
+    QCOMPARE(freedAll.count(), 1);
+
+    while (widget.count())
+        widget.closeTab(0);
 }
 
 // A grouped tab's menu: collapse/expand, rename (QInputDialog), the

@@ -215,7 +215,10 @@ browsing profile:
 - **Tab search** — Ctrl+Shift+A fuzzy dropdown over all open tabs,
   with hover previews.
 - **Sleeping tabs** — suspend tabs to reclaim memory without losing
-  their place.
+  their place; the tab context menu also offers "Free Memory" (a
+  discard+reload flush on the current tab, plain discard on
+  background tabs) and "Free Memory in Background Tabs", reporting
+  the measured freed figure on the status bar.
 - **Per-tab engine switcher** — an engine button in the navigation
   toolbar, immediately right of the URL bar, names the active tab's
   engine and offers "Reload in …" on the other backends; Servo
