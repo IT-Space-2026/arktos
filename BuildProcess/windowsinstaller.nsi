@@ -69,7 +69,6 @@ Function un.onInit
 FunctionEnd
 Name "${PRODUCT_NAME} ${PRODUCT_VERSION}"
 OutFile "${OUTDIR}\${PRODUCT_NAME} ${PRODUCT_VERSION} Installer.exe"
-InstallDirRegKey SHCTX "${PRODUCT_DIR_REGKEY}" ""
 ShowInstDetails show
 ShowUnInstDetails show
 ; RequestExecutionLevel is owned by MultiUser (it elevates only when
