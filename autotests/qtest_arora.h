@@ -27,7 +27,9 @@
 #include <qapplication.h>
 #include <qcoreapplication.h>
 #include <cstdio>
+#if defined(Q_OS_UNIX)
 #include <unistd.h>
+#endif
 #include <qfileinfo.h>
 #include <qstandardpaths.h>
 #include <qabstractbutton.h>
