@@ -28,7 +28,12 @@ rustcore:!no-rust {
     # re-export into the recipe (flatpak-builder CFLAGS/CXXFLAGS leak).
     unix: cargo_rustcore.commands = cd $$PWD && \
         env -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS \
+        MACOSX_DEPLOYMENT_TARGET=$$QMAKE_MACOSX_DEPLOYMENT_TARGET \
         $$CARGO build --release
+    # MACOSX_DEPLOYMENT_TARGET: ld warns when rust objects carry a
+    # newer -version-min than the C++ link target ("built for newer
+    # 'macOS' version (26.5) than being linked (14.4)"). The var is
+    # empty on non-Apple platforms — a harmless no-op env there.
     win32: cargo_rustcore.commands = cd $$PWD && $$CARGO build --release
     cargo_rustcore.depends = $$PWD/Cargo.toml $$PWD/Cargo.lock \
         $$files($$PWD/src/*.rs, true) $$files($$PWD/data/*)

@@ -45,7 +45,11 @@ adblock_rust:!no-rust {
     else:  ADBLOCK_RUST_LIB = $$PWD/rust/target/release/libarora_adblock_ffi.a
 
     cargo_adblock_rust.target = $$ADBLOCK_RUST_LIB
-    cargo_adblock_rust.commands = cd $$PWD/rust && $$CARGO build --release
+    unix: cargo_adblock_rust.commands = cd $$PWD/rust && \
+        env -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS \
+        MACOSX_DEPLOYMENT_TARGET=$$QMAKE_MACOSX_DEPLOYMENT_TARGET \
+        $$CARGO build --release
+    win32: cargo_adblock_rust.commands = cd $$PWD/rust && $$CARGO build --release
     cargo_adblock_rust.depends = $$PWD/rust/Cargo.toml \
         $$PWD/rust/Cargo.lock $$files($$PWD/rust/src/*.rs, true)
     QMAKE_EXTRA_TARGETS += cargo_adblock_rust

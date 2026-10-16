@@ -33,6 +33,7 @@ rustdl:!no-rust {
     # Cargo/rustc do not consume those vars anyway.
     unix: cargo_rustdl.commands = cd $$PWD && \
         env -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS \
+        MACOSX_DEPLOYMENT_TARGET=$$QMAKE_MACOSX_DEPLOYMENT_TARGET \
         $$CARGO build --release
     win32: cargo_rustdl.commands = cd $$PWD && $$CARGO build --release
     cargo_rustdl.depends = $$PWD/Cargo.toml $$PWD/Cargo.lock \
