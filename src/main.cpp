@@ -30,6 +30,7 @@
 #include "bookmarknode.h"
 #include "bookmarksmanager.h"
 #include "bidiclient.h"
+#include "bidipanel.h"
 #include "bookmarksmodel.h"
 #include "browserapplication.h"
 #include "browsermainwindow.h"
@@ -178,6 +179,7 @@
 #include <QtWebEngineCore/qtwebenginecoreglobal.h>
 #include <QtWebChannel/QWebChannel>
 #include <QtWidgets/QApplication>
+#include <QtWidgets/QComboBox>
 #include <QtWidgets/QDialog>
 #include <QtWidgets/QFrame>
 #include <QtWidgets/QLabel>
@@ -190,6 +192,7 @@
 #include <QtWidgets/QPushButton>
 #include <QtWidgets/QStatusBar>
 #include <QtWidgets/QToolButton>
+#include <QtWidgets/QTreeWidget>
 #include <QtPrintSupport/QPrinter>
 #include <QtGui/QAction>
 #include <QtGui/QKeyEvent>
@@ -2569,6 +2572,71 @@ static int bidiSmoke(BrowserApplication &application, WebView *view)
     return rc;
 }
 
+// DEVT17: --bidi-elements-smoke drives the REAL BidiPanel UI end to
+// end — connect, combo claim, Elements lazy DOM fetch — the way the
+// dock does it, where --bidi-smoke only proves the wire.  PASS when
+// the Elements tree materializes real element rows for the page.
+static int bidiElementsSmoke(BrowserApplication &application,
+                             WebView *view)
+{
+    BidiPanel *panel = new BidiPanel;
+    panel->resize(640, 420);
+    panel->show();
+    // Give the page real element content so a populated tree is
+    // distinguishable from the "loading…" placeholder.
+    view->setHtml(QStringLiteral(
+        "<html><head><title>elements-smoke</title></head>"
+        "<body><h1 id=\"t\">elem</h1><p class=\"x\">para</p>"
+        "</body></html>"),
+        QUrl(QStringLiteral("http://elements-smoke.test/")));
+
+    const auto finish = [&application](bool pass, const QString &why) {
+        static bool done = false;
+        if (done)
+            return;
+        done = true;
+        qInfo() << "bidi-elements-smoke:" << (pass ? "PASS" : "FAIL")
+                << why;
+        application.exit(pass ? 0 : 1);
+    };
+
+    QTimer *poll = new QTimer(panel);
+    QObject::connect(poll, &QTimer::timeout, panel,
+                     [panel, finish]() {
+        QComboBox *combo = panel->findChild<QComboBox *>(
+            QStringLiteral("bidiContextCombo"));
+        QTreeWidget *tree = panel->findChild<QTreeWidget *>(
+            QStringLiteral("bidiElementsTree"));
+        if (!combo || !tree)
+            return;
+        if (combo->currentData().toString().isEmpty())
+            return; // still waiting on getTree
+        if (tree->topLevelItemCount() < 1)
+            return;
+        QTreeWidgetItem *root = tree->topLevelItem(0);
+        for (int i = 0; i < root->childCount(); ++i) {
+            // Real element rows carry their index path; the
+            // placeholder does not.
+            if (!root->child(i)->data(0, Qt::UserRole).isNull()) {
+                QStringList labels;
+                for (int j = 0; j < root->childCount(); ++j)
+                    labels << root->child(j)->text(0);
+                finish(labels.contains(QLatin1String("head"))
+                           || labels.contains(QLatin1String("body")),
+                       QStringLiteral("ctx=%1 rows=[%2]")
+                           .arg(combo->currentData().toString(),
+                                labels.join(QLatin1Char(','))));
+                return;
+            }
+        }
+    });
+    poll->start(200);
+    QTimer::singleShot(25000, panel, [finish]() {
+        finish(false, QStringLiteral("timeout waiting for DOM rows"));
+    });
+    return application.exec();
+}
+
 static int startPageSmoke(BrowserApplication &application, WebView *view)
 {
     AdBlockManager *manager = AdBlockManager::instance();
@@ -4578,7 +4646,8 @@ int main(int argc, char **argv)
         "sleep-smoke", "palette-smoke", "pip-smoke", "tabstrip-smoke",
         "startpage-smoke", "crash-smoke",
         "sandbox-smoke", "write-sandbox-launcher",
-        "bidi-smoke", "pdf-smoke", "pdfview-smoke", "printpreview-smoke",
+        "bidi-smoke", "bidi-elements-smoke", "pdf-smoke",
+        "pdfview-smoke", "printpreview-smoke",
         "parallel-download-smoke", "parallel-download-off-smoke",
         "ingress-smoke",
         "engine-list", "engine-smoke", "servo-smoke",
@@ -5011,6 +5080,9 @@ int main(int argc, char **argv)
     // DEVT03: engine-neutral devtools channel end-to-end.
     if (args.contains(QLatin1String("--bidi-smoke")))
         return bidiSmoke(application, view);
+    // DEVT17: the Elements tree through the real panel UI.
+    if (args.contains(QLatin1String("--bidi-elements-smoke")))
+        return bidiElementsSmoke(application, view);
 
     // BADSSL02: live-site measurement — loads every badssl.com
     // matrix case on the browsing profile and records per-case

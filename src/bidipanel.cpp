@@ -1217,6 +1217,7 @@ BidiPanel::BidiPanel(QWidget *parent)
     QVBoxLayout *tv = new QVBoxLayout(tabsPage);
     tv->setContentsMargins(2, 2, 2, 2);
     m_contextCombo = new QComboBox;
+    m_contextCombo->setObjectName(QLatin1String("bidiContextCombo"));
     tv->addWidget(m_contextCombo);
     m_tabs = new QTabWidget;
     QTabWidget *tabs = m_tabs;
@@ -1944,18 +1945,7 @@ BidiPanel::BidiPanel(QWidget *parent)
             this, &BidiPanel::onConnectionChanged);
     connect(m_contextCombo, &QComboBox::currentIndexChanged,
             this, [this](int) {
-        // Milestones belong to the page that fired them — a context
-        // switch starts a fresh clock.
-        m_dclMs = m_loadMs = -1.0;
-        refreshDom();
-        updateNetworkSummary();
-        // DEVT13: the verdicts are per-session — a different page is
-        // a different attach, so re-probe, and the Sources/Security/
-        // Application views follow the new page.
-        probeDomains();
-        refreshSources();
-        refreshSecurity();
-        refreshApplication();
+        applyContextSelection();
     });
     // DEVT13: the Elements page's own wiring.
     connect(m_domTree, &QTreeWidget::currentItemChanged,
@@ -2109,6 +2099,27 @@ void BidiPanel::onConnectionChanged(int state)
 QString BidiPanel::currentContext() const
 {
     return m_contextCombo->currentData().toString();
+}
+
+// Every way the selection can move — the user picking a combo row,
+// or rebuildContextCombo landing on a different enabled row behind
+// blocked signals — runs this one cascade: a new page owns a fresh
+// milestone clock, a fresh Elements tree, fresh domain verdicts,
+// and fresh Sources/Security/Application views.
+void BidiPanel::applyContextSelection()
+{
+    // Milestones belong to the page that fired them — a context
+    // switch starts a fresh clock.
+    m_dclMs = m_loadMs = -1.0;
+    refreshDom();
+    updateNetworkSummary();
+    // DEVT13: the verdicts are per-session — a different page is a
+    // different attach, so re-probe, and the Sources/Security/
+    // Application views follow the new page.
+    probeDomains();
+    refreshSources();
+    refreshSecurity();
+    refreshApplication();
 }
 
 void BidiPanel::consoleLine(const QString &prefix, const QString &text)
@@ -2531,11 +2542,14 @@ void BidiPanel::rebuildContextCombo()
     m_contextCombo->setCurrentIndex(idx);
     m_contextCombo->blockSignals(false);
     // currentIndexChanged is blocked — run the context-switch reset
-    // ourselves when the effective context actually moved.
-    if (now != keep) {
-        m_dclMs = m_loadMs = -1.0;
-        updateNetworkSummary();
-    }
+    // ourselves when the effective context actually moved.  DEVT17:
+    // this used to only touch the footer clock, so a selection that
+    // landed through a rebuild (strip churn, a vanished keep, an
+    // enabled row appearing where all rows were disabled) left the
+    // Elements tree empty or showing the old page until something
+    // else happened to call refreshDom().
+    if (now != keep)
+        applyContextSelection();
 }
 
 void BidiPanel::clearNetworkLog()
@@ -2748,6 +2762,18 @@ void BidiPanel::domItemExpanded(QTreeWidgetItem *item)
     }
 }
 
+void BidiPanel::domFetchFailed(QTreeWidgetItem *item,
+                               const QString &why)
+{
+    if (!item)
+        return;
+    while (item->childCount())
+        delete item->takeChild(0);
+    QTreeWidgetItem *row = new QTreeWidgetItem(QStringList(why));
+    row->setDisabled(true);
+    item->addChild(row);
+}
+
 void BidiPanel::refreshStorage()
 {
     const quint64 id = m_client->sendCommand(
@@ -2801,26 +2827,42 @@ void BidiPanel::onResponse(quint64 id, const QByteArray &json)
     const quint64 tag = m_evalTags.take(id);
 
     if (root.contains(QLatin1String("error"))) {
+        const QString errorText = root[QStringLiteral("error")]
+                                      .toObject()[QLatin1String(
+                                          "message")]
+                                      .toString();
         if (tag == TagConsole)
-            consoleLine(QStringLiteral("< error: "),
-                        root[QStringLiteral("error")]
-                            .toObject()[QStringLiteral("message")]
-                            .toString());
+            consoleLine(QStringLiteral("< error: "), errorText);
+        // DEVT17: a refused DOM eval used to be dropped silently —
+        // the branch hung on "loading…" forever.  Verdict-row it so
+        // the tree reads honest (a manual re-expand retries).
+        if (tag == TagDomChildren)
+            domFetchFailed(m_pendingDomItem.take(id), errorText);
+        if (tag == TagDomInject)
+            domFetchFailed(m_domTree->topLevelItem(0), errorText);
         return;
     }
     const QJsonObject result = root[QStringLiteral("result")].toObject();
 
-    if (tag == 0) { // browsingContext.getTree
-        m_contexts = result[QStringLiteral("contexts")].toArray();
-        rebuildContextCombo();
-        refreshDom();
-        refreshApplication();
-        // DEVT13: the combo may already have pointed at this context
-        // (no currentIndexChanged), so kick the probe + the
-        // context-bound tabs from here too.
-        probeDomains();
-        refreshSources();
-        refreshSecurity();
+    if (tag == 0) { // browsingContext.getTree bookkeeping — but the
+        // id->tag map takes() to 0 for ANY unregistered answer, and
+        // housekeeping commands (session.new / session.subscribe /
+        // network.setCacheBehavior) register none.  Their result
+        // carries no "contexts" — without this gate every such answer
+        // wiped the context list, dropped every combo claim, and left
+        // the Elements tree cleared behind them.
+        if (result.contains(QLatin1String("contexts"))) {
+            m_contexts = result[QStringLiteral("contexts")].toArray();
+            rebuildContextCombo();
+            refreshDom();
+            refreshApplication();
+            // DEVT13: the combo may already have pointed at this
+            // context (no currentIndexChanged), so kick the probe +
+            // the context-bound tabs from here too.
+            probeDomains();
+            refreshSources();
+            refreshSecurity();
+        }
         return;
     }
 
@@ -2836,6 +2878,10 @@ void BidiPanel::onResponse(quint64 id, const QByteArray &json)
             // exception line, not a plain reply.
             addConsoleRow(LevelError, QStringLiteral("< ") + text,
                           QJsonObject(), QJsonArray(), false);
+        if (tag == TagDomChildren)
+            domFetchFailed(m_pendingDomItem.take(id), text);
+        if (tag == TagDomInject)
+            domFetchFailed(m_domTree->topLevelItem(0), text);
         if (tag == TagDomProps) {
             m_stylesView->clear();
             m_stylesView->addTopLevelItem(new QTreeWidgetItem(
@@ -2869,8 +2915,20 @@ void BidiPanel::onResponse(quint64 id, const QByteArray &json)
         while (item->childCount())
             delete item->takeChild(0);
         const QString base = item->data(0, Qt::UserRole).toString();
+        const QByteArray payload = value.toString().toUtf8();
+        // DEVT17: the page-side helper answers 'null' when the path
+        // resolves to nothing — a document with no documentElement,
+        // or an element that vanished between expand and fetch.
+        // Silently clearing left a childless node that read as an
+        // empty tree; a verdict row keeps it honest and the null
+        // path lets a re-expand retry.
+        if (payload.trimmed() == "null") {
+            domFetchFailed(
+                item, tr("element no longer in the document"));
+            break;
+        }
         const QJsonArray kids =
-            QJsonDocument::fromJson(value.toString().toUtf8()).array();
+            QJsonDocument::fromJson(payload).array();
         int idx = 0;
         for (const QJsonValue &kv : kids) {
             const QJsonObject k = kv.toObject();
@@ -3098,15 +3156,35 @@ void BidiPanel::onEvent(const QByteArray &json)
         const QString ctx = params[QStringLiteral("context")].toString();
         const double ts =
             params[QStringLiteral("timestamp")].toDouble(-1.0);
-        if (ts >= 0.0
-            && (ctx.isEmpty() || ctx == currentContext())) {
-            if (method == QLatin1String("browsingContext.domContentLoaded"))
-                m_dclMs = ts;
-            else
-                m_loadMs = ts;
-            static_cast<BidiNetworkModel *>(m_networkModel)
-                ->setPageTimings(m_dclMs, m_loadMs);
-            updateNetworkSummary();
+        if (ctx.isEmpty() || ctx == currentContext()) {
+            // DEVT17: the Elements tree's only re-fetch trigger used
+            // to be navigationStarted — its evals race the commit and
+            // land in the old or the not-yet-parsed document, so the
+            // tree came back empty and stayed empty after the real
+            // page parsed.  Re-fetch once the document actually
+            // exists: domContentLoaded always rebuilds, load rebuilds
+            // only if the tree is still stuck on the placeholder (a
+            // domContentLoaded refresh could itself have raced).
+            const bool dcl =
+                method == QLatin1String("browsingContext.domContentLoaded");
+            bool domStale = true;
+            if (QTreeWidgetItem *root = m_domTree->topLevelItem(0)) {
+                domStale = root->childCount() == 0
+                    || (root->childCount() == 1
+                        && root->child(0)->data(0, Qt::UserRole)
+                               .isNull());
+            }
+            if (dcl || domStale)
+                refreshDom();
+            if (ts >= 0.0) {
+                if (dcl)
+                    m_dclMs = ts;
+                else
+                    m_loadMs = ts;
+                static_cast<BidiNetworkModel *>(m_networkModel)
+                    ->setPageTimings(m_dclMs, m_loadMs);
+                updateNetworkSummary();
+            }
         }
         return;
     }

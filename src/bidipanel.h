@@ -160,6 +160,11 @@ private:
     void onConnectionChanged(int state);
     void evaluateInput();
     void refreshContexts();
+    // DEVT17: the shared context-switch cascade — a moved selection
+    // (combo pick or a rebuild landing on a different row) owns a
+    // fresh milestone clock, DOM tree, domain probes, and
+    // context-bound views.
+    void applyContextSelection();
     // DEVT10: merge the last getTree answer with the bound tab strip —
     // one combo row per strip tab in strip order, then CDP pages with
     // no tab here.  Selection restores by context id and falls back to
@@ -186,6 +191,11 @@ private:
     void ensureDomHelper(const QString &context);
     void sendEval(const QString &context, const QString &expression,
                   quint64 tag);
+    // DEVT17: a failed/vanished DOM fetch swaps its "loading…"
+    // placeholder for an honest verdict row instead of hanging the
+    // branch forever; the row keeps the placeholder's null path so a
+    // manual re-expand retries the fetch.
+    void domFetchFailed(QTreeWidgetItem *item, const QString &why);
     void clearNetworkLog();
     void sendCacheBehavior();
     void fitNetworkColumns();

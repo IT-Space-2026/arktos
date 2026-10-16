@@ -35,6 +35,7 @@
 #include <qwebengineview.h>
 
 #include "browsermainwindow.h"
+#include "browserprofile.h"
 #include "devtoolswindow.h"
 #include "webpage.h"
 #include "webview.h"
@@ -83,6 +84,8 @@ private slots:
     void closeReleasesBinding();
     void inspectedPageDestroyedClosesWindow();
     void bidiPanel();
+    void bidiElementsRefresh();
+    void bidiElementsLiveTree();
     void bidiContextSelector();
     void bidiContextRematch();
     void bidiConsoleParity();
@@ -890,6 +893,189 @@ void tst_DevTools::bidiPanel()
 // tabs with no CDP target (engine tabs, widget tabs) appear disabled
 // with the reason instead of being silently absent, and a strip whose
 // first slot isn't debuggable never strands the selection on it.
+// DEVT17: the empty-Elements report — four holes in the live path
+// the canned-JSON legs missed.  (a) Untagged housekeeping answers
+// (session.new/subscribe, network.setCacheBehavior) took the
+// tag==0/getTree route and wiped the context list + tree because
+// their result carries no "contexts".  (b) The only re-fetch
+// trigger was navigationStarted, whose evals race the commit and
+// land in the torn-down or not-yet-parsed document — the completed
+// page never re-fetched.  (c) A rebuild that silently moved the
+// effective selection ran no context-switch cascade, so the tree
+// stayed empty/stale while the combo pointed at a live context.
+// (d) Refused/exception/vanished DOM answers were dropped on the
+// floor, hanging branches on "loading…" forever.
+void tst_DevTools::bidiElementsRefresh()
+{
+    const QByteArray domAnswer = QByteArray(
+        "{\"result\":{\"type\":\"success\",\"result\":{\"type\":\"string\""
+        ",\"value\":\"[{\\\"label\\\":\\\"div\\\",\\\"children\\\":0}]\"}}}");
+
+    BidiPanel panel;
+    panel.onConnectionChanged(BidiClient::Connected);
+
+    // getTree: two contexts, combo claims by order (no strip bound —
+    // pending contexts append as enabled rows).
+    panel.onResponse(7777, QByteArray(
+        "{\"result\":{\"contexts\":["
+        "{\"context\":\"ctx1\",\"url\":\"http://a/\"},"
+        "{\"context\":\"ctx2\",\"url\":\"http://b/\"}]}}"));
+    QCOMPARE(panel.currentContext(), QStringLiteral("ctx1"));
+    QCOMPARE(panel.m_domTree->topLevelItemCount(), 1);
+    QTreeWidgetItem *root = panel.m_domTree->topLevelItem(0);
+
+    // (a) Housekeeping answers shaped like session.new /
+    // session.subscribe / network.setCacheBehavior must leave the
+    // selector and the Elements tree alone.
+    panel.onResponse(8001, QByteArray(
+        "{\"result\":{\"sessionId\":\"arora-bidi-1\","
+        "\"capabilities\":{}}}"));
+    panel.onResponse(8002, QByteArray("{\"result\":{}}"));
+    QCOMPARE(panel.currentContext(), QStringLiteral("ctx1"));
+    QCOMPARE(panel.m_contextCombo->count(), 2);
+    QCOMPARE(panel.m_domTree->topLevelItemCount(), 1);
+    QCOMPARE(panel.m_domTree->topLevelItem(0), root);
+
+    // Materialize real children under the root so a rebuild is
+    // observable (the placeholder is the only no-path child).
+    quint64 id = panel.testDomExpand(root);
+    panel.onResponse(id, domAnswer);
+    QCOMPARE(root->childCount(), 1);
+    QVERIFY(!root->child(0)->data(0, Qt::UserRole).isNull());
+
+    // (b) domContentLoaded on the current context rebuilds the tree
+    // — the live path's missing re-fetch: back to a placeholder.
+    panel.onEvent(QByteArray(
+        "{\"method\":\"browsingContext.domContentLoaded\",\"params\":{"
+        "\"context\":\"ctx1\",\"timestamp\":100.0}}"));
+    root = panel.m_domTree->topLevelItem(0);
+    QVERIFY(root);
+    QCOMPARE(root->childCount(), 1);
+    QVERIFY(root->child(0)->data(0, Qt::UserRole).isNull());
+
+    // …and once materialized again, a trailing load event leaves the
+    // good tree alone (the stale-only backstop, not a rebuild).
+    id = panel.testDomExpand(root);
+    panel.onResponse(id, domAnswer);
+    panel.onEvent(QByteArray(
+        "{\"method\":\"browsingContext.load\",\"params\":{"
+        "\"context\":\"ctx1\",\"timestamp\":200.0}}"));
+    root = panel.m_domTree->topLevelItem(0);
+    QVERIFY(!root->child(0)->data(0, Qt::UserRole).isNull());
+
+    // …but a load arriving while the tree is still a placeholder
+    // does re-fetch (covers a domContentLoaded that raced early).
+    panel.m_domTree->clear();
+    root = new QTreeWidgetItem(QStringList(QStringLiteral("document")));
+    root->setData(0, Qt::UserRole, QString());
+    root->addChild(new QTreeWidgetItem(QStringList(QStringLiteral("x"))));
+    panel.m_domTree->addTopLevelItem(root);
+    panel.onEvent(QByteArray(
+        "{\"method\":\"browsingContext.load\",\"params\":{"
+        "\"context\":\"ctx1\",\"timestamp\":300.0}}"));
+    QCOMPARE(panel.m_domTree->topLevelItemCount(), 1);
+    root = panel.m_domTree->topLevelItem(0);
+    QVERIFY(root->child(0)->data(0, Qt::UserRole).isNull()
+            || root->child(0)->text(0) != QStringLiteral("x"));
+
+    // A milestone for another context never touches the tree.
+    panel.onEvent(QByteArray(
+        "{\"method\":\"browsingContext.domContentLoaded\",\"params\":{"
+        "\"context\":\"ctx2\",\"timestamp\":400.0}}"));
+    QCOMPARE(panel.m_domTree->topLevelItem(0), root);
+
+    // (d) A refused children eval turns into a verdict row, not a
+    // permanent "loading…"; the row keeps a null path so expanding
+    // retries the fetch.
+    id = panel.testDomExpand(root);
+    panel.onResponse(id, QByteArray(
+        "{\"error\":{\"message\":\"attach refused\"}}"));
+    QCOMPARE(root->childCount(), 1);
+    QCOMPARE(root->child(0)->text(0),
+             QStringLiteral("attach refused"));
+    QVERIFY(root->child(0)->isDisabled());
+    QVERIFY(root->child(0)->data(0, Qt::UserRole).isNull());
+
+    // An exception answer (helper gone after a navigation) same.
+    id = panel.testDomExpand(root);
+    panel.onResponse(id, QByteArray(
+        "{\"result\":{\"type\":\"exception\",\"exceptionDetails\":{"
+        "\"text\":\"TypeError: gone\"}}}"));
+    QCOMPARE(root->child(0)->text(0),
+             QStringLiteral("TypeError: gone"));
+
+    // A 'null' payload (element/document gone) gets the honest
+    // gone-verdict instead of a silently childless node.
+    id = panel.testDomExpand(root);
+    panel.onResponse(id, QByteArray(
+        "{\"result\":{\"type\":\"success\",\"result\":{\"type\":\"string\""
+        ",\"value\":\"null\"}}}"));
+    QCOMPARE(root->child(0)->text(0),
+             QStringLiteral("element no longer in the document"));
+
+    // (c) A rebuild that silently moves the effective selection runs
+    // the switch cascade — the tree repopulates for the new context
+    // instead of staying empty.  Selection is ctx1; drop it from the
+    // cached contexts so the rebuild falls forward to ctx2.
+    panel.m_contextCombo->setCurrentIndex(0); // ctx1
+    QCOMPARE(panel.currentContext(), QStringLiteral("ctx1"));
+    panel.m_contexts = QJsonArray{QJsonObject{
+        {QStringLiteral("context"), QStringLiteral("ctx2")},
+        {QStringLiteral("url"), QStringLiteral("http://b/")}}};
+    panel.m_domTree->clear();
+    panel.rebuildContextCombo();
+    QCOMPARE(panel.currentContext(), QStringLiteral("ctx2"));
+    QCOMPARE(panel.m_domTree->topLevelItemCount(), 1);
+}
+
+// DEVT17: the Elements tab against the REAL debug channel — the
+// fixture legs drive onResponse with canned JSON, which proved the
+// handlers but not the live connect -> subscribe -> getTree -> eval
+// chain.  This leg needs the armed loopback endpoint; it skips when
+// the backend is disabled (devtools/bidiBackend=0, no rustcore).
+void tst_DevTools::bidiElementsLiveTree()
+{
+    if (BrowserProfile::bidiDebugPort() == 0)
+        QSKIP("debug channel not armed in this build/config");
+
+    TabWidget strip;
+    WebView *view = strip.makeNewTab(true);
+    QVERIFY(view);
+    QSignalSpy loaded(view->page(), &QWebEnginePage::loadFinished);
+    view->setHtml(QStringLiteral("<html><head><title>elements</title>"
+                                 "</head><body><h1 id=\"t\">elem</h1>"
+                                 "<p class=\"x\">para</p></body></html>"),
+                  QUrl(QStringLiteral("http://elements.test/")));
+    QTRY_VERIFY(loaded.count() >= 1);
+
+    BidiPanel panel;
+    panel.setTabWidget(&strip);
+    panel.show(); // showEvent -> connectToEngine
+    QTRY_VERIFY_WITH_TIMEOUT(
+        panel.m_client->state() == BidiClient::Connected, 15000);
+    // getTree -> rebuild: the tab claims its context.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !panel.currentContext().isEmpty(), 15000);
+
+    // The tree root materializes, then its lazy children fetch fills
+    // real element rows (the placeholder carries no index path).
+    QTRY_VERIFY_WITH_TIMEOUT(
+        panel.m_domTree->topLevelItemCount() >= 1, 15000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        panel.m_domTree->topLevelItem(0)->childCount() >= 1
+            && !panel.m_domTree->topLevelItem(0)->child(0)
+                    ->data(0, Qt::UserRole).isNull(),
+        15000);
+    // document's element children are the real tags — head/body —
+    // never the "loading…" placeholder.
+    QStringList labels;
+    QTreeWidgetItem *rootItem = panel.m_domTree->topLevelItem(0);
+    for (int i = 0; i < rootItem->childCount(); ++i)
+        labels << rootItem->child(i)->text(0);
+    QVERIFY(labels.contains(QLatin1String("head"))
+            || labels.contains(QLatin1String("body")));
+}
+
 void tst_DevTools::bidiContextSelector()
 {
     const auto flagsOf = [](QComboBox *combo, int row) {
