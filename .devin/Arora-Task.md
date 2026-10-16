@@ -338,8 +338,8 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | MPROF04 | moved to rust lane | done | 0 | parallel stream — see arora-rust task file |
 | MPROF05 | moved to UI lane | done | 0 | parallel stream — see arora-ui task file |
 | MPROF06 | Multi-profile integration/e2e pass — isolation verified, migration verified, single-profile regression sweep — details below | pending | 0 | needs: all MPROF merged |
-| PVAULT02 | Profile vault engine: seal/unseal orchestration, dirty-crash recovery, cache exclusion, registry lock flag — details below | pending | 0 | needs:task:PVAULT01 (rust lane); loose dep on MPROF01 layout — standalone fallback in spec |
-| PVAULT04 | Profile vault e2e: lock/unlock round-trip, tamper detection, crash-dirty re-seal offer — details below | pending | 0 | needs: PVAULT01+02+03 merged |
+| PVAULT02 | moved to rust lane | done | 0 | parallel stream — see arora-rust task file |
+| PVAULT04 | moved to rust lane | done | 0 | parallel stream — see arora-rust task file |
 
 ## Task details
 
@@ -2110,14 +2110,4 @@ needs:task:MPROF02. Window↔profile binding — the point where profiles become
 
 Integration + e2e — run only after MPROF01-05 (and PROF01-04 for the menu surface) have all merged: check `git log master --grep=MPROF`. (a) ISOLATION E2E: two profiles live — history/bookmarks/cookies/settings under A invisible from B; a site logged-in on A is logged-out on B; avatar/name independent; containers per profile. (b) MIGRATION E2E: seeded pre-MPROF data dir (history + bookmarks + settings + avatar) → upgrade → everything intact under default; marker set; second boot no-op. (c) REGRESSION SWEEP: single-profile users must see zero change — the whole autotest suite is the gate; specifically the clear-data actions, Delete Profile (still nukes everything incl. all profiles), private windows, tor windows, session restore. (d) Honest-docs leg: README/ChangeLog describe the model (per-profile stores, global trust/site-decisions if that choice held, no sync). Verify: legs as above + full make check PASS + --quit-after-load rc=0 on both profiles. Tests: REQUIRED — add a dedicated autotest binary (tst_profilecontext / tst_profilemanagers / legs in the owning suites — suite choice is yours) asserting the spec's Verify items; smoke-only coverage does not count as done.
 
-### PVAULT02
 
-Profile vault seal/unseal engine — needs:task:PVAULT01 (rust lane ships `rustcore` profilevault FFI). Loose dep on MPROF01's `profiles/<id>/` layout — if it hasn't merged, build the engine against `dataFilePath()` root (the pre-MPROF single dir is exactly what `profiles/default/` becomes), and mark the profile-id plumbing with the conditional hook pattern.
-
-Spec: (a) **seal** — take the profile dir, exclude `cache/` (disposable — spec'd exclusion stays unsealed), stream-pack via the FFI (`rv_seal(dir, password, algo)`), write `vault.arv` atomically (temp+rename), secure-erase the plaintext tree (single overwrite + fsync on each sensitive file — SSD wear-leveling caveat documented honestly, no fake 3-pass claim), leave a `vault.lock` marker. (b) **unseal** — verify header+HMAC first (fail closed: wrong password or tamper = no partial unpack, error surfaces honestly), stream-unpack, remove marker on success. (c) **crash-dirty recovery** — if app dies while unlocked, plaintext remains; next boot detects `unlocked.dirty` + missing sealed blob → offer "Re-seal now" (honest residual-window wording, never silent). (d) **registry integration** — lock flag + kdf params + algo id per profile in the profile registry (pre-MPROF: a `vault.conf` next to the dir). (e) **lock triggers** — menu lock action hook (PVAULT03 UI fills it), auto-lock on profile's last window close. Never lock a profile with open windows; never unseal over existing plaintext without explicit confirm.
-
-Verify: legs — seal→unseal round-trip preserves file tree byte-for-byte; tampered ciphertext → HMAC fail, zero files unpacked; wrong password fails closed; dirty-boot detection fires; cache excluded; make check PASS. Tests: REQUIRED — dedicated autotest coverage; smoke-only does not count as done.
-
-### PVAULT04
-
-Profile vault e2e integration — needs: PVAULT01+02+03 merged. Full pipeline: create profile → set password → lock → verify dir replaced by sealed blob + marker → unlock via prompt → windows open on the profile → auto-lock on last-window-close → tamper test (flip a ciphertext byte → unlock refuses, honest error) → dirty-crash → re-seal offer works → wrong-password N attempts rate-limit sane (no lockout theater, just honest attempt cost via argon2 memory-hardness). Also: locked profile never yields history/cookies reads; Delete Profile on a locked profile wipes vault.arv without needing the password (owner-host honesty — the local operator can always delete their own data; document this). Verify: all legs + make check PASS + quit-after-load on locked profile doesn't unpack anything. Tests: REQUIRED — dedicated autotest coverage.
