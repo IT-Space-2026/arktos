@@ -1018,6 +1018,16 @@ UI:
   on any profile share one memory-only off-the-record overlay that
   writes nothing to disk; site trust and permission decisions stay
   global — they are not persona data (MPROF03).
+- Multi-profile integration verified end to end: a dedicated
+  autotest drives two live profiles through real windows, engine
+  cookie stores and a loopback navigation probe — history,
+  bookmarks, settings, cookies, identities and containers stay
+  disjoint, a pre-multi-profile data directory upgrades intact into
+  the default profile, and private/Tor sessions write nothing to any
+  persona's store. New `arora --profile <id>` flag launches a
+  standalone instance bound to a registry persona (useful for a
+  second concurrent instance). Profiles are local-only: there is no
+  sync service and nothing leaves the data directory (MPROF06).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

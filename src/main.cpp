@@ -5190,6 +5190,19 @@ int main(int argc, char **argv)
             "Internal: filesystem probe executed inside the sandbox "
             "(spawned by --sandbox-smoke)."),
         QLatin1String("workdir")));
+    // MPROF06: bind this run to a registry persona.  Like every
+    // option flag it makes the run standalone (no single-instance
+    // forwarding) — which is also what a second concurrent profile
+    // wants — and the standalone harness below hands the id to
+    // webEngineProfileFor() so --quit-after-load and the smokes can
+    // drive any profile, not just the default one.  A non-slug id
+    // degrades to "default" inside BrowserProfile::profileFor().
+    parser.addOption(QCommandLineOption(
+        QLatin1String("profile"),
+        QCoreApplication::translate("main",
+            "Run this (standalone) instance bound to the given "
+            "browser profile id, as listed in the Profile Manager."),
+        QLatin1String("id")));
     // Internal development/verification flags.
     const char *const internalOptions[] = {
         "quit-after-load",
@@ -5682,7 +5695,15 @@ int main(int argc, char **argv)
             || args.contains(QLatin1String("--vault-smoke-dirty-seed")))
         return vaultSmoke(application, args);
 
-    QWebEngineProfile *profile = BrowserApplication::webEngineProfile();
+    // MPROF06: --profile <id> rebinds the whole harness — the stub
+    // view, its cookie jar and every service prepareProfile()
+    // attaches — to that persona's named QWebEngineProfile.  Empty
+    // keeps the default browsing profile.
+    const QString harnessProfileId =
+        parser.value(QLatin1String("profile"));
+    QWebEngineProfile *profile = harnessProfileId.isEmpty()
+        ? BrowserApplication::webEngineProfile()
+        : BrowserApplication::webEngineProfileFor(harnessProfileId);
     CookieJar *cookieJar = CookieJar::instance(profile);
     NetworkAccessManager *networkAccessManager =
         BrowserApplication::networkAccessManager();

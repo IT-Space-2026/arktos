@@ -581,7 +581,12 @@ core landed and UX/completion work still landing.
     bookmarks, cookies, extensions and containers live under its own
     `profiles/<id>/` directory with its own settings.ini, and every
     window is bound to one profile — private and Tor sessions write
-    nothing to any profile store
+    nothing to any profile store. Site trust verdicts and permission
+    decisions stay machine-global by design (they are not persona
+    data); cookie rules and container assignments are persona-scoped.
+    There is no sync service — profiles never leave the local data
+    directory. `arora --profile <id>` launches a standalone instance
+    bound to a registry persona
   - Profile vaults *(in progress)* — whole-profile sealed archives
     (ARV1): Argon2id KEK wrapping a random 512-bit vault key,
     AES-256-GCM chunks + HMAC-SHA-512 integrity, optional
