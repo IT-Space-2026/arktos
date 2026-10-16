@@ -69,6 +69,7 @@
 #include "bookmarknode.h"
 #include "browsertheme.h"
 #include "aroraicon.h"
+#include "arorastyle.h"
 #include "containermanager.h"
 #include "bookmarksdialog.h"
 #include "bookmarksmanager.h"
@@ -201,6 +202,7 @@ private slots:
     void torStatusBarTheme();
     void torNavIconsDarkChrome();
     void torChromeGlyphsLegible();
+    void torReaderAccent();
     void darkChromeIcons();
     void darkThemeReaderGlyph();
     void torCircuitDropdown();
@@ -2865,9 +2867,48 @@ void tst_BrowserMainWindow::torChromeGlyphsLegible()
         return lums;
     };
 
-    // At open: reader glyph light, rail strip violet with light
+    // THEM06: once the article verdict lands the glyph honestly wears
+    // the accent mark — the tor raised violet — which is darker than
+    // the chrome text the plain-state assert gates on (and so was the
+    // stray app-blue it replaced).  A flat luminance assert read the
+    // legitimate accent as a stale dark bake whenever the verdict won
+    // the race against the measurement, so the reader checks below
+    // are state-aware: a suggested glyph's dominant ink must BE the
+    // accent (the button's override when one is set, else the palette
+    // accent), a plain glyph must stay light.
+    const auto readerInkOk = [&reader]() -> bool {
+        const QImage image =
+            reader->icon().pixmap(QSize(18, 18)).toImage();
+        QHash<QRgb, int> counts;
+        int best = 0;
+        QColor ink;
+        for (int y = 0; y < image.height(); ++y)
+            for (int x = 0; x < image.width(); ++x) {
+                const QColor color = image.pixelColor(x, y);
+                if (color.alpha() > 200) {
+                    const int n = ++counts[color.rgb()];
+                    if (n > best) {
+                        best = n;
+                        ink = color;
+                    }
+                }
+            }
+        if (!ink.isValid())
+            return false;
+        if (reader->property("suggested").toBool()) {
+            const QColor accent = reader->accentOverride().isValid()
+                ? reader->accentOverride()
+                : reader->palette().color(QPalette::Accent);
+            return qAbs(ink.red() - accent.red()) <= 2
+                && qAbs(ink.green() - accent.green()) <= 2
+                && qAbs(ink.blue() - accent.blue()) <= 2;
+        }
+        return qGray(ink.rgb()) > 140;
+    };
+
+    // At open: reader glyph on-theme, rail strip violet with light
     // glyphs, fold toggle light.
-    const qlonglong readerOpen = luminance(reader->icon());
+    const bool readerOpen = readerInkOk();
     const QList<qlonglong> railOpen = railLums();
     const qlonglong railOpenSelected =
         luminance(rail->tabIcon(0), QIcon::Selected);
@@ -2880,27 +2921,27 @@ void tst_BrowserMainWindow::torChromeGlyphsLegible()
     // button on, exactly the mid-scroll refresh the report caught.
     view->load(QUrl::fromLocalFile(articlePath));
     QTRY_VERIFY_WITH_TIMEOUT(!reader->isHidden(), 20000);
-    const qlonglong readerVerdict = luminance(reader->icon());
+    const bool readerVerdict = readerInkOk();
 
     // Rebind/unbind — the tab-switch refresh path.
     reader->setWebView(nullptr);
     reader->setWebView(view);
-    const qlonglong readerRebind = luminance(reader->icon());
+    const bool readerRebind = readerInkOk();
 
     // Nav-bar edit mode re-setStyleSheet()s the bar — the repolish
     // window where the transient dark palette used to bake in.  A
-    // refresh inside the settling window must still land light (or
+    // refresh inside the settling window must still land on-theme (or
     // be rebaked by the PaletteChange that follows).
     window->navBarEditAction()->trigger();
     QApplication::processEvents();
     reader->setWebView(nullptr);
     reader->setWebView(view);
-    const qlonglong readerEditOn = luminance(reader->icon());
+    const bool readerEditOn = readerInkOk();
     window->navBarEditAction()->trigger();
     QApplication::processEvents();
     reader->setWebView(nullptr);
     reader->setWebView(view);
-    const qlonglong readerEditOff = luminance(reader->icon());
+    const bool readerEditOff = readerInkOk();
     const QList<qlonglong> railAfterEdit = railLums();
     const qlonglong foldAfterEdit = luminance(fold->icon());
 
@@ -2910,13 +2951,13 @@ void tst_BrowserMainWindow::torChromeGlyphsLegible()
     QApplication::processEvents();
     reader->setWebView(nullptr);
     reader->setWebView(view);
-    const qlonglong readerDark = luminance(reader->icon());
+    const bool readerDark = readerInkOk();
     const QList<qlonglong> railDark = railLums();
     BrowserTheme::previewColorScheme(Qt::ColorScheme::Light);
     QApplication::processEvents();
     reader->setWebView(nullptr);
     reader->setWebView(view);
-    const qlonglong readerBackLight = luminance(reader->icon());
+    const bool readerBackLight = readerInkOk();
     const QList<qlonglong> railBackLight = railLums();
 
     // Offscreen grab for visual review — ARORA_TOR_GRAB_DIR picks up
@@ -2953,16 +2994,18 @@ void tst_BrowserMainWindow::torChromeGlyphsLegible()
     QVERIFY(railOpenSelected > 140);
     QVERIFY(foldOpen > 140);
     QVERIFY(isViolet(railBackground));
-    // Reader: light at open, and still light through the probe
+    // Reader: on-theme at open, and still on-theme through the probe
     // verdict, tab rebinding, the edit-mode repolish and a live
-    // scheme flip — no path may leave a stale dark bake.
-    QVERIFY(readerOpen > 140);
-    QVERIFY(readerVerdict > 140);
-    QVERIFY(readerRebind > 140);
-    QVERIFY(readerEditOn > 140);
-    QVERIFY(readerEditOff > 140);
-    QVERIFY(readerDark > 140);
-    QVERIFY(readerBackLight > 140);
+    // scheme flip — no path may leave a stale dark bake, and the
+    // suggested mark must come out of the tor accent, not the app
+    // palette's blue.
+    QVERIFY(readerOpen);
+    QVERIFY(readerVerdict);
+    QVERIFY(readerRebind);
+    QVERIFY(readerEditOn);
+    QVERIFY(readerEditOff);
+    QVERIFY(readerDark);
+    QVERIFY(readerBackLight);
     for (const qlonglong lum : railAfterEdit)
         QVERIFY(lum > 140);
     QVERIFY(foldAfterEdit > 140);
@@ -2970,6 +3013,151 @@ void tst_BrowserMainWindow::torChromeGlyphsLegible()
         QVERIFY(lum > 140);
     for (const qlonglong lum : railBackLight)
         QVERIFY(lum > 140);
+}
+
+// THEM06: the reader glyph's accent states resolve QPalette::Accent —
+// on the tor window that stayed the app palette's blue, so the
+// suggested mark and the active page fill painted a stray blue on the
+// violet bar.  The tor palette seed now hands the engine the raised
+// violet accent — the family the badge pill and the sidebar rail's
+// selection already wear — while a normal window keeps its own
+// surface accent.  A file:// article drives the real Readability
+// verdict so the suggested state is honest; a click exercises the
+// active fill.
+void tst_BrowserMainWindow::torReaderAccent()
+{
+    const auto dominantInk = [](const QIcon &icon, const QSize &size)
+            -> QColor {
+        const QImage image = icon.pixmap(size).toImage();
+        QHash<QRgb, int> counts;
+        int best = 0;
+        QColor dominant;
+        for (int y = 0; y < image.height(); ++y)
+            for (int x = 0; x < image.width(); ++x) {
+                const QColor color = image.pixelColor(x, y);
+                if (color.alpha() > 200) {
+                    const int n = ++counts[color.rgb()];
+                    if (n > best) {
+                        best = n;
+                        dominant = color;
+                    }
+                }
+            }
+        if (!dominant.isValid())
+            return dominant;
+        return QColor(dominant.red(), dominant.green(), dominant.blue());
+    };
+    const auto inkMatch = [](const QColor &a, const QColor &b) {
+        return qAbs(a.red() - b.red()) <= 2
+            && qAbs(a.green() - b.green()) <= 2
+            && qAbs(a.blue() - b.blue()) <= 2;
+    };
+
+    const QString articlePath =
+        QDir::temp().filePath(QLatin1String("arora-them06-article.html"));
+    {
+        QFile article(articlePath);
+        QVERIFY(article.open(QIODevice::WriteOnly));
+        article.write("<html><head><title>An article</title></head>"
+                      "<body><article><h1>An article</h1>");
+        for (int i = 0; i < 12; ++i)
+            article.write("<p>Lorem ipsum dolor sit amet, consectetur "
+                          "adipiscing elit, sed do eiusmod tempor "
+                          "incididunt ut labore et dolore magna aliqua. "
+                          "Ut enim ad minim veniam, quis nostrud "
+                          "exercitation ullamco laboris nisi ut aliquip "
+                          "ex ea commodo consequat.</p>");
+        article.write("</article></body></html>");
+    }
+    const QSize iconSize(18, 18);
+
+    // Normal window: the suggested mark keeps the surface's own
+    // accent — whatever the platform palette resolves, unchanged.
+    QColor plainSuggested;
+    QColor plainAccent;
+    {
+        SubWindow *plain = new SubWindow;
+        plain->resize(1000, 600);
+        plain->show();
+        QApplication::processEvents();
+        ReaderButton *reader = plain->findChild<ReaderButton *>(
+            QLatin1String("navReaderButton"));
+        QVERIFY(reader);
+        WebView *tab = plain->currentTab();
+        ReaderMode *mode = tab->readerMode();
+        QVERIFY(mode);
+        tab->loadUrl(QUrl::fromLocalFile(articlePath));
+        QTRY_VERIFY_WITH_TIMEOUT(mode->isAvailable(), 20000);
+        QVERIFY(reader->property("suggested").toBool());
+        plainSuggested = dominantInk(reader->icon(), iconSize);
+        plainAccent = reader->palette().color(QPalette::Accent);
+        closeWindow(plain);
+    }
+
+    // Tor window: the same mark must come out of the tor accent
+    // family — the override the window installs, then the painted
+    // pixels of both accent states.
+    QColor torSuggested;
+    QColor torActive;
+    QColor torAccentOverride;
+    // A leg that fails mid-test would otherwise leak tor mode into
+    // every later test in the process.
+    struct TorGuard {
+        ~TorGuard() { BrowserApplication::setTorMode(false); }
+    } torGuard;
+    BrowserApplication::setTorMode(true);
+    {
+        SubWindow *window = new SubWindow;
+        window->resize(1000, 600);
+        window->show();
+        QApplication::processEvents();
+        ReaderButton *reader = window->findChild<ReaderButton *>(
+            QLatin1String("navReaderButton"));
+        QVERIFY(reader);
+        torAccentOverride = reader->accentOverride();
+        WebView *tab = window->currentTab();
+        ReaderMode *mode = tab->readerMode();
+        QVERIFY(mode);
+        tab->loadUrl(QUrl::fromLocalFile(articlePath));
+        QTRY_VERIFY_WITH_TIMEOUT(mode->isAvailable(), 20000);
+        QVERIFY(reader->property("suggested").toBool());
+        torSuggested = dominantInk(reader->icon(), iconSize);
+        // The active state fills the page with the accent — its
+        // dominant ink is the fill color itself.
+        reader->click();
+        QTRY_VERIFY_WITH_TIMEOUT(mode->isActive(), 20000);
+        torActive = dominantInk(reader->icon(), iconSize);
+        reader->click();
+        QTRY_VERIFY_WITH_TIMEOUT(!mode->isActive(), 20000);
+        closeWindow(window);
+    }
+    BrowserApplication::setTorMode(false);
+    QFile::remove(articlePath);
+
+    const QColor torAccent = AroraStyle::torChromeRaisedColor();
+    QVERIFY2(inkMatch(plainSuggested, plainAccent),
+             qPrintable(QStringLiteral("plain suggested %1 vs accent %2")
+                        .arg(plainSuggested.name())
+                        .arg(plainAccent.name())));
+    QVERIFY2(inkMatch(torAccentOverride, torAccent),
+             qPrintable(QStringLiteral("tor accent override %1 vs %2")
+                        .arg(torAccentOverride.name())
+                        .arg(torAccent.name())));
+    QVERIFY2(inkMatch(torSuggested, torAccent),
+             qPrintable(QStringLiteral("tor suggested %1 vs %2")
+                        .arg(torSuggested.name()).arg(torAccent.name())));
+    QVERIFY2(inkMatch(torActive, torAccent),
+             qPrintable(QStringLiteral("tor active %1 vs %2")
+                        .arg(torActive.name()).arg(torAccent.name())));
+    // The regression pin: the platform accent is a blue (green or
+    // blue channel leads red) — the tor mark must read violet
+    // (red over green) instead.
+    QVERIFY2(torSuggested.red() > torSuggested.green(),
+             qPrintable(QStringLiteral("tor suggested not violet: %1")
+                        .arg(torSuggested.name())));
+    QVERIFY2(torActive.red() > torActive.green(),
+             qPrintable(QStringLiteral("tor active not violet: %1")
+                        .arg(torActive.name())));
 }
 
 // ICONS05: the normal window's chrome under a dark palette.  The

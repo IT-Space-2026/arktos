@@ -39,12 +39,22 @@ public:
     ReaderButton(QWidget *parent = nullptr);
     void setWebView(WebView *webView);
 
+    // THEM06: an accent override applied to the icon's palette
+    // snapshot at bake time — for chrome whose accent differs from
+    // the app palette's.  The tor bar needs this because a stylesheet
+    // repolish rebuilds the widget palette from QApplication::palette
+    // + the sheet's roles, wiping a widget-level Accent seed (the
+    // sheet only rewrites ButtonText).  An invalid color clears it.
+    void setAccentOverride(const QColor &color);
+    QColor accentOverride() const { return m_accentOverride; }
+
 private:
     void changeEvent(QEvent *event) override;
     void refresh();
     QIcon makeIcon(bool active, bool suggested) const;
 
     QPointer<WebView> m_webView;
+    QColor m_accentOverride;
 };
 
 #endif // READERBUTTON_H

@@ -382,6 +382,15 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
         readerPalette.setColor(QPalette::ButtonText,
                                AroraStyle::torTextColor());
         m_readerModeButton->setPalette(readerPalette);
+        // THEM06: the suggested/active marks resolve QPalette::Accent
+        // — the app palette's blue read as a stray blue on the violet
+        // bar.  A palette seed can't carry it: the next stylesheet
+        // repolish rebuilds the widget palette and wipes widget-level
+        // roles the sheet never set.  The button's accent override is
+        // applied to the icon's palette snapshot at bake time instead
+        // — the violet the badge pill and rail selection already wear.
+        m_readerModeButton->setAccentOverride(
+            AroraStyle::torChromeRaisedColor());
         // TOR08: same lift for the circuit button's painted onion —
         // its PaletteChange handler repaints the glyph.
         if (m_torCircuitButton) {
