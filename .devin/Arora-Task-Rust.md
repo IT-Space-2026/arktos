@@ -512,7 +512,9 @@ Profile vault crypto module — genuine Rust task (audited crypto crates, zeroiz
 - payload: tar-style pack of the profile dir, chunked (16MB); each chunk independently encrypted + tagged
 - HMAC-SHA-512 over full ciphertext
 
-**Key schedule:** Argon2id (default 64MB / t=3 / p=4, params stored in header for future tuning) → 512-bit output → `enc_key`(256b) + `mac_key`(256b) — the "AES-512-class" composite the user asked for (AES is only standardized to 256-bit keys; 512-bit composite = what vendors mean by it). `zeroize` everything; password bytes never persisted.
+**Key schedule — two-tier (wrapped vault key):** the vault key is **random**, not password-derived. At seal: generate 512-bit `vault_key` (enc_key 256b + mac_key 256b) from the OS RNG — the "AES-512-class" composite (AES is only standardized to 256-bit keys; 512-bit composite = what vendors mean). Argon2id(password, salt — default 64MB / t=3 / p=4, params in header) → 256-bit `kek`; header stores `AEAD_encrypt(kek, vault_key)`. Unseal is a **two-stage check producing distinct errors**: (1) unwrap tag fails → `WrongPassword`; (2) unwrap ok but ciphertext HMAC fails → `Tampered`. Edge honestly documented: bits flipped inside the wrapped-key field report as WrongPassword (still fails closed). Side benefit — password change only re-wraps, no re-encrypt. `zeroize` everything; password and vault_key bytes never persisted.
+
+**No partial unpack (structural):** unseal is two-pass — pass 1 stream-verifies the full ciphertext HMAC before writing any plaintext; pass 2 decrypts into `out_dir.tmp`, fsyncs, atomic-renames on success only. Any failure = zero unpacked artifacts.
 
 **Algorithm agility (user-requested):** `algo_id` field selects:
 - `0x01` = AES-256-GCM per chunk + HMAC-SHA-512 — **default** (AES-NI, audited, boring)
