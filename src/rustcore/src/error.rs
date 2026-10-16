@@ -32,6 +32,15 @@ pub enum RcStatus {
     /// Named credential does not exist.
     NotFound = 11,
     EmptyPassphrase = 12,
+    /// Vault (PVAULT01): the wrapped-key AEAD rejected the derived
+    /// KEK — wrong password.  Deliberately distinct from Tampered:
+    /// the caller can tell "bad password" from "damaged vault".
+    WrongPassword = 13,
+    /// Vault: key unwrap succeeded but a MAC check failed — header
+    /// MAC, a per-chunk tag, or the whole-payload MAC.
+    Tampered = 14,
+    /// Vault: header's algo_id selects no implemented lane.
+    UnsupportedAlgo = 15,
 }
 
 #[derive(Debug)]

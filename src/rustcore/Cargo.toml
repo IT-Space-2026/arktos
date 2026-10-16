@@ -48,8 +48,23 @@ x509-parser = "=0.18.1"
 # packages vs the update-manifest hash, and pure-Rust inflate for
 # reading manifest.json out of a deflated zip member.  Exact-pinned
 # like the rest of the reviewed tree.
-sha2 = "=0.10.9"
+# sha2 rides the digest-0.11 line so the PVAULT01 HMAC-SHA-512 /
+# HMAC-Skein-512 MACs share one hmac/digest trait universe with the
+# skein crate (digest 0.11 only); extverify's Sha256::digest use is
+# API-identical across the bump.
+sha2 = "=0.11.0"
 miniz_oxide = "=0.8.9"
+# Profile vault (PVAULT01): chunked, password-sealed profile archives.
+# hmac supplies HMAC-SHA-512 (header + whole-payload MACs) and the
+# Skein-MAC construction for the optional Threefish lane; threefish
+# is used at the hazmat block-cipher level (new_with_tweak +
+# encrypt_block_u64 — the cipher-feature trait plumbing is unused);
+# tar is the "tar-style pack" the chunks encrypt.  Exact-pinned like
+# the rest of the reviewed tree.
+hmac = "=0.13.0"
+threefish = { version = "=0.6.0", default-features = false }
+skein = { version = "=0.2.0", default-features = false }
+tar = "=0.4.46"
 dom_smoothie = "=0.18.2"
 dom_query = "=0.28.0"
 # QR encoding (QRC01): Nayuki's qrcodegen-rs — the same code lineage

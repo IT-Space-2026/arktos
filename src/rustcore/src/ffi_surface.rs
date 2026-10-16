@@ -1453,3 +1453,114 @@ fn useragent_and_clearplan_entry_points() {
     assert!(unsafe { crate::rc_clearplan(bogus.as_ptr(), 0xFF, 0) }.is_null());
     assert!(unsafe { crate::rc_clearplan(ptr::null(), 0xFF, 0) }.is_null());
 }
+
+#[test]
+fn profilevault_surface() {
+    let _g = guard();
+    let base = tmpdir("pvault");
+    let src = format!("{base}/src");
+    std::fs::create_dir_all(format!("{src}/sub")).unwrap();
+    std::fs::write(format!("{src}/a.txt"), b"payload-one").unwrap();
+    std::fs::write(format!("{src}/sub/b.txt"), b"payload-two").unwrap();
+    let vault = format!("{base}/v.arv");
+    let out = format!("{base}/out");
+
+    let dir = cs(&src);
+    let vpath = cs(&vault);
+    let outd = cs(&out);
+    let pw = b"vault-pw";
+
+    // Bad-argument forms first.
+    assert_eq!(
+        unsafe {
+            crate::rv_seal(ptr::null(), pw.as_ptr(), pw.len(), 0x01, vpath.as_ptr(), None, ptr::null_mut())
+        },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe {
+            crate::rv_seal(dir.as_ptr(), pw.as_ptr(), pw.len(), 0x77, vpath.as_ptr(), None, ptr::null_mut())
+        },
+        RcStatus::UnsupportedAlgo
+    );
+    assert_eq!(
+        unsafe {
+            crate::rv_seal(dir.as_ptr(), ptr::null(), 4, 0x01, vpath.as_ptr(), None, ptr::null_mut())
+        },
+        RcStatus::InvalidArgument
+    );
+    assert!(unsafe { crate::rv_inspect(ptr::null()) }.is_null());
+    assert_eq!(
+        unsafe { crate::rv_verify(ptr::null(), pw.as_ptr(), pw.len()) },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe {
+            crate::rv_unseal(vpath.as_ptr(), pw.as_ptr(), pw.len(), ptr::null(), None, ptr::null_mut())
+        },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe {
+            crate::rv_rewrap(vpath.as_ptr(), pw.as_ptr(), pw.len(), ptr::null(), 2)
+        },
+        RcStatus::InvalidArgument
+    );
+
+    // Happy path over the C ABI: seal -> inspect -> verify -> unseal.
+    assert_eq!(
+        unsafe {
+            crate::rv_seal(dir.as_ptr(), pw.as_ptr(), pw.len(), 0x01, vpath.as_ptr(), None, ptr::null_mut())
+        },
+        RcStatus::Ok
+    );
+    let j = take_str(unsafe { crate::rv_inspect(vpath.as_ptr()) }).unwrap();
+    assert!(j.contains("\"algo\":1"), "{j}");
+    assert!(j.contains("\"kdf\":\"argon2id\""), "{j}");
+    assert_eq!(
+        unsafe { crate::rv_verify(vpath.as_ptr(), pw.as_ptr(), pw.len()) },
+        RcStatus::Ok
+    );
+    let bad = b"nope";
+    assert_eq!(
+        unsafe { crate::rv_verify(vpath.as_ptr(), bad.as_ptr(), bad.len()) },
+        RcStatus::WrongPassword
+    );
+    assert_eq!(
+        unsafe {
+            crate::rv_unseal(vpath.as_ptr(), pw.as_ptr(), pw.len(), outd.as_ptr(), None, ptr::null_mut())
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        std::fs::read(format!("{out}/a.txt")).unwrap(),
+        b"payload-one"
+    );
+
+    // Rewrap: old password rejected afterwards, new one opens.
+    let np = b"new-vault-pw";
+    assert_eq!(
+        unsafe { crate::rv_rewrap(vpath.as_ptr(), pw.as_ptr(), pw.len(), np.as_ptr(), np.len()) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::rv_verify(vpath.as_ptr(), pw.as_ptr(), pw.len()) },
+        RcStatus::WrongPassword
+    );
+    assert_eq!(
+        unsafe { crate::rv_verify(vpath.as_ptr(), np.as_ptr(), np.len()) },
+        RcStatus::Ok
+    );
+    let out2 = format!("{base}/out2");
+    let outd2 = cs(&out2);
+    assert_eq!(
+        unsafe {
+            crate::rv_unseal(vpath.as_ptr(), np.as_ptr(), np.len(), outd2.as_ptr(), None, ptr::null_mut())
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        std::fs::read(format!("{out2}/sub/b.txt")).unwrap(),
+        b"payload-two"
+    );
+}

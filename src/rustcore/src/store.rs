@@ -504,7 +504,7 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> RcResult<()> {
     Ok(())
 }
 
-fn tighten_perms(path: &Path) {
+pub(crate) fn tighten_perms(path: &Path) {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
