@@ -165,6 +165,10 @@ private:
     // no tab here.  Selection restores by context id and falls back to
     // the first ENABLED row (never a disabled non-CDP entry).
     void rebuildContextCombo();
+    // DEVT16: while the channel is live, a web tab with no claimed
+    // target re-asks for the tree a bounded number of times ("…
+    // attaching") before the row settles on "no debug target".
+    void armAttachRetry();
     void refreshDom();
     void refreshStorage();
     void domItemExpanded(QTreeWidgetItem *item);
@@ -342,6 +346,14 @@ private:
     // browsingContext.getTree answer the selector merges against.
     QPointer<TabWidget> m_tabWidget;
     QJsonArray m_contexts;
+    // DEVT16: attach-retry bookkeeping — m_channelLive mirrors the
+    // last connectionChanged verdict (the client state is not
+    // directly readable under the test harness), m_attachPending
+    // dedupes the deferred getTree, m_attachRetries spends the
+    // kMaxAttachRetries budget.
+    bool m_channelLive = false;
+    bool m_attachPending = false;
+    int m_attachRetries = 0;
 
     // pending eval bookkeeping: bidi id -> purpose
     QHash<quint64, quint64> m_evalTags;

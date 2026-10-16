@@ -2857,3 +2857,16 @@ Padlock verdict on Tor windows (TRUST23):
     chain FAILED the engine's check, so the padlock (and its popover,
     which now says so outright) renders red for the rest of the
     session.
+BiDi Dev Tools tab selector re-matches instead of stranding pages on "no debug target" (DEVT16):
+    A web tab that opened or finished loading while the BiDi panel's
+    target snapshot was stale stayed disabled as "no debug target"
+    forever — the selector compared the tab's url against a getTree
+    snapshot that page navigations never refreshed, and even a fresh
+    snapshot could disagree in spelling (typed "http://site" vs the
+    committed "http://site/"). The selector now re-merges whenever
+    the bridge reports a context's url moving, matches the two url
+    forms through normalization, pairs a lone failed-navigation tab
+    with its lone chrome-error target, and shows "attaching…" with a
+    short bounded retry while the debug channel is live — "no debug
+    target" is now the verdict only after the retries come back
+    empty, so every real WebEngine tab ends up selectable.

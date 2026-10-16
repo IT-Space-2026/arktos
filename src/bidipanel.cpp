@@ -73,6 +73,11 @@ static const quint64 TagIdb = 7;
 static const quint64 TagDomProps = 8;
 static const quint64 TagInspect = 9;
 
+// DEVT16: deferred getTree retries a "…attaching" web tab gets
+// before the row settles on the honest "no debug target" verdict —
+// 600ms apart, so ~4s of attach window.
+static const int kMaxAttachRetries = 6;
+
 /*
  * DEVT13 — arora.cdp passthrough kinds.
  *
@@ -2056,6 +2061,7 @@ void BidiPanel::setTabWidget(TabWidget *tabs)
     if (m_tabWidget)
         disconnect(m_tabWidget, nullptr, this, nullptr);
     m_tabWidget = tabs;
+    m_attachRetries = 0;
     if (tabs) {
         // Strip churn that produces no CDP traffic (engine/widget
         // tabs, renames, drags) still re-merges the selector against
@@ -2075,8 +2081,14 @@ void BidiPanel::showEvent(QShowEvent *event)
 
 void BidiPanel::onConnectionChanged(int state)
 {
+    m_channelLive = (state == BidiClient::Connected);
     if (state == BidiClient::Connected) {
         m_stack->setCurrentIndex(1);
+        m_attachRetries = 0;
+        // Rows drawn while the channel was down read "no debug
+        // target" — re-merge so a waiting tab flips to "attaching…"
+        // before the first getTree answer even lands.
+        rebuildContextCombo();
         refreshContexts();
         refreshApplication();
         refreshSecurity();
@@ -2292,6 +2304,29 @@ void BidiPanel::refreshContexts()
         clearNetworkLog();
 }
 
+// DEVT16: a tab can legitimately outrun its target — a getTree
+// snapshot taken before targetCreated lands reads "no debug target"
+// for a page that registers a second later.  While the channel is
+// live, re-ask for the tree a bounded number of times so the row
+// resolves into a real context instead of pinning the verdict; the
+// budget resets on every browsingContext event (new evidence means
+// the snapshot moved, so waiting is worth it again).
+void BidiPanel::armAttachRetry()
+{
+    if (m_attachPending
+        || m_attachRetries >= kMaxAttachRetries
+        || !m_channelLive)
+        return;
+    m_attachPending = true;
+    QTimer::singleShot(600, this, [this]() {
+        m_attachPending = false;
+        if (!m_channelLive)
+            return;
+        ++m_attachRetries;
+        refreshContexts();
+    });
+}
+
 // DEVT10: the selector mirrors the window's REAL tab strip.  CDP
 // only ever reports type=="page" targets — engine tabs (Servo) and
 // widget tabs (Preferences, Downloads, ...) have none, so they used
@@ -2302,6 +2337,18 @@ void BidiPanel::refreshContexts()
 // WebEngine tabs claim their context by committed url; targets no
 // strip tab claimed (other windows, the inspector page) keep the old
 // append-only behavior at the end of the list.
+//
+// DEVT16: claims resolve in a first pass, rows render in a second —
+// the url forms the two sides report legitimately diverge (the tab
+// may still hold the requested/typed spelling while the target shows
+// the committed one, a fresh target surfaces "" where the tab reads
+// about:blank), so matching normalizes instead of comparing raw
+// strings; a failed navigation leaves the target on a chrome-error:
+// url the tab never shows, which pairs only when it is the unique
+// remaining candidate.  A web tab with no claim while the channel is
+// live is "attaching…" — armAttachRetry re-asks for the tree a few
+// times so a late-registering target lands on a real row; "no debug
+// target" is the verdict only after that budget is spent.
 void BidiPanel::rebuildContextCombo()
 {
     const QString keep = currentContext();
@@ -2336,8 +2383,77 @@ void BidiPanel::rebuildContextCombo()
         m_contextCombo->setItemData(row, reason, Qt::ToolTipRole);
     };
 
+    int unmatchedWeb = 0;
     if (m_tabWidget) {
-        for (int i = 0; i < m_tabWidget->count(); ++i) {
+        // Pass 1 — resolve claims.  The tab url and the target url
+        // agree in content but not always in spelling: Chromium
+        // normalizes a bare host to "…/" while the tab can still be
+        // holding the typed form, and a not-yet-committed target
+        // reports "" for the tab's about:blank.
+        const auto urlsMatch = [](const QString &targetUrl,
+                                  const QUrl &tabUrl) {
+            if (targetUrl == tabUrl.toString())
+                return true;
+            // QUrl::StripTrailingSlash keeps a bare host's root "/",
+            // so drop it by hand — "http://h/" and "http://h" are
+            // the same page to a user.
+            const auto rootless = [](QUrl url) {
+                if (url.path() == QLatin1String("/"))
+                    url.setPath(QString());
+                return url;
+            };
+            if (rootless(QUrl(targetUrl)) == rootless(tabUrl))
+                return true;
+            const bool targetBlank = targetUrl.isEmpty()
+                || targetUrl == QLatin1String("about:blank");
+            const bool tabBlank = tabUrl.isEmpty()
+                || tabUrl == QUrl(QStringLiteral("about:blank"));
+            return targetBlank && tabBlank;
+        };
+        const int tabs = m_tabWidget->count();
+        QVector<QJsonObject> claimed(tabs);
+        QVector<int> openWeb;
+        for (int i = 0; i < tabs; ++i) {
+            if (m_tabWidget->engineTab(i)
+                || !m_tabWidget->webView(i))
+                continue;
+            WebView *view = m_tabWidget->webView(i);
+            for (int p = 0; p < pending.size(); ++p) {
+                if (urlsMatch(pending[p][QLatin1String("url")]
+                                  .toString(),
+                              view->url())) {
+                    claimed[i] = pending.takeAt(p);
+                    break;
+                }
+            }
+            if (claimed[i].isEmpty())
+                openWeb.append(i);
+        }
+        // A net error commits the tab's target on
+        // chrome-error://chromewebdata/ — the urls can never agree,
+        // so the claim is positional: safe only when a single open
+        // tab and a single error target remain.
+        if (openWeb.size() == 1) {
+            int err = -1;
+            bool ambiguous = false;
+            for (int p = 0; p < pending.size(); ++p) {
+                if (pending[p][QLatin1String("url")].toString()
+                        .startsWith(QLatin1String("chrome-error:"))) {
+                    if (err >= 0) {
+                        ambiguous = true;
+                        break;
+                    }
+                    err = p;
+                }
+            }
+            if (err >= 0 && !ambiguous)
+                claimed[openWeb.first()] = pending.takeAt(err);
+        }
+
+        // Pass 2 — render one row per strip tab in strip order.
+        const bool attaching = m_channelLive
+            && m_attachRetries < kMaxAttachRetries;
+        for (int i = 0; i < tabs; ++i) {
             const QString title = m_tabWidget->tabDisplayTitle(i);
             if (EngineTab *foreign = m_tabWidget->engineTab(i)) {
                 const QString backend = foreign->backend()
@@ -2353,36 +2469,32 @@ void BidiPanel::rebuildContextCombo()
                                       .arg(backend));
                 continue;
             }
-            WebView *view = m_tabWidget->webView(i);
-            if (!view) {
+            if (!m_tabWidget->webView(i)) {
                 addDisabled(title, tr("not a web page"),
                             tr("Not a web page — the devtools panel "
                                "inspects web content only"));
                 continue;
             }
-            int found = -1;
-            for (int p = 0; p < pending.size(); ++p) {
-                const QString url =
-                    pending[p][QLatin1String("url")].toString();
-                if (url == view->url().toString()
-                    || QUrl(url) == view->url()) {
-                    found = p;
-                    break;
-                }
-            }
-            if (found < 0) {
+            const QJsonObject c = claimed[i];
+            if (c.isEmpty()) {
+                const bool sleeping = m_tabWidget->isTabSleeping(i);
+                const bool waiting = !sleeping && attaching;
                 addDisabled(title,
-                            m_tabWidget->isTabSleeping(i)
-                                ? tr("asleep")
-                                : tr("no debug target"),
-                            m_tabWidget->isTabSleeping(i)
-                                ? tr("Tab is asleep — wake it to "
-                                     "attach devtools")
-                                : tr("Web page — not exposed on the "
-                                     "debug channel"));
+                            sleeping ? tr("asleep")
+                                     : waiting ? tr("attaching…")
+                                               : tr("no debug target"),
+                            sleeping ? tr("Tab is asleep — wake it to "
+                                          "attach devtools")
+                                     : waiting ? tr("Web page — waiting "
+                                                    "for the debug "
+                                                    "channel to attach")
+                                               : tr("Web page — not "
+                                                    "exposed on the "
+                                                    "debug channel"));
+                if (waiting)
+                    ++unmatchedWeb;
                 continue;
             }
-            const QJsonObject c = pending.takeAt(found);
             m_contextCombo->addItem(
                 title.isEmpty() ? cdpLabel(c) : title,
                 c[QLatin1String("context")].toString());
@@ -2393,6 +2505,9 @@ void BidiPanel::rebuildContextCombo()
         m_contextCombo->addItem(
             cdpLabel(c), c[QLatin1String("context")].toString());
     }
+
+    if (unmatchedWeb)
+        armAttachRetry();
 
     // Restore by context id; a vanished selection (or a strip whose
     // first slot is a non-CDP tab) must not land on a disabled row —
@@ -2915,12 +3030,41 @@ void BidiPanel::onEvent(const QByteArray &json)
     if (method == QLatin1String("browsingContext.contextCreated")
         || method == QLatin1String("browsingContext.contextDestroyed")) {
         // keep the combo in sync without clobbering an in-flight tree
+        m_attachRetries = 0;
         refreshContexts();
         return;
     }
     if (method == QLatin1String("browsingContext.navigationStarted")) {
-        if (params[QStringLiteral("context")].toString()
-            == currentContext()) {
+        // DEVT16: the bridge forwards Target.targetInfoChanged as
+        // navigationStarted — a committed navigation just moved this
+        // context's url while the cached getTree row still holds the
+        // old one, so a tab that simply finished loading would
+        // mis-merge as "no debug target".  Patch the cache and
+        // re-merge; a context the snapshot never saw needs a fresh
+        // tree instead.
+        const QString navCtx =
+            params[QStringLiteral("context")].toString();
+        const QString navUrl =
+            params[QStringLiteral("url")].toString();
+        bool found = false;
+        for (int i = 0; i < m_contexts.size(); ++i) {
+            QJsonObject c = m_contexts[i].toObject();
+            if (c[QLatin1String("context")].toString() != navCtx)
+                continue;
+            found = true;
+            if (c[QLatin1String("url")].toString() != navUrl) {
+                c[QLatin1String("url")] = navUrl;
+                m_contexts[i] = c;
+                m_attachRetries = 0;
+                rebuildContextCombo();
+            }
+            break;
+        }
+        if (!found && !navCtx.isEmpty()) {
+            m_attachRetries = 0;
+            refreshContexts();
+        }
+        if (navCtx == currentContext()) {
             // A fresh load owns fresh footer timings regardless of
             // Preserve log keeping the old request rows — and fresh
             // waterfall marker lines (DEVT09).
