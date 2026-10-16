@@ -31,6 +31,7 @@ SetCompressor /SOLID /FINAL lzma
 !define MULTIUSER_MUI
 !define MULTIUSER_INSTALLMODE_COMMANDLINE
 !define MULTIUSER_INSTALLMODE_INSTDIR "Arora"
+!define MULTIUSER_USE_PROGRAMFILES64
 
 !include "MUI.nsh"
 !include "MultiUser.nsh"
@@ -58,8 +59,14 @@ SetCompressor /SOLID /FINAL lzma
 !insertmacro MUI_UNPAGE_INSTFILES
 
 !insertmacro MUI_LANGUAGE "English"
-!insertmacro MULTIUSER_INSTALLMODE
-!insertmacro MULTIUSER_UNINSTALLMODE
+
+Function .onInit
+  !insertmacro MULTIUSER_INIT
+FunctionEnd
+
+Function un.onInit
+  !insertmacro MULTIUSER_UNINIT
+FunctionEnd
 Name "${PRODUCT_NAME} ${PRODUCT_VERSION}"
 OutFile "${OUTDIR}\${PRODUCT_NAME} ${PRODUCT_VERSION} Installer.exe"
 InstallDirRegKey SHCTX "${PRODUCT_DIR_REGKEY}" ""
