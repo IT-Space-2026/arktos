@@ -485,6 +485,41 @@
          </property>
         </widget>
        </item>
+       <item row="6" column="0" colspan="3">
+        <widget class="QGroupBox" name="profilesGroupBox">
+         <property name="title">
+          <string>Profiles</string>
+         </property>
+         <layout class="QHBoxLayout" name="profilesLayout">
+          <item>
+           <widget class="QLabel" name="profilesLabel">
+            <property name="text">
+             <string>Profiles keep separate browsing identities — each profile has its own history, bookmarks and settings.</string>
+            </property>
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="manageProfilesButton">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="toolTip">
+             <string>Create, rename, delete and open windows on browser profiles.</string>
+            </property>
+            <property name="text">
+             <string>Manage Profiles...</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
        <item row="7" column="0" colspan="3">
         <widget class="QCheckBox" name="middleClickAutoscroll">
          <property name="toolTip">

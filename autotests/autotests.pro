@@ -51,6 +51,7 @@ SUBDIRS  = \
     privacy \
     profileavatar \
     profilecontext \
+    profilemanager \
     profilemanagers \
     profilemenu \
     profilesettings \

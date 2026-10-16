@@ -935,6 +935,17 @@ UI:
   the face is a neutral silhouette that stays readable on the
   violet Tor bar too; the button is a normal navigation-bar item, so
   Edit Navigation Bar can move it like any other (PROF01).
+- Multiple browser profiles: the profile button's menu gains a "New
+  Window" submenu listing every profile and a "Profile Manager..."
+  entry, and the same manager opens from Tools > Profiles... and
+  Preferences > General.  The manager lists each profile with its
+  avatar, name and data size, and can create, rename, set a picture
+  for, delete and open a window on a profile — deleting asks you to
+  type the profile name first, and the default profile cannot be
+  deleted.  Profiles are kept under their own data folders with a
+  shared registry, ready for per-profile windows once that layer
+  lands; until then, opening a window on another profile is disabled
+  with an explanation rather than silently falling back (MPROF05).
 - Tab strips no longer draw a line under resting tabs: the thin seam
   that ran along the strip's page-facing edge (and gapped under the
   active tab, so some tabs looked underlined and some didn't) is gone

@@ -19,7 +19,11 @@
 
 #include "profilebutton.h"
 
+#include "browserapplication.h"
+#include "browsermainwindow.h"
 #include "profileidentity.h"
+#include "profilemanagerdialog.h"
+#include "profilestore.h"
 
 #include <qboxlayout.h>
 #include <qevent.h>
@@ -140,6 +144,30 @@ ProfileButton::ProfileButton(QWidget *parent)
     connect(m_renameAction, &QAction::triggered,
             this, &ProfileButton::renameProfile);
 
+    // MPROF05: profile switcher + manager entry in the identity
+    // block.  'New Window' lists every registry profile; on this lane
+    // only the window's own profile can actually bind a window
+    // (MPROF03 hasn't merged), so the rest stay disabled with the
+    // reason in their tooltip rather than faking a binding.  The
+    // menu rebuilds on open so manager edits show immediately.
+    m_newWindowMenu = new QMenu(m_menu);
+    m_newWindowMenu->menuAction()->setObjectName(
+        QLatin1String("profileNewWindowMenu"));
+    connect(m_newWindowMenu, &QMenu::aboutToShow,
+            this, &ProfileButton::populateNewWindowMenu);
+    connect(ProfileStore::instance(), &ProfileStore::profilesChanged,
+            this, &ProfileButton::populateNewWindowMenu);
+    m_menu->addMenu(m_newWindowMenu);
+    populateNewWindowMenu();
+
+    m_managerAction = m_menu->addAction(QString());
+    m_managerAction->setObjectName(
+        QLatin1String("profileManagerAction"));
+    connect(m_managerAction, &QAction::triggered, this, [this]() {
+        ProfileManagerDialog::showManager(
+            this, ProfileStore::activeProfileId());
+    });
+
     m_menu->addSeparator();
     // PROF02: 'Change Picture…' + 'Remove Picture' insert here,
     // directly under the identity block.
@@ -176,6 +204,42 @@ void ProfileButton::retranslateUi()
     setToolTip(tr("Profile"));
     setAccessibleName(tr("Profile"));
     m_renameAction->setText(tr("Edit Profile Name..."));
+    m_newWindowMenu->setTitle(tr("New Window"));
+    m_managerAction->setText(tr("Profile Manager..."));
+}
+
+void ProfileButton::populateNewWindowMenu()
+{
+    m_newWindowMenu->clear();
+    ProfileStore *store = ProfileStore::instance();
+    const QString activeId = ProfileStore::activeProfileId();
+    for (const ProfileContext &context : store->profiles()) {
+        QAction *action = m_newWindowMenu->addAction(
+            QIcon(store->avatarPixmap(context, 16)),
+            context.name.isEmpty() ? context.id : context.name);
+        action->setData(context.id);
+        if (context.id == activeId) {
+            // This window's profile — a plain new window honestly is
+            // a window bound to it.
+            action->setCheckable(true);
+            action->setChecked(true);
+            connect(action, &QAction::triggered, this, []() {
+                if (BrowserApplication *application =
+                        BrowserApplication::instance()) {
+                    BrowserMainWindow *window =
+                        application->newMainWindow();
+                    window->goHome();
+                }
+            });
+        } else {
+            // MPROF03's per-window binding hasn't merged — no honest
+            // way to open a window on another profile yet.
+            action->setEnabled(false);
+            action->setToolTip(
+                tr("Opening a window on another profile needs "
+                   "per-profile window support — not available yet."));
+        }
+    }
 }
 
 void ProfileButton::refreshIdentity()

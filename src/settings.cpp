@@ -93,6 +93,8 @@
 #include "opensearchmanager.h"
 #include "popupblocker.h"
 #include "privacyrequestinterceptor.h"
+#include "profilemanagerdialog.h"
+#include "profilestore.h"
 #include "safetext.h"
 #include "scopeshortcuts.h"
 #include "scriptcontrolmanager.h"
@@ -309,6 +311,14 @@ SettingsDialog::SettingsDialog(QWidget *parent)
             homeLineEdit, &QLineEdit::setEnabled);
     connect(startupSpecificPagesRadio, &QRadioButton::toggled,
             startupPagesEdit, &QPlainTextEdit::setEnabled);
+
+    // MPROF05: the Profile Manager is discoverable without the
+    // nav-bar button — same dialog the Tools > Profiles... entry and
+    // the profile-menu item open.
+    connect(manageProfilesButton, &QPushButton::clicked, this, [this]() {
+        ProfileManagerDialog::showManager(
+            this, ProfileStore::activeProfileId());
+    });
 
     // ICONS01: one entry per AroraIcon::themeIds() — itemData carries
     // the id.

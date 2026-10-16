@@ -63,6 +63,7 @@
 #include <qtoolbar.h>
 #include <qtoolbutton.h>
 #include <qtreeview.h>
+#include <qtreewidget.h>
 
 #include "browsermainwindow.h"
 #include "browserapplication.h"
@@ -83,6 +84,8 @@
 #include "profilecontext.h"
 #include "profileidentity.h"
 #include "profileregistry.h"
+#include "profilemanagerdialog.h"
+#include "profilestore.h"
 #include "notesmodel.h"
 #include "pdfview.h"
 #include "printpreviewdialog.h"
@@ -247,6 +250,7 @@ private slots:
     void navBarOrderPersistence();
     void siteShieldButton();
     void profileButton();
+    void profileMenuEntries();
 };
 
 void tst_BrowserMainWindow::initTestCase()
@@ -8927,6 +8931,91 @@ void tst_BrowserMainWindow::profileButton()
         context.name = QStringLiteral("Profile");
         ProfileRegistry::instance()->updateProfile(context);
     }
+}
+
+// MPROF05: the profile menu carries the switcher submenu and the
+// Profile Manager entry; the manager is also reachable from Tools so
+// it is discoverable without the nav button (the app menu embeds the
+// shared Tools menu).  Until MPROF03's window binding merges, 'New
+// Window' enables only this window's own (default) profile — a plain
+// new window honestly is bound to it — and leaves the rest disabled
+// with the reason in the tooltip.
+void tst_BrowserMainWindow::profileMenuEntries()
+{
+    SubWindow *window = new SubWindow;
+    window->resize(1400, 700);
+    window->show();
+    QApplication::processEvents();
+    QToolButton *button = window->findChild<QToolButton *>(
+        QLatin1String("profileButton"));
+    QVERIFY(button);
+    QMenu *menu = button->menu();
+    QVERIFY(menu);
+
+    QAction *managerAction = menu->findChild<QAction *>(
+        QLatin1String("profileManagerAction"));
+    QVERIFY(managerAction);
+    QVERIFY(!managerAction->text().isEmpty());
+
+    QAction *submenuAction = menu->findChild<QAction *>(
+        QLatin1String("profileNewWindowMenu"));
+    QVERIFY(submenuAction);
+    QMenu *newWindowMenu = submenuAction->menu();
+    QVERIFY(newWindowMenu);
+
+    // The submenu populates on open.  Offscreen, show() fires
+    // aboutToShow the same way a real popup does.
+    newWindowMenu->show();
+    QApplication::processEvents();
+    newWindowMenu->hide();
+    QVERIFY(!newWindowMenu->actions().isEmpty());
+    QAction *defaultEntry = nullptr;
+    for (QAction *action : newWindowMenu->actions()) {
+        if (action->data().toString() == QLatin1String("default"))
+            defaultEntry = action;
+    }
+    QVERIFY(defaultEntry);
+    QVERIFY(defaultEntry->isEnabled());
+    QVERIFY(defaultEntry->isChecked());
+
+    // A second profile lists as disabled — binding hasn't merged, so
+    // the tooltip carries the honest reason rather than a fake window.
+    ProfileStore *store = ProfileStore::instance();
+    QVERIFY(store->createProfile(QLatin1String("Suite")).isValid());
+    newWindowMenu->show();
+    QApplication::processEvents();
+    newWindowMenu->hide();
+    QAction *suiteEntry = nullptr;
+    for (QAction *action : newWindowMenu->actions()) {
+        if (action->data().toString() == QLatin1String("suite"))
+            suiteEntry = action;
+    }
+    QVERIFY(suiteEntry);
+    QVERIFY(!suiteEntry->isEnabled());
+    QVERIFY(!suiteEntry->toolTip().isEmpty());
+    store->deleteProfile(QLatin1String("suite"));
+
+    // Triggering the manager action opens the shared dialog; closing
+    // drops the singleton so the next open rereads the registry.
+    managerAction->trigger();
+    QTRY_VERIFY(ProfileManagerDialog::instance());
+    ProfileManagerDialog::instance()->close();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QVERIFY(!ProfileManagerDialog::instance());
+
+    // Tools > Profiles... reaches the same manager.
+    QAction *toolsAction = window->findChild<QAction *>(
+        QLatin1String("toolsProfilesAction"));
+    QVERIFY(toolsAction);
+    QVERIFY(toolsAction->isVisible());
+    toolsAction->trigger();
+    QTRY_VERIFY(ProfileManagerDialog::instance());
+    QCOMPARE(ProfileManagerDialog::instance()->profileTree
+                 ->topLevelItemCount() >= 1, true);
+    ProfileManagerDialog::instance()->close();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+
+    closeWindow(window);
 }
 
 QTEST_MAIN(tst_BrowserMainWindow)

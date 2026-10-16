@@ -93,6 +93,8 @@
 #include "printpreviewdialog.h"
 #include "profilebutton.h"
 #include "profileidentity.h"
+#include "profilemanagerdialog.h"
+#include "profilestore.h"
 #include "readerbutton.h"
 #include "readermode.h"
 #include "safetext.h"
@@ -1581,6 +1583,20 @@ void BrowserMainWindow::setupMenu()
             this, &BrowserMainWindow::downloadManager);
     m_toolsMenu->addAction(m_toolsDownloadsAction);
 
+    // MPROF05: the Profile Manager is reachable without the nav-bar
+    // button — the app menu embeds the shared Tools menu, so this one
+    // action is discoverable from both surfaces.
+    m_toolsProfilesAction = new QAction(m_toolsMenu);
+    m_toolsProfilesAction->setObjectName(
+        QLatin1String("toolsProfilesAction"));
+    m_toolsProfilesAction->setIcon(
+        AroraIcon::getChrome(QLatin1String("user-bookmarks")));
+    connect(m_toolsProfilesAction, &QAction::triggered, this, [this]() {
+        ProfileManagerDialog::showManager(
+            this, ProfileStore::activeProfileId());
+    });
+    m_toolsMenu->addAction(m_toolsProfilesAction);
+
     // MENU01: no Tools-menu entry — the action lives on the window
     // itself so the Ctrl+K shortcut keeps reaching webSearch()
     // without a menu item to show.
@@ -1906,6 +1922,7 @@ void BrowserMainWindow::retranslate()
     m_toolsDownloadsAction->setText(tr("Downloads"));
     m_toolsDownloadsAction->setShortcut(
         QKeySequence(tr("Ctrl+Y", "Download Manager")));
+    m_toolsProfilesAction->setText(tr("Profiles..."));
     m_toolsWebSearchAction->setText(tr("Web &Search"));
     m_toolsWebSearchAction->setShortcut(QKeySequence(tr("Ctrl+K", "Web Search")));
     m_toolsClearPrivateDataAction->setText(tr("&Clear Private Data"));
