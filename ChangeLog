@@ -2902,3 +2902,15 @@ BiDi Dev Tools tab selector re-matches instead of stranding pages on "no debug t
     short bounded retry while the debug channel is live — "no debug
     target" is now the verdict only after the retries come back
     empty, so every real WebEngine tab ends up selectable.
+BiDi Dev Tools Elements tab shows the selected page's real DOM tree (DEVT17):
+    The Elements page could come up empty or stuck on "loading…" even
+    though the page loaded fine: housekeeping replies from the debug
+    channel were mistaken for the context list and silently wiped it,
+    the tree only re-fetched at the start of a navigation — before the
+    new document existed — a rebuilt tab selector could move to a
+    different page without repopulating, and a refused or vanished
+    fetch was dropped without a trace. The tree now re-fetches when
+    the document actually finishes parsing (and once more at load if
+    it is still empty), every selection change repopulates it, real
+    replies can no longer clobber the tab list, and a failed fetch
+    shows an honest error row that re-expanding retries.
