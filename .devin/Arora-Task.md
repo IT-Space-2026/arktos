@@ -334,12 +334,13 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | PROF03 | Profile menu backend: clear-data plan helpers + red 'Delete Profile' wipe-with-restart — details below | done | 0 | landed via the TOR17 run (interrupted-attempt tree + fixes: arm-smoke added to internalOptions, test modal legs must click Yes not accept(), comment-only QtWebEngine mention tripped engine-audit); tst_profilemenu 14/14, --profile-wipe-smoke e2e PASS (seed→arm→boot-wipe→fresh stores); menu hook unwired — PROF01 not on master yet, conditional per spec |
 | MPROF01 | Multi-profile foundation: ProfileContext abstraction + profiles/&lt;id&gt;/ data-dir layout + default-profile migration — details below | done | 0 | profiles/&lt;id&gt;/ + profiles.json registry live; dataFilePath()→active profile, globals stay root; rename-only migration verified on live dir; tst_profilecontext 10/10 + affected suites green; make check full autotest leg deferred (3600s) |
 | MPROF02 | Multi-profile: per-profile app singletons (history/bookmarks/autofill/cookies/extensions/adblock/containers) — details below | done | 2 | needs:task:MPROF01 — instanceFor(profileId) on all 10 persona stores + BrowserProfile::profileIdFor page→persona plumbing; rust stores re-anchor per call; OTR stays volatile, tor→default persona; tst_profilemanagers 15/15, make check gates PASS, suite green except documented flake fileSchemeErrors |
-| MPROF03 | Multi-profile: window↔profile binding — per-window named QWebEngineProfile + OTR overlay + session-restore profile ids — details below | pending | 0 | needs:task:MPROF02 |
+| MPROF03 | Multi-profile: window↔profile binding — per-window named QWebEngineProfile + OTR overlay + session-restore profile ids — details below | in_progress | 0 | needs:task:MPROF02 |
 | MPROF04 | moved to rust lane | done | 0 | parallel stream — see arora-rust task file |
 | MPROF05 | moved to UI lane | done | 0 | parallel stream — see arora-ui task file |
 | MPROF06 | Multi-profile integration/e2e pass — isolation verified, migration verified, single-profile regression sweep — details below | pending | 0 | needs: all MPROF merged |
 | PVAULT02 | moved to rust lane | done | 0 | parallel stream — see arora-rust task file |
 | PVAULT04 | moved to rust lane | done | 0 | parallel stream — see arora-rust task file |
+| VSEC01 | Security audit of the multi-profile + vault stack: isolation boundaries, crypto usage, FFI attack surface, wipe/erase honesty — details below | pending | 0 | needs: all MPROF + PVAULT merged — user-requested post-landing review |
 
 ## Task details
 
@@ -2111,3 +2112,23 @@ needs:task:MPROF02. Window↔profile binding — the point where profiles become
 Integration + e2e — run only after MPROF01-05 (and PROF01-04 for the menu surface) have all merged: check `git log master --grep=MPROF`. (a) ISOLATION E2E: two profiles live — history/bookmarks/cookies/settings under A invisible from B; a site logged-in on A is logged-out on B; avatar/name independent; containers per profile. (b) MIGRATION E2E: seeded pre-MPROF data dir (history + bookmarks + settings + avatar) → upgrade → everything intact under default; marker set; second boot no-op. (c) REGRESSION SWEEP: single-profile users must see zero change — the whole autotest suite is the gate; specifically the clear-data actions, Delete Profile (still nukes everything incl. all profiles), private windows, tor windows, session restore. (d) Honest-docs leg: README/ChangeLog describe the model (per-profile stores, global trust/site-decisions if that choice held, no sync). Verify: legs as above + full make check PASS + --quit-after-load rc=0 on both profiles. Tests: REQUIRED — add a dedicated autotest binary (tst_profilecontext / tst_profilemanagers / legs in the owning suites — suite choice is yours) asserting the spec's Verify items; smoke-only coverage does not count as done.
 
 
+
+### VSEC01
+
+Security audit of the merged multi-profile + vault stack — user-requested, run only after MPROF01-06 + PVAULT01-04 (+ PROF01-05) are all on master. Read the code as an attacker; do not re-run feature tests as a substitute for adversarial review. Findings → fix in-place where small, else file a task row; every accepted risk gets a documented rationale.
+
+Audit surface:
+
+(a) **Profile isolation** — can a page or window under profile A read/write B's stores? Check every `instanceFor(profileId)` caller can't be tricked into cross-profile resolution (untrusted `profileId` strings reaching `BrowserPaths`/`QWebEngineProfile::setStorageName` — validate id charset `[a-z0-9_-]`, reject `..`/path separators at the registry boundary). OTR/private profiles provably write nothing persistent. Session manifest can't inject an arbitrary profile id.
+
+(b) **Vault crypto usage** — verify against the PVAULT01 spec: fresh salt per seal, nonce = salt_prefix‖chunk_index (no reuse across re-seals), two-pass unseal (MAC before any plaintext), staging+atomic rename, `Zeroizing` on all key material, KEK-unwrap vs ciphertext-MAC error split correct. Threefish path: XEX tweak derivation sane, HMAC-Skein-512 keyed correctly, algo_id can't be downgraded by header tamper (algo inside header-MAC coverage). rv_* FFI: length validation, no panics on malformed input, traversal refusal on `..`/absolute/symlink entries in the tar.
+
+(c) **Plaintext lifecycle** — seal-time secure erase covers every file the pack read (no skipped dotfiles, no fd leaks leaving plaintext), `cache/` exclusion is honest (document what stays plaintext — favicons cache? downloads dir?), dirty-boot detection can't be bypassed by a marker-deleting attacker (it's a UX aid not a security boundary — document that), unlocked-window-while-sealed impossible.
+
+(d) **Migration + registry** — MPROF01 move-migration can't be tricked into moving attacker-planted paths (symlink following), registry writes atomic, profiles.json corruption → fail-safe not fail-open, `default` undeletable enforced at the manager layer not just UI.
+
+(e) **UI/FFI boundary** — password lifetime in Qt: field cleared on dialog close, no QString copies living longer than needed (document residual `QString` heap copies honestly — Qt has no guaranteed zeroize), wrong-password error doesn't leak timing/oracle info, auto-lock timer can't be starved by event-loop pressure.
+
+(f) **Supply chain** — the new vault crates (threefish/skein/hmac/tar/sha2-0.11) already passed the supplychain gate; re-verify pinned versions + the documented unaudited-upstream caveat still holds.
+
+Method: read, don't trust the specs — the code is the truth. Write findings to `.devin/security/VSEC01-report.md` (new dir if absent — follow any existing audit-report convention from SEC*/QUAL* tasks). Verify: report committed, fixes landed or tasked, make check PASS. Tests: add regression legs only where a real bug was found and fixed.
