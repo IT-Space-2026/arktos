@@ -84,6 +84,7 @@ private slots:
     void inspectedPageDestroyedClosesWindow();
     void bidiPanel();
     void bidiContextSelector();
+    void bidiContextRematch();
     void bidiConsoleParity();
     void bidiWaterfallLegibility();
     void bidiNetworkParity();
@@ -1022,6 +1023,123 @@ void tst_DevTools::bidiContextSelector()
     QVERIFY(panel.currentContext().isEmpty());
 
     EngineRegistry::unregisterBackend(&fake);
+}
+
+// DEVT16: a web tab that outruns its CDP target must not pin "no
+// debug target" — while the channel is live the row reads
+// "attaching…" and a bounded getTree retry runs; a navigationStarted
+// whose committed url reaches the tab re-merges it into a real row;
+// typed-vs-committed url forms match through normalization; a lone
+// chrome-error target pairs with the lone open tab; and the honest
+// verdict returns once the retry budget is spent.
+void tst_DevTools::bidiContextRematch()
+{
+    const auto flagsOf = [](QComboBox *combo, int row) {
+        QStandardItemModel *model =
+            qobject_cast<QStandardItemModel *>(combo->model());
+        QStandardItem *item = model ? model->item(row) : nullptr;
+        return item ? item->flags() : Qt::ItemFlags();
+    };
+    const auto disabled = [&flagsOf](QComboBox *combo, int row) {
+        return !(flagsOf(combo, row) & Qt::ItemIsEnabled);
+    };
+
+    TabWidget strip;
+    WebView *view = strip.makeNewTab(true);
+    QVERIFY(view);
+    QSignalSpy loaded(view->page(), &QWebEnginePage::loadFinished);
+    view->setHtml(QStringLiteral("<html><body>rematch</body></html>"),
+                  QUrl(QStringLiteral("http://rematch.test/")));
+    QTRY_VERIFY(loaded.count() >= 1);
+
+    BidiPanel panel;
+    panel.setTabWidget(&strip);
+    // Channel down: the old permanent verdict still applies.
+    QCOMPARE(panel.m_contextCombo->count(), 1);
+    QVERIFY(disabled(panel.m_contextCombo, 0));
+    QVERIFY(panel.m_contextCombo->itemText(0).contains(
+                QStringLiteral("no debug target")));
+
+    // Channel live with no target in the snapshot: the row reads
+    // "attaching…" and a deferred getTree retry is armed.
+    panel.onConnectionChanged(BidiClient::Connected);
+    QVERIFY(disabled(panel.m_contextCombo, 0));
+    QVERIFY(panel.m_contextCombo->itemText(0).contains(
+                QStringLiteral("attaching")));
+    QTRY_VERIFY_WITH_TIMEOUT(panel.m_attachRetries >= 1, 3000);
+
+    // The snapshot carried the target with its pre-commit url — the
+    // tab's committed url reaches it via navigationStarted (the
+    // bridge's Target.targetInfoChanged forward) and re-merges.
+    panel.onResponse(9100, QByteArray(
+        "{\"result\":{\"contexts\":["
+        "{\"context\":\"ctx-r\",\"url\":\"about:blank\"}]}}"));
+    QVERIFY(disabled(panel.m_contextCombo, 0));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"browsingContext.navigationStarted\",\"params\":{"
+        "\"context\":\"ctx-r\",\"url\":\"http://rematch.test/\"}}"));
+    QVERIFY(!disabled(panel.m_contextCombo, 0));
+    QCOMPARE(panel.m_contextCombo->itemData(0).toString(),
+             QStringLiteral("ctx-r"));
+
+    // Typed-vs-committed url forms match: the target reports the
+    // slash-less typed spelling, the tab holds the normalized one.
+    TabWidget strip2;
+    WebView *view2 = strip2.makeNewTab(true);
+    QVERIFY(view2);
+    QSignalSpy loaded2(view2->page(), &QWebEnginePage::loadFinished);
+    view2->setHtml(QStringLiteral("<html><body>slash</body></html>"),
+                   QUrl(QStringLiteral("http://slash.test/")));
+    QTRY_VERIFY(loaded2.count() >= 1);
+    panel.setTabWidget(&strip2);
+    // The target reports the slash-less typed spelling, the tab
+    // holds the normalized one.
+    QByteArray typed = view2->url().toString().toUtf8();
+    if (typed.endsWith('/'))
+        typed.chop(1);
+    QVERIFY(typed != view2->url().toString().toUtf8());
+    panel.onResponse(9101, QByteArray(
+        "{\"result\":{\"contexts\":["
+        "{\"context\":\"ctx-s\",\"url\":\"") + typed
+        + QByteArray("\"}]}}"));
+    QVERIFY(!disabled(panel.m_contextCombo, 0));
+    QCOMPARE(panel.m_contextCombo->itemData(0).toString(),
+             QStringLiteral("ctx-s"));
+
+    // A failed navigation commits the target on a chrome-error url
+    // the tab never shows — the claim is positional and safe only
+    // when exactly one open tab and one error target remain.
+    panel.onResponse(9102, QByteArray(
+        "{\"result\":{\"contexts\":["
+        "{\"context\":\"ctx-e\",\"url\":\"chrome-error://"
+        "chromewebdata/\"}]}}"));
+    QVERIFY(!disabled(panel.m_contextCombo, 0));
+    QCOMPARE(panel.m_contextCombo->itemData(0).toString(),
+             QStringLiteral("ctx-e"));
+
+    // Two open tabs plus one error target is ambiguous — nobody
+    // claims it; both stay attaching, and the target appends as a
+    // plain unclaimed row like any foreign-window page.
+    WebView *view3 = strip2.makeNewTab(true);
+    QVERIFY(view3);
+    QSignalSpy loaded3(view3->page(), &QWebEnginePage::loadFinished);
+    view3->setHtml(QStringLiteral("<html><body>other</body></html>"),
+                   QUrl(QStringLiteral("http://other.test/")));
+    QTRY_VERIFY(loaded3.count() >= 1);
+    QCOMPARE(panel.m_contextCombo->count(), 3);
+    QVERIFY(disabled(panel.m_contextCombo, 0));
+    QVERIFY(disabled(panel.m_contextCombo, 1));
+    QVERIFY(!disabled(panel.m_contextCombo, 2));
+    QCOMPARE(panel.m_contextCombo->itemData(2).toString(),
+             QStringLiteral("ctx-e"));
+
+    // Once the retry budget is spent the row settles back on the
+    // honest verdict instead of promising an attach forever.
+    panel.m_attachRetries = 100;
+    panel.rebuildContextCombo();
+    QVERIFY(disabled(panel.m_contextCombo, 0));
+    QVERIFY(panel.m_contextCombo->itemText(0).contains(
+                QStringLiteral("no debug target")));
 }
 
 // DEVT12: the Console's Chromium-parity pass — per-level washes and
