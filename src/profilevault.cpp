@@ -20,6 +20,7 @@
 #include "profilevault.h"
 
 #include "browserapplication.h"
+#include "browsermainwindow.h"
 #include "browserpaths.h"
 #include "profilesettings.h"
 
@@ -27,11 +28,13 @@
 #include <qdatetime.h>
 #include <qdebug.h>
 #include <qdir.h>
+#include <qevent.h>
 #include <qfile.h>
 #include <qfileinfo.h>
 #include <qjsondocument.h>
 #include <qjsonobject.h>
 #include <qsavefile.h>
+#include <qtimer.h>
 
 #ifdef Q_OS_UNIX
 #include <unistd.h>
@@ -59,21 +62,11 @@ void secureZero(QByteArray &bytes)
         p[i] = 0;
 }
 
-// The MPROF01 profile-id contract (BrowserPaths::isProfileId on the
-// merged tree): lowercase slug, 1..64 chars.  Duplicate — whoever
-// merges second deletes their copy, same rule as ProfilePaths.
+// Merged-tree fold: the local slug copy is gone — BrowserPaths::
+// isProfileId is the contract (MPROF01 won the merge race).
 bool idIsSlug(const QString &id)
 {
-    if (id.isEmpty() || id.size() > 64)
-        return false;
-    for (const QChar c : id) {
-        const ushort u = c.unicode();
-        const bool ok = (u >= 'a' && u <= 'z') || (u >= '0' && u <= '9')
-                        || c == QLatin1Char('-') || c == QLatin1Char('_');
-        if (!ok)
-            return false;
-    }
-    return true;
+    return BrowserPaths::isProfileId(id);
 }
 
 QString vaultPath(const QString &vaultDir, const QString &name)
@@ -242,12 +235,9 @@ QString ProfileVault::normalizedId(const QString &profileId)
 
 QString ProfileVault::profileDirFor(const QString &profileId)
 {
-    const QString id = normalizedId(profileId);
-    // MPROF01 retargets this seam: post-merge "default" also lives at
-    // profiles/default/ and this folds into profileDataDir(id).
-    if (id == QLatin1String("default"))
-        return QDir::cleanPath(BrowserPaths::dataFilePath(QString()));
-    return ProfilePaths::dirFor(id);
+    // Merged-tree fold: MPROF01 landed first — "default" lives at
+    // profiles/default/ like every other id.
+    return BrowserPaths::profileDataDir(normalizedId(profileId));
 }
 
 QString ProfileVault::vaultDirFor(const QString &profileId)
@@ -365,16 +355,27 @@ void ProfileVault::progressTrampoline(uint64_t done, uint64_t total,
 
 bool ProfileVault::hasOpenWindows(const QString &id) const
 {
+    return openWindowCount(id) > 0;
+}
+
+int ProfileVault::openWindowCount(const QString &profileId) const
+{
 #ifdef AUTOTESTS
     if (m_testGate >= 0)
-        return m_testGate != 0;
+        return m_testGate != 0 ? 1 : 0;
 #endif
-    // MPROF03 retargets: pre-binding every window belongs to the
-    // default profile, so a non-default id can never have one open.
-    if (normalizedId(id) != ProfileSettings::defaultId())
-        return false;
+    // Merged-tree fold: MPROF03's per-persona binding is live — a
+    // window counts against the profile it is bound to.
+    const QString id = normalizedId(profileId);
     BrowserApplication *app = BrowserApplication::instance();
-    return app && !app->mainWindows().isEmpty();
+    if (!app)
+        return 0;
+    int count = 0;
+    for (BrowserMainWindow *window : app->mainWindows()) {
+        if (window && window->profileId() == id)
+            ++count;
+    }
+    return count;
 }
 
 bool ProfileVault::holdExcluded(const QString &id, bool hold,
@@ -572,6 +573,7 @@ ProfileVault::Error ProfileVault::seal(const QString &profileId,
 
     dropPassword(id); // locked — custody ends
     emit profileLocked(id);
+    emit vaultChanged(id);
     return fail(NoError, QString());
 #endif
 }
@@ -696,7 +698,9 @@ ProfileVault::Error ProfileVault::unseal(const QString &profileId,
         writeConf(id, conf, &ioError);
     }
     cachePassword(id, password); // custody for the auto-lock re-seal
+    installIdleTracking();
     emit profileUnlocked(id);
+    emit vaultChanged(id);
     return fail(NoError, QString());
 #endif
 }
@@ -799,6 +803,7 @@ void ProfileVault::setAutoLock(const QString &profileId, bool enabled)
     QString error;
     if (!writeConf(id, conf, &error))
         qWarning() << "ProfileVault:" << error;
+    emit vaultChanged(id);
 }
 
 void ProfileVault::disarmDirty(const QString &profileId)
@@ -823,6 +828,7 @@ ProfileVault::Error ProfileVault::wipeVault(const QString &profileId)
     if (!secureEraseTree(vaultDirFor(id), &error))
         return fail(Io, error);
     dropPassword(id); // any unlock custody dies with the vault
+    emit vaultChanged(id);
     return fail(NoError, QString());
 }
 
@@ -864,6 +870,228 @@ void ProfileVault::sealUnlockedProfilesAtShutdown()
     for (auto it = m_passwords.begin(); it != m_passwords.end(); ++it)
         secureZero(it.value());
     m_passwords.clear();
+}
+
+// ---- PVAULT03 merge surface ----------------------------------------
+
+bool ProfileVault::isVaulted(const QString &profileId) const
+{
+    return state(profileId) != NoVault;
+}
+
+bool ProfileVault::isUnlocked(const QString &profileId) const
+{
+    const State s = state(profileId);
+    return s == Unlocked || s == DirtyUnlocked;
+}
+
+quint8 ProfileVault::algo(const QString &profileId) const
+{
+    QVariantMap conf;
+    if (readConf(normalizedId(profileId), &conf)) {
+        const uint recorded =
+            conf.value(QLatin1String("algo"), 0).toUInt();
+        if (recorded == AlgoThreefishXex)
+            return AlgoThreefishXex;
+    }
+    return AlgoAes256Gcm;
+}
+
+QString ProfileVault::blobPathFor(const QString &profileId)
+{
+    return vaultPath(vaultDirFor(profileId), QLatin1String("vault.arv"));
+}
+
+bool ProfileVault::canLockNow(const QString &profileId,
+                              QString *reason) const
+{
+    const QString id = normalizedId(profileId);
+    const QString why = [this, &id]() -> QString {
+        if (!isAvailable())
+            return tr("The vault encryption engine is not available "
+                      "in this build.");
+        switch (state(id)) {
+        case Locked:
+            return tr("This profile is already locked.");
+        case SealInterrupted:
+            return tr("A previous lock was interrupted — unlock the "
+                      "profile to recover it first.");
+        case NoVault:
+            return tr("Set a password for this profile in the "
+                      "Profile Manager first.");
+        default:
+            break;
+        }
+        if (openWindowCount(id) > 0)
+            return tr("Close this profile's windows before locking "
+                      "it.");
+        return QString();
+    }();
+    if (reason)
+        *reason = why;
+    return why.isEmpty();
+}
+
+bool ProfileVault::hasSessionPassword(const QString &profileId) const
+{
+    return m_passwords.contains(normalizedId(profileId));
+}
+
+QByteArray ProfileVault::sessionPassword(const QString &profileId) const
+{
+    return m_passwords.value(normalizedId(profileId));
+}
+
+ProfileVault::Error ProfileVault::setPassword(
+    const QString &profileId, const QByteArray &password, quint8 algoId)
+{
+    const QString id = normalizedId(profileId);
+    m_lastError.clear();
+    if (password.isEmpty())
+        return fail(EmptyPassword,
+                    QStringLiteral("empty vault password"));
+    cachePassword(id, password);
+    QVariantMap conf;
+    readConf(id, &conf); // keep locked/sealed_at/kdf across updates
+    conf.insert(QLatin1String("version"), 1);
+    conf.insert(QLatin1String("profile"), id);
+    conf.insert(QLatin1String("algo"), int(algoId));
+    if (!conf.contains(QLatin1String("auto_lock")))
+        conf.insert(QLatin1String("auto_lock"), true);
+    QString error;
+    if (!writeConf(id, conf, &error))
+        return fail(Io, error);
+    installIdleTracking();
+    emit vaultChanged(id);
+    return fail(NoError, QString());
+}
+
+int ProfileVault::idleLockMinutes(const QString &profileId) const
+{
+    QVariantMap conf;
+    if (!readConf(normalizedId(profileId), &conf))
+        return 0;
+    return conf.value(QLatin1String("idle_lock_minutes"), 0).toInt();
+}
+
+void ProfileVault::setIdleLockMinutes(const QString &profileId,
+                                      int minutes)
+{
+    const QString id = normalizedId(profileId);
+    QVariantMap conf;
+    readConf(id, &conf);
+    conf.insert(QLatin1String("version"), 1);
+    conf.insert(QLatin1String("profile"), id);
+    conf.insert(QLatin1String("idle_lock_minutes"),
+                qMax(0, minutes));
+    QString error;
+    if (!writeConf(id, conf, &error))
+        qWarning() << "ProfileVault:" << error;
+    if (minutes > 0)
+        installIdleTracking();
+    emit vaultChanged(id);
+}
+
+void ProfileVault::noteWindowClosed(const QString &profileId)
+{
+    const QString id = normalizedId(profileId);
+    const State s = state(id);
+    if ((s == Unlocked || s == DirtyUnlocked) && autoLock(id)
+        && !hasOpenWindows(id)
+        && lockProfile(id) != NoError)
+        qWarning() << "ProfileVault: auto-lock of profile" << id
+                   << "failed:" << errorMessage()
+                   << "— plaintext remains on disk";
+}
+
+QString ProfileVault::statusText(int error)
+{
+    switch (error) {
+    case NoError:
+        return QString();
+    case WrongPassword:
+        return tr("The password is incorrect.");
+    case Tampered:
+        return tr("The vault failed its integrity check — the data "
+                  "may have been modified or corrupted.  Nothing was "
+                  "unpacked.");
+    case Corrupt:
+        return tr("The vault file is damaged or not a recognized "
+                  "vault.");
+    case UnsupportedAlgo:
+        return tr("The vault uses a cipher this build cannot read.");
+    case EmptyPassword:
+        return tr("An empty password cannot lock a vault.");
+    case NotLocked:
+        return tr("This profile has no vault.");
+    case AlreadyLocked:
+        return tr("This profile is already locked.");
+    case PlaintextPresent:
+        return tr("Unlocking would overwrite existing profile data.");
+    case HasOpenWindows:
+        return tr("This profile still has open windows.");
+    case NoPassword:
+        return tr("No password is cached for this profile this "
+                  "session.");
+    case Io:
+        return tr("A filesystem error stopped the vault operation.");
+    case Unavailable:
+        return tr("The vault encryption engine is not available in "
+                  "this build.");
+    case Canceled:
+        return tr("The operation was canceled.");
+    }
+    return tr("Unknown vault error.");
+}
+
+void ProfileVault::installIdleTracking()
+{
+    if (m_idleTimer || !qApp)
+        return;
+    m_lastActivityMs = QDateTime::currentMSecsSinceEpoch();
+    qApp->installEventFilter(this);
+    m_idleTimer = new QTimer(this);
+    m_idleTimer->setInterval(30 * 1000);
+    connect(m_idleTimer, &QTimer::timeout,
+            this, &ProfileVault::checkIdleDeadlines);
+    m_idleTimer->start();
+}
+
+bool ProfileVault::eventFilter(QObject *watched, QEvent *event)
+{
+    switch (event->type()) {
+    case QEvent::KeyPress:
+    case QEvent::MouseButtonPress:
+    case QEvent::Wheel:
+    case QEvent::TouchBegin:
+        m_lastActivityMs = QDateTime::currentMSecsSinceEpoch();
+        break;
+    default:
+        break;
+    }
+    return QObject::eventFilter(watched, event);
+}
+
+void ProfileVault::checkIdleDeadlines()
+{
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    for (const QString &id : m_passwords.keys()) {
+        const int minutes = idleLockMinutes(id);
+        if (minutes <= 0)
+            continue;
+        if (now - m_lastActivityMs < qint64(minutes) * 60000)
+            continue;
+        const State s = state(id);
+        if (s != Unlocked && s != DirtyUnlocked)
+            continue;
+        // The open-window rule still stands — an idle profile whose
+        // windows are open locks when they close instead.
+        if (hasOpenWindows(id))
+            continue;
+        if (lockProfile(id) != NoError)
+            qWarning() << "ProfileVault: idle-lock of profile" << id
+                       << "failed:" << errorMessage();
+    }
 }
 
 #ifdef AUTOTESTS

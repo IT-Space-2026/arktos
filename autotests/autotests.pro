@@ -51,6 +51,7 @@ SUBDIRS  = \
     privacy \
     profileavatar \
     profilecontext \
+    profilee2e \
     profilemanager \
     profilemanagers \
     profilemenu \

@@ -29,6 +29,8 @@
 
 #include <stdint.h>
 
+class QTimer;
+
 // PVAULT02: the Qt-side profile vault engine — orchestrates the
 // rustcore "ARV1" FFI (PVAULT01's rv_seal/rv_unseal/rv_verify/
 // rv_inspect/rv_rewrap) into the lock/unlock lifecycle the UI drives.
@@ -108,9 +110,20 @@ public:
         HasOpenWindows,   // lock refused — profile still has windows
         NoPassword,       // re-lock with no cached/explicit password
         Io,               // filesystem or other FFI failure
-        Unavailable       // built without rustcore
+        Unavailable,      // built without rustcore
+        Canceled          // UI-side state — ops themselves can't be
+                          // canceled mid-flight (the FFI is
+                          // synchronous); produced when a wait
+                          // dialog is dismissed
     };
     Q_ENUM(Error)
+
+    // Cipher ids — mirror RC_VAULT_ALGO_* so dialogs can name the
+    // choice without pulling the FFI header in.
+    enum VaultAlgo {
+        AlgoAes256Gcm = 0x01,     // AES-256-GCM + HMAC-SHA-512
+        AlgoThreefishXex = 0x02   // Threefish-1024 XEX + HMAC-Skein-512
+    };
 
     // Marker-derived truth (vault.conf is a record, not the state):
     //   lock marker              -> Locked
@@ -199,6 +212,49 @@ public:
     // Called at the tail of ~BrowserApplication and quitBrowser().
     void sealUnlockedProfilesAtShutdown();
 
+    // ---- PVAULT03 merge surface ----------------------------------
+    // The ui lane's facade entry points, folded onto this engine.
+    // vault.conf exists — a password vaulted this profile, sealed or
+    // not.
+    bool isVaulted(const QString &profileId) const;
+    // Vaulted and currently open in plaintext.
+    bool isUnlocked(const QString &profileId) const;
+    // Configured cipher id from vault.conf (AlgoAes256Gcm default).
+    quint8 algo(const QString &profileId) const;
+    // The sealed blob's path for display — no existence check.
+    static QString blobPathFor(const QString &profileId);
+
+    // Windows currently bound to this id (MPROF03 live binding).
+    int openWindowCount(const QString &profileId) const;
+    // The Lock gate — `reason` carries the blocking cause for
+    // tooltips: engine missing, not vaulted, already locked, an
+    // interrupted seal, or windows still open.
+    bool canLockNow(const QString &profileId,
+                    QString *reason = nullptr) const;
+
+    // Session password custody (set by unseal()/setPassword(), wiped
+    // at seal/shutdown) — lock paths re-seal without re-prompting.
+    bool hasSessionPassword(const QString &profileId) const;
+    QByteArray sessionPassword(const QString &profileId) const;
+    // Set-password entry: caches the session password and records
+    // the algo pick in vault.conf — nothing is sealed yet, the dir
+    // stays live.
+    Error setPassword(const QString &profileId,
+                      const QByteArray &password, quint8 algo);
+
+    // Idle lock in minutes; 0 (default) means never.  The
+    // m_idleTimer/eventFilter pair enforces it once installed.
+    int idleLockMinutes(const QString &profileId) const;
+    void setIdleLockMinutes(const QString &profileId, int minutes);
+
+    // PVAULT03 hook: a window on `profileId` went away — seal when
+    // the state + auto_lock pref say so and no windows remain on the
+    // id.  Never disarms the dirty marker: the session may continue.
+    void noteWindowClosed(const QString &profileId);
+
+    // Honest user-facing text for an Error.
+    static QString statusText(int error);
+
 #ifdef AUTOTESTS
     // Drops every cached password + the window-gate override.
     void resetForTests();
@@ -215,6 +271,12 @@ signals:
     void profileLocked(const QString &profileId);
     void profileUnlocked(const QString &profileId);
     void dirtyDetected(const QString &profileId);
+    // Vault-relevant state flipped for the profile — repaint
+    // triggers for the manager/menu (PVAULT03 merge surface).
+    void vaultChanged(const QString &profileId);
+
+private slots:
+    void checkIdleDeadlines();
 
 private:
     explicit ProfileVault(QObject *parent = nullptr);
@@ -227,6 +289,8 @@ private:
                    QString *error) const;
     void cachePassword(const QString &id, const QByteArray &password);
     void dropPassword(const QString &id);
+    bool eventFilter(QObject *watched, QEvent *event) override;
+    void installIdleTracking();
 #ifdef ARORA_RUSTCORE
     Error mapStatus(int status, const QString &fallback) const;
     static void progressTrampoline(uint64_t done, uint64_t total,
@@ -237,6 +301,8 @@ private:
     // auto-lock re-seal.  Wiped on lock/shutdown.
     QHash<QString, QByteArray> m_passwords;
     mutable QString m_lastError;
+    QTimer *m_idleTimer = nullptr;
+    qint64 m_lastActivityMs = 0;
 #ifdef AUTOTESTS
     int m_testGate = -1; // -1 none, 0 no windows, 1 windows open
 #endif

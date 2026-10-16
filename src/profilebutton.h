@@ -84,6 +84,10 @@ private:
     // MPROF05: rebuilds the 'New Window' switcher submenu from the
     // profile registry on every open.
     void populateNewWindowMenu();
+    // PVAULT03: keeps 'Lock Profile' honest — enabled only when the
+    // vault can actually seal this profile right now, with the
+    // blocking reason on the tooltip.
+    void updateLockAction();
 
     QMenu *m_menu;
     QLabel *m_headerAvatar;
@@ -91,6 +95,7 @@ private:
     QAction *m_renameAction;
     QMenu *m_newWindowMenu;
     QAction *m_managerAction;
+    QAction *m_lockAction;
 };
 
 #endif // PROFILEBUTTON_H

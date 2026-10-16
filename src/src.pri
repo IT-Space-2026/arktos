@@ -156,6 +156,7 @@ HEADERS += \
     $$PWD/tabwidget.h \
     $$PWD/toolbarsearch.h \
     $$PWD/urlcleaner.h \
+    $$PWD/vaultdialogs.h \
     $$PWD/webactionmapper.h \
     $$PWD/webpage.h \
     $$PWD/webpermissionmanager.h \
@@ -246,6 +247,7 @@ SOURCES += \
     $$PWD/tabwidget.cpp \
     $$PWD/toolbarsearch.cpp \
     $$PWD/urlcleaner.cpp \
+    $$PWD/vaultdialogs.cpp \
     $$PWD/webactionmapper.cpp \
     $$PWD/webpage.cpp \
     $$PWD/webpermissionmanager.cpp \

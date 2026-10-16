@@ -957,6 +957,24 @@ UI:
   cache roots plus settings before any profile exists again, so a
   live profile can never be deleted out from under a running window
   (PROF03).
+- Profile lock: a profile can be sealed behind a password from the
+  Profile Manager — the password dialog offers a strength hint and a
+  cipher picker whose default is AES-256-GCM + HMAC-SHA-512, with an
+  explicitly unaudited Threefish-1024 opt-in, and sealing encrypts
+  the profile's data folder at rest.  Locked profiles show as
+  "Locked" in the manager, report their sealed size, and refuse to
+  open until unlocked; a failed unlock says honestly whether the
+  password was wrong or the vault itself failed integrity checks.
+  "Lock Profile" on the profile menu seals the active profile with a
+  progress dialog and is disabled while its windows are still open;
+  Preferences can lock a vaulted profile automatically when its last
+  window closes or after an idle timeout, and a browser that exited
+  uncleanly while a profile was unlocked offers to re-seal it on the
+  next launch.  Seal/unseal run on worker threads and canceling a
+  seal rolls back to honest plaintext — a half-sealed profile is
+  never presented as locked.  On this branch the vault engine seam
+  runs the unavailable stub until the Rust vault FFI lands
+  (PVAULT03).
 - Tab strips no longer draw a line under resting tabs: the thin seam
   that ran along the strip's page-facing edge (and gapped under the
   active tab, so some tabs looked underlined and some didn't) is gone
