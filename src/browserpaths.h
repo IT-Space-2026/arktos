@@ -40,8 +40,10 @@
 //     per-profile lookups.
 //   - globalDataFilePath() stays at the root for shared, persona-free
 //     state (the tor bundle + its data/docs dirs, locale drops, the
-//     crash log, the profile-wipe marker, QtWebEngine/'s Chromium-
-//     namespaced stores, profiles.json).  Note the tranco/blocklist
+//     crash log, the profile-wipe marker, profiles.json).  The
+//     QtWebEngine/ store tree lived here too until VSEC02 moved it
+//     inside each persona's dir (see engineStorageDir).  Note the
+//     tranco/blocklist
 //     caches live INSIDE the profile dir instead — rustcore reads
 //     them from its single data dir, which anchors to the profile
 //     store.
@@ -92,6 +94,38 @@ QString dataFilePath(const QString &fileName);
 // reseeding the root.  Returns false and fills *error when a move
 // fails — treat a false return as LOUD, never as split state.
 bool ensureDataLayout(QString *error = nullptr);
+
+// VSEC02: the ENGINE side of a persona's store — where its named
+// QWebEngineProfile persists cookies, LocalStorage/IndexedDB,
+// service workers and visited links.  Rooted inside profiles/<id>/
+// so the profile vault's rv_seal packs it with the app-side stores
+// (VSEC01 F2: at the data root it stayed plaintext through a lock).
+//   engineStorageDir -> profiles/<id>/QtWebEngine   (sealed)
+//   engineCacheDir   -> profiles/<id>/cache/QtWebEngine
+// The cache deliberately lands under the profile's "cache" name —
+// the vault's existing exclusion holds it aside unsealed, the honest
+// "disposable plaintext" posture the app cache already has (sealing
+// a multi-hundred-MB HTTP cache would buy nothing it promises).
+QString engineStorageDir(const QString &profileId);
+QString engineCacheDir(const QString &profileId);
+
+// VSEC02 one-time relocation of the pre-change layout: moves
+// <data root>/QtWebEngine/arora[-<id>]/ into each persona's
+// engineStorageDir() — except when a sealed vault blob owns the
+// plaintext right now (state Locked or SealInterrupted), where the
+// tree parks in <id>.vault/engine-hold/ instead and unseal()
+// restores it next to the unpacked data.  Same never-follow-
+// symlinks discipline as ensureDataLayout: the QtWebEngine dir, the
+// payload entry and the destination chain are lstat-checked and a
+// planted link or a both-sides collision fails the pass LOUDLY —
+// nothing moves.  "arora-container-*" entries are container residue,
+// not personas, and stay put.  The legacy <cache root>/QtWebEngine/
+// arora* dirs are disposable — removed, not migrated.
+// Marker-free and idempotent: it runs every boot (main() after
+// ensureDataLayout) and lazily inside the profile factories, so it
+// must be called before any named QWebEngineProfile is constructed —
+// a profile that already opened storage cannot be re-pointed.
+bool ensureEngineStorageLayout(QString *error = nullptr);
 
 } // namespace BrowserPaths
 

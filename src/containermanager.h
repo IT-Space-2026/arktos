@@ -124,13 +124,13 @@ public:
     // storage root.  Only meaningful for registered ids.
     QString storagePath(const QString &id) const;
 
-    // CONT05: the on-disk locations Qt derives from the container's
-    // storage name — <CacheLocation>/QtWebEngine/<storageName> for the
-    // http cache, and the mostly-empty default storage dir
-    // <AppDataLocation>/QtWebEngine/<storageName> Qt creates at profile
-    // construction before persistentStoragePath is overridden.  Both
-    // are computed WITHOUT materializing the profile so deletion and
-    // clear-data paths reach containers never used this session.
+    // The on-disk locations container cleanup must reach WITHOUT
+    // materializing the profile.  VSEC02: the http cache now lives
+    // under the owning persona's cache/ tree (profiles/<persona>/
+    // cache/containers/<id>) so it rides the vault's "cache"
+    // exclusion with the persona's own engine cache; the residue
+    // default storage dir Qt keys off the storage name stays at
+    // <AppDataLocation>/QtWebEngine/<storageName>.
     QString cachePathFor(const QString &id) const;
     QString defaultDataPathFor(const QString &id) const;
 

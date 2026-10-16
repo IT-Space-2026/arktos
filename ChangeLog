@@ -3205,3 +3205,22 @@ Security audit of the multi-profile + vault stack (VSEC01):
     profile still leaves Chromium's own on-disk storage (cookies,
     localStorage, disk cache) outside the sealed set — is filed as
     follow-up task VSEC02.
+
+    VSEC02 closes that gap: every named persona profile now roots its
+    engine storage inside the sealed tree — cookies, localStorage,
+    IndexedDB, service workers and visited links land in
+    profiles/<id>/QtWebEngine and pack into the vault archive on lock,
+    so a locked profile no longer leaves Chromium-side plaintext on
+    disk. The HTTP disk cache deliberately rides the vault's existing
+    "cache" exclusion as disposable plaintext. Existing installs are
+    migrated on first boot: the old data-root QtWebEngine/arora[-<id>]
+    trees move into their persona (or park inside the vault's
+    engine-hold for a profile that is already locked, restored on
+    unlock), with the same symlink-refusal and collision-abort
+    discipline as the earlier data-layout migration — a planted link
+    or a both-sides store fails loudly instead of merging or following
+    the link. Container profiles keep their storage under
+    profiles/<persona>/containers/<cid>/ and now keep their cache under
+    the owning persona's excluded cache tree as well, and
+    off-the-record/Tor profiles remain memory-only with nothing on
+    disk to relocate.

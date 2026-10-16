@@ -48,10 +48,21 @@ namespace {
 
 // Top-level names excluded from the sealed tree and held aside as
 // "<name>-hold/" inside the vault dir: "cache" is the spec'd
-// disposable exclusion (stays unsealed by design); "profiles" keeps
-// the pre-MPROF data-root layout from swallowing sibling profiles and
-// their vaults — a no-op once MPROF01 makes profiles/<id> the dir.
+// disposable exclusion (stays unsealed by design — VSEC02 parks the
+// engine's http cache there too: profiles/<id>/cache/QtWebEngine);
+// "profiles" keeps the pre-MPROF data-root layout from swallowing
+// sibling profiles and their vaults — a no-op once MPROF01 makes
+// profiles/<id> the dir.
 const char *const kExcludedNames[] = { "cache", "profiles" };
+
+// VSEC02: top-level names the ENGINE can recreate inside the profile
+// dir after a seal — a live QWebEngineProfile (or one brought up by
+// a boot that ran ahead of the lock check) keeps writing to its
+// configured roots, and Chromium re-makes the dirs when they are
+// gone.  That residue is engine-regenerable, not user payload, so
+// unseal() clears it rather than tripping the plaintext gate; a dir
+// holding anything else still refuses.
+const char *const kEngineResidueNames[] = { "QtWebEngine", "cache" };
 
 void secureZero(QByteArray &bytes)
 {
@@ -523,6 +534,15 @@ ProfileVault::Error ProfileVault::seal(const QString &profileId,
             "profile %1 sealed but plaintext erase failed: %2")
             .arg(id, ioError));
 
+    // VSEC02: a held-aside engine tree from before the relocation is
+    // plaintext for a store the blob now covers — the sealed copy is
+    // authoritative, so erase the stale hold instead of letting it
+    // resurrect on the next unseal.
+    if (QFileInfo(vaultPath(
+            vault, QLatin1String("engine-hold/QtWebEngine"))).isDir())
+        secureEraseTree(vaultPath(
+            vault, QLatin1String("engine-hold")), &ioError);
+
     QFile::remove(vaultPath(vault, QLatin1String("unlocked.dirty")));
     const QString sealedAt =
         QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
@@ -542,6 +562,15 @@ ProfileVault::Error ProfileVault::seal(const QString &profileId,
     for (const char *name : kExcludedNames)
         excluded.append(QLatin1String(name));
     conf.insert(QLatin1String("excluded"), excluded);
+    // VSEC02: say in the conf which engine roots the sealed set
+    // actually covers, so rv_inspect/lock-state audits can verify the
+    // claim instead of assuming it — QtWebEngine is sealed; the
+    // cache/QtWebEngine subtree rides the "cache" exclusion as
+    // disposable plaintext.
+    conf.insert(QLatin1String("engine_storage"),
+                QLatin1String("QtWebEngine"));
+    conf.insert(QLatin1String("engine_cache"),
+                QLatin1String("cache/QtWebEngine"));
     // Record the params the blob actually carries — rv_inspect reads
     // them out of the sealed header rather than trusting defaults.
     char *raw = rv_inspect(out.constData());
@@ -630,6 +659,32 @@ ProfileVault::Error ProfileVault::unseal(const QString &profileId,
     const QString park =
         vaultPath(vault, QLatin1String("pre-unlock"));
     QString ioError;
+    // VSEC02: engine residue written while sealed is not the
+    // plaintext the overwrite gate protects — drop it FIRST so a
+    // residue-only dir counts as empty for the park recovery below,
+    // and a locked boot's cookie-store open or cache flush cannot
+    // deadlock the unlock path on PlaintextPresent.
+    if (dirHasContents(dir)) {
+        const QStringList live = QDir(dir).entryList(
+            QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden
+            | QDir::System);
+        bool residueOnly = !live.isEmpty();
+        for (const QString &name : live) {
+            bool engineOwned = false;
+            for (const char *residue : kEngineResidueNames) {
+                if (name == QLatin1String(residue))
+                    engineOwned = true;
+            }
+            residueOnly &= engineOwned;
+        }
+        if (residueOnly) {
+            qInfo() << "ProfileVault: clearing post-seal engine"
+                       " residue before unseal of profile" << id;
+            if (!secureEraseTreeContents(dir, &ioError))
+                return fail(Io, ioError);
+        }
+    }
+
     // Recover or retire a parked tree from an earlier interrupted
     // overwrite: live plaintext wins, an empty destination means the
     // previous attempt never committed and the parked copy is the
@@ -679,6 +734,35 @@ ProfileVault::Error ProfileVault::unseal(const QString &profileId,
     }
 
     holdExcluded(id, false, &ioError);
+    // VSEC02: the pre-change engine store parked here by the boot
+    // sweep rides back into the freshly-unsealed tree — before any
+    // page exists, so the profile's configured storage path opens it
+    // whole.  When the blob itself already carries QtWebEngine/ (a
+    // post-change seal), the hold is stale plaintext for a store the
+    // blob now covers — erase it instead of overwriting.
+    const QString hold = vaultPath(
+        vault, QLatin1String("engine-hold/QtWebEngine"));
+    if (QFileInfo(hold).isDir() && !QFileInfo(hold).isSymLink()) {
+        const QString engineDst =
+            dir + QLatin1String("/QtWebEngine");
+        if (QFileInfo(engineDst).isDir()) {
+            secureEraseTree(vaultPath(
+                vault, QLatin1String("engine-hold")), &ioError);
+        } else {
+            QDir(engineDst).removeRecursively();
+            if (QDir().rename(hold, engineDst)) {
+                QDir(vaultPath(vault, QLatin1String("engine-hold")))
+                    .removeRecursively();
+            } else {
+                // A failed rename leaves the hold as the ONLY copy of
+                // the store — keep it for a later unseal rather than
+                // destroying it on the way out.
+                qWarning() << "ProfileVault: engine-hold for profile"
+                           << id << "could not be restored — still at"
+                           << hold;
+            }
+        }
+    }
     if (QFile::exists(park))
         secureEraseTree(park, &ioError);
 

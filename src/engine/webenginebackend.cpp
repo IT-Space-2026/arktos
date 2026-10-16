@@ -32,6 +32,7 @@
 #include <qwebenginehistory.h>
 #include <qwebenginepage.h>
 #include <qwebengineprofile.h>
+#include <qwebengineprofilebuilder.h>
 #include <qwebenginescript.h>
 #include <qwebenginescriptcollection.h>
 #include <qwebenginesettings.h>
@@ -940,15 +941,23 @@ Engine::Profile *WebEngineBackend::createProfile(const Engine::ProfileOptions &o
     bool owned = false;
     if (options.storageName.isEmpty() && !options.offTheRecord) {
         profile = QWebEngineProfile::defaultProfile();
-    } else {
-        profile = options.offTheRecord && options.storageName.isEmpty()
-                ? new QWebEngineProfile
-                : new QWebEngineProfile(options.storageName);
+    } else if (options.offTheRecord && options.storageName.isEmpty()) {
+        profile = new QWebEngineProfile;
         owned = true;
+    } else {
+        // Custom storage paths must ride the builder: the post-
+        // construction setPersistentStoragePath() re-creates the
+        // profile's PrefService/ExtensionPrefs while the already-
+        // built ExtensionRegistrar still holds the stale pair —
+        // the next enableExtension() then dereferences the dead
+        // object (upstream Qt 6.12 bug, VSEC02).
+        QWebEngineProfileBuilder builder;
         if (!options.dataPath.isEmpty())
-            profile->setPersistentStoragePath(options.dataPath);
+            builder.setPersistentStoragePath(options.dataPath);
         if (!options.cachePath.isEmpty())
-            profile->setCachePath(options.cachePath);
+            builder.setCachePath(options.cachePath);
+        profile = builder.createProfile(options.storageName);
+        owned = true;
     }
     auto *adapter = new WebEngineProfileAdapter(profile, parent);
     if (owned)

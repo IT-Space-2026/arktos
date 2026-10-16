@@ -4080,3 +4080,52 @@ I'll start by checking the current state and fetching origin.Working tree has so
 
 Left untouched (agent WIP in this tree, per rules): `src/main.cpp` MPROF06 edits, `autotests/profilee2e/`, and the `.devin/*.log`/`Arora-Task.md` dirty files.
 [2026-10-16 16:05:40] merge run exited rc=0
+[2026-10-16 19:20:59] merge due: ui-work(2) — spawning devin merge run
+I'll start by checking the repo state and fetching.Working tree has uncommitted changes (likely an agent mid-run). I'll note those files — if a merge touches them, I skip that lane. Now checking lane ahead-counts.`rust-work` is even — skipping. `ui-work` is 2 ahead. Checking which files it touches versus the dirty working tree.Only `.devin/Arora-Task-UI.md` differs — let me verify what each commit actually contains.Clean lane — only `.devin/Arora-Task-UI.md` touched, no overlap with dirty files. Merging.Merge completed cleanly (no conflicts). Now verifying the build.Build clean. Now let me check the WORKLOG convention before pushing and logging.Merge is clean and build passed. Checking how previous runs committed the WORKLOG line, then pushing.Convention confirmed: WORKLOG lines get their own `MERGEWATCH:` commits. Reading the file tail to append.Committing only the WORKLOG line, then pushing master.Pushed successfully. Let me verify the final state — the push range looked slightly different than expected.Done — one pass complete:
+
+- **`rust-work`**: 0 commits ahead of master — skipped.
+- **`ui-work`**: 2 commits ahead (UPD01 "Check for Updates" task-queue rows). Touched only `.devin/Arora-Task-UI.md` — no overlap with the agent WIP dirty in this tree, so merged cleanly via `ort`, zero conflicts (merge commit `a0d20968`).
+- **Build**: `source .devin/qt-env.sh && make -C src -j2` → clean, nothing to rebuild.
+- **WORKLOG**: appended the `MERGEWATCH` line and committed it alone (`2bd43141`), matching prior-run convention.
+- **Push**: `daabf714..2bd43141` → `origin/master`. Note the range also carried `daabf714` (windows dual-mode installer), which the parallel agent committed to master mid-run — it was a legitimate master commit, so the fast-forward push took it along.
+
+Left untouched: all pre-existing dirty files (`.devin/Arora-Task.md`, logs, `src/*` agent WIP). Stopping here as instructed — the watchdog handles the next run.
+[2026-10-16 19:21:58] merge run exited rc=0
+[2026-10-16 19:57:01] merge due: ui-work(1) — spawning devin merge run
+Starting merge run. First, checking repo state and fetching.Working tree is dirty (likely a task agent mid-run). I'll check lane ahead-counts and which files each merge would touch before proceeding.`rust-work` is even with master — skipping. `ui-work` is 1 ahead. Checking which files that commit touches versus the dirty files.Overlap found: the `ui-work` merge would touch `.devin/COVERAGE.md`, `ChangeLog`, and `README.md` — all of which have uncommitted changes in this tree (agent mid-run). Per the rules, I'll skip this lane rather than disturb the working tree.
+
+Let me check master's position vs origin and confirm the overlap.Skipping `ui-work` — merge would touch dirty files. Logging the skip to `.devin/WORKLOG.md`. Checking its tail format first.Confirmed. No merges possible this pass — `rust-work` is even, and `ui-work` (UPD01 commit `b81e7229`) overlaps dirty files `ChangeLog`, `.devin/COVERAGE.md`, `README.md`.
+
+I'll log the skip in `WORKLOG.md` and commit just that file — leaving it dirty would make every future ui-work merge abort on it.Merge pass complete — no lanes merged this run.
+
+- **rust-work**: 0 commits ahead of master — skipped.
+- **ui-work**: 1 commit ahead (`b81e7229` UPD01: Help > Check for Updates) — **skipped** because the merge would touch `ChangeLog`, `.devin/COVERAGE.md`, and `README.md`, all of which have uncommitted changes in this tree (agent mid-run). Merging would have aborted on "local changes would be overwritten" anyway, and stashing/committing someone else's work was off-limits.
+- **Build**: not run — nothing merged.
+- **Logged**: skip noted in `.devin/WORKLOG.md`, committed alone (`3e9a6d04`) so it doesn't block the next pass, and pushed to `origin/master`. The agent's dirty working tree was left untouched.
+
+The next watchdog run should be able to merge `ui-work` once the in-flight agent commits its work.
+[2026-10-16 19:58:32] merge run exited rc=0
+[2026-10-16 20:03:33] merge due: ui-work(1) — spawning devin merge run
+I'll start by checking the current state of the repo and fetching origin.The tree has uncommitted changes — likely an agent mid-run. Let me see the full status and check lane progress.rust-work is 0 ahead (skip). ui-work is 1 ahead. Let me check which files the ui-work commit touches vs the dirty files in this tree.Master is in sync with origin. The dirty files overlap the merge path — let me confirm the merge would be refused rather than guessing.[2026-10-16 20:04:20] merge run exited rc=0
+[2026-10-16 20:09:20] merge due: ui-work(1) — spawning devin merge run
+I'll start by checking the repository state and fetching from origin.The working tree is dirty (another agent mid-run, likely). Let me check how far ahead each lane is.Local `ui-work` is 1 commit ahead (not yet pushed to origin). Let me see what that commit touches, since this tree has dirty files.The `ui-work` commit touches `WORKLOG.md`, `COVERAGE.md`, `ChangeLog`, and `README.md` — all of which are dirty in this tree. Let me confirm git refuses the merge, and check the worklog format.[2026-10-16 20:10:07] merge run exited rc=0
+[2026-10-16 20:15:08] merge due: ui-work(1) — spawning devin merge run
+I'll start by checking the current state of the repository and fetching from origin.The tree has uncommitted changes (likely an agent mid-run). I'll proceed — only lanes whose merges touch those dirty files will be skipped. Fetching and checking lane status now.Both sides touch the same files and the local ones are dirty. Let me attempt the merge — git will abort cleanly if it can't proceed.[2026-10-16 20:16:22] merge run exited rc=0
+[2026-10-16 20:21:23] merge due: ui-work(1) — spawning devin merge run
+I'll start by checking the repo state and fetching.The tree has uncommitted changes. Let me fetch and check the lane status.`rust-work` is at 0 (skip). `ui-work` has 1 commit — checking which files it touches vs. the dirty files in this tree.The merge touches `.devin/COVERAGE.md`, `ChangeLog`, and `README.md` — all dirty in this tree (agent mid-run). Git will refuse. Let me attempt the merge to confirm.[2026-10-16 20:22:27] merge run exited rc=0
+[2026-10-16 20:27:27] merge due: ui-work(1) — spawning devin merge run
+Working tree is dirty (agent possibly mid-run). Checking lane status:Same situation as prior passes — ui-work's commit touches `.devin/COVERAGE.md`, `ChangeLog`, `README.md`, all dirty in this tree, so git would refuse the merge. Per rules: skip the lane and log it.Logging the skip and pushing:Pass complete. Summary:
+
+- **rust-work**: 0 commits ahead of master — skipped.
+- **ui-work**: 1 commit ahead (`UPD01: Help > Check for Updates`), but it touches `.devin/COVERAGE.md`, `ChangeLog`, and `README.md`, all of which have uncommitted local changes in this tree (agent mid-run). Git would refuse the merge, so I skipped it per the rules — same as the last three passes.
+- **Build**: not run — no merges happened.
+- **WORKLOG**: appended the skip line, committed (`dec419f2`), pushed master to origin.
+
+The dirty tree appears to be an ongoing agent run (profile/container manager work). Once it commits or cleans up, the next watchdog pass should be able to merge ui-work.
+[2026-10-16 20:27:52] merge run exited rc=0
+[2026-10-16 20:32:52] merge due: ui-work(1) — spawning devin merge run
+I'll start by checking the repo state and fetching.The tree has uncommitted changes (possibly another agent mid-run). Let me check lane status.`rust-work` is at 0 — skip. `ui-work` is 1 ahead, but prior runs skipped it for dirty-tree overlap. Let me check what that commit touches.ui-work's commit touches `.devin/COVERAGE.md`, `ChangeLog`, and `README.md` — all dirty in this tree. Let me confirm the merge would be refused.[2026-10-16 20:33:19] merge run exited rc=0
+[2026-10-16 20:38:19] merge due: ui-work(1) — spawning devin merge run
+I'll start by checking the current state of the repository and fetching.The working tree has uncommitted changes (an agent appears to be mid-run in this tree). Per the rules I won't touch those — I'll only flag a lane if a merge actually conflicts with a dirty file. Now checking lane progress:`rust-work` is at 0 — skipping. `ui-work` is 1 commit ahead (update checker feature). However, the lane touched `ChangeLog`, `README.md`, and `.devin/COVERAGE.md`, which are dirty in this working tree — the merge will likely be blocked. Let me attempt it:[2026-10-16 20:39:15] merge run exited rc=0
+[2026-10-16 20:44:15] merge due: ui-work(1) — spawning devin merge run
+Starting the merge run. First, check the working tree state and fetch.Working tree has uncommitted changes (likely an agent mid-run). I'll only skip a lane if the merge actually touches those files. Checking lane status:`rust-work` is even with master (skip). `ui-work` is 1 ahead — checking which files it touches vs. the dirty files:[2026-10-16 20:44:41] merge run exited rc=0

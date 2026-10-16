@@ -1470,7 +1470,13 @@ void tst_ContainerManager::derivedPathCleanup()
     QCOMPARE(manager->defaultDataPathFor(idLive),
              QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
              + QLatin1String("/QtWebEngine/") + profile->storageName());
-    QVERIFY(!profile->cachePath().contains(QLatin1String("/containers/")));
+    // VSEC02: the cache moved under the persona's cache/ exclusion
+    // (profiles/<persona>/cache/containers/<id>) — still never inside
+    // the sealed container store itself.
+    QVERIFY(profile->cachePath().contains(
+        QLatin1String("/cache/containers/")));
+    QVERIFY(!profile->cachePath().startsWith(
+        manager->storagePath(idLive)));
 
     // A never-materialized container still has the on-disk residue an
     // earlier session would have left — deletion must reach all of it.

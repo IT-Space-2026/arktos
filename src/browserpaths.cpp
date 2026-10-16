@@ -44,10 +44,11 @@ namespace BrowserPaths {
 // repopulate themselves per profile, which the task notes record as
 // the accepted trade-off.
 // Truly global entries — tor/ (daemon state + staged binary), locale/
-// drops, crashreport.log, arora-profile-wipe.pending, QtWebEngine/
-// (Chromium namespaces it by storageName itself), profiles.json,
+// drops, crashreport.log, arora-profile-wipe.pending, profiles.json,
 // this marker — deliberately absent: they stay at the data root and
-// their call sites use globalDataFilePath().
+// their call sites use globalDataFilePath().  QtWebEngine/ joined
+// the sealed side in VSEC02 — ensureEngineStorageLayout() owns its
+// relocation.
 static const char *kProfilePayloads[] = {
     // The SQLite WAL sidecars ride with history.db — moving the db
     // without them would silently drop every un-checkpointed entry.
@@ -79,6 +80,7 @@ static const char *kProfileGlobs[] = {
 
 static const char kMigrationMarker[] = "migration-v1.done";
 static const char kMigrationFailedReport[] = "migration-v1.failed";
+static const char kEngineMigrationFailedReport[] = "migration-v2.failed";
 
 // Every failure path funnels here: qCritical for the terminal plus a
 // persistent report next to the data — a GUI-launched browser cannot
@@ -87,14 +89,16 @@ static const char kMigrationFailedReport[] = "migration-v1.failed";
 // Nothing was deleted, only renamed, and the next boot retries.
 static void reportMigrationFailure(const QString &root,
                                    const QString &message,
-                                   QString *error)
+                                   QString *error,
+                                   const char *reportName
+                                       = kMigrationFailedReport)
 {
     if (error)
         *error = message;
     qCritical() << "BrowserPaths: profile layout migration failed -"
                 << message;
     QFile report(root + QLatin1Char('/')
-                 + QLatin1String(kMigrationFailedReport));
+                 + QLatin1String(reportName));
     if (report.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         report.write(message.toUtf8());
         report.write("\n");
@@ -304,6 +308,227 @@ static void ensureDataLayoutOnce()
 {
     static const bool done = ensureDataLayout();
     Q_UNUSED(done);
+}
+
+QString engineStorageDir(const QString &profileId)
+{
+    return profileDataDir(profileId) + QLatin1String("/QtWebEngine");
+}
+
+QString engineCacheDir(const QString &profileId)
+{
+    return profileDataDir(profileId) + QLatin1String("/cache/QtWebEngine");
+}
+
+// A sealed blob owning the id's plaintext decides whether an engine
+// tree can go straight into profiles/<id> (empty while locked —
+// moving it in would break unseal's empty-destination contract) or
+// parks in <id>.vault/engine-hold/ for unseal() to restore.  Both
+// vault locations are checked — pre-MPROF artifacts sit as siblings
+// of the data root, post-MPROF ones under profiles/.
+static QString engineVaultHold(const QString &root, const QString &id)
+{
+    const QStringList vaultDirs = {
+        root + QLatin1String("/profiles/") + id
+            + QLatin1String(".vault"),
+        root + QLatin1Char('/') + id + QLatin1String(".vault"),
+    };
+    for (const QString &vault : vaultDirs) {
+        if (QFile::exists(vault + QLatin1String("/vault.arv")))
+            return vault + QLatin1String("/engine-hold/QtWebEngine");
+    }
+    return QString();
+}
+
+// The lstat-not-follow rule shared by both layout migrations: every
+// path component a rename writes through is checked for links, so a
+// planted junction can never route the move outside the tree.  Only
+// components strictly BELOW the data root are considered — the root
+// itself may legitimately sit behind a user symlinked XDG dir.
+static bool pathChainHasLink(const QString &path, const QString &root)
+{
+    QString current = path;
+    while (current.startsWith(root + QLatin1Char('/'))
+           && current != root) {
+        if (QFileInfo(current).isSymLink())
+            return true;
+        const QString parent = QFileInfo(current).absolutePath();
+        if (parent == current || parent.isEmpty())
+            break;
+        current = parent;
+    }
+    return false;
+}
+
+bool ensureEngineStorageLayout(QString *error)
+{
+    static QMutex mutex;
+    QMutexLocker locker(&mutex);
+
+    const QString root = dataRoot();
+    if (root.isEmpty()) {
+        if (error)
+            *error = QStringLiteral("data root unavailable");
+        return false;
+    }
+
+    const QString engineRoot = root + QLatin1String("/QtWebEngine");
+    if (QFileInfo(engineRoot).isSymLink()) {
+        reportMigrationFailure(
+            root, QStringLiteral(
+                "refusing to sweep a symlinked QtWebEngine dir"),
+            error, kEngineMigrationFailedReport);
+        return false;
+    }
+
+    // Dirs|Files so a DANGLING symlink named like a store still shows
+    // up — QDir::Dirs alone would filter it out and never run the
+    // isSymLink refusal.
+    const QFileInfoList entries = QFileInfo(engineRoot).isDir()
+        ? QDir(engineRoot).entryInfoList(
+              QDir::Dirs | QDir::Files | QDir::NoDotAndDotDot
+              | QDir::Hidden | QDir::System)
+        : QFileInfoList();
+    for (const QFileInfo &entry : entries) {
+        const QString name = entry.fileName();
+        QString id;
+        if (name == QLatin1String("arora")) {
+            id = QStringLiteral("default");
+        } else if (name.startsWith(QLatin1String("arora-"))
+                   && !name.startsWith(
+                       QLatin1String("arora-container-"))) {
+            const QString slug = name.mid(6);
+            if (isProfileId(slug))
+                id = slug;
+        }
+        if (id.isEmpty())
+            continue;
+        const QString src = entry.absoluteFilePath();
+        if (entry.isSymLink()) {
+            reportMigrationFailure(
+                root, QStringLiteral(
+                    "refusing to migrate symlinked engine dir %1")
+                    .arg(src),
+                error, kEngineMigrationFailedReport);
+            return false;
+        }
+
+        // A stray FILE at a persona-shaped name is not an engine
+        // store — leave it untouched and say so rather than rename
+        // unknown bytes into a profile tree.
+        if (!entry.isDir()) {
+            qWarning() << "BrowserPaths: skipping non-directory engine"
+                          " entry" << src;
+            continue;
+        }
+
+        // Qt materializes the name-keyed default dir at profile
+        // construction even though the real roots are overridden —
+        // the same residue defaultDataPathFor() documents for
+        // containers.  An EMPTY src is that residue, not a payload:
+        // drop it unconditionally so a booted-once tree never
+        // false-collides with the already-relocated store.
+        if (QDir(src).entryList(
+                QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden
+                | QDir::System).isEmpty()) {
+            QDir(src).removeRecursively();
+            continue;
+        }
+
+        // A persona nobody can address — no profile dir, no vault —
+        // is leftover from a deleted profile.  Leave it in place and
+        // say so; fabricating a fresh profiles/<id> for it would
+        // masquerade orphan data as a live store.
+        const QString profileDir =
+            root + QLatin1String("/profiles/") + id;
+        const QString hold = engineVaultHold(root, id);
+        const QString vaultDir =
+            root + QLatin1String("/profiles/") + id
+            + QLatin1String(".vault");
+        if (id != QLatin1String("default") && hold.isEmpty()
+            && !QFile::exists(profileDir) && !QFile::exists(vaultDir)
+            && !QFile::exists(root + QLatin1Char('/') + id
+                              + QLatin1String(".vault"))) {
+            qWarning() << "BrowserPaths: leaving unowned engine dir"
+                          " in place (no profile or vault for id)"
+                       << src;
+            continue;
+        }
+
+        QString dst;
+        if (!hold.isEmpty()) {
+            dst = hold;
+        } else {
+            dst = profileDir + QLatin1String("/QtWebEngine");
+        }
+        // The destination chain gets the same lstat discipline —
+        // profiles/, profiles/<id>, the vault dir and engine-hold are
+        // all components a planted link could redirect through.
+        if (pathChainHasLink(dst, root)) {
+            reportMigrationFailure(
+                root, QStringLiteral(
+                    "refusing to migrate %1 into a symlinked"
+                    " destination %2").arg(src, dst),
+                error, kEngineMigrationFailedReport);
+            return false;
+        }
+        if (QFile::exists(dst)) {
+            reportMigrationFailure(
+                root, QStringLiteral(
+                    "%1 exists in both QtWebEngine/ and %2")
+                    .arg(name, dst),
+                error, kEngineMigrationFailedReport);
+            return false;
+        }
+        if (!QDir().mkpath(QFileInfo(dst).absolutePath())) {
+            reportMigrationFailure(
+                root, QStringLiteral("cannot create %1")
+                    .arg(QFileInfo(dst).absolutePath()),
+                error, kEngineMigrationFailedReport);
+            return false;
+        }
+        if (!QFile::rename(src, dst)) {
+            reportMigrationFailure(
+                root, QStringLiteral("rename %1 -> %2 failed")
+                    .arg(src, dst),
+                error, kEngineMigrationFailedReport);
+            return false;
+        }
+    }
+
+    // The legacy cache dirs (<cache root>/QtWebEngine/arora*) are
+    // disposable — a cache is rebuilt, never migrated; cross-filesystem
+    // moves add nothing but failure modes.  A planted link is removed
+    // as a link (QFile::remove never follows) rather than descended.
+    const QString cacheEngineRoot =
+        QStandardPaths::writableLocation(QStandardPaths::CacheLocation)
+        + QLatin1String("/QtWebEngine");
+    if (!QFileInfo(cacheEngineRoot).isSymLink()) {
+        const QFileInfoList cacheEntries =
+            QDir(cacheEngineRoot).entryInfoList(
+                QDir::Dirs | QDir::Files | QDir::NoDotAndDotDot
+                | QDir::Hidden | QDir::System);
+        for (const QFileInfo &entry : cacheEntries) {
+            const QString name = entry.fileName();
+            if (name != QLatin1String("arora")
+                && !name.startsWith(QLatin1String("arora-")))
+                continue;
+            const QString path = entry.absoluteFilePath();
+            if (entry.isSymLink()) {
+                QFile::remove(path);
+            } else if (!QDir(path).removeRecursively()) {
+                qWarning() << "BrowserPaths: could not remove legacy"
+                              " engine cache" << path;
+            }
+        }
+    } else {
+        qWarning() << "BrowserPaths: refusing to clean a symlinked"
+                      " cache QtWebEngine dir" << cacheEngineRoot;
+    }
+
+    QFile::remove(root + QLatin1Char('/')
+                  + QLatin1String(kEngineMigrationFailedReport));
+    return true;
 }
 
 QString profileDataFilePath(const QString &profileId,

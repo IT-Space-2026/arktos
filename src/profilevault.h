@@ -50,6 +50,13 @@ class QTimer;
 //                             means we died with plaintext live
 //   <id>.vault/cache-hold/    excluded dir held aside while locked
 //   <id>.vault/profiles-hold/ same, for the nested profiles/ dir
+//   <id>.vault/engine-hold/   VSEC02: the pre-change engine store
+//                             (root QtWebEngine/arora[-<id>]) parked
+//                             here by the boot sweep when the profile
+//                             was already sealed; restored into
+//                             profiles/<id>/QtWebEngine on unseal,
+//                             erased as stale when the blob already
+//                             carries engine state
 //   <id>.vault/pre-unlock/    overwrite-unseal parking slot
 //
 // Exclusions from the sealed tree (top-level names):
@@ -64,19 +71,23 @@ class QTimer;
 //                 vaults).  Post-MPROF the profile dir IS
 //                 profiles/<id> and the exclusion is a harmless no-op.
 //
-// VSEC01 boundary amendment — the vault seals the APP-SIDE store
-// tree only.  The engine's own persistence never enters the sealed
-// set: the named QWebEngineProfile for persona <id> stores cookies,
-// localStorage/IndexedDB, service workers, the HTTP disk cache and
-// visited-link state in its own QtWebEngine/arora[-<id>]/ dir at the
-// data root, and that dir is neither under profiles/<id> nor in the
-// exclusion list — it simply isn't in scope.  A "locked" profile
-// therefore still leaves every Chromium-side record on disk in
-// cleartext; sealing is an app-store guarantee, not a browsing-data
-// guarantee.  Closing that needs setPersistentStoragePath()/
-// setCachePath() relocated inside the sealed tree (plus migration of
-// existing dirs and a story for cache-held exclusions) — tracked as
-// follow-up task VSEC02.
+// VSEC02 boundary amendment — the vault now seals the ENGINE store
+// too.  Every named persona profile calls
+// setPersistentStoragePath(profiles/<id>/QtWebEngine) before first
+// use (BrowserProfile::normalProfile/profileFor), so cookies,
+// localStorage/IndexedDB, service workers and visited-link state
+// land inside the packed tree; the pre-change root-level
+// QtWebEngine/arora[-<id>]/ dirs are migrated into it by
+// BrowserPaths::ensureEngineStorageLayout (symlink refusal,
+// collision abort), or parked under engine-hold/ when the profile
+// was already sealed — unseal() restores them whole.  The engine
+// http cache lives at profiles/<id>/cache/QtWebEngine and rides the
+// "cache" exclusion by design: disposable plaintext while locked.
+// vault.conf records the boundary (engine_storage, engine_cache) so
+// rv_inspect/lock-state audits verify the claim instead of
+// assuming.  Container profiles keep their roots under
+// profiles/<id>/containers/<cid>/ (sealed) with their cache beside
+// the persona's; OTR/Tor profiles are unnamed and write nothing.
 //
 // Secure erase is ONE zero overwrite + fsync per file, then unlink.
 // On SSD/CoW media wear-leveling and snapshots mean old blocks may

@@ -47,6 +47,7 @@
 #include <qwebengineclienthints.h>
 #include <qwebengineglobalsettings.h>
 #include <qwebengineprofile.h>
+#include <qwebengineprofilebuilder.h>
 #include <qwebenginescript.h>
 #include <qwebenginescriptcollection.h>
 #include <qwebenginesettings.h>
@@ -65,6 +66,54 @@ namespace BrowserProfile {
 static quint16 s_bidiDebugPort = 0;
 static QString s_bidiDebugOrigin;
 
+// VSEC02: the pre-change engine store lived at <data root>/
+// QtWebEngine/arora[-<id>] — outside the sealed tree.  The relocation
+// sweep must run before the first named profile exists (a profile
+// that already opened storage cannot be re-pointed), so every persona
+// factory funnels through this once-guard; main() also runs it
+// outright at boot.
+static void ensureEngineStorageOnce()
+{
+    static const bool done = [] {
+        QString error;
+        if (!BrowserPaths::ensureEngineStorageLayout(&error))
+            qWarning() << "browserprofile: engine storage relocation"
+                          " unfinished -" << error;
+        return true;
+    }();
+    Q_UNUSED(done);
+}
+
+// VSEC02: construct the named persona profile with its roots already
+// inside profiles/<id>/ — QtWebEngine/ seals with the vault's packed
+// tree, cache/QtWebEngine rides the "cache" exclusion (disposable
+// plaintext while locked, same honesty as the app-side cache).  The
+// paths MUST ride the builder, not setPersistentStoragePath() after
+// construction: the post-construction setter re-creates the profile's
+// PrefService and ExtensionPrefs while the ExtensionRegistrar the
+// loader already built still holds the stale pair, and the next
+// enableExtension() dereferences the dead ExtensionPrefs (upstream Qt
+// bug — verified on 6.12: enable on a re-pointed profile segfaults).
+static QWebEngineProfile *newBoundEngineProfile(const QString &storageName,
+                                                const QString &profileId)
+{
+    ensureEngineStorageOnce();
+    QWebEngineProfileBuilder builder;
+    builder.setPersistentStoragePath(
+        BrowserPaths::engineStorageDir(profileId));
+    builder.setCachePath(BrowserPaths::engineCacheDir(profileId));
+    QWebEngineProfile *profile = builder.createProfile(storageName, qApp);
+    // Qt materializes the name-keyed default dir at construction
+    // (<data root>/QtWebEngine/<storageName>) — empty residue, never a
+    // payload.  rmdir only removes an empty dir, so a populated one
+    // (the sweep never ran) survives for the next sweep's loud
+    // handling rather than being unlinked here.
+    QDir().rmdir(BrowserPaths::dataRoot()
+                 + QLatin1String("/QtWebEngine/")
+                 + profile->storageName());
+    return profile;
+}
+
 QWebEngineProfile *normalProfile()
 {
     // Lazily-created so callers do not need to coordinate with main():
@@ -72,7 +121,8 @@ QWebEngineProfile *normalProfile()
     // gets the same named "arora" profile.
     static QWebEngineProfile *profile = nullptr;
     if (!profile) {
-        profile = new QWebEngineProfile(QLatin1String("arora"), qApp);
+        profile = newBoundEngineProfile(QLatin1String("arora"),
+                                        QStringLiteral("default"));
         // MPROF02: the tag lets profileIdFor() resolve this object
         // without re-parsing the storage name.
         profile->setProperty("aroraProfileId",
@@ -81,7 +131,8 @@ QWebEngineProfile *normalProfile()
         // deferred its service-coupled storage trees to this moment —
         // the profile exists but no page has ever used it, so the
         // directories can be removed without wedging the storage
-        // services (see clearSiteStorage).
+        // services (see clearSiteStorage).  The VSEC02 rename carries
+        // the sentinel file along with the tree it targets.
         clearDeferredSiteStorage(profile->persistentStoragePath());
     }
     return profile;
@@ -130,8 +181,8 @@ QWebEngineProfile *profileFor(const QString &profileId)
         return normalProfile();
     QWebEngineProfile *&profile = s_personaProfiles[profileId];
     if (!profile) {
-        profile = new QWebEngineProfile(
-            QLatin1String("arora-") + profileId, qApp);
+        profile = newBoundEngineProfile(
+            QLatin1String("arora-") + profileId, profileId);
         profile->setProperty("aroraProfileId", profileId);
         // HARD01: same first-bring-up contract as normalProfile() — a
         // deferred clear targeted THIS profile's storage tree, so it

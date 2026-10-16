@@ -4960,6 +4960,22 @@ int main(int argc, char **argv)
     // retries, but a colliding payload is never silently split.
     BrowserPaths::ensureDataLayout();
 
+    // VSEC02: relocate the pre-change engine store — <data root>/
+    // QtWebEngine/arora[-<id>] — into the persona trees (or the
+    // vault's engine-hold for a sealed profile) BEFORE any named
+    // QWebEngineProfile exists: a profile that already opened its
+    // storage cannot be re-pointed.  Same loud-failure contract as
+    // the layout migration — qCritical + migration-v2.failed at the
+    // data root, boot continues, nothing was deleted unsafely.
+    // Idempotent: re-runs every boot until no root engine dirs
+    // remain, and also fires lazily from the profile factories in
+    // test harnesses that skip this line.
+    {
+        QString engineError;
+        if (!BrowserPaths::ensureEngineStorageLayout(&engineError))
+            qCritical() << "main:" << engineError;
+    }
+
     // DOH01: --doh-smoke seeds the strict custom-DoH mode with a dead
     // loopback endpoint BEFORE applyChromiumFlags reads the keys, so
     // the engine latches the DnsOverHttps feature switch exactly as a

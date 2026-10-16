@@ -45,6 +45,7 @@
 #include <qthread.h>
 #include <quuid.h>
 #include <qwebengineprofile.h>
+#include <qwebengineprofilebuilder.h>
 
 ContainerManager::ContainerManager(QObject *parent,
                                    const QString &profileId)
@@ -254,16 +255,26 @@ QWebEngineProfile *ContainerManager::profileFor(const QString &id)
     QDir().mkpath(path);
 
     // A unique storage name keeps every derived default path —
-    // persistentStoragePath is overridden below but cachePath,
+    // persistentStoragePath and cachePath are overridden but
     // dictionaries and download state all key off the name — isolated
-    // per container and unable to collide with "arora".
+    // per container and unable to collide with "arora".  Both paths
+    // ride the builder: the post-construction setPersistentStoragePath
+    // re-creates PrefService/ExtensionPrefs behind the already-built
+    // ExtensionRegistrar's back, and the next enableExtension()
+    // dereferences the dead object (upstream Qt bug, verified 6.12 —
+    // see BrowserProfile::newBoundEngineProfile).
+    QWebEngineProfileBuilder builder;
+    builder.setPersistentStoragePath(path);
+    // VSEC02: the cache sits under the owning persona's cache/ tree —
+    // sealed or held-aside with it like the persona's own engine
+    // cache (the vault's honest "cache" exclusion).
+    builder.setCachePath(cachePathFor(id));
     QWebEngineProfile *profile =
-        new QWebEngineProfile(storageNameFor(id), qApp);
+        builder.createProfile(storageNameFor(id), qApp);
     // App-side stores for pages on this container resolve to the
     // OWNING persona's profile — the container isolates web state,
     // not history/bookmarks/etc (MPROF02).
     profile->setProperty("aroraProfileId", m_profileId);
-    profile->setPersistentStoragePath(path);
     // Parity with normalProfile(): honor a deferred site-data wipe
     // sentinel left by a previous session before the storage services
     // open these trees (HARD01 — only safe before any WebContents).
@@ -310,17 +321,21 @@ QString ContainerManager::storagePath(const QString &id) const
         + QLatin1Char('/') + id;
 }
 
-// Qt derives a named profile's default paths as
-// <writableLocation>/QtWebEngine/<storageName>; the container root
-// only overrides persistentStoragePath, so the http cache dir and the
-// residue default dir still follow this formula (verified against a
-// materialized profile's cachePath()).
+// VSEC02: the container's http cache lives under the OWNING
+// persona's cache/ tree — sealed aside with it on lock like the
+// persona's own engine cache (the vault's honest "cache" exclusion).
+// The pre-change location was <CacheLocation>/QtWebEngine/
+// <storageName>; the VSEC02 boot sweep removes those leftover dirs.
 QString ContainerManager::cachePathFor(const QString &id) const
 {
-    return QStandardPaths::writableLocation(QStandardPaths::CacheLocation)
-        + QLatin1String("/QtWebEngine/") + storageNameFor(id);
+    return BrowserPaths::profileDataFilePath(
+        m_profileId, QLatin1String("cache"))
+        + QLatin1String("/containers/") + id;
 }
 
+// Qt keys a residue default dir off the storage name even when the
+// real paths are overridden — <AppDataLocation>/QtWebEngine/
+// <storageName>.  Kept for deletion/wipe bookkeeping of that residue.
 QString ContainerManager::defaultDataPathFor(const QString &id) const
 {
     return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)

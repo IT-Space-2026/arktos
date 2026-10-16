@@ -282,7 +282,12 @@ browsing profile:
   reorder it.
 - **Profile vaults (in progress)** — password-sealed profile storage:
   a profile's whole data folder is packed into a single tamper-evident
-  encrypted archive when locked. AES-256-GCM per chunk with
+  encrypted archive when locked — including the engine's own stores
+  (cookies, localStorage, IndexedDB, service workers), which live
+  inside the profile directory so a locked persona leaves no
+  Chromium-side plaintext. The HTTP disk cache is the deliberate
+  exception: it rides the vault's unsealed `cache/` exclusion as
+  disposable data. AES-256-GCM per chunk with
   HMAC-SHA-512 integrity and an Argon2id password key is the default;
   an opt-in Threefish-1024 lane rides the same format. Wrong-password
   and tampered-vault failures are distinct and an unlock never leaves
@@ -690,7 +695,13 @@ that swap means in practice:
   secure-erases the plaintext tree, unlocking restores it
   byte-for-byte, auto-lock re-seals on shutdown, a crash while
   unlocked is detected and offered for re-seal on next boot, and a
-  locked profile can be deleted without the password. Groundwork
+  locked profile can be deleted without the password. The sealed set
+  covers the engine's own persistence too — the persona's
+  `QWebEngineProfile` roots its storage inside `profiles/<id>/`
+  (`QtWebEngine/` sealed, `cache/QtWebEngine/` held aside as
+  disposable), and pre-change engine dirs at the data root are
+  migrated in on first boot with the same symlink-refusal discipline
+  as the app-store migration. Groundwork
   (PVAULT01-04) — the lock/unlock UI lands with the profile
   manager.
 - **Privacy-first direction** — everything in the

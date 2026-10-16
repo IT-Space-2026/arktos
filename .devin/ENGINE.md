@@ -19,6 +19,21 @@ an engine dependency without documenting it and the gate fails.
 | 0 | QtWebEngine (Chromium 140.0.7339.225, Qt 6.12.0) | the only backend today |
 | 1 | Servo | planned — ENG03 spike gates viability (interception, SOCKS5, cookie/storage, download, JS-eval hooks are the open questions) |
 
+### Qt 6.12 gotcha — named-profile storage paths MUST go through `QWebEngineProfileBuilder`
+
+`QWebEngineProfile::setPersistentStoragePath()` after construction runs
+`ProfileAdapter::setDataPath()`, which recreates the `PrefService` — and
+with it `ExtensionPrefs`.  `ExtensionRegistrar` (created at profile
+construction) still holds the old `extension_prefs_` pointer, so any
+later `setExtensionEnabled`/prefs access dereferences a dangling object
+(observed as a deterministic SIGSEGV at a `nullptr+0x10` member read).
+Fix: set `persistentStoragePath`/`cachePath` on `QWebEngineProfileBuilder`
+BEFORE `createProfile()` so the PrefService is built once with the real
+data path.  All named-profile creation sites
+(`BrowserProfile::normalProfile`/`profileFor`, `ContainerManager::profileFor`,
+`WebEngineBackend::createProfile`) follow this rule — do not add
+post-construction path setters.
+
 ## Adapter boundary (where engine types are allowed to live)
 
 The future `Engine::Backend` implementations wrap this layer.  Today
@@ -115,10 +130,10 @@ inherently Chromium — capability-gated, degrades on Servo; **comment**
 | `src/aboutdialog.cpp` | comment + `qWebEngineVersion`-style version string | engine-bound | Backend supplies `Backend::displayName`/version string. |
 | `src/history/historymanager.h` | comment only (Chromium's internal history note) | comment | App-side store — already engine-neutral. |
 | `src/tor/tormanager.h` | comment only (no per-profile proxy API note) | comment | Tor forces backend-0 anyway (ENG05 lock). |
-| `src/browserpaths.h`, `src/browserpaths.cpp` | comments only — MPROF01 names the engine's on-disk `QtWebEngine/` store dir while classifying it as machine-global (Chromium namespaces it by storageName itself, so it stays at the data root) | comment | Path resolution is engine-neutral; the dir name is a literal Chromium artifact, not an engine API. |
+| `src/browserpaths.h`, `src/browserpaths.cpp` | literal `QtWebEngine/` dir names only — VSEC02's `engineStorageDir`/`engineCacheDir` roots plus `ensureEngineStorageLayout` (the relocation sweep over `<root>/QtWebEngine/arora[-<id>]` into `profiles/<id>/`) | comment | Path resolution is engine-neutral; the dir name is a literal Chromium artifact, not an engine API. VSEC02 moved the store inside the sealed tree — the sweep manipulates dirs, never engine objects. |
 | `src/main.cpp` | app init (scheme registration, `QtWebEngineQuick` init note) + every `--*-smoke` harness driving raw `QWebEngineView`/`Profile`/`Script`/interceptors | mixed | App-init lines → `Backend::initialize`. The smoke harnesses are engine-coupled test probes by design — ENG06's engine-matrix work absorbs/replaces them. |
 | `src/notesmodel.h`, `src/notesmodel.cpp` | `QWebEngineProfile` pointer for per-profile keying + `isOffTheRecord`/`storageName` reads (NOTE02) | wrap | Notes storage keys on `Engine::Profile` identity + an OTR/storage-key property — engine-neutral semantics. |
-| `src/profilevault.h` | comment only — the VSEC01 boundary note names `QWebEngineProfile`/`setPersistentStoragePath`/`setCachePath` while documenting that the engine's storage tree is outside the vault's sealed set | comment | Vault artifacts seal directories, not engine objects — VSEC02 (engine-storage relocation into the sealed tree) is the task that makes this a real dependency, at which point the note gets a wrap/engine-bound verdict. |
+| `src/profilevault.h`, `src/profilevault.cpp` | literal `QtWebEngine`/`engine-hold` dir names + the `engine_storage`/`engine_cache` vault.conf coverage keys (VSEC02); comments name `QWebEngineProfile`/`setPersistentStoragePath`/`setCachePath` while documenting the sealed-set boundary | comment | Vault artifacts seal directories, not engine objects — VSEC02 put the engine's storage tree inside the sealed set, but the coupling stays at the dir-name level (no engine API is called). |
 | `src/src.pri` | `QT += webenginewidgets webchannel quickwidgets` | engine-bound | Backend-0 module deps; a Servo build swaps these for the spike's GL surface deps. |
 | `src/rustdl/include/rustdl.h` | comment only (gate mirrors interceptor semantics) | comment | C FFI header — engine-neutral by design. |
 | `src/rustcore/include/rustcore.h` | comment only (`QtWebEngine/<ver>` token in the `rc_ua_build` doc) | comment | C FFI header — the UA helpers are engine-neutral string functions fed by the backend's factory UA. |
