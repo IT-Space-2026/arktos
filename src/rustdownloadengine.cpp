@@ -25,6 +25,7 @@
 #include "adblockrequestinterceptor.h"
 #include "browserapplication.h"
 #include "browserpaths.h"
+#include "browserprofile.h"
 #include "bwrapgenerator.h"
 #include "cookiejar.h"
 #include "privacyrequestinterceptor.h"
@@ -231,6 +232,8 @@ RustDownloadEngine::RustDownloadEngine(QWebEnginePage *page, const QUrl &url,
     : QObject(parent)
     , m_handle(0)
     , m_page(page)
+    , m_profileId(BrowserProfile::profileIdFor(
+          page ? page->profile() : nullptr))
     , m_url(url)
     , m_suggested(suggestedFileName)
     , m_mimeType(mimeType)
@@ -474,7 +477,7 @@ void RustDownloadEngine::accept()
 
     // User-configurable 4-16 segments (0/empty = engine default 8);
     // the DLACC01 settings page owns the visible control.
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     settings.beginGroup(QLatin1String("downloadmanager"));
     const int connections = settings.value(QLatin1String("connections"), 0).toInt();
 
@@ -733,7 +736,7 @@ bool RustDownloadEngine::startWorkerProcess()
     removeCookieFile();
     m_cookieFile = exportCookieFileTo(m_workDir);
 
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     settings.beginGroup(QLatin1String("downloadmanager"));
     QJsonObject job;
     job.insert(QLatin1String("cmd"), QLatin1String("job"));

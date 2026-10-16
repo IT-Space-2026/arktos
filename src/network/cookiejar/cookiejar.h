@@ -130,8 +130,17 @@ public:
     // uncompiled (MIG15 delegates to this).  A null profile argument
     // resolves to BrowserProfile::normalProfile().
     static CookieJar *instance(QWebEngineProfile *profile = nullptr);
+    // MPROF02: the jar for a registry persona — resolves the persona's
+    // named QWebEngineProfile through BrowserProfile::namedProfile and
+    // shares its cookie store, while the jar's own policy + exception
+    // lists persist under profiles/<id>/.
+    static CookieJar *instanceFor(const QString &profileId);
 
     QWebEngineProfile *profile() const;
+    // The registry profile this jar's app-side state (accept policy,
+    // exception lists) belongs to — the owning persona for container
+    // profiles, "default" for unbound/off-the-record ones.
+    QString profileId() const { return m_profileId; }
     bool isPrivate() const;
 
     QList<QNetworkCookie> cookiesForUrl(const QUrl &url) const;
@@ -197,6 +206,7 @@ private:
     void applyKeepPolicy();
 
     QWebEngineProfile *m_profile;   // not owned
+    QString m_profileId;
     // QPointer: the store can die during WebEngine teardown before this
     // jar is destroyed.
     QPointer<QWebEngineCookieStore> m_store;

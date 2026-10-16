@@ -157,6 +157,17 @@ QDateTime AdBlockSubscription::lastUpdate() const
     return m_lastUpdate;
 }
 
+// MPROF02: a subscription belongs to the profile of its owning
+// AdBlockManager — the rules cache and the consent gate resolve
+// through the parent chain.
+QString AdBlockSubscription::profileId() const
+{
+    if (const AdBlockManager *manager =
+            qobject_cast<const AdBlockManager *>(parent()))
+        return manager->profileId();
+    return BrowserPaths::activeProfileId();
+}
+
 QString AdBlockSubscription::rulesFileName() const
 {
     if (location().scheme() == QLatin1String("file"))
@@ -166,7 +177,10 @@ QString AdBlockSubscription::rulesFileName() const
         return QString();
 
     QByteArray sha1 = QCryptographicHash::hash(m_location, QCryptographicHash::Sha1).toHex();
-    QString fileName = BrowserPaths::dataFilePath(QString(QLatin1String("adblock_subscription_%1")).arg(QLatin1String(sha1)));
+    QString fileName = BrowserPaths::profileDataFilePath(
+        profileId(),
+        QString(QLatin1String("adblock_subscription_%1"))
+            .arg(QLatin1String(sha1)));
     return fileName;
 }
 
@@ -232,7 +246,7 @@ void AdBlockSubscription::loadRules()
     // re-reading a local file, so no consent applies to them; and an
     // explicit updateNow() call stays an on-demand fetch either way.
     if (stale && (location().scheme() == QLatin1String("file")
-                  || AdBlockManager::remoteListsAllowed()))
+                  || AdBlockManager::remoteListsAllowed(profileId())))
         updateNow();
 }
 

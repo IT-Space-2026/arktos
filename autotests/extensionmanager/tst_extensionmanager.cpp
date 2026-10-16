@@ -438,21 +438,21 @@ void tst_ExtensionManager::consentGate()
 
 void tst_ExtensionManager::storePaths()
 {
-    QVERIFY(!ExtensionManager::updatesPath().isEmpty());
-    QVERIFY(QDir(ExtensionManager::updatesPath()).exists());
-    QVERIFY(!ExtensionManager::userScriptsPath().isEmpty());
+    QVERIFY(!ExtensionManager::instance()->updatesPath().isEmpty());
+    QVERIFY(QDir(ExtensionManager::instance()->updatesPath()).exists());
+    QVERIFY(!ExtensionManager::instance()->userScriptsPath().isEmpty());
     // EXT05: the userscript store must be owner-only.
-    QVERIFY(!(QFileInfo(ExtensionManager::userScriptsPath())
+    QVERIFY(!(QFileInfo(ExtensionManager::instance()->userScriptsPath())
                   .permissions()
               & (QFileDevice::ReadGroup | QFileDevice::WriteGroup
                  | QFileDevice::ExeGroup | QFileDevice::ReadOther
                  | QFileDevice::WriteOther | QFileDevice::ExeOther)));
 
-    const bool saved = ExtensionManager::updateCheckEnabled();
-    ExtensionManager::setUpdateCheckEnabled(!saved);
-    QCOMPARE(ExtensionManager::updateCheckEnabled(), !saved);
-    ExtensionManager::setUpdateCheckEnabled(saved);
-    QCOMPARE(ExtensionManager::updateCheckEnabled(), saved);
+    const bool saved = ExtensionManager::instance()->updateCheckEnabled();
+    ExtensionManager::instance()->setUpdateCheckEnabled(!saved);
+    QCOMPARE(ExtensionManager::instance()->updateCheckEnabled(), !saved);
+    ExtensionManager::instance()->setUpdateCheckEnabled(saved);
+    QCOMPARE(ExtensionManager::instance()->updateCheckEnabled(), saved);
 }
 
 // EXT06: earlier legs of this test installed into the user's real
@@ -749,7 +749,7 @@ void tst_ExtensionManager::updateCheckLoopback()
     QCOMPARE(resA.availableVersion, QStringLiteral("2.0.0"));
     QVERIFY(!resA.savedTo.isEmpty());
     QVERIFY(QFile::exists(resA.savedTo));
-    QVERIFY(resA.savedTo.startsWith(ExtensionManager::updatesPath()));
+    QVERIFY(resA.savedTo.startsWith(ExtensionManager::instance()->updatesPath()));
     QVERIFY(resA.installable);
 
     // Older offer -> upToDate, no package fetch.

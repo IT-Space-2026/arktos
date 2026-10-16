@@ -32,10 +32,10 @@ class QWebEngineProfile;
 // empty title displays as the body's first line ("Untitled" when both
 // are empty) so notes never look blank in the list.
 //
-// Persistence is a per-profile JSON file under the app data dir
-// (<data>/notes/<profile storageName>.json), debounce-written through
+// Persistence is a per-persona JSON file under the persona's profile
+// dir (<data>/profiles/<id>/notes.json), debounce-written through
 // the model's own AutoSaver like every other app-side store.  An
-// off-the-record profile shares a session-only in-memory model (an
+// off-the-record profile gets a session-only in-memory model (an
 // empty storage file): private/tor notes never reach disk.
 class NotesModel : public QAbstractListModel
 {
@@ -56,16 +56,24 @@ public:
                         QObject *parent = nullptr);
     ~NotesModel() override;
 
-    // The shared notes model for a browsing profile — one instance per
-    // profile object, qApp-owned, so every window's panel edits the
-    // same set.  nullptr in -> nullptr out.
+    // The shared notes model for a browsing profile.  Persistent
+    // profiles resolve to one model per registry persona (MPROF02 —
+    // a persona's normal and container profiles share its notes);
+    // off-the-record profiles get a per-profile-object volatile
+    // model.  nullptr in -> nullptr out.
     static NotesModel *instance(QWebEngineProfile *profile);
+    // MPROF02: the persistent store for a registry persona —
+    // qApp-parented, one instance per id.
+    static NotesModel *instanceFor(const QString &profileId);
 
     // NOTE02 migration seam: folds the pre-multi-note scratch pad
     // (the sidebar/notes QSettings key) into this store as the first
     // note, then removes the key so no other profile's store picks it
-    // up twice.  Safe to call on any model — no key, no-op.
-    static void migrateLegacyScratch(NotesModel *model);
+    // up twice.  Safe to call on any model — no key, no-op.  The
+    // scratch lives in profile-owned settings, so pass the persona id
+    // for per-persona stores (defaults to the active profile).
+    static void migrateLegacyScratch(NotesModel *model,
+                                     const QString &profileId = QString());
 
     int rowCount(const QModelIndex &parent = QModelIndex()) const override;
     QVariant data(const QModelIndex &index,

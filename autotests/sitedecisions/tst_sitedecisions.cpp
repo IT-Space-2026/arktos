@@ -40,6 +40,7 @@
 #include <qwebengineprofile.h>
 
 #include "browserpaths.h"
+#include "profilesettings.h"
 #include "containermanager.h"
 #include "cookiejar.h"
 #include "popupblocker.h"
@@ -302,7 +303,11 @@ void tst_SiteDecisions::legacyMigration()
 
     // Adblock site whitelist: a canonical document exception in the
     // custom-rules file, plus the subscription entry that loads it.
-    const QString customFile = BrowserPaths::dataFilePath(
+    // MPROF02 anchors both to the default persona — a real upgrade's
+    // root copy reaches profiles/default via BrowserPaths'
+    // ensureDataLayout rename pass, which already ran.
+    const QString customFile = BrowserPaths::profileDataFilePath(
+        QStringLiteral("default"),
         QLatin1String("adblock_subscription_custom"));
     {
         QFile file(customFile);
@@ -316,9 +321,11 @@ void tst_SiteDecisions::legacyMigration()
     const QString customSub = QLatin1String(
         "abp:subscribe?location=%1&title=Custom%20Rules")
         .arg(QString::fromUtf8(customLocation.toEncoded()));
-    settings.setValue(QLatin1String("AdBlock/subscriptions"),
-                      QStringList() << customSub);
-    settings.sync();
+    {
+        ProfileSettings profileSettings(QStringLiteral("default"));
+        profileSettings.setValue(QLatin1String("AdBlock/subscriptions"),
+                                 QStringList() << customSub);
+    }
 
     // -- the migrations ------------------------------------------------
 

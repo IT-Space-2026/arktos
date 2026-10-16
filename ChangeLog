@@ -955,6 +955,16 @@ UI:
   file remains a harmless read fallback. Only the "default" profile
   exists today; this is the storage plumbing the profile switching
   work binds to (MPROF04).
+- The app's data stores are per-profile too: history, bookmarks,
+  autofill, cookie rules, adblock subscriptions, containers,
+  extensions, download history, notes and the credential store each
+  resolve a profile-keyed instance that reads and writes under
+  `profiles/<id>/`, and page-level actions (notes, custom adblock
+  rules, the site panel and shield) follow the profile of the page
+  they act on. Private and Tor browsing stay volatile — nothing
+  reaches any profile's store. Still no visible change: every window
+  runs the default profile until window↔profile binding lands
+  (MPROF02).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
@@ -3007,3 +3017,32 @@ Reader-mode button no longer paints blue on Tor windows (THEM06):
     raised violet — the same family the Tor badge pill and sidebar
     selection already wear. Suggested and active states stay
     distinguishable but in-theme; normal windows are unchanged.
+Per-profile app singletons (MPROF02):
+    The global qApp singletons — HistoryManager, BookmarksManager,
+    AutoFillManager, CookieJar, AdBlockManager, ContainerManager,
+    ExtensionManager, DownloadManager, NotesModel and SecureStore —
+    are now keyed by registry profile: each gained an
+    instanceFor(profileId) returning a qApp-owned per-persona
+    instance (instance() still aliases the active profile, "default"
+    today). A page's persona resolves through
+    BrowserProfile::profileIdFor: the "aroraProfileId" tag the profile
+    factories set wins, otherwise the storage name is parsed —
+    "arora-<id>" names persona <id> while "arora-container-*" resolves
+    through its owner tag — and unnamed, foreign or off-the-record
+    profiles fall back to "default" so they can never alias a real
+    persona's store. Process-global Rust stores (history database,
+    site decisions, credential/autofill maps) are re-anchored to the
+    caller's profiles/<id>/ directory before every entry point, so two
+    live personas can never write into each other's stores. Site
+    decisions split honestly: trust, permission and adblock-site
+    verdicts stay on the shared default-profile store (trust is not
+    persona data) while per-host cookie rules are per-persona. Tor and
+    private profiles resolve to the default persona's managers —
+    mode-level, not persona-level — and off-the-record pages feed
+    nothing: history, notes, jars and autofill all stay volatile.
+    Notes made on a page now land in that page's profile's notes
+    store; the pre-split <data>/notes/<storageName>.json file is
+    adopted into profiles/default/ on first read. Verified by the new
+    tst_profilemanagers suite: two personas write disjoint stores,
+    seeded history/bookmarks/notes/secrets stay invisible across ids,
+    and the off-the-record legs confirm nothing persists.

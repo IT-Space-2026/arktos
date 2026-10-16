@@ -64,6 +64,15 @@ QByteArray seal(const QByteArray &plain);
 // returned array is empty in that case.
 QByteArray open(const QByteArray &blob, bool *ok = nullptr);
 
+// MPROF02: profile-scoped variants.  The key/KDF artifacts live under
+// profiles/<id>/ (securestore.key, securestore.kdf, the rust-side
+// credentials and autofill stores), so sealing under one profile can
+// never open data sealed under another.  The no-id overloads operate
+// on the active profile — "default" until MPROF03.
+QByteArray seal(const QString &profileId, const QByteArray &plain);
+QByteArray open(const QString &profileId, const QByteArray &blob,
+                bool *ok = nullptr);
+
 // QSettings-friendly wrappers: sealString() returns
 // "arsec1:<base64>" when the backend works and the unchanged input
 // otherwise (keep the old plaintext behavior rather than lose the
@@ -71,32 +80,42 @@ QByteArray open(const QByteArray &blob, bool *ok = nullptr);
 // legacy plaintext values through so existing settings keep working.
 QString sealString(const QString &plain);
 QString openString(const QString &stored, bool *ok = nullptr);
+QString sealString(const QString &profileId, const QString &plain);
+QString openString(const QString &profileId, const QString &stored,
+                   bool *ok = nullptr);
 
 // ---- master-passphrase key custody (SEC13) ----
 
 // True when securestore.kdf exists: the encryption key is derived
 // from a master passphrase and no securestore.key file is used.
 bool passphraseProtectionEnabled();
+bool passphraseProtectionEnabled(const QString &profileId);
 
 // False only in passphrase mode while locked.  seal()/open() try an
 // interactive unlock prompt first (when a QApplication exists and
 // interactive unlock is enabled) and fail securely when it is denied.
 bool isUnlocked();
+bool isUnlocked(const QString &profileId);
 
 // Derives the key from the passphrase and verifies it against the
 // verifier stored in securestore.kdf.  A wrong passphrase returns
 // false cleanly (the GCM tag on the verifier rejects it — no oracle).
 bool unlock(const QString &passphrase);
+bool unlock(const QString &profileId, const QString &passphrase);
 
 // Drops the cached derived key and wipes it from RAM.  Also clears
 // any cached file key so lock() is safe to call unconditionally.
+// lock() clears every profile's cached keys; lock(profileId) only
+// the named one's (MPROF02).
 void lock();
+void lock(const QString &profileId);
 
 // Interactive variant of unlock(): prompts up to three times via a
 // password-echo dialog.  Returns the resulting unlocked state.
 // Non-interactive contexts (no QApplication, or disabled via
 // setInteractiveUnlockEnabled) simply return isUnlocked().
 bool ensureUnlocked(QWidget *parent = nullptr);
+bool ensureUnlocked(const QString &profileId, QWidget *parent);
 void setInteractiveUnlockEnabled(bool enabled);
 
 // Mode transitions.  Each re-seals the known consumer stores
@@ -110,6 +129,15 @@ bool enablePassphraseProtection(const QString &passphrase,
 bool disablePassphraseProtection(QString *error = nullptr);
 bool changePassphrase(const QString &newPassphrase,
                       QString *error = nullptr);
+// MPROF02: profile-scoped custody transitions.
+bool enablePassphraseProtection(const QString &profileId,
+                                const QString &passphrase,
+                                QString *error);
+bool disablePassphraseProtection(const QString &profileId,
+                                 QString *error);
+bool changePassphrase(const QString &profileId,
+                      const QString &newPassphrase,
+                      QString *error);
 
 #ifdef AUTOTESTS
 // Clears every cached key/param and deletes both store files — test

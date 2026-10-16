@@ -70,6 +70,7 @@
 #include "addbookmarkdialog.h"
 #include "browserapplication.h"
 #include "browsermainwindow.h"
+#include "browserprofile.h"
 #include "containermanager.h"
 #include "extensionbackgroundhost.h"
 #include "extensioneventhub.h"
@@ -260,8 +261,9 @@ QString WebView::containerId() const
 {
     if (!m_page)
         return ContainerManager::defaultContainerId();
-    return ContainerManager::instance()
-        ->containerIdForProfile(m_page->profile());
+    return ContainerManager::instanceFor(
+        BrowserProfile::profileIdFor(m_page->profile()))
+            ->containerIdForProfile(m_page->profile());
 }
 
 // Translates the engine's context-menu payload into the interface's
@@ -483,8 +485,11 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
             menu->addAction(tr("Block Image"), this,
                     [this, position]() {
                 grabContextImage(position, false,
-                        [](const QUrl &resolved) {
-                    AdBlockManager::instance()->showDialog()
+                        [this](const QUrl &resolved) {
+                    AdBlockManager::instanceFor(
+                        BrowserProfile::profileIdFor(
+                            m_page ? m_page->profile() : nullptr))
+                            ->showDialog()
                         ->addCustomRule(resolved.toString());
                 });
             });
@@ -842,7 +847,10 @@ void WebView::copyImageLocationToClipboard()
 void WebView::blockImage()
 {
     if (QAction *action = qobject_cast<QAction*>(sender()))
-        AdBlockManager::instance()->showDialog()->addCustomRule(action->data().toString());
+        AdBlockManager::instanceFor(
+            BrowserProfile::profileIdFor(
+                m_page ? m_page->profile() : nullptr))
+                ->showDialog()->addCustomRule(action->data().toString());
 }
 
 void WebView::bookmarkLink()
@@ -888,7 +896,8 @@ void WebView::addSelectionToNote()
     // window gets the volatile model: private selections never touch
     // disk.
     NotesModel *model = NotesModel::instance(
-        BrowserApplication::webEngineProfile());
+        m_page ? m_page->profile()
+               : BrowserApplication::webEngineProfile());
     if (!model)
         return;
     QString body = text;

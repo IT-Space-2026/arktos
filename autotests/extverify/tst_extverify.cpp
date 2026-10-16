@@ -563,7 +563,7 @@ void tst_ExtVerify::userScriptPermissions()
     manager->installOnProfile(profile);
 
     // The scripts dir is owner-only (0700) once provisioned.
-    const QString dirPath = ExtensionManager::userScriptsPath();
+    const QString dirPath = ExtensionManager::instance()->userScriptsPath();
     const QFileDevice::Permissions dirLeaked =
         QFileInfo(dirPath).permissions()
         & (QFileDevice::ReadGroup | QFileDevice::WriteGroup

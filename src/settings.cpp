@@ -1638,7 +1638,7 @@ void SettingsDialog::loadFromSettings()
 
     // EXT03: the opt-in background update check (default off).
     extensionAutoUpdateCheck->setChecked(
-        ExtensionManager::updateCheckEnabled());
+        ExtensionManager::instance()->updateCheckEnabled());
 }
 
 void SettingsDialog::saveToSettings()
@@ -2079,7 +2079,7 @@ void SettingsDialog::saveToSettings()
 
     // EXT03: opt-in background update check — applies immediately;
     // the next scheduled slot reads the stored value.
-    ExtensionManager::setUpdateCheckEnabled(
+    ExtensionManager::instance()->setUpdateCheckEnabled(
         extensionAutoUpdateCheck->isChecked());
 
     // Re-apply: the profile-level settings (was
@@ -3297,7 +3297,8 @@ void SettingsDialog::refreshUserScripts()
 void SettingsDialog::openUserScriptsFolder()
 {
     QDesktopServices::openUrl(
-        QUrl::fromLocalFile(ExtensionManager::userScriptsPath()));
+        QUrl::fromLocalFile(
+            ExtensionManager::instance()->userScriptsPath()));
 }
 
 void SettingsDialog::reloadUserScripts()

@@ -32,6 +32,7 @@
 #include "addressdialog.h"
 #include "autosaver.h"
 #include "browserpaths.h"
+#include "browserprofile.h"
 #include "engineinterface.h"
 #include "securestore.h"
 #include "startupprofile.h"
@@ -99,19 +100,36 @@ void AutoFillBridge::submitForm(const QString &reportToken,
     if (!m_captureEnabled || m_reportToken.isEmpty()
         || reportToken != m_reportToken)
         return;
-    AutoFillManager::instance()->formSubmitted(m_pageUrl, reportedUrl, formData);
+    // The bridge is parented to the WebPage — the submit lands in
+    // the profile the page runs on, not necessarily the active one.
+    QWebEnginePage *page = qobject_cast<QWebEnginePage *>(parent());
+    const QString profileId = BrowserProfile::profileIdFor(
+        page ? page->profile() : nullptr);
+    AutoFillManager::instanceFor(profileId)
+        ->formSubmitted(m_pageUrl, reportedUrl, formData);
 }
 
 AutoFillManager *AutoFillManager::instance()
 {
-    static QPointer<AutoFillManager> manager;
+    return instanceFor(BrowserPaths::activeProfileId());
+}
+
+AutoFillManager *AutoFillManager::instanceFor(const QString &profileId)
+{
+    const QString id = BrowserPaths::isProfileId(profileId)
+            ? profileId : BrowserPaths::activeProfileId();
+    static QHash<QString, QPointer<AutoFillManager>> managers;
+    QPointer<AutoFillManager> &manager = managers[id];
     if (!manager)
-        manager = new AutoFillManager(qApp);
+        manager = new AutoFillManager(qApp, id);
     return manager;
 }
 
-AutoFillManager::AutoFillManager(QObject *parent)
+AutoFillManager::AutoFillManager(QObject *parent,
+                                 const QString &profileId)
     : QObject(parent)
+    , m_profileId(BrowserPaths::isProfileId(profileId)
+                      ? profileId : BrowserPaths::activeProfileId())
     , m_savePasswordForms(true)
     , m_allowAutoCompleteOff(true)
     , m_saveTimer(new AutoSaver(this))
@@ -238,15 +256,16 @@ void AutoFillManager::clearData()
 
 void AutoFillManager::loadSettings()
 {
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     settings.beginGroup(QLatin1String("autofill"));
     m_savePasswordForms = settings.value(QLatin1String("passwordForms"), m_savePasswordForms).toBool();
     m_allowAutoCompleteOff = settings.value(QLatin1String("ignoreAutoCompleteOff"), m_allowAutoCompleteOff).toBool();
 }
 
-QString AutoFillManager::autoFillDataFile()
+QString AutoFillManager::autoFillDataFile() const
 {
-    return BrowserPaths::dataFilePath(QLatin1String("autofill.dat"));
+    return BrowserPaths::profileDataFilePath(
+        m_profileId, QLatin1String("autofill.dat"));
 }
 
 #ifdef ARORA_RUSTCORE
@@ -370,14 +389,15 @@ static QList<AutoFillManager::Address> addressesFromJson(
 // reader.  The payload is [forms] then the optional ADDR01/02
 // [addresses][lastUsed] tails; a forms-only file imports with an
 // empty address list.  Returns false on an unopenable/corrupt blob.
-static bool decodeLegacyPayload(const QByteArray &raw,
+static bool decodeLegacyPayload(const QString &profileId,
+                                const QByteArray &raw,
                                 QList<AutoFillManager::Form> *formsOut,
                                 QList<AutoFillManager::Address> *addrsOut)
 {
     QByteArray payload = raw;
     if (SecureStore::isSealed(raw)) {
         bool ok = false;
-        payload = SecureStore::open(raw, &ok);
+        payload = SecureStore::open(profileId, raw, &ok);
         if (!ok)
             return false;
     }
@@ -430,9 +450,9 @@ void AutoFillManager::saveFormData() const
     // write now means the user declined the unlock or the disk
     // refused — serializing PII outside custody in either case would
     // be a leak, so the data stays in memory for this session.
-    rustCoreEnsureDataDir();
+    rustCoreEnsureDataDirFor(m_profileId);
     if (rc_passphrase_enabled() && !rc_is_unlocked())
-        SecureStore::ensureUnlocked(nullptr);
+        SecureStore::ensureUnlocked(m_profileId, nullptr);
 
     const QByteArray json = formsToJson(m_forms);
     const RcStatus status = rc_autofill_set_forms(
@@ -482,7 +502,7 @@ void AutoFillManager::saveFormData() const
         stream << lastUsed;
     }
 
-    const QByteArray sealed = SecureStore::seal(payload);
+    const QByteArray sealed = SecureStore::seal(m_profileId, payload);
     if (sealed.isEmpty()) {
         // No crypto backend on this box: never re-serialize password
         // forms as plaintext — keep them in memory for this session
@@ -524,9 +544,9 @@ void AutoFillManager::loadFormData()
     QString fileName = autoFillDataFile();
 
 #ifdef ARORA_RUSTCORE
-    rustCoreEnsureDataDir();
+    rustCoreEnsureDataDirFor(m_profileId);
     if (rc_passphrase_enabled() && !rc_is_unlocked())
-        SecureStore::ensureUnlocked(nullptr);
+        SecureStore::ensureUnlocked(m_profileId, nullptr);
 
     // One-shot import: when the Rust store does not exist yet the
     // legacy file is decoded by the original reader, replayed into
@@ -538,7 +558,7 @@ void AutoFillManager::loadFormData()
         QList<Address> legacyAddresses;
         QFile file(fileName);
         const bool decoded = file.open(QFile::ReadOnly)
-            && decodeLegacyPayload(file.readAll(), &legacy,
+            && decodeLegacyPayload(m_profileId, file.readAll(), &legacy,
                                    &legacyAddresses);
         if (decoded) {
             const QByteArray json = formsToJson(legacy);
@@ -623,7 +643,7 @@ void AutoFillManager::loadFormData()
 
     if (SecureStore::isSealed(raw)) {
         bool ok = false;
-        const QByteArray payload = SecureStore::open(raw, &ok);
+        const QByteArray payload = SecureStore::open(m_profileId, raw, &ok);
         if (!ok) {
             qWarning() << "AutoFillManager: cannot decrypt" << fileName
                        << "(key missing or file tampered)";

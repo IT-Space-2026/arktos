@@ -131,9 +131,13 @@ static void rustSyncExpanded(const BookmarkNode *node)
 #define BOOKMARKBAR QT_TRANSLATE_NOOP("BookmarksManager", "Bookmarks Bar")
 #define BOOKMARKMENU QT_TRANSLATE_NOOP("BookmarksManager", "Bookmarks Menu")
 
-BookmarksManager::BookmarksManager(QObject *parent)
+BookmarksManager::BookmarksManager(QObject *parent,
+                                   const QString &profileId)
     : QObject(parent)
+    , m_profileId(BrowserPaths::isProfileId(profileId)
+                      ? profileId : BrowserPaths::activeProfileId())
     , m_loaded(false)
+    , m_stale(false)
     , m_saveTimer(new AutoSaver(this))
     , m_toolbar(nullptr)
     , m_menu(nullptr)
@@ -161,9 +165,26 @@ BookmarksManager::BookmarksManager(QObject *parent)
 
 BookmarksManager *BookmarksManager::instance()
 {
-    static QPointer<BookmarksManager> manager;
+    return instanceFor(BrowserPaths::activeProfileId());
+}
+
+#ifdef ARORA_RUSTCORE
+// The profile whose file the process-global rust tree currently
+// holds, and the manager that bound it.  A second profile's manager
+// marks the previous owner stale instead of touching its nodes —
+// the stale view rebuilds on next access.
+static QString s_boundProfileId;
+static QPointer<BookmarksManager> s_boundManager;
+#endif
+
+BookmarksManager *BookmarksManager::instanceFor(const QString &profileId)
+{
+    const QString id = BrowserPaths::isProfileId(profileId)
+            ? profileId : BrowserPaths::activeProfileId();
+    static QHash<QString, QPointer<BookmarksManager>> managers;
+    QPointer<BookmarksManager> &manager = managers[id];
     if (!manager)
-        manager = new BookmarksManager(qApp);
+        manager = new BookmarksManager(qApp, id);
     return manager;
 }
 
@@ -172,8 +193,34 @@ BookmarksManager::~BookmarksManager()
     m_saveTimer->saveIfNeccessary();
 }
 
+#ifdef ARORA_RUSTCORE
+void BookmarksManager::ensureBound()
+{
+    if (!m_stale)
+        return;
+    // Our nodes wrap handles into a tree another profile's manager
+    // has since replaced — the handles are dead (and may have been
+    // recycled onto live nodes), so detach them before dropping the
+    // view or ~BookmarkNode's rc_bm_destroy would delete the current
+    // profile's tree.
+    if (m_bookmarkRootNode)
+        m_bookmarkRootNode->dropRustHandles();
+    m_bookmarkRootNode.reset();
+    m_toolbar = nullptr;
+    m_menu = nullptr;
+    m_commands.clear();
+    m_loaded = false;
+    m_stale = false;
+    load();
+    emit bookmarksReset();
+}
+#endif
+
 void BookmarksManager::changeExpanded()
 {
+#ifdef ARORA_RUSTCORE
+    ensureBound();
+#endif
     m_saveTimer->changeOccurred();
 }
 
@@ -185,12 +232,21 @@ void BookmarksManager::load()
 
     StartupProfile::Scope profileScope("bookmarks xbel load");
 
-    QString bookmarkFile = BrowserPaths::dataFilePath(QLatin1String("bookmarks.xbel"));
+    QString bookmarkFile = BrowserPaths::profileDataFilePath(
+        m_profileId, QLatin1String("bookmarks.xbel"));
 
 #ifdef ARORA_RUSTCORE
     // The Rust store owns parsing and the canonical tree; the C++
     // nodes below are a lazily materialized view over its handles.
-    rustCoreEnsureDataDir();
+    //
+    // The tree is process-global: before rc_bm_load replaces it, the
+    // previously bound manager's pending edits must reach ITS file
+    // and its in-memory view marked stale — its handles point into
+    // the tree we're about to free.
+    if (s_boundManager && s_boundManager.data() != this) {
+        s_boundManager->m_saveTimer->saveIfNeccessary();
+        s_boundManager->m_stale = true;
+    }
     RcStatus st = RC_OK;
     if (QFile::exists(bookmarkFile))
         st = rc_bm_load(bookmarkFile.toUtf8().constData());
@@ -221,6 +277,8 @@ void BookmarksManager::load()
     }
     m_bookmarkRootNode.reset(new BookmarkNode(BookmarkNode::Root));
     m_bookmarkRootNode->setHandle(rc_bm_root());
+    s_boundProfileId = m_profileId;
+    s_boundManager = this;
 #else
     if (!QFile::exists(bookmarkFile))
         bookmarkFile = QLatin1String(":defaultbookmarks.xbel");
@@ -292,13 +350,20 @@ void BookmarksManager::save() const
 {
     if (!m_loaded)
         return;
+#ifdef ARORA_RUSTCORE
+    // Stale means another profile's tree replaced ours — our pending
+    // edits were already flushed to our file at the unbind, and
+    // serializing now would write THEIR tree into our file.
+    if (m_stale)
+        return;
+#endif
 
-    QString bookmarkFile = BrowserPaths::dataFilePath(QLatin1String("bookmarks.xbel"));
+    QString bookmarkFile = BrowserPaths::profileDataFilePath(
+        m_profileId, QLatin1String("bookmarks.xbel"));
     // Save root folder titles in English (i.e. not localized)
     m_menu->title = QLatin1String(BOOKMARKMENU);
     m_toolbar->title = QLatin1String(BOOKMARKBAR);
 #ifdef ARORA_RUSTCORE
-    rustCoreEnsureDataDir();
     rustSyncTitle(m_menu);
     rustSyncTitle(m_toolbar);
     rustSyncExpanded(m_bookmarkRootNode.get());
@@ -333,7 +398,10 @@ void BookmarksManager::retranslate() const
 void BookmarksManager::addBookmark(BookmarkNode *parent, BookmarkNode *node, int row)
 {
     if (!m_loaded)
-        return;
+        load();
+#ifdef ARORA_RUSTCORE
+    ensureBound();
+#endif
     Q_ASSERT(parent);
     InsertBookmarksCommand *command = new InsertBookmarksCommand(this, parent, node, row);
     m_commands.push(command);
@@ -342,7 +410,10 @@ void BookmarksManager::addBookmark(BookmarkNode *parent, BookmarkNode *node, int
 void BookmarksManager::removeBookmark(BookmarkNode *node)
 {
     if (!m_loaded)
-        return;
+        load();
+#ifdef ARORA_RUSTCORE
+    ensureBound();
+#endif
 
     Q_ASSERT(node);
     BookmarkNode *parent = node->parent();
@@ -354,7 +425,10 @@ void BookmarksManager::removeBookmark(BookmarkNode *node)
 void BookmarksManager::setTitle(BookmarkNode *node, const QString &newTitle)
 {
     if (!m_loaded)
-        return;
+        load();
+#ifdef ARORA_RUSTCORE
+    ensureBound();
+#endif
 
     Q_ASSERT(node);
     ChangeBookmarkCommand *command = new ChangeBookmarkCommand(this, node, newTitle, true);
@@ -364,7 +438,10 @@ void BookmarksManager::setTitle(BookmarkNode *node, const QString &newTitle)
 void BookmarksManager::setUrl(BookmarkNode *node, const QString &newUrl)
 {
     if (!m_loaded)
-        return;
+        load();
+#ifdef ARORA_RUSTCORE
+    ensureBound();
+#endif
 
     Q_ASSERT(node);
     ChangeBookmarkCommand *command = new ChangeBookmarkCommand(this, node, newUrl, false);
@@ -375,6 +452,9 @@ BookmarkNode *BookmarksManager::bookmarks()
 {
     if (!m_loaded)
         load();
+#ifdef ARORA_RUSTCORE
+    ensureBound();
+#endif
     return m_bookmarkRootNode.get();
 }
 
@@ -382,6 +462,9 @@ BookmarkNode *BookmarksManager::menu()
 {
     if (!m_loaded)
         load();
+#ifdef ARORA_RUSTCORE
+    ensureBound();
+#endif
 
     Q_ASSERT(m_menu);
     return m_menu;
@@ -391,6 +474,9 @@ BookmarkNode *BookmarksManager::toolbar()
 {
     if (!m_loaded)
         load();
+#ifdef ARORA_RUSTCORE
+    ensureBound();
+#endif
 
     Q_ASSERT(m_toolbar);
     return m_toolbar;
@@ -639,6 +725,7 @@ bool BookmarksManager::exportBookmarksTo(const QString &fileName)
 {
     if (!m_loaded)
         load();
+    ensureBound();
     // .html is the BKIMP01 Netscape writer; anything else is the
     // canonical XBEL — both atomic on the rust side.
     if (fileName.endsWith(QLatin1String(".html"), Qt::CaseInsensitive))

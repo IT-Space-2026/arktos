@@ -131,8 +131,18 @@ public:
     // BookmarksManager / AdBlockManager).  BrowserApplication delegates
     // here; the manager reads the profile-independent store itself.
     static AutoFillManager *instance();
+    // MPROF02: the store for a specific profile — one instance per
+    // registry id, qApp-owned.  Each instance's autofill.dat /
+    // rust autofill-store lives under profiles/<id>/ and seals under
+    // that profile's SecureStore key.
+    static AutoFillManager *instanceFor(const QString &profileId);
+    QString profileId() const { return m_profileId; }
 
-    AutoFillManager(QObject *parent = nullptr);
+    // profileId names the registry profile whose store this manager
+    // owns (MPROF02); an empty or non-slug id binds the active
+    // profile — "default" until MPROF03.
+    AutoFillManager(QObject *parent = nullptr,
+                    const QString &profileId = QString());
     ~AutoFillManager();
 
     void loadSettings();
@@ -179,7 +189,7 @@ private slots:
 
 private:
     static QUrl stripUrl(const QUrl &url);
-    static QString autoFillDataFile();
+    QString autoFillDataFile() const;
     bool allowedToAutoFill(bool password) const;
     QList<AutoFillManager::Form> fetchForms(const QUrl &url) const;
     QString scriptForPage(Engine::Page *page, const QUrl &url);
@@ -198,6 +208,7 @@ private:
     void saveFormData() const;
     void loadFormData();
 
+    QString m_profileId;
     bool m_savePasswordForms;
     bool m_allowAutoCompleteOff;
 

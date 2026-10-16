@@ -20,6 +20,7 @@
 #include "siteshield.h"
 
 #include "adblockmanager.h"
+#include "browserprofile.h"
 #include "aroraicon.h"
 #include "arorastyle.h"
 #include "browserapplication.h"
@@ -170,6 +171,15 @@ void SiteShieldButton::setWebView(WebView *webView)
                 this, [this](int) { refreshIcon(); });
         connect(webView, &QWebEngineView::loadFinished,
                 this, [this](bool) { refreshIcon(); });
+        // MPROF02: follow the adblock manager this view's persona
+        // owns (UniqueConnection across persona revisits).
+        QWebEnginePage *page = webView->page();
+        connect(AdBlockManager::instanceFor(
+                    BrowserProfile::profileIdFor(
+                        page ? page->profile() : nullptr)),
+                &AdBlockManager::rulesChanged,
+                this, &SiteShieldButton::refreshIcon,
+                Qt::UniqueConnection);
     }
     refreshIcon();
 }
@@ -259,7 +269,9 @@ void SiteShieldButton::refreshIcon()
     // icon size so the overlay follows the icon growth.
     const int px = iconSize().width();
     const QSize iconPx(px, px);
-    AdBlockManager *adblock = AdBlockManager::instance();
+    QWebEnginePage *page = m_webView->page();
+    AdBlockManager *adblock = AdBlockManager::instanceFor(
+        BrowserProfile::profileIdFor(page ? page->profile() : nullptr));
     const QString host = m_webView->url().host();
     const bool whitelisted = adblock->isSiteWhitelisted(host);
     QIcon icon;

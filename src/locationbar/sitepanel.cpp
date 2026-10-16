@@ -23,6 +23,7 @@
 #include "arorastyle.h"
 #include "adblockrequestinterceptor.h"
 #include "browserapplication.h"
+#include "browserprofile.h"
 #include "browsertheme.h"
 #include "cookiejar.h"
 #include "domainblocklist.h"
@@ -61,6 +62,16 @@ static QLabel *plainLabel(const QString &text, QWidget *parent)
     QLabel *label = new QLabel(text, parent);
     label->setTextFormat(Qt::PlainText);
     return label;
+}
+
+// MPROF02: the adblock manager for the panel's current page persona —
+// a container view resolves to its owner's manager, never the active
+// profile's by default.
+static AdBlockManager *panelAdBlockManager(WebView *view)
+{
+    QWebEnginePage *page = view ? view->page() : nullptr;
+    return AdBlockManager::instanceFor(BrowserProfile::profileIdFor(
+        page ? page->profile() : nullptr));
 }
 
 SitePanel::SitePanel(QWidget *parent)
@@ -285,7 +296,9 @@ SitePanel::SitePanel(QWidget *parent)
     m_adBlockSettings = new QPushButton(tr("Ad Block Settings..."), this);
     m_adBlockSettings->setObjectName(QLatin1String("siteAdBlockSettings"));
     connect(m_adBlockSettings, &QPushButton::clicked,
-            this, []() { AdBlockManager::instance()->showDialog(); });
+            this, [this]() {
+        panelAdBlockManager(m_webView)->showDialog();
+    });
     buttons->addWidget(m_adBlockSettings);
 
     m_clearData = new QPushButton(tr("Clear site data"), this);
@@ -306,8 +319,8 @@ SitePanel::SitePanel(QWidget *parent)
     // wrong-size popup.
     connect(WebPermissionManager::instance(),
             &WebPermissionManager::changed, this, &SitePanel::refresh);
-    connect(AdBlockManager::instance(), &AdBlockManager::rulesChanged,
-            this, &SitePanel::refresh);
+    connect(panelAdBlockManager(m_webView),
+            &AdBlockManager::rulesChanged, this, &SitePanel::refresh);
     refresh();
 }
 
@@ -331,6 +344,11 @@ void SitePanel::setWebView(WebView *webView)
         });
         connect(webView, &QWebEngineView::loadFinished,
                 this, [this](bool) { refresh(); });
+        // MPROF02: follow rule changes on the manager this view's
+        // persona owns (UniqueConnection — revisiting the same persona
+        // does not stack slots).
+        connect(panelAdBlockManager(webView), &AdBlockManager::rulesChanged,
+                this, &SitePanel::refresh, Qt::UniqueConnection);
         m_blockedBaseline = blockedTotal();
     }
     refresh();
@@ -486,7 +504,7 @@ void SitePanel::refresh()
             hasSite ? QString() : tr("No site to scope cookies to"));
     }
 
-    AdBlockManager *adblock = AdBlockManager::instance();
+    AdBlockManager *adblock = panelAdBlockManager(m_webView);
     const bool blockingOn = adblock->isEnabled();
     m_contentBlocking->setChecked(blockingOn);
     if (!blockingOn)
@@ -618,7 +636,7 @@ void SitePanel::toggleContentBlocking(bool checked)
     const QString site = host();
     if (site.isEmpty())
         return;
-    AdBlockManager::instance()->setSiteWhitelisted(site, !checked);
+    panelAdBlockManager(m_webView)->setSiteWhitelisted(site, !checked);
     refresh();
 }
 
@@ -626,7 +644,7 @@ void SitePanel::toggleGlobalBlocking(bool checked)
 {
     if (m_refreshing)
         return;
-    AdBlockManager::instance()->setEnabled(checked);
+    panelAdBlockManager(m_webView)->setEnabled(checked);
     refresh();
 }
 

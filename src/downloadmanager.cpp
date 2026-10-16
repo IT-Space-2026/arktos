@@ -60,6 +60,7 @@
 #include "profilesettings.h"
 
 #include "autosaver.h"
+#include "browserpaths.h"
 #include "browserprofile.h"
 #include "flowlayout.h"
 #include "pdfsupport.h"
@@ -195,7 +196,8 @@ DownloadItem::DownloadItem(Engine::DownloadRequest *download, bool requestFileNa
     updateDetails();
 
     if (!requestFileName) {
-        ProfileSettings settings;
+        ProfileSettings settings(m_manager
+            ? m_manager->profileId() : BrowserPaths::activeProfileId());
         settings.beginGroup(QLatin1String("downloadmanager"));
         m_requestFileName = settings.value(QLatin1String("alwaysPromptForFileName"), false).toBool();
     }
@@ -1274,26 +1276,41 @@ void DownloadItem::finished()
   */
 DownloadManager *DownloadManager::instance()
 {
-    // Lazily created controller.  Not parented on qApp: a QWidget
-    // cannot take a non-widget parent, and a static QPointer keeps the
+    return instanceFor(BrowserPaths::activeProfileId());
+}
+
+DownloadManager *DownloadManager::instanceFor(const QString &profileId)
+{
+    // Lazily created controllers.  Not parented on qApp: a QWidget
+    // cannot take a non-widget parent, and static QPointers keep the
     // lookup cheap without a leak-on-purpose flag.
-    static QPointer<DownloadManager> manager;
+    const QString id = BrowserPaths::isProfileId(profileId)
+        ? profileId : BrowserPaths::activeProfileId();
+    static QHash<QString, QPointer<DownloadManager>> managers;
+    QPointer<DownloadManager> &manager = managers[id];
     if (!manager)
-        manager = new DownloadManager();
+        manager = new DownloadManager(id);
     return manager;
 }
 
 DownloadManager::DownloadManager(QWidget *parent)
+    : DownloadManager(QString(), parent)
+{
+}
+
+DownloadManager::DownloadManager(const QString &profileId, QWidget *parent)
     : QWidget(parent)
     , m_autoSaver(new AutoSaver(this))
     , m_model(new DownloadModel(this, this))
+    , m_profileId(BrowserPaths::isProfileId(profileId)
+                  ? profileId : BrowserPaths::activeProfileId())
     , m_iconProvider()
     , m_retryPage(nullptr)
     , m_retryPageOtr(nullptr)
     , m_removePolicy(Never)
     , m_requestFileNameNext(false)
 {
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     settings.beginGroup(QLatin1String("downloadmanager"));
     QString defaultLocation = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
     if (defaultLocation.isEmpty())
@@ -1386,7 +1403,9 @@ bool DownloadManager::allowQuit()
 
 bool DownloadManager::externalDownload(const QUrl &url)
 {
-    ProfileSettings settings;
+    // Static helper with no page context — reads the active persona's
+    // downloadmanager/external* keys like the pre-MPROF02 code did.
+    ProfileSettings settings(BrowserPaths::activeProfileId());
     settings.beginGroup(QLatin1String("downloadmanager"));
     if (!settings.value(QLatin1String("external"), false).toBool())
         return false;
@@ -1621,7 +1640,7 @@ void DownloadManager::setRemovePolicy(RemovePolicy policy)
 
 void DownloadManager::save() const
 {
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     settings.beginGroup(QLatin1String("downloadmanager"));
     QMetaEnum removePolicyEnum = staticMetaObject.enumerator(staticMetaObject.indexOfEnumerator("RemovePolicy"));
     settings.setValue(QLatin1String("removeDownloadsPolicy"), QLatin1String(removePolicyEnum.valueToKey(m_removePolicy)));
@@ -1660,7 +1679,7 @@ void DownloadManager::save() const
 
 void DownloadManager::load()
 {
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     settings.beginGroup(QLatin1String("downloadmanager"));
     QByteArray value = settings.value(QLatin1String("removeDownloadsPolicy"), QLatin1String("Never")).toByteArray();
     QMetaEnum removePolicyEnum = staticMetaObject.enumerator(staticMetaObject.indexOfEnumerator("RemovePolicy"));

@@ -39,14 +39,18 @@
 #include <qlineedit.h>
 #include <qpainter.h>
 #include <qpixmap.h>
+#include <qpointer.h>
 #include <qsettings.h>
 #include <qstandardpaths.h>
 #include <qthread.h>
 #include <quuid.h>
 #include <qwebengineprofile.h>
 
-ContainerManager::ContainerManager(QObject *parent)
+ContainerManager::ContainerManager(QObject *parent,
+                                   const QString &profileId)
     : QObject(parent)
+    , m_profileId(BrowserPaths::isProfileId(profileId)
+                      ? profileId : BrowserPaths::activeProfileId())
 {
     loadRegistry();
 }
@@ -59,7 +63,17 @@ ContainerManager::~ContainerManager()
 
 ContainerManager *ContainerManager::instance()
 {
-    static ContainerManager *manager = new ContainerManager(qApp);
+    return instanceFor(BrowserPaths::activeProfileId());
+}
+
+ContainerManager *ContainerManager::instanceFor(const QString &profileId)
+{
+    const QString id = BrowserPaths::isProfileId(profileId)
+            ? profileId : BrowserPaths::activeProfileId();
+    static QHash<QString, QPointer<ContainerManager>> managers;
+    QPointer<ContainerManager> &manager = managers[id];
+    if (!manager)
+        manager = new ContainerManager(qApp, id);
     return manager;
 }
 
@@ -103,7 +117,7 @@ ContainerManager::Container ContainerManager::createContainer(
     m_containers.append(container);
     saveRegistry(container);
 
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     settings.beginGroup(QLatin1String("containers"));
     QStringList order = settings.value(QLatin1String("order")).toStringList();
     order.append(container.id);
@@ -181,8 +195,10 @@ bool ContainerManager::deleteContainer(const QString &id)
     }
 #if defined(ARORA_RUSTCORE)
     // SITED01: the rules live in the Rust store now — the registry
-    // group removal no longer carries them away.
-    SiteDecisionStore::replace(SiteDecisionStore::KindContainer,
+    // group removal no longer carries them away.  MPROF02: the store
+    // is this profile's sitedecisions.json.
+    SiteDecisionStore::replace(m_profileId,
+                               SiteDecisionStore::KindContainer,
                                m_siteRules);
 #endif
 
@@ -243,6 +259,10 @@ QWebEngineProfile *ContainerManager::profileFor(const QString &id)
     // per container and unable to collide with "arora".
     QWebEngineProfile *profile =
         new QWebEngineProfile(storageNameFor(id), qApp);
+    // App-side stores for pages on this container resolve to the
+    // OWNING persona's profile — the container isolates web state,
+    // not history/bookmarks/etc (MPROF02).
+    profile->setProperty("aroraProfileId", m_profileId);
     profile->setPersistentStoragePath(path);
     // Parity with normalProfile(): honor a deferred site-data wipe
     // sentinel left by a previous session before the storage services
@@ -285,7 +305,8 @@ QString ContainerManager::containerIdForProfile(QWebEngineProfile *profile) cons
 
 QString ContainerManager::storagePath(const QString &id) const
 {
-    return BrowserPaths::dataFilePath(QLatin1String("containers"))
+    return BrowserPaths::profileDataFilePath(
+        m_profileId, QLatin1String("containers"))
         + QLatin1Char('/') + id;
 }
 
@@ -507,14 +528,16 @@ QString ContainerManager::containerIdForHost(const QString &host) const
 void ContainerManager::saveSiteRules(const QString &id) const
 {
 #if defined(ARORA_RUSTCORE)
-    // The hash mirror is authoritative — persist it whole.
+    // The hash mirror is authoritative — persist it whole into this
+    // profile's site-decision store (MPROF02).
     Q_UNUSED(id);
-    SiteDecisionStore::replace(SiteDecisionStore::KindContainer,
+    SiteDecisionStore::replace(m_profileId,
+                               SiteDecisionStore::KindContainer,
                                m_siteRules);
 #else
     if (!isContainerId(id))
         return;
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     settings.beginGroup(QLatin1String("containers"));
     settings.beginGroup(id);
     settings.setValue(QLatin1String("sites"), siteRules(id));
@@ -530,7 +553,7 @@ void ContainerManager::saveSiteRules(const QString &id) const
 // Ids are generated uuids, so they are always safe group names.
 void ContainerManager::loadRegistry()
 {
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     settings.beginGroup(QLatin1String("containers"));
     const QStringList order =
         settings.value(QLatin1String("order")).toStringList();
@@ -557,6 +580,7 @@ void ContainerManager::loadRegistry()
             const QString key = normalizeSiteHost(site);
             if (!key.isEmpty())
                 allWritten = SiteDecisionStore::set(
+                    m_profileId,
                     SiteDecisionStore::KindContainer,
                     key, id) && allWritten;
         }
@@ -579,7 +603,8 @@ void ContainerManager::loadRegistry()
     // outliving its container) are kept but filtered at query time by
     // isContainerId, same as a stale legacy entry was.
     const QHash<QString, QString> rows =
-        SiteDecisionStore::entries(SiteDecisionStore::KindContainer);
+        SiteDecisionStore::entries(m_profileId,
+                                   SiteDecisionStore::KindContainer);
     for (auto it = rows.constBegin(); it != rows.constEnd(); ++it) {
         const QString key = normalizeSiteHost(it.key());
         if (!key.isEmpty() && !it.value().isEmpty())
@@ -596,7 +621,7 @@ void ContainerManager::loadRegistry()
 
 void ContainerManager::saveRegistry(const Container &container) const
 {
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     settings.beginGroup(QLatin1String("containers"));
     settings.beginGroup(container.id);
     settings.setValue(QLatin1String("name"), container.name);
@@ -605,7 +630,7 @@ void ContainerManager::saveRegistry(const Container &container) const
 
 void ContainerManager::removeRegistry(const QString &id) const
 {
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     settings.beginGroup(QLatin1String("containers"));
     settings.remove(id);
     QStringList order = settings.value(QLatin1String("order")).toStringList();
@@ -615,5 +640,10 @@ void ContainerManager::removeRegistry(const QString &id) const
 
 QString ContainerManager::storageNameFor(const QString &id) const
 {
-    return QLatin1String("arora-container-") + id;
+    // The owning profile rides the storage name so two personas can
+    // each register a container with the same id without colliding in
+    // Qt's derived dirs (MPROF02); the "arora-container-" prefix keeps
+    // BrowserProfile::profileIdFor from mistaking it for a persona.
+    return QLatin1String("arora-container-") + m_profileId
+        + QLatin1Char('-') + id;
 }

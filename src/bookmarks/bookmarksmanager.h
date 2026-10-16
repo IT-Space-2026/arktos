@@ -38,15 +38,33 @@ signals:
     void entryAdded(BookmarkNode *item);
     void entryRemoved(BookmarkNode *parent, int row, BookmarkNode *item);
     void entryChanged(BookmarkNode *item);
+    // MPROF02: the whole node view was rebuilt — emitted when a stale
+    // manager re-binds the shared rust store and reloads its file.
+    void bookmarksReset();
 
 public:
-    BookmarksManager(QObject *parent = nullptr);
+    // profileId names the registry profile whose store this manager
+    // owns (MPROF02); an empty or non-slug id binds the active
+    // profile — "default" until MPROF03.
+    BookmarksManager(QObject *parent = nullptr,
+                     const QString &profileId = QString());
     ~BookmarksManager();
 
     // The application-wide bookmarks store (was
     // BrowserApplication::bookmarksManager()).  Lazily created, owned by
     // qApp so the destructor flushes pending saves at shutdown.
     static BookmarksManager *instance();
+    // MPROF02: the store for a specific profile — one instance per
+    // registry id, qApp-owned (MPROF05's profile delete tears them
+    // down).  Every instance's file lives under profiles/<id>/.
+    //
+    // rustcore keeps ONE process-global bookmark tree, so only the
+    // last-binding manager's nodes are live: touching another
+    // profile's manager flushes the current owner to its file and
+    // re-loads the new profile's — the file is the source of truth,
+    // memory a bound cache.
+    static BookmarksManager *instanceFor(const QString &profileId);
+    QString profileId() const { return m_profileId; }
 
     void addBookmark(BookmarkNode *parent, BookmarkNode *node, int row = -1);
     void removeBookmark(BookmarkNode *node);
@@ -94,10 +112,16 @@ private slots:
 private:
     void load();
 #ifdef ARORA_RUSTCORE
+    // Re-binds the process-global rust tree to this profile when the
+    // last rc_bm_load targeted another manager's file (m_stale).  All
+    // node-touching entry points funnel here first.
+    void ensureBound();
     void importHtmlDocument(const QByteArray &html);
 #endif
 
+    QString m_profileId;
     bool m_loaded;
+    bool m_stale;
     AutoSaver *m_saveTimer;
     std::unique_ptr<BookmarkNode> m_bookmarkRootNode;
     BookmarkNode *m_toolbar;

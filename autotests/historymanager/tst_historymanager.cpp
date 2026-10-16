@@ -21,6 +21,7 @@
 #include "qtest_arora.h"
 
 #include <browserpaths.h>
+#include <browserprofile.h>
 #include <historymanager.h>
 #include <history.h>
 #include <historycompleter.h>
@@ -303,16 +304,22 @@ void tst_HistoryManager::addHistoryEntry_private()
 
     const QUrl url(QStringLiteral("data:text/plain,private-page"));
 
-    // Control: a page on a persisted profile is recorded.
+    // Control: a page on a persisted profile is recorded — in the
+    // store the page's profile resolves to (MPROF02 keys managers by
+    // persona, so an "arora-<id>" storage name lands in that profile).
     QWebEngineProfile normalProfile(QStringLiteral("arora-historytest"));
+    HistoryManager *resolved = HistoryManager::instanceFor(
+        BrowserProfile::profileIdFor(&normalProfile));
+    resolved->setHistory(HistoryList());
     WebPage normalPage(&normalProfile);
     QSignalSpy normalSpy(&normalPage, &QWebEnginePage::loadFinished);
     normalPage.load(url);
     QTRY_VERIFY_WITH_TIMEOUT(normalSpy.count() >= 1, 15000);
-    QTRY_VERIFY(manager->history().count() == 1);
-    QCOMPARE(manager->history().first().url, url.toString());
+    QTRY_VERIFY(resolved->history().count() == 1);
+    QCOMPARE(resolved->history().first().url, url.toString());
+    QVERIFY(manager->history().isEmpty());
 
-    manager->setHistory(HistoryList());
+    resolved->setHistory(HistoryList());
 
     // Off-the-record pages must never reach the manager.
     QWebEngineProfile otrProfile;
@@ -322,9 +329,10 @@ void tst_HistoryManager::addHistoryEntry_private()
     privatePage.load(url);
     QTRY_VERIFY_WITH_TIMEOUT(otrSpy.count() >= 1, 15000);
     QTest::qWait(200);
+    QVERIFY(resolved->history().isEmpty());
     QVERIFY(manager->history().isEmpty());
 
-    manager->setHistory(HistoryList());
+    resolved->setHistory(HistoryList());
 }
 
 void tst_HistoryManager::addHistoryEntry_url()

@@ -11700,7 +11700,7 @@ int main(int argc, char **argv)
         check(!mv2.valid && !mv2.error.isEmpty(),
               "missing manifest reported");
 
-        const QString scriptDir = ExtensionManager::userScriptsPath();
+        const QString scriptDir = ExtensionManager::instance()->userScriptsPath();
         const QString scriptPath = scriptDir
             + QLatin1String("/smoke-user.js");
         {
@@ -14723,11 +14723,13 @@ int main(int argc, char **argv)
               QStringLiteral("compareVersions: dotted-quad"));
 
         // Update-check opt-in round-trips through QSettings.
-        const bool savedAutoCheck = ExtensionManager::updateCheckEnabled();
-        ExtensionManager::setUpdateCheckEnabled(!savedAutoCheck);
-        check(ExtensionManager::updateCheckEnabled() == !savedAutoCheck,
+        const bool savedAutoCheck =
+            ExtensionManager::instance()->updateCheckEnabled();
+        ExtensionManager::instance()->setUpdateCheckEnabled(!savedAutoCheck);
+        check(ExtensionManager::instance()->updateCheckEnabled()
+                  == !savedAutoCheck,
               QStringLiteral("auto-check setting round-trip"));
-        ExtensionManager::setUpdateCheckEnabled(savedAutoCheck);
+        ExtensionManager::instance()->setUpdateCheckEnabled(savedAutoCheck);
 
         // The manifest "key" pins the extension id across versions:
         // id = sha256(der)[0..15] with each nibble mapped to a..p.

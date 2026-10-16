@@ -117,8 +117,11 @@ QString HistoryEntry::userTitle() const
 
 static const unsigned int HISTORY_VERSION = HistoryParser::Version;
 
-HistoryManager::HistoryManager(QObject *parent)
+HistoryManager::HistoryManager(QObject *parent,
+                               const QString &profileId)
     : QObject(parent)
+    , m_profileId(BrowserPaths::isProfileId(profileId)
+                      ? profileId : BrowserPaths::activeProfileId())
     , m_saveTimer(new AutoSaver(this))
     , m_daysToExpire(30)
     , m_historyModel(nullptr)
@@ -153,11 +156,33 @@ HistoryManager::HistoryManager(QObject *parent)
 
 HistoryManager *HistoryManager::instance()
 {
-    static QPointer<HistoryManager> manager;
+    return instanceFor(BrowserPaths::activeProfileId());
+}
+
+HistoryManager *HistoryManager::instanceFor(const QString &profileId)
+{
+    const QString id = BrowserPaths::isProfileId(profileId)
+            ? profileId : BrowserPaths::activeProfileId();
+    static QHash<QString, QPointer<HistoryManager>> managers;
+    QPointer<HistoryManager> &manager = managers[id];
     if (!manager)
-        manager = new HistoryManager(qApp);
+        manager = new HistoryManager(qApp, id);
     return manager;
 }
+
+#ifdef ARORA_RUSTCORE
+void HistoryManager::ensureRustStore() const
+{
+    // The rustcore history store is a single open database per
+    // process; rc_hist_open re-binds it to this profile's file first
+    // (a no-op when already open — one path compare).  Every rc_hist_*
+    // entry point calls this so two live per-profile managers can
+    // never write into each other's stores.
+    const QByteArray dbPath = BrowserPaths::profileDataFilePath(
+        m_profileId, QLatin1String("history.db")).toUtf8();
+    rc_hist_open(dbPath.constData());
+}
+#endif
 
 HistoryManager::~HistoryManager()
 {
@@ -174,16 +199,17 @@ QList<HistoryEntry> HistoryManager::history() const
 
 // HIST01: the favicon store is keyed by host so every entry for a
 // site shares its icon, and persisted like the WebKit icon database
-// it replaces — one small png per host under <data dir>/icons/.
-static QString iconStoreDir()
+// it replaces — one small png per host under <profile dir>/icons/.
+static QString iconStoreDir(const QString &profileId)
 {
-    return BrowserPaths::dataFilePath(QLatin1String("icons"));
+    return BrowserPaths::profileDataFilePath(
+        profileId, QLatin1String("icons"));
 }
 
 #ifndef ARORA_RUSTCORE
-static QString iconFilePath(const QString &host)
+static QString iconFilePath(const QString &profileId, const QString &host)
 {
-    return iconStoreDir() + QLatin1Char('/')
+    return iconStoreDir(profileId) + QLatin1Char('/')
             + QString::fromLatin1(QUrl::toPercentEncoding(host))
             + QLatin1String(".png");
 }
@@ -195,7 +221,7 @@ QIcon HistoryManager::icon(const QUrl &url) const
     const QString key = historyIconKey(url);
     QIcon icon = m_icons.value(key);
     if (icon.isNull()) {
-        rustCoreEnsureDataDir();
+        ensureRustStore();
         const QByteArray k = key.toUtf8();
         RcBuffer out{};
         if (rc_hist_icon_get(k.constData(), &out) == RC_OK && out.data) {
@@ -212,7 +238,7 @@ QIcon HistoryManager::icon(const QUrl &url) const
     const QString key = host.isEmpty() ? url.toString() : host;
     QIcon icon = m_icons.value(key);
     if (icon.isNull() && !host.isEmpty() && !m_iconMisses.contains(host)) {
-        const QPixmap pixmap(iconFilePath(host));
+        const QPixmap pixmap(iconFilePath(m_profileId, host));
         if (!pixmap.isNull()) {
             icon = QIcon(pixmap);
             m_icons.insert(host, icon);
@@ -239,7 +265,7 @@ void HistoryManager::setIcon(const QUrl &url, const QIcon &icon)
     QByteArray png;
     QBuffer buffer(&png);
     if (buffer.open(QIODevice::WriteOnly) && image.save(&buffer, "PNG")) {
-        rustCoreEnsureDataDir();
+        ensureRustStore();
         const QByteArray k = key.toUtf8();
         rc_hist_icon_set(k.constData(),
                          reinterpret_cast<const uint8_t *>(png.constData()),
@@ -254,8 +280,8 @@ void HistoryManager::setIcon(const QUrl &url, const QIcon &icon)
     m_iconMisses.remove(key);
 
     if (!host.isEmpty()) {
-        QDir().mkpath(iconStoreDir());
-        icon.pixmap(64).save(iconFilePath(host), "PNG");
+        QDir().mkpath(iconStoreDir(m_profileId));
+        icon.pixmap(64).save(iconFilePath(m_profileId, host), "PNG");
     }
 #endif
 
@@ -274,8 +300,9 @@ void HistoryManager::clearIcons()
 {
     m_icons.clear();
     m_iconMisses.clear();
-    QDir(iconStoreDir()).removeRecursively();
+    QDir(iconStoreDir(m_profileId)).removeRecursively();
 #ifdef ARORA_RUSTCORE
+    ensureRustStore();
     rc_hist_icon_clear();
 #endif
 }
@@ -340,6 +367,9 @@ void HistoryManager::checkForExpired()
     if (m_daysToExpire < 0 || m_history.isEmpty())
         return;
 
+#ifdef ARORA_RUSTCORE
+    ensureRustStore();
+#endif
     QDateTime now = QDateTime::currentDateTime();
     int nextTimeout = 0;
 
@@ -377,6 +407,7 @@ void HistoryManager::prependHistoryEntry(const HistoryEntry &item)
     // global flag is gone).
     m_history.prepend(item);
 #ifdef ARORA_RUSTCORE
+    ensureRustStore();
     rc_hist_add(item.url.toUtf8().constData(),
                 item.title.toUtf8().constData(),
                 item.dateTime.toMSecsSinceEpoch());
@@ -392,6 +423,7 @@ void HistoryManager::updateHistoryEntry(const QUrl &url, const QString &title)
         if (url == m_history.at(i).url) {
             m_history[i].title = atomicString(title);
 #ifdef ARORA_RUSTCORE
+            ensureRustStore();
             rc_hist_update_title(url.toString().toUtf8().constData(),
                                  m_history[i].title.toUtf8().constData());
 #endif
@@ -409,6 +441,7 @@ void HistoryManager::removeHistoryEntry(const HistoryEntry &item)
     m_lastSavedUrl.clear();
     m_history.removeOne(item);
 #ifdef ARORA_RUSTCORE
+    ensureRustStore();
     rc_hist_remove(item.url.toUtf8().constData(),
                    item.title.toUtf8().constData(),
                    item.dateTime.toMSecsSinceEpoch());
@@ -458,6 +491,7 @@ void HistoryManager::clear()
     m_atomicStringHash.clear();
     m_lastSavedUrl.clear();
 #ifdef ARORA_RUSTCORE
+    ensureRustStore();
     rc_hist_clear();
 #endif
     m_saveTimer->changeOccurred();
@@ -479,7 +513,7 @@ void HistoryManager::clearSince(qint64 sinceMs)
         }
     }
 #ifdef ARORA_RUSTCORE
-    rustCoreEnsureDataDir();
+    ensureRustStore();
     rc_hist_clear_since(sinceMs);
 #endif
     m_saveTimer->changeOccurred();
@@ -490,7 +524,7 @@ void HistoryManager::clearSince(qint64 sinceMs)
 void HistoryManager::loadSettings()
 {
     // load settings
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     settings.beginGroup(QLatin1String("history"));
     m_daysToExpire = settings.value(QLatin1String("historyLimit"), 30).toInt();
 }
@@ -501,11 +535,10 @@ void HistoryManager::load()
     loadSettings();
 
 #ifdef ARORA_RUSTCORE
-    // The canonical store is <data dir>/history.db (rusqlite); the
+    // The canonical store is <profile dir>/history.db (rusqlite); the
     // legacy QDataStream file is imported once, on first run.
-    rustCoreEnsureDataDir();
-    const QByteArray dbPath =
-        BrowserPaths::dataFilePath(QLatin1String("history.db")).toUtf8();
+    const QByteArray dbPath = BrowserPaths::profileDataFilePath(
+        m_profileId, QLatin1String("history.db")).toUtf8();
     const bool fresh = rc_hist_exists(dbPath.constData()) == 0;
     if (rc_hist_open(dbPath.constData()) != RC_OK) {
         char *err = rc_last_error_message();
@@ -536,7 +569,8 @@ void HistoryManager::load()
     setHistory(list, true);
     return;
 #else
-    QFile historyFile(BrowserPaths::dataFilePath(QLatin1String("history")));
+    QFile historyFile(BrowserPaths::profileDataFilePath(
+        m_profileId, QLatin1String("history")));
 
     if (!historyFile.exists())
         return;
@@ -565,7 +599,8 @@ void HistoryManager::load()
 // the canonical store from then on (the old file is left in place).
 void HistoryManager::importLegacyHistory()
 {
-    QFile historyFile(BrowserPaths::dataFilePath(QLatin1String("history")));
+    QFile historyFile(BrowserPaths::profileDataFilePath(
+        m_profileId, QLatin1String("history")));
     if (!historyFile.exists() || !historyFile.open(QFile::ReadOnly))
         return;
     QDataStream in(&historyFile);
@@ -584,6 +619,7 @@ void HistoryManager::importLegacyHistory()
 // the test/import seam that wholesale-replaces the list.
 void HistoryManager::rustReplaceAll()
 {
+    ensureRustStore();
     rc_hist_clear();
     for (int i = m_history.count() - 1; i >= 0; --i) {
         const HistoryEntry &e = m_history.at(i);
@@ -605,7 +641,7 @@ QString HistoryManager::atomicString(const QString &string) {
 
 void HistoryManager::save()
 {
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     settings.beginGroup(QLatin1String("history"));
     settings.setValue(QLatin1String("historyLimit"), m_daysToExpire);
 
@@ -629,7 +665,8 @@ void HistoryManager::save()
     if (first == m_history.count() - 1)
         saveAll = true;
 
-    QFile historyFile(BrowserPaths::dataFilePath(QLatin1String("history")));
+    QFile historyFile(BrowserPaths::profileDataFilePath(
+        m_profileId, QLatin1String("history")));
 
     // When saving everything use a temporary file to prevent possible data loss.
     // The temp file must live in the target's directory: a default

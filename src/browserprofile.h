@@ -47,6 +47,15 @@ QWebEngineProfile *privateProfile();
 // normalized UA, no extensions, no WebChannel bridges).
 QWebEngineProfile *torProfile();
 
+// MPROF02: the persistent named profile for a registry persona —
+// storageName "arora-<id>" (id "default" resolves to normalProfile()).
+// Lazily created, qApp-owned, tagged "aroraProfileId" so profileIdFor
+// resolves it without parsing.  This is the minimal profile-object
+// seam profile-aware stores need now; MPROF03's window binding will
+// extend it into the full persona factory (service attachment, OTR
+// sibling, session binding).
+QWebEngineProfile *namedProfile(const QString &profileId);
+
 // The private profile only if it has already been brought up —
 // nullptr otherwise.  For callers that want to adjust an existing
 // private session without forcing one into existence (settings
@@ -57,6 +66,21 @@ QWebEngineProfile *privateProfileIfCreated();
 // otherwise.  Lets per-profile feature checks recognize tor sessions
 // without materializing the profile on normal runs.
 QWebEngineProfile *torProfileIfCreated();
+
+// MPROF02: the registry profile a QWebEngineProfile belongs to — the
+// key every per-profile app singleton (HistoryManager::
+// instanceFor(id) & friends) resolves a page's profile through.
+// Resolution order: the "aroraProfileId" dynamic property the profile
+// factories tag at creation (BrowserProfile::normalProfile, MPROF03's
+// profileFor(id), ContainerManager::profileFor) wins; otherwise the
+// storageName is parsed — "arora" is id "default", "arora-<id>" is id
+// <id>.  Unnamed (off-the-record) profiles, container profiles that
+// were never tagged and anything else resolve to "default": a
+// profile with no declared persona must never alias a real one, and
+// until MPROF03 binds windows every live profile IS the default.
+// App-side stores have their own isOffTheRecord() gates, so the
+// fallback cannot leak private browsing state to disk either.
+QString profileIdFor(QWebEngineProfile *profile);
 
 // UA03: the Chrome milestone the default UA presents on the wire.
 // Sites version-sniff "Chrome/<major>" to nag "browser out of date" —

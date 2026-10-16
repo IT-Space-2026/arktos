@@ -90,6 +90,9 @@ private slots:
 
 private:
     void populateCache();
+    // MPROF02: the registry profile this subscription's rules cache
+    // and consent gate belong to — its owning AdBlockManager's id.
+    QString profileId() const;
     QString rulesFileName() const;
     void parseUrl(const QUrl &url);
     void loadRules();

@@ -56,3 +56,10 @@ void rustCoreEnsureDataDir()
             .absolutePath().toUtf8();
     rc_set_data_dir(dir.constData());
 }
+
+void rustCoreEnsureDataDirFor(const QString &profileId)
+{
+    const QByteArray dir =
+        BrowserPaths::profileDataDir(profileId).toUtf8();
+    rc_set_data_dir(dir.constData());
+}

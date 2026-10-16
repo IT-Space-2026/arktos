@@ -114,6 +114,15 @@ public:
     // store children this proxy has never seen.  Only valid while
     // m_children is empty (a freshly created node).
     void invalidateChildren() { if (m_children.isEmpty()) m_childrenLoaded = false; }
+    // MPROF02: zeroes every loaded handle without touching the store —
+    // the call a stale BookmarksManager makes before discarding its
+    // node view.  The tree those handles indexed was already freed by
+    // the incoming profile's rc_bm_load, so ~BookmarkNode's
+    // rc_bm_destroy would fire on dead handles that the store may
+    // have recycled onto the CURRENT profile's nodes — destroying the
+    // live tree.  Never walks unmaterialized children: materializing
+    // would query dead handles for the same reason.
+    void dropRustHandles();
 #endif
 
 private:

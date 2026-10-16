@@ -220,6 +220,11 @@ public:
     };
 
     static ExtensionManager *instance();
+    // MPROF02: the manager for a registry persona — instance() is the
+    // active-profile alias; repeat calls for one id return the same
+    // qApp-parented object.
+    static ExtensionManager *instanceFor(const QString &profileId);
+    QString profileId() const { return m_profileId; }
 
     // False when Qt was built without webengine_extensions — every
     // other call then degrades to an empty list / errorOccurred signal.
@@ -301,8 +306,9 @@ public:
     UpdateResult updateResultFor(const QString &id) const;
     QString updateUrlFor(const QString &id) const;
 
-    // Directory the downloaded update packages land in.
-    static QString updatesPath();
+    // Directory the downloaded update packages land in — under this
+    // manager's persona profile dir (MPROF02).
+    QString updatesPath() const;
     // <0 / 0 / >0 like strcmp, over dotted numeric components —
     // "1.0" == "1.0.0", "1.10" > "1.9".  Components past the fourth
     // and non-numeric input compare lexically.
@@ -322,8 +328,8 @@ public:
     // background check only detects and downloads; installs still
     // come from the manual button).  While enabled, checks run at
     // most once every 20 hours.
-    static bool updateCheckEnabled();
-    static void setUpdateCheckEnabled(bool enabled);
+    bool updateCheckEnabled() const;
+    void setUpdateCheckEnabled(bool enabled);
 
     // chrome.* permission names whose browser-side delegates Qt
     // WebEngine does not provide — see extensionmanager.cpp for the
@@ -385,7 +391,8 @@ public:
 
     // User scripts: every *.js file in this directory is injected at
     // DocumentReady in the ApplicationWorld on each prepared profile.
-    static QString userScriptsPath();
+    // Persona-owned (MPROF02).
+    QString userScriptsPath() const;
     QStringList userScriptNames() const;
     void reloadUserScripts();
 
@@ -404,7 +411,8 @@ signals:
     void updateAvailable(const ExtensionManager::UpdateResult &result);
 
 private:
-    explicit ExtensionManager(QObject *parent = nullptr);
+    explicit ExtensionManager(const QString &profileId = QString(),
+                              QObject *parent = nullptr);
 
     // EXT12 health probe plumbing — see extensionmanager.cpp.  One
     // hidden extension-origin page at a time; probes queue behind the
@@ -430,6 +438,9 @@ private:
     void fetchUpdatePackage(const UpdateResult &result);
     void finishUpdateCheck();
 
+    // MPROF02: the registry persona this manager persists state for.
+    QString m_profileId;
+
     QList<QPointer<QWebEngineProfile>> m_profiles;
 
     // One-shot consent grants keyed by the exact path string the
@@ -447,6 +458,7 @@ private:
     // out of the list (bounded — a handful of bundled files).
     struct PendingBundle {
         QPointer<QWebEngineExtensionManager> engine;
+        QString profileId;      // persona whose settings hold the marker
         QString settingsKey;    // "extensions/bundled/<storageName>"
         QString fileName;       // basename — the consumed marker
         QString stem;           // name stem for loose correlation

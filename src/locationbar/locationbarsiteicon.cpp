@@ -25,6 +25,7 @@
 #include <qmimedata.h>
 #include <qurl.h>
 
+#include "browserprofile.h"
 #include "historymanager.h"
 #include "webview.h"
 
@@ -54,9 +55,16 @@ void LocationBarSiteIcon::setWebView(WebView *webView)
 void LocationBarSiteIcon::webViewSiteIconChanged()
 {
     QUrl url;
-    if (m_webView)
+    QWebEnginePage *page = nullptr;
+    if (m_webView) {
         url = m_webView->url();
-    setPixmap(HistoryManager::instance()->icon(url).pixmap(16, 16));
+        page = m_webView->page();
+    }
+    // MPROF02: the page's persona recorded the icon — ask its store.
+    setPixmap(HistoryManager::instanceFor(
+                  BrowserProfile::profileIdFor(
+                      page ? page->profile() : nullptr))
+        ->icon(url).pixmap(16, 16));
 }
 
 void LocationBarSiteIcon::mousePressEvent(QMouseEvent *event)

@@ -54,4 +54,14 @@ private:
 // test-mode data-dir switches propagate (RCORE02).
 void rustCoreEnsureDataDir();
 
+// MPROF02: points the crate at a SPECIFIC profile's dir —
+// profiles/<id>/ instead of the active profile's.  The rust store is
+// process-global: switching dirs drops its cached keys and the
+// decoded credential/autofill maps (per rc_set_data_dir), and every
+// DirCache re-stamps, so alternating profiles is correct but
+// expensive — callers anchor per operation batch, never per page
+// load.  An empty or non-slug id resolves to the default profile,
+// matching BrowserPaths::profileDataDir.
+void rustCoreEnsureDataDirFor(const QString &profileId);
+
 #endif // RUSTCOREBRIDGE_H

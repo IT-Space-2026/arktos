@@ -31,6 +31,7 @@
 #include <qdir.h>
 #include <qfile.h>
 #include <qfileinfo.h>
+#include <qhash.h>
 #include <qjsondocument.h>
 #include <qjsonobject.h>
 #include <qregularexpression.h>
@@ -72,6 +73,10 @@ QWebEngineProfile *normalProfile()
     static QWebEngineProfile *profile = nullptr;
     if (!profile) {
         profile = new QWebEngineProfile(QLatin1String("arora"), qApp);
+        // MPROF02: the tag lets profileIdFor() resolve this object
+        // without re-parsing the storage name.
+        profile->setProperty("aroraProfileId",
+                             QLatin1String("default"));
         // HARD01: a previous session's site-data clear may have
         // deferred its service-coupled storage trees to this moment —
         // the profile exists but no page has ever used it, so the
@@ -112,6 +117,50 @@ QWebEngineProfile *torProfile()
 QWebEngineProfile *torProfileIfCreated()
 {
     return s_torProfile;
+}
+
+QWebEngineProfile *namedProfile(const QString &profileId)
+{
+    if (!BrowserPaths::isProfileId(profileId)
+            || profileId == QLatin1String("default"))
+        return normalProfile();
+    static QHash<QString, QWebEngineProfile *> profiles;
+    QWebEngineProfile *&profile = profiles[profileId];
+    if (!profile) {
+        profile = new QWebEngineProfile(
+            QLatin1String("arora-") + profileId, qApp);
+        profile->setProperty("aroraProfileId", profileId);
+    }
+    return profile;
+}
+
+QString profileIdFor(QWebEngineProfile *profile)
+{
+    if (!profile)
+        return QLatin1String("default");
+    // The explicit tag the factories set wins — it is the only channel
+    // that can express an off-the-record profile's persona (MPROF03's
+    // per-id OTR overlay) or a container profile's owner id.
+    const QVariant tag = profile->property("aroraProfileId");
+    if (tag.isValid()) {
+        const QString id = tag.toString();
+        if (BrowserPaths::isProfileId(id))
+            return id;
+    }
+    const QString name = profile->storageName();
+    if (name == QLatin1String("arora"))
+        return QLatin1String("default");
+    // "arora-<id>" is MPROF03's per-profile storage name; container
+    // profiles are "arora-container-<uuid>" and must NOT parse here —
+    // they resolve through the tag their manager sets (an untagged
+    // container lands on the default fallback like everything else).
+    if (name.startsWith(QLatin1String("arora-"))
+            && !name.startsWith(QLatin1String("arora-container-"))) {
+        const QString id = name.mid(6);
+        if (BrowserPaths::isProfileId(id))
+            return id;
+    }
+    return QLatin1String("default");
 }
 
 int presentedChromeMajor()
@@ -1266,7 +1315,8 @@ bool addClientCertificateFile(QWebEngineProfile *profile,
 
 void loadClientCertificates(QWebEngineProfile *profile)
 {
-    const QDir dir(BrowserPaths::dataFilePath(
+    const QDir dir(BrowserPaths::profileDataFilePath(
+            profileIdFor(profile),
             QLatin1String("clientcertificates")));
     const QFileInfoList files = dir.entryInfoList(
             QStringList() << QStringLiteral("*.pem")

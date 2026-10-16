@@ -2158,7 +2158,9 @@ void tst_WebView::contextMenuPageActions()
 // regardless of which actions the menu carries.
 void tst_WebView::contextMenuSelectionToNote()
 {
-    TestWebView view;
+    // MPROF02: the note lands in the page's own profile's store —
+    // bind the view to the app profile so it is the persistent one.
+    TestWebView view(BrowserApplication::webEngineProfile());
     view.resize(800, 600);
     view.show();
 

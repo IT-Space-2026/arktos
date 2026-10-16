@@ -438,7 +438,8 @@ void WebPage::init()
     // signals instead.  Pages on the off-the-record profile never reach
     // the manager — that is the private-browsing guarantee now.
     if (!profile()->isOffTheRecord()) {
-        HistoryManager *history = HistoryManager::instance();
+        HistoryManager *history = HistoryManager::instanceFor(
+            BrowserProfile::profileIdFor(profile()));
         connect(this, &QWebEnginePage::loadFinished, this,
                 [this, history](bool ok) {
             // The warning interstitials are chrome, not visited
@@ -563,6 +564,10 @@ void WebPage::setUserAgent(const QString &userAgent)
         applyTo(otrProfile);
     // CONT01: a UA override applies on materialized container profiles
     // too — containers send the same UA as the rest of the browser.
+    // MPROF02: instance() covers the active persona's containers; a
+    // sweep across every persona's managers lands with MPROF03's
+    // window binding (only the default persona can have live
+    // container profiles until then).
     const QList<QWebEngineProfile*> containerProfiles =
         ContainerManager::instance()->createdProfiles();
     for (QWebEngineProfile *containerProfile : containerProfiles)
@@ -1004,7 +1009,8 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
 // container's storage.
 bool WebPage::divertToContainerRule(const QUrl &url)
 {
-    ContainerManager *manager = ContainerManager::instance();
+    ContainerManager *manager = ContainerManager::instanceFor(
+        BrowserProfile::profileIdFor(profile()));
     const QString target = manager->containerIdForHost(url.host());
     if (target.isEmpty()
         || target == manager->containerIdForProfile(profile()))
@@ -1375,7 +1381,8 @@ void WebPage::showErrorPage(const QUrl &errorUrl, const QString &errorString,
     // A failed load is normally never recorded (only loadFinished(true)
     // feeds the manager), but a page that loaded and then errored —
     // e.g. a navigation interrupted mid-way — may have gotten in.
-    HistoryManager::instance()->removeHistoryEntry(errorUrl, this->title());
+    HistoryManager::instanceFor(BrowserProfile::profileIdFor(profile()))
+        ->removeHistoryEntry(errorUrl, this->title());
 }
 
 // TOR18: the cold-circuit stretch after the SOCKS listener goes
@@ -1556,7 +1563,8 @@ void WebPage::showTorWarmupPending(const QUrl &url)
     setHtml(html, url);
     // Same bookkeeping as the error page: a failed url that already
     // reached the store is removed.
-    HistoryManager::instance()->removeHistoryEntry(url, title());
+    HistoryManager::instanceFor(BrowserProfile::profileIdFor(profile()))
+        ->removeHistoryEntry(url, title());
     if (WebView *webView = qobject_cast<WebView *>(
             WebEnginePageAdapter::forPage(this)->view()))
         webView->torWarmupNotice();
@@ -2270,11 +2278,14 @@ void WebPage::schedulePageScripts(const QUrl &url)
     if (!m_injectedScriptsEnabled)
         return;
     Engine::Page *enginePage = WebEnginePageAdapter::forPage(this);
-    AdBlockManager::instance()->page()->scheduleRulesOnPage(enginePage, url);
+    AdBlockManager::instanceFor(BrowserProfile::profileIdFor(profile()))
+        ->page()->scheduleRulesOnPage(enginePage, url);
     // TOR02: no autofill fill/capture in a tor window — stored
     // credentials are a cross-context identity leak.
     if (!BrowserApplication::isTorMode())
-        AutoFillManager::instance()->scheduleOnPage(enginePage, url);
+        AutoFillManager::instanceFor(
+            BrowserProfile::profileIdFor(profile()))
+                ->scheduleOnPage(enginePage, url);
 }
 
 void WebPage::setInjectedScriptsEnabled(bool enabled)

@@ -242,8 +242,10 @@ static ExtensionManager::Manifest inspectPackageManifest(const QString &path)
 }
 #endif // ARORA_RUSTCORE
 
-ExtensionManager::ExtensionManager(QObject *parent)
+ExtensionManager::ExtensionManager(const QString &profileId, QObject *parent)
     : QObject(parent)
+    , m_profileId(BrowserPaths::isProfileId(profileId)
+                  ? profileId : BrowserPaths::activeProfileId())
 {
     // EXT12: every lifecycle pulse (load/install/uninstall + the
     // enable/disable settle) fans out through changed() — coalesce
@@ -273,9 +275,17 @@ ExtensionManager::ExtensionManager(QObject *parent)
 
 ExtensionManager *ExtensionManager::instance()
 {
-    static ExtensionManager *manager = nullptr;
+    return instanceFor(BrowserPaths::activeProfileId());
+}
+
+ExtensionManager *ExtensionManager::instanceFor(const QString &profileId)
+{
+    const QString id = BrowserPaths::isProfileId(profileId)
+        ? profileId : BrowserPaths::activeProfileId();
+    static QHash<QString, QPointer<ExtensionManager>> managers;
+    QPointer<ExtensionManager> &manager = managers[id];
     if (!manager)
-        manager = new ExtensionManager(qApp);
+        manager = new ExtensionManager(id, qApp);
     return manager;
 }
 
@@ -345,8 +355,9 @@ void ExtensionManager::installOnProfile(QWebEngineProfile *profile)
             this, [this, profile](const QWebEngineExtensionInfo &info) {
         const ExtensionInfo plain = infoFrom(info);
         // SEC25: the pin and any tamper flag die with the extension.
-        ProfileSettings().remove(integritySettingsKey(
-            profile->storageName(), plain.id));
+        ProfileSettings(BrowserProfile::profileIdFor(profile))
+            .remove(integritySettingsKey(
+                profile->storageName(), plain.id));
         m_tamperedIds.remove(plain.id);
         // EXT12: its health verdict too.
         m_healthVerdicts.remove(plain.id);
@@ -652,7 +663,7 @@ void ExtensionManager::installBundledExtensions(QWebEngineProfile *profile)
     const QString settingsKey = QLatin1String("extensions/bundled/")
         + (profile->storageName().isEmpty()
            ? QStringLiteral("default") : profile->storageName());
-    ProfileSettings settings;
+    ProfileSettings settings(BrowserProfile::profileIdFor(profile));
     const QStringList consumed = settings.value(settingsKey).toStringList();
     QStringList satisfied;
 
@@ -689,6 +700,7 @@ void ExtensionManager::installBundledExtensions(QWebEngineProfile *profile)
 
         PendingBundle pending;
         pending.engine = extensions;
+        pending.profileId = BrowserProfile::profileIdFor(profile);
         pending.settingsKey = settingsKey;
         pending.fileName = name;
         pending.stem = stem;
@@ -729,7 +741,8 @@ void ExtensionManager::finishBundledInstall(const ExtensionInfo &info)
         m_bundledPending.removeAt(i);
         if (!info.error.isEmpty() || !info.installed)
             return;
-        ProfileSettings settings;
+        ProfileSettings settings(pending.profileId.isEmpty()
+                                 ? m_profileId : pending.profileId);
         QStringList consumed =
             settings.value(pending.settingsKey).toStringList();
         if (!consumed.contains(pending.fileName)) {
@@ -1101,7 +1114,7 @@ void ExtensionManager::pinInstalledExtension(QWebEngineProfile *profile,
     const QByteArray hash = extensionTreeHash(info.path);
     if (hash.isEmpty())
         return;
-    ProfileSettings().setValue(
+    ProfileSettings(BrowserProfile::profileIdFor(profile)).setValue(
         integritySettingsKey(profile->storageName(), info.id),
         QString::fromLatin1(hash));
 }
@@ -1151,7 +1164,7 @@ void ExtensionManager::verifyInstalledIntegrity(QWebEngineProfile *profile)
         if (plain.builtin)
             continue;
         const QString key = integritySettingsKey(storage, info.id());
-        ProfileSettings settings;
+        ProfileSettings settings(BrowserProfile::profileIdFor(profile));
         const QString pinned = settings.value(key).toString();
         const QString current =
             QString::fromLatin1(extensionTreeHash(info.path()));
@@ -1580,10 +1593,10 @@ void ExtensionManager::abandonHealthProbe()
     m_healthQueue.clear();
 }
 
-QString ExtensionManager::userScriptsPath()
+QString ExtensionManager::userScriptsPath() const
 {
-    const QString directory =
-        BrowserPaths::dataFilePath(QLatin1String("userscripts"));
+    const QString directory = BrowserPaths::profileDataFilePath(
+        m_profileId, QLatin1String("userscripts"));
     QDir().mkpath(directory);
     // EXT05: every file here executes in each page's ApplicationWorld
     // — the store must stay owner-only so another account cannot
@@ -1676,10 +1689,10 @@ void ExtensionManager::reloadUserScripts(QWebEngineProfile *profile)
 // member names, and an embedded readable manifest.json are all
 // required.  Rejected packages are never written.
 
-QString ExtensionManager::updatesPath()
+QString ExtensionManager::updatesPath() const
 {
-    const QString directory =
-        BrowserPaths::dataFilePath(QLatin1String("extension-updates"));
+    const QString directory = BrowserPaths::profileDataFilePath(
+        m_profileId, QLatin1String("extension-updates"));
     QDir().mkpath(directory);
     return directory;
 }
@@ -1842,16 +1855,16 @@ bool ExtensionManager::parseUpdateManifest(const QByteArray &xml,
     return true;
 }
 
-bool ExtensionManager::updateCheckEnabled()
+bool ExtensionManager::updateCheckEnabled() const
 {
-    return ProfileSettings().value(QLatin1String("extensions/autoUpdateCheck"),
-                             false).toBool();
+    return ProfileSettings(m_profileId).value(
+        QLatin1String("extensions/autoUpdateCheck"), false).toBool();
 }
 
 void ExtensionManager::setUpdateCheckEnabled(bool enabled)
 {
-    ProfileSettings().setValue(QLatin1String("extensions/autoUpdateCheck"),
-                         enabled);
+    ProfileSettings(m_profileId).setValue(
+        QLatin1String("extensions/autoUpdateCheck"), enabled);
 }
 
 bool ExtensionManager::updateCheckInProgress() const
@@ -2130,8 +2143,9 @@ void ExtensionManager::finishUpdateCheck()
 {
     if (m_updateJobs.isEmpty() && m_updateCheckRunning) {
         m_updateCheckRunning = false;
-        ProfileSettings().setValue(QLatin1String("extensions/lastUpdateCheck"),
-                             QDateTime::currentSecsSinceEpoch());
+        ProfileSettings(m_profileId).setValue(
+            QLatin1String("extensions/lastUpdateCheck"),
+            QDateTime::currentSecsSinceEpoch());
         emit updateCheckFinished(m_updateResults);
     }
 }
@@ -2158,7 +2172,7 @@ void ExtensionManager::maybeAutoUpdateCheck()
 {
     if (!updateCheckEnabled() || m_updateCheckRunning)
         return;
-    const qint64 last = ProfileSettings()
+    const qint64 last = ProfileSettings(m_profileId)
         .value(QLatin1String("extensions/lastUpdateCheck"), 0).toLongLong();
     if (QDateTime::currentSecsSinceEpoch() - last < 20 * 60 * 60)
         return;

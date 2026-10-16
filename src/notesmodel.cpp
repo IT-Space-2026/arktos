@@ -22,6 +22,7 @@
 
 #include "autosaver.h"
 #include "browserpaths.h"
+#include "browserprofile.h"
 
 #include <qdir.h>
 #include <qfile.h>
@@ -52,44 +53,64 @@ NotesModel *NotesModel::instance(QWebEngineProfile *profile)
 {
     if (!profile)
         return nullptr;
-    // One shared store per profile object — every window's panel edits
-    // the same model, same singleton shape as CookieJar::instance().
-    static QHash<QWebEngineProfile *, QPointer<NotesModel>> models;
-    NotesModel *model = models.value(profile);
+    if (profile->isOffTheRecord()) {
+        // Volatile per-profile-object store — nothing reaches disk.
+        // Parented to the profile so the QPointer expires with it
+        // instead of aliasing an address-reused profile object.
+        static QHash<QWebEngineProfile *, QPointer<NotesModel>> models;
+        NotesModel *model = models.value(profile);
+        if (!model) {
+            model = new NotesModel(QString(), profile);
+            models.insert(profile, model);
+        }
+        return model;
+    }
+    // Persistent profiles resolve to their registry persona — a
+    // persona's normal and container profiles share one notes store.
+    return instanceFor(BrowserProfile::profileIdFor(profile));
+}
+
+NotesModel *NotesModel::instanceFor(const QString &profileId)
+{
+    const QString id = BrowserPaths::isProfileId(profileId)
+        ? profileId : BrowserPaths::activeProfileId();
+    static QHash<QString, QPointer<NotesModel>> models;
+    NotesModel *model = models.value(id);
     if (model)
         return model;
 
-    QString storageFile;
-    if (!profile->isOffTheRecord()) {
-        // <data>/notes/<storageName>.json — a file next to the app's
-        // own stores rather than inside Chromium's managed storage
-        // tree (clearSiteStorage prunes whole directories under the
-        // profile path; app files stay out of the blast radius).
-        const QString dir =
-            BrowserPaths::dataFilePath(QLatin1String("notes"));
-        QString name = profile->storageName();
-        if (name.isEmpty())
-            name = QLatin1String("default");
-        storageFile = dir + QLatin1Char('/')
-            + QString(name).replace(QLatin1Char('/'), QLatin1Char('_'))
-            + QLatin1String(".json");
+    // <data>/profiles/<id>/notes.json — a file next to the app's
+    // own stores rather than inside Chromium's managed storage
+    // tree (clearSiteStorage prunes whole directories under the
+    // profile path; app files stay out of the blast radius).
+    const QString storageFile =
+        BrowserPaths::profileDataFilePath(id, QLatin1String("notes.json"));
+    if (!QFile::exists(storageFile)) {
+        // MPROF02 migration: the pre-per-persona store lived at
+        // <data>/notes/<storageName>.json — adopt it if present.
+        QString legacyName = id == QLatin1String("default")
+            ? QLatin1String("arora") : QLatin1String("arora-") + id;
+        const QString legacy =
+            BrowserPaths::dataFilePath(QLatin1String("notes"))
+            + QLatin1Char('/') + legacyName + QLatin1String(".json");
+        if (QFile::exists(legacy)) {
+            QDir().mkpath(QFileInfo(storageFile).absolutePath());
+            QFile::rename(legacy, storageFile);
+        }
     }
-    // Parented to the profile, not qApp: a destroyed profile takes
-    // its model down, so the static registry's QPointer expires with
-    // it instead of handing a stale store to an address-reused
-    // profile object.
-    model = new NotesModel(storageFile, profile);
-    if (model->isPersistent())
-        migrateLegacyScratch(model);
-    models.insert(profile, model);
+    model = new NotesModel(storageFile, qApp);
+    migrateLegacyScratch(model, id);
+    models.insert(id, model);
     return model;
 }
 
-void NotesModel::migrateLegacyScratch(NotesModel *model)
+void NotesModel::migrateLegacyScratch(NotesModel *model,
+                                      const QString &profileId)
 {
     if (!model)
         return;
-    ProfileSettings settings;
+    ProfileSettings settings(profileId.isEmpty()
+        ? BrowserPaths::activeProfileId() : profileId);
     if (!settings.contains(QLatin1String("sidebar/notes")))
         return;
     const QString legacy =

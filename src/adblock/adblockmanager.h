@@ -62,11 +62,15 @@ public:
         RemoteListsGranted = 1
     };
     static RemoteListsConsent remoteListsConsent();
+    static RemoteListsConsent remoteListsConsent(const QString &profileId);
     static void setRemoteListsConsent(RemoteListsConsent consent);
+    static void setRemoteListsConsent(const QString &profileId,
+                                      RemoteListsConsent consent);
     // True while remote subscription fetches are allowed (consent
     // granted).  Consulted by AdBlockSubscription's automatic update
     // trigger; updateNow() itself stays an explicit fetch.
     static bool remoteListsAllowed();
+    static bool remoteListsAllowed(const QString &profileId);
     // Grants consent and refreshes every stale remote subscription.
     void grantRemoteLists();
     // One-time first-launch prompt; a no-op once a choice is stored,
@@ -74,12 +78,25 @@ public:
     // exists.
     void maybePromptForListConsent(QWidget *parent);
 
-    AdBlockManager(QObject *parent = nullptr);
+    // profileId names the registry profile whose store this manager
+    // owns (MPROF02); an empty or non-slug id binds the active
+    // profile — "default" until MPROF03.
+    AdBlockManager(QObject *parent = nullptr,
+                   const QString &profileId = QString());
     ~AdBlockManager();
 
     void load();
 
     static AdBlockManager *instance();
+    // MPROF02: the blocker for a specific profile — one instance per
+    // registry id, qApp-owned (MPROF05's profile delete tears them
+    // down).  Subscriptions, custom rules, enabled state, consent and
+    // the engine pick all read/write profiles/<id>/settings.ini and
+    // profiles/<id>/adblock_subscription_*; the downloaded list cache
+    // files stay per-profile too so a rule added under one persona
+    // never filters another's traffic.
+    static AdBlockManager *instanceFor(const QString &profileId);
+    QString profileId() const { return m_profileId; }
     bool isEnabled() const;
 
     QList<AdBlockSubscription*> subscriptions() const;
@@ -144,6 +161,7 @@ public:
     };
     static bool rustEngineAvailable();
     static Engine storedEngine();
+    static Engine storedEngine(const QString &profileId);
     Engine engine() const;
     // True while the live matcher snapshot delegates to the Rust
     // engine.  Never constructs the network snapshot just to answer.
@@ -161,9 +179,10 @@ private slots:
     void save();
 
 private:
-    static QUrl customSubscriptionUrl();
-    static AdBlockManager *s_adBlockManager;
+    QUrl customSubscriptionUrl() const;
+    QString customSubscriptionFile() const;
 
+    QString m_profileId;
     bool m_loaded;
     bool m_enabled;
     AutoSaver *m_saveTimer;

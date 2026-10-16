@@ -62,12 +62,22 @@ public:
         QColor color;
     };
 
-    explicit ContainerManager(QObject *parent = nullptr);
+    // profileId names the registry profile whose containers this
+    // manager owns (MPROF02); an empty or non-slug id binds the
+    // active profile — "default" until MPROF03.
+    explicit ContainerManager(QObject *parent = nullptr,
+                              const QString &profileId = QString());
     ~ContainerManager();
 
     // Lazy qApp-owned singleton — same pattern as
     // HistoryManager::instance()/AdBlockManager::instance().
     static ContainerManager *instance();
+    // MPROF02: the container registry of a specific profile — one
+    // instance per registry id, qApp-owned.  The registry, site
+    // rules and <profile dir>/containers/<id> storage roots are all
+    // scoped to that profile.
+    static ContainerManager *instanceFor(const QString &profileId);
+    QString profileId() const { return m_profileId; }
 
     // The default (unlabeled) container's id.  Everything that is not
     // a registered container — including the normal "arora" profile —
@@ -194,6 +204,7 @@ private:
     // authoritative, the per-container list the persisted mirror.
     void saveSiteRules(const QString &id) const;
 
+    QString m_profileId;
     QList<Container> m_containers;
     // Materialized profiles only, keyed by container id.  The default
     // container is never an entry — it lives in BrowserProfile.

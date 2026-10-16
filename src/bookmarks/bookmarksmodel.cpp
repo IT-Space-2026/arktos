@@ -87,6 +87,11 @@ BookmarksModel::BookmarksModel(BookmarksManager *bookmarkManager, QObject *paren
             this, &BookmarksModel::entryRemoved);
     connect(bookmarkManager, &BookmarksManager::entryChanged,
             this, &BookmarksModel::entryChanged);
+    connect(bookmarkManager, &BookmarksManager::bookmarksReset,
+            this, [this] {
+        beginResetModel();
+        endResetModel();
+    });
 }
 
 QModelIndex BookmarksModel::index(BookmarkNode *node) const

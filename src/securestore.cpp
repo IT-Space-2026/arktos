@@ -23,6 +23,7 @@
 #include "browserpaths.h"
 
 #include <qfile.h>
+#include <qhash.h>
 #include <qsavefile.h>
 #include <qsettings.h>
 
@@ -49,7 +50,6 @@
 #include "rustcorebridge.h"
 
 #include <qcoreapplication.h>
-#include <qfileinfo.h>
 #else
 #include "argon2id.h"
 
@@ -77,9 +77,19 @@ void secureZero(QByteArray &bytes)
     secureZero(bytes.data(), bytes.size());
 }
 
-QString storePath(const char *name)
+// MPROF02: the store's key/KDF/consumer artifacts are profile-owned —
+// every path resolves under profiles/<id>/.  An empty or non-slug id
+// binds the active profile, matching the managers' ctor contract.
+QString normalizeProfileId(const QString &profileId)
 {
-    return BrowserPaths::dataFilePath(QLatin1String(name));
+    return BrowserPaths::isProfileId(profileId)
+            ? profileId : BrowserPaths::activeProfileId();
+}
+
+QString storePath(const QString &profileId, const char *name)
+{
+    return BrowserPaths::profileDataFilePath(
+        normalizeProfileId(profileId), QLatin1String(name));
 }
 
 // ---- shared interactive-unlock state -------------------------------
@@ -97,10 +107,11 @@ QByteArray openWithKey(const QByteArray &blob, const QByteArray &key,
 //   - QSettings proxy/password ("arsec1:" blob or plaintext)
 // A blob that does not open under oldKey is already unreadable — it
 // is left in place with a warning rather than blocking the switch.
-bool resealConsumers(const QByteArray &oldKey, const QByteArray &newKey,
+bool resealConsumers(const QString &profileId,
+                     const QByteArray &oldKey, const QByteArray &newKey,
                      QString *error)
 {
-    const QString autofillPath = storePath("autofill.dat");
+    const QString autofillPath = storePath(profileId, "autofill.dat");
     {
         QFile file(autofillPath);
         if (file.exists() && file.open(QIODevice::ReadOnly)) {
@@ -135,7 +146,7 @@ bool resealConsumers(const QByteArray &oldKey, const QByteArray &newKey,
         }
     }
 
-    ProfileSettings settings;
+    ProfileSettings settings(normalizeProfileId(profileId));
     settings.beginGroup(QLatin1String("proxy"));
     const QString stored =
         settings.value(QLatin1String("password")).toString();
@@ -179,12 +190,15 @@ bool resealConsumers(const QByteArray &oldKey, const QByteArray &newKey,
 // artifact -> re-seal every consumer -> retire the old one) and the
 // interactive unlock prompt.
 
-void ensureRustCore()
+void ensureRustCore(const QString &profileId)
 {
     // Cheap and idempotent — call per operation so test-mode data-dir
-    // switches propagate.
-    const QByteArray dir =
-        QFileInfo(storePath("securestore.key")).absolutePath().toUtf8();
+    // switches propagate.  Anchors the process-global rust store at
+    // THIS profile's dir (MPROF02): rc_set_data_dir drops cached keys
+    // and decoded credential/autofill maps on a dir change, so
+    // alternating profiles re-derives rather than cross-reading.
+    const QByteArray dir = BrowserPaths::profileDataDir(
+        normalizeProfileId(profileId)).toUtf8();
     rc_set_data_dir(dir.constData());
     // Wake the change-callback -> Qt-signal bridge once a real
     // application object exists.
@@ -202,7 +216,7 @@ QByteArray bufferToByteArray(const RcBuffer &buf)
 
 QByteArray sealWithKey(const QByteArray &plain, const QByteArray &key)
 {
-    ensureRustCore();
+    // Pure crypto (explicit key) — no data-dir anchor needed.
     if (key.size() != kKeySize)
         return QByteArray();
     RcBuffer out{};
@@ -218,7 +232,6 @@ QByteArray sealWithKey(const QByteArray &plain, const QByteArray &key)
 QByteArray openWithKey(const QByteArray &blob, const QByteArray &key,
                        bool *ok)
 {
-    ensureRustCore();
     bool result = false;
     if (!ok)
         ok = &result;
@@ -239,9 +252,9 @@ QByteArray openWithKey(const QByteArray &blob, const QByteArray &key,
 // Copies of the custody keys for transition re-sealing.  The Rust
 // side already caches the file key; these byte copies are wiped by
 // the caller after use.
-QByteArray fileKeyCopy()
+QByteArray fileKeyCopy(const QString &profileId)
 {
-    ensureRustCore();
+    ensureRustCore(profileId);
     QByteArray key(kKeySize, Qt::Uninitialized);
     if (rc_key_file_copy(reinterpret_cast<uint8_t *>(key.data()))
         != RC_OK)
@@ -249,8 +262,11 @@ QByteArray fileKeyCopy()
     return key;
 }
 
-QByteArray derivedKeyCopy()
+QByteArray derivedKeyCopy(const QString &profileId)
 {
+    // Re-anchoring to the same dir is a no-op for the cached key —
+    // the caller has already anchored, this just proves the binding.
+    ensureRustCore(profileId);
     QByteArray key(kKeySize, Qt::Uninitialized);
     if (rc_derived_key_copy(reinterpret_cast<uint8_t *>(key.data()))
         != RC_OK)
@@ -381,14 +397,14 @@ const EvpApi *evp()
 }
 
 // ---- key custody state ---------------------------------------------
-// The passphrase-derived key lives only in RAM (s_derivedKey); the
+// The passphrase-derived key lives only in RAM (s_derivedKeys); the
 // on-disk artifacts are either securestore.key (random file key) or
-// securestore.kdf (public salt+params+verifier) — never both.
+// securestore.kdf (public salt+params+verifier) — never both.  MPROF02:
+// caches are keyed by profile id — each profile's key material is
+// independent and lock() wipes them all.
 
-unsigned char s_derivedKey[kKeySize];
-bool s_derivedKeyValid = false;
-QByteArray s_fileKey;
-bool s_fileKeyLoaded = false;
+QHash<QString, QByteArray> s_derivedKeys;
+QHash<QString, QByteArray> s_fileKeys;
 
 struct KdfParams {
     quint32 memoryKiB;
@@ -408,9 +424,9 @@ QByteArray randomBytes(int count)
     return bytes;
 }
 
-QByteArray loadOrCreateFileKey()
+QByteArray loadOrCreateFileKey(const QString &profileId)
 {
-    const QString path = storePath("securestore.key");
+    const QString path = storePath(profileId, "securestore.key");
     QFile file(path);
     if (file.exists()) {
         if (file.open(QIODevice::ReadOnly)) {
@@ -444,18 +460,17 @@ QByteArray loadOrCreateFileKey()
 // Cached file key.  Note this stays loaded across a transition to
 // passphrase mode until the transition finishes — the old key is
 // needed to re-seal consumer stores — then lock() drops it.
-const QByteArray &fileKey()
+const QByteArray &fileKey(const QString &profileId)
 {
-    if (!s_fileKeyLoaded) {
-        s_fileKey = loadOrCreateFileKey();
-        s_fileKeyLoaded = true;
-    }
-    return s_fileKey;
+    const QString id = normalizeProfileId(profileId);
+    if (!s_fileKeys.contains(id))
+        s_fileKeys.insert(id, loadOrCreateFileKey(id));
+    return s_fileKeys[id];
 }
 
-bool parseKdfFile(KdfParams *params)
+bool parseKdfFile(const QString &profileId, KdfParams *params)
 {
-    QFile file(storePath("securestore.kdf"));
+    QFile file(storePath(profileId, "securestore.kdf"));
     if (!file.open(QIODevice::ReadOnly))
         return false;
     const QByteArray data = file.readAll();
@@ -478,7 +493,7 @@ bool parseKdfFile(KdfParams *params)
         && SecureStore::isSealed(params->verifier);
 }
 
-bool writeKdfFile(const KdfParams &params)
+bool writeKdfFile(const QString &profileId, const KdfParams &params)
 {
     QByteArray data;
     data.reserve(34 + params.verifier.size());
@@ -495,7 +510,7 @@ bool writeKdfFile(const KdfParams &params)
     data.append(params.salt);
     data.append(params.verifier);
 
-    const QString path = storePath("securestore.kdf");
+    const QString path = storePath(profileId, "securestore.kdf");
     QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly)
         || file.write(data) != data.size() || !file.commit()) {
@@ -525,17 +540,17 @@ QByteArray deriveKey(const QString &passphrase, const KdfParams &params)
 // The key the current custody mode seals/opens with.  In passphrase
 // mode a locked store tries one interactive unlock first and fails
 // securely when the user declines.
-QByteArray currentKey()
+QByteArray currentKey(const QString &profileId)
 {
-    if (SecureStore::passphraseProtectionEnabled()) {
-        if (!s_derivedKeyValid)
-            SecureStore::ensureUnlocked(nullptr);
-        if (!s_derivedKeyValid)
+    if (SecureStore::passphraseProtectionEnabled(profileId)) {
+        const QString id = normalizeProfileId(profileId);
+        if (!s_derivedKeys.contains(id))
+            SecureStore::ensureUnlocked(id, nullptr);
+        if (!s_derivedKeys.contains(id))
             return QByteArray();
-        return QByteArray(reinterpret_cast<char *>(s_derivedKey),
-                          kKeySize);
+        return s_derivedKeys.value(id);
     }
-    return fileKey();
+    return fileKey(profileId);
 }
 
 QByteArray sealWithKey(const QByteArray &plain, const QByteArray &key)
@@ -665,17 +680,23 @@ QByteArray openWithKey(const QByteArray &blob, const QByteArray &key,
 
 bool SecureStore::isAvailable()
 {
-    ensureRustCore();
+    ensureRustCore(BrowserPaths::activeProfileId());
     return rc_is_available() != 0;
 }
 
 QByteArray SecureStore::seal(const QByteArray &plain)
 {
-    ensureRustCore();
+    return seal(BrowserPaths::activeProfileId(), plain);
+}
+
+QByteArray SecureStore::seal(const QString &profileId,
+                             const QByteArray &plain)
+{
+    ensureRustCore(profileId);
     // Locked passphrase store: try one interactive unlock first and
     // fail securely when the user declines — same policy as before.
     if (rc_passphrase_enabled() && !rc_is_unlocked())
-        ensureUnlocked(nullptr);
+        ensureUnlocked(profileId, nullptr);
     RcBuffer out{};
     if (rc_seal(reinterpret_cast<const uint8_t *>(plain.constData()),
                 size_t(plain.size()), &out) != RC_OK)
@@ -685,14 +706,20 @@ QByteArray SecureStore::seal(const QByteArray &plain)
 
 QByteArray SecureStore::open(const QByteArray &blob, bool *ok)
 {
+    return open(BrowserPaths::activeProfileId(), blob, ok);
+}
+
+QByteArray SecureStore::open(const QString &profileId,
+                             const QByteArray &blob, bool *ok)
+{
     bool result = false;
     if (!ok)
         ok = &result;
     *ok = false;
 
-    ensureRustCore();
+    ensureRustCore(profileId);
     if (rc_passphrase_enabled() && !rc_is_unlocked())
-        ensureUnlocked(nullptr);
+        ensureUnlocked(profileId, nullptr);
 
     RcBuffer out{};
     // Rust performs the passphrase-mode file-key fallback internally.
@@ -705,19 +732,35 @@ QByteArray SecureStore::open(const QByteArray &blob, bool *ok)
 
 bool SecureStore::passphraseProtectionEnabled()
 {
-    ensureRustCore();
+    return passphraseProtectionEnabled(BrowserPaths::activeProfileId());
+}
+
+bool SecureStore::passphraseProtectionEnabled(const QString &profileId)
+{
+    ensureRustCore(profileId);
     return rc_passphrase_enabled() != 0;
 }
 
 bool SecureStore::isUnlocked()
 {
-    ensureRustCore();
+    return isUnlocked(BrowserPaths::activeProfileId());
+}
+
+bool SecureStore::isUnlocked(const QString &profileId)
+{
+    ensureRustCore(profileId);
     return rc_is_unlocked() != 0;
 }
 
 bool SecureStore::unlock(const QString &passphrase)
 {
-    ensureRustCore();
+    return unlock(BrowserPaths::activeProfileId(), passphrase);
+}
+
+bool SecureStore::unlock(const QString &profileId,
+                         const QString &passphrase)
+{
+    ensureRustCore(profileId);
     QByteArray utf8 = passphrase.toUtf8();
     const RcStatus st = rc_unlock(
         reinterpret_cast<const uint8_t *>(utf8.constData()),
@@ -728,14 +771,31 @@ bool SecureStore::unlock(const QString &passphrase)
 
 void SecureStore::lock()
 {
+    // The rust store holds at most one anchored profile's keys —
+    // locking clears whatever is cached regardless of which profile
+    // anchored it.
+    rc_lock();
+}
+
+void SecureStore::lock(const QString &profileId)
+{
+    ensureRustCore(profileId);
     rc_lock();
 }
 
 bool SecureStore::enablePassphraseProtection(const QString &passphrase,
                                              QString *error)
 {
-    ensureRustCore();
-    if (passphraseProtectionEnabled()) {
+    return enablePassphraseProtection(
+        BrowserPaths::activeProfileId(), passphrase, error);
+}
+
+bool SecureStore::enablePassphraseProtection(const QString &profileId,
+                                             const QString &passphrase,
+                                             QString *error)
+{
+    ensureRustCore(profileId);
+    if (passphraseProtectionEnabled(profileId)) {
         if (error)
             *error = QStringLiteral("passphrase protection is already"
                                     " enabled");
@@ -748,7 +808,7 @@ bool SecureStore::enablePassphraseProtection(const QString &passphrase,
     }
 
     // Capture the current (file) key before custody switches.
-    QByteArray oldKey = fileKeyCopy();
+    QByteArray oldKey = fileKeyCopy(profileId);
     if (oldKey.size() != kKeySize) {
         if (error)
             *error = QStringLiteral("cannot create the key file");
@@ -768,12 +828,13 @@ bool SecureStore::enablePassphraseProtection(const QString &passphrase,
                 : QStringLiteral("key derivation failed");
         return false;
     }
-    QByteArray newKey = derivedKeyCopy();
+    QByteArray newKey = derivedKeyCopy(profileId);
 
     // Consumers re-seal while securestore.key still exists — a crash
     // here still leaves open()'s file-key fallback able to read the
     // old blobs; the key file is retired last.
-    const bool resealed = resealConsumers(oldKey, newKey, error);
+    const bool resealed = resealConsumers(
+        normalizeProfileId(profileId), oldKey, newKey, error);
     if (!resealed) {
         wipeKeys(oldKey, newKey);
         return false;
@@ -787,21 +848,28 @@ bool SecureStore::enablePassphraseProtection(const QString &passphrase,
 
 bool SecureStore::disablePassphraseProtection(QString *error)
 {
-    ensureRustCore();
-    if (!passphraseProtectionEnabled()) {
+    return disablePassphraseProtection(
+        BrowserPaths::activeProfileId(), error);
+}
+
+bool SecureStore::disablePassphraseProtection(const QString &profileId,
+                                              QString *error)
+{
+    ensureRustCore(profileId);
+    if (!passphraseProtectionEnabled(profileId)) {
         if (error)
             *error = QStringLiteral("passphrase protection is not"
                                     " enabled");
         return false;
     }
-    if (!isUnlocked()) {
+    if (!isUnlocked(profileId)) {
         if (error)
             *error = QStringLiteral("the store is locked — unlock it"
                                     " first");
         return false;
     }
 
-    QByteArray oldKey = derivedKeyCopy();
+    QByteArray oldKey = derivedKeyCopy(profileId);
     // Mirror ordering: write the new key file, re-seal consumers off
     // the derived key, then drop the KDF file and wipe the key from
     // RAM.
@@ -811,9 +879,10 @@ bool SecureStore::disablePassphraseProtection(QString *error)
             *error = QStringLiteral("cannot write the key file");
         return false;
     }
-    QByteArray newKey = fileKeyCopy();
+    QByteArray newKey = fileKeyCopy(profileId);
 
-    const bool resealed = resealConsumers(oldKey, newKey, error);
+    const bool resealed = resealConsumers(
+        normalizeProfileId(profileId), oldKey, newKey, error);
     if (resealed)
         resealRustStores(oldKey, newKey);
     if (!resealed) {
@@ -829,14 +898,22 @@ bool SecureStore::disablePassphraseProtection(QString *error)
 bool SecureStore::changePassphrase(const QString &newPassphrase,
                                    QString *error)
 {
-    ensureRustCore();
-    if (!passphraseProtectionEnabled()) {
+    return changePassphrase(
+        BrowserPaths::activeProfileId(), newPassphrase, error);
+}
+
+bool SecureStore::changePassphrase(const QString &profileId,
+                                   const QString &newPassphrase,
+                                   QString *error)
+{
+    ensureRustCore(profileId);
+    if (!passphraseProtectionEnabled(profileId)) {
         if (error)
             *error = QStringLiteral("passphrase protection is not"
                                     " enabled");
         return false;
     }
-    if (!isUnlocked()) {
+    if (!isUnlocked(profileId)) {
         if (error)
             *error = QStringLiteral("the store is locked — unlock it"
                                     " first");
@@ -848,7 +925,7 @@ bool SecureStore::changePassphrase(const QString &newPassphrase,
         return false;
     }
 
-    QByteArray oldKey = derivedKeyCopy();
+    QByteArray oldKey = derivedKeyCopy(profileId);
     QByteArray utf8 = newPassphrase.toUtf8();
     const RcStatus st = rc_kdf_create(
         reinterpret_cast<const uint8_t *>(utf8.constData()),
@@ -862,9 +939,10 @@ bool SecureStore::changePassphrase(const QString &newPassphrase,
                 : QStringLiteral("key derivation failed");
         return false;
     }
-    QByteArray newKey = derivedKeyCopy();
+    QByteArray newKey = derivedKeyCopy(profileId);
 
-    const bool resealed = resealConsumers(oldKey, newKey, error);
+    const bool resealed = resealConsumers(
+        normalizeProfileId(profileId), oldKey, newKey, error);
     if (resealed)
         resealRustStores(oldKey, newKey);
     wipeKeys(oldKey, newKey);
@@ -875,13 +953,21 @@ bool SecureStore::changePassphrase(const QString &newPassphrase,
 
 bool SecureStore::isAvailable()
 {
+    const QString id = BrowserPaths::activeProfileId();
     return evp()
-        && (passphraseProtectionEnabled() || fileKey().size() == kKeySize);
+        && (passphraseProtectionEnabled(id)
+            || fileKey(id).size() == kKeySize);
 }
 
 QByteArray SecureStore::seal(const QByteArray &plain)
 {
-    QByteArray key = currentKey();
+    return seal(BrowserPaths::activeProfileId(), plain);
+}
+
+QByteArray SecureStore::seal(const QString &profileId,
+                             const QByteArray &plain)
+{
+    QByteArray key = currentKey(profileId);
     QByteArray blob = sealWithKey(plain, key);
     secureZero(key);
     return blob;
@@ -889,12 +975,18 @@ QByteArray SecureStore::seal(const QByteArray &plain)
 
 QByteArray SecureStore::open(const QByteArray &blob, bool *ok)
 {
+    return open(BrowserPaths::activeProfileId(), blob, ok);
+}
+
+QByteArray SecureStore::open(const QString &profileId,
+                             const QByteArray &blob, bool *ok)
+{
     bool result = false;
     if (!ok)
         ok = &result;
     *ok = false;
 
-    QByteArray key = currentKey();
+    QByteArray key = currentKey(profileId);
     QByteArray plain = openWithKey(blob, key, &result);
 
     // Transition residue fallback: in passphrase mode a blob sealed
@@ -903,9 +995,9 @@ QByteArray SecureStore::open(const QByteArray &blob, bool *ok)
     // readable and is rewritten under the derived key on next save.
     // The exists() check keeps fileKey() from creating a fresh key
     // file in passphrase mode just to fail the retry.
-    if (!result && passphraseProtectionEnabled()
-        && QFile::exists(storePath("securestore.key"))) {
-        const QByteArray legacy = fileKey();
+    if (!result && passphraseProtectionEnabled(profileId)
+        && QFile::exists(storePath(profileId, "securestore.key"))) {
+        const QByteArray legacy = fileKey(profileId);
         if (legacy.size() == kKeySize)
             plain = openWithKey(blob, legacy, &result);
     }
@@ -918,18 +1010,35 @@ QByteArray SecureStore::open(const QByteArray &blob, bool *ok)
 
 bool SecureStore::passphraseProtectionEnabled()
 {
-    return QFile::exists(storePath("securestore.kdf"));
+    return passphraseProtectionEnabled(BrowserPaths::activeProfileId());
+}
+
+bool SecureStore::passphraseProtectionEnabled(const QString &profileId)
+{
+    return QFile::exists(storePath(profileId, "securestore.kdf"));
 }
 
 bool SecureStore::isUnlocked()
 {
-    return !passphraseProtectionEnabled() || s_derivedKeyValid;
+    return isUnlocked(BrowserPaths::activeProfileId());
+}
+
+bool SecureStore::isUnlocked(const QString &profileId)
+{
+    return !passphraseProtectionEnabled(profileId)
+        || s_derivedKeys.contains(normalizeProfileId(profileId));
 }
 
 bool SecureStore::unlock(const QString &passphrase)
 {
+    return unlock(BrowserPaths::activeProfileId(), passphrase);
+}
+
+bool SecureStore::unlock(const QString &profileId,
+                         const QString &passphrase)
+{
     KdfParams params;
-    if (!parseKdfFile(&params))
+    if (!parseKdfFile(profileId, &params))
         return false;
 
     QByteArray candidate = deriveKey(passphrase, params);
@@ -944,26 +1053,42 @@ bool SecureStore::unlock(const QString &passphrase)
         secureZero(candidate);
         return false;
     }
-    std::memcpy(s_derivedKey, candidate.constData(), kKeySize);
-    s_derivedKeyValid = true;
-    secureZero(candidate);
+    s_derivedKeys.insert(normalizeProfileId(profileId), candidate);
     return true;
 }
 
 void SecureStore::lock()
 {
-    if (s_derivedKeyValid) {
-        secureZero(s_derivedKey, kKeySize);
-        s_derivedKeyValid = false;
+    for (QByteArray &key : s_derivedKeys)
+        secureZero(key);
+    s_derivedKeys.clear();
+    for (QByteArray &key : s_fileKeys)
+        secureZero(key);
+    s_fileKeys.clear();
+}
+
+void SecureStore::lock(const QString &profileId)
+{
+    const QString id = normalizeProfileId(profileId);
+    if (s_derivedKeys.contains(id)) {
+        secureZero(s_derivedKeys[id]);
+        s_derivedKeys.remove(id);
     }
-    if (s_fileKeyLoaded) {
-        secureZero(s_fileKey);
-        s_fileKey.clear();
-        s_fileKeyLoaded = false;
+    if (s_fileKeys.contains(id)) {
+        secureZero(s_fileKeys[id]);
+        s_fileKeys.remove(id);
     }
 }
 
 bool SecureStore::enablePassphraseProtection(const QString &passphrase,
+                                             QString *error)
+{
+    return enablePassphraseProtection(
+        BrowserPaths::activeProfileId(), passphrase, error);
+}
+
+bool SecureStore::enablePassphraseProtection(const QString &profileId,
+                                             const QString &passphrase,
                                              QString *error)
 {
     if (!evp()) {
@@ -971,7 +1096,7 @@ bool SecureStore::enablePassphraseProtection(const QString &passphrase,
             *error = QStringLiteral("crypto backend unavailable");
         return false;
     }
-    if (passphraseProtectionEnabled()) {
+    if (passphraseProtectionEnabled(profileId)) {
         if (error)
             *error = QStringLiteral("passphrase protection is already"
                                     " enabled");
@@ -984,7 +1109,7 @@ bool SecureStore::enablePassphraseProtection(const QString &passphrase,
     }
 
     // Capture the current (file) key before custody switches.
-    QByteArray oldKey = fileKey();
+    QByteArray oldKey = fileKey(profileId);
     if (oldKey.size() != kKeySize) {
         if (error)
             *error = QStringLiteral("cannot create the key file");
@@ -1017,53 +1142,60 @@ bool SecureStore::enablePassphraseProtection(const QString &passphrase,
     // cached, the consumers are re-sealed under it, and the key file
     // is removed last — any interruption leaves open()'s file-key
     // fallback able to read the old blobs.
-    if (!writeKdfFile(params)) {
+    if (!writeKdfFile(profileId, params)) {
         secureZero(newKey);
         if (error)
             *error = QStringLiteral("cannot write the KDF parameters");
         return false;
     }
-    std::memcpy(s_derivedKey, newKey.constData(), kKeySize);
-    s_derivedKeyValid = true;
+    const QString id = normalizeProfileId(profileId);
+    s_derivedKeys.insert(id, newKey);
 
-    if (!resealConsumers(oldKey, newKey, error)) {
+    if (!resealConsumers(id, oldKey, newKey, error)) {
         secureZero(newKey);
         return false;
     }
 
-    QFile::remove(storePath("securestore.key"));
-    if (s_fileKeyLoaded) {
-        secureZero(s_fileKey);
-        s_fileKey.clear();
-        s_fileKeyLoaded = false;
+    QFile::remove(storePath(id, "securestore.key"));
+    if (s_fileKeys.contains(id)) {
+        secureZero(s_fileKeys[id]);
+        s_fileKeys.remove(id);
     }
     secureZero(oldKey);
-    secureZero(newKey);
+    secureZero(s_derivedKeys[id]);
     return true;
 }
 
 bool SecureStore::disablePassphraseProtection(QString *error)
 {
-    if (!passphraseProtectionEnabled()) {
+    return disablePassphraseProtection(
+        BrowserPaths::activeProfileId(), error);
+}
+
+bool SecureStore::disablePassphraseProtection(const QString &profileId,
+                                              QString *error)
+{
+    if (!passphraseProtectionEnabled(profileId)) {
         if (error)
             *error = QStringLiteral("passphrase protection is not"
                                     " enabled");
         return false;
     }
-    if (!s_derivedKeyValid) {
+    const QString id = normalizeProfileId(profileId);
+    if (!s_derivedKeys.contains(id)) {
         if (error)
             *error = QStringLiteral("the store is locked — unlock it"
                                     " first");
         return false;
     }
 
-    QByteArray oldKey(reinterpret_cast<char *>(s_derivedKey), kKeySize);
+    QByteArray oldKey = s_derivedKeys.value(id);
     const QByteArray newKey = randomBytes(kKeySize);
 
     // Mirror ordering: write the new key file, re-seal consumers off
     // the derived key, then drop the KDF file and wipe the key from
     // RAM.
-    const QString keyPath = storePath("securestore.key");
+    const QString keyPath = storePath(id, "securestore.key");
     {
         QSaveFile out(keyPath);
         if (!out.open(QIODevice::WriteOnly)
@@ -1076,16 +1208,15 @@ bool SecureStore::disablePassphraseProtection(QString *error)
             QFile::ReadUser | QFile::WriteUser);
     }
 
-    if (!resealConsumers(oldKey, newKey, error)) {
+    if (!resealConsumers(id, oldKey, newKey, error)) {
         secureZero(oldKey);
         return false;
     }
 
-    QFile::remove(storePath("securestore.kdf"));
-    s_fileKey = newKey;
-    s_fileKeyLoaded = true;
-    secureZero(s_derivedKey, kKeySize);
-    s_derivedKeyValid = false;
+    QFile::remove(storePath(id, "securestore.kdf"));
+    s_fileKeys.insert(id, newKey);
+    secureZero(s_derivedKeys[id]);
+    s_derivedKeys.remove(id);
     secureZero(oldKey);
     return true;
 }
@@ -1093,13 +1224,22 @@ bool SecureStore::disablePassphraseProtection(QString *error)
 bool SecureStore::changePassphrase(const QString &newPassphrase,
                                    QString *error)
 {
-    if (!passphraseProtectionEnabled()) {
+    return changePassphrase(
+        BrowserPaths::activeProfileId(), newPassphrase, error);
+}
+
+bool SecureStore::changePassphrase(const QString &profileId,
+                                   const QString &newPassphrase,
+                                   QString *error)
+{
+    if (!passphraseProtectionEnabled(profileId)) {
         if (error)
             *error = QStringLiteral("passphrase protection is not"
                                     " enabled");
         return false;
     }
-    if (!s_derivedKeyValid) {
+    const QString id = normalizeProfileId(profileId);
+    if (!s_derivedKeys.contains(id)) {
         if (error)
             *error = QStringLiteral("the store is locked — unlock it"
                                     " first");
@@ -1111,7 +1251,7 @@ bool SecureStore::changePassphrase(const QString &newPassphrase,
         return false;
     }
 
-    QByteArray oldKey(reinterpret_cast<char *>(s_derivedKey), kKeySize);
+    QByteArray oldKey = s_derivedKeys.value(id);
 
     KdfParams params;
     params.memoryKiB = kKdfMemoryKiB;
@@ -1129,16 +1269,16 @@ bool SecureStore::changePassphrase(const QString &newPassphrase,
     params.verifier = sealWithKey(
         QByteArray(kVerifierMessage), newKey);
 
-    if (!writeKdfFile(params)) {
+    if (!writeKdfFile(id, params)) {
         secureZero(oldKey);
         secureZero(newKey);
         if (error)
             *error = QStringLiteral("cannot write the KDF parameters");
         return false;
     }
-    std::memcpy(s_derivedKey, newKey.constData(), kKeySize);
+    s_derivedKeys.insert(id, newKey);
 
-    const bool resealed = resealConsumers(oldKey, newKey, error);
+    const bool resealed = resealConsumers(id, oldKey, newKey, error);
     secureZero(oldKey);
     secureZero(newKey);
     return resealed;
@@ -1155,7 +1295,13 @@ bool SecureStore::isSealed(const QByteArray &blob)
 
 QString SecureStore::sealString(const QString &plain)
 {
-    const QByteArray blob = seal(plain.toUtf8());
+    return sealString(BrowserPaths::activeProfileId(), plain);
+}
+
+QString SecureStore::sealString(const QString &profileId,
+                                const QString &plain)
+{
+    const QByteArray blob = seal(profileId, plain.toUtf8());
     if (blob.isEmpty())
         return plain;
     return QLatin1String("arsec1:")
@@ -1164,6 +1310,12 @@ QString SecureStore::sealString(const QString &plain)
 
 QString SecureStore::openString(const QString &stored, bool *ok)
 {
+    return openString(BrowserPaths::activeProfileId(), stored, ok);
+}
+
+QString SecureStore::openString(const QString &profileId,
+                                const QString &stored, bool *ok)
+{
     if (ok)
         *ok = true;
     static const QLatin1String prefix("arsec1:");
@@ -1171,6 +1323,7 @@ QString SecureStore::openString(const QString &stored, bool *ok)
         return stored;
     bool good = false;
     const QByteArray plain = open(
+        profileId,
         QByteArray::fromBase64(stored.mid(prefix.size()).toLatin1()),
         &good);
     if (ok)
@@ -1180,7 +1333,13 @@ QString SecureStore::openString(const QString &stored, bool *ok)
 
 bool SecureStore::ensureUnlocked(QWidget *parent)
 {
-    if (isUnlocked())
+    return ensureUnlocked(BrowserPaths::activeProfileId(), parent);
+}
+
+bool SecureStore::ensureUnlocked(const QString &profileId,
+                                 QWidget *parent)
+{
+    if (isUnlocked(profileId))
         return true;
     if (!s_interactiveUnlock)
         return false;
@@ -1204,7 +1363,7 @@ bool SecureStore::ensureUnlocked(QWidget *parent)
             QLineEdit::Password, QString(), &given);
         if (!given)
             break;
-        unlocked = unlock(text);
+        unlocked = unlock(profileId, text);
     }
     s_unlockPromptActive = false;
     return unlocked;
@@ -1225,15 +1384,16 @@ void SecureStore::resetForTests()
     lock();
     s_interactiveUnlock = true;
     s_unlockPromptActive = false;
+    const QString id = BrowserPaths::activeProfileId();
 #ifdef ARORA_RUSTCORE
-    ensureRustCore();
+    ensureRustCore(id);
     rc_kdf_file_delete();
     rc_key_file_delete();
-    QFile::remove(storePath(RC_CREDENTIALS_FILE));
-    QFile::remove(storePath(RC_AUTOFILL_FILE));
+    QFile::remove(storePath(id, RC_CREDENTIALS_FILE));
+    QFile::remove(storePath(id, RC_AUTOFILL_FILE));
 #else
-    QFile::remove(storePath("securestore.kdf"));
-    QFile::remove(storePath("securestore.key"));
+    QFile::remove(storePath(id, "securestore.kdf"));
+    QFile::remove(storePath(id, "securestore.key"));
 #endif
 }
 #endif

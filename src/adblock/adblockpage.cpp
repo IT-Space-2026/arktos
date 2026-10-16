@@ -430,7 +430,10 @@ static void replacePageScript(Engine::Page *page, const QString &name,
 
 QString AdBlockPage::cosmeticScriptForUrl(const QUrl &url) const
 {
-    AdBlockManager *manager = AdBlockManager::instance();
+    // MPROF02: this page helper belongs to one persona's manager.
+    AdBlockManager *manager = qobject_cast<AdBlockManager *>(parent());
+    if (!manager)
+        manager = AdBlockManager::instance();
     if (!manager->isEnabled())
         return QString();
 

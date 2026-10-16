@@ -179,7 +179,12 @@ void BrowserApplication::prepareProfile(QWebEngineProfile *profile)
             AcceptLanguageDialog::httpString(
                 AcceptLanguageDialog::normalizedAcceptLanguages())));
     }
-    DownloadManager::instance()->installOnProfile(
+    // MPROF02: managers are per-persona — a named "arora-<id>" or
+    // container profile resolves its owning registry profile, tor
+    // and off-the-record profiles resolve to the default persona's
+    // (mode-level) store set.
+    const QString ownerId = BrowserProfile::profileIdFor(profile);
+    DownloadManager::instanceFor(ownerId)->installOnProfile(
         WebEngineProfileAdapter::forProfile(profile));
     if (!BrowserApplication::isTorMode()) {
         // BADSSL03: TLS client certificates are strong user identity —
@@ -192,19 +197,23 @@ void BrowserApplication::prepareProfile(QWebEngineProfile *profile)
     // the first window.  postLaunch() queues the rebuild once the
     // startup navigation is underway; requests made in between see an
     // empty ruleset (allow-all).
-    AdBlockManager::instance()->installOnProfile(profile, true);
+    AdBlockManager *adBlock =
+        BrowserApplication::isTorMode()
+            ? AdBlockManager::instance()
+            : AdBlockManager::instanceFor(ownerId);
+    adBlock->installOnProfile(profile, true);
     if (BrowserApplication::isTorMode()) {
         // A profile accepts exactly one request interceptor — the
         // HTTPS-first upgrade wraps the adblock matcher inside
         // TorRequestInterceptor.
         profile->setUrlRequestInterceptor(new TorRequestInterceptor(
-            AdBlockManager::instance()->network(), profile));
+            adBlock->network(), profile));
     } else {
         // PRIV01: the adblock-only interceptor installOnProfile set is
         // replaced by the composite that also runs the privacy stages
         // (HTTPS-first navigation upgrade + cross-site referrer trim).
         profile->setUrlRequestInterceptor(new PrivacyRequestInterceptor(
-            AdBlockManager::instance()->network(), profile));
+            adBlock->network(), profile));
     }
     if (!BrowserApplication::isTorMode()) {
         // QWebEngineExtensionManager wiring + user-scripts injection.
@@ -213,7 +222,7 @@ void BrowserApplication::prepareProfile(QWebEngineProfile *profile)
         // EXT04) — but still receives user scripts.  The tor profile
         // gets neither — extensions and injected scripts are
         // fingerprintable surface; keep it that way (hard refusal).
-        ExtensionManager::instance()->installOnProfile(profile);
+        ExtensionManager::instanceFor(ownerId)->installOnProfile(profile);
     }
 }
 

@@ -51,6 +51,7 @@ SUBDIRS  = \
     privacy \
     profileavatar \
     profilecontext \
+    profilemanagers \
     profilemenu \
     profilesettings \
     qrcode \

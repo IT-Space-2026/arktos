@@ -116,13 +116,22 @@ signals:
     void entryUpdated(int offset);
 
 public:
-    HistoryManager(QObject *parent = nullptr);
+    // profileId names the registry profile whose store this manager
+    // owns (MPROF02); an empty or non-slug id binds the active
+    // profile — "default" until MPROF03.
+    HistoryManager(QObject *parent = nullptr,
+                   const QString &profileId = QString());
     ~HistoryManager();
 
     // The application-wide history store (was
     // BrowserApplication::historyManager()).  Lazily created, owned by
     // qApp so the destructor flushes pending saves at shutdown.
     static HistoryManager *instance();
+    // MPROF02: the store for a specific profile — one instance per
+    // registry id, qApp-owned (MPROF05's profile delete tears them
+    // down).  Every instance's files live under profiles/<id>/.
+    static HistoryManager *instanceFor(const QString &profileId);
+    QString profileId() const { return m_profileId; }
 
     bool historyContains(const QString &url) const;
     void addHistoryEntry(const QString &url);
@@ -181,10 +190,15 @@ private:
     QString atomicString(const QString &string);
     void startFrecencyTimer();
 #ifdef ARORA_RUSTCORE
+    // Re-binds the process-global rust history connection to this
+    // profile's history.db — required before EVERY rc_hist_* call:
+    // another profile's manager may own the open database.
+    void ensureRustStore() const;
     void importLegacyHistory();
     void rustReplaceAll();
 #endif
 
+    QString m_profileId;
     AutoSaver *m_saveTimer;
     int m_daysToExpire;
     QTimer m_expiredTimer;

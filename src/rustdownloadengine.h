@@ -176,6 +176,7 @@ private:
 
     DlHandle m_handle;
     QPointer<QWebEnginePage> m_page;
+    QString m_profileId;        // MPROF02: owning persona for settings
     QUrl m_url;
     QString m_suggested;
     QString m_mimeType;

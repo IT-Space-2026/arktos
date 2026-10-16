@@ -59,10 +59,11 @@
 
 // #define ADBLOCKMANAGER_DEBUG
 
-AdBlockManager *AdBlockManager::s_adBlockManager = nullptr;
-
-AdBlockManager::AdBlockManager(QObject *parent)
+AdBlockManager::AdBlockManager(QObject *parent,
+                               const QString &profileId)
     : QObject(parent)
+    , m_profileId(BrowserPaths::isProfileId(profileId)
+                      ? profileId : BrowserPaths::activeProfileId())
     , m_loaded(false)
     , m_enabled(true)
     , m_saveTimer(new AutoSaver(this))
@@ -81,11 +82,18 @@ AdBlockManager::~AdBlockManager()
 
 AdBlockManager *AdBlockManager::instance()
 {
-    if (!s_adBlockManager) {
-        // Set a parent that will delete us before the application exits
-        s_adBlockManager = new AdBlockManager(NetworkAccessManager::instance());
-    }
-    return s_adBlockManager;
+    return instanceFor(BrowserPaths::activeProfileId());
+}
+
+AdBlockManager *AdBlockManager::instanceFor(const QString &profileId)
+{
+    const QString id = BrowserPaths::isProfileId(profileId)
+            ? profileId : BrowserPaths::activeProfileId();
+    static QHash<QString, QPointer<AdBlockManager>> managers;
+    QPointer<AdBlockManager> &manager = managers[id];
+    if (!manager)
+        manager = new AdBlockManager(qApp, id);
+    return manager;
 }
 
 bool AdBlockManager::isEnabled() const
@@ -121,7 +129,13 @@ bool AdBlockManager::rustEngineAvailable()
 
 AdBlockManager::Engine AdBlockManager::storedEngine()
 {
-    const QString value = ProfileSettings().value(
+    return storedEngine(BrowserPaths::activeProfileId());
+}
+
+AdBlockManager::Engine AdBlockManager::storedEngine(
+        const QString &profileId)
+{
+    const QString value = ProfileSettings(profileId).value(
         QLatin1String("AdBlock/engine")).toString();
     // ADBLK01: Brave adblock-rust is the default — an absent or empty
     // key selects it.  Only an explicit opt-out (a persisted "cpp" or
@@ -133,16 +147,16 @@ AdBlockManager::Engine AdBlockManager::storedEngine()
 
 AdBlockManager::Engine AdBlockManager::engine() const
 {
-    const Engine stored = storedEngine();
+    const Engine stored = storedEngine(m_profileId);
     return stored == RustEngine && rustEngineAvailable()
             ? RustEngine : NativeEngine;
 }
 
 void AdBlockManager::setEngine(Engine engine)
 {
-    if (storedEngine() == engine)
+    if (storedEngine(m_profileId) == engine)
         return;
-    ProfileSettings().setValue(QLatin1String("AdBlock/engine"),
+    ProfileSettings(m_profileId).setValue(QLatin1String("AdBlock/engine"),
                          engine == RustEngine
                          ? QLatin1String("rust") : QLatin1String("cpp"));
     // rulesChanged rebuilds the matcher snapshot; the Rust engine is
@@ -158,7 +172,13 @@ bool AdBlockManager::rustEngineInUse() const
 
 AdBlockManager::RemoteListsConsent AdBlockManager::remoteListsConsent()
 {
-    const int value = ProfileSettings().value(
+    return remoteListsConsent(BrowserPaths::activeProfileId());
+}
+
+AdBlockManager::RemoteListsConsent AdBlockManager::remoteListsConsent(
+        const QString &profileId)
+{
+    const int value = ProfileSettings(profileId).value(
         QLatin1String("AdBlock/remoteListsConsent"),
         int(RemoteListsUndecided)).toInt();
     if (value < int(RemoteListsUndecided) || value > int(RemoteListsGranted))
@@ -168,19 +188,30 @@ AdBlockManager::RemoteListsConsent AdBlockManager::remoteListsConsent()
 
 void AdBlockManager::setRemoteListsConsent(RemoteListsConsent consent)
 {
-    ProfileSettings().setValue(QLatin1String("AdBlock/remoteListsConsent"),
-                         int(consent));
+    setRemoteListsConsent(BrowserPaths::activeProfileId(), consent);
+}
+
+void AdBlockManager::setRemoteListsConsent(const QString &profileId,
+                                           RemoteListsConsent consent)
+{
+    ProfileSettings(profileId).setValue(
+        QLatin1String("AdBlock/remoteListsConsent"), int(consent));
 }
 
 bool AdBlockManager::remoteListsAllowed()
 {
-    return remoteListsConsent() == RemoteListsGranted;
+    return remoteListsAllowed(BrowserPaths::activeProfileId());
+}
+
+bool AdBlockManager::remoteListsAllowed(const QString &profileId)
+{
+    return remoteListsConsent(profileId) == RemoteListsGranted;
 }
 
 void AdBlockManager::grantRemoteLists()
 {
-    if (remoteListsConsent() != RemoteListsGranted)
-        setRemoteListsConsent(RemoteListsGranted);
+    if (remoteListsConsent(m_profileId) != RemoteListsGranted)
+        setRemoteListsConsent(m_profileId, RemoteListsGranted);
     // Only stale or never-fetched remote lists need the kick — a
     // freshly downloaded list should not be re-fetched on every
     // enable.
@@ -203,7 +234,8 @@ void AdBlockManager::grantRemoteLists()
 
 void AdBlockManager::maybePromptForListConsent(QWidget *parent)
 {
-    if (remoteListsConsent() != RemoteListsUndecided || !isEnabled())
+    if (remoteListsConsent(m_profileId) != RemoteListsUndecided
+        || !isEnabled())
         return;
     bool hasRemoteSubscription = false;
     const QList<AdBlockSubscription*> list = subscriptions();
@@ -228,7 +260,7 @@ void AdBlockManager::maybePromptForListConsent(QWidget *parent)
     if (choice == QMessageBox::Yes)
         grantRemoteLists();
     else
-        setRemoteListsConsent(RemoteListsDeclined);
+        setRemoteListsConsent(m_profileId, RemoteListsDeclined);
 }
 
 AdBlockNetwork *AdBlockManager::network()
@@ -280,15 +312,15 @@ AdBlockPage *AdBlockManager::page()
     return m_adBlockPage;
 }
 
-static QUrl customSubscriptionLocation()
+QString AdBlockManager::customSubscriptionFile() const
 {
-    QString fileName = BrowserPaths::dataFilePath(QLatin1String("adblock_subscription_custom"));
-    return QUrl::fromLocalFile(fileName);
+    return BrowserPaths::profileDataFilePath(
+        m_profileId, QLatin1String("adblock_subscription_custom"));
 }
 
-QUrl AdBlockManager::customSubscriptionUrl()
+QUrl AdBlockManager::customSubscriptionUrl() const
 {
-    QUrl location = customSubscriptionLocation();
+    QUrl location = QUrl::fromLocalFile(customSubscriptionFile());
     QString encodedUrl = QString::fromUtf8(location.toEncoded());
     QUrl url(QString(QLatin1String("abp:subscribe?location=%1&title=%2"))
             .arg(encodedUrl)
@@ -298,7 +330,7 @@ QUrl AdBlockManager::customSubscriptionUrl()
 
 AdBlockSubscription *AdBlockManager::customRules()
 {
-    QUrl location = customSubscriptionLocation();
+    QUrl location = QUrl::fromLocalFile(customSubscriptionFile());
     for (AdBlockSubscription *subscription : m_subscriptions) {
         if (subscription->location() == location)
             return subscription;
@@ -385,8 +417,8 @@ AdBlockSubscription *AdBlockManager::subscribeRemoteList(
                              // or refetch — the box was already ticked
     // Ticking the preset (or calling this) is explicit consent — grant
     // and fetch now rather than waiting for the next staleness sweep.
-    if (remoteListsConsent() != RemoteListsGranted)
-        setRemoteListsConsent(RemoteListsGranted);
+    if (remoteListsConsent(m_profileId) != RemoteListsGranted)
+        setRemoteListsConsent(m_profileId, RemoteListsGranted);
     subscription->updateNow();
     return subscription;
 }
@@ -399,7 +431,7 @@ void AdBlockManager::save()
     if (!m_loaded)
         return;
 
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     settings.beginGroup(QLatin1String("AdBlock"));
     settings.setValue(QLatin1String("enabled"), m_enabled);
     QStringList subscriptions;
@@ -422,7 +454,7 @@ void AdBlockManager::load()
         return;
     m_loaded = true;
 
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     settings.beginGroup(QLatin1String("AdBlock"));
     m_enabled = settings.value(QLatin1String("enabled"), m_enabled).toBool();
 
@@ -508,8 +540,10 @@ void AdBlockManager::load()
     // "@@||<host>^$document" exactly as siteWhitelistFilter produces;
     // anything else stays where it is.
     AdBlockSubscription *custom = nullptr;
+    const QUrl customLocation =
+        QUrl::fromLocalFile(customSubscriptionFile());
     for (AdBlockSubscription *subscription : m_subscriptions) {
-        if (subscription->location() == customSubscriptionLocation()) {
+        if (subscription->location() == customLocation) {
             custom = subscription;
             break;
         }

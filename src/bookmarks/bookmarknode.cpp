@@ -97,6 +97,19 @@ BookmarkNode::~BookmarkNode()
     m_type = BookmarkNode::Root;
 }
 
+#ifdef ARORA_RUSTCORE
+void BookmarkNode::dropRustHandles()
+{
+    m_handle = 0;
+    // Only recurse into children already materialized — touching the
+    // lazy path would resolve dead handles against the live tree.
+    if (!m_childrenLoaded)
+        return;
+    for (BookmarkNode *child : m_children)
+        child->dropRustHandles();
+}
+#endif
+
 bool BookmarkNode::operator==(const BookmarkNode &other) const
 {
     if (url != other.url

@@ -25,6 +25,7 @@
 #include "safetext.h"
 
 #ifdef ARORA_RUSTCORE
+#include "browserpaths.h"
 #include "rustcorebridge.h"
 
 #include <qfileinfo.h>
@@ -219,6 +220,14 @@ void RustHistorySuggestModel::refresh()
 {
     beginResetModel();
     m_rows.clear();
+    // Anchor the process-global rust history store to the active
+    // profile's database — per-profile HistoryManager instances
+    // re-bind it as they run (MPROF02); the window's completer follows
+    // the window profile, which is the active profile until MPROF03.
+    const QByteArray dbPath = BrowserPaths::profileDataFilePath(
+        BrowserPaths::activeProfileId(),
+        QLatin1String("history.db")).toUtf8();
+    rc_hist_open(dbPath.constData());
     // The cap bounds the FFI marshal; the dropdown never shows more.
     const QByteArray t = m_term.toUtf8();
     if (char *json = rc_history_suggest(t.constData(), 500)) {
