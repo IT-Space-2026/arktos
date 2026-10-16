@@ -3104,3 +3104,48 @@ Password-sealed profile vaults in the Rust core (PVAULT01):
     byte-progress callback for UI progress bars; the Qt-side profile
     export/import UI consumes it in a follow-up task.  No-Rust builds
     are unaffected.
+
+Profile vault end-to-end lifecycle + delete path (PVAULT04):
+    The vault pipeline now runs verifiably end to end on this lane:
+    a profile can be sealed, unlocked through the same call the
+    unlock prompt will drive, and re-sealed by the auto-lock when
+    the app shuts down — a real crash between unlock and shutdown
+    leaves an armed dirty marker that the next boot reports so a
+    re-seal can be offered, and repeated wrong passwords each pay
+    the honest Argon2id cost with no lockout counter.  A new
+    ProfileVault::wipeVault is the Delete Profile backend: a locked
+    profile's vault artifacts can be destroyed without the password
+    (owner-host honesty — the local operator can always delete
+    their own data; demanding the password first would be lockout
+    theater, not protection), while live plaintext is left for the
+    caller's ordinary profile-directory removal.  New --vault-smoke*
+    flags drive the lifecycle in real app processes: seed+seal, a
+    locked-profile boot that provably unpacks nothing (even
+    --quit-after-load leaves the blob byte-identical), the unlock
+    path, and a hard-_exit crash plant whose next boot detects the
+    dirty state and accepts the re-seal offer.
+
+Profile vault seal/unseal engine (PVAULT02):
+    The Qt side of the profile vault now exists: a ProfileVault
+    singleton orchestrates PVAULT01's ARV1 FFI into the lock/unlock
+    lifecycle.  Locking a profile packs its data directory into a
+    sibling "<id>.vault/vault.arv" (atomically committed before any
+    plaintext is touched), secure-erases the plaintext tree — one
+    zero overwrite plus fsync per file, with the honest caveat that
+    SSD wear-leveling can retain stale blocks — and leaves a
+    vault.lock marker plus a vault.conf registry entry recording the
+    algo, Argon2id parameters, sealed-at time and the auto_lock flag.
+    Unlocking verifies the whole payload MAC before a single byte of
+    plaintext lands, restores the tree, and re-arms an unlocked.dirty
+    marker; a boot that finds that marker with no sealed blob means
+    the last run died with plaintext live, and checkForDirtyProfiles
+    reports it so a re-seal can be offered.  The disposable cache/
+    directory is deliberately excluded from the vault and stays on
+    disk unsealed (held aside in the vault dir, restored on unlock);
+    the nested profiles/ directory is likewise excluded so sealing
+    one profile never swallows another's vault.  The auto-lock
+    trigger re-seals unlocked auto_lock profiles when the app shuts
+    down (the pre-MPROF03 meaning of "last window closed"), refuses
+    to lock a profile that still has open windows, and refuses to
+    unseal over existing plaintext without explicit confirmation.
+    No-Rust builds keep the class compiled but inert.

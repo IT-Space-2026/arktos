@@ -87,6 +87,7 @@
 #include "pdfsupport.h"
 #include "privacyrequestinterceptor.h"
 #include "profileregistry.h"
+#include "profilevault.h"
 #include "webenginebackend.h"
 #include "schemeaccesshandler.h"
 #include "securestore.h"
@@ -426,6 +427,10 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
         // private directly: volatile cookie jar, disk cache disabled.
         networkAccessManager()->privacyChanged(true);
     }
+    // PVAULT02: an unlocked.dirty marker with no sealed blob means the
+    // last run died with profile plaintext live — surface it (the
+    // re-seal offer UI connects to dirtyDetected).
+    ProfileVault::instance()->checkForDirtyProfiles();
     StartupProfile::mark("ctor: done");
 }
 
@@ -441,6 +446,9 @@ BrowserApplication::~BrowserApplication()
         // TAKEOWNERSHIP also kills tor if the process dies abruptly.
         m_torManager->stop();
     }
+    // PVAULT02: last — the auto-lock re-seal must run after every
+    // store flushed; a seal earlier would orphan late plaintext.
+    ProfileVault::instance()->sealUnlockedProfilesAtShutdown();
 }
 
 #if defined(Q_OS_MACOS)
@@ -598,6 +606,9 @@ void BrowserApplication::quitBrowser()
 
     saveSession();
     clearPrivateDataOnExit();
+    // PVAULT02: the explicit-quit path bypasses the destructor — run
+    // the auto-lock re-seal here too, after all stores flushed.
+    ProfileVault::instance()->sealUnlockedProfilesAtShutdown();
     // SESS02: ::exit() never unwinds to main()'s markSessionCleanExit,
     // so an explicit Quit would leave the sentinel armed and score as
     // a crash on the next start — record the clean exit first.
