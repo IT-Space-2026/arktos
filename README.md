@@ -92,6 +92,9 @@ browsing profile:
   and a capture-proxy smoke proves it (idle launch plus a browsing run
   covering navigation, search and a download). DNS prefetch is off by
   default — linked hostnames are no longer leaked to the resolver.
+  The one solicited exception is Help > "Check for Updates...", which
+  contacts github.com only when you click it (and never on Tor
+  windows).
 - **Consent gates** — external protocol launches (mailto:, magnet:,
   custom schemes) ask first; adblock-list downloads are opt-in;
   command-line URLs are treated as untrusted input.

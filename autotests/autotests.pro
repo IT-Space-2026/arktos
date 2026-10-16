@@ -79,6 +79,7 @@ SUBDIRS  = \
     torinterceptor \
     tormanager \
     trancolist \
+    updatechecker \
     useragent \
     urlcleaner \
     utils \

@@ -85,6 +85,7 @@ class ToolbarSearch;
 class QToolButton;
 class TorCircuitButton;
 class TorStatusBanner;
+class UpdateDialog;
 class WebView;
 class QSplitter;
 class QFrame;
@@ -229,6 +230,9 @@ private slots:
     void webSearch();
     void clearPrivateData();
     void aboutApplication();
+    // UPD01: Help > Check for Updates... — opens the single update
+    // dialog and starts the (manual) releases lookup.
+    void checkForUpdates();
     void downloadManager();
     void selectLineEdit();
 
@@ -408,6 +412,11 @@ private:
 
     QMenu *m_helpMenu;
     QAction *m_helpChangeLanguageAction;
+    // UPD01: Help > Check for Updates... — manual-only GitHub
+    // releases lookup; disabled outright on tor windows (a direct
+    // github.com call must never leave a tor session).
+    QAction *m_helpCheckUpdatesAction;
+    QPointer<UpdateDialog> m_updateDialog;
     QAction *m_helpAboutQtAction;
     QAction *m_helpAboutApplicationAction;
 
