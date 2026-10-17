@@ -59,9 +59,12 @@
  *              functions by self time.  Disabled-with-reason when
  *              the domains don't answer.
  *   Memory     HeapProfiler.startSampling/stopSampling allocation
- *              profile aggregated by function, plus the JS heap
- *              figure from the metrics poll.  Disabled-with-reason
- *              when HeapProfiler doesn't answer.
+ *              profile aggregated by function, the JS heap figure
+ *              from the metrics poll, and — DEVT21 — a one-shot
+ *              heap summary pairing Runtime.getHeapUsage used/total
+ *              figures with the sampling pass's top allocation
+ *              sites.  Disabled-with-reason when HeapProfiler
+ *              doesn't answer.
  *   Application  (was Storage) — a Chrome-style storage tree over
  *              cookies (storage.getCookies), localStorage and
  *              sessionStorage (script.evaluate), and an IndexedDB
@@ -294,6 +297,10 @@ private:
     void setCpuProfiling(bool on);
     void collectHeapSample();
     void stopHeapSample();
+    // DEVT21: the one-shot heap summary — Runtime.getHeapUsage
+    // used/total figures plus the sampling pass's top allocation
+    // sites (a sampling estimate, never claimed as a full snapshot).
+    void collectHeapSnapshot();
 
     BidiClient *m_client;
     QStackedWidget *m_stack;
@@ -428,6 +435,20 @@ private:
     QTableWidget *m_heapTable;
     bool m_heapSampling = false;
     QString m_heapContext;
+    // DEVT21 — heap-summary state.  A snapshot run pairs a
+    // Runtime.getHeapUsage answer (m_snapUsed/m_snapTotal, -1 while
+    // unanswered or failed) with one sampling pass for the top
+    // allocation sites; m_snapErr keeps a failed usage call's CDP
+    // error text for the status line.  m_snapStopSeen records that
+    // the sampling leg's stop reply already landed — the two legs
+    // answer in either order, and whichever lands last composes
+    // the final status line.
+    QToolButton *m_snapButton;
+    bool m_snapshotRun = false;
+    bool m_snapStopSeen = false;
+    qint64 m_snapUsed = -1;
+    qint64 m_snapTotal = -1;
+    QString m_snapErr;
 
     // DEVT13 — Application (was Storage).
     QTreeWidget *m_appTree;

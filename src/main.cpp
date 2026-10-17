@@ -195,6 +195,7 @@
 #include <QtWidgets/QScrollBar>
 #include <QtWidgets/QSpinBox>
 #include <QtWidgets/QTableView>
+#include <QtWidgets/QTableWidget>
 #include <QtWidgets/QStatusBar>
 #include <QtWidgets/QTabWidget>
 #include <QtWidgets/QToolButton>
@@ -2467,7 +2468,10 @@ static int bidiSmoke(BrowserApplication &application, WebView *view)
                 {"Page", "Page.getResourceTree", "{}", true},
                 {"Security", "Security.enable", "{}", true},
                 {"Storage", "Storage.getCookies", "{}", true},
-                {"Performance", "Performance.getMetrics", "{}", true},
+                // DEVT21: enable, not getMetrics — an un-enabled
+                // getMetrics answers clean-but-empty, which reads
+                // "up" while serving no data.
+                {"Performance", "Performance.enable", "{}", true},
                 {"Tracing", "Tracing.getCategories", "{}", false},
             };
             for (const auto &probe : kProbes) {
@@ -3184,6 +3188,252 @@ static int bidiSourcesSmoke(BrowserApplication &application,
                    .arg(combo ? combo->currentData().toString()
                               : QStringLiteral("?"))
                    .arg(dump.join(QLatin1Char('|'))));
+    });
+    return application.exec();
+#endif
+}
+
+// DEVT21: --bidi-perfmem-smoke drives the REAL BidiPanel's
+// Performance + Memory tabs end to end on a live page — tst_devtools
+// feeds synthesized JSON which cannot prove the Profiler/HeapProfiler
+// captures answer on a real endpoint.  The poll stages: context
+// attach -> navigate the busy fixture -> probes apply -> the metrics
+// poll ticks with nonzero counters -> a ~1.5s Profiler.start/stop
+// capture fills the self/total table -> allocation sampling fills the
+// heap table -> the heap summary reports used/total plus site count.
+static int bidiPerfMemSmoke(BrowserApplication &application,
+                            WebView *view)
+{
+#ifndef ARORA_RUSTCORE
+    // Same convention as --bidi-smoke: an absent backend is a skip,
+    // not a failure.
+    Q_UNUSED(application);
+    Q_UNUSED(view);
+    qInfo() << "bidi-perfmem-smoke: SKIP (built without rustcore)";
+    return 0;
+#else
+    auto done = std::make_shared<bool>(false);
+    const auto finish = [&application, done](bool pass,
+                                             const QString &why) {
+        if (*done)
+            return;
+        *done = true;
+        qInfo().noquote() << "bidi-perfmem-smoke:"
+                          << (pass ? "PASS" : "FAIL") << why;
+        application.exit(pass ? 0 : 1);
+    };
+
+    QTcpServer *server = new QTcpServer(&application);
+    if (!server->listen(QHostAddress::LocalHost)) {
+        finish(false, QStringLiteral("listen: %1")
+                          .arg(server->errorString()));
+        return application.exec();
+    }
+    const quint16 port = server->serverPort();
+    // Named functions doing measurable CPU work plus steady
+    // allocation — the profiler needs self time and the heap
+    // sampler needs live allocation sites.
+    const QByteArray indexBody = QByteArray(
+        "<html><head><title>perfmem-smoke</title><script>\n"
+        "window.__junk = [];\n"
+        "function spin(n) { var s = 0;\n"
+        "  for (var i = 0; i < n; i++) s += Math.sqrt(i);\n"
+        "  return s; }\n"
+        "function alloc() {\n"
+        "  for (var i = 0; i < 4000; i++)\n"
+        "    window.__junk.push({a: i, b: 'x' + i}); }\n"
+        "setInterval(function() { spin(300000); alloc(); }, 80);\n"
+        "</script></head><body><p>pm</p></body></html>");
+    QObject::connect(server, &QTcpServer::newConnection, &application,
+                     [server, indexBody]() {
+        QTcpSocket *client = server->nextPendingConnection();
+        auto served = std::make_shared<bool>(false);
+        QObject::connect(client, &QTcpSocket::readyRead, client,
+                         [client, served, indexBody]() {
+            if (*served)
+                return;
+            if (client->readAll().indexOf("\r\n\r\n") < 0)
+                return;
+            *served = true;
+            client->write("HTTP/1.1 200 OK\r\nContent-Type: text/html"
+                          "\r\nContent-Length: "
+                          + QByteArray::number(indexBody.size())
+                          + "\r\nConnection: close\r\n\r\n"
+                          + indexBody);
+            client->disconnectFromHost();
+        });
+        QObject::connect(client, &QTcpSocket::disconnected, client,
+                         &QTcpSocket::deleteLater);
+    });
+
+    BidiPanel *panel = new BidiPanel;
+    panel->resize(900, 480);
+    panel->show();
+
+    auto stage = std::make_shared<int>(0);
+    auto navigated = std::make_shared<bool>(false);
+    auto cpuStopAt = std::make_shared<qint64>(0);
+    QTimer *poll = new QTimer(panel);
+    QObject::connect(poll, &QTimer::timeout, panel, [=]() {
+        QComboBox *combo = panel->findChild<QComboBox *>(
+            QStringLiteral("bidiContextCombo"));
+        QTabWidget *tabs = panel->findChild<QTabWidget *>();
+        QWidget *perfPage = panel->findChild<QWidget *>(
+            QStringLiteral("bidiPerfPage"));
+        QWidget *memPage = panel->findChild<QWidget *>(
+            QStringLiteral("bidiMemoryPage"));
+        QTableWidget *metrics = panel->findChild<QTableWidget *>(
+            QStringLiteral("bidiPerfMetrics"));
+        QTableWidget *cpu = panel->findChild<QTableWidget *>(
+            QStringLiteral("bidiPerfCpu"));
+        QToolButton *record = panel->findChild<QToolButton *>(
+            QStringLiteral("bidiPerfRecord"));
+        QTableWidget *heap = panel->findChild<QTableWidget *>(
+            QStringLiteral("bidiMemoryHeap"));
+        QToolButton *collect = panel->findChild<QToolButton *>(
+            QStringLiteral("bidiMemoryCollect"));
+        QToolButton *snap = panel->findChild<QToolButton *>(
+            QStringLiteral("bidiMemorySnapshot"));
+        QLabel *memStatus = panel->findChild<QLabel *>(
+            QStringLiteral("bidiMemoryStatus"));
+        if (!combo || !tabs || !perfPage || !memPage || !metrics
+            || !cpu || !record || !heap || !collect || !snap
+            || !memStatus)
+            return;
+        if (!*navigated) {
+            // Pin the combo to THIS view's page target — the browser
+            // exposes sibling targets too (same convention as
+            // --bidi-sources-smoke).
+            const QString want = view->page()->devToolsId();
+            if (want.isEmpty())
+                return;
+            int row = -1;
+            for (int i = 0; i < combo->count(); ++i) {
+                if (combo->itemData(i).toString() == want) {
+                    row = i;
+                    break;
+                }
+            }
+            if (row < 0)
+                return;
+            if (combo->currentIndex() != row)
+                combo->setCurrentIndex(row);
+            *navigated = true;
+            const QUrl page(QStringLiteral(
+                "http://127.0.0.1:%1/").arg(port));
+            QTimer::singleShot(1500, panel, [view, page]() {
+                view->loadUrl(page);
+            });
+            return;
+        }
+        switch (*stage) {
+        case 0:
+            // Land on the Performance tab — once the probes apply,
+            // applyDomainSupport arms the metrics poll itself.
+            tabs->setCurrentWidget(perfPage);
+            *stage = 1;
+            return;
+        case 1: {
+            // Live metrics — require rows AND a nonzero counter; a
+            // dead endpoint paints nothing.
+            if (metrics->rowCount() < 1)
+                return;
+            bool nonzero = false;
+            for (int i = 0; i < metrics->rowCount(); ++i) {
+                QTableWidgetItem *v = metrics->item(i, 1);
+                if (v && !v->text().startsWith(QLatin1Char('0'))
+                    && v->text() != QLatin1String("-"))
+                    nonzero = true;
+            }
+            if (!nonzero)
+                return;
+            if (!record->isEnabled())
+                return;
+            record->setChecked(true);
+            *cpuStopAt = QDateTime::currentMSecsSinceEpoch() + 1500;
+            *stage = 2;
+            return;
+        }
+        case 2:
+            if (QDateTime::currentMSecsSinceEpoch() < *cpuStopAt)
+                return;
+            record->setChecked(false);
+            *stage = 3;
+            return;
+        case 3: {
+            // The busy fixture must produce >0 rows with plausible
+            // self time.
+            if (cpu->rowCount() < 1)
+                return;
+            bool self = false;
+            for (int i = 0; i < cpu->rowCount(); ++i) {
+                QTableWidgetItem *v = cpu->item(i, 1);
+                if (v) {
+                    QString t = v->text();
+                    t.remove(QLatin1String(" ms"));
+                    if (t.toDouble() > 0.0)
+                        self = true;
+                }
+            }
+            if (!self) {
+                finish(false, QStringLiteral(
+                           "cpu profile rows but zero self time"));
+                return;
+            }
+            if (!collect->isEnabled() || !snap->isEnabled())
+                return;
+            tabs->setCurrentWidget(memPage);
+            collect->click();
+            *stage = 4;
+            return;
+        }
+        case 4:
+            // The 2s allocation sample must produce site rows.
+            if (heap->rowCount() < 1)
+                return;
+            snap->click();
+            *stage = 5;
+            return;
+        case 5:
+            // The summary line composes used/total + site count
+            // once both legs answered.
+            if (!memStatus->text().contains(
+                    QStringLiteral("used of"))
+                || !memStatus->text().contains(
+                    QStringLiteral("allocation sites")))
+                return;
+            finish(true, QStringLiteral(
+                     "metrics+cpu+heap+summary"));
+            return;
+        }
+    });
+    poll->start(200);
+    QTimer::singleShot(40000, panel, [finish, stage, panel]() {
+        QTableWidget *metrics = panel->findChild<QTableWidget *>(
+            QStringLiteral("bidiPerfMetrics"));
+        QTableWidget *cpu = panel->findChild<QTableWidget *>(
+            QStringLiteral("bidiPerfCpu"));
+        QTableWidget *heap = panel->findChild<QTableWidget *>(
+            QStringLiteral("bidiMemoryHeap"));
+        QLabel *memStatus = panel->findChild<QLabel *>(
+            QStringLiteral("bidiMemoryStatus"));
+        QLabel *perfOff = panel->findChild<QLabel *>(
+            QStringLiteral("bidiPerfOffline"));
+        QLabel *memOff = panel->findChild<QLabel *>(
+            QStringLiteral("bidiMemoryOffline"));
+        finish(false, QStringLiteral(
+                   "timeout in stage %1 metrics=%2 cpu=%3 heap=%4 "
+                   "memStatus=[%5] perfOff=[%6] memOff=[%7]")
+                   .arg(*stage)
+                   .arg(metrics ? metrics->rowCount() : -1)
+                   .arg(cpu ? cpu->rowCount() : -1)
+                   .arg(heap ? heap->rowCount() : -1)
+                   .arg(memStatus ? memStatus->text()
+                                  : QStringLiteral("?"))
+                   .arg(perfOff && perfOff->isVisible()
+                        ? perfOff->text() : QStringLiteral("-"))
+                   .arg(memOff && memOff->isVisible()
+                        ? memOff->text() : QStringLiteral("-")));
     });
     return application.exec();
 #endif
@@ -5199,7 +5449,7 @@ int main(int argc, char **argv)
         "startpage-smoke", "crash-smoke",
         "sandbox-smoke", "write-sandbox-launcher",
         "bidi-smoke", "bidi-elements-smoke", "bidi-network-smoke",
-        "bidi-sources-smoke",
+        "bidi-sources-smoke", "bidi-perfmem-smoke",
         "pdf-smoke",
         "pdfview-smoke", "printpreview-smoke",
         "parallel-download-smoke", "parallel-download-off-smoke",
@@ -5645,6 +5895,10 @@ int main(int argc, char **argv)
     // breakpoint pause with call frames, and resume.
     if (args.contains(QLatin1String("--bidi-sources-smoke")))
         return bidiSourcesSmoke(application, view);
+    // DEVT21: the Performance + Memory tabs — live metrics, a real
+    // CPU capture, heap sampling, and the heap summary.
+    if (args.contains(QLatin1String("--bidi-perfmem-smoke")))
+        return bidiPerfMemSmoke(application, view);
 
     // BADSSL02: live-site measurement — loads every badssl.com
     // matrix case on the browsing profile and records per-case
