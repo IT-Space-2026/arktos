@@ -200,7 +200,11 @@ This file is the task queue for the Devin CLI task loop
 | DEVT20 | BiDi devtools: Sources parity — resource tree, source view, breakpoints/pause/step — details below | done | 0 | bridge now forwards Debugger.*/Page.frameNavigated under "debugger" subscription; tree refresh on navigation milestones, getScriptSource for scripts + paused frames, breakpointResolved re-pointing, pause/step/resume toolbar + call stack; verified: tst_devtools 18/18 +1 skip, --bidi-sources-smoke PASS "resources+source+bp+pause+resume" x2, make check rc=0 |
 | DEVT21 | BiDi devtools: Performance + Memory parity — live metrics, JS profiler capture, heap sampling — details below | done | 0 | verified: tst_devtools 18/18 +1 skip; --bidi-perfmem-smoke PASS "metrics+cpu+heap+summary"; make check rc=0 (0 failed) |
 | THEM07 | Tor reader button still wrong: accent outline/fill reads as a muddy raised box on the violet bar — pick a legible tor accent — details below | done | 0 | new AroraStyle::torChromeAccentColor() (0xa98bd9, ~3.7:1 vs surface) backs the tor ReaderButton accentOverride; raised violet stays fill-scale only (badge/rail/tab hover); accent-on-tor audit: circuit onion = ButtonText, shield/popup badges = fill pills inside the light location field, NavBarAccentButton paints none — verified: torReaderAccent repin + >=3:1 contrast pin, torChromeGlyphsLegible, browsermainwindow 76/76, arorastyle 17/17, make check rc=0 (check-warnings PASS, all programs 0 failed) offscreen --disable-gpu |
-| TRUST24 | Chrome regression: shield renders on/in the URL field instead of a bar item before it; padlock gone from the field's left slot — details below | pending | 0 | user report post-merge: shield visible on url bar, lock icon disappeared |
+| TRUST24 | Chrome regression: shield renders on/in the URL field instead of a bar item before it; padlock gone from the field's left slot — details below | in_progress | 0 | user report post-merge: shield visible on url bar, lock icon disappeared |
+| DEVT22 | BiDi Elements panel UX is wrong vs Chrome devtools — DOM tree, styles pane layout, search dock — details below | pending | 0 | user screenshot: tree shows flat head/body, results dock awkward, toolbar floats in empty area |
+| DEVT23 | BiDi Sources panel UX is wrong vs Chrome devtools — domain-grouped navigator, real source view + debugger side rail — details below | pending | 0 | needs:task:DEVT22 — user screenshot vs Qt WebInspector |
+| ICONS10 | App/logo button in nav bar ~15% bigger with correct aspect ratio — details below | pending | 0 | user: logo too small/squished vs siblings |
+| TABGRP03 | Vivaldi-style tab grouping UX — group header/workspace affordances like screenshot 4 — details below | pending | 0 | user screenshot: vivaldi workspaces+grouped tabs |
 
 
 ## Task details
@@ -1267,3 +1271,31 @@ User report (post-merge master): on the navigation row the site shield shows ON/
 Diagnose which regressed (likely candidates: a nav-bar order/restore path placing the shield action wrong; the QSplitter making the shield's zero-width host overlap the field so it PAINTS over the padlock slot (padlock may still exist underneath — check findChild, don't assume deleted); a LeftSide widget list bug in locationbar.cpp where a missing/hidden padlock shifts geometry; or an engine/backend swap leaving the padlock unbound+blank while the shield rebinds fine). Fix to the contract: shield is a normal movable bar item directly left of the url field, padlock restored as the field's leftmost LeftSide widget showing the connection verdict, site icon second.
 
 Verify: extend the existing trust chrome legs in tst_BrowserMainWindow — assert the shield widget's parent is m_navigationBar (not inside the field), its x-position is left of the location bar with no overlap, and the padlock exists+visible+non-null webview on a loaded https-fixture page; screenshot/pixel probe the field's left slot like the THEM06 legs if position-only asserts are flaky. make check PASS.
+
+### DEVT22
+
+User compared the BiDi panel's Elements tab against Chrome's devtools on a live page — it's visually/structurally wrong: the toolbar (inspect/reload/search buttons) floats in a large empty area instead of a compact bar; the DOM tree shows document>head>body but reads flat and sparse vs Chrome's indented tree with tag+attr rendering (e.g. Chrome shows `<body class="viewfrontpagepage-1 …">` as a rich line — ours shows `body.viewfrontpagepage-1.path-frontpage…` text); the search dock at bottom shows bare "document >" + raw path text instead of Chrome's find field + result count + list; the right pane ("Computed styles") shows an Attributes table + Computed styles stacked awkwardly (Chrome: Styles pane with rule origin groups, Computed as its own view, box model diagram).
+
+Bring the Elements tab to Chrome-devtools shape: (a) compact toolbar row — inspect-element, reload-tree, search — docked at the pane top, no dead space; (b) DOM tree renders Chrome-style lines: `<tag attr="v">` markup with attribute highlighting (a colored/secondary-text attribute span is enough — the suite already has tree item rendering helpers), expand/collapse carets, children indented, closing-tag or "…" rows for big subtrees are optional; (c) right rail: Attributes section, Computed styles (sorted property→value list as it already has), and a real box-model diagram (content/padding/border/margin nested boxes with numbers — the DOM.getBoxModel data is already fetched); (d) search: bottom dock like Chrome — field + "1 of N" + up/down + a results list that selects the node in tree.
+
+Verify: tst_devtools legs against a fixture page — tree lines carry attr text, computed pane lists fixture styles, box model shows fixture numbers, search 'div.x' selects the node and shows count; keep existing smoke legs green; make check PASS.
+
+### DEVT23
+
+User compared the BiDi Sources tab against Chrome devtools — ours shows a flat Resources list keyed by raw https:// origins; Chrome groups by frame → origin → path folders (Page > top > hup.hu > core/images/modules… > files) in a left navigator, with the source view center and a right debugger rail (Watch/Breakpoints/Scope/Call Stack + pause controls).
+
+Restructure Sources to the Chrome shape: (a) left navigator tree grouped frame→origin→directory-path segments (collapse single-child path chains like Chrome's folder merging), file leaves; (b) center source view (existing getScriptSource/resource content); (c) right debugger rail: Breakpoints list, Call stack (when paused), pause/step controls row; (d) XHR/DOM/global-listener groups can stay honest-disabled if the endpoint lacks them — the structural shape is what matters.
+
+Verify: tst_devtools legs — a fixture with nested paths produces origin/folder/file hierarchy not flat list; selecting a file fills the view; existing bp/pause legs still green; make check PASS.
+
+### ICONS10
+
+User: the app/logo button on the far-left of the navigation bar looks small and slightly squished — should be ~15% bigger with the correct aspect ratio (it's a globe icon that should stay round, not scaled non-uniformly into a square slot). Find where the nav-bar logo button sizes its icon (browsermainwindow nav setup / AroraIcon getChrome) and bump the pixmap ~15% while preserving aspect — compare against the profile button on the right (they were sized to match in PROF01 — keep that contract or intentionally re-align both).
+
+Verify: pixel-probe leg like the THEM06/torReaderAccent pattern — icon pixmap size/asserted aspect; browsermainwindow suite green; make check PASS.
+
+### TABGRP03
+
+User wants the tab-group UX to feel like Vivaldi (screenshot: Vivaldi sidebar shows a Workspaces section + grouped tabs render as stacked cards with the group name header). Current state: TABGRP01/02 delivered drag-to-group, chips, collapse, Close Group. Now: (a) group headers on the tab strip should show the GROUP NAME as a labeled chip segment like Vivaldi's stacked-tab header (not just a colored chip); (b) drag-out affordance + drag-in highlight already exist — polish if needed; (c) optionally a groups/workspace overview — check what the sidebar panel already shows and add a Workspaces-style section listing groups with member thumbnails/titles if feasible without a huge build.
+
+Verify: tst_TabWidget/tst_TabBar legs — group chip shows the name, rename updates it live, collapse/close still work; make check PASS.
