@@ -44,6 +44,12 @@
 #                             the build tree (e.g. "src tools") —
 #                             analyses then cover only those dirs' TUs
 #   ARORA_STATIC_KEEP=1       keep a fresh analysis build tree
+#   ARORA_STATIC_REPORT=FILE  report output (default STAT01-report.md)
+#   ARORA_STATIC_TRIAGE=FILE  triage doc appended verbatim
+#   ARORA_STATIC_TITLE=NAME   sweep name in the report header —
+#                             the three together let a re-sweep
+#                             (STAT02...) reuse the script without
+#                             clobbering the previous report/triage
 #
 # Exit status: 0 unless a build/analysis pass failed.  This is a
 # report tool, not a gate — findings are triaged into fixes or
@@ -51,8 +57,9 @@
 set -u
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-REPORT_MD="$ROOT/.devin/STAT01-report.md"
-TRIAGE_MD="$ROOT/.devin/STAT01-triage.md"
+REPORT_MD=${ARORA_STATIC_REPORT:-$ROOT/.devin/STAT01-report.md}
+TRIAGE_MD=${ARORA_STATIC_TRIAGE:-$ROOT/.devin/STAT01-triage.md}
+REPORT_TITLE=${ARORA_STATIC_TITLE:-STAT01}
 
 GCC_JOBS=${ARORA_STATIC_GCC_JOBS:-1}
 CLANG_JOBS=${ARORA_STATIC_CLANG_JOBS:-3}
@@ -242,7 +249,7 @@ GCC_COUNT=$GCC_TREE
 CLANG_COUNT=$CLANG_TREE
 
 {
-    echo "# Static-analysis sweep (STAT01)"
+    echo "# Static-analysis sweep ($REPORT_TITLE)"
     echo
     echo "Generated: $(date -u '+%Y-%m-%d %H:%M UTC') on commit $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
     echo "Toolchains: $(g++ --version | head -1) / $(clang++ --version | head -1)"
