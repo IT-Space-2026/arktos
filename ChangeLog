@@ -1040,6 +1040,9 @@ UI:
   is manual-only — nothing ever phones home on its own — and the
   entry is disabled on Tor windows so no direct github.com request
   can leak out of a Tor session (UPD01).
+- The update check now refuses release manifests larger than 1 MiB —
+  a hostile or wedged endpoint can no longer make Arora buffer an
+  unbounded response before the JSON parse rejects it (AUDIT03).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
@@ -1562,6 +1565,14 @@ Build, tests & tools:
   overrides (download-model flags, tree-view key handling), and a
   truncated GIF fixture; the test suite now runs in an isolated HOME so
   it can no longer read or mutate the live browser profile.
+- Audit slice B (AUDIT03): clang-tidy pass over 331 translation units
+  plus triage of every new STAT02 analyzer finding — the tor/webdriver
+  socket pump no longer shuts down or sends on a descriptor that is
+  already closed, vault zeroization uses a direct volatile cast, and
+  four confirmed-dead members (an uncalled vault getter, an adblock
+  exception setter, a vestigial extension handshake flag, an unused
+  tor test seam) are gone; Qt-ownership false positives are documented
+  in .devin/STAT02-triage.md.
 0.2 (unreleased) — Qt 6 port in progress
 Build system:
     The Rust components are now the default code path: a plain `qmake` auto-detects a cargo toolchain (PATH, then ~/.cargo/bin) and builds rustcore (credential/autofill/session/bookmark/history stores, the OpenSearch engine registry, per-site decisions, url-strip, blocklist, TLS probe), rustdl (accelerated downloads) and the adblock-rust engine as part of `make`. The C++ implementations remain as the no-toolchain fallback — opt out with `qmake CONFIG+=no-rust` or per crate with `CONFIG-=rustcore` / `CONFIG-=rustdl` / `CONFIG-=adblock_rust`. With no Rust toolchain at all qmake warns loudly and builds the Qt paths so the tree always configures.

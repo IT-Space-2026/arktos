@@ -387,12 +387,19 @@ static void telemetryRelay(int clientFd, int upstreamFd)
             if (got <= 0) {
                 // Half-close: the peer may still be replying, so only
                 // signal EOF to the other direction and keep pumping.
-                ::shutdown(to, SHUT_WR);
+                if (to >= 0)
+                    ::shutdown(to, SHUT_WR);
                 fds[i].fd = -1;
                 --open;
                 if (fds[1 - i].fd < 0)
                     break;
                 continue;
+            }
+            if (to < 0) {
+                // The other direction already closed — nothing left
+                // to forward to.
+                open = 0;
+                break;
             }
             ssize_t sent = 0;
             while (sent < got) {

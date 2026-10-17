@@ -597,11 +597,6 @@ bool AdBlockRule::isException() const
     return m_exception;
 }
 
-void AdBlockRule::setException(bool exception)
-{
-    m_exception = exception;
-}
-
 bool AdBlockRule::isEnabled() const
 {
     return m_enabled;

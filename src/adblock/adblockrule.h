@@ -93,7 +93,6 @@ public:
                       int resourceType = -1) const;
 
     bool isException() const;
-    void setException(bool exception);
 
     bool isEnabled() const;
     void setEnabled(bool enabled);

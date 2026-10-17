@@ -67,8 +67,7 @@ const char *const kEngineResidueNames[] = { "QtWebEngine", "cache" };
 void secureZero(QByteArray &bytes)
 {
     volatile unsigned char *p =
-        static_cast<volatile unsigned char *>(
-            static_cast<void *>(bytes.data()));
+        reinterpret_cast<volatile unsigned char *>(bytes.data());
     for (qsizetype i = 0; i < bytes.size(); ++i)
         p[i] = 0;
 }
@@ -1014,11 +1013,6 @@ bool ProfileVault::canLockNow(const QString &profileId,
     if (reason)
         *reason = why;
     return why.isEmpty();
-}
-
-bool ProfileVault::hasSessionPassword(const QString &profileId) const
-{
-    return m_passwords.contains(normalizedId(profileId));
 }
 
 QByteArray ProfileVault::sessionPassword(const QString &profileId) const

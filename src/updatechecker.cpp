@@ -34,6 +34,14 @@
 #include <qregularexpression.h>
 #include <qtimer.h>
 
+// AUDIT03: a release manifest is tens of KB of JSON — a server
+// answering with megabytes is hostile or wedged, not informative.
+// The parse-side cap fails fast; the read buffer bounds how much a
+// slow-drip endpoint can grow the reply before the transfer timeout
+// kills it.
+static const qint64 kMaxReleaseJsonBytes = 1024 * 1024;
+static const qint64 kReleaseReadBufferBytes = 8 * 1024 * 1024;
+
 UpdateChecker::UpdateChecker(QObject *parent)
     : QObject(parent)
     , m_manager(nullptr)
@@ -112,6 +120,7 @@ void UpdateChecker::check()
     m_result.status = Status::Checking;
 
     m_reply = m_manager->get(request);
+    m_reply->setReadBufferSize(kReleaseReadBufferBytes);
     connect(m_reply, &QNetworkReply::finished,
             this, &UpdateChecker::replyFinished);
     m_timer->start();
@@ -172,9 +181,18 @@ void UpdateChecker::replyFinished()
         return;
     }
 
+    const QByteArray payload = reply->readAll();
+    if (payload.size() > kMaxReleaseJsonBytes) {
+        m_result = Result();
+        m_result.errorString = tr("The update server returned an "
+                                  "oversized response.");
+        finish(Status::Error);
+        return;
+    }
+
     bool ok = false;
     QString error;
-    m_result = parseReleaseJson(reply->readAll(), &ok, &error);
+    m_result = parseReleaseJson(payload, &ok, &error);
     if (!ok) {
         m_result.errorString = error;
         finish(Status::Error);

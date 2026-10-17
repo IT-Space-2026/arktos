@@ -154,6 +154,7 @@ private slots:
     void updateAvailable();
     void noReleases();
     void malformedJson();
+    void oversizedBody();
     void httpError();
     void torRefusesCheck();
     void helpMenuEntry();
@@ -361,6 +362,26 @@ void tst_UpdateChecker::malformedJson()
         qvariant_cast<UpdateChecker::Result>(spy.first().first());
     QCOMPARE(result.status, UpdateChecker::Status::Error);
     QVERIFY(!result.errorString.isEmpty());
+}
+
+void tst_UpdateChecker::oversizedBody()
+{
+    // AUDIT03: a manifest far beyond the parse bound is refused fast —
+    // the reply must never reach the JSON parser.
+    ReleaseServer server;
+    QVERIFY(server.start());
+    server.body = QByteArray(1200 * 1024, '{');
+
+    UpdateChecker checker;
+    checker.setApiUrl(server.url(QLatin1String("/releases/latest")));
+    QSignalSpy spy(&checker, &UpdateChecker::finished);
+    checker.check();
+    QVERIFY(spy.wait(10000) || !spy.isEmpty());
+    QCOMPARE(spy.count(), 1);
+    const UpdateChecker::Result result =
+        qvariant_cast<UpdateChecker::Result>(spy.first().first());
+    QCOMPARE(result.status, UpdateChecker::Status::Error);
+    QVERIFY(result.errorString.contains(QLatin1String("oversized")));
 }
 
 void tst_UpdateChecker::httpError()

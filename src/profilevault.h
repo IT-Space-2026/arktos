@@ -266,7 +266,6 @@ public:
 
     // Session password custody (set by unseal()/setPassword(), wiped
     // at seal/shutdown) — lock paths re-seal without re-prompting.
-    bool hasSessionPassword(const QString &profileId) const;
     QByteArray sessionPassword(const QString &profileId) const;
     // Set-password entry: caches the session password and records
     // the algo pick in vault.conf — nothing is sealed yet, the dir

@@ -234,12 +234,6 @@ public slots:
         m_circuits = circuits;
         emit circuitsChanged(m_circuits);
     }
-    // Test seam: shrinks the NEWNYM cooldown so a test can re-arm
-    // without a real 10s wait.
-    void setNewNymWindowForTesting(qint64 ms)
-    {
-        m_newNymWindowMs = ms;
-    }
 #endif
 
 signals:

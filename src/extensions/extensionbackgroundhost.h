@@ -111,7 +111,6 @@ public:
                                    const QJsonObject &args);
 
     QString extensionId() const { return m_extensionId; }
-    bool handshakeDone() const { return m_handshakeDone; }
     // Out-of-line — QPointer needs the complete type.
     ExtensionShimBackend *backend() const;
 
@@ -137,7 +136,6 @@ private:
 
     QString m_extensionId;
     QString m_extensionName;
-    bool m_handshakeDone = false;
     // QPointer — a shared backend dies with the host that owns it;
     // a popup bridge must answer typed errors, not dangle.
     QPointer<ExtensionShimBackend> m_backend;
