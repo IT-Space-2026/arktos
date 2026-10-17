@@ -139,6 +139,16 @@ struct RequestDecision {
     RequestAction action = RequestAction::Allow;
     QUrl redirectUrl;      // action == Redirect
     QByteArray referer;    // optional referer override (REF01 levels)
+    // ENG35: engines that can only SERVE a response (Servo's
+    // interception hook answers the load, it cannot re-issue the
+    // request) take this ready-made stub instead of the redirect —
+    // the policy fills it when redirectUrl names a bundled stub or a
+    // data: payload it already resolved.  Empty = no stub carried;
+    // such a backend then degrades the Redirect to Allow (it cannot
+    // express the rewrite) while redirect-capable engines still
+    // honor redirectUrl.  Ignored unless action == Redirect.
+    QByteArray stubBody;
+    QByteArray stubMime;
 };
 
 // The app's policy engine (adblock + privacy today; the rustcore

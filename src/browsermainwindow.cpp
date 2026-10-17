@@ -1716,6 +1716,34 @@ void BrowserMainWindow::setupMenu()
     m_toolsDevToolsMenu->addAction(m_toolsBidiDevToolAction);
 #endif
 
+    // ENG35: the devtools rows track the CURRENT tab's engine —
+    // capabilities().devTools is false on Servo (its devtools crate
+    // only serves the Firefox remote protocol, which the panel's CDP
+    // client cannot read), so both entries disable with the reason
+    // instead of opening a dead surface — the same honesty pattern
+    // as BidiPanel's domain probes.
+    const auto refreshDevToolsRows = [this]() {
+        const EngineTab *eng =
+            m_tabWidget->engineTab(m_tabWidget->currentIndex());
+        const bool dead = eng && eng->backend()
+            && !eng->backend()->capabilities().devTools;
+        const QString tip = dead
+            ? tr("devtools unavailable on %1")
+                  .arg(eng->backend()->displayName())
+            : QString();
+        m_toolsChromiumDevToolAction->setEnabled(!dead);
+        m_toolsChromiumDevToolAction->setToolTip(tip);
+#ifdef ARORA_RUSTCORE
+        if (!BrowserApplication::isTorMode()) {
+            m_toolsBidiDevToolAction->setEnabled(!dead);
+            m_toolsBidiDevToolAction->setToolTip(tip);
+        }
+#endif
+    };
+    connect(m_tabWidget, &QTabWidget::currentChanged,
+            this, [refreshDevToolsRows](int) { refreshDevToolsRows(); });
+    refreshDevToolsRows();
+
     m_toolsUserAgentMenu = new UserAgentMenu(m_toolsMenu);
     m_toolsMenu->addMenu(m_toolsUserAgentMenu);
 

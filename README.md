@@ -235,7 +235,12 @@ browsing profile:
   engine: a new tab with Servo as the default engine lands on the
   Servo-branded start page, and a start page carried through an
   engine swap (or reached via the Home button) re-resolves to the
-  destination engine's own variant. Servo renders in-process, so its
+  destination engine's own variant. Servo tabs enforce the same
+  per-profile AdBlock policy as Chromium ones — network-level
+  blocking plus $redirect stub serving, no cosmetic CSS hiding —
+  while devtools honestly report themselves unavailable (Servo's
+  devtools server speaks the Firefox remote protocol, not the
+  panel's CDP transport). Servo renders in-process, so its
   status-bar memory readout shows the shared whole-app figure
   marked "(shared)" rather than a per-tab number.
 - **Reader mode** (Ctrl+Alt+R) and **Picture-in-Picture** on videos.

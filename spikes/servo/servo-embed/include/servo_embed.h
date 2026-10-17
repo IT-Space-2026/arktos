@@ -102,6 +102,45 @@ typedef int (*SeResourceResolver)(void *userdata, const char *url,
 
 void se_set_resource_resolver(void *userdata, SeResourceResolver resolver);
 
+/* ENG35: host load gate — consulted inside the same
+ * load_web_resource hook BEFORE the resource resolver, so the host
+ * can veto or stub a load Servo would otherwise fetch (adblock-style
+ * request blocking).  The observational resource_load callback is
+ * untouched: it still reports every load, gated or not.
+ *
+ * Registered once per process like the resolver.  Called
+ * synchronously from inside se_spin() on the GUI thread for EVERY
+ * resource load; the host inspects `info` and returns non-zero to
+ * SERVE `reply` verbatim — the request never reaches Servo's fetch
+ * path (a deny is reply{status:403, empty body}; a stub is any
+ * 200+mime+body pair, the same contract as the resolver).  Return 0
+ * to pass the load on to the resolver / normal fetch.  There is no
+ * redirect verdict: Servo's interception hook only ever serves a
+ * response — a policy wanting to rewrite a URL must carry the
+ * replacement payload in `reply` or let the request pass. */
+typedef struct SeLoadInfo {
+    const char *url;              /* request URL, utf8 */
+    /* first-party document URL: the resolved referrer when Servo
+     * knows it, else the webview's committed URL for subresources;
+     * the request URL itself for main-frame loads; "" when unknown. */
+    const char *first_party_url;
+    const char *method;           /* HTTP method, utf8 */
+    /* Fetch destination string ("","document","script","image",
+     * "style","font","iframe","audio","video","worker",...) —
+     * servo's content_security_policy::Destination::as_str value. */
+    const char *destination;
+    int is_for_main_frame;        /* 1 for top-document loads */
+    int is_redirect;              /* 1 on a redirect hop */
+} SeLoadInfo;
+
+typedef int (*SeLoadGate)(void *userdata, const SeLoadInfo *info,
+                          SeHostReply *reply);
+
+/* Absent on artifacts predating ENG35 — resolve optionally; a
+ * missing symbol means loads cannot be gated (request policies stay
+ * unenforced, the old observable-only behavior). */
+void se_set_load_gate(void *userdata, SeLoadGate gate);
+
 /* ENG20: panic containment. Every export catches unwinding panics at
  * the ABI boundary; the first caught panic poisons the instance so all
  * later exports short-circuit to an error/no-op — a panicking webview

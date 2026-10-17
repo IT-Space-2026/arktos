@@ -2916,3 +2916,24 @@ Profile vault seal/unseal engine (PVAULT02):
     to lock a profile that still has open windows, and refuses to
     unseal over existing plaintext without explicit confirmation.
     No-Rust builds keep the class compiled but inert.
+
+Servo tabs enforce AdBlock; devtools entries admit when the engine cannot (ENG35):
+    AdBlock did nothing on Servo tabs — the engine reported every
+    resource load but had no veto. The servo-embed shim now consults
+    a host load gate inside its WebResourceLoad hook ahead of the
+    resource resolver: the owning profile's request policy decides
+    each load, a deny is answered with an empty 403 that never
+    reaches the network, and $redirect-style stub resources (bundled
+    or data: payloads) are served in place — Servo's interception
+    can only answer a response, never re-issue the request, so bare
+    URL rewrites degrade to a pass. The policy is the same adblock
+    matcher snapshot the Chromium interceptor consults (custom
+    rules, subscriptions, and the optional Rust engine included),
+    resolved per load through the tab's own profile, so a profile
+    with no binding stays genuinely ungated. On the devtools side
+    the honest answer is "unavailable": libservo's devtools server
+    speaks the Firefox remote debugging protocol over a raw TCP
+    socket, not the CDP-over-WebSocket the BiDi panel's client
+    drives, so instead of a dead surface the Tools menu devtools
+    entries and the panel's context selector now disable Servo tabs
+    with the reason.
