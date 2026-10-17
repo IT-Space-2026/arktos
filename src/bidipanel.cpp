@@ -440,6 +440,101 @@ static QString initiatorText(const QJsonObject &initiator)
     return initiator[QLatin1String("type")].toString();
 }
 
+// ===== DEVT23 — Sources navigator (Chrome's Page tree) =====
+
+// Chrome's origin node label: the host (with a non-default port),
+// the scheme for host-less urls like data: or about:.
+static QString sourceOriginLabel(const QUrl &u)
+{
+    const QString host = u.host();
+    if (host.isEmpty())
+        return u.scheme().isEmpty() ? u.toString() : u.scheme();
+    if (u.port() == -1)
+        return host;
+    return host + QLatin1Char(':') + QString::number(u.port());
+}
+
+// Group key for an origin — label first so a QMap keyed on it
+// iterates in the display order Chrome shows.
+static QString sourceOriginKey(const QUrl &u)
+{
+    return sourceOriginLabel(u) + QLatin1Char('\n') + u.scheme();
+}
+
+// Folder rows carry this flag so the merge pass can tell them from
+// file leaves (the data roles a leaf keeps start at Qt::UserRole).
+static const int kSourceDirRole = Qt::UserRole + 5;
+
+// Find-or-create a path-folder row under `parent`.
+static QTreeWidgetItem *sourceDirChild(QTreeWidgetItem *parent,
+                                       const QString &name)
+{
+    for (int i = 0; i < parent->childCount(); ++i) {
+        QTreeWidgetItem *c = parent->child(i);
+        if (c->data(0, kSourceDirRole).toBool()
+            && c->text(0) == name)
+            return c;
+    }
+    QTreeWidgetItem *dir = new QTreeWidgetItem(QStringList(name));
+    dir->setData(0, kSourceDirRole, true);
+    parent->addChild(dir);
+    return dir;
+}
+
+// One resource url -> a file leaf at the end of its path-folder
+// chain under the origin row.  The leaf keeps the same data roles
+// the flat tree used so selection and breakpoints keep working.
+static void sourceInsertFile(QTreeWidgetItem *origin,
+                             const QString &url, const QString &fid,
+                             const QString &type, const QString &mime)
+{
+    const QUrl u(url);
+    QStringList segs = u.path().split(QLatin1Char('/'),
+                                      Qt::SkipEmptyParts);
+    const QString file =
+        segs.isEmpty() ? requestName(url) : segs.takeLast();
+    QTreeWidgetItem *parent = origin;
+    for (const QString &seg : segs)
+        parent = sourceDirChild(parent, seg);
+    QTreeWidgetItem *leaf = new QTreeWidgetItem(QStringList(file));
+    leaf->setData(0, Qt::UserRole, url);
+    leaf->setData(0, Qt::UserRole + 1, fid);
+    leaf->setData(0, Qt::UserRole + 2, type);
+    leaf->setData(0, Qt::UserRole + 3, mime);
+    leaf->setToolTip(0, url);
+    parent->addChild(leaf);
+}
+
+// Chrome folds a folder whose only child is another folder into a
+// single "a/b" row — repeat until the row has real children.  Only
+// flagged path folders fold; the origin/frame rows above them are
+// fixed parts of the tree.
+static void sourceMergeDirs(QTreeWidgetItem *item)
+{
+    for (int i = 0; i < item->childCount(); ++i)
+        sourceMergeDirs(item->child(i));
+    while (item->data(0, kSourceDirRole).toBool()
+           && item->childCount() == 1) {
+        QTreeWidgetItem *kid = item->child(0);
+        if (!kid->data(0, kSourceDirRole).toBool())
+            break;
+        item->setText(0, item->text(0) + QLatin1Char('/')
+                         + kid->text(0));
+        while (kid->childCount())
+            item->addChild(kid->takeChild(0));
+        delete kid;
+    }
+}
+
+// Alphabetical like Chrome's navigator — folders and files
+// interleave by display name.
+static void sourceSortTree(QTreeWidgetItem *item)
+{
+    for (int i = 0; i < item->childCount(); ++i)
+        sourceSortTree(item->child(i));
+    item->sortChildren(0, Qt::AscendingOrder);
+}
+
 static QString formatBytes(qint64 bytes)
 {
     if (bytes < 0)
@@ -1986,10 +2081,13 @@ BidiPanel::BidiPanel(QWidget *parent)
     cv->addWidget(prompt);
     tabs->addTab(consolePage, tr("Console"));
 
-    // DEVT13 — Sources: the page's resource tree (Page.getResource-
-    // Tree) on the left, the read-only body (Page.getResourceContent)
-    // in a monospace view, and a breakpoint row that only lights up
-    // when the Debugger domain's probe came back clean.
+    // DEVT23 — Sources reshaped to Chrome's three-pane layout: the
+    // left navigator is the Page tree (frame -> origin -> path
+    // folders -> file leaves, single-child chains folded), the
+    // center pane is the read-only source view, and the right rail
+    // carries the debugger surface — DEVT20's pause/step controls
+    // on top, then collapsible sections (Breakpoints and Call
+    // Stack live, the endpoint-less groups honestly disabled).
     QWidget *sourcesPage = new QWidget;
     sourcesPage->setObjectName(QLatin1String("bidiSourcesPage"));
     QVBoxLayout *srcv = new QVBoxLayout(sourcesPage);
@@ -1998,17 +2096,29 @@ BidiPanel::BidiPanel(QWidget *parent)
     QSplitter *srcSplit = new QSplitter(Qt::Horizontal);
     m_sourcesTree = new QTreeWidget;
     m_sourcesTree->setObjectName(QLatin1String("bidiSourcesTree"));
-    m_sourcesTree->setHeaderLabel(tr("Resources"));
+    m_sourcesTree->setHeaderHidden(true);
     m_sourcesTree->setRootIsDecorated(true);
     srcSplit->addWidget(m_sourcesTree);
-    QWidget *srcRight = new QWidget;
-    QVBoxLayout *srv = new QVBoxLayout(srcRight);
-    srv->setContentsMargins(0, 0, 0, 0);
-    srv->setSpacing(0);
-    // DEVT20: Chrome's debugger toolbar heads the right pane —
+    QWidget *srcCenter = new QWidget;
+    QVBoxLayout *scv = new QVBoxLayout(srcCenter);
+    scv->setContentsMargins(0, 0, 0, 0);
+    scv->setSpacing(0);
+    m_sourceView = new QPlainTextEdit;
+    m_sourceView->setObjectName(QLatin1String("bidiSourceView"));
+    m_sourceView->setReadOnly(true);
+    m_sourceView->setFont(QFontDatabase::systemFont(
+        QFontDatabase::FixedFont));
+    scv->addWidget(m_sourceView, 1);
+    srcSplit->addWidget(srcCenter);
+    // DEVT20: Chrome's debugger toolbar heads the right rail —
     // pause/resume/step buttons plus the paused-state line.  The
     // buttons map 1:1 onto the Debugger.* commands; enablement
     // tracks the probe verdict (updateDebuggerButtons).
+    QWidget *srcRail = new QWidget;
+    srcRail->setObjectName(QLatin1String("bidiSourcesDbgRail"));
+    QVBoxLayout *srl = new QVBoxLayout(srcRail);
+    srl->setContentsMargins(0, 0, 0, 0);
+    srl->setSpacing(0);
     m_dbgBar = new QWidget;
     m_dbgBar->setObjectName(QLatin1String("bidiSourcesDbgBar"));
     QHBoxLayout *dbl = new QHBoxLayout(m_dbgBar);
@@ -2051,13 +2161,7 @@ BidiPanel::BidiPanel(QWidget *parent)
     m_pauseStatus->setObjectName(QLatin1String("bidiDbgStatus"));
     m_pauseStatus->setVisible(false);
     dbl->addWidget(m_pauseStatus, 1);
-    srv->addWidget(m_dbgBar);
-    m_sourceView = new QPlainTextEdit;
-    m_sourceView->setObjectName(QLatin1String("bidiSourceView"));
-    m_sourceView->setReadOnly(true);
-    m_sourceView->setFont(QFontDatabase::systemFont(
-        QFontDatabase::FixedFont));
-    srv->addWidget(m_sourceView, 1);
+    srl->addWidget(m_dbgBar);
     // Chrome's gutter breakpoints compress to an explicit row here —
     // a QPlainTextEdit has no gutter to click.  Lines are 1-based
     // like Chrome's gutter; toggleBreakpoint maps down to CDP's
@@ -2080,27 +2184,94 @@ BidiPanel::BidiPanel(QWidget *parent)
                          "displayed resource"));
     bpl->addWidget(bpSet);
     bpl->addStretch();
-    srv->addWidget(m_bpBar);
     m_bpList = new QListWidget;
     m_bpList->setObjectName(QLatin1String("bidiSourcesBpList"));
-    m_bpList->setMaximumHeight(90);
+    m_bpList->setMaximumHeight(110);
     m_bpList->setToolTip(
         tr("Active breakpoints — double-click to remove"));
-    srv->addWidget(m_bpList);
-    // DEVT20: Chrome's Call stack sidebar compresses to a list under
-    // the breakpoints — filled while the debugger is paused.
-    QLabel *callLabel = new QLabel(tr("Call stack"));
-    srv->addWidget(callLabel);
+    // DEVT20: Chrome's Call stack sidebar — filled while the
+    // debugger is paused.
     m_callFrames = new QListWidget;
     m_callFrames->setObjectName(
         QLatin1String("bidiSourcesCallStack"));
-    m_callFrames->setMaximumHeight(90);
+    m_callFrames->setMaximumHeight(140);
     m_callFrames->setToolTip(
         tr("Call stack while the debugger is paused"));
-    srv->addWidget(m_callFrames);
-    srcSplit->addWidget(srcRight);
-    srcSplit->setStretchFactor(0, 1);
-    srcSplit->setStretchFactor(1, 3);
+    // One collapsible rail section — Chrome's accordion rows.  A
+    // live body toggles under its header; a section the endpoint
+    // can't serve stays a collapsed, honestly-disabled header.
+    const auto railSection =
+        [srl](const QString &title, const QString &name,
+              QWidget *body, const QString &reason) {
+        QToolButton *head = new QToolButton;
+        head->setObjectName(name);
+        head->setAutoRaise(true);
+        head->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        head->setSizePolicy(QSizePolicy::Expanding,
+                            QSizePolicy::Fixed);
+        head->setText(title);
+        srl->addWidget(head);
+        if (body) {
+            head->setCheckable(true);
+            head->setChecked(true);
+            head->setArrowType(Qt::DownArrow);
+            srl->addWidget(body);
+            QObject::connect(head, &QToolButton::toggled, body,
+                             [head, body](bool on) {
+                head->setArrowType(on ? Qt::DownArrow
+                                      : Qt::RightArrow);
+                body->setVisible(on);
+            });
+        } else {
+            head->setEnabled(false);
+            head->setArrowType(Qt::RightArrow);
+            head->setToolTip(reason);
+        }
+        return head;
+    };
+    const QString noCallFrame = tr(
+        "Requires call-frame evaluation, which this debug endpoint "
+        "does not expose");
+    const QString noDomDebugger = tr(
+        "Requires the CDP DOMDebugger domain, which this debug "
+        "endpoint does not expose");
+    railSection(tr("Watch"),
+                QStringLiteral("bidiSourcesSecWatch"),
+                nullptr, noCallFrame);
+    QWidget *bpSection = new QWidget;
+    QVBoxLayout *bps = new QVBoxLayout(bpSection);
+    bps->setContentsMargins(0, 0, 0, 0);
+    bps->setSpacing(0);
+    bps->addWidget(m_bpBar);
+    bps->addWidget(m_bpList);
+    railSection(tr("Breakpoints"),
+                QStringLiteral("bidiSourcesSecBp"),
+                bpSection, QString());
+    railSection(tr("Scope"),
+                QStringLiteral("bidiSourcesSecScope"),
+                nullptr, noCallFrame);
+    railSection(tr("Call Stack"),
+                QStringLiteral("bidiSourcesSecStack"),
+                m_callFrames, QString());
+    railSection(tr("XHR/fetch Breakpoints"),
+                QStringLiteral("bidiSourcesSecXhr"), nullptr,
+                tr("Requires the CDP Fetch domain, which this debug "
+                   "endpoint does not expose"));
+    railSection(tr("DOM Breakpoints"),
+                QStringLiteral("bidiSourcesSecDom"),
+                nullptr, noDomDebugger);
+    railSection(tr("Global Listeners"),
+                QStringLiteral("bidiSourcesSecListeners"),
+                nullptr, noDomDebugger);
+    railSection(tr("Event Listener Breakpoints"),
+                QStringLiteral("bidiSourcesSecEventBp"),
+                nullptr, noDomDebugger);
+    srl->addStretch(1);
+    srcSplit->addWidget(srcRail);
+    srcSplit->setStretchFactor(0, 0);
+    srcSplit->setStretchFactor(1, 1);
+    srcSplit->setStretchFactor(2, 0);
+    srcSplit->setSizes({220, 560, 280});
     srcv->addWidget(srcSplit);
     tabs->addTab(sourcesPage, tr("Sources"));
     connect(m_sourcesTree, &QTreeWidget::currentItemChanged,
@@ -4639,12 +4810,21 @@ void BidiPanel::onCdpResponse(quint64 id, const QJsonObject &root)
             return;
         }
         m_sourcesTree->clear();
-        // frameTree: {frame:{id,url}, resources:[{url,type,mimeType}],
-        // childFrames:[...]}.  The frame row itself is the Document
-        // resource; its resources group by type like Chrome's left
-        // pane.
-        QVector<QPair<QTreeWidgetItem *, QJsonObject>> stack;
-        stack.append({nullptr,
+        // DEVT23: Chrome's navigator — a "Page" root, one row per
+        // frame ("top" for the main document, the frame's host for
+        // subframes), resources grouped by origin under it, and an
+        // origin's files laid out in folders mirroring the url path
+        // (single-child chains folded into one "a/b" row).  The
+        // frame document itself lands as the origin's Document
+        // leaf, so the whole pane is origin/folder/file — no flat
+        // type groups.
+        QTreeWidgetItem *pageItem = new QTreeWidgetItem(
+            QStringList(tr("Page")));
+        pageItem->setToolTip(
+            0, tr("Resources loaded by the inspected page"));
+        m_sourcesTree->addTopLevelItem(pageItem);
+        QVector<QPair<bool, QJsonObject>> stack;
+        stack.append({true,
                       result[QStringLiteral("frameTree")].toObject()});
         while (!stack.isEmpty()) {
             const auto pair = stack.takeLast();
@@ -4654,63 +4834,53 @@ void BidiPanel::onCdpResponse(quint64 id, const QJsonObject &root)
             const QString fid = frame[QStringLiteral("id")].toString();
             const QString furl =
                 frame[QStringLiteral("url")].toString();
+            const QString fname = pair.first
+                ? tr("top")
+                : sourceOriginLabel(QUrl(furl));
             QTreeWidgetItem *frameItem = new QTreeWidgetItem(
-                QStringList(furl.isEmpty() ? tr("(frame)")
-                                           : furl));
-            if (pair.first)
-                pair.first->addChild(frameItem);
-            else
-                m_sourcesTree->addTopLevelItem(frameItem);
-            frameItem->setData(0, Qt::UserRole, furl);
+                QStringList(fname.isEmpty() ? tr("(frame)")
+                                            : fname));
             frameItem->setData(0, Qt::UserRole + 1, fid);
-            frameItem->setData(0, Qt::UserRole + 2,
-                               QStringLiteral("Document"));
-            QMap<QString, QTreeWidgetItem *> groups;
+            frameItem->setToolTip(0, furl);
+            pageItem->addChild(frameItem);
+            QMap<QString, QTreeWidgetItem *> origins;
+            const auto addResource =
+                [&origins, frameItem, fid](const QString &url,
+                                           const QString &type,
+                                           const QString &mime) {
+                if (url.isEmpty())
+                    return;
+                const QUrl u(url);
+                QTreeWidgetItem *&origin =
+                    origins[sourceOriginKey(u)];
+                if (!origin) {
+                    origin = new QTreeWidgetItem(QStringList(
+                        sourceOriginLabel(u)));
+                    frameItem->addChild(origin);
+                }
+                sourceInsertFile(origin, url, fid, type, mime);
+            };
+            addResource(furl, QStringLiteral("Document"),
+                        QStringLiteral("text/html"));
             const QJsonArray res =
                 ft[QStringLiteral("resources")].toArray();
             for (const QJsonValue &rv : res) {
                 const QJsonObject r = rv.toObject();
-                const QString type =
-                    r[QStringLiteral("type")].toString();
-                // The frame item already stands for the document.
-                if (type == QLatin1String("Document"))
-                    continue;
-                QString group = tr("Other");
-                if (type == QLatin1String("Stylesheet"))
-                    group = tr("Stylesheets");
-                else if (type == QLatin1String("Script"))
-                    group = tr("Scripts");
-                else if (type == QLatin1String("Image"))
-                    group = tr("Images");
-                else if (type == QLatin1String("Font"))
-                    group = tr("Fonts");
-                else if (type == QLatin1String("Media"))
-                    group = tr("Media");
-                QTreeWidgetItem *&g = groups[group];
-                if (!g)
-                    g = new QTreeWidgetItem(
-                        QStringList(group));
-                QTreeWidgetItem *item = new QTreeWidgetItem(
-                    QStringList(requestName(
-                        r[QStringLiteral("url")].toString())));
-                item->setData(
-                    0, Qt::UserRole,
-                    r[QStringLiteral("url")].toString());
-                item->setData(0, Qt::UserRole + 1, fid);
-                item->setData(0, Qt::UserRole + 2, type);
-                item->setData(
-                    0, Qt::UserRole + 3,
+                addResource(
+                    r[QStringLiteral("url")].toString(),
+                    r[QStringLiteral("type")].toString(),
                     r[QStringLiteral("mimeType")].toString());
-                item->setToolTip(
-                    0, r[QStringLiteral("url")].toString());
-                g->addChild(item);
             }
-            for (QTreeWidgetItem *g : groups)
-                frameItem->addChild(g);
+            for (QTreeWidgetItem *origin : origins) {
+                sourceMergeDirs(origin);
+                sourceSortTree(origin);
+            }
+            // Origins themselves sort by label under the frame row.
+            frameItem->sortChildren(0, Qt::AscendingOrder);
             const QJsonArray kids =
                 ft[QStringLiteral("childFrames")].toArray();
             for (const QJsonValue &kv : kids)
-                stack.append({frameItem, kv.toObject()});
+                stack.append({false, kv.toObject()});
         }
         m_sourcesTree->expandAll();
         return;

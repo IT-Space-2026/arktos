@@ -44,7 +44,15 @@
  *              breakpointResolved re-pointing, and — DEVT20 — the
  *              pause/step/resume toolbar + call stack driven by the
  *              Debugger.paused/resumed events the bridge forwards
- *              under the "debugger" subscription.
+ *              under the "debugger" subscription.  DEVT23's
+ *              Chrome-UX pass: a three-pane layout — a left
+ *              navigator grouping frame -> origin -> path folders
+ *              (single-child chains folded into "a/b" rows) down
+ *              to file leaves, the source view center, and a right
+ *              debugger rail whose collapsible sections hold the
+ *              controls row, the Breakpoints list, the Call Stack,
+ *              and honest-disabled Watch/Scope/XHR/DOM/listener
+ *              groups the endpoint can't serve.
  *   Network    Chrome-DevTools-style request table (DEVT06): filter
  *              field, type-filter chips, Preserve log / Disable cache
  *              toggles, a Name/Status/Type/Initiator/Size/Time/
