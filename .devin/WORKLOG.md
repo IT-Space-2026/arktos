@@ -1196,3 +1196,4 @@
 - 2026-10-17 MERGEWATCH: ui-work merged — no conflicts (Arora-Task-UI.md queue rows only), build ok
 - 2026-10-17 MERGEWATCH: ui-work SKIPPED — merge refused: dirty .devin/COVERAGE.md (stale coverage regen overlaps lane's Generated-stamp edit); rust-work even with master, skipped; no merges this pass, build not run
 - 2026-10-17 MERGEWATCH: ui-work SKIPPED — merge refused again: dirty .devin/COVERAGE.md still uncommitted (no live agent found — stale regen residue); rust-work even with master, skipped; no merges this pass, build not run
+- 2026-10-17 MERGEWATCH: ui-work SKIPPED — merge refused: dirty .devin/COVERAGE.md (taskloop agent actively running in this tree); rust-work even with master, skipped; no merges this pass, build not run
