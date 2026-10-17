@@ -80,11 +80,11 @@ QSize NavBarAccentButton::sizeHint() const
                                   &opt, this);
     QSize grown = style()->sizeFromContents(QStyle::CT_ToolButton,
                                             &opt, QSize(w, h), this);
-    // The bigger mark fills the face instead of stretching the row:
-    // the face caps at a square one pixel over the glyph, and
-    // NavBarToolBar's compacted vertical margins hand the extra
-    // pixels back so the bar keeps the height the location field
-    // drove.  The style only ever clips the pixmap to the label cell
+    // The bigger mark fills the face instead of stretching the row
+    // wider: the face caps at a square one pixel over the glyph, and
+    // NavBarToolBar's compacted vertical margins keep the row at
+    // exactly face + margins.  The style only ever clips the pixmap
+    // to the label cell
     // after bounding the request to iconSize, so a snug face shrinks
     // the glyph a pixel — never deforms it.  The iconSize floor
     // guards thin styles: the hit-rect never drops below the art it

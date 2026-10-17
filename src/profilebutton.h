@@ -28,17 +28,17 @@ class QMenu;
 class ProfileIdentity;
 
 // PROF01: shared base for the nav bar's oversized-face buttons —
-// the app-menu logo (MENU17/MENU19) and the profile avatar.  A
-// widget added through QToolBar::addWidget keeps its own iconSize
-// property, but QToolButton::initStyleOption unconditionally swaps
-// it for the parent toolbar's, so a plain setIconSize() changes the
-// accessor value and never the pixels.  This base restores its own
-// iconSize on the style option at the two read sites — paint and
-// sizeHint — so the glyph grows while every sibling stays at the
-// bar's size.  The face caps at a square one pixel over the glyph
-// and NavBarToolBar's compacted vertical margins hand the extra
-// pixels back, so the row keeps the height the location field
-// drives.
+// the app-menu logo (MENU17/MENU19, grown ~15% by ICONS10) and the
+// profile avatar.  A widget added through QToolBar::addWidget keeps
+// its own iconSize property, but QToolButton::initStyleOption
+// unconditionally swaps it for the parent toolbar's, so a plain
+// setIconSize() changes the accessor value and never the pixels.
+// This base restores its own iconSize on the style option at the
+// two read sites — paint and sizeHint — so the glyph grows while
+// every sibling stays at the bar's size.  The face caps at a square
+// one pixel over the glyph and NavBarToolBar's compacted vertical
+// margins hand the extra pixels back, so the pair drives the row
+// height with no slack above the face.
 class NavBarAccentButton : public QToolButton
 {
 public:

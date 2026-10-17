@@ -3356,3 +3356,14 @@ BiDi Dev Tools Sources tab reads like Chrome DevTools now (DEVT23):
     Listener Breakpoints sit collapsed and honestly disabled with
     a tooltip naming the debug surface the endpoint doesn't
     expose.
+
+Larger, correctly-proportioned app logo button (ICONS10):
+    The Arora logo button at the left of the navigation bar read
+    small next to its siblings; the brand glyph now sits ~15%
+    bigger (~1.84x the shared nav icon size, 33px at the default
+    18px density) and the profile button on the right edge grew in
+    step so the bar's two brand faces stay matched. The mark keeps
+    its own aspect ratio at any cell shape — the icon engine
+    letterboxes it into a centered square, so it can never be
+    stretched into an ellipse — and the bar's compacted margins
+    keep the row at face height + margins.
