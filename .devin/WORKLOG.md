@@ -1198,3 +1198,4 @@
 - 2026-10-17 MERGEWATCH: ui-work SKIPPED — merge refused again: dirty .devin/COVERAGE.md still uncommitted (no live agent found — stale regen residue); rust-work even with master, skipped; no merges this pass, build not run
 - 2026-10-17 MERGEWATCH: ui-work SKIPPED — merge refused: dirty .devin/COVERAGE.md (taskloop agent actively running in this tree); rust-work even with master, skipped; no merges this pass, build not run
 - 2026-10-17 MERGEWATCH: ui-work SKIPPED — merge refused: dirty .devin/COVERAGE.md still uncommitted (taskloop agent active, files touched 12:00); rust-work even with master, skipped; no merges this pass, build not run
+- 2026-10-17 MERGEWATCH: ui-work SKIPPED — merge refused: dirty .devin/COVERAGE.md (taskloop agent active — COVERAGE.md/mergewatch.log/taskloop.log touched 12:06:48 local, seconds before merge attempt); rust-work even with master, skipped; no merges this pass, build not run
