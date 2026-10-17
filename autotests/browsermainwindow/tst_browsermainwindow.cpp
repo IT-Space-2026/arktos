@@ -249,6 +249,7 @@ private slots:
     void navBarEditMode();
     void navBarOrderPersistence();
     void siteShieldButton();
+    void trustChromeRestore();
     void profileButton();
     void profileMenuEntries();
 };
@@ -8021,6 +8022,30 @@ void tst_BrowserMainWindow::navShieldPadlock()
         bar->findChild<SitePadlockButton *>();
     QVERIFY(padlock);
 
+    // TRUST24: the padlock is live chrome, not a stale slot — it is
+    // visible, bound to the active view, and sits as the field's
+    // leftmost left-side widget (the site icon follows it).
+    QVERIFY(padlock->isVisible());
+    QCOMPARE(padlock->webView(), first);
+    QVERIFY(!padlock->icon().isNull());
+    QVERIFY(!padlock->icon().pixmap(padlock->iconSize()).isNull());
+    LocationBarSiteIcon *siteIcon =
+        bar->findChild<LocationBarSiteIcon *>();
+    QVERIFY(siteIcon);
+    QVERIFY(bar->isAncestorOf(padlock));
+    QVERIFY(bar->isAncestorOf(siteIcon));
+    QVERIFY(padlock->mapTo(bar, QPoint(0, 0)).x()
+            <= siteIcon->mapTo(bar, QPoint(0, 0)).x());
+
+    // Widget geometry, not just the action list: the shield's rect
+    // ends at or before the field host's left edge — nothing it
+    // paints can land inside the url field.
+    const QRect shieldRect = shield->geometry();
+    const QRect hostRect = splitter->geometry();
+    QVERIFY(shieldRect.isValid() && hostRect.isValid());
+    QVERIFY(shieldRect.right() <= hostRect.left());
+    QVERIFY(!shieldRect.intersects(hostRect));
+
     // Tab switch rebinds the shared shield; the padlock belongs to the
     // tab's own bar, so each page keeps its own verdict.
     WebView *second = window->tabWidget()->makeNewTab(true);
@@ -8487,8 +8512,9 @@ void tst_BrowserMainWindow::navBarOrderPersistence()
 
     // Stale/partial stored orders degrade gracefully: unknown ids
     // (including ones only another window type carries, like
-    // torBadge) drop, and items the list doesn't name keep their
-    // stock sequence at the end — the bar can never corrupt.
+    // torBadge) drop, and items the list doesn't name resurface at
+    // their stock slots — the bar can never corrupt, and chrome the
+    // stored list predates lands where it belongs.
     {
         ProfileSettings settings;
         settings.setValue(key, QStringList{
@@ -8499,17 +8525,7 @@ void tst_BrowserMainWindow::navBarOrderPersistence()
     SubWindow *third = new SubWindow;
     third->show();
     QApplication::processEvents();
-    QCOMPARE(third->navBarOrder(),
-             (QStringList{QStringLiteral("back"),
-                          QStringLiteral("sidebar"),
-                          QStringLiteral("appMenu"),
-                          QStringLiteral("forward"),
-                          QStringLiteral("stopReload"),
-                          QStringLiteral("home"),
-                          QStringLiteral("reader"),
-                          QStringLiteral("siteShield"),
-                          QStringLiteral("locationBar"),
-                          QStringLiteral("profileButton")}));
+    QCOMPARE(third->navBarOrder(), stockOrder);
     closeWindow(third);
 
     // A corrupt non-list value falls back to stock entirely.
@@ -8545,8 +8561,6 @@ void tst_BrowserMainWindow::navBarOrderPersistence()
     QCOMPARE(torWindow->navBarOrder(),
              (QStringList{QStringLiteral("torBadge"),
                           QStringLiteral("appMenu"),
-                          QStringLiteral("sidebar"),
-                          QStringLiteral("back"),
                           QStringLiteral("forward"),
                           QStringLiteral("stopReload"),
                           QStringLiteral("home"),
@@ -8554,6 +8568,8 @@ void tst_BrowserMainWindow::navBarOrderPersistence()
                           QStringLiteral("torCircuit"),
                           QStringLiteral("siteShield"),
                           QStringLiteral("locationBar"),
+                          QStringLiteral("sidebar"),
+                          QStringLiteral("back"),
                           QStringLiteral("profileButton")}));
     QVERIFY(torBar->styleSheet().contains(QLatin1String("#4a3372")));
     closeWindow(torWindow);
@@ -8745,6 +8761,173 @@ void tst_BrowserMainWindow::siteShieldButton()
     }
 
     closeWindow(window);
+}
+
+// TRUST24: the regression walked in through chrome state, not through
+// the stock construction path — a nav-bar order serialized by a build
+// that never knew the 'siteShield' id must not park the shield at the
+// bar's tail (it belongs pinned left of the url field), and a
+// session-restored window must surface the padlock bound to the
+// restored tab's view.
+void tst_BrowserMainWindow::trustChromeRestore()
+{
+    const QLatin1String key("navbar/order");
+
+    // Stale order — the pre-TRUST14 layout's persisted list names
+    // every item the bar had then, so 'siteShield' is simply absent.
+    // A window built on it still lands the shield directly left of
+    // the field, not appended behind the tail items.
+    {
+        QSettings settings;
+        settings.setValue(key, QStringList{
+            QStringLiteral("appMenu"), QStringLiteral("back"),
+            QStringLiteral("forward"), QStringLiteral("stopReload"),
+            QStringLiteral("home"), QStringLiteral("reader"),
+            QStringLiteral("locationBar"), QStringLiteral("sidebar"),
+            QStringLiteral("profileButton")});
+        settings.sync();
+    }
+    SubWindow *stale = new SubWindow;
+    stale->resize(1200, 700);
+    stale->show();
+    QApplication::processEvents();
+    const QStringList staleOrder = stale->navBarOrder();
+    QCOMPARE(staleOrder.indexOf(QLatin1String("siteShield")),
+             staleOrder.indexOf(QLatin1String("locationBar")) - 1);
+    QToolBar *staleBar = stale->findChild<QToolBar *>(
+        QLatin1String("NavigationToolBar"));
+    QVERIFY(staleBar);
+    SiteShieldButton *staleShield =
+        staleBar->findChild<SiteShieldButton *>(
+            QLatin1String("navSiteShield"));
+    QVERIFY(staleShield);
+    QCOMPARE(staleShield->parentWidget(), staleBar);
+    QVERIFY(staleShield->isVisible());
+    QWidget *staleSplitter = stale->findChild<QWidget *>(
+        QLatin1String("navigationSplitter"));
+    QVERIFY(staleSplitter);
+    QVERIFY(staleShield->geometry().right()
+            <= staleSplitter->geometry().left());
+    QVERIFY(!staleShield->geometry().intersects(
+        staleSplitter->geometry()));
+    closeWindow(stale);
+    {
+        QSettings settings;
+        settings.remove(key);
+        settings.sync();
+    }
+
+    // Session round-trip — restoreState() re-lays the bar through
+    // QMainWindow::restoreState and rebuilds the tab strip; the
+    // restored window still carries exactly one bar-side shield and
+    // a padlock bound to the restored tab's own view.
+    SubWindow *source = new SubWindow;
+    source->resize(1200, 700);
+    source->show();
+    QVERIFY(QTest::qWaitForWindowExposed(source));
+    const QByteArray state = source->saveState();
+    closeWindow(source);
+
+    SubWindow *restored = new SubWindow;
+    restored->resize(1200, 700);
+    restored->restoreState(state);
+    restored->show();
+    QVERIFY(QTest::qWaitForWindowExposed(restored));
+    QApplication::processEvents();
+
+    QToolBar *restoredBar = restored->findChild<QToolBar *>(
+        QLatin1String("NavigationToolBar"));
+    QVERIFY(restoredBar);
+    const QList<SiteShieldButton *> shields =
+        restored->findChildren<SiteShieldButton *>();
+    QCOMPARE(shields.size(), 1);
+    SiteShieldButton *shield = shields.first();
+    QCOMPARE(shield->parentWidget(), restoredBar);
+    QVERIFY(shield->isVisible());
+    QCOMPARE(restored->navBarOrder().indexOf(QLatin1String("siteShield")),
+             restored->navBarOrder().indexOf(
+                 QLatin1String("locationBar")) - 1);
+
+    QWidget *splitter = restored->findChild<QWidget *>(
+        QLatin1String("navigationSplitter"));
+    QVERIFY(splitter);
+    QVERIFY(shield->geometry().right()
+            <= splitter->geometry().left());
+    QVERIFY(!shield->geometry().intersects(splitter->geometry()));
+
+    LocationBar *bar = qobject_cast<LocationBar *>(
+        restored->tabWidget()->currentLocationBar());
+    QVERIFY(bar);
+    QVERIFY(!bar->findChild<SiteShieldButton *>());
+    SitePadlockButton *padlock =
+        bar->findChild<SitePadlockButton *>();
+    QVERIFY(padlock);
+    QVERIFY(padlock->isVisible());
+    QCOMPARE(padlock->webView(), restored->currentTab());
+    LocationBarSiteIcon *siteIcon =
+        bar->findChild<LocationBarSiteIcon *>();
+    QVERIFY(siteIcon);
+    QVERIFY(padlock->mapTo(bar, QPoint(0, 0)).x()
+            <= siteIcon->mapTo(bar, QPoint(0, 0)).x());
+
+    // Loaded-page leg — the padlock tracks the committed url's
+    // verdict (plaintext fixture -> unlocked amber; the https states
+    // are pinned by tst_sitepanel's decision-table legs).  The pixel
+    // probe proves the slot paints an actual glyph, not a blanked
+    // unbound button.
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    const QByteArray body = "<html><body>trust fixture</body></html>";
+    QObject::connect(&server, &QTcpServer::newConnection, &server,
+                     [&server, &body]() {
+        QTcpSocket *socket = server.nextPendingConnection();
+        socket->setParent(&server);
+        socket->readAll();
+        socket->write(QByteArray("HTTP/1.1 200 OK\r\n"
+                                 "Content-Type: text/html\r\n"
+                                 "Content-Length: ")
+                      + QByteArray::number(body.size())
+                      + "\r\n\r\n" + body);
+        socket->disconnectFromHost();
+    });
+    restored->currentTab()->loadUrl(
+        QUrl(QStringLiteral("http://127.0.0.1:%1/page")
+                 .arg(server.serverPort())));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        int(padlock->state())
+            == int(SitePadlockButton::State::UnlockedYellow),
+        20000);
+    QVERIFY(padlock->isVisible());
+    QCOMPARE(padlock->webView(), restored->currentTab());
+
+    // https verdict on the same bound button — an https url's state
+    // is a locked tier regardless of fixture transport.
+    QCOMPARE(int(SitePadlockButton::stateFor(
+                 QUrl(QStringLiteral("https://a.example/")))),
+             int(SitePadlockButton::State::LockedYellow));
+
+    // Pixel probe of the field's left slot — the padlock's glyph
+    // strokes stand out from the field's base color.
+    const QImage fieldGrab = bar->grab().toImage();
+    const QPoint slotTopLeft = padlock->mapTo(bar, QPoint(0, 0));
+    const QRect slotRect(slotTopLeft, padlock->size());
+    const QColor base =
+        bar->palette().color(QPalette::Base);
+    int inkPixels = 0;
+    for (int x = slotRect.left(); x <= slotRect.right(); ++x) {
+        for (int y = slotRect.top(); y <= slotRect.bottom(); ++y) {
+            if (!fieldGrab.valid(x, y))
+                continue;
+            const QColor pixel = fieldGrab.pixelColor(x, y);
+            if (qAbs(pixel.red() - base.red())
+                    + qAbs(pixel.green() - base.green())
+                    + qAbs(pixel.blue() - base.blue()) > 60)
+                ++inkPixels;
+        }
+    }
+    QVERIFY2(inkPixels > 4,
+             "padlock slot painted no glyph — unbound or blanked");
+    closeWindow(restored);
 }
 
 // PROF01: the profile button is the rightmost nav-bar widget — its

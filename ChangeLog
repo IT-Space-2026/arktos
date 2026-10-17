@@ -3307,3 +3307,18 @@ Tor reader-mode accent made legible on the violet bar (THEM07):
     the Tor badge pill, the sidebar rail selection — keep the deeper
     raised violet where the contrast holds; normal windows are
     unchanged.
+Navigation-bar trust chrome restored to contract (TRUST24):
+    A navigation-bar order serialized by a build that predates the
+    site shield (or that predates any later chrome item) used to park
+    every item it didn't name at the bar's tail — the shield could end
+    up pasted at the far right of the row instead of holding its slot
+    directly left of the url field, and once any later drag re-wrote
+    the order the misplacement became permanent. Stored orders now
+    keep each unnamed item at its stock slot — the shield resurfaces
+    immediately left of the address bar on every window type — while
+    the arrangement the list actually names is preserved verbatim.
+    The contract is pinned by new test legs: exactly one shield, a
+    toolbar child never inside the field, physically left of the
+    location-bar host with no overlap, and a per-tab padlock that is
+    present, visible, bound to the tab's view and painting a real
+    verdict glyph through session restore and a live page load.

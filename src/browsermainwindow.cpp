@@ -2690,10 +2690,13 @@ QStringList BrowserMainWindow::navBarOrder() const
 
 // Rebuilds the bar to match `order`: each stored id resolves to a bar
 // item; ids this window doesn't carry (a normal window meeting a tor
-// badge, or chrome removed since the write) drop cleanly, and items
-// the list doesn't name keep their stock sequence at the end — a
-// stale or partial order can never break the bar.  A resolved order
-// identical to the live one early-outs, so resync paths stay free.
+// badge, or chrome removed since the write) drop cleanly.  Items the
+// list doesn't name keep their stock slot — each lands ahead of the
+// nearest already-placed default-order successor, so chrome added
+// after the order was written (a pre-TRUST14 list never knew
+// 'siteShield') resurfaces where it belongs instead of drifting to
+// the bar's tail past the url field.  A resolved order identical to
+// the live one early-outs, so resync paths stay free.
 void BrowserMainWindow::applyNavBarOrder(const QStringList &order)
 {
     const QList<QAction *> current = m_navigationBar->actions();
@@ -2711,8 +2714,24 @@ void BrowserMainWindow::applyNavBarOrder(const QStringList &order)
             arranged.append(action);
     }
     for (QAction *action : current) {
-        if (!arranged.contains(action))
-            arranged.append(action);
+        if (arranged.contains(action))
+            continue;
+        const QString id =
+            action->property(kNavBarItemIdProperty).toString();
+        const int defIndex = m_navBarDefaultOrder.indexOf(id);
+        int insertAt = arranged.size();
+        for (int i = defIndex + 1;
+             defIndex >= 0 && i < m_navBarDefaultOrder.size(); ++i) {
+            QAction *successor =
+                byId.value(m_navBarDefaultOrder.at(i));
+            const int pos = successor ? arranged.indexOf(successor)
+                                      : -1;
+            if (pos >= 0) {
+                insertAt = pos;
+                break;
+            }
+        }
+        arranged.insert(insertAt, action);
     }
     if (arranged == current)
         return;
