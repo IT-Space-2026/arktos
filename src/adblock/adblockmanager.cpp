@@ -423,6 +423,34 @@ AdBlockSubscription *AdBlockManager::subscribeRemoteList(
     return subscription;
 }
 
+void AdBlockManager::promptSubscribe(const QUrl &subscribeUrl)
+{
+    AdBlockSubscription *subscription = new AdBlockSubscription(subscribeUrl, this);
+
+    // The subscription title arrives inside the abp:subscribe URL —
+    // page-controlled, so render it literally.
+    QMessageBox box(QMessageBox::Question, tr("Subscribe?"),
+            tr("Subscribe to this AdBlock subscription?\n%1").arg(subscription->title()),
+            QMessageBox::Yes | QMessageBox::No);
+    box.setTextFormat(Qt::PlainText);
+    box.setDefaultButton(QMessageBox::No);
+    const QMessageBox::StandardButton result =
+        static_cast<QMessageBox::StandardButton>(box.exec());
+    if (result == QMessageBox::No) {
+        delete subscription;
+    } else {
+        // TELEM01: clicking Subscribe is consent to fetch the list —
+        // the constructor's automatic update was consent-gated, so
+        // kick the download here.
+        setRemoteListsConsent(m_profileId, RemoteListsGranted);
+        addSubscription(subscription);
+        subscription->updateNow();
+        AdBlockDialog *dialog = showDialog();
+        dialog->selectSubscription(subscription);
+        dialog->setFocus();
+    }
+}
+
 void AdBlockManager::save()
 {
 #if defined(ADBLOCKMANAGER_DEBUG)

@@ -131,6 +131,14 @@ void tst_AdBlockSubscription::adblocksubscription_data()
                             << QUrl("http://easylist.adblockplus.org/easylist.txt")
                             << false
                             << QDateTime(QDate(2009, 1, 16), QTime(12, 10, 55));
+
+    // ADB04: the host form abp://subscribe?... is emitted by filter
+    // sites too — it must parse identically.
+    QTest::newRow("host-form") << QUrl::fromEncoded("abp://subscribe?location=http://easylist.adblockplus.org/easylist.txt&title=EasyList")
+                            << "EasyList"
+                            << QUrl("http://easylist.adblockplus.org/easylist.txt")
+                            << true
+                            << QDateTime();
 }
 
 void tst_AdBlockSubscription::adblocksubscription()

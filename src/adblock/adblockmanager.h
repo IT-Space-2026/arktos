@@ -114,6 +114,13 @@ public:
     AdBlockSubscription *subscribeRemoteList(const QUrl &location,
                                              const QString &title);
 
+    // ADB04: the shared subscribe prompt — parses an abp:subscribe
+    // URL, asks the user, and on Yes grants remote-list consent and
+    // fetches.  Called by the abp: scheme handler and by the
+    // subscribe.adblockplus.org https interception in WebPage so both
+    // entry points behave identically.  Must run on the GUI thread.
+    void promptSubscribe(const QUrl &subscribeUrl);
+
     AdBlockNetwork *network();
     AdBlockPage *page();
     AdBlockSubscription *customRules();

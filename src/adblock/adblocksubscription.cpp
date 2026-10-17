@@ -81,7 +81,12 @@ void AdBlockSubscription::parseUrl(const QUrl &url)
 #endif
     if (url.scheme() != QLatin1String("abp"))
         return;
-    if (url.path() != QLatin1String("subscribe"))
+    // abp:subscribe?... (path) or abp://subscribe?... (host) — both
+    // forms are emitted by filter-list sites, and a path-syntax
+    // scheme registration can deliver the host form as "//subscribe".
+    if (url.path() != QLatin1String("subscribe")
+        && url.host() != QLatin1String("subscribe")
+        && url.path() != QLatin1String("//subscribe"))
         return;
 
     // QUrl::PrettyDecoded keeps '+' literal like QUrl::fromPercentEncoding did

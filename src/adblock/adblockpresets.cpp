@@ -123,6 +123,90 @@ QList<AdBlockListPreset> all()
         QLatin1String("EasyList Lithuania"),
         QLatin1String("https://raw.githubusercontent.com/EasyList-Lithuania/easylist_lithuania/master/easylistlithuania.txt"),
         tr("Lithuanian site coverage.") });
+    presets.append({ regional,
+        QLatin1String("hufilter"),
+        QLatin1String("https://hufilter.github.io/hufilter/hufilter.txt"),
+        tr("Hungarian site coverage — the community hufilter project, updated daily.") });
+    presets.append({ regional,
+        QLatin1String("EasyList Spanish"),
+        QLatin1String("https://easylist-downloads.adblockplus.org/easylistspanish.txt"),
+        tr("Spanish-language site coverage.") });
+    presets.append({ regional,
+        QLatin1String("AdGuard Spanish/Portuguese"),
+        QLatin1String("https://filters.adtidy.org/extension/ublock/filters/9.txt"),
+        tr("Spanish and Portuguese (incl. Brazilian) site coverage.") });
+    presets.append({ regional,
+        QLatin1String("EasyList Italy"),
+        QLatin1String("https://easylist-downloads.adblockplus.org/easylistitaly.txt"),
+        tr("Italian-language site coverage.") });
+    presets.append({ regional,
+        QLatin1String("EasyList China"),
+        QLatin1String("https://easylist-downloads.adblockplus.org/easylistchina.txt"),
+        tr("Chinese-language site coverage.") });
+    presets.append({ regional,
+        QLatin1String("IndianList"),
+        QLatin1String("https://easylist-downloads.adblockplus.org/indianlist.txt"),
+        tr("Indian-language site coverage.") });
+    presets.append({ regional,
+        QLatin1String("EasyDutch"),
+        QLatin1String("https://raw.githubusercontent.com/EasyDutch-uBO/easydutch/main/EasyDutch.txt"),
+        tr("Dutch-language site coverage.") });
+    presets.append({ regional,
+        QLatin1String("EasyList Hebrew"),
+        QLatin1String("https://raw.githubusercontent.com/easylist/EasyListHebrew/master/EasyListHebrew.txt"),
+        tr("Hebrew-language site coverage.") });
+    presets.append({ regional,
+        QLatin1String("Official Polish Filters"),
+        QLatin1String("https://raw.githubusercontent.com/MajkiIT/polish-ads-filter/master/polish-adblock-filters/adblock.txt"),
+        tr("Polish-language site coverage.") });
+    presets.append({ regional,
+        QLatin1String("Adblock Bulgarian"),
+        QLatin1String("https://raw.githubusercontent.com/RealEnder/adblockbg/master/adblockbg.txt"),
+        tr("Bulgarian-language site coverage.") });
+    presets.append({ regional,
+        QLatin1String("ABPVN"),
+        QLatin1String("https://raw.githubusercontent.com/abpvn/abpvn/master/filter/abpvn.txt"),
+        tr("Vietnamese-language site coverage.") });
+    presets.append({ regional,
+        QLatin1String("KO Classic"),
+        QLatin1String("https://filters.adtidy.org/extension/ublock/filters/227.txt"),
+        tr("Korean-language site coverage.") });
+    presets.append({ regional,
+        QLatin1String("AdGuard Japanese"),
+        QLatin1String("https://filters.adtidy.org/extension/ublock/filters/7.txt"),
+        tr("Japanese-language site coverage.") });
+    presets.append({ regional,
+        QLatin1String("AdGuard Turkish"),
+        QLatin1String("https://filters.adtidy.org/extension/ublock/filters/13.txt"),
+        tr("Turkish-language site coverage.") });
+    presets.append({ regional,
+        QLatin1String("Greek Adblock Filter"),
+        QLatin1String("https://raw.githubusercontent.com/kargig/greek-adblockplus-filter/master/void-gr-filters.txt"),
+        tr("Greek-language site coverage.") });
+    presets.append({ regional,
+        QLatin1String("Estonian List"),
+        QLatin1String("https://adblock.ee/list.php"),
+        tr("Estonian-language site coverage.") });
+    presets.append({ regional,
+        QLatin1String("Latvian List"),
+        QLatin1String("https://raw.githubusercontent.com/Latvian-List/adblock-latvian/master/lists/latvian-list.txt"),
+        tr("Latvian-language site coverage.") });
+    presets.append({ regional,
+        QLatin1String("Nordic Filters"),
+        QLatin1String("https://raw.githubusercontent.com/DandelionSprout/adfilt/master/NorwegianList.txt"),
+        tr("Norwegian + Nordic site coverage (DandelionSprout).") });
+    presets.append({ regional,
+        QLatin1String("Icelandic ABP List"),
+        QLatin1String("https://adblock.gardar.net/is.abp.txt"),
+        tr("Icelandic-language site coverage.") });
+    presets.append({ regional,
+        QLatin1String("Finnish List"),
+        QLatin1String("https://raw.githubusercontent.com/finnish-easylist-addition/finnish-easylist-addition/master/Finland_adb.txt"),
+        tr("Finnish-language site coverage.") });
+    presets.append({ regional,
+        QLatin1String("ABPindo"),
+        QLatin1String("https://raw.githubusercontent.com/ABPindo/indonesianadblockrules/master/subscriptions/abpindo.txt"),
+        tr("Indonesian-language site coverage.") });
 
     return presets;
 }

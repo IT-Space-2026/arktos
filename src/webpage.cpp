@@ -744,6 +744,33 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
         return false;
     }
 
+    // ADB04: the https redirector form of the subscribe link —
+    // filter sites emit https://subscribe.adblockplus.org/?location=…
+    // which would just open the helper page.  Offer the same
+    // abp: prompt instead, through the page's own persona manager.
+    if (isMainFrame
+        && scheme == QLatin1String("https")
+        && url.host() == QLatin1String("subscribe.adblockplus.org")) {
+        const QUrlQuery sourceQuery(url);
+        const QString location =
+            sourceQuery.queryItemValue(QLatin1String("location"));
+        if (!location.isEmpty()) {
+            QUrl sub;
+            sub.setScheme(QLatin1String("abp"));
+            sub.setPath(QLatin1String("subscribe"));
+            QUrlQuery subQuery;
+            subQuery.addQueryItem(QLatin1String("location"), location);
+            if (sourceQuery.hasQueryItem(QLatin1String("title")))
+                subQuery.addQueryItem(QLatin1String("title"),
+                    sourceQuery.queryItemValue(QLatin1String("title")));
+            sub.setQuery(subQuery);
+            AdBlockManager::instanceFor(
+                BrowserProfile::profileIdFor(profile()))
+                    ->promptSubscribe(sub);
+        }
+        return false;
+    }
+
     if (!scheme.isEmpty() && !isBrowserHandledScheme(scheme)) {
         // Subframe requests are dropped without prompting — an iframe
         // must not raise dialogs on the user's behalf.

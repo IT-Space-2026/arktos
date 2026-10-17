@@ -56,6 +56,7 @@ private slots:
     void aboutToShowActionMenu();
     void updateSubscription();
     void browseSubscriptions();
+    void addSubscriptionByUrl();
     void showPresets();
     void removeSubscription();
     void repopulateSubscriptions();
