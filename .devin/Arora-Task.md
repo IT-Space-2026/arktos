@@ -346,6 +346,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | AUDIT03 | Audit slice B: clang-tidy pass + STAT02 finding triage/fixes + dead-code sweep — details below | done | 1 | needs:task:AUDIT02. All 22 STAT02 findings triaged (QPointer/Qt-ownership FPs + 1 real bound); clang-tidy 22.1.8 over 331 TUs (773 in-tree → 3 real fixes: update-manifest 1MiB cap+test, socket-pump dead-fd guard, volatile zeroization cast); dead-code sweep removed 4 members. Triage doc: .devin/STAT02-triage.md — check-warnings 0, make check PASS |
 | AUDIT04 | Audit slice C: security delta re-check (UPD01/VSEC02/NSIS) + consolidated report — details below | done | 1 | needs:task:AUDIT03. 4 real fixes: asset URLs pinned to github/https-or-same-host surface, tor-mode sinks refuse (not just the check), release title rendered plaintext, planted-symlink engine/cache-hold can no longer inject a foreign store on unseal (+check→rename race re-verify, residue-erase link guard); NSIS SHCTX verified symmetric (no wrong-hive stranding). Consolidated report .devin/security/AUDIT02-report.md — tst_updatechecker 15/15, tst_profilee2e 22/22, make check PASS |
 
+| BRAND01 | Full rebrand Arora → Arktos (arktos-browser.com): user-visible strings, version 1.0, URLs, credits, start pages, packaging, data-dir migration — details below | pending | 0 | user directive: name is arktos-browser.com; Arora was the base, product is Arktos; first version 1.0 not 0.12; credits = only Copyright © 2026-2027 Janos Szenfner + repo url; check everywhere |
 
 ## Task details
 
@@ -2166,3 +2167,27 @@ Verify: check-warnings stays 0 after dead-code removal; make check PASS; triage 
 Slice C — security delta re-check (post-VSEC01/VSEC02 surface only): (a) UPD01 UpdateChecker — first user-facing network feature: JSON parse size caps; the download button must not be invocable from a tor window (check-refusal alone isn't enough); a malicious release payload must not inject javascript:/file: links or arbitrary non-release URLs into openUrl/download (asset URLs constrained to the release's own asset list / github domain); proxy/policy inheritance on the asset fetch. (b) VSEC02 engine-hold: no TOCTOU between hold-check and restore; engine-hold can't point outside profiles/<id>; failed-retry retention can't leak. (c) NSIS dual-mode: all-users vs just-me context can't strand a partial install (SHCTX uninstall keys under the wrong hive). (d) Any other new network/parsing surface added since VSEC01. Write `.devin/security/AUDIT02-report.md` consolidating slices A-C: findings, fixes, suppressions, honest residual risks.
 
 Verify: each delta finding fixed + regression leg or documented-with-reason; make check PASS.
+
+### BRAND01
+
+Full rebrand Arora → Arktos. The new product name is **Arktos**, site **https://arktos-browser.com**, repo **github.com/janos-szenfner/arktos** (user will rename the GitHub repo itself — code must only update URLs). First release version is **1.0** (not 0.12). "Check everywhere" — be exhaustive; a leftover "Arora" in any user-visible surface is a defect.
+
+**User-visible strings** — every "Arora" a user can see becomes "Arktos": window titles, About dialog (name + version line + copyright), menus (About Arktos etc.), start pages, error pages (src/htmls/*), error text (src/webpage.cpp:1392 arora-browser.org example), dialogs, desktop file Name/Comment/Keywords, metainfo/appdata (name, summary, id — pick a valid app-id on the new domain, e.g. com.arktos_browser.Arktos; update flatpak manifest + sources accordingly), Info.plist CFBundleName/CFBundleExecutable/CFBundleIdentifier, NSIS PRODUCT_NAME + install dir default (Program Files\Arktos, %LOCALAPPDATA%\Programs\Arktos), deb package name + description (debian/control, changelog, rules paths), rpm Name/Summary/URL, icon file names where referenced by packaging.
+
+**Binary & build** — rename TARGET/output to `arktos`, qrc file names and the icon lookups (grep for "arora" in qrc files + icon name strings like ":128x128/arora.png", desktop Icon= key, freedesktop icon-theme lookup names), SingleApplication key, D-Bus service/suffix names, organizationDomain/orgName. Update every test/smoke reference that greps for "arora" or the binary name (autotests, smoke legs in main.cpp like arora-browser-smoke fixture names can stay internal but user-facing names change — judgement call, prefer renaming consistently).
+
+**Version 1.0** — every version site becomes 1.0: debian/changelog (new 1.0 entry), rpm Version:, metainfo release tag, NSIS PRODUCT_VERSION default, .devin/pkg-*.sh defaults, QCoreApplication::setApplicationVersion sites, README mentions. UpdateChecker comparisons keep working.
+
+**URLs** — arora-browser.org → arktos-browser.com everywhere (aboutdialog.ui link, orgDomain, comments); github.com/janos-szenfner/arora → github.com/janos-szenfner/arktos in updatechecker.cpp endpoint + tests, README, debian/control Homepage, rpm URL/Source0, flatpak manifest source urls, NSIS links, pkg scripts.
+
+**Start pages** — src/htmls/startpage*.html: change the product name shown to "Arktos" and link to https://arktos-browser.com.
+
+**Credits** — user-facing credits (About dialog text, README credits/license section) show ONLY: "Copyright © 2026-2027 Janos Szenfner" + https://github.com/janos-szenfner/arktos. Do NOT strip GPL license headers from source files — upstream copyright in file headers must stay (GPL requirement); only the user-facing credits sections change. README intro states: Arktos is based on the Arora browser project.
+
+**Data-dir migration** — orgName/appName changes move QSettings + profile roots; implement first-run migration: if the old arora data dir exists and the arktos one doesn't, migrate (rename or copy) it — never orphan user profiles/vaults/settings. Verify vault unseal + profiles work after migration; a profilee2e leg covering the migration path.
+
+**README/ChangeLog** — README: title Arktos, "based on Arora" lineage line, new URLs, credits per above. ChangeLog: 1.0 entry noting the rebrand.
+
+**Also**: watchdog/taskloop units reference repo paths only — fine. .desktop file rename → update any install rules referencing it. The repo directory itself + GitHub repo rename are manual user steps — list them in the completion note.
+
+Verify: `grep -ri "arora" src/ debian/ rpm/ flatpak/ BuildProcess/ README.md` returns only justified leftovers (file headers, history refs, internal non-visible ids documented); build rc=0; make check PASS; app launches as Arktos 1.0.
