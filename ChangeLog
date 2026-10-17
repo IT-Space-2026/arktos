@@ -3027,3 +3027,19 @@ Navigation-bar trust chrome restored to contract (TRUST24):
     location-bar host with no overlap, and a per-tab padlock that is
     present, visible, bound to the tab's view and painting a real
     verdict glyph through session restore and a live page load.
+BiDi Dev Tools Elements tab reads like Chrome DevTools now (DEVT22):
+    The Elements tab's pieces all existed but didn't look or behave
+    like Chrome's: the inspect/reload/search buttons floated in an
+    unbounded strip, the DOM tree showed flat selector text, the find
+    bar had no results list, and the box model rendered as plain text
+    rows. The toolbar is now a compact bordered bar docked at the top
+    with a live element count on its right edge. Tree rows paint real
+    markup — <tag attr="value"> lines with the tag in the accent
+    color, attribute names muted, and quoted values link-colored —
+    while the breadcrumb trail and the live-refresh matching keep the
+    compact tag#id.class form internally. The styles rail's Box model
+    section is a real nested-boxes diagram (margin/border/padding/
+    content with the DOM.getBoxModel edge numbers) instead of text
+    rows, and the find dock lists every match's markup line —
+    clicking a hit selects the node in the tree just like stepping
+    through matches does.

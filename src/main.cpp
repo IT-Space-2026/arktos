@@ -2634,10 +2634,20 @@ static int bidiElementsSmoke(BrowserApplication &application,
         if (tree->topLevelItemCount() < 1)
             return;
         QTreeWidgetItem *root = tree->topLevelItem(0);
+        // DEVT22: tree rows paint Chrome's <tag attr="v"> markup —
+        // prefix-match on the "<tag" open or a substring probe.
         const auto childByLabel =
             [](QTreeWidgetItem *item, const QString &prefix) {
                 for (int i = 0; i < item->childCount(); ++i) {
                     if (item->child(i)->text(0).startsWith(prefix))
+                        return item->child(i);
+                }
+                return static_cast<QTreeWidgetItem *>(nullptr);
+            };
+        const auto childContaining =
+            [](QTreeWidgetItem *item, const QString &needle) {
+                for (int i = 0; i < item->childCount(); ++i) {
+                    if (item->child(i)->text(0).contains(needle))
                         return item->child(i);
                 }
                 return static_cast<QTreeWidgetItem *>(nullptr);
@@ -2652,7 +2662,7 @@ static int bidiElementsSmoke(BrowserApplication &application,
             return nullptr;
         };
         QTreeWidgetItem *body = childByLabel(
-            root, QStringLiteral("body"));
+            root, QStringLiteral("<body"));
 
         switch (*stage) {
         case 0: {
@@ -2675,7 +2685,7 @@ static int bidiElementsSmoke(BrowserApplication &application,
             if (!body)
                 return;
             QTreeWidgetItem *para = childByLabel(
-                body, QStringLiteral("p"));
+                body, QStringLiteral("<p"));
             if (!para || para->data(0, Qt::UserRole).isNull())
                 return;
             tree->setCurrentItem(para);
@@ -2683,14 +2693,19 @@ static int bidiElementsSmoke(BrowserApplication &application,
             return;
         }
         case 2: {
-            // The styles pane must fill all three groups from live
-            // CDP answers — real computed values and box numbers.
+            // The styles pane must fill its groups from live CDP
+            // answers — real computed values plus the DEVT22
+            // box-model diagram holding real numbers.
             QTreeWidgetItem *computed =
                 stylesGroup(QStringLiteral("Computed styles"));
             QTreeWidgetItem *box =
                 stylesGroup(QStringLiteral("Box model"));
-            if (!computed || !box || computed->childCount() < 1
-                || box->childCount() < 1)
+            QWidget *boxView = panel->findChild<QWidget *>(
+                QStringLiteral("bidiElementsBoxModel"));
+            if (!computed || !box || !boxView
+                || computed->childCount() < 1
+                || boxView->property("state").toString()
+                       != QLatin1String("model"))
                 return;
             // Mutate the page's DOM — the MutationObserver should
             // report it and grow the tree without a manual refresh.
@@ -2706,7 +2721,7 @@ static int bidiElementsSmoke(BrowserApplication &application,
             // wait for the new <p id=mut> row to land under body.
             if (!body)
                 return;
-            if (!childByLabel(body, QStringLiteral("p#mut")))
+            if (!childContaining(body, QStringLiteral("id=\"mut\"")))
                 return;
             find->setText(QStringLiteral("#mut"));
             *stage = 4;
