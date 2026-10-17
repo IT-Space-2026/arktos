@@ -205,6 +205,7 @@ This file is the task queue for the Devin CLI task loop
 | DEVT23 | BiDi Sources panel UX is wrong vs Chrome devtools — domain-grouped navigator, real source view + debugger side rail — details below | done | 0 | Sources reshaped to Chrome 3-pane: Page>frame>origin>path-folders (single-child chains folded) navigator, center source view, right debugger rail (controls row + collapsible Breakpoints/Call Stack live, Watch/Scope/XHR/DOM/listeners honest-disabled); verified: new bidiSourcesUx leg + repinned tree legs, tst_devtools 20/20 +1 skip, --bidi-sources-smoke PASS, make check rc=1 from pre-existing torStartPage flake (89 programs otherwise 0 failed) offscreen |
 | ICONS10 | App/logo button in nav bar ~15% bigger with correct aspect ratio — details below | done | 0 | shared navAccentSize = bar iconSize x1.84 (33px at 18px) for appMenu logo + profile avatar (PROF01 face-match kept); letterbox engine keeps aspect at any cell shape; bar row now face+margins driven (38px); new pixel-probe leg pins fill+aspect; tst_browsermainwindow 77/77, make check rc=0 (check-warnings PASS, 86 programs 0 failed) offscreen |
 | TABGRP03 | Vivaldi-style tab grouping UX — group header/workspace affordances like screenshot 4 — details below | done | 0 | labeled group-header segment on run leaders (name or "N tabs" fallback; horizontal leaders widen by the reserve, vertical rows use the reserved top band; rename live via tabGroupsChanged) + sidebar Workspaces section listing groups/members incl. hidden titles — verified: new groupHeaderSegments + groupWorkspaceSignals legs, tst_tabbar 31/31, tst_tabwidget 36/36, tst_browsermainwindow 77/77, make check rc=0 (89 programs 0 failed) offscreen --disable-gpu |
+| TRUST25 | Servo tabs: shield disabled + padlock invisible — engine chrome unbound — details below | pending | 0 | user report: on a servo tab the nav shield shows "not available" and the field padlock is gone; both bind to WebView* which is null on EngineTab tabs — bind to EngineTab or a shared adapter |
 
 
 ## Task details
@@ -1335,3 +1336,60 @@ sidebarPanelOrder repinned for five panels. Verified: tst_tabbar
 31/31, tst_tabwidget 36/36, tst_browsermainwindow 77/77, make check
 rc=0 (89 programs 0 failed, check-warnings PASS) offscreen
 --disable-gpu.
+
+### TRUST25
+
+User report (master, post-rebrand build): on a Servo tab the nav-bar
+site shield is disabled ("Site privacy — not available on this tab")
+and the padlock is not viewable at all. Root cause found in the
+contract: `BrowserMainWindow::currentTab()` returns
+`TabWidget::currentWebView()`, which is `nullptr` when the active tab
+is an `EngineTab` (servo) — so `m_siteShield->setWebView(nullptr)`
+disables the shield, and the per-tab `LocationBar` never gains a
+bound `SitePadlockButton` because servo tabs park a plain read-only
+`QLineEdit` in `m_locationBars` (PREFS01 widget-tab path), which
+carries no LeftSide widgets at all.
+
+Scope: make the trust chrome work on servo tabs.
+
+(a) Shield (`SiteShieldButton`, src/locationbar/siteshield.*): today
+it consumes `WebView*` — url(), urlChanged/loadFinished signals,
+page() for the adblock persona lookup, isJavaScriptBlocked(),
+blockedSinceLoad via the panel. Introduce the narrowest engine-
+agnostic surface it actually needs (url + url/load signals + an
+optional per-tab capability block), so `setWebView` becomes
+`setTab`-style binding that accepts either a WebView OR an EngineTab.
+On servo: show the real shield state — enabled, adblock whitelist
+lookup against the servo tab's profile/persona (check how servo tabs
+get their profile — do NOT fall back to the ambient singleton
+manager if the tab has its own), trust badge via the same
+trustLevelFor(host, isHttps) cache (it is host+scheme keyed, engine
+independent — reuse it), tooltip honest about what applies. The
+blocked-count badge and isJavaScriptBlocked are webengine-only —
+on servo tabs render them absent, not fake-zero, and keep the panel
+entry points honest-disabled if they can't answer for servo.
+
+(b) Padlock (`SitePadlockButton`, src/locationbar/sitepadlock.*): on
+servo tabs the location bar is a plain QLineEdit — give servo tab
+bars the same LeftSide padlock contract webengine bars have (the
+LocationBar widget is already a shared component — check whether
+servo tabs get a full LocationBar or the plain QLineEdit; if the
+latter, either host the real LocationBar or add the padlock widget to
+whatever bar servo tabs actually show). The padlock's state machine
+needs the same engine-agnostic binding as (a) — url + load signals;
+verdict inputs (trustLevelFor, TlsVerifier) are engine-independent.
+On servo the certificate probe leg may not exist — show the honest
+verdict from the same cache; if TLS probe data genuinely can't exist
+for servo, the padlock still shows scheme/host trust, not a blank.
+
+(c) Rebinding: `BrowserMainWindow` calls `setWebView(currentTab())`
+on tab switch (line ~2295 area) — that call must route to the new
+binding for both tab kinds, plus wherever the padlock gets bound per
+tab (location bar construction / tab switch).
+
+Verify: an offscreen servo-tab leg — shield enabled + real tooltip on
+a loaded servo tab, padlock visible in the field's left slot showing
+the verdict for the servo tab's URL (fixture pages exist for servo
+loads; check the servo autotest/smoke infra), both revert correctly
+when switching back to a webengine tab; new legs in
+tst_BrowserMainWindow; make check PASS.
