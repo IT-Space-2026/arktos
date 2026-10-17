@@ -86,6 +86,7 @@ private slots:
     void bidiPanel();
     void bidiElementsRefresh();
     void bidiElementsLiveTree();
+    void bidiElementsParity();
     void bidiContextSelector();
     void bidiContextRematch();
     void bidiConsoleParity();
@@ -1090,6 +1091,259 @@ void tst_DevTools::bidiElementsLiveTree()
         labels << rootItem->child(i)->text(0);
     QVERIFY(labels.contains(QLatin1String("head"))
             || labels.contains(QLatin1String("body")));
+}
+
+// DEVT19 — Elements parity: the page-side MutationObserver marker
+// triggers a debounced live re-fetch that keeps expanded branches,
+// the find bar's result paths drive selection, and the styles pane
+// groups Attributes / Computed styles / Box model from real CDP
+// answers with DOM.setAttributeValue-backed editing and the
+// honest page-side fallbacks.  CdpKind / tag numbers mirror
+// bidipanel.cpp (file-local there).
+void tst_DevTools::bidiElementsParity()
+{
+    const QByteArray domAnswer = QByteArray(
+        "{\"result\":{\"type\":\"success\",\"result\":{\"type\":\"string\""
+        ",\"value\":\"[{\\\"label\\\":\\\"div\\\",\\\"children\\\":1}"
+        ",{\\\"label\\\":\\\"span\\\",\\\"children\\\":0}]\"}}}");
+
+    BidiPanel panel;
+    panel.onConnectionChanged(BidiClient::Connected);
+    panel.onResponse(7777, QByteArray(
+        "{\"result\":{\"contexts\":["
+        "{\"context\":\"ctx1\",\"url\":\"http://a/\"}]}}"));
+    QCOMPARE(panel.currentContext(), QStringLiteral("ctx1"));
+    QTreeWidgetItem *root = panel.m_domTree->topLevelItem(0);
+    QVERIFY(root);
+
+    // Materialize: [div(children:1), span] — div gets its own child.
+    quint64 id = panel.testDomExpand(root);
+    panel.onResponse(id, domAnswer);
+    QCOMPARE(root->childCount(), 2);
+    QCOMPARE(root->child(0)->data(0, Qt::UserRole).toString(),
+             QStringLiteral("0"));
+    QCOMPARE(root->child(1)->data(0, Qt::UserRole).toString(),
+             QStringLiteral("1"));
+    id = panel.testDomExpand(root->child(0));
+    panel.onResponse(id, QByteArray(
+        "{\"result\":{\"type\":\"success\",\"result\":{\"type\":\"string\""
+        ",\"value\":\"[{\\\"label\\\":\\\"em\\\",\\\"children\\\":0}]\"}}}"));
+    QCOMPARE(root->child(0)->child(0)->data(0, Qt::UserRole).toString(),
+             QStringLiteral("0/0"));
+
+    // --- live tree: the mutation marker is control traffic — it
+    // never reaches the console, and after the debounce a live
+    // refresh re-pulls the tree.  Expanded branches are snapshotted
+    // by label and re-opened by the refill.
+    const int consoleLines = panel.m_console->topLevelItemCount();
+    root->child(0)->setExpanded(true);
+    panel.onEvent(QByteArray(
+        "{\"method\":\"log.entryAdded\",\"params\":{\"level\":\"log\""
+        ",\"text\":\"__arora_dom_mutated\"}}"));
+    QCOMPARE(panel.m_console->topLevelItemCount(), consoleLines);
+    QTRY_VERIFY_WITH_TIMEOUT(panel.testDomLiveRefreshCount() >= 1,
+                             3000);
+    // The refresh's own fetch answers with a grown tree — the new
+    // sibling lands and the previously-expanded div re-opens.
+    id = panel.testDomExpand(root);
+    panel.onResponse(id, QByteArray(
+        "{\"result\":{\"type\":\"success\",\"result\":{\"type\":\"string\""
+        ",\"value\":\"[{\\\"label\\\":\\\"div\\\",\\\"children\\\":1}"
+        ",{\\\"label\\\":\\\"span\\\",\\\"children\\\":0}"
+        ",{\\\"label\\\":\\\"p\\\",\\\"children\\\":0}]\"}}}"));
+    QCOMPARE(root->childCount(), 3);
+    QCOMPARE(root->child(2)->text(0), QStringLiteral("p"));
+    QVERIFY(root->child(0)->isExpanded());
+    // The refill replaced div's children with a placeholder —
+    // re-materialize the em grandchild so "0/0" resolves again.
+    id = panel.testDomExpand(root->child(0));
+    panel.onResponse(id, QByteArray(
+        "{\"result\":{\"type\":\"success\",\"result\":{\"type\":\"string\""
+        ",\"value\":\"[{\\\"label\\\":\\\"em\\\",\\\"children\\\":0}]\"}}}"));
+    QCOMPARE(root->child(0)->child(0)->data(0, Qt::UserRole).toString(),
+             QStringLiteral("0/0"));
+
+    // --- find bar: the search reply's paths select through the
+    // same descend-one-level walk the inspect pick uses.  (The
+    // eval itself no-ops — the canned client never reaches
+    // Connected — so the reply is fed through the tag seam.)
+    panel.m_domFind->setText(QStringLiteral("em"));
+    panel.runDomSearch();
+    id = panel.testRegisterTag(10); // TagDomSearch
+    panel.onResponse(id, QByteArray(
+        "{\"result\":{\"type\":\"success\",\"result\":{\"type\":\"string\""
+        ",\"value\":\"[\\\"0/0\\\",\\\"1\\\"]\"}}}"));
+    QCOMPARE(panel.testSearchPaths(),
+             QStringList({QStringLiteral("0/0"),
+                          QStringLiteral("1")}));
+    QCOMPARE(panel.testSearchIndex(), 0);
+    QCOMPARE(panel.m_domFindCount->text(), QStringLiteral("1 of 2"));
+    // First hit selected through the lazy walk…
+    QTRY_COMPARE(panel.m_domTree->currentItem(),
+                 root->child(0)->child(0));
+    // …and Enter/arrow cycles the ring.
+    panel.domSearchStep(1);
+    QCOMPARE(panel.testSearchIndex(), 1);
+    QCOMPARE(panel.m_domFindCount->text(), QStringLiteral("2 of 2"));
+    panel.domSearchStep(1); // wraps to 0
+    QCOMPARE(panel.testSearchIndex(), 0);
+    // An empty result reports honestly.
+    id = panel.testRegisterTag(10);
+    panel.onResponse(id, QByteArray(
+        "{\"result\":{\"type\":\"success\",\"result\":{\"type\":\"string\""
+        ",\"value\":\"[]\"}}}"));
+    QCOMPARE(panel.testSearchIndex(), -1);
+    QCOMPARE(panel.m_domFindCount->text(), QStringLiteral("0 of 0"));
+
+    // --- styles pane: the CDP chain fills Attributes / Computed
+    // styles / Box model as three groups.  Drive the verdicts:
+    // CSS up so the CDP path runs.
+    const auto probe = [&panel](const char *domain, bool up) {
+        const quint64 pid = panel.testRegisterCdp(
+            1 /*CdpProbe*/, QString::fromLatin1(domain));
+        panel.onResponse(pid, up
+            ? QByteArray("{\"result\":{}}")
+            : QByteArray("{\"error\":{\"message\":\"down\"}}"));
+    };
+    probe("CSS", true);
+    probe("DOM", true);
+    QTreeWidgetItem *emItem = root->child(0)->child(0);
+    // requestStylesFor would set these — it early-outs on the
+    // disconnected canned client, so stage the selection state the
+    // same way and feed the chain's replies through the seam.
+    panel.m_propsPath = QStringLiteral("0/0");
+    const int serial = ++panel.m_stylesSerial;
+    QVERIFY(emItem);
+    // Runtime.evaluate -> objectId; DOM.requestNode -> nodeId 42 —
+    // which fans out to getAttributes/getComputedStyle/getBoxModel.
+    id = panel.testRegisterCdp(4 /*CdpEvalNode*/, QString(), QString(),
+                               serial);
+    panel.onResponse(id, QByteArray(
+        "{\"result\":{\"result\":{\"objectId\":\"obj-1\"}}}"));
+    id = panel.testRegisterCdp(5 /*CdpRequestNode*/, QString(),
+                               QString(), serial);
+    panel.onResponse(id, QByteArray("{\"result\":{\"nodeId\":42}}"));
+    QCOMPARE(panel.m_propsNodeId, 42);
+    id = panel.testRegisterCdp(15 /*CdpAttributes*/, QString(),
+                               QString(), serial);
+    panel.onResponse(id, QByteArray(
+        "{\"result\":{\"attributes\":[\"id\",\"main\",\"class\",\"x\"]}}"));
+    id = panel.testRegisterCdp(6 /*CdpComputed*/, QString(), QString(),
+                               serial);
+    panel.onResponse(id, QByteArray(
+        "{\"result\":{\"computedStyle\":["
+        "{\"name\":\"color\",\"value\":\"rgb(9, 9, 9)\"},"
+        "{\"name\":\"display\",\"value\":\"inline\"}]}}"));
+    id = panel.testRegisterCdp(16 /*CdpBoxModel*/, QString(), QString(),
+                               serial);
+    panel.onResponse(id, QByteArray(
+        "{\"result\":{\"model\":{"
+        "\"content\":[0,0,100,0,100,50,0,50],"
+        "\"padding\":[0,0,110,0,110,60,0,60],"
+        "\"border\":[0,0,120,0,120,70,0,70],"
+        "\"margin\":[0,0,140,0,140,90,0,90],"
+        "\"width\":140,\"height\":90}}}"));
+
+    // Grouped sections in Chrome's order.
+    const auto section = [&panel](const QString &name) {
+        for (int i = 0; i < panel.m_stylesView->topLevelItemCount();
+             ++i) {
+            QTreeWidgetItem *s = panel.m_stylesView->topLevelItem(i);
+            if (s->data(0, Qt::UserRole + 4).toString() == name)
+                return s;
+        }
+        return static_cast<QTreeWidgetItem *>(nullptr);
+    };
+    QTreeWidgetItem *attrs = section(QStringLiteral("Attributes"));
+    QTreeWidgetItem *computed =
+        section(QStringLiteral("Computed styles"));
+    QTreeWidgetItem *box = section(QStringLiteral("Box model"));
+    QVERIFY(attrs && computed && box);
+    QCOMPARE(attrs->childCount(), 2);
+    QCOMPARE(attrs->child(0)->text(0), QStringLiteral("id"));
+    QCOMPARE(attrs->child(0)->text(1), QStringLiteral("main"));
+    QVERIFY(attrs->child(0)->flags() & Qt::ItemIsEditable);
+    QCOMPARE(computed->childCount(), 2);
+    QCOMPARE(computed->child(0)->text(0), QStringLiteral("color"));
+    QCOMPARE(computed->child(0)->text(1),
+             QStringLiteral("rgb(9, 9, 9)"));
+    // The quads became per-edge numbers, not a raw dump.
+    QStringList boxTexts;
+    for (int i = 0; i < box->childCount(); ++i)
+        boxTexts << box->child(i)->text(0) + QLatin1Char('=')
+                    + box->child(i)->text(1);
+    QVERIFY(boxTexts.contains(QStringLiteral("content=100.0 × 50.0")));
+    QVERIFY(boxTexts.contains(QStringLiteral("margin=20.0 × 20.0")));
+    QVERIFY(boxTexts.contains(QStringLiteral("width=140")));
+
+    // Attribute editing: the resolved node lands a
+    // DOM.setAttributeValue whose error surfaces in the console,
+    // and a successful answer re-pulls getAttributes.
+    QTreeWidgetItem *row = attrs->child(1); // class="x"
+    row->setText(1, QStringLiteral("y"));
+    panel.editDomAttribute(row, 1); // sends CdpAttrSet on nodeId 42
+    id = panel.testRegisterCdp(17 /*CdpAttrSet*/, QStringLiteral("class"),
+                               QString(), serial);
+    panel.onResponse(id, QByteArray("{\"result\":{}}"));
+    id = panel.testRegisterCdp(17, QStringLiteral("class"), QString(),
+                               serial);
+    panel.onResponse(id, QByteArray(
+        "{\"error\":{\"message\":\"node detached\"}}"));
+    QVERIFY(consoleJoined(panel).contains(
+        QStringLiteral("setAttributeValue failed: node detached")));
+
+    // A stale serial (another selection raced it) drops the reply.
+    id = panel.testRegisterCdp(15, QString(), QString(), serial - 1);
+    panel.onResponse(id, QByteArray(
+        "{\"result\":{\"attributes\":[\"stale\",\"yes\"]}}"));
+    QCOMPARE(attrs->child(0)->text(1), QStringLiteral("main"));
+
+    // --- fallbacks: CSS down routes through the page-side pair
+    // readout (TagDomProps=8) into the same three groups, honestly
+    // titled; a refused getComputedStyleForNode fills only the
+    // Computed section from the pick list (TagDomStylesPick=11).
+    probe("CSS", false);
+    panel.requestStylesFor(emItem); // now sends the eval fallback
+    id = panel.testRegisterTag(8);
+    panel.onResponse(id, QByteArray(
+        "{\"result\":{\"type\":\"success\",\"result\":{\"type\":\"string\""
+        ",\"value\":\"[[\\\"id\\\",\\\"main\\\"],"
+        "[\\\"computed: color\\\",\\\"rgb(1, 2, 3)\\\"]]\"}}}"));
+    attrs = section(QStringLiteral("Attributes"));
+    computed = section(QStringLiteral("Computed styles"));
+    QVERIFY(attrs && computed);
+    QCOMPARE(attrs->childCount(), 1);
+    QCOMPARE(attrs->child(0)->text(0), QStringLiteral("id"));
+    QCOMPARE(computed->child(0)->text(0), QStringLiteral("color"));
+    QCOMPARE(computed->child(0)->text(1),
+             QStringLiteral("rgb(1, 2, 3)"));
+    // Fallback attrs stay editable — the write goes page-side.
+    QVERIFY(attrs->child(0)->flags() & Qt::ItemIsEditable);
+    id = panel.testRegisterTag(11);
+    panel.onResponse(id, QByteArray(
+        "{\"result\":{\"type\":\"success\",\"result\":{\"type\":\"string\""
+        ",\"value\":\"[[\\\"display\\\",\\\"block\\\"]]\"}}}"));
+    QCOMPARE(computed->child(0)->text(0), QStringLiteral("display"));
+
+    // --- probe watchdog: a probe that never answers becomes an
+    // honest verdict instead of stranding the tab defaults; a
+    // disconnect drops the verdicts for the next session.
+    probe("Runtime", true);
+    panel.m_probedContext = QStringLiteral("ctx1");
+    panel.probeWatchdog();
+    QCOMPARE(panel.m_domainErr.size(), 9);
+    // An answered verdict survives; the missing ones read "timed
+    // out" rather than silently never-landing.
+    QCOMPARE(panel.domainReason(QStringLiteral("CSS")),
+             QStringLiteral("down"));
+    QCOMPARE(panel.domainReason(QStringLiteral("Page")),
+             QStringLiteral("probe timed out"));
+    QVERIFY(!panel.domainUp(QStringLiteral("Page")));
+    QVERIFY(panel.m_stylesTitle->text().contains(
+        QStringLiteral("unavailable")));
+    panel.onConnectionChanged(BidiClient::Disconnected);
+    QVERIFY(panel.m_domainErr.isEmpty());
+    QVERIFY(panel.m_probedContext.isEmpty());
 }
 
 void tst_DevTools::bidiContextSelector()

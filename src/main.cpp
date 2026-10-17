@@ -2578,8 +2578,13 @@ static int bidiSmoke(BrowserApplication &application, WebView *view)
 
 // DEVT17: --bidi-elements-smoke drives the REAL BidiPanel UI end to
 // end — connect, combo claim, Elements lazy DOM fetch — the way the
-// dock does it, where --bidi-smoke only proves the wire.  PASS when
-// the Elements tree materializes real element rows for the page.
+// dock does it, where --bidi-smoke only proves the wire.
+// DEVT19 grows it into the parity legs: after the tree materializes
+// it expands body, selects a real element (the styles chain's
+// Attributes/Computed styles/Box model groups must fill from live
+// CDP answers), mutates the page's DOM (the MutationObserver-driven
+// live refresh must grow the tree), and runs the find bar (the hit
+// must land as the current item).  PASS when every stage lands.
 static int bidiElementsSmoke(BrowserApplication &application,
                              WebView *view)
 {
@@ -2604,39 +2609,118 @@ static int bidiElementsSmoke(BrowserApplication &application,
         application.exit(pass ? 0 : 1);
     };
 
+    auto stage = std::make_shared<int>(0);
     QTimer *poll = new QTimer(panel);
     QObject::connect(poll, &QTimer::timeout, panel,
-                     [panel, finish]() {
+                     [panel, view, finish, stage]() {
         QComboBox *combo = panel->findChild<QComboBox *>(
             QStringLiteral("bidiContextCombo"));
         QTreeWidget *tree = panel->findChild<QTreeWidget *>(
             QStringLiteral("bidiElementsTree"));
-        if (!combo || !tree)
+        QTreeWidget *styles = panel->findChild<QTreeWidget *>(
+            QStringLiteral("bidiElementsStyles"));
+        QLineEdit *find = panel->findChild<QLineEdit *>(
+            QStringLiteral("bidiElementsFind"));
+        if (!combo || !tree || !styles || !find)
             return;
         if (combo->currentData().toString().isEmpty())
             return; // still waiting on getTree
         if (tree->topLevelItemCount() < 1)
             return;
         QTreeWidgetItem *root = tree->topLevelItem(0);
-        for (int i = 0; i < root->childCount(); ++i) {
-            // Real element rows carry their index path; the
-            // placeholder does not.
-            if (!root->child(i)->data(0, Qt::UserRole).isNull()) {
-                QStringList labels;
-                for (int j = 0; j < root->childCount(); ++j)
-                    labels << root->child(j)->text(0);
-                finish(labels.contains(QLatin1String("head"))
-                           || labels.contains(QLatin1String("body")),
-                       QStringLiteral("ctx=%1 rows=[%2]")
-                           .arg(combo->currentData().toString(),
-                                labels.join(QLatin1Char(','))));
-                return;
+        const auto childByLabel =
+            [](QTreeWidgetItem *item, const QString &prefix) {
+                for (int i = 0; i < item->childCount(); ++i) {
+                    if (item->child(i)->text(0).startsWith(prefix))
+                        return item->child(i);
+                }
+                return static_cast<QTreeWidgetItem *>(nullptr);
+            };
+        const auto stylesGroup =
+            [styles](const QString &header) -> QTreeWidgetItem * {
+            for (int i = 0; i < styles->topLevelItemCount(); ++i) {
+                QTreeWidgetItem *s = styles->topLevelItem(i);
+                if (s->text(0) == header)
+                    return s;
             }
+            return nullptr;
+        };
+        QTreeWidgetItem *body = childByLabel(
+            root, QStringLiteral("body"));
+
+        switch (*stage) {
+        case 0: {
+            // Wait for real element rows (index paths, not the
+            // placeholder), then expand body so its lazy fetch runs.
+            bool real = false;
+            for (int i = 0; i < root->childCount(); ++i) {
+                if (!root->child(i)->data(0, Qt::UserRole).isNull())
+                    real = true;
+            }
+            if (!real || !body)
+                return;
+            body->setExpanded(true);
+            *stage = 1;
+            return;
+        }
+        case 1: {
+            // body's children materialized — select the real <p> so
+            // the objectId -> nodeId -> styles chain runs.
+            if (!body)
+                return;
+            QTreeWidgetItem *para = childByLabel(
+                body, QStringLiteral("p"));
+            if (!para || para->data(0, Qt::UserRole).isNull())
+                return;
+            tree->setCurrentItem(para);
+            *stage = 2;
+            return;
+        }
+        case 2: {
+            // The styles pane must fill all three groups from live
+            // CDP answers — real computed values and box numbers.
+            QTreeWidgetItem *computed =
+                stylesGroup(QStringLiteral("Computed styles"));
+            QTreeWidgetItem *box =
+                stylesGroup(QStringLiteral("Box model"));
+            if (!computed || !box || computed->childCount() < 1
+                || box->childCount() < 1)
+                return;
+            // Mutate the page's DOM — the MutationObserver should
+            // report it and grow the tree without a manual refresh.
+            view->page()->runJavaScript(QStringLiteral(
+                "var p=document.createElement('p');"
+                "p.id='mut';p.textContent='mutated';"
+                "document.body.appendChild(p);"));
+            *stage = 3;
+            return;
+        }
+        case 3: {
+            // The live refresh re-pulls materialized branches —
+            // wait for the new <p id=mut> row to land under body.
+            if (!body)
+                return;
+            if (!childByLabel(body, QStringLiteral("p#mut")))
+                return;
+            find->setText(QStringLiteral("#mut"));
+            *stage = 4;
+            return;
+        }
+        case 4: {
+            // The debounced search answers index paths; the hit
+            // selects through the lazy-walk like the inspect pick.
+            QTreeWidgetItem *cur = tree->currentItem();
+            if (!cur || !cur->text(0).contains(QLatin1String("mut")))
+                return;
+            finish(true, QStringLiteral("ctx=%1 styles+box+live+find")
+                             .arg(combo->currentData().toString()));
+            return;
+        }
         }
     });
     poll->start(200);
-    QTimer::singleShot(25000, panel, [finish]() {
-        finish(false, QStringLiteral("timeout waiting for DOM rows"));
+    QTimer::singleShot(25000, panel, [finish, stage]() {
+        finish(false, QStringLiteral("timeout in stage %1").arg(*stage));
     });
     return application.exec();
 }

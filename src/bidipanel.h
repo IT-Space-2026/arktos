@@ -152,6 +152,14 @@ public:
     // would, so the suite can drive raw result/error handling.
     quint64 testRegisterCdp(int tag, const QString &a = QString(),
                             const QString &b = QString(), int n = 0);
+    // DEVT19: how many live-refreshes the mutation marker has
+    // triggered — the suite observes the debounce firing without a
+    // live channel to answer the re-fetch.
+    int testDomLiveRefreshCount() const;
+    // The last DOM-search result set (element index paths) and the
+    // current position — the offline legs pin search -> select.
+    QStringList testSearchPaths() const;
+    int testSearchIndex() const;
 #else
 private:
 #endif
@@ -189,13 +197,38 @@ private:
     void updateConsoleLevelMask();
     void clearConsole();
     void ensureDomHelper(const QString &context);
-    void sendEval(const QString &context, const QString &expression,
-                  quint64 tag);
+    quint64 sendEval(const QString &context, const QString &expression,
+                     quint64 tag);
     // DEVT17: a failed/vanished DOM fetch swaps its "loading…"
     // placeholder for an honest verdict row instead of hanging the
     // branch forever; the row keeps the placeholder's null path so a
     // manual re-expand retries the fetch.
     void domFetchFailed(QTreeWidgetItem *item, const QString &why);
+    // DEVT19: the children fetch factored out of domItemExpanded so
+    // the live-refresh pass can re-pull any materialized branch, and
+    // the mutation-debounced refresh itself.
+    void fetchDomChildren(QTreeWidgetItem *item);
+    void liveRefreshDom();
+    void restoreDomExpansion(QTreeWidgetItem *item);
+    // Elements find bar (Ctrl-F parity): a page-side search returns
+    // index paths, the first/current one selects through
+    // domSelectPath, prev/next cycle.
+    void runDomSearch();
+    void domSearchStep(int dir);
+    void applyDomSearchResult(const QStringList &paths);
+    // Styles-pane group plumbing + attribute editing (DEVT19).
+    QTreeWidgetItem *stylesSection(const QString &name);
+    void fillAttributesSection(const QJsonArray &attributes,
+                               const QString &errText);
+    void fillComputedSection(const QJsonArray &styles,
+                             const QString &errText);
+    void fillBoxModelSection(const QJsonObject &model,
+                             const QString &errText);
+    void editDomAttribute(QTreeWidgetItem *item, int column);
+    // A probe answer that never arrives must not strand the tabs on
+    // their constructed defaults — fill the missing verdicts as
+    // honest no-answers and apply support anyway.
+    void probeWatchdog();
     void clearNetworkLog();
     void sendCacheBehavior();
     void fitNetworkColumns();
@@ -293,15 +326,42 @@ private:
     QWidget *m_crumbBar;
     QLabel *m_stylesTitle;
     QTreeWidget *m_stylesView;
-    // Plain pointer: guarded by m_stylesSerial — a stale styles
-    // reply is dropped before it can paint over a newer selection,
-    // and refreshDom clears it with the tree.
-    QTreeWidgetItem *m_propsItem = nullptr;
+    // DEVT19: the find bar, the live-refresh debounce, and the
+    // attribute-edit state.
+    QWidget *m_domFindBar;
+    QLineEdit *m_domFind;
+    QToolButton *m_domFindPrev;
+    QToolButton *m_domFindNext;
+    QLabel *m_domFindCount;
+    QTimer *m_domSearchDebounce;
+    QStringList m_searchPaths;
+    int m_searchIndex = -1;
+    QTimer *m_domLiveTimer;
+    int m_domLiveRefreshCount = 0;
+    // Live-refresh expansion snapshot — "path|label" -> labels of
+    // the children that were expanded; consumed by
+    // restoreDomExpansion as each branch's reply lands.
+    QHash<QString, QStringList> m_domLiveExpand;
+    // The styles pane resolved nodeId for DOM.* attribute calls;
+    // both stay serial-guarded like the style replies.
+    int m_propsNodeId = 0;
+    int m_propsNodeSerial = 0;
+    bool m_stylesFilling = false;
+    // Path of the item whose styles are in flight — a plain path,
+    // not an item pointer, because the live refresh can delete the
+    // item under it.
+    QString m_propsPath;
+    // eval id -> styles serial for serial-guarded eval replies
+    // (the pick-list fallback), matching the CdpReq n-field.
+    QHash<quint64, int> m_evalSerials;
     QString m_pendingSelectPath;
     bool m_selectActive = false;
     // Serial so a late computed-styles reply can't paint over the
     // styles of a newer selection.
     int m_stylesSerial = 0;
+    // DEVT19: probes that never answer get a watchdog verdict
+    // instead of stranding the tabs.
+    QTimer *m_probeWatch;
 
     // DEVT13 — Sources.
     QTreeWidget *m_sourcesTree;

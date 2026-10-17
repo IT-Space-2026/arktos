@@ -2967,3 +2967,19 @@ Reader-mode button no longer paints blue on Tor windows (THEM06):
     raised violet — the same family the Tor badge pill and sidebar
     selection already wear. Suggested and active states stay
     distinguishable but in-theme; normal windows are unchanged.
+
+BiDi Dev Tools Elements panel reaches live parity (DEVT19):
+    The Elements tab reported "dead" in the BiDi panel now works end
+    to end against a real page: the DOM tree populates lazily and
+    refreshes itself on page mutations (a page-side MutationObserver
+    re-materializes expanded branches instead of going stale), and
+    selecting a node fills a grouped inspector — Attributes, Computed
+    styles, and Box model — through the CDP DOM/CSS domains with
+    honest fallbacks when a domain does not answer. A find bar
+    (Ctrl+F) searches by selector, tag, id, class, or text and steps
+    through matches, and attribute values are editable in place via
+    DOM.setAttributeValue. Two shared bugs that made probes look dead
+    are fixed along the way: stale domain verdicts no longer survive a
+    reconnect, and a single dropped probe reply can no longer leave
+    every tab stuck uninitialized — unanswered domains now declare
+    "probe timed out" instead of pretending to work.
