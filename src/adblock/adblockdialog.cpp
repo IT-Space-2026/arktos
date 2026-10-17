@@ -89,6 +89,8 @@ AdBlockDialog::AdBlockDialog(QWidget *parent)
             this, &AdBlockDialog::subscriptionSelectionChanged);
     connect(updateSubscriptionButton, &QPushButton::clicked,
             this, &AdBlockDialog::updateSubscription);
+    connect(updateAllSubscriptionsButton, &QPushButton::clicked,
+            this, &AdBlockDialog::updateAllSubscriptions);
     connect(removeSubscriptionButton, &QPushButton::clicked,
             this, &AdBlockDialog::removeSubscription);
 
@@ -145,6 +147,10 @@ void AdBlockDialog::aboutToShowActionMenu()
     connect(updateSubscription, &QAction::triggered, this, &AdBlockDialog::updateSubscription);
     updateSubscription->setEnabled(remote);
 
+    QAction *updateAll = menu->addAction(tr("Update All Subscriptions"));
+    connect(updateAll, &QAction::triggered,
+            this, &AdBlockDialog::updateAllSubscriptions);
+
     QAction *addByUrl = menu->addAction(tr("Add Subscription by URL..."));
     connect(addByUrl, &QAction::triggered, this, &AdBlockDialog::addSubscriptionByUrl);
 
@@ -189,6 +195,18 @@ void AdBlockDialog::updateSubscription()
     // Pressing Update is explicit consent to download remote lists.
     AdBlockManager::setRemoteListsConsent(AdBlockManager::RemoteListsGranted);
     subscription->updateNow();
+}
+
+void AdBlockDialog::updateAllSubscriptions()
+{
+    AdBlockManager *manager = AdBlockManager::instance();
+    // Same explicit consent as Update Now — one gesture covering
+    // every remote list the user has subscribed to.
+    AdBlockManager::setRemoteListsConsent(AdBlockManager::RemoteListsGranted);
+    for (AdBlockSubscription *subscription : manager->subscriptions()) {
+        if (subscription != manager->customRules())
+            subscription->updateNow();
+    }
 }
 
 void AdBlockDialog::browseSubscriptions()
@@ -254,9 +272,12 @@ void AdBlockDialog::repopulateSubscriptions()
     subscriptionsTree->clear();
     const QLocale locale;
     const QList<AdBlockSubscription*> subscriptions = manager->subscriptions();
+    bool hasRemote = false;
     for (AdBlockSubscription *subscription : subscriptions) {
         if (!subscription)
             continue;
+        if (subscription != manager->customRules())
+            hasRemote = true;
         QTreeWidgetItem *item = new QTreeWidgetItem(subscriptionsTree);
         item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable
                        | Qt::ItemIsUserCheckable);
@@ -279,6 +300,7 @@ void AdBlockDialog::repopulateSubscriptions()
             subscriptionsTree->setCurrentItem(item);
     }
     m_refreshing = false;
+    updateAllSubscriptionsButton->setEnabled(hasRemote);
     subscriptionSelectionChanged();
 }
 

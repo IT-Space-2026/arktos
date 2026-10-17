@@ -55,6 +55,7 @@ private slots:
     void learnAboutWritingFilters();
     void aboutToShowActionMenu();
     void updateSubscription();
+    void updateAllSubscriptions();
     void browseSubscriptions();
     void addSubscriptionByUrl();
     void showPresets();
