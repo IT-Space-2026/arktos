@@ -134,6 +134,7 @@ private slots:
 private:
     QVariant m_savedConsent;
     QVariant m_savedUpdated;
+    QVariant m_savedMajestic;
 };
 
 void tst_TrancoList::initTestCase()
@@ -144,6 +145,8 @@ void tst_TrancoList::initTestCase()
         settings.value(QLatin1String("AdBlock/remoteListsConsent"));
     m_savedUpdated =
         settings.value(QLatin1String("privacy/trancoListUpdated"));
+    m_savedMajestic =
+        settings.value(QLatin1String("privacy/majesticListUpdated"));
 }
 
 void tst_TrancoList::cleanupTestCase()
@@ -158,8 +161,10 @@ void tst_TrancoList::cleanupTestCase()
     };
     restore(QLatin1String("AdBlock/remoteListsConsent"), m_savedConsent);
     restore(QLatin1String("privacy/trancoListUpdated"), m_savedUpdated);
-    // The fixture override the updater wrote goes with the suite.
+    restore(QLatin1String("privacy/majesticListUpdated"), m_savedMajestic);
+    // The fixture overrides the updater wrote go with the suite.
     QFile::remove(TrancoList::listFilePath());
+    QFile::remove(TrancoList::majesticFilePath());
 #if defined(ARORA_RUSTCORE)
     rc_tranco_reload();
 #endif
@@ -239,27 +244,42 @@ void tst_TrancoList::updateRoundTrip()
 {
 #if defined(ARORA_RUSTCORE)
     // Granted consent + a stale stamp -> updateIfStale fetches the
-    // fixture zip, writes the override file verbatim and reloads the
-    // core.  The fixture also tries to re-rank a seed domain — the
-    // poison-safe merge must keep the vendored rank.
+    // fixture zip AND the fixture Majestic CSV, writes both override
+    // files verbatim and reloads the core.  The Tranco fixture also
+    // tries to re-rank a seed domain to a worse rank — the best-rank
+    // merge keeps the vendored rank.
     AdBlockManager::setRemoteListsConsent(AdBlockManager::RemoteListsGranted);
     QSettings().remove(QLatin1String("privacy/trancoListUpdated"));
+    QSettings().remove(QLatin1String("privacy/majesticListUpdated"));
     QFile::remove(TrancoList::listFilePath());
+    QFile::remove(TrancoList::majesticFilePath());
     QCOMPARE(rc_tranco_reload(), RC_OK);
 
     FixtureListServer server;
     server.body = storedZip(
         "top-1m.csv",
-        "7,served-fixture.test\n999999,google.com\n");
+        "7,served-fixture.test\n999999,google.com\n55,both-lists.test\n");
     QVERIFY(server.start());
+    // SEC19: the Majestic source is a plain GlobalRank,TldRank,
+    // Domain,... CSV committed under its own file name.
+    FixtureListServer majestic;
+    majestic.body =
+        "GlobalRank,TldRank,Domain,TLD,RefSubNets\n"
+        "3,1,both-lists.test,test,10\n"
+        "40,5,mj-only.test,test,11\n";
+    QVERIFY(majestic.start());
     TrancoList *updater = TrancoList::instance();
-    updater->setSourcesForTest({ server.url() });
+    updater->setSourcesForTest({
+        TrancoList::Source(server.url(), TrancoList::trancoFileName()),
+        TrancoList::Source(majestic.url(), TrancoList::majesticFileName()),
+    });
     QSignalSpy finished(updater, SIGNAL(updateFinished(bool)));
 
     updater->updateIfStale();
     QTRY_VERIFY_WITH_TIMEOUT(finished.count() == 1, 15000);
     QVERIFY(finished.at(0).at(0).toBool());
     QCOMPARE(server.hits, 1);
+    QCOMPARE(majestic.hits, 1);
 
     const QString path = TrancoList::listFilePath();
     QVERIFY(QFile::exists(path));
@@ -268,18 +288,31 @@ void tst_TrancoList::updateRoundTrip()
     // The zip body lands verbatim — the crate unzips on load.
     QVERIFY(file.read(4) == "PK\x03\x04");
     file.close();
+    QVERIFY(QFile::exists(TrancoList::majesticFilePath()));
 
     // The update merged on top of the seed…
     QCOMPARE(rc_tranco_rank("served-fixture.test"), 7u);
     QCOMPARE(rc_tranco_rank("www.served-fixture.test"), 7u);
-    // …but could not re-rank (or un-rank) a seed entry.
+    // …the Majestic source adds its own coverage…
+    QCOMPARE(rc_tranco_rank("mj-only.test"), 40u);
+    // …and a domain in both lists gets the best (lowest) rank.
+    QCOMPARE(rc_tranco_rank("both-lists.test"), 3u);
+    // …but nothing could un-rank (or worsen) a seed entry.
     QCOMPARE(rc_tranco_rank("google.com"), 1u);
+    // A domain absent from both stays unranked.
+    QCOMPARE(rc_tranco_rank("unlisted-fixture.test"), 0u);
+    // Both stamps landed, so the shared status reports fresh.
+    QVERIFY(QSettings().value(QLatin1String("privacy/trancoListUpdated"))
+                .toDateTime().isValid());
+    QVERIFY(QSettings().value(QLatin1String("privacy/majesticListUpdated"))
+                .toDateTime().isValid());
     QVERIFY(TrancoList::instance()->lastUpdate().isValid());
 
     // A second stale-check within the interval fetches nothing.
     updater->updateIfStale();
     QTest::qWait(500);
     QCOMPARE(server.hits, 1);
+    QCOMPARE(majestic.hits, 1);
 
     updater->setSourcesForTest(TrancoList::defaultSources());
 #endif

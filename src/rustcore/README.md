@@ -95,31 +95,35 @@ Rust side never touches the network — fetching is entirely Qt-side and
 consent-gated like remote filter lists.  In a no-rust build the
 whole feature is absent and nothing is ever blocked.
 
-## Tranco rank table (TRUST04)
+## Site-rank table (TRUST04 + SEC19)
 
-`rc_tranco_rank(host)` answers the host's Tranco top-site rank (or 0
-when unlisted) — the popularity signal the site-trust verdicts
-(TRUST01) and the homograph detector (TRUST05) consume.  The probe
-hits the exact host first, then walks up the label boundary to the
-most specific listed ancestor — the registrable-domain lookup — with
-the query normalized into a fixed stack buffer so the hot path
-allocates nothing.  Lookups never leave the machine.
+`rc_tranco_rank(host)` answers the host's top-site rank (or 0 when
+unlisted) — the popularity signal the site-trust verdicts (TRUST01)
+and the homograph detector (TRUST05) consume.  The probe hits the
+exact host first, then walks up the label boundary to the most
+specific listed ancestor — the registrable-domain lookup — with the
+query normalized into a fixed stack buffer so the hot path allocates
+nothing.  Lookups never leave the machine.
 
-The table is the union of the vendored seed
-(`data/tranco-top100k.csv` — ranks 1..100000 of the Tranco daily
-top-1M, embedded via `include_str!`) and
+The table merges three sources best-rank-wins (SEC19 — the effective
+rank is the lowest any list assigns; membership in either list
+counts): the vendored seed (`data/tranco-top100k.csv` — ranks
+1..100000 of the Tranco daily top-1M, embedded via `include_str!`),
 `<data dir>/tranco-list.dat`, which the Qt-side TrancoList updater
-writes from the remote download (the `top-1m.csv.zip` body verbatim —
-the crate pulls the `*.csv` member out through the same
-central-directory walk extverify uses, and a plaintext
-`rank,domain` body parses as-is) before calling
-`rc_tranco_reload()`.  The merge is poison-safe like the blocklist's:
-an update can only *add* entries — a seeded domain keeps its vendored
-rank and can never be un-ranked or re-ranked by a download — and a
-failed or garbage update falls back to the seed.
+writes from the remote Tranco download (the `top-1m.csv.zip` body
+verbatim — the crate pulls the `*.csv` member out through the same
+central-directory walk extverify uses, and a plaintext `rank,domain`
+body parses as-is), and `<data dir>/majestic-million.csv`, the
+Majestic Million second rank source (a plain multi-column
+`GlobalRank,TldRank,Domain,...` CSV — no zip wrapper; the parser
+reads the GlobalRank and Domain columns).  An update can only ever
+*add* coverage or improve a rank — nothing can be un-ranked — and a
+failed or garbage download falls back to whatever remains.
 `rc_tranco_load` swaps in a caller-supplied table (update/test seam);
-`rc_tranco_count` reports the merged size.  In a no-rust build the
-updater is inert and nothing is ever ranked.
+`rc_tranco_count` reports the merged size; `rc_tranco_file_entries`
+counts one override file's usable entries under its own grammar —
+the updater's per-file validation probe before `rc_tranco_reload()`.
+In a no-rust build the updater is inert and nothing is ever ranked.
 
 ## Second-opinion TLS verification (SEC22)
 

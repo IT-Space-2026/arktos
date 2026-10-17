@@ -17,10 +17,13 @@
 //! `www.bad.example` does not block `bad.example`).  The set is a
 //! HashSet probed once per label — O(host labels), no trie needed.
 //!
-//! Data sources (the updater merges both into
+//! Data sources (the updater merges all into
 //! `<data dir>/blocklist-domains.txt`):
 //!   * https://urlhaus.abuse.ch/downloads/hostfile/   (malware)
 //!   * https://openphish.com/feed.txt                  (phishing)
+//!   * https://raw.githubusercontent.com/mitchellkrogza/
+//!       Phishing.Database/master/phishing-domains-ACTIVE.txt
+//!       (phishing — MIT, bare domains, SEC19)
 //!
 //! The vendored data/blocklist-domains.txt is the offline seed —
 //! updates merge INTO the builtin set rather than replacing it, so a

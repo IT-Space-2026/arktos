@@ -52,7 +52,8 @@ public:
 
     // <data dir>/blocklist-domains.txt — rustcore's override file.
     static QString listFilePath();
-    // The upstream feeds (URLhaus hostfile + OpenPhish community).
+    // The upstream feeds (URLhaus hostfile + OpenPhish community +
+    // Phishing.Database ACTIVE domains).
     static QList<QUrl> defaultSources();
 
     // Automatic path: fetch only when remote-list consent was granted

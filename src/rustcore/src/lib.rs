@@ -1205,6 +1205,26 @@ pub unsafe extern "C" fn rc_tranco_count() -> usize {
     catch_unwind(AssertUnwindSafe(tranco::count)).unwrap_or(0)
 }
 
+/// Usable-entry count of one data-dir override file
+/// ("tranco-list.dat", "majestic-million.csv"), parsed under the
+/// grammar its name selects — the updater's per-file validation
+/// probe before a reload: a body that yields zero entries is junk
+/// and must not replace a good copy.  0 when the data dir is unset,
+/// the file is absent/unreadable/oversized or yields nothing.
+///
+/// # Safety
+/// `name` must be NUL-terminated UTF-8, or null (reads as 0).
+#[no_mangle]
+pub unsafe extern "C" fn rc_tranco_file_entries(name: *const c_char) -> usize {
+    catch_unwind(AssertUnwindSafe(|| {
+        match unsafe { util::cstr(name) } {
+            Some(n) => tranco::file_entries(n),
+            None => 0,
+        }
+    }))
+    .unwrap_or(0)
+}
+
 // ---- homograph lookalike detector (TRUST05) -------------------------
 
 /// IDN/homograph verdict as JSON:

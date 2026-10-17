@@ -472,7 +472,10 @@ public:
         "# fixture feed\n"
         "served-fixture.test\n"
         "127.0.0.1\thostfile-served.test\n"
-        "https://url-served.test/phish/path\n";
+        "https://url-served.test/phish/path\n"
+        // SEC19: the Phishing.Database ACTIVE feed's row shape —
+        // bare domains, often long numeric-label names.
+        "00000000000000000000000dead0beef.phish-fixture.test\n";
 
     bool start()
     {
@@ -552,11 +555,18 @@ void tst_DomainBlock::updateRoundTrip()
             .contains(QLatin1String("served-fixture.test")));
     file.close();
 
-    // Every row shape the feed carries landed in the merged set.
+    // Every row shape the feeds carry landed in the merged set —
+    // including the Phishing.Database-style bare-domain row, which
+    // blocks a main-frame navigation the same as the others.
     QCOMPARE(rc_blocklist_check("served-fixture.test"), 1);
     QCOMPARE(rc_blocklist_check("hostfile-served.test"), 1);
     QCOMPARE(rc_blocklist_check("url-served.test"), 1);
     QCOMPARE(rc_blocklist_check("www.served-fixture.test"), 1);
+    const QString phish =
+        QLatin1String("00000000000000000000000dead0beef.phish-fixture.test");
+    QCOMPARE(rc_blocklist_check(phish.toUtf8().constData()), 1);
+    QVERIFY(PrivacyRequestInterceptor::shouldBlockDomain(
+        QUrl(QStringLiteral("https://") + phish + QLatin1Char('/'))));
     QCOMPARE(rc_blocklist_check("unlisted-served.test"), 0);
     QVERIFY(DomainBlocklist::instance()->lastUpdate().isValid());
 

@@ -420,6 +420,10 @@ fn urlstrip_and_blocklist_surface() {
     assert_eq!(unsafe { crate::rc_tranco_reload() }, RcStatus::Ok);
     let google = cs("google.com");
     assert_eq!(unsafe { crate::rc_tranco_rank(google.as_ptr()) }, 1);
+    // Per-file override probe: null/absent names read as 0.
+    assert_eq!(unsafe { crate::rc_tranco_file_entries(ptr::null()) }, 0);
+    let missing = cs("no-such-file.csv");
+    assert_eq!(unsafe { crate::rc_tranco_file_entries(missing.as_ptr()) }, 0);
 
     // Lookalike probe over the FFI: a confusable twin of a ranked
     // domain flags; the real domain and unranked names stay clean.

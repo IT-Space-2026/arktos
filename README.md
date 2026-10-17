@@ -101,14 +101,15 @@ browsing profile:
   tracking query params from navigations (vendored rules +
   data-dir override; rustcore backend, C++ fallback).
 - **Anti-phishing/malware blocklist** — a vendored domain seed merged
-  with a consent-gated URLhaus/OpenPhish feed; listed main-frame
-  navigations stop at a warning interstitial with a session-only
-  proceed.
-- **Tranco site-rank table** — a vendored top-100k seed merged with a
-  consent-gated top-1M download; the merge is poison-safe (an update
-  can only add entries, never un-rank or re-rank a seed domain).
-  `rc_tranco_rank` backs the site-trust signals; lookups never leave
-  the machine.
+  with consent-gated URLhaus/OpenPhish/Phishing.Database feeds;
+  listed main-frame navigations stop at a warning interstitial with
+  a session-only proceed.
+- **Site-rank table** — a vendored Tranco top-100k seed merged
+  best-rank-wins with consent-gated Tranco top-1M and Majestic
+  Million downloads (a domain's effective rank is the lowest any
+  source assigns — an update can only add or improve coverage, never
+  un-rank a domain).  `rc_tranco_rank` backs the site-trust signals;
+  lookups never leave the machine.
 - **IDN/homograph lookalike probe** — `rc_lookalike_check` consults
   the rank table: the host is punycode-decoded, case-folded and mapped
   through the UTS #39 confusables table, then matched against a
@@ -766,7 +767,9 @@ the full transitive list lives in `THIRD-PARTY-NOTICES` §7–9)
 | uBlock filters (uAssets) | GPL-3.0 | https://github.com/uBlockOrigin/uAssets |
 | URLhaus domain blocklist | abuse.ch usage terms | https://urlhaus.abuse.ch |
 | OpenPhish feed | OpenPhish community feed terms | https://openphish.com |
+| Phishing.Database active-domain feed | MIT | https://github.com/mitchellkrogza/Phishing.Database |
 | Tranco top-site list (top-1M) | Tranco list terms | https://tranco-list.eu |
+| Majestic Million site list | CC BY 3.0 | https://majestic.com/reports/majestic-million |
 | ClearURLs-derived tracking-param rules (`urlstrip-rules.json`, vendored) | LGPL-3.0 | https://github.com/ClearURLs/Addon |
 
 **Experimental** (in-tree, not shipped): libservo (MPL-2.0 —
