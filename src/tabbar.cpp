@@ -1085,6 +1085,17 @@ void TabBar::mousePressEvent(QMouseEvent *event)
         if (tabWidget && index >= 0 && tabWidget->isTabGroupChip(index))
             tabWidget->setTabGroupCollapsed(tabWidget->tabGroupId(index),
                                             false);
+        // TABGRP04: the mirror gesture — a press on a run leader's «
+        // header pill collapses the group.  It consumes the press so
+        // no selection or move drag arms under a pill the user meant
+        // as a button.
+        else if (index >= 0 && isGroupHeaderHit(index, m_dragStartPos)) {
+            tabWidget->setTabGroupCollapsed(tabWidget->tabGroupId(index),
+                                            true);
+            m_pressedTabIndex = -1;
+            m_dragTracking = false;
+            return;
+        }
     }
     if (band > 0) {
         QMouseEvent shifted = shiftedMouseEvent(event, QPointF(0, -band));
@@ -1944,9 +1955,11 @@ QString TabBar::groupChipLabel(int index) const
         return QString();
     const QString name = tabWidget->tabGroupName(gid);
     const int size = tabWidget->tabGroupSize(gid);
+    // TABGRP04: the » marker is the expand affordance — the chip's
+    // tap opens the group to the right of it.
     return name.isEmpty()
-        ? tr("%1 tabs").arg(size)
-        : tr("%1 (%2)").arg(name).arg(size);
+        ? tr("» %1 tabs").arg(size)
+        : tr("» %1 (%2)").arg(name).arg(size);
 }
 
 // TABGRP03: the labeled header segment a group's run leader wears —
@@ -1964,9 +1977,11 @@ QString TabBar::groupHeaderLabel(int index) const
         || !isFirstInGroupRun(index))
         return QString();
     const QString name = tabWidget->tabGroupName(gid);
+    // TABGRP04: the « marker is the collapse affordance — tapping the
+    // header folds the group's members back into its chip.
     return name.isEmpty()
-        ? tr("%1 tabs").arg(tabWidget->tabGroupSize(gid))
-        : name;
+        ? tr("« %1 tabs").arg(tabWidget->tabGroupSize(gid))
+        : tr("« %1").arg(name);
 }
 
 // The extent the header segment borrows at the run leader's leading
@@ -1981,6 +1996,33 @@ int TabBar::groupHeaderReserve(int index) const
         return 0;
     return qMin(120, QFontMetrics(containerChipFont())
                     .horizontalAdvance(label) + 10) + 8;
+}
+
+bool TabBar::isGroupHeaderHit(int index, const QPoint &pos) const
+{
+    if (index < 0 || groupHeaderLabel(index).isEmpty())
+        return false;
+    const QRect rect = tabRect(index);
+    const int chipHeight =
+        QFontMetrics(containerChipFont()).height() + 4;
+    if (verticalTabShape(shape())) {
+        // Vertical rows reserve the header as the row's top band.
+        return pos.x() >= rect.left() + 2 && pos.x() <= rect.right() - 2
+            && pos.y() >= rect.top() + 2
+            && pos.y() <= rect.top() + 2 + chipHeight;
+    }
+    QStyleOptionTab option;
+    initStyleOption(&option, index);
+    option.text = tabText(index);
+    const QRect textRect = style()->subElementRect(
+        QStyle::SE_TabBarTabText, &option, this);
+    const int reserve = groupHeaderReserve(index);
+    if (textRect.width() - reserve <= 24)
+        return false;
+    const QRect pill(textRect.left(),
+                     rect.top() + (rect.height() - chipHeight) / 2,
+                     reserve - 8, chipHeight);
+    return pill.contains(pos);
 }
 
 // TABS17: the readable band a vertical row's label and side widgets
@@ -2576,8 +2618,10 @@ QSize TabBar::tabSizeHint(int index) const
             if (tabWidget && tabWidget->isTabGroupChip(index)) {
                 const int labelWidth = QFontMetrics(containerChipFont())
                     .horizontalAdvance(groupChipLabel(index)) + 28;
+                // TABGRP04: doubled like the horizontal chip — the
+                // close affordance must not sit on the label.
                 rowWidth = qMin(m_verticalTabWidth,
-                                qMax(rowWidth, labelWidth));
+                                qMax(rowWidth, 2 * labelWidth));
             }
         }
         return QSize(rowWidth + qMax(0, chip.width()),
@@ -2594,15 +2638,17 @@ QSize TabBar::tabSizeHint(int index) const
         return QSize(iconSize().width() + 20,
                      thickness + chip.height());
     }
-    // TABGRP01: a collapsed group's chip shrinks to its label instead
+    // TABGRP01: a collapsed group's chip sizes from its label instead
     // of the member's title — it is not a titled tab and keeps its
-    // own compact sizing.
+    // own compact sizing.  TABGRP04: double the label width so the
+    // close button sits well clear of the label — the single-width
+    // chip parked the X right under the title.
     if (!gid.isEmpty()) {
         TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
         if (tabWidget && tabWidget->isTabGroupChip(index)) {
             const int labelWidth = QFontMetrics(containerChipFont())
                 .horizontalAdvance(groupChipLabel(index)) + 20;
-            return QSize(qMin(sizeHint.width(), labelWidth),
+            return QSize(qMin(sizeHint.width(), 2 * labelWidth),
                          thickness + chip.height());
         }
     }

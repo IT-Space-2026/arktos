@@ -294,6 +294,10 @@ private:
     // drawn right of it, never under it.
     QString groupHeaderLabel(int index) const;
     int groupHeaderReserve(int index) const;
+    // TABGRP04: hit-test for the run leader's « collapse affordance —
+    // the header pill on a horizontal strip, the leader row's top
+    // band on a vertical one.  pos is strip-space (as tabRect).
+    bool isGroupHeaderHit(int index, const QPoint &pos) const;
     // TABS02/RSZ02: strip helpers — the resize grip on the strip's
     // content-facing edge (inner side for vertical strips, top/bottom
     // edge for horizontal ones), its painted affordance, and the
