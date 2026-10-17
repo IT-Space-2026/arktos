@@ -1,12 +1,18 @@
-# Arora — a Qt 6 / QtWebEngine web browser (experimental)
+<p align="center"><img src="src/data/512x512/arktos.png" alt="Arktos" width="180"/></p>
 
-**Arora** is an experimental cross-platform web browser built on **Qt 6
-and QtWebEngine** (Chromium). It continues the 2009 Qt/WebKit Arora as a
-maintained fork: the original WebKit stack is fully replaced by
-WebEngine, and the shell has been rebuilt around privacy hardening,
-containers, Tor support and a modernized UI.
+# Arktos — a Qt 6 / QtWebEngine web browser (experimental)
 
-**Status: experimental.** Arora is a work in progress and an
+**Arktos** is an experimental cross-platform web browser built on **Qt 6
+and QtWebEngine** (Chromium), based on the Arora browser project. It
+continues the 2009 Qt/WebKit Arora as a maintained fork: the original
+WebKit stack is fully replaced by WebEngine, and the shell has been
+rebuilt around privacy hardening, containers, Tor support and a
+modernized UI.
+
+Website: https://arktos-browser.com — sources and releases live at
+https://github.com/janos-szenfner/arktos.
+
+**Status: experimental.** Arktos is a work in progress and an
 experimental tool — it is provided **as is, without warranty of any
 kind**, under the terms of the **GNU General Public License v2 or
 later** (see COPYING). It is not yet a daily-driver replacement: expect
@@ -27,6 +33,7 @@ trust it with anything you cannot afford to lose.
   - [Extensions](#extensions)
   - [Credentials & autofill](#credentials--autofill)
 - [Differences from Qt 4 Arora](#differences-from-qt-4-arora)
+
 - [Source structure](#source-structure)
 - [Building](#building)
 - [Testing & diagnostics](#testing--diagnostics)
@@ -165,7 +172,7 @@ browsing profile:
   second-opinion TLS verifier: on https page commits a worker
   performs a real handshake to the host and re-evaluates the
   certificate chain with rustls+webpki against the platform
-  roots — the site panel shows a "TLS verified by Arora" chip,
+  roots — the site panel shows a "TLS verified by Arktos" chip,
   or a warning line naming the failure class when the
   independent verdict disagrees. The check only informs the
   panel (it never blocks a page), skips Tor windows, proxied
@@ -177,7 +184,7 @@ browsing profile:
   strings cannot inject markup into chrome.
 - **In-browser PDFs, sanitized before view** — PDFs open in a
   shell-owned document view (Preferences → Privacy → PDF Documents):
-  pages are rasterized by a confined `arora --pdf-worker` subprocess
+  pages are rasterized by a confined `arktos --pdf-worker` subprocess
   running the pure-Rust `hayro` renderer under a bubblewrap allowlist
   (staged file read-only, one writable work dir, no network, no
   $HOME) — the same widget every engine backend hosts, so the view
@@ -200,13 +207,13 @@ browsing profile:
   files), `/etc` `/usr` `/boot` are remounted read-only, and the rest
   of the filesystem — profile and `~/Downloads` included — stays
   writable. One declarative `SandboxPolicy` drives pure per-platform
-  generators: the bwrap argv + `arora-sandbox` launcher script for
+  generators: the bwrap argv + `arktos-sandbox` launcher script for
   Linux, a Seatbelt profile for macOS, an AppContainer manifest for
   Windows, and an unveil/pledge sequence for OpenBSD (those apply
   paths are compiled but untested off-Linux; FreeBSD has no Capsicum
   apply path yet and warns accordingly). Escape hatches:
-  `arora --no-sandbox`, `ARORA_NO_SANDBOX=1`, or `sandbox/enabled=false`
-  in settings. `arora --sandbox-status` prints the backend and the
+  `arktos --no-sandbox`, `ARKTOS_NO_SANDBOX=1`, or `sandbox/enabled=false`
+  in settings. `arktos --sandbox-status` prints the backend and the
   live policy; a missing sandbox tool warns once and continues
   unsandboxed rather than failing.
 
@@ -312,7 +319,7 @@ browsing profile:
 - **History manager** — "Show All History" (Ctrl+H) opens in a tab
   instead of a floating window; entries open in new tabs.
 - **Look & feel** — Theme selector (System default / Light / Dark,
-  `ARORA_COLOR_SCHEME` override), bundled icon sets
+  `ARKTOS_COLOR_SCHEME` override), bundled icon sets
   (Adwaita/Breeze/Tabler/Lucide, light+dark variants — Tabler is the default
   so every menu glyph ships in the bundle), flat palette-aware chrome with a consistent
   spacing rhythm, status-bar load
@@ -331,7 +338,7 @@ browsing profile:
 - **Bundled engines** — DuckDuckGo (default), Google, Bing, Qwant,
   Startpage, Ecosia, Yahoo, Wikipedia, YouTube, Reddit and Google
   I'm Feeling Lucky, each with its own icon and a default keyword
-  nickname where declared ("b arora" searches Bing, "sp" Startpage,
+  nickname where declared ("b arktos" searches Bing, "sp" Startpage,
   "q" Qwant, "e" Ecosia); nicknames you rebind or remove stay yours.
 - **Suggestions opt-in per engine** — nothing is sent to a suggest
   endpoint unless the user enables it for that engine.
@@ -362,7 +369,7 @@ and the isolation boundary is audited end to end.
 
 ### Tor
 
-File → "New Tor Window" (or `arora --tor`) opens a Tor-browsing window
+File → "New Tor Window" (or `arktos --tor`) opens a Tor-browsing window
 backed by a managed tor daemon (bundled or system): SOCKS5 egress
 only, a dedicated off-the-record profile, .onion reachability, and
 Tor-aware rules (no direct-connection fallbacks, no extension loads,
@@ -379,7 +386,7 @@ NEWNYM and reloads the site's tab, so the page's traffic lands on a
 fresh circuit and the displayed chain rotates; requests inside tor's
 rate limit report the wait instead of pretending to rotate, and the
 button explains itself when the daemon cannot take one. New tabs
-land on a Tor-branded start page: the usual Arora
+land on a Tor-branded start page: the usual Arktos
 header and search box on a purple background with the official Tor
 onion centered — bundled in the binary, so the page never touches the
 network; a configured custom homepage still takes precedence.
@@ -428,7 +435,7 @@ in-flight part/staging files stay 0600, stale dl-*/cookies-* debris
 is swept when the engine arms, and debug output redacts URL queries,
 fragments and userinfo.
 
-On Linux the accelerated engine runs inside `arora
+On Linux the accelerated engine runs inside `arktos
 --download-worker`, a confined subprocess under a restrictive
 bubblewrap wrap: the mount namespace exposes only the download's
 work dir and the destination directory — `$HOME` and the profile
@@ -436,7 +443,7 @@ are never mounted — so a compromised downloader cannot touch
 credentials, keys or cookies.  The browser keeps answering the
 policy gate over a stdin/stdout protocol, making the sandboxed path
 policy-identical to in-process; a failed wrap falls back to
-in-process.  Disable via `ARORA_DL_NO_SANDBOX=1` or
+in-process.  Disable via `ARKTOS_DL_NO_SANDBOX=1` or
 `downloadmanager/sandboxedWorker=false`.
 
 Rust supply chain: `make check-supplychain` (also a `make check`
@@ -478,12 +485,12 @@ Not-supported extension's toolbar action opens a short explanation
 rather than a popup that spins on a dead worker. The page lists each
 extension's manifest description and, for installed ones, the
 on-disk folder — installed extensions live under the browsing
-profile's `QtWebEngine/arora/Extensions/` directory (inside the
-Arora data location, e.g. `~/.local/share/Arora/Arora/` on Linux)
+profile's `QtWebEngine/arktos/Extensions/` directory (inside the
+Arktos data location, e.g. `~/.local/share/Arktos/Arktos/` on Linux)
 and can be removed with the page's Remove button or by deleting
-their folder while Arora is closed.
+their folder while Arktos is closed.
 
-Arora bundles the **Bitwarden password-manager extension** (official
+Arktos bundles the **Bitwarden password-manager extension** (official
 Chrome build, `src/data/extensions/` — provenance and checksums in
 `PROVENANCE.txt` there). On the first run of a profile that has no
 extensions yet it is installed and enabled by default; on a profile
@@ -491,7 +498,7 @@ that already carries extensions it is installed but left disabled —
 flip it on from Settings → Extensions. It installs exactly once:
 uninstalling is never undone, and it is never loaded into private
 or Tor profiles. The bundled build cannot self-update (no
-`update_url`); updates arrive with Arora releases. Qt WebEngine's
+`update_url`); updates arrive with Arktos releases. Qt WebEngine's
 extension API is a tech preview — measured on 6.12: MV3 service
 workers, content scripts, action popups, `storage`, `alarms`,
 `idle`, `offscreen`, `i18n`, observe-only `webRequest` and runtime
@@ -526,7 +533,7 @@ background throttling, and bridges to the shell over a dedicated
 `chromeBridge` WebChannel — calls into chrome.* surfaces that are
 not implemented yet answer a typed error that shows up in the
 extension's health state on the Settings page rather than silently
-no-op'ing. Set `ARORA_EXTHOST_OFF=1` to disable hosted backgrounds.
+no-op'ing. Set `ARKTOS_EXTHOST_OFF=1` to disable hosted backgrounds.
 
 ### Credentials & autofill
 
@@ -578,7 +585,7 @@ core landed and UX/completion work still landing.
     on insecure pages
   - Consent gates for external protocols, adblock-list downloads and
     remote trust-list refreshes; command-line URLs treated as untrusted
-  - In-browser PDFs sanitized before render: a confined `arora
+  - In-browser PDFs sanitized before render: a confined `arktos
     --pdf-worker` subprocess runs the pure-Rust `hayro` renderer under
     a bubblewrap allowlist; a Rust policy pass strips JavaScript,
     /Launch, auto-actions, embedded files and XFA/AcroForm remnants
@@ -598,7 +605,7 @@ core landed and UX/completion work still landing.
     decisions stay machine-global by design (they are not persona
     data); cookie rules and container assignments are persona-scoped.
     There is no sync service — profiles never leave the local data
-    directory. `arora --profile <id>` launches a standalone instance
+    directory. `arktos --profile <id>` launches a standalone instance
     bound to a registry persona
   - Profile vaults *(in progress)* — whole-profile sealed archives
     (ARV1): Argon2id KEK wrapping a random 512-bit vault key,
@@ -682,12 +689,12 @@ that swap means in practice:
   (never a bare port; off in Tor windows and via
   `devtools/bidiBackend=0`).
 - **file:// directory listings** — WebKit rendered them natively; they
-  are now served by a registered `arora-file:` URL scheme handler.
+  are now served by a registered `arktos-file:` URL scheme handler.
 - **QtScript gone** — OpenSearch suggestions parse JSON natively;
   user-script, autofill and fingerprint injection use
   QWebEngineScript. Qt5Compat remains only as a migration bridge.
 - **Self-contained installs** — `make bundle` produces a relocatable
-  directory shipping the Qt/WebEngine runtime, so Arora runs on a
+  directory shipping the Qt/WebEngine runtime, so Arktos runs on a
   system with no Qt installed (see [Packaging](#packaging)).
 - **Per-profile settings store** — persona preferences (privacy
   toggles, homepage, search engine, cookie policy, downloads dir,
@@ -734,7 +741,7 @@ src/                  application sources (flat layout + subdirs)
   extensions/         MV3 plumbing
   sandbox/            declarative policy + per-platform generators
                       (bwrap / Seatbelt / AppContainer / unveil+pledge),
-                      runtime re-exec, arora-sandbox launcher script
+                      runtime re-exec, arktos-sandbox launcher script
   icons/              bundled icon sets (adwaita/breeze/tabler/lucide ±dark)
   utils/              shared helpers (SafeText, scope shortcuts, ...)
   rustcore/           shared Rust core crate (credential store, ...)
@@ -747,7 +754,7 @@ BuildProcess/         bundling + fetch scripts (bundle-linux.sh, ...)
 
 ## Building
 
-Arora uses the **qmake** build system against **Qt 6**. The reference
+Arktos uses the **qmake** build system against **Qt 6**. The reference
 toolchain is **Qt 6.12** — features such as the extension API and the
 DNS-mode control rely on recent Qt releases, so prefer the newest
 Qt 6 you can install.
@@ -826,16 +833,16 @@ On Windows `nmake`/`jom` replaces `make`; macOS uses `make` as usual.
 ## Testing & diagnostics
 
 - `make check` — the qtest suite (offscreen-safe); each test binary
-  is capped at 15 minutes (`ARORA_TEST_TIMEOUT` overrides) so a hung
+  is capped at 15 minutes (`ARKTOS_TEST_TIMEOUT` overrides) so a hung
   test can't stall the run
 - `make check-rustcoverage` — per-crate cargo-llvm-cov line-coverage
   gate for the shipped Rust crates (>=85% each;
-  `ARORA_RUST_COVERAGE_MIN` overrides; also a `make check`
+  `ARKTOS_RUST_COVERAGE_MIN` overrides; also a `make check`
   prerequisite, skipped where the Rust tools are absent)
 - `make check-coverage` / `check-static` / `check-leaks` — coverage
-  (src/ >=85% line gate by default; `ARORA_COVERAGE_MIN` overrides),
+  (src/ >=85% line gate by default; `ARKTOS_COVERAGE_MIN` overrides),
   static analysis and sanitizer-leak gates
-- `./arora --*-smoke` — a family of headless harnesses:
+- `./arktos --*-smoke` — a family of headless harnesses:
   `--adblock-smoke`, `--adblock-rust-smoke`, `--telemetry-smoke`,
   `--anon-smoke`, `--badssl-smoke`, `--browseraudit-smoke`,
   `--session-smoke`, `--perf-smoke`, `--sorry-smoke`,
@@ -844,16 +851,16 @@ On Windows `nmake`/`jom` replaces `make`; macOS uses `make` as usual.
   Every smoke (plus `--quit-after-load`) runs against a throwaway
   per-run config/data store, so test writes never touch the real
   profile — even when a run is killed mid-flight
-- `./arora --sandbox-smoke` — end-to-end sandbox verification: wraps a
+- `./arktos --sandbox-smoke` — end-to-end sandbox verification: wraps a
   probe child in bwrap, asserts the denylist hides files and
   directories, writes pass through, the engine runs inside the wrap,
   and a missing bwrap degrades gracefully
-- `./arora --sandbox-status` — sandbox backend, whether this process
+- `./arktos --sandbox-status` — sandbox backend, whether this process
   is wrapped, and the resolved policy
-- `./arora --write-sandbox-launcher` — print the `arora-sandbox`
-  launcher script (used to regenerate src/sandbox/arora-sandbox)
-- `./arora --profile-startup` — millisecond startup timeline
-- `ARORA_DISABLE_GPU_COMPOSITING=1` — GPU-crash workaround: forces
+- `./arktos --write-sandbox-launcher` — print the `arktos-sandbox`
+  launcher script (used to regenerate src/sandbox/arktos-sandbox)
+- `./arktos --profile-startup` — millisecond startup timeline
+- `ARKTOS_DISABLE_GPU_COMPOSITING=1` — GPU-crash workaround: forces
   Chromium's `--disable-gpu-compositing` (software page compositing;
   WebGL/canvas acceleration stays on). The same mitigation lives in
   Preferences and engages automatically after two consecutive unclean
@@ -867,15 +874,15 @@ or `xvfb-run`).
 ## Packaging
 
 `make bundle` produces a **self-contained relocatable directory**
-(`dist/Arora-<ver>-linux-<arch>/`) packing the binary, the Qt/WebEngine
+(`dist/Arktos-<ver>-linux-<arch>/`) packing the binary, the Qt/WebEngine
 runtime, resources, plugins, freedesktop metadata and the
-`arora-sandbox` launcher — runs on a system with no Qt installed.
+`arktos-sandbox` launcher — runs on a system with no Qt installed.
 `make check-bundle` verifies self-containment in a bubblewrap sandbox
 with the dev Qt hidden.
 
 ## Third-party components
 
-Arora is built on, bundles, or talks to these projects — thank you to
+Arktos is built on, bundles, or talks to these projects — thank you to
 their authors. `THIRD-PARTY-NOTICES` is the authoritative, complete
 inventory (including the full transitive Rust crate list); the tables
 below are the user-facing summary.
@@ -900,7 +907,7 @@ below are the user-facing summary.
 | networkcookiejar (Torch Mobile/Linden) | MPL-1.1 / GPL-2.0 / LGPL-2.1 | `src/network/cookiejar/networkcookiejar/` |
 | BSD utility code (utils, adblockrule, useragentmenu) | BSD-3-Clause | `src/utils/` + named files |
 | qrcodegen — QR generator (Nayuki, C++ and Rust crate) | MIT | `src/qrcodegen.*`, crate `qrcodegen` |
-| Arora icon artwork (Jens Bache-Wiig, 2008) | GPL-2.0 | `src/data/arora.svg` + renderings |
+| Arora icon artwork (Jens Bache-Wiig, 2008) | GPL-2.0 | `src/data/arktos.svg` + renderings |
 | OpenSearch descriptors (service names are their owners' marks) | GPL-2.0+ (Arora-authored XML) | `src/data/searchengines/` |
 | Bitwarden password-manager extension 2026.9.3 (bundled default) | GPL-3.0 | `src/data/extensions/` |
 | Community translations | GPL-2.0+ (project license) | `src/locale/` |
@@ -946,12 +953,12 @@ https://servo.org) behind the spikes/servo embedding harness and the
 planned selectable engine.
 
 `make pkg-deb` (driver: `./.devin/pkg-deb.sh`) builds a **Debian
-package** at `dist/arora_0.2_amd64.deb`. The same payload is laid out
-on the FHS — `/usr/bin/arora` launcher, bundled Qt 6.12 + QtWebEngine
-under `/usr/lib/arora` (the tree builds against a newer Qt than the
-distro series ships), app data in `/usr/share/arora`, desktop file,
+package** at `dist/arktos_1.0_amd64.deb`. The same payload is laid out
+on the FHS — `/usr/bin/arktos` launcher, bundled Qt 6.12 + QtWebEngine
+under `/usr/lib/arktos` (the tree builds against a newer Qt than the
+distro series ships), app data in `/usr/share/arktos`, desktop file,
 hicolor icons and man page under `/usr/share`. The optional Rust crates
-(arora-rustdl, arora-rustcore) are statically linked, so the package
+(arktos-rustdl, arktos-rustcore) are statically linked, so the package
 has no rust artifacts to ship. Runtime `Depends` are computed by
 `dpkg-shlibdeps` — real versioned system deps only (libnss3, libdbus,
 libxcb-cursor0, ...). `debian/` carries hand-rolled metadata (no
@@ -962,8 +969,8 @@ instdir, `ldd` clean with the dev Qt masked, and a headless
 `--quit-after-load` launch from the installed layout.
 
 `make pkg-flatpak` (driver: `./.devin/pkg-flatpak.sh`, manifest:
-`io.arora.Arora.yaml`) builds an **installable flatpak** at
-`dist/io.arora.Arora_0.2_x86_64.flatpak` and installs it into the user
+`com.arktos_browser.Arktos.yaml`) builds an **installable flatpak** at
+`dist/com.arktos_browser.Arktos_1.0_x86_64.flatpak` and installs it into the user
 flatpak. The app compiles inside the org.kde 6.11 SDK (newest Qt 6
 runtime on flathub) with QtWebEngine provided by the
 `io.qt.qtwebengine.BaseApp` and cargo by the rust-stable SDK extension —
@@ -979,10 +986,10 @@ driver verifies the bundle by installing it and running the offscreen
 `--quit-after-load` + `--tor --tor-window-smoke` paths inside the
 sandbox.
 
-`make pkg-rpm` (driver: `./.devin/pkg-rpm.sh`, spec: `rpm/arora.spec`)
-builds an **openSUSE-compatible RPM** at `dist/arora_0.2-0.*.rpm`.
+`make pkg-rpm` (driver: `./.devin/pkg-rpm.sh`, spec: `rpm/arktos.spec`)
+builds an **openSUSE-compatible RPM** at `dist/arktos_1.0-0.*.rpm`.
 Same artifact policy as the deb — identical staged payload
-(`/usr/bin/arora` + private Qt/QtWebEngine under `/usr/lib/arora`,
+(`/usr/bin/arktos` + private Qt/QtWebEngine under `/usr/lib/arktos`,
 statically-linked rust crates), so the spec disables `AutoReqProv` and
 carries an explicit `Requires:` list in SONAME-capability form that the
 driver regenerates and diffs against the staged tree. The `%{qtdir}`
@@ -997,14 +1004,16 @@ the deb verifier.
 
 ## License
 
-Arora is **free software under the GNU General Public License,
+Arktos is **free software under the GNU General Public License,
 version 2 or later** — see COPYING for the full text.
 
-Arora is **experimental software provided "as is"** — the license text
+Arktos is **experimental software provided "as is"** — the license text
 governs, but in plain terms: there is **no warranty**, no guarantee of
 fitness for any purpose, and no liability accepted for data loss,
 security failures or any other damage. Use it for testing, hacking and
 learning; treat it as a research browser, not a promise.
 
 Original Arora: Benjamin C. Meyer (icefox) and contributors, 2007–2011.
-Qt 6 port + continued development: see AUTHORS and git history.
+Arktos: Copyright © 2026-2027 Janos Szenfner —
+https://github.com/janos-szenfner/arktos. Qt 6 port + continued
+development: see AUTHORS and git history.
