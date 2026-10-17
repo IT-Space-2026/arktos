@@ -40,9 +40,38 @@ QList<AdBlockListPreset> all()
     const QString security = tr("Security");
     const QString resourceAbuse = tr("Resource Abuse & Mining");
     const QString regional = tr("Regional");
+    const QString multipurpose = tr("Multipurpose");
 
     QList<AdBlockListPreset> presets;
 
+    presets.append({ core,
+        QLatin1String("uBlock filters"),
+        QLatin1String("https://ublockorigin.github.io/uAssets/filters/filters.txt"),
+        tr("uBlock Origin's primary filter list — enabled by default in uBlock Origin.") });
+    presets.append({ core,
+        QLatin1String("EasyList"),
+        QLatin1String("https://easylist.to/easylist/easylist.txt"),
+        tr("The standard ad-blocking list; enabled by default in uBlock Origin.") });
+    presets.append({ core,
+        QLatin1String("EasyPrivacy"),
+        QLatin1String("https://easylist.to/easylist/easyprivacy.txt"),
+        tr("Tracker protection; enabled by default in uBlock Origin.") });
+    presets.append({ core,
+        QLatin1String("AdGuard Base"),
+        QLatin1String("https://filters.adtidy.org/extension/ublock/filters/2.txt"),
+        tr("AdGuard's own ad-blocking rules, complementary to EasyList.") });
+    presets.append({ core,
+        QLatin1String("AdGuard Tracking Protection"),
+        QLatin1String("https://filters.adtidy.org/extension/ublock/filters/3.txt"),
+        tr("Blocks trackers and analytics; complements EasyPrivacy.") });
+    presets.append({ core,
+        QLatin1String("AdGuard URL Tracking Protection"),
+        QLatin1String("https://filters.adtidy.org/extension/ublock/filters/17.txt"),
+        tr("Strips tracking parameters from URLs.") });
+    presets.append({ core,
+        QLatin1String("Block Outsider Intrusion into LAN"),
+        QLatin1String("https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/lan-block.txt"),
+        tr("Blocks public sites from probing your local network (anti-DNS-rebinding).") });
     presets.append({ core,
         QLatin1String("uBlock filters \u2013 Privacy"),
         QLatin1String("https://ublockorigin.github.io/uAssets/filters/privacy.txt"),
@@ -56,6 +85,30 @@ QList<AdBlockListPreset> all()
         QLatin1String("https://ublockorigin.github.io/uAssets/filters/quick-fixes.txt"),
         tr("Fast-shipping fixes for urgent filter issues.") });
 
+    presets.append({ annoyances,
+        QLatin1String("uBlock filters \u2013 Annoyances"),
+        QLatin1String("https://ublockorigin.github.io/uAssets/filters/annoyances.txt"),
+        tr("uBlock Origin's combined anti-annoyance rules.") });
+    presets.append({ annoyances,
+        QLatin1String("AdGuard Annoyances"),
+        QLatin1String("https://filters.adtidy.org/extension/ublock/filters/14.txt"),
+        tr("AdGuard's combined cookie/popup/social-widget annoyance rules.") });
+    presets.append({ annoyances,
+        QLatin1String("AdGuard Social Media"),
+        QLatin1String("https://filters.adtidy.org/extension/ublock/filters/4.txt"),
+        tr("Removes social-media widgets, like/share buttons, and counters.") });
+    presets.append({ annoyances,
+        QLatin1String("Anti-Facebook"),
+        QLatin1String("https://secure.fanboy.co.nz/fanboy-antifacebook.txt"),
+        tr("Blocks Facebook trackers and widgets embedded on other sites.") });
+    presets.append({ annoyances,
+        QLatin1String("Dandelion Sprout's Annoyances List"),
+        QLatin1String("https://raw.githubusercontent.com/DandelionSprout/adfilt/master/AnnoyancesList"),
+        tr("Extra rules for nag screens, surveys, and other annoyances.") });
+    presets.append({ annoyances,
+        QLatin1String("Actually Legitimate URL Shortener"),
+        QLatin1String("https://raw.githubusercontent.com/DandelionSprout/adfilt/master/LegitimateURLShortener.txt"),
+        tr("Strips tracking junk from shared links (shipped by uBlock Origin).") });
     presets.append({ annoyances,
         QLatin1String("EasyList Annoyances"),
         QLatin1String("https://easylist.to/easylist/fanboy-annoyance.txt"),
@@ -103,6 +156,19 @@ QList<AdBlockListPreset> all()
         QLatin1String("https://raw.githubusercontent.com/hoshsadiq/adblock-nocoin-list/master/nocoin.txt"),
         tr("Dedicated browser crypto-mining blocklist, community maintained.") });
 
+    presets.append({ multipurpose,
+        QLatin1String("Dan Pollock's hosts file"),
+        QLatin1String("https://someonewhocares.org/hosts/zero/hosts"),
+        tr("Long-running hosts-file ad/malware domain blocklist.") });
+    presets.append({ multipurpose,
+        QLatin1String("MVPS HOSTS"),
+        QLatin1String("https://winhelp2002.mvps.org/hosts.txt"),
+        tr("Classic hosts-file ad/tracker domain blocklist.") });
+    presets.append({ multipurpose,
+        QLatin1String("Peter Lowe's Ad and tracking server list"),
+        QLatin1String("https://pgl.yoyo.org/adservers/serverlist.php?hostformat=adblockplus&showintro=1&mimetype=plaintext"),
+        tr("Compact list of well-known ad/tracking server domains.") });
+
     presets.append({ regional,
         QLatin1String("EasyList Germany"),
         QLatin1String("https://easylist.to/easylistgermany/easylistgermany.txt"),
@@ -115,6 +181,14 @@ QList<AdBlockListPreset> all()
         QLatin1String("RU AdList"),
         QLatin1String("https://raw.githubusercontent.com/easylist/ruadlist/master/advblock.txt"),
         tr("Russian-language site coverage.") });
+    presets.append({ regional,
+        QLatin1String("AdGuard German"),
+        QLatin1String("https://filters.adtidy.org/extension/ublock/filters/6.txt"),
+        tr("AdGuard's own German-language site coverage.") });
+    presets.append({ regional,
+        QLatin1String("AdGuard French"),
+        QLatin1String("https://filters.adtidy.org/extension/ublock/filters/16.txt"),
+        tr("AdGuard's own French-language site coverage.") });
     presets.append({ regional,
         QLatin1String("EasyList Czech and Slovak"),
         QLatin1String("https://raw.githubusercontent.com/tomasko126/easylistczechandslovak/master/filters.txt"),
@@ -139,6 +213,10 @@ QList<AdBlockListPreset> all()
         QLatin1String("EasyList Italy"),
         QLatin1String("https://easylist-downloads.adblockplus.org/easylistitaly.txt"),
         tr("Italian-language site coverage.") });
+    presets.append({ regional,
+        QLatin1String("Liste AR"),
+        QLatin1String("https://easylist-downloads.adblockplus.org/Liste_AR.txt"),
+        tr("Arabic-language site coverage.") });
     presets.append({ regional,
         QLatin1String("EasyList China"),
         QLatin1String("https://easylist-downloads.adblockplus.org/easylistchina.txt"),
@@ -167,6 +245,10 @@ QList<AdBlockListPreset> all()
         QLatin1String("ABPVN"),
         QLatin1String("https://raw.githubusercontent.com/abpvn/abpvn/master/filter/abpvn.txt"),
         tr("Vietnamese-language site coverage.") });
+    presets.append({ regional,
+        QLatin1String("AdGuard Chinese"),
+        QLatin1String("https://filters.adtidy.org/extension/ublock/filters/224.txt"),
+        tr("AdGuard's own Chinese-language site coverage.") });
     presets.append({ regional,
         QLatin1String("KO Classic"),
         QLatin1String("https://filters.adtidy.org/extension/ublock/filters/227.txt"),
@@ -200,9 +282,17 @@ QList<AdBlockListPreset> all()
         QLatin1String("https://adblock.gardar.net/is.abp.txt"),
         tr("Icelandic-language site coverage.") });
     presets.append({ regional,
+        QLatin1String("Frellwit's Swedish Filter"),
+        QLatin1String("https://raw.githubusercontent.com/lassekongo83/Frellwits-filter-lists/master/Frellwits-Swedish-Filter.txt"),
+        tr("Swedish-language site coverage (shipped by uBlock Origin).") });
+    presets.append({ regional,
         QLatin1String("Finnish List"),
         QLatin1String("https://raw.githubusercontent.com/finnish-easylist-addition/finnish-easylist-addition/master/Finland_adb.txt"),
         tr("Finnish-language site coverage.") });
+    presets.append({ regional,
+        QLatin1String("EasyList Thailand"),
+        QLatin1String("https://raw.githubusercontent.com/easylist-thailand/easylist-thailand/master/subscription/easylist-thailand.txt"),
+        tr("Thai-language site coverage.") });
     presets.append({ regional,
         QLatin1String("ABPindo"),
         QLatin1String("https://raw.githubusercontent.com/ABPindo/indonesianadblockrules/master/subscriptions/abpindo.txt"),
