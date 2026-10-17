@@ -199,6 +199,7 @@ This file is the task queue for the Devin CLI task loop
 | DEVT19 | BiDi devtools: Elements parity with Chrome — live DOM tree, attributes, computed styles, box model, search — details below | pending | 0 | user report: Elements/Performance/Sources/Memory dead in the BiDi panel |
 | DEVT20 | BiDi devtools: Sources parity — resource tree, source view, breakpoints/pause/step — details below | pending | 0 | needs:task:DEVT19 |
 | DEVT21 | BiDi devtools: Performance + Memory parity — live metrics, JS profiler capture, heap sampling — details below | pending | 0 | needs:task:DEVT20 |
+| THEM07 | Tor reader button still wrong: accent outline/fill reads as a muddy raised box on the violet bar — pick a legible tor accent — details below | pending | 0 | user screenshot: violet box glyph vs flat light siblings |
 
 
 ## Task details
@@ -1241,3 +1242,11 @@ Verify: tst_devtools legs + --bidi-sources-smoke (new if absent): fixture page r
 BiDi devtools Performance + Memory to Chrome parity (gated on DEVT20). Performance: Performance.getMetrics polled live into the metrics table, Profiler.enable/start/stop capture producing a real call-tree/self-total table (Profiler.takePreciseCoverage or startProfiling→stopProfiling nodes→{function, self, total, source} aggregation). Memory: HeapProfiler.startSampling/stopSampling producing the allocation-sampling table (function/self-size/source), plus a one-shot heap snapshot summary (HeapProfiler.getHeapObjectId-lite — total heap size + top allocation sites is enough for v1). Both tabs currently ship honest-disabled labels when domains don't answer — that stays as the fallback, but on a working endpoint they must be live.
 
 Verify: tst_devtools legs + smokes: metrics tick live against a loaded page (nonzero counters), a profiler capture over a busy fixture produces >0 rows with plausible self/total, heap sampling produces rows; if a domain legitimately can't serve on this endpoint, the offline reason names the exact CDP error. make check PASS.
+
+### THEM07
+
+User screenshot: on the tor bar the ReaderButton's suggested state bakes `torChromeRaisedColor` (0x6b4fa3) — a violet only ~30 luminance steps off the bar (0x4a3372) — so the accent outline reads as a muddy raised box while every sibling icon is a flat light glyph. THEM06 fixed WHICH color is used (bake-time accentOverride, verified working — the screenshot shows 0x6b4fa3 pixels) but the color itself is illegible at glyph scale.
+
+Fix: the tor reader accent needs a LIGHTER in-family violet for glyph-scale marks — e.g. a new `AroraStyle::torChromeAccentColor()` (~0xa98bd9 / contrast >=3:1 against torChromeColor), used for setAccentOverride — while badge pills/rail fills keep torChromeRaisedColor (fill-scale contrast is fine). Check the other accent consumers for the same glyph-scale problem while here (circuit button bake, any other icon that resolves QPalette::Accent on the tor bar). Keep plain windows unchanged.
+
+Verify: update tst_BrowserMainWindow::torReaderAccent — it pins the override == torChromeRaisedColor; repin to the new accent and add a contrast assertion (accent-vs-bar luminance ratio) so a too-dark accent can't regress. torChromeGlyphsLegible still green, make check PASS.
