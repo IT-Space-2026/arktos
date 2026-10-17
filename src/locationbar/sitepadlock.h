@@ -89,6 +89,7 @@ public:
 
     explicit SitePadlockButton(QWidget *parent = nullptr);
     void setWebView(WebView *webView);
+    WebView *webView() const;
 
     // The whole decision table as a pure function of the page url —
     // the icon/tooltip/popup render it and the autotest exercises it.

@@ -131,6 +131,11 @@ SitePadlockButton::SitePadlockButton(QWidget *parent)
     setVisible(m_webView != nullptr);
 }
 
+WebView *SitePadlockButton::webView() const
+{
+    return m_webView;
+}
+
 void SitePadlockButton::setWebView(WebView *webView)
 {
     if (m_webView == webView)
