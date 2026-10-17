@@ -117,7 +117,10 @@ enum CdpKind {
     CdpAttrSet,
     // DEVT20 — Debugger.getScriptSource bodies; n carries the
     // paused line to highlight (1-based, 0 = plain selection).
-    CdpScriptSource
+    CdpScriptSource,
+    // DEVT21 — Runtime.getHeapUsage: the heap summary's used/total
+    // pair, paired with a sampling pass for the top sites.
+    CdpHeapUsage
 };
 
 // The cheapest REAL method per domain — enable calls are stateless,
@@ -134,7 +137,11 @@ static const struct {
     {"Page", "Page.getResourceTree", "{}"},
     {"Debugger", "Debugger.enable", "{}"},
     {"Security", "Security.enable", "{}"},
-    {"Performance", "Performance.getMetrics", "{}"},
+    // DEVT21: must be enable, not getMetrics — getMetrics answers
+    // clean-but-EMPTY until the domain is enabled on the session,
+    // so probing the read call marked Performance "up" while the
+    // metrics table stayed blank forever.
+    {"Performance", "Performance.enable", "{}"},
     {"Profiler", "Profiler.enable", "{}"},
     {"HeapProfiler", "HeapProfiler.enable", "{}"},
 };
@@ -1896,6 +1903,7 @@ BidiPanel::BidiPanel(QWidget *parent)
     m_perfOffline->hide();
     pv->addWidget(m_perfOffline);
     m_perfBody = new QWidget;
+    m_perfBody->setObjectName(QLatin1String("bidiPerfBody"));
     QVBoxLayout *pbody = new QVBoxLayout(m_perfBody);
     pbody->setContentsMargins(0, 0, 0, 0);
     pbody->setSpacing(0);
@@ -1934,6 +1942,8 @@ BidiPanel::BidiPanel(QWidget *parent)
     // DEVT13 — Memory: a real allocation-sampling capture through
     // HeapProfiler.startSampling/stopSampling, aggregated by
     // function.  Same honest-disabled shape as Performance.
+    // DEVT21 adds the one-shot heap summary — Runtime.getHeapUsage
+    // totals plus the sampling pass's top allocation sites.
     QWidget *memPage = new QWidget;
     memPage->setObjectName(QLatin1String("bidiMemoryPage"));
     QVBoxLayout *mv = new QVBoxLayout(memPage);
@@ -1955,6 +1965,19 @@ BidiPanel::BidiPanel(QWidget *parent)
         tr("Sample JS heap allocations for two seconds, then show "
            "where the bytes went"));
     mb->addWidget(m_heapButton);
+    m_snapButton = new QToolButton;
+    m_snapButton->setObjectName(
+        QLatin1String("bidiMemorySnapshot"));
+    m_snapButton->setAutoRaise(true);
+    m_snapButton->setIcon(
+        style()->standardIcon(QStyle::SP_FileDialogInfoView));
+    m_snapButton->setText(tr(" Heap summary"));
+    m_snapButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    m_snapButton->setToolTip(
+        tr("Report the JS heap's used and total size plus the top "
+           "allocation sites (a sampling estimate, not a full heap "
+           "snapshot)"));
+    mb->addWidget(m_snapButton);
     m_memStatus = new QLabel;
     m_memStatus->setObjectName(QLatin1String("bidiMemoryStatus"));
     mb->addWidget(m_memStatus);
@@ -1968,6 +1991,7 @@ BidiPanel::BidiPanel(QWidget *parent)
     m_memOffline->hide();
     mv->addWidget(m_memOffline);
     m_memBody = new QWidget;
+    m_memBody->setObjectName(QLatin1String("bidiMemoryBody"));
     QVBoxLayout *mbody = new QVBoxLayout(m_memBody);
     mbody->setContentsMargins(0, 0, 0, 0);
     mbody->setSpacing(0);
@@ -1985,6 +2009,8 @@ BidiPanel::BidiPanel(QWidget *parent)
     tabs->addTab(memPage, tr("Memory"));
     connect(m_heapButton, &QToolButton::clicked,
             this, &BidiPanel::collectHeapSample);
+    connect(m_snapButton, &QToolButton::clicked,
+            this, &BidiPanel::collectHeapSnapshot);
 
     // DEVT13 — Application: Chrome's storage tree.  One nav tree on
     // the left, the matching values table on the right; every row
@@ -2381,6 +2407,14 @@ void BidiPanel::onConnectionChanged(int state)
         // DEVT20: the channel died — script ids, pause chrome and
         // session breakpoint ids are all stale.
         resetDebuggerState();
+        // DEVT21: an in-flight heap capture's answers died with the
+        // channel — without the reset the flags would block every
+        // later capture on the reconnected session.
+        m_heapSampling = false;
+        m_snapshotRun = false;
+        m_snapStopSeen = false;
+        m_snapUsed = m_snapTotal = -1;
+        m_snapErr.clear();
         m_breakpoints.clear();
         rebuildBreakpointList();
         updateDebuggerButtons();
@@ -4039,6 +4073,7 @@ void BidiPanel::applyDomainSupport()
     const bool memUp = domainUp(QLatin1String("HeapProfiler"));
     m_memBody->setEnabled(memUp);
     m_heapButton->setEnabled(memUp);
+    m_snapButton->setEnabled(memUp);
     m_memOffline->setVisible(!memUp);
     m_memOffline->setText(
         memUp ? QString()
@@ -4546,13 +4581,16 @@ void BidiPanel::onCdpResponse(quint64 id, const QJsonObject &root)
 
     case CdpHeapStart:
         if (err) {
+            m_snapshotRun = false;
             m_memStatus->setText(
                 tr("Heap sampling unavailable: %1").arg(errText));
             return;
         }
         m_heapSampling = true;
         m_heapContext = ctx;
-        m_memStatus->setText(tr("Sampling allocations…"));
+        m_memStatus->setText(
+            m_snapshotRun ? tr("Collecting heap summary…")
+                          : tr("Sampling allocations…"));
         QTimer::singleShot(2000, this,
                            [this] { stopHeapSample(); });
         return;
@@ -4560,6 +4598,7 @@ void BidiPanel::onCdpResponse(quint64 id, const QJsonObject &root)
     case CdpHeapStop: {
         m_heapSampling = false;
         if (err) {
+            m_snapshotRun = false;
             m_memStatus->setText(
                 tr("Heap sampling failed: %1").arg(errText));
             return;
@@ -4620,10 +4659,74 @@ void BidiPanel::onCdpResponse(quint64 id, const QJsonObject &root)
             m_heapTable->setItem(
                 row, 2, new QTableWidgetItem(r.src));
         }
-        m_memStatus->setText(tr("Allocation profile: %1 functions")
-                                 .arg(rows.size()));
+        // DEVT21: a snapshot run composes its final line here when
+        // the getHeapUsage leg already answered — the sampling pass
+        // owns the sites, the usage answer the totals.  A still-
+        // pending usage reply stays a "pending" line its own reply
+        // replaces; a failed one is an honest "unavailable" with the
+        // CDP error, never a faked figure.
+        if (m_snapshotRun) {
+            m_snapStopSeen = true;
+            if (m_snapTotal > 0) {
+                m_snapshotRun = false;
+                m_memStatus->setText(
+                    tr("Heap: %1 used of %2 total — %3 allocation "
+                       "sites (sampling estimate)")
+                        .arg(formatBytes(m_snapUsed))
+                        .arg(formatBytes(m_snapTotal))
+                        .arg(rows.size()));
+            } else if (!m_snapErr.isEmpty()) {
+                m_snapshotRun = false;
+                m_memStatus->setText(
+                    tr("Allocation profile: %1 functions — heap "
+                       "usage unavailable: %2")
+                        .arg(rows.size())
+                        .arg(m_snapErr));
+            } else {
+                m_memStatus->setText(
+                    tr("Allocation profile: %1 functions — heap "
+                       "usage pending…")
+                        .arg(rows.size()));
+            }
+        } else {
+            m_memStatus->setText(tr("Allocation profile: %1 functions")
+                                     .arg(rows.size()));
+        }
         return;
     }
+
+    case CdpHeapUsage:
+        // DEVT21: Runtime.getHeapUsage — the summary's used/total
+        // pair.  The legs answer in either order: before the
+        // sampling stop lands this reply only stashes the figures;
+        // after it (m_snapStopSeen) this is the last leg and writes
+        // the final line itself.
+        if (err) {
+            m_snapErr = errText;
+            if (m_snapshotRun && m_snapStopSeen) {
+                m_snapshotRun = false;
+                m_memStatus->setText(
+                    tr("Allocation profile: %1 functions — heap "
+                       "usage unavailable: %2")
+                        .arg(m_heapTable->rowCount())
+                        .arg(errText));
+            }
+            return;
+        }
+        m_snapUsed = qint64(
+            result[QStringLiteral("usedSize")].toDouble());
+        m_snapTotal = qint64(
+            result[QStringLiteral("totalSize")].toDouble());
+        if (m_snapshotRun && m_snapStopSeen) {
+            m_snapshotRun = false;
+            m_memStatus->setText(
+                tr("Heap: %1 used of %2 total — %3 allocation "
+                   "sites (sampling estimate)")
+                    .arg(formatBytes(m_snapUsed))
+                    .arg(formatBytes(m_snapTotal))
+                    .arg(m_heapTable->rowCount()));
+        }
+        return;
 
     case CdpBpSet: {
         if (err) {
@@ -5411,7 +5514,7 @@ void BidiPanel::setCpuProfiling(bool on)
 void BidiPanel::collectHeapSample()
 {
     const QString ctx = currentContext();
-    if (ctx.isEmpty() || m_heapSampling
+    if (ctx.isEmpty() || m_heapSampling || m_snapshotRun
         || !domainUp(QLatin1String("HeapProfiler")))
         return;
     sendCdp(ctx, QStringLiteral("HeapProfiler.startSampling"),
@@ -5425,6 +5528,27 @@ void BidiPanel::stopHeapSample()
         return;
     sendCdp(m_heapContext, QStringLiteral("HeapProfiler.stopSampling"),
             QJsonObject(), CdpHeapStop);
+}
+
+// DEVT21: the one-shot heap summary — Runtime.getHeapUsage gives
+// the honest used/total figures and a sampling pass the top
+// allocation sites; the two legs answer in either order and the
+// last one composes the status line (see CdpHeapStop/CdpHeapUsage).
+void BidiPanel::collectHeapSnapshot()
+{
+    const QString ctx = currentContext();
+    if (ctx.isEmpty() || m_heapSampling || m_snapshotRun
+        || !domainUp(QLatin1String("HeapProfiler")))
+        return;
+    m_snapshotRun = true;
+    m_snapStopSeen = false;
+    m_snapUsed = m_snapTotal = -1;
+    m_snapErr.clear();
+    sendCdp(ctx, QStringLiteral("Runtime.getHeapUsage"),
+            QJsonObject(), CdpHeapUsage);
+    sendCdp(ctx, QStringLiteral("HeapProfiler.startSampling"),
+            QJsonObject{{QStringLiteral("samplingInterval"), 16384}},
+            CdpHeapStart);
 }
 
 #ifdef AUTOTESTS

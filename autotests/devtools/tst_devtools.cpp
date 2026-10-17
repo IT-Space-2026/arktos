@@ -2442,6 +2442,7 @@ void tst_DevTools::bidiFullTabSet()
     QVERIFY(panel.m_cpuToggle && panel.m_cpuToggle->isCheckable());
     QVERIFY(panel.m_metricsTable && panel.m_cpuTable);
     QVERIFY(panel.m_heapButton && panel.m_heapTable);
+    QVERIFY(panel.m_snapButton);
     QVERIFY(panel.m_perfOffline && panel.m_memOffline);
     QVERIFY(panel.m_perfOffline->isHidden());
     QVERIFY(panel.m_memOffline->isHidden());
@@ -2636,6 +2637,78 @@ void tst_DevTools::bidiFullTabSet()
                  QStringLiteral("make"));
         QCOMPARE(panel.m_heapTable->item(0, 1)->text(),
                  QStringLiteral("4.0 kB"));
+    }
+
+    // DEVT21 — the heap summary: the getHeapUsage answer stashes
+    // used/total mid-sample, the stop reply composes one line with
+    // totals + site count.
+    {
+        panel.m_snapshotRun = true;
+        panel.m_snapStopSeen = false;
+        panel.m_snapUsed = panel.m_snapTotal = -1;
+        panel.m_snapErr.clear();
+        panel.m_heapSampling = true; // usage lands mid-sample
+        const quint64 uid = panel.testRegisterCdp(19 /*CdpHeapUsage*/);
+        panel.onResponse(uid, QByteArray(
+            "{\"result\":{\"usedSize\":2097152,"
+            "\"totalSize\":8388608}}"));
+        QCOMPARE(panel.m_snapUsed, qint64(2097152));
+        QCOMPARE(panel.m_snapTotal, qint64(8388608));
+        QVERIFY(panel.m_snapshotRun); // waits on the sampling leg
+        const quint64 sid = panel.testRegisterCdp(11 /*CdpHeapStop*/);
+        panel.onResponse(sid, QByteArray(
+            "{\"result\":{\"profile\":{\"head\":{\"callFrame\":"
+            "{\"functionName\":\"\",\"url\":\"\",\"lineNumber\":-1},"
+            "\"selfSize\":0,\"children\":["
+            "{\"callFrame\":{\"functionName\":\"alloc\","
+            "\"url\":\"http://a/app.js\",\"lineNumber\":9},"
+            "\"selfSize\":8192,\"children\":[]}]}}}}"));
+        QVERIFY(panel.m_memStatus->text().contains(
+            QStringLiteral("2.0 MB used of 8.0 MB total")));
+        QVERIFY(panel.m_memStatus->text().contains(
+            QStringLiteral("allocation sites")));
+        QVERIFY(!panel.m_snapshotRun);
+
+        // Reverse order: stop lands first, the usage reply finishes
+        // the line (site count comes from the filled table).
+        panel.m_snapshotRun = true;
+        panel.m_snapStopSeen = false;
+        panel.m_snapUsed = panel.m_snapTotal = -1;
+        panel.m_snapErr.clear();
+        const quint64 sid2 = panel.testRegisterCdp(11);
+        panel.onResponse(sid2, QByteArray(
+            "{\"result\":{\"profile\":{\"head\":{\"callFrame\":"
+            "{\"functionName\":\"\",\"url\":\"\",\"lineNumber\":-1},"
+            "\"selfSize\":0,\"children\":[]}}}}"));
+        QVERIFY(panel.m_snapshotRun);
+        QVERIFY(panel.m_memStatus->text().contains(
+            QStringLiteral("pending")));
+        const quint64 uid2 = panel.testRegisterCdp(19);
+        panel.onResponse(uid2, QByteArray(
+            "{\"result\":{\"usedSize\":1048576,"
+            "\"totalSize\":4194304}}"));
+        QVERIFY(!panel.m_snapshotRun);
+        QVERIFY(panel.m_memStatus->text().contains(
+            QStringLiteral("1.0 MB used of 4.0 MB total")));
+
+        // A failed usage call keeps the sites and says why.
+        panel.m_snapshotRun = true;
+        panel.m_snapStopSeen = false;
+        panel.m_snapUsed = panel.m_snapTotal = -1;
+        panel.m_snapErr.clear();
+        const quint64 uid3 = panel.testRegisterCdp(19);
+        panel.m_heapSampling = true;
+        panel.onResponse(uid3, QByteArray(
+            "{\"error\":{\"message\":\"usage dead\"}}"));
+        QCOMPARE(panel.m_snapErr, QStringLiteral("usage dead"));
+        const quint64 sid3 = panel.testRegisterCdp(11);
+        panel.onResponse(sid3, QByteArray(
+            "{\"result\":{\"profile\":{\"head\":{\"callFrame\":"
+            "{\"functionName\":\"\",\"url\":\"\",\"lineNumber\":-1},"
+            "\"selfSize\":0,\"children\":[]}}}}"));
+        QVERIFY(panel.m_memStatus->text().contains(
+            QStringLiteral("heap usage unavailable: usage dead")));
+        QVERIFY(!panel.m_snapshotRun);
     }
 
     // Security: http page reads "Not secure", https picks up the
