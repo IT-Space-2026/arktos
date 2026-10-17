@@ -23,6 +23,7 @@
 #include "networkaccessmanager.h"
 
 #include <qcoreapplication.h>
+#include <qdebug.h>
 #include <qfile.h>
 #include <qjsonarray.h>
 #include <qjsondocument.h>
@@ -192,7 +193,7 @@ void UpdateChecker::replyFinished()
 
     bool ok = false;
     QString error;
-    m_result = parseReleaseJson(payload, &ok, &error);
+    m_result = parseReleaseJson(payload, m_apiUrl, &ok, &error);
     if (!ok) {
         m_result.errorString = error;
         finish(Status::Error);
@@ -225,8 +226,32 @@ void UpdateChecker::finish(Status status)
     emit finished(m_result);
 }
 
+bool UpdateChecker::isTrustedDownloadUrl(const QUrl &url,
+                                         const QUrl &apiUrl)
+{
+    if (!url.isValid() || url.isRelative() || !url.userInfo().isEmpty())
+        return false;
+    const QString scheme = url.scheme().toLower();
+    const QString host = url.host().toLower();
+    const bool githubHost = host == QLatin1String("github.com")
+        || host.endsWith(QLatin1String(".github.com"))
+        || host.endsWith(QLatin1String(".githubusercontent.com"));
+    if (githubHost)
+        return scheme == QLatin1String("https");
+    // Custom api host (loopback tests, GitHub Enterprise): the api's
+    // own host is the only other trustable source, and the asset url
+    // must not downgrade the api's transport.
+    return !apiUrl.host().isEmpty()
+        && host == apiUrl.host().toLower()
+        && (scheme == QLatin1String("https")
+            || (scheme == QLatin1String("http")
+                && apiUrl.scheme().toLower()
+                    == QLatin1String("http")));
+}
+
 UpdateChecker::Result UpdateChecker::parseReleaseJson(
-        const QByteArray &payload, bool *ok, QString *error)
+        const QByteArray &payload, const QUrl &apiUrl,
+        bool *ok, QString *error)
 {
     Result result;
     QJsonParseError parseError;
@@ -245,8 +270,16 @@ UpdateChecker::Result UpdateChecker::parseReleaseJson(
         .toString();
     result.releaseTitle = release.value(QLatin1String("name"))
         .toString();
-    result.releasePageUrl = QUrl(release.value(QLatin1String("html_url"))
+    // html_url is informational only today (the dialog opens the
+    // constant releases page) — still bound it so a stored Result
+    // never carries a javascript: or worse for a future caller.
+    const QUrl pageUrl(release.value(QLatin1String("html_url"))
         .toString());
+    const QString pageScheme = pageUrl.scheme().toLower();
+    if (pageUrl.isValid()
+            && (pageScheme == QLatin1String("https")
+                || pageScheme == QLatin1String("http")))
+        result.releasePageUrl = pageUrl;
 
     const QJsonArray assets = release.value(QLatin1String("assets"))
         .toArray();
@@ -258,8 +291,14 @@ UpdateChecker::Result UpdateChecker::parseReleaseJson(
             QLatin1String("browser_download_url")).toString());
         entry.size = asset.value(QLatin1String("size"))
             .toVariant().toLongLong();
-        if (!entry.name.isEmpty() && entry.downloadUrl.isValid())
-            result.assets.append(entry);
+        if (entry.name.isEmpty())
+            continue;
+        if (!isTrustedDownloadUrl(entry.downloadUrl, apiUrl)) {
+            qWarning() << "UpdateChecker: dropping release asset with"
+                          " an untrusted url" << entry.name;
+            continue;
+        }
+        result.assets.append(entry);
     }
 
     *ok = true;

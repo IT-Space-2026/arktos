@@ -290,7 +290,9 @@ browsing profile:
   inside the profile directory so a locked persona leaves no
   Chromium-side plaintext. The HTTP disk cache is the deliberate
   exception: it rides the vault's unsealed `cache/` exclusion as
-  disposable data. AES-256-GCM per chunk with
+  disposable data — and so does one bounded migration residue, the
+  pre-relocation engine store parked next to the vault until the
+  first unlock. AES-256-GCM per chunk with
   HMAC-SHA-512 integrity and an Argon2id password key is the default;
   an opt-in Threefish-1024 lane rides the same format. Wrong-password
   and tampered-vault failures are distinct and an unlock never leaves

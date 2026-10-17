@@ -112,6 +112,15 @@ public:
             const QString &osReleaseIdLike,
             const QList<ReleaseAsset> &assets);
     static PlatformPick platformAssets(const QList<ReleaseAsset> &assets);
+    // AUDIT04: the release payload is server input — only URLs on the
+    // GitHub release surface (github.com / *.github.com /
+    // *.githubusercontent.com over https) or on the configured api
+    // url's own host (loopback tests, self-hosted GHE — never a
+    // scheme downgrade below the api's own) are trusted as download
+    // targets.  javascript:/file:/data:, credential-bearing and
+    // off-host URLs are refused at parse time.
+    static bool isTrustedDownloadUrl(const QUrl &url,
+            const QUrl &apiUrl);
     // Separated for tests: reads /etc/os-release on Linux.
     static QString hostOs();
     static QString hostOsReleaseIdLike();
@@ -126,6 +135,7 @@ private slots:
 private:
     void finish(Status status);
     static Result parseReleaseJson(const QByteArray &payload,
+                                   const QUrl &apiUrl,
                                    bool *ok, QString *error);
 
     QNetworkAccessManager *m_manager;

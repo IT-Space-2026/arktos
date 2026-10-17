@@ -56,7 +56,13 @@ class QTimer;
 //                             was already sealed; restored into
 //                             profiles/<id>/QtWebEngine on unseal,
 //                             erased as stale when the blob already
-//                             carries engine state
+//                             carries engine state.  Honest caveat:
+//                             while the persona stays locked this is
+//                             PLAINTEXT beside the blob — it is a
+//                             migration way-station for a store the
+//                             password can't be re-sealed without,
+//                             and unseal refuses to follow it through
+//                             any symlinked component (AUDIT04).
 //   <id>.vault/pre-unlock/    overwrite-unseal parking slot
 //
 // Exclusions from the sealed tree (top-level names):
@@ -88,6 +94,10 @@ class QTimer;
 // assuming.  Container profiles keep their roots under
 // profiles/<id>/containers/<cid>/ (sealed) with their cache beside
 // the persona's; OTR/Tor profiles are unnamed and write nothing.
+// AUDIT04: every hold restore path applies the relocation sweep's
+// lstat discipline — a link at engine-hold/, <name>-hold/ or the
+// restored destination is dropped unfollowed, never renamed into or
+// routed out of the profile tree.
 //
 // Secure erase is ONE zero overwrite + fsync per file, then unlink.
 // On SSD/CoW media wear-leveling and snapshots mean old blocks may

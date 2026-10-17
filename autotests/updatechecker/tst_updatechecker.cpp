@@ -156,7 +156,9 @@ private slots:
     void malformedJson();
     void oversizedBody();
     void httpError();
+    void untrustedAssetUrls();
     void torRefusesCheck();
+    void torDialogSinks();
     void helpMenuEntry();
     void dialogLegs();
 };
@@ -402,6 +404,90 @@ void tst_UpdateChecker::httpError()
     QCOMPARE(result.status, UpdateChecker::Status::Error);
 }
 
+void tst_UpdateChecker::untrustedAssetUrls()
+{
+    // AUDIT04: server JSON must never steer the download target off
+    // the release surface — javascript:/file:/data:/off-host URLs are
+    // dropped at parse, and html_url is scheme-bound too.
+    const QUrl api(QStringLiteral("https://api.github.com/x"));
+    QVERIFY(!UpdateChecker::isTrustedDownloadUrl(
+        QUrl(QLatin1String("javascript:alert(1)")), api));
+    QVERIFY(!UpdateChecker::isTrustedDownloadUrl(
+        QUrl(QLatin1String("file:///etc/passwd")), api));
+    QVERIFY(!UpdateChecker::isTrustedDownloadUrl(
+        QUrl(QLatin1String("data:application/x-deb;base64,AA==")), api));
+    QVERIFY(!UpdateChecker::isTrustedDownloadUrl(
+        QUrl(QLatin1String("http://evil.example/arora.deb")), api));
+    QVERIFY(!UpdateChecker::isTrustedDownloadUrl(
+        QUrl(QLatin1String("https://evil.example/arora.deb")), api));
+    // A github host over cleartext is a downgrade, not an asset.
+    QVERIFY(!UpdateChecker::isTrustedDownloadUrl(
+        QUrl(QLatin1String("http://github.com/a/x.deb")), api));
+    // Credential-bearing URLs are refused even on a trusted host.
+    QVERIFY(!UpdateChecker::isTrustedDownloadUrl(
+        QUrl(QLatin1String("https://user:pw@github.com/a/x.deb")), api));
+    QVERIFY(UpdateChecker::isTrustedDownloadUrl(
+        QUrl(QLatin1String(
+            "https://github.com/o/r/releases/download/v9.9/a.deb")),
+        api));
+    QVERIFY(UpdateChecker::isTrustedDownloadUrl(
+        QUrl(QLatin1String(
+            "https://objects.githubusercontent.com/x/y")), api));
+    // Self-hosted api (loopback tests, GHE): the api's own host is
+    // trusted, other hosts and scheme downgrades are not.
+    const QUrl loopback(QStringLiteral("http://127.0.0.1:8/r"));
+    QVERIFY(UpdateChecker::isTrustedDownloadUrl(
+        QUrl(QLatin1String("http://127.0.0.1/asset.deb")), loopback));
+    QVERIFY(!UpdateChecker::isTrustedDownloadUrl(
+        QUrl(QLatin1String("http://127.0.0.2/asset.deb")), loopback));
+    const QUrl ghe(QStringLiteral("https://ghe.corp.example/api"));
+    QVERIFY(!UpdateChecker::isTrustedDownloadUrl(
+        QUrl(QLatin1String("http://ghe.corp.example/a.deb")), ghe));
+
+    // End-to-end: a hostile payload still reports the update, but the
+    // booby-trapped assets never reach the candidate list and the
+    // injected page url is never stored.
+    ReleaseServer server;
+    QVERIFY(server.start());
+    const QList<QByteArray> assets = {
+        assetJson(QLatin1String("evil-js.deb"),
+                  QLatin1String("javascript:alert(1)")),
+        assetJson(QLatin1String("evil-file.deb"),
+                  QLatin1String("file:///etc/passwd")),
+        assetJson(QLatin1String("evil-host.deb"),
+                  QLatin1String("https://evil.example/arora.deb")),
+        assetJson(QLatin1String("arora_9.9_amd64.deb"),
+                  server.url(QLatin1String("/a.deb")).toString()),
+    };
+    QByteArray joined;
+    for (const QByteArray &asset : assets) {
+        if (!joined.isEmpty())
+            joined += ',';
+        joined += asset;
+    }
+    QByteArray payload = releaseJson(QLatin1String("v999.0.0"),
+                                     QString::fromUtf8(joined));
+    payload.replace("http://127.0.0.1/releases/x",
+                    "javascript:alert(1)");
+    server.body = payload;
+
+    UpdateChecker checker;
+    checker.setApiUrl(server.url(QLatin1String("/releases/latest")));
+    QSignalSpy spy(&checker, &UpdateChecker::finished);
+    checker.check();
+    QVERIFY(spy.wait(10000) || !spy.isEmpty());
+    QCOMPARE(spy.count(), 1);
+    const UpdateChecker::Result result =
+        qvariant_cast<UpdateChecker::Result>(spy.first().first());
+    QCOMPARE(result.status, UpdateChecker::Status::UpdateAvailable);
+    QCOMPARE(result.assets.size(), 1);
+    QCOMPARE(result.assets.first().name,
+             QLatin1String("arora_9.9_amd64.deb"));
+    QVERIFY(!result.releasePageUrl.isValid()
+            || result.releasePageUrl.scheme()
+                != QLatin1String("javascript"));
+}
+
 void tst_UpdateChecker::torRefusesCheck()
 {
     ReleaseServer server;
@@ -420,6 +506,41 @@ void tst_UpdateChecker::torRefusesCheck()
         qvariant_cast<UpdateChecker::Result>(spy.first().first());
     QCOMPARE(result.status, UpdateChecker::Status::Error);
     QCOMPARE(server.requestCount, 0);
+    BrowserApplication::setTorMode(false);
+}
+
+void tst_UpdateChecker::torDialogSinks()
+{
+    // AUDIT04: refusing check() alone is not enough — the dialog's
+    // sinks (download button, releases link) must refuse on their own
+    // so a github.com url can never reach clearnet from a tor
+    // process.
+    BrowserApplication::setTorMode(true);
+    ReleaseServer server;
+    QVERIFY(server.start());
+    server.body = releaseJson(QLatin1String("v999.0.0"),
+                              QString::fromUtf8(allPlatformAssets()));
+    {
+        UpdateDialog dialog;
+        dialog.checker()->setApiUrl(
+            server.url(QLatin1String("/releases/latest")));
+        QSignalSpy spy(dialog.checker(), &UpdateChecker::finished);
+        dialog.check();
+        QVERIFY(spy.wait(5000) || !spy.isEmpty());
+        QCOMPARE(dialog.statusText(),
+                 QLatin1String("Couldn't check for updates."));
+        QVERIFY(!dialog.findChild<QPushButton *>(
+                     QLatin1String("updateDownloadButton"))
+                     ->isEnabled());
+        QCOMPARE(server.requestCount, 0);
+
+        // The link and download slots refuse too — both report the
+        // tor refusal instead of touching the network/handler.
+        QVERIFY(QMetaObject::invokeMethod(&dialog, "viewAllReleases"));
+        QVERIFY(dialog.statusText().contains(QLatin1String("Tor")));
+        QVERIFY(QMetaObject::invokeMethod(&dialog, "downloadLatest"));
+        QVERIFY(dialog.statusText().contains(QLatin1String("Tor")));
+    }
     BrowserApplication::setTorMode(false);
 }
 

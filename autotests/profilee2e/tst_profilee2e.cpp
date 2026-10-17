@@ -104,6 +104,7 @@ private slots:
     void containersPerProfile();
     void sealedPersonaRefusesWindow();
     void engineVaultCoverage();
+    void engineHoldRejectsLinks();
     void otrWritesNothing();
     void torModeLevelStore();
     void noEngineResidueAtRoot();
@@ -1023,6 +1024,80 @@ void tst_ProfileE2E::engineVaultCoverage()
              QByteArray("cache"));
 
     // Leave the persona unlocked and clean for downstream legs.
+    vault->disarmDirty(id);
+#endif
+}
+
+void tst_ProfileE2E::engineHoldRejectsLinks()
+{
+#if !defined(ARORA_RUSTCORE)
+    QSKIP("vault sealing needs a rustcore build");
+#else
+    // AUDIT04: a hold dir is only ever real — a symlinked
+    // engine-hold/ or cache-hold/ planted while the persona is locked
+    // must never move foreign content into the profile tree on unseal
+    // (that would bypass the blob's MAC for the engine store), and a
+    // link at the restored destination must never route Chromium's
+    // writes outside it.
+    if (!ProfileVault::isAvailable())
+        QSKIP("rustcore vault FFI unavailable");
+    ProfileVault *vault = ProfileVault::instance();
+
+    // Dedicated persona like engineVaultCoverage — sealing refuses
+    // while windows bound to the shared e2e personas are open.
+    ProfileStore *store = ProfileStore::instance();
+    if (store->profile(QStringLiteral("e2ehold")).isValid())
+        store->deleteProfile(QStringLiteral("e2ehold"));
+    QDir(profileDir(QStringLiteral("e2ehold"))).removeRecursively();
+    QDir(root() + QLatin1String("/profiles/e2ehold.vault"))
+        .removeRecursively();
+    QDir(root() + QLatin1String("/e2ehold.vault")).removeRecursively();
+    const ProfileContext ctx = store->createProfile(
+        QStringLiteral("e2ehold"));
+    QVERIFY(ctx.isValid());
+    const QString id = ctx.id;
+    const QString vaultDir = ProfileVault::vaultDirFor(id);
+    const QByteArray pw("e2e-hold-link-passphrase");
+
+    const QString engineDir = BrowserPaths::engineStorageDir(id);
+    const QString liveCache =
+        profileDir(id) + QLatin1String("/cache");
+    writeFile(engineDir + QLatin1String("/Network/Cookies"),
+              "sealed-engine-seed");
+    writeFile(liveCache + QLatin1String("/seed.bin"), "cache-seed");
+    QCOMPARE(vault->seal(id, pw), ProfileVault::NoError);
+
+    // Locked: the cache rode into cache-hold (real), the engine store
+    // is inside the blob.  Plant a hostile engine-hold — a symlink to
+    // a foreign store — and swap the real cache-hold for a link too.
+    const QString foreign = root() + QLatin1String("/foreign-store");
+    writeFile(foreign + QLatin1String("/QtWebEngine/Network/Cookies"),
+              "planted-foreign");
+    QVERIFY(QFile::link(foreign,
+                        vaultDir + QLatin1String("/engine-hold")));
+    const QString foreignCache =
+        root() + QLatin1String("/foreign-cache");
+    writeFile(foreignCache + QLatin1String("/evil.bin"), "planted");
+    QDir(vaultDir + QLatin1String("/cache-hold")).removeRecursively();
+    QVERIFY(QFile::link(foreignCache,
+                        vaultDir + QLatin1String("/cache-hold")));
+
+    QCOMPARE(vault->unseal(id, pw), ProfileVault::NoError);
+
+    // The blob's own engine store is back; the linked hold never
+    // moved, and both planted links are gone (removed, not followed).
+    QCOMPARE(readFile(engineDir + QLatin1String("/Network/Cookies")),
+             QByteArray("sealed-engine-seed"));
+    QVERIFY(!QFile::exists(vaultDir + QLatin1String("/engine-hold")));
+    QVERIFY(!QFileInfo(liveCache).isSymLink());
+    QVERIFY(!QFile::exists(liveCache + QLatin1String("/evil.bin")));
+    // The foreign trees themselves are untouched — refusal removes
+    // our links, never descends into the target.
+    QVERIFY(QFile::exists(foreign
+                          + QLatin1String("/QtWebEngine/Network/"
+                                          "Cookies")));
+    QVERIFY(QFile::exists(foreignCache + QLatin1String("/evil.bin")));
+
     vault->disarmDirty(id);
 #endif
 }

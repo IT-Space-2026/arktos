@@ -1573,6 +1573,20 @@ Build, tests & tools:
   exception setter, a vestigial extension handshake flag, an unused
   tor test seam) are gone; Qt-ownership false positives are documented
   in .devin/STAT02-triage.md.
+- Audit slice C (AUDIT04): security delta re-check of the update
+  checker, vault engine-hold restore and the Windows dual-mode
+  installer. A hostile release manifest can no longer aim the update
+  download at an arbitrary host or non-http(s) scheme — asset URLs
+  must resolve to the GitHub release surface (https) or the check
+  endpoint's own host, and the release title can no longer smuggle
+  markup into the dialog. On Tor windows the update check's sinks now
+  refuse too, not just the check itself — neither the download button
+  nor the "all releases" link can leak a github.com request onto the
+  clearnet. A symlink planted in a locked profile's vault hold
+  directories can no longer inject a foreign engine store or reroute
+  the restored data outside the sealed tree on unlock, and the
+  same instant-swap window on the hold restore is now re-verified.
+  Consolidated report: .devin/security/AUDIT02-report.md.
 0.2 (unreleased) — Qt 6 port in progress
 Build system:
     The Rust components are now the default code path: a plain `qmake` auto-detects a cargo toolchain (PATH, then ~/.cargo/bin) and builds rustcore (credential/autofill/session/bookmark/history stores, the OpenSearch engine registry, per-site decisions, url-strip, blocklist, TLS probe), rustdl (accelerated downloads) and the adblock-rust engine as part of `make`. The C++ implementations remain as the no-toolchain fallback — opt out with `qmake CONFIG+=no-rust` or per crate with `CONFIG-=rustcore` / `CONFIG-=rustdl` / `CONFIG-=adblock_rust`. With no Rust toolchain at all qmake warns loudly and builds the Qt paths so the tree always configures.

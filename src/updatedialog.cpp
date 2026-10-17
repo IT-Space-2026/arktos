@@ -53,6 +53,9 @@ UpdateDialog::UpdateDialog(QWidget *parent)
     m_detailLabel = new QLabel(this);
     m_detailLabel->setObjectName(QLatin1String("updateDetailLabel"));
     m_detailLabel->setWordWrap(true);
+    // AUDIT04: release titles are server input — render them as
+    // text, never as markup.
+    m_detailLabel->setTextFormat(Qt::PlainText);
     m_detailLabel->setVisible(false);
     layout->addWidget(m_detailLabel);
 
@@ -142,8 +145,10 @@ void UpdateDialog::checkFinished(const UpdateChecker::Result &result)
                    "system — open the release page instead."));
         } else {
             m_downloadButton->setText(tr("Download Latest Version"));
+            // Tooltips auto-detect rich text — the asset name is
+            // server input, so show it escaped.
             m_downloadButton->setToolTip(
-                m_pick.candidates.first().name);
+                m_pick.candidates.first().name.toHtmlEscaped());
             if (m_pick.ambiguous) {
                 m_assetCombo->clear();
                 for (const UpdateChecker::ReleaseAsset &asset
@@ -174,6 +179,14 @@ void UpdateDialog::checkFinished(const UpdateChecker::Result &result)
 
 void UpdateDialog::downloadLatest()
 {
+    // AUDIT04: refusing the check is not enough — in a tor process a
+    // github.com asset fetch (or the system-handler fallback below)
+    // would ride clearnet, so the sinks refuse on their own.
+    if (BrowserApplication::isTorMode()) {
+        m_statusLabel->setText(tr("Update downloads are disabled in "
+                                  "Tor mode."));
+        return;
+    }
     if (m_pick.candidates.isEmpty()) {
         viewAllReleases();
         return;
@@ -194,5 +207,10 @@ void UpdateDialog::downloadLatest()
 
 void UpdateDialog::viewAllReleases()
 {
+    if (BrowserApplication::isTorMode()) {
+        m_statusLabel->setText(tr("Update checks are disabled in Tor "
+                                  "mode."));
+        return;
+    }
     QDesktopServices::openUrl(UpdateChecker::releasesPageUrl());
 }

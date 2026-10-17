@@ -99,6 +99,25 @@ bool dirHasContents(const QString &path)
                           | QDir::Hidden | QDir::System)
                 .isEmpty();
 }
+
+// AUDIT04: the lstat-not-follow rule the relocation sweep applies —
+// every component strictly below `boundary` is checked so a planted
+// link cannot route a hold restore outside its own tree.  The
+// boundary itself may legitimately sit behind a user-symlinked dir.
+bool pathChainHasLink(const QString &path, const QString &boundary)
+{
+    QString current = path;
+    while (current.startsWith(boundary + QLatin1Char('/'))
+           && current != boundary) {
+        if (QFileInfo(current).isSymLink())
+            return true;
+        const QString parent = QFileInfo(current).absolutePath();
+        if (parent == current || parent.isEmpty())
+            break;
+        current = parent;
+    }
+    return false;
+}
 #endif
 
 // Single zero overwrite + fsync, then unlink.  This is the honest
@@ -398,13 +417,32 @@ bool ProfileVault::holdExcluded(const QString &id, bool hold,
         const QString held =
             vaultPath(vault, QLatin1String(name) + QLatin1String("-hold"));
         const bool liveExists = QFile::exists(live);
-        const bool heldExists = QFile::exists(held);
+        bool heldExists = QFile::exists(held);
+        // AUDIT04: a hold is only ever a real directory — a planted
+        // link would rename a foreign path into the profile tree on
+        // restore, and writes through it would escape the sealed
+        // set.  Drop the link itself, never follow it.
+        if (QFileInfo(held).isSymLink()) {
+            qWarning() << "ProfileVault: refusing a linked hold"
+                       << held;
+            if (!QFile::remove(held)) {
+                if (error)
+                    *error = QStringLiteral("cannot remove linked %1")
+                                 .arg(held);
+                return false;
+            }
+            heldExists = false;
+        }
         if (hold) {
             // A stale hold means an earlier cycle never restored —
             // the live tree wins, the disposable hold goes.
             if (heldExists && !secureEraseTree(held, error))
                 return false;
-            if (liveExists && !QDir().rename(live, held)) {
+            // A symlinked live dir is user plumbing (cache on tmpfs
+            // etc) — leave it so the sealer packs the link itself,
+            // and restore resurrects the same setup.
+            if (liveExists && !QFileInfo(live).isSymLink()
+                    && !QDir().rename(live, held)) {
                 if (error)
                     *error = QStringLiteral("cannot move %1 aside")
                                  .arg(live);
@@ -663,7 +701,10 @@ ProfileVault::Error ProfileVault::unseal(const QString &profileId,
     // residue-only dir counts as empty for the park recovery below,
     // and a locked boot's cookie-store open or cache flush cannot
     // deadlock the unlock path on PlaintextPresent.
-    if (dirHasContents(dir)) {
+    // AUDIT04: never descend through a symlinked dir — a planted link
+    // would route the erase into a foreign tree; the park path below
+    // handles links safely (rename moves the link itself).
+    if (!QFileInfo(dir).isSymLink() && dirHasContents(dir)) {
         const QStringList live = QDir(dir).entryList(
             QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden
             | QDir::System);
@@ -739,19 +780,45 @@ ProfileVault::Error ProfileVault::unseal(const QString &profileId,
     // whole.  When the blob itself already carries QtWebEngine/ (a
     // post-change seal), the hold is stale plaintext for a store the
     // blob now covers — erase it instead of overwriting.
+    // AUDIT04: the hold chain gets the sweep's lstat discipline — a
+    // planted link at engine-hold/ or QtWebEngine would move a
+    // FOREIGN store into the profile tree (integrity bypass of the
+    // MAC'd blob), and a planted link at the destination would route
+    // Chromium's writes outside the sealed set.
     const QString hold = vaultPath(
         vault, QLatin1String("engine-hold/QtWebEngine"));
-    if (QFileInfo(hold).isDir() && !QFileInfo(hold).isSymLink()) {
-        const QString engineDst =
-            dir + QLatin1String("/QtWebEngine");
+    const QString engineDst = dir + QLatin1String("/QtWebEngine");
+    if (pathChainHasLink(hold, vault)) {
+        qWarning() << "ProfileVault: refusing a linked engine-hold"
+                      " for profile" << id;
+        if (!secureEraseTree(
+                vaultPath(vault, QLatin1String("engine-hold")),
+                &ioError))
+            return fail(Io, ioError);
+    } else if (QFileInfo(hold).isDir()) {
+        if (QFileInfo(engineDst).isSymLink()) {
+            qWarning() << "ProfileVault: dropping a planted engine"
+                          " destination link for profile" << id;
+            QFile::remove(engineDst);
+        }
         if (QFileInfo(engineDst).isDir()) {
             secureEraseTree(vaultPath(
                 vault, QLatin1String("engine-hold")), &ioError);
         } else {
             QDir(engineDst).removeRecursively();
             if (QDir().rename(hold, engineDst)) {
-                QDir(vaultPath(vault, QLatin1String("engine-hold")))
-                    .removeRecursively();
+                // Shrink the check→rename race: a link swapped in at
+                // the last instant lands at the destination — remove
+                // it rather than let the engine write through it.
+                if (QFileInfo(engineDst).isSymLink()) {
+                    QFile::remove(engineDst);
+                    qWarning() << "ProfileVault: engine-hold restore"
+                                  " raced a planted link for profile"
+                               << id;
+                } else {
+                    QDir(vaultPath(vault, QLatin1String("engine-hold")))
+                        .removeRecursively();
+                }
             } else {
                 // A failed rename leaves the hold as the ONLY copy of
                 // the store — keep it for a later unseal rather than
