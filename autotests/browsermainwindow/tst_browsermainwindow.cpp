@@ -1083,21 +1083,23 @@ void tst_BrowserMainWindow::appMenuButton()
     QVERIFY(!button->icon().isNull());
     // MENU16: the MENU09 host + fixed 36px extent that rendered the
     // logo oversized are gone; the button is a direct bar child now.
-    // MENU17/MENU19: brand accent — its glyph rides ~60% over the
-    // bar's shared icon size (18 -> 28.8 -> 29) in a still-square
-    // cell, while the toolbar's own action buttons keep the shared
-    // size.
+    // MENU17/MENU19: brand accent — its glyph rides over the bar's
+    // shared icon size (18 -> 28.8 -> 29; ICONS10: +~15% -> 33) in a
+    // still-square cell, while the toolbar's own action buttons keep
+    // the shared size.
     QCOMPARE(button->iconSize().width(), button->iconSize().height());
     QVERIFY(qAbs(button->iconSize().height()
-                 - navBar->iconSize().height() * 1.6) <= 1.0);
+                 - navBar->iconSize().height() * 1.84) <= 1.0);
     QToolButton *sibling = qobject_cast<QToolButton *>(
         navBar->widgetForAction(navBar->actions().at(1)));
     QVERIFY(sibling);
     QCOMPARE(sibling->iconSize(), navBar->iconSize());
-    // The bigger glyph fills the face instead of stretching the row:
-    // the face caps at a square one pixel over the glyph, and the
-    // bar's compacted vertical margins hand back the pixels so the
-    // row keeps the height the location field drove.
+    // The bigger glyph fills a capped face instead of stretching the
+    // row wider: the face caps at a square one pixel over the glyph.
+    // ICONS10: at ~1.84x the paired accent faces (not the location
+    // field) drive the row — pin the bar to face + the compacted
+    // vertical margins so it cannot bloat further (38px at the 18px
+    // glyph, still under Firefox's ~40px toolbar).
     QVERIFY(button->sizeHint().height() > sibling->sizeHint().height());
     QCOMPARE(button->sizeHint().width(), button->sizeHint().height());
     QVERIFY(button->sizeHint().height()
@@ -1105,8 +1107,36 @@ void tst_BrowserMainWindow::appMenuButton()
     QLineEdit *navLocationBar = window->tabWidget()->currentLocationBar();
     QVERIFY(navLocationBar);
     QVERIFY(navBar->sizeHint().height()
-            <= navLocationBar->minimumHeight() + 8);
-    QVERIFY(!button->icon().pixmap(button->iconSize()).isNull());
+            <= button->sizeHint().height() + 4);
+    // ICONS10: pixel probe — the rendered mark fills the accent cell
+    // (not a shrunken glyph) and keeps the artwork's own aspect: a
+    // deliberately non-square request must letterbox to the centered
+    // square instead of stretching the mark to the cell's shape.
+    const auto opaqueBox = [](const QImage &image) {
+        QRect box;
+        for (int y = 0; y < image.height(); ++y)
+            for (int x = 0; x < image.width(); ++x)
+                if (image.pixelColor(x, y).alpha() > 100)
+                    box |= QRect(x, y, 1, 1);
+        return box;
+    };
+    const QImage mark =
+        button->icon().pixmap(button->iconSize()).toImage();
+    QVERIFY(!mark.isNull());
+    const QRect markBox = opaqueBox(mark);
+    QVERIFY(markBox.isValid());
+    QVERIFY(markBox.width() >= mark.width() * 3 / 5);
+    QVERIFY(markBox.height() >= mark.height() * 3 / 5);
+    const double markAspect =
+        double(markBox.width()) / markBox.height();
+    const QImage wide =
+        button->icon().pixmap(QSize(48, 24)).toImage();
+    const QRect wideBox = opaqueBox(wide);
+    QVERIFY(wideBox.isValid());
+    // A stretched paint would give ~2:1; the centered-square engine
+    // keeps the mark's own ~0.9 aspect at any cell shape.
+    QVERIFY(qAbs(double(wideBox.width()) / wideBox.height()
+                 - markAspect) < 0.1);
     QVERIFY(!button->toolTip().isEmpty());
     QVERIFY(!button->accessibleName().isEmpty());
 
@@ -1345,10 +1375,11 @@ void tst_BrowserMainWindow::appMenuButton()
     const bool privateMenuFull = privateButton
         && privateButton->menu()
         && privateButton->menu()->actions().count() >= 8;
-    // MENU19: every window type gets the same ~1.6x brand glyph.
+    // MENU19/ICONS10: every window type gets the same ~1.84x brand
+    // glyph.
     const bool privateBarIcon = privateButton && privateBar
         && qAbs(privateButton->iconSize().height()
-                - privateBar->iconSize().height() * 1.6) <= 1.0
+                - privateBar->iconSize().height() * 1.84) <= 1.0
         && privateButton->iconSize().width()
             == privateButton->iconSize().height();
     const bool privateBarHidden =
@@ -1407,13 +1438,13 @@ void tst_BrowserMainWindow::appMenuButton()
                        .remove(QLatin1Char('&'))
                    == QLatin1String("Quit");
     }
-    // MENU19: the tor button follows the same ~1.6x accent — the
-    // violet bar keeps the row height too (the stylesheet's
+    // MENU19/ICONS10: the tor button follows the same ~1.84x accent —
+    // the violet bar keeps the row height too (the stylesheet's
     // StyleChange rebuilds the layout margins and NavBarToolBar
     // re-compacts them).
     const bool torBarIcon = torButton && torNavBar
         && qAbs(torButton->iconSize().height()
-                - torNavBar->iconSize().height() * 1.6) <= 1.0
+                - torNavBar->iconSize().height() * 1.84) <= 1.0
         && torButton->iconSize().width()
             == torButton->iconSize().height();
     // MENU08: the violet window's dropdown is enlarged identically —
@@ -8943,8 +8974,8 @@ void tst_BrowserMainWindow::profileButton()
              QLatin1String("profileButton"));
 
     // Face-matched to the app-menu logo on the left — same oversized
-    // iconSize (~1.6x the bar's 18px) and the same capped square
-    // face one pixel over the glyph.
+    // iconSize (the shared ~1.84x accent on the bar's 18px) and the
+    // same capped square face one pixel over the glyph.
     QToolButton *appButton = window->findChild<QToolButton *>(
         QLatin1String("appMenuButton"));
     QVERIFY(appButton);

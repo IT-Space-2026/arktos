@@ -245,11 +245,13 @@ static QIcon torAppMenuIcon()
 
 // MENU17: brand accent — the app-menu button paints its logo larger
 // than the bar's shared nav glyphs (MENU19: ~1.6x, 29px at the
-// bar's 18px).  The iconSize-restore machinery that lets an own
-// iconSize reach the pixels under the toolbar clamp lives on
-// NavBarAccentButton (profilebutton.h) — PROF01's profile button is
-// the second consumer.  The engine already letterboxes the mark
-// into a centered square, so the bigger cell still cannot deform it.
+// bar's 18px; ICONS10: ~15% over that, 1.84x/33px — the logo read
+// small next to the siblings' row).  The iconSize-restore machinery
+// that lets an own iconSize reach the pixels under the toolbar
+// clamp lives on NavBarAccentButton (profilebutton.h) — PROF01's
+// profile button is the second consumer.  The engine already
+// letterboxes the mark into a centered square, so the bigger cell
+// still cannot deform it.
 class AppMenuButton : public NavBarAccentButton
 {
 public:
@@ -261,8 +263,8 @@ public:
 
 // MENU19: the grown brand face borrows the row's vertical chrome —
 // the toolbar layout stretches every item to (bar height - layout
-// margins), so shaving the top/bottom margins seats the 30px face
-// inside the same 34px row the location field used to drive.
+// margins), so shaving the top/bottom margins seats the accent face
+// (34px since ICONS10's ~1.84x) in the tightest row it can occupy.
 // A StyleChange (tor bar stylesheet, theme rewrap, the app chrome
 // sheet) rebuilds the margins and spacing from style metrics, so
 // the bar re-asserts its authored values right after the base class
@@ -2041,9 +2043,10 @@ void BrowserMainWindow::setupToolBar()
     // 36px inside a margin-less host) fought, rendering the logo
     // oversized against the nav glyphs.  With the host gone it
     // matches the siblings' row; MENU17 grew the mark alone ~25% as
-    // a Firefox-style brand accent and MENU19 grows it another
-    // quarter to ~1.6x (18 -> 28.8 -> 29px) — AppMenuButton is what
-    // lets its own iconSize reach the pixels under that clamp.
+    // a Firefox-style brand accent, MENU19 grew it another quarter
+    // to ~1.6x (18 -> 28.8 -> 29px), and ICONS10 adds ~15% (~1.84x,
+    // 33px) — AppMenuButton is what lets its own iconSize reach the
+    // pixels under that clamp.
     // The square request keeps the ratio: the logo scales
     // uniformly, never stretches.
     m_appMenuButton = new AppMenuButton(m_navigationBar);
@@ -2060,9 +2063,14 @@ void BrowserMainWindow::setupToolBar()
     m_appMenuButton->setPopupMode(QToolButton::InstantPopup);
     m_appMenuButton->setMenu(m_appMenu);
     const QSize navIconSize = m_navigationBar->iconSize();
-    m_appMenuButton->setIconSize(
-        QSize(qRound(navIconSize.width() * 1.6),
-              qRound(navIconSize.height() * 1.6)));
+    // ICONS10: the bar's two brand ends share one accent face —
+    // the logo on the left and PROF01's avatar on the right grow
+    // together (~1.84x the shared glyph, ~15% over MENU19's 1.6x,
+    // 33px at 18px).  The square cell keeps the globe round.
+    const QSize navAccentSize(
+        qRound(navIconSize.width() * 1.84),
+        qRound(navIconSize.height() * 1.84));
+    m_appMenuButton->setIconSize(navAccentSize);
     m_navigationBar->addWidget(m_appMenuButton)
         ->setProperty(kNavBarItemIdProperty, QLatin1String("appMenu"));
 
@@ -2281,16 +2289,14 @@ void BrowserMainWindow::setupToolBar()
 
     // PROF01: the profile button closes the bar — the LAST widget on
     // the right edge, face-matched to the app-menu logo on the left
-    // (~1.6x the bar's glyph size, same NavBarAccentButton face).
+    // (the shared ~1.84x accent face, same NavBarAccentButton base).
     // Its dropdown scaffolds the single-profile identity menu
     // (avatar + editable name now; picture and hygiene entries land
     // with PROF02/PROF03).  On tor windows the badge inserts ahead
     // of it below so the avatar keeps the right edge.
     m_profileButton = new ProfileButton(m_navigationBar);
     m_profileButton->setObjectName(QLatin1String("profileButton"));
-    m_profileButton->setIconSize(
-        QSize(qRound(navIconSize.width() * 1.6),
-              qRound(navIconSize.height() * 1.6)));
+    m_profileButton->setIconSize(navAccentSize);
     // The ctor baked the avatar at the default iconSize — rebake at
     // the final face size.
     m_profileButton->refreshIdentity();
