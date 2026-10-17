@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,7 +17,7 @@
  * Boston, MA  02110-1301  USA
  */
 
-#include "arorastyle.h"
+#include "arktosstyle.h"
 
 #include "browsertheme.h"
 
@@ -134,7 +134,7 @@ public:
             // One flat hairline from the widget's own palette — the
             // tor window's variant included — instead of the bevel.
             const QColor line =
-                AroraStyle::separatorColor(frame->palette);
+                ArktosStyle::separatorColor(frame->palette);
             const QRect rect = frame->rect;
             if (frame->frameShape == QFrame::HLine)
                 painter->fillRect(rect.left(), rect.center().y(),
@@ -163,8 +163,8 @@ public:
                 if ((option->state & State_Enabled)
                         && (option->state & State_MouseOver)) {
                     const QColor fill = (option->state & State_Sunken)
-                        ? AroraStyle::pressedColor(option->palette)
-                        : AroraStyle::hoverColor(option->palette);
+                        ? ArktosStyle::pressedColor(option->palette)
+                        : ArktosStyle::hoverColor(option->palette);
                     painter->save();
                     painter->setRenderHint(QPainter::Antialiasing);
                     painter->setPen(Qt::NoPen);
@@ -198,7 +198,7 @@ public:
                 && !(tab->state & State_Selected)
                 && !(tab->state & State_MouseOver)) {
             QStyleOptionTab copy(*tab);
-            const QColor dim = AroraStyle::blend(
+            const QColor dim = ArktosStyle::blend(
                 tab->palette.color(QPalette::WindowText),
                 tab->palette.color(QPalette::Window), 0.28);
             copy.palette.setColor(QPalette::WindowText, dim);
@@ -248,7 +248,7 @@ public:
                 qMax(textRect.bottom(), checkRect.bottom()) + 2;
             painter->fillRect(frameRect.left(), lineY,
                               frameRect.width(), 1,
-                              AroraStyle::separatorColor(box->palette));
+                              ArktosStyle::separatorColor(box->palette));
             if (box->subControls & SC_GroupBoxCheckBox) {
                 QStyleOptionButton indicator;
                 indicator.QStyleOption::operator=(*box);
@@ -311,7 +311,7 @@ private:
                         && !railRow
                         && !verticalTabCardShape(tab->shape)) {
                     const QColor line =
-                        AroraStyle::separatorColor(tab->palette);
+                        ArktosStyle::separatorColor(tab->palette);
                     painter->fillRect(rect.right(), rect.top() + 5,
                                       1, rect.height() - 10, line);
                 }
@@ -355,14 +355,14 @@ private:
         fill.closeSubpath();
 
         const QColor color = selected
-            ? AroraStyle::tabActiveColor(tab->palette)
-            : pressed ? AroraStyle::pressedColor(tab->palette)
-                      : AroraStyle::hoverColor(tab->palette);
+            ? ArktosStyle::tabActiveColor(tab->palette)
+            : pressed ? ArktosStyle::pressedColor(tab->palette)
+                      : ArktosStyle::hoverColor(tab->palette);
         painter->setPen(Qt::NoPen);
         painter->setBrush(color);
         painter->drawPath(fill);
         if (selected) {
-            painter->setPen(AroraStyle::separatorColor(tab->palette));
+            painter->setPen(ArktosStyle::separatorColor(tab->palette));
             painter->setBrush(Qt::NoBrush);
             painter->drawPath(outline);
         }
@@ -370,7 +370,7 @@ private:
     }
 };
 
-QColor AroraStyle::blend(const QColor &base, const QColor &over,
+QColor ArktosStyle::blend(const QColor &base, const QColor &over,
                          qreal amount)
 {
     const qreal keep = 1.0 - amount;
@@ -381,25 +381,25 @@ QColor AroraStyle::blend(const QColor &base, const QColor &over,
         base.alphaF() * keep + over.alphaF() * amount);
 }
 
-QColor AroraStyle::separatorColor(const QPalette &palette)
+QColor ArktosStyle::separatorColor(const QPalette &palette)
 {
     return blend(palette.color(QPalette::Window),
                  palette.color(QPalette::WindowText), 0.14);
 }
 
-QColor AroraStyle::hoverColor(const QPalette &palette)
+QColor ArktosStyle::hoverColor(const QPalette &palette)
 {
     return blend(palette.color(QPalette::Window),
                  palette.color(QPalette::WindowText), 0.08);
 }
 
-QColor AroraStyle::pressedColor(const QPalette &palette)
+QColor ArktosStyle::pressedColor(const QPalette &palette)
 {
     return blend(palette.color(QPalette::Window),
                  palette.color(QPalette::WindowText), 0.13);
 }
 
-QColor AroraStyle::tabActiveColor(const QPalette &palette)
+QColor ArktosStyle::tabActiveColor(const QPalette &palette)
 {
     const QColor window = palette.color(QPalette::Window);
     const QColor base = palette.color(QPalette::Base);
@@ -421,7 +421,7 @@ static qreal relativeLuminance(const QColor &color)
         + 0.0722 * channel(color.blueF());
 }
 
-qreal AroraStyle::contrastRatio(const QColor &a, const QColor &b)
+qreal ArktosStyle::contrastRatio(const QColor &a, const QColor &b)
 {
     qreal high = relativeLuminance(a);
     qreal low = relativeLuminance(b);
@@ -430,14 +430,14 @@ qreal AroraStyle::contrastRatio(const QColor &a, const QColor &b)
     return (high + 0.05) / (low + 0.05);
 }
 
-QColor AroraStyle::contrastTextColor(const QColor &on)
+QColor ArktosStyle::contrastTextColor(const QColor &on)
 {
     return contrastRatio(QColor(Qt::black), on)
             >= contrastRatio(QColor(Qt::white), on)
         ? QColor(Qt::black) : QColor(Qt::white);
 }
 
-QColor AroraStyle::selectionTextColor(const QPalette &palette)
+QColor ArktosStyle::selectionTextColor(const QPalette &palette)
 {
     const QColor highlight = palette.color(QPalette::Highlight);
     const QColor onHighlight =
@@ -447,14 +447,14 @@ QColor AroraStyle::selectionTextColor(const QPalette &palette)
     return contrastTextColor(highlight);
 }
 
-QColor AroraStyle::accentFillColor(const QPalette &palette)
+QColor ArktosStyle::accentFillColor(const QPalette &palette)
 {
     const QColor accent = palette.color(QPalette::Accent);
     return accent.isValid() ? accent
                             : palette.color(QPalette::Highlight);
 }
 
-QColor AroraStyle::onAccentColor(const QPalette &palette)
+QColor ArktosStyle::onAccentColor(const QPalette &palette)
 {
     const QColor fill = accentFillColor(palette);
     const QColor on = palette.color(QPalette::HighlightedText);
@@ -467,7 +467,7 @@ QColor AroraStyle::onAccentColor(const QPalette &palette)
 // BrowserTheme forces when the platform has no dark scheme.  It is
 // the classic Fusion dark set; every color is a variant definition,
 // not a stray literal.
-QPalette AroraStyle::darkPalette()
+QPalette ArktosStyle::darkPalette()
 {
     QPalette palette;
     palette.setColor(QPalette::Window, QColor(53, 53, 53));
@@ -503,7 +503,7 @@ QPalette AroraStyle::darkPalette()
     return palette;
 }
 
-QList<QColor> AroraStyle::containerIdentityColors()
+QList<QColor> ArktosStyle::containerIdentityColors()
 {
     // Firefox's container accent palette — blue, turquoise, green,
     // yellow, orange, red, pink, purple.
@@ -513,12 +513,12 @@ QList<QColor> AroraStyle::containerIdentityColors()
              QColor(0xff, 0x4b, 0xda), QColor(0xaf, 0x51, 0xf5) };
 }
 
-QColor AroraStyle::noContainerColor()
+QColor ArktosStyle::noContainerColor()
 {
     return QColor(0x8a, 0x8a, 0x8a);
 }
 
-QColor AroraStyle::loadingProgressColor(const QPalette &fieldPalette)
+QColor ArktosStyle::loadingProgressColor(const QPalette &fieldPalette)
 {
     // Light text on the field means a dark or violet scheme — step
     // the app palette's Base down for the cue instead.  The app
@@ -532,12 +532,12 @@ QColor AroraStyle::loadingProgressColor(const QPalette &fieldPalette)
     return QColor(116, 192, 250);
 }
 
-QColor AroraStyle::secureFieldColor()
+QColor ArktosStyle::secureFieldColor()
 {
     return QColor(248, 248, 210);
 }
 
-QColor AroraStyle::networkTypeSwatch(const QString &type,
+QColor ArktosStyle::networkTypeSwatch(const QString &type,
                                      const QPalette &palette)
 {
     // Chrome DevTools' per-type waterfall hues, approximately —
@@ -576,27 +576,27 @@ QColor AroraStyle::networkTypeSwatch(const QString &type,
     return swatch;
 }
 
-QColor AroraStyle::recordDotColor()
+QColor ArktosStyle::recordDotColor()
 {
     return QColor(0xd9, 0x30, 0x25);
 }
 
-QColor AroraStyle::warningBannerColor()
+QColor ArktosStyle::warningBannerColor()
 {
     return QColor(0xff, 0xf4, 0xce);
 }
 
-QColor AroraStyle::warningBannerTextColor()
+QColor ArktosStyle::warningBannerTextColor()
 {
     return QColor(0x3b, 0x31, 0x05);
 }
 
-QColor AroraStyle::warningBannerBorderColor()
+QColor ArktosStyle::warningBannerBorderColor()
 {
     return QColor(0xe0, 0xc4, 0x5f);
 }
 
-void AroraStyle::macToolbarSurfacePalette(QPalette &palette)
+void ArktosStyle::macToolbarSurfacePalette(QPalette &palette)
 {
     palette.setColor(QPalette::Active, QPalette::Window,
                      QColor(150, 150, 150));
@@ -604,7 +604,7 @@ void AroraStyle::macToolbarSurfacePalette(QPalette &palette)
                      QColor(207, 207, 207));
 }
 
-void AroraStyle::macToolbarFramePalette(QPalette &palette)
+void ArktosStyle::macToolbarFramePalette(QPalette &palette)
 {
     palette.setColor(QPalette::Active, QPalette::Light,
                      QColor(64, 64, 64));
@@ -616,27 +616,27 @@ void AroraStyle::macToolbarFramePalette(QPalette &palette)
                      QColor(226, 226, 226));
 }
 
-QColor AroraStyle::torChromeColor()
+QColor ArktosStyle::torChromeColor()
 {
     return QColor(0x4a, 0x33, 0x72);
 }
 
-QColor AroraStyle::torChromeHoverColor()
+QColor ArktosStyle::torChromeHoverColor()
 {
     return QColor(0x5d, 0x44, 0x91);
 }
 
-QColor AroraStyle::torChromePressedColor()
+QColor ArktosStyle::torChromePressedColor()
 {
     return QColor(0x3a, 0x2a, 0x5c);
 }
 
-QColor AroraStyle::torChromeRaisedColor()
+QColor ArktosStyle::torChromeRaisedColor()
 {
     return QColor(0x6b, 0x4f, 0xa3);
 }
 
-QColor AroraStyle::torChromeAccentColor()
+QColor ArktosStyle::torChromeAccentColor()
 {
     // THEM07: the raised violet (~1.6:1 over the surface) reads as a
     // muddy raised box when a glyph-scale mark paints with it — a
@@ -644,17 +644,17 @@ QColor AroraStyle::torChromeAccentColor()
     return QColor(0xa9, 0x8b, 0xd9);
 }
 
-QColor AroraStyle::torTextColor()
+QColor ArktosStyle::torTextColor()
 {
     return QColor(0xee, 0xee, 0xee);
 }
 
-QColor AroraStyle::torDimTextColor()
+QColor ArktosStyle::torDimTextColor()
 {
     return QColor(0xb9, 0xae, 0xcf);
 }
 
-QString AroraStyle::chromeStyleSheet()
+QString ArktosStyle::chromeStyleSheet()
 {
     const QPalette palette = qApp ? qApp->palette() : QPalette();
     const QString separator = separatorColor(palette).name();
@@ -720,7 +720,7 @@ QString AroraStyle::chromeStyleSheet()
         .arg(onHighlight);
 }
 
-QString AroraStyle::torBarStyleSheet()
+QString ArktosStyle::torBarStyleSheet()
 {
     // TOR02/TOR07: one bar treatment shared by the navigation and
     // bookmarks toolbars so the header band reads as a single surface.
@@ -733,7 +733,7 @@ QString AroraStyle::torBarStyleSheet()
              torChromeHoverColor().name(), torChromePressedColor().name());
 }
 
-QString AroraStyle::torMenuBarStyleSheet()
+QString ArktosStyle::torMenuBarStyleSheet()
 {
     return QString::fromLatin1(
         "QMenuBar { background: %1; border: none; }"
@@ -744,7 +744,19 @@ QString AroraStyle::torMenuBarStyleSheet()
              torChromeHoverColor().name(), torChromePressedColor().name());
 }
 
-QString AroraStyle::torBadgeStyleSheet()
+QString ArktosStyle::auroraMenuBarStyleSheet()
+{
+    // The wave strip is a background layer only — menu items keep the
+    // native palette colors, so both light and dark chrome read
+    // correctly without any item overrides.
+    return QString::fromLatin1(
+        "QMenuBar {"
+        " background-image: url(:/arktos-strip.svg);"
+        " background-position: center center;"
+        " background-repeat: no-repeat; }");
+}
+
+QString ArktosStyle::torBadgeStyleSheet()
 {
     return QString::fromLatin1(
         "QLabel { color: white; background: %1;"
@@ -752,7 +764,7 @@ QString AroraStyle::torBadgeStyleSheet()
         .arg(torChromeRaisedColor().name());
 }
 
-QString AroraStyle::torTabWidgetStyleSheet()
+QString ArktosStyle::torTabWidgetStyleSheet()
 {
     return QString::fromLatin1(
         "QTabWidget#mainTabWidget { background: %1; }"
@@ -760,7 +772,7 @@ QString AroraStyle::torTabWidgetStyleSheet()
         .arg(torChromeColor().name());
 }
 
-QString AroraStyle::torTabBarStyleSheet()
+QString ArktosStyle::torTabBarStyleSheet()
 {
     // TOR07: inactive tabs read as chrome (mid violet), the selected
     // tab is the light "field" element — the same inside-the-violet
@@ -791,7 +803,7 @@ QString AroraStyle::torTabBarStyleSheet()
              torChromeRaisedColor().name());
 }
 
-QString AroraStyle::torStatusBarStyleSheet()
+QString ArktosStyle::torStatusBarStyleSheet()
 {
     // TOR14: light-on-violet for the circuit label, the MEM/NET/
     // loading/zoom widgets and the transient message line.  The top
@@ -813,7 +825,7 @@ QString AroraStyle::torStatusBarStyleSheet()
              torDimTextColor().name());
 }
 
-QString AroraStyle::torToolButtonStyleSheet()
+QString ArktosStyle::torToolButtonStyleSheet()
 {
     return QString::fromLatin1(
         "QToolButton { background: transparent; }"
@@ -822,7 +834,7 @@ QString AroraStyle::torToolButtonStyleSheet()
         .arg(torChromeHoverColor().name(), torChromePressedColor().name());
 }
 
-QString AroraStyle::torBannerStyleSheet()
+QString ArktosStyle::torBannerStyleSheet()
 {
     return QString::fromLatin1(
         "TorStatusBanner { background: %1; color: %2; }"
@@ -837,7 +849,7 @@ QString AroraStyle::torBannerStyleSheet()
              torChromeRaisedColor().name(), torChromeColor().name());
 }
 
-QString AroraStyle::torTitleBarStyleSheet()
+QString ArktosStyle::torTitleBarStyleSheet()
 {
     // The title is the headline element on the violet chrome — pure
     // white, the maximum contrast against the surface (~12:1); the
@@ -851,7 +863,7 @@ QString AroraStyle::torTitleBarStyleSheet()
         .arg(torTextColor().name(), torChromeRaisedColor().name());
 }
 
-QString AroraStyle::torTitleControlsStyleSheet()
+QString ArktosStyle::torTitleControlsStyleSheet()
 {
     return QString::fromLatin1(
         "QWidget#torTitleControls { background: transparent; }"
@@ -861,7 +873,7 @@ QString AroraStyle::torTitleControlsStyleSheet()
         .arg(torChromeHoverColor().name(), torChromePressedColor().name());
 }
 
-QString AroraStyle::torWindowStyleSheet()
+QString ArktosStyle::torWindowStyleSheet()
 {
     return QString::fromLatin1("#torMainWindow { background: %1; }")
         .arg(torChromeColor().name());
@@ -873,7 +885,7 @@ QString AroraStyle::torWindowStyleSheet()
 // recovered from the style stack, so it is remembered here.
 static QString s_wrappedBaseName;
 
-QString AroraStyle::baseStyleName()
+QString ArktosStyle::baseStyleName()
 {
     if (!s_wrappedBaseName.isEmpty())
         return s_wrappedBaseName;
@@ -914,10 +926,10 @@ static void ensureStyleWrapped()
 static void refreshChromeSheet()
 {
     if (qApp)
-        qApp->setStyleSheet(AroraStyle::chromeStyleSheet());
+        qApp->setStyleSheet(ArktosStyle::chromeStyleSheet());
 }
 
-void AroraStyle::install()
+void ArktosStyle::install()
 {
     ensureStyleWrapped();
     refreshChromeSheet();

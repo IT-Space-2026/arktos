@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,8 +17,8 @@
  * Boston, MA  02110-1301  USA
  */
 
-#ifndef ARORASTYLE_H
-#define ARORASTYLE_H
+#ifndef ARKTOSTYLE_H
+#define ARKTOSTYLE_H
 
 #include <qcolor.h>
 #include <qlist.h>
@@ -47,7 +47,7 @@
 // violet family, the container identity accents, the fixed cue and
 // notice colors, the macOS toolbar greys, and the forced dark
 // palette.  Everything else resolves from the live QPalette.
-namespace AroraStyle {
+namespace ArktosStyle {
 
 // The chrome spacing scale.  Layout margins and spacings on toolbars,
 // panels and popovers snap to these steps — no ad-hoc literals.
@@ -178,6 +178,9 @@ QColor torDimTextColor();       // receded text / disabled glyphs
 QString chromeStyleSheet();           // app-wide flat chrome
 QString torBarStyleSheet();           // navigation + bookmarks bars
 QString torMenuBarStyleSheet();
+// Normal-window menu bar: faint aurora wave strip matching the
+// start-page hero — the crest centers on the bar.
+QString auroraMenuBarStyleSheet();
 QString torBadgeStyleSheet();         // the "Tor" badge pill
 QString torTabWidgetStyleSheet();     // the tab pane's violet band
 QString torTabBarStyleSheet();        // resolves Base/Text live
@@ -202,4 +205,4 @@ void install();
 
 }
 
-#endif // ARORASTYLE_H
+#endif // ARKTOSTYLE_H

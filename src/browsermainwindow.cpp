@@ -67,8 +67,8 @@
 
 #include "aboutdialog.h"
 #include "addbookmarkdialog.h"
-#include "aroraicon.h"
-#include "arorastyle.h"
+#include "arktosicon.h"
+#include "arktosstyle.h"
 #include "autosaver.h"
 #include "bookmarksmanager.h"
 #include "bookmarksmenu.h"
@@ -157,7 +157,7 @@
 #include <qdebug.h>
 
 // THEME01: the tor window's violet chrome (TOR02/TOR07/TOR14) and the
-// palette-derived flat-chrome rules all build in AroraStyle — the one
+// palette-derived flat-chrome rules all build in ArktosStyle — the one
 // central style source — not as per-callsite setStyleSheet strings.
 
 // NAVB04: a bar item's stable id rides as a dynamic property on its
@@ -171,24 +171,24 @@ static const char kNavBarItemIdProperty[] = "navBarItemId";
 // label layout computes — and under the stylesheet path (or any
 // foreign style that asks for the label cell instead of the icon
 // size) that target is not square.  QIcon::paint/QPixmapIconEngine
-// fill the rect outright and arora.svg reports
+// fill the rect outright and arktos.svg reports
 // Qt::IgnoreAspectRatio, so a non-square request stretches the
 // bear-globe mark into an ellipse.  This engine renders the mark
 // into the centered square of whatever is asked — the logo can
 // letterbox but can never deform, on every style and scale factor.
-class AroraLogoEngine : public QIconEngine
+class ArktosLogoEngine : public QIconEngine
 {
 public:
     // lightDisc: ICONS06's translucent backing plate for the violet
     // tor bar — painted inside the same square, so it stays a circle.
-    explicit AroraLogoEngine(bool lightDisc)
+    explicit ArktosLogoEngine(bool lightDisc)
         : m_disc(lightDisc)
     {
     }
 
     QIconEngine *clone() const override
     {
-        return new AroraLogoEngine(m_disc);
+        return new ArktosLogoEngine(m_disc);
     }
 
     void paint(QPainter *painter, const QRect &rect, QIcon::Mode,
@@ -225,7 +225,7 @@ private:
             painter->save();
             painter->setRenderHint(QPainter::Antialiasing);
             painter->setPen(Qt::NoPen);
-            QColor disc = AroraStyle::torTextColor();
+            QColor disc = ArktosStyle::torTextColor();
             disc.setAlpha(150);
             painter->setBrush(disc);
             const qreal inset = side / 24.0; // 1.5px at the 36px baseline
@@ -237,12 +237,12 @@ private:
     }
 
     const bool m_disc;
-    const QIcon m_icon = QIcon(QLatin1String(":/arora.svg"));
+    const QIcon m_icon = QIcon(QLatin1String(":/arktos.svg"));
 };
 
 static QIcon torAppMenuIcon()
 {
-    return QIcon(new AroraLogoEngine(true));
+    return QIcon(new ArktosLogoEngine(true));
 }
 
 // MENU17: brand accent — the app-menu button paints its logo larger
@@ -299,7 +299,7 @@ private:
                                       qMin(margins.top(), 2),
                                       margins.right(),
                                       qMin(margins.bottom(), 2));
-        barLayout->setSpacing(AroraStyle::Spacing::Medium);
+        barLayout->setSpacing(ArktosStyle::Spacing::Medium);
     }
 };
 
@@ -347,6 +347,12 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags,
     setupMenu();
     setupToolBar();
 
+    // The menu row doubles as the top header strip on a normal
+    // window — give it the faint aurora wave from the start page.
+    // Tor windows keep their violet chrome instead.
+    if (!BrowserApplication::isTorMode())
+        menuBar()->setStyleSheet(ArktosStyle::auroraMenuBarStyleSheet());
+
     if (BrowserApplication::isTorMode()) {
         // TOR02: a tor window is private by construction (dedicated
         // OTR profile) — a "New Private Tab" entry would be a no-op
@@ -371,16 +377,16 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags,
         // Unmistakable chrome accent — violet navigation bar + badge,
         // and a "(Tor)" marker in the window title — so a tor window
         // is never mistaken for a normal one at a glance.
-        m_navigationBar->setStyleSheet(AroraStyle::torBarStyleSheet());
+        m_navigationBar->setStyleSheet(ArktosStyle::torBarStyleSheet());
 
         // TOR07: the violet used to stop at the navigation bar, so
         // the menu row stayed on the default palette — three
         // unrelated shades in the header block.  The menu bar takes
         // the same treatment; its popup menus are intentionally left
         // on the platform palette.
-        menuBar()->setStyleSheet(AroraStyle::torMenuBarStyleSheet());
+        menuBar()->setStyleSheet(ArktosStyle::torMenuBarStyleSheet());
         QLabel *badge = new QLabel(QLatin1String(" Tor "), m_navigationBar);
-        badge->setStyleSheet(AroraStyle::torBadgeStyleSheet());
+        badge->setStyleSheet(ArktosStyle::torBadgeStyleSheet());
         badge->setToolTip(tr("This window browses through the Tor network"));
         // PROF01: insert ahead of the profile button — the avatar
         // keeps the bar's right edge on every window type.
@@ -395,7 +401,7 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags,
         // (the button only ever repaints while a page is loaded).
         QPalette readerPalette = m_readerModeButton->palette();
         readerPalette.setColor(QPalette::ButtonText,
-                               AroraStyle::torTextColor());
+                               ArktosStyle::torTextColor());
         m_readerModeButton->setPalette(readerPalette);
         // THEM06: the suggested/active marks resolve QPalette::Accent
         // — the app palette's blue read as a stray blue on the violet
@@ -407,13 +413,13 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags,
         // take the lighter accent step while fill-scale elements
         // (badge pill, rail selection) keep the raised color.
         m_readerModeButton->setAccentOverride(
-            AroraStyle::torChromeAccentColor());
+            ArktosStyle::torChromeAccentColor());
         // TOR08: same lift for the circuit button's painted onion —
         // its PaletteChange handler repaints the glyph.
         if (m_torCircuitButton) {
             QPalette circuitPalette = m_torCircuitButton->palette();
             circuitPalette.setColor(QPalette::ButtonText,
-                                    AroraStyle::torTextColor());
+                                    ArktosStyle::torTextColor());
             m_torCircuitButton->setPalette(circuitPalette);
         }
 
@@ -427,7 +433,7 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags,
         QPalette shieldPalette = m_siteShield->palette();
         shieldPalette.setColor(QPalette::Disabled,
                                QPalette::ButtonText,
-                               AroraStyle::torDimTextColor());
+                               ArktosStyle::torDimTextColor());
         m_siteShield->setPalette(shieldPalette);
 
         // ICONS04/ICONS06: the violet bar sits on the application's
@@ -441,22 +447,22 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags,
         // stays deliberate instead of washed.  The menu actions keep
         // the normal icons — their popups stay on the platform
         // palette, not the violet bar.
-        const QColor torGlyph = AroraStyle::torTextColor();
-        const QColor torGlyphDisabled = AroraStyle::torDimTextColor();
-        m_reloadIcon = AroraIcon::getTinted(
+        const QColor torGlyph = ArktosStyle::torTextColor();
+        const QColor torGlyphDisabled = ArktosStyle::torDimTextColor();
+        m_reloadIcon = ArktosIcon::getTinted(
             QLatin1String("view-refresh"), torGlyph, torGlyphDisabled);
-        m_stopIcon = AroraIcon::getTinted(
+        m_stopIcon = ArktosIcon::getTinted(
             QLatin1String("process-stop"), torGlyph, torGlyphDisabled);
         m_stopReloadAction->setIcon(m_reloadIcon);
-        m_historyBackAction->setIcon(AroraIcon::getTinted(
+        m_historyBackAction->setIcon(ArktosIcon::getTinted(
             QLatin1String("go-previous"), torGlyph, torGlyphDisabled));
-        m_historyForwardAction->setIcon(AroraIcon::getTinted(
+        m_historyForwardAction->setIcon(ArktosIcon::getTinted(
             QLatin1String("go-next"), torGlyph, torGlyphDisabled));
         // HOME01: same lift for the nav-bar Home button — its History
         // menu entry shows the light glyph too, matching Back/Forward.
-        m_historyHomeAction->setIcon(AroraIcon::getTinted(
+        m_historyHomeAction->setIcon(ArktosIcon::getTinted(
             QLatin1String("go-home"), torGlyph, torGlyphDisabled));
-        m_viewSidebarAction->setIcon(AroraIcon::tinted(
+        m_viewSidebarAction->setIcon(ArktosIcon::tinted(
             SidebarPanel::icon(m_readerModeButton),
             torGlyph, torGlyphDisabled));
 
@@ -473,10 +479,10 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags,
         // transient message line is painted straight from
         // palette().windowText() (it bypasses the stylesheet), so
         // the role is lifted explicitly — children inherit it.
-        statusBar()->setStyleSheet(AroraStyle::torStatusBarStyleSheet());
+        statusBar()->setStyleSheet(ArktosStyle::torStatusBarStyleSheet());
         QPalette statusPalette = statusBar()->palette();
         statusPalette.setColor(QPalette::WindowText,
-                               AroraStyle::torTextColor());
+                               ArktosStyle::torTextColor());
         statusBar()->setPalette(statusPalette);
         // The zoom +/- glyphs are themed icons — dark art on the
         // violet bar.  Tint them to the nav cluster's flat #eee.
@@ -541,13 +547,13 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags,
     m_bookmarksToolbarFrame->setFrameShape(QFrame::HLine);
     m_bookmarksToolbarFrame->setFrameShadow(QFrame::Plain);
     QPalette fp = m_bookmarksToolbarFrame->palette();
-    AroraStyle::macToolbarFramePalette(fp);
+    ArktosStyle::macToolbarFramePalette(fp);
     m_bookmarksToolbarFrame->setPalette(fp);
     layout->addWidget(m_bookmarksToolbarFrame);
 
     layout->addWidget(m_bookmarksToolbar);
     QPalette p = m_bookmarksToolbar->palette();
-    AroraStyle::macToolbarSurfacePalette(p);
+    ArktosStyle::macToolbarSurfacePalette(p);
     m_bookmarksToolbar->setAutoFillBackground(true);
     m_bookmarksToolbar->setPalette(p);
     m_bookmarksToolbar->setBackgroundRole(QPalette::Window);
@@ -560,8 +566,8 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags,
     // UIP01: modest padding around the bookmarks row (skipped on macOS
     // where the toolbar is hard-capped to 19px for the unified look).
     m_bookmarksToolbar->setContentsMargins(
-        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small,
-        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small);
+        ArktosStyle::Spacing::Small, ArktosStyle::Spacing::Small,
+        ArktosStyle::Spacing::Small, ArktosStyle::Spacing::Small);
     addToolBarBreak();
     addToolBar(m_bookmarksToolbar);
 #endif
@@ -576,37 +582,37 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags,
         // light "field" element, inactive tabs = violet chrome).
         // The objectName scopes the pane rule so a QTabWidget hosted
         // inside a widget tab never picks the chrome colors up.
-        m_bookmarksToolbar->setStyleSheet(AroraStyle::torBarStyleSheet());
+        m_bookmarksToolbar->setStyleSheet(ArktosStyle::torBarStyleSheet());
         m_tabWidget->setObjectName(QLatin1String("mainTabWidget"));
-        m_tabWidget->setStyleSheet(AroraStyle::torTabWidgetStyleSheet());
+        m_tabWidget->setStyleSheet(ArktosStyle::torTabWidgetStyleSheet());
         // Manual strip paints (the vertical-row background fill, the
         // edge divider, the sleeping-tab badge) take palette() colors
         // — pull them into the same violet family.
         QPalette stripPalette = m_tabWidget->tabBar()->palette();
         stripPalette.setColor(QPalette::Window,
-                              AroraStyle::torChromeColor());
+                              ArktosStyle::torChromeColor());
         stripPalette.setColor(QPalette::Button,
-                              AroraStyle::torChromeColor());
+                              ArktosStyle::torChromeColor());
         stripPalette.setColor(QPalette::WindowText,
-                              AroraStyle::torTextColor());
+                              ArktosStyle::torTextColor());
         stripPalette.setColor(QPalette::ButtonText,
-                              AroraStyle::torTextColor());
+                              ArktosStyle::torTextColor());
         stripPalette.setColor(QPalette::Disabled, QPalette::WindowText,
-                              AroraStyle::torDimTextColor());
+                              ArktosStyle::torDimTextColor());
         stripPalette.setColor(QPalette::Disabled, QPalette::ButtonText,
-                              AroraStyle::torDimTextColor());
+                              ArktosStyle::torDimTextColor());
         stripPalette.setColor(QPalette::Mid,
-                              AroraStyle::torChromePressedColor());
+                              ArktosStyle::torChromePressedColor());
         TabBar *tabBar = m_tabWidget->tabBar();
         tabBar->setPalette(stripPalette);
-        tabBar->setStyleSheet(AroraStyle::torTabBarStyleSheet());
+        tabBar->setStyleSheet(ArktosStyle::torTabBarStyleSheet());
         // The selected tab borrows the palette's field colors — a
         // live theme preview re-resolves them so the tab keeps
         // matching the location bar.
         connect(BrowserTheme::themeNotifier(),
                 &BrowserTheme::BrowserThemeNotifier::chromeSchemeChanged,
                 tabBar, [tabBar]() {
-            tabBar->setStyleSheet(AroraStyle::torTabBarStyleSheet());
+            tabBar->setStyleSheet(ArktosStyle::torTabBarStyleSheet());
         });
 
         // TOR17: until the daemon's SOCKS listener is live every page
@@ -1066,7 +1072,7 @@ void BrowserMainWindow::setupMenu()
             m_tabWidget, &TabWidget::newPrivateTab);
     m_fileMenu->addAction(m_fileNewPrivateTabAction);
 
-    // TOR02: a Tor window is a separate `arora --tor` process — the
+    // TOR02: a Tor window is a separate `arktos --tor` process — the
     // application proxy is process-global, so routing cannot be a
     // mode of this window.  Disabled when no tor binary resolves.
     m_fileNewTorWindowAction = new QAction(m_fileMenu);
@@ -1175,21 +1181,21 @@ void BrowserMainWindow::setupMenu()
     addAction(m_quitAction);
 
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
-    m_fileNewWindowAction->setIcon(AroraIcon::getChrome(QLatin1String("window-new")));
-    m_fileNewPrivateTabAction->setIcon(AroraIcon::getChrome(QLatin1String("view-private")));
-    m_fileNewTorWindowAction->setIcon(AroraIcon::getChrome(QLatin1String("tor-onion")));
+    m_fileNewWindowAction->setIcon(ArktosIcon::getChrome(QLatin1String("window-new")));
+    m_fileNewPrivateTabAction->setIcon(ArktosIcon::getChrome(QLatin1String("view-private")));
+    m_fileNewTorWindowAction->setIcon(ArktosIcon::getChrome(QLatin1String("tor-onion")));
     // ICONS08: submenu headers that sit among iconed leaf rows carry
     // an icon too — the crate glyph marks the container flyout.
     m_fileNewContainerTabMenu->setIcon(
-        AroraIcon::getChrome(QLatin1String("container-tab")));
-    m_fileOpenFileAction->setIcon(AroraIcon::getChrome(QLatin1String("document-open")));
-    m_fileSaveAsAction->setIcon(AroraIcon::getChrome(QLatin1String("document-save-as")));
-    m_fileImportBookmarksAction->setIcon(AroraIcon::getChrome(QLatin1String("document-import")));
-    m_fileExportBookmarksAction->setIcon(AroraIcon::getChrome(QLatin1String("document-export")));
-    m_filePrintAction->setIcon(AroraIcon::getChrome(QLatin1String("document-print")));
-    m_preferencesAction->setIcon(AroraIcon::getChrome(QLatin1String("preferences-system")));
-    m_fileCloseWindow->setIcon(AroraIcon::getChrome(QLatin1String("window-close")));
-    m_quitAction->setIcon(AroraIcon::getChrome(QLatin1String("application-exit")));
+        ArktosIcon::getChrome(QLatin1String("container-tab")));
+    m_fileOpenFileAction->setIcon(ArktosIcon::getChrome(QLatin1String("document-open")));
+    m_fileSaveAsAction->setIcon(ArktosIcon::getChrome(QLatin1String("document-save-as")));
+    m_fileImportBookmarksAction->setIcon(ArktosIcon::getChrome(QLatin1String("document-import")));
+    m_fileExportBookmarksAction->setIcon(ArktosIcon::getChrome(QLatin1String("document-export")));
+    m_filePrintAction->setIcon(ArktosIcon::getChrome(QLatin1String("document-print")));
+    m_preferencesAction->setIcon(ArktosIcon::getChrome(QLatin1String("preferences-system")));
+    m_fileCloseWindow->setIcon(ArktosIcon::getChrome(QLatin1String("window-close")));
+    m_quitAction->setIcon(ArktosIcon::getChrome(QLatin1String("application-exit")));
 #endif
 
     // Edit
@@ -1239,15 +1245,15 @@ void BrowserMainWindow::setupMenu()
     m_editMenu->addAction(m_editFindPreviousAction);
 
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
-    m_editUndoAction->setIcon(AroraIcon::getChrome(QLatin1String("edit-undo")));
-    m_editRedoAction->setIcon(AroraIcon::getChrome(QLatin1String("edit-redo")));
-    m_editCutAction->setIcon(AroraIcon::getChrome(QLatin1String("edit-cut")));
-    m_editCopyAction->setIcon(AroraIcon::getChrome(QLatin1String("edit-copy")));
-    m_editPasteAction->setIcon(AroraIcon::getChrome(QLatin1String("edit-paste")));
-    m_editSelectAllAction->setIcon(AroraIcon::getChrome(QLatin1String("edit-select-all")));
-    m_editFindAction->setIcon(AroraIcon::getChrome(QLatin1String("edit-find")));
-    m_editFindNextAction->setIcon(AroraIcon::getChrome(QLatin1String("go-down")));
-    m_editFindPreviousAction->setIcon(AroraIcon::getChrome(QLatin1String("go-up")));
+    m_editUndoAction->setIcon(ArktosIcon::getChrome(QLatin1String("edit-undo")));
+    m_editRedoAction->setIcon(ArktosIcon::getChrome(QLatin1String("edit-redo")));
+    m_editCutAction->setIcon(ArktosIcon::getChrome(QLatin1String("edit-cut")));
+    m_editCopyAction->setIcon(ArktosIcon::getChrome(QLatin1String("edit-copy")));
+    m_editPasteAction->setIcon(ArktosIcon::getChrome(QLatin1String("edit-paste")));
+    m_editSelectAllAction->setIcon(ArktosIcon::getChrome(QLatin1String("edit-select-all")));
+    m_editFindAction->setIcon(ArktosIcon::getChrome(QLatin1String("edit-find")));
+    m_editFindNextAction->setIcon(ArktosIcon::getChrome(QLatin1String("go-down")));
+    m_editFindPreviousAction->setIcon(ArktosIcon::getChrome(QLatin1String("go-up")));
 #endif
 
     // View
@@ -1432,33 +1438,33 @@ void BrowserMainWindow::setupMenu()
     connect(m_viewTextEncodingMenu, &QMenu::triggered,
             this, &BrowserMainWindow::viewTextEncoding);
 
-    m_stopIcon = AroraIcon::getChrome(QLatin1String("process-stop"));
-    m_reloadIcon = AroraIcon::getChrome(QLatin1String("view-refresh"));
+    m_stopIcon = ArktosIcon::getChrome(QLatin1String("process-stop"));
+    m_reloadIcon = ArktosIcon::getChrome(QLatin1String("view-refresh"));
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
     m_viewStopAction->setIcon(m_stopIcon);
     m_viewReloadAction->setIcon(m_reloadIcon);
-    m_viewZoomInAction->setIcon(AroraIcon::getChrome(QLatin1String("zoom-in")));
-    m_viewZoomNormalAction->setIcon(AroraIcon::getChrome(QLatin1String("zoom-original")));
-    m_viewZoomOutAction->setIcon(AroraIcon::getChrome(QLatin1String("zoom-out")));
-    m_viewFullScreenAction->setIcon(AroraIcon::getChrome(QLatin1String("view-fullscreen")));
+    m_viewZoomInAction->setIcon(ArktosIcon::getChrome(QLatin1String("zoom-in")));
+    m_viewZoomNormalAction->setIcon(ArktosIcon::getChrome(QLatin1String("zoom-original")));
+    m_viewZoomOutAction->setIcon(ArktosIcon::getChrome(QLatin1String("zoom-out")));
+    m_viewFullScreenAction->setIcon(ArktosIcon::getChrome(QLatin1String("view-fullscreen")));
     // ICONS07: the bar-visibility toggles and engine tools get icons
     // too — names with no bundled-set artwork resolve to the mid-grey
     // legacy glyphs (SHLD01 convention).
-    m_viewShowMenuBarAction->setIcon(AroraIcon::getChrome(QLatin1String("view-menubar")));
-    m_viewToolbarAction->setIcon(AroraIcon::getChrome(QLatin1String("view-toolbar")));
-    m_viewBookmarkBarAction->setIcon(AroraIcon::getChrome(QLatin1String("user-bookmarks")));
-    viewTabBarAction->setIcon(AroraIcon::getChrome(QLatin1String("view-tabbar")));
+    m_viewShowMenuBarAction->setIcon(ArktosIcon::getChrome(QLatin1String("view-menubar")));
+    m_viewToolbarAction->setIcon(ArktosIcon::getChrome(QLatin1String("view-toolbar")));
+    m_viewBookmarkBarAction->setIcon(ArktosIcon::getChrome(QLatin1String("user-bookmarks")));
+    viewTabBarAction->setIcon(ArktosIcon::getChrome(QLatin1String("view-tabbar")));
     m_tabWidget->tabBar()->iconOnlyTabsAction()->setIcon(
-        AroraIcon::getChrome(QLatin1String("view-icon")));
-    m_viewStatusbarAction->setIcon(AroraIcon::getChrome(QLatin1String("view-statusbar")));
-    m_viewZoomTextOnlyAction->setIcon(AroraIcon::getChrome(QLatin1String("zoom-text")));
-    m_viewReaderAction->setIcon(AroraIcon::getChrome(QLatin1String("text-x-generic")));
-    m_viewPipAction->setIcon(AroraIcon::getChrome(QLatin1String("view-pip")));
-    m_viewSourceAction->setIcon(AroraIcon::getChrome(QLatin1String("text-html")));
+        ArktosIcon::getChrome(QLatin1String("view-icon")));
+    m_viewStatusbarAction->setIcon(ArktosIcon::getChrome(QLatin1String("view-statusbar")));
+    m_viewZoomTextOnlyAction->setIcon(ArktosIcon::getChrome(QLatin1String("zoom-text")));
+    m_viewReaderAction->setIcon(ArktosIcon::getChrome(QLatin1String("text-x-generic")));
+    m_viewPipAction->setIcon(ArktosIcon::getChrome(QLatin1String("view-pip")));
+    m_viewSourceAction->setIcon(ArktosIcon::getChrome(QLatin1String("text-html")));
     // ICONS08: the View submenu headers sit among iconed leaf rows —
     // they get icons from the same family.
     m_viewTextEncodingAction->setIcon(
-        AroraIcon::getChrome(QLatin1String("accessories-character-map")));
+        ArktosIcon::getChrome(QLatin1String("accessories-character-map")));
 #endif
 
     // History
@@ -1489,7 +1495,7 @@ void BrowserMainWindow::setupMenu()
     m_historyHomeAction->setShortcut(QKeySequence(Qt::ControlModifier | Qt::ShiftModifier | Qt::Key_H));
     // HOME01: the nav-bar Home button reuses this action, so the icon
     // is unconditional — platform convention only hides it in menus.
-    m_historyHomeAction->setIcon(AroraIcon::getChrome(QLatin1String("go-home")));
+    m_historyHomeAction->setIcon(ArktosIcon::getChrome(QLatin1String("go-home")));
 #if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
     m_historyHomeAction->setIconVisibleInMenu(false);
 #endif
@@ -1510,10 +1516,10 @@ void BrowserMainWindow::setupMenu()
     historyActions.append(m_historyRestoreLastSessionAction);
     m_historyMenu->setInitialActions(historyActions);
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
-    m_historyRestoreLastSessionAction->setIcon(AroraIcon::getChrome(QLatin1String("document-revert")));
+    m_historyRestoreLastSessionAction->setIcon(ArktosIcon::getChrome(QLatin1String("document-revert")));
     // ICONS08: a static submenu header among iconed rows.
     m_tabWidget->recentlyClosedTabsAction()->setIcon(
-        AroraIcon::getChrome(QLatin1String("view-restore")));
+        ArktosIcon::getChrome(QLatin1String("view-restore")));
 #endif
 
     // Bookmarks
@@ -1532,7 +1538,7 @@ void BrowserMainWindow::setupMenu()
             this, &BrowserMainWindow::showBookmarksDialog);
 
     m_bookmarksAddAction = new QAction(this);
-    m_bookmarksAddAction->setIcon(AroraIcon::getChrome(QLatin1String("bookmark-new")));
+    m_bookmarksAddAction->setIcon(ArktosIcon::getChrome(QLatin1String("bookmark-new")));
 #if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
     m_bookmarksAddAction->setIconVisibleInMenu(false);
 #endif
@@ -1551,11 +1557,11 @@ void BrowserMainWindow::setupMenu()
     bookmarksActions.append(m_bookmarksAddFolderAction);
     m_bookmarksMenu->setInitialActions(bookmarksActions);
 
-    m_bookmarksAddFolderAction->setIcon(AroraIcon::getChrome(QLatin1String("folder-new")));
-    m_bookmarksShowAllAction->setIcon(AroraIcon::getChrome(QLatin1String("user-bookmarks")));
+    m_bookmarksAddFolderAction->setIcon(ArktosIcon::getChrome(QLatin1String("folder-new")));
+    m_bookmarksShowAllAction->setIcon(ArktosIcon::getChrome(QLatin1String("user-bookmarks")));
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
     tabWidget()->bookmarkTabsAction()->setIcon(
-        AroraIcon::getChrome(QLatin1String("bookmark-new")));
+        ArktosIcon::getChrome(QLatin1String("bookmark-new")));
 #endif
 
     // Window
@@ -1573,7 +1579,7 @@ void BrowserMainWindow::setupMenu()
             this, &BrowserMainWindow::showTabSearch);
     addAction(m_windowTabSearchAction);
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
-    m_windowTabSearchAction->setIcon(AroraIcon::getChrome(QLatin1String("edit-find")));
+    m_windowTabSearchAction->setIcon(ArktosIcon::getChrome(QLatin1String("edit-find")));
 #endif
 
     connect(m_windowMenu, &QMenu::aboutToShow,
@@ -1598,7 +1604,7 @@ void BrowserMainWindow::setupMenu()
     // Window menu keeps only tab/window-management entries.
     m_toolsDownloadsAction = new QAction(m_toolsMenu);
     m_toolsDownloadsAction->setIcon(
-        AroraIcon::getChrome(QLatin1String("emblem-downloads")));
+        ArktosIcon::getChrome(QLatin1String("emblem-downloads")));
     connect(m_toolsDownloadsAction, &QAction::triggered,
             this, &BrowserMainWindow::downloadManager);
     m_toolsMenu->addAction(m_toolsDownloadsAction);
@@ -1610,7 +1616,7 @@ void BrowserMainWindow::setupMenu()
     m_toolsProfilesAction->setObjectName(
         QLatin1String("toolsProfilesAction"));
     m_toolsProfilesAction->setIcon(
-        AroraIcon::getChrome(QLatin1String("user-bookmarks")));
+        ArktosIcon::getChrome(QLatin1String("user-bookmarks")));
     connect(m_toolsProfilesAction, &QAction::triggered, this, [this]() {
         ProfileManagerDialog::showManager(
             this, ProfileStore::activeProfileId());
@@ -1679,7 +1685,7 @@ void BrowserMainWindow::setupMenu()
     // builds have no BiDi backend at all — the entry stays out of
     // the menu there; a tor window keeps it visible but disabled
     // since its process never arms the debug channel.
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     m_toolsBidiDevToolAction = new QAction(m_toolsDevToolsMenu);
     connect(m_toolsBidiDevToolAction, &QAction::triggered,
             this, [this]() {
@@ -1688,7 +1694,7 @@ void BrowserMainWindow::setupMenu()
     m_toolsBidiDevToolAction->setText(tr("BiDi Dev &Tools"));
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
     m_toolsBidiDevToolAction->setIcon(
-        AroraIcon::getChrome(QLatin1String("system-run")));
+        ArktosIcon::getChrome(QLatin1String("system-run")));
 #endif
     if (BrowserApplication::isTorMode()) {
         m_toolsBidiDevToolAction->setEnabled(false);
@@ -1704,18 +1710,18 @@ void BrowserMainWindow::setupMenu()
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
     // ICONS07: the dev-tools rows get icons too.
     m_toolsChromiumDevToolAction->setIcon(
-        AroraIcon::getChrome(QLatin1String("utilities-terminal")));
+        ArktosIcon::getChrome(QLatin1String("utilities-terminal")));
     m_toolsCommandPaletteAction->setIcon(
-        AroraIcon::getChrome(QLatin1String("system-run")));
+        ArktosIcon::getChrome(QLatin1String("system-run")));
     m_toolsClearPrivateDataAction->setIcon(
-        AroraIcon::getChrome(QLatin1String("edit-clear")));
+        ArktosIcon::getChrome(QLatin1String("edit-clear")));
     m_toolsLockStoreAction->setIcon(
-        AroraIcon::getChrome(QLatin1String("security-high")));
+        ArktosIcon::getChrome(QLatin1String("security-high")));
     // ICONS08: static submenu headers among iconed rows.
     m_toolsUserAgentMenu->setIcon(
-        AroraIcon::getChrome(QLatin1String("avatar-default")));
+        ArktosIcon::getChrome(QLatin1String("avatar-default")));
     m_toolsDevToolsMenu->setIcon(
-        AroraIcon::getChrome(QLatin1String("applications-development")));
+        ArktosIcon::getChrome(QLatin1String("applications-development")));
 #endif
 
     // MENU05: filter management lives on the Preferences Privacy
@@ -1754,8 +1760,8 @@ void BrowserMainWindow::setupMenu()
     m_helpMenu->addAction(m_helpAboutApplicationAction);
 
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
-    m_helpChangeLanguageAction->setIcon(AroraIcon::getChrome(QLatin1String("preferences-desktop-locale")));
-    m_helpCheckUpdatesAction->setIcon(AroraIcon::getChrome(QLatin1String("view-refresh")));
+    m_helpChangeLanguageAction->setIcon(ArktosIcon::getChrome(QLatin1String("preferences-desktop-locale")));
+    m_helpCheckUpdatesAction->setIcon(ArktosIcon::getChrome(QLatin1String("view-refresh")));
     // ICONS09 identity exceptions: the Qt mark and the app mark keep
     // their brand colors — chrome glyphs go through getChrome.
     m_helpAboutQtAction->setIcon(QPixmap(QLatin1String(":/qt-project.org/qmessagebox/images/qtlogo-64.png")));
@@ -1923,7 +1929,7 @@ void BrowserMainWindow::retranslate()
     // panel inside; the menu action stays "BiDi Dev &Tools" so it
     // reads distinctly next to "Chromium Dev Tool".
     m_bidiPanelDock->setWindowTitle(tr("Development Tools"));
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     m_toolsBidiDevToolAction->setText(tr("BiDi Dev &Tools"));
 #endif
     m_viewSidebarAction->setText(tr("Sidebar"));
@@ -1972,7 +1978,7 @@ void BrowserMainWindow::retranslate()
     m_helpCheckUpdatesAction->setToolTip(BrowserApplication::isTorMode()
         ? tr("Update checks are disabled in Tor windows — the check "
              "contacts github.com directly.")
-        : tr("Check github.com for a newer Arora release"));
+        : tr("Check github.com for a newer Arktos release"));
     m_helpAboutQtAction->setText(tr("About &Qt"));
     m_helpAboutApplicationAction->setText(tr("About &%1", "About Browser").arg(QApplication::applicationName()));
 
@@ -1980,9 +1986,9 @@ void BrowserMainWindow::retranslate()
     m_navigationBar->setWindowTitle(tr("Navigation"));
     m_bookmarksToolbar->setWindowTitle(tr("&Bookmarks"));
 
-    m_appMenuButton->setText(tr("Arora"));
-    m_appMenuButton->setToolTip(tr("Arora menu"));
-    m_appMenuButton->setAccessibleName(tr("Arora menu"));
+    m_appMenuButton->setText(tr("Arktos"));
+    m_appMenuButton->setToolTip(tr("Arktos menu"));
+    m_appMenuButton->setAccessibleName(tr("Arktos menu"));
 
     m_navBarEditAction->setText(tr("Edit Navigation Bar"));
     m_navBarResetAction->setText(tr("Reset Navigation Bar"));
@@ -2022,16 +2028,16 @@ void BrowserMainWindow::setupToolBar()
     // band under the nav items.  Zero them — the layout's own margin
     // still pads the row, and the whole row now centers against the
     // app button instead of riding the top edge.
-    m_navigationBar->setContentsMargins(AroraStyle::Spacing::Medium, 0,
-                                        AroraStyle::Spacing::Medium, 0);
-    m_navigationBar->layout()->setSpacing(AroraStyle::Spacing::Medium);
+    m_navigationBar->setContentsMargins(ArktosStyle::Spacing::Medium, 0,
+                                        ArktosStyle::Spacing::Medium, 0);
+    m_navigationBar->layout()->setSpacing(ArktosStyle::Spacing::Medium);
     // UIP02: one icon size for the nav buttons on every platform —
     // was macOS-only, so Linux/Windows fell back to the style's
     // larger default and the row looked uneven.
     m_navigationBar->setIconSize(QSize(18, 18));
     addToolBar(m_navigationBar);
 
-    // MENU06: Vivaldi-style application menu — an Arora logo + name
+    // MENU06: Vivaldi-style application menu — an Arktos logo + name
     // button leading the navigation bar whose dropdown lists every
     // real top-level menu.  The QMenu objects are shared, not cloned,
     // so dynamic menus (History/Bookmarks/Window) stay live and the
@@ -2075,8 +2081,8 @@ void BrowserMainWindow::setupToolBar()
     // icon cell under a stylesheet or foreign style can never
     // stretch the mark.  The bundled vector art stays crisp at the
     // enlarged size and fractional scale factors.
-    m_appMenuButton->setIcon(QIcon(new AroraLogoEngine(false)));
-    // MENU13: the button is icon-only; setText still carries "Arora"
+    m_appMenuButton->setIcon(QIcon(new ArktosLogoEngine(false)));
+    // MENU13: the button is icon-only; setText still carries "Arktos"
     // (retranslate) so screen readers keep a real label.
     m_appMenuButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
     m_appMenuButton->setPopupMode(QToolButton::InstantPopup);
@@ -2093,7 +2099,7 @@ void BrowserMainWindow::setupToolBar()
     m_navigationBar->addWidget(m_appMenuButton)
         ->setProperty(kNavBarItemIdProperty, QLatin1String("appMenu"));
 
-    m_historyBackAction->setIcon(AroraIcon::getChrome(QLatin1String("go-previous")));
+    m_historyBackAction->setIcon(ArktosIcon::getChrome(QLatin1String("go-previous")));
     m_historyBackMenu = new QMenu(this);
     m_historyBackAction->setMenu(m_historyBackMenu);
     connect(m_historyBackMenu, &QMenu::aboutToShow,
@@ -2104,7 +2110,7 @@ void BrowserMainWindow::setupToolBar()
     m_historyBackAction->setProperty(kNavBarItemIdProperty,
                                      QLatin1String("back"));
 
-    m_historyForwardAction->setIcon(AroraIcon::getChrome(QLatin1String("go-next")));
+    m_historyForwardAction->setIcon(ArktosIcon::getChrome(QLatin1String("go-next")));
     m_historyForwardMenu = new QMenu(this);
     connect(m_historyForwardMenu, &QMenu::aboutToShow,
             this, &BrowserMainWindow::aboutToShowForwardMenu);
@@ -2352,7 +2358,7 @@ void BrowserMainWindow::setupToolBar()
     connect(m_navigationBar, &QWidget::customContextMenuRequested,
             this, &BrowserMainWindow::showNavigationBarContextMenu);
 
-    // MENU08: bigger text under the Arora button — the dropdown and
+    // MENU08: bigger text under the Arktos button — the dropdown and
     // its whole submenu tree paint at ~120% of the platform menu font
     // (MENU07's larger button pairs with a proportionally larger
     // menu).  The QMenus are shared with the menubar, so an unhidden
@@ -3218,7 +3224,7 @@ void BrowserMainWindow::showSettingsPage(int page)
                 m_tabWidget->closeTab(index);
         });
         m_tabWidget->addWidgetTab(settings, tr("Preferences"),
-                                  AroraIcon::getChrome(QLatin1String("preferences-system")));
+                                  ArktosIcon::getChrome(QLatin1String("preferences-system")));
     }
     if (page >= 0)
         settings->openAtPage(SettingsDialog::Page(page));
@@ -3255,7 +3261,7 @@ void BrowserMainWindow::showHistoryPage()
                 title);
         });
         m_tabWidget->addWidgetTab(history, tr("History"),
-            AroraIcon::getChrome(QLatin1String("view-history")));
+            ArktosIcon::getChrome(QLatin1String("view-history")));
     }
     m_tabWidget->setCurrentWidget(history);
     history->setFocus();
@@ -3371,7 +3377,7 @@ void BrowserMainWindow::updateWindowTitle(const QString &title)
 #if defined(Q_OS_MACOS)
         setWindowTitle(title + marker);
 #else
-        setWindowTitle(tr("%1 - Arora", "Page title and Browser name").arg(title) + marker);
+        setWindowTitle(tr("%1 - Arktos", "Page title and Browser name").arg(title) + marker);
 #endif
     }
 }
@@ -3539,7 +3545,7 @@ void BrowserMainWindow::closeEvent(QCloseEvent *event)
         if (confirm) {
             QApplication::alert(this);
             const QString question = lastWindow
-                ? tr("Closing the last window quits Arora."
+                ? tr("Closing the last window quits Arktos."
                      "  There are %1 tabs open").arg(openTabs)
                 : tr("Are you sure you want to close the window?"
                      "  There are %1 tabs open").arg(openTabs);
@@ -3845,9 +3851,9 @@ void BrowserMainWindow::populateNewContainerTabMenu()
         m_tabWidget, &TabWidget::manageContainers);
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
     noContainer->setIcon(
-        ContainerManager::colorIcon(AroraStyle::noContainerColor()));
-    newContainer->setIcon(AroraIcon::getChrome(QLatin1String("list-add")));
-    manageContainers->setIcon(AroraIcon::getChrome(QLatin1String("preferences-system")));
+        ContainerManager::colorIcon(ArktosStyle::noContainerColor()));
+    newContainer->setIcon(ArktosIcon::getChrome(QLatin1String("list-add")));
+    manageContainers->setIcon(ArktosIcon::getChrome(QLatin1String("preferences-system")));
 #endif
 }
 
