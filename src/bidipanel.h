@@ -30,10 +30,15 @@
  *              text filter, Chrome's checkable "Default levels"
  *              dropdown and a console-scoped Preserve log, and a '>'
  *              prompt row with Up/Down history recall.
- *   Sources    Page.getResourceTree resource list, read-only source
- *              view fed by Page.getResourceContent, and URL:line
- *              breakpoints through Debugger.setBreakpointByUrl when
- *              the Debugger domain answers.
+ *   Sources    Page.getResourceTree resource list (refreshed on
+ *              Page.frameNavigated + load milestones), a read-only
+ *              source view fed by Page.getResourceContent /
+ *              Debugger.getScriptSource, URL:line breakpoints
+ *              through Debugger.setBreakpointByUrl with
+ *              breakpointResolved re-pointing, and — DEVT20 — the
+ *              pause/step/resume toolbar + call stack driven by the
+ *              Debugger.paused/resumed events the bridge forwards
+ *              under the "debugger" subscription.
  *   Network    Chrome-DevTools-style request table (DEVT06): filter
  *              field, type-filter chips, Preserve log / Disable cache
  *              toggles, a Name/Status/Type/Initiator/Size/Time/
@@ -270,6 +275,19 @@ private:
     void sourceSelected(QTreeWidgetItem *item);
     void toggleBreakpoint();
     void rebuildBreakpointList();
+    // DEVT20 — Sources parity: the raw CDP debugger events the
+    // bridge forwards under the "debugger" subscription drive the
+    // pause chrome, the call stack, the script-source map and the
+    // debounced resource refresh.
+    void onDebuggerEvent(const QString &method,
+                         const QJsonObject &params);
+    void resetDebuggerState();
+    void setDebuggerPaused(bool paused,
+                           const QString &why = QString());
+    void updateDebuggerButtons();
+    void sendDebuggerCommand(const QString &method);
+    void showPausedLocation(const QJsonObject &frame);
+    void highlightSourceLine(int line);
     void refreshApplication();
     void refreshSecurity();
     void requestMetrics();
@@ -372,8 +390,26 @@ private:
     QListWidget *m_bpList;
     QString m_sourceFrameId;
     QString m_sourceUrl;
-    // breakpointId -> (url, line) — Debugger answers the real ids.
+    // breakpointId -> (url, line) — Debugger answers the real ids;
+    // the line is Chrome's 1-based display number.
     QHash<QString, QPair<QString, int>> m_breakpoints;
+    // DEVT20: the debugger surface — Chrome's paused-state toolbar
+    // (pause/resume/step over/step into/step out), the status line
+    // and the call-stack list.  m_scriptIds/m_scriptUrls are the
+    // Debugger.scriptParsed map used to prefer getScriptSource and
+    // to label frames + breakpoint-resolved locations.
+    QWidget *m_dbgBar;
+    QToolButton *m_dbgPause;
+    QToolButton *m_dbgResume;
+    QToolButton *m_dbgStepOver;
+    QToolButton *m_dbgStepInto;
+    QToolButton *m_dbgStepOut;
+    QLabel *m_pauseStatus;
+    QListWidget *m_callFrames;
+    QTimer *m_srcRefreshDebounce;
+    bool m_debuggerPaused = false;
+    QHash<QString, QString> m_scriptUrls; // scriptId -> url
+    QHash<QString, QString> m_scriptIds;  // url -> scriptId
 
     // DEVT13 — Performance.
     QWidget *m_perfBody;

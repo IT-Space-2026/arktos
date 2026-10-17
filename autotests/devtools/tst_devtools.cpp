@@ -92,6 +92,7 @@ private slots:
     void bidiConsoleParity();
     void bidiWaterfallLegibility();
     void bidiNetworkParity();
+    void bidiSourcesParity();
     void bidiFullTabSet();
 };
 
@@ -2246,6 +2247,167 @@ void tst_DevTools::bidiNetworkParity()
 // Application, and the arora.cdp verdicts driving the honest-
 // disabled states.  CdpKind numbers mirror bidipanel.cpp's enum
 // (it is file-local there).
+// DEVT20: Sources parity — the raw CDP debugger events the bridge
+// forwards under the "debugger" subscription (scriptParsed, paused,
+// resumed, breakpointResolved, Page.frameNavigated) drive the pause
+// chrome, the call stack, the script-source preference and the
+// paused-line highlight; getScriptSource replies fill the view.
+void tst_DevTools::bidiSourcesParity()
+{
+    BidiPanel panel;
+    panel.show();
+
+    // The debugger surface exists and starts cold: unprobed means
+    // every button down and no pause chrome.
+    QVERIFY(panel.m_dbgBar);
+    QVERIFY(panel.m_dbgPause && panel.m_dbgResume);
+    QVERIFY(panel.m_dbgStepOver && panel.m_dbgStepInto
+            && panel.m_dbgStepOut);
+    QVERIFY(panel.m_callFrames && panel.m_pauseStatus);
+    QVERIFY(panel.m_srcRefreshDebounce);
+    QVERIFY(!panel.m_debuggerPaused);
+    QVERIFY(panel.m_pauseStatus->isHidden());
+    QVERIFY(!panel.m_dbgPause->isEnabled());
+
+    // A context so event scoping has something to match.
+    panel.onResponse(41, QByteArray(
+        "{\"result\":{\"contexts\":["
+        "{\"context\":\"ctx1\",\"url\":\"http://a/\"}]}}"));
+    QCOMPARE(panel.currentContext(), QStringLiteral("ctx1"));
+
+    auto probe = [&panel](const char *domain, bool up) {
+        const quint64 id = panel.testRegisterCdp(
+            1 /*CdpProbe*/, QString::fromLatin1(domain));
+        panel.onResponse(id, up
+            ? QByteArray("{\"result\":{}}")
+            : QByteArray("{\"error\":{\"message\":\"'")
+                  + QByteArray(domain)
+                  + QByteArray("' wasn't found\"}}"));
+    };
+    probe("Runtime", true);
+    probe("DOM", true);
+    probe("CSS", true);
+    probe("Page", true);
+    probe("Debugger", true);
+    probe("Security", true);
+    probe("Performance", true);
+    probe("Profiler", true);
+    probe("HeapProfiler", true);
+    QVERIFY(panel.domainUp(QStringLiteral("Debugger")));
+
+    // Chrome's enable rule: Pause arms on demand; Resume/steps wait
+    // for a real paused state.
+    QVERIFY(panel.m_dbgPause->isEnabled());
+    QVERIFY(!panel.m_dbgResume->isEnabled());
+    QVERIFY(!panel.m_dbgStepOver->isEnabled());
+    QVERIFY(!panel.m_dbgStepInto->isEnabled());
+    QVERIFY(!panel.m_dbgStepOut->isEnabled());
+
+    // scriptParsed fills the scriptId <-> url maps, context-scoped.
+    panel.onEvent(QByteArray(
+        "{\"method\":\"Debugger.scriptParsed\",\"params\":{"
+        "\"context\":\"ctx1\",\"scriptId\":\"s1\","
+        "\"url\":\"http://a/app.js\"}}"));
+    QCOMPARE(panel.m_scriptIds.value(
+                 QStringLiteral("http://a/app.js")),
+             QStringLiteral("s1"));
+    QCOMPARE(panel.m_scriptUrls.value(QStringLiteral("s1")),
+             QStringLiteral("http://a/app.js"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"Debugger.scriptParsed\",\"params\":{"
+        "\"context\":\"other\",\"scriptId\":\"sX\","
+        "\"url\":\"http://x/foreign.js\"}}"));
+    QVERIFY(!panel.m_scriptUrls.contains(QStringLiteral("sX")));
+    // A foreign-context pause doesn't move the chrome either.
+    panel.onEvent(QByteArray(
+        "{\"method\":\"Debugger.paused\",\"params\":{"
+        "\"context\":\"other\",\"reason\":\"other\",\"callFrames\":["
+        "{\"functionName\":\"f\",\"url\":\"http://x/f.js\","
+        "\"location\":{\"scriptId\":\"sX\",\"lineNumber\":0}}]}}"));
+    QVERIFY(!panel.m_debuggerPaused);
+
+    // paused: call frames fill (0-based CDP lines display 1-based),
+    // the status line names the reason, the buttons flip.
+    panel.onEvent(QByteArray(
+        "{\"method\":\"Debugger.paused\",\"params\":{"
+        "\"context\":\"ctx1\",\"reason\":\"other\","
+        "\"hitBreakpoints\":[\"b1\"],\"callFrames\":["
+        "{\"functionName\":\"tick\",\"url\":\"http://a/app.js\","
+        "\"location\":{\"scriptId\":\"s1\",\"lineNumber\":3}},"
+        "{\"functionName\":\"\",\"url\":\"\","
+        "\"location\":{\"scriptId\":\"s2\",\"lineNumber\":0}}]}}"));
+    QVERIFY(panel.m_debuggerPaused);
+    QVERIFY(!panel.m_pauseStatus->isHidden());
+    QCOMPARE(panel.m_pauseStatus->text(),
+             QStringLiteral("Paused on breakpoint"));
+    QCOMPARE(panel.m_callFrames->count(), 2);
+    QVERIFY(panel.m_callFrames->item(0)->text().contains(
+        QStringLiteral("tick")));
+    QVERIFY(panel.m_callFrames->item(0)->text().contains(
+        QStringLiteral("app.js:4")));
+    QVERIFY(panel.m_callFrames->item(1)->text().contains(
+        QStringLiteral("anonymous")));
+    QVERIFY(panel.m_dbgResume->isEnabled());
+    QVERIFY(panel.m_dbgStepOver->isEnabled());
+    QVERIFY(panel.m_dbgStepInto->isEnabled());
+    QVERIFY(panel.m_dbgStepOut->isEnabled());
+    QVERIFY(!panel.m_dbgPause->isEnabled());
+
+    // The paused location's getScriptSource reply fills the view and
+    // highlights the 1-based line the request carried in n.
+    const quint64 sid = panel.testRegisterCdp(
+        18 /*CdpScriptSource*/, QStringLiteral("s1"),
+        QStringLiteral("http://a/app.js"), 4);
+    panel.onResponse(sid, QByteArray(
+        "{\"result\":{\"scriptSource\":\"a\\nb\\nc\\nd\\n\"}}"));
+    QCOMPARE(panel.m_sourceView->toPlainText(),
+             QStringLiteral("a\nb\nc\nd\n"));
+    QCOMPARE(panel.m_sourceView->extraSelections().count(), 1);
+    // A getScriptSource error on an unrelated url lands as honest
+    // readable text.
+    const quint64 bad = panel.testRegisterCdp(
+        18, QStringLiteral("sX"),
+        QStringLiteral("http://x/foreign.js"), 0);
+    panel.onResponse(bad, QByteArray(
+        "{\"error\":{\"message\":\"no script\"}}"));
+    QVERIFY(panel.m_sourceView->toPlainText().contains(
+        QStringLiteral("no script")));
+
+    // breakpointResolved re-points a pending row at the resolved
+    // script's url:line (0-based -> 1-based).
+    panel.m_breakpoints.insert(
+        QStringLiteral("b1"),
+        {QStringLiteral("http://a/app.js"), 0});
+    panel.rebuildBreakpointList();
+    panel.onEvent(QByteArray(
+        "{\"method\":\"Debugger.breakpointResolved\",\"params\":{"
+        "\"context\":\"ctx1\",\"breakpointId\":\"b1\",\"location\":{"
+        "\"scriptId\":\"s1\",\"lineNumber\":3}}}"));
+    QCOMPARE(panel.m_breakpoints.value(
+                 QStringLiteral("b1")).second, 4);
+    QVERIFY(panel.m_bpList->item(0)->text().contains(
+        QStringLiteral("app.js:4")));
+
+    // frameNavigated arms the debounced resource refresh.
+    QVERIFY(!panel.m_srcRefreshDebounce->isActive());
+    panel.onEvent(QByteArray(
+        "{\"method\":\"Page.frameNavigated\",\"params\":{"
+        "\"context\":\"ctx1\",\"frame\":{\"id\":\"f1\","
+        "\"url\":\"http://a/page.html\"}}}"));
+    QVERIFY(panel.m_srcRefreshDebounce->isActive());
+    panel.m_srcRefreshDebounce->stop();
+
+    // resumed unwinds the whole paused chrome.
+    panel.onEvent(QByteArray(
+        "{\"method\":\"Debugger.resumed\",\"params\":{"
+        "\"context\":\"ctx1\"}}"));
+    QVERIFY(!panel.m_debuggerPaused);
+    QCOMPARE(panel.m_callFrames->count(), 0);
+    QVERIFY(panel.m_pauseStatus->isHidden());
+    QVERIFY(panel.m_dbgPause->isEnabled());
+    QVERIFY(!panel.m_dbgResume->isEnabled());
+}
+
 void tst_DevTools::bidiFullTabSet()
 {
     BidiPanel panel;

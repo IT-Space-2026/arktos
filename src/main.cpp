@@ -189,9 +189,11 @@
 #include <QtWidgets/QMessageBox>
 #include <QtWidgets/QPlainTextEdit>
 #include <QtWidgets/QHeaderView>
+#include <QtWidgets/QListWidget>
 #include <QtWidgets/QMenu>
 #include <QtWidgets/QPushButton>
 #include <QtWidgets/QScrollBar>
+#include <QtWidgets/QSpinBox>
 #include <QtWidgets/QTableView>
 #include <QtWidgets/QStatusBar>
 #include <QtWidgets/QTabWidget>
@@ -2934,6 +2936,259 @@ static int bidiNetworkSmoke(BrowserApplication &application,
 #endif
 }
 
+// DEVT20: --bidi-sources-smoke drives the REAL BidiPanel's Sources
+// tab end to end on a live page — tst_devtools feeds synthesized
+// JSON which cannot prove the bridge forwards the Debugger.* event
+// stream at all.  The poll stages: context attach -> navigate the
+// fixture -> the resource tree enumerates frame+script -> selecting
+// the script fills the view through the debugger's own copy -> a
+// url:line breakpoint trips the ticking interval into a real
+// paused state with call frames -> Resume unwinds the chrome.
+static int bidiSourcesSmoke(BrowserApplication &application,
+                            WebView *view)
+{
+#ifndef ARORA_RUSTCORE
+    // Same convention as --bidi-smoke: an absent backend is a skip,
+    // not a failure.
+    Q_UNUSED(application);
+    Q_UNUSED(view);
+    qInfo() << "bidi-sources-smoke: SKIP (built without rustcore)";
+    return 0;
+#else
+    auto done = std::make_shared<bool>(false);
+    const auto finish = [&application, done](bool pass,
+                                             const QString &why) {
+        if (*done)
+            return;
+        *done = true;
+        qInfo().noquote() << "bidi-sources-smoke:"
+                          << (pass ? "PASS" : "FAIL") << why;
+        application.exit(pass ? 0 : 1);
+    };
+
+    QTcpServer *server = new QTcpServer(&application);
+    if (!server->listen(QHostAddress::LocalHost)) {
+        finish(false, QStringLiteral("listen: %1")
+                          .arg(server->errorString()));
+        return application.exec();
+    }
+    const quint16 port = server->serverPort();
+    // The breakpoint leg relies on line 3 being the counter bump
+    // inside tick() — keep it there.
+    const QByteArray jsBody = QByteArray(
+        "window.__ticks = 0;\n"
+        "function tick() {\n"
+        "  window.__ticks++;\n"
+        "  document.title = 't' + window.__ticks;\n"
+        "}\n"
+        "setInterval(tick, 120);\n");
+    const QByteArray indexBody = QByteArray(
+        "<html><head><title>sources-smoke</title>"
+        "<link rel=\"stylesheet\" href=\"/style.css\">"
+        "<script src=\"/app.js\"></script></head>"
+        "<body><p>src</p></body></html>");
+    const auto respond = [](QTcpSocket *client, const QByteArray &mime,
+                            const QByteArray &body) {
+        client->write("HTTP/1.1 200 OK\r\nContent-Type: " + mime
+                      + "\r\nContent-Length: "
+                      + QByteArray::number(body.size())
+                      + "\r\nConnection: close\r\n\r\n" + body);
+        client->disconnectFromHost();
+    };
+    QObject::connect(server, &QTcpServer::newConnection, &application,
+                     [server, indexBody, jsBody, respond]() {
+        QTcpSocket *client = server->nextPendingConnection();
+        auto header = std::make_shared<QByteArray>();
+        auto served = std::make_shared<bool>(false);
+        QObject::connect(client, &QTcpSocket::readyRead, client,
+                         [client, header, served, indexBody, jsBody,
+                          respond]() {
+            if (*served)
+                return;
+            header->append(client->readAll());
+            const int end = header->indexOf("\r\n\r\n");
+            if (end < 0)
+                return;
+            *served = true;
+            const QByteArray line = header->left(end).split('\n')
+                                        .first().simplified();
+            const QByteArray path = line.split(' ').value(1, "/");
+            if (path == "/")
+                respond(client, "text/html", indexBody);
+            else if (path == "/app.js")
+                respond(client, "application/javascript", jsBody);
+            else if (path == "/style.css")
+                respond(client, "text/css", "body{margin:0}");
+            else
+                respond(client, "text/plain", "nf");
+        });
+        QObject::connect(client, &QTcpSocket::disconnected, client,
+                         &QTcpSocket::deleteLater);
+    });
+
+    BidiPanel *panel = new BidiPanel;
+    panel->resize(900, 480);
+    panel->show();
+
+    auto stage = std::make_shared<int>(0);
+    auto navigated = std::make_shared<bool>(false);
+    QTimer *poll = new QTimer(panel);
+    QObject::connect(poll, &QTimer::timeout, panel, [=]() {
+        QComboBox *combo = panel->findChild<QComboBox *>(
+            QStringLiteral("bidiContextCombo"));
+        QTreeWidget *tree = panel->findChild<QTreeWidget *>(
+            QStringLiteral("bidiSourcesTree"));
+        QPlainTextEdit *srcView = panel->findChild<QPlainTextEdit *>(
+            QStringLiteral("bidiSourceView"));
+        QSpinBox *bpLine = panel->findChild<QSpinBox *>(
+            QStringLiteral("bidiSourcesBpLine"));
+        QToolButton *bpSet = panel->findChild<QToolButton *>(
+            QStringLiteral("bidiSourcesBpSet"));
+        QListWidget *bpList = panel->findChild<QListWidget *>(
+            QStringLiteral("bidiSourcesBpList"));
+        QListWidget *frames = panel->findChild<QListWidget *>(
+            QStringLiteral("bidiSourcesCallStack"));
+        QLabel *status = panel->findChild<QLabel *>(
+            QStringLiteral("bidiDbgStatus"));
+        QToolButton *resume = panel->findChild<QToolButton *>(
+            QStringLiteral("bidiDbgResume"));
+        if (!combo || !tree || !srcView || !bpLine || !bpSet
+            || !bpList || !frames || !status || !resume)
+            return;
+        if (!*navigated) {
+            // The combo selection is what fires the context-scoped
+            // probes the bridge attaches on — pin it to THIS view's
+            // page target (the browser process exposes sibling
+            // targets too, so the first row is not reliably ours),
+            // then give attach + Debugger.enable a beat before the
+            // page load.
+            const QString want = view->page()->devToolsId();
+            if (want.isEmpty())
+                return;
+            int row = -1;
+            for (int i = 0; i < combo->count(); ++i) {
+                if (combo->itemData(i).toString() == want) {
+                    row = i;
+                    break;
+                }
+            }
+            if (row < 0)
+                return;
+            if (combo->currentIndex() != row)
+                combo->setCurrentIndex(row);
+            *navigated = true;
+            const QUrl page(QStringLiteral(
+                "http://127.0.0.1:%1/").arg(port));
+            QTimer::singleShot(1500, panel, [view, page]() {
+                view->loadUrl(page);
+            });
+            return;
+        }
+        switch (*stage) {
+        case 0: {
+            // Hunt the app.js row under a frame's Scripts group.
+            const QString js = QStringLiteral(
+                "http://127.0.0.1:%1/app.js").arg(port);
+            QTreeWidgetItem *hit = nullptr;
+            for (int i = 0; i < tree->topLevelItemCount() && !hit;
+                 ++i) {
+                QTreeWidgetItem *frame = tree->topLevelItem(i);
+                for (int g = 0; g < frame->childCount() && !hit;
+                     ++g) {
+                    QTreeWidgetItem *grp = frame->child(g);
+                    for (int r = 0; r < grp->childCount(); ++r) {
+                        QTreeWidgetItem *it = grp->child(r);
+                        if (it->data(0, Qt::UserRole).toString()
+                            == js)
+                            hit = it;
+                    }
+                }
+            }
+            if (!hit)
+                return;
+            tree->setCurrentItem(hit);
+            *stage = 1;
+            return;
+        }
+        case 1: {
+            // The debugger's own copy of the script lands in the
+            // view — then the breakpoint row must be live (the
+            // Debugger probe answered) before we arm one.
+            if (!srcView->toPlainText().contains(
+                    QStringLiteral("setInterval")))
+                return;
+            if (!bpSet->isEnabled())
+                return;
+            bpLine->setValue(3);
+            bpSet->click();
+            *stage = 2;
+            return;
+        }
+        case 2: {
+            // The setBreakpointByUrl answer registered the row.
+            if (bpList->count() < 1)
+                return;
+            *stage = 3;
+            return;
+        }
+        case 3: {
+            // The ticking interval must trip the breakpoint into a
+            // real paused state with call frames.
+            if (frames->count() < 1)
+                return;
+            if (!frames->item(0)->text().contains(
+                    QStringLiteral("tick"))) {
+                finish(false, QStringLiteral(
+                           "paused but wrong frame: %1")
+                           .arg(frames->item(0)->text()));
+                return;
+            }
+            resume->click();
+            *stage = 4;
+            return;
+        }
+        case 4: {
+            // Debugger.resumed cleared the chrome.
+            if (frames->count() > 0 || status->isVisible())
+                return;
+            finish(true, QStringLiteral(
+                       "resources+source+bp+pause+resume"));
+            return;
+        }
+        }
+    });
+    poll->start(200);
+    QTimer::singleShot(30000, panel, [finish, stage, panel]() {
+        QTreeWidget *tree = panel->findChild<QTreeWidget *>(
+            QStringLiteral("bidiSourcesTree"));
+        QComboBox *combo = panel->findChild<QComboBox *>(
+            QStringLiteral("bidiContextCombo"));
+        QStringList dump;
+        if (tree) {
+            for (int i = 0; i < tree->topLevelItemCount(); ++i) {
+                QTreeWidgetItem *t = tree->topLevelItem(i);
+                dump << t->text(0);
+                for (int g = 0; g < t->childCount(); ++g) {
+                    dump << QLatin1String("  ")
+                            + t->child(g)->text(0);
+                    for (int r = 0; r < t->child(g)->childCount();
+                         ++r)
+                        dump << QLatin1String("    ")
+                                + t->child(g)->child(r)->text(0);
+                }
+            }
+        }
+        finish(false, QStringLiteral(
+                   "timeout in stage %1 ctx=[%2] tree=[%3]")
+                   .arg(*stage)
+                   .arg(combo ? combo->currentData().toString()
+                              : QStringLiteral("?"))
+                   .arg(dump.join(QLatin1Char('|'))));
+    });
+    return application.exec();
+#endif
+}
+
 static int startPageSmoke(BrowserApplication &application, WebView *view)
 {
     AdBlockManager *manager = AdBlockManager::instance();
@@ -4944,6 +5199,7 @@ int main(int argc, char **argv)
         "startpage-smoke", "crash-smoke",
         "sandbox-smoke", "write-sandbox-launcher",
         "bidi-smoke", "bidi-elements-smoke", "bidi-network-smoke",
+        "bidi-sources-smoke",
         "pdf-smoke",
         "pdfview-smoke", "printpreview-smoke",
         "parallel-download-smoke", "parallel-download-off-smoke",
@@ -5385,6 +5641,10 @@ int main(int argc, char **argv)
     // plus a live wire — the gap fixture tests can't cover.
     if (args.contains(QLatin1String("--bidi-network-smoke")))
         return bidiNetworkSmoke(application, view);
+    // DEVT20: the Sources tab — resources, debugger source, a real
+    // breakpoint pause with call frames, and resume.
+    if (args.contains(QLatin1String("--bidi-sources-smoke")))
+        return bidiSourcesSmoke(application, view);
 
     // BADSSL02: live-site measurement — loads every badssl.com
     // matrix case on the browsing profile and records per-case
