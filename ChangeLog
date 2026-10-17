@@ -3367,3 +3367,18 @@ Larger, correctly-proportioned app logo button (ICONS10):
     letterboxes it into a centered square, so it can never be
     stretched into an ellipse — and the bar's compacted margins
     keep the row at face height + margins.
+
+Tab groups read as named headers, plus a Workspaces panel (TABGRP03):
+    A run of grouped tabs now opens with a labeled header segment in
+    the group's color — the group's name, or its member count while
+    the group is unnamed — instead of the bare colored rail the
+    strip used to paint. On a horizontal strip the run's leader
+    widens by the segment's width so the title keeps its full metric
+    and never sits under the chip; on vertical tab strips the header
+    lives in the row's reserved top band. Renaming a group updates
+    the segment live, and a collapsed group keeps its "name (N)"
+    chip as before. The sidebar gained a fifth section, Workspaces,
+    listing every tab group in the window with each member's title —
+    collapsed and container-filtered members included, marked as
+    detached — where clicking a member activates its tab and
+    clicking a collapsed group expands it back onto the strip.

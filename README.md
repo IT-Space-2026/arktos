@@ -218,13 +218,16 @@ browsing profile:
   every orientation (an appended row on vertical rails).
 - **Tab groups** — drag a tab onto the middle of another to group
   them (the strip previews the stack while hovering; edge drops
-  still reorder). Groups are named and color-coded, collapse to a
+  still reorder). Groups are named and color-coded, each run
+  opening with a labeled header segment (the group name, or its
+  member count while unnamed), collapse to a
   Vivaldi/Firefox-style chip that expands on click, and the context
   menu can rename, recolor, add/remove members, ungroup, or close the
   whole group — closed members stay recoverable through Reopen
   Closed Tab.
 - **Sidebar dock** — optional Vivaldi-style side panel (bookmarks,
-  history, downloads, notes), lazily built and off by default; the
+  history, downloads, notes, workspaces), lazily built and off by
+  default; the
   bookmarks rail doubles as the manager — "Show All Bookmarks"
   (Ctrl+Shift+B) opens it with Add/Remove right on the page.  The
   notes panel manages multiple named notes (list, editor, autosave);

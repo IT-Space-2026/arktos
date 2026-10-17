@@ -77,6 +77,7 @@ private slots:
     void chipsPaint();
     void tabMouseAndDragEvents();
     void groupDropAffordance();
+    void groupHeaderSegments();
     void tabKeyShortcuts();
     void previewDwell();
     void iconOnlyTabs();
@@ -1611,6 +1612,89 @@ void tst_TabBar::groupDropAffordance()
               Qt::LeftButton, Qt::NoButton);
     QCOMPARE(widget.count(), 1);   // the lone ungrouped tab joined
     QCOMPARE(widget.tabGroupSize(gid), 3);
+}
+
+// TABGRP03: the Vivaldi-style labeled group header — a run's first
+// member carries a labeled chip segment (the group name, or the
+// member-count fallback while unnamed) instead of a bare colored
+// chip.  Horizontal strips widen the leader by the segment's reserve
+// and hand-draw the title right of it; vertical rows keep the header
+// in the reserved top band.  Rename lands live through
+// updateGeometry, and collapse still swaps the run for the chip.
+void tst_TabBar::groupHeaderSegments()
+{
+    TabWidget widget;
+    // Wide enough that four tabs never reach the squeeze — the strip
+    // renders each tab at its real size hint.
+    widget.resize(1200, 240);
+    widget.show();
+    TabBar *bar = widget.tabBar();
+    widget.newTab();
+    widget.newTab();
+    widget.newTab();
+    widget.newTab();
+    QApplication::processEvents();
+
+    // An UNNAMED group still gets a labeled segment — the count
+    // fallback — so the leader widens by the reserve while plain and
+    // non-leader tabs keep the shared metric.
+    const QString gid = widget.createTabGroup(1);
+    widget.groupTabWith(2, 1);
+    widget.setTabGroupColor(gid, QColor(Qt::red));
+    QApplication::processEvents();
+    // A grab forces the pending layout+paint — the run leader is
+    // wider than a plain tab by the segment's reserve, its run-mates
+    // keep the shared 225 metric.
+    const QImage strip = bar->grab().toImage();
+    const int plainWidth = bar->tabRect(0).width();
+    QVERIFY(bar->tabRect(1).width() > plainWidth);
+    QCOMPARE(bar->tabRect(2).width(), plainWidth);
+    QCOMPARE(bar->tabRect(3).width(), plainWidth);
+
+    // The segment is real paint, not just sizing: accent pixels show
+    // inside the leader's leading zone (above the content-edge rail).
+    {
+        const QRect rect = bar->tabRect(1);
+        bool found = false;
+        for (int x = rect.left() + 4;
+                x < rect.left() + 90 && !found; ++x) {
+            for (int y = rect.top() + 4;
+                    y < rect.bottom() - 5 && !found; ++y) {
+                const QColor c = strip.pixelColor(x, y);
+                if (c.red() > 150 && c.green() < 90 && c.blue() < 90)
+                    found = true;
+            }
+        }
+        QVERIFY(found);
+    }
+
+    // Rename lands live — the segment's text and reserve follow
+    // without a strip rebuild, resizing the leader.
+    const int unnamedWidth = bar->tabRect(1).width();
+    widget.renameTabGroup(gid, QLatin1String("Work"));
+    bar->grab();
+    QVERIFY(bar->tabRect(1).width() != unnamedWidth);
+    QCOMPARE(bar->tabRect(2).width(), plainWidth);
+
+    // Vertical rows give every labeled leader the header band —
+    // the count fallback on an unnamed group included.
+    widget.setTabPosition(QTabWidget::West);
+    QApplication::processEvents();
+    bar->grab();
+    QVERIFY(bar->tabRect(1).height() > bar->tabRect(0).height());
+    QCOMPARE(bar->tabRect(2).height(), bar->tabRect(0).height());
+
+    // Collapse still swaps the run for the single chip, and expanding
+    // restores the members' shared metric.
+    widget.setTabPosition(QTabWidget::North);
+    QApplication::processEvents();
+    widget.setTabGroupCollapsed(gid, true);
+    QVERIFY(widget.isTabGroupChip(1));
+    QCOMPARE(widget.tabGroupMembers(gid), QList<int>() << 1);
+    widget.setTabGroupCollapsed(gid, false);
+    QCOMPARE(widget.tabGroupMembers(gid), QList<int>() << 1 << 2);
+    bar->grab();
+    QCOMPARE(bar->tabRect(2).width(), plainWidth);
 }
 
 // Ctrl+1..9 TabShortcuts select tabs by index; the view-tab-bar

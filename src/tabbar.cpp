@@ -1949,6 +1949,40 @@ QString TabBar::groupChipLabel(int index) const
         : tr("%1 (%2)").arg(name).arg(size);
 }
 
+// TABGRP03: the labeled header segment a group's run leader wears —
+// the group name, or the member count as fallback so an unnamed group
+// still reads as a labeled segment (the same "N tabs" wording the
+// collapsed chip uses) rather than a bare colored rail.  Suppressed
+// on the collapsed chip (it carries its own label), under the
+// icon-only view mode, and on non-leader members.
+QString TabBar::groupHeaderLabel(int index) const
+{
+    TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
+    const QString gid = groupIdForTab(index);
+    if (!tabWidget || gid.isEmpty() || m_iconOnlyTabs
+        || tabWidget->isTabGroupChip(index)
+        || !isFirstInGroupRun(index))
+        return QString();
+    const QString name = tabWidget->tabGroupName(gid);
+    return name.isEmpty()
+        ? tr("%1 tabs").arg(tabWidget->tabGroupSize(gid))
+        : name;
+}
+
+// The extent the header segment borrows at the run leader's leading
+// edge on a horizontal strip — pill width plus its margins.  The
+// leader's tab is widened by the same extent in tabSizeHint() so the
+// title keeps its full metric; on a vertical strip the header is the
+// reserved top band instead and nothing is borrowed here.
+int TabBar::groupHeaderReserve(int index) const
+{
+    const QString label = groupHeaderLabel(index);
+    if (label.isEmpty() || verticalTabShape(shape()))
+        return 0;
+    return qMin(120, QFontMetrics(containerChipFont())
+                    .horizontalAdvance(label) + 10) + 8;
+}
+
 // TABS17: the readable band a vertical row's label and side widgets
 // share — the row's rect minus the name pill band a group run's
 // first member reserves on top (tabSizeHint grew the row by the
@@ -1957,12 +1991,11 @@ QString TabBar::groupChipLabel(int index) const
 // under the pill.
 QRect TabBar::rowLabelRect(const QRect &rowRect, int index) const
 {
-    const QString gid = groupIdForTab(index);
-    if (gid.isEmpty() || m_iconOnlyTabs || !isFirstInGroupRun(index))
+    if (groupIdForTab(index).isEmpty())
         return rowRect;
-    const TabWidget *tabWidget =
-        qobject_cast<TabWidget*>(parentWidget());
-    if (!tabWidget || tabWidget->tabGroupName(gid).isEmpty())
+    // TABGRP03: the header band rides every labeled run leader —
+    // named groups and the member-count fallback alike.
+    if (groupHeaderLabel(index).isEmpty())
         return rowRect;
     QRect rect = rowRect;
     rect.setTop(rect.top()
@@ -2264,7 +2297,6 @@ void TabBar::paintEvent(QPaintEvent *event)
             // light enough for white text but only gives ~2:1).
             const QColor textColor = AroraStyle::contrastTextColor(accent);
             const QRect rect = tabRect(index);
-            const QString name = tabWidget->tabGroupName(gid);
 
             if (tabWidget->isTabGroupChip(index)) {
                 // Collapsed: the whole tab reads as the group chip.
@@ -2313,17 +2345,19 @@ void TabBar::paintEvent(QPaintEvent *event)
                 break;
             }
 
-            // The name pill sits just inside the rail on the run's
-            // first member — tabSizeHint() reserved its extent.
-            // TABS09: icon-only mode keeps the strip uniformly
-            // icon-sized — the accent rail still marks the group but
-            // the pill would only paint clipped over the favicon.
-            if (name.isEmpty() || !isFirstInGroupRun(index)
-                || m_iconOnlyTabs)
+            // TABGRP03: the run leader carries the group's header — a
+            // labeled chip segment with the name (or the member-count
+            // fallback while unnamed), so every group reads as a named
+            // header instead of a bare colored chip.  TABS09:
+            // icon-only mode keeps the strip uniformly icon-sized —
+            // the rail still marks the group but a segment would only
+            // paint clipped over the favicon.
+            const QString headerLabel = groupHeaderLabel(index);
+            if (headerLabel.isEmpty())
                 continue;
-            const int pillWidth = QFontMetrics(chipFont)
-                .horizontalAdvance(name) + 12;
             QRect pill;
+            QStyleOptionTab option;
+            bool titleUnderPill = false;
             switch (shape()) {
             case QTabBar::RoundedWest:
             case QTabBar::TriangularWest: {
@@ -2339,15 +2373,25 @@ void TabBar::paintEvent(QPaintEvent *event)
                              rect.width() - strip - 4, chipHeight);
                 break;
             }
-            default:
-                // Horizontal bars: the pill anchors at the leading
-                // edge, vertically centered — the reserved width
-                // pushes the tab's label right of it.
-                pill = QRect(rect.left() + 4,
+            default: {
+                // Horizontal bars: the segment sits just ahead of the
+                // title's text rect — tabSizeHint() widened the leader
+                // by the reserve so the title keeps its metric, and
+                // initStyleOption() cleared the style's label so the
+                // hand-drawn title below never runs under the chip.
+                initStyleOption(&option, index);
+                option.text = tabText(index);
+                const QRect textRect = style()->subElementRect(
+                    QStyle::SE_TabBarTabText, &option, this);
+                const int reserve = groupHeaderReserve(index);
+                if (textRect.width() - reserve <= 24)
+                    continue;   // too narrow — the title keeps the space
+                titleUnderPill = true;
+                pill = QRect(textRect.left(),
                              rect.top() + (rect.height() - chipHeight) / 2,
-                             qMin(pillWidth, rect.width() - 8),
-                             chipHeight);
+                             reserve - 8, chipHeight);
                 break;
+            }
             }
             if (pill.width() < 16)
                 continue;
@@ -2359,10 +2403,31 @@ void TabBar::paintEvent(QPaintEvent *event)
             painter.setFont(chipFont);
             painter.setPen(textColor);
             const QString elided = painter.fontMetrics().elidedText(
-                name, Qt::ElideRight, pill.width() - 8);
+                headerLabel, Qt::ElideRight, pill.width() - 8);
             painter.drawText(pill.adjusted(4, 0, -4, 0),
                              Qt::AlignCenter | Qt::AlignVCenter, elided);
             painter.restore();
+            if (titleUnderPill) {
+                // The leader's title, elided into the space right of
+                // the header segment — the style's copy was cleared
+                // for exactly the tabs that reach here.
+                const QRect textRect = style()->subElementRect(
+                    QStyle::SE_TabBarTabText, &option, this);
+                const QRect titleRect = textRect.adjusted(
+                    groupHeaderReserve(index), 0, 0, 0);
+                painter.save();
+                painter.setPen(option.state & QStyle::State_Enabled
+                    ? option.palette.color(QPalette::WindowText)
+                    : option.palette.color(QPalette::Disabled,
+                                           QPalette::WindowText));
+                painter.drawText(titleRect,
+                                 Qt::AlignCenter | Qt::AlignVCenter,
+                                 fontMetrics().elidedText(
+                                     tabText(index), elideMode(),
+                                     titleRect.width(),
+                                     Qt::TextShowMnemonic));
+                painter.restore();
+            }
         }
     }
 
@@ -2440,6 +2505,21 @@ void TabBar::initStyleOption(QStyleOptionTab *option, int tabIndex) const
             }
         }
     }
+    // TABGRP03: a horizontal run leader's header segment borrows the
+    // title's leading edge — the style would paint the title under
+    // it, so the label is cleared here and hand-drawn right of the
+    // segment in paintEvent().  A tab too narrow to keep a 24px
+    // title stub keeps its title; the segment drops instead
+    // (paintEvent() re-tests the same bound).
+    if (!verticalTabShape(shape()) && !option->text.isEmpty()) {
+        const int reserve = groupHeaderReserve(tabIndex);
+        if (reserve > 0) {
+            const QRect textRect = style()->subElementRect(
+                QStyle::SE_TabBarTabText, option, this);
+            if (textRect.width() - reserve > 24)
+                option->text.clear();
+        }
+    }
 }
 
 QSize TabBar::tabSizeHint(int index) const
@@ -2482,12 +2562,8 @@ QSize TabBar::tabSizeHint(int index) const
         int rowHeight = m_tabStripHeight > 0
             ? qMax(automaticThickness, m_tabStripHeight)
             : automaticThickness;
-        if (!gid.isEmpty() && !m_iconOnlyTabs) {
-            TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
-            if (tabWidget && isFirstInGroupRun(index)
-                && !tabWidget->tabGroupName(gid).isEmpty())
-                rowHeight += QFontMetrics(containerChipFont()).height() + 6;
-        }
+        if (!gid.isEmpty() && !groupHeaderLabel(index).isEmpty())
+            rowHeight += QFontMetrics(containerChipFont()).height() + 6;
         // TABS14: a pinned row is an ordinary titled row — the
         // strip's shared width and row height, title included.
         // TABS09: the icon-only mode collapses the strip to an icon
@@ -2546,8 +2622,12 @@ QSize TabBar::tabSizeHint(int index) const
         ? (m_tabMaxWidth > 0 ? qMin(m_tabMinWidth, m_tabMaxWidth)
                            : m_tabMinWidth)
         : 0;
-    return QSize(qBound(floor, firefoxTabWidth + chip.width(),
-                        qMax(cap, floor)),
+    // TABGRP03: a run leader widens by its header segment's reserve —
+    // the segment is group chrome ahead of the title, not title
+    // space, so it may also ride past a tabMaxWidth cap.
+    const int header = groupHeaderReserve(index);
+    return QSize(qBound(floor, firefoxTabWidth + chip.width() + header,
+                        qMax(cap, floor) + header),
                  thickness + chip.height());
 }
 

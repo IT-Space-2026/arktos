@@ -193,6 +193,16 @@ TabWidget::TabWidget(QWidget *parent)
     setDocumentMode(true);
     connect(m_tabBar, &QTabBar::tabMoved,
             this, &TabWidget::moveTab);
+    // TABGRP03: group mutations change the leader's size hint (the
+    // labeled header segment's reserve) — QTabBar only re-plans its
+    // tab rects once a public setter trips the private layoutDirty
+    // flag, and a no-op setIconSize is the established nudge for it
+    // (the same trick setVerticalTabWidth/setTabWidths use).
+    connect(this, &TabWidget::tabGroupsChanged, this, [this]() {
+        m_tabBar->setIconSize(m_tabBar->iconSize());
+        m_tabBar->updateGeometry();
+        m_tabBar->update();
+    });
 
     // Actions
     m_newTabAction = new QAction(this);
@@ -1663,6 +1673,27 @@ bool TabWidget::hasCollapsedTabGroup() const
     return false;
 }
 
+// TABGRP03: the detached members' titles — the collapsed group's
+// hidden stack first, then any member filtered into a non-active
+// container level, in store order.  Visible members' titles come off
+// the strip (tabDisplayTitle) instead.
+QStringList TabWidget::tabGroupHiddenMemberTitles(const QString &groupId) const
+{
+    QStringList titles;
+    for (const HiddenGroupTab &hidden : m_tabGroupInfo.value(groupId).hidden)
+        titles.append(hidden.text);
+    for (const QList<HiddenGroupTab> &level : m_containerHidden) {
+        for (const HiddenGroupTab &hidden : level) {
+            WebViewWithSearch *withSearch =
+                qobject_cast<WebViewWithSearch*>(hidden.tab);
+            if (withSearch
+                && m_tabGroups.value(withSearch->m_webView) == groupId)
+                titles.append(hidden.text);
+        }
+    }
+    return titles;
+}
+
 // Raw membership assignment — no positioning.  Callers that need
 // contiguity (menu adds, drop-stacking) follow with
 // moveTabIntoGroupRun(); the drag-normalize path must not.
@@ -1674,6 +1705,7 @@ void TabWidget::assignTabGroup(WebView *webView, const QString &groupId)
         m_tabGroups.remove(webView);
     else if (m_tabGroupInfo.contains(groupId))
         m_tabGroups.insert(webView, groupId);
+    emit tabGroupsChanged();
 }
 
 QString TabWidget::createTabGroup(int index)
@@ -1778,6 +1810,7 @@ void TabWidget::removeTabFromGroup(int index)
     forgetTabGroupIfEmpty(gid);
     m_tabBar->updateGeometry();
     m_tabBar->update();
+    emit tabGroupsChanged();
 }
 
 void TabWidget::groupTabWith(int index, int targetIndex)
@@ -1800,6 +1833,7 @@ void TabWidget::renameTabGroup(const QString &groupId, const QString &name)
     it->name = name.trimmed();
     m_tabBar->updateGeometry();
     m_tabBar->update();
+    emit tabGroupsChanged();
 }
 
 void TabWidget::setTabGroupColor(const QString &groupId, const QColor &color)
@@ -1809,6 +1843,7 @@ void TabWidget::setTabGroupColor(const QString &groupId, const QColor &color)
         return;
     it->color = color;
     m_tabBar->update();
+    emit tabGroupsChanged();
 }
 
 void TabWidget::inheritTabGroup(WebView *webView, WebView *opener)
@@ -1840,8 +1875,10 @@ void TabWidget::forgetTabGroupIfEmpty(const QString &groupId)
         return;
     if (it->collapsed && tabGroupMembers(groupId).isEmpty())
         setTabGroupCollapsed(groupId, false);
-    if (tabGroupSize(groupId) == 0)
+    if (tabGroupSize(groupId) == 0) {
         m_tabGroupInfo.remove(groupId);
+        emit tabGroupsChanged();
+    }
     m_tabBar->update();
 }
 
@@ -1964,6 +2001,7 @@ void TabWidget::setTabGroupCollapsed(const QString &groupId, bool collapsed)
     m_tabBar->updateVisibility();
     m_tabBar->updateGeometry();
     m_tabBar->update();
+    emit tabGroupsChanged();
 }
 
 void TabWidget::ungroupTabs(const QString &groupId)
@@ -1981,6 +2019,7 @@ void TabWidget::ungroupTabs(const QString &groupId)
     m_tabGroupInfo.remove(groupId);
     m_tabBar->updateGeometry();
     m_tabBar->update();
+    emit tabGroupsChanged();
 }
 
 // TABGRP02: "Close Group" — every member dies through closeTab() (or
