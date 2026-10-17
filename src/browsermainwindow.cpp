@@ -390,10 +390,12 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
         // bar.  A palette seed can't carry it: the next stylesheet
         // repolish rebuilds the widget palette and wipes widget-level
         // roles the sheet never set.  The button's accent override is
-        // applied to the icon's palette snapshot at bake time instead
-        // — the violet the badge pill and rail selection already wear.
+        // applied to the icon's palette snapshot at bake time instead.
+        // THEM07: at glyph scale the raised violet is mud — the marks
+        // take the lighter accent step while fill-scale elements
+        // (badge pill, rail selection) keep the raised color.
         m_readerModeButton->setAccentOverride(
-            AroraStyle::torChromeRaisedColor());
+            AroraStyle::torChromeAccentColor());
         // TOR08: same lift for the circuit button's painted onion —
         // its PaletteChange handler repaints the glyph.
         if (m_torCircuitButton) {

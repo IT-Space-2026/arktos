@@ -163,6 +163,10 @@ QColor torChromeColor();        // the violet surface
 QColor torChromeHoverColor();   // hover step on the surface
 QColor torChromePressedColor(); // pressed / deepest step
 QColor torChromeRaisedColor();  // raised elements (badges)
+// A lighter in-family violet for glyph-scale marks (thin outlines,
+// icon dots) — the raised step is only ~1.6:1 against the surface,
+// fine at fill scale but muddy as a pen stroke; this keeps >=3:1.
+QColor torChromeAccentColor();
 QColor torTextColor();          // light text and painted glyphs
 QColor torDimTextColor();       // receded text / disabled glyphs
 
