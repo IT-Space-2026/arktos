@@ -97,6 +97,7 @@ private slots:
     void bidiWaterfallLegibility();
     void bidiNetworkParity();
     void bidiSourcesParity();
+    void bidiSourcesUx();
     void bidiFullTabSet();
 };
 
@@ -2626,6 +2627,162 @@ void tst_DevTools::bidiSourcesParity()
     QVERIFY(!panel.m_dbgResume->isEnabled());
 }
 
+// DEVT23: the Sources navigator is Chrome's Page tree — frames
+// ("top" + subframe hosts) group resources by origin, an origin's
+// files sit under folders mirroring the url path with single-
+// child chains folded into one "a/b" row; the right debugger rail
+// keeps the live controls + Breakpoints/Call Stack sections while
+// the endpoint-less groups stay honestly disabled.
+void tst_DevTools::bidiSourcesUx()
+{
+    BidiPanel panel;
+    panel.show();
+
+    panel.onResponse(41, QByteArray(
+        "{\"result\":{\"contexts\":["
+        "{\"context\":\"ctx1\",\"url\":\"http://hup.hu/\"}]}}"));
+
+    auto probe = [&panel](const char *domain, bool up) {
+        const quint64 id = panel.testRegisterCdp(
+            1 /*CdpProbe*/, QString::fromLatin1(domain));
+        panel.onResponse(id, up
+            ? QByteArray("{\"result\":{}}")
+            : QByteArray("{\"error\":{\"message\":\"'")
+                  + QByteArray(domain)
+                  + QByteArray("' wasn't found\"}}"));
+    };
+    probe("Runtime", true);
+    probe("DOM", true);
+    probe("CSS", true);
+    probe("Page", true);
+    probe("Debugger", true);
+    probe("Security", true);
+    probe("Performance", true);
+    probe("Profiler", true);
+    probe("HeapProfiler", true);
+
+    // Nested paths across two origins plus a subframe.
+    const quint64 id = panel.testRegisterCdp(2 /*CdpResourceTree*/);
+    panel.onResponse(id, QByteArray(
+        "{\"result\":{\"frameTree\":{\"frame\":{\"id\":\"f1\","
+        "\"url\":\"http://hup.hu/index.html\"},\"resources\":["
+        "{\"url\":\"http://hup.hu/app.js\",\"type\":\"Script\","
+        "\"mimeType\":\"text/javascript\"},"
+        "{\"url\":\"http://hup.hu/core/images/modules/deep/util.js\","
+        "\"type\":\"Script\",\"mimeType\":\"text/javascript\"},"
+        "{\"url\":\"http://hup.hu/core/images/modules/icons.png\","
+        "\"type\":\"Image\",\"mimeType\":\"image/png\"},"
+        "{\"url\":\"http://cdn.example.com/lib/util.js\","
+        "\"type\":\"Script\",\"mimeType\":\"text/javascript\"}],"
+        "\"childFrames\":[{\"frame\":{\"id\":\"f2\","
+        "\"url\":\"http://ads.example.net/banner.html\"},"
+        "\"resources\":[{\"url\":\"http://ads.example.net/b.js\","
+        "\"type\":\"Script\",\"mimeType\":\"text/javascript\"}]}]}}}"));
+
+    QTreeWidgetItem *page = panel.m_sourcesTree->topLevelItem(0);
+    QVERIFY(page);
+    QCOMPARE(page->text(0), QStringLiteral("Page"));
+    QCOMPARE(page->childCount(), 2); // top + the subframe
+    QTreeWidgetItem *top = page->child(0);
+    QCOMPARE(top->text(0), QStringLiteral("top"));
+    // Origins sort by label — cdn.example.com before hup.hu.
+    QCOMPARE(top->childCount(), 2);
+    QCOMPARE(top->child(0)->text(0),
+             QStringLiteral("cdn.example.com"));
+    QCOMPARE(top->child(0)->child(0)->text(0),
+             QStringLiteral("lib"));
+    QCOMPARE(top->child(0)->child(0)->child(0)->text(0),
+             QStringLiteral("util.js"));
+    QTreeWidgetItem *hup = top->child(1);
+    QCOMPARE(hup->text(0), QStringLiteral("hup.hu"));
+    QCOMPARE(hup->childCount(), 3);
+    QCOMPARE(hup->child(0)->text(0), QStringLiteral("app.js"));
+    // core/images is a chain of single-child folders — Chrome
+    // folds it into one row that stops at "modules", which has a
+    // real mixed child set (the deep/ folder and icons.png).
+    QTreeWidgetItem *merged = hup->child(1);
+    QCOMPARE(merged->text(0),
+             QStringLiteral("core/images/modules"));
+    QCOMPARE(merged->childCount(), 2);
+    QCOMPARE(merged->child(0)->text(0), QStringLiteral("deep"));
+    QCOMPARE(merged->child(1)->text(0),
+             QStringLiteral("icons.png"));
+    QTreeWidgetItem *deep = merged->child(0);
+    QCOMPARE(deep->childCount(), 1);
+    QCOMPARE(deep->child(0)->text(0), QStringLiteral("util.js"));
+    QCOMPARE(merged->child(1)->data(0, Qt::UserRole).toString(),
+             QStringLiteral(
+                 "http://hup.hu/core/images/modules/icons.png"));
+    // The frame document is a leaf too — UserRole+2 keeps "Document"
+    // so breakpoints still arm on it.
+    QCOMPARE(hup->child(2)->text(0), QStringLiteral("index.html"));
+    QCOMPARE(hup->child(2)->data(0, Qt::UserRole + 2).toString(),
+             QStringLiteral("Document"));
+    // The subframe groups under Page as a sibling of "top".
+    QTreeWidgetItem *sub = page->child(1);
+    QCOMPARE(sub->text(0), QStringLiteral("ads.example.net"));
+    QCOMPARE(sub->child(0)->text(0),
+             QStringLiteral("ads.example.net"));
+    QCOMPARE(sub->child(0)->childCount(), 2);
+    QCOMPARE(sub->child(0)->child(0)->text(0),
+             QStringLiteral("b.js"));
+    QCOMPARE(sub->child(0)->child(1)->text(0),
+             QStringLiteral("banner.html"));
+    QCOMPARE(sub->child(0)->child(0)
+                 ->data(0, Qt::UserRole + 1).toString(),
+             QStringLiteral("f2"));
+
+    // Selecting a file leaf fills the center view; a group row is
+    // inert (no fetch, the view keeps its content).
+    panel.sourceSelected(deep->child(0));
+    const quint64 cid = panel.testRegisterCdp(
+        3 /*CdpResourceContent*/, QStringLiteral("f1"),
+        QStringLiteral("http://hup.hu/core/images/modules/deep/util.js"));
+    panel.onResponse(cid, QByteArray(
+        "{\"result\":{\"content\":\"function u(){}\","
+        "\"base64Encoded\":false}}"));
+    QCOMPARE(panel.m_sourceView->toPlainText(),
+             QStringLiteral("function u(){}"));
+    // The Script leaf armed the breakpoint row (Debugger is up).
+    QVERIFY(panel.m_bpBar->isEnabled());
+    panel.sourceSelected(hup);
+    QCOMPARE(panel.m_sourceView->toPlainText(),
+             QStringLiteral("function u(){}"));
+
+    // The right debugger rail holds the controls + live sections;
+    // Watch/Scope and the XHR/DOM/listener groups are present but
+    // honestly disabled with a reason.
+    QWidget *rail = panel.findChild<QWidget *>(
+        QStringLiteral("bidiSourcesDbgRail"));
+    QVERIFY(rail);
+    QVERIFY(rail->isAncestorOf(panel.m_dbgBar));
+    QVERIFY(rail->isAncestorOf(panel.m_bpList));
+    QVERIFY(rail->isAncestorOf(panel.m_callFrames));
+    QVERIFY(!rail->isAncestorOf(panel.m_sourceView));
+    const char *offSections[] = {
+        "bidiSourcesSecWatch", "bidiSourcesSecScope",
+        "bidiSourcesSecXhr", "bidiSourcesSecDom",
+        "bidiSourcesSecListeners", "bidiSourcesSecEventBp",
+    };
+    for (const char *name : offSections) {
+        QAbstractButton *head = panel.findChild<QAbstractButton *>(
+            QString::fromLatin1(name));
+        QVERIFY(head);
+        QVERIFY(!head->isEnabled());
+        QVERIFY(!head->toolTip().isEmpty()); // the honest reason
+    }
+    // The live section headers are real collapsible accordions.
+    QAbstractButton *bpSec = panel.findChild<QAbstractButton *>(
+        QStringLiteral("bidiSourcesSecBp"));
+    QVERIFY(bpSec && bpSec->isCheckable());
+    QWidget *bpBody = panel.m_bpList->parentWidget();
+    QVERIFY(!bpBody->isHidden());
+    bpSec->setChecked(false);
+    QVERIFY(bpBody->isHidden());
+    bpSec->setChecked(true);
+    QVERIFY(!bpBody->isHidden());
+}
+
 void tst_DevTools::bidiFullTabSet()
 {
     BidiPanel panel;
@@ -2661,6 +2818,14 @@ void tst_DevTools::bidiFullTabSet()
     QVERIFY(panel.m_sourcesTree);
     QVERIFY(panel.m_sourceView->isReadOnly());
     QVERIFY(panel.m_bpBar && panel.m_bpLine && panel.m_bpList);
+    // DEVT23: the right debugger rail — controls + collapsible
+    // sections live here, not stacked under the view.
+    QVERIFY(panel.findChild<QWidget *>(
+                QStringLiteral("bidiSourcesDbgRail")));
+    QVERIFY(panel.findChild<QAbstractButton *>(
+                QStringLiteral("bidiSourcesSecBp")));
+    QVERIFY(panel.findChild<QAbstractButton *>(
+                QStringLiteral("bidiSourcesSecStack")));
 
     // Performance / Memory controls exist.
     QVERIFY(panel.m_cpuToggle && panel.m_cpuToggle->isCheckable());
@@ -2748,16 +2913,31 @@ void tst_DevTools::bidiFullTabSet()
             "\"mimeType\":\"text/javascript\"},"
             "{\"url\":\"http://a/site.css\",\"type\":\"Stylesheet\","
             "\"mimeType\":\"text/css\"}]}}}"));
-        QTreeWidgetItem *frame =
+        // DEVT23: Page > top > origin > file leaves — the document
+        // itself is a leaf, no flat type groups.
+        QTreeWidgetItem *page =
             panel.m_sourcesTree->topLevelItem(0);
-        QVERIFY(frame);
-        QCOMPARE(frame->text(0), QStringLiteral("http://a/page.html"));
-        QCOMPARE(frame->childCount(), 2); // Scripts + Stylesheets
-        QCOMPARE(frame->child(0)->text(0), QStringLiteral("Scripts"));
-        QTreeWidgetItem *js = frame->child(0)->child(0);
+        QVERIFY(page);
+        QCOMPARE(page->text(0), QStringLiteral("Page"));
+        QTreeWidgetItem *top = page->child(0);
+        QVERIFY(top);
+        QCOMPARE(top->text(0), QStringLiteral("top"));
+        QTreeWidgetItem *origin = top->child(0);
+        QVERIFY(origin);
+        QCOMPARE(origin->text(0), QStringLiteral("a"));
+        QCOMPARE(origin->childCount(), 3);
+        QTreeWidgetItem *js = origin->child(0);
         QCOMPARE(js->text(0), QStringLiteral("app.js"));
+        QCOMPARE(js->data(0, Qt::UserRole).toString(),
+                 QStringLiteral("http://a/app.js"));
         QCOMPARE(js->data(0, Qt::UserRole + 1).toString(),
                  QStringLiteral("f1"));
+        QCOMPARE(js->data(0, Qt::UserRole + 2).toString(),
+                 QStringLiteral("Script"));
+        QCOMPARE(origin->child(1)->text(0),
+                 QStringLiteral("page.html"));
+        QCOMPARE(origin->child(2)->text(0),
+                 QStringLiteral("site.css"));
 
         // Content: raw and base64 bodies both decode.
         const quint64 cid = panel.testRegisterCdp(

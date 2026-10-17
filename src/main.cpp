@@ -3121,24 +3121,27 @@ static int bidiSourcesSmoke(BrowserApplication &application,
         }
         switch (*stage) {
         case 0: {
-            // Hunt the app.js row under a frame's Scripts group.
+            // DEVT23: hunt the app.js leaf anywhere under the Page
+            // root — the navigator is frame -> origin -> path
+            // folders, so a leaf can sit at any depth.
             const QString js = QStringLiteral(
                 "http://127.0.0.1:%1/app.js").arg(port);
+            const std::function<QTreeWidgetItem *(QTreeWidgetItem *)>
+                find = [&js, &find](QTreeWidgetItem *it)
+                    -> QTreeWidgetItem * {
+                for (int i = 0; i < it->childCount(); ++i) {
+                    QTreeWidgetItem *c = it->child(i);
+                    if (c->data(0, Qt::UserRole).toString() == js)
+                        return c;
+                    if (QTreeWidgetItem *hit = find(c))
+                        return hit;
+                }
+                return nullptr;
+            };
             QTreeWidgetItem *hit = nullptr;
             for (int i = 0; i < tree->topLevelItemCount() && !hit;
-                 ++i) {
-                QTreeWidgetItem *frame = tree->topLevelItem(i);
-                for (int g = 0; g < frame->childCount() && !hit;
-                     ++g) {
-                    QTreeWidgetItem *grp = frame->child(g);
-                    for (int r = 0; r < grp->childCount(); ++r) {
-                        QTreeWidgetItem *it = grp->child(r);
-                        if (it->data(0, Qt::UserRole).toString()
-                            == js)
-                            hit = it;
-                    }
-                }
-            }
+                 ++i)
+                hit = find(tree->topLevelItem(i));
             if (!hit)
                 return;
             tree->setCurrentItem(hit);
@@ -3200,18 +3203,15 @@ static int bidiSourcesSmoke(BrowserApplication &application,
             QStringLiteral("bidiContextCombo"));
         QStringList dump;
         if (tree) {
-            for (int i = 0; i < tree->topLevelItemCount(); ++i) {
-                QTreeWidgetItem *t = tree->topLevelItem(i);
-                dump << t->text(0);
-                for (int g = 0; g < t->childCount(); ++g) {
-                    dump << QLatin1String("  ")
-                            + t->child(g)->text(0);
-                    for (int r = 0; r < t->child(g)->childCount();
-                         ++r)
-                        dump << QLatin1String("    ")
-                                + t->child(g)->child(r)->text(0);
-                }
-            }
+            const std::function<void(QTreeWidgetItem *, int)> dump1 =
+                [&dump, &dump1](QTreeWidgetItem *it, int depth) {
+                dump << QString(depth * 2, QLatin1Char(' '))
+                        + it->text(0);
+                for (int i = 0; i < it->childCount(); ++i)
+                    dump1(it->child(i), depth + 1);
+            };
+            for (int i = 0; i < tree->topLevelItemCount(); ++i)
+                dump1(tree->topLevelItem(i), 0);
         }
         finish(false, QStringLiteral(
                    "timeout in stage %1 ctx=[%2] tree=[%3]")

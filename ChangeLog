@@ -3338,3 +3338,21 @@ BiDi Dev Tools Elements tab reads like Chrome DevTools now (DEVT22):
     rows, and the find dock lists every match's markup line —
     clicking a hit selects the node in the tree just like stepping
     through matches does.
+BiDi Dev Tools Sources tab reads like Chrome DevTools now (DEVT23):
+    The Sources tab's left pane listed raw per-origin resources in
+    flat type groups; Chrome organizes the page tree by frame, then
+    origin, then the directories the urls actually live under. The
+    navigator is now that tree: a "Page" root with "top" (plus one
+    row per subframe), each frame's resources grouped under their
+    origin's host label, and files laid out in folders mirroring
+    the url path — chains of folders that each contain a single
+    folder fold into one "a/b" row exactly like Chrome's folder
+    merging. The source view stands alone in the center, and the
+    debugger surface moved into Chrome's right rail: the
+    pause/step controls row on top, then collapsible sections —
+    Breakpoints (set-a-line row plus the active list) and Call
+    Stack live and expandable, while Watch, Scope, XHR/fetch
+    Breakpoints, DOM Breakpoints, Global Listeners and Event
+    Listener Breakpoints sit collapsed and honestly disabled with
+    a tooltip naming the debug surface the endpoint doesn't
+    expose.
