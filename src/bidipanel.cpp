@@ -151,8 +151,32 @@ static const int kDomainProbeCount =
 // DOM walking lives in the page — BiDi (and the CDP backend we
 // translate through) stays out of the layout details.  The helper
 // resolves an element by an index path ("0/4/2") and returns its
-// element children as JSON [{label, children}].
+// element children as JSON.  DEVT22: the reply is an object —
+// {label, markup, children:[{label, markup, children}]} — where
+// `label` is the compact selector form (tag#id.class) the crumbs
+// and expansion matching use, and `markup` is Chrome's
+// <tag attr="v"> line the tree paints.  Older {label, children}
+// objects and bare arrays still parse (the canned test payloads
+// drive the legacy shape).
 static const char kDomHelper[] =
+    "window.__arora_dom_label = function(c) {"
+    "  var s = c.tagName.toLowerCase();"
+    "  if (c.id) s += '#' + c.id;"
+    "  var cn = (typeof c.className === 'string') ? c.className.trim() : '';"
+    "  if (cn) s += '.' + cn.split(/\\s+/).join('.');"
+    "  return s;"
+    "};"
+    "window.__arora_dom_markup = function(e) {"
+    "  var s = '<' + e.tagName.toLowerCase();"
+    "  var n = e.attributes ? e.attributes.length : 0;"
+    "  for (var i = 0; i < n && i < 8; i++) {"
+    "    var v = e.attributes[i].value;"
+    "    if (v.length > 40) v = v.slice(0, 39) + '\\u2026';"
+    "    s += ' ' + e.attributes[i].name + '=\"' + v + '\"';"
+    "  }"
+    "  if (n > 8) s += ' \\u2026';"
+    "  return s + '>';"
+    "};"
     "window.__arora_dom_children = function(path) {"
     "  var e = document.documentElement;"
     "  if (path) { var parts = path.split('/');"
@@ -165,14 +189,13 @@ static const char kDomHelper[] =
     "  if (!e) return 'null';"
     "  var out = [], n = 0;"
     "  for (var c = e.firstElementChild; c && n < 200; c = c.nextElementSibling) {"
-    "    var s = c.tagName.toLowerCase();"
-    "    if (c.id) s += '#' + c.id;"
-    "    var cn = (typeof c.className === 'string') ? c.className.trim() : '';"
-    "    if (cn) s += '.' + cn.split(/\\s+/).join('.');"
     "    var cc = 0; for (var k = c.firstElementChild; k; k = k.nextElementSibling) cc++;"
-    "    out.push({label: s, children: cc}); n++;"
+    "    out.push({label: window.__arora_dom_label(c),"
+    "              markup: window.__arora_dom_markup(c),"
+    "              children: cc}); n++;"
     "  }"
-    "  return JSON.stringify(out);"
+    "  return JSON.stringify({label: window.__arora_dom_label(e),"
+    "      markup: window.__arora_dom_markup(e), children: out});"
     "};"
     // DEVT19: a MutationObserver keeps the Elements tree live — the
     // bridge relays no CDP DOM.* events, so the page reports batches
@@ -244,9 +267,14 @@ static const char kDomStylesPick[] =
 // anything else is a case-insensitive text/tag/id/class match over
 // every element.  Answers index paths in the tree's own coordinate
 // space (the same walk __arora_dom_children uses), capped at 200.
+// DEVT22: hits carry {path, label, markup} so the results list can
+// show Chrome's <tag attr> lines; bare path strings still parse.
 static const char kDomSearch[] =
     "window.__arora_dom_search = function(q) {"
     "  var out = [], i;"
+    "  var lb = window.__arora_dom_label, mk = window.__arora_dom_markup;"
+    "  if (!lb) lb = function(e) { return e.tagName.toLowerCase(); };"
+    "  if (!mk) mk = function(e) { return '<' + lb(e) + '>'; };"
     "  var path = function(e) {"
     "    var parts = [];"
     "    while (e && e !== document.documentElement) {"
@@ -258,10 +286,13 @@ static const char kDomSearch[] =
     "    }"
     "    return parts.join('/');"
     "  };"
+    "  var hit = function(e) {"
+    "    return {path: path(e), label: lb(e), markup: mk(e)};"
+    "  };"
     "  try {"
     "    var nodes = document.querySelectorAll(q);"
     "    for (i = 0; i < nodes.length && out.length < 200; i++)"
-    "      out.push(path(nodes[i]));"
+    "      out.push(hit(nodes[i]));"
     "    return JSON.stringify(out);"
     "  } catch (err) {}"
     "  var low = q.toLowerCase();"
@@ -274,7 +305,7 @@ static const char kDomSearch[] =
     "        || cn.toLowerCase().indexOf(low) >= 0"
     "        || (e.children.length === 0 && e.textContent"
     "            && e.textContent.toLowerCase().indexOf(low) >= 0))"
-    "      out.push(path(e));"
+    "      out.push(hit(e));"
     "  }"
     "  return JSON.stringify(out);"
     "}";
@@ -596,6 +627,361 @@ static QIcon inspectPickerIcon(const QPalette &palette)
     p.drawPolygon(arrow);
     return QIcon(pm);
 }
+
+// DEVT22 — Elements Chrome-UX parity.
+//
+// Column-0 roles on m_domTree items (Qt::UserRole itself is the
+// index path, set by the lazy fetch):
+//   DomCrumbRole — the compact selector label ("div#id.class") the
+//                  breadcrumb bar and the live-refresh expansion
+//                  snapshot match on; the display text is the wider
+//                  <tag attr="v"> markup, which changes on every
+//                  attribute mutation and would needlessly collapse
+//                  branches if it keyed the snapshot.
+//   DomBoxRole   — marks the styles pane's spanned box-model row.
+static const int DomCrumbRole = Qt::UserRole + 6;
+static const int DomBoxRole = Qt::UserRole + 7;
+
+// Synthesize "<tag id="i" class="a b">" from the compact
+// tag#id.class1.class2 label — the fallback when a children reply
+// carries no markup field (canned payloads, an older helper).
+static QString domMarkupFromLabel(const QString &label)
+{
+    const int hash = label.indexOf(QLatin1Char('#'));
+    const int dot = label.indexOf(QLatin1Char('.'));
+    int cut = label.size();
+    if (hash >= 0 && hash < cut)
+        cut = hash;
+    if (dot >= 0 && dot < cut)
+        cut = dot;
+    const QString tag = label.left(cut);
+    const QString rest = label.mid(cut);
+    QString id, cls;
+    if (rest.startsWith(QLatin1Char('#'))) {
+        const QString tail = rest.mid(1);
+        const int d = tail.indexOf(QLatin1Char('.'));
+        id = d < 0 ? tail : tail.left(d);
+        if (d >= 0)
+            cls = tail.mid(d + 1);
+    } else if (rest.startsWith(QLatin1Char('.'))) {
+        cls = rest.mid(1);
+    }
+    cls.replace(QLatin1Char('.'), QLatin1Char(' '));
+    QString out = QLatin1Char('<') + tag;
+    if (!id.isEmpty())
+        out += QStringLiteral(" id=\"%1\"").arg(id);
+    if (!cls.isEmpty())
+        out += QStringLiteral(" class=\"%1\"").arg(cls);
+    return out + QLatin1Char('>');
+}
+
+// The stable key the expansion snapshot and the crumb bar match on:
+// the compact selector label.  The markup display text changes on
+// every attribute mutation and would collapse branches the label
+// still identifies.
+static QString domItemKey(const QTreeWidgetItem *item)
+{
+    const QString key = item->data(0, DomCrumbRole).toString();
+    return key.isEmpty() ? item->text(0) : key;
+}
+
+// Chrome's Elements tree paints markup lines, not flat selector
+// text: "<tag" and ">" in the accent color, attribute names in a
+// muted ink, quoted values in the link color.  Rows that aren't
+// markup (the loading placeholder, verdict rows) paint stock.
+class BidiDomDelegate : public QStyledItemDelegate
+{
+public:
+    explicit BidiDomDelegate(QObject *parent = nullptr)
+        : QStyledItemDelegate(parent)
+    {
+        // Test seam — the class is file-local, so the suite reads
+        // this marker instead of naming the type.
+        setProperty("aroraDomMarkup", true);
+    }
+
+    void paint(QPainter *painter, const QStyleOptionViewItem &option,
+               const QModelIndex &index) const override
+    {
+        const QString text = index.data(Qt::DisplayRole).toString();
+        if (!text.startsWith(QLatin1Char('<'))
+            || !text.endsWith(QLatin1Char('>'))) {
+            QStyledItemDelegate::paint(painter, option, index);
+            return;
+        }
+        QStyleOptionViewItem opt = option;
+        initStyleOption(&opt, index);
+        opt.text.clear();
+        const QWidget *w = opt.widget;
+        QStyle *style = w ? w->style() : QApplication::style();
+        style->drawControl(QStyle::CE_ItemViewItem, &opt, painter, w);
+
+        const bool selected = opt.state & QStyle::State_Selected;
+        const QPalette &pal = opt.palette;
+        const QColor tagColor =
+            selected ? AroraStyle::selectionTextColor(pal)
+                     : AroraStyle::accentFillColor(pal);
+        const QColor nameColor =
+            selected ? AroraStyle::selectionTextColor(pal)
+                     : AroraStyle::blend(pal.color(QPalette::Text),
+                                         pal.color(QPalette::Link),
+                                         0.55);
+        const QColor valueColor =
+            selected ? AroraStyle::selectionTextColor(pal)
+                     : pal.color(QPalette::Link);
+
+        // Split "<tag a="v" b="w" …>" into {text, color} spans.
+        struct Span { QString text; QColor color; };
+        QVector<Span> spans;
+        int i = 1;
+        int tagEnd = i;
+        while (tagEnd < text.size()
+               && !text.at(tagEnd).isSpace()
+               && text.at(tagEnd) != QLatin1Char('>'))
+            ++tagEnd;
+        spans.append({text.left(tagEnd), tagColor});
+        i = tagEnd;
+        const int n = text.size();
+        while (i < n) {
+            const int ws = i;
+            while (i < n && text.at(i).isSpace())
+                ++i;
+            if (i >= n || text.at(i) == QLatin1Char('>'))
+                break;
+            QString chunk = text.mid(ws, i - ws);
+            // One attribute: name="value" | name='value' | …
+            int nameEnd = i;
+            while (nameEnd < n && text.at(nameEnd) != QLatin1Char('=')
+                   && text.at(nameEnd) != QLatin1Char('>')
+                   && !text.at(nameEnd).isSpace())
+                ++nameEnd;
+            const QString name = text.mid(i, nameEnd - i);
+            QString value;
+            i = nameEnd;
+            if (i < n && text.at(i) == QLatin1Char('=')) {
+                ++i;
+                if (i < n && (text.at(i) == QLatin1Char('"')
+                              || text.at(i) == QLatin1Char('\''))) {
+                    const QChar q = text.at(i);
+                    const int close = text.indexOf(q, i + 1);
+                    const int end = close < 0 ? n : close + 1;
+                    value = text.mid(i, end - i);
+                    i = end;
+                } else {
+                    int vEnd = i;
+                    while (vEnd < n && !text.at(vEnd).isSpace()
+                           && text.at(vEnd) != QLatin1Char('>'))
+                        ++vEnd;
+                    value = text.mid(i, vEnd - i);
+                    i = vEnd;
+                }
+            }
+            if (name == QLatin1String("…")) {
+                spans.append({chunk + name, tagColor});
+            } else {
+                spans.append({chunk + name
+                              + (value.isEmpty() ? QString()
+                                                 : QStringLiteral("=")),
+                              nameColor});
+                if (!value.isEmpty())
+                    spans.append({value, valueColor});
+            }
+        }
+        // ">" closes the line — keep it attached through elision.
+        spans.append({QStringLiteral(">"), tagColor});
+
+        QRect r = style->subElementRect(
+            QStyle::SE_ItemViewItemText, &opt, w);
+        const int avail = r.width();
+        const QFontMetrics fm = opt.fontMetrics;
+        painter->save();
+        painter->setFont(opt.font);
+        const int baseY = r.y() + fm.ascent()
+            + (r.height() - fm.height()) / 2;
+        int x = r.x();
+        for (int s = 0; s < spans.size(); ++s) {
+            const int wdt = fm.horizontalAdvance(spans[s].text);
+            if (x + wdt > r.x() + avail && s > 0) {
+                painter->setPen(tagColor);
+                painter->drawText(x, baseY,
+                                  QStringLiteral("…"));
+                x += fm.horizontalAdvance(QStringLiteral("…"));
+                painter->drawText(x, baseY, QStringLiteral(">"));
+                break;
+            }
+            painter->setPen(spans[s].color);
+            painter->drawText(x, baseY, spans[s].text);
+            x += wdt;
+        }
+        painter->restore();
+    }
+};
+
+// Chrome's Computed box-model diagram: nested margin / border /
+// padding / content boxes with the DOM.getBoxModel numbers painted
+// on each edge (numbers annotate — the boxes aren't to scale, same
+// as Chrome).  State and every edge value ride on dynamic
+// properties so tests and smokes read them without naming this
+// file-local class.
+class BidiBoxModelView : public QWidget
+{
+public:
+    // Edges are CSS order: top, right, bottom, left.
+    explicit BidiBoxModelView(QWidget *parent = nullptr)
+        : QWidget(parent)
+    {
+        setObjectName(QLatin1String("bidiElementsBoxModel"));
+        setProperty("state", QStringLiteral("empty"));
+        setToolTip(QStringLiteral(
+            "margin / border / padding / content — DOM.getBoxModel"));
+    }
+
+    void setModel(const QVector<double> &margin,
+                  const QVector<double> &border,
+                  const QVector<double> &padding,
+                  const QSizeF &content)
+    {
+        m_margin = margin;
+        m_border = border;
+        m_padding = padding;
+        m_content = content;
+        m_error.clear();
+        static const char *props[] = {"mt", "mr", "mb", "ml",
+                                      "bt", "br", "bb", "bl",
+                                      "pt", "pr", "pb", "pl"};
+        const QVector<double> *rings[] = {&m_margin, &m_border,
+                                          &m_padding};
+        for (int ring = 0; ring < 3; ++ring)
+            for (int e = 0; e < 4; ++e)
+                setProperty(props[ring * 4 + e],
+                            rings[ring]->value(e, 0.0));
+        setProperty("cw", content.width());
+        setProperty("ch", content.height());
+        setProperty("state", QStringLiteral("model"));
+        setProperty("error", QString());
+        update();
+    }
+
+    void setError(const QString &why)
+    {
+        m_margin.clear();
+        m_border.clear();
+        m_padding.clear();
+        m_content = QSizeF();
+        m_error = why;
+        setProperty("state", QStringLiteral("error"));
+        setProperty("error", why);
+        update();
+    }
+
+    bool hasModel() const
+    {
+        return m_error.isEmpty() && m_content.isValid();
+    }
+
+    QSize sizeHint() const override { return QSize(0, 148); }
+    QSize minimumSizeHint() const override { return QSize(0, 96); }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        const QPalette &pal = palette();
+        const QRect area = rect().adjusted(6, 4, -6, -4);
+        QFont f = font();
+        f.setPointSizeF(qMax(7.5, f.pointSizeF() * 0.82));
+        p.setFont(f);
+        const QFontMetrics fm(f);
+
+        if (!hasModel()) {
+            p.setPen(pal.color(QPalette::Disabled, QPalette::Text));
+            p.drawText(area, Qt::AlignCenter | Qt::TextWordWrap,
+                       m_error.isEmpty() ? QString() : m_error);
+            return;
+        }
+
+        // Ring thickness: room for the caption + the edge numbers.
+        int t = qBound(16, qMin(area.width(), area.height()) / 7, 30);
+        while (t > 12
+               && area.adjusted(3 * t, 3 * t, -3 * t, -3 * t)
+                          .height() < fm.height() + 8)
+            --t;
+        const QRect marginR = area;
+        const QRect borderR = marginR.adjusted(t, t, -t, -t);
+        const QRect paddingR = borderR.adjusted(t, t, -t, -t);
+        const QRect contentR = paddingR.adjusted(t, t, -t, -t);
+
+        // Chrome's pastel set, blended halfway toward the field's
+        // Base so dark palettes darken the fills instead of glowing.
+        const auto ringColor = [&pal](const QColor &chrome) {
+            return AroraStyle::blend(pal.color(QPalette::Base),
+                                     chrome, 0.55);
+        };
+        const struct { QRect r; QColor c; const char *name;
+                       const QVector<double> *edges; } rings[] = {
+            {marginR, ringColor(QColor(0xf6, 0xb1, 0x7c)), "margin",
+             &m_margin},
+            {borderR, ringColor(QColor(0xff, 0xe0, 0xa0)), "border",
+             &m_border},
+            {paddingR, ringColor(QColor(0xc8, 0xdf, 0xa4)), "padding",
+             &m_padding},
+        };
+        for (const auto &ring : rings) {
+            p.fillRect(ring.r, ring.c);
+            const QColor ink = AroraStyle::contrastTextColor(ring.c);
+            p.setPen(ink);
+            // caption in the ring's top-left corner
+            p.drawText(ring.r.adjusted(3, 1, 0, 0),
+                       Qt::AlignLeft | Qt::AlignTop,
+                       QLatin1String(ring.name));
+            const QVector<double> &e = *ring.edges;
+            const auto num = [](double v) {
+                return v == std::floor(v)
+                    ? QString::number(int(v))
+                    : QString::number(v, 'f', 1);
+            };
+            // Edge numbers centered in each ring band — Chrome's
+            // layout; the side bands draw only when the text fits.
+            if (ring.edges->size() >= 4 && fm.height() <= t - 2) {
+                const int cy = ring.r.center().y();
+                p.drawText(QRect(ring.r.left() + 4, ring.r.top(),
+                                 ring.r.width() - 8, t),
+                           Qt::AlignCenter, num(e.value(0)));
+                p.drawText(QRect(ring.r.left() + 4,
+                                 ring.r.bottom() - t,
+                                 ring.r.width() - 8, t),
+                           Qt::AlignCenter, num(e.value(2)));
+                if (fm.horizontalAdvance(num(e.value(1))) <= t - 4)
+                    p.drawText(QRect(ring.r.right() - t,
+                                     cy - fm.height() / 2,
+                                     t, fm.height()),
+                               Qt::AlignCenter, num(e.value(1)));
+                if (fm.horizontalAdvance(num(e.value(3))) <= t - 4)
+                    p.drawText(QRect(ring.r.left(),
+                                     cy - fm.height() / 2,
+                                     t, fm.height()),
+                               Qt::AlignCenter, num(e.value(3)));
+            }
+        }
+        p.fillRect(contentR,
+                   ringColor(QColor(0x8b, 0xb3, 0xd9)));
+        p.setPen(AroraStyle::contrastTextColor(
+            ringColor(QColor(0x8b, 0xb3, 0xd9))));
+        p.drawText(contentR, Qt::AlignCenter,
+                   QStringLiteral("%1 × %2")
+                       .arg(m_content.width(), 0, 'f',
+                            m_content.width() == std::floor(
+                                m_content.width()) ? 0 : 1)
+                       .arg(m_content.height(), 0, 'f',
+                            m_content.height() == std::floor(
+                                m_content.height()) ? 0 : 1));
+    }
+
+private:
+    QVector<double> m_margin, m_border, m_padding;
+    QSizeF m_content;
+    QString m_error;
+};
 
 class BidiNetworkModel : public QAbstractTableModel
 {
@@ -1332,13 +1718,24 @@ BidiPanel::BidiPanel(QWidget *parent)
     // DEVT13 — Elements: the old DOM tab grew Chrome's chrome.  The
     // toolbar carries click-to-inspect and refresh; the right pane
     // shows computed styles (or the DOM-derived fallback); Chrome's
-    // breadcrumb trail runs along the bottom edge.
+    // breadcrumb trail runs along the bottom edge.  DEVT22 reshaped
+    // the page to Chrome's silhouette: a compact bordered toolbar
+    // (buttons left, live element count right), a markup-painting
+    // DOM tree, the grouped styles rail with a real box-model
+    // diagram, and a find dock with a results list.
     QWidget *elementsPage = new QWidget;
     QVBoxLayout *elv = new QVBoxLayout(elementsPage);
     elv->setContentsMargins(0, 0, 0, 0);
     elv->setSpacing(0);
     QWidget *elBar = new QWidget;
     elBar->setObjectName(QLatin1String("bidiElementsToolbar"));
+    // DEVT22: a visibly delimited compact bar, not buttons floating
+    // in an unbounded strip — fixed height, hairline under-edge.
+    elBar->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    elBar->setStyleSheet(QStringLiteral(
+        "#bidiElementsToolbar {"
+        "border-bottom: 1px solid palette(mid);"
+        "background: palette(window);}"));
     QHBoxLayout *elb = new QHBoxLayout(elBar);
     elb->setContentsMargins(4, 2, 4, 2);
     elb->setSpacing(4);
@@ -1369,12 +1766,22 @@ BidiPanel::BidiPanel(QWidget *parent)
         tr("Find an element by string or selector (Ctrl+F)"));
     elb->addWidget(domSearchToggle);
     elb->addStretch();
+    // The right side of the bar reports the materialized tree size —
+    // the count Chrome's status surface implies, and what fills the
+    // otherwise dead space.
+    m_domStats = new QLabel;
+    m_domStats->setObjectName(QLatin1String("bidiElementsStats"));
+    m_domStats->setStyleSheet(QStringLiteral(
+        "color: palette(disabled-text);"));
+    elb->addWidget(m_domStats);
     elv->addWidget(elBar);
     QSplitter *elSplit = new QSplitter(Qt::Horizontal);
     m_domTree = new QTreeWidget;
     m_domTree->setObjectName(QLatin1String("bidiElementsTree"));
     m_domTree->setHeaderLabel(tr("DOM"));
     m_domTree->setRootIsDecorated(true);
+    m_domTree->setIndentation(14);
+    m_domTree->setItemDelegate(new BidiDomDelegate(m_domTree));
     connect(m_domTree, &QTreeWidget::itemExpanded,
             this, &BidiPanel::domItemExpanded);
     elSplit->addWidget(m_domTree);
@@ -1406,13 +1813,20 @@ BidiPanel::BidiPanel(QWidget *parent)
     elSplit->setStretchFactor(1, 2);
     elv->addWidget(elSplit);
     // DEVT19: Chrome's find bar — query field, result count, prev /
-    // next, hidden until Ctrl+F or the toolbar toggle.
+    // next, hidden until Ctrl+F or the toolbar toggle.  DEVT22 adds
+    // the results list under the row: every hit's markup line,
+    // clicking one selects the node in the tree.
     m_domFindBar = new QWidget;
     m_domFindBar->setObjectName(QLatin1String("bidiElementsFindBar"));
     m_domFindBar->setStyleSheet(QStringLiteral(
-        "border-top: 1px solid palette(mid);"));
-    QHBoxLayout *fb = new QHBoxLayout(m_domFindBar);
-    fb->setContentsMargins(4, 2, 4, 2);
+        "#bidiElementsFindBar {"
+        "border-top: 1px solid palette(mid);}"));
+    QVBoxLayout *fbv = new QVBoxLayout(m_domFindBar);
+    fbv->setContentsMargins(4, 2, 4, 2);
+    fbv->setSpacing(2);
+    QWidget *findRow = new QWidget;
+    QHBoxLayout *fb = new QHBoxLayout(findRow);
+    fb->setContentsMargins(0, 0, 0, 0);
     fb->setSpacing(4);
     m_domFind = new QLineEdit;
     m_domFind->setObjectName(QLatin1String("bidiElementsFind"));
@@ -1420,6 +1834,10 @@ BidiPanel::BidiPanel(QWidget *parent)
         tr("Find by string or selector"));
     m_domFind->setClearButtonEnabled(true);
     fb->addWidget(m_domFind, 1);
+    m_domFindCount = new QLabel;
+    m_domFindCount->setObjectName(
+        QLatin1String("bidiElementsFindCount"));
+    fb->addWidget(m_domFindCount);
     m_domFindPrev = new QToolButton;
     m_domFindPrev->setObjectName(QLatin1String("bidiElementsFindPrev"));
     m_domFindPrev->setAutoRaise(true);
@@ -1433,16 +1851,22 @@ BidiPanel::BidiPanel(QWidget *parent)
         style()->standardIcon(QStyle::SP_ArrowDown));
     m_domFindNext->setToolTip(tr("Next match"));
     fb->addWidget(m_domFindNext);
-    m_domFindCount = new QLabel;
-    m_domFindCount->setObjectName(
-        QLatin1String("bidiElementsFindCount"));
-    fb->addWidget(m_domFindCount);
+    fbv->addWidget(findRow);
+    m_domFindResults = new QListWidget;
+    m_domFindResults->setObjectName(
+        QLatin1String("bidiElementsFindResults"));
+    m_domFindResults->setHorizontalScrollBarPolicy(
+        Qt::ScrollBarAlwaysOff);
+    m_domFindResults->setUniformItemSizes(true);
+    m_domFindResults->hide();
+    fbv->addWidget(m_domFindResults);
     m_domFindBar->hide();
     elv->addWidget(m_domFindBar);
     m_crumbBar = new QWidget;
     m_crumbBar->setObjectName(QLatin1String("bidiElementsCrumbs"));
     m_crumbBar->setStyleSheet(QStringLiteral(
-        "border-top: 1px solid palette(mid);"));
+        "#bidiElementsCrumbs {"
+        "border-top: 1px solid palette(mid);}"));
     new FlowLayout(m_crumbBar, 0, 4, 0);
     elv->addWidget(m_crumbBar);
     tabs->addTab(elementsPage, tr("Elements"));
@@ -2229,6 +2653,19 @@ BidiPanel::BidiPanel(QWidget *parent)
             this, [this]() { domSearchStep(-1); });
     connect(m_domFindNext, &QToolButton::clicked,
             this, [this]() { domSearchStep(1); });
+    // DEVT22: clicking a results-list row jumps to that hit — same
+    // landing as Enter/arrow cycling.
+    connect(m_domFindResults, &QListWidget::itemClicked, this,
+            [this](QListWidgetItem *it) {
+        const int row = m_domFindResults->row(it);
+        if (row < 0 || row >= m_searchPaths.size())
+            return;
+        m_searchIndex = row;
+        m_domFindCount->setText(
+            tr("%1 of %2").arg(m_searchIndex + 1)
+                .arg(m_searchPaths.size()));
+        domSelectPath(m_searchPaths.at(row));
+    });
     m_domLiveTimer = new QTimer(this);
     m_domLiveTimer->setSingleShot(true);
     m_domLiveTimer->setInterval(350);
@@ -3101,14 +3538,21 @@ void BidiPanel::refreshDom()
     m_searchPaths.clear();
     m_searchIndex = -1;
     m_domFindCount->clear();
+    m_domFindResults->clear();
+    m_domFindResults->hide();
     m_domLiveExpand.clear();
     m_evalSerials.clear();
     m_domLiveTimer->stop();
+    updateDomStats();
     const QString ctx = currentContext();
     if (ctx.isEmpty())
         return;
     QTreeWidgetItem *root = new QTreeWidgetItem(
         QStringList(QStringLiteral("document")));
+    // DEVT22: the first children fill rewrites this to the page's
+    // own <html …> markup — the root IS the documentElement (its
+    // children index into documentElement's children).
+    root->setData(0, DomCrumbRole, QStringLiteral("html"));
     root->setData(0, Qt::UserRole, QString());
     root->addChild(new QTreeWidgetItem(QStringList(tr("loading…"))));
     m_domTree->addTopLevelItem(root);
@@ -3187,12 +3631,12 @@ void BidiPanel::liveRefreshDom()
             for (int i = 0; i < item->childCount(); ++i) {
                 QTreeWidgetItem *kid = item->child(i);
                 if (kid->isExpanded())
-                    expanded << kid->text(0);
+                    expanded << domItemKey(kid);
                 stack.append(kid);
             }
             m_domLiveExpand.insert(
                 item->data(0, Qt::UserRole).toString() + sep
-                    + item->text(0),
+                    + domItemKey(item),
                 expanded);
         }
     }
@@ -3217,12 +3661,13 @@ void BidiPanel::restoreDomExpansion(QTreeWidgetItem *item)
         return;
     const QLatin1Char sep(0x1f);
     const QStringList expanded = m_domLiveExpand.value(
-        item->data(0, Qt::UserRole).toString() + sep + item->text(0));
+        item->data(0, Qt::UserRole).toString() + sep
+            + domItemKey(item));
     if (expanded.isEmpty())
         return;
     for (int i = 0; i < item->childCount(); ++i) {
         QTreeWidgetItem *kid = item->child(i);
-        if (expanded.contains(kid->text(0)))
+        if (expanded.contains(domItemKey(kid)))
             kid->setExpanded(true); // fires the lazy fetch down
     }
 }
@@ -3237,11 +3682,14 @@ void BidiPanel::runDomSearch()
         m_searchPaths.clear();
         m_searchIndex = -1;
         m_domFindCount->clear();
+        m_domFindResults->clear();
+        m_domFindResults->hide();
         return;
     }
     const QString ctx = currentContext();
     if (ctx.isEmpty() || m_client->state() != BidiClient::Connected)
         return;
+    ensureDomHelper(ctx); // __arora_dom_label/markup feed the hits
     const QByteArray quoted = QJsonDocument(QJsonArray{query})
                                   .toJson(QJsonDocument::Compact);
     sendEval(ctx,
@@ -3267,17 +3715,42 @@ void BidiPanel::domSearchStep(int delta)
     m_domFindCount->setText(
         tr("%1 of %2").arg(m_searchIndex + 1)
             .arg(m_searchPaths.size()));
+    {
+        const QSignalBlocker hold(m_domFindResults);
+        m_domFindResults->setCurrentRow(m_searchIndex);
+    }
     domSelectPath(m_searchPaths.at(m_searchIndex));
 }
 
-void BidiPanel::applyDomSearchResult(const QStringList &paths)
+void BidiPanel::applyDomSearchResult(const QStringList &paths,
+                                     const QStringList &labels)
 {
     m_searchPaths = paths;
     m_searchIndex = -1;
     m_domFindCount->setText(
         paths.isEmpty() ? tr("0 of 0") : tr("1 of %1").arg(paths.size()));
+    // DEVT22: the results dock lists every hit's markup line — the
+    // clicked row jumps the same way Enter/arrow cycling does.
+    m_domFindResults->clear();
+    for (int i = 0; i < paths.size(); ++i) {
+        QListWidgetItem *row = new QListWidgetItem(
+            labels.value(i, paths.at(i)));
+        row->setData(Qt::UserRole, paths.at(i));
+        row->setToolTip(labels.value(i, paths.at(i)));
+        m_domFindResults->addItem(row);
+    }
+    // ~6 rows of hits — taller sets scroll inside the dock.
+    const int rowH = m_domFindResults->sizeHintForRow(0);
+    m_domFindResults->setMaximumHeight(
+        paths.isEmpty() ? 0
+                        : qMin(paths.size(), 6) * qMax(rowH, 16) + 6);
+    m_domFindResults->setVisible(!paths.isEmpty());
     if (!paths.isEmpty()) {
         m_searchIndex = 0;
+        {
+            const QSignalBlocker hold(m_domFindResults);
+            m_domFindResults->setCurrentRow(0);
+        }
         domSelectPath(paths.at(0));
     }
 }
@@ -3474,23 +3947,54 @@ void BidiPanel::onResponse(quint64 id, const QByteArray &json)
                 item, tr("element no longer in the document"));
             break;
         }
-        const QJsonArray kids =
-            QJsonDocument::fromJson(payload).array();
+        // DEVT22: the reply is {label, markup, children:[…]} — the
+        // object's own pair rewrites this row's markup (attributes
+        // mutated since the parent's fetch repaint in place) while
+        // the compact label feeds crumbs/snapshot matching.  Bare
+        // arrays and markup-less child objects still parse — the
+        // markup is derived from the compact label then.
+        const QJsonDocument treeDoc =
+            QJsonDocument::fromJson(payload);
+        QJsonArray kids;
+        if (treeDoc.isObject()) {
+            const QJsonObject self = treeDoc.object();
+            const QString label =
+                self[QStringLiteral("label")].toString();
+            QString markup =
+                self[QStringLiteral("markup")].toString();
+            if (markup.isEmpty() && !label.isEmpty())
+                markup = domMarkupFromLabel(label);
+            if (!markup.isEmpty())
+                item->setText(0, markup);
+            if (!label.isEmpty())
+                item->setData(0, DomCrumbRole, label);
+            kids = self[QStringLiteral("children")].toArray();
+        } else {
+            kids = treeDoc.array();
+        }
         int idx = 0;
         for (const QJsonValue &kv : kids) {
             const QJsonObject k = kv.toObject();
-            QTreeWidgetItem *child = new QTreeWidgetItem(
-                QStringList(k[QStringLiteral("label")].toString()));
+            const QString label =
+                k[QStringLiteral("label")].toString();
+            QString markup =
+                k[QStringLiteral("markup")].toString();
+            if (markup.isEmpty())
+                markup = domMarkupFromLabel(label);
+            QTreeWidgetItem *child =
+                new QTreeWidgetItem(QStringList(markup));
             const QString childPath =
                 base.isEmpty() ? QString::number(idx)
                                : base + QLatin1Char('/') + QString::number(idx);
             child->setData(0, Qt::UserRole, childPath);
+            child->setData(0, DomCrumbRole, label);
             if (k[QStringLiteral("children")].toInt() > 0)
                 child->addChild(
                     new QTreeWidgetItem(QStringList(tr("loading…"))));
             item->addChild(child);
             ++idx;
         }
+        updateDomStats();
         // DEVT19: a live-refresh fill re-opens the branches the
         // snapshot recorded before the mutation wiped this level.
         restoreDomExpansion(item);
@@ -3563,11 +4067,8 @@ void BidiPanel::onResponse(quint64 id, const QByteArray &json)
             }
             fillAttributesSection(attrs, QString());
             fillComputedSection(computed, QString());
-            QTreeWidgetItem *box = stylesSection(tr("Box model"));
-            box->addChild(new QTreeWidgetItem(QStringList{
-                QString(),
-                tr("requires the CDP DOM domain")}));
-            box->setExpanded(true);
+            fillBoxModelSection(
+                QJsonObject(), tr("requires the CDP DOM domain"));
         }
         break;
     }
@@ -3586,12 +4087,27 @@ void BidiPanel::onResponse(quint64 id, const QByteArray &json)
         break;
     }
     case TagDomSearch: {
-        const QJsonArray paths = QJsonDocument::fromJson(
+        const QJsonArray hits = QJsonDocument::fromJson(
             value.toString().toUtf8()).array();
-        QStringList list;
-        for (const QJsonValue &pv : paths)
-            list << pv.toString();
-        applyDomSearchResult(list);
+        // DEVT22: hits arrive {path, label, markup} — markup rows
+        // fill the results list; bare strings (older helper, canned
+        // payloads) carry the path as their own label.
+        QStringList list, labels;
+        for (const QJsonValue &hv : hits) {
+            if (hv.isObject()) {
+                const QJsonObject h = hv.toObject();
+                list << h[QStringLiteral("path")].toString();
+                QString markup =
+                    h[QStringLiteral("markup")].toString();
+                if (markup.isEmpty())
+                    markup = h[QStringLiteral("label")].toString();
+                labels << markup;
+            } else {
+                list << hv.toString();
+                labels << hv.toString();
+            }
+        }
+        applyDomSearchResult(list, labels);
         break;
     }
     case TagInspect:
@@ -4759,6 +5275,25 @@ void BidiPanel::onCdpResponse(quint64 id, const QJsonObject &root)
     }
 }
 
+// DEVT22: the toolbar's right-aligned element count — how many
+// real element rows the lazy tree has materialized so far.
+void BidiPanel::updateDomStats()
+{
+    int count = 0;
+    QVector<QTreeWidgetItem *> stack;
+    for (int i = 0; i < m_domTree->topLevelItemCount(); ++i)
+        stack.append(m_domTree->topLevelItem(i));
+    while (!stack.isEmpty()) {
+        QTreeWidgetItem *item = stack.takeLast();
+        if (!item->data(0, Qt::UserRole).isNull())
+            ++count;
+        for (int i = 0; i < item->childCount(); ++i)
+            stack.append(item->child(i));
+    }
+    m_domStats->setText(
+        count ? tr("%1 elements").arg(count) : QString());
+}
+
 // One probe per domain the tabs depend on — the verdicts are the
 // source of truth for the honest-disabled states.
 void BidiPanel::updateCrumbs(QTreeWidgetItem *item)
@@ -4787,7 +5322,9 @@ void BidiPanel::updateCrumbs(QTreeWidgetItem *item)
         QToolButton *b = new QToolButton(m_crumbBar);
         b->setAutoRaise(true);
         b->setFocusPolicy(Qt::NoFocus);
-        b->setText(ptr->text(0));
+        // DEVT22: Chrome's trail shows the compact selector form
+        // (div#id.class), not the full markup line.
+        b->setText(domItemKey(ptr));
         connect(b, &QToolButton::clicked, this,
                 [this, ptr]() {
             m_domTree->setCurrentItem(ptr);
@@ -4930,23 +5467,60 @@ void BidiPanel::fillComputedSection(const QJsonArray &computed,
     group->setExpanded(true);
 }
 
+// DEVT22: the Box model section's content is a spanned diagram row
+// (Chrome's nested-boxes figure), not text rows.  The row is the
+// section's only child — collapsing the header folds it like any
+// other group.
+QTreeWidgetItem *BidiPanel::boxModelDiagramItem(QTreeWidgetItem *group)
+{
+    for (int i = 0; i < group->childCount(); ++i) {
+        QTreeWidgetItem *it = group->child(i);
+        if (it->data(0, DomBoxRole).toBool())
+            return it;
+    }
+    QTreeWidgetItem *row = new QTreeWidgetItem(group);
+    row->setData(0, DomBoxRole, true);
+    row->setFlags(Qt::ItemIsEnabled);
+    BidiBoxModelView *view = new BidiBoxModelView;
+    row->setSizeHint(0, QSize(0, view->sizeHint().height()));
+    m_stylesView->setFirstColumnSpanned(
+        group->indexOfChild(row), m_stylesView->indexFromItem(group),
+        true);
+    m_stylesView->setItemWidget(row, 0, view);
+    return row;
+}
+
 void BidiPanel::fillBoxModelSection(const QJsonObject &model,
                                     const QString &error)
 {
     QTreeWidgetItem *group = stylesSection(tr("Box model"));
-    while (group->childCount())
-        delete group->takeChild(0);
+    // Clear plain children but keep the spanned diagram row — the
+    // view is cheap state to reuse (and survives a m_stylesView
+    // ->clear() since boxModelDiagramItem recreates it on demand).
+    for (int i = group->childCount() - 1; i >= 0; --i) {
+        QTreeWidgetItem *c = group->child(i);
+        if (!c->data(0, DomBoxRole).toBool())
+            delete group->takeChild(i);
+    }
     QSignalBlocker block(m_stylesView);
+    group->setExpanded(true);
+    QTreeWidgetItem *row = boxModelDiagramItem(group);
+    BidiBoxModelView *view = static_cast<BidiBoxModelView *>(
+        m_stylesView->itemWidget(row, 0));
+    if (!view)
+        return;
     if (!error.isEmpty()) {
-        group->addChild(new QTreeWidgetItem(QStringList{QString(), error}));
-        group->setExpanded(true);
+        view->setError(error);
         return;
     }
     // DOM.getBoxModel answers content/padding/border/margin quads —
-    // [x1,y1, x2,y2, x3,y3, x4,y4]; width = rightmost x - leftmost x.
-    const auto dims = [](const QJsonArray &quad) {
+    // [x1,y1, x2,y2, x3,y3, x4,y4].  Each ring's four edges are the
+    // inset of the inner quad's bounds inside the outer's, Chrome's
+    // top/right/bottom/left.
+    const auto bounds = [](const QJsonArray &quad) {
+        QRectF r;
         if (quad.size() < 8)
-            return qMakePair(0.0, 0.0);
+            return r;
         double minX = quad.at(0).toDouble(), maxX = minX;
         double minY = quad.at(1).toDouble(), maxY = minY;
         for (int i = 0; i + 1 < quad.size(); i += 2) {
@@ -4955,43 +5529,27 @@ void BidiPanel::fillBoxModelSection(const QJsonObject &model,
             minY = qMin(minY, quad.at(i + 1).toDouble());
             maxY = qMax(maxY, quad.at(i + 1).toDouble());
         }
-        return qMakePair(maxX - minX, maxY - minY);
+        return QRectF(QPointF(minX, minY), QPointF(maxX, maxY));
     };
-    const auto fmt = [](const QPair<double, double> &d) {
-        return QStringLiteral("%1 × %2")
-            .arg(d.first, 0, 'f', 1).arg(d.second, 0, 'f', 1);
+    const auto edges = [](const QRectF &outer, const QRectF &inner) {
+        // {top, right, bottom, left} — Chrome's edge order.
+        return QVector<double>{
+            inner.top() - outer.top(),
+            outer.right() - inner.right(),
+            outer.bottom() - inner.bottom(),
+            inner.left() - outer.left()};
     };
-    const QPair<double, double> content =
-        dims(model[QStringLiteral("content")].toArray());
-    const QPair<double, double> padding =
-        dims(model[QStringLiteral("padding")].toArray());
-    const QPair<double, double> border =
-        dims(model[QStringLiteral("border")].toArray());
-    const QPair<double, double> margin =
-        dims(model[QStringLiteral("margin")].toArray());
-    group->addChild(new QTreeWidgetItem(
-        QStringList{tr("content"), fmt(content)}));
-    group->addChild(new QTreeWidgetItem(QStringList{
-        tr("padding"), fmt(QPair<double, double>{
-            padding.first - content.first,
-            padding.second - content.second})}));
-    group->addChild(new QTreeWidgetItem(QStringList{
-        tr("border"), fmt(QPair<double, double>{
-            border.first - padding.first,
-            border.second - padding.second})}));
-    group->addChild(new QTreeWidgetItem(QStringList{
-        tr("margin"), fmt(QPair<double, double>{
-            margin.first - border.first,
-            margin.second - border.second})}));
-    group->addChild(new QTreeWidgetItem(
-        QStringList{tr("width"),
-                    QString::number(
-                        model[QStringLiteral("width")].toInt())}));
-    group->addChild(new QTreeWidgetItem(
-        QStringList{tr("height"),
-                    QString::number(
-                        model[QStringLiteral("height")].toInt())}));
-    group->setExpanded(true);
+    const QRectF content =
+        bounds(model[QStringLiteral("content")].toArray());
+    const QRectF padding =
+        bounds(model[QStringLiteral("padding")].toArray());
+    const QRectF border =
+        bounds(model[QStringLiteral("border")].toArray());
+    const QRectF margin =
+        bounds(model[QStringLiteral("margin")].toArray());
+    view->setModel(edges(margin, border), edges(border, padding),
+                   edges(padding, content),
+                   QSizeF(content.width(), content.height()));
 }
 
 // DEVT19: attribute value rows edit in place.  With a resolved CDP

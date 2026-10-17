@@ -51,11 +51,13 @@
 #include "tabwidget.h"
 
 #include <qabstractitemmodel.h>
+#include <qabstractbutton.h>
 #include <qbuttongroup.h>
 #include <qcheckbox.h>
 #include <qcombobox.h>
 #include <qheaderview.h>
 #include <qlabel.h>
+#include <qlayout.h>
 #include <qlineedit.h>
 #include <qlistwidget.h>
 #include <qplaintextedit.h>
@@ -63,6 +65,7 @@
 #include <qsortfilterproxymodel.h>
 #include <qstackedwidget.h>
 #include <qstandarditemmodel.h>
+#include <qstyleoption.h>
 #include <qtableview.h>
 #include <qtablewidget.h>
 #include <qtabwidget.h>
@@ -87,6 +90,7 @@ private slots:
     void bidiElementsRefresh();
     void bidiElementsLiveTree();
     void bidiElementsParity();
+    void bidiElementsUx();
     void bidiContextSelector();
     void bidiContextRematch();
     void bidiConsoleParity();
@@ -362,7 +366,9 @@ void tst_DevTools::bidiPanel()
     id = panel.testDomExpand(root);
     panel.onResponse(id, domAnswer);
     QCOMPARE(root->childCount(), 2);
-    QCOMPARE(root->child(0)->text(0), QStringLiteral("div"));
+    // DEVT22: legacy {label} payloads still paint — the markup is
+    // derived from the compact label.
+    QCOMPARE(root->child(0)->text(0), QStringLiteral("<div>"));
     QCOMPARE(root->child(0)->data(0, Qt::UserRole).toString(),
              QStringLiteral("0"));
     QCOMPARE(root->child(0)->childCount(), 1); // nested placeholder
@@ -1085,13 +1091,19 @@ void tst_DevTools::bidiElementsLiveTree()
                     ->data(0, Qt::UserRole).isNull(),
         15000);
     // document's element children are the real tags — head/body —
-    // never the "loading…" placeholder.
+    // never the "loading…" placeholder.  DEVT22: rows carry the
+    // <tag …> markup lines now.
     QStringList labels;
     QTreeWidgetItem *rootItem = panel.m_domTree->topLevelItem(0);
     for (int i = 0; i < rootItem->childCount(); ++i)
         labels << rootItem->child(i)->text(0);
-    QVERIFY(labels.contains(QLatin1String("head"))
-            || labels.contains(QLatin1String("body")));
+    bool realTag = false;
+    for (const QString &l : labels) {
+        if (l.startsWith(QLatin1String("<head"))
+            || l.startsWith(QLatin1String("<body")))
+            realTag = true;
+    }
+    QVERIFY(realTag);
 }
 
 // DEVT19 — Elements parity: the page-side MutationObserver marker
@@ -1153,7 +1165,7 @@ void tst_DevTools::bidiElementsParity()
         ",{\\\"label\\\":\\\"span\\\",\\\"children\\\":0}"
         ",{\\\"label\\\":\\\"p\\\",\\\"children\\\":0}]\"}}}"));
     QCOMPARE(root->childCount(), 3);
-    QCOMPARE(root->child(2)->text(0), QStringLiteral("p"));
+    QCOMPARE(root->child(2)->text(0), QStringLiteral("<p>"));
     QVERIFY(root->child(0)->isExpanded());
     // The refill replaced div's children with a placeholder —
     // re-materialize the em grandchild so "0/0" resolves again.
@@ -1268,14 +1280,22 @@ void tst_DevTools::bidiElementsParity()
     QCOMPARE(computed->child(0)->text(0), QStringLiteral("color"));
     QCOMPARE(computed->child(0)->text(1),
              QStringLiteral("rgb(9, 9, 9)"));
-    // The quads became per-edge numbers, not a raw dump.
-    QStringList boxTexts;
-    for (int i = 0; i < box->childCount(); ++i)
-        boxTexts << box->child(i)->text(0) + QLatin1Char('=')
-                    + box->child(i)->text(1);
-    QVERIFY(boxTexts.contains(QStringLiteral("content=100.0 × 50.0")));
-    QVERIFY(boxTexts.contains(QStringLiteral("margin=20.0 × 20.0")));
-    QVERIFY(boxTexts.contains(QStringLiteral("width=140")));
+    // DEVT22: the quads drive a nested-boxes diagram (spanned row
+    // under the section), not text rows.  The view's edge values
+    // ride on dynamic properties.  Fixture: content 100x50,
+    // padding/border rings +10 on right/bottom, margin +20.
+    QWidget *boxView = panel.findChild<QWidget *>(
+        QStringLiteral("bidiElementsBoxModel"));
+    QVERIFY(boxView);
+    QCOMPARE(boxView->property("state").toString(),
+             QStringLiteral("model"));
+    QCOMPARE(boxView->property("cw").toDouble(), 100.0);
+    QCOMPARE(boxView->property("ch").toDouble(), 50.0);
+    QCOMPARE(boxView->property("mr").toDouble(), 20.0);
+    QCOMPARE(boxView->property("mb").toDouble(), 20.0);
+    QCOMPARE(boxView->property("br").toDouble(), 10.0);
+    QCOMPARE(boxView->property("pr").toDouble(), 10.0);
+    QCOMPARE(boxView->property("mt").toDouble(), 0.0);
 
     // Attribute editing: the resolved node lands a
     // DOM.setAttributeValue whose error surfaces in the console,
@@ -1345,6 +1365,204 @@ void tst_DevTools::bidiElementsParity()
     panel.onConnectionChanged(BidiClient::Disconnected);
     QVERIFY(panel.m_domainErr.isEmpty());
     QVERIFY(panel.m_probedContext.isEmpty());
+}
+
+// DEVT22 — the Elements tab's Chrome-UX shape: markup tree lines
+// (<tag attr="v"> with the compact selector kept for crumbs and
+// expansion matching), a compact bounded toolbar with the live
+// element count, a spanned box-model diagram row, and the find
+// dock's results list that selects hits in the tree.
+void tst_DevTools::bidiElementsUx()
+{
+    BidiPanel panel;
+    panel.onConnectionChanged(BidiClient::Connected);
+    panel.onResponse(7777, QByteArray(
+        "{\"result\":{\"contexts\":["
+        "{\"context\":\"ctx1\",\"url\":\"http://a/\"}]}}"));
+    QTreeWidgetItem *root = panel.m_domTree->topLevelItem(0);
+    QVERIFY(root);
+
+    // Build the eval envelope programmatically — the inner JSON is
+    // the page helper's reply string (real payload shapes, no
+    // triple-escaped literals).
+    const auto reply = [](const QByteArray &inner) {
+        return QJsonDocument(QJsonObject{
+            {QStringLiteral("result"), QJsonObject{
+                {QStringLiteral("type"), QStringLiteral("success")},
+                {QStringLiteral("result"), QJsonObject{
+                    {QStringLiteral("type"),
+                     QStringLiteral("string")},
+                    {QStringLiteral("value"),
+                     QString::fromUtf8(inner)}}}}}
+        }).toJson(QJsonDocument::Compact);
+    };
+
+    // The object reply's own pair rewrites the row to real markup
+    // (this is how the root "document" line becomes <html …>);
+    // children land as markup lines + compact crumb labels.
+    quint64 id = panel.testDomExpand(root);
+    const QByteArray treeReply = QJsonDocument(QJsonObject{
+        {QStringLiteral("label"), QStringLiteral("html")},
+        {QStringLiteral("markup"),
+         QStringLiteral("<html lang=\"en\">")},
+        {QStringLiteral("children"), QJsonArray{
+            QJsonObject{
+                {QStringLiteral("label"), QStringLiteral("body.main")},
+                {QStringLiteral("markup"),
+                 QStringLiteral("<body class=\"main\">")},
+                {QStringLiteral("children"), 1}},
+            QJsonObject{
+                {QStringLiteral("label"), QStringLiteral("div#a.x.y")},
+                {QStringLiteral("markup"),
+                 QStringLiteral("<div id=\"a\" class=\"x y\" "
+                                "data-note=\"z\">")},
+                {QStringLiteral("children"), 0}}}}
+    }).toJson(QJsonDocument::Compact);
+    panel.onResponse(id, reply(treeReply));
+    QCOMPARE(root->text(0), QStringLiteral("<html lang=\"en\">"));
+    QCOMPARE(root->data(0, Qt::UserRole + 6).toString(),
+             QStringLiteral("html"));
+    QCOMPARE(root->childCount(), 2);
+    QCOMPARE(root->child(0)->text(0),
+             QStringLiteral("<body class=\"main\">"));
+    QCOMPARE(root->child(0)->data(0, Qt::UserRole + 6).toString(),
+             QStringLiteral("body.main"));
+    // The attr text the user missed — a real <tag attr> line, not
+    // the flat "div#a.x.y" selector string.
+    QVERIFY(root->child(1)->text(0).contains(
+        QStringLiteral("class=\"x y\"")));
+    QVERIFY(root->child(1)->text(0).contains(
+        QStringLiteral("data-note=\"z\"")));
+
+    // (a) the toolbar is a compact bounded bar — Fixed vertical
+    // policy, no floating buttons in dead space — and its right
+    // edge reports the materialized element count (html + 2).
+    QWidget *bar = panel.findChild<QWidget *>(
+        QStringLiteral("bidiElementsToolbar"));
+    QVERIFY(bar);
+    QCOMPARE(bar->sizePolicy().verticalPolicy(), QSizePolicy::Fixed);
+    QCOMPARE(panel.m_domStats->text(), QStringLiteral("3 elements"));
+
+    // (b) the markup delegate is installed (rows paint colored
+    // <tag attr> spans); the crumbs keep the compact selector form.
+    QVERIFY(panel.m_domTree->itemDelegate());
+    QVERIFY(panel.m_domTree->itemDelegate()
+                ->property("aroraDomMarkup").toBool());
+    panel.m_domTree->setCurrentItem(root->child(1));
+    QStringList crumbTexts;
+    QLayout *cl = panel.m_crumbBar->layout();
+    for (int i = 0; i < cl->count(); ++i) {
+        if (QAbstractButton *b = qobject_cast<QAbstractButton *>(
+                cl->itemAt(i)->widget()))
+            crumbTexts << b->text();
+    }
+    QCOMPARE(crumbTexts,
+             QStringList({QStringLiteral("html"),
+                          QStringLiteral("div#a.x.y")}));
+
+    // The painted row really is multi-colored: render it through
+    // the delegate and count the distinct quantized ink hues.
+    {
+        const QModelIndex midx = panel.m_domTree->indexFromItem(
+            root->child(1), 0);
+        QVERIFY(midx.isValid());
+        QImage img(360, 24, QImage::Format_ARGB32);
+        img.fill(Qt::white);
+        QPainter p(&img);
+        QStyleOptionViewItem opt;
+        opt.initFrom(panel.m_domTree);
+        opt.rect = img.rect();
+        opt.font = panel.m_domTree->font();
+        opt.features = QStyleOptionViewItem::HasDisplay;
+        opt.text = midx.data(Qt::DisplayRole).toString();
+        panel.m_domTree->itemDelegate()->paint(&p, opt, midx);
+        p.end();
+        QSet<quint32> hues;
+        for (int y = 0; y < img.height(); ++y) {
+            for (int x = 0; x < img.width(); ++x) {
+                const QRgb px = img.pixel(x, y);
+                const int dr = 255 - qRed(px), dg = 255 - qGreen(px),
+                          db = 255 - qBlue(px);
+                if (dr + dg + db > 90)
+                    hues.insert((qRed(px) / 40 << 8)
+                                | (qGreen(px) / 40 << 4)
+                                | (qBlue(px) / 40));
+            }
+        }
+        // accent tag + muted name + link value = 2+ ink families.
+        QVERIFY(hues.size() >= 2);
+    }
+
+    // (c) Box model: a spanned diagram row under the section
+    // header — per-edge numbers from the quads, honest error state.
+    panel.fillBoxModelSection(QJsonObject{
+        {QStringLiteral("content"),
+         QJsonArray{0, 0, 40, 0, 40, 20, 0, 20}},
+        {QStringLiteral("padding"),
+         QJsonArray{0, 0, 50, 0, 50, 30, 0, 30}},
+        {QStringLiteral("border"),
+         QJsonArray{0, 0, 60, 0, 60, 40, 0, 40}},
+        {QStringLiteral("margin"),
+         QJsonArray{0, 0, 80, 0, 80, 60, 0, 60}},
+        {QStringLiteral("width"), 80},
+        {QStringLiteral("height"), 60}},
+        QString());
+    QWidget *boxView = panel.findChild<QWidget *>(
+        QStringLiteral("bidiElementsBoxModel"));
+    QVERIFY(boxView);
+    QCOMPARE(boxView->property("state").toString(),
+             QStringLiteral("model"));
+    QCOMPARE(boxView->property("cw").toDouble(), 40.0);
+    QCOMPARE(boxView->property("ch").toDouble(), 20.0);
+    QCOMPARE(boxView->property("mr").toDouble(), 20.0);
+    QCOMPARE(boxView->property("mb").toDouble(), 20.0);
+    QCOMPARE(boxView->property("br").toDouble(), 10.0);
+    QCOMPARE(boxView->property("pl").toDouble(), 0.0);
+    panel.fillBoxModelSection(QJsonObject(), QStringLiteral("down"));
+    QCOMPARE(boxView->property("state").toString(),
+             QStringLiteral("error"));
+    QCOMPARE(boxView->property("error").toString(),
+             QStringLiteral("down"));
+
+    // (d) the find dock lists every hit's markup; the clicked row
+    // selects the node in the tree like Enter/arrow cycling.
+    panel.m_domFind->setText(QStringLiteral("div"));
+    id = panel.testRegisterTag(10); // TagDomSearch
+    panel.onResponse(id, reply(QJsonDocument(QJsonArray{
+        QJsonObject{{QStringLiteral("path"), QStringLiteral("1")},
+                    {QStringLiteral("label"),
+                     QStringLiteral("div#a.x.y")},
+                    {QStringLiteral("markup"),
+                     QStringLiteral("<div id=\"a\" "
+                                    "class=\"x y\">")}},
+        QJsonObject{{QStringLiteral("path"), QStringLiteral("0")},
+                    {QStringLiteral("label"),
+                     QStringLiteral("body.main")},
+                    {QStringLiteral("markup"),
+                     QStringLiteral("<body class=\"main\">")}}})
+        .toJson(QJsonDocument::Compact)));
+    QCOMPARE(panel.testSearchPaths(),
+             QStringList({QStringLiteral("1"), QStringLiteral("0")}));
+    QCOMPARE(panel.m_domFindCount->text(), QStringLiteral("1 of 2"));
+    QVERIFY(!panel.m_domFindResults->isHidden());
+    QCOMPARE(panel.m_domFindResults->count(), 2);
+    QCOMPARE(panel.m_domFindResults->item(0)->text(),
+             QStringLiteral("<div id=\"a\" class=\"x y\">"));
+    QTRY_COMPARE(panel.m_domTree->currentItem(), root->child(1));
+    // Clicking a listed hit jumps the ring to it.
+    emit panel.m_domFindResults->itemClicked(
+        panel.m_domFindResults->item(1));
+    QCOMPARE(panel.testSearchIndex(), 1);
+    QCOMPARE(panel.m_domFindCount->text(), QStringLiteral("2 of 2"));
+    QTRY_COMPARE(panel.m_domTree->currentItem(), root->child(0));
+    // …and cycling moves the list's current row with the ring.
+    panel.domSearchStep(1); // wraps to 0
+    QCOMPARE(panel.m_domFindResults->currentRow(), 0);
+    // An empty result hides the list again.
+    id = panel.testRegisterTag(10);
+    panel.onResponse(id, reply(QByteArray("[]")));
+    QCOMPARE(panel.m_domFindCount->text(), QStringLiteral("0 of 0"));
+    QVERIFY(panel.m_domFindResults->isHidden());
 }
 
 void tst_DevTools::bidiContextSelector()
@@ -2424,14 +2642,20 @@ void tst_DevTools::bidiFullTabSet()
         QCOMPARE(panel.m_tabs->tabText(i),
                  QString::fromLatin1(want[i]));
 
-    // Elements: tree + toolbar + crumbs + styles pane.
+    // Elements: tree + toolbar + crumbs + styles pane.  DEVT22:
+    // markup delegate, stats label, find results list.
     QVERIFY(panel.findChild<QWidget *>(
                 QStringLiteral("bidiElementsToolbar")));
     QVERIFY(panel.findChild<QWidget *>(
                 QStringLiteral("bidiElementsCrumbs")));
+    QVERIFY(panel.findChild<QWidget *>(
+                QStringLiteral("bidiElementsFindResults")));
     QVERIFY(panel.m_inspectToggle && panel.m_inspectToggle->isCheckable());
     QVERIFY(panel.m_stylesView);
     QVERIFY(panel.m_stylesTitle);
+    QVERIFY(panel.m_domStats && panel.m_domFindResults);
+    QVERIFY(panel.m_domTree->itemDelegate()
+                ->property("aroraDomMarkup").toBool());
 
     // Sources: resource tree, read-only view, breakpoint row + list.
     QVERIFY(panel.m_sourcesTree);

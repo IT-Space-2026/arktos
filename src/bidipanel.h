@@ -21,6 +21,12 @@
  *              styles pane — real CSS.getComputedStyleForNode output
  *              when the CSS domain answers, an honest DOM attributes/
  *              inline-style readout when it does not.
+ *              DEVT22's Chrome-UX pass: a compact bordered toolbar
+ *              (inspect/refresh/find + live element count), tree
+ *              rows painted as <tag attr="v"> markup with attribute
+ *              coloring, a grouped styles rail whose Box model
+ *              section is a real nested-boxes diagram, and a find
+ *              dock with a results list under the query row.
  *   Console    log.entryAdded event stream + script.evaluate REPL —
  *              DEVT12's Chromium parity pass: a structured entry list
  *              (per-level wash + icon, source url:line on the right
@@ -223,9 +229,16 @@ private:
     // domSelectPath, prev/next cycle.
     void runDomSearch();
     void domSearchStep(int dir);
-    void applyDomSearchResult(const QStringList &paths);
+    // DEVT22: labels carries the hits' markup lines for the results
+    // list (paths themselves when the reply labels nothing).
+    void applyDomSearchResult(const QStringList &paths,
+                              const QStringList &labels = QStringList());
     // Styles-pane group plumbing + attribute editing (DEVT19).
     QTreeWidgetItem *stylesSection(const QString &name);
+    // DEVT22: the Box model section's spanned diagram row, and the
+    // toolbar's live element count.
+    QTreeWidgetItem *boxModelDiagramItem(QTreeWidgetItem *group);
+    void updateDomStats();
     void fillAttributesSection(const QJsonArray &attributes,
                                const QString &errText);
     void fillComputedSection(const QJsonArray &styles,
@@ -358,6 +371,10 @@ private:
     QToolButton *m_domFindPrev;
     QToolButton *m_domFindNext;
     QLabel *m_domFindCount;
+    // DEVT22: the hits list under the find row, and the toolbar's
+    // element-count label.
+    QListWidget *m_domFindResults;
+    QLabel *m_domStats;
     QTimer *m_domSearchDebounce;
     QStringList m_searchPaths;
     int m_searchIndex = -1;
