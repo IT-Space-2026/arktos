@@ -275,6 +275,17 @@
          stdDeviation="0.40474704"
          id="feGaussianBlur4030" />
     </filter>
+    <linearGradient id="auroraGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0"   style="stop-color:#22f59a;stop-opacity:1"/>
+      <stop offset="0.55" style="stop-color:#3fd2f0;stop-opacity:0.95"/>
+      <stop offset="1"   style="stop-color:#a24ef5;stop-opacity:0.95"/>
+    </linearGradient>
+    <filter id="auroraBlur" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="1.1"/>
+    </filter>
+    <filter id="cubBlur" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="0.5"/>
+    </filter>
   </defs>
   <sodipodi:namedview
      id="base"
@@ -550,5 +561,6 @@
        d="M 6.0987963,34.478291 C 6.9237541,34.684531 6.9974108,34.669799 8.3968931,35.097009 C 8.4263568,35.921967 8.1022652,36.393372 7.9107572,36.864777 C 10.408268,35.943223 11.028966,33.449466 11.474603,33.488412 C 12.201734,34.157192 12.22176,34.693392 8.5736698,37.571884 C 7.6161295,37.32145 6.6585888,37.071017 5.7010485,36.820583 C 5.8041683,36.15767 5.7747055,36.15767 6.0987963,34.478291 z"
        id="path2467"
        sodipodi:nodetypes="ccccccc" />
+    
   </g>
 </svg>

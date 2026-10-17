@@ -1,7 +1,7 @@
 /* PTAB02: private-branded variant of startpage.css — same layout as
    the tor page (TOR09), but a deep private-browsing navy instead of
    the tor violet.  The base colors are already dark, so the
-   html.arora-dark overrides only deepen them further. */
+   html.arktos-dark overrides only deepen them further. */
 
 * {
     margin: 0;
@@ -20,8 +20,26 @@ html {
 }
 
 body {
-    margin-top: 60px;
+    margin-top: 0;
     color: #e9effc;
+}
+
+/* Aurora stage: navy-shifted wave band whose crest passes behind
+   the plain logo — same composition as startpage.css. */
+#aurora {
+    position: relative;
+    height: 240px;
+    margin-top: 20px;
+    background: url("aurora-wave-private.svg") no-repeat center 0 / 1600px 300px;
+}
+
+#aurora img {
+    position: absolute;
+    left: 50%;
+    top: 18px;
+    width: 170px;
+    height: 170px;
+    margin-left: -85px;
 }
 
 #header, #search, #privatelogo {
@@ -35,8 +53,15 @@ body {
 }
 
 #header {
-    background: linear-gradient(to bottom, #3a5da8 0%, #2a447f 90%, #21376b 100%);
+    background:
+        radial-gradient(130% 220% at 85% -40%,
+            rgba(46, 200, 245, 0.25) 0%,
+            rgba(74, 143, 232, 0.15) 40%,
+            rgba(74, 143, 232, 0) 70%),
+        linear-gradient(to bottom, #3a5da8 0%, #2a447f 90%, #21376b 100%);
+    box-shadow: 0 2px 14px rgba(74, 143, 232, 0.35);
     height: 20px;
+    text-align: center;
 }
 
 #header h1 {
@@ -44,13 +69,7 @@ body {
     font-size: 1.7em;
     color: #fff;
     font-weight: bold;
-}
-
-#header img {
-    display: inline;
-    float: right;
-    height: 150px;
-    margin-top: -80px;
+    text-shadow: 0 1px 6px rgba(46, 200, 245, 0.4);
 }
 
 #search {
@@ -71,6 +90,15 @@ body {
 
 #search input[type=submit] {
     width: 25%;
+    background: linear-gradient(to right, #2ec8f5 0%, #6b5fd4 100%);
+    color: #fff;
+    border: 0;
+    border-radius: 4px;
+    padding: 2px 0;
+}
+
+#search input[type=submit]:hover {
+    background: linear-gradient(to right, #2ec8f5 0%, #4a8fe8 55%, #6b5fd4 100%);
 }
 
 #privatelogo {
@@ -81,16 +109,16 @@ body {
     height: 110px;
 }
 
-/* THEME01: the start page adds the arora-dark class on <html> from
-   the arora channel's darkChrome property — the app chrome palette,
+/* THEME01: the start page adds the arktos-dark class on <html> from
+   the arktos channel's darkChrome property — the app chrome palette,
    not the OS's prefers-color-scheme. */
-html.arora-dark {
+html.arktos-dark {
     background: linear-gradient(to bottom, #1a2a52 0%, #101a33 60%, #0b1327 100%);
 }
-html.arora-dark body {
+html.arktos-dark body {
     color: #e5ecfa;
 }
-html.arora-dark #search {
+html.arktos-dark #search {
     background: linear-gradient(to right, #24355e 0%, #31467a 50%, #24355e 100%);
     color: #e5ecfa;
 }
