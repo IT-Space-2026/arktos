@@ -1361,6 +1361,24 @@ impl Core {
                     }),
                 );
             }
+            // DEVT20: the Sources tab's debugger surface — CDP events
+            // the BiDi model has no shape for, forwarded verbatim
+            // (context id injected) under the vendor "debugger"
+            // subscription so clients that never asked see nothing.
+            "Debugger.paused" | "Debugger.resumed" | "Debugger.scriptParsed"
+            | "Debugger.breakpointResolved" | "Page.frameNavigated" => {
+                if !subscribed("debugger") {
+                    return;
+                }
+                let mut p = params;
+                if let Some(obj) = p.as_object_mut() {
+                    obj.insert(
+                        "context".to_string(),
+                        self.context_for_session(session),
+                    );
+                }
+                self.event(name, p);
+            }
             _ => {}
         }
     }

@@ -40,6 +40,7 @@
 #include <qpolygon.h>
 #include <qpushbutton.h>
 #include <qscrollbar.h>
+#include <qshortcut.h>
 #include <qsortfilterproxymodel.h>
 #include <qspinbox.h>
 #include <qsplitter.h>
@@ -51,6 +52,9 @@
 #include <qtableview.h>
 #include <qtablewidget.h>
 #include <qtabwidget.h>
+#include <qtextcursor.h>
+#include <qtextedit.h>
+#include <qtextformat.h>
 #include <qtimer.h>
 #include <qtoolbutton.h>
 #include <qtreewidget.h>
@@ -72,6 +76,11 @@ static const quint64 TagSessionStorage = 6;
 static const quint64 TagIdb = 7;
 static const quint64 TagDomProps = 8;
 static const quint64 TagInspect = 9;
+// DEVT19: the Elements find bar's page-side search, and the
+// computed-style pick list used when the CSS domain is absent but
+// DOM still resolves node ids.
+static const quint64 TagDomSearch = 10;
+static const quint64 TagDomStylesPick = 11;
 
 // DEVT16: deferred getTree retries a "…attaching" web tab gets
 // before the row settles on the honest "no debug target" verdict —
@@ -101,7 +110,14 @@ enum CdpKind {
     CdpHeapStop,
     CdpBpSet,
     CdpBpRemove,
-    CdpGeneric   // quiet housekeeping (e.g. Runtime.releaseObjectGroup)
+    CdpGeneric,   // quiet housekeeping (e.g. Runtime.releaseObjectGroup)
+    // DEVT19 — Elements parity reads/writes on the resolved nodeId.
+    CdpAttributes,
+    CdpBoxModel,
+    CdpAttrSet,
+    // DEVT20 — Debugger.getScriptSource bodies; n carries the
+    // paused line to highlight (1-based, 0 = plain selection).
+    CdpScriptSource
 };
 
 // The cheapest REAL method per domain — enable calls are stateless,
@@ -150,7 +166,35 @@ static const char kDomHelper[] =
     "    out.push({label: s, children: cc}); n++;"
     "  }"
     "  return JSON.stringify(out);"
-    "}, 'installed'";
+    "};"
+    // DEVT19: a MutationObserver keeps the Elements tree live — the
+    // bridge relays no CDP DOM.* events, so the page reports batches
+    // on the same console.log channel the inspect pick uses (the
+    // panel intercepts the marker before the console sees it).
+    // Throttled so a mutation storm becomes one refresh.
+    "if (!window.__arora_dom_obs) {"
+    "  var __mt = null;"
+    "  window.__arora_dom_obs = new MutationObserver(function(ms) {"
+    "    for (var i = 0; i < ms.length; i++) {"
+    "      var m = ms[i], own = false, j;"
+    "      if (m.target && m.target.id === '__arora_overlay') continue;"
+    "      for (j = 0; j < m.addedNodes.length; j++)"
+    "        if (m.addedNodes[j].id === '__arora_overlay') own = true;"
+    "      for (j = 0; j < m.removedNodes.length; j++)"
+    "        if (m.removedNodes[j].id === '__arora_overlay') own = true;"
+    "      if (own) continue;"
+    "      if (__mt) clearTimeout(__mt);"
+    "      __mt = setTimeout(function() { __mt = null;"
+    "        console.log('__arora_dom_mutated'); }, 250);"
+    "      break;"
+    "    }"
+    "  });"
+    "  window.__arora_dom_obs.observe("
+    "    document.documentElement || document,"
+    "    {subtree: true, childList: true, attributes: true,"
+    "     characterData: true});"
+    "}"
+    "'installed'";
 
 // DEVT13: resolve an index path to the element itself — the same
 // walk the children helper performs, used by the computed-styles
@@ -177,6 +221,57 @@ static const char kDomProps[] =
     "out.push(['computed: '+pick[k],cs.getPropertyValue(pick[k])]);"
     "return JSON.stringify(out);})";
 
+// DEVT19: same pick list WITHOUT the attribute pairs — the CDP DOM
+// domain already answered attributes/box-model for this node, so
+// the Computed group gets only real computed values.
+static const char kDomStylesPick[] =
+    "(function(e){if(!e)return '[]';var cs=getComputedStyle(e),pick=['display',"
+    "'position','box-sizing','color','background-color','font-family',"
+    "'font-size','font-weight','line-height','margin','padding','border',"
+    "'width','height'];var out=[];for(var k=0;k<pick.length;k++)"
+    "out.push([pick[k],cs.getPropertyValue(pick[k])]);"
+    "return JSON.stringify(out);})";
+
+// DEVT19: the Elements find bar's page-side search — Chrome's "find
+// by string or selector".  A parseable query runs querySelectorAll;
+// anything else is a case-insensitive text/tag/id/class match over
+// every element.  Answers index paths in the tree's own coordinate
+// space (the same walk __arora_dom_children uses), capped at 200.
+static const char kDomSearch[] =
+    "window.__arora_dom_search = function(q) {"
+    "  var out = [], i;"
+    "  var path = function(e) {"
+    "    var parts = [];"
+    "    while (e && e !== document.documentElement) {"
+    "      var p = e.parentElement; if (!p) break; var i = 0;"
+    "      for (var c = p.firstElementChild; c; c = c.nextElementSibling) {"
+    "        if (c === e) break; i++;"
+    "      }"
+    "      parts.unshift(i); e = p;"
+    "    }"
+    "    return parts.join('/');"
+    "  };"
+    "  try {"
+    "    var nodes = document.querySelectorAll(q);"
+    "    for (i = 0; i < nodes.length && out.length < 200; i++)"
+    "      out.push(path(nodes[i]));"
+    "    return JSON.stringify(out);"
+    "  } catch (err) {}"
+    "  var low = q.toLowerCase();"
+    "  var all = document.querySelectorAll('*');"
+    "  for (i = 0; i < all.length && out.length < 200; i++) {"
+    "    var e = all[i];"
+    "    var cn = (typeof e.className === 'string') ? e.className : '';"
+    "    if (e.tagName.toLowerCase().indexOf(low) >= 0"
+    "        || (e.id && e.id.toLowerCase().indexOf(low) >= 0)"
+    "        || cn.toLowerCase().indexOf(low) >= 0"
+    "        || (e.children.length === 0 && e.textContent"
+    "            && e.textContent.toLowerCase().indexOf(low) >= 0))"
+    "      out.push(path(e));"
+    "  }"
+    "  return JSON.stringify(out);"
+    "}";
+
 // DEVT13: click-to-inspect — a translucent overlay chases the
 // hovered element; a click swallows the event, derives the same
 // index path the tree uses, and announces it on console.log (the
@@ -186,6 +281,9 @@ static const char kInspectOn[] =
     "(function(){var st=window.__arora_inspect;"
     "if(!st){st={};window.__arora_inspect=st;"
     "var ov=document.createElement('div');"
+    // DEVT19: the DOM mutation observer skips changes to our own
+    // inspect chrome by this id.
+    "ov.id='__arora_overlay';"
     "ov.style.cssText='position:fixed;z-index:2147483647;"
     "pointer-events:none;border:2px solid #1a73e8;"
     "background:rgba(26,115,232,.2);display:none';"
@@ -1252,6 +1350,17 @@ BidiPanel::BidiPanel(QWidget *parent)
         style()->standardIcon(QStyle::SP_BrowserReload));
     m_domRefresh->setToolTip(tr("Rebuild the element tree"));
     elb->addWidget(m_domRefresh);
+    // DEVT19: Chrome's Ctrl-F find — the toggle opens the find bar
+    // under the tree.
+    QToolButton *domSearchToggle = new QToolButton;
+    domSearchToggle->setObjectName(
+        QLatin1String("bidiElementsSearchToggle"));
+    domSearchToggle->setAutoRaise(true);
+    domSearchToggle->setIcon(
+        AroraIcon::getChrome(QLatin1String("edit-find")));
+    domSearchToggle->setToolTip(
+        tr("Find an element by string or selector (Ctrl+F)"));
+    elb->addWidget(domSearchToggle);
     elb->addStretch();
     elv->addWidget(elBar);
     QSplitter *elSplit = new QSplitter(Qt::Horizontal);
@@ -1273,8 +1382,14 @@ BidiPanel::BidiPanel(QWidget *parent)
     m_stylesView->setObjectName(QLatin1String("bidiElementsStyles"));
     m_stylesView->setColumnCount(2);
     m_stylesView->setHeaderLabels({tr("Property"), tr("Value")});
-    m_stylesView->setRootIsDecorated(false);
-    m_stylesView->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    // DEVT19: the pane is grouped now — Attributes / Computed
+    // styles / Box model — so the decoration comes back, and
+    // attribute rows open for editing on double-click.
+    m_stylesView->setRootIsDecorated(true);
+    m_stylesView->setItemsExpandable(true);
+    m_stylesView->setEditTriggers(
+        QAbstractItemView::DoubleClicked
+        | QAbstractItemView::EditKeyPressed);
     m_stylesView->header()->setSectionResizeMode(
         0, QHeaderView::ResizeToContents);
     m_stylesView->header()->setStretchLastSection(true);
@@ -1283,6 +1398,40 @@ BidiPanel::BidiPanel(QWidget *parent)
     elSplit->setStretchFactor(0, 3);
     elSplit->setStretchFactor(1, 2);
     elv->addWidget(elSplit);
+    // DEVT19: Chrome's find bar — query field, result count, prev /
+    // next, hidden until Ctrl+F or the toolbar toggle.
+    m_domFindBar = new QWidget;
+    m_domFindBar->setObjectName(QLatin1String("bidiElementsFindBar"));
+    m_domFindBar->setStyleSheet(QStringLiteral(
+        "border-top: 1px solid palette(mid);"));
+    QHBoxLayout *fb = new QHBoxLayout(m_domFindBar);
+    fb->setContentsMargins(4, 2, 4, 2);
+    fb->setSpacing(4);
+    m_domFind = new QLineEdit;
+    m_domFind->setObjectName(QLatin1String("bidiElementsFind"));
+    m_domFind->setPlaceholderText(
+        tr("Find by string or selector"));
+    m_domFind->setClearButtonEnabled(true);
+    fb->addWidget(m_domFind, 1);
+    m_domFindPrev = new QToolButton;
+    m_domFindPrev->setObjectName(QLatin1String("bidiElementsFindPrev"));
+    m_domFindPrev->setAutoRaise(true);
+    m_domFindPrev->setIcon(style()->standardIcon(QStyle::SP_ArrowUp));
+    m_domFindPrev->setToolTip(tr("Previous match"));
+    fb->addWidget(m_domFindPrev);
+    m_domFindNext = new QToolButton;
+    m_domFindNext->setObjectName(QLatin1String("bidiElementsFindNext"));
+    m_domFindNext->setAutoRaise(true);
+    m_domFindNext->setIcon(
+        style()->standardIcon(QStyle::SP_ArrowDown));
+    m_domFindNext->setToolTip(tr("Next match"));
+    fb->addWidget(m_domFindNext);
+    m_domFindCount = new QLabel;
+    m_domFindCount->setObjectName(
+        QLatin1String("bidiElementsFindCount"));
+    fb->addWidget(m_domFindCount);
+    m_domFindBar->hide();
+    elv->addWidget(m_domFindBar);
     m_crumbBar = new QWidget;
     m_crumbBar->setObjectName(QLatin1String("bidiElementsCrumbs"));
     m_crumbBar->setStyleSheet(QStringLiteral(
@@ -1425,6 +1574,53 @@ BidiPanel::BidiPanel(QWidget *parent)
     QVBoxLayout *srv = new QVBoxLayout(srcRight);
     srv->setContentsMargins(0, 0, 0, 0);
     srv->setSpacing(0);
+    // DEVT20: Chrome's debugger toolbar heads the right pane —
+    // pause/resume/step buttons plus the paused-state line.  The
+    // buttons map 1:1 onto the Debugger.* commands; enablement
+    // tracks the probe verdict (updateDebuggerButtons).
+    m_dbgBar = new QWidget;
+    m_dbgBar->setObjectName(QLatin1String("bidiSourcesDbgBar"));
+    QHBoxLayout *dbl = new QHBoxLayout(m_dbgBar);
+    dbl->setContentsMargins(4, 2, 4, 2);
+    dbl->setSpacing(4);
+    const auto dbgButton = [this, dbl](
+            QToolButton *&slot, QStyle::StandardPixmap icon,
+            const QString &name, const QString &tip,
+            const QString &method) {
+        slot = new QToolButton;
+        slot->setObjectName(name);
+        slot->setAutoRaise(true);
+        slot->setIcon(style()->standardIcon(icon));
+        slot->setToolTip(tip);
+        dbl->addWidget(slot);
+        connect(slot, &QToolButton::clicked, this,
+                [this, method]() { sendDebuggerCommand(method); });
+    };
+    dbgButton(m_dbgPause, QStyle::SP_MediaPause,
+              QStringLiteral("bidiDbgPause"),
+              tr("Pause script execution"),
+              QStringLiteral("Debugger.pause"));
+    dbgButton(m_dbgResume, QStyle::SP_MediaPlay,
+              QStringLiteral("bidiDbgResume"),
+              tr("Resume script execution"),
+              QStringLiteral("Debugger.resume"));
+    dbgButton(m_dbgStepOver, QStyle::SP_MediaSkipForward,
+              QStringLiteral("bidiDbgStepOver"),
+              tr("Step over the next call"),
+              QStringLiteral("Debugger.stepOver"));
+    dbgButton(m_dbgStepInto, QStyle::SP_ArrowDown,
+              QStringLiteral("bidiDbgStepInto"),
+              tr("Step into the next call"),
+              QStringLiteral("Debugger.stepInto"));
+    dbgButton(m_dbgStepOut, QStyle::SP_ArrowUp,
+              QStringLiteral("bidiDbgStepOut"),
+              tr("Step out of the current function"),
+              QStringLiteral("Debugger.stepOut"));
+    m_pauseStatus = new QLabel;
+    m_pauseStatus->setObjectName(QLatin1String("bidiDbgStatus"));
+    m_pauseStatus->setVisible(false);
+    dbl->addWidget(m_pauseStatus, 1);
+    srv->addWidget(m_dbgBar);
     m_sourceView = new QPlainTextEdit;
     m_sourceView->setObjectName(QLatin1String("bidiSourceView"));
     m_sourceView->setReadOnly(true);
@@ -1432,7 +1628,9 @@ BidiPanel::BidiPanel(QWidget *parent)
         QFontDatabase::FixedFont));
     srv->addWidget(m_sourceView, 1);
     // Chrome's gutter breakpoints compress to an explicit row here —
-    // a QPlainTextEdit has no gutter to click.
+    // a QPlainTextEdit has no gutter to click.  Lines are 1-based
+    // like Chrome's gutter; toggleBreakpoint maps down to CDP's
+    // 0-based lineNumber.
     m_bpBar = new QWidget;
     m_bpBar->setObjectName(QLatin1String("bidiSourcesBpBar"));
     QHBoxLayout *bpl = new QHBoxLayout(m_bpBar);
@@ -1440,7 +1638,8 @@ BidiPanel::BidiPanel(QWidget *parent)
     bpl->setSpacing(4);
     bpl->addWidget(new QLabel(tr("Breakpoint at line")));
     m_bpLine = new QSpinBox;
-    m_bpLine->setRange(0, 9999999);
+    m_bpLine->setObjectName(QLatin1String("bidiSourcesBpLine"));
+    m_bpLine->setRange(1, 9999999);
     bpl->addWidget(m_bpLine);
     QToolButton *bpSet = new QToolButton;
     bpSet->setObjectName(QLatin1String("bidiSourcesBpSet"));
@@ -1457,6 +1656,17 @@ BidiPanel::BidiPanel(QWidget *parent)
     m_bpList->setToolTip(
         tr("Active breakpoints — double-click to remove"));
     srv->addWidget(m_bpList);
+    // DEVT20: Chrome's Call stack sidebar compresses to a list under
+    // the breakpoints — filled while the debugger is paused.
+    QLabel *callLabel = new QLabel(tr("Call stack"));
+    srv->addWidget(callLabel);
+    m_callFrames = new QListWidget;
+    m_callFrames->setObjectName(
+        QLatin1String("bidiSourcesCallStack"));
+    m_callFrames->setMaximumHeight(90);
+    m_callFrames->setToolTip(
+        tr("Call stack while the debugger is paused"));
+    srv->addWidget(m_callFrames);
     srcSplit->addWidget(srcRight);
     srcSplit->setStretchFactor(0, 1);
     srcSplit->setStretchFactor(1, 3);
@@ -1957,6 +2167,77 @@ BidiPanel::BidiPanel(QWidget *parent)
             this, &BidiPanel::setInspecting);
     connect(m_domRefresh, &QToolButton::clicked,
             this, &BidiPanel::refreshDom);
+    // DEVT19 — Elements parity wiring: find bar, live-refresh
+    // debounce, probe watchdog, attribute editing.
+    connect(domSearchToggle, &QToolButton::clicked, this, [this]() {
+        m_domFindBar->setVisible(!m_domFindBar->isVisible());
+        if (m_domFindBar->isVisible()) {
+            m_domFind->setFocus();
+            m_domFind->selectAll();
+        }
+    });
+    QShortcut *findShortcut = new QShortcut(
+        QKeySequence::Find, elementsPage);
+    findShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(findShortcut, &QShortcut::activated, this, [this]() {
+        m_domFindBar->setVisible(!m_domFindBar->isVisible());
+        if (m_domFindBar->isVisible()) {
+            m_domFind->setFocus();
+            m_domFind->selectAll();
+        }
+    });
+    m_domSearchDebounce = new QTimer(this);
+    m_domSearchDebounce->setSingleShot(true);
+    m_domSearchDebounce->setInterval(300);
+    connect(m_domSearchDebounce, &QTimer::timeout,
+            this, &BidiPanel::runDomSearch);
+    connect(m_domFind, &QLineEdit::textChanged,
+            this, [this]() { m_domSearchDebounce->start(); });
+    connect(m_domFind, &QLineEdit::returnPressed, this, [this]() {
+        if (m_searchPaths.isEmpty())
+            runDomSearch();
+        else
+            domSearchStep(1);
+    });
+    connect(m_domFindPrev, &QToolButton::clicked,
+            this, [this]() { domSearchStep(-1); });
+    connect(m_domFindNext, &QToolButton::clicked,
+            this, [this]() { domSearchStep(1); });
+    m_domLiveTimer = new QTimer(this);
+    m_domLiveTimer->setSingleShot(true);
+    m_domLiveTimer->setInterval(350);
+    connect(m_domLiveTimer, &QTimer::timeout,
+            this, &BidiPanel::liveRefreshDom);
+    m_probeWatch = new QTimer(this);
+    m_probeWatch->setSingleShot(true);
+    m_probeWatch->setInterval(6000);
+    connect(m_probeWatch, &QTimer::timeout,
+            this, &BidiPanel::probeWatchdog);
+    // DEVT20: Page.frameNavigated (and the load milestones) burst on
+    // multi-frame pages — coalesce into one resource-tree refresh.
+    m_srcRefreshDebounce = new QTimer(this);
+    m_srcRefreshDebounce->setSingleShot(true);
+    m_srcRefreshDebounce->setInterval(400);
+    connect(m_srcRefreshDebounce, &QTimer::timeout,
+            this, &BidiPanel::refreshSources);
+    // Buttons start down until the Debugger probe verdict lands.
+    updateDebuggerButtons();
+    connect(m_stylesView, &QTreeWidget::itemChanged,
+            this, [this](QTreeWidgetItem *item, int column) {
+        if (m_stylesFilling || !item || !item->parent())
+            return;
+        if (item->parent()->data(0, Qt::UserRole + 4).toString()
+                != tr("Attributes"))
+            return;
+        if (column == 0) {
+            // Renames aren't wired — put the original name back.
+            m_stylesFilling = true;
+            item->setText(0, item->data(0, Qt::UserRole).toString());
+            m_stylesFilling = false;
+            return;
+        }
+        editDomAttribute(item, column);
+    });
     // The metrics poll only runs while its tab is visible.
     connect(m_tabs, &QTabWidget::currentChanged, this, [this](int i) {
         QWidget *w = m_tabs->widget(i);
@@ -2089,6 +2370,20 @@ void BidiPanel::onConnectionChanged(int state)
     } else {
         m_stack->setCurrentIndex(0);
         m_metricsTimer->stop();
+        m_domLiveTimer->stop();
+        // DEVT19: drop the probe verdicts with the channel — a
+        // reconnect is a fresh session and re-probes; keeping the
+        // old map would pin a dead endpoint's "down" forever (or
+        // worse, report "up" on a channel that can't serve).
+        m_probeWatch->stop();
+        m_domainErr.clear();
+        m_probedContext.clear();
+        // DEVT20: the channel died — script ids, pause chrome and
+        // session breakpoint ids are all stale.
+        resetDebuggerState();
+        m_breakpoints.clear();
+        rebuildBreakpointList();
+        updateDebuggerButtons();
         m_unavailableLabel->setText(
             m_client->unavailableReason().isEmpty()
                 ? tr("Debug channel disconnected.")
@@ -2115,7 +2410,12 @@ void BidiPanel::applyContextSelection()
     updateNetworkSummary();
     // DEVT13: the verdicts are per-session — a different page is a
     // different attach, so re-probe, and the Sources/Security/
-    // Application views follow the new page.
+    // Application views follow the new page.  DEVT20: the debugger
+    // surface is per-session too — script ids and breakpoint ids
+    // belong to the page we just left.
+    resetDebuggerState();
+    m_breakpoints.clear();
+    rebuildBreakpointList();
     probeDomains();
     refreshSources();
     refreshSecurity();
@@ -2289,8 +2589,8 @@ void BidiPanel::evaluateInput()
     sendEval(currentContext(), expr, TagConsole);
 }
 
-void BidiPanel::sendEval(const QString &context, const QString &expression,
-                         quint64 tag)
+quint64 BidiPanel::sendEval(const QString &context,
+                            const QString &expression, quint64 tag)
 {
     QJsonObject target;
     target[QStringLiteral("context")] = context;
@@ -2303,6 +2603,7 @@ void BidiPanel::sendEval(const QString &context, const QString &expression,
         QJsonDocument(params).toJson(QJsonDocument::Compact));
     if (id)
         m_evalTags.insert(id, tag);
+    return id;
 }
 
 void BidiPanel::refreshContexts()
@@ -2755,11 +3056,20 @@ void BidiPanel::refreshDom()
     m_domTree->clear();
     m_domHelperContext.clear();
     // DEVT13: the tree's siblings — crumbs, styles, and any pending
-    // inspect selection — die with it.
+    // inspect selection — die with it.  DEVT19: so do the search
+    // hit list, the mutation snapshot/timer, and the resolved
+    // attribute-edit node.
     updateCrumbs(nullptr);
     m_stylesView->clear();
-    m_propsItem = nullptr;
+    m_propsPath.clear();
+    m_propsNodeId = 0;
     m_selectActive = false;
+    m_searchPaths.clear();
+    m_searchIndex = -1;
+    m_domFindCount->clear();
+    m_domLiveExpand.clear();
+    m_evalSerials.clear();
+    m_domLiveTimer->stop();
     const QString ctx = currentContext();
     if (ctx.isEmpty())
         return;
@@ -2785,6 +3095,15 @@ void BidiPanel::domItemExpanded(QTreeWidgetItem *item)
         return;
     if (!item->child(0)->data(0, Qt::UserRole).isNull())
         return; // real children already
+    fetchDomChildren(item);
+}
+
+// DEVT19: factored out of domItemExpanded so the live refresh can
+// re-pull a materialized branch — no placeholder precondition.
+void BidiPanel::fetchDomChildren(QTreeWidgetItem *item)
+{
+    if (!item)
+        return;
     const QString path = item->data(0, Qt::UserRole).toString();
     const QString ctx = currentContext();
     if (ctx.isEmpty())
@@ -2804,6 +3123,128 @@ void BidiPanel::domItemExpanded(QTreeWidgetItem *item)
     if (id) {
         m_evalTags.insert(id, TagDomChildren);
         m_pendingDomItem.insert(id, item);
+    }
+}
+
+// DEVT19: a mutation report debounced onto this — re-fetch the
+// root's children, which replaces one level; the expansion
+// snapshot then walks matching children back open, and each of
+// those expands fetches its own level in turn.  Sibling-index
+// reshuffles collapse what they must rather than pin stale rows.
+void BidiPanel::liveRefreshDom()
+{
+    ++m_domLiveRefreshCount;
+    const QString ctx = currentContext();
+    if (ctx.isEmpty())
+        return;
+    m_domLiveExpand.clear();
+    const QLatin1Char sep(0x1f);
+    QVector<QTreeWidgetItem *> stack;
+    for (int i = 0; i < m_domTree->topLevelItemCount(); ++i)
+        stack.append(m_domTree->topLevelItem(i));
+    while (!stack.isEmpty()) {
+        QTreeWidgetItem *item = stack.takeLast();
+        // Materialized = the lazy fetch already ran (a placeholder /
+        // verdict child keeps a null path — not materialized).
+        if (item->childCount() != 0
+            && (item->childCount() != 1
+                || !item->child(0)->data(0, Qt::UserRole).isNull())) {
+            QStringList expanded;
+            for (int i = 0; i < item->childCount(); ++i) {
+                QTreeWidgetItem *kid = item->child(i);
+                if (kid->isExpanded())
+                    expanded << kid->text(0);
+                stack.append(kid);
+            }
+            m_domLiveExpand.insert(
+                item->data(0, Qt::UserRole).toString() + sep
+                    + item->text(0),
+                expanded);
+        }
+    }
+    if (QTreeWidgetItem *root = m_domTree->topLevelItem(0))
+        fetchDomChildren(root);
+    // The selected element's styles/attributes may have moved with
+    // the same mutation — re-resolve rather than show stale values.
+    if (!m_propsPath.isEmpty())
+        requestStylesFor(domItemForPath(m_propsPath));
+    // An open find re-runs like Chrome's live result count.
+    if (!m_domFind->text().isEmpty())
+        m_domSearchDebounce->start();
+}
+
+// After a live-refreshed branch fills, re-expand the children that
+// were open before — matched by label, so a reshuffled sibling
+// still keeps its chain while a renamed element does not silently
+// expand the wrong row.
+void BidiPanel::restoreDomExpansion(QTreeWidgetItem *item)
+{
+    if (m_domLiveExpand.isEmpty() || !item)
+        return;
+    const QLatin1Char sep(0x1f);
+    const QStringList expanded = m_domLiveExpand.value(
+        item->data(0, Qt::UserRole).toString() + sep + item->text(0));
+    if (expanded.isEmpty())
+        return;
+    for (int i = 0; i < item->childCount(); ++i) {
+        QTreeWidgetItem *kid = item->child(i);
+        if (expanded.contains(kid->text(0)))
+            kid->setExpanded(true); // fires the lazy fetch down
+    }
+}
+
+// DEVT19: Chrome's Elements find — the query goes to the page-side
+// helper (selector first, text fallback), which answers index paths
+// in the tree's coordinate space.
+void BidiPanel::runDomSearch()
+{
+    const QString query = m_domFind->text().trimmed();
+    if (query.isEmpty()) {
+        m_searchPaths.clear();
+        m_searchIndex = -1;
+        m_domFindCount->clear();
+        return;
+    }
+    const QString ctx = currentContext();
+    if (ctx.isEmpty() || m_client->state() != BidiClient::Connected)
+        return;
+    const QByteArray quoted = QJsonDocument(QJsonArray{query})
+                                  .toJson(QJsonDocument::Compact);
+    sendEval(ctx,
+             QString::fromLatin1(kDomSearch)
+                 + QStringLiteral(";window.__arora_dom_search(%1)")
+                       .arg(QString::fromUtf8(
+                           quoted.mid(1, quoted.size() - 2))),
+             TagDomSearch);
+    m_domFindCount->setText(tr("searching…"));
+}
+
+// Enter / the arrow buttons walk the hit ring; the tree materializes
+// each hop lazily, so jumping to a match reuses the inspect pick's
+// descend-one-level-at-a-time walk.
+void BidiPanel::domSearchStep(int delta)
+{
+    if (m_searchPaths.isEmpty()) {
+        runDomSearch();
+        return;
+    }
+    m_searchIndex = (m_searchIndex + delta + m_searchPaths.size())
+                    % m_searchPaths.size();
+    m_domFindCount->setText(
+        tr("%1 of %2").arg(m_searchIndex + 1)
+            .arg(m_searchPaths.size()));
+    domSelectPath(m_searchPaths.at(m_searchIndex));
+}
+
+void BidiPanel::applyDomSearchResult(const QStringList &paths)
+{
+    m_searchPaths = paths;
+    m_searchIndex = -1;
+    m_domFindCount->setText(
+        paths.isEmpty() ? tr("0 of 0") : tr("1 of %1").arg(paths.size()));
+    if (!paths.isEmpty()) {
+        m_searchIndex = 0;
+        domSelectPath(paths.at(0));
     }
 }
 
@@ -2885,6 +3326,12 @@ void BidiPanel::onResponse(quint64 id, const QByteArray &json)
             domFetchFailed(m_pendingDomItem.take(id), errorText);
         if (tag == TagDomInject)
             domFetchFailed(m_domTree->topLevelItem(0), errorText);
+        // DEVT19: a refused search/pick eval still gets an honest
+        // landing instead of spinning forever.
+        if (tag == TagDomSearch)
+            applyDomSearchResult(QStringList());
+        if (tag == TagDomStylesPick)
+            fillComputedSection(QJsonArray(), errorText);
         return;
     }
     const QJsonObject result = root[QStringLiteral("result")].toObject();
@@ -2932,6 +3379,10 @@ void BidiPanel::onResponse(quint64 id, const QByteArray &json)
             m_stylesView->addTopLevelItem(new QTreeWidgetItem(
                 QStringList{QString(), text}));
         }
+        if (tag == TagDomStylesPick)
+            fillComputedSection(QJsonArray(), text);
+        if (tag == TagDomSearch)
+            applyDomSearchResult(QStringList());
         return;
     }
     const QJsonObject remote = result[QStringLiteral("result")].toObject();
@@ -2956,6 +3407,23 @@ void BidiPanel::onResponse(quint64 id, const QByteArray &json)
         QTreeWidgetItem *item = m_pendingDomItem.take(id);
         if (!item)
             break;
+        // DEVT19: the refill deletes this branch's items — drop any
+        // still-pending fetches registered on a descendant first so
+        // a slower answer can't write into freed items (a live
+        // refresh re-pulling the parent outruns them).
+        for (auto it = m_pendingDomItem.begin();
+             it != m_pendingDomItem.end();) {
+            bool dead = false;
+            for (QTreeWidgetItem *q = it.value(); q; q = q->parent())
+                if (q == item) {
+                    dead = true;
+                    break;
+                }
+            if (dead)
+                it = m_pendingDomItem.erase(it);
+            else
+                ++it;
+        }
         // clear the placeholder
         while (item->childCount())
             delete item->takeChild(0);
@@ -2989,6 +3457,9 @@ void BidiPanel::onResponse(quint64 id, const QByteArray &json)
             item->addChild(child);
             ++idx;
         }
+        // DEVT19: a live-refresh fill re-opens the branches the
+        // snapshot recorded before the mutation wiped this level.
+        restoreDomExpansion(item);
         // DEVT13: a pending click-to-inspect walk keeps descending
         // through the freshly materialized children.
         if (m_selectActive)
@@ -3029,16 +3500,64 @@ void BidiPanel::onResponse(quint64 id, const QByteArray &json)
     case TagDomProps: {
         // The no-CSS-domain fallback: [name, value] pairs straight
         // off the element (attributes + a getComputedStyle pick
-        // list), labeled honestly by m_stylesTitle.
-        m_stylesView->clear();
-        const QJsonArray pairs =
-            QJsonDocument::fromJson(value.toString().toUtf8()).array();
-        for (const QJsonValue &pv : pairs) {
-            const QJsonArray pair = pv.toArray();
-            m_stylesView->addTopLevelItem(new QTreeWidgetItem(
-                QStringList{pair.at(0).toString(),
-                            pair.at(1).toString()}));
+        // list), labeled honestly by m_stylesTitle.  DEVT19: the
+        // pane is grouped now — 'computed: x' rows split into the
+        // Computed section, the rest are attributes; a stale reply
+        // (another selection raced it) is dropped by serial.
+        {
+            const int serial = m_evalSerials.take(id);
+            if (serial && serial != m_stylesSerial)
+                break;
         }
+        m_stylesView->clear();
+        {
+            const QJsonArray pairs = QJsonDocument::fromJson(
+                value.toString().toUtf8()).array();
+            QJsonArray attrs, computed;
+            for (const QJsonValue &pv : pairs) {
+                const QJsonArray pair = pv.toArray();
+                const QString name = pair.at(0).toString();
+                if (name.startsWith(QLatin1String("computed: "))) {
+                    computed.append(QJsonArray{
+                        name.mid(10), pair.at(1).toString()});
+                } else {
+                    // flat [name,value,…] — the getAttributes shape
+                    // fillAttributesSection consumes.
+                    attrs.append(pair.at(0));
+                    attrs.append(pair.at(1));
+                }
+            }
+            fillAttributesSection(attrs, QString());
+            fillComputedSection(computed, QString());
+            QTreeWidgetItem *box = stylesSection(tr("Box model"));
+            box->addChild(new QTreeWidgetItem(QStringList{
+                QString(),
+                tr("requires the CDP DOM domain")}));
+            box->setExpanded(true);
+        }
+        break;
+    }
+    case TagDomStylesPick: {
+        // The CSS domain's getComputedStyleForNode refused — the
+        // page-side pick list fills the Computed section honestly
+        // while Attributes/Box model keep their CDP answers.
+        {
+            const int serial = m_evalSerials.take(id);
+            if (serial && serial != m_stylesSerial)
+                break;
+        }
+        const QJsonArray pairs = QJsonDocument::fromJson(
+            value.toString().toUtf8()).array();
+        fillComputedSection(pairs, QString());
+        break;
+    }
+    case TagDomSearch: {
+        const QJsonArray paths = QJsonDocument::fromJson(
+            value.toString().toUtf8()).array();
+        QStringList list;
+        for (const QJsonValue &pv : paths)
+            list << pv.toString();
+        applyDomSearchResult(list);
         break;
     }
     case TagInspect:
@@ -3121,6 +3640,13 @@ void BidiPanel::onEvent(const QByteArray &json)
             domSelectPath(text.mid(kPick.size()));
             return;
         }
+        // DEVT19: the page-side MutationObserver reports on the
+        // same channel — control traffic again, so it re-arms the
+        // live-refresh debounce without reaching the console list.
+        if (text == QLatin1String("__arora_dom_mutated")) {
+            m_domLiveTimer->start();
+            return;
+        }
         addConsoleRow(
             consoleLevelFor(
                 params[QStringLiteral("level")].toString()),
@@ -3185,10 +3711,13 @@ void BidiPanel::onEvent(const QByteArray &json)
             refreshDom();
             updateNetworkSummary();
             // DEVT13: a fresh document owns fresh resources and a
-            // fresh security verdict.
+            // fresh security verdict.  DEVT20: script ids die with
+            // the document and the page resumes on navigation —
+            // the url breakpoints survive (same session).
             refreshSources();
             refreshSecurity();
             refreshApplication();
+            resetDebuggerState();
             m_selectActive = false;
         }
         return;
@@ -3230,7 +3759,19 @@ void BidiPanel::onEvent(const QByteArray &json)
                     ->setPageTimings(m_dclMs, m_loadMs);
                 updateNetworkSummary();
             }
+            // DEVT20: resources stream in during the load — the
+            // navigationStarted fetch ran before scripts/styles
+            // existed, so re-pull the tree once the document lands.
+            m_srcRefreshDebounce->start();
         }
+        return;
+    }
+
+    // DEVT20: Sources' debugger surface — the bridge forwards the
+    // raw CDP events under the "debugger" subscription group.
+    if (method.startsWith(QLatin1String("Debugger."))
+        || method == QLatin1String("Page.frameNavigated")) {
+        onDebuggerEvent(method, params);
         return;
     }
 
@@ -3407,6 +3948,28 @@ void BidiPanel::probeDomains()
                 QJsonDocument::fromJson(kDomainProbes[i].params)
                     .object(),
                 CdpProbe, QLatin1String(kDomainProbes[i].domain));
+    // DEVT19: a probe reply that never comes used to strand the
+    // feature in its constructed default — the watchdog applies
+    // honest verdicts anyway.
+    m_probeWatch->start();
+}
+
+// DEVT19: fire-and-forget probes assume every request gets a reply;
+// a dropped answer left applyDomainSupport() waiting on 9/9 for
+// ever.  Six seconds is a probe, not a page request — whatever has
+// not answered by then reads "no response" instead of "dead".
+void BidiPanel::probeWatchdog()
+{
+    if (m_probedContext.isEmpty()
+        || m_domainErr.size() >= kDomainProbeCount)
+        return;
+    for (int i = 0; i < kDomainProbeCount; ++i) {
+        const QLatin1String domain(kDomainProbes[i].domain);
+        if (!m_domainErr.contains(QString(domain)))
+            m_domainErr.insert(QString(domain),
+                               tr("probe timed out"));
+    }
+    applyDomainSupport();
 }
 
 // Verdicts -> UI.  A down domain flips its feature to the
@@ -3438,6 +4001,11 @@ void BidiPanel::applyDomainSupport()
         dbgUp ? QString()
               : tr("Requires the CDP Debugger domain — %1")
                     .arg(domainReason(QLatin1String("Debugger"))));
+    m_dbgBar->setToolTip(
+        dbgUp ? QString()
+              : tr("Requires the CDP Debugger domain — %1")
+                    .arg(domainReason(QLatin1String("Debugger"))));
+    updateDebuggerButtons();
 
     QStringList perfMissing;
     if (!domainUp(QLatin1String("Performance")))
@@ -3453,6 +4021,13 @@ void BidiPanel::applyDomainSupport()
     if (perfUp) {
         m_perfOffline->clear();
         requestMetrics();
+        // DEVT19: if the user was already sitting on the tab when
+        // the last probe landed, the tab-change that starts the
+        // poll already happened — arm it here too.
+        if (m_tabs->currentWidget()
+            && m_tabs->currentWidget()->objectName()
+                   == QLatin1String("bidiPerfPage"))
+            m_metricsTimer->start(1000);
     } else {
         m_metricsTimer->stop();
         m_perfOffline->setText(
@@ -3499,8 +4074,10 @@ void BidiPanel::onCdpResponse(quint64 id, const QJsonObject &root)
     switch (req.tag) {
     case CdpProbe:
         m_domainErr.insert(req.a, err ? errText : QString());
-        if (int(m_domainErr.size()) >= kDomainProbeCount)
+        if (int(m_domainErr.size()) >= kDomainProbeCount) {
+            m_probeWatch->stop();
             applyDomainSupport();
+        }
         return;
 
     case CdpResourceTree: {
@@ -3603,6 +4180,8 @@ void BidiPanel::onCdpResponse(quint64 id, const QJsonObject &root)
         delete m_srcHl;
         m_srcHl = nullptr;
         m_sourceView->setPlainText(QString::fromUtf8(bytes));
+        m_sourceView->setExtraSelections(
+            QList<QTextEdit::ExtraSelection>());
         // The in-tree highlighter speaks markup — attach it to the
         // document-ish resources it can honestly color, leave the
         // rest plain monospace.
@@ -3618,9 +4197,59 @@ void BidiPanel::onCdpResponse(quint64 id, const QJsonObject &root)
         return;
     }
 
-    case CdpEvalNode: {
-        if (err || req.n != m_stylesSerial)
+    case CdpScriptSource: {
+        if (err) {
+            // getScriptSource failed — for the still-displayed url
+            // the resource body is the honest fallback; anything
+            // else lands as readable error text.
+            if (!req.b.isEmpty() && req.b == m_sourceUrl
+                && domainUp(QLatin1String("Page"))) {
+                sendCdp(ctx, QStringLiteral("Page.getResourceContent"),
+                        QJsonObject{
+                            {QStringLiteral("frameId"),
+                             m_sourceFrameId},
+                            {QStringLiteral("url"), req.b}},
+                        CdpResourceContent, m_sourceFrameId, req.b);
+            } else {
+                m_sourceView->setPlainText(
+                    tr("(%1)").arg(errText));
+            }
             return;
+        }
+        delete m_srcHl;
+        m_srcHl = nullptr;
+        m_sourceView->setPlainText(
+            result[QStringLiteral("scriptSource")].toString());
+        // n carries the paused line to highlight (1-based; 0 for a
+        // plain resource selection, which clears instead).
+        if (req.n > 0)
+            highlightSourceLine(req.n);
+        else
+            m_sourceView->setExtraSelections(
+                QList<QTextEdit::ExtraSelection>());
+        return;
+    }
+
+    case CdpEvalNode: {
+        if (req.n != m_stylesSerial)
+            return;
+        if (err) {
+            // Node resolution failed — the DOM-eval fallback still
+            // gives a real readout.
+            if (!m_propsPath.isEmpty()) {
+                const quint64 id = sendEval(
+                    ctx,
+                    QString::fromLatin1(kDomProps)
+                        + QStringLiteral("(")
+                        + QString::fromLatin1(kDomResolve)
+                        + QStringLiteral("(\"%1\"))")
+                              .arg(m_propsPath),
+                    TagDomProps);
+                if (id)
+                    m_evalSerials.insert(id, req.n);
+            }
+            return;
+        }
         const QJsonObject remote =
             result[QStringLiteral("result")].toObject();
         const QString objectId =
@@ -3646,49 +4275,108 @@ void BidiPanel::onCdpResponse(quint64 id, const QJsonObject &root)
         if (err || !nodeId) {
             // Node resolution failed — the DOM-eval fallback still
             // gives a real readout.
-            if (m_propsItem) {
-                const QString path =
-                    m_propsItem->data(0, Qt::UserRole).toString();
-                sendEval(ctx,
-                         QString::fromLatin1(kDomProps)
-                             + QStringLiteral("(")
-                             + QString::fromLatin1(kDomResolve)
-                             + QStringLiteral("(\"%1\"))").arg(path),
-                         TagDomProps);
+            if (!m_propsPath.isEmpty()) {
+                const quint64 id = sendEval(
+                    ctx,
+                    QString::fromLatin1(kDomProps)
+                        + QStringLiteral("(")
+                        + QString::fromLatin1(kDomResolve)
+                        + QStringLiteral("(\"%1\"))")
+                              .arg(m_propsPath),
+                    TagDomProps);
+                if (id)
+                    m_evalSerials.insert(id, req.n);
             }
             return;
         }
+        // DEVT19: one nodeId feeds all three sections — attributes
+        // (with the resolved node parked for DOM.setAttributeValue
+        // edits), computed styles, and the box model.
+        m_propsNodeId = nodeId;
+        m_propsNodeSerial = req.n;
+        sendCdp(ctx, QStringLiteral("DOM.getAttributes"),
+                QJsonObject{{QStringLiteral("nodeId"), nodeId}},
+                CdpAttributes, QString(), QString(), req.n);
         sendCdp(ctx, QStringLiteral("CSS.getComputedStyleForNode"),
                 QJsonObject{{QStringLiteral("nodeId"), nodeId}},
                 CdpComputed, QString(), QString(), req.n);
+        sendCdp(ctx, QStringLiteral("DOM.getBoxModel"),
+                QJsonObject{{QStringLiteral("nodeId"), nodeId}},
+                CdpBoxModel, QString(), QString(), req.n);
+        return;
+    }
+
+    case CdpAttributes: {
+        if (req.n != m_stylesSerial)
+            return;
+        if (err) {
+            fillAttributesSection(QJsonArray(), errText);
+            return;
+        }
+        fillAttributesSection(
+            result[QStringLiteral("attributes")].toArray(),
+            QString());
         return;
     }
 
     case CdpComputed: {
         if (req.n != m_stylesSerial)
             return;
-        m_stylesView->clear();
         if (err) {
-            if (m_propsItem) {
-                const QString path =
-                    m_propsItem->data(0, Qt::UserRole).toString();
-                sendEval(ctx,
-                         QString::fromLatin1(kDomProps)
-                             + QStringLiteral("(")
-                             + QString::fromLatin1(kDomResolve)
-                             + QStringLiteral("(\"%1\"))").arg(path),
-                         TagDomProps);
+            // A CSS domain that probed "up" but refuses the call —
+            // the page-side pick list still gives real computed
+            // values for this section only.
+            if (!m_propsPath.isEmpty()) {
+                const quint64 id = sendEval(
+                    ctx,
+                    QString::fromLatin1(kDomStylesPick)
+                        + QStringLiteral("(")
+                        + QString::fromLatin1(kDomResolve)
+                        + QStringLiteral("(\"%1\"))")
+                              .arg(m_propsPath),
+                    TagDomStylesPick);
+                if (id)
+                    m_evalSerials.insert(id, req.n);
+                else
+                    fillComputedSection(QJsonArray(), errText);
             }
             return;
         }
-        const QJsonArray styles =
-            result[QStringLiteral("computedStyle")].toArray();
-        for (const QJsonValue &sv : styles) {
-            const QJsonObject s = sv.toObject();
-            m_stylesView->addTopLevelItem(new QTreeWidgetItem(
-                QStringList{
-                    s[QStringLiteral("name")].toString(),
-                    s[QStringLiteral("value")].toString()}));
+        fillComputedSection(
+            result[QStringLiteral("computedStyle")].toArray(),
+            QString());
+        return;
+    }
+
+    case CdpBoxModel: {
+        if (req.n != m_stylesSerial)
+            return;
+        if (err) {
+            fillBoxModelSection(QJsonObject(), errText);
+            return;
+        }
+        fillBoxModelSection(
+            result[QStringLiteral("model")].toObject(), QString());
+        return;
+    }
+
+    case CdpAttrSet: {
+        // The MutationObserver repaint refills the section; an
+        // error needs its own landing so the edit doesn't look
+        // swallowed.  On success re-pull the attributes now — the
+        // observer debounce would eventually do it, but the row
+        // should confirm the write it claims.
+        if (err) {
+            consoleLine(
+                QStringLiteral("< setAttributeValue failed: "),
+                errText);
+        } else if (m_propsNodeId
+                   && m_propsNodeSerial == m_stylesSerial) {
+            sendCdp(ctx, QStringLiteral("DOM.getAttributes"),
+                    QJsonObject{{QStringLiteral("nodeId"),
+                                 m_propsNodeId}},
+                    CdpAttributes, QString(), QString(),
+                    m_stylesSerial);
         }
         return;
     }
@@ -4008,18 +4696,22 @@ void BidiPanel::updateCrumbs(QTreeWidgetItem *item)
 void BidiPanel::requestStylesFor(QTreeWidgetItem *item)
 {
     m_stylesView->clear();
+    // DEVT19: a fresh selection invalidates the resolved node —
+    // attribute edits must never land on the previous element.
+    m_propsNodeId = 0;
+    m_propsPath.clear();
     if (!item || item->data(0, Qt::UserRole).isNull())
         return;
     const QString path = item->data(0, Qt::UserRole).toString();
     const QString ctx = currentContext();
     if (ctx.isEmpty() || m_client->state() != BidiClient::Connected)
         return;
-    m_propsItem = item;
+    m_propsPath = path;
     const int serial = ++m_stylesSerial;
     if (domainUp(QLatin1String("CSS"))) {
-        // path -> objectId -> nodeId -> computed style.  Each hop is
-        // a real CDP call; a stale reply (serial mismatch) is
-        // dropped in onCdpResponse.
+        // path -> objectId -> nodeId -> attributes + computed +
+        // box model.  Each hop is a real CDP call; a stale reply
+        // (serial mismatch) is dropped in onCdpResponse.
         sendCdp(ctx, QStringLiteral("Runtime.releaseObjectGroup"),
                 QJsonObject{{QStringLiteral("objectGroup"),
                              QStringLiteral("arora-elements")}},
@@ -4036,12 +4728,202 @@ void BidiPanel::requestStylesFor(QTreeWidgetItem *item)
     } else {
         // Honest subset when the CSS domain is absent: attributes,
         // inline style, a getComputedStyle pick list.
-        sendEval(ctx,
-                 QString::fromLatin1(kDomProps) + QStringLiteral("(")
-                     + QString::fromLatin1(kDomResolve)
-                     + QStringLiteral("(\"%1\"))").arg(path),
-                 TagDomProps);
+        const quint64 id = sendEval(
+            ctx,
+            QString::fromLatin1(kDomProps) + QStringLiteral("(")
+                + QString::fromLatin1(kDomResolve)
+                + QStringLiteral("(\"%1\"))").arg(path),
+            TagDomProps);
+        if (id)
+            m_evalSerials.insert(id, serial);
     }
+}
+
+// DEVT19: the styles pane's three groups — Chrome's Elements
+// sidebar shows Attributes (as tag text), Computed styles, and the
+// box model.  Sections are addressed by header text so partial
+// answers can fill independently of arrival order.
+QTreeWidgetItem *BidiPanel::stylesSection(const QString &header)
+{
+    const int role = Qt::UserRole + 4;
+    for (int i = 0; i < m_stylesView->topLevelItemCount(); ++i) {
+        QTreeWidgetItem *s = m_stylesView->topLevelItem(i);
+        if (s->data(0, role).toString() == header)
+            return s;
+    }
+    QTreeWidgetItem *s = new QTreeWidgetItem(QStringList(header));
+    s->setData(0, role, header);
+    QFont f = s->font(0);
+    f.setBold(true);
+    s->setFont(0, f);
+    // Keep the Chrome order: Attributes, Computed styles, Box model.
+    const auto rankOf = [this](const QString &h) {
+        return h == tr("Attributes") ? 0
+             : h == tr("Box model") ? 2 : 1;
+    };
+    int pos = m_stylesView->topLevelItemCount();
+    for (int i = 0; i < m_stylesView->topLevelItemCount(); ++i) {
+        const QString other =
+            m_stylesView->topLevelItem(i)->data(0, role).toString();
+        if (rankOf(other) > rankOf(header)) {
+            pos = i;
+            break;
+        }
+    }
+    m_stylesView->insertTopLevelItem(pos, s);
+    return s;
+}
+
+void BidiPanel::fillAttributesSection(const QJsonArray &attrs,
+                                      const QString &error)
+{
+    QTreeWidgetItem *group = stylesSection(tr("Attributes"));
+    while (group->childCount())
+        delete group->takeChild(0);
+    QSignalBlocker block(m_stylesView);
+    for (int i = 0; i + 1 < attrs.size(); i += 2) {
+        QTreeWidgetItem *row = new QTreeWidgetItem(QStringList{
+            attrs.at(i).toString(), attrs.at(i + 1).toString()});
+        // Editable in column 1 — DOM.setAttributeValue lands it.
+        // Column 0 keeps the true name in the role so a stray edit
+        // there can be put back.
+        row->setData(0, Qt::UserRole, attrs.at(i).toString());
+        row->setFlags(row->flags() | Qt::ItemIsEditable);
+        group->addChild(row);
+    }
+    if (attrs.isEmpty())
+        group->addChild(new QTreeWidgetItem(
+            QStringList{QString(),
+                        error.isEmpty() ? tr("(no attributes)") : error}));
+    group->setExpanded(true);
+}
+
+void BidiPanel::fillComputedSection(const QJsonArray &computed,
+                                    const QString &error)
+{
+    QTreeWidgetItem *group = stylesSection(tr("Computed styles"));
+    while (group->childCount())
+        delete group->takeChild(0);
+    QSignalBlocker block(m_stylesView);
+    // kDomStylesPick answers [[name,value]…] pairs;
+    // CSS.getComputedStyleForNode answers [{name,value}…].
+    for (const QJsonValue &cv : computed) {
+        QString name, val;
+        if (cv.isArray()) {
+            const QJsonArray pair = cv.toArray();
+            name = pair.at(0).toString();
+            val = pair.at(1).toString();
+        } else {
+            const QJsonObject c = cv.toObject();
+            name = c[QStringLiteral("name")].toString();
+            val = c[QStringLiteral("value")].toString();
+        }
+        group->addChild(new QTreeWidgetItem(QStringList{name, val}));
+    }
+    if (computed.isEmpty())
+        group->addChild(new QTreeWidgetItem(
+            QStringList{QString(),
+                        error.isEmpty() ? tr("(no values)") : error}));
+    group->setExpanded(true);
+}
+
+void BidiPanel::fillBoxModelSection(const QJsonObject &model,
+                                    const QString &error)
+{
+    QTreeWidgetItem *group = stylesSection(tr("Box model"));
+    while (group->childCount())
+        delete group->takeChild(0);
+    QSignalBlocker block(m_stylesView);
+    if (!error.isEmpty()) {
+        group->addChild(new QTreeWidgetItem(QStringList{QString(), error}));
+        group->setExpanded(true);
+        return;
+    }
+    // DOM.getBoxModel answers content/padding/border/margin quads —
+    // [x1,y1, x2,y2, x3,y3, x4,y4]; width = rightmost x - leftmost x.
+    const auto dims = [](const QJsonArray &quad) {
+        if (quad.size() < 8)
+            return qMakePair(0.0, 0.0);
+        double minX = quad.at(0).toDouble(), maxX = minX;
+        double minY = quad.at(1).toDouble(), maxY = minY;
+        for (int i = 0; i + 1 < quad.size(); i += 2) {
+            minX = qMin(minX, quad.at(i).toDouble());
+            maxX = qMax(maxX, quad.at(i).toDouble());
+            minY = qMin(minY, quad.at(i + 1).toDouble());
+            maxY = qMax(maxY, quad.at(i + 1).toDouble());
+        }
+        return qMakePair(maxX - minX, maxY - minY);
+    };
+    const auto fmt = [](const QPair<double, double> &d) {
+        return QStringLiteral("%1 × %2")
+            .arg(d.first, 0, 'f', 1).arg(d.second, 0, 'f', 1);
+    };
+    const QPair<double, double> content =
+        dims(model[QStringLiteral("content")].toArray());
+    const QPair<double, double> padding =
+        dims(model[QStringLiteral("padding")].toArray());
+    const QPair<double, double> border =
+        dims(model[QStringLiteral("border")].toArray());
+    const QPair<double, double> margin =
+        dims(model[QStringLiteral("margin")].toArray());
+    group->addChild(new QTreeWidgetItem(
+        QStringList{tr("content"), fmt(content)}));
+    group->addChild(new QTreeWidgetItem(QStringList{
+        tr("padding"), fmt(QPair<double, double>{
+            padding.first - content.first,
+            padding.second - content.second})}));
+    group->addChild(new QTreeWidgetItem(QStringList{
+        tr("border"), fmt(QPair<double, double>{
+            border.first - padding.first,
+            border.second - padding.second})}));
+    group->addChild(new QTreeWidgetItem(QStringList{
+        tr("margin"), fmt(QPair<double, double>{
+            margin.first - border.first,
+            margin.second - border.second})}));
+    group->addChild(new QTreeWidgetItem(
+        QStringList{tr("width"),
+                    QString::number(
+                        model[QStringLiteral("width")].toInt())}));
+    group->addChild(new QTreeWidgetItem(
+        QStringList{tr("height"),
+                    QString::number(
+                        model[QStringLiteral("height")].toInt())}));
+    group->setExpanded(true);
+}
+
+// DEVT19: attribute value rows edit in place.  With a resolved CDP
+// node the write lands through DOM.setAttributeValue; without one
+// (the no-CSS-domain fallback pane) it goes through a page-side
+// setAttribute — either way the MutationObserver-driven live
+// refresh repaints the section from the element itself, so the
+// pane never claims a write the DOM didn't take.
+void BidiPanel::editDomAttribute(QTreeWidgetItem *item, int column)
+{
+    if (column != 1 || m_propsPath.isEmpty())
+        return;
+    const QString ctx = currentContext();
+    if (ctx.isEmpty())
+        return;
+    if (m_propsNodeId && m_propsNodeSerial == m_stylesSerial) {
+        sendCdp(ctx, QStringLiteral("DOM.setAttributeValue"),
+                QJsonObject{
+                    {QStringLiteral("nodeId"), m_propsNodeId},
+                    {QStringLiteral("name"), item->text(0)},
+                    {QStringLiteral("value"), item->text(1)}},
+                CdpAttrSet, item->text(0), QString(),
+                m_stylesSerial);
+        return;
+    }
+    const auto js = [](const QString &s) {
+        const QByteArray j = QJsonDocument(QJsonArray{s})
+                                 .toJson(QJsonDocument::Compact);
+        return QString::fromUtf8(j.mid(1, j.size() - 2));
+    };
+    sendEval(ctx, QString::fromLatin1(kDomResolve)
+             + QStringLiteral("(\"%1\").setAttribute(%2,%3)")
+                   .arg(m_propsPath, js(item->text(0)),
+                        js(item->text(1))),
+             TagInspect);
 }
 
 void BidiPanel::setInspecting(bool on)
@@ -4152,6 +5034,19 @@ void BidiPanel::sourceSelected(QTreeWidgetItem *item)
         return;
     m_sourceView->setPlainText(
         tr("Loading %1…").arg(requestName(url)));
+    m_sourceView->setExtraSelections(
+        QList<QTextEdit::ExtraSelection>());
+    // DEVT20: a script the debugger has parsed reads its own copy —
+    // the body breakpoints resolve against — falling back to the
+    // resource body for everything unmapped.
+    const QString scriptId = m_scriptIds.value(url);
+    if (type == QLatin1String("Script") && !scriptId.isEmpty()
+        && domainUp(QLatin1String("Debugger"))) {
+        sendCdp(ctx, QStringLiteral("Debugger.getScriptSource"),
+                QJsonObject{{QStringLiteral("scriptId"), scriptId}},
+                CdpScriptSource, scriptId, url);
+        return;
+    }
     sendCdp(ctx, QStringLiteral("Page.getResourceContent"),
             QJsonObject{{QStringLiteral("frameId"), m_sourceFrameId},
                         {QStringLiteral("url"), url}},
@@ -4164,12 +5059,14 @@ void BidiPanel::toggleBreakpoint()
     if (ctx.isEmpty() || m_sourceUrl.isEmpty()
         || !domainUp(QLatin1String("Debugger")))
         return;
+    // The spin shows Chrome's 1-based gutter line; CDP lineNumber is
+    // 0-based.  The display value is what the list keeps showing.
+    const int line = m_bpLine->value();
     sendCdp(ctx, QStringLiteral("Debugger.setBreakpointByUrl"),
             QJsonObject{{QStringLiteral("url"), m_sourceUrl},
-                        {QStringLiteral("lineNumber"),
-                         m_bpLine->value()},
+                        {QStringLiteral("lineNumber"), line - 1},
                         {QStringLiteral("columnNumber"), 0}},
-            CdpBpSet, QString(), m_sourceUrl, m_bpLine->value());
+            CdpBpSet, QString(), m_sourceUrl, line);
 }
 
 void BidiPanel::rebuildBreakpointList()
@@ -4184,6 +5081,201 @@ void BidiPanel::rebuildBreakpointList()
         item->setToolTip(it.value().first);
         m_bpList->addItem(item);
     }
+}
+
+// ===== DEVT20 — Sources parity: the debugger surface =====
+
+// The bridge forwards the session's raw CDP Debugger.* events (and
+// Page.frameNavigated) verbatim with the context id injected.  All
+// of it is scoped like the rest of the panel: events for a page the
+// selector isn't showing don't move the UI.
+void BidiPanel::onDebuggerEvent(const QString &method,
+                                const QJsonObject &params)
+{
+    const QString ctx = params[QStringLiteral("context")].toString();
+    if (!ctx.isEmpty() && ctx != currentContext())
+        return;
+
+    if (method == QLatin1String("Debugger.scriptParsed")) {
+        const QString id =
+            params[QStringLiteral("scriptId")].toString();
+        const QString url = params[QStringLiteral("url")].toString();
+        if (!id.isEmpty() && !url.isEmpty()) {
+            m_scriptUrls.insert(id, url);
+            m_scriptIds.insert(url, id);
+        }
+        return;
+    }
+    if (method == QLatin1String("Page.frameNavigated")) {
+        // A frame (top or iframe) moved — the resource tree is
+        // stale.  Multi-frame pages fire a burst; the debounce
+        // coalesces to one refresh.
+        m_srcRefreshDebounce->start();
+        return;
+    }
+    if (method == QLatin1String("Debugger.breakpointResolved")) {
+        const QString bpId =
+            params[QStringLiteral("breakpointId")].toString();
+        const QJsonObject loc =
+            params[QStringLiteral("location")].toObject();
+        const QString url = m_scriptUrls.value(
+            loc[QStringLiteral("scriptId")].toString());
+        if (m_breakpoints.contains(bpId) && !url.isEmpty()) {
+            // Re-point the row at the real resolved url:line (CDP is
+            // 0-based, the list shows 1-based).
+            m_breakpoints[bpId] = {
+                url, loc[QStringLiteral("lineNumber")].toInt(-1) + 1};
+            rebuildBreakpointList();
+        }
+        return;
+    }
+    if (method == QLatin1String("Debugger.paused")) {
+        const QJsonArray frames =
+            params[QStringLiteral("callFrames")].toArray();
+        m_callFrames->clear();
+        for (const QJsonValue &fv : frames) {
+            const QJsonObject f = fv.toObject();
+            QString fn =
+                f[QStringLiteral("functionName")].toString();
+            if (fn.isEmpty())
+                fn = tr("(anonymous function)");
+            const QJsonObject loc =
+                f[QStringLiteral("location")].toObject();
+            QString url = f[QStringLiteral("url")].toString();
+            if (url.isEmpty())
+                url = m_scriptUrls.value(
+                    loc[QStringLiteral("scriptId")].toString());
+            const int line =
+                loc[QStringLiteral("lineNumber")].toInt(-1);
+            QString text = fn;
+            if (!url.isEmpty()) {
+                text += tr(" — %1").arg(requestName(url));
+                if (line >= 0)
+                    text += QLatin1Char(':')
+                        + QString::number(line + 1);
+            }
+            QListWidgetItem *row = new QListWidgetItem(text);
+            if (!url.isEmpty())
+                row->setToolTip(url);
+            m_callFrames->addItem(row);
+        }
+        QString why;
+        if (!params[QStringLiteral("hitBreakpoints")].toArray()
+                 .isEmpty())
+            why = tr("Paused on breakpoint");
+        else if (params[QStringLiteral("reason")].toString()
+                 == QLatin1String("other"))
+            why = tr("Paused in debugger");
+        else
+            why = tr("Paused: %1").arg(
+                params[QStringLiteral("reason")].toString());
+        setDebuggerPaused(true, why);
+        if (!frames.isEmpty())
+            showPausedLocation(frames.first().toObject());
+        return;
+    }
+    if (method == QLatin1String("Debugger.resumed")) {
+        setDebuggerPaused(false);
+        return;
+    }
+}
+
+void BidiPanel::resetDebuggerState()
+{
+    // Script ids die with the document/session, and so does the
+    // pause chrome — clear both (url breakpoints survive an in-place
+    // navigation, so m_breakpoints is deliberately not here).
+    m_scriptUrls.clear();
+    m_scriptIds.clear();
+    setDebuggerPaused(false);
+}
+
+void BidiPanel::setDebuggerPaused(bool paused, const QString &why)
+{
+    m_debuggerPaused = paused;
+    if (!paused) {
+        m_callFrames->clear();
+        m_sourceView->setExtraSelections(
+            QList<QTextEdit::ExtraSelection>());
+    }
+    m_pauseStatus->setText(paused ? why : QString());
+    m_pauseStatus->setVisible(paused);
+    updateDebuggerButtons();
+}
+
+// Chrome's enable rule: Pause arms on demand; Resume and the steps
+// only do something while the page is actually paused.
+void BidiPanel::updateDebuggerButtons()
+{
+    const bool up = domainUp(QLatin1String("Debugger"));
+    m_dbgPause->setEnabled(up && !m_debuggerPaused);
+    m_dbgResume->setEnabled(up && m_debuggerPaused);
+    m_dbgStepOver->setEnabled(up && m_debuggerPaused);
+    m_dbgStepInto->setEnabled(up && m_debuggerPaused);
+    m_dbgStepOut->setEnabled(up && m_debuggerPaused);
+}
+
+void BidiPanel::sendDebuggerCommand(const QString &method)
+{
+    const QString ctx = currentContext();
+    if (ctx.isEmpty() || !domainUp(QLatin1String("Debugger")))
+        return;
+    // The replies carry no payload — the paused state tracks the
+    // Debugger.paused/.resumed events, not the answer.
+    sendCdp(ctx, method, QJsonObject(), CdpGeneric);
+}
+
+// A pause jumps the source view to the top frame's file like Chrome
+// — getScriptSource serves the body (the file needn't sit in the
+// resource tree) and the reply highlights the 0-based CDP line it
+// carried as n.
+void BidiPanel::showPausedLocation(const QJsonObject &frame)
+{
+    const QJsonObject loc =
+        frame[QStringLiteral("location")].toObject();
+    const QString scriptId =
+        loc[QStringLiteral("scriptId")].toString();
+    const int line0 =
+        loc[QStringLiteral("lineNumber")].toInt(-1);
+    const QString url = m_scriptUrls.value(
+        scriptId, frame[QStringLiteral("url")].toString());
+    if (!url.isEmpty())
+        // Breakpoint operations follow the file the page paused in.
+        m_sourceUrl = url;
+    if (scriptId.isEmpty())
+        return;
+    const QString ctx = currentContext();
+    if (ctx.isEmpty())
+        return;
+    const quint64 id = sendCdp(
+        ctx, QStringLiteral("Debugger.getScriptSource"),
+        QJsonObject{{QStringLiteral("scriptId"), scriptId}},
+        CdpScriptSource, scriptId, url, line0 + 1);
+    if (id)
+        m_sourceView->setPlainText(
+            tr("Loading %1…").arg(requestName(url)));
+}
+
+void BidiPanel::highlightSourceLine(int line)
+{
+    QList<QTextEdit::ExtraSelection> sels;
+    if (line > 0) {
+        const QTextBlock block =
+            m_sourceView->document()->findBlockByNumber(line - 1);
+        if (block.isValid()) {
+            QTextEdit::ExtraSelection sel;
+            QColor wash = palette().color(QPalette::Highlight);
+            wash.setAlpha(70);
+            sel.format.setBackground(wash);
+            sel.format.setProperty(
+                QTextFormat::FullWidthSelection, true);
+            sel.cursor = QTextCursor(block);
+            sels << sel;
+            m_sourceView->setTextCursor(QTextCursor(block));
+            m_sourceView->centerCursor();
+        }
+    }
+    m_sourceView->setExtraSelections(sels);
 }
 
 void BidiPanel::refreshSecurity()
@@ -4379,5 +5471,20 @@ QVector<double> BidiPanel::testWaterfallTicks()
         ->sectionSize(BidiNetworkModel::WaterfallColumn) - 4;
     return waterfallTicks(model->windowStart(),
                           model->displayWindowEnd(), width);
+}
+
+int BidiPanel::testDomLiveRefreshCount() const
+{
+    return m_domLiveRefreshCount;
+}
+
+QStringList BidiPanel::testSearchPaths() const
+{
+    return m_searchPaths;
+}
+
+int BidiPanel::testSearchIndex() const
+{
+    return m_searchIndex;
 }
 #endif

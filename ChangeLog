@@ -3262,3 +3262,20 @@ Security audit of the multi-profile + vault stack (VSEC01):
     the owning persona's excluded cache tree as well, and
     off-the-record/Tor profiles remain memory-only with nothing on
     disk to relocate.
+
+BiDi Dev Tools Elements panel reaches live parity (DEVT19):
+    The Elements tab reported "dead" in the BiDi panel now works end
+    to end against a real page: the DOM tree populates lazily and
+    refreshes itself on page mutations (a page-side MutationObserver
+    re-materializes expanded branches instead of going stale), and
+    selecting a node fills a grouped inspector — Attributes, Computed
+    styles, and Box model — through the CDP DOM/CSS domains with
+    honest fallbacks when a domain does not answer. A find bar
+    (Ctrl+F) searches by selector, tag, id, class, or text and steps
+    through matches, and attribute values are editable in place via
+    DOM.setAttributeValue. Two shared bugs that made probes look dead
+    are fixed along the way: stale domain verdicts no longer survive a
+    reconnect, and a single dropped probe reply can no longer leave
+    every tab stuck uninitialized — unanswered domains now declare
+    "probe timed out" instead of pretending to work.
+- 2026-10-17 DEVT20: BiDi Sources parity — the rust bridge now forwards Debugger.paused/resumed/scriptParsed/breakpointResolved and Page.frameNavigated verbatim (context injected) under a new "debugger" subscription the client requests, and the Sources tab grew the Chrome debugger surface: resource tree re-pulls on navigation + load milestones (debounced), scripts read via Debugger.getScriptSource with Page.getResourceContent fallback, breakpoint rows re-point at the resolved url:line, and a pause/resume/step-over/into/out toolbar plus call-stack list and paused-line highlight drive off Debugger.paused/resumed — verified: tst_devtools 18/18 +1 skip, --bidi-sources-smoke PASS "resources+source+bp+pause+resume", make check rc=0 (89 programs 0 failed) offscreen --disable-gpu

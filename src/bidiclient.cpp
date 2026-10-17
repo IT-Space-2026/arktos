@@ -172,8 +172,10 @@ void BidiClient::connectFinished(quintptr handle, const QString &error)
     // Open the BiDi session and subscribe to the groups the panel
     // shows — subsequent targets auto-attach through the crate.
     sendCommand(QLatin1String("session.new"));
+    // DEVT20: "debugger" is the vendor group gating the Sources
+    // tab's raw CDP Debugger.* / Page.frameNavigated forwards.
     sendCommand(QLatin1String("session.subscribe"),
-                QByteArray("{\"events\":[\"browsingContext\",\"log\",\"network\"]}"));
+                QByteArray("{\"events\":[\"browsingContext\",\"log\",\"network\",\"debugger\"]}"));
 #else
     Q_UNUSED(error);
 #endif
