@@ -2875,9 +2875,9 @@ void tst_BrowserMainWindow::torChromeGlyphsLegible()
     };
 
     // THEM06: once the article verdict lands the glyph honestly wears
-    // the accent mark — the tor raised violet — which is darker than
-    // the chrome text the plain-state assert gates on (and so was the
-    // stray app-blue it replaced).  A flat luminance assert read the
+    // the accent mark — the tor glyph-scale violet — which is darker
+    // than the chrome text the plain-state assert gates on (and so was
+    // the stray app-blue it replaced).  A flat luminance assert read the
     // legitimate accent as a stale dark bake whenever the verdict won
     // the race against the measurement, so the reader checks below
     // are state-aware: a suggested glyph's dominant ink must BE the
@@ -3026,9 +3026,10 @@ void tst_BrowserMainWindow::torChromeGlyphsLegible()
 // THEM06: the reader glyph's accent states resolve QPalette::Accent —
 // on the tor window that stayed the app palette's blue, so the
 // suggested mark and the active page fill painted a stray blue on the
-// violet bar.  The tor palette seed now hands the engine the raised
-// violet accent — the family the badge pill and the sidebar rail's
-// selection already wear — while a normal window keeps its own
+// violet bar.  The tor palette seed now hands the engine the lighter
+// glyph-scale violet accent — the raised step the badge pill and the
+// sidebar rail's selection wear is too close to the surface to stay
+// legible as a thin outline — while a normal window keeps its own
 // surface accent.  A file:// article drives the real Readability
 // verdict so the suggested state is honest; a click exercises the
 // active fill.
@@ -3142,7 +3143,16 @@ void tst_BrowserMainWindow::torReaderAccent()
     BrowserApplication::setTorMode(false);
     QFile::remove(articlePath);
 
-    const QColor torAccent = AroraStyle::torChromeRaisedColor();
+    const QColor torAccent = AroraStyle::torChromeAccentColor();
+    // THEM07's regression pin: glyph-scale marks on the violet bar
+    // must hold >=3:1 against the surface — the raised color (~1.6:1)
+    // is what painted the muddy raised box in the screenshot.
+    QVERIFY2(AroraStyle::contrastRatio(torAccent,
+                                     AroraStyle::torChromeColor())
+                 >= 3.0,
+             qPrintable(QStringLiteral("tor accent %1 too dark on %2")
+                        .arg(torAccent.name())
+                        .arg(AroraStyle::torChromeColor().name())));
     QVERIFY2(inkMatch(plainSuggested, plainAccent),
              qPrintable(QStringLiteral("plain suggested %1 vs accent %2")
                         .arg(plainSuggested.name())

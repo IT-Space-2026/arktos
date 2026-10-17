@@ -764,6 +764,10 @@ void tst_Arorastyle::contrastAudit()
                                          step) >= 4.5,
                  qPrintable(step.name()));
     }
+    // THEM07: the glyph-scale accent must stay legible on the surface
+    // — a pen stroke can't borrow the raised step's fill-scale margin.
+    QVERIFY(AroraStyle::contrastRatio(AroraStyle::torChromeAccentColor(),
+                                    chrome) >= 3.0);
 
     // The injected warning banner — dark ink on amber.
     QVERIFY(AroraStyle::contrastRatio(AroraStyle::warningBannerTextColor(),

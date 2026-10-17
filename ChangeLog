@@ -3294,3 +3294,16 @@ BiDi Dev Tools Performance + Memory panels reach live parity (DEVT21):
     the top allocation sites, honestly labelled as a sampling
     estimate. Tabs whose CDP domain does not answer still show the
     disabled-with-reason fallback naming the exact error.
+
+Tor reader-mode accent made legible on the violet bar (THEM07):
+    The Tor window's reader-mode button picked up the tor raised
+    violet for its "suggested" outline and active page-fill — a shade
+    only a notch lighter than the toolbar itself, so the accent read
+    as a muddy raised box instead of a mark. The button now paints
+    those marks in a lighter violet from the same family (~3.7:1
+    against the bar): the suggested state reads as a light violet
+    outline + dot and the active state as a filled light-violet page,
+    matching the flat light glyphs beside it. Fill-scale elements —
+    the Tor badge pill, the sidebar rail selection — keep the deeper
+    raised violet where the contrast holds; normal windows are
+    unchanged.

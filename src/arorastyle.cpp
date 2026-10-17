@@ -636,6 +636,14 @@ QColor AroraStyle::torChromeRaisedColor()
     return QColor(0x6b, 0x4f, 0xa3);
 }
 
+QColor AroraStyle::torChromeAccentColor()
+{
+    // THEM07: the raised violet (~1.6:1 over the surface) reads as a
+    // muddy raised box when a glyph-scale mark paints with it — a
+    // lighter in-family step keeps ~3.7:1 against the surface.
+    return QColor(0xa9, 0x8b, 0xd9);
+}
+
 QColor AroraStyle::torTextColor()
 {
     return QColor(0xee, 0xee, 0xee);
