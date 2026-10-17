@@ -5457,18 +5457,21 @@ void tst_BrowserMainWindow::sidebarPanel()
     toggle->trigger();
     QVERIFY(dock->isVisible());
     QVERIFY(toggle->isChecked());
-    // First show builds the panel: four sections over the shared
-    // bookmarks/history/downloads models plus the notes editor.
+    // First show builds the panel: five sections over the shared
+    // bookmarks/history/downloads models plus the notes editor and
+    // the Workspaces group overview.
     SidebarPanel *panel = window->sidebarPanel();
     QVERIFY(panel);
     QVERIFY(panel->tabs());
-    QCOMPARE(panel->tabs()->count(), 4);
+    QCOMPARE(panel->tabs()->count(), 5);
     QVERIFY(panel->findChild<QWidget *>(
                 QLatin1String("sidebarBookmarksView")));
     QVERIFY(panel->findChild<QWidget *>(
                 QLatin1String("sidebarHistoryView")));
     QVERIFY(panel->findChild<QWidget *>(
                 QLatin1String("sidebarDownloadsView")));
+    QVERIFY(panel->findChild<QWidget *>(
+                QLatin1String("sidebarWorkspacesTree")));
     QVERIFY(panel->notes());
 
     // SIDE02: the switcher is a vertical icon rail — entries carry
@@ -5542,13 +5545,13 @@ void tst_BrowserMainWindow::sidebarPanel()
     // rail keeps registry order when it comes back.
     SidebarPanel::setPanelVisible("history", false);
     window->applySidebarSettings();
-    QCOMPARE(panel->tabs()->count(), 3);
+    QCOMPARE(panel->tabs()->count(), 4);
     QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     QVERIFY(!panel->findChild<QWidget *>(
                 QLatin1String("sidebarHistoryView")));
     SidebarPanel::setPanelVisible("history", true);
     window->applySidebarSettings();
-    QCOMPARE(panel->tabs()->count(), 4);
+    QCOMPARE(panel->tabs()->count(), 5);
     QCOMPARE(panel->tabs()->tabText(1), QLatin1String("History"));
 
     // Offscreen panel grab for visual review — set
@@ -5904,19 +5907,21 @@ void tst_BrowserMainWindow::sidebarPanelOrder()
     window->show();
     SidebarPanel *panel = window->sidebarPanel();
     QVERIFY(panel);
-    QCOMPARE(panel->tabs()->count(), 4);
+    QCOMPARE(panel->tabs()->count(), 5);
     QCOMPARE(panel->tabs()->tabText(0), QLatin1String("Bookmarks"));
 
-    // A full reorder re-sequences the rail live.
+    // A full reorder re-sequences the rail live — a panel the stored
+    // order does not name appends in registry position.
     SidebarPanel::setPanelOrder(
         QStringList{ QLatin1String("notes"), QLatin1String("bookmarks"),
                      QLatin1String("history"),
                      QLatin1String("downloads") });
     window->applySidebarSettings();
-    QCOMPARE(panel->tabs()->count(), 4);
+    QCOMPARE(panel->tabs()->count(), 5);
     QCOMPARE(panel->tabs()->tabText(0), QLatin1String("Notes"));
     QCOMPARE(panel->tabs()->tabText(1), QLatin1String("Bookmarks"));
     QCOMPARE(panel->tabs()->tabText(3), QLatin1String("Downloads"));
+    QCOMPARE(panel->tabs()->tabText(4), QLatin1String("Workspaces"));
 
     // A partial order keeps the named ids up front and appends the
     // rest in registry order.
@@ -5928,16 +5933,17 @@ void tst_BrowserMainWindow::sidebarPanelOrder()
     QCOMPARE(panel->tabs()->tabText(1), QLatin1String("Bookmarks"));
     QCOMPARE(panel->tabs()->tabText(2), QLatin1String("History"));
     QCOMPARE(panel->tabs()->tabText(3), QLatin1String("Notes"));
+    QCOMPARE(panel->tabs()->tabText(4), QLatin1String("Workspaces"));
 
     // Order and visibility compose — hiding the front entry pulls the
     // next one up, restoring lands it back in its ordered slot.
     SidebarPanel::setPanelVisible("downloads", false);
     window->applySidebarSettings();
-    QCOMPARE(panel->tabs()->count(), 3);
+    QCOMPARE(panel->tabs()->count(), 4);
     QCOMPARE(panel->tabs()->tabText(0), QLatin1String("Bookmarks"));
     SidebarPanel::setPanelVisible("downloads", true);
     window->applySidebarSettings();
-    QCOMPARE(panel->tabs()->count(), 4);
+    QCOMPARE(panel->tabs()->count(), 5);
     QCOMPARE(panel->tabs()->tabText(0), QLatin1String("Downloads"));
 
     // The order survives a fresh window's construction.
@@ -6074,7 +6080,7 @@ void tst_BrowserMainWindow::sidebarPanelOptions()
     lazyWindow->show();
     QVERIFY(lazyWindow->sidebarPanel());
     SidebarPanel *lazyPanel = lazyWindow->sidebarPanel();
-    QCOMPARE(lazyPanel->tabs()->count(), 4);
+    QCOMPARE(lazyPanel->tabs()->count(), 5);
     QVERIFY(!lazyPanel->findChild<QWidget *>(
                 QLatin1String("sidebarDownloadsView")));
     lazyPanel->showDownloads();

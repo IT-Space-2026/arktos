@@ -120,6 +120,11 @@ class TabWidget : public QTabWidget
 signals:
     // tab widget signals
     void tabsChanged();
+    // TABGRP03: group metadata or membership changed — a rename,
+    // recolor, collapse/expand, join or leave.  The sidebar's
+    // Workspaces listing rebuilds on it; tabsChanged() still covers
+    // strip-level churn (add/close/reorder/title).
+    void tabGroupsChanged();
     void lastTabClosed();
 
     // current tab signals
@@ -281,6 +286,12 @@ public:
     // The tab at index is the only visible member of a collapsed group.
     bool isTabGroupChip(int index) const;
     bool hasCollapsedTabGroup() const;
+    // TABGRP03: titles of the group's DETACHED members — a collapsed
+    // group's hidden stack plus any member filtered into a non-active
+    // container level — in store order.  Feeds the sidebar's
+    // Workspaces member listing; visible members' titles come off the
+    // strip through tabDisplayTitle().
+    QStringList tabGroupHiddenMemberTitles(const QString &groupId) const;
     // Creates an unnamed group (rotating palette color) holding the tab
     // — returns the new group id, "" when index has no web view.
     QString createTabGroup(int index);

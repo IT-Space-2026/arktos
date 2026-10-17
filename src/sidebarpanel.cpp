@@ -26,12 +26,14 @@
 #include "bookmarknode.h"
 #include "browserapplication.h"
 #include "browsermainwindow.h"
+#include "containermanager.h"
 #include "downloadmanager.h"
 #include "history.h"
 #include "historymanager.h"
 #include "notesmodel.h"
 #include "searchlineedit.h"
 #include "settings.h"
+#include "tabbar.h"
 #include "webview.h"
 #include "utils/aroraicon.h"
 #include "utils/edittreeview.h"
@@ -67,6 +69,7 @@
 #include <qtextbrowser.h>
 #include <qtabwidget.h>
 #include <qtoolbutton.h>
+#include <qtreewidget.h>
 
 // DownloadModel's DisplayRole is deliberately empty (the rows used to
 // be painted by live DownloadItem index widgets).  This proxy maps the
@@ -500,6 +503,11 @@ QList<SidebarPanel::Panel> &SidebarPanel::registry()
         panels.append({ QByteArrayLiteral("notes"), tr("Notes"),
                         QByteArrayLiteral("edit-paste"),
                         [](SidebarPanel *p) { return p->buildNotesPage(); } });
+        // TABGRP03: the Vivaldi-style group overview — one section
+        // per tab group in the window with each member's title.
+        panels.append({ QByteArrayLiteral("workspaces"), tr("Workspaces"),
+                        QByteArrayLiteral("view-tabbar"),
+                        [](SidebarPanel *p) { return p->buildWorkspacesPage(); } });
     }
     return panels;
 }
@@ -2083,4 +2091,147 @@ void SidebarPanel::openDownload(const QModelIndex &index)
     }
     // An unfinished row's actions (Stop/Try Again/Restart) live on its
     // detail card — selecting the row already surfaced the pane.
+}
+
+// TABGRP03: the Vivaldi-style Workspaces overview — one section per
+// tab group in this window, tinted by the group's accent, listing
+// each member's title (visible members first, then the detached ones
+// a collapsed group or a filtered container level hides).  Clicking a
+// visible member activates its tab; clicking a detached member or the
+// collapsed group's own row expands the group back onto the strip.
+// The tree rebuilds on tabGroupsChanged() (metadata) and
+// tabsChanged() (membership moves and title updates).
+namespace {
+enum {
+    WorkspaceGroupRole = Qt::UserRole,
+    WorkspaceIndexRole = Qt::UserRole + 1
+};
+}
+
+QWidget *SidebarPanel::buildWorkspacesPage()
+{
+    QWidget *page = new QWidget(m_tabs);
+    QVBoxLayout *layout = new QVBoxLayout(page);
+    layout->setContentsMargins(
+        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small,
+        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small);
+    layout->setSpacing(AroraStyle::Spacing::Small);
+
+    QLabel *title = new QLabel(tr("Workspaces"), page);
+    title->setObjectName(QLatin1String("sidebarWorkspacesTitle"));
+    QFont titleFont = title->font();
+    titleFont.setBold(true);
+    title->setFont(titleFont);
+    title->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    layout->addWidget(title);
+
+    m_workspacesStack = new QStackedWidget(page);
+    m_workspacesStack->setObjectName(
+        QLatin1String("sidebarWorkspacesStack"));
+
+    QLabel *emptyLabel = new QLabel(
+        tr("No tab groups yet — drag one tab onto another to stack "
+           "them, then name the group from its tab's menu."),
+        m_workspacesStack);
+    emptyLabel->setObjectName(QLatin1String("sidebarWorkspacesEmpty"));
+    emptyLabel->setAlignment(Qt::AlignCenter);
+    emptyLabel->setWordWrap(true);
+    emptyLabel->setForegroundRole(QPalette::PlaceholderText);
+    m_workspacesStack->addWidget(emptyLabel);
+
+    m_workspacesTree = new QTreeWidget(m_workspacesStack);
+    m_workspacesTree->setObjectName(
+        QLatin1String("sidebarWorkspacesTree"));
+    m_workspacesTree->setAccessibleName(tr("Tab groups"));
+    m_workspacesTree->setHeaderHidden(true);
+    m_workspacesTree->setUniformRowHeights(true);
+    connect(m_workspacesTree, &QTreeWidget::itemClicked,
+            this, &SidebarPanel::openWorkspaceMember);
+    connect(m_workspacesTree, &QTreeWidget::itemActivated,
+            this, &SidebarPanel::openWorkspaceMember);
+    m_workspacesStack->addWidget(m_workspacesTree);
+    layout->addWidget(m_workspacesStack, 1);
+
+    BrowserMainWindow *window = BrowserMainWindow::parentWindow(this);
+    TabWidget *tabWidget = window ? window->tabWidget() : nullptr;
+    if (tabWidget) {
+        connect(tabWidget, &TabWidget::tabGroupsChanged,
+                this, &SidebarPanel::refreshWorkspaces);
+        connect(tabWidget, &TabWidget::tabsChanged,
+                this, &SidebarPanel::refreshWorkspaces);
+    }
+    refreshWorkspaces();
+    return page;
+}
+
+void SidebarPanel::refreshWorkspaces()
+{
+    if (!m_workspacesTree || !m_workspacesStack)
+        return;
+    BrowserMainWindow *window = BrowserMainWindow::parentWindow(this);
+    TabWidget *tabWidget = window ? window->tabWidget() : nullptr;
+    const QStringList gids =
+        tabWidget ? tabWidget->tabGroupIds() : QStringList();
+    m_workspacesTree->clear();
+    m_workspacesStack->setCurrentIndex(gids.isEmpty() ? 0 : 1);
+    for (const QString &gid : gids) {
+        const QString name = tabWidget->tabGroupName(gid);
+        const QString label =
+            name.isEmpty() ? tr("Unnamed Group") : name;
+        const int size = tabWidget->tabGroupSize(gid);
+        const bool collapsed = tabWidget->tabGroupIsCollapsed(gid);
+        QTreeWidgetItem *groupItem = new QTreeWidgetItem(m_workspacesTree);
+        groupItem->setText(0, tr("%1 (%2)").arg(label).arg(size));
+        groupItem->setIcon(0, ContainerManager::colorIcon(
+            tabWidget->tabGroupColor(gid)));
+        groupItem->setData(0, WorkspaceGroupRole, gid);
+        groupItem->setData(0, WorkspaceIndexRole, -1);
+        groupItem->setToolTip(0, collapsed
+            ? tr("%1 — collapsed; click to expand").arg(label)
+            : label);
+        for (int index : tabWidget->tabGroupMembers(gid)) {
+            QTreeWidgetItem *member = new QTreeWidgetItem(groupItem);
+            member->setText(0, tabWidget->tabDisplayTitle(index));
+            member->setIcon(0, tabWidget->tabBar()->tabIcon(index));
+            member->setData(0, WorkspaceGroupRole, gid);
+            member->setData(0, WorkspaceIndexRole, index);
+        }
+        for (const QString &memberTitle
+                 : tabWidget->tabGroupHiddenMemberTitles(gid)) {
+            QTreeWidgetItem *member = new QTreeWidgetItem(groupItem);
+            member->setText(0, memberTitle);
+            member->setData(0, WorkspaceGroupRole, gid);
+            member->setData(0, WorkspaceIndexRole, -1);
+            member->setForeground(
+                0, m_workspacesTree->palette().color(
+                    QPalette::Disabled, QPalette::Text));
+            member->setToolTip(
+                0, collapsed
+                    ? tr("Hidden while the group is collapsed — "
+                         "click to expand the group")
+                    : tr("Filtered into another tab row — "
+                         "select its header on the strip"));
+        }
+        groupItem->setExpanded(true);
+    }
+}
+
+void SidebarPanel::openWorkspaceMember(QTreeWidgetItem *item)
+{
+    if (!item)
+        return;
+    BrowserMainWindow *window = BrowserMainWindow::parentWindow(this);
+    TabWidget *tabWidget = window ? window->tabWidget() : nullptr;
+    if (!tabWidget)
+        return;
+    const int index = item->data(0, WorkspaceIndexRole).toInt();
+    if (index >= 0 && index < tabWidget->count()) {
+        tabWidget->setCurrentIndex(index);
+        return;
+    }
+    // A detached member or the group's own row — a collapsed group
+    // comes back onto the strip first so its members are reachable.
+    const QString gid = item->data(0, WorkspaceGroupRole).toString();
+    if (!gid.isEmpty() && tabWidget->tabGroupIsCollapsed(gid))
+        tabWidget->setTabGroupCollapsed(gid, false);
 }

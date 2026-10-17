@@ -204,7 +204,7 @@ This file is the task queue for the Devin CLI task loop
 | DEVT22 | BiDi Elements panel UX is wrong vs Chrome devtools — DOM tree, styles pane layout, search dock — details below | done | 0 | Elements reshaped to Chrome: bounded toolbar + element count, <tag attr="v"> markup rows w/ colored spans, box-model diagram, find dock results list — verified: tst_devtools 19/19 +1 skip, --bidi-elements-smoke PASS, make check rc=0 |
 | DEVT23 | BiDi Sources panel UX is wrong vs Chrome devtools — domain-grouped navigator, real source view + debugger side rail — details below | done | 0 | Sources reshaped to Chrome 3-pane: Page>frame>origin>path-folders (single-child chains folded) navigator, center source view, right debugger rail (controls row + collapsible Breakpoints/Call Stack live, Watch/Scope/XHR/DOM/listeners honest-disabled); verified: new bidiSourcesUx leg + repinned tree legs, tst_devtools 20/20 +1 skip, --bidi-sources-smoke PASS, make check rc=1 from pre-existing torStartPage flake (89 programs otherwise 0 failed) offscreen |
 | ICONS10 | App/logo button in nav bar ~15% bigger with correct aspect ratio — details below | done | 0 | shared navAccentSize = bar iconSize x1.84 (33px at 18px) for appMenu logo + profile avatar (PROF01 face-match kept); letterbox engine keeps aspect at any cell shape; bar row now face+margins driven (38px); new pixel-probe leg pins fill+aspect; tst_browsermainwindow 77/77, make check rc=0 (check-warnings PASS, 86 programs 0 failed) offscreen |
-| TABGRP03 | Vivaldi-style tab grouping UX — group header/workspace affordances like screenshot 4 — details below | pending | 0 | user screenshot: vivaldi workspaces+grouped tabs |
+| TABGRP03 | Vivaldi-style tab grouping UX — group header/workspace affordances like screenshot 4 — details below | done | 0 | labeled group-header segment on run leaders (name or "N tabs" fallback; horizontal leaders widen by the reserve, vertical rows use the reserved top band; rename live via tabGroupsChanged) + sidebar Workspaces section listing groups/members incl. hidden titles — verified: new groupHeaderSegments + groupWorkspaceSignals legs, tst_tabbar 31/31, tst_tabwidget 36/36, tst_browsermainwindow 77/77, make check rc=0 (89 programs 0 failed) offscreen --disable-gpu |
 
 
 ## Task details
@@ -1307,3 +1307,31 @@ Result (2026-10-17): both accent ends share one `navAccentSize` = bar iconSize x
 User wants the tab-group UX to feel like Vivaldi (screenshot: Vivaldi sidebar shows a Workspaces section + grouped tabs render as stacked cards with the group name header). Current state: TABGRP01/02 delivered drag-to-group, chips, collapse, Close Group. Now: (a) group headers on the tab strip should show the GROUP NAME as a labeled chip segment like Vivaldi's stacked-tab header (not just a colored chip); (b) drag-out affordance + drag-in highlight already exist — polish if needed; (c) optionally a groups/workspace overview — check what the sidebar panel already shows and add a Workspaces-style section listing groups with member thumbnails/titles if feasible without a huge build.
 
 Verify: tst_TabWidget/tst_TabBar legs — group chip shows the name, rename updates it live, collapse/close still work; make check PASS.
+
+Result (2026-10-17, done): (a) the horizontal strip's group pill used
+to paint over the leader's title ("Painted|ntitled" in grabs) and
+unnamed groups got only a bare rail — now `TabBar::groupHeaderLabel()`
+gives every run leader a labeled segment (group name, else the
+"%1 tabs" count fallback), `groupHeaderReserve()` widens the leader in
+tabSizeHint(), initStyleOption() clears the style title when the
+segment fits (24px title-stub bound, else the segment drops), and
+paintEvent() hand-draws the title right of the pill; vertical rows
+extend the existing top-band pill to unnamed groups via
+rowLabelRect(). (b) drag affordances verified adequate — untouched.
+(c) sidebar registry grew a fifth "workspaces" panel: a QTreeWidget
+of one group row + member rows (visible titles/icons off the strip,
+detached members via new TabWidget::tabGroupHiddenMemberTitles()
+covering collapsed-hidden and container-filtered storage), rebuilt on
+the new tabGroupsChanged() signal (emitted by every group mutator) +
+tabsChanged(); clicks activate a member or expand a collapsed group.
+Also fixed: group ops never tripped QTabBar's private layoutDirty, so
+leader rects stayed stale — tabGroupsChanged now drives the
+established no-op setIconSize() relayout nudge + updateGeometry +
+update from one ctor connect. Tests: tst_tabbar groupHeaderSegments
+(leader width reserve, painted accent pixels, live rename resize,
+vertical band, collapse/expand), tst_tabwidget groupWorkspaceSignals
+(emission per mutator + hidden-title accessor), sidebarPanel/
+sidebarPanelOrder repinned for five panels. Verified: tst_tabbar
+31/31, tst_tabwidget 36/36, tst_browsermainwindow 77/77, make check
+rc=0 (89 programs 0 failed, check-warnings PASS) offscreen
+--disable-gpu.

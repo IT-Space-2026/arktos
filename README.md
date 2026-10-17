@@ -211,9 +211,12 @@ browsing profile:
   window and picked from clickable preview tiles in Preferences.
   A Vivaldi-style **'+' button** sits right after the last tab in
   every orientation (an appended row on vertical rails).
-- **Tab groups** — named, color-coded groups on the strip.
+- **Tab groups** — named, color-coded groups on the strip, each run
+  opening with a labeled header segment (the group name, or its
+  member count while unnamed).
 - **Sidebar dock** — optional Vivaldi-style side panel (bookmarks,
-  history, downloads, notes), lazily built and off by default; the
+  history, downloads, notes, workspaces), lazily built and off by
+  default; the
   bookmarks rail doubles as the manager — "Show All Bookmarks"
   (Ctrl+Shift+B) opens it with Add/Remove right on the page.  The
   notes panel manages multiple named notes (list, editor, autosave);

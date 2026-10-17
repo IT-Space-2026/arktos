@@ -286,6 +286,14 @@ private:
     QString groupIdForTab(int index) const;
     bool isFirstInGroupRun(int index) const;
     QString groupChipLabel(int index) const;
+    // TABGRP03: the Vivaldi-style labeled group header — a run's first
+    // member carries a labeled chip segment with the group's name (or a
+    // member-count fallback while unnamed) instead of a bare colored
+    // chip.  groupHeaderReserve() is the leading-edge extent the
+    // segment borrows on a horizontal strip — the leader's title is
+    // drawn right of it, never under it.
+    QString groupHeaderLabel(int index) const;
+    int groupHeaderReserve(int index) const;
     // TABS02/RSZ02: strip helpers — the resize grip on the strip's
     // content-facing edge (inner side for vertical strips, top/bottom
     // edge for horizontal ones), its painted affordance, and the

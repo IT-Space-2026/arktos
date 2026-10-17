@@ -111,6 +111,7 @@ private slots:
     void omniboxTabScope();
     void tabGroups();
     void closeTabGroup();
+    void groupWorkspaceSignals();
     void pinnedTabs();
     void iconOnlyTabStrip();
     void reopenClosedTab();
@@ -1690,6 +1691,51 @@ void tst_TabWidget::closeTabGroup()
     QCOMPARE(widget.count(), 0);
 
     settings.remove(QLatin1String("tabs/confirmClosingMultipleTabs"));
+}
+
+// TABGRP03: the Workspaces overview consumes group metadata live —
+// every group mutator emits tabGroupsChanged so the panel (and the
+// strip) repaint, and hidden-member titles surface collapsed
+// (and container-filtered) members the strip no longer shows.
+void tst_TabWidget::groupWorkspaceSignals()
+{
+    SubTabWidget widget;
+    QSignalSpy groupSpy(&widget, SIGNAL(tabGroupsChanged()));
+    QVERIFY(groupSpy.isValid());
+    for (int i = 0; i < 4; ++i)
+        widget.newTab();
+
+    // Every mutator bumps the signal — create, add, rename, color,
+    // collapse/expand, remove and ungroup.
+    int emissions = 0;
+    const QString gid = widget.createTabGroup(0);
+    QCOMPARE(groupSpy.count(), ++emissions);
+    widget.addTabToGroup(1, gid);
+    QCOMPARE(groupSpy.count(), ++emissions);
+    widget.renameTabGroup(gid, QStringLiteral("Work"));
+    QCOMPARE(groupSpy.count(), ++emissions);
+    widget.setTabGroupColor(gid, QColor(Qt::blue));
+    QCOMPARE(groupSpy.count(), ++emissions);
+
+    // Collapsed members leave the strip but keep their titles in the
+    // hidden-member list the Workspaces tree renders.
+    QVERIFY(widget.tabGroupHiddenMemberTitles(gid).isEmpty());
+    widget.setTabGroupCollapsed(gid, true);
+    QCOMPARE(groupSpy.count(), ++emissions);
+    QCOMPARE(widget.count(), 3);
+    QCOMPARE(widget.tabGroupHiddenMemberTitles(gid).count(), 1);
+    widget.setTabGroupCollapsed(gid, false);
+    QCOMPARE(groupSpy.count(), ++emissions);
+    QVERIFY(widget.tabGroupHiddenMemberTitles(gid).isEmpty());
+
+    // Removing a member and ungrouping the rest still notify — and
+    // the accessor answers empty for unknown ids.
+    widget.removeTabFromGroup(1);
+    QCOMPARE(groupSpy.count(), ++emissions);
+    widget.ungroupTabs(gid);
+    QCOMPARE(groupSpy.count(), ++emissions);
+    QVERIFY(widget.tabGroupHiddenMemberTitles(
+                QLatin1String("no-such-group")).isEmpty());
 }
 
 // TABS04: pinned tabs — a contiguous leading prefix that keeps its
