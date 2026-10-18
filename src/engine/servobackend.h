@@ -30,12 +30,18 @@
 // unavailable when it is absent; chrome hides the dead option rather
 // than shipping a guaranteed-fail menu entry.
 //
-// Honest capability surface per .devin/SERVO-SPIKE.md: no request
-// interception enforcement (loads are observable only), no SOCKS5
+// Honest capability surface per .devin/SERVO-SPIKE.md: no SOCKS5
 // (Tor windows stay Chromium — the swap path refuses), no per-webview
 // settings, no find-in-page, no download delegate, no cert-error
-// delegate, one-way JS eval.  Everything the backend cannot do is
-// reported through capabilities()/no-op overrides, never faked.
+// delegate, one-way JS eval, no devtools transport (servo's devtools
+// crate speaks the Firefox remote protocol — reachable only as a
+// TCP listener the BiDi panel cannot read, so devTools stays false
+// and chrome disables the entry; ENG35).  Request interception IS
+// enforced since ENG35 — the shim's load gate consults the tab's
+// profile RequestPolicy per resource load; on artifacts predating
+// se_set_load_gate the capability drops back to false honestly.
+// Everything the backend cannot do is reported through
+// capabilities()/no-op overrides, never faked.
 //
 // Rendering is the spike's software path — se_frame_copy blits an
 // RGBA image into a QImage on frame_ready.  The C ABI exposes no GL
@@ -77,6 +83,8 @@
 
 class QPushButton;
 class ServoPage;
+struct SeLoadInfo;
+struct SeHostReply;
 
 // QWidget hosting one libservo WebView through the servo-embed C ABI
 // (the ENG03 spike harness's ServoView, grown signal coverage for the
@@ -186,8 +194,18 @@ private:
     static void cbConsole(void *userdata, int level, const char *message);
     static void cbNavigation(void *userdata, const char *url);
     static void cbResourceLoad(void *userdata, const char *request);
+    // ENG35: the shim's se_set_load_gate callback — consults the
+    // page's profile RequestPolicy and serves a reply (deny = an
+    // empty 403) instead of letting Servo fetch.  Runs on the GUI
+    // thread inside se_spin.
+    static int cbLoadGate(void *userdata, const SeLoadInfo *info,
+                          SeHostReply *reply);
 
     void *m_instance;
+    // ENG35: the page that owns this view — attachView sets it so
+    // the load gate can resolve the OWNING profile's RequestPolicy
+    // (the MPROF lesson: never an ambient manager lookup).
+    QPointer<ServoPage> m_page;
     QImage m_image;
     QUrl m_url;
     QString m_title;
@@ -305,6 +323,10 @@ public:
     // The backend binds the widget the page renders into — loads
     // issued before it lands queue behind the attach.
     void attachView(ServoView *view);
+
+    // ENG35: the profile this page belongs to — the load gate
+    // resolves request policy through it (owning-profile lookup).
+    Engine::Profile *profile() const { return m_profile; }
 
 private:
     void recordNavigation(const QUrl &url);

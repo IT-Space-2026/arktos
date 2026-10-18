@@ -38,9 +38,13 @@ class QWidget;
 class QWebEngineProfile;
 class AutoSaver;
 class AdBlockDialog;
+class AdBlockEnginePolicy;
 class AdBlockNetwork;
 class AdBlockPage;
 class AdBlockSubscription;
+namespace Engine {
+class Profile;
+}
 class AdBlockManager : public QObject
 {
     Q_OBJECT
@@ -151,6 +155,17 @@ public:
     void installOnProfile(QWebEngineProfile *profile,
                           bool deferInitialRules = false);
 
+    // ENG35: the engine-neutral overload for backends whose request
+    // hook is a policy consult rather than a
+    // QWebEngineUrlRequestInterceptor (Servo's se_set_load_gate).
+    // Installs a shared adblock-backed Engine::RequestPolicy on the
+    // profile — the backend resolves it per load through the tab's
+    // own profile (the MPROF lesson), matching the SAME network()
+    // snapshot the Chromium interceptor uses, including the Rust
+    // engine when selected.  No-op on null.
+    // (::Engine — this class has a nested enum Engine.)
+    void installOnProfile(::Engine::Profile *profile);
+
     // ADB06: which matcher answers requests, picked at runtime in
     // Preferences (persisted as AdBlock/engine = "cpp"|"rust").
     // RustEngine is Brave's adblock-rust — reachable only in
@@ -196,6 +211,9 @@ private:
     QPointer<AdBlockDialog> m_adBlockDialog;
     AdBlockNetwork *m_adBlockNetwork;
     AdBlockPage *m_adBlockPage;
+    // ENG35: shared Engine::RequestPolicy handed to Engine::Profile
+    // objects — lives as long as this singleton (outlives profiles).
+    AdBlockEnginePolicy *m_enginePolicy = nullptr;
     QList<AdBlockSubscription*> m_subscriptions;
 
 };

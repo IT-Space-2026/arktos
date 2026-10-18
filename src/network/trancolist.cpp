@@ -25,6 +25,7 @@
 
 #include <qcoreapplication.h>
 #include <qdebug.h>
+#include <qfile.h>
 #include <qfileinfo.h>
 #include <qhostaddress.h>
 #include <qnetworkreply.h>
@@ -37,10 +38,10 @@
 #include <rustcore.h>
 #endif
 
-// Same ceiling the adblock subscriptions apply — the top-1m.csv.zip
-// sits around 10 MB, so a body larger than this is an error page or
-// an attack, not a rank list.
-static const qint64 MaximumListSize = 64 * 1024 * 1024;
+// The Majestic CSV sits around 80 MB today, so the ceiling moves
+// past the adblock-list 64 MB — a body larger than this is still an
+// error page or an attack, not a rank list.
+static const qint64 MaximumListSize = 128 * 1024 * 1024;
 // The refresh cadence AdBlockSubscription uses.
 static const int RefreshIntervalDays = 7;
 
@@ -56,30 +57,61 @@ TrancoList::TrancoList(QObject *parent)
 {
 }
 
-QString TrancoList::listFilePath()
+QString TrancoList::trancoFileName()
 {
-    return BrowserPaths::dataFilePath(QLatin1String("tranco-list.dat"));
+    return QLatin1String("tranco-list.dat");
 }
 
-QList<QUrl> TrancoList::defaultSources()
+QString TrancoList::majesticFileName()
+{
+    return QLatin1String("majestic-million.csv");
+}
+
+QString TrancoList::listFilePath()
+{
+    return BrowserPaths::dataFilePath(trancoFileName());
+}
+
+QString TrancoList::majesticFilePath()
+{
+    return BrowserPaths::dataFilePath(majesticFileName());
+}
+
+QList<TrancoList::Source> TrancoList::defaultSources()
 {
     // Tranco's permanent "latest daily list" link — it 307-redirects
     // to the dated top-1m.csv.zip (the https redirect rule below
     // carries that hop).  The response body lands verbatim in
     // tranco-list.dat; the crate extracts the *.csv member on load.
+    // SEC19: Majestic Million is the second rank source — a plain
+    // multi-column CSV (no zip wrapper) committed under its own file
+    // name so the bodies never mix.
     return {
-        QUrl(QLatin1String("https://tranco-list.eu/top-1m.csv.zip")),
+        Source(QUrl(QLatin1String("https://tranco-list.eu/top-1m.csv.zip")),
+               trancoFileName()),
+        Source(QUrl(QLatin1String(
+                   "https://downloads.majestic.com/majestic_million.csv")),
+               majesticFileName()),
     };
 }
 
 QDateTime TrancoList::lastUpdate() const
 {
-    return QSettings()
+    // The honest answer is the stalest list — a source that never
+    // fetched is older than any date, so either side missing stamps
+    // the whole row "never" and triggers a refetch.
+    const QDateTime tranco = QSettings()
         .value(QLatin1String("privacy/trancoListUpdated"))
         .toDateTime();
+    const QDateTime majestic = QSettings()
+        .value(QLatin1String("privacy/majesticListUpdated"))
+        .toDateTime();
+    if (!tranco.isValid() || !majestic.isValid())
+        return QDateTime();
+    return qMin(tranco, majestic);
 }
 
-void TrancoList::setSourcesForTest(const QList<QUrl> &sources)
+void TrancoList::setSourcesForTest(const QList<Source> &sources)
 {
     m_sources = sources;
 }
@@ -109,11 +141,13 @@ void TrancoList::updateNow()
 #else
     if (!m_replies.isEmpty())
         return;   // a fetch is already in flight
-    m_merged.clear();
-    for (const QUrl &url : m_sources) {
+    m_bodies.clear();
+    m_replyFile.clear();
+    for (const Source &source : m_sources) {
         // List downloads are HTTPS — a plaintext list could be
         // rewritten on the wire to fake rank coverage.  A loopback
         // source is the test fixture's exception.
+        const QUrl &url = source.url;
         const QHostAddress literal(url.host());
         const bool loopback = literal.isLoopback()
             || url.host().compare(QLatin1String("localhost"),
@@ -123,18 +157,19 @@ void TrancoList::updateNow()
                        << url;
             continue;
         }
-        fetch(url);
+        fetch(url, source.fileName);
     }
     if (m_replies.isEmpty())
         emit updateFinished(false);
 #endif
 }
 
-void TrancoList::fetch(const QUrl &url)
+void TrancoList::fetch(const QUrl &url, const QString &fileName)
 {
     QNetworkReply *reply =
         NetworkAccessManager::instance()->get(QNetworkRequest(url));
     m_replies.append(reply);
+    m_replyFile.insert(reply, fileName);
     connect(reply, &QNetworkReply::finished,
             this, &TrancoList::replyFinished);
 }
@@ -145,6 +180,7 @@ void TrancoList::replyFinished()
     if (!reply)
         return;
     m_replies.removeAll(reply);
+    const QString fileName = m_replyFile.take(reply);
 
     const QByteArray body = reply->size() <= MaximumListSize
         ? reply->readAll() : QByteArray();
@@ -160,21 +196,23 @@ void TrancoList::replyFinished()
     } else if (redirect.isValid()) {
         // One redirect hop, same as AdBlockSubscription — must land
         // on https as well (a downgrade would strip the integrity
-        // the source list needs).
+        // the source list needs).  The hop keeps the source's drop
+        // point — it is the same list, relocated.
         const QUrl target = reply->url().resolved(redirect);
         if (target.scheme() == QLatin1String("https"))
-            fetch(target);
+            fetch(target, fileName);
         else
             qWarning() << "TrancoList: refusing non-https redirect"
                        << target;
-    } else if (!body.isEmpty()) {
-        m_merged += body;
+    } else if (!body.isEmpty() && !fileName.isEmpty()) {
+        QByteArray &merged = m_bodies[fileName];
+        merged += body;
         // Line-oriented bodies get the record-terminating newline
         // the blocklist feeds carry; a zip container must not —
         // trailing bytes invalidate its central directory.
-        if (!m_merged.startsWith("PK\x03\x04")
-            && !m_merged.endsWith('\n'))
-            m_merged += '\n';
+        if (!merged.startsWith("PK\x03\x04")
+            && !merged.endsWith('\n'))
+            merged += '\n';
     }
 
     if (m_replies.isEmpty())
@@ -184,46 +222,91 @@ void TrancoList::replyFinished()
 void TrancoList::maybeCommit()
 {
 #if defined(ARKTOS_RUSTCORE)
-    if (!m_merged.trimmed().isEmpty()) {
-        const QString path = listFilePath();
+    // Commit each drop point separately: the bodies have different
+    // container shapes, so they land under their own file names and
+    // a bad fetch can only ever cost its own file.
+    QStringList written;
+    bool failed = false;
+    for (auto it = m_bodies.constBegin(); it != m_bodies.constEnd();
+         ++it) {
+        const QString &fileName = it.key();
+        const QByteArray &body = it.value();
+        if (fileName.isEmpty() || fileName.contains(QLatin1Char('/'))
+            || body.trimmed().isEmpty())
+            continue;
+        const QString path =
+            BrowserPaths::dataFilePath(fileName);
         QByteArray out;
         // A zip body must land verbatim — a prepended text header
         // would break the crate's PK-magic sniff.  Plaintext CSV
         // gets the provenance comment the blocklist file carries.
-        if (!m_merged.startsWith("PK\x03\x04")) {
-            out += "# Arktos TRUST04 Tranco list update\n# sources: ";
-            for (const QUrl &source : m_sources) {
-                out += source.host().toUtf8();
-                out += ' ';
+        if (!body.startsWith("PK\x03\x04")) {
+            out += "# Arktos site-rank list update\n# sources: ";
+            for (const Source &source : m_sources) {
+                if (source.fileName == fileName) {
+                    out += source.url.host().toUtf8();
+                    out += ' ';
+                }
             }
             out += '\n';
         }
-        out += m_merged;
+        out += body;
         QSaveFile file(path);
         if (file.open(QIODevice::WriteOnly)
             && file.write(out) == out.size()
             && file.commit()) {
-            // Point the core at the data dir (the SecureStore shim
-            // may not have run yet) and re-merge seed ∪ override.
-            const QByteArray dir =
-                QFileInfo(path).absolutePath().toUtf8();
-            rc_set_data_dir(dir.constData());
-            if (rc_tranco_reload() == RC_OK) {
-                QSettings().setValue(
-                    QLatin1String("privacy/trancoListUpdated"),
-                    QDateTime::currentDateTime());
-                emit updateFinished(true);
-                return;
-            }
-            // The downloaded body yielded no usable entries (corrupt
-            // zip, error page) — the seed keeps ranking; the file is
-            // left for diagnosis but reports failure.
-            qWarning() << "TrancoList: downloaded list did not parse";
-            emit updateFinished(false);
-            return;
+            written += fileName;
+        } else {
+            qWarning() << "TrancoList: cannot write" << path;
+            failed = true;
         }
-        qWarning() << "TrancoList: cannot write" << path;
     }
+    if (written.isEmpty()) {
+        emit updateFinished(false);
+        return;
+    }
+    // Point the core at the data dir (the SecureStore shim may not
+    // have run yet), then validate every drop point through the
+    // crate before merging: a body that yields no usable entries
+    // (corrupt zip, error page) is junk — drop it so it can neither
+    // fail the reload nor jam a sibling's future commits, and sweep
+    // any stale corrupt file left by an interrupted run too.
+    const QByteArray dir =
+        QFileInfo(listFilePath()).absolutePath().toUtf8();
+    rc_set_data_dir(dir.constData());
+    const QStringList known = { trancoFileName(), majesticFileName() };
+    QStringList kept;
+    for (const QString &name : known) {
+        const QString path = BrowserPaths::dataFilePath(name);
+        if (!QFile::exists(path))
+            continue;
+        if (rc_tranco_file_entries(name.toUtf8().constData()) > 0) {
+            kept += name;
+        } else {
+            qWarning() << "TrancoList:" << name
+                       << "yielded no usable entries — dropping it";
+            QFile::remove(path);
+            failed = true;
+        }
+    }
+    if (rc_tranco_reload() == RC_OK) {
+        const QDateTime now = QDateTime::currentDateTime();
+        QSettings settings;
+        for (const QString &name : written) {
+            if (!kept.contains(name))
+                continue;
+            settings.setValue(
+                name == majesticFileName()
+                    ? QLatin1String("privacy/majesticListUpdated")
+                    : QLatin1String("privacy/trancoListUpdated"),
+                now);
+        }
+        // Partial success still commits the good files — the failure
+        // flag is honest about the fetch as a whole.
+        emit updateFinished(!failed);
+        return;
+    }
+    qWarning() << "TrancoList: merged table did not reload";
 #endif
     emit updateFinished(false);
 }

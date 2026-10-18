@@ -120,14 +120,15 @@ browsing profile:
   to the real destination. Per-site opt-out + a "N trackers removed"
   count on the shield panel; master toggle in Preferences → Privacy.
 - **Anti-phishing/malware blocklist** — a vendored domain seed merged
-  with a consent-gated URLhaus/OpenPhish feed; listed main-frame
-  navigations stop at a warning interstitial with a session-only
-  proceed.
-- **Tranco site-rank table** — a vendored top-100k seed merged with a
-  consent-gated top-1M download; the merge is poison-safe (an update
-  can only add entries, never un-rank or re-rank a seed domain).
-  `rc_tranco_rank` backs the site-trust signals; lookups never leave
-  the machine.
+  with consent-gated URLhaus/OpenPhish/Phishing.Database feeds;
+  listed main-frame navigations stop at a warning interstitial with
+  a session-only proceed.
+- **Site-rank table** — a vendored Tranco top-100k seed merged
+  best-rank-wins with consent-gated Tranco top-1M and Majestic
+  Million downloads (a domain's effective rank is the lowest any
+  source assigns — an update can only add or improve coverage, never
+  un-rank a domain).  `rc_tranco_rank` backs the site-trust signals;
+  lookups never leave the machine.
 - **IDN/homograph lookalike probe** — `rc_lookalike_check` consults
   the rank table: the host is punycode-decoded, case-folded and mapped
   through the UTS #39 confusables table, then matched against a
@@ -266,7 +267,12 @@ browsing profile:
   engine: a new tab with Servo as the default engine lands on the
   Servo-branded start page, and a start page carried through an
   engine swap (or reached via the Home button) re-resolves to the
-  destination engine's own variant. Servo renders in-process, so its
+  destination engine's own variant. Servo tabs enforce the same
+  per-profile AdBlock policy as Chromium ones — network-level
+  blocking plus $redirect stub serving, no cosmetic CSS hiding —
+  while devtools honestly report themselves unavailable (Servo's
+  devtools server speaks the Firefox remote protocol, not the
+  panel's CDP transport). Servo renders in-process, so its
   status-bar memory readout shows the shared whole-app figure
   marked "(shared)" rather than a per-tab number.
 - **Reader mode** (Ctrl+Alt+R) and **Picture-in-Picture** on videos.
@@ -945,7 +951,9 @@ the full transitive list lives in `THIRD-PARTY-NOTICES` §7–9)
 | uBlock filters (uAssets) | GPL-3.0 | https://github.com/uBlockOrigin/uAssets |
 | URLhaus domain blocklist | abuse.ch usage terms | https://urlhaus.abuse.ch |
 | OpenPhish feed | OpenPhish community feed terms | https://openphish.com |
+| Phishing.Database active-domain feed | MIT | https://github.com/mitchellkrogza/Phishing.Database |
 | Tranco top-site list (top-1M) | Tranco list terms | https://tranco-list.eu |
+| Majestic Million site list | CC BY 3.0 | https://majestic.com/reports/majestic-million |
 | ClearURLs-derived tracking-param rules (`urlstrip-rules.json`, vendored) | LGPL-3.0 | https://github.com/ClearURLs/Addon |
 
 **Experimental** (in-tree, not shipped): libservo (MPL-2.0 —

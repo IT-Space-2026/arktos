@@ -74,8 +74,13 @@ public:
     // changed.  Pure; safe on any thread.
     static bool stripQueryParams(QUrl *url, const QStringList &specs);
 
-private:
+    // ENG35: public so the engine-neutral policy spelling
+    // (AdBlockEnginePolicy, used by Servo's load gate) feeds the same
+    // per-page tally the interceptor writes — same static+lock as
+    // blockedRequestCount, safe on any thread.
     static void noteBlockedRequest(const QUrl &firstPartyUrl);
+
+private:
 
     AdBlockNetwork *m_network;
 };

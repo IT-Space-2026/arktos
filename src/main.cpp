@@ -21,6 +21,7 @@
 #include "profilesettings.h"
 #include "adblocknetwork.h"
 #include "adblockpage.h"
+#include "adblockrequestinterceptor.h"
 #include "adblockresourcehandler.h"
 #include "adblockrule.h"
 #include "adblockschemeaccesshandler.h"
@@ -4238,6 +4239,33 @@ static int engineSmoke()
 // again — asserting refusal exactly where re-init would be fatal.
 // The process surviving to the PASS line is itself the check.
 // Skips cleanly when the servo backend/artifact is absent.
+// ENG35: a RequestPolicy that records what the servo load gate
+// asked and delegates to the real (adblock) policy installed on the
+// profile — the smoke's proof the gate consulted the profile and
+// which verdict it served for each load.
+class GateProbePolicy : public Engine::RequestPolicy
+{
+public:
+    explicit GateProbePolicy(Engine::RequestPolicy *inner)
+        : m_inner(inner)
+    {
+    }
+    Engine::RequestDecision decide(
+            const Engine::NavigationRequest &request) override
+    {
+        ++calls;
+        lastUrl = request.url;
+        Engine::RequestDecision decision =
+            m_inner ? m_inner->decide(request) : Engine::RequestDecision();
+        lastAction = decision.action;
+        return decision;
+    }
+    int calls = 0;
+    QUrl lastUrl;
+    Engine::RequestAction lastAction = Engine::RequestAction::Allow;
+    Engine::RequestPolicy *m_inner;
+};
+
 static int servoLifecycleSmoke()
 {
     Engine::Backend *servo =
@@ -5171,6 +5199,113 @@ static int servoLifecycleSmoke()
         delete view;
         delete page;
         delete profile;
+    }
+
+    // (e) ENG35 — adblock through the shim's load gate.  The gate
+    // consults the profile's RequestPolicy per resource load; the
+    // probe wrapper proves the gate fired and which verdict it
+    // served.  A deny is an empty 403 — the request never reaches
+    // the wire (no fetch is issued at all), which the tally +
+    // verdict pair asserts.
+    {
+        Engine::Profile *profile =
+            servo->createProfile(Engine::ProfileOptions(), nullptr);
+        Engine::Page *page =
+            profile ? servo->createPage(profile, nullptr) : nullptr;
+        QWidget *view =
+            page ? servo->createView(page, nullptr) : nullptr;
+        ServoView *gateView = qobject_cast<ServoView *>(view);
+        report(QStringLiteral("load-gate-symbol"),
+               servo->capabilities().requestInterception);
+        if (gateView && gateView->isReady()) {
+            AdBlockManager *manager = AdBlockManager::instance();
+            manager->customRules()->addRule(AdBlockRule(
+                QStringLiteral("||servo-gate-block.invalid^")));
+            manager->installOnProfile(profile);
+            report(QStringLiteral("gate-policy-bound"),
+                   profile->requestPolicy() != nullptr);
+            if (profile->requestPolicy()) {
+                GateProbePolicy probe(profile->requestPolicy());
+                profile->setRequestPolicy(&probe);
+
+                // Allow leg FIRST — no rule covers this host; the
+                // gate must consult and pass (verdict Allow, no
+                // tally).  It runs before the deny because in this
+                // servo pin a webview.load() issued while a previous
+                // top-level navigation is still in flight is aborted
+                // constellation-side — and the allow leg's fetch must
+                // be given time to conclude (DNS fails on .invalid)
+                // before the deny leg navigates.
+                page->load(QUrl(QStringLiteral(
+                    "http://servo-gate-allow.invalid/")));
+                pumpUntil([&probe]() { return probe.calls > 0; }, 15000);
+                report(QStringLiteral("adblock-allow-passes"),
+                       probe.calls > 0
+                       && probe.lastAction == Engine::RequestAction::Allow
+                       && AdBlockRequestInterceptor::blockedRequestCount(
+                              QStringLiteral("servo-gate-allow.invalid")) == 0);
+
+                // Let the failed fetch settle — see above; racing it
+                // would drop the deny leg's navigation.
+                pumpUntil([]() { return false; }, 15000);
+
+                // Deny leg — a blocklisted main-frame load; the gate
+                // serves an empty 403 and the request never reaches
+                // the wire (no fetch is issued at all), which the
+                // verdict + tally pair asserts.
+                const int callsBefore = probe.calls;
+                page->load(QUrl(QStringLiteral(
+                    "http://servo-gate-block.invalid/")));
+                pumpUntil([&probe, callsBefore]() {
+                    return probe.calls > callsBefore;
+                }, 15000);
+                report(QStringLiteral("gate-consults-policy"),
+                       probe.calls > callsBefore);
+                report(QStringLiteral("adblock-deny-tally"),
+                       probe.lastAction == Engine::RequestAction::Block
+                       && AdBlockRequestInterceptor::blockedRequestCount(
+                              QStringLiteral("servo-gate-block.invalid")) > 0);
+                profile->setRequestPolicy(probe.m_inner);
+            }
+        }
+        delete view;
+        delete page;
+        // profile is servo's shared backend-owned context — never
+        // deleted (see second-page-refused-live).
+    }
+
+    // (f) ENG35 — the BiDi panel's honesty on a servo tab: the
+    // context selector lists the tab DISABLED with the reason, and
+    // the backend's devTools capability stays false (servo's
+    // devtools crate serves the Firefox remote protocol on
+    // 127.0.0.1:7000 — a transport the CDP client cannot read, so no
+    // fake channel is wired).
+    report(QStringLiteral("bidi-devtools-false"),
+           !servo->capabilities().devTools);
+    {
+        TabWidget tabs;
+        tabs.makeNewTab(true);
+        tabs.reloadTabInEngine(0, QStringLiteral("servo"));
+        BidiPanel panel;
+        panel.setTabWidget(&tabs);
+        bool disabledWithReason = false;
+        for (QComboBox *combo : panel.findChildren<QComboBox *>()) {
+            QStandardItemModel *model =
+                qobject_cast<QStandardItemModel *>(combo->model());
+            if (!model)
+                continue;
+            for (int i = 0; i < combo->count(); ++i) {
+                QStandardItem *item = model->item(i);
+                const bool disabled = item
+                    && !(item->flags() & Qt::ItemIsEnabled);
+                const QString tip =
+                    combo->itemData(i, Qt::ToolTipRole).toString();
+                if (disabled && tip.contains(QLatin1String("devtools")))
+                    disabledWithReason = true;
+            }
+        }
+        report(QStringLiteral("bidi-combo-disabled-reason"),
+               disabledWithReason);
     }
     // The smoke returns without exec(), so aboutToQuit never fires —
     // drive the engine's graceful shutdown explicitly or servo

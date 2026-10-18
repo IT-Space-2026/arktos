@@ -62,14 +62,19 @@ QString DomainBlocklist::listFilePath()
 
 QList<QUrl> DomainBlocklist::defaultSources()
 {
-    // Both verified live and stable — URLhaus's hostfile feed is the
+    // All verified live and stable — URLhaus's hostfile feed is the
     // maintained domain export (malware/C2/droppers), OpenPhish's
-    // community feed is one phishing URL per line.  The rustcore
-    // parser understands both row shapes natively, so the bodies are
+    // community feed is one phishing URL per line, and SEC19 adds
+    // Phishing.Database's ACTIVE domain list (MIT, ~11 MB of bare
+    // domains — under the same 64 MB response cap).  The rustcore
+    // parser understands every row shape natively, so the bodies are
     // concatenated verbatim.
     return {
         QUrl(QLatin1String("https://urlhaus.abuse.ch/downloads/hostfile/")),
         QUrl(QLatin1String("https://openphish.com/feed.txt")),
+        QUrl(QLatin1String(
+            "https://raw.githubusercontent.com/mitchellkrogza/"
+            "Phishing.Database/master/phishing-domains-ACTIVE.txt")),
     };
 }
 

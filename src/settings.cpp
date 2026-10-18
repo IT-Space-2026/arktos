@@ -3517,7 +3517,8 @@ void SettingsDialog::updateContentBlockerStatus()
 }
 
 // TRUST13: bits for m_siteTrustUpdatesPending — which of the two
-// list singletons an Update Now click is still waiting on.
+// list singletons an Update Now click is still waiting on (TrancoList
+// covers Tranco + Majestic behind its one signal — SEC19).
 enum {
     TrancoListPending = 1,
     DomainBlocklistPending = 2
@@ -3561,9 +3562,10 @@ void SettingsDialog::refreshSiteTrustListStatus()
         return;
     }
 
-    // The label reports the older of the two stamps — the lists move
-    // together, so the stale one is the honest answer; a list that
-    // never fetched is older than any date.
+    // The label reports the oldest stamp across all the lists — they
+    // move together, so the stale one is the honest answer; a list
+    // that never fetched is older than any date (TrancoList folds
+    // its Tranco + Majestic stamps into one oldest-of answer).
     const QDateTime tranco = TrancoList::instance()->lastUpdate();
     const QDateTime blocklist = DomainBlocklist::instance()->lastUpdate();
     QDateTime oldest;

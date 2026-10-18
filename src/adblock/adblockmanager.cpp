@@ -35,6 +35,7 @@
 #include "adblockpage.h"
 #include "adblockrequestinterceptor.h"
 #include "adblockresourcehandler.h"
+#include "engineinterface.h"
 #include "adblockschemeaccesshandler.h"
 #include "adblocksubscription.h"
 #include "browserpaths.h"
@@ -303,6 +304,123 @@ void AdBlockManager::installOnProfile(QWebEngineProfile *profile,
     // arktos-resource:// serves the bundled $redirect= stub resources.
     profile->installUrlSchemeHandler(AdBlockResourceHandler::schemeName(),
                                      new AdBlockResourceHandler(this));
+}
+
+// ENG35: the Engine::RequestPolicy spelling of the adblock decision
+// — what installOnProfile(QWebEngineProfile) achieves through the
+// interceptor, for backends whose request hook can only consult a
+// policy object (Servo's se_set_load_gate).  One shared instance
+// serves every Engine::Profile: decide() reads the same network()
+// snapshot the Chromium interceptor uses — identical rules on both
+// engine lanes, Rust matcher included — and Redirect decisions carry
+// a ready-made stub (stubBody/stubMime) for engines that can only
+// serve a response, never re-issue the request (Servo).  Thread-safe
+// through the matcher's own snapshot lock; the object lives as long
+// as the manager singleton, which outlives every profile.
+class AdBlockEnginePolicy : public Engine::RequestPolicy
+{
+public:
+    explicit AdBlockEnginePolicy(AdBlockManager *manager)
+        : m_manager(manager)
+    {
+    }
+
+    Engine::RequestDecision decide(
+            const Engine::NavigationRequest &request) override
+    {
+        Engine::RequestDecision out;
+        // STALL01: same scheme guard as the interceptor — internal
+        // schemes (qrc:, arktos-resource:, data:, abp:, ...) never
+        // reach the filter lists.
+        if (!AdBlockRequestInterceptor::isWebRequestScheme(
+                    request.url.scheme()))
+            return out;
+        const AdBlockDecision decision = m_manager->network()->match(
+            request.url, request.firstPartyUrl,
+            int(request.resourceType));
+        switch (decision.action) {
+        case AdBlockDecision::Allow:
+            break;
+        case AdBlockDecision::Block:
+            AdBlockRequestInterceptor::noteBlockedRequest(
+                request.firstPartyUrl);
+            out.action = Engine::RequestAction::Block;
+            return out;
+        case AdBlockDecision::Redirect:
+            AdBlockRequestInterceptor::noteBlockedRequest(
+                request.firstPartyUrl);
+            out.action = Engine::RequestAction::Redirect;
+            if (!decision.redirectUrl.isEmpty()) {
+                // adblock-rust decisions carry a literal URL — a
+                // data: stub payload or an http(s) $removeparam
+                // rewrite.  The data: payload doubles as the stub.
+                out.redirectUrl = QUrl(decision.redirectUrl);
+                if (decision.redirectUrl.startsWith(QLatin1String("data:")))
+                    dataUrlDecode(decision.redirectUrl,
+                                  &out.stubMime, &out.stubBody);
+                return out;
+            }
+            {
+                const QByteArray resource =
+                    AdBlockResourceHandler::canonicalResourceName(
+                        decision.redirectResource);
+                if (resource.isEmpty()) {
+                    // unknown stub — plain block, same as the
+                    // interceptor's fallback.
+                    out.action = Engine::RequestAction::Block;
+                } else {
+                    out.redirectUrl =
+                        AdBlockResourceHandler::urlForResource(resource);
+                    AdBlockResourceHandler::resourceFor(
+                        resource, &out.stubMime, &out.stubBody);
+                }
+            }
+            return out;
+        }
+        if (!decision.removeParams.isEmpty()) {
+            QUrl url = request.url;
+            if (AdBlockRequestInterceptor::stripQueryParams(
+                        &url, decision.removeParams)) {
+                out.action = Engine::RequestAction::Redirect;
+                out.redirectUrl = url;
+            }
+        }
+        return out;
+    }
+
+private:
+    // data:<mime>[,<params>][;base64],<payload> — the stub encoding
+    // the Rust engine hands back for $redirect=; decoded into
+    // mime+body so a serve-only engine still gets the payload.
+    static void dataUrlDecode(const QString &url, QByteArray *mime,
+                              QByteArray *body)
+    {
+        const int comma = url.indexOf(QLatin1Char(','));
+        if (comma < 0)
+            return;
+        const QString head = url.mid(5, comma - 5);   // skip "data:"
+        const QString payload = url.mid(comma + 1);
+        const QStringList parts = head.split(QLatin1Char(';'));
+        *mime = parts.value(0).toUtf8();
+        *body = parts.contains(QLatin1String("base64"))
+            ? QByteArray::fromBase64(payload.toUtf8())
+            : QByteArray::fromPercentEncoding(payload.toUtf8());
+    }
+
+    AdBlockManager *m_manager;
+};
+
+void AdBlockManager::installOnProfile(::Engine::Profile *profile)
+{
+    // ENG35: the profile owns the binding — the backend resolves the
+    // policy through the tab's own profile per load (the MPROF
+    // lesson), so a profile this was never called on stays genuinely
+    // ungated.
+    if (!profile)
+        return;
+    if (!m_enginePolicy)
+        m_enginePolicy = new AdBlockEnginePolicy(this);
+    profile->setRequestPolicy(m_enginePolicy);
 }
 
 AdBlockPage *AdBlockManager::page()

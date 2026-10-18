@@ -1,39 +1,49 @@
-//! TRUST04: the Tranco top-site rank table — a vendored snapshot of
-//! the Tranco list (https://tranco-list.eu) that the site-trust
-//! verdicts (TRUST01) and the homograph detector (TRUST05) consult
-//! for "is this host a popular domain".  A lookup never leaves the
-//! machine: the rank table is shipped data, not a remote service.
+//! TRUST04/SEC19: the site-rank table — a vendored snapshot of the
+//! Tranco list (https://tranco-list.eu) plus two consent-gated
+//! downloads that the site-trust verdicts (TRUST01) and the
+//! homograph detector (TRUST05) consult for "is this host a popular
+//! domain".  A lookup never leaves the machine: the rank table is
+//! shipped data, not a remote service.
 //!
 //! Data sources, same shape as blocklist.rs:
 //!   * vendored `data/tranco-top100k.csv` — ranks 1..100000 of the
 //!     Tranco daily top-1M, compiled in so ranking works with no data
 //!     dir and no network at all;
 //!   * `<data dir>/tranco-list.dat` — the download-on-demand full
-//!     top-1M the Qt-side TrancoList updater drops in.  The updater
-//!     writes the response body verbatim (top-1m.csv.zip); the
-//!     loader sniffs the PK magic and pulls the `*.csv` member out
-//!     through the same central-directory walk extverify uses, so a
-//!     plaintext `rank,domain` file works too (fixtures, hand-drops).
+//!     Tranco top-1M the Qt-side TrancoList updater drops in.  The
+//!     updater writes the response body verbatim (top-1m.csv.zip);
+//!     the loader sniffs the PK magic and pulls the `*.csv` member
+//!     out through the same central-directory walk extverify uses,
+//!     so a plaintext `rank,domain` file works too (fixtures,
+//!     hand-drops);
+//!   * `<data dir>/majestic-million.csv` — the Majestic Million
+//!     (https://majestic.com/reports/majestic-million, CC BY 3.0)
+//!     second rank source: a plain multi-column CSV
+//!     (`GlobalRank,TldRank,Domain,...`) — no zip wrapper, the parser
+//!     reads the GlobalRank and Domain columns directly.
 //!
-//! Merge is poison-safe like blocklist.rs: the update can only ADD
-//! entries — a domain already seeded keeps its vendored rank, and no
-//! update can quietly un-rank (or re-rank) a seed domain.  The
-//! trade-off is deliberate: a stale seed rank is a cosmetic signal
-//! issue, a poisoned rank is a trust-verdict issue; the seed is
-//! refreshed with the crate.
+//! Rank merge (SEC19): the effective rank is the BEST (lowest) rank
+//! across all sources — Tranco's aggregate and Majestic's
+//! backlink-based ranking measure different signals, and membership
+//! in either counts.  An update can still never un-rank a domain
+//! (min can only improve a rank) and a source that stops listing a
+//! domain simply stops contributing — the vendored seed alone keeps
+//! the feature alive.
 //!
-//! Row grammar is deliberately tolerant so upstream drops in
+//! Row grammars are deliberately tolerant so upstream drops in
 //! unchanged:
 //!   * `<rank>,<domain>`   — the Tranco CSV shape
+//!   * `<rank>,<tldrank>,<domain>,...` — the Majestic CSV shape
+//!     (GlobalRank/TldRank/Domain/TLD columns; the header row fails
+//!     the rank parse and drops out)
 //!   * `<domain>`          — bare domain, ranked at its line ordinal
 //!   * `#`, `!`, `;`, `//` lines, blanks — comments/junk
 //!
 //! Domains must pass the same DNS-name gate the blocklist applies
-//! (a dot, sane labels) and IP literals are never entries — Tranco
-//! ranks domains only.
+//! (a dot, sane labels) and IP literals are never entries — the
+//! lists rank domains only.
 
 use std::collections::HashMap;
-use std::io::ErrorKind;
 use std::net::IpAddr;
 use std::path::Path;
 use std::sync::Arc;
@@ -41,9 +51,11 @@ use std::sync::Arc;
 use crate::error::{fail, Fail, RcResult, RcStatus};
 use crate::store::{data_dir, DirCache};
 
-/// Updated-list drop point inside the data dir — the Qt-side
-/// TrancoList updater writes this file and calls rc_tranco_reload().
+/// Updated-list drop points inside the data dir — the Qt-side
+/// TrancoList updater writes these files and calls
+/// rc_tranco_reload().
 const OVERRIDE_FILE: &str = "tranco-list.dat";
+const MAJESTIC_FILE: &str = "majestic-million.csv";
 
 /// Vendored seed, compiled in so ranking works with no data dir and
 /// no network at all.
@@ -51,10 +63,12 @@ const BUILTIN_LIST: &str = include_str!("../data/tranco-top100k.csv");
 
 /// Bound on parsed entries — the full top-1M plus headroom; a file
 /// growing past this is almost certainly hostile or corrupt.  Bound
-/// on a single line and on the inflated `*.csv` member too.
+/// on a single line, on the inflated `*.csv` zip member and on a
+/// whole override file (majestic_million.csv is ~80 MB today).
 const MAX_ENTRIES: usize = 2_000_000;
 const MAX_LINE: usize = 512;
 const MAX_MEMBER: usize = 64 * 1024 * 1024;
+const MAX_FILE: u64 = 128 * 1024 * 1024;
 
 /// The loaded table.  The DirCache slot stamps the data dir the
 /// entries were resolved against — a store that appears after first
@@ -123,6 +137,30 @@ fn entry_from_line(line: &str, ordinal: u32) -> Option<(String, u32)> {
     validate_domain(&host).then_some((host, rank))
 }
 
+/// One (domain, rank) entry out of one Majestic Million CSV row, or
+/// None for the header/comments/junk.  The upstream shape is
+/// `GlobalRank,TldRank,Domain,TLD,...` — rank is field 0, the domain
+/// field 2.  The header row's "GlobalRank" is no u32 and drops out;
+/// a row without a Domain column is junk.
+fn majestic_entry_from_line(line: &str) -> Option<(String, u32)> {
+    let line = line.trim();
+    if line.len() > MAX_LINE || line.is_empty() {
+        return None;
+    }
+    match line.as_bytes()[0] {
+        b'#' | b'!' | b';' | b'[' | b'/' => return None,
+        _ => {}
+    }
+    let mut fields = line.split(',');
+    let rank: u32 = fields.next()?.trim().parse().ok()?;
+    if rank == 0 {
+        return None;
+    }
+    fields.next()?; // TldRank
+    let host = fields.next()?.trim().trim_end_matches('.').to_lowercase();
+    validate_domain(&host).then_some((host, rank))
+}
+
 /// Both indexes out of one ordered pass — (ranks, skeletons).  The
 /// skeleton of each entry's decoded name is computed once, here, so
 /// the lookalike probe itself stays allocation-free; entries whose
@@ -154,14 +192,42 @@ fn parse_entries(text: &str) -> (HashMap<String, u32>, HashMap<String, String>) 
     (ranks, skeletons)
 }
 
+/// Same pass over the Majestic Million multi-column shape.
+fn parse_majestic_entries(
+    text: &str,
+) -> (HashMap<String, u32>, HashMap<String, String>) {
+    let mut ranks = HashMap::new();
+    let mut skeletons = HashMap::new();
+    for line in text.lines() {
+        if ranks.len() >= MAX_ENTRIES {
+            break;
+        }
+        if let Some((host, rank)) = majestic_entry_from_line(line) {
+            if ranks.contains_key(&host) {
+                continue;
+            }
+            if let Some(skel) = crate::lookalike::entry_skeleton(&host) {
+                if skel != host {
+                    skeletons.entry(skel).or_insert_with(|| host.clone());
+                }
+            }
+            ranks.insert(host, rank);
+        }
+    }
+    (ranks, skeletons)
+}
+
 /// The updatable body out of an override blob: the Tranco download is
-/// a zip container (`top-1m.csv.zip`); a plaintext `rank,domain`
-/// body is accepted as-is.
+/// a zip container (`top-1m.csv.zip`); plaintext bodies are accepted
+/// as-is, in the `rank,domain` grammar or the Majestic Million
+/// columnar grammar (`majestic` selects it — the Qt updater drops
+/// each source under its own file name).
 fn entries_from_blob(
     blob: &[u8],
+    majestic: bool,
 ) -> (HashMap<String, u32>, HashMap<String, String>) {
     let text;
-    let body = if blob.starts_with(b"PK\x03\x04") {
+    let body = if !majestic && blob.starts_with(b"PK\x03\x04") {
         match crate::extverify::zip_member_by_suffix(blob, ".csv", MAX_MEMBER)
         {
             Ok(member) => {
@@ -181,7 +247,61 @@ fn entries_from_blob(
             }
         }
     };
-    parse_entries(body)
+    if majestic {
+        parse_majestic_entries(body)
+    } else {
+        parse_entries(body)
+    }
+}
+
+/// Fold one parsed source into the merged table (SEC19): a domain's
+/// effective rank is the best (lowest) rank any list gives it — an
+/// update can improve a seed or sibling-list rank but never un-rank
+/// anything.  Skeleton collisions resolve to the better-ranked raw
+/// name so the lookalike probe keeps answering with the most popular
+/// twin.
+fn merge_into(
+    ranks: &mut HashMap<String, u32>,
+    skeletons: &mut HashMap<String, String>,
+    eranks: HashMap<String, u32>,
+    eskels: HashMap<String, String>,
+) {
+    for (host, rank) in eranks {
+        ranks
+            .entry(host)
+            .and_modify(|r| *r = (*r).min(rank))
+            .or_insert(rank);
+    }
+    for (skel, raw) in eskels {
+        skeletons
+            .entry(skel)
+            .and_modify(|cur| {
+                let cur_rank = ranks.get(cur.as_str()).copied().unwrap_or(u32::MAX);
+                let new_rank = ranks.get(raw.as_str()).copied().unwrap_or(u32::MAX);
+                if new_rank < cur_rank {
+                    *cur = raw.clone();
+                }
+            })
+            .or_insert(raw);
+    }
+}
+
+/// Read a data-dir override file under the size bound — an oversized
+/// drop is an attack or junk, and an unreadable/absent file simply
+/// contributes nothing.
+fn read_override(dir: &Path, name: &str) -> Option<Vec<u8>> {
+    let path = dir.join(name);
+    let meta = std::fs::metadata(&path).ok()?;
+    if !meta.is_file() || meta.len() > MAX_FILE {
+        return None;
+    }
+    std::fs::read(&path).ok()
+}
+
+/// Grammar each override file parses under — keyed by the file name
+/// the Qt updater drops it under.
+fn grammar_for(name: &str) -> bool {
+    name == MAJESTIC_FILE
 }
 
 impl TrancoList {
@@ -264,25 +384,20 @@ impl TrancoList {
     }
 }
 
-/// Seed ∪ override, seed rank winning every shared key.  The union
-/// is deliberate: an update adds coverage on top of the seed, so a
-/// truncated or malicious update can only ever rank MORE domains,
-/// never un-rank or re-rank a seeded one.
+/// Seed ∪ both override files, best-rank-wins across every source
+/// (SEC19).  The merge is still poison-safe where it matters: an
+/// update can only ever rank MORE domains or improve a rank, never
+/// un-rank anything, so a truncated or malicious download degrades
+/// to "no new coverage" — the vendored seed alone keeps ranking.
 fn load_from_disk(dir: Option<&Path>) -> TrancoList {
     let (mut ranks, mut skeletons) = parse_entries(BUILTIN_LIST);
     if let Some(dir) = dir {
-        match std::fs::read(dir.join(OVERRIDE_FILE)) {
-            Ok(blob) => {
-                let (eranks, eskels) = entries_from_blob(&blob);
-                for (host, rank) in eranks {
-                    ranks.entry(host).or_insert(rank);
-                }
-                for (skel, raw) in eskels {
-                    skeletons.entry(skel).or_insert(raw);
-                }
+        for name in [OVERRIDE_FILE, MAJESTIC_FILE] {
+            if let Some(blob) = read_override(dir, name) {
+                let (eranks, eskels) =
+                    entries_from_blob(&blob, grammar_for(name));
+                merge_into(&mut ranks, &mut skeletons, eranks, eskels);
             }
-            Err(e) if e.kind() == ErrorKind::NotFound => {}
-            Err(_) => {} // unreadable override — the seed still ranks
         }
     }
     TrancoList { ranks, skeletons }
@@ -307,24 +422,48 @@ pub fn load(text: &str) -> RcResult<()> {
     Ok(())
 }
 
-/// rc_tranco_reload: re-run the seed ∪ `<data dir>/tranco-list.dat`
-/// merge, e.g. after a list update lands in the data dir.
-/// RC_CORRUPT when an override exists but yields zero entries — the
-/// previous table stays active.
+/// rc_tranco_reload: re-run the seed ∪ `<data dir>/{tranco-list.dat,
+/// majestic-million.csv}` merge, e.g. after a list update lands in
+/// the data dir.  RC_CORRUPT when an override exists but yields zero
+/// usable entries — the previous table stays active.
 pub fn reload() -> RcResult<()> {
     let dir = data_dir();
     if let Some(dir) = &dir {
-        if let Ok(blob) = std::fs::read(dir.join(OVERRIDE_FILE)) {
-            if entries_from_blob(&blob).0.is_empty() {
-                return Err(Fail {
-                    status: RcStatus::Corrupt,
-                    msg: "tranco: override yields no entries".into(),
-                });
+        for name in [OVERRIDE_FILE, MAJESTIC_FILE] {
+            if dir.join(name).exists() {
+                let empty = read_override(dir, name)
+                    .map(|blob| {
+                        entries_from_blob(&blob, grammar_for(name))
+                            .0
+                            .is_empty()
+                    })
+                    .unwrap_or(true);
+                if empty {
+                    return Err(Fail {
+                        status: RcStatus::Corrupt,
+                        msg: format!(
+                            "tranco: {name} yields no entries"
+                        ),
+                    });
+                }
             }
         }
     }
     LIST.replace(load_from_disk(dir.as_deref()));
     Ok(())
+}
+
+/// rc_tranco_file_entries: usable-entry count of one data-dir
+/// override file, parsed under the grammar its name selects — the
+/// Qt updater's per-file validation probe (a body that yields zero
+/// entries is junk and must not be committed on top of a good copy).
+/// 0 when the data dir is unset, the file is absent, unreadable,
+/// oversized or yields nothing.
+pub fn file_entries(name: &str) -> usize {
+    let Some(dir) = data_dir() else { return 0 };
+    read_override(&dir, name)
+        .map(|blob| entries_from_blob(&blob, grammar_for(name)).0.len())
+        .unwrap_or(0)
 }
 
 /// rc_tranco_rank: FFI-facing lookup — 0 when unranked (Tranco ranks
@@ -489,47 +628,76 @@ mod tests {
     #[test]
     fn update_blob_accepts_plaintext_and_zip() {
         let csv = b"7,updated.example\n";
-        assert_eq!(entries_from_blob(csv).0.len(), 1);
+        assert_eq!(entries_from_blob(csv, false).0.len(), 1);
         // Stored member.
         let zip_store = test_zip("top-1m.csv", csv, false);
-        let e = entries_from_blob(&zip_store);
+        let e = entries_from_blob(&zip_store, false);
         assert_eq!(e.0.get("updated.example"), Some(&7));
         // Deflated member — the real top-1m.csv.zip shape.
         let zip_defl = test_zip("top-1m.csv", csv, true);
-        let e = entries_from_blob(&zip_defl);
+        let e = entries_from_blob(&zip_defl, false);
         assert_eq!(e.0.get("updated.example"), Some(&7));
         // A zip with no .csv member and a garbage blob both parse
         // empty — the caller treats that as "no usable update".
         let zip_other = test_zip("readme.txt", csv, false);
-        assert!(entries_from_blob(&zip_other).0.is_empty());
-        assert!(entries_from_blob(b"\x00\x01\x02garbage").0.is_empty());
-        assert!(entries_from_blob(b"PK\x03\x04truncated").0.is_empty());
+        assert!(entries_from_blob(&zip_other, false).0.is_empty());
+        assert!(entries_from_blob(b"\x00\x01\x02garbage", false).0.is_empty());
+        assert!(entries_from_blob(b"PK\x03\x04truncated", false).0.is_empty());
     }
 
     #[test]
-    fn merge_is_poison_safe() {
-        // Build the merge the way load_from_disk does: seed first,
-        // update rows only fill gaps.
+    fn majestic_blob_parses_columns() {
+        // The real majestic_million.csv shape: header row, then
+        // GlobalRank,TldRank,Domain,TLD,... — fields 0 and 2 carry
+        // the entry.
+        let (ranks, _) = entries_from_blob(
+            b"GlobalRank,TldRank,Domain,TLD,RefSubNets,RefIPs,IDN_Domain,IDN_TLD,PrevGlobalRank,PrevTldRank,PrevRefSubNets,PrevRefIPs\n\
+              1,1,google.com,com,508408,2224152,google.com,com,1,1,508504,2225468\n\
+              42,9,mj.example,example,10,20,mj.example,example,40,8,11,22\n\
+              # comment\n\
+              \n\
+              7,junk.example,example\n\
+              0,1,zerorank.example,example\n\
+              9,1,1.2.3.4,com\n\
+              xx,1,notarank.example,com\n",
+            true,
+        );
+        assert_eq!(ranks.get("google.com"), Some(&1));
+        assert_eq!(ranks.get("mj.example"), Some(&42));
+        // Short row (no Domain field), rank-0, IP literal and
+        // non-numeric-rank rows all drop out.
+        assert_eq!(ranks.len(), 2);
+        // The majestic grammar never sniffs zip containers.
+        let zip = test_zip("majestic_million.csv", b"5,z.example\n", false);
+        assert!(entries_from_blob(&zip, true).0.is_empty());
+    }
+
+    #[test]
+    fn merge_takes_best_rank_across_lists() {
+        // SEC19: the effective rank is the best (lowest) rank any
+        // source assigns — the seed's stale rank can improve, nothing
+        // can be un-ranked, and coverage only grows.
         let (mut ranks, mut skeletons) =
             parse_entries("5,seed.example\n9,also-seed.example\n");
         let seed_len = ranks.len();
         let (eranks, eskels) = entries_from_blob(
-            b"1,seed.example\n2,new.example\n", // re-rank + drop attempts + add
+            b"1,seed.example\n2,new.example\n",
+            false,
         );
-        for (host, rank) in eranks {
-            ranks.entry(host).or_insert(rank);
-        }
-        for (skel, raw) in eskels {
-            skeletons.entry(skel).or_insert(raw);
-        }
+        merge_into(&mut ranks, &mut skeletons, eranks, eskels);
+        // A Majestic body listing the same domain lower still wins.
+        let (mranks, mskels) = entries_from_blob(
+            b"GlobalRank,TldRank,Domain,TLD\n7,3,seed.example,example\n8,4,mj-only.example,example\n",
+            true,
+        );
+        merge_into(&mut ranks, &mut skeletons, mranks, mskels);
         let t = TrancoList { ranks, skeletons };
-        // The update cannot re-rank a seed entry…
-        assert_eq!(t.rank_of("seed.example"), Some(5));
-        // …nor un-rank one it simply omits…
-        assert_eq!(t.rank_of("also-seed.example"), Some(9));
-        // …only add coverage.
+        assert_eq!(t.rank_of("seed.example"), Some(1)); // tranco update bested seed+majestic
+        assert_eq!(t.rank_of("also-seed.example"), Some(9)); // no source can un-rank
         assert_eq!(t.rank_of("new.example"), Some(2));
-        assert_eq!(t.len(), seed_len + 1);
+        assert_eq!(t.rank_of("mj-only.example"), Some(8)); // membership in either counts
+        assert_eq!(t.rank_of("never-listed.example"), None);
+        assert_eq!(t.len(), seed_len + 2);
     }
 
     #[test]
@@ -579,6 +747,52 @@ mod tests {
         std::fs::remove_file(&override_path).unwrap();
         reload().unwrap();
         assert_eq!(rank("added-by-update.example"), 0);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn majestic_file_merges_on_reload() {
+        let _g = guard();
+        let dir = std::env::temp_dir().join(format!(
+            "rustcore-majestic-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let tranco_path = dir.join(OVERRIDE_FILE);
+        let majestic_path = dir.join(MAJESTIC_FILE);
+        std::fs::write(&tranco_path, "50,both-lists.example\n").unwrap();
+        std::fs::write(
+            &majestic_path,
+            "GlobalRank,TldRank,Domain,TLD\n\
+             12,4,both-lists.example,example\n\
+             77,9,mj-only.example,example\n",
+        )
+        .unwrap();
+        crate::store::lock().set_data_dir(dir.to_str().unwrap()).unwrap();
+        // Per-file probe: usable-entry counts under each grammar.
+        assert_eq!(file_entries(OVERRIDE_FILE), 1);
+        assert_eq!(file_entries(MAJESTIC_FILE), 2);
+        assert_eq!(file_entries("missing-file.csv"), 0);
+        reload().unwrap();
+        // Best rank across the lists wins; either-source membership
+        // counts; an unlisted domain stays unranked.
+        assert_eq!(rank("both-lists.example"), 12);
+        assert_eq!(rank("mj-only.example"), 77);
+        assert_eq!(rank("unlisted-still.example"), 0);
+        assert_eq!(rank("google.com"), 1); // seed coverage intact
+        // A corrupt sibling override fails the reload — the Qt side
+        // sweeps it before retrying.
+        std::fs::write(&majestic_path, "<html>404</html>\n").unwrap();
+        assert!(reload().is_err());
+        assert_eq!(rank("mj-only.example"), 77); // previous table stays
+        std::fs::remove_file(&majestic_path).unwrap();
+        std::fs::remove_file(&tranco_path).unwrap();
+        reload().unwrap();
+        assert_eq!(rank("mj-only.example"), 0);
         std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -262,15 +262,17 @@ char *rc_policy_call(const uint8_t *jsonUtf8, size_t len);
  * stale stamp is never served. */
 uint64_t rc_policy_eval_generation(void);
 
-/* --- Tranco rank table (TRUST04) ------------------------------------
- * The Tranco top-site rank table the site-trust signals consult —
- * a lookup never leaves the machine.  The active table is the
- * vendored top-100k seed (compiled in) unioned with
- * "<data dir>/tranco-list.dat", which the Qt-side TrancoList updater
- * writes from the remote top-1M download (the top-1m.csv.zip body —
- * the crate unzips it) before calling rc_tranco_reload().  The merge
- * is poison-safe: an update can only add entries, never un-rank or
- * re-rank a seeded domain.
+/* --- site-rank table (TRUST04 + SEC19) ------------------------------
+ * The top-site rank table the site-trust signals consult — a lookup
+ * never leaves the machine.  The active table merges three sources:
+ * the vendored Tranco top-100k seed (compiled in), "<data dir>/
+ * tranco-list.dat" (the remote Tranco top-1M — the top-1m.csv.zip
+ * body the crate unzips) and "<data dir>/majestic-million.csv" (the
+ * Majestic Million second source — a plain GlobalRank,TldRank,
+ * Domain,... CSV the crate reads directly), both written by the
+ * Qt-side TrancoList updater.  The merge is best-rank-wins: a
+ * domain's effective rank is the lowest any list assigns, so an
+ * update can only ever add or improve coverage, never un-rank.
  *
  * rc_tranco_rank returns the host's rank — the exact host first,
  * then the most specific listed ancestor (the registrable-domain
@@ -283,10 +285,18 @@ uint32_t rc_tranco_rank(const char *hostUtf8);
  * previous table stays active. */
 RcStatus rc_tranco_load(const uint8_t *textUtf8, size_t len);
 
-/* Re-run the seed-union-override merge.  RC_CORRUPT when an override
- * exists but yields no usable entries — previous table stays active. */
+/* Re-run the seed-union-overrides merge.  RC_CORRUPT when an
+ * override file exists but yields no usable entries — previous
+ * table stays active. */
 RcStatus rc_tranco_reload(void);
 size_t rc_tranco_count(void);
+
+/* Usable-entry count of one data-dir override file
+ * ("tranco-list.dat", "majestic-million.csv"), parsed under the
+ * grammar its name selects — the updater's per-file validation
+ * probe before a reload.  0 when the file is absent, unreadable,
+ * oversized or yields nothing (a NULL name reads as 0). */
+size_t rc_tranco_file_entries(const char *nameUtf8);
 
 /* --- Homograph lookalike detector (TRUST05) -------------------------
  * IDN/homograph verdict: the host is punycode-decoded, case-folded

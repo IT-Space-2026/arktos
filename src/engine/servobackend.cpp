@@ -83,6 +83,11 @@ struct ServoApi {
     // them (the reported "Error loading page" on swapped start-page
     // tabs).  A missing symbol degrades to exactly that old behavior.
     void (*setResourceResolver)(void *, SeResourceResolver) = nullptr;
+    // ENG35: optional — the host load gate.  Missing on artifacts
+    // predating se_set_load_gate: loads then stay ungated (the old
+    // observable-only behavior) and capabilities() reports
+    // requestInterception=false honestly.
+    void (*setLoadGate)(void *, SeLoadGate) = nullptr;
     // ENG20: optional — artifacts predating panic containment cannot
     // report poisoning (they abort instead); a missing symbol reads as
     // "never observed", which is the honest answer for them.
@@ -222,6 +227,11 @@ bool resolve()
     api().setResourceResolver =
         reinterpret_cast<decltype(api().setResourceResolver)>(
             library().resolve("se_set_resource_resolver"));
+    // Optional ENG35 addition — the per-load veto/stub consult.
+    // Absent on older artifacts: nothing can gate loads, so request
+    // policies stay advisory only and requestInterception reads false.
+    api().setLoadGate = reinterpret_cast<decltype(api().setLoadGate)>(
+        library().resolve("se_set_load_gate"));
     // Optional ENG20 addition — panic containment.  Missing on older
     // artifacts: the best a host can do there is nothing (a panic
     // would already have aborted the process).
@@ -400,6 +410,110 @@ void ServoView::cbNavigation(void *, const char *url)
 
 void ServoView::cbResourceLoad(void *, const char *) {}
 
+// ENG35: servo fetch-destination string -> Engine::ResourceType.
+// The adblock rule engine keys on QWebEngineUrlRequestInfo's values
+// and Engine::ResourceType mirrors them for the common types; the
+// tail (preload/websocket/json) has no servo destination and stays
+// unmapped — anything unclassified lands on SubResource ("other").
+static Engine::ResourceType servoDestType(const char *dest)
+{
+    const QLatin1String d(dest ? dest : "");
+    if (d == QLatin1String("document"))
+        return Engine::ResourceType::MainFrame;
+    if (d == QLatin1String("iframe") || d == QLatin1String("frame"))
+        return Engine::ResourceType::SubFrame;
+    if (d == QLatin1String("script"))
+        return Engine::ResourceType::Script;
+    if (d == QLatin1String("image"))
+        return Engine::ResourceType::Image;
+    if (d == QLatin1String("style"))
+        return Engine::ResourceType::Stylesheet;
+    if (d == QLatin1String("font"))
+        return Engine::ResourceType::FontResource;
+    if (d == QLatin1String("object") || d == QLatin1String("embed"))
+        return Engine::ResourceType::Object;
+    if (d == QLatin1String("audio") || d == QLatin1String("video")
+        || d == QLatin1String("track"))
+        return Engine::ResourceType::Media;
+    if (d == QLatin1String("worker") || d == QLatin1String("audioworklet")
+        || d == QLatin1String("paintworklet") || d == QLatin1String("xslt"))
+        return Engine::ResourceType::Worker;
+    if (d == QLatin1String("sharedworker"))
+        return Engine::ResourceType::SharedWorker;
+    if (d == QLatin1String("serviceworker"))
+        return Engine::ResourceType::ServiceWorker;
+    if (d == QLatin1String("report"))
+        return Engine::ResourceType::CspReport;
+    if (d.isEmpty())
+        // XHR/fetch()/beacon all carry an empty destination in this
+        // servo pin — Xhr is the dominant member of that bucket.
+        return Engine::ResourceType::Xhr;
+    return Engine::ResourceType::SubResource;
+}
+
+int ServoView::cbLoadGate(void *userdata, const SeLoadInfo *info,
+                            SeHostReply *reply)
+{
+    // GUI thread, inside se_spin — the same call context every
+    // delegate callback gets, so decide() runs synchronously here.
+    // The policy is resolved through the OWNING profile (MPROF):
+    // view -> page -> profile -> requestPolicy — never an ambient
+    // manager singleton, so a profile with no policy installed is
+    // genuinely ungated.
+    QMutexLocker lock(&servoMutex());
+    ServoView *view = viewFor(userdata);
+    if (!view || !view->m_page || !info || !info->url)
+        return 0;
+    Engine::Profile *profile = view->m_page->profile();
+    Engine::RequestPolicy *policy =
+        profile ? profile->requestPolicy() : nullptr;
+    if (!policy)
+        return 0;
+
+    Engine::NavigationRequest request;
+    request.url = QUrl::fromEncoded(QByteArray(info->url));
+    request.firstPartyUrl = QUrl(QString::fromUtf8(
+        info->first_party_url ? info->first_party_url : ""));
+    request.isMainFrame = info->is_for_main_frame != 0;
+    request.resourceType = servoDestType(info->destination);
+
+    const Engine::RequestDecision decision = policy->decide(request);
+    switch (decision.action) {
+    case Engine::RequestAction::Allow:
+        return 0;
+    case Engine::RequestAction::Block:
+        // Deny: empty 403 — the request never reaches the wire.
+        reply->status = 403;
+        reply->mime[0] = '\0';
+        reply->body = nullptr;
+        reply->body_len = 0;
+        return 1;
+    case Engine::RequestAction::Redirect:
+        // Servo's interception hook can only SERVE, never re-issue —
+        // a policy redirect becomes the ready-made stub the policy
+        // carried (bundled $redirect= resource or data: payload); a
+        // bare URL rewrite ($removeparam) has no servo expression
+        // and degrades to Allow — documented in the header comment.
+        if (decision.stubBody.isEmpty())
+            return 0;
+        reply->status = 200;
+        reply->mime[0] = '\0';
+        if (!decision.stubMime.isEmpty()
+            && decision.stubMime.size() < int(sizeof(reply->mime)))
+            memcpy(reply->mime, decision.stubMime.constData(),
+                   size_t(decision.stubMime.size()) + 1);
+        // The shim copies the body synchronously during this call —
+        // a function-static keeps the borrowed pointer valid that
+        // long (same trick as servoResourceResolve).
+        static QByteArray stub;
+        stub = decision.stubBody;
+        reply->body = reinterpret_cast<const unsigned char *>(stub.constData());
+        reply->body_len = size_t(stub.size());
+        return 1;
+    }
+    return 0;
+}
+
 ServoView::ServoView(QWidget *parent)
     : QWidget(parent)
     , m_instance(nullptr)
@@ -446,6 +560,12 @@ ServoView::ServoView(QWidget *parent)
     const int h = height() > 0 ? height() : 600;
     m_instance = api().init(callbacks, w, h, configDir.constData());
     if (m_instance) {
+        // ENG35: the gate is a shim-side process global like the
+        // resolver — userdata is the &g_liveView cell so every
+        // generation's loads resolve to the CURRENT view's page.
+        // Absent on pre-ENG35 artifacts: loads stay ungated there.
+        if (api().setLoadGate)
+            api().setLoadGate(&g_liveView, &ServoView::cbLoadGate);
         // ENG28 self-check: a fresh instance counts only when its
         // first real pump stays panic-free — resize exercises the
         // painter bookkeeping, spin runs the event loop, and either
@@ -1016,6 +1136,10 @@ ServoPage::ServoPage(Engine::Profile *profile, QObject *parent)
 void ServoPage::attachView(ServoView *view)
 {
     m_view = view;
+    // ENG35: the back-pointer the load gate walks to find this
+    // page's profile (owning-profile policy resolution).
+    if (view)
+        view->m_page = this;
     if (!m_view)
         return;
     connect(m_view, &ServoView::urlChanged,
@@ -1338,8 +1462,11 @@ void ServoProfile::setUserAgent(const QString &userAgent)
 
 void ServoProfile::setRequestPolicy(Engine::RequestPolicy *policy)
 {
-    // Stored, never enforced — servo resource loads are observable
-    // but cannot be blocked through the current ABI.
+    // ENG35: enforced — the shim's se_set_load_gate consults this
+    // policy for every resource load on this profile's tabs (deny =
+    // empty 403, stub = served reply).  On artifacts predating the
+    // export the stored policy stays advisory-only and
+    // capabilities() reports requestInterception=false.
     m_policy = policy;
 }
 
@@ -1506,6 +1633,13 @@ Engine::Capabilities ServoBackend::capabilities() const
     // struct's default so it is pinned off explicitly.
     Engine::Capabilities caps;
     caps.downloads = false;
+    // ENG35: the profile RequestPolicy is enforced through the shim's
+    // load gate — true only when the resolved artifact actually
+    // exports se_set_load_gate.  devTools stays false: servo's
+    // devtools crate speaks the Firefox remote protocol on a TCP
+    // listener (prefs devtools_server_enabled / :7000), which the
+    // BiDi panel's CDP client cannot read — no fake channel.
+    caps.requestInterception = resolve() && api().setLoadGate;
     return caps;
 }
 

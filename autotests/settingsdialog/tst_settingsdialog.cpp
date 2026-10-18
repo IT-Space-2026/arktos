@@ -4181,10 +4181,12 @@ void tst_SettingsDialog::siteTrustUpdateControls()
         QLatin1String("AdBlock/remoteListsConsent"));
     const QVariant savedTranco = settings.value(
         QLatin1String("privacy/trancoListUpdated"));
+    const QVariant savedMajestic = settings.value(
+        QLatin1String("privacy/majesticListUpdated"));
     const QVariant savedBlock = settings.value(
         QLatin1String("privacy/domainBlocklistUpdated"));
     const auto restore = [&settings, savedConsent,
-                          savedTranco, savedBlock]() {
+                          savedTranco, savedMajestic, savedBlock]() {
         const auto restoreKey = [&settings](const QString &key,
                                             const QVariant &saved) {
             if (saved.isValid())
@@ -4196,10 +4198,13 @@ void tst_SettingsDialog::siteTrustUpdateControls()
                    savedConsent);
         restoreKey(QLatin1String("privacy/trancoListUpdated"),
                    savedTranco);
+        restoreKey(QLatin1String("privacy/majesticListUpdated"),
+                   savedMajestic);
         restoreKey(QLatin1String("privacy/domainBlocklistUpdated"),
                    savedBlock);
     };
     settings.remove(QLatin1String("privacy/trancoListUpdated"));
+    settings.remove(QLatin1String("privacy/majesticListUpdated"));
     settings.remove(QLatin1String("privacy/domainBlocklistUpdated"));
 
     // A stored proxy (saveAndReload leaves localhost:8080 enabled)
@@ -4232,20 +4237,33 @@ void tst_SettingsDialog::siteTrustUpdateControls()
                  QLatin1String("Last updated: never"));
     }
 
-    // Consent on -> the click fetches both lists and lands the stamps.
+    // Consent on -> the click fetches all three lists and lands the
+    // stamps (the site-rank update covers Tranco + Majestic behind
+    // the one button — SEC19).
     AdBlockManager::setRemoteListsConsent(AdBlockManager::RemoteListsGranted);
     SiteTrustListServer trancoServer;
     trancoServer.body = storedZip("top-1m.csv",
                                   "1,sitetrust-fixture.test\n");
     QVERIFY(trancoServer.start());
+    SiteTrustListServer majesticServer;
+    majesticServer.body =
+        "GlobalRank,TldRank,Domain,TLD\n"
+        "2,1,sitetrust-mj.test,test\n";
+    QVERIFY(majesticServer.start());
     SiteTrustListServer blockServer;
     blockServer.body = "sitetrust-blocked.test\n";
     QVERIFY(blockServer.start());
     TrancoList *tranco = TrancoList::instance();
     DomainBlocklist *blocklist = DomainBlocklist::instance();
-    tranco->setSourcesForTest({ trancoServer.url() });
+    tranco->setSourcesForTest({
+        TrancoList::Source(trancoServer.url(),
+                           TrancoList::trancoFileName()),
+        TrancoList::Source(majesticServer.url(),
+                           TrancoList::majesticFileName()),
+    });
     blocklist->setSourcesForTest({ blockServer.url() });
     QFile::remove(TrancoList::listFilePath());
+    QFile::remove(TrancoList::majesticFilePath());
     QFile::remove(DomainBlocklist::listFilePath());
 
     {
@@ -4266,6 +4284,7 @@ void tst_SettingsDialog::siteTrustUpdateControls()
         QVERIFY(trancoSpy.at(0).at(0).toBool());
         QVERIFY(blockSpy.at(0).at(0).toBool());
         QCOMPARE(trancoServer.hits, 1);
+        QCOMPARE(majesticServer.hits, 1);
         QCOMPARE(blockServer.hits, 1);
         QTRY_VERIFY(dialog.siteTrustUpdateButton->isEnabled());
         QVERIFY(dialog.siteTrustUpdateLabel->text().startsWith(
@@ -4274,6 +4293,8 @@ void tst_SettingsDialog::siteTrustUpdateControls()
                     QLatin1String("never")));
     }
     QVERIFY(settings.value(QLatin1String("privacy/trancoListUpdated"))
+                .toDateTime().isValid());
+    QVERIFY(settings.value(QLatin1String("privacy/majesticListUpdated"))
                 .toDateTime().isValid());
     QVERIFY(settings.value(QLatin1String("privacy/domainBlocklistUpdated"))
                 .toDateTime().isValid());
@@ -4303,6 +4324,7 @@ void tst_SettingsDialog::siteTrustUpdateControls()
     tranco->setSourcesForTest(TrancoList::defaultSources());
     blocklist->setSourcesForTest(DomainBlocklist::defaultSources());
     QFile::remove(TrancoList::listFilePath());
+    QFile::remove(TrancoList::majesticFilePath());
     QFile::remove(DomainBlocklist::listFilePath());
 #if defined(ARKTOS_RUSTCORE)
     rc_tranco_reload();

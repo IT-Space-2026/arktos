@@ -391,8 +391,14 @@ The Site Trust / privacy features consume third-party data sets:
     abuse.ch usage terms (https://urlhaus.abuse.ch).
   * OpenPhish phishing feed — fetched at runtime under the OpenPhish
     community feed terms (https://openphish.com).
+  * Phishing.Database active-domain feed (mitchellkrogza) — fetched at
+    runtime; the project is MIT licensed
+    (https://github.com/mitchellkrogza/Phishing.Database).
   * Tranco top-1M site list — fetched at runtime under the Tranco list
     terms (https://tranco-list.eu).
+  * Majestic Million site list — fetched at runtime; licensed under
+    the Creative Commons Attribution 3.0 Unported License (CC BY 3.0)
+    per majestic.com/reports/majestic-million.
   * src/rustcore/data/urlstrip-rules.json — tracking-parameter strip
     rules derived from the ClearURLs ruleset
     (https://github.com/ClearURLs/Addon), vendored; the ClearURLs

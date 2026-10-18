@@ -130,11 +130,49 @@ impl WebViewDelegate for SeDelegate {
         request.allow();
     }
 
-    fn load_web_resource(&self, _webview: WebView, load: WebResourceLoad) {
+    fn load_web_resource(&self, webview: WebView, load: WebResourceLoad) {
         self.shared.intercepted.set(self.shared.intercepted.get() + 1);
         let line = format!("{} {}", load.request.method, load.request.url);
         self.shared.log_line(line.clone());
         self.emit_string(self.shared.cbs.resource_load, &line);
+
+        // ENG35: the host load gate runs BEFORE the resolver — a
+        // non-zero return serves the host reply verbatim (a deny is
+        // an empty 403) and the request never reaches the network.
+        // first-party = the resolved referrer (honors the page's
+        // referrer policy — may be stripped), falling back to the
+        // webview's committed URL for subresources; for main-frame
+        // loads the request URL is its own first party.
+        if let Some(&(userdata, gate)) = LOAD_GATE.get() {
+            let url_s = load.request.url.to_string();
+            let first_party = if load.request.is_for_main_frame {
+                url_s.clone()
+            } else {
+                load.request
+                    .referrer_url
+                    .as_ref()
+                    .map(|u| u.to_string())
+                    .or_else(|| webview.url().map(|u| u.to_string()))
+                    .unwrap_or_default()
+            };
+            let url = cstr(&url_s);
+            let fp = cstr(&first_party);
+            let method = cstr(&load.request.method.to_string());
+            let dest = cstr(load.request.destination.as_str());
+            let info = SeLoadInfo {
+                url: url.as_ptr(),
+                first_party_url: fp.as_ptr(),
+                method: method.as_ptr(),
+                destination: dest.as_ptr(),
+                is_for_main_frame: load.request.is_for_main_frame as i32,
+                is_redirect: load.request.is_redirect as i32,
+            };
+            let mut reply = SeHostReply::default();
+            if gate(userdata as *mut c_void, &info, &mut reply) != 0 {
+                serve_host_reply(load, reply);
+                return;
+            }
+        }
 
         // ENG18: this delegate is consulted ahead of scheme dispatch
         // (net/request_interceptor.rs), so it sees the schemes
@@ -211,6 +249,30 @@ type SeResourceResolver =
 
 static RESOURCE_RESOLVER: OnceLock<(usize, SeResourceResolver)> = OnceLock::new();
 
+// ---- host load gate (ENG35) -------------------------------------
+//
+// Request facts the host sees before deciding to serve a reply
+// itself — mirrors SeLoadInfo in include/servo_embed.h.  The gate
+// runs ahead of the resolver so a host policy (the owning profile's
+// adblock on the Qt side) can veto or stub a load Servo would
+// otherwise fetch; like the resolver it is a process global shared
+// by the one SeInstance a process may host.
+
+#[repr(C)]
+pub struct SeLoadInfo {
+    pub url: *const c_char,
+    pub first_party_url: *const c_char,
+    pub method: *const c_char,
+    pub destination: *const c_char,
+    pub is_for_main_frame: i32,
+    pub is_redirect: i32,
+}
+
+type SeLoadGate =
+    extern "C" fn(*mut c_void, *const SeLoadInfo, *mut SeHostReply) -> i32;
+
+static LOAD_GATE: OnceLock<(usize, SeLoadGate)> = OnceLock::new();
+
 fn serve_host_reply(load: WebResourceLoad, reply: SeHostReply) {
     let mut response = WebResourceResponse::new(load.request.url.clone());
     if reply.status > 0 {
@@ -251,6 +313,17 @@ pub extern "C" fn se_set_resource_resolver(
     // panic-free (ENG20).
     let _ = catch_unwind(AssertUnwindSafe(|| {
         let _ = RESOURCE_RESOLVER.set((userdata as usize, resolver));
+    }));
+}
+
+/// Register the host's load gate — see servo_embed.h for the
+/// contract.  Optional from the host side: hosts built before ENG35
+/// simply never call this and every load proceeds ungated, exactly
+/// as before.
+#[no_mangle]
+pub extern "C" fn se_set_load_gate(userdata: *mut c_void, gate: SeLoadGate) {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        let _ = LOAD_GATE.set((userdata as usize, gate));
     }));
 }
 
