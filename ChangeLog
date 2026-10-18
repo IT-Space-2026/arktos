@@ -3420,3 +3420,17 @@ Servo tabs enforce AdBlock; devtools entries admit when the engine cannot (ENG35
     drives, so instead of a dead surface the Tools menu devtools
     entries and the panel's context selector now disable Servo tabs
     with the reason.
+Post-port leak re-audit, instrumented build + scan pass (MEM09):
+    The multi-profile and profile-vault series landed after the last
+    memory-leak audit, and in the meantime every instrumented test
+    binary had silently stopped reporting leaks — the exit path that
+    keeps offscreen WebEngine teardown stable also skipped the leak
+    checker's at-exit hook. A fresh ASan/LSan build with the check
+    restored scanned all thirteen profile/vault and touched-core test
+    binaries: zero leaked blocks in application code on the new
+    surface, one small leak inside a test fixture (a per-connection
+    buffer in the browser-window suite, queued for the fix pass), and
+    the remaining reports are the same upstream Qt/fontconfig families
+    as the previous audit. Raw tally lives in .devin/MEM09-scan.md;
+    the kept instrumented tree hands off to the lifecycle/valgrind
+    pass.
