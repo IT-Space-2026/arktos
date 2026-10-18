@@ -95,17 +95,27 @@ QList<TrancoList::Source> TrancoList::defaultSources()
     };
 }
 
+QDateTime TrancoList::trancoLastUpdate() const
+{
+    return QSettings()
+        .value(QLatin1String("privacy/trancoListUpdated"))
+        .toDateTime();
+}
+
+QDateTime TrancoList::majesticLastUpdate() const
+{
+    return QSettings()
+        .value(QLatin1String("privacy/majesticListUpdated"))
+        .toDateTime();
+}
+
 QDateTime TrancoList::lastUpdate() const
 {
     // The honest answer is the stalest list — a source that never
     // fetched is older than any date, so either side missing stamps
     // the whole row "never" and triggers a refetch.
-    const QDateTime tranco = QSettings()
-        .value(QLatin1String("privacy/trancoListUpdated"))
-        .toDateTime();
-    const QDateTime majestic = QSettings()
-        .value(QLatin1String("privacy/majesticListUpdated"))
-        .toDateTime();
+    const QDateTime tranco = trancoLastUpdate();
+    const QDateTime majestic = majesticLastUpdate();
     if (!tranco.isValid() || !majestic.isValid())
         return QDateTime();
     return qMin(tranco, majestic);

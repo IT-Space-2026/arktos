@@ -94,6 +94,10 @@ public:
     // The oldest stamp across the rank lists — invalid ("never")
     // until every list has fetched once.
     QDateTime lastUpdate() const;
+    // Per-source stamps for the Preferences rows — invalid when that
+    // list has never committed a fetch.
+    QDateTime trancoLastUpdate() const;
+    QDateTime majesticLastUpdate() const;
 
 signals:
     void updateFinished(bool ok);

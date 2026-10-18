@@ -25,10 +25,13 @@
 //!
 //! Output JSON:
 //!   {"level":"green|amber|red","signals":[...],"rank":N,
-//!    "lookalike_of":"..."}
+//!    "rank_tranco":T,"rank_majestic":M,"lookalike_of":"..."}
 //! signals[] reports each input that evaluated true — "threat",
 //! "lookalike", "rank" (rank>0), "first_seen" (no prior visit).
 //! "lookalike_of" is present only when the lookalike probe fired.
+//! "rank_tranco"/"rank_majestic" carry each rank list's own number
+//! for the host — present only for lists that actually carry it, so
+//! the UI can name every source instead of guessing one.
 //!
 //! Hot-path discipline: the blocklist/rank/lookalike probes are the
 //! crate's alloc-free hot paths; the first-seen check is one
@@ -75,7 +78,7 @@ pub fn lookup_opts(host: &str, is_https: bool, probes: u32) -> String {
 fn lookup_at(host: &str, is_https: bool, now: i64, probes: u32) -> String {
     let threat =
         probes & PROBE_THREATLIST != 0 && blocklist::check(host);
-    let rank = tranco::rank(host);
+    let (rank, tr_rank, mj_rank) = tranco::rank_detail(host);
     // A skipped probe evaluates clean — it must not synthesize a
     // signal the switch was meant to suppress.
     let probe = if probes & PROBE_LOOKALIKE != 0 {
@@ -132,6 +135,17 @@ fn lookup_at(host: &str, is_https: bool, now: i64, probes: u32) -> String {
     }
     j.push_str("],\"rank\":");
     j.push_str(&rank.to_string());
+    // Each list's own rank rides along so the panel can name every
+    // source carrying the host — "Tranco rank" alone would lie about
+    // a Majestic-only (or better-ranked-in-Majestic) hit.
+    if tr_rank > 0 {
+        j.push_str(",\"rank_tranco\":");
+        j.push_str(&tr_rank.to_string());
+    }
+    if mj_rank > 0 {
+        j.push_str(",\"rank_majestic\":");
+        j.push_str(&mj_rank.to_string());
+    }
     if let Some(twin) = &lookalike_of {
         j.push_str(",\"lookalike_of\":");
         util::json_push_str(&mut j, twin);
@@ -223,6 +237,8 @@ mod tests {
             serde_json::json!(["rank", "first_seen"])
         );
         assert_eq!(j["rank"], 3);
+        assert_eq!(j["rank_tranco"], 3);
+        assert!(j["rank_majestic"].is_null());
 
         // Same site over plaintext http -> amber.
         let j: serde_json::Value =
@@ -243,6 +259,53 @@ mod tests {
             j["signals"],
             serde_json::json!(["first_seen"])
         );
+
+        std::fs::remove_dir_all(
+            std::path::Path::new(&db).parent().unwrap(),
+        )
+        .ok();
+    }
+
+    /// rank_tranco/rank_majestic carry each list's own number — a
+    /// host in both reports both even at different ranks, so the UI
+    /// can name every source instead of only the winner.
+    #[test]
+    fn rank_source_names_provenance() {
+        let _g = guard();
+        let db = fixture(
+            "srcs",
+            "3,tie.example\n40,worse-in-mj.example\n",
+            "other.invalid\n",
+        );
+        crate::tranco::merge_text_as(
+            "GlobalRank,TldRank,Domain,TLD\n\
+             3,1,tie.example,example\n\
+             12,2,mj-only.example,example\n\
+             99,5,worse-in-mj.example,example\n",
+            crate::tranco::SRCS_MAJESTIC,
+            true,
+        );
+        let now = now_ms();
+        let verdict = |h: &str| -> serde_json::Value {
+            serde_json::from_str(&lookup_at(h, true, now, PROBE_ALL))
+                .unwrap()
+        };
+        let tie = verdict("tie.example");
+        assert_eq!(tie["rank"], 3);
+        assert_eq!(tie["rank_tranco"], 3);
+        assert_eq!(tie["rank_majestic"], 3);
+        let mj = verdict("mj-only.example");
+        assert_eq!(mj["rank"], 12);
+        assert!(mj["rank_tranco"].is_null());
+        assert_eq!(mj["rank_majestic"], 12);
+        let wm = verdict("worse-in-mj.example");
+        assert_eq!(wm["rank"], 40);
+        assert_eq!(wm["rank_tranco"], 40);
+        assert_eq!(wm["rank_majestic"], 99);
+        // Unranked hosts carry no per-source fields at all.
+        let un = verdict("unlisted.example");
+        assert!(un["rank_tranco"].is_null());
+        assert!(un["rank_majestic"].is_null());
 
         std::fs::remove_dir_all(
             std::path::Path::new(&db).parent().unwrap(),

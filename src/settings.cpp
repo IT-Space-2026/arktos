@@ -3562,21 +3562,25 @@ void SettingsDialog::refreshSiteTrustListStatus()
         return;
     }
 
-    // The label reports the oldest stamp across all the lists — they
-    // move together, so the stale one is the honest answer; a list
-    // that never fetched is older than any date (TrancoList folds
-    // its Tranco + Majestic stamps into one oldest-of answer).
-    const QDateTime tranco = TrancoList::instance()->lastUpdate();
+    // Each source gets its own stamp — folding Majestic into one
+    // oldest-of answer hid that the second rank list even exists.
+    // A list that never fetched says "never" on its own entry; only
+    // when nothing has ever fetched does the row collapse to the
+    // single "Last updated: never" summary.
+    const auto stampOf = [](const QDateTime &dt) {
+        return dt.isValid()
+            ? QLocale().toString(dt, QLocale::ShortFormat)
+            : SettingsDialog::tr("never");
+    };
+    const QDateTime tranco = TrancoList::instance()->trancoLastUpdate();
+    const QDateTime majestic = TrancoList::instance()->majesticLastUpdate();
     const QDateTime blocklist = DomainBlocklist::instance()->lastUpdate();
-    QDateTime oldest;
-    if (tranco.isValid() && blocklist.isValid())
-        oldest = qMin(tranco, blocklist);
-    const QString stamp = oldest.isValid()
-        ? QLocale().toString(oldest, QLocale::ShortFormat)
-        : tr("never");
+    QString line = tr("Last updated: never");
+    if (tranco.isValid() || majestic.isValid() || blocklist.isValid())
+        line = tr("Tranco: %1 · Majestic: %2 · Threat: %3")
+            .arg(stampOf(tranco), stampOf(majestic), stampOf(blocklist));
     siteTrustUpdateLabel->setText(m_siteTrustUpdateFailed
-        ? tr("Update failed — last updated: %1").arg(stamp)
-        : tr("Last updated: %1").arg(stamp));
+        ? tr("Update failed — %1").arg(line) : line);
 }
 
 // Prompts for a new master passphrase — entered twice — and returns

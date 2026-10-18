@@ -988,12 +988,31 @@ QList<SitePanel::TrustLine> SitePanel::trustSignals(const QString &host,
             true });
     }
     // The rank probe is informative in both directions: listed sites
-    // are known, unlisted ones little-known.
+    // are known, unlisted ones little-known.  rank_tranco /
+    // rank_majestic carry each list's own number — a host known to
+    // both names both, whatever ranks they gave it.  Absent on older
+    // cores, where "top-site" keeps the wording honest.
     const qint64 rank =
         verdict.value(QLatin1String("rank")).toInteger();
-    lines.append({ rank > 0
-        ? tr("Known site (Tranco rank %1)").arg(rank)
-        : tr("Little-known site"), false });
+    const qint64 rankTranco =
+        verdict.value(QLatin1String("rank_tranco")).toInteger();
+    const qint64 rankMajestic =
+        verdict.value(QLatin1String("rank_majestic")).toInteger();
+    QString rankText = tr("Little-known site");
+    if (rank > 0) {
+        if (rankTranco > 0 && rankMajestic > 0)
+            rankText = tr("Known site (Tranco rank %1, Majestic rank %2)")
+                .arg(rankTranco).arg(rankMajestic);
+        else if (rankMajestic > 0)
+            rankText = tr("Known site (Majestic rank %1)")
+                .arg(rankMajestic);
+        else if (rankTranco > 0)
+            rankText = tr("Known site (Tranco rank %1)")
+                .arg(rankTranco);
+        else
+            rankText = tr("Known site (top-site rank %1)").arg(rank);
+    }
+    lines.append({ rankText, false });
     if (fired(QLatin1String("first_seen")))
         lines.append({ tr("First visit to this site"), false });
 #else

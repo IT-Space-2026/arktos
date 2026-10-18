@@ -57,6 +57,7 @@
 #include "siteshield.h"
 #include "tlsverifier.h"
 #include "tlsfixture.h"
+#include "trancolist.h"
 #include "webpage.h"
 #include "webpermissionmanager.h"
 #include "webview.h"
@@ -121,6 +122,7 @@ private slots:
     void panelWithoutPage();
     void panelForSite();
     void trustSignalLines();
+    void trustRankSources();
     void trustBadgeLevels();
     void trustBadgeCache();
     void trustBadgeNavigation();
@@ -647,6 +649,56 @@ void tst_SitePanel::trustSignalLines()
     QVERIFY(SitePanel::trustSignalLines(QString(), true).isEmpty());
 
     // Restore the vendored seed ∪ override tables for later tests.
+    rc_sitetrust_reload();
+#endif
+}
+
+// SEC20: the rank line names every list carrying the domain with its
+// own rank — Tranco-only, Majestic-only, or both numbers side by
+// side.  Real override files go through the data-dir reload so
+// provenance is exercised end-to-end, not patched into the JSON.
+void tst_SitePanel::trustRankSources()
+{
+#if defined(ARKTOS_RUSTCORE)
+    const QString trancoPath = TrancoList::listFilePath();
+    const QString majesticPath = TrancoList::majesticFilePath();
+    QFile::remove(trancoPath);
+    QFile::remove(majesticPath);
+    {
+        QFile f(trancoPath);
+        QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Text));
+        f.write("30,tied-rank.test\n50,worse-in-mj.test\n");
+    }
+    {
+        QFile f(majesticPath);
+        QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Text));
+        f.write("GlobalRank,TldRank,Domain,TLD\n"
+                "30,1,tied-rank.test,test\n"
+                "12,2,mj-only-rank.test,test\n"
+                "99,3,worse-in-mj.test,test\n");
+    }
+    QCOMPARE(rc_tranco_reload(), RC_OK);
+
+    auto linesFor = [](const QString &host) {
+        return SitePanel::trustSignalLines(host, true)
+            .join(QLatin1Char('\n'));
+    };
+    // Listed in both at different ranks — both numbers show, each
+    // under its own list's name.
+    const QString both = linesFor(QLatin1String("worse-in-mj.test"));
+    QVERIFY(both.contains(QLatin1String("Tranco rank 50")));
+    QVERIFY(both.contains(QLatin1String("Majestic rank 99")));
+    // Majestic-only names only Majestic.
+    const QString mjOnly = linesFor(QLatin1String("mj-only-rank.test"));
+    QVERIFY(mjOnly.contains(QLatin1String("Majestic rank 12")));
+    QVERIFY(!mjOnly.contains(QLatin1String("Tranco rank")));
+    // An equal-rank tie shows both lists too.
+    const QString tied = linesFor(QLatin1String("tied-rank.test"));
+    QVERIFY(tied.contains(QLatin1String("Tranco rank 30")));
+    QVERIFY(tied.contains(QLatin1String("Majestic rank 30")));
+
+    QFile::remove(trancoPath);
+    QFile::remove(majesticPath);
     rc_sitetrust_reload();
 #endif
 }

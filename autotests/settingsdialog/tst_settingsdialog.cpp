@@ -4287,8 +4287,14 @@ void tst_SettingsDialog::siteTrustUpdateControls()
         QCOMPARE(majesticServer.hits, 1);
         QCOMPARE(blockServer.hits, 1);
         QTRY_VERIFY(dialog.siteTrustUpdateButton->isEnabled());
-        QVERIFY(dialog.siteTrustUpdateLabel->text().startsWith(
-                    QLatin1String("Last updated:")));
+        // Every source names its own stamp — Majestic must not hide
+        // behind a folded Tranco label.
+        QVERIFY(dialog.siteTrustUpdateLabel->text().contains(
+                    QLatin1String("Tranco:")));
+        QVERIFY(dialog.siteTrustUpdateLabel->text().contains(
+                    QLatin1String("Majestic:")));
+        QVERIFY(dialog.siteTrustUpdateLabel->text().contains(
+                    QLatin1String("Threat:")));
         QVERIFY(!dialog.siteTrustUpdateLabel->text().contains(
                     QLatin1String("never")));
     }

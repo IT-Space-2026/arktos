@@ -2242,6 +2242,9 @@ Trust padlock in the URL bar, shield on the toolbar (TRUST14):
 Broader site-reputation and threat coverage (SEC19):
     The site-trust lists now draw on two more upstream sources: Majestic Million joins Tranco as a second site-rank feed — the rank a verdict reports is the best (lowest) across the two lists, so a site popular on either counts — and the Phishing.Database feed joins URLhaus and OpenPhish in the domain blocklist. Both refresh through the same consent-gated, HTTPS-only machinery behind the single Site Trust "Update Now" button, a downloaded list file that yields no usable entries is dropped instead of replacing working data, and the status line keeps reporting the oldest stamp across every list. Majestic Million is used under CC BY 3.0 and Phishing.Database under MIT (see THIRD-PARTY-NOTICES).
 
+Rank-source provenance through the trust UI (SEC20):
+    The merged rank table now keeps each list's own rank per domain, and the verdict emits them as "rank_tranco"/"rank_majestic" — the site panel names every source carrying the host with its real number ("Known site (Tranco rank 50, Majestic rank 12)") instead of always saying Tranco, and Preferences → Site Trust shows a separate last-updated stamp for Tranco, Majestic and the threat list instead of one folded oldest-of answer. The verdict's effective "rank" stays the best (lowest) across lists.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

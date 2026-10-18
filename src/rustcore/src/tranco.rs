@@ -85,10 +85,41 @@ const MAX_FILE: u64 = 128 * 1024 * 1024;
 /// same poison-safe merge as `ranks`: line order decides collisions
 /// (best rank first), and an update can only add skeleton keys, never
 /// re-point a seeded one at a different name.
-#[derive(Debug)]
+/// One merged entry: `best` is the effective (lowest) rank any list
+/// assigns, and each list's OWN rank is kept alongside — 0 means the
+/// list does not carry the host.  Keeping per-source ranks lets the
+/// verdict name every list that knows the domain (Tranco rank 50,
+/// Majestic rank 12), not just the one that won.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RankEntry {
+    best: u32,
+    tranco: u32,
+    majestic: u32,
+}
+
+#[derive(Debug, Clone)]
 pub struct TrancoList {
-    ranks: HashMap<String, u32>,
+    /// domain -> RankEntry (SRC_TRANCO for the seed + tranco-list.dat,
+    /// SRC_MAJESTIC for majestic-million.csv).
+    ranks: HashMap<String, RankEntry>,
     skeletons: HashMap<String, String>,
+}
+
+/// Source bit for the vendored seed and `tranco-list.dat` (both
+/// Tranco data).
+const SRC_TRANCO: u8 = 1;
+/// Source bit for `majestic-million.csv`.
+const SRC_MAJESTIC: u8 = 2;
+
+/// Grammar each override file parses under — keyed by the file name
+/// the Qt updater drops it under.
+fn grammar_for(name: &str) -> bool {
+    name == MAJESTIC_FILE
+}
+
+/// Source bitmask each override file merges under.
+fn src_for(name: &str) -> u8 {
+    if name == MAJESTIC_FILE { SRC_MAJESTIC } else { SRC_TRANCO }
 }
 
 /// The active table — Arc'd so a rank lookup in flight survives a
@@ -261,23 +292,39 @@ fn entries_from_blob(
 /// name so the lookalike probe keeps answering with the most popular
 /// twin.
 fn merge_into(
-    ranks: &mut HashMap<String, u32>,
+    ranks: &mut HashMap<String, RankEntry>,
     skeletons: &mut HashMap<String, String>,
     eranks: HashMap<String, u32>,
     eskels: HashMap<String, String>,
+    src: u8,
 ) {
     for (host, rank) in eranks {
         ranks
             .entry(host)
-            .and_modify(|r| *r = (*r).min(rank))
-            .or_insert(rank);
+            .and_modify(|r| {
+                // Every list keeps its own rank — the panel shows
+                // each source's number, not only the winner's.  Two
+                // merges of the same source (seed + downloaded list)
+                // fold to that source's best rank.
+                let field = if src == SRC_MAJESTIC {
+                    &mut r.majestic
+                } else {
+                    &mut r.tranco
+                };
+                *field = if *field == 0 { rank } else { (*field).min(rank) };
+                r.best = r.best.min(rank);
+            })
+            .or_insert(match src {
+                SRC_MAJESTIC => RankEntry { best: rank, tranco: 0, majestic: rank },
+                _ => RankEntry { best: rank, tranco: rank, majestic: 0 },
+            });
     }
     for (skel, raw) in eskels {
         skeletons
             .entry(skel)
             .and_modify(|cur| {
-                let cur_rank = ranks.get(cur.as_str()).copied().unwrap_or(u32::MAX);
-                let new_rank = ranks.get(raw.as_str()).copied().unwrap_or(u32::MAX);
+                let cur_rank = ranks.get(cur.as_str()).map(|e| e.best).unwrap_or(u32::MAX);
+                let new_rank = ranks.get(raw.as_str()).map(|e| e.best).unwrap_or(u32::MAX);
                 if new_rank < cur_rank {
                     *cur = raw.clone();
                 }
@@ -298,12 +345,6 @@ fn read_override(dir: &Path, name: &str) -> Option<Vec<u8>> {
     std::fs::read(&path).ok()
 }
 
-/// Grammar each override file parses under — keyed by the file name
-/// the Qt updater drops it under.
-fn grammar_for(name: &str) -> bool {
-    name == MAJESTIC_FILE
-}
-
 impl TrancoList {
     /// The host's Tranco rank, or None when unlisted.  The probe
     /// walks the hostname's label boundary left-to-right: the exact
@@ -322,6 +363,12 @@ impl TrancoList {
     /// rightmost 253 bytes — every entry is shorter, so a matchable
     /// suffix always lives in the tail.)
     pub fn rank_of(&self, host: &str) -> Option<u32> {
+        self.rank_detail_of(host).map(|e| e.best)
+    }
+
+    /// rank_of plus the per-source ranks — which top-site lists
+    /// carry the matched name and at what rank each lists it.
+    pub fn rank_detail_of(&self, host: &str) -> Option<RankEntry> {
         let h = crate::util::HostNorm::new(host)?;
         let host = h.as_str();
         // IP literals and dot-less names are never ranked.
@@ -339,8 +386,8 @@ impl TrancoList {
             // ever equal a whole request host (and IPs are never
             // entries here regardless).
             if candidate.parse::<IpAddr>().is_err() {
-                if let Some(&rank) = self.ranks.get(candidate) {
-                    return Some(rank);
+                if let Some(&entry) = self.ranks.get(candidate) {
+                    return Some(entry);
                 }
             }
         }
@@ -370,8 +417,8 @@ impl TrancoList {
         ) {
             (Some(twin), Some(&own)) => {
                 let twin_rank =
-                    self.ranks.get(twin.as_str()).copied().unwrap_or(u32::MAX);
-                Some(if own <= twin_rank {
+                    self.ranks.get(twin.as_str()).map(|e| e.best).unwrap_or(u32::MAX);
+                Some(if own.best <= twin_rank {
                     skel_suffix
                 } else {
                     twin.as_str()
@@ -390,13 +437,18 @@ impl TrancoList {
 /// un-rank anything, so a truncated or malicious download degrades
 /// to "no new coverage" — the vendored seed alone keeps ranking.
 fn load_from_disk(dir: Option<&Path>) -> TrancoList {
-    let (mut ranks, mut skeletons) = parse_entries(BUILTIN_LIST);
+    let (seed_ranks, mut skeletons) = parse_entries(BUILTIN_LIST);
+    let mut ranks = HashMap::new();
+    // The vendored seed is Tranco data — merges under its bit like
+    // the downloaded override does.
+    merge_into(&mut ranks, &mut skeletons, seed_ranks, HashMap::new(), SRC_TRANCO);
     if let Some(dir) = dir {
         for name in [OVERRIDE_FILE, MAJESTIC_FILE] {
             if let Some(blob) = read_override(dir, name) {
                 let (eranks, eskels) =
                     entries_from_blob(&blob, grammar_for(name));
-                merge_into(&mut ranks, &mut skeletons, eranks, eskels);
+                merge_into(&mut ranks, &mut skeletons, eranks, eskels,
+                           src_for(name));
             }
         }
     }
@@ -414,10 +466,13 @@ pub(crate) fn active_list() -> Arc<TrancoList> {
 /// (update/test seam).  A body yielding no usable entries is
 /// RC_CORRUPT and the previous table stays active.
 pub fn load(text: &str) -> RcResult<()> {
-    let (ranks, skeletons) = parse_entries(text);
-    if ranks.is_empty() {
+    let (eranks, eskels) = parse_entries(text);
+    if eranks.is_empty() {
         return fail(RcStatus::Corrupt, "tranco: no usable entries");
     }
+    let mut ranks = HashMap::new();
+    let mut skeletons = HashMap::new();
+    merge_into(&mut ranks, &mut skeletons, eranks, eskels, SRC_TRANCO);
     LIST.replace(TrancoList { ranks, skeletons });
     Ok(())
 }
@@ -473,6 +528,34 @@ pub fn rank(host: &str) -> u32 {
     active_list().rank_of(host).unwrap_or(0)
 }
 
+/// rank + per-source ranks for the verdict — (best, tranco,
+/// majestic), all zero when unranked.  The sources hold each list's
+/// own number so the UI can name them all.
+pub(crate) fn rank_detail(host: &str) -> (u32, u32, u32) {
+    active_list()
+        .rank_detail_of(host)
+        .map(|e| (e.best, e.tranco, e.majestic))
+        .unwrap_or((0, 0, 0))
+}
+
+/// Source-bit constants re-exported for the test merge seam —
+/// sitetrust tests merge fixture rows under the Majestic grammar.
+#[cfg(test)]
+pub(crate) const SRCS_TRANCO: u8 = SRC_TRANCO;
+#[cfg(test)]
+pub(crate) const SRCS_MAJESTIC: u8 = SRC_MAJESTIC;
+
+/// Test seam: merge a list body into the active table under an
+/// explicit source bit, so verdict tests can build "both"/
+/// "majestic-only" provenance without writing override files.
+#[cfg(test)]
+pub(crate) fn merge_text_as(text: &str, src: u8, majestic_grammar: bool) {
+    let (er, es) = entries_from_blob(text.as_bytes(), majestic_grammar);
+    let mut l = (*active_list()).clone();
+    merge_into(&mut l.ranks, &mut l.skeletons, er, es, src);
+    LIST.replace(l);
+}
+
 /// Entry count of the active table — diagnostics/tests.
 pub fn count() -> usize {
     active_list().len()
@@ -491,7 +574,10 @@ mod tests {
     }
 
     fn table(text: &str) -> TrancoList {
-        let (ranks, skeletons) = parse_entries(text);
+        let (eranks, eskels) = parse_entries(text);
+        let mut ranks = HashMap::new();
+        let mut skeletons = HashMap::new();
+        merge_into(&mut ranks, &mut skeletons, eranks, eskels, SRC_TRANCO);
         TrancoList { ranks, skeletons }
     }
 
@@ -677,27 +763,40 @@ mod tests {
         // SEC19: the effective rank is the best (lowest) rank any
         // source assigns — the seed's stale rank can improve, nothing
         // can be un-ranked, and coverage only grows.
-        let (mut ranks, mut skeletons) =
+        let mut ranks = HashMap::new();
+        let mut skeletons = HashMap::new();
+        let (sranks, sskels) =
             parse_entries("5,seed.example\n9,also-seed.example\n");
+        merge_into(&mut ranks, &mut skeletons, sranks, sskels, SRC_TRANCO);
         let seed_len = ranks.len();
         let (eranks, eskels) = entries_from_blob(
-            b"1,seed.example\n2,new.example\n",
+            b"1,seed.example\n2,new.example\n3,tie.example\n",
             false,
         );
-        merge_into(&mut ranks, &mut skeletons, eranks, eskels);
+        merge_into(&mut ranks, &mut skeletons, eranks, eskels, SRC_TRANCO);
         // A Majestic body listing the same domain lower still wins.
         let (mranks, mskels) = entries_from_blob(
-            b"GlobalRank,TldRank,Domain,TLD\n7,3,seed.example,example\n8,4,mj-only.example,example\n",
+            b"GlobalRank,TldRank,Domain,TLD\n7,3,seed.example,example\n8,4,mj-only.example,example\n3,5,tie.example,example\n",
             true,
         );
-        merge_into(&mut ranks, &mut skeletons, mranks, mskels);
+        merge_into(&mut ranks, &mut skeletons, mranks, mskels, SRC_MAJESTIC);
         let t = TrancoList { ranks, skeletons };
         assert_eq!(t.rank_of("seed.example"), Some(1)); // tranco update bested seed+majestic
         assert_eq!(t.rank_of("also-seed.example"), Some(9)); // no source can un-rank
         assert_eq!(t.rank_of("new.example"), Some(2));
         assert_eq!(t.rank_of("mj-only.example"), Some(8)); // membership in either counts
         assert_eq!(t.rank_of("never-listed.example"), None);
-        assert_eq!(t.len(), seed_len + 2);
+        assert_eq!(t.len(), seed_len + 3);
+        // Per-source ranks are kept verbatim — the verdict names
+        // every list carrying the domain with its own number.
+        assert_eq!(t.rank_detail_of("seed.example"),
+                   Some(RankEntry { best: 1, tranco: 1, majestic: 7 }));
+        assert_eq!(t.rank_detail_of("mj-only.example"),
+                   Some(RankEntry { best: 8, tranco: 0, majestic: 8 }));
+        assert_eq!(t.rank_detail_of("new.example"),
+                   Some(RankEntry { best: 2, tranco: 2, majestic: 0 }));
+        assert_eq!(t.rank_detail_of("tie.example"),
+                   Some(RankEntry { best: 3, tranco: 3, majestic: 3 }));
     }
 
     #[test]
@@ -764,18 +863,19 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let tranco_path = dir.join(OVERRIDE_FILE);
         let majestic_path = dir.join(MAJESTIC_FILE);
-        std::fs::write(&tranco_path, "50,both-lists.example\n").unwrap();
+        std::fs::write(&tranco_path, "50,both-lists.example\n20,tied.example\n").unwrap();
         std::fs::write(
             &majestic_path,
             "GlobalRank,TldRank,Domain,TLD\n\
              12,4,both-lists.example,example\n\
-             77,9,mj-only.example,example\n",
+             77,9,mj-only.example,example\n\
+             20,6,tied.example,example\n",
         )
         .unwrap();
         crate::store::lock().set_data_dir(dir.to_str().unwrap()).unwrap();
         // Per-file probe: usable-entry counts under each grammar.
-        assert_eq!(file_entries(OVERRIDE_FILE), 1);
-        assert_eq!(file_entries(MAJESTIC_FILE), 2);
+        assert_eq!(file_entries(OVERRIDE_FILE), 2);
+        assert_eq!(file_entries(MAJESTIC_FILE), 3);
         assert_eq!(file_entries("missing-file.csv"), 0);
         reload().unwrap();
         // Best rank across the lists wins; either-source membership
@@ -784,6 +884,12 @@ mod tests {
         assert_eq!(rank("mj-only.example"), 77);
         assert_eq!(rank("unlisted-still.example"), 0);
         assert_eq!(rank("google.com"), 1); // seed coverage intact
+        // Provenance: (best, tranco, majestic) — both-lists keeps
+        // each list's own number, the seed is Tranco-only.
+        assert_eq!(rank_detail("both-lists.example"), (12, 50, 12));
+        assert_eq!(rank_detail("mj-only.example"), (77, 0, 77));
+        assert_eq!(rank_detail("tied.example"), (20, 20, 20));
+        assert_eq!(rank_detail("google.com"), (1, 1, 0));
         // A corrupt sibling override fails the reload — the Qt side
         // sweeps it before retrying.
         std::fs::write(&majestic_path, "<html>404</html>\n").unwrap();
