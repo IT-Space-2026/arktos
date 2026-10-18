@@ -3134,3 +3134,12 @@ WebKit backend devtools surfaces researched (WKB04):
     homonymous, a few honest-disable gaps), weighs WPE WebDriver as a
     free automation surface, and recommends the WebKit backend report
     devTools=false until a real inspect path is proven.
+
+WebKit spike fixtures added (WKB06):
+    Static self-contained test pages under spikes/webkit/fixtures/ for
+    the WPE WebKit engine spikes: blank.html gives the render-path
+    spike a stable paint baseline, paint-proof.html lays out
+    deterministic pixel-assertable color blocks plus text,
+    input-click.html and nav-target.html form the two-page
+    click-navigation fixture, and eval-proof.html exposes typed
+    globals for the evaluate_javascript round-trip leg.
