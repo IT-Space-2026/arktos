@@ -64,3 +64,7 @@ core.*
 # flatpak build state (PKG02)
 flatpak/.build/
 flatpak/.build.log
+
+# stale pre-rebrand build outputs
+/arora
+/tools/placesimport/arora-placesimport
