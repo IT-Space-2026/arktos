@@ -90,6 +90,7 @@ private slots:
     void actionPopupSelfWires();
     void realExtensionPopup();
     void bitwardenGapBaseline();
+    void bitwardenHandshakeGate();
     void enabledStatePersists();
 
 private:
@@ -4262,6 +4263,451 @@ void tst_ExtensionManager::bitwardenGapBaseline()
     frame->close();
     view->deleteLater();
     frame->deleteLater();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    manager->setExtensionEnabled(id, false);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 20000);
+    manager->removeExtension(id);
+    QTest::qWait(500);
+    QDir(copyRoot).removeRecursively();
+}
+
+// ER06 — the lane's DECISION GATE, made executable.  The study's E3
+// checkpoint: drive the REAL Bitwarden bundle through the ER01/02
+// bridge and measure whether the content-script handshake crosses
+// the world-emulation boundary.  Four assertions, each through real
+// Bitwarden code on both ends:
+//
+//   1. cs->bg sendMessage — the declared
+//      content/trigger-autofill-script-injection.js (document_start)
+//      posts {command:'triggerAutofillScriptInjection'}; a gate
+//      listener inside the REAL hosted background must see it with
+//      sender.tab.id === our tab (the autofillService early-returns
+//      without it — the field is the handshake's load-bearing part).
+//   2. cs->bg connect — content-message-handler.js opens
+//      chrome.runtime.connect({name:'autofill-injected-script-port'})
+//      purely to observe disconnects; the real background's
+//      runtime.onConnect must fire with the same Chrome sender.
+//   3. the background ACTS on the handshake — its message router
+//      dispatches to autofillService.injectAutofillScripts, which
+//      calls chrome.scripting.executeScript; this runtime answers
+//      the typed 'unsupported' gap (ER07 territory).  The gap
+//      appearing only after the page load is the proof of dispatch.
+//   4. bg->cs deliver + real cs reply — Bitwarden's
+//      content-message-handler forwards the bg->cs commands
+//      'bgUnlockPopoutOpened'/'addedCipher' back through sendMessage.
+//      Driving one via chrome.tabs.sendMessage from the real
+//      background context must come back through the real cs onto
+//      real bg onMessage listeners — the full loop.
+//
+// PASS = all four cross; BLOCK = a measured isolation finding, which
+// belongs in .devin/EXT-RUNTIME-SPIKE.md with the exact failing
+// primitive — never a papered-over verdict.  The report prints to
+// the test log and, when ARKTOS_EXTTEST_OUT names a file, is written
+// there verbatim.
+void tst_ExtensionManager::bitwardenHandshakeGate()
+{
+    const QString src = qEnvironmentVariable("ARKTOS_EXTTEST_DIR");
+    if (src.isEmpty())
+        QSKIP("set ARKTOS_EXTTEST_DIR to an unpacked extension dir");
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+    QVERIFY(QFile::exists(src + QLatin1String("/manifest.json")));
+
+    // Fixture copy — install + runtime storage writes never touch
+    // the live profile's bundle.
+    const QString copyRoot = QDir::temp().filePath(
+        QStringLiteral("tst-bwgate-%1")
+            .arg(QCoreApplication::applicationPid()));
+    const QString dir = copyRoot + QLatin1String("/bundle");
+    QVERIFY2(copyTree(src, dir), "fixture copy of the bundle failed");
+    QVERIFY(QFile::exists(dir + QLatin1String("/manifest.json")));
+
+    const ExtensionManager::Manifest manifest =
+        ExtensionManager::inspectManifest(dir);
+    QVERIFY(manifest.valid);
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+
+    auto installed = std::make_shared<QString>();
+    auto finished = std::make_shared<bool>(false);
+    QObject::connect(manager, &ExtensionManager::extensionInstalled,
+                     this, [installed, finished](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.error.isEmpty())
+            *installed = info.id;
+        else
+            *installed = QStringLiteral("ERROR:") + info.error;
+        *finished = true;
+    });
+    QObject::connect(manager, &ExtensionManager::errorOccurred,
+                     this, [installed, finished](const QString &m) {
+        *installed = QStringLiteral("ERROR:") + m;
+        *finished = true;
+    });
+    manager->grantConsent(dir);
+    manager->installExtension(dir);
+    QElapsedTimer installTimer;
+    installTimer.start();
+    while (!*finished && installTimer.elapsed() < 90000)
+        QTest::qWait(100);
+    const QString id = *installed;
+    QVERIFY2(!id.isEmpty() && !id.startsWith(QLatin1String("ERROR:")),
+             qPrintable(QStringLiteral(
+                 "real bundle must install: %1").arg(id)));
+
+    manager->setExtensionEnabled(id, true);
+    ExtensionBackgroundHost *host = nullptr;
+    QElapsedTimer hostTimer;
+    hostTimer.start();
+    while (hostTimer.elapsed() < 120000) {
+        host = runtime->host(id);
+        if (host && host->state()
+                != ExtensionBackgroundHost::State::Starting)
+            break;
+        QTest::qWait(250);
+    }
+    QVERIFY2(host, "hosted background never spawned");
+    QVERIFY2(host->state() == ExtensionBackgroundHost::State::Ready,
+             qPrintable(QStringLiteral(
+                 "background host not ready: %1").arg(host->lastError())));
+
+    auto eval = [](QWebEnginePage *p, const QString &source,
+                   quint32 worldId = 0) {
+        auto result = std::make_shared<QVariant>();
+        p->runJavaScript(source, worldId,
+                         [result](const QVariant &v) { *result = v; });
+        QElapsedTimer t;
+        t.start();
+        while (!result->isValid() && t.elapsed() < 15000)
+            QTest::qWait(50);
+        return *result;
+    };
+    const quint32 agentWorld =
+        ExtensionBackgroundRuntime::AgentWorldId;
+    const QString probe = QStringLiteral(
+        "((window.__arktosExtAgents&&__arktosExtAgents['%1'])"
+        "||{active:false,bridgeUp:false})").arg(id);
+    auto gateJson = [&eval, &host]() {
+        return QJsonDocument::fromJson(
+            eval(host->page(), QStringLiteral(
+                "JSON.stringify(self.__gate||{msgs:[],ports:[]})"))
+                .toString().toUtf8()).object();
+    };
+    auto gateHasMsg = [&gateJson](const QString &command, int tabId) {
+        const QJsonArray msgs = gateJson()
+            .value(QLatin1String("msgs")).toArray();
+        for (const QJsonValue &v : msgs) {
+            const QJsonObject m = v.toObject();
+            if (m.value(QLatin1String("command")).toString() == command
+                    && m.value(QLatin1String("tab")).toInt() == tabId)
+                return true;
+        }
+        return false;
+    };
+
+    // --- gate probes inside the REAL background context --------------
+    // Installed before the tab loads so every cs->bg crossing is
+    // captured verbatim: __gate.msgs records (command, sender.tab.id,
+    // sender.url/origin); __gate.ports records onConnect port name +
+    // sender.  Bitwarden's own listeners coexist — these only watch.
+    QVERIFY(eval(host->page(), QStringLiteral(
+        "self.__gate={msgs:[],ports:[]};"
+        "chrome.runtime.onMessage.addListener(function(m,s){"
+        "try{self.__gate.msgs.push({command:(m&&m.command)||null,"
+        "tab:(s&&s.tab&&s.tab.id)||null,"
+        "url:(s&&s.url)||null,"
+        "origin:(s&&s.origin)||null});}catch(e){}"
+        "return false;});"
+        "chrome.runtime.onConnect.addListener(function(p){"
+        "try{self.__gate.ports.push({name:(p&&p.name)||null,"
+        "tab:(p&&p.sender&&p.sender.tab&&p.sender.tab.id)||null,"
+        "frameId:(p&&p.sender&&p.sender.frameId)||null});}catch(e){}});"
+        "self.__gate.armed=1;0"))
+        .toInt() == 0);
+    // Snapshot the shim's per-API access counts so leg 3 measures a
+    // delta, not ambient traffic.
+    const QJsonObject touchedBefore = QJsonDocument::fromJson(
+        eval(host->page(), QStringLiteral(
+            "JSON.stringify((window.__arktosShim&&__arktosShim.probe)"
+            "?__arktosShim.probe().touched:{})"))
+            .toString().toUtf8()).object();
+
+    // --- a real tab on a covered page ---------------------------------
+    // sender.tab only stamps when the page resolves to a TabWidget's
+    // WebView — the bridge's honest identity, and the field
+    // Bitwarden's handshake cannot proceed without.
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    const QString base = QStringLiteral("http://127.0.0.1:%1")
+        .arg(server.serverPort());
+    QObject::connect(&server, &QTcpServer::newConnection,
+                     this, [&]() {
+        QTcpSocket *socket = server.nextPendingConnection();
+        QObject::connect(socket, &QTcpSocket::readyRead,
+                         socket, [socket]() {
+            socket->readAll();
+            const QByteArray body =
+                "<html><body><form>"
+                "<input type=text name=username>"
+                "<input type=password name=password>"
+                "</form></body></html>";
+            socket->write(
+                "HTTP/1.1 200\r\nContent-Type: text/html\r\n"
+                "Content-Length: "
+                + QByteArray::number(body.size())
+                + "\r\nConnection: close\r\n\r\n" + body);
+            socket->disconnectFromHost();
+        });
+    });
+
+    BrowserMainWindow *window = new BrowserMainWindow;
+    TabWidget *tw = window->tabWidget();
+    QVERIFY(tw && tw->count() >= 1);
+    WebView *view = tw->webView(0);
+    QVERIFY(view && view->page());
+    QSignalSpy loadSpy(view->page(), &QWebEnginePage::loadFinished);
+    view->load(QUrl(base + QStringLiteral("/login")));
+    QTRY_VERIFY_WITH_TIMEOUT(loadSpy.count() >= 1, 30000);
+    const int tabId = ExtensionShimBackend::tabIdFor(view);
+    QVERIFY(tabId > 0);
+    // Bitwarden's agent registers + handshakes; its declared content
+    // scripts (document_start) run inside the shared agent realm.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(view->page(), probe + QStringLiteral(".bridgeUp"),
+             agentWorld).toBool(),
+        30000);
+
+    // --- leg 1: cs->bg sendMessage -------------------------------------
+    QTRY_VERIFY_WITH_TIMEOUT(
+        gateHasMsg(QStringLiteral("triggerAutofillScriptInjection"),
+                   tabId),
+        45000);
+    QVERIFY2(gateHasMsg(QStringLiteral("triggerAutofillScriptInjection"),
+                        tabId),
+             qPrintable(QStringLiteral(
+                 "cs->bg sendMessage never arrived with sender.tab: %1")
+                 .arg(eval(host->page(), QStringLiteral(
+                      "JSON.stringify(self.__gate)")).toString())));
+
+    // --- leg 2: cs->bg connect -----------------------------------------
+    auto gateHasPort = [&gateJson](const QString &name, int tabId) {
+        const QJsonArray ports = gateJson()
+            .value(QLatin1String("ports")).toArray();
+        for (const QJsonValue &v : ports) {
+            const QJsonObject p = v.toObject();
+            if (p.value(QLatin1String("name")).toString() == name
+                    && p.value(QLatin1String("tab")).toInt() == tabId)
+                return true;
+        }
+        return false;
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(
+        gateHasPort(QStringLiteral("autofill-injected-script-port"),
+                    tabId),
+        15000);
+
+    // --- leg 3: the real background ACTED on the handshake -------------
+    // injectAutofillScripts(sender.tab, sender.frameId) ->
+    // scriptInjectorService.inject -> chrome.scripting.executeScript
+    // (or the MV2-fallback chrome.tabs.executeScript), answered here
+    // as the typed 'unsupported' gap — the honest degradation, and
+    // proof the router dispatched the real command.  The calls are
+    // async inside the bundle (account state, RxJS), so poll.
+    // Touched keys differ by serving stub: fillNs counts
+    // 'scripting.executeScript', the unsupportedNs proxy counts
+    // 'chrome.scripting.executeScript'; the MV2 fallback lands under
+    // tabs.* the same way.  Sum every *executeScript key's delta.
+    auto injectCalls = [&]() {
+        const QJsonObject now = QJsonDocument::fromJson(
+            eval(host->page(), QStringLiteral(
+                "JSON.stringify((window.__arktosShim"
+                "&&__arktosShim.probe)"
+                "?__arktosShim.probe().touched:{})"))
+                .toString().toUtf8()).object();
+        int delta = 0;
+        for (const QString &k : now.keys()) {
+            if (!k.endsWith(QLatin1String("executeScript")))
+                continue;
+            delta += now.value(k).toInt()
+                     - touchedBefore.value(k).toInt();
+        }
+        return delta;
+    };
+    auto gapHas = [&host](const QString &needle) {
+        for (const QString &g : host->shimGaps())
+            if (g.contains(needle))
+                return true;
+        return false;
+    };
+    // The typed gap is recorded only by failCall — an actual
+    // invocation, never a property probe — so its arrival certifies
+    // the call crossed, not just the access.
+    QTRY_VERIFY_WITH_TIMEOUT(gapHas(QLatin1String("executeScript")),
+                             30000);
+    QVERIFY2(gapHas(QLatin1String("executeScript")),
+             qPrintable(QStringLiteral(
+                 "executeScript never invoked — gaps: %1")
+                 .arg(host->shimGaps().join(QLatin1String(", ")))));
+    const int scriptingCalls = injectCalls();
+
+    // --- leg 4: bg->cs deliver + the real cs replies -------------------
+    eval(host->page(), QStringLiteral(
+        "chrome.tabs.sendMessage(%1,"
+        "{command:'bgUnlockPopoutOpened'},function(){});0")
+        .arg(tabId));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        gateHasMsg(QStringLiteral("bgUnlockPopoutOpened"), tabId),
+        30000);
+    QVERIFY2(gateHasMsg(QStringLiteral("bgUnlockPopoutOpened"), tabId),
+             qPrintable(QStringLiteral(
+                 "bg->cs deliver or the real cs's forward-back failed: "
+                 "%1").arg(eval(host->page(), QStringLiteral(
+                     "JSON.stringify(self.__gate)")).toString())));
+
+    // --- collect -------------------------------------------------------
+    QStringList report;
+    report << QStringLiteral(
+        "# ER06 — hosted-runtime decision gate (Bitwarden handshake)");
+    report << QStringLiteral("generated: %1").arg(
+        QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+    report << QStringLiteral("bundle: %1 name=\"%2\" version=%3")
+        .arg(QFileInfo(src).fileName(), manifest.name,
+             manifest.version);
+    report << QStringLiteral("installed id: %1").arg(id);
+    report << QStringLiteral("host state: ready");
+    report << QStringLiteral("tab: id=%1 url=%2")
+        .arg(tabId).arg(view->page()->url().toString());
+    report << QStringLiteral("VERDICT: PASS — the cs<->bg handshake "
+                             "crossed the world-emulation boundary "
+                             "through real Bitwarden code on both "
+                             "ends; no world-identity requirement "
+                             "surfaced.");
+    report << QString();
+    report << QStringLiteral("## handshake legs");
+    report << QStringLiteral(
+        "- cs->bg sendMessage: triggerAutofillScriptInjection "
+        "delivered with sender.tab.id=%1 — PASS").arg(tabId);
+    report << QStringLiteral(
+        "- cs->bg connect: autofill-injected-script-port accepted by "
+        "the real onConnect with sender.tab.id=%1 — PASS").arg(tabId);
+    report << QStringLiteral(
+        "- bg dispatch: %1 executeScript call(s) "
+        "(scripting/tabs) after the handshake — typed 'unsupported' "
+        "gap recorded (ER07), PASS")
+        .arg(scriptingCalls);
+    report << QStringLiteral(
+        "- bg->cs deliver + real cs forward-back: "
+        "bgUnlockPopoutOpened round-tripped — PASS");
+    report << QString();
+    const QJsonObject agentWrap = QJsonDocument::fromJson(
+        eval(view->page(), QStringLiteral(
+            "JSON.stringify(function(){"
+            "var a=window.__arktosExtAgents"
+            "&&__arktosExtAgents['%1'];"
+            "return a?{deliveries:a.deliveries,"
+            "ports:Object.keys(a.ports||{}).length,"
+            "probe:a.probe()}:null;}())").arg(id),
+            agentWorld).toString().toUtf8()).object();
+    const QJsonObject agentProbe =
+        agentWrap.value(QLatin1String("probe")).toObject();
+    {
+        const QJsonObject touchedMap = QJsonDocument::fromJson(
+            eval(host->page(), QStringLiteral(
+                "JSON.stringify((window.__arktosShim"
+                "&&__arktosShim.probe)"
+                "?__arktosShim.probe().touched:{})"))
+                .toString().toUtf8()).object();
+        QStringList touched;
+        for (const QString &k : touchedMap.keys())
+            touched.append(QStringLiteral("%1=%2")
+                .arg(k).arg(touchedMap.value(k).toInt()));
+        touched.sort();
+        report << QStringLiteral("## background touched: %1")
+            .arg(touched.join(QLatin1String(", ")));
+        report << QStringLiteral("## agent probe: active=%1 "
+                                     "bridgeUp=%2 deliveries=%3 "
+                                     "ports=%4")
+            .arg(agentProbe.value(QLatin1String("active")).toBool())
+            .arg(agentProbe.value(QLatin1String("bridgeUp")).toBool())
+            .arg(agentWrap.value(QLatin1String("deliveries")).toInt())
+            .arg(agentWrap.value(QLatin1String("ports")).toInt());
+        report << QStringLiteral("agent gaps:");
+        for (const QJsonValue &v
+             : agentProbe.value(QLatin1String("gaps")).toArray())
+            report << QStringLiteral("- ") + v.toString();
+        report << QStringLiteral("agent errors:");
+        for (const QJsonValue &v
+             : agentProbe.value(QLatin1String("errors")).toArray())
+            report << QStringLiteral("- ") + v.toString();
+        report << QStringLiteral("host shimGaps:");
+        for (const QString &g : host->shimGaps())
+            report << QStringLiteral("- ") + g;
+    }
+    report << QString();
+    report << QStringLiteral(
+        "## gate capture (every cs->bg crossing)");
+    for (const QJsonValue &v : gateJson()
+             .value(QLatin1String("msgs")).toArray())
+        report << QStringLiteral("- msg ") + QString::fromUtf8(
+            QJsonDocument(v.toObject()).toJson(QJsonDocument::Compact));
+    for (const QJsonValue &v : gateJson()
+             .value(QLatin1String("ports")).toArray())
+        report << QStringLiteral("- port ") + QString::fromUtf8(
+            QJsonDocument(v.toObject()).toJson(QJsonDocument::Compact));
+
+    // The unlock-init path on a fresh install: Bitwarden boots into
+    // the logged-out init (no enrolled account), so the crypto
+    // offscreen document is never requested — record what the
+    // dependency WOULD answer rather than faking a flow.
+    const QVariant offscreenReply = eval(host->page(),
+        QStringLiteral(
+            "JSON.stringify(function(){var out={supported:"
+            "typeof chrome.offscreen!=='undefined'};"
+            "try{chrome.offscreen.hasDocument(function(r){"
+            "self.__offs={r:r,err:(chrome.runtime.lastError"
+            "&&chrome.runtime.lastError.message)||((__arktosShim"
+            "&&__arktosShim.lastError)&&__arktosShim.lastError"
+            ".message)||null};});}catch(e){out.threw=String(e);}"
+            "return out;}())"));
+    QTest::qWait(800);
+    const QVariant offscreenResult = eval(host->page(),
+        QStringLiteral("JSON.stringify(self.__offs||null)"));
+    report << QString();
+    report << QStringLiteral(
+        "## unlock-init dependency: chrome.offscreen");
+    report << QStringLiteral("- surface: %1")
+        .arg(offscreenReply.toString());
+    report << QStringLiteral("- hasDocument() answer: %1")
+        .arg(offscreenResult.toString());
+    report << QStringLiteral(
+        "- note: a fresh install has no enrolled account, so the "
+        "real unlock-init (Argon2 in the offscreen document) is not "
+        "reachable from the harness.  chrome.offscreen resolves to a "
+        "live ENGINE binding here (hasDocument answered false — the "
+        "schema exists, the delegate may not) — whether "
+        "createDocument yields a working document is ER10's "
+        "measurement, not assumed.");
+
+    for (const QString &line : report)
+        qWarning().noquote() << line;
+
+    const QString out = qEnvironmentVariable("ARKTOS_EXTTEST_OUT");
+    if (!out.isEmpty()) {
+        QFile file(out);
+        if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            file.write(report.join(QLatin1Char('\n')).toUtf8());
+            file.write("\n");
+            file.close();
+        } else {
+            qWarning() << "GATE could not write" << out;
+        }
+    }
+
+    // --- teardown -----------------------------------------------------
+    window->close();
+    window->deleteLater();
     QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     manager->setExtensionEnabled(id, false);
     QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 20000);

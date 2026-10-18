@@ -3528,3 +3528,20 @@ Extensions (runtime lifecycle): chrome.runtime.onInstalled and
     removed on uninstall so a reinstall is a clean install again.
     chrome.windows.onCreated now also delivers Chrome's single
     Window-object argument instead of a bare window id (ER05).
+Extensions (runtime decision gate): the hosted runtime's
+    content-script handshake now carries real extension code end to
+    end (ER06) — measured with the installed Bitwarden bundle on an
+    isolated profile: its declared document_start content scripts
+    ran inside the page agent's isolated realm, announced themselves
+    to the real background (triggerAutofillScriptInjection) with a
+    correct sender.tab, held the autofill-injected-script-port
+    connection the background's onConnect accepted, and the
+    background responded by dispatching chrome.scripting.executeScript
+    (answered as the typed 'unsupported' gap until scripting lands).
+    A background-initiated tabs.sendMessage reached the real content
+    script and its forward-back reply returned to real onMessage
+    listeners — the handshake crossed the world-emulation boundary in
+    both directions with no isolated-world identity requirement, so
+    the gate verdict is PASS and the remaining work is mechanical
+    namespace coverage, not isolation surgery. Evidence:
+    .devin/EXT-RUNTIME-SPIKE.md.
