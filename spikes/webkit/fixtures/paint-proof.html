@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<!-- WKB06 spike fixture — consumed by WK03 (render path: WPEBuffer ->
+     QImage -> QWidget paint + screenshot proof).
+
+     Deterministic paint proof. Solid-color blocks at fixed CSS-px
+     coordinates plus a text band; all coordinates below are CSS px,
+     multiply by devicePixelRatio before indexing the QImage.
+
+     Assertable pixel map (sample well inside each block to dodge
+     rasterizer edge cases):
+
+       point      expected   element
+       (5,5)      #404040    page background
+       (60,60)    #ff0000    #block-red    rect (10,10)-(110,110)
+       (180,60)   #00ff00    #block-green  rect (120,10)-(220,110)
+       (290,60)   #0000ff    #block-blue   rect (230,10)-(330,110)
+       (60,150)   #ffffff    #text-band    rect (10,120)-(330,190)
+
+     Text check (font rasterization is platform-dependent — do NOT
+     assert glyph shapes): the band contains "ARORA PAINT PROOF" in
+     black, so assert at least one pixel inside (10,120)-(330,190)
+     is darker than ~#202020.
+
+     overflow:hidden on html/body suppresses scrollbars; content is
+     340x190 so any viewport >= that size renders identically. -->
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>arora-paint-proof</title>
+<style>
+html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: #404040;
+    overflow: hidden;
+}
+.block {
+    position: absolute;
+    top: 10px;
+    width: 100px;
+    height: 100px;
+}
+#block-red   { left: 10px;  background: #ff0000; }
+#block-green { left: 120px; background: #00ff00; }
+#block-blue  { left: 230px; background: #0000ff; }
+#text-band {
+    position: absolute;
+    left: 10px;
+    top: 120px;
+    width: 320px;
+    height: 70px;
+    background: #ffffff;
+    color: #000000;
+    font: bold 28px sans-serif;
+    line-height: 70px;
+    text-align: center;
+}
+</style>
+</head>
+<body>
+<div id="block-red" class="block"></div>
+<div id="block-green" class="block"></div>
+<div id="block-blue" class="block"></div>
+<div id="text-band">ARORA PAINT PROOF</div>
+</body>
+</html>

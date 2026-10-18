@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<!-- WKB06 spike fixture — consumed by WK04 leg (a) (input smoke) as
+     the click destination for input-click.html's a#nav-link.
+
+     Marker surface the spike asserts on after the click lands:
+       - uri ends with "nav-target.html"
+       - document.title == "arora-nav-target"
+       - window.__navTarget === true
+       - #nav-marker text "NAV TARGET REACHED" (visually distinct
+         green band, so a screenshot also proves the navigation) -->
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>arora-nav-target</title>
+<style>
+html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: #ffffff;
+    overflow: hidden;
+}
+#nav-marker {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 60px;
+    background: #00aa00;
+    color: #ffffff;
+    font: bold 24px sans-serif;
+    line-height: 60px;
+    text-align: center;
+}
+</style>
+</head>
+<body>
+<div id="nav-marker">NAV TARGET REACHED</div>
+<script>
+window.__navTarget = true;
+</script>
+</body>
+</html>

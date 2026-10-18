@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<!-- WKB06 spike fixture — consumed by WK04 leg (a) (input smoke:
+     synthetic QMouseEvent -> wpe pointer event -> click navigates).
+
+     Two fixed-position hit targets; no scrolling (overflow hidden),
+     so event coordinates map 1:1 onto CSS px (times devicePixelRatio):
+
+       a#nav-link       rect (20,20)-(220,60)   href="nav-target.html"
+       button#coords-btn rect (20,80)-(220,120)
+
+     WK04 leg (a): dispatch a click at the center of #nav-link,
+     e.g. (120,40), then assert the view's uri property changed to
+     the sibling fixture .../nav-target.html.
+
+     #coords-btn records every pointer-relevant event into
+     window.__clickLog (array of {type, clientX, clientY, screenX,
+     screenY, button}) and mirrors simple typed globals so a plain
+     evaluate_javascript can read the result without marshaling an
+     object:
+
+       window.__lastClickType  string, e.g. "click"
+       window.__lastClickX     number (clientX)
+       window.__lastClickY     number (clientY)
+       window.__clickLog       array of objects
+       #coords-out             div text = JSON of latest entry
+
+     Suggested assert: click at (120,100) -> __lastClickType ==
+     "click" and __lastClickX/__lastClickY are near 120/100. -->
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>arora-input-click</title>
+<style>
+html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: #ffffff;
+    overflow: hidden;
+}
+#nav-link {
+    position: absolute;
+    left: 20px;
+    top: 20px;
+    width: 200px;
+    height: 40px;
+    line-height: 40px;
+    text-align: center;
+    background: #ddeeff;
+    border: 1px solid #336699;
+    color: #003366;
+    text-decoration: none;
+    font: 16px sans-serif;
+    display: block;
+}
+#coords-btn {
+    position: absolute;
+    left: 20px;
+    top: 80px;
+    width: 200px;
+    height: 40px;
+    font: 16px sans-serif;
+}
+#coords-out {
+    position: absolute;
+    left: 20px;
+    top: 140px;
+    width: 400px;
+    font: 12px monospace;
+    color: #333333;
+}
+</style>
+</head>
+<body>
+<a id="nav-link" href="nav-target.html">Go to nav target</a>
+<button id="coords-btn">record click</button>
+<div id="coords-out">no click yet</div>
+<script>
+window.__clickLog = [];
+window.__lastClickType = "";
+window.__lastClickX = -1;
+window.__lastClickY = -1;
+(function () {
+    var btn = document.getElementById('coords-btn');
+    var out = document.getElementById('coords-out');
+    function record(ev) {
+        var entry = {
+            type: ev.type,
+            clientX: ev.clientX,
+            clientY: ev.clientY,
+            screenX: ev.screenX,
+            screenY: ev.screenY,
+            button: ev.button
+        };
+        window.__clickLog.push(entry);
+        window.__lastClickType = ev.type;
+        window.__lastClickX = ev.clientX;
+        window.__lastClickY = ev.clientY;
+        out.textContent = JSON.stringify(entry);
+    }
+    btn.addEventListener('mousedown', record);
+    btn.addEventListener('mouseup', record);
+    btn.addEventListener('click', record);
+})();
+</script>
+</body>
+</html>
