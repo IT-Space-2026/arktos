@@ -3420,3 +3420,21 @@ Servo tabs enforce AdBlock; devtools entries admit when the engine cannot (ENG35
     drives, so instead of a dead surface the Tools menu devtools
     entries and the panel's context selector now disable Servo tabs
     with the reason.
+
+Trust chrome works on Servo/foreign-engine tabs (TRUST25):
+    On a Servo tab the navigation-bar shield used to sit disabled —
+    "Site privacy — not available on this tab" — and the address
+    field lost its padlock, because both controls were bound to the
+    WebView a foreign-engine tab doesn't have. The shield, its site
+    panel, and the padlock now bind to the EngineTab itself: they
+    follow the tab's own url/load/page-recreation signals, keep the
+    shared host+scheme trust verdict, and show the padlock in the
+    field's left slot. Since the second-opinion TLS probe can't run
+    on a foreign engine, an https page reports the honest stand-in —
+    "TLS verified by <engine>" — the same reasoning the tor surface
+    uses, instead of a blank. Panel entries that only WebEngine can
+    answer (blocked-request count, JavaScript rules, site-data wipe,
+    pop-up/HTTPS-Only exceptions, fingerprint spoofing) grey out with
+    an explanation rather than claiming values they can't produce.
+    Switching between Chromium and Servo tabs rebinds the chrome in
+    both directions.

@@ -26,6 +26,9 @@
 #include "browserapplication.h"
 #include "browsertheme.h"
 #include "domainblocklist.h"
+#include "engineinterface.h"
+#include "engineregistry.h"
+#include "enginetab.h"
 #include "sitepanel.h"
 #include "trancolist.h"
 #include "webview.h"
@@ -151,8 +154,14 @@ void SiteShieldButton::growMenuToFit()
 
 void SiteShieldButton::setWebView(WebView *webView)
 {
-    if (m_webView == webView)
+    // The engine-tab binding clears first — an early return while it
+    // is still set would keep the wrong tab's connections alive.
+    if (m_webView == webView && !m_engineTab)
         return;
+    if (m_engineTab) {
+        disconnect(m_engineTab, nullptr, this, nullptr);
+        m_engineTab = nullptr;
+    }
     if (m_webView)
         disconnect(m_webView, nullptr, this, nullptr);
     m_webView = webView;
@@ -182,6 +191,50 @@ void SiteShieldButton::setWebView(WebView *webView)
                 Qt::UniqueConnection);
     }
     refreshIcon();
+}
+
+void SiteShieldButton::setEngineTab(EngineTab *tab)
+{
+    if (m_engineTab == tab && !m_webView)
+        return;
+    if (m_webView) {
+        disconnect(m_webView, nullptr, this, nullptr);
+        m_webView = nullptr;
+    }
+    if (m_engineTab)
+        disconnect(m_engineTab, nullptr, this, nullptr);
+    m_engineTab = tab;
+    // The tab's backend pointer is raw — a stack-owned backend (the
+    // autotest fakes) can die while a bound tab still stands, and
+    // refresh paths still run during tab-stack teardown.  Keep it as
+    // a QPointer so a dead backend reads as absent; the registry
+    // membership probe is a plain pointer compare, safe even if the
+    // backend is already gone.
+    Engine::Backend *backend = tab ? tab->backend() : nullptr;
+    m_engineBackend = (backend
+        && EngineRegistry::backends().contains(backend))
+        ? backend : nullptr;
+    m_panel->setEngineTab(tab);
+    if (tab) {
+        connect(tab, &EngineTab::urlChanged,
+                this, [this](const QUrl &) { refreshIcon(); });
+        connect(tab, &EngineTab::loadStarted,
+                this, [this]() { refreshIcon(); });
+        connect(tab, &EngineTab::loadProgress,
+                this, [this](int) { refreshIcon(); });
+        connect(tab, &EngineTab::loadFinished,
+                this, [this](bool) { refreshIcon(); });
+        // ENG28: the page object is swapped in place — url() resolves
+        // through the tab, so a repaint is all the swap needs.
+        connect(tab, &EngineTab::pageRecreated,
+                this, [this]() { refreshIcon(); });
+    }
+    refreshIcon();
+}
+
+EngineTab *SiteShieldButton::engineTab() const
+{
+    return m_engineTab;
 }
 
 QString SiteShieldButton::trustLevelFor(const QString &host, bool isHttps)
@@ -254,10 +307,12 @@ void SiteShieldButton::refreshIcon()
         QLatin1String("security-high"), palette());
 
     m_trustLevel.clear();
-    // TRUST15: unbound (widget/engine tab, or a window before its
-    // first bind) shows the shield disabled with the honest reason —
-    // the row keeps its shape instead of gaining a gap.
-    if (!m_webView) {
+    // TRUST15: unbound (widget tab, or a window before its first
+    // bind) shows the shield disabled with the honest reason — the
+    // row keeps its shape instead of gaining a gap.  TRUST25: a
+    // foreign-engine tab binds too, so only a genuinely tab-less
+    // surface lands here now.
+    if (!m_webView && !m_engineTab) {
         setIcon(shield);
         setEnabled(false);
         setToolTip(tr("Site privacy — not available on this tab"));
@@ -265,18 +320,29 @@ void SiteShieldButton::refreshIcon()
     }
     setEnabled(true);
 
+    const QUrl url = m_webView ? m_webView->url()
+                             : m_engineTab->url();
+
     // Badge art is authored in 16x16 space; scale it to the button's
     // icon size so the overlay follows the icon growth.
     const int px = iconSize().width();
     const QSize iconPx(px, px);
-    QWebEnginePage *page = m_webView->page();
+    QWebEnginePage *page = m_webView ? m_webView->page() : nullptr;
     AdBlockManager *adblock = AdBlockManager::instanceFor(
         BrowserProfile::profileIdFor(page ? page->profile() : nullptr));
-    const QString host = m_webView->url().host();
-    const bool whitelisted = adblock->isSiteWhitelisted(host);
+    const QString host = url.host();
+    // TRUST25: the interceptor only runs on WebEngine profiles — a
+    // servo profile advertises no requestInterception and carries no
+    // blocking persona of its own, so the global host-keyed
+    // whitelist is the only store that exists; but on a foreign tab
+    // the whitelist/disabled treatments would imply blocking that
+    // never runs there, so they are skipped and the tooltip says so
+    // instead of implying a count.
+    const bool whitelisted = !m_engineTab
+        && adblock->isSiteWhitelisted(host);
     QIcon icon;
     QString tip;
-    if (!adblock->isEnabled()) {
+    if (!adblock->isEnabled() && !m_engineTab) {
         icon = QIcon(shield.pixmap(iconPx, QIcon::Disabled));
         tip = tr("Site privacy — content blocking is disabled");
     } else if (whitelisted) {
@@ -287,6 +353,13 @@ void SiteShieldButton::refreshIcon()
         icon = shield;
         tip = tr("Site privacy and permissions");
     }
+    if (m_engineTab) {
+        const QString engine = m_engineBackend
+            ? m_engineBackend->displayName() : QString();
+        tip += engine.isEmpty()
+            ? tr(" — content blocking does not run on this engine")
+            : tr(" — content blocking does not run on %1").arg(engine);
+    }
 
     // TRUST09: the composite site-trust verdict marks the lock —
     // red on threat/lookalike hits, an amber wash on an "amber"
@@ -295,7 +368,7 @@ void SiteShieldButton::refreshIcon()
     // (refreshed by the navigation signals wired in setWebView), so
     // this repaint path never blocks on the lookup; non-web schemes
     // carry no badge at all.
-    const QString scheme = m_webView->url().scheme();
+    const QString scheme = url.scheme();
     if (scheme == QLatin1String("http")
         || scheme == QLatin1String("https")) {
         m_trustLevel = trustLevelFor(
@@ -310,8 +383,12 @@ void SiteShieldButton::refreshIcon()
     // SHLD02: the uBO-style blocked-count badge the removed
     // AdBlockButton used to carry, now on the single shield; the
     // panel owns the load-start baseline the count diffs against.
-    const int blocked = m_panel->blockedSinceLoad();
-    const bool jsBlocked = m_webView->isJavaScriptBlocked();
+    // WebEngine-only: the interceptor never runs on a foreign
+    // engine, so the badge is simply absent there rather than a
+    // fake zero.
+    const int blocked = m_webView ? m_panel->blockedSinceLoad() : 0;
+    const bool jsBlocked =
+        m_webView && m_webView->isJavaScriptBlocked();
     if (blocked > 0 || jsBlocked) {
         QPixmap pixmap = icon.pixmap(iconPx);
         QPainter painter(&pixmap);

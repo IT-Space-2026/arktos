@@ -22,6 +22,9 @@
 #include "browserapplication.h"
 #include "browsertheme.h"
 #include "domainblocklist.h"
+#include "engineinterface.h"
+#include "engineregistry.h"
+#include "enginetab.h"
 #include "sitepanel.h"
 #include "siteshield.h"
 #include "tlsverifier.h"
@@ -136,10 +139,27 @@ WebView *SitePadlockButton::webView() const
     return m_webView;
 }
 
+EngineTab *SitePadlockButton::engineTab() const
+{
+    return m_engineTab;
+}
+
+QUrl SitePadlockButton::boundUrl() const
+{
+    return m_webView ? m_webView->url()
+                     : (m_engineTab ? m_engineTab->url() : QUrl());
+}
+
 void SitePadlockButton::setWebView(WebView *webView)
 {
-    if (m_webView == webView)
+    // The engine-tab binding clears first — an early return while it
+    // is still set would skip the visibility/state update entirely.
+    if (m_webView == webView && !m_engineTab)
         return;
+    if (m_engineTab) {
+        disconnect(m_engineTab, nullptr, this, nullptr);
+        m_engineTab = nullptr;
+    }
     if (m_webView)
         disconnect(m_webView, nullptr, this, nullptr);
     m_webView = webView;
@@ -159,7 +179,48 @@ void SitePadlockButton::setWebView(WebView *webView)
     refresh();
 }
 
-SitePadlockButton::State SitePadlockButton::stateFor(const QUrl &url)
+void SitePadlockButton::setEngineTab(EngineTab *tab)
+{
+    if (m_engineTab == tab && !m_webView)
+        return;
+    if (m_webView) {
+        disconnect(m_webView, nullptr, this, nullptr);
+        m_webView = nullptr;
+    }
+    if (m_engineTab)
+        disconnect(m_engineTab, nullptr, this, nullptr);
+    m_engineTab = tab;
+    // The tab's backend pointer is raw — a stack-owned backend (the
+    // autotest fakes) can die while a bound tab still stands, and
+    // refresh paths still run during tab-stack teardown.  Keep it as
+    // a QPointer so a dead backend reads as absent; the registry
+    // membership probe is a plain pointer compare, safe even if the
+    // backend is already gone.
+    Engine::Backend *backend = tab ? tab->backend() : nullptr;
+    m_engineBackend = (backend
+        && EngineRegistry::backends().contains(backend))
+        ? backend : nullptr;
+    if (tab) {
+        // The tab re-emits the page's navigation beats — same bracket
+        // the WebView signals provide on webengine tabs.
+        connect(tab, &EngineTab::urlChanged,
+                this, [this](const QUrl &) { refresh(); });
+        connect(tab, &EngineTab::loadStarted,
+                this, [this]() { refresh(); });
+        connect(tab, &EngineTab::loadFinished,
+                this, [this](bool) { refresh(); });
+        // ENG28: an engine restart swaps the page object in place —
+        // boundUrl() re-resolves url() live, so a repaint now is all
+        // the rebinding the swap needs.
+        connect(tab, &EngineTab::pageRecreated,
+                this, [this]() { refresh(); });
+    }
+    setVisible(tab != nullptr);
+    refresh();
+}
+
+SitePadlockButton::State SitePadlockButton::stateFor(const QUrl &url,
+                                                     bool engineValidated)
 {
     const QString scheme = url.scheme();
     const QString host = url.host();
@@ -208,9 +269,13 @@ SitePadlockButton::State SitePadlockButton::stateFor(const QUrl &url)
         // check above covers the "proceed" exception).
         // Pending/Unverified/Refused and None on non-tor pages can
         // only ever claim neutral — an absent verdict never wears
-        // green.
+        // green.  TRUST25: a foreign-engine tab earns the same
+        // stand-in tor gets — the probe cannot run there either, but
+        // an https commit means that engine accepted the chain
+        // end-to-end, so its validation is the TLS leg.
         const bool tlsVerified = tls == TlsVerifier::Status::Verified
-            || BrowserApplication::isTorMode();
+            || BrowserApplication::isTorMode()
+            || engineValidated;
         if (tlsVerified && level == QLatin1String("green"))
             return State::LockedGreen;
         return State::LockedYellow;
@@ -301,8 +366,8 @@ QIcon SitePadlockButton::makeIcon(State state) const
 
 void SitePadlockButton::refresh()
 {
-    const QUrl url = m_webView ? m_webView->url() : QUrl();
-    m_state = stateFor(url);
+    const QUrl url = boundUrl();
+    m_state = stateFor(url, m_engineTab != nullptr);
     setIcon(makeIcon(m_state));
 
     QString tip;
@@ -346,7 +411,7 @@ void SitePadlockButton::refresh()
 
 void SitePadlockButton::rebuildPopup()
 {
-    const QUrl url = m_webView ? m_webView->url() : QUrl();
+    const QUrl url = boundUrl();
     const QString host = url.host();
     const QString scheme = url.scheme();
     const bool https = scheme == QLatin1String("https");
@@ -446,6 +511,19 @@ void SitePadlockButton::rebuildPopup()
             m_popupTls->setText(
                 tr("TLS verified by the engine — the independent "
                    "check cannot run over Tor"));
+            m_popupTls->setToolTip(QString());
+            m_popupTls->setPalette(palette());
+            m_popupTls->setVisible(true);
+        } else if (https && m_engineTab) {
+            // TRUST25: same stand-in on a foreign engine — the probe
+            // never runs on its loads, but the engine itself had to
+            // validate the chain for the page to commit as https.
+            const QString engine = m_engineBackend
+                ? m_engineBackend->displayName()
+                : tr("the engine");
+            m_popupTls->setText(
+                tr("TLS verified by %1 — the independent check does "
+                   "not run on this engine").arg(engine));
             m_popupTls->setToolTip(QString());
             m_popupTls->setPalette(palette());
             m_popupTls->setVisible(true);
