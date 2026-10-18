@@ -3493,3 +3493,16 @@ Lifecycle leak re-audit, churn legs + fix pass (MEM10): deleting a
     likewise clean. Also fixed the per-connection buffer the previous
     scan flagged in the browser-window test fixture. Details in
     .devin/MEM10-report.md.
+WebKit lane research — WebExtensions on WPE (WKB02): what a future
+    WebKit engine backend could offer for extensions is now measured,
+    not guessed. The new WebKitWebExtension API shipping since WPE/WebKitGTK
+    2.52 is a manifest.json parser only — name, icons, permissions, match
+    patterns — with no way to actually load or run an extension, and that
+    is still true in the latest 2.54.1 release; the missing runtime half
+    (WebKitWebExtensionContext) exists only as unmerged upstream patches.
+    The practical finding: extensions on WebKit are possible the same way
+    Epiphany does it — the embedder builds the runtime itself — which is
+    exactly the architecture of Arktos's own hosted extension runtime, and
+    WebKit's named script worlds plus reply-capable script messages make it
+    a good port target later. Findings and sources in
+    .devin/WEBKIT-EXTENSIONS.md.

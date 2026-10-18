@@ -347,7 +347,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | AUDIT04 | Audit slice C: security delta re-check (UPD01/VSEC02/NSIS) + consolidated report — details below | done | 1 | needs:task:AUDIT03. 4 real fixes: asset URLs pinned to github/https-or-same-host surface, tor-mode sinks refuse (not just the check), release title rendered plaintext, planted-symlink engine/cache-hold can no longer inject a foreign store on unseal (+check→rename race re-verify, residue-erase link guard); NSIS SHCTX verified symmetric (no wrong-hive stranding). Consolidated report .devin/security/AUDIT02-report.md — tst_updatechecker 15/15, tst_profilee2e 22/22, make check PASS |
 
 | BRAND01 | Full rebrand Arora → Arktos (arktos-browser.com): user-visible strings, version 1.0, URLs, credits, start pages, packaging, data-dir migration — details below | done | 5 | landed as 6794f964 + repo moved to github.com/IT-Space-2026/arktos (de3c152b); stale blocked row closed |
-| WKB02 | WebKit-lane research: WebExtensions on WPE — what WebKitWebExtension (2.52+) really is vs chrome.* — details below | pending | 0 | cross-lane item feeding the webkit spine's WK21; doc-only, commit to master |
+| WKB02 | WebKit-lane research: WebExtensions on WPE — what WebKitWebExtension (2.52+) really is vs chrome.* — details below | done | 1 | .devin/WEBKIT-EXTENSIONS.md — WebKitWebExtension (2.52+) is manifest.json parse-only; no load/run API through 2.54.1 (WebExtensionContext = unmerged PR #52242); embedder-built runtime is the only path (Epiphany precedent) and ports well to our hosted chrome.* runtime; all 4 questions answered with sourced refs |
 | WKB03 | WebKit-lane research: SOCKS5/Tor audit — WebKitNetworkProxySettings surface + leak vectors + test methodology — details below | pending | 0 | cross-lane item feeding the webkit spine's WK21; doc-only, commit to master |
 | WKB05 | WebKit-lane packaging strategy — how the WPE .so set ships inside our deb/rpm/flatpak + dep-manifest script — details below | pending | 0 | cross-lane item feeding the webkit spine; scripts + doc, commit to master |
 
@@ -2212,6 +2212,24 @@ WK21's probe row. Sources: WebKitGTK/WPE API docs, upstream
 NEWS/release notes, the WebKit source tree if reachable.
 Verify: doc committed; the four questions each have a sourced answer
 or an explicit "unknown — requires source build to verify".
+
+Result (2026-10-18): `.devin/WEBKIT-EXTENSIONS.md` committed. (a)
+`WebKitWebExtension` (wpe-webkit-2.0, since 2.52) is a manifest.json
+parser/resource accessor — UI-process GObject wrapping the shared
+`WebKit::WebExtension` (Safari `_WKWebExtension` engine); the whole
+2.52–2.54.1 surface is metadata getters + permission/match-pattern
+introspection + `web-extension-mode` view flag (2.38); the old
+web-process `.so` API was renamed `WebKitWebProcessExtension` in 2.40 —
+name collision documented. (b) No extension can load via native API —
+no WebExtensionContext/Manager exported on either GLib port at 2.54.1;
+runtime half = open PR #52242 (merging-blocked, bug 300631, GTK-first
+with WPE sources touched). Epiphany proves embedder-built runtimes work
+(MV2 subset, dev-only). (c) Option-B delta mapped: WebKit primitives
+named worlds + script-message-with-reply (2.40) are *better* than
+QtWebEngine's, eval is string/main-frame-only (worse); webRequest still
+absent. (d) WK21 verdict: caps.extensions native=false; probe = symbol
+check `webkit_web_extension_new` (≥2.52 parse) vs absent
+`webkit_web_extension_context_*`; hosted runtime stays the path.
 
 ### WKB03
 
