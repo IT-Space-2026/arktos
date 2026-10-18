@@ -347,6 +347,9 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | AUDIT04 | Audit slice C: security delta re-check (UPD01/VSEC02/NSIS) + consolidated report — details below | done | 1 | needs:task:AUDIT03. 4 real fixes: asset URLs pinned to github/https-or-same-host surface, tor-mode sinks refuse (not just the check), release title rendered plaintext, planted-symlink engine/cache-hold can no longer inject a foreign store on unseal (+check→rename race re-verify, residue-erase link guard); NSIS SHCTX verified symmetric (no wrong-hive stranding). Consolidated report .devin/security/AUDIT02-report.md — tst_updatechecker 15/15, tst_profilee2e 22/22, make check PASS |
 
 | BRAND01 | Full rebrand Arora → Arktos (arktos-browser.com): user-visible strings, version 1.0, URLs, credits, start pages, packaging, data-dir migration — details below | done | 5 | landed as 6794f964 + repo moved to github.com/IT-Space-2026/arktos (de3c152b); stale blocked row closed |
+| WKB02 | WebKit-lane research: WebExtensions on WPE — what WebKitWebExtension (2.52+) really is vs chrome.* — details below | pending | 0 | cross-lane item feeding the webkit spine's WK21; doc-only, commit to master |
+| WKB03 | WebKit-lane research: SOCKS5/Tor audit — WebKitNetworkProxySettings surface + leak vectors + test methodology — details below | pending | 0 | cross-lane item feeding the webkit spine's WK21; doc-only, commit to master |
+| WKB05 | WebKit-lane packaging strategy — how the WPE .so set ships inside our deb/rpm/flatpak + dep-manifest script — details below | pending | 0 | cross-lane item feeding the webkit spine; scripts + doc, commit to master |
 
 ## Task details
 
@@ -2193,3 +2196,50 @@ Full rebrand Arora → Arktos. The new product name is **Arktos**, site **https:
 Verify: `grep -ri "arora" src/ debian/ rpm/ flatpak/ BuildProcess/ README.md` returns only justified leftovers (file headers, history refs, internal non-visible ids documented); build rc=0; make check PASS; app launches as Arktos 1.0.
 
 Status (attempt 5, 2026-10-18): the rebrand content pass is landed and committed — ~546 files: all user-visible strings, org/app identity (Arktos / arktos-browser.com), version 1.0 at every site (deb changelog, rpm spec, metainfo release, NSIS PRODUCT_VERSION, QCoreApplication), URLs (arora-browser.org→arktos-browser.com, janos-szenfner/arora→/arktos), credits (About dialog + README = "Copyright © 2026-2027 Janos Szenfner" + repo link only; upstream GPL headers untouched), start/error pages, desktop/metainfo/Info.plist/NSIS packaging, qrc + icon names, env vars + build defines (ARORA_*→ARKTOS_*), JS channel object names, Rust crate names (arktos-rustcore/rustdl/adblock-ffi). First-run migration: BrowserPaths::migrateLegacyIdentity runs pre-app in main.cpp and moves the legacy data/config/cache roots; both-exist → keep old, loud-fail + retry, nothing deleted. Verified this run: `make -C src` rc=0 (shipping build incl. Rust crates), `./arktos --version` → "Arktos 1.0", `--quit-after-load` rc=0 offscreen, `tst_profilee2e` 23/23 (incl. identity + engine-storage migration legs, vault unseal). Justified leftovers audited: migration fixture strings, `ARORA-KDF-VERIFY` vault verifier (must NOT rotate — would break existing vault unseal), GPL/upstream attribution (AUTHORS list, SVG dc:title), ChangeLog/history refs, internal spike ids. NOT done: full `make check` (check-warnings scratch build + ~90-binary suite) — mergewatch merge probes kept mass-bumping source mtimes every ~15 min, restarting incremental builds and eating the 3600s window; the tree is now committed so probes can proceed to real merges and the next attempt gets a stable, warm tree to run the suite on. Manual user steps still pending: rename the checkout dir and the GitHub repo to arktos.
+
+### WKB02
+
+WebExtensions research doc → `.devin/WEBKIT-EXTENSIONS.md`. Feeds the
+webkit lane's WK21 "WebExtensions probe" row. Answer precisely:
+(a) what `WebKitWebExtension` in WPE 2.52+/2.54 actually is (native
+GObject API vs manifest.json loader — verify against upstream
+docs/source, not assumptions); (b) can ANY manifest.json+JS-worker
+extension load on WPE today (expected: no); (c) the delta between
+WebKit's model and what the extruntime lane's hosted chrome.* runtime
+would need to run over WebKit primitives — a cross-lane note for
+Option B of `.devin/EXT-RUNTIME-STUDY.md`; (d) honest verdict for
+WK21's probe row. Sources: WebKitGTK/WPE API docs, upstream
+NEWS/release notes, the WebKit source tree if reachable.
+Verify: doc committed; the four questions each have a sourced answer
+or an explicit "unknown — requires source build to verify".
+
+### WKB03
+
+SOCKS5/Tor audit doc → `.devin/WEBKIT-TOR.md`. Feeds WK21's leak
+audit: (a) `WebKitNetworkProxySettings`/`webkit_network_proxy_settings_new`
+surface — socks:// support, per-context vs per-WebContext scoping,
+whether proxy is settable per session/profile (needed for per-profile
+Tor like Chromium's isolation); (b) leak vectors to enumerate and how
+to test each: DNS (does WPE resolve via the proxy or libc?), WebRTC
+(does WPE even ship WebRTC? state it), GIO proxy auto-detect leaks,
+fetch/XHR vs subresource paths; (c) the concrete test methodology the
+spine will run (local SOCKS5 fixture + connection assertions);
+(d) verdict: is Tor-on-WebKit even a candidate, or documented out.
+Verify: doc committed with a checklist WK21 can execute verbatim.
+
+### WKB05
+
+Packaging strategy → `.devin/WEBKIT-PACKAGING.md` + a concrete script
+`.devin/wpe-deps.sh`. The deployment blocker (Ubuntu 24.04 ships no
+WPE) needs an answer per package format. Deliver: (a) the script —
+given a WPE prefix or Debian .deb set it lists the required .so
+closure and which of them our target distros already provide;
+(b) per-format analysis: deb (bundled private libs under
+/usr/lib/arktos/wpe vs Depends-on-distro-packages — tradeoffs,
+SONAME risk), rpm (Fedora-side where WPE IS packaged), flatpak
+(runtime-extension vs bundled modules in our manifest — flatpak/ dir
+already exists); (c) recommended strategy; concrete manifest/script
+changes STAGED in the doc but not applied to live packaging (live
+changes land on the webkit spine after the backend exists).
+Verify: script runs and emits a sane dep list against a local
+fixture dir; doc committed.
