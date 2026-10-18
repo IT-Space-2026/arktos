@@ -7509,4 +7509,933 @@ Now let me look at the DomainBlocklist updater and the blocklist parser, plus th
 
 Let me check Majestic's license terms for the attribution, then look at a couple more integration points.Licenses confirmed: Majestic Million is CC BY 3.0 (per the site's own footer), Phishing.Database is MIT. Now let me look at the FFI block in lib.rs for the tranco functions and the store helpers.Feasibility check: cargo/rustup and the Qt env.Toolchain is fine. Marking SEC19 in_progress, then implementing.Now I'll update `tranco.rs`: Majestic file + grammar, min-merge across lists, size bound, and a per-file entry-count probe for the Qt-side rollback.Now the parser + merge + load/reload changes:Update the existing tests to the new signature/semantics and add Majestic legs:Add a file-level merge test exercising `file_entries` and the two-file reload:Now add the `rc_tranco_file_entries` FFI in lib.rs and declare it in rustcore.h:Now the fetch/commit logic in trancolist.cpp:Now update the tests. First the rest of tst_domainblock's updateRoundTrip:Now update tst_trancolist — save/restore the majestic stamp, clean both files, and extend the round-trip to exercise the min-merge:Now update `tst_settingsdialog::siteTrustUpdateControls` for the two-source fetch and the new stamp:Check other callers of the changed TrancoList API for compatibility:Docs next — rustcore README, THIRD-PARTY-NOTICES, and README:Quick comment fix in settings.cpp, then build the crate and run its tests.All 254 Rust tests pass. Now build the Qt side (the project Makefile exists — check how rustcore is built/linked first).Build is compiling in the background. Let me wait for it.Still building (it's now linking autotest binaries). Wait for completion.Build finished clean (exit 0). Now run the affected autotests headless.All targeted legs pass. Now the full `make check` gate (background — it's the whole suite).`make check` failed on two `tst_BrowserMainWindow` tests — `darkThemeReaderGlyph` and `stopReloadState` — both paint/theme assertions unrelated to anything SEC19 touched. Let me check whether they're pre-existing failures.Both failures are in `tst_BrowserMainWindow` — UI-lane tests from the `ui-work` merges (reader-glyph TRUST20/21 and the stop/reload paint strip). Nothing in SEC19 touches ReaderMode, theming, or the location bar. Let me check whether they're known-flaky/pre-existing before deciding.`make check` verdict is clean for SEC19: **all 4 gates PASS** (check-warnings no-rust build, supply-chain, engine-audit, rust coverage 91.72%) and the only suite failures are the **4 documented env flakes** — `darkThemeReaderGlyph`, `stopReloadState`, `tabCookieIsolation`, `shieldPopupFirstShow` — the same set previous runs recorded. No SEC19-related failure anywhere.
 
-Now the bookkeeping. Check ChangeLog format and whether the stray `.devin` files are normally committed.Verification is complete. Now the bookkeeping — ChangeLog entry after TRUST14 (last site-trust bullet in 0.12):Now the WORKLOG line and the queue row.Now final review before commit.All expected files, no build output. Committing and pushing.
+Now the bookkeeping. Check ChangeLog format and whether the stray `.devin` files are normally committed.Verification is complete. Now the bookkeeping — ChangeLog entry after TRUST14 (last site-trust bullet in 0.12):Now the WORKLOG line and the queue row.Now final review before commit.All expected files, no build output. Committing and pushing.SEC19 done — committed `1929dc1f` and pushed to `rust-work`.
+
+## What landed
+
+**Majestic Million (second rank source)**
+- `TrancoList` fetches Tranco + Majestic behind the single Update gesture; `privacy/tranco*` keys and one `updateFinished` signal preserved
+- rustcore parses Majestic's 12-column CSV in a dedicated grammar into a separate `majestic-million.csv` override (128 MiB bound for the ~80 MB feed)
+- Merge is **min-rank across seed + both downloads** — best rank wins, no source can un-rank a domain
+- New `rc_tranco_file_entries()` probe: a download with zero usable rows is dropped, never committed over working data
+- Per-source timestamps; `lastUpdate()` and the Site Trust status line report the oldest list
+
+**Phishing.Database (third threat feed)**
+- Added to `DomainBlocklist` sources beside URLhaus + OpenPhish — plain newline grammar, fits the existing 64 MiB cap, same atomic merge + interceptor enforcement
+
+**Consent & attribution** — the remote-list consent gate covers all three fetches; README + THIRD-PARTY-NOTICES credit Majestic (CC BY 3.0) and Phishing.Database (MIT)
+
+## Verification
+
+- `cargo test` — 254/254
+- `tst_trancolist` 8/8, `tst_domainblock` 13/13, `tst_settingsdialog` 56/56
+- `qmake && make -j2` clean
+- `make check` — all 4 gates PASS (no-rust warnings build, supply-chain, engine-audit, rust coverage 91.72%); suite failures are only the 4 documented env flakes (`darkThemeReaderGlyph`, `stopReloadState`, `tabCookieIsolation`, `shieldPopupFirstShow`) — the same set recorded in prior runs, unrelated to this diff
+
+Queue row marked `done`, ChangeLog + WORKLOG updated. Stopping here per the one-task rule.
+[2026-10-18 00:28:41] <<< devin exited rc=0 (task SEC19)
+[2026-10-18 00:28:41] task SEC19 finished (next: none)
+[2026-10-18 00:28:43] no pending/in_progress tasks remain — all done
+[2026-10-18 00:29:43] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 00:29:43] no pending/in_progress tasks remain — all done
+[2026-10-18 00:30:43] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 00:30:43] no pending/in_progress tasks remain — all done
+[2026-10-18 00:31:43] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 00:31:43] no pending/in_progress tasks remain — all done
+[2026-10-18 00:32:44] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 00:32:44] no pending/in_progress tasks remain — all done
+[2026-10-18 00:33:44] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 00:33:44] no pending/in_progress tasks remain — all done
+[2026-10-18 00:34:44] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 00:34:44] no pending/in_progress tasks remain — all done
+[2026-10-18 00:35:44] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 00:35:44] no pending/in_progress tasks remain — all done
+[2026-10-18 00:36:45] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 00:36:45] no pending/in_progress tasks remain — all done
+[2026-10-18 00:37:45] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 00:37:45] no pending/in_progress tasks remain — all done
+[2026-10-18 00:38:45] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 00:38:45] no pending/in_progress tasks remain — all done
+[2026-10-18 00:39:45] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 00:39:46] no pending/in_progress tasks remain — all done
+[2026-10-18 00:40:46] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 00:40:46] no pending/in_progress tasks remain — all done
+[2026-10-18 00:41:46] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 00:41:46] no pending/in_progress tasks remain — all done
+[2026-10-18 00:42:46] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 00:42:46] no pending/in_progress tasks remain — all done
+[2026-10-18 00:43:46] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 00:43:46] no pending/in_progress tasks remain — all done
+[2026-10-18 00:44:47] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 00:44:47] no pending/in_progress tasks remain — all done
+[2026-10-18 00:45:47] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 00:45:47] no pending/in_progress tasks remain — all done
+[2026-10-18 00:46:47] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 00:46:47] no pending/in_progress tasks remain — all done
+[2026-10-18 00:47:47] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 00:47:47] no pending/in_progress tasks remain — all done
+[2026-10-18 00:48:47] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 00:48:47] no pending/in_progress tasks remain — all done
+[2026-10-18 00:49:48] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 00:49:48] no pending/in_progress tasks remain — all done
+[2026-10-18 00:50:48] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 00:50:48] no pending/in_progress tasks remain — all done
+[2026-10-18 00:51:48] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 00:51:48] no pending/in_progress tasks remain — all done
+[2026-10-18 00:52:49] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 00:52:49] no pending/in_progress tasks remain — all done
+[2026-10-18 00:53:49] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 00:53:49] no pending/in_progress tasks remain — all done
+[2026-10-18 00:54:49] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 00:54:49] no pending/in_progress tasks remain — all done
+[2026-10-18 00:55:49] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 00:55:49] no pending/in_progress tasks remain — all done
+[2026-10-18 00:56:49] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 00:56:49] no pending/in_progress tasks remain — all done
+[2026-10-18 00:57:50] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 00:57:50] no pending/in_progress tasks remain — all done
+[2026-10-18 00:58:50] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 00:58:50] no pending/in_progress tasks remain — all done
+[2026-10-18 00:59:50] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 00:59:50] no pending/in_progress tasks remain — all done
+[2026-10-18 01:00:50] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:00:50] no pending/in_progress tasks remain — all done
+[2026-10-18 01:01:51] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:01:51] no pending/in_progress tasks remain — all done
+[2026-10-18 01:02:51] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:02:51] no pending/in_progress tasks remain — all done
+[2026-10-18 01:03:51] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:03:51] no pending/in_progress tasks remain — all done
+[2026-10-18 01:04:51] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:04:51] no pending/in_progress tasks remain — all done
+[2026-10-18 01:05:51] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:05:51] no pending/in_progress tasks remain — all done
+[2026-10-18 01:06:52] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:06:52] no pending/in_progress tasks remain — all done
+[2026-10-18 01:07:52] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:07:52] no pending/in_progress tasks remain — all done
+[2026-10-18 01:08:52] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:08:52] no pending/in_progress tasks remain — all done
+[2026-10-18 01:09:52] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:09:52] no pending/in_progress tasks remain — all done
+[2026-10-18 01:10:53] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:10:53] no pending/in_progress tasks remain — all done
+[2026-10-18 01:11:53] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:11:53] no pending/in_progress tasks remain — all done
+[2026-10-18 01:12:53] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:12:53] no pending/in_progress tasks remain — all done
+[2026-10-18 01:13:53] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:13:53] no pending/in_progress tasks remain — all done
+[2026-10-18 01:14:54] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:14:54] no pending/in_progress tasks remain — all done
+[2026-10-18 01:15:54] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:15:54] no pending/in_progress tasks remain — all done
+[2026-10-18 01:16:54] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:16:54] no pending/in_progress tasks remain — all done
+[2026-10-18 01:17:54] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:17:54] no pending/in_progress tasks remain — all done
+[2026-10-18 01:18:55] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:18:55] no pending/in_progress tasks remain — all done
+[2026-10-18 01:19:55] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:19:55] no pending/in_progress tasks remain — all done
+[2026-10-18 01:20:55] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:20:55] no pending/in_progress tasks remain — all done
+[2026-10-18 01:21:55] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:21:55] no pending/in_progress tasks remain — all done
+[2026-10-18 01:22:56] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:22:56] no pending/in_progress tasks remain — all done
+[2026-10-18 01:23:56] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:23:56] no pending/in_progress tasks remain — all done
+[2026-10-18 01:24:56] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:24:56] no pending/in_progress tasks remain — all done
+[2026-10-18 01:25:56] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:25:56] no pending/in_progress tasks remain — all done
+[2026-10-18 01:26:57] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:26:57] no pending/in_progress tasks remain — all done
+[2026-10-18 01:27:57] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:27:57] no pending/in_progress tasks remain — all done
+[2026-10-18 01:28:57] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:28:57] no pending/in_progress tasks remain — all done
+[2026-10-18 01:29:57] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:29:57] no pending/in_progress tasks remain — all done
+[2026-10-18 01:30:58] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:30:58] no pending/in_progress tasks remain — all done
+[2026-10-18 01:31:58] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:31:58] no pending/in_progress tasks remain — all done
+[2026-10-18 01:32:58] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:32:58] no pending/in_progress tasks remain — all done
+[2026-10-18 01:33:58] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:33:58] no pending/in_progress tasks remain — all done
+[2026-10-18 01:34:59] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:34:59] no pending/in_progress tasks remain — all done
+[2026-10-18 01:35:59] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:35:59] no pending/in_progress tasks remain — all done
+[2026-10-18 01:36:59] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:36:59] no pending/in_progress tasks remain — all done
+[2026-10-18 01:37:59] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:37:59] no pending/in_progress tasks remain — all done
+[2026-10-18 01:39:00] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:39:00] no pending/in_progress tasks remain — all done
+[2026-10-18 01:40:00] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:40:00] no pending/in_progress tasks remain — all done
+[2026-10-18 01:41:00] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:41:00] no pending/in_progress tasks remain — all done
+[2026-10-18 01:42:00] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:42:00] no pending/in_progress tasks remain — all done
+[2026-10-18 01:43:01] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:43:01] no pending/in_progress tasks remain — all done
+[2026-10-18 01:44:01] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:44:01] no pending/in_progress tasks remain — all done
+[2026-10-18 01:45:01] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:45:01] no pending/in_progress tasks remain — all done
+[2026-10-18 01:46:01] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:46:01] no pending/in_progress tasks remain — all done
+[2026-10-18 01:47:02] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:47:02] no pending/in_progress tasks remain — all done
+[2026-10-18 01:48:02] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:48:02] no pending/in_progress tasks remain — all done
+[2026-10-18 01:49:02] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:49:02] no pending/in_progress tasks remain — all done
+[2026-10-18 01:50:02] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:50:02] no pending/in_progress tasks remain — all done
+[2026-10-18 01:51:03] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:51:03] no pending/in_progress tasks remain — all done
+[2026-10-18 01:52:03] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:52:03] no pending/in_progress tasks remain — all done
+[2026-10-18 01:53:03] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:53:03] no pending/in_progress tasks remain — all done
+[2026-10-18 01:54:03] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:54:03] no pending/in_progress tasks remain — all done
+[2026-10-18 01:55:03] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:55:03] no pending/in_progress tasks remain — all done
+[2026-10-18 01:56:04] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:56:04] no pending/in_progress tasks remain — all done
+[2026-10-18 01:57:04] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:57:04] no pending/in_progress tasks remain — all done
+[2026-10-18 01:58:04] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:58:04] no pending/in_progress tasks remain — all done
+[2026-10-18 01:59:04] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 01:59:04] no pending/in_progress tasks remain — all done
+[2026-10-18 02:00:05] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:00:05] no pending/in_progress tasks remain — all done
+[2026-10-18 02:01:05] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:01:05] no pending/in_progress tasks remain — all done
+[2026-10-18 02:02:05] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:02:05] no pending/in_progress tasks remain — all done
+[2026-10-18 02:03:05] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:03:05] no pending/in_progress tasks remain — all done
+[2026-10-18 02:04:06] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:04:06] no pending/in_progress tasks remain — all done
+[2026-10-18 02:05:06] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:05:06] no pending/in_progress tasks remain — all done
+[2026-10-18 02:06:06] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:06:06] no pending/in_progress tasks remain — all done
+[2026-10-18 02:07:06] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:07:06] no pending/in_progress tasks remain — all done
+[2026-10-18 02:08:07] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:08:07] no pending/in_progress tasks remain — all done
+[2026-10-18 02:09:07] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:09:07] no pending/in_progress tasks remain — all done
+[2026-10-18 02:10:07] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:10:07] no pending/in_progress tasks remain — all done
+[2026-10-18 02:11:07] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:11:08] no pending/in_progress tasks remain — all done
+[2026-10-18 02:12:08] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:12:08] no pending/in_progress tasks remain — all done
+[2026-10-18 02:13:08] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:13:08] no pending/in_progress tasks remain — all done
+[2026-10-18 02:14:08] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:14:08] no pending/in_progress tasks remain — all done
+[2026-10-18 02:15:08] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:15:08] no pending/in_progress tasks remain — all done
+[2026-10-18 02:16:09] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:16:09] no pending/in_progress tasks remain — all done
+[2026-10-18 02:17:09] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:17:09] no pending/in_progress tasks remain — all done
+[2026-10-18 02:18:09] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:18:09] no pending/in_progress tasks remain — all done
+[2026-10-18 02:19:09] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:19:09] no pending/in_progress tasks remain — all done
+[2026-10-18 02:20:10] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:20:10] no pending/in_progress tasks remain — all done
+[2026-10-18 02:21:10] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:21:10] no pending/in_progress tasks remain — all done
+[2026-10-18 02:22:10] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:22:10] no pending/in_progress tasks remain — all done
+[2026-10-18 02:23:10] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:23:10] no pending/in_progress tasks remain — all done
+[2026-10-18 02:24:11] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:24:11] no pending/in_progress tasks remain — all done
+[2026-10-18 02:25:11] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:25:11] no pending/in_progress tasks remain — all done
+[2026-10-18 02:26:11] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:26:11] no pending/in_progress tasks remain — all done
+[2026-10-18 02:27:11] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:27:11] no pending/in_progress tasks remain — all done
+[2026-10-18 02:28:12] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:28:12] no pending/in_progress tasks remain — all done
+[2026-10-18 02:29:12] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:29:12] no pending/in_progress tasks remain — all done
+[2026-10-18 02:30:12] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:30:12] no pending/in_progress tasks remain — all done
+[2026-10-18 02:31:12] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:31:12] no pending/in_progress tasks remain — all done
+[2026-10-18 02:32:13] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:32:13] no pending/in_progress tasks remain — all done
+[2026-10-18 02:33:13] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:33:13] no pending/in_progress tasks remain — all done
+[2026-10-18 02:34:13] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:34:13] no pending/in_progress tasks remain — all done
+[2026-10-18 02:35:13] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:35:13] no pending/in_progress tasks remain — all done
+[2026-10-18 02:36:14] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:36:14] no pending/in_progress tasks remain — all done
+[2026-10-18 02:37:14] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:37:14] no pending/in_progress tasks remain — all done
+[2026-10-18 02:38:14] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:38:14] no pending/in_progress tasks remain — all done
+[2026-10-18 02:39:14] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:39:14] no pending/in_progress tasks remain — all done
+[2026-10-18 02:40:15] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:40:15] no pending/in_progress tasks remain — all done
+[2026-10-18 02:41:15] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:41:15] no pending/in_progress tasks remain — all done
+[2026-10-18 02:42:15] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:42:15] no pending/in_progress tasks remain — all done
+[2026-10-18 02:43:15] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:43:15] no pending/in_progress tasks remain — all done
+[2026-10-18 02:44:16] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:44:16] no pending/in_progress tasks remain — all done
+[2026-10-18 02:45:16] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:45:16] no pending/in_progress tasks remain — all done
+[2026-10-18 02:46:16] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:46:16] no pending/in_progress tasks remain — all done
+[2026-10-18 02:47:16] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:47:16] no pending/in_progress tasks remain — all done
+[2026-10-18 02:48:17] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:48:17] no pending/in_progress tasks remain — all done
+[2026-10-18 02:49:17] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:49:17] no pending/in_progress tasks remain — all done
+[2026-10-18 02:50:17] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:50:17] no pending/in_progress tasks remain — all done
+[2026-10-18 02:51:17] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:51:17] no pending/in_progress tasks remain — all done
+[2026-10-18 02:52:18] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:52:18] no pending/in_progress tasks remain — all done
+[2026-10-18 02:53:18] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:53:18] no pending/in_progress tasks remain — all done
+[2026-10-18 02:54:18] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:54:18] no pending/in_progress tasks remain — all done
+[2026-10-18 02:55:18] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:55:18] no pending/in_progress tasks remain — all done
+[2026-10-18 02:56:19] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:56:19] no pending/in_progress tasks remain — all done
+[2026-10-18 02:57:19] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:57:19] no pending/in_progress tasks remain — all done
+[2026-10-18 02:58:19] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:58:19] no pending/in_progress tasks remain — all done
+[2026-10-18 02:59:19] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 02:59:19] no pending/in_progress tasks remain — all done
+[2026-10-18 03:00:20] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:00:20] no pending/in_progress tasks remain — all done
+[2026-10-18 03:01:20] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:01:20] no pending/in_progress tasks remain — all done
+[2026-10-18 03:02:20] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:02:20] no pending/in_progress tasks remain — all done
+[2026-10-18 03:03:20] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:03:21] no pending/in_progress tasks remain — all done
+[2026-10-18 03:04:21] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:04:21] no pending/in_progress tasks remain — all done
+[2026-10-18 03:05:21] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:05:21] no pending/in_progress tasks remain — all done
+[2026-10-18 03:06:21] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:06:21] no pending/in_progress tasks remain — all done
+[2026-10-18 03:07:21] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:07:21] no pending/in_progress tasks remain — all done
+[2026-10-18 03:08:22] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:08:22] no pending/in_progress tasks remain — all done
+[2026-10-18 03:09:22] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:09:22] no pending/in_progress tasks remain — all done
+[2026-10-18 03:10:22] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:10:22] no pending/in_progress tasks remain — all done
+[2026-10-18 03:11:22] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:11:22] no pending/in_progress tasks remain — all done
+[2026-10-18 03:12:23] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:12:23] no pending/in_progress tasks remain — all done
+[2026-10-18 03:13:23] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:13:23] no pending/in_progress tasks remain — all done
+[2026-10-18 03:14:23] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:14:23] no pending/in_progress tasks remain — all done
+[2026-10-18 03:15:23] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:15:23] no pending/in_progress tasks remain — all done
+[2026-10-18 03:16:24] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:16:24] no pending/in_progress tasks remain — all done
+[2026-10-18 03:17:24] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:17:24] no pending/in_progress tasks remain — all done
+[2026-10-18 03:18:24] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:18:24] no pending/in_progress tasks remain — all done
+[2026-10-18 03:19:24] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:19:24] no pending/in_progress tasks remain — all done
+[2026-10-18 03:20:25] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:20:25] no pending/in_progress tasks remain — all done
+[2026-10-18 03:21:25] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:21:25] no pending/in_progress tasks remain — all done
+[2026-10-18 03:22:25] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:22:25] no pending/in_progress tasks remain — all done
+[2026-10-18 03:23:25] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:23:25] no pending/in_progress tasks remain — all done
+[2026-10-18 03:24:26] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:24:26] no pending/in_progress tasks remain — all done
+[2026-10-18 03:25:26] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:25:26] no pending/in_progress tasks remain — all done
+[2026-10-18 03:26:26] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:26:26] no pending/in_progress tasks remain — all done
+[2026-10-18 03:27:26] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:27:27] no pending/in_progress tasks remain — all done
+[2026-10-18 03:28:27] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:28:27] no pending/in_progress tasks remain — all done
+[2026-10-18 03:29:27] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:29:27] no pending/in_progress tasks remain — all done
+[2026-10-18 03:30:27] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:30:27] no pending/in_progress tasks remain — all done
+[2026-10-18 03:31:27] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:31:27] no pending/in_progress tasks remain — all done
+[2026-10-18 03:32:28] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:32:28] no pending/in_progress tasks remain — all done
+[2026-10-18 03:33:28] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:33:28] no pending/in_progress tasks remain — all done
+[2026-10-18 03:34:28] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:34:28] no pending/in_progress tasks remain — all done
+[2026-10-18 03:35:28] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:35:28] no pending/in_progress tasks remain — all done
+[2026-10-18 03:36:29] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:36:29] no pending/in_progress tasks remain — all done
+[2026-10-18 03:37:29] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:37:29] no pending/in_progress tasks remain — all done
+[2026-10-18 03:38:29] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:38:29] no pending/in_progress tasks remain — all done
+[2026-10-18 03:39:29] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:39:29] no pending/in_progress tasks remain — all done
+[2026-10-18 03:40:30] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:40:30] no pending/in_progress tasks remain — all done
+[2026-10-18 03:41:30] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:41:30] no pending/in_progress tasks remain — all done
+[2026-10-18 03:42:30] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:42:30] no pending/in_progress tasks remain — all done
+[2026-10-18 03:43:30] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:43:30] no pending/in_progress tasks remain — all done
+[2026-10-18 03:44:31] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:44:31] no pending/in_progress tasks remain — all done
+[2026-10-18 03:45:31] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:45:31] no pending/in_progress tasks remain — all done
+[2026-10-18 03:46:31] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:46:31] no pending/in_progress tasks remain — all done
+[2026-10-18 03:47:31] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:47:31] no pending/in_progress tasks remain — all done
+[2026-10-18 03:48:32] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:48:32] no pending/in_progress tasks remain — all done
+[2026-10-18 03:49:32] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:49:32] no pending/in_progress tasks remain — all done
+[2026-10-18 03:50:32] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:50:32] no pending/in_progress tasks remain — all done
+[2026-10-18 03:51:32] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:51:32] no pending/in_progress tasks remain — all done
+[2026-10-18 03:52:33] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:52:33] no pending/in_progress tasks remain — all done
+[2026-10-18 03:53:33] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:53:33] no pending/in_progress tasks remain — all done
+[2026-10-18 03:54:33] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:54:33] no pending/in_progress tasks remain — all done
+[2026-10-18 03:55:33] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:55:33] no pending/in_progress tasks remain — all done
+[2026-10-18 03:56:34] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:56:34] no pending/in_progress tasks remain — all done
+[2026-10-18 03:57:34] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:57:34] no pending/in_progress tasks remain — all done
+[2026-10-18 03:58:34] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:58:34] no pending/in_progress tasks remain — all done
+[2026-10-18 03:59:34] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 03:59:34] no pending/in_progress tasks remain — all done
+[2026-10-18 04:00:35] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:00:35] no pending/in_progress tasks remain — all done
+[2026-10-18 04:01:35] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:01:35] no pending/in_progress tasks remain — all done
+[2026-10-18 04:02:35] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:02:35] no pending/in_progress tasks remain — all done
+[2026-10-18 04:03:35] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:03:35] no pending/in_progress tasks remain — all done
+[2026-10-18 04:04:36] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:04:36] no pending/in_progress tasks remain — all done
+[2026-10-18 04:05:36] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:05:36] no pending/in_progress tasks remain — all done
+[2026-10-18 04:06:36] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:06:36] no pending/in_progress tasks remain — all done
+[2026-10-18 04:07:36] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:07:36] no pending/in_progress tasks remain — all done
+[2026-10-18 04:08:37] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:08:37] no pending/in_progress tasks remain — all done
+[2026-10-18 04:09:37] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:09:37] no pending/in_progress tasks remain — all done
+[2026-10-18 04:10:37] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:10:37] no pending/in_progress tasks remain — all done
+[2026-10-18 04:11:37] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:11:37] no pending/in_progress tasks remain — all done
+[2026-10-18 04:12:38] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:12:38] no pending/in_progress tasks remain — all done
+[2026-10-18 04:13:38] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:13:38] no pending/in_progress tasks remain — all done
+[2026-10-18 04:14:38] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:14:38] no pending/in_progress tasks remain — all done
+[2026-10-18 04:15:38] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:15:38] no pending/in_progress tasks remain — all done
+[2026-10-18 04:16:39] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:16:39] no pending/in_progress tasks remain — all done
+[2026-10-18 04:17:39] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:17:39] no pending/in_progress tasks remain — all done
+[2026-10-18 04:18:39] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:18:39] no pending/in_progress tasks remain — all done
+[2026-10-18 04:19:39] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:19:39] no pending/in_progress tasks remain — all done
+[2026-10-18 04:20:40] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:20:40] no pending/in_progress tasks remain — all done
+[2026-10-18 04:21:40] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:21:40] no pending/in_progress tasks remain — all done
+[2026-10-18 04:22:40] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:22:40] no pending/in_progress tasks remain — all done
+[2026-10-18 04:23:40] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:23:40] no pending/in_progress tasks remain — all done
+[2026-10-18 04:24:41] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:24:41] no pending/in_progress tasks remain — all done
+[2026-10-18 04:25:41] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:25:41] no pending/in_progress tasks remain — all done
+[2026-10-18 04:26:41] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:26:41] no pending/in_progress tasks remain — all done
+[2026-10-18 04:27:41] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:27:41] no pending/in_progress tasks remain — all done
+[2026-10-18 04:28:42] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:28:42] no pending/in_progress tasks remain — all done
+[2026-10-18 04:29:42] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:29:42] no pending/in_progress tasks remain — all done
+[2026-10-18 04:30:42] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:30:42] no pending/in_progress tasks remain — all done
+[2026-10-18 04:31:42] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:31:42] no pending/in_progress tasks remain — all done
+[2026-10-18 04:32:43] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:32:43] no pending/in_progress tasks remain — all done
+[2026-10-18 04:33:43] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:33:43] no pending/in_progress tasks remain — all done
+[2026-10-18 04:34:43] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:34:43] no pending/in_progress tasks remain — all done
+[2026-10-18 04:35:43] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:35:43] no pending/in_progress tasks remain — all done
+[2026-10-18 04:36:44] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:36:44] no pending/in_progress tasks remain — all done
+[2026-10-18 04:37:44] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:37:44] no pending/in_progress tasks remain — all done
+[2026-10-18 04:38:44] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:38:44] no pending/in_progress tasks remain — all done
+[2026-10-18 04:39:44] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:39:44] no pending/in_progress tasks remain — all done
+[2026-10-18 04:40:45] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:40:45] no pending/in_progress tasks remain — all done
+[2026-10-18 04:41:45] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:41:45] no pending/in_progress tasks remain — all done
+[2026-10-18 04:42:45] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:42:45] no pending/in_progress tasks remain — all done
+[2026-10-18 04:43:45] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:43:45] no pending/in_progress tasks remain — all done
+[2026-10-18 04:44:46] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:44:46] no pending/in_progress tasks remain — all done
+[2026-10-18 04:45:46] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:45:46] no pending/in_progress tasks remain — all done
+[2026-10-18 04:46:46] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:46:46] no pending/in_progress tasks remain — all done
+[2026-10-18 04:47:46] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:47:46] no pending/in_progress tasks remain — all done
+[2026-10-18 04:48:47] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:48:47] no pending/in_progress tasks remain — all done
+[2026-10-18 04:49:47] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:49:47] no pending/in_progress tasks remain — all done
+[2026-10-18 04:50:47] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:50:47] no pending/in_progress tasks remain — all done
+[2026-10-18 04:51:47] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:51:47] no pending/in_progress tasks remain — all done
+[2026-10-18 04:52:48] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:52:48] no pending/in_progress tasks remain — all done
+[2026-10-18 04:53:48] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:53:48] no pending/in_progress tasks remain — all done
+[2026-10-18 04:54:48] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:54:48] no pending/in_progress tasks remain — all done
+[2026-10-18 04:55:48] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:55:48] no pending/in_progress tasks remain — all done
+[2026-10-18 04:56:49] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:56:49] no pending/in_progress tasks remain — all done
+[2026-10-18 04:57:49] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:57:49] no pending/in_progress tasks remain — all done
+[2026-10-18 04:58:49] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:58:49] no pending/in_progress tasks remain — all done
+[2026-10-18 04:59:49] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 04:59:49] no pending/in_progress tasks remain — all done
+[2026-10-18 05:00:50] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:00:50] no pending/in_progress tasks remain — all done
+[2026-10-18 05:01:50] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:01:50] no pending/in_progress tasks remain — all done
+[2026-10-18 05:02:50] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:02:50] no pending/in_progress tasks remain — all done
+[2026-10-18 05:03:50] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:03:50] no pending/in_progress tasks remain — all done
+[2026-10-18 05:04:51] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:04:51] no pending/in_progress tasks remain — all done
+[2026-10-18 05:05:51] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:05:51] no pending/in_progress tasks remain — all done
+[2026-10-18 05:06:51] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:06:51] no pending/in_progress tasks remain — all done
+[2026-10-18 05:07:51] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:07:51] no pending/in_progress tasks remain — all done
+[2026-10-18 05:08:52] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:08:52] no pending/in_progress tasks remain — all done
+[2026-10-18 05:09:52] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:09:52] no pending/in_progress tasks remain — all done
+[2026-10-18 05:10:52] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:10:52] no pending/in_progress tasks remain — all done
+[2026-10-18 05:11:52] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:11:52] no pending/in_progress tasks remain — all done
+[2026-10-18 05:12:53] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:12:53] no pending/in_progress tasks remain — all done
+[2026-10-18 05:13:53] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:13:53] no pending/in_progress tasks remain — all done
+[2026-10-18 05:14:53] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:14:53] no pending/in_progress tasks remain — all done
+[2026-10-18 05:15:53] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:15:53] no pending/in_progress tasks remain — all done
+[2026-10-18 05:16:54] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:16:54] no pending/in_progress tasks remain — all done
+[2026-10-18 05:17:54] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:17:54] no pending/in_progress tasks remain — all done
+[2026-10-18 05:18:54] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:18:54] no pending/in_progress tasks remain — all done
+[2026-10-18 05:19:54] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:19:54] no pending/in_progress tasks remain — all done
+[2026-10-18 05:20:55] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:20:55] no pending/in_progress tasks remain — all done
+[2026-10-18 05:21:55] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:21:55] no pending/in_progress tasks remain — all done
+[2026-10-18 05:22:55] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:22:55] no pending/in_progress tasks remain — all done
+[2026-10-18 05:23:55] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:23:55] no pending/in_progress tasks remain — all done
+[2026-10-18 05:24:56] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:24:56] no pending/in_progress tasks remain — all done
+[2026-10-18 05:25:56] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:25:56] no pending/in_progress tasks remain — all done
+[2026-10-18 05:26:56] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:26:56] no pending/in_progress tasks remain — all done
+[2026-10-18 05:27:56] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:27:56] no pending/in_progress tasks remain — all done
+[2026-10-18 05:28:57] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:28:57] no pending/in_progress tasks remain — all done
+[2026-10-18 05:29:57] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:29:57] no pending/in_progress tasks remain — all done
+[2026-10-18 05:30:57] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:30:57] no pending/in_progress tasks remain — all done
+[2026-10-18 05:31:57] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:31:57] no pending/in_progress tasks remain — all done
+[2026-10-18 05:32:58] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:32:58] no pending/in_progress tasks remain — all done
+[2026-10-18 05:33:58] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:33:58] no pending/in_progress tasks remain — all done
+[2026-10-18 05:34:58] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:34:58] no pending/in_progress tasks remain — all done
+[2026-10-18 05:35:58] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:35:58] no pending/in_progress tasks remain — all done
+[2026-10-18 05:36:59] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:36:59] no pending/in_progress tasks remain — all done
+[2026-10-18 05:37:59] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:37:59] no pending/in_progress tasks remain — all done
+[2026-10-18 05:38:59] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:38:59] no pending/in_progress tasks remain — all done
+[2026-10-18 05:39:59] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:39:59] no pending/in_progress tasks remain — all done
+[2026-10-18 05:41:00] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:41:00] no pending/in_progress tasks remain — all done
+[2026-10-18 05:42:00] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:42:00] no pending/in_progress tasks remain — all done
+[2026-10-18 05:43:00] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:43:00] no pending/in_progress tasks remain — all done
+[2026-10-18 05:44:00] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:44:00] no pending/in_progress tasks remain — all done
+[2026-10-18 05:45:01] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:45:01] no pending/in_progress tasks remain — all done
+[2026-10-18 05:46:01] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:46:01] no pending/in_progress tasks remain — all done
+[2026-10-18 05:47:01] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:47:01] no pending/in_progress tasks remain — all done
+[2026-10-18 05:48:01] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:48:01] no pending/in_progress tasks remain — all done
+[2026-10-18 05:49:02] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:49:02] no pending/in_progress tasks remain — all done
+[2026-10-18 05:50:02] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:50:02] no pending/in_progress tasks remain — all done
+[2026-10-18 05:51:02] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:51:02] no pending/in_progress tasks remain — all done
+[2026-10-18 05:52:02] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:52:02] no pending/in_progress tasks remain — all done
+[2026-10-18 05:53:03] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:53:03] no pending/in_progress tasks remain — all done
+[2026-10-18 05:54:03] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:54:03] no pending/in_progress tasks remain — all done
+[2026-10-18 05:55:03] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:55:03] no pending/in_progress tasks remain — all done
+[2026-10-18 05:56:03] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:56:03] no pending/in_progress tasks remain — all done
+[2026-10-18 05:57:04] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:57:04] no pending/in_progress tasks remain — all done
+[2026-10-18 05:58:04] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:58:04] no pending/in_progress tasks remain — all done
+[2026-10-18 05:59:04] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 05:59:04] no pending/in_progress tasks remain — all done
+[2026-10-18 06:00:04] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:00:04] no pending/in_progress tasks remain — all done
+[2026-10-18 06:01:05] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:01:05] no pending/in_progress tasks remain — all done
+[2026-10-18 06:02:05] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:02:05] no pending/in_progress tasks remain — all done
+[2026-10-18 06:03:05] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:03:05] no pending/in_progress tasks remain — all done
+[2026-10-18 06:04:05] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:04:05] no pending/in_progress tasks remain — all done
+[2026-10-18 06:05:06] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:05:06] no pending/in_progress tasks remain — all done
+[2026-10-18 06:06:06] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:06:06] no pending/in_progress tasks remain — all done
+[2026-10-18 06:07:06] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:07:06] no pending/in_progress tasks remain — all done
+[2026-10-18 06:08:06] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:08:06] no pending/in_progress tasks remain — all done
+[2026-10-18 06:09:07] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:09:07] no pending/in_progress tasks remain — all done
+[2026-10-18 06:10:07] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:10:07] no pending/in_progress tasks remain — all done
+[2026-10-18 06:11:07] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:11:07] no pending/in_progress tasks remain — all done
+[2026-10-18 06:12:07] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:12:07] no pending/in_progress tasks remain — all done
+[2026-10-18 06:13:08] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:13:08] no pending/in_progress tasks remain — all done
+[2026-10-18 06:14:08] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:14:08] no pending/in_progress tasks remain — all done
+[2026-10-18 06:15:08] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:15:08] no pending/in_progress tasks remain — all done
+[2026-10-18 06:16:08] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:16:08] no pending/in_progress tasks remain — all done
+[2026-10-18 06:17:09] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:17:09] no pending/in_progress tasks remain — all done
+[2026-10-18 06:18:09] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:18:09] no pending/in_progress tasks remain — all done
+[2026-10-18 06:19:09] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:19:09] no pending/in_progress tasks remain — all done
+[2026-10-18 06:20:09] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:20:09] no pending/in_progress tasks remain — all done
+[2026-10-18 06:21:10] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:21:10] no pending/in_progress tasks remain — all done
+[2026-10-18 06:22:10] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:22:10] no pending/in_progress tasks remain — all done
+[2026-10-18 06:23:10] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:23:10] no pending/in_progress tasks remain — all done
+[2026-10-18 06:24:10] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:24:10] no pending/in_progress tasks remain — all done
+[2026-10-18 06:25:11] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:25:11] no pending/in_progress tasks remain — all done
+[2026-10-18 06:26:11] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:26:11] no pending/in_progress tasks remain — all done
+[2026-10-18 06:27:11] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:27:11] no pending/in_progress tasks remain — all done
+[2026-10-18 06:28:11] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:28:11] no pending/in_progress tasks remain — all done
+[2026-10-18 06:29:12] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:29:12] no pending/in_progress tasks remain — all done
+[2026-10-18 06:30:12] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:30:12] no pending/in_progress tasks remain — all done
+[2026-10-18 06:31:12] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:31:12] no pending/in_progress tasks remain — all done
+[2026-10-18 06:32:12] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:32:12] no pending/in_progress tasks remain — all done
+[2026-10-18 06:33:13] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:33:13] no pending/in_progress tasks remain — all done
+[2026-10-18 06:34:13] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:34:13] no pending/in_progress tasks remain — all done
+[2026-10-18 06:35:13] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:35:13] no pending/in_progress tasks remain — all done
+[2026-10-18 06:36:13] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:36:13] no pending/in_progress tasks remain — all done
+[2026-10-18 06:37:14] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:37:14] no pending/in_progress tasks remain — all done
+[2026-10-18 06:38:14] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:38:14] no pending/in_progress tasks remain — all done
+[2026-10-18 06:39:14] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:39:14] no pending/in_progress tasks remain — all done
+[2026-10-18 06:40:14] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:40:14] no pending/in_progress tasks remain — all done
+[2026-10-18 06:41:15] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:41:15] no pending/in_progress tasks remain — all done
+[2026-10-18 06:42:15] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:42:15] no pending/in_progress tasks remain — all done
+[2026-10-18 06:43:15] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:43:15] no pending/in_progress tasks remain — all done
+[2026-10-18 06:44:15] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:44:15] no pending/in_progress tasks remain — all done
+[2026-10-18 06:45:16] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:45:16] no pending/in_progress tasks remain — all done
+[2026-10-18 06:46:16] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:46:16] no pending/in_progress tasks remain — all done
+[2026-10-18 06:47:16] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:47:16] no pending/in_progress tasks remain — all done
+[2026-10-18 06:48:16] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:48:16] no pending/in_progress tasks remain — all done
+[2026-10-18 06:49:17] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:49:17] no pending/in_progress tasks remain — all done
+[2026-10-18 06:50:17] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:50:17] no pending/in_progress tasks remain — all done
+[2026-10-18 06:51:17] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:51:17] no pending/in_progress tasks remain — all done
+[2026-10-18 06:52:17] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:52:18] no pending/in_progress tasks remain — all done
+[2026-10-18 06:53:18] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:53:18] no pending/in_progress tasks remain — all done
+[2026-10-18 06:54:18] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:54:18] no pending/in_progress tasks remain — all done
+[2026-10-18 06:55:18] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:55:18] no pending/in_progress tasks remain — all done
+[2026-10-18 06:56:18] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:56:18] no pending/in_progress tasks remain — all done
+[2026-10-18 06:57:19] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:57:19] no pending/in_progress tasks remain — all done
+[2026-10-18 06:58:19] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:58:19] no pending/in_progress tasks remain — all done
+[2026-10-18 06:59:19] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 06:59:19] no pending/in_progress tasks remain — all done
+[2026-10-18 07:00:19] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:00:19] no pending/in_progress tasks remain — all done
+[2026-10-18 07:01:20] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:01:20] no pending/in_progress tasks remain — all done
+[2026-10-18 07:02:20] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:02:20] no pending/in_progress tasks remain — all done
+[2026-10-18 07:03:20] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:03:20] no pending/in_progress tasks remain — all done
+[2026-10-18 07:04:20] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:04:20] no pending/in_progress tasks remain — all done
+[2026-10-18 07:05:21] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:05:21] no pending/in_progress tasks remain — all done
+[2026-10-18 07:06:21] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:06:21] no pending/in_progress tasks remain — all done
+[2026-10-18 07:07:21] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:07:21] no pending/in_progress tasks remain — all done
+[2026-10-18 07:08:21] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:08:21] no pending/in_progress tasks remain — all done
+[2026-10-18 07:09:22] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:09:22] no pending/in_progress tasks remain — all done
+[2026-10-18 07:10:22] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:10:22] no pending/in_progress tasks remain — all done
+[2026-10-18 07:11:22] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:11:22] no pending/in_progress tasks remain — all done
+[2026-10-18 07:12:22] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:12:22] no pending/in_progress tasks remain — all done
+[2026-10-18 07:13:23] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:13:23] no pending/in_progress tasks remain — all done
+[2026-10-18 07:14:23] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:14:23] no pending/in_progress tasks remain — all done
+[2026-10-18 07:15:23] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:15:23] no pending/in_progress tasks remain — all done
+[2026-10-18 07:16:23] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:16:23] no pending/in_progress tasks remain — all done
+[2026-10-18 07:17:24] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:17:24] no pending/in_progress tasks remain — all done
+[2026-10-18 07:18:24] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:18:24] no pending/in_progress tasks remain — all done
+[2026-10-18 07:19:24] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:19:24] no pending/in_progress tasks remain — all done
+[2026-10-18 07:20:24] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:20:24] no pending/in_progress tasks remain — all done
+[2026-10-18 07:21:25] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:21:25] no pending/in_progress tasks remain — all done
+[2026-10-18 07:22:25] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:22:25] no pending/in_progress tasks remain — all done
+[2026-10-18 07:23:25] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:23:25] no pending/in_progress tasks remain — all done
+[2026-10-18 07:24:25] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:24:25] no pending/in_progress tasks remain — all done
+[2026-10-18 07:25:26] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:25:26] no pending/in_progress tasks remain — all done
+[2026-10-18 07:26:26] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:26:26] no pending/in_progress tasks remain — all done
+[2026-10-18 07:27:26] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:27:26] no pending/in_progress tasks remain — all done
+[2026-10-18 07:28:26] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:28:26] no pending/in_progress tasks remain — all done
+[2026-10-18 07:29:27] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:29:27] no pending/in_progress tasks remain — all done
+[2026-10-18 07:30:27] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:30:27] no pending/in_progress tasks remain — all done
+[2026-10-18 07:31:27] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:31:27] no pending/in_progress tasks remain — all done
+[2026-10-18 07:32:27] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:32:27] no pending/in_progress tasks remain — all done
+[2026-10-18 07:33:28] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:33:28] no pending/in_progress tasks remain — all done
+[2026-10-18 07:34:28] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:34:28] no pending/in_progress tasks remain — all done
+[2026-10-18 07:35:28] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:35:28] no pending/in_progress tasks remain — all done
+[2026-10-18 07:36:28] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:36:28] no pending/in_progress tasks remain — all done
+[2026-10-18 07:37:29] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:37:29] no pending/in_progress tasks remain — all done
+[2026-10-18 07:38:29] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:38:29] no pending/in_progress tasks remain — all done
+[2026-10-18 07:39:29] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:39:29] no pending/in_progress tasks remain — all done
+[2026-10-18 07:40:29] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:40:29] no pending/in_progress tasks remain — all done
+[2026-10-18 07:41:30] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:41:30] no pending/in_progress tasks remain — all done
+[2026-10-18 07:42:30] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:42:30] no pending/in_progress tasks remain — all done
+[2026-10-18 07:43:30] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:43:30] no pending/in_progress tasks remain — all done
+[2026-10-18 07:44:30] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:44:30] no pending/in_progress tasks remain — all done
+[2026-10-18 07:45:31] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:45:31] no pending/in_progress tasks remain — all done
+[2026-10-18 07:46:31] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:46:31] no pending/in_progress tasks remain — all done
+[2026-10-18 07:47:31] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:47:31] no pending/in_progress tasks remain — all done
+[2026-10-18 07:48:31] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:48:31] no pending/in_progress tasks remain — all done
+[2026-10-18 07:49:32] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:49:32] no pending/in_progress tasks remain — all done
+[2026-10-18 07:50:32] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:50:32] no pending/in_progress tasks remain — all done
+[2026-10-18 07:51:32] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:51:32] no pending/in_progress tasks remain — all done
+[2026-10-18 07:52:32] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:52:32] no pending/in_progress tasks remain — all done
+[2026-10-18 07:53:33] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:53:33] no pending/in_progress tasks remain — all done
+[2026-10-18 07:54:33] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:54:33] no pending/in_progress tasks remain — all done
+[2026-10-18 07:55:33] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:55:33] no pending/in_progress tasks remain — all done
+[2026-10-18 07:56:33] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:56:33] no pending/in_progress tasks remain — all done
+[2026-10-18 07:57:34] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:57:34] no pending/in_progress tasks remain — all done
+[2026-10-18 07:58:34] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:58:34] no pending/in_progress tasks remain — all done
+[2026-10-18 07:59:34] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 07:59:34] no pending/in_progress tasks remain — all done
+[2026-10-18 08:00:34] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 08:00:34] no pending/in_progress tasks remain — all done
+[2026-10-18 08:01:35] taskloop starting: repo=/home/szefi/Documents/arora-rust devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-18 08:01:36] >>> starting run for task MEM09 (attempt 1, tree mem cap 4096MB, timeout 3600s)
+I'll start by reading the task file to understand MEM09.Working tree is clean aside from a loop log. Now reading the task file.Now let me find the MEM09 row and its details section.Gate satisfied — all MPROF01-06 and PVAULT01-04 commits are on `origin/master`. Now checking how the sanitize build and rust gating interact, plus the MEM02 taxonomy reference.224 commits behind — merge needed. The local `taskloop-rust.log` modification won't conflict (master's copy is identical to HEAD's). Marking MEM09 `in_progress` first.Committing the in_progress marking, then merging origin/master into rust-work.
