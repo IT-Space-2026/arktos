@@ -7592,7 +7592,12 @@ void tst_BrowserMainWindow::stopReloadState()
                      [&server]() {
         QTcpSocket *socket = server.nextPendingConnection();
         socket->setParent(&server);
+        // The accumulation buffer dies with its socket — the /held
+        // and /abort legs leave connections open, so "request complete"
+        // is not a reliable free point (MEM10).
         QByteArray *request = new QByteArray;
+        QObject::connect(socket, &QTcpSocket::destroyed, socket,
+                         [request]() { delete request; });
         QObject::connect(socket, &QTcpSocket::readyRead, socket,
                          [socket, request]() {
             request->append(socket->readAll());
