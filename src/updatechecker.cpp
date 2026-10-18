@@ -67,13 +67,13 @@ UpdateChecker::~UpdateChecker()
 QUrl UpdateChecker::defaultApiUrl()
 {
     return QUrl(QLatin1String(
-        "https://api.github.com/repos/janos-szenfner/arktos/releases/latest"));
+        "https://api.github.com/repos/arktos-browser/arktos/releases/latest"));
 }
 
 QUrl UpdateChecker::releasesPageUrl()
 {
     return QUrl(QLatin1String(
-        "https://github.com/janos-szenfner/arktos/releases"));
+        "https://github.com/arktos-browser/arktos/releases"));
 }
 
 void UpdateChecker::setApiUrl(const QUrl &url)

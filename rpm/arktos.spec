@@ -47,7 +47,7 @@ Release:        0
 Summary:        Experimental Qt 6 / QtWebEngine web browser
 License:        GPL-2.0-or-later
 Group:          Productivity/Networking/Web/Browsers
-URL:            https://github.com/janos-szenfner/arktos
+URL:            https://github.com/arktos-browser/arktos
 Source0:        %{name}-%{version}.tar.gz
 AutoReqProv:    no
 

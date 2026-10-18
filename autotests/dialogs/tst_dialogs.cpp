@@ -194,7 +194,7 @@ void tst_Dialogs::aboutDialog()
     QVERIFY(author->text().contains(QLatin1String("Benjamin C. Meyer")));
     QVERIFY(author->text().contains(QLatin1String("Janos Szenfner")));
     QVERIFY(author->text().contains(
-        QLatin1String("href=\"https://github.com/janos-szenfner/arktos\"")));
+        QLatin1String("href=\"https://github.com/arktos-browser/arktos\"")));
 
     // The Authors button shows :AUTHORS — the maintainer is listed first.
     QFile authorsFile(QLatin1String(":AUTHORS"));

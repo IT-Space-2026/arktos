@@ -31,8 +31,8 @@
     <keyword>Browser</keyword>
     <keyword>Web</keyword>
   </keywords>
-  <url type="homepage">https://github.com/janos-szenfner/arktos</url>
-  <url type="bugtracker">https://github.com/janos-szenfner/arktos/issues</url>
+  <url type="homepage">https://github.com/arktos-browser/arktos</url>
+  <url type="bugtracker">https://github.com/arktos-browser/arktos/issues</url>
   <provides>
     <binary>arktos</binary>
     <mediatype>text/html</mediatype>
