@@ -178,9 +178,12 @@ static void fillManifestFromCheck(ExtensionManager::Manifest *manifest,
     };
     manifest->backgroundScripts = stringList("background_scripts");
     manifest->permissions = stringList("permissions");
+    manifest->requiredPermissions =
+        stringList("required_permissions");
     manifest->hostPermissions = stringList("host_permissions");
     manifest->unsupported = stringList("unsupported");
     manifest->unverified = stringList("unverified");
+    manifest->fatalMissing = stringList("fatal");
     manifest->dangerous = stringList("dangerous");
     manifest->error = stringList("errors").join(QLatin1String(" "));
 }
@@ -481,14 +484,17 @@ QList<ExtensionManager::ExtensionInfo> ExtensionManager::extensions() const
         // one health state — the Preferences row reads this instead
         // of a naked "Enabled".
         bool hasBackground = false;
+        QStringList fatalMissingApis;
         if (!plain.builtin && !plain.path.isEmpty()) {
             const Manifest manifest = inspectManifest(plain.path);
             if (manifest.valid) {
                 plain.missingApis = manifest.unsupported;
+                fatalMissingApis = manifest.fatalMissing;
                 hasBackground = manifest.hasBackground;
             }
         }
         plain.health = classifyHealth(hasBackground, plain.missingApis,
+                fatalMissingApis,
                 m_healthVerdicts.value(plain.id, ProbeVerdict::Pending),
                 &plain.healthReason);
         list.append(plain);
@@ -941,6 +947,8 @@ ExtensionManager::Manifest ExtensionManager::inspectManifest(const QString &path
     };
     manifest.permissions = stringList(QLatin1String("permissions"))
         + stringList(QLatin1String("optional_permissions"));
+    manifest.requiredPermissions =
+        stringList(QLatin1String("permissions"));
     manifest.hostPermissions = stringList(QLatin1String("host_permissions"));
     manifest.updateUrl = root.value(QLatin1String("update_url")).toString();
 
@@ -955,6 +963,28 @@ ExtensionManager::Manifest ExtensionManager::inspectManifest(const QString &path
             manifest.unverified.append(permission);
         if (dangerous.contains(permission))
             manifest.dangerous.append(permission);
+    }
+    // EXT21: fatal core APIs — an extension REQUIRING one of these
+    // exists to do that thing: scripting = inject into pages
+    // (password managers' whole autofill function), the request
+    // APIs = filter traffic.  Unserved on this engine means the
+    // extension's declared purpose cannot run — NotSupported, not
+    // merely Limited.  Optional grants don't count: a nice-to-have
+    // scripting grant must not condemn an extension that works
+    // without it.
+    static const QStringList fatal = {
+        QStringLiteral("scripting"),
+        QStringLiteral("declarativeNetRequest"),
+        QStringLiteral("declarativeNetRequestWithHostAccess"),
+        QStringLiteral("declarativeNetRequestFeedback"),
+        QStringLiteral("webRequest"),
+        QStringLiteral("webRequestBlocking"),
+    };
+    for (const QString &permission : manifest.requiredPermissions) {
+        if (fatal.contains(permission)
+                && (unsupported.contains(permission)
+                    || unverified.contains(permission)))
+            manifest.fatalMissing.append(permission);
     }
     for (const QString &pattern : manifest.hostPermissions) {
         if (dangerousHosts.contains(pattern))
@@ -1083,13 +1113,23 @@ QStringList ExtensionManager::dangerousHostPatterns()
 
 ExtensionManager::ExtensionHealth ExtensionManager::classifyHealth(
         bool hasBackground, const QStringList &missingApis,
+        const QStringList &fatalMissingApis,
         ProbeVerdict verdict, QString *reason)
 {
     QString why;
+    // EXT21: a required-but-unserved core API means the extension's
+    // declared purpose can never run — a password manager without
+    // chrome.scripting can open its popup but can never fill a form.
+    // Say it will not work, not merely that some features are limited.
+    if (!fatalMissingApis.isEmpty()) {
+        why = tr("it requires chrome.* APIs Qt WebEngine does not "
+                 "provide (%1) — this extension cannot work in this "
+                 "browser")
+                  .arg(fatalMissingApis.join(QLatin1String(", ")));
     // A dead background means the extension cannot work at all —
     // every declared feature that routes through the worker (the
     // whole vault in Bitwarden's case) is dead with it.
-    if (verdict == ProbeVerdict::Dead) {
+    } else if (verdict == ProbeVerdict::Dead) {
         why = missingApis.isEmpty()
             ? tr("its background service worker never became ready")
             : tr("its background service worker never became ready — "
@@ -1103,7 +1143,7 @@ ExtensionManager::ExtensionHealth ExtensionManager::classifyHealth(
     if (reason)
         *reason = why;
 
-    if (verdict == ProbeVerdict::Dead)
+    if (verdict == ProbeVerdict::Dead || !fatalMissingApis.isEmpty())
         return ExtensionHealth::NotSupported;
     if (!missingApis.isEmpty())
         return ExtensionHealth::Limited;

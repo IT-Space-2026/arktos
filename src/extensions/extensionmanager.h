@@ -182,9 +182,17 @@ public:
         int contentScriptCount = 0;
         bool hasAction = false;
         QStringList permissions;      // permissions + optional_permissions
+        QStringList requiredPermissions; // permissions only (no optional)
         QStringList hostPermissions;
         QStringList unsupported;      // permissions Qt WebEngine cannot serve
         QStringList unverified;       // registered but delegates may be stubs
+        // EXT21: required permissions naming a chrome.* surface this
+        // engine cannot serve that IS the extension's function —
+        // a manifest declaring scripting/webRequest/declarativeNetRequest
+        // lives to inject into pages or filter traffic; without the
+        // API it can only open its own popup.  The extension cannot
+        // do its job — classifyHealth reports it NotSupported.
+        QStringList fatalMissing;
         QStringList dangerous;        // EXT05 deny-by-default consent set —
                                       // by rc_ext_manifest_check under
                                       // CONFIG+=rustcore, or the mirrored
@@ -364,7 +372,9 @@ public:
     // what the last background probe recorded; Pending/-1 means none
     // has run for the id this session.
     static ExtensionHealth classifyHealth(bool hasBackground,
-            const QStringList &missingApis, ProbeVerdict verdict,
+            const QStringList &missingApis,
+            const QStringList &fatalMissingApis,
+            ProbeVerdict verdict,
             QString *reason = nullptr);
 
     // EXT12: queue a background-liveness probe for one extension —

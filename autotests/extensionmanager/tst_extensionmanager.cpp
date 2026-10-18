@@ -326,6 +326,7 @@ void tst_ExtensionManager::inspectManifest_data()
     QTest::addColumn<bool>("hasBackground");
     QTest::addColumn<QStringList>("unsupported");
     QTest::addColumn<QStringList>("unverified");
+    QTest::addColumn<QStringList>("fatal");
     QTest::addColumn<QStringList>("dangerous");
     QTest::addColumn<QStringList>("dangerousHosts");
 
@@ -334,7 +335,7 @@ void tst_ExtensionManager::inspectManifest_data()
                       "\"version\":\"1.0\"}")
         << true << 3 << QStringLiteral("mini") << false
         << QStringList() << QStringList() << QStringList()
-        << QStringList();
+        << QStringList() << QStringList();
     QTest::newRow("permission classes")
         << QByteArray("{\"manifest_version\":3,\"name\":\"perms\","
                       "\"version\":\"1.0\","
@@ -345,21 +346,43 @@ void tst_ExtensionManager::inspectManifest_data()
         << true << 3 << QStringLiteral("perms") << false
         << (QStringList() << QStringLiteral("bookmarks"))
         << (QStringList() << QStringLiteral("webRequest"))
+        << (QStringList() << QStringLiteral("webRequest"))
         << (QStringList() << QStringLiteral("cookies")
                           << QStringLiteral("nativeMessaging"))
         << (QStringList() << QStringLiteral("<all_urls>"));
+    // EXT21: required scripting marks the extension's purpose dead —
+    // the Bitwarden signature.  An OPTIONAL scripting grant must not.
+    QTest::newRow("fatal core api required")
+        << QByteArray("{\"manifest_version\":3,\"name\":\"vault\","
+                      "\"version\":\"1.0\","
+                      "\"permissions\":[\"scripting\",\"storage\"]}")
+        << true << 3 << QStringLiteral("vault") << false
+        << QStringList()
+        << (QStringList() << QStringLiteral("scripting"))
+        << (QStringList() << QStringLiteral("scripting"))
+        << QStringList() << QStringList();
+    QTest::newRow("fatal core api optional")
+        << QByteArray("{\"manifest_version\":3,\"name\":\"maybe\","
+                      "\"version\":\"1.0\","
+                      "\"permissions\":[\"storage\"],"
+                      "\"optional_permissions\":[\"scripting\"]}")
+        << true << 3 << QStringLiteral("maybe") << false
+        << QStringList()
+        << (QStringList() << QStringLiteral("scripting"))
+        << QStringList()
+        << QStringList() << QStringList();
     QTest::newRow("background flag")
         << QByteArray("{\"manifest_version\":3,\"name\":\"bg\","
                       "\"version\":\"1.0\",\"background\":"
                       "{\"service_worker\":\"sw.js\"}}")
         << true << 3 << QStringLiteral("bg") << true
         << QStringList() << QStringList() << QStringList()
-        << QStringList();
+        << QStringList() << QStringList();
     QTest::newRow("not json")
         << QByteArray("this is not json")
         << false << 0 << QString() << false
         << QStringList() << QStringList() << QStringList()
-        << QStringList();
+        << QStringList() << QStringList();
 }
 
 void tst_ExtensionManager::inspectManifest()
@@ -371,6 +394,7 @@ void tst_ExtensionManager::inspectManifest()
     QFETCH(bool, hasBackground);
     QFETCH(QStringList, unsupported);
     QFETCH(QStringList, unverified);
+    QFETCH(QStringList, fatal);
     QFETCH(QStringList, dangerous);
     QFETCH(QStringList, dangerousHosts);
 
@@ -393,6 +417,9 @@ void tst_ExtensionManager::inspectManifest()
             QVERIFY(parsed.unsupported.contains(perm));
         for (const QString &perm : unverified)
             QVERIFY(parsed.unverified.contains(perm));
+        // EXT21: fatalMissing is an exact match — an over-wide set
+        // would condemn working extensions.
+        QCOMPARE(parsed.fatalMissing, fatal);
         for (const QString &perm : dangerous)
             QVERIFY(parsed.dangerous.contains(perm));
         for (const QString &host : dangerousHosts)
@@ -996,45 +1023,69 @@ void tst_ExtensionManager::healthClassification()
     using EH = ExtensionManager::ExtensionHealth;
     using PV = ExtensionManager::ProbeVerdict;
 
+    const QStringList none;
     QCOMPARE(ExtensionManager::classifyHealth(
-                 false, QStringList(), PV::Pending),
+                 false, none, none, PV::Pending),
              EH::Unknown);
     QCOMPARE(ExtensionManager::classifyHealth(
-                 false, QStringList(), PV::None),
+                 false, none, none, PV::None),
              EH::Healthy);
     QCOMPARE(ExtensionManager::classifyHealth(
-                 true, QStringList(), PV::Pending),
+                 true, none, none, PV::Pending),
              EH::Unknown);
     QCOMPARE(ExtensionManager::classifyHealth(
-                 true, QStringList(), PV::Responsive),
+                 true, none, none, PV::Responsive),
              EH::Healthy);
     QCOMPARE(ExtensionManager::classifyHealth(
-                 true, QStringList(), PV::Dead),
+                 true, none, none, PV::Dead),
              EH::NotSupported);
     QCOMPARE(ExtensionManager::classifyHealth(
-                 true, {QStringLiteral("notifications")},
+                 true, {QStringLiteral("notifications")}, none,
                  PV::Responsive),
              EH::Limited);
     // Dead beats Limited — a crashed worker means nothing works.
     QCOMPARE(ExtensionManager::classifyHealth(
-                 true, {QStringLiteral("notifications")},
+                 true, {QStringLiteral("notifications")}, none,
                  PV::Dead),
+             EH::NotSupported);
+    // EXT21: a required-but-unserved core API means the extension's
+    // declared purpose can never run — NotSupported even with a
+    // live, responsive background (the popup opens, the product
+    // function is dead).
+    QCOMPARE(ExtensionManager::classifyHealth(
+                 true, {QStringLiteral("scripting")},
+                 {QStringLiteral("scripting")}, PV::Responsive),
+             EH::NotSupported);
+    // ...and beats Limited the other way too.
+    QCOMPARE(ExtensionManager::classifyHealth(
+                 true, {QStringLiteral("scripting"),
+                        QStringLiteral("notifications")},
+                 {QStringLiteral("scripting")}, PV::Responsive),
              EH::NotSupported);
 
     QString reason;
     ExtensionManager::classifyHealth(
         true, {QStringLiteral("notifications"),
-               QStringLiteral("tabs")}, PV::Dead, &reason);
+               QStringLiteral("tabs")}, none, PV::Dead, &reason);
     QVERIFY(reason.contains(QLatin1String("background")));
     QVERIFY(reason.contains(QLatin1String("notifications")));
     reason.clear();
     ExtensionManager::classifyHealth(
-        true, {QStringLiteral("cookies")}, PV::Responsive, &reason);
+        true, {QStringLiteral("cookies")}, none, PV::Responsive,
+        &reason);
     QVERIFY(reason.contains(QLatin1String("cookies")));
     reason.clear();
     ExtensionManager::classifyHealth(
-        true, QStringList(), PV::Dead, &reason);
+        true, none, none, PV::Dead, &reason);
     QVERIFY(reason.contains(QLatin1String("background")));
+    // EXT21: the fatal reason names the unserved API and states the
+    // extension cannot work — no softening into "limited".
+    reason.clear();
+    ExtensionManager::classifyHealth(
+        true, {QStringLiteral("scripting")},
+        {QStringLiteral("scripting")}, PV::Responsive, &reason);
+    QVERIFY(reason.contains(QLatin1String("scripting")));
+    QVERIFY(reason.contains(QLatin1String("cannot work")));
 }
 
 // EXT12: the real measurement — a live service worker must classify

@@ -728,6 +728,25 @@ const UNVERIFIED_PERMISSIONS: &[&str] = &[
     "webRequest",
 ];
 
+// EXT21: core-function APIs — an extension REQUIRING one of these
+// exists to do that thing: scripting = inject into pages (a password
+// manager's whole autofill function), the request APIs = filter
+// traffic.  Unserved on this engine means the extension's declared
+// purpose cannot run; ExtensionManager classifies the extension
+// NotSupported rather than merely Limited.  Only the required
+// permissions feed this — an optional scripting grant must not
+// condemn an extension that works without it.
+// Keep in lockstep with the `fatal` table in
+// ExtensionManager::inspectManifest().
+const FATAL_CORE_PERMISSIONS: &[&str] = &[
+    "scripting",
+    "declarativeNetRequest",
+    "declarativeNetRequestWithHostAccess",
+    "declarativeNetRequestFeedback",
+    "webRequest",
+    "webRequestBlocking",
+];
+
 // The EXT05 deny-by-default consent set — permissions needing an
 // explicit per-permission consent checkbox in the review dialog.
 const DANGEROUS_PERMISSIONS: &[&str] = &[
@@ -786,7 +805,9 @@ pub fn manifest_check(data: &[u8]) -> RcResult<Vec<u8>> {
         ));
     }
 
-    let mut permissions = strings(root.get("permissions").unwrap_or(&Value::Null));
+    let required_permissions =
+        strings(root.get("permissions").unwrap_or(&Value::Null));
+    let mut permissions = required_permissions.clone();
     permissions.extend(strings(
         root.get("optional_permissions").unwrap_or(&Value::Null),
     ));
@@ -819,6 +840,18 @@ pub fn manifest_check(data: &[u8]) -> RcResult<Vec<u8>> {
         .map(String::as_str)
         .filter(|p| UNVERIFIED_PERMISSIONS.contains(p))
         .collect();
+    // EXT21: required permissions naming an unservable chrome.*
+    // surface that IS the extension's function — see
+    // FATAL_CORE_PERMISSIONS.
+    let fatal: Vec<&str> = required_permissions
+        .iter()
+        .map(String::as_str)
+        .filter(|p| {
+            FATAL_CORE_PERMISSIONS.contains(p)
+                && (UNSUPPORTED_PERMISSIONS.contains(p)
+                    || UNVERIFIED_PERMISSIONS.contains(p))
+        })
+        .collect();
     let mut dangerous: Vec<String> = permissions
         .iter()
         .filter(|p| DANGEROUS_PERMISSIONS.contains(&p.as_str()))
@@ -849,9 +882,11 @@ pub fn manifest_check(data: &[u8]) -> RcResult<Vec<u8>> {
             .and_then(Value::as_array)
             .map_or(0, Vec::len),
         "permissions": permissions,
+        "required_permissions": required_permissions,
         "host_permissions": host_permissions,
         "unsupported": unsupported,
         "unverified": unverified,
+        "fatal": fatal,
         "dangerous": dangerous,
         "errors": errors,
     })

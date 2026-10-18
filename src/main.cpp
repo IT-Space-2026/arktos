@@ -14693,16 +14693,28 @@ int main(int argc, char **argv)
         // Static legs — the classifier's fold needs no engine.
         using EH = ExtensionManager::ExtensionHealth;
         using PV = ExtensionManager::ProbeVerdict;
+        const QStringList noFatal;
         check(ExtensionManager::classifyHealth(
-                  false, QStringList(), PV::None) == EH::Healthy,
+                  false, QStringList(), noFatal,
+                  PV::None) == EH::Healthy,
               QStringLiteral("clean no-background manifest = Healthy"));
         check(ExtensionManager::classifyHealth(
                   true, QStringList() << QStringLiteral("notifications"),
-                  PV::Responsive) == EH::Limited,
+                  noFatal, PV::Responsive) == EH::Limited,
               QStringLiteral("missing API over live worker = Limited"));
         check(ExtensionManager::classifyHealth(
-                  true, QStringList(), PV::Dead) == EH::NotSupported,
+                  true, QStringList(), noFatal, PV::Dead)
+                  == EH::NotSupported,
               QStringLiteral("dead worker = NotSupported"));
+        // EXT21: a required-but-unservable core API means the
+        // extension's declared purpose can never run — NotSupported
+        // even while the worker answers.
+        check(ExtensionManager::classifyHealth(
+                  true, QStringList() << QStringLiteral("scripting"),
+                  QStringList() << QStringLiteral("scripting"),
+                  PV::Responsive) == EH::NotSupported,
+              QStringLiteral("required unservable core API = "
+                             "NotSupported"));
 
         // Fixtures: identical MV3 shells differing only in what the
         // manifest asks for and whether the service worker evaluates.
