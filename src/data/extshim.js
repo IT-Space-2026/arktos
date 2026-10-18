@@ -200,7 +200,10 @@
         'tabs.onCreated': ['tab'],
         'tabs.onUpdated': ['tabId', 'changeInfo', 'tab'],
         'tabs.onMoved': ['tabId', 'moveInfo'],
-        'tabs.onActivated': ['tabId', 'windowId'],
+        // tabs.onActivated has NO entry on purpose: its single
+        // argument IS the {tabId, windowId} activeInfo object, so a
+        // named-object payload fires as one arg — key mapping would
+        // wrongly spread it into two scalars.
         'tabs.onHighlighted': ['highlightInfo'],
         'tabs.onDetached': ['tabId', 'detachInfo'],
         'tabs.onAttached': ['tabId', 'attachInfo'],

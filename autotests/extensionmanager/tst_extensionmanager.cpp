@@ -2101,6 +2101,56 @@ void tst_ExtensionManager::extensionEventSurfaces()
                  "webNavigation.onCommitted(details) shape");
     }
 
+    // ER03: Chrome parity for onActivated — ONE activeInfo object
+    // {tabId, windowId}, never two scalar args — and the scripted
+    // ops reach the fixture in causal order: tab2 (the newTab)
+    // onCreated before its onRemoved, tab0's setCurrentIndex(0)
+    // activation after tab2's creation, and the navigated load's
+    // onUpdated 'loading' before 'complete'.
+    {
+        const QJsonObject order = QJsonDocument::fromJson(
+            eval(runtime->host(idA)->page(), QStringLiteral(
+                "(function(){var evs=self.__extEvents||[];"
+                "function ix(p){for(var i=0;i<evs.length;++i)"
+                " if(p(evs[i]))return i;return -1;}"
+                "var c0=ix(function(e){return e.n==='tabs.onCreated'"
+                "&&e.a[0]&&e.a[0].index===0;});"
+                "var id0=c0<0?-1:evs[c0].a[0].id;"
+                "var c2=ix(function(e){return e.n==='tabs.onCreated'"
+                "&&e.a[0]&&e.a[0].index===1;});"
+                "var id2=c2<0?-1:evs[c2].a[0].id;"
+                "var a0=ix(function(e){return e.n==='tabs.onActivated'"
+                "&&e.a[0]&&e.a[0].tabId===id0;});"
+                "var r2=ix(function(e){return e.n==='tabs.onRemoved'"
+                "&&e.a[0]===id2;});"
+                "var l0=ix(function(e){return e.n==='tabs.onUpdated'"
+                "&&e.a[0]===id0&&e.a[1]&&e.a[1].status==='loading';});"
+                "var f0=ix(function(e){return e.n==='tabs.onUpdated'"
+                "&&e.a[0]===id0&&e.a[1]&&e.a[1].status==='complete';});"
+                "var shape=evs.every(function(e){"
+                " return e.n!=='tabs.onActivated'"
+                "  ||(e.a.length===1&&e.a[0]"
+                "   &&typeof e.a[0].tabId==='number'"
+                "   &&typeof e.a[0].windowId==='number');});"
+                "return JSON.stringify({c2:c2,a0:a0,r2:r2,l0:l0,"
+                "f0:f0,shape:shape});})()"))
+            .toString().toUtf8()).object();
+        QVERIFY2(order.value(QLatin1String("shape")).toBool(),
+                 "tabs.onActivated(activeInfo) single-object shape");
+        QVERIFY2(order.value(QLatin1String("c2")).toInt(-1) >= 0,
+                 "newTab onCreated recorded");
+        QVERIFY2(order.value(QLatin1String("r2")).toInt(-1)
+                     > order.value(QLatin1String("c2")).toInt(-1),
+                 "onRemoved arrives after its tab's onCreated");
+        QVERIFY2(order.value(QLatin1String("a0")).toInt(-1)
+                     > order.value(QLatin1String("c2")).toInt(-1),
+                 "setCurrentIndex activation follows the create");
+        QVERIFY2(order.value(QLatin1String("l0")).toInt(-1) >= 0
+                     && order.value(QLatin1String("f0")).toInt(-1)
+                            > order.value(QLatin1String("l0")).toInt(-1),
+                 "onUpdated loading precedes complete");
+    }
+
     // --- permission gating -------------------------------------------
     // B declares no webNavigation permission — the whole family is
     // gated for it.  tabs.* events do arrive (ungated) but url-bearing

@@ -405,9 +405,13 @@ void ExtensionEventHub::onTabActivated(TabWidget *tabs, int index)
         BrowserMainWindow::parentWindow(view));
     ExtensionBackgroundRuntime *runtime =
         ExtensionBackgroundRuntime::instance();
+    // Chrome's signature is onActivated(activeInfo) — ONE object
+    // carrying {tabId, windowId}, not two scalar args.
     runtime->broadcastEvent(
         QStringLiteral("tabs.onActivated"),
-        argsPayload({tabId, windowId}));
+        argsPayload({QJsonObject{
+            {QStringLiteral("tabId"), tabId},
+            {QStringLiteral("windowId"), windowId}}}));
     runtime->broadcastEvent(
         QStringLiteral("tabs.onHighlighted"),
         argsPayload({QJsonObject{
