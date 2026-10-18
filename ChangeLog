@@ -3590,3 +3590,28 @@ Extensions (scripting): chrome.scripting.insertCSS/removeCSS now
     measurable insert -> remove restore, the files form, origin
     scoping, subframe targeting, the executeScript multi-file order,
     and every typed denial on real browser tabs.
+Extensions (scripting): dynamic content-script registration is
+    served on both API shapes (ER09) — the MV3
+    chrome.scripting.registerContentScripts/unregisterContentScripts/
+    getRegisteredContentScripts/updateContentScripts set and the
+    Firefox-shape chrome.contentScripts.register/unregister/getScripts
+    (the surface the bundled webextension-polyfill resolves
+    browser.contentScripts.* to). One runtime registry normalizes both
+    option shapes; a registered spec arms as a profile script in the
+    shared content-script realm and fires on the next matching
+    navigation under the same gate a declared content_scripts entry
+    carries. Registration re-proves every matches[] pattern against
+    the extension's declared host coverage BEFORE anything is armed —
+    an uncovered pattern is a typed no-host-access, never a silent
+    grant — the MV3 surface additionally requires the 'scripting'
+    permission. Registered js/css read real bundle files (traversal,
+    missing and oversized paths refused typed); Firefox-only options
+    that can't be honored (globs, cookieStoreId) refuse with a typed
+    unsupported rather than registering a lie. Registrations persist
+    across restarts in profile settings exactly like Chrome's
+    persistAcrossSessions default, session-only ones die with the
+    extension, and uninstall drops the whole set. The
+    extensionContentScriptRegistration autotest leg proves the real
+    register -> navigate -> inject -> unregister chain, persistence
+    across a host respawn, every typed denial, and the consent split
+    between the two surfaces.

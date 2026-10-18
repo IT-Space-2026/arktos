@@ -400,6 +400,13 @@ void ExtensionManager::installOnProfile(QWebEngineProfile *profile)
         ProfileSettings(BrowserProfile::profileIdFor(profile))
             .remove(QStringLiteral("extensions/runtime/")
                     + plain.id);
+        // ER09: persisted dynamic content-script registrations die
+        // with the extension too — Chrome drops them on uninstall.
+        ProfileSettings(BrowserProfile::profileIdFor(profile))
+            .remove(QStringLiteral("extensions/regscripts/")
+                    + plain.id);
+        ExtensionBackgroundRuntime::instance()
+            ->dropRegisteredScripts(plain.id);
         m_tamperedIds.remove(plain.id);
         // EXT12: its health verdict too.
         m_healthVerdicts.remove(plain.id);

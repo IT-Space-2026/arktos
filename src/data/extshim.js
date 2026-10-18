@@ -2134,9 +2134,13 @@
     // '__arktos.execResult'.  ER08 — insertCSS/removeCSS ride the
     // same execId machinery (a per-frame css payload, the same
     // '__arktos.execResult' answer) but resolve void like Chrome.
-    // registerContentScripts/updateContentScripts/
-    // getRegisteredContentScripts/unregisterContentScripts stay typed
-    // stubs (fillNs below) until ER09's registration work lands them.
+    // ER09 — registerContentScripts/unregisterContentScripts/
+    // getRegisteredContentScripts/updateContentScripts are
+    // synchronous registry ops: the C++ side normalizes the spec,
+    // re-proves every matches[] pattern against the extension's host
+    // coverage BEFORE arming it, then joins the spec to the
+    // page-agent injection set (profile script in the shared agent
+    // world, same gate shape as a declared content script).
     function cssOp(method, injection, cb) {
         touch('chrome.scripting.' + method);
         injection = injection || {};
@@ -2266,6 +2270,140 @@
             },
             removeCSS: function (injection, cb) {
                 return cssOp('removeCSS', injection, cb);
+            },
+            registerContentScripts: function (scripts, cb) {
+                touch('chrome.scripting.registerContentScripts');
+                var p = call('scripting', 'registerContentScripts', {
+                    scripts: Array.isArray(scripts) ? scripts : null
+                }).then(function (v) {
+                    if (v && v.notes)
+                        v.notes.forEach(function (n) { note(n); });
+                });
+                if (cb)
+                    p.then(function () { answerCb(cb); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p.then(function () {});
+            },
+            unregisterContentScripts: function (filter, cb) {
+                touch('chrome.scripting.unregisterContentScripts');
+                var p = call('scripting', 'unregisterContentScripts', {
+                    filter: { ids: filter && filter.ids || null }
+                }).then(function () {});
+                if (cb)
+                    p.then(function () { answerCb(cb); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p;
+            },
+            getRegisteredContentScripts: function (filter, cb) {
+                touch('chrome.scripting.getRegisteredContentScripts');
+                var p = call('scripting',
+                             'getRegisteredContentScripts', {
+                    filter: { ids: filter && filter.ids || null }
+                });
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v || []); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p;
+            },
+            updateContentScripts: function (scripts, cb) {
+                touch('chrome.scripting.updateContentScripts');
+                var p = call('scripting', 'updateContentScripts', {
+                    scripts: Array.isArray(scripts) ? scripts : null
+                }).then(function (v) {
+                    if (v && v.notes)
+                        v.notes.forEach(function (n) { note(n); });
+                });
+                if (cb)
+                    p.then(function () { answerCb(cb); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p.then(function () {});
+            }
+        });
+    }
+
+    // --- chrome.contentScripts ------------------------------------------------
+    // ER09 — the Firefox-shape dynamic registration surface.  The
+    // bundled webextension-polyfill Bitwarden ships resolves
+    // browser.contentScripts.* to chrome.contentScripts.* in a
+    // Chromium-shaped context, so this namespace must exist even
+    // though Chromium itself never offers it.  register() resolves a
+    // RegisteredContentScript-style handle — a plain object carrying
+    // unregister(), since the registry lives host-side.  No API
+    // permission exists for this surface; the per-match host-coverage
+    // check host-side is the whole gate (the MV2 model).
+    if (typeof chrome !== 'undefined') {
+        var csHandle = function (id) {
+            return {
+                id: id,
+                unregister: function (cb) {
+                    var p = call('contentScripts', 'unregister',
+                                 { id: id }).then(function () {});
+                    if (cb)
+                        p.then(function () { answerCb(cb); },
+                               function (e) {
+                                   answerCb(cb, undefined, e.message);
+                               });
+                    return p;
+                }
+            };
+        };
+        installNs('contentScripts', {
+            __arktosShim: true,
+            register: function (contentScriptOptions, cb) {
+                touch('chrome.contentScripts.register');
+                var p = call('contentScripts', 'register', {
+                    options: contentScriptOptions || {}
+                }).then(function (v) {
+                    if (v && v.notes)
+                        v.notes.forEach(function (n) { note(n); });
+                    return csHandle(v && v.id);
+                });
+                if (cb)
+                    p.then(function (h) { answerCb(cb, h); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p;
+            },
+            unregister: function (handle, cb) {
+                touch('chrome.contentScripts.unregister');
+                var id = (typeof handle === 'string') ? handle
+                    : (handle && handle.id);
+                var p = call('contentScripts', 'unregister',
+                             { id: id }).then(function () {});
+                if (cb)
+                    p.then(function () { answerCb(cb); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p;
+            },
+            getScripts: function (cb) {
+                touch('chrome.contentScripts.getScripts');
+                var p = call('contentScripts', 'getScripts', {})
+                    .then(function (list) {
+                        return (list || []).map(function (s) {
+                            var h = csHandle(s && s.id);
+                            for (var k in s)
+                                if (k !== 'id')
+                                    h[k] = s[k];
+                            return h;
+                        });
+                    });
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p;
             }
         });
     }
@@ -2886,6 +3024,9 @@
         'chrome.bookmarks.getTree',
         'chrome.history.search', 'chrome.history.onVisited.addListener',
         'chrome.scripting.executeScript',
+        'chrome.scripting.registerContentScripts',
+        'chrome.scripting.unregisterContentScripts',
+        'chrome.contentScripts.register',
         'chrome.offscreen.createDocument',
         'chrome.management.getSelf',
         'chrome.browsingData.remove',

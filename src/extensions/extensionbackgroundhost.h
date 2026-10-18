@@ -145,6 +145,19 @@ private:
     // lives here.
     QJsonObject invokeScripting(const QString &method,
                                 const QJsonObject &args);
+    // ER09: chrome.scripting.registerContentScripts /
+    // unregisterContentScripts / getRegisteredContentScripts /
+    // updateContentScripts — synchronous registry ops; the registry
+    // itself lives on the runtime so every context of one extension
+    // (background, popup, offscreen) shares it.
+    QJsonObject invokeScriptRegistration(const QString &method,
+                                         const QJsonObject &args);
+    // ER09: chrome.contentScripts.register/unregister/getScripts —
+    // the Firefox-shape surface the bundled webextension-polyfill
+    // resolves browser.contentScripts.* to.  Same registry, MV2
+    // option shapes.
+    QJsonObject invokeContentScripts(const QString &method,
+                                     const QJsonObject &args);
     void finishExecFrame(const QString &execId, int slot,
                          int frameId, const QVariant &value,
                          QWebEngineFrame frame, quint32 worldId,
@@ -240,6 +253,11 @@ public:
     static QString pageAgentInjectionName(const QString &extensionId);
     static QString contentScriptInjectionName(const QString &extensionId,
                                               int index);
+    // ER09: a dynamically-registered content script's profile-script
+    // name — 'arktos-extdcs-<id>-<regId>' (regId sanitized) so host
+    // teardown can sweep them by prefix like the declared set.
+    static QString dynamicContentScriptInjectionName(
+            const QString &extensionId, const QString &registrationId);
     // Union of the manifest's content_scripts[].matches — the page
     // agent's js-side grant list and the C++ agentCovers check share
     // it with host_permissions.
@@ -368,6 +386,44 @@ public:
     // chrome.tabs replies in ExtensionShimBackend apply the same
     // scrub rule the event fan-out does.
     bool seesUrls(const QString &extensionId, const QString &url) const;
+
+    // ------------------------------------------------------------------
+    // ER09 — dynamic content-script registration.  Chrome's
+    // scripting.registerContentScripts and Firefox's
+    // contentScripts.register share one per-extension registry here —
+    // any shim context of the extension reaches the same set.  A
+    // registered spec joins the page-agent injection set as a
+    // profile-level QWebEngineScript in AgentWorldId (same world and
+    // gate shape as a declared content script); every match pattern is
+    // re-proved against the extension's host coverage BEFORE the spec
+    // is armed, and specs with persistAcrossSessions live in
+    // ProfileSettings under 'extensions/regscripts/<id>' so a runtime
+    // restart re-arms them exactly like Chrome.
+    //
+    // Replies use the shared {ok,result}|{ok:false,error} shapes;
+    // 'not-found'/'invalid-argument'/'no-host-access'/'unsupported'
+    // are the typed failures.
+    QJsonObject registerContentScripts(
+            const QString &extensionId, const QString &extensionPath,
+            const QJsonArray &scripts, const QString &api);
+    QJsonObject unregisterContentScripts(
+            const QString &extensionId, const QStringList &ids);
+    QJsonArray registeredContentScripts(
+            const QString &extensionId, const QString &api,
+            const QStringList &onlyIds = QStringList()) const;
+    QJsonObject updateContentScripts(
+            const QString &extensionId, const QString &extensionPath,
+            const QJsonArray &scripts);
+    // syncNow: a fresh host re-arms every persisted + session
+    // registration of its extension onto its profile.
+    void restoreRegisteredScripts(const QString &extensionId);
+    // Uninstall: drop the whole in-memory registry (and its armed
+    // profile scripts) — Chrome discards registrations with the
+    // extension, settings record included.
+    void dropRegisteredScripts(const QString &extensionId);
+    // Test seam: the raw normalized spec set (id -> spec) — the same
+    // map getScripts/getRegisteredContentScripts read.
+    QJsonObject registeredScriptSpecs(const QString &extensionId) const;
 
     // Whether the extension's manifest declares the named API
     // permission — the page agent's chrome.storage gate.
@@ -505,6 +561,22 @@ private:
     // decided — a mid-session respawn or re-enable never re-fires
     // it; the set clears only on restartLifecycleSession().
     QSet<QString> m_lifecycleSeen;
+
+    // ER09 — the dynamic content-script registry: extId -> regId ->
+    // normalized spec.  Session lifetime for
+    // persistAcrossSessions:false entries; persisted entries also
+    // live in ProfileSettings (extensions/regscripts/<id>) and are
+    // merged back in by restoreRegisteredScripts() when a host
+    // respawns.  Armed state is a profile QWebEngineScript named
+    // arktos-extdcs-<extId>-<regId> — host teardown sweeps them by
+    // prefix with the declared set.
+    void armRegisteredScript(const QString &extensionId,
+                           const QJsonObject &spec);
+    void disarmRegisteredScripts(const QString &extensionId,
+                                 const QString &registrationId);
+    void persistRegisteredScripts(const QString &extensionId);
+    QString regProfileId(const QString &extensionId) const;
+    QHash<QString, QHash<QString, QJsonObject>> m_regScripts;
 
     // Relay: live shimmed contexts and in-flight deliveries
     // (mid -> the sending bridge; entries expire on a timer so a

@@ -53,7 +53,7 @@ xvfb-run — never touch the user's live display.
 | ER06 | DECISION GATE — Bitwarden unlock + content-script handshake proven or measured-blocked with world-isolation finding — details below | done | 1 | needs:task:ER02 needs:task:ER04 · bitwardenHandshakeGate leg PASS: real bundle's cs↔bg handshake crossed the emulated-world boundary both directions (triggerAutofillScriptInjection + autofill-injected-script-port in with sender.tab; tabs.sendMessage bgUnlockPopoutOpened out + real cs forward-back reply) — bg dispatched chrome.scripting.executeScript → typed unsupported gap; verdict PASS, evidence .devin/EXT-RUNTIME-SPIKE.md; full suite 34/34 (3 env skips) |
 | ER07 | scripting.executeScript — per-frame runJavaScript, host-permission check, one-shot result marshaling — details below | done | 0 | needs:task:ER06 · extensionScripting leg PASS: per-frame QWebEngineFrame::runJavaScript fan-out (allFrames/frameIds over DFS tree ids) in shared agent world — agent's scoped chrome bound via the compat closure; thenables parked on __arktosExecResults + polled (runJavaScript never awaits); func/args/files forms; 'scripting' + host-coverage gates run BEFORE page write — no-permission/no-host-access/not-found/bad-path/no-such-file typed + ledgered, documentIds unsupported; MAIN = unprivileged page world; full suite 35/35 (3 env skips) |
 | ER08 | scripting.insertCSS/removeCSS + executeScript file/frames/args forms — details below | done | 1 | needs:task:ER07 · extensionScriptCss leg PASS: insertCSS/removeCSS share the executeScript gates + per-frame fan-out, agent-world <style> ledger keyed by css unit+origin (upsert/remove/no-op-on-miss, dies with document); css/files/origin validated, USER origin = author-level approximation recorded; allFrames+frameIds target real subframes; multi-file files[] order verified; no-permission/no-host-access/bad-path/no-such-file/invalid-argument/unsupported/not-found typed + ledgered; full suite 36/36 (3 env skips) |
-| ER09 | contentScripts dynamic registration — register/unregister/getScripts over our injection set — details below | pending | 0 | needs:task:ER07 |
+| ER09 | contentScripts dynamic registration — register/unregister/getScripts over our injection set — details below | done | 1 | needs:task:ER07 · extensionContentScriptRegistration leg PASS: shared runtime registry behind BOTH surfaces (MV3 scripting.register/unregister/getRegistered/update + Firefox contentScripts.register/unregister/getScripts w/ unregister-handle) arms profile scripts into the shared agent world on next matching nav; per-match host-coverage implication checked BEFORE arming (no-host-access), 'scripting' permission gates only the MV3 surface; persisted specs re-arm across host respawn via ProfileSettings extensions/regscripts/<id>, session-only die with load, all drop on uninstall; bad-path/no-such-file/invalid-argument/not-found/unsupported typed; full suite 37/37 (3 env skips) + real Bitwarden legs all PASS incl. handshake gate (bg dispatched 4 executeScript — executed, no gap) |
 | ER10 | offscreen.createDocument/hasDocument/closeDocument → second-class host page — details below | pending | 0 | needs:task:ER06 |
 | ER11 | webRequest observe-only events (onBeforeRequest/onCompleted/onErrorOccurred) via QWebEngineUrlRequestInterceptor — details below | pending | 0 | needs:task:ER04 |
 | ER12 | notifications.create/update/clear/getAll → native presenter — details below | pending | 0 | needs:task:ER06 |
@@ -198,6 +198,47 @@ matching pages. Persist per-extension in ProfileSettings so
 registrations survive restarts like Chrome's.
 Verify: a registered script fires on the next matching navigation and
 survives a runtime restart.
+
+Result (done): one runtime-owned registry
+(`m_regScripts`, extId→regId→normalized spec) behind both front doors
+— `invokeScriptRegistration` for the MV3 set (gated on the declared
+'scripting' permission, like every chrome.scripting member) and
+`invokeContentScripts` for the Firefox shape the bundled
+webextension-polyfill resolves `browser.contentScripts.*` to (no API
+permission exists there; the gate is the same per-match implication
+check Chrome's "must have host permission" rule requires). A
+normalized spec arms as a profile-level QWebEngineScript
+(`arktos-extdcs-<extId>-<sanitized-regId>`) in AgentWorldId with the
+same wrapper/gate shape as a declared content script — the wrapper
+waits for this extension's agent, re-checks matches/excludeMatches
+against the committed url, and runs the code in a closure bound to
+the scoped chrome/browser object. Registration validates the whole
+batch before arming anything (Chrome's atomic contract): match
+patterns parse + every `matches[]` must be implied by the
+host-permissions ∪ declared-cs-matches coverage union
+(`hostPermCoversPattern` — scheme, host incl. `*.` subdomains, path
+granularity; fails closed) else typed `no-host-access`; js/css file
+paths re-proven against the bundle (traversal/absolute/scheme →
+`bad-path`, missing/oversize → `no-such-file`), inline `code:` is
+Firefox-only (typed `invalid-argument` on MV3), globs/cookieStoreId →
+`unsupported`, dup id / missing caller id / bad runAt or world →
+`invalid-argument`, unregister+update on a missing id → `not-found`.
+`world:'MAIN'` registers with the recorded same approximation
+declared scripts carry; `matchAboutBlank`/`matchOriginAsFallback`
+accept with a recorded inert note. MV2 callers get a minted
+`mv2cs-N` id and an `unregister()` handle. Persisted specs
+(`persistAcrossSessions`, the default) serialize to ProfileSettings
+`extensions/regscripts/<extId>` and merge back in
+`restoreRegisteredScripts()` on every host respawn; session-only
+entries die when the extension unloads, and uninstall drops the
+record + registry + armed scripts (`dropRegisteredScripts` from the
+uninstall path). The stale bitwardenHandshakeGate assertion was
+updated to post-ER07 reality (dispatch proof = touched delta; a typed
+gap is still reported when the real call degrades) — it now measures
+4 real executeScript dispatches from Bitwarden's background, all
+executed with no gap. The realExtensionPopup SIGTRAP remains the
+documented pre-existing blessed-context engine issue, reproduced on
+the clean tree — unrelated to this diff.
 
 ### ER10
 `chrome.offscreen.createDocument/hasDocument/closeDocument` — spawn a

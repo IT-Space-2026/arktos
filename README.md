@@ -525,8 +525,7 @@ extension pages (popup, options, extension links in tabs) get the
 same shim injection and chromeBridge channel as the background, and
 the popup reaches its genuine vault login/unlock gate. Actual
 sign-in needs a real Bitwarden account; a few surfaces it touches
-(`chrome.notifications`, the dynamic-registration half of
-`chrome.scripting`) answer typed errors that show up in its
+(`chrome.notifications`) answer typed errors that show up in its
 Settings → Extensions health row instead of failing silently.
 `chrome.scripting.executeScript` itself is served: the host
 re-checks the `scripting` permission and host coverage of the
@@ -538,7 +537,16 @@ rejecting the call, and every denial is a typed error on the health
 row, never a silent no-op. `insertCSS`/`removeCSS` are served too:
 the same gates and per-frame fan-out drive a `<style>` ledger keyed
 by css source and origin, so an insert changes the page's computed
-style and the matching remove restores it.
+style and the matching remove restores it. Dynamic content-script
+registration is served on both API shapes —
+`scripting.registerContentScripts`/`unregister`/`getRegistered`/
+`update` and Firefox's `contentScripts.register`/`unregister`/
+`getScripts`: a registered spec joins the same agent-realm injection
+set as a declared `content_scripts` entry on the next matching
+navigation, every match pattern is re-proven against the
+extension's declared host coverage before anything is armed, and
+persistent registrations survive restarts (session-only ones die
+with the extension, all of them on uninstall).
 
 Enabled extensions that declare a background script additionally get
 a hosted background context: a hidden page on the extension's own
