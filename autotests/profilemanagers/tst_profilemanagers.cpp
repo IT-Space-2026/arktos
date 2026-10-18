@@ -33,6 +33,9 @@
 #include <extensionmanager.h>
 #include <historymanager.h>
 #include <notesmodel.h>
+#include <profileidentity.h>
+#include <profileregistry.h>
+#include <profilestore.h>
 #include <securestore.h>
 
 #if defined(ARKTOS_RUSTCORE)
@@ -42,6 +45,7 @@
 #include <qdir.h>
 #include <qfile.h>
 #include <qfileinfo.h>
+#include <qpointer.h>
 #include <qwebengineprofile.h>
 
 // MPROF02: the per-persona app singletons.  Two registry profiles must
@@ -68,6 +72,13 @@ private slots:
     void secureStoreIsolation();
     void siteDecisionIsolation();
     void offTheRecordVolatile();
+
+    // MEM10: deleting a persona releases its live world.
+    void releasePersonaDestroysManagers();
+    void releasePersonaChurn();
+    void releasePersonaRefusesUnsafe();
+    void deleteProfileReleasesPersona();
+    void offTheRecordRelease();
 };
 
 static const QString kAlpha = QStringLiteral("alpha");
@@ -428,6 +439,128 @@ void tst_ProfileManagers::offTheRecordVolatile()
     // A private jar reports private and never persists policy.
     CookieJar *jar = CookieJar::instance(otr);
     QVERIFY(jar->isPrivate());
+}
+
+void tst_ProfileManagers::releasePersonaDestroysManagers()
+{
+    // Materialize a persona's whole live world, then release it —
+    // every instanceFor() map entry, the jar and the named engine
+    // profile die with it.
+    const QString id = QStringLiteral("release");
+    QPointer<QWebEngineProfile> profile = BrowserProfile::profileFor(id);
+    QVERIFY(profile);
+
+    QPointer<HistoryManager> history = HistoryManager::instanceFor(id);
+    QPointer<BookmarksManager> bookmarks =
+        BookmarksManager::instanceFor(id);
+    QPointer<AutoFillManager> autofill = AutoFillManager::instanceFor(id);
+    QPointer<AdBlockManager> adblock = AdBlockManager::instanceFor(id);
+    QPointer<ContainerManager> containers =
+        ContainerManager::instanceFor(id);
+    QPointer<ExtensionManager> extensions =
+        ExtensionManager::instanceFor(id);
+    QPointer<DownloadManager> downloads =
+        DownloadManager::instanceFor(id);
+    QPointer<NotesModel> notes = NotesModel::instanceFor(id);
+    QPointer<ProfileIdentity> identity = ProfileIdentity::instanceFor(id);
+    QPointer<CookieJar> jar = CookieJar::instanceFor(id);
+    QVERIFY(history && bookmarks && autofill && adblock && containers
+            && extensions && downloads && notes && identity && jar);
+
+    QVERIFY(BrowserProfile::releasePersona(id));
+
+    QVERIFY(!profile);
+    QVERIFY(!history);
+    QVERIFY(!bookmarks);
+    QVERIFY(!autofill);
+    QVERIFY(!adblock);
+    QVERIFY(!containers);
+    QVERIFY(!extensions);
+    QVERIFY(!downloads);
+    QVERIFY(!notes);
+    QVERIFY(!identity);
+    QVERIFY(!jar);
+    QVERIFY(!BrowserProfile::personaProfileIfCreated(id));
+
+    // Re-materializing the persona builds a fresh generation — the
+    // released objects are never revived or aliased.
+    QVERIFY(BrowserProfile::profileFor(id));
+    QVERIFY(HistoryManager::instanceFor(id) != history.data());
+    QVERIFY(BrowserProfile::releasePersona(id));
+}
+
+void tst_ProfileManagers::releasePersonaChurn()
+{
+    // Many personas materialized and released in sequence — every
+    // generation must die on release, and a second round on the same
+    // ids re-materializes fresh objects rather than reviving stale
+    // ones.
+    for (int round = 0; round < 2; ++round) {
+        QList<QPointer<ProfileIdentity>> generation;
+        for (int i = 0; i < 8; ++i) {
+            const QString id = QStringLiteral("churn%1").arg(i);
+            generation.append(ProfileIdentity::instanceFor(id));
+            QVERIFY(HistoryManager::instanceFor(id));
+        }
+        for (int i = 0; i < 8; ++i)
+            QVERIFY(BrowserProfile::releasePersona(
+                QStringLiteral("churn%1").arg(i)));
+        for (const QPointer<ProfileIdentity> &identity : generation)
+            QVERIFY(!identity);
+    }
+}
+
+void tst_ProfileManagers::releasePersonaRefusesUnsafe()
+{
+    // "default" is the app's own persona — its stores never release.
+    QPointer<HistoryManager> history =
+        HistoryManager::instanceFor(QStringLiteral("default"));
+    QVERIFY(history);
+    QVERIFY(!BrowserProfile::releasePersona(QStringLiteral("default")));
+    QVERIFY(history);
+    // Non-slug ids are refused outright — no path through.
+    QVERIFY(!BrowserProfile::releasePersona(QString()));
+    QVERIFY(!BrowserProfile::releasePersona(
+        QStringLiteral("../escape")));
+    // A persona that was never materialized is a no-op success.
+    QVERIFY(BrowserProfile::releasePersona(
+        QStringLiteral("neverexisted")));
+}
+
+void tst_ProfileManagers::deleteProfileReleasesPersona()
+{
+    // The MPROF02 contract end to end: ProfileStore::deleteProfile
+    // releases the persona's live objects before the dir goes away.
+    ProfileStore *store = ProfileStore::instance();
+    const ProfileContext context =
+        store->createProfile(QStringLiteral("MEM10 Delete"));
+    QVERIFY(context.isValid());
+    const QString id = context.id;
+
+    QPointer<HistoryManager> history = HistoryManager::instanceFor(id);
+    QPointer<ProfileIdentity> identity = ProfileIdentity::instanceFor(id);
+    QVERIFY(history && identity);
+
+    QVERIFY(store->deleteProfile(id));
+    QVERIFY(!history);
+    QVERIFY(!identity);
+    // The MPROF01 registry stopped resolving the deleted persona.
+    QVERIFY(!ProfileRegistry::instance()->profile(id).isValid());
+}
+
+void tst_ProfileManagers::offTheRecordRelease()
+{
+    // A short-lived OTR profile: its volatile notes model and its jar
+    // must die with it — nothing may linger keyed on the dead address
+    // to alias a recycled profile object.
+    QWebEngineProfile *otr = new QWebEngineProfile;
+    QPointer<NotesModel> notes = NotesModel::instance(otr);
+    QPointer<CookieJar> jar = CookieJar::instance(otr);
+    QVERIFY(notes && jar);
+    QVERIFY(jar->isPrivate());
+    delete otr;
+    QVERIFY(!notes);
+    QVERIFY(!jar);
 }
 
 QTEST_MAIN(tst_ProfileManagers)

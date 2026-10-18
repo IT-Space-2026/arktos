@@ -177,15 +177,29 @@ static QString s_boundProfileId;
 static QPointer<BookmarksManager> s_boundManager;
 #endif
 
+static QHash<QString, QPointer<BookmarksManager>> &bookmarksManagers()
+{
+    static QHash<QString, QPointer<BookmarksManager>> managers;
+    return managers;
+}
+
 BookmarksManager *BookmarksManager::instanceFor(const QString &profileId)
 {
     const QString id = BrowserPaths::isProfileId(profileId)
             ? profileId : BrowserPaths::activeProfileId();
-    static QHash<QString, QPointer<BookmarksManager>> managers;
-    QPointer<BookmarksManager> &manager = managers[id];
+    QPointer<BookmarksManager> &manager = bookmarksManagers()[id];
     if (!manager)
         manager = new BookmarksManager(qApp, id);
     return manager;
+}
+
+void BookmarksManager::releaseFor(const QString &profileId)
+{
+    // Strict id check — no ambient-persona aliasing; releasing the
+    // wrong persona's store is worse than leaking it.
+    if (!BrowserPaths::isProfileId(profileId))
+        return;
+    delete bookmarksManagers().take(profileId);
 }
 
 BookmarksManager::~BookmarksManager()

@@ -21,10 +21,22 @@
 #include "profilesettings.h"
 
 #include "acceptlanguagedialog.h"
+#include "adblockmanager.h"
+#include "autofillmanager.h"
+#include "bookmarksmanager.h"
 #include "browserapplication.h"
+#include "browsermainwindow.h"
 #include "browserpaths.h"
+#include "containermanager.h"
+#include "cookiejar.h"
+#include "downloadmanager.h"
+#include "extensionmanager.h"
 #include "fingerprintprotector.h"
+#include "historymanager.h"
+#include "notesmodel.h"
 #include "privacyrequestinterceptor.h"
+#include "profileidentity.h"
+#include "securestore.h"
 
 #include <qapplication.h>
 #include <qdebug.h>
@@ -195,6 +207,53 @@ QWebEngineProfile *profileFor(const QString &profileId)
 QList<QWebEngineProfile *> createdPersonaProfiles()
 {
     return s_personaProfiles.values();
+}
+
+QWebEngineProfile *personaProfileIfCreated(const QString &profileId)
+{
+    if (!BrowserPaths::isProfileId(profileId)
+            || profileId == QLatin1String("default"))
+        return nullptr;
+    return s_personaProfiles.value(profileId);
+}
+
+bool releasePersona(const QString &profileId)
+{
+    if (!BrowserPaths::isProfileId(profileId)
+            || profileId == QLatin1String("default"))
+        return false;
+    const QString id = profileId;
+    // A persona with live windows keeps its world — its pages,
+    // containers and stores still resolve through these instances.
+    if (BrowserApplication *app = BrowserApplication::instance()) {
+        const QList<BrowserMainWindow *> windows = app->mainWindows();
+        for (BrowserMainWindow *window : windows) {
+            if (window && window->profileId() == id)
+                return false;
+        }
+    }
+    // Jars first: ~CookieJar touches the profile's cookie store, so
+    // they must die while their profiles are still alive.  Covers the
+    // named profile's jar and every materialized container's.
+    CookieJar::releaseFor(id);
+    // The per-persona instance maps.  ContainerManager's release also
+    // destroys the qApp-owned container profiles it materialized.
+    HistoryManager::releaseFor(id);
+    BookmarksManager::releaseFor(id);
+    AutoFillManager::releaseFor(id);
+    AdBlockManager::releaseFor(id);
+    ContainerManager::releaseFor(id);
+    ExtensionManager::releaseFor(id);
+    DownloadManager::releaseFor(id);
+    NotesModel::releaseFor(id);
+    ProfileIdentity::releaseFor(id);
+    // Custody hygiene: a dead persona's unlocked SecureStore key must
+    // not outlive it.
+    SecureStore::lock(id);
+    // The engine profile last — its destruction tears down the
+    // interceptor, scheme handlers and stores attached to it.
+    delete s_personaProfiles.take(id);
+    return true;
 }
 
 QString profileIdFor(QWebEngineProfile *profile)

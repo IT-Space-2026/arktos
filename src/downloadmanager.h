@@ -282,6 +282,9 @@ public:
     // and policy persist under profiles/<id>/; instance() aliases the
     // active profile.  Repeat calls for one id return the same object.
     static DownloadManager *instanceFor(const QString &profileId);
+    // MEM10: destroys the persona's instance if one was created —
+    // called by BrowserProfile::releasePersona on profile delete.
+    static void releaseFor(const QString &profileId);
     QString profileId() const { return m_profileId; }
 
     int activeDownloads() const;

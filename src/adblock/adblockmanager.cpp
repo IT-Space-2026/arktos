@@ -86,15 +86,29 @@ AdBlockManager *AdBlockManager::instance()
     return instanceFor(BrowserPaths::activeProfileId());
 }
 
+static QHash<QString, QPointer<AdBlockManager>> &adBlockManagers()
+{
+    static QHash<QString, QPointer<AdBlockManager>> managers;
+    return managers;
+}
+
 AdBlockManager *AdBlockManager::instanceFor(const QString &profileId)
 {
     const QString id = BrowserPaths::isProfileId(profileId)
             ? profileId : BrowserPaths::activeProfileId();
-    static QHash<QString, QPointer<AdBlockManager>> managers;
-    QPointer<AdBlockManager> &manager = managers[id];
+    QPointer<AdBlockManager> &manager = adBlockManagers()[id];
     if (!manager)
         manager = new AdBlockManager(qApp, id);
     return manager;
+}
+
+void AdBlockManager::releaseFor(const QString &profileId)
+{
+    // Strict id check — no ambient-persona aliasing; releasing the
+    // wrong persona's store is worse than leaking it.
+    if (!BrowserPaths::isProfileId(profileId))
+        return;
+    delete adBlockManagers().take(profileId);
 }
 
 bool AdBlockManager::isEnabled() const

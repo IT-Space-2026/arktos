@@ -65,6 +65,7 @@ private slots:
     void lockRefusesOpenWindows();
     void relockUsesCachedPassword();
     void autoLockShutdownSeals();
+    void churnCycles();
 };
 
 static const QLatin1String kId("pvaulttest");
@@ -451,6 +452,47 @@ void tst_VaultEngine::autoLockShutdownSeals()
     QCOMPARE(vault->state(kId), ProfileVault::Unlocked);
     QVERIFY(vault->dirtyProfiles().isEmpty());
     QVERIFY(QFile::exists(profileDir() + QLatin1String("/a/one.txt")));
+}
+
+void tst_VaultEngine::churnCycles()
+{
+    // MEM10: repeated seal → unseal → dirty-reseal churn over the same
+    // persona.  Every cycle must reach the same states, custody must
+    // drop (and zeroize) at lock and land again at unseal, and no
+    // staging residue may survive a cycle — the leak legs count on
+    // this path being allocation-clean.
+    ProfileVault *vault = ProfileVault::instance();
+    for (int i = 0; i < 3; ++i) {
+        seedTree();
+        const QVariantMap before = snapshot(profileDir());
+        QCOMPARE(vault->seal(kId, QByteArray("churnpw")),
+                 ProfileVault::NoError);
+        QCOMPARE(vault->state(kId), ProfileVault::Locked);
+        QVERIFY(vault->sessionPassword(kId).isEmpty()); // custody dropped
+        QCOMPARE(vault->unseal(kId, QByteArray("churnpw")),
+                 ProfileVault::NoError);
+        QCOMPARE(snapshot(profileDir()), before);
+        QCOMPARE(vault->state(kId), ProfileVault::DirtyUnlocked);
+        QVERIFY(!vault->sessionPassword(kId).isEmpty()); // custody held
+        // Dirty re-seal through the cached-custody lock path.
+        QCOMPARE(vault->lockProfile(kId), ProfileVault::NoError);
+        QCOMPARE(vault->state(kId), ProfileVault::Locked);
+        QVERIFY(vault->sessionPassword(kId).isEmpty());
+        // The parked-plaintext staging dir is consumed by the
+        // restore — it must never survive a cycle.
+        QVERIFY(!QFile::exists(vaultFile(QLatin1String("pre-unlock"))));
+        // Final unseal: the excluded-tree holds are restored too —
+        // nothing staged or held may linger once fully unlocked.
+        QCOMPARE(vault->unseal(kId, QByteArray("churnpw")),
+                 ProfileVault::NoError);
+        QVERIFY(!QFile::exists(vaultFile(QLatin1String("cache-hold"))));
+        QVERIFY(!QFile::exists(
+            vaultFile(QLatin1String("profiles-hold"))));
+        QVERIFY(!QFile::exists(vaultFile(QLatin1String("pre-unlock"))));
+        // Clean slate for the next round.
+        QDir(profileDir()).removeRecursively();
+        QDir(vaultDir()).removeRecursively();
+    }
 }
 
 QTEST_MAIN(tst_VaultEngine)

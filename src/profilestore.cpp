@@ -20,7 +20,9 @@
 #include "profilestore.h"
 
 #include "browserpaths.h"
+#include "browserprofile.h"
 #include "profileidentity.h"
+#include "profileregistry.h"
 #include "profilevault.h"
 
 #include <qcoreapplication.h>
@@ -400,6 +402,15 @@ bool ProfileStore::deleteProfile(const QString &id)
         // dir removal below proceeds either way, an orphaned vault
         // dir is ciphertext-only residue.
         ProfileVault::instance()->wipeVault(id);
+        // MEM10: the persona's live objects die with it — every
+        // instanceFor() map, the cookie jars and the named engine
+        // profile (MPROF02's destroy-on-delete contract).  Runs
+        // before the dir removal so the managers' final flushes land
+        // inside the tree that is about to be removed rather than
+        // recreating it.  releasePersona() refuses while a window is
+        // still bound to the id; the removal below then proceeds with
+        // the instances still attached, as it always did.
+        BrowserProfile::releasePersona(id);
         if (QFile::exists(dir) && !QDir(dir).removeRecursively())
             return false;
         const ProfileContext removed = m_profiles.at(i);
@@ -408,6 +419,9 @@ bool ProfileStore::deleteProfile(const QString &id)
             m_profiles.insert(i, removed);
             return false;
         }
+        // The MPROF01 registry shares this file — drop its stale row
+        // before anything resolves the deleted persona through it.
+        ProfileRegistry::instance()->reload();
         emit profilesChanged();
         return true;
     }

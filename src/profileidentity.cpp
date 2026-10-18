@@ -76,16 +76,30 @@ ProfileIdentity *ProfileIdentity::instance()
     return instanceFor(BrowserPaths::activeProfileId());
 }
 
+static QHash<QString, ProfileIdentity *> &profileIdentities()
+{
+    static QHash<QString, ProfileIdentity *> identities;
+    return identities;
+}
+
 ProfileIdentity *ProfileIdentity::instanceFor(const QString &profileId)
 {
     QString id = profileId;
     if (!BrowserPaths::isProfileId(id))
         id = ProfileRegistry::defaultProfileId();
-    static QHash<QString, ProfileIdentity *> identities;
-    ProfileIdentity *&identity = identities[id];
+    ProfileIdentity *&identity = profileIdentities()[id];
     if (!identity)
         identity = new ProfileIdentity(id, qApp);
     return identity;
+}
+
+void ProfileIdentity::releaseFor(const QString &profileId)
+{
+    // Strict id check — no default-persona aliasing; releasing the
+    // wrong persona's identity is worse than leaking it.
+    if (!BrowserPaths::isProfileId(profileId))
+        return;
+    delete profileIdentities().take(profileId);
 }
 
 QString ProfileIdentity::profileId() const

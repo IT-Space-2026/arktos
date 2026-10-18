@@ -56,12 +56,15 @@ NotesModel *NotesModel::instance(QWebEngineProfile *profile)
     if (profile->isOffTheRecord()) {
         // Volatile per-profile-object store — nothing reaches disk.
         // Parented to the profile so the QPointer expires with it
-        // instead of aliasing an address-reused profile object.
+        // instead of aliasing an address-reused profile object; the
+        // hash row goes with it too so OTR churn cannot grow the map.
         static QHash<QWebEngineProfile *, QPointer<NotesModel>> models;
         NotesModel *model = models.value(profile);
         if (!model) {
             model = new NotesModel(QString(), profile);
             models.insert(profile, model);
+            QObject::connect(profile, &QObject::destroyed, profile,
+                             [profile]() { models.remove(profile); });
         }
         return model;
     }
@@ -70,11 +73,17 @@ NotesModel *NotesModel::instance(QWebEngineProfile *profile)
     return instanceFor(BrowserProfile::profileIdFor(profile));
 }
 
+static QHash<QString, QPointer<NotesModel>> &notesModels()
+{
+    static QHash<QString, QPointer<NotesModel>> models;
+    return models;
+}
+
 NotesModel *NotesModel::instanceFor(const QString &profileId)
 {
     const QString id = BrowserPaths::isProfileId(profileId)
         ? profileId : BrowserPaths::activeProfileId();
-    static QHash<QString, QPointer<NotesModel>> models;
+    QHash<QString, QPointer<NotesModel>> &models = notesModels();
     NotesModel *model = models.value(id);
     if (model)
         return model;
@@ -111,6 +120,16 @@ NotesModel *NotesModel::instanceFor(const QString &profileId)
     migrateLegacyScratch(model, id);
     models.insert(id, model);
     return model;
+}
+
+void NotesModel::releaseFor(const QString &profileId)
+{
+    // Strict id check — no ambient-persona aliasing; releasing the
+    // wrong persona's store is worse than leaking it.
+    if (!BrowserPaths::isProfileId(profileId))
+        return;
+    if (NotesModel *model = notesModels().take(profileId))
+        delete model;
 }
 
 void NotesModel::migrateLegacyScratch(NotesModel *model,

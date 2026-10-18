@@ -73,6 +73,20 @@ QWebEngineProfile *privateProfileIfCreated();
 // without materializing the profile on normal runs.
 QWebEngineProfile *torProfileIfCreated();
 
+// The persona's named profile only if profileFor() already
+// materialized it — nullptr otherwise; never creates.
+QWebEngineProfile *personaProfileIfCreated(const QString &profileId);
+
+// MEM10: tears down everything still keyed to a deleted persona —
+// every per-profile instanceFor() map (history, bookmarks, autofill,
+// adblock, containers, extensions, downloads, notes), the
+// ProfileIdentity, the cookie jars and this namespace's named
+// QWebEngineProfile.  Refuses (false) for "default" — the app's own
+// stores never release — for a non-slug id, and while any window is
+// still bound to the persona: live pages keep their world.  A
+// persona that was never materialized is a no-op success (true).
+bool releasePersona(const QString &profileId);
+
 // MPROF02: the registry profile a QWebEngineProfile belongs to — the
 // key every per-profile app singleton (HistoryManager::
 // instanceFor(id) & friends) resolves a page's profile through.

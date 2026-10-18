@@ -25,7 +25,9 @@
 #include <browsermainwindow.h>
 #include <browserpaths.h>
 #include <browserprofile.h>
+#include <cookiejar.h>
 #include <historymanager.h>
+#include <notesmodel.h>
 #include <profileregistry.h>
 #include <profilesettings.h>
 #include <tabwidget.h>
@@ -36,6 +38,7 @@
 #include <qjsonarray.h>
 #include <qjsondocument.h>
 #include <qjsonobject.h>
+#include <qpointer.h>
 #include <qrandom.h>
 #include <qsignalspy.h>
 #include <qtemporaryfile.h>
@@ -67,6 +70,10 @@ private slots:
     void privateWindowSharesOtrAndWritesNothing();
     void sessionRoundTripKeepsBindings();
     void deletedProfileFallsBackOnRestore();
+
+    // MEM10: the create → window → close → delete lifecycle leg.
+    void releaseRefusesOpenWindowThenSucceeds();
+    void privateWindowTeardownKeepsSharedOtr();
 
 private:
     void writeRegistry(const QStringList &ids);
@@ -426,6 +433,74 @@ void tst_ProfileWindow::deletedProfileFallsBackOnRestore()
 
     // Leave the registry the way the other legs expect it.
     writeRegistry(QStringList() << kDefault << kAlpha << kBeta);
+    closeAllWindows();
+}
+
+void tst_ProfileWindow::releaseRefusesOpenWindowThenSucceeds()
+{
+    // MEM10 lifecycle leg: create the persona, open a window on it,
+    // prove release refuses while the window lives, then close the
+    // window and watch the persona's whole live world die.
+    BrowserApplication *app = BrowserApplication::instance();
+    const QString id = QStringLiteral("doomed");
+    writeRegistry(QStringList() << kDefault << kAlpha << kBeta << id);
+
+    QPointer<QWebEngineProfile> profile = BrowserProfile::profileFor(id);
+    QPointer<HistoryManager> history = HistoryManager::instanceFor(id);
+    QVERIFY(profile && history);
+
+    BrowserMainWindow *window = app->newMainWindow(id);
+    QCOMPARE(window->profileId(), id);
+
+    // A persona with a live window keeps its world — release refuses.
+    QVERIFY(!BrowserProfile::releasePersona(id));
+    QVERIFY(profile && history);
+
+    QPointer<BrowserMainWindow> guard = window;
+    window->close();
+    QCoreApplication::processEvents();
+    QVERIFY(!guard);
+
+    // With the window gone the persona's world releases cleanly.
+    QVERIFY(BrowserProfile::releasePersona(id));
+    QVERIFY(!profile);
+    QVERIFY(!history);
+    QVERIFY(!BrowserProfile::personaProfileIfCreated(id));
+
+    // Leave the registry the way the other legs expect it.
+    writeRegistry(QStringList() << kDefault << kAlpha << kBeta);
+    closeAllWindows();
+}
+
+void tst_ProfileWindow::privateWindowTeardownKeepsSharedOtr()
+{
+    // Private windows ride the shared OTR overlay — closing one must
+    // leave that overlay (and its per-object stores) alive for the
+    // next private window, and touch nothing persistent.
+    BrowserApplication *app = BrowserApplication::instance();
+    BrowserApplication::setPrivate(true);
+
+    QPointer<QWebEngineProfile> otr = BrowserProfile::privateProfile();
+    QPointer<NotesModel> notes = NotesModel::instance(otr);
+    QPointer<CookieJar> jar = CookieJar::instance(otr);
+    QVERIFY(otr && notes && jar);
+
+    BrowserMainWindow *window = app->newMainWindow(kAlpha);
+    QCOMPARE(window->profileId(), kAlpha);
+    QCOMPARE(window->currentTab()->webPage()->profile(), otr.data());
+
+    QPointer<BrowserMainWindow> guard = window;
+    window->close();
+    QCoreApplication::processEvents();
+    QVERIFY(!guard);
+
+    // The overlay outlives the window — only the window died.
+    QVERIFY(otr);
+    QVERIFY(notes);
+    QVERIFY(jar);
+    QCOMPARE(BrowserProfile::privateProfile(), otr.data());
+
+    BrowserApplication::setPrivate(false);
     closeAllWindows();
 }
 

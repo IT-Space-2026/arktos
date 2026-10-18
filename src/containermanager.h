@@ -77,6 +77,15 @@ public:
     // rules and <profile dir>/containers/<id> storage roots are all
     // scoped to that profile.
     static ContainerManager *instanceFor(const QString &profileId);
+    // The existing instance without materializing one — nullptr when
+    // the persona's manager was never touched (then no container
+    // profiles exist either).
+    static ContainerManager *instanceIfCreated(const QString &profileId);
+    // MEM10: destroys the persona's instance AND its materialized
+    // container profiles — called by BrowserProfile::releasePersona
+    // on profile delete; same no-live-pages contract as
+    // releaseProfileFor().
+    static void releaseFor(const QString &profileId);
     QString profileId() const { return m_profileId; }
 
     // The default (unlabeled) container's id.  Everything that is not

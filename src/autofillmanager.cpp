@@ -114,15 +114,29 @@ AutoFillManager *AutoFillManager::instance()
     return instanceFor(BrowserPaths::activeProfileId());
 }
 
+static QHash<QString, QPointer<AutoFillManager>> &autoFillManagers()
+{
+    static QHash<QString, QPointer<AutoFillManager>> managers;
+    return managers;
+}
+
 AutoFillManager *AutoFillManager::instanceFor(const QString &profileId)
 {
     const QString id = BrowserPaths::isProfileId(profileId)
             ? profileId : BrowserPaths::activeProfileId();
-    static QHash<QString, QPointer<AutoFillManager>> managers;
-    QPointer<AutoFillManager> &manager = managers[id];
+    QPointer<AutoFillManager> &manager = autoFillManagers()[id];
     if (!manager)
         manager = new AutoFillManager(qApp, id);
     return manager;
+}
+
+void AutoFillManager::releaseFor(const QString &profileId)
+{
+    // Strict id check — no ambient-persona aliasing; releasing the
+    // wrong persona's store is worse than leaking it.
+    if (!BrowserPaths::isProfileId(profileId))
+        return;
+    delete autoFillManagers().take(profileId);
 }
 
 AutoFillManager::AutoFillManager(QObject *parent,

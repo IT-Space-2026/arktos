@@ -64,6 +64,9 @@ public:
     // re-loads the new profile's — the file is the source of truth,
     // memory a bound cache.
     static BookmarksManager *instanceFor(const QString &profileId);
+    // MEM10: destroys the persona's instance if one was created —
+    // called by BrowserProfile::releasePersona on profile delete.
+    static void releaseFor(const QString &profileId);
     QString profileId() const { return m_profileId; }
 
     void addBookmark(BookmarkNode *parent, BookmarkNode *node, int row = -1);
