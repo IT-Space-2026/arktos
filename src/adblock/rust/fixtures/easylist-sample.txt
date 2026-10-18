@@ -1,0 +1,33 @@
+[Adblock Plus 2.0]
+! Title: WKB01 content-blocker converter fixture
+! Covers every conversion class plus every drop class.
+
+||ads.example^
+||track.example/pixel.gif$image
+||scripts.example^$script,third-party
+||cdn.example^$domain=foo.com|bar.com
+||neg.example^$domain=~spam.example
+||mix.example^$domain=foo.com|~bar.example
+
+@@||ads.example/ok.js^$script
+@@||page.example^$document
+
+##.ad-banner
+example.com##.sponsored
+~mobile.example###top-ad
+example.com#@#.ad-exempt
+
+||redir.example/vast.xml$redirect=noop-vast
+||csp.example^$csp=script-src 'none'
+||param.example^$removeparam=utm_source
+/ads[0-9]+\.js/
+example.com##+js(set-constant)
+example.com##.x:style(color:red)
+example.com##.offer:has-text(buy)
+example.com#$#body{border:0}
+
+||disabled.example^
+||disabled.example^$badfilter
+
+# a cosmetic-style comment
+x

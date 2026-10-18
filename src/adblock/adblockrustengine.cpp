@@ -53,6 +53,8 @@ ArktosCheckResult arktos_adblock_engine_check(const ArktosAdBlockEngine *engine,
                                             const char *request_type);
 char *arktos_adblock_engine_cosmetic(const ArktosAdBlockEngine *engine,
                                     const char *url);
+char *arktos_adblock_contentblocker_convert(const char *rules,
+                                            size_t rules_len);
 void arktos_adblock_engine_free(ArktosAdBlockEngine *engine);
 void arktos_adblock_string_free(char *s);
 }
@@ -176,6 +178,19 @@ AdBlockDecision AdBlockRustEngine::check(const QUrl &url,
     arktos_adblock_string_free(result.redirect_url);
     arktos_adblock_string_free(result.rewritten_url);
     return decision;
+}
+
+QByteArray AdBlockRustEngine::contentBlockerJson(const QByteArray &ruleText)
+{
+    if (ruleText.isEmpty())
+        return QByteArray();
+    char *doc = arktos_adblock_contentblocker_convert(
+        ruleText.constData(), size_t(ruleText.size()));
+    if (!doc)
+        return QByteArray();
+    const QByteArray out(doc);
+    arktos_adblock_string_free(doc);
+    return out;
 }
 
 QJsonObject AdBlockRustEngine::cosmetic(const QUrl &documentUrl) const

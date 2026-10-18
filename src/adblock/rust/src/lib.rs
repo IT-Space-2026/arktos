@@ -17,6 +17,8 @@ use std::os::raw::c_char;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
 
+mod contentblocker;
+
 use adblock::request::Request;
 use adblock::resources::{MimeType, Resource, ResourceType};
 use adblock::Engine;
@@ -61,7 +63,7 @@ unsafe fn cstr_to_string<'a>(ptr: *const c_char) -> Option<&'a str> {
     unsafe { CStr::from_ptr(ptr) }.to_str().ok()
 }
 
-fn to_c_string(s: String) -> *mut c_char {
+pub(crate) fn to_c_string(s: String) -> *mut c_char {
     CString::new(s).map_or(ptr::null_mut(), |c| c.into_raw())
 }
 

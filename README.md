@@ -361,6 +361,11 @@ browsing profile:
   → Privacy → Content Blocking lets you switch between Brave
   adblock-rust and the built-in matcher at runtime (no restart);
   builds without the engine behave exactly like the built-in matcher.
+  The crate can also export a rule set as a Safari-format
+  content-blocker JSON document (`AdBlockRustEngine::contentBlockerJson`)
+  — the format WebKit's `WebKitUserContentFilterStore` consumes —
+  with an explicit per-rule drop channel for constructs Safari
+  cannot express.
 - **Subscription-centric UI** — preset filter-list catalog, per-list
   enable/update, custom rules editor, toolbar blocker button with
   per-page counts and per-site toggle.

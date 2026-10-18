@@ -14,6 +14,7 @@ SUBDIRS  = \
     browsermainwindow \
     certerror \
     clearplan \
+    contentblocker \
     cookiejar \
     cookiemodel \
     containermanager \
