@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -46,8 +46,8 @@ static BookmarkNode *sampleTree()
     bar->expanded = true;
 
     BookmarkNode *link = new BookmarkNode(BookmarkNode::Bookmark, bar);
-    link->title = QLatin1String("Arora");
-    link->url = QLatin1String("https://arora.example.com/?a=b&c=d");
+    link->title = QLatin1String("Arktos");
+    link->url = QLatin1String("https://arktos.example.com/?a=b&c=d");
 
     new BookmarkNode(BookmarkNode::Separator, bar);
 
@@ -96,7 +96,7 @@ void tst_HtmlBookmarks::outputShape()
     // Only the toolbar folder gets the marker; News stays a plain folder.
     QVERIFY(!html.contains(QLatin1String("PERSONAL_TOOLBAR_FOLDER=\"true\">News</H3>")));
     QVERIFY(html.contains(QLatin1String("PERSONAL_TOOLBAR_FOLDER=\"true\">Bookmarks Bar</H3>")));
-    QVERIFY(html.contains(QLatin1String("<DT><A HREF=\"https://arora.example.com/?a=b&amp;c=d\">Arora</A>")));
+    QVERIFY(html.contains(QLatin1String("<DT><A HREF=\"https://arktos.example.com/?a=b&amp;c=d\">Arktos</A>")));
     QVERIFY(html.contains(QLatin1String("<HR>")));
     QVERIFY(html.contains(QLatin1String("<DT><H3 FOLDED>News</H3>")));
     QVERIFY(html.contains(QLatin1String("<DT><A HREF=\"http://docs.example.com/\">Docs &lt;&amp;&gt; &quot;here&quot;</A>")));
@@ -136,8 +136,8 @@ void tst_HtmlBookmarks::roundTrip()
     QCOMPARE(bar->title, QLatin1String("Bookmarks Bar"));
     QCOMPARE(bar->children().count(), 3);
     QCOMPARE(bar->children().at(0)->type(), BookmarkNode::Bookmark);
-    QCOMPARE(bar->children().at(0)->title, QLatin1String("Arora"));
-    QCOMPARE(bar->children().at(0)->url, QLatin1String("https://arora.example.com/?a=b&c=d"));
+    QCOMPARE(bar->children().at(0)->title, QLatin1String("Arktos"));
+    QCOMPARE(bar->children().at(0)->url, QLatin1String("https://arktos.example.com/?a=b&c=d"));
     QCOMPARE(bar->children().at(1)->type(), BookmarkNode::Separator);
     BookmarkNode *sub = bar->children().at(2);
     QCOMPARE(sub->type(), BookmarkNode::Folder);

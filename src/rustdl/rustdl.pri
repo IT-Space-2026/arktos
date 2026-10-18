@@ -1,6 +1,6 @@
 # Accelerated download engine (DLACC03/DLACC06, default-on per
 # RDEF01): the segmented HTTP(S) fetcher lives in $$PWD (crate
-# "arora-rustdl") behind the C ABI in include/rustdl.h, consumed by
+# "arktos-rustdl") behind the C ABI in include/rustdl.h, consumed by
 # src/rustdownloadengine.{h,cpp} which maps a handle onto the
 # existing download-manager card UI.
 #
@@ -20,10 +20,10 @@
 # `cargo deny` policy lives in $$PWD/deny.toml.
 
 rustdl:!no-rust {
-    CARGO = $$ARORA_CARGO
+    CARGO = $$ARKTOS_CARGO
     isEmpty(CARGO): CARGO = cargo
-    win32: RUSTDL_LIB = $$PWD/target/release/arora_rustdl.lib
-    else:  RUSTDL_LIB = $$PWD/target/release/libarora_rustdl.a
+    win32: RUSTDL_LIB = $$PWD/target/release/arktos_rustdl.lib
+    else:  RUSTDL_LIB = $$PWD/target/release/libarktos_rustdl.a
 
     cargo_rustdl.target = $$RUSTDL_LIB
     # Scrub the parent build system's flag env vars: make re-exports
@@ -33,6 +33,7 @@ rustdl:!no-rust {
     # Cargo/rustc do not consume those vars anyway.
     unix: cargo_rustdl.commands = cd $$PWD && \
         env -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS \
+        MACOSX_DEPLOYMENT_TARGET=$$QMAKE_MACOSX_DEPLOYMENT_TARGET \
         $$CARGO build --release
     win32: cargo_rustdl.commands = cd $$PWD && $$CARGO build --release
     cargo_rustdl.depends = $$PWD/Cargo.toml $$PWD/Cargo.lock \
@@ -40,7 +41,7 @@ rustdl:!no-rust {
     QMAKE_EXTRA_TARGETS += cargo_rustdl
     PRE_TARGETDEPS += $$RUSTDL_LIB
 
-    DEFINES += ARORA_RUSTDL
+    DEFINES += ARKTOS_RUSTDL
     INCLUDEPATH += $$PWD/include
     DEPENDPATH += $$PWD/include
     HEADERS += $$PWD/include/rustdl.h \
@@ -50,5 +51,6 @@ rustdl:!no-rust {
         $$PWD/../downloadworker.cpp
     LIBS += $$RUSTDL_LIB
     unix: LIBS += -ldl -lpthread -lm
+    win32: LIBS += -ladvapi32 -lbcrypt -lntdll -luserenv -lws2_32
     macx: LIBS += -framework Security -framework CoreFoundation
 }

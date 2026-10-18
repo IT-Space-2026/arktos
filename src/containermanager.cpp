@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,13 +20,13 @@
 #include "containermanager.h"
 #include "profilesettings.h"
 
-#include "arorastyle.h"
+#include "arktosstyle.h"
 #include "browserapplication.h"
 #include "browserpaths.h"
 #include "browserprofile.h"
 #include "twoleveldomains_p.h"
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "sitedecisionstore.h"
 #endif
 
@@ -39,14 +39,19 @@
 #include <qlineedit.h>
 #include <qpainter.h>
 #include <qpixmap.h>
+#include <qpointer.h>
 #include <qsettings.h>
 #include <qstandardpaths.h>
 #include <qthread.h>
 #include <quuid.h>
 #include <qwebengineprofile.h>
+#include <qwebengineprofilebuilder.h>
 
-ContainerManager::ContainerManager(QObject *parent)
+ContainerManager::ContainerManager(QObject *parent,
+                                   const QString &profileId)
     : QObject(parent)
+    , m_profileId(BrowserPaths::isProfileId(profileId)
+                      ? profileId : BrowserPaths::activeProfileId())
 {
     loadRegistry();
 }
@@ -59,7 +64,17 @@ ContainerManager::~ContainerManager()
 
 ContainerManager *ContainerManager::instance()
 {
-    static ContainerManager *manager = new ContainerManager(qApp);
+    return instanceFor(BrowserPaths::activeProfileId());
+}
+
+ContainerManager *ContainerManager::instanceFor(const QString &profileId)
+{
+    const QString id = BrowserPaths::isProfileId(profileId)
+            ? profileId : BrowserPaths::activeProfileId();
+    static QHash<QString, QPointer<ContainerManager>> managers;
+    QPointer<ContainerManager> &manager = managers[id];
+    if (!manager)
+        manager = new ContainerManager(qApp, id);
     return manager;
 }
 
@@ -103,7 +118,7 @@ ContainerManager::Container ContainerManager::createContainer(
     m_containers.append(container);
     saveRegistry(container);
 
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     settings.beginGroup(QLatin1String("containers"));
     QStringList order = settings.value(QLatin1String("order")).toStringList();
     order.append(container.id);
@@ -179,10 +194,12 @@ bool ContainerManager::deleteContainer(const QString &id)
         else
             ++it;
     }
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // SITED01: the rules live in the Rust store now — the registry
-    // group removal no longer carries them away.
-    SiteDecisionStore::replace(SiteDecisionStore::KindContainer,
+    // group removal no longer carries them away.  MPROF02: the store
+    // is this profile's sitedecisions.json.
+    SiteDecisionStore::replace(m_profileId,
+                               SiteDecisionStore::KindContainer,
                                m_siteRules);
 #endif
 
@@ -238,12 +255,26 @@ QWebEngineProfile *ContainerManager::profileFor(const QString &id)
     QDir().mkpath(path);
 
     // A unique storage name keeps every derived default path —
-    // persistentStoragePath is overridden below but cachePath,
+    // persistentStoragePath and cachePath are overridden but
     // dictionaries and download state all key off the name — isolated
-    // per container and unable to collide with "arora".
+    // per container and unable to collide with "arktos".  Both paths
+    // ride the builder: the post-construction setPersistentStoragePath
+    // re-creates PrefService/ExtensionPrefs behind the already-built
+    // ExtensionRegistrar's back, and the next enableExtension()
+    // dereferences the dead object (upstream Qt bug, verified 6.12 —
+    // see BrowserProfile::newBoundEngineProfile).
+    QWebEngineProfileBuilder builder;
+    builder.setPersistentStoragePath(path);
+    // VSEC02: the cache sits under the owning persona's cache/ tree —
+    // sealed or held-aside with it like the persona's own engine
+    // cache (the vault's honest "cache" exclusion).
+    builder.setCachePath(cachePathFor(id));
     QWebEngineProfile *profile =
-        new QWebEngineProfile(storageNameFor(id), qApp);
-    profile->setPersistentStoragePath(path);
+        builder.createProfile(storageNameFor(id), qApp);
+    // App-side stores for pages on this container resolve to the
+    // OWNING persona's profile — the container isolates web state,
+    // not history/bookmarks/etc (MPROF02).
+    profile->setProperty("arktosProfileId", m_profileId);
     // Parity with normalProfile(): honor a deferred site-data wipe
     // sentinel left by a previous session before the storage services
     // open these trees (HARD01 — only safe before any WebContents).
@@ -285,21 +316,26 @@ QString ContainerManager::containerIdForProfile(QWebEngineProfile *profile) cons
 
 QString ContainerManager::storagePath(const QString &id) const
 {
-    return BrowserPaths::dataFilePath(QLatin1String("containers"))
+    return BrowserPaths::profileDataFilePath(
+        m_profileId, QLatin1String("containers"))
         + QLatin1Char('/') + id;
 }
 
-// Qt derives a named profile's default paths as
-// <writableLocation>/QtWebEngine/<storageName>; the container root
-// only overrides persistentStoragePath, so the http cache dir and the
-// residue default dir still follow this formula (verified against a
-// materialized profile's cachePath()).
+// VSEC02: the container's http cache lives under the OWNING
+// persona's cache/ tree — sealed aside with it on lock like the
+// persona's own engine cache (the vault's honest "cache" exclusion).
+// The pre-change location was <CacheLocation>/QtWebEngine/
+// <storageName>; the VSEC02 boot sweep removes those leftover dirs.
 QString ContainerManager::cachePathFor(const QString &id) const
 {
-    return QStandardPaths::writableLocation(QStandardPaths::CacheLocation)
-        + QLatin1String("/QtWebEngine/") + storageNameFor(id);
+    return BrowserPaths::profileDataFilePath(
+        m_profileId, QLatin1String("cache"))
+        + QLatin1String("/containers/") + id;
 }
 
+// Qt keys a residue default dir off the storage name even when the
+// real paths are overridden — <AppDataLocation>/QtWebEngine/
+// <storageName>.  Kept for deletion/wipe bookkeeping of that residue.
 QString ContainerManager::defaultDataPathFor(const QString &id) const
 {
     return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
@@ -359,10 +395,10 @@ void ContainerManager::releaseProfileFor(const QString &id)
 }
 
 // The container accent palette — the fixed identity family lives in
-// AroraStyle with the rest of the chrome colors.
+// ArktosStyle with the rest of the chrome colors.
 QList<QColor> ContainerManager::defaultColors()
 {
-    return AroraStyle::containerIdentityColors();
+    return ArktosStyle::containerIdentityColors();
 }
 
 QIcon ContainerManager::colorIcon(const QColor &color)
@@ -506,15 +542,17 @@ QString ContainerManager::containerIdForHost(const QString &host) const
 
 void ContainerManager::saveSiteRules(const QString &id) const
 {
-#if defined(ARORA_RUSTCORE)
-    // The hash mirror is authoritative — persist it whole.
+#if defined(ARKTOS_RUSTCORE)
+    // The hash mirror is authoritative — persist it whole into this
+    // profile's site-decision store (MPROF02).
     Q_UNUSED(id);
-    SiteDecisionStore::replace(SiteDecisionStore::KindContainer,
+    SiteDecisionStore::replace(m_profileId,
+                               SiteDecisionStore::KindContainer,
                                m_siteRules);
 #else
     if (!isContainerId(id))
         return;
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     settings.beginGroup(QLatin1String("containers"));
     settings.beginGroup(id);
     settings.setValue(QLatin1String("sites"), siteRules(id));
@@ -530,7 +568,7 @@ void ContainerManager::saveSiteRules(const QString &id) const
 // Ids are generated uuids, so they are always safe group names.
 void ContainerManager::loadRegistry()
 {
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     settings.beginGroup(QLatin1String("containers"));
     const QStringList order =
         settings.value(QLatin1String("order")).toStringList();
@@ -546,7 +584,7 @@ void ContainerManager::loadRegistry()
         container.id = id;
         container.name = settings.value(QLatin1String("name")).toString();
         container.color = settings.value(QLatin1String("color")).value<QColor>();
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
         // SITED01: one-shot import — replay the legacy per-container
         // "sites" list into the Rust store, then retire the key.  The
         // name/color registry itself stays in QSettings.
@@ -557,6 +595,7 @@ void ContainerManager::loadRegistry()
             const QString key = normalizeSiteHost(site);
             if (!key.isEmpty())
                 allWritten = SiteDecisionStore::set(
+                    m_profileId,
                     SiteDecisionStore::KindContainer,
                     key, id) && allWritten;
         }
@@ -574,12 +613,13 @@ void ContainerManager::loadRegistry()
         settings.endGroup();
         m_containers.append(container);
     }
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // Hydrate the hash mirror from the Rust store — dead ids (a rule
     // outliving its container) are kept but filtered at query time by
     // isContainerId, same as a stale legacy entry was.
     const QHash<QString, QString> rows =
-        SiteDecisionStore::entries(SiteDecisionStore::KindContainer);
+        SiteDecisionStore::entries(m_profileId,
+                                   SiteDecisionStore::KindContainer);
     for (auto it = rows.constBegin(); it != rows.constEnd(); ++it) {
         const QString key = normalizeSiteHost(it.key());
         if (!key.isEmpty() && !it.value().isEmpty())
@@ -596,7 +636,7 @@ void ContainerManager::loadRegistry()
 
 void ContainerManager::saveRegistry(const Container &container) const
 {
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     settings.beginGroup(QLatin1String("containers"));
     settings.beginGroup(container.id);
     settings.setValue(QLatin1String("name"), container.name);
@@ -605,7 +645,7 @@ void ContainerManager::saveRegistry(const Container &container) const
 
 void ContainerManager::removeRegistry(const QString &id) const
 {
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     settings.beginGroup(QLatin1String("containers"));
     settings.remove(id);
     QStringList order = settings.value(QLatin1String("order")).toStringList();
@@ -615,5 +655,10 @@ void ContainerManager::removeRegistry(const QString &id) const
 
 QString ContainerManager::storageNameFor(const QString &id) const
 {
-    return QLatin1String("arora-container-") + id;
+    // The owning profile rides the storage name so two personas can
+    // each register a container with the same id without colliding in
+    // Qt's derived dirs (MPROF02); the "arktos-container-" prefix keeps
+    // BrowserProfile::profileIdFor from mistaking it for a persona.
+    return QLatin1String("arktos-container-") + m_profileId
+        + QLatin1Char('-') + id;
 }

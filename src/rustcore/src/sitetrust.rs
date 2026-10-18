@@ -163,7 +163,7 @@ mod tests {
 
     fn temp_db(tag: &str) -> String {
         let dir = std::env::temp_dir().join(format!(
-            "arora-sitetrust-{}-{}-{}",
+            "arktos-sitetrust-{}-{}-{}",
             tag,
             std::process::id(),
             std::time::SystemTime::now()

@@ -65,13 +65,13 @@
 
 #include "adblockmanager.h"
 #include "addbookmarkdialog.h"
-#include "aroraicon.h"
-#include "arorastyle.h"
+#include "arktosicon.h"
 #include "bookmarknode.h"
 #include "bookmarksmanager.h"
 #include "bookmarksmodel.h"
 #include "browserapplication.h"
 #include "browsermainwindow.h"
+#include "browserprofile.h"
 #include "browsertheme.h"
 #include "containermanager.h"
 #include "downloadmanager.h"
@@ -99,11 +99,12 @@
 #include "webview.h"
 #include "webviewsearch.h"
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 #include <rustcore.h>
 #endif
 
 #include <qabstractproxymodel.h>
+#include <qapplication.h>
 #include <qcompleter.h>
 #include <qdatetime.h>
 #include <qdir.h>
@@ -184,11 +185,25 @@ TabWidget::TabWidget(QWidget *parent)
             this, &TabWidget::reopenTabInContainer);
     connect(m_tabBar, &TabBar::sleepTab, this, &TabWidget::sleepTab);
     connect(m_tabBar, &TabBar::wakeTab, this, &TabWidget::wakeTab);
+    connect(m_tabBar, &TabBar::freeTabMemory,
+            this, &TabWidget::freeTabMemory);
+    connect(m_tabBar, &TabBar::freeBackgroundTabsMemory,
+            this, &TabWidget::freeBackgroundTabsMemory);
     setTabBar(m_tabBar);
     m_tabBar->setAccessibleName(tr("Tabs"));
     setDocumentMode(true);
     connect(m_tabBar, &QTabBar::tabMoved,
             this, &TabWidget::moveTab);
+    // TABGRP03: group mutations change the leader's size hint (the
+    // labeled header segment's reserve) — QTabBar only re-plans its
+    // tab rects once a public setter trips the private layoutDirty
+    // flag, and a no-op setIconSize is the established nudge for it
+    // (the same trick setVerticalTabWidth/setTabWidths use).
+    connect(this, &TabWidget::tabGroupsChanged, this, [this]() {
+        m_tabBar->setIconSize(m_tabBar->iconSize());
+        m_tabBar->updateGeometry();
+        m_tabBar->update();
+    });
 
     // Actions
     m_newTabAction = new QAction(this);
@@ -199,7 +214,7 @@ TabWidget::TabWidget(QWidget *parent)
     m_closeTabAction->setShortcuts(QKeySequence::Close);
     // ICONS10: tab-close, not window-close — File > Close Tab and
     // Close Window shared the same glyph.
-    m_closeTabAction->setIcon(AroraIcon::getChrome(QLatin1String("tab-close")));
+    m_closeTabAction->setIcon(ArktosIcon::getChrome(QLatin1String("tab-close")));
 #if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
     m_closeTabAction->setIconVisibleInMenu(false);
 #endif
@@ -208,7 +223,7 @@ TabWidget::TabWidget(QWidget *parent)
     m_bookmarkTabsAction = new QAction(this);
     connect(m_bookmarkTabsAction, &QAction::triggered, this, &TabWidget::bookmarkTabs);
 
-    m_newTabAction->setIcon(AroraIcon::getChrome(QLatin1String("tab-new")));
+    m_newTabAction->setIcon(ArktosIcon::getChrome(QLatin1String("tab-new")));
 #if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
     m_newTabAction->setIconVisibleInMenu(false);
 #endif
@@ -219,8 +234,8 @@ TabWidget::TabWidget(QWidget *parent)
     m_previousTabAction = new QAction(this);
     connect(m_previousTabAction, &QAction::triggered, this, &TabWidget::previousTab);
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
-    m_previousTabAction->setIcon(AroraIcon::getChrome(QLatin1String("go-previous")));
-    m_nextTabAction->setIcon(AroraIcon::getChrome(QLatin1String("go-next")));
+    m_previousTabAction->setIcon(ArktosIcon::getChrome(QLatin1String("go-previous")));
+    m_nextTabAction->setIcon(ArktosIcon::getChrome(QLatin1String("go-next")));
 #endif
 
     m_recentlyClosedTabsMenu = new QMenu(this);
@@ -239,7 +254,7 @@ TabWidget::TabWidget(QWidget *parent)
 
     m_locationBars = new QStackedWidget(this);
 
-    connect(BrowserApplication::historyManager(), &HistoryManager::historyCleared,
+    connect(HistoryManager::instanceFor(profileId()), &HistoryManager::historyCleared,
         this, &TabWidget::historyCleared);
 
     // PREFUI05: Energy Saver flips live — re-evaluate the suspend
@@ -250,7 +265,7 @@ TabWidget::TabWidget(QWidget *parent)
     // CONT02: a container rename/recolor/delete must repaint the tab
     // strip's chips and recompute the size hints the chip feeds.
     // CONT06: the same change renames/recolors a level-1 header.
-    connect(ContainerManager::instance(), &ContainerManager::containersChanged,
+    connect(ContainerManager::instanceFor(profileId()), &ContainerManager::containersChanged,
             m_tabBar, [this]() {
         m_tabBar->updateGeometry();
         m_tabBar->update();
@@ -643,6 +658,17 @@ QString TabWidget::containerIdForTab(int index) const
     return view->containerId();
 }
 
+QString TabWidget::profileId() const
+{
+    // The owning BrowserMainWindow's persona binding — fixed at
+    // window construction (MPROF03).  A bare TabWidget (autotests)
+    // resolves "default" like every other unscoped context.
+    if (BrowserMainWindow *window =
+            qobject_cast<BrowserMainWindow*>(QWidget::window()))
+        return window->profileId();
+    return QStringLiteral("default");
+}
+
 bool TabWidget::isTabPrivate(int index) const
 {
     WebView *view = webView(index);
@@ -835,7 +861,7 @@ void TabWidget::applyTabTitle(int index)
     QString toolTip = tabTitle;
     const QString containerId = containerIdForTab(index);
     if (!containerId.isEmpty()) {
-        const QString name = ContainerManager::instance()
+        const QString name = ContainerManager::instanceFor(profileId())
             ->containerForId(containerId).name;
         if (!name.isEmpty())
             toolTip = QStringLiteral("[%1] %2").arg(name, tabTitle);
@@ -862,7 +888,7 @@ WebView *TabWidget::makeNewTabInContainer(const QString &containerId, bool makeC
 {
     // webview — bound to the container's profile (CONT02).  The
     // default container and private browsing both resolve to
-    // BrowserApplication::webEngineProfile() (the normal "arora"
+    // BrowserApplication::webEngineProfileFor(profileId()) (the normal "arktos"
     // profile, or the off-the-record profile while private browsing
     // is on) — containers are persistent state and can never take
     // over a private tab, and ContainerManager::profileFor() refuses
@@ -872,10 +898,10 @@ WebView *TabWidget::makeNewTabInContainer(const QString &containerId, bool makeC
     // wrapped in their canonical Engine::Profile adapters — the tab
     // layer stays on the neutral side of the boundary.
     Engine::Profile *profile = WebEngineProfileAdapter::forProfile(
-        BrowserApplication::webEngineProfile());
+        BrowserApplication::webEngineProfileFor(profileId()));
     if (!containerId.isEmpty() && !BrowserApplication::isPrivate()) {
         if (auto *containerProfile =
-                ContainerManager::instance()->profileFor(containerId))
+                ContainerManager::instanceFor(profileId())->profileFor(containerId))
             profile = WebEngineProfileAdapter::forProfile(containerProfile);
     }
     return makeNewTabOnProfile(profile, makeCurrent);
@@ -890,7 +916,7 @@ void TabWidget::ensureLineEditCompleter()
     if (m_lineEditCompleter)
         return;
     HistoryCompletionModel *completionModel = new HistoryCompletionModel(this);
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // OMNI01: the rustcore store serves the ranked completion rows
     // — a thin model in front of rc_history_suggest().  The no-rust
     // build keeps the in-memory filter model.  (Touch the manager
@@ -1149,17 +1175,17 @@ QString TabWidget::tabEngineId(int index) const
     return QString();
 }
 
-// ENG18: foreign backends carry no QWebChannel, so the "arora" page
+// ENG18: foreign backends carry no QWebChannel, so the "arktos" page
 // object that the internal qrc pages bind against (startpage.js'
 // init()) never materializes — a start page on a Servo tab renders
 // the bare skeleton: empty title and header, a dead search box.
 // After a qrc: commit on an engine tab, inject the equivalent
 // page-side shim: translate() answers from the same translation
-// domains webpage.cpp's JavaScriptAroraObject serves, searchUrl()
+// domains webpage.cpp's JavaScriptArktosObject serves, searchUrl()
 // reuses the live context engine's template and darkChrome tracks
 // the real palette — the page gains every feature the transport
-// cannot carry.  A page that already defined arora is left alone.
-static QString engineTabAroraScript()
+// cannot carry.  A page that already defined arktos is left alone.
+static QString engineTabArktosScript()
 {
     const auto jsString = [](const QString &text) {
         QJsonArray array;
@@ -1169,17 +1195,17 @@ static QString engineTabAroraScript()
         return QString::fromUtf8(json.mid(1, json.size() - 2));
     };
     static const char *keys[] = {
-        "Welcome to Arora!",
-        "Arora Start",
+        "Welcome to Arktos!",
+        "Arktos Start",
         "Search!",
         "Search results provided by",
-        "About Arora",
+        "About Arktos",
         "QT_LAYOUT_DIRECTION"
     };
     QStringList entries;
     for (const char *key : keys) {
         QString translated = QCoreApplication::translate(
-            "JavaScriptAroraObject", key);
+            "JavaScriptArktosObject", key);
         if (translated == QLatin1String(key))
             translated = qApp->tr(key);
         entries.append(jsString(QLatin1String(key)) + QLatin1Char(':')
@@ -1196,16 +1222,16 @@ static QString engineTabAroraScript()
             ? "true" : "false");
     return QStringLiteral(
         "(function(){"
-        "if(window.arora)return;"
+        "if(window.arktos)return;"
         "var T={%1};"
-        "window.arora={"
+        "window.arktos={"
         "currentEngineName:%2,"
         "darkChrome:%3,"
         "darkChromeChanged:{connect:function(){}},"
         "translate:function(s,cb){cb(Object.prototype.hasOwnProperty.call(T,s)?T[s]:s);},"
         "searchUrl:function(q,cb){cb(%4.split('{searchTerms}').join(encodeURIComponent(q)));}"
         "};"
-        "document.documentElement.classList.toggle('arora-dark',%3);"
+        "document.documentElement.classList.toggle('arktos-dark',%3);"
         "if(typeof update==='function')update();"
         "})();")
         .arg(entries.join(QLatin1Char(',')), jsString(engineName),
@@ -1326,12 +1352,12 @@ EngineTab *TabWidget::addEngineTab(Engine::Backend *backend, bool makeCurrent)
         if (at == currentIndex())
             emit showStatusBarMessage(ok ? tr("Finished loading")
                                          : tr("Failed to load"));
-        // ENG18: arm the page-side "arora" shim — internal qrc pages
+        // ENG18: arm the page-side "arktos" shim — internal qrc pages
         // get translated chrome text and a working search box even
         // though a foreign backend has no QWebChannel to serve them.
         if (ok && tab->page()
             && tab->url().scheme() == QLatin1String("qrc"))
-            tab->page()->runJavaScript(engineTabAroraScript());
+            tab->page()->runJavaScript(engineTabArktosScript());
     });
 
     // webview actions — same wiring makeNewTabOnProfile applies to a
@@ -1502,7 +1528,7 @@ void TabWidget::reopenTabInContainer(int index, const QString &containerId)
         || isTabPrivate(index))
         return;
     if (!containerId.isEmpty()
-        && !ContainerManager::instance()->isContainerId(containerId))
+        && !ContainerManager::instanceFor(profileId())->isContainerId(containerId))
         return;
 
     const QUrl url = tab->url();
@@ -1655,6 +1681,27 @@ bool TabWidget::hasCollapsedTabGroup() const
     return false;
 }
 
+// TABGRP03: the detached members' titles — the collapsed group's
+// hidden stack first, then any member filtered into a non-active
+// container level, in store order.  Visible members' titles come off
+// the strip (tabDisplayTitle) instead.
+QStringList TabWidget::tabGroupHiddenMemberTitles(const QString &groupId) const
+{
+    QStringList titles;
+    for (const HiddenGroupTab &hidden : m_tabGroupInfo.value(groupId).hidden)
+        titles.append(hidden.text);
+    for (const QList<HiddenGroupTab> &level : m_containerHidden) {
+        for (const HiddenGroupTab &hidden : level) {
+            WebViewWithSearch *withSearch =
+                qobject_cast<WebViewWithSearch*>(hidden.tab);
+            if (withSearch
+                && m_tabGroups.value(withSearch->m_webView) == groupId)
+                titles.append(hidden.text);
+        }
+    }
+    return titles;
+}
+
 // Raw membership assignment — no positioning.  Callers that need
 // contiguity (menu adds, drop-stacking) follow with
 // moveTabIntoGroupRun(); the drag-normalize path must not.
@@ -1666,6 +1713,7 @@ void TabWidget::assignTabGroup(WebView *webView, const QString &groupId)
         m_tabGroups.remove(webView);
     else if (m_tabGroupInfo.contains(groupId))
         m_tabGroups.insert(webView, groupId);
+    emit tabGroupsChanged();
 }
 
 QString TabWidget::createTabGroup(int index)
@@ -1770,6 +1818,7 @@ void TabWidget::removeTabFromGroup(int index)
     forgetTabGroupIfEmpty(gid);
     m_tabBar->updateGeometry();
     m_tabBar->update();
+    emit tabGroupsChanged();
 }
 
 void TabWidget::groupTabWith(int index, int targetIndex)
@@ -1792,6 +1841,7 @@ void TabWidget::renameTabGroup(const QString &groupId, const QString &name)
     it->name = name.trimmed();
     m_tabBar->updateGeometry();
     m_tabBar->update();
+    emit tabGroupsChanged();
 }
 
 void TabWidget::setTabGroupColor(const QString &groupId, const QColor &color)
@@ -1801,6 +1851,7 @@ void TabWidget::setTabGroupColor(const QString &groupId, const QColor &color)
         return;
     it->color = color;
     m_tabBar->update();
+    emit tabGroupsChanged();
 }
 
 void TabWidget::inheritTabGroup(WebView *webView, WebView *opener)
@@ -1832,8 +1883,10 @@ void TabWidget::forgetTabGroupIfEmpty(const QString &groupId)
         return;
     if (it->collapsed && tabGroupMembers(groupId).isEmpty())
         setTabGroupCollapsed(groupId, false);
-    if (tabGroupSize(groupId) == 0)
+    if (tabGroupSize(groupId) == 0) {
         m_tabGroupInfo.remove(groupId);
+        emit tabGroupsChanged();
+    }
     m_tabBar->update();
 }
 
@@ -1956,6 +2009,7 @@ void TabWidget::setTabGroupCollapsed(const QString &groupId, bool collapsed)
     m_tabBar->updateVisibility();
     m_tabBar->updateGeometry();
     m_tabBar->update();
+    emit tabGroupsChanged();
 }
 
 void TabWidget::ungroupTabs(const QString &groupId)
@@ -1973,6 +2027,82 @@ void TabWidget::ungroupTabs(const QString &groupId)
     m_tabGroupInfo.remove(groupId);
     m_tabBar->updateGeometry();
     m_tabBar->update();
+    emit tabGroupsChanged();
+}
+
+// TABGRP02: "Close Group" — every member dies through closeTab() (or
+// the hidden-store counterpart for a tab filtered into a non-active
+// container level), so each one lands on the recently-closed stack
+// the same way an individually closed tab does.
+void TabWidget::closeTabGroup(const QString &groupId)
+{
+    if (!m_tabGroupInfo.contains(groupId))
+        return;
+    // tabGroupSize() counts collapsed-hidden members too — the
+    // confirm must state the real count, not just the chip.
+    const int size = tabGroupSize(groupId);
+    if (size <= 0)
+        return;
+    if (size > 1) {
+        // The same multi-close confirm the window close path uses —
+        // one prompt, one preference key.
+        QSettings settings;
+        settings.beginGroup(QLatin1String("tabs"));
+        if (settings.value(QLatin1String("confirmClosingMultipleTabs"),
+                           true).toBool()) {
+            const QString name = tabGroupName(groupId);
+            const QString question = name.isEmpty()
+                ? tr("Are you sure you want to close this tab group?"
+                     "  There are %1 tabs in it").arg(size)
+                : tr("Are you sure you want to close the group \"%1\"?"
+                     "  There are %2 tabs in it").arg(name).arg(size);
+            QApplication::alert(this);
+            const int ret = QMessageBox::warning(
+                this, QString(), question,
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+            if (ret != QMessageBox::Yes)
+                return;
+        }
+    }
+    // A collapsed group's members are detached, not on the strip —
+    // expand it first so they rejoin and die through the normal
+    // closeTab() path like the rest.
+    if (m_tabGroupInfo.value(groupId).collapsed)
+        setTabGroupCollapsed(groupId, false);
+    // The final member's closeTab() emits lastTabClosed, which can
+    // close the window this widget lives in — re-verify survival and
+    // the group record after every close.
+    QPointer<TabWidget> guard(this);
+    while (m_tabGroupInfo.contains(groupId)) {
+        const QList<int> members = tabGroupMembers(groupId);
+        if (!members.isEmpty()) {
+            closeTab(members.last());
+            if (!guard)
+                return;
+            continue;
+        }
+        // Remaining members are detached into a filtered container
+        // level (CONT06) — close them out of the hidden store.
+        WebView *stray = nullptr;
+        for (auto it = m_containerHidden.begin();
+             it != m_containerHidden.end() && !stray; ++it) {
+            for (const HiddenGroupTab &hidden : it.value()) {
+                WebViewWithSearch *withSearch =
+                    qobject_cast<WebViewWithSearch*>(hidden.tab);
+                if (withSearch
+                    && m_tabGroups.value(withSearch->m_webView)
+                       == groupId) {
+                    stray = withSearch->m_webView;
+                    break;
+                }
+            }
+        }
+        if (!stray)
+            break;
+        closeHiddenTab(stray);
+        if (!guard)
+            return;
+    }
 }
 
 // Post-drag membership normalization, called from moveTab() after the
@@ -2108,7 +2238,7 @@ QStringList TabWidget::containerHeaders() const
     // of the strip entirely — there is no pinned state yet).
     QStringList headers;
     headers.append(ContainerManager::defaultContainerId());
-    ContainerManager *manager = ContainerManager::instance();
+    ContainerManager *manager = ContainerManager::instanceFor(profileId());
     for (const QString &id : std::as_const(m_containerHeaderOrder)) {
         if (containerTabCount(id) > 0 && manager->isContainerId(id)
             && !headers.contains(id))
@@ -2236,7 +2366,7 @@ void TabWidget::setActiveContainerHeader(const QString &containerId)
 {
     QString resolved = containerId;
     if (!resolved.isEmpty()
-        && !ContainerManager::instance()->isContainerId(resolved))
+        && !ContainerManager::instanceFor(profileId())->isContainerId(resolved))
         resolved = ContainerManager::defaultContainerId();
     if (m_activeContainerHeader == resolved)
         return;
@@ -2494,6 +2624,68 @@ void TabWidget::sleepTab(int index)
     beginTabSleep(index, false);
 }
 
+// MEM06: the periodic low-priority purge.  MEM05/06 established that
+// the renderer's climb on repeated nav->back cycles is upstream soft
+// retention — collectable heap the engine only releases when a
+// memory-pressure signal arrives, and desktop Linux sends none.
+// Freezing a hidden page routes exactly that pressure notification
+// through its renderer (memcycle's ARKTOS_MEM_FREEZE leg drops the
+// background slope from ~8.2 MB/cycle to ~0.06 MB/cycle), so the
+// sweep pulses each eligible background page Frozen for ~600 ms
+// then restores Active.  Unlike Memory Saver's discard the page
+// stays loaded — no reload on return — which is why the cadence can
+// be short and why the discard-only exemptions (form data, pinned)
+// don't apply: freezing loses nothing.  The exemptions that remain
+// mirror sleepBlockReason's live-activity set.
+void TabWidget::purgeInactiveTabs()
+{
+    for (int i = 0; i < count(); ++i) {
+        if (i == currentIndex())
+            continue;
+        WebView *view = webView(i);
+        if (!view || !view->enginePage() || view->url().isEmpty())
+            continue;
+        Engine::Page *page = view->enginePage();
+        // Only an Active page can freeze — a Discarded (sleeping)
+        // tab already released its renderer, a Frozen one is mid-
+        // pulse.  Loading pages and audible/active-download tabs
+        // keep working undisturbed.
+        if (page->lifecycleState() != Engine::Page::LifecycleState::Active
+                || page->isLoading() || page->recentlyAudible()
+                || DownloadManager::instance()->hasActiveDownloadForPage(
+                    page))
+            continue;
+        page->setLifecycleState(Engine::Page::LifecycleState::Frozen);
+        QPointer<WebView> guard(view);
+        // Long enough for the pressure purge to run inside the
+        // renderer, short enough that a user activating the tab
+        // mid-pulse never notices.  The Frozen check keeps a page
+        // discarded or re-activated meanwhile from being re-frozen
+        // or wrongly revived.
+        QTimer::singleShot(600, this, [guard]() {
+            if (guard && guard->enginePage()
+                    && guard->enginePage()->lifecycleState()
+                           == Engine::Page::LifecycleState::Frozen)
+                guard->enginePage()->setLifecycleState(
+                    Engine::Page::LifecycleState::Active);
+        });
+    }
+}
+
+void TabWidget::updatePurgeTimer()
+{
+    if (m_memoryPurge) {
+        if (!m_purgeTimer) {
+            m_purgeTimer = new QTimer(this);
+            connect(m_purgeTimer, &QTimer::timeout, this,
+                    &TabWidget::purgeInactiveTabs);
+        }
+        m_purgeTimer->start(2 * 60 * 1000);
+    } else if (m_purgeTimer) {
+        m_purgeTimer->stop();
+    }
+}
+
 void TabWidget::wakeTab(int index)
 {
     if (index < 0)
@@ -2603,6 +2795,119 @@ void TabWidget::applySleepVisuals(int index, bool sleeping)
     m_tabBar->setTabTextColor(index,
         m_tabBar->palette().color(group, QPalette::WindowText));
     m_tabBar->update();
+}
+
+// MEM08: the manual flush from the tab context menu.  MEM05 pinned
+// the nav->back climb on renderer-side per-navigation retention that
+// only a WebContents teardown releases (history()->clear() freed
+// nothing), so a background tab flushes through the SLEEP01 discard
+// path — the unsaved-form refusal still applies since the discard
+// would silently eat the input.  The current tab can't stay
+// discarded while visible, so it gets a discard+reactivate pulse
+// that rebuilds the WebContents and reloads the current entry — the
+// menu labels it as the reload it is.
+void TabWidget::freeTabMemory(int index)
+{
+    WebView *view = (index >= 0 && index < count())
+        ? webView(index) : nullptr;
+    Engine::Page *page = view ? view->enginePage() : nullptr;
+    if (!page || view->url().isEmpty()) {
+        emit showStatusBarMessage(tr("Nothing to free on this tab"));
+        return;
+    }
+    if (isTabSleeping(index)
+        || page->lifecycleState()
+               == Engine::Page::LifecycleState::Discarded) {
+        emit showStatusBarMessage(
+            tr("Tab is already asleep — nothing to free"));
+        return;
+    }
+    const qint64 beforeKb = page->residentMemoryKb();
+    if (index == currentIndex())
+        flushCurrentTabMemory(view);
+    else
+        beginTabSleep(index, false);
+    reportFreedMemory(view, beforeKb);
+}
+
+// The window-level leg: hand every eligible background tab to the
+// discard path.  sleepBlockReason carries the live-activity
+// exemptions (current, pinned, sleeping, in-flight, loading, audible,
+// downloading, dirty-form) so a bulk flush only ever takes quiet
+// tabs — same gate the idle sweep applies.
+void TabWidget::freeBackgroundTabsMemory()
+{
+    int attempted = 0;
+    for (int i = 0; i < count(); ++i) {
+        if (!sleepBlockReason(i).isEmpty())
+            continue;
+        beginTabSleep(i, true);
+        ++attempted;
+    }
+    emit showStatusBarMessage(attempted
+        ? tr("Suspending %1 background tab(s) to free memory")
+              .arg(attempted)
+        : tr("No background tabs to free"));
+}
+
+// Qt's lifecycle setter keeps a visible page Active — a hard limit
+// (the docs also refuse Discarded under a devtools page).  The view
+// only re-asserts its own visibility on show/hide events, so flagging
+// the page hidden for the discard window is enough; the last
+// composited frame stays on screen meanwhile, so nothing visibly
+// flickers.  If the engine still refuses, the flag is restored and
+// the deferred report lands as "no memory freed".
+void TabWidget::flushCurrentTabMemory(WebView *view)
+{
+    WebEnginePageAdapter *adapter =
+        WebEnginePageAdapter::of(view->enginePage());
+    QWebEnginePage *page = adapter ? adapter->webEnginePage()
+                                 : nullptr;
+    if (!page) {
+        emit showStatusBarMessage(
+            tr("This tab's engine cannot be flushed"));
+        return;
+    }
+    const bool wasVisible = page->isVisible();
+    page->setVisible(false);
+    page->setLifecycleState(QWebEnginePage::LifecycleState::Discarded);
+    if (page->lifecycleState()
+            != QWebEnginePage::LifecycleState::Discarded) {
+        page->setVisible(wasVisible);
+        emit showStatusBarMessage(
+            tr("The engine refused to discard the visible tab"));
+        return;
+    }
+    QPointer<QWebEnginePage> guard(page);
+    QTimer::singleShot(300, this, [guard, wasVisible]() {
+        if (!guard)
+            return;
+        // Active out of Discarded rebuilds the WebContents and reloads
+        // the current entry — dropping every retained session document.
+        guard->setLifecycleState(QWebEnginePage::LifecycleState::Active);
+        guard->setVisible(wasVisible);
+    });
+}
+
+// ~2s after the flush the renderer has either died (a discarded
+// tab's pid reads -1 — everything it held is freed) or respawned a
+// fresh WebContents whose RSS makes the honest delta.
+void TabWidget::reportFreedMemory(WebView *view, qint64 beforeKb)
+{
+    if (beforeKb <= 0)
+        return;   // no baseline — nothing honest to compare against
+    QPointer<WebView> guard(view);
+    QTimer::singleShot(2000, this, [this, guard, beforeKb]() {
+        if (!guard || !guard->enginePage())
+            return;
+        const qint64 afterKb = guard->enginePage()->residentMemoryKb();
+        const qint64 freedKb =
+            afterKb < 0 ? beforeKb : beforeKb - afterKb;
+        emit showStatusBarMessage(
+            freedKb >= 1024
+                ? tr("Freed ~%1 MB").arg(freedKb / 1024)
+                : tr("No memory freed"));
+    });
 }
 
 // POL02: QtWebEngine paints each page into a QQuickWidget delegate
@@ -2959,7 +3264,7 @@ bool TabWidget::moveTabTo(int index, TabWidget *target, int targetIndex)
     // bare QWidget that moves whole.  A backend that cannot transfer
     // (the servo spike's host) must mark its page so the drop refuses
     // instead of tearing a foreign view off its window.
-    if (page->property("aroraNoTabTransfer").toBool())
+    if (page->property("arktosNoTabTransfer").toBool())
         return false;
     // Privacy boundary: private browsing is per-tab (PTAB01) — the
     // OTR bit lives on the page's profile and moves with the widget,
@@ -3595,7 +3900,7 @@ void TabWidget::aboutToShowRecentTabsMenu()
         action->setData(i);
         QString label = closed.title;
         if (!closed.containerId.isEmpty()) {
-            const QString name = ContainerManager::instance()
+            const QString name = ContainerManager::instanceFor(profileId())
                 ->containerForId(closed.containerId).name;
             if (!name.isEmpty())
                 label = QStringLiteral("[%1] %2").arg(name, label);
@@ -3650,31 +3955,6 @@ void TabWidget::changeEvent(QEvent *event)
     if (event->type() == QEvent::LanguageChange)
         retranslate();
     QTabWidget::changeEvent(event);
-}
-
-void TabWidget::paintEvent(QPaintEvent *event)
-{
-    QTabWidget::paintEvent(event);
-    // THEM02: the selected card merges into the page — the pane's
-    // hairline row next to the strip takes the card's color where
-    // the card lands, so no seam boxes the lifted tab.  Vertical
-    // rails keep floating cards and need no gap; the strip's own
-    // edge line opens its matching segment in paintResizeGrip().
-    if (!m_tabBar || !m_tabBar->isVisible() || currentIndex() < 0)
-        return;
-    const bool south = tabPosition() == QTabWidget::South;
-    if (tabPosition() == QTabWidget::West
-            || tabPosition() == QTabWidget::East)
-        return;
-    const QRect sel = m_tabBar->tabRect(currentIndex())
-        .translated(m_tabBar->pos());
-    QPainter painter(this);
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(AroraStyle::tabActiveColor(palette()));
-    painter.drawRect(sel.left() - 1,
-                     south ? m_tabBar->geometry().top() - 1
-                           : m_tabBar->geometry().bottom() + 1,
-                     sel.width() + 2, 1);
 }
 
 /*
@@ -3754,7 +4034,7 @@ static bool searchInAddressFieldEnabled()
         .toBool();
 }
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 // OMNI01: rc_classify_input() owns the url-or-search decision; this
 // resolves its verdict against the Qt-owned engine table and the
 // private-context routing.  An empty QUrl means FFI or JSON trouble —
@@ -3839,7 +4119,7 @@ QUrl TabWidget::guessUrlFromStringRust(const QString &string, bool privateContex
     return manager->searchUrlForEngine(
         manager->engineForContext(privateContext), trimmed);
 }
-#endif // ARORA_RUSTCORE
+#endif // ARKTOS_RUSTCORE
 
 QUrl TabWidget::guessUrlFromString(const QString &string)
 {
@@ -3848,7 +4128,7 @@ QUrl TabWidget::guessUrlFromString(const QString &string)
 
 QUrl TabWidget::guessUrlFromString(const QString &string, bool privateContext)
 {
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     const QUrl resolved = guessUrlFromStringRust(string, privateContext);
     if (!resolved.isEmpty())
         return resolved;
@@ -4019,6 +4299,14 @@ void TabWidget::loadSettings()
     m_suspendIdleMs = suspend ? qint64(suspendMinutes) * 60 * 1000 : 0;
     updateSleepTimer();
 
+    // MEM06: the periodic background purge — on by default.  It is
+    // the light-touch counterpart to suspend above: instead of
+    // unloading the page it freeze-pulses hidden tabs so the engine
+    // reclaims the soft retention MEM05 measured.
+    m_memoryPurge =
+        settings.value(QLatin1String("memoryPurge"), true).toBool();
+    updatePurgeTimer();
+
     // PREFUI04: lazy session restore — restored tabs defer their
     // first load until activation; pinned tabs can be exempted.
     settings.endGroup();
@@ -4145,18 +4433,33 @@ WebView *TabWidget::getView(OpenUrlIn tab, WebView *currentView)
             if (!application) {
                 WebView *detachedView = new WebView(WebEngineProfileAdapter::forProfile(
                     currentView ? currentView->webPage()->profile()
-                                : BrowserApplication::webEngineProfile()));
+                                : BrowserApplication::webEngineProfileFor(profileId())));
                 detachedView->setAttribute(Qt::WA_DeleteOnClose);
                 detachedView->show();
                 webView = detachedView;
             } else {
                 // CONT02: a window opened from a container tab keeps
                 // the opener's container — the new window's first tab
-                // binds to the same container profile.
+                // binds to the same container profile.  MPROF03: the
+                // window itself binds to the OPENER'S persona (a
+                // container profile reports its owner id) — a link
+                // can never spawn a window on another profile's
+                // browsing context.
+                const QString openerPersona =
+                    (currentView && currentView->webPage())
+                    ? BrowserProfile::profileIdFor(
+                          currentView->webPage()->profile())
+                    : profileId();
                 BrowserMainWindow *newMainWindow =
                     application->newMainWindowInContainer(
                         currentView ? currentView->containerId()
-                                    : ContainerManager::defaultContainerId());
+                                    : ContainerManager::defaultContainerId(),
+                        openerPersona);
+                // VSEC01: null when the opener's persona is sealed —
+                // the link is dropped rather than opened on a locked
+                // vault.
+                if (!newMainWindow)
+                    break;
                 webView = newMainWindow->currentTab();
                 // PTAB01: a window spawned from a private tab browses
                 // privately too — the ctor's fresh first tab is
@@ -4484,7 +4787,7 @@ bool TabWidget::restoreSessionSnapshot(const TabSessionSnapshot &snap)
         // never dropped.
         QString containerId = tabContainers.value(i);
         if (!containerId.isEmpty()
-            && !ContainerManager::instance()->isContainerId(containerId))
+            && !ContainerManager::instanceFor(profileId())->isContainerId(containerId))
             containerId = ContainerManager::defaultContainerId();
         const bool reusePlaceholder = i == 0
             && currentWebView() && currentWebView()->url() == QUrl()
@@ -4623,7 +4926,7 @@ bool TabWidget::restoreSessionSnapshot(const TabSessionSnapshot &snap)
                 header = current->containerId();
         }
         if (!header.isEmpty()
-            && !ContainerManager::instance()->isContainerId(header))
+            && !ContainerManager::instanceFor(profileId())->isContainerId(header))
             header = ContainerManager::defaultContainerId();
         if (header != m_activeContainerHeader
             || containerTabCount(m_activeContainerHeader) < count()) {
@@ -4641,7 +4944,7 @@ bool TabWidget::restoreSessionSnapshot(const TabSessionSnapshot &snap)
     return true;
 }
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 // RCORE03: the rustcore session store consumes this JSON manifest —
 // {"current":i,"tabs":[{url,container,group,engine,state}],
 //  "groups":[{id,name,color,collapsed}]}.  "state" is the opaque
@@ -4716,7 +5019,7 @@ bool TabWidget::restoreSessionState(const QJsonObject &state)
     }
     return restoreSessionSnapshot(snap);
 }
-#endif // ARORA_RUSTCORE
+#endif // ARKTOS_RUSTCORE
 
 void TabWidget::createTab(const QByteArray &historyState, TabWidget::OpenUrlIn tab,
                           const QString &containerId)

@@ -81,6 +81,7 @@ class LanguageManager;
 class QLocalSocket;
 class QTemporaryDir;
 class TorManager;
+class QWebEnginePage;
 class QWebEngineProfile;
 class BrowserApplication : public SingleApplication
 {
@@ -120,9 +121,19 @@ public:
 
     static HistoryManager *historyManager();
     static CookieJar *cookieJar();
-    // The profile pages are created on: the default profile normally, an
-    // off-the-record profile while private browsing is enabled (MIG03).
+    // The profile pages are created on: the ambient persona's named
+    // profile normally, an off-the-record profile while private
+    // browsing is enabled (MIG03).
     static QWebEngineProfile *webEngineProfile();
+    // MPROF03: the persona-aware spelling — resolves the given profile
+    // id through BrowserProfile::profileFor() and attaches the app
+    // services via prepareProfile().  Mode profiles still win
+    // outright: a tor process takes the dedicated tor profile and a
+    // private process the shared OTR overlay regardless of the id —
+    // OTR is memory-only, so one unnamed profile safely serves every
+    // persona (documented decision: no per-id OTR clones; the app-side
+    // stores have their own isOffTheRecord gates).
+    static QWebEngineProfile *webEngineProfileFor(const QString &profileId);
     // PTAB01: the prepared off-the-record profile regardless of the
     // global private flag — a private TAB inside a normal window needs
     // it while webEngineProfile() still hands out the normal profile.
@@ -154,7 +165,7 @@ public:
     static bool isPrivate();
     static void setPrivate(bool isPrivate);
 
-    // TOR02: `arora --tor` runs the whole process on a dedicated
+    // TOR02: `arktos --tor` runs the whole process on a dedicated
     // off-the-record profile behind a managed tor daemon.  The
     // application proxy is process-global — that is why Tor is a
     // separate process rather than a window mode in this one.
@@ -220,7 +231,7 @@ public:
         m_torManager = manager;
     }
 #endif
-    // Spawns an independent `arora --tor` process.  An optional start
+    // Spawns an independent `arktos --tor` process.  An optional start
     // url (CONT07's 'Open in New Tor Window') rides as its own argv
     // element — never a shell string — and is re-gated as untrusted
     // input on the receiving side (torStartup).
@@ -234,6 +245,16 @@ public:
     // The receiving-side gate torStartup() applies to an argv url
     // operand — the same page-link discipline the sender enforced.
     static bool isUrlAllowedOnTorArgv(const QString &operand);
+
+    // TOR17: false from the moment the managed daemon's SOCKS endpoint
+    // is applied to QNetworkProxy until a probe request has made the
+    // WebEngine network service re-read it — Chromium only re-fetches
+    // the config from a lazy poll inside proxy resolution, and the
+    // request that triggers the poll still resolves on the STALE
+    // endpoint (the ERR_PROXY_CONNECTION_FAILED the first post-ready
+    // navigation used to die on).  True outside tor mode and before
+    // the first endpoint discovery.  WebView::torMustQueue reads it.
+    bool isTorProxyWarmed() const;
 
     // TRUST06: master switch for the site-trust surface (Preferences
     // > Privacy > Site Trust).  The toolbar badge and every
@@ -256,11 +277,20 @@ public:
     // bound to the given container's profile — a window spawned from
     // a container tab (window.open, ctrl+alt+click) stays in the
     // opener's container.  The default id, private browsing and tor
-    // mode just produce a normal window.
-    BrowserMainWindow *newMainWindowInContainer(const QString &containerId);
+    // mode just produce a normal window.  MPROF03: profileId binds the
+    // window's persona (the opener's); an empty id inherits the
+    // ambient persona like newMainWindow().
+    BrowserMainWindow *newMainWindowInContainer(const QString &containerId,
+                                                const QString &profileId = QString());
 
 public slots:
-    BrowserMainWindow *newMainWindow();
+    // MPROF03: profileId binds the window to a registry persona —
+    // every WebView it creates browses on that persona's named
+    // QWebEngineProfile and its app-side stores follow.  An empty id
+    // inherits the ambient persona (the focused window's — a File>New
+    // Window stays on the opener's profile); an id the registry does
+    // not carry falls back to "default".
+    BrowserMainWindow *newMainWindow(const QString &profileId = QString());
     bool restoreLastSession();
 #if defined(Q_OS_MACOS)
     void lastWindowClosed();
@@ -277,17 +307,29 @@ private slots:
     void postLaunch();
     void openUrl(const QUrl &url);
     // SESS02: BrowserMainWindow::destroyed hook — see implementation.
-    void windowDestroyed();
+    // VSEC01: carries the closing window's persona (captured at
+    // construction) — auto-lock must fire on the profile that lost a
+    // window, not the ambient ProfileStore::activeProfileId().
+    void windowDestroyed(const QString &profileId);
 
 signals:
     void zoomTextOnlyChanged(bool textOnly);
     void privacyChanged(bool isPrivate);
+    // TOR17: the warm-up request settled — held navigations may flush.
+    void torProxyWarmed();
 
 private:
     QString parseArgumentUrl(const QString &string) const;
     QString argumentUrl() const;
     void clean();
     void torStartup(const QString &url);
+    // TOR17: fires the sacrificial first request through the tor
+    // profile so the network service's lazy proxy poll refreshes the
+    // config before any user navigation reaches it; markTorProxyWarmed
+    // releases the navigation gate on the probe's settle or a bounded
+    // fallback.
+    void warmTorProxy();
+    void markTorProxyWarmed();
     // PRIV01: opt-in full private-data wipe at quit — runs SEC12's
     // categories (history, cookies, site data, caches) and drops the
     // deferred sentinels so Chromium's on-disk state goes away at the
@@ -305,6 +347,12 @@ private:
     // a page so teardown stops the daemon before the dir vanishes.
     TorManager *m_torManager;
     QScopedPointer<QTemporaryDir> m_torDataDir;
+    // TOR17: warm-up state for the process-global SOCKS switch — see
+    // isTorProxyWarmed()/warmTorProxy().  m_torProxyWarmSeq invalidates
+    // stale probe completions when a daemon restart re-warms.
+    bool m_torProxyWarmed;
+    qint64 m_torProxyWarmSeq;
+    QWebEnginePage *m_torProxyProbe;
 
     Qt::MouseButtons m_eventMouseButtons;
     Qt::KeyboardModifiers m_eventKeyboardModifiers;

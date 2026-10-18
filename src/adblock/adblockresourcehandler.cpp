@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2026, The Arora Authors
+ * Copyright (c) 2026, The Arktos Authors
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -103,7 +103,7 @@ QHash<QByteArray, StubResource> buildResourceTable()
         "<!DOCTYPE html><html><head><title>Blocked frame</title>"
         "<style>body{font-family:sans-serif;color:GrayText;padding:1em}"
         "a{cursor:pointer}</style></head>"
-        "<body><a href=\"#\">This content was blocked by Arora."
+        "<body><a href=\"#\">This content was blocked by Arktos."
         " Click to load.</a>"
         "<script>document.querySelector('a').onclick=function(){"
         "location.reload();return false;};</script>"
@@ -216,7 +216,7 @@ AdBlockResourceHandler::AdBlockResourceHandler(QObject *parent)
 
 QByteArray AdBlockResourceHandler::schemeName()
 {
-    return QByteArrayLiteral("arora-resource");
+    return QByteArrayLiteral("arktos-resource");
 }
 
 void AdBlockResourceHandler::registerUrlScheme()

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, The Arora Authors
+ * Copyright (c) 2026, The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,7 +28,7 @@
 #include <qfile.h>
 #include <qfileinfo.h>
 
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 
 #if defined(Q_OS_UNIX)
 #include <signal.h>
@@ -58,7 +58,7 @@ private slots:
 void tst_CrashReporter::installPath()
 {
     const QString dir =
-        QDir::temp().filePath(QLatin1String("arora-crashreporter-test"));
+        QDir::temp().filePath(QLatin1String("arktos-crashreporter-test"));
     const QString want = dir + QLatin1String("/crashreport.log");
     const QString got = CrashReporter::install(want);
     QCOMPARE(got, want);
@@ -69,13 +69,13 @@ void tst_CrashReporter::installPath()
 void tst_CrashReporter::envOverride()
 {
     const QString override_ = QDir::temp().filePath(
-        QLatin1String("arora-crashreporter-env.log"));
-    qputenv("ARORA_CRASH_LOG", QFile::encodeName(override_));
+        QLatin1String("arktos-crashreporter-env.log"));
+    qputenv("ARKTOS_CRASH_LOG", QFile::encodeName(override_));
     const QString got = CrashReporter::install(
         QStringLiteral("/should/not/be/used.log"));
     QCOMPARE(got, override_);
     QCOMPARE(CrashReporter::logPath(), override_);
-    qunsetenv("ARORA_CRASH_LOG");
+    qunsetenv("ARKTOS_CRASH_LOG");
 }
 
 #if defined(Q_OS_UNIX)
@@ -120,15 +120,15 @@ static QByteArray readLog(const QString &path)
 void tst_CrashReporter::segvProducesReport()
 {
     const QString log = QDir::temp().filePath(
-        QLatin1String("arora-crash-segv.log"));
+        QLatin1String("arktos-crash-segv.log"));
     QFile::remove(log);
-    qputenv("ARORA_CRASH_LOG", QFile::encodeName(log));
+    qputenv("ARKTOS_CRASH_LOG", QFile::encodeName(log));
     CrashReporter::install(QString());
     const int status = forkAndWaitForDeath("segv");
     QVERIFY(WIFSIGNALED(status));
     QCOMPARE(WTERMSIG(status), SIGSEGV);
     const QByteArray report = readLog(log);
-    QVERIFY(report.contains("ARORA CRASH"));
+    QVERIFY(report.contains("ARKTOS CRASH"));
     QVERIFY(report.contains("signal=11 (SIGSEGV)"));
     // Marker lines + a non-empty backtrace — one line is no report.
     QVERIFY(report.count('\n') >= 3);
@@ -137,9 +137,9 @@ void tst_CrashReporter::segvProducesReport()
 void tst_CrashReporter::abortProducesReport()
 {
     const QString log = QDir::temp().filePath(
-        QLatin1String("arora-crash-abrt.log"));
+        QLatin1String("arktos-crash-abrt.log"));
     QFile::remove(log);
-    qputenv("ARORA_CRASH_LOG", QFile::encodeName(log));
+    qputenv("ARKTOS_CRASH_LOG", QFile::encodeName(log));
     CrashReporter::install(QString());
     const int status = forkAndWaitForDeath("abrt");
     QVERIFY(WIFSIGNALED(status));
@@ -150,15 +150,15 @@ void tst_CrashReporter::abortProducesReport()
 void tst_CrashReporter::terminateProducesReport()
 {
     const QString log = QDir::temp().filePath(
-        QLatin1String("arora-crash-term.log"));
+        QLatin1String("arktos-crash-term.log"));
     QFile::remove(log);
-    qputenv("ARORA_CRASH_LOG", QFile::encodeName(log));
+    qputenv("ARKTOS_CRASH_LOG", QFile::encodeName(log));
     CrashReporter::install(QString());
     const int status = forkAndWaitForDeath("terminate");
     QVERIFY(WIFSIGNALED(status));
     QCOMPARE(WTERMSIG(status), SIGABRT);
     const QByteArray report = readLog(log);
-    QVERIFY(report.contains("ARORA CRASH"));
+    QVERIFY(report.contains("ARKTOS CRASH"));
     QVERIFY(report.contains("crashreporter-test uncaught"));
 }
 

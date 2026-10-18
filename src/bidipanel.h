@@ -13,7 +13,7 @@
  * DEVT03 — engine-neutral developer-tools dock panel.
  *
  * DEVT13's full tab set (Chrome order), all fed by the BiDi-shaped
- * channel in BidiClient plus the vendor arora.cdp passthrough that
+ * channel in BidiClient plus the vendor arktos.cdp passthrough that
  * carries raw CDP commands onto a page session:
  *   Elements   lazy DOM tree (the old DOM tab, renamed), Chrome's
  *              breadcrumb trail along the bottom, a click-to-inspect
@@ -21,6 +21,12 @@
  *              styles pane — real CSS.getComputedStyleForNode output
  *              when the CSS domain answers, an honest DOM attributes/
  *              inline-style readout when it does not.
+ *              DEVT22's Chrome-UX pass: a compact bordered toolbar
+ *              (inspect/refresh/find + live element count), tree
+ *              rows painted as <tag attr="v"> markup with attribute
+ *              coloring, a grouped styles rail whose Box model
+ *              section is a real nested-boxes diagram, and a find
+ *              dock with a results list under the query row.
  *   Console    log.entryAdded event stream + script.evaluate REPL —
  *              DEVT12's Chromium parity pass: a structured entry list
  *              (per-level wash + icon, source url:line on the right
@@ -30,10 +36,23 @@
  *              text filter, Chrome's checkable "Default levels"
  *              dropdown and a console-scoped Preserve log, and a '>'
  *              prompt row with Up/Down history recall.
- *   Sources    Page.getResourceTree resource list, read-only source
- *              view fed by Page.getResourceContent, and URL:line
- *              breakpoints through Debugger.setBreakpointByUrl when
- *              the Debugger domain answers.
+ *   Sources    Page.getResourceTree resource list (refreshed on
+ *              Page.frameNavigated + load milestones), a read-only
+ *              source view fed by Page.getResourceContent /
+ *              Debugger.getScriptSource, URL:line breakpoints
+ *              through Debugger.setBreakpointByUrl with
+ *              breakpointResolved re-pointing, and — DEVT20 — the
+ *              pause/step/resume toolbar + call stack driven by the
+ *              Debugger.paused/resumed events the bridge forwards
+ *              under the "debugger" subscription.  DEVT23's
+ *              Chrome-UX pass: a three-pane layout — a left
+ *              navigator grouping frame -> origin -> path folders
+ *              (single-child chains folded into "a/b" rows) down
+ *              to file leaves, the source view center, and a right
+ *              debugger rail whose collapsible sections hold the
+ *              controls row, the Breakpoints list, the Call Stack,
+ *              and honest-disabled Watch/Scope/XHR/DOM/listener
+ *              groups the endpoint can't serve.
  *   Network    Chrome-DevTools-style request table (DEVT06): filter
  *              field, type-filter chips, Preserve log / Disable cache
  *              toggles, a Name/Status/Type/Initiator/Size/Time/
@@ -54,14 +73,17 @@
  *              functions by self time.  Disabled-with-reason when
  *              the domains don't answer.
  *   Memory     HeapProfiler.startSampling/stopSampling allocation
- *              profile aggregated by function, plus the JS heap
- *              figure from the metrics poll.  Disabled-with-reason
- *              when HeapProfiler doesn't answer.
+ *              profile aggregated by function, the JS heap figure
+ *              from the metrics poll, and — DEVT21 — a one-shot
+ *              heap summary pairing Runtime.getHeapUsage used/total
+ *              figures with the sampling pass's top allocation
+ *              sites.  Disabled-with-reason when HeapProfiler
+ *              doesn't answer.
  *   Application  (was Storage) — a Chrome-style storage tree over
  *              cookies (storage.getCookies), localStorage and
  *              sessionStorage (script.evaluate), and an IndexedDB
  *              database list (indexedDB.databases()).
- *   Security   built from Arora's own data, no CDP needed — the
+ *   Security   built from Arktos's own data, no CDP needed — the
  *              page scheme, the TlsVerifier second-opinion verdict
  *              (status, TLS version, chain detail), and a mixed-
  *              content count observed from the Network rows.
@@ -148,10 +170,18 @@ public:
     // the cell gridlines draw for the current window — lets the
     // suite pin the ladder without scraping header pixels.
     QVector<double> testWaterfallTicks();
-    // DEVT13: register a pending arora.cdp tag the way sendCdp
+    // DEVT13: register a pending arktos.cdp tag the way sendCdp
     // would, so the suite can drive raw result/error handling.
     quint64 testRegisterCdp(int tag, const QString &a = QString(),
                             const QString &b = QString(), int n = 0);
+    // DEVT19: how many live-refreshes the mutation marker has
+    // triggered — the suite observes the debounce firing without a
+    // live channel to answer the re-fetch.
+    int testDomLiveRefreshCount() const;
+    // The last DOM-search result set (element index paths) and the
+    // current position — the offline legs pin search -> select.
+    QStringList testSearchPaths() const;
+    int testSearchIndex() const;
 #else
 private:
 #endif
@@ -160,11 +190,20 @@ private:
     void onConnectionChanged(int state);
     void evaluateInput();
     void refreshContexts();
+    // DEVT17: the shared context-switch cascade — a moved selection
+    // (combo pick or a rebuild landing on a different row) owns a
+    // fresh milestone clock, DOM tree, domain probes, and
+    // context-bound views.
+    void applyContextSelection();
     // DEVT10: merge the last getTree answer with the bound tab strip —
     // one combo row per strip tab in strip order, then CDP pages with
     // no tab here.  Selection restores by context id and falls back to
     // the first ENABLED row (never a disabled non-CDP entry).
     void rebuildContextCombo();
+    // DEVT16: while the channel is live, a web tab with no claimed
+    // target re-asks for the tree a bounded number of times ("…
+    // attaching") before the row settles on "no debug target".
+    void armAttachRetry();
     void refreshDom();
     void refreshStorage();
     void domItemExpanded(QTreeWidgetItem *item);
@@ -180,15 +219,52 @@ private:
     void updateConsoleLevelMask();
     void clearConsole();
     void ensureDomHelper(const QString &context);
-    void sendEval(const QString &context, const QString &expression,
-                  quint64 tag);
+    quint64 sendEval(const QString &context, const QString &expression,
+                     quint64 tag);
+    // DEVT17: a failed/vanished DOM fetch swaps its "loading…"
+    // placeholder for an honest verdict row instead of hanging the
+    // branch forever; the row keeps the placeholder's null path so a
+    // manual re-expand retries the fetch.
+    void domFetchFailed(QTreeWidgetItem *item, const QString &why);
+    // DEVT19: the children fetch factored out of domItemExpanded so
+    // the live-refresh pass can re-pull any materialized branch, and
+    // the mutation-debounced refresh itself.
+    void fetchDomChildren(QTreeWidgetItem *item);
+    void liveRefreshDom();
+    void restoreDomExpansion(QTreeWidgetItem *item);
+    // Elements find bar (Ctrl-F parity): a page-side search returns
+    // index paths, the first/current one selects through
+    // domSelectPath, prev/next cycle.
+    void runDomSearch();
+    void domSearchStep(int dir);
+    // DEVT22: labels carries the hits' markup lines for the results
+    // list (paths themselves when the reply labels nothing).
+    void applyDomSearchResult(const QStringList &paths,
+                              const QStringList &labels = QStringList());
+    // Styles-pane group plumbing + attribute editing (DEVT19).
+    QTreeWidgetItem *stylesSection(const QString &name);
+    // DEVT22: the Box model section's spanned diagram row, and the
+    // toolbar's live element count.
+    QTreeWidgetItem *boxModelDiagramItem(QTreeWidgetItem *group);
+    void updateDomStats();
+    void fillAttributesSection(const QJsonArray &attributes,
+                               const QString &errText);
+    void fillComputedSection(const QJsonArray &styles,
+                             const QString &errText);
+    void fillBoxModelSection(const QJsonObject &model,
+                             const QString &errText);
+    void editDomAttribute(QTreeWidgetItem *item, int column);
+    // A probe answer that never arrives must not strand the tabs on
+    // their constructed defaults — fill the missing verdicts as
+    // honest no-answers and apply support anyway.
+    void probeWatchdog();
     void clearNetworkLog();
     void sendCacheBehavior();
     void fitNetworkColumns();
     void updateNetworkSummary();
 
     // DEVT13 — the full tab set.
-    // arora.cdp passthrough plumbing: sendCdp returns the bidi id
+    // arktos.cdp passthrough plumbing: sendCdp returns the bidi id
     // and registers CdpReq so the raw result/error routes back to
     // the right handler in onResponse.
     struct CdpReq {
@@ -223,12 +299,29 @@ private:
     void sourceSelected(QTreeWidgetItem *item);
     void toggleBreakpoint();
     void rebuildBreakpointList();
+    // DEVT20 — Sources parity: the raw CDP debugger events the
+    // bridge forwards under the "debugger" subscription drive the
+    // pause chrome, the call stack, the script-source map and the
+    // debounced resource refresh.
+    void onDebuggerEvent(const QString &method,
+                         const QJsonObject &params);
+    void resetDebuggerState();
+    void setDebuggerPaused(bool paused,
+                           const QString &why = QString());
+    void updateDebuggerButtons();
+    void sendDebuggerCommand(const QString &method);
+    void showPausedLocation(const QJsonObject &frame);
+    void highlightSourceLine(int line);
     void refreshApplication();
     void refreshSecurity();
     void requestMetrics();
     void setCpuProfiling(bool on);
     void collectHeapSample();
     void stopHeapSample();
+    // DEVT21: the one-shot heap summary — Runtime.getHeapUsage
+    // used/total figures plus the sampling pass's top allocation
+    // sites (a sampling estimate, never claimed as a full snapshot).
+    void collectHeapSnapshot();
 
     BidiClient *m_client;
     QStackedWidget *m_stack;
@@ -279,15 +372,46 @@ private:
     QWidget *m_crumbBar;
     QLabel *m_stylesTitle;
     QTreeWidget *m_stylesView;
-    // Plain pointer: guarded by m_stylesSerial — a stale styles
-    // reply is dropped before it can paint over a newer selection,
-    // and refreshDom clears it with the tree.
-    QTreeWidgetItem *m_propsItem = nullptr;
+    // DEVT19: the find bar, the live-refresh debounce, and the
+    // attribute-edit state.
+    QWidget *m_domFindBar;
+    QLineEdit *m_domFind;
+    QToolButton *m_domFindPrev;
+    QToolButton *m_domFindNext;
+    QLabel *m_domFindCount;
+    // DEVT22: the hits list under the find row, and the toolbar's
+    // element-count label.
+    QListWidget *m_domFindResults;
+    QLabel *m_domStats;
+    QTimer *m_domSearchDebounce;
+    QStringList m_searchPaths;
+    int m_searchIndex = -1;
+    QTimer *m_domLiveTimer;
+    int m_domLiveRefreshCount = 0;
+    // Live-refresh expansion snapshot — "path|label" -> labels of
+    // the children that were expanded; consumed by
+    // restoreDomExpansion as each branch's reply lands.
+    QHash<QString, QStringList> m_domLiveExpand;
+    // The styles pane resolved nodeId for DOM.* attribute calls;
+    // both stay serial-guarded like the style replies.
+    int m_propsNodeId = 0;
+    int m_propsNodeSerial = 0;
+    bool m_stylesFilling = false;
+    // Path of the item whose styles are in flight — a plain path,
+    // not an item pointer, because the live refresh can delete the
+    // item under it.
+    QString m_propsPath;
+    // eval id -> styles serial for serial-guarded eval replies
+    // (the pick-list fallback), matching the CdpReq n-field.
+    QHash<quint64, int> m_evalSerials;
     QString m_pendingSelectPath;
     bool m_selectActive = false;
     // Serial so a late computed-styles reply can't paint over the
     // styles of a newer selection.
     int m_stylesSerial = 0;
+    // DEVT19: probes that never answer get a watchdog verdict
+    // instead of stranding the tabs.
+    QTimer *m_probeWatch;
 
     // DEVT13 — Sources.
     QTreeWidget *m_sourcesTree;
@@ -298,8 +422,26 @@ private:
     QListWidget *m_bpList;
     QString m_sourceFrameId;
     QString m_sourceUrl;
-    // breakpointId -> (url, line) — Debugger answers the real ids.
+    // breakpointId -> (url, line) — Debugger answers the real ids;
+    // the line is Chrome's 1-based display number.
     QHash<QString, QPair<QString, int>> m_breakpoints;
+    // DEVT20: the debugger surface — Chrome's paused-state toolbar
+    // (pause/resume/step over/step into/step out), the status line
+    // and the call-stack list.  m_scriptIds/m_scriptUrls are the
+    // Debugger.scriptParsed map used to prefer getScriptSource and
+    // to label frames + breakpoint-resolved locations.
+    QWidget *m_dbgBar;
+    QToolButton *m_dbgPause;
+    QToolButton *m_dbgResume;
+    QToolButton *m_dbgStepOver;
+    QToolButton *m_dbgStepInto;
+    QToolButton *m_dbgStepOut;
+    QLabel *m_pauseStatus;
+    QListWidget *m_callFrames;
+    QTimer *m_srcRefreshDebounce;
+    bool m_debuggerPaused = false;
+    QHash<QString, QString> m_scriptUrls; // scriptId -> url
+    QHash<QString, QString> m_scriptIds;  // url -> scriptId
 
     // DEVT13 — Performance.
     QWidget *m_perfBody;
@@ -318,6 +460,20 @@ private:
     QTableWidget *m_heapTable;
     bool m_heapSampling = false;
     QString m_heapContext;
+    // DEVT21 — heap-summary state.  A snapshot run pairs a
+    // Runtime.getHeapUsage answer (m_snapUsed/m_snapTotal, -1 while
+    // unanswered or failed) with one sampling pass for the top
+    // allocation sites; m_snapErr keeps a failed usage call's CDP
+    // error text for the status line.  m_snapStopSeen records that
+    // the sampling leg's stop reply already landed — the two legs
+    // answer in either order, and whichever lands last composes
+    // the final status line.
+    QToolButton *m_snapButton;
+    bool m_snapshotRun = false;
+    bool m_snapStopSeen = false;
+    qint64 m_snapUsed = -1;
+    qint64 m_snapTotal = -1;
+    QString m_snapErr;
 
     // DEVT13 — Application (was Storage).
     QTreeWidget *m_appTree;
@@ -342,6 +498,14 @@ private:
     // browsingContext.getTree answer the selector merges against.
     QPointer<TabWidget> m_tabWidget;
     QJsonArray m_contexts;
+    // DEVT16: attach-retry bookkeeping — m_channelLive mirrors the
+    // last connectionChanged verdict (the client state is not
+    // directly readable under the test harness), m_attachPending
+    // dedupes the deferred getTree, m_attachRetries spends the
+    // kMaxAttachRetries budget.
+    bool m_channelLive = false;
+    bool m_attachPending = false;
+    int m_attachRetries = 0;
 
     // pending eval bookkeeping: bidi id -> purpose
     QHash<quint64, quint64> m_evalTags;

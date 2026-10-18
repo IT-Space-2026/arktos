@@ -45,7 +45,7 @@ class QJsonObject;
 struct AdBlockDecision {
     enum Action { Allow, Block, Redirect } action;
     // Set on Redirect: canonical name of a bundled stub resource
-    // (served on the arora-resource:// scheme).
+    // (served on the arktos-resource:// scheme).
     QString redirectResource;
     // Set on Redirect (adblock-rust engine only): a literal URL to
     // load instead — a data: URL carrying the stub payload or the
@@ -80,7 +80,7 @@ class AdBlockNetwork : public QObject
 
 public:
     AdBlockNetwork(QObject *parent = nullptr);
-#if defined(ARORA_ADBLOCK_RUST)
+#if defined(ARKTOS_ADBLOCK_RUST)
     ~AdBlockNetwork();
 #endif
 
@@ -103,7 +103,7 @@ public:
     // selected and enabled.  Always false in native-only builds.
     bool rustEngineActive() const;
 
-#if defined(ARORA_ADBLOCK_RUST)
+#if defined(ARKTOS_ADBLOCK_RUST)
     // The native C++ matcher, kept compiled in under the Rust flag so
     // the --adblock-rust-smoke comparison harness can diff the two
     // engines on identical input.  Do not call from the interceptor.
@@ -122,7 +122,7 @@ public slots:
 
 private:
     // Requires m_lock held (read) and m_enabled already checked.
-#if defined(ARORA_ADBLOCK_RUST)
+#if defined(ARKTOS_ADBLOCK_RUST)
     // Document-level unbreak scan shared by the composite match():
     // 1 = $document page exception (allow everything), 2 =
     // $genericblock page (native matcher handles it), 0 = neither.
@@ -176,7 +176,7 @@ private:
     bool m_enabled;
     mutable QReadWriteLock m_lock;
 
-#if defined(ARORA_ADBLOCK_RUST)
+#if defined(ARKTOS_ADBLOCK_RUST)
     std::unique_ptr<AdBlockRustEngine> m_rustEngine; // swapped under m_lock
 #endif
 };

@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,7 +28,7 @@
 #include <qsettings.h>
 #include <qwebenginepage.h>
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "sitedecisionstore.h"
 
 // SITED01: one-shot import of the legacy "webpermissions" QSettings
@@ -70,7 +70,7 @@ WebPermissionManager::WebPermissionManager(QObject *parent)
     : QObject(parent)
     , m_inPrompt(false)
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     importLegacyWebPermissions();
 #endif
 }
@@ -188,7 +188,7 @@ QList<WebPermissionManager::Entry> WebPermissionManager::entries() const
 {
     QList<Entry> result;
     const QMetaEnum metaEnum = permissionTypeEnum();
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // Keys round-trip as "<enc-origin>/<Type>" rows in the Rust store.
     const QHash<QString, QString> rows =
         SiteDecisionStore::entries(SiteDecisionStore::KindWebPermission);
@@ -235,7 +235,7 @@ QList<WebPermissionManager::Entry> WebPermissionManager::entries() const
 void WebPermissionManager::setEntry(const QUrl &origin,
         QWebEnginePermission::PermissionType type, bool granted)
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     SiteDecisionStore::set(SiteDecisionStore::KindWebPermission,
                            keyFor(origin, type),
                            QLatin1String(granted ? "grant" : "deny"));
@@ -252,7 +252,7 @@ void WebPermissionManager::setEntry(const QUrl &origin,
 void WebPermissionManager::removeEntry(const QUrl &origin,
         QWebEnginePermission::PermissionType type)
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     SiteDecisionStore::remove(SiteDecisionStore::KindWebPermission,
                               keyFor(origin, type));
 #else
@@ -268,7 +268,7 @@ void WebPermissionManager::removeEntry(const QUrl &origin,
 
 void WebPermissionManager::clearEntries()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     SiteDecisionStore::clear(SiteDecisionStore::KindWebPermission);
 #else
     ProfileSettings settings;
@@ -290,7 +290,7 @@ bool WebPermissionManager::storedDecision(const QUrl &origin,
         bool offTheRecord) const
 {
     const QString key = keyFor(origin, type);
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     QString stored;
     if (SiteDecisionStore::get(SiteDecisionStore::KindWebPermission,
                                key, &stored)) {

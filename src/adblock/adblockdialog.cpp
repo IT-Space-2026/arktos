@@ -32,12 +32,15 @@
 #include "adblockpresetsdialog.h"
 #include "adblockrule.h"
 #include "adblocksubscription.h"
-#include "aroraicon.h"
+#include "arktosicon.h"
 #include "safetext.h"
 #include "searchlineedit.h"
 
 #include <qdesktopservices.h>
 #include <qfontdatabase.h>
+#include <qinputdialog.h>
+#include <qlineedit.h>
+#include <qmessagebox.h>
 #include <qheaderview.h>
 #include <qlocale.h>
 #include <qmenu.h>
@@ -86,6 +89,8 @@ AdBlockDialog::AdBlockDialog(QWidget *parent)
             this, &AdBlockDialog::subscriptionSelectionChanged);
     connect(updateSubscriptionButton, &QPushButton::clicked,
             this, &AdBlockDialog::updateSubscription);
+    connect(updateAllSubscriptionsButton, &QPushButton::clicked,
+            this, &AdBlockDialog::updateAllSubscriptions);
     connect(removeSubscriptionButton, &QPushButton::clicked,
             this, &AdBlockDialog::removeSubscription);
 
@@ -103,7 +108,7 @@ AdBlockDialog::AdBlockDialog(QWidget *parent)
     connect(menu, &QMenu::aboutToShow,
             this, &AdBlockDialog::aboutToShowActionMenu);
     actionToolButton->setMenu(menu);
-    actionToolButton->setIcon(AroraIcon::getChrome(QLatin1String("system-run")));
+    actionToolButton->setIcon(ArktosIcon::getChrome(QLatin1String("system-run")));
     actionToolButton->setPopupMode(QToolButton::InstantPopup);
 
     m_customCommitTimer = new QTimer(this);
@@ -141,6 +146,13 @@ void AdBlockDialog::aboutToShowActionMenu()
     QAction *updateSubscription = menu->addAction(tr("Update Subscription"));
     connect(updateSubscription, &QAction::triggered, this, &AdBlockDialog::updateSubscription);
     updateSubscription->setEnabled(remote);
+
+    QAction *updateAll = menu->addAction(tr("Update All Subscriptions"));
+    connect(updateAll, &QAction::triggered,
+            this, &AdBlockDialog::updateAllSubscriptions);
+
+    QAction *addByUrl = menu->addAction(tr("Add Subscription by URL..."));
+    connect(addByUrl, &QAction::triggered, this, &AdBlockDialog::addSubscriptionByUrl);
 
     QAction *presets = menu->addAction(tr("Preset Filter Lists..."));
     connect(presets, &QAction::triggered, this, &AdBlockDialog::showPresets);
@@ -185,10 +197,45 @@ void AdBlockDialog::updateSubscription()
     subscription->updateNow();
 }
 
+void AdBlockDialog::updateAllSubscriptions()
+{
+    AdBlockManager *manager = AdBlockManager::instance();
+    // Same explicit consent as Update Now — one gesture covering
+    // every remote list the user has subscribed to.
+    AdBlockManager::setRemoteListsConsent(AdBlockManager::RemoteListsGranted);
+    for (AdBlockSubscription *subscription : manager->subscriptions()) {
+        if (subscription != manager->customRules())
+            subscription->updateNow();
+    }
+}
+
 void AdBlockDialog::browseSubscriptions()
 {
     QUrl url(QLatin1String("http://adblockplus.org/en/subscriptions"));
     QDesktopServices::openUrl(url);
+}
+
+// ADB04: hand-entered list URL — the only way to subscribe to a list
+// that is neither a preset nor linked via an abp:subscribe page link.
+// Entering the URL is the same explicit consent as ticking a preset:
+// subscribeRemoteList grants remote-list consent and kicks the fetch.
+void AdBlockDialog::addSubscriptionByUrl()
+{
+    bool ok = false;
+    const QString text = QInputDialog::getText(this, tr("Add Subscription"),
+        tr("Filter list URL (http or https):"), QLineEdit::Normal,
+        QString(), &ok);
+    if (!ok || text.trimmed().isEmpty())
+        return;
+    const QUrl location = QUrl::fromUserInput(text.trimmed());
+    if (!location.isValid()
+        || (location.scheme() != QLatin1String("http")
+            && location.scheme() != QLatin1String("https"))) {
+        QMessageBox::warning(this, tr("Add Subscription"),
+            tr("Please enter a valid http(s) filter list URL."));
+        return;
+    }
+    AdBlockManager::instance()->subscribeRemoteList(location, location.host());
 }
 
 // ADB03: the curated community-list catalog; ticking a preset
@@ -225,9 +272,12 @@ void AdBlockDialog::repopulateSubscriptions()
     subscriptionsTree->clear();
     const QLocale locale;
     const QList<AdBlockSubscription*> subscriptions = manager->subscriptions();
+    bool hasRemote = false;
     for (AdBlockSubscription *subscription : subscriptions) {
         if (!subscription)
             continue;
+        if (subscription != manager->customRules())
+            hasRemote = true;
         QTreeWidgetItem *item = new QTreeWidgetItem(subscriptionsTree);
         item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable
                        | Qt::ItemIsUserCheckable);
@@ -250,6 +300,7 @@ void AdBlockDialog::repopulateSubscriptions()
             subscriptionsTree->setCurrentItem(item);
     }
     m_refreshing = false;
+    updateAllSubscriptionsButton->setEnabled(hasRemote);
     subscriptionSelectionChanged();
 }
 

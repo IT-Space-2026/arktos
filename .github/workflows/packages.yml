@@ -1,4 +1,4 @@
-# packages.yml — CI packaging pipeline for Arora.
+# packages.yml — CI packaging pipeline for Arktos.
 #
 # One job per distributable artifact. All jobs build from the same commit
 # and upload their result as a workflow artifact. No release is created —
@@ -14,10 +14,10 @@
 #
 # Coverage:
 #   deb      — .devin/pkg-deb.sh (dpkg-buildpackage path) → dist/*.deb
-#   rpm      — .devin/pkg-rpm.sh (rpmbuild, spec at rpm/arora.spec)
-#   flatpak  — flatpak-builder action → io.arora.Arora.flatpak
+#   rpm      — .devin/pkg-rpm.sh (rpmbuild, spec at rpm/arktos.spec)
+#   flatpak  — flatpak-builder action → com.arktos_browser.Arktos.flatpak
 #   windows  — qmake + nmake + windeployqt → zipped portable package
-#   macos    — qmake + make + macdeployqt → Arora.dmg
+#   macos    — qmake + make + macdeployqt → Arktos.dmg
 
 name: packages
 
@@ -25,6 +25,13 @@ on:
   workflow_dispatch:
   push:
     branches: [master]
+    # lane bookkeeping (task tables, worklog, loop logs) must not
+    # trigger — or cancel — packaging runs.  .devin/pkg-*.sh stays a
+    # real trigger since it IS the packaging logic.
+    paths-ignore:
+      - '.devin/WORKLOG.md'
+      - '.devin/Arora-Task*.md'
+      - '.devin/*.log'
 
 concurrency:
   group: packages-${{ github.ref }}
@@ -50,12 +57,15 @@ jobs:
           QTDIR="$(dirname "$(dirname "$(readlink -f "$QMAKE")")")"
           echo "QTDIR=$QTDIR" >> "$GITHUB_ENV"
 
+      - name: Install tor runtime deps (bundled tor's ldd targets)
+        run: sudo apt-get update -qq && sudo apt-get install -y libevent-2.1-7
+
       - name: Build .deb
         run: ./.devin/pkg-deb.sh
 
       - uses: actions/upload-artifact@v7
         with:
-          name: arora-deb
+          name: arktos-deb
           path: dist/*.deb
 
   rpm:
@@ -85,7 +95,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: arora-rpm
+          name: arktos-rpm
           path: dist/*.rpm
 
   flatpak:
@@ -100,10 +110,10 @@ jobs:
         # flatpak-builder handles the KDE 6.11 runtime + qtwebengine
         # baseapp + rust SDK extension declared in the manifest; the
         # vendored cargo-sources.json keeps the build offline-exact.
-        uses: flatpak/flatpak-github-actions/flatpak-builder@v6.5
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6.8
         with:
-          manifest-path: io.arora.Arora.yaml
-          bundle: io.arora.Arora.flatpak
+          manifest-path: com.arktos_browser.Arktos.yaml
+          bundle: com.arktos_browser.Arktos.flatpak
           repository-name: flathub
           repository-url: https://flathub.org/repo/flathub.flatpakrepo
           cache-key: flatpak-builder-${{ github.sha }}
@@ -111,8 +121,8 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: arora-flatpak
-          path: io.arora.Arora.flatpak
+          name: arktos-flatpak
+          path: com.arktos_browser.Arktos.flatpak
 
   windows:
     runs-on: windows-latest
@@ -148,36 +158,86 @@ jobs:
           "QTDIR=$qt" >> $env:GITHUB_ENV
           "$qt\bin" >> $env:GITHUB_PATH
 
-      - uses: ilammy/msvc-dev-cmd@v1
-
       - name: Build
         shell: cmd
         run: |
-          "%QTDIR%\bin\qmake.exe" -o Makefile arora.pro
-          nmake
+          rem MSVC env without ilammy/msvc-dev-cmd (it still targets
+          rem Node 20): glob for vcvars64.bat under the VS install root.
+          rem (vswhere lives under "Program Files (x86)" — a literal ')'
+          rem inside a for-in () clause breaks cmd parsing, so glob the
+          rem paren-free path instead of invoking it.)
+          set "VCVARS="
+          for /d %%v in ("C:\Program Files\Microsoft Visual Studio\*") do (
+            for /d %%e in ("%%v\*") do (
+              if not defined VCVARS if exist "%%e\VC\Auxiliary\Build\vcvars64.bat" set "VCVARS=%%e\VC\Auxiliary\Build\vcvars64.bat"
+            )
+          )
+          if not defined VCVARS (echo vcvars64.bat not found & exit /b 1)
+          call "%VCVARS%"
+          rem vcvars env dies with this step — re-export the piece the
+          rem NSIS step needs (CRT redist dir for the installer payload).
+          echo VCToolsRedistDir=%VCToolsRedistDir%>> %GITHUB_ENV%
+          "%QTDIR%\bin\qmake.exe" -o Makefile arktos.pro
+          rem Packaging only needs the app — autotests/tools aren't
+          rem deployed, and serial nmake over ~65 test binaries stalls
+          rem the job for hours. Build just the src subdir target.
+          nmake sub-src
 
       - name: Deploy
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path deploy | Out-Null
-          Copy-Item arora.exe deploy\
-          & "$env:QTDIR\bin\windeployqt.exe" --release --no-translations deploy\arora.exe
-          Compress-Archive -Path deploy\* -DestinationPath arora-windows.zip
+          Copy-Item arktos.exe deploy\
+          & "$env:QTDIR\bin\windeployqt.exe" --release --no-translations deploy\arktos.exe
+          # Arktos data payload — installedDataDirectory() resolves to
+          # the exe dir on Windows, so stage beside it.
+          Copy-Item -Recurse src\.qm\locale deploy\locale
+          Copy-Item src\useragent\useragents.xml deploy\
+          if (Test-Path src\data\extensions) { Copy-Item -Recurse src\data\extensions deploy\extensions }
+          # Tor expert bundle (windows-x86_64) — same artifact+pin as
+          # BuildProcess/fetch-tor.sh, which is sh-only.
+          $tv = "15.0.25"
+          $tb = "tor-expert-bundle-windows-x86_64-$tv.tar.gz"
+          $base = "https://dist.torproject.org/torbrowser/$tv"
+          Invoke-WebRequest "$base/$tb" -OutFile $tb
+          Invoke-WebRequest "$base/sha256sums-unsigned-build.txt" -OutFile tor-sums.txt
+          $expected = (Select-String -Path tor-sums.txt -Pattern " $([regex]::Escape($tb))$").Line.Split(' ')[0]
+          $actual = (Get-FileHash $tb -Algorithm SHA256).Hash.ToLower()
+          if ($expected -ne $actual) { throw "tor bundle sha256 mismatch: $actual != $expected" }
+          tar -xzf $tb
+          Copy-Item -Recurse tor deploy\tor
+          Copy-Item -Recurse data deploy\data
+          Compress-Archive -Path deploy\* -DestinationPath arktos-windows.zip
 
       - name: Installer (NSIS)
         shell: pwsh
         run: |
           choco install nsis -y --no-progress
-          $crt = Get-ChildItem "$env:VCToolsRedistDir\x64" -Directory -Filter 'Microsoft.VC*.CRT' | Select-Object -Last 1
-          $args = "/DDEPLOYDIR=deploy"
-          if ($crt) { $args += " /DVCREDIST=$($crt.FullName)" }
-          & makensis $args BuildProcess\windowsinstaller.nsi
+          # choco's PATH refresh does not propagate between steps —
+          # resolve makensis from its install dir explicitly (a plain
+          # path string — $cmd.Source only exists on CommandInfo).
+          $makensis = 'C:\Program Files (x86)\NSIS\makensis.exe'
+          if (-not (Test-Path $makensis)) { $makensis = 'C:\Program Files\NSIS\makensis.exe' }
+          if (-not (Test-Path $makensis)) { $makensis = (Get-Command makensis -ErrorAction Stop).Source }
+          $crt = Get-ChildItem "$env:VCToolsRedistDir\x64" -Directory -Filter 'Microsoft.VC*.CRT' -ErrorAction SilentlyContinue | Select-Object -Last 1
+          # makensis cd's into the script's dir, so every path it sees
+          # must be absolute — relative ones silently resolve under
+          # BuildProcess\ (that's what broke the icon load).
+          $nsisArgs = @(
+            "/DDEPLOYDIR=$PWD\deploy",
+            "/DICONFILE=$PWD\BuildProcess\browser.ico",
+            "/DOUTDIR=$PWD",
+            "/DSRCDIR=$PWD\src"
+          )
+          if ($crt) { $nsisArgs += "/DVCREDIST=$($crt.FullName)" }
+          & $makensis @nsisArgs BuildProcess\windowsinstaller.nsi
+          if ($LASTEXITCODE -ne 0) { throw "makensis failed ($LASTEXITCODE)" }
 
       - uses: actions/upload-artifact@v7
         with:
-          name: arora-windows
+          name: arktos-windows
           path: |
-            arora-windows.zip
+            arktos-windows.zip
             *Installer*.exe
 
   macos:
@@ -201,14 +261,42 @@ jobs:
 
       - name: Build
         run: |
-          "$QTDIR/bin/qmake" -o Makefile arora.pro
+          "$QTDIR/bin/qmake" -o Makefile arktos.pro
           make -j"$(sysctl -n hw.ncpu)"
+
+      - name: Stage payload + bundled tor into the .app
+        run: |
+          # The unix install block is !mac-gated, so stage the payload
+          # (compiled translations, useragents.xml, bundled extensions)
+          # straight from the source tree into the bundle-relative path
+          # installedDataDirectory() resolves.
+          mkdir -p Arktos.app/Contents/Resources/share/arktos
+          cp -a src/.qm/locale Arktos.app/Contents/Resources/share/arktos/
+          cp -a src/useragent/useragents.xml \
+                Arktos.app/Contents/Resources/share/arktos/
+          cp -a src/data/extensions \
+                Arktos.app/Contents/Resources/share/arktos/
+          # tor expert bundle where TorManager's bundled-layout
+          # search (<bindir>/../lib/tor, binaryDir/../data) finds it.
+          ARKTOS_TOR_PREFIX="$PWD/torpayload" sh BuildProcess/fetch-tor.sh
+          mkdir -p Arktos.app/Contents/lib
+          cp -a torpayload/tor Arktos.app/Contents/lib/tor
+          cp -a torpayload/data Arktos.app/Contents/lib/data
 
       - name: Package .dmg
         run: |
-          "$QTDIR/bin/macdeployqt" Arora.app -dmg -verbose=1
+          "$QTDIR/bin/macdeployqt" Arktos.app -verbose=1
+          # macdeployqt's own -dmg output is a bare volume — no
+          # /Applications link, no install affordance. Build the
+          # classic drag-to-Applications layout ourselves: a staging
+          # dir holding the .app beside an Applications symlink, then
+          # a compressed UDZO image of it.
+          mkdir dmg-root
+          cp -R Arktos.app dmg-root/
+          ln -s /Applications dmg-root/Applications
+          hdiutil create -volname "Arktos" -srcfolder dmg-root -ov -format UDZO Arktos.dmg
 
       - uses: actions/upload-artifact@v7
         with:
-          name: arora-macos
+          name: arktos-macos
           path: '*.dmg'

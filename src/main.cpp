@@ -27,7 +27,7 @@
 #include "adblockschemeaccesshandler.h"
 #include "adblocksubscription.h"
 #include "acceptlanguagedialog.h"
-#include "aroraicon.h"
+#include "arktosicon.h"
 #include "autofillmanager.h"
 #include "bookmarknode.h"
 #include "bookmarksmanager.h"
@@ -67,6 +67,7 @@
 #include "pipwindow.h"
 #include "plaintexteditsearch.h"
 #include "printpreviewdialog.h"
+#include "profilemenuactions.h"
 #include "navigationpolicy.h"
 #include "privacyrequestinterceptor.h"
 #include "readermode.h"
@@ -97,12 +98,12 @@
 #include "xbelreader.h"
 #include "xbelwriter.h"
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 #include "rustcore.h"
 #include "rustcorebridge.h"
 #endif
 
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
 #include "downloadworker.h"
 #endif
 #include "profilevault.h"
@@ -110,7 +111,7 @@
 // in no-rust builds too (ENG12).
 #include "enginetab.h"
 
-#ifdef ARORA_SERVO
+#ifdef ARKTOS_SERVO
 // ENG22: the panic-injection leg drives ServoView::spinOnce/isPoisoned
 // directly — Engine::Page has no such surface.
 #include "servobackend.h"
@@ -192,10 +193,18 @@
 #include <QtWidgets/QMenuBar>
 #include <QtWidgets/QMessageBox>
 #include <QtWidgets/QPlainTextEdit>
+#include <QtWidgets/QHeaderView>
+#include <QtWidgets/QListWidget>
 #include <QtWidgets/QMenu>
 #include <QtWidgets/QPushButton>
+#include <QtWidgets/QScrollBar>
+#include <QtWidgets/QSpinBox>
+#include <QtWidgets/QTableView>
+#include <QtWidgets/QTableWidget>
 #include <QtWidgets/QStatusBar>
+#include <QtWidgets/QTabWidget>
 #include <QtWidgets/QToolButton>
+#include <QtWidgets/QTreeWidget>
 #include <QtPrintSupport/QPrinter>
 #include <QtGui/QAction>
 #include <QtGui/QKeyEvent>
@@ -207,12 +216,12 @@
 #include <cmath>
 #include <memory>
 #include <stdexcept>
+#include <atomic>
+#include <csignal>
 
 #if defined(Q_OS_UNIX)
 #include <arpa/inet.h>
-#include <atomic>
 #include <cerrno>
-#include <csignal>
 #include <execinfo.h>
 #include <fcntl.h>
 #include <netdb.h>
@@ -224,7 +233,7 @@
 #include <unistd.h>
 #endif
 
-#if defined(ARORA_ADBLOCK_RUST)
+#if defined(ARKTOS_ADBLOCK_RUST)
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonObject>
 
@@ -315,6 +324,28 @@ static QList<quint16> tlsClientHelloCiphers(const QByteArray &record)
     return ciphers;
 }
 
+// TELEM01: telemetry state shared by the capture proxy and the smoke
+// polling legs below.  These are plain Qt/std types — kept outside the
+// platform guard so the non-Unix smoke legs still compile (they simply
+// never observe a hit where the proxy machinery is absent).
+static QMutex s_telemetryMutex;
+static QStringList s_telemetryHits;
+static QStringList s_telemetryHosts;
+// ip:port of every upstream the forwarding proxy dialed — the /proc
+// socket scan sees these as process-owned remote sockets, so the
+// browse smoke must not count them as proxy bypasses.
+static QSet<QString> s_telemetryUpstream;
+static std::atomic<bool> s_telemetryForward{false};
+
+// Spins the event loop for ms — the smoke polling loop's QTest-free
+// wait (src does not link testlib).
+static void telemetryWait(int ms)
+{
+    QEventLoop loop;
+    QTimer::singleShot(ms, &loop, &QEventLoop::quit);
+    loop.exec();
+}
+
 #if defined(Q_OS_UNIX)
 // TELEM01: --telemetry-smoke's capture proxy is a raw loopback socket
 // with a blocking accept loop on a detached thread — it must already
@@ -327,14 +358,6 @@ static QList<quint16> tlsClientHelloCiphers(const QByteArray &record)
 // (s_telemetryForward) it is forwarded so real browsing works through
 // the tap and every CONNECT/Host target lands in s_telemetryHosts for
 // the after-session classification.
-static QMutex s_telemetryMutex;
-static QStringList s_telemetryHits;
-static QStringList s_telemetryHosts;
-// ip:port of every upstream the forwarding proxy dialed — the /proc
-// socket scan sees these as process-owned remote sockets, so the
-// browse smoke must not count them as proxy bypasses.
-static QSet<QString> s_telemetryUpstream;
-static std::atomic<bool> s_telemetryForward{false};
 
 static void telemetryRecord(const QByteArray &head, const QString &target)
 {
@@ -368,12 +391,19 @@ static void telemetryRelay(int clientFd, int upstreamFd)
             if (got <= 0) {
                 // Half-close: the peer may still be replying, so only
                 // signal EOF to the other direction and keep pumping.
-                ::shutdown(to, SHUT_WR);
+                if (to >= 0)
+                    ::shutdown(to, SHUT_WR);
                 fds[i].fd = -1;
                 --open;
                 if (fds[1 - i].fd < 0)
                     break;
                 continue;
+            }
+            if (to < 0) {
+                // The other direction already closed — nothing left
+                // to forward to.
+                open = 0;
+                break;
             }
             ssize_t sent = 0;
             while (sent < got) {
@@ -586,15 +616,6 @@ static void telemetryAcceptLoop(int listenFd)
         }
         std::thread(telemetryConnection, fd).detach();
     }
-}
-
-// Spins the event loop for ms — the smoke polling loop's QTest-free
-// wait (src does not link testlib).
-static void telemetryWait(int ms)
-{
-    QEventLoop loop;
-    QTimer::singleShot(ms, &loop, &QEventLoop::quit);
-    loop.exec();
 }
 
 // Opens the capture proxy: binds + listens on an ephemeral loopback
@@ -878,7 +899,7 @@ static const char kBrowserAuditCaptureJs[] = R"JS(
     var categoryPath = [];
     var poll = setInterval(function () {
         var framework = window.browserAuditTestFramework;
-        if (!framework || framework.__aroraWrapped)
+        if (!framework || framework.__arktosWrapped)
             return;
         var realStart = framework.start;
         framework.start = function (callbacks) {
@@ -897,7 +918,7 @@ static const char kBrowserAuditCaptureJs[] = R"JS(
                     return onEndCategory.apply(this, arguments);
             };
             callbacks.endTest = function (duration, result) {
-                (window.__aroraResults = window.__aroraResults || [])
+                (window.__arktosResults = window.__arktosResults || [])
                     .push({
                         id: this.id,
                         title: String(this.title),
@@ -911,14 +932,14 @@ static const char kBrowserAuditCaptureJs[] = R"JS(
                     return onEndTest.apply(this, arguments);
             };
             callbacks.endSuite = function (result) {
-                window.__aroraSummary = result;
-                window.__aroraDone = true;
+                window.__arktosSummary = result;
+                window.__arktosDone = true;
                 if (onEndSuite)
                     return onEndSuite.apply(this, arguments);
             };
             return realStart.call(this, callbacks);
         };
-        framework.__aroraWrapped = true;
+        framework.__arktosWrapped = true;
         clearInterval(poll);
     }, 5);
     // The suite scripts arrive via network fetch after
@@ -934,7 +955,7 @@ static int browserAuditSmoke(BrowserApplication &application,
     const QString mode = bare ? QStringLiteral("bare")
                               : QStringLiteral("app");
     const QString outPath = qEnvironmentVariable(
-        "ARORA_AUDIT_OUT",
+        "ARKTOS_AUDIT_OUT",
         QStringLiteral("/tmp/browseraudit-%1.json").arg(mode));
 
     QWebEngineView *view = appView;
@@ -945,7 +966,7 @@ static int browserAuditSmoke(BrowserApplication &application,
         QWebEngineProfile *profile = new QWebEngineProfile(&application);
         QWebEngineView *bareView = nullptr;
 
-        // SEC15 bisection aid: ARORA_AUDIT_WIRE=<csv> applies selected
+        // SEC15 bisection aid: ARKTOS_AUDIT_WIRE=<csv> applies selected
         // pieces of prepareProfile()/WebPage wiring onto the OTR profile
         // so a divergent result can be attributed to one component.
         // Values: settings cookies interceptor extensions webpage webview
@@ -957,7 +978,7 @@ static int browserAuditSmoke(BrowserApplication &application,
         // wiring.  Modifier: bar (without webview) adds a hidden child
         // widget like WebView's ScriptBlockInfoBar, to test whether a
         // child widget alone affects paint-gated resource loads.
-        const QStringList wire = qEnvironmentVariable("ARORA_AUDIT_WIRE")
+        const QStringList wire = qEnvironmentVariable("ARKTOS_AUDIT_WIRE")
             .split(QLatin1Char(','), Qt::SkipEmptyParts);
         if (wire.contains(QLatin1String("settings")))
             BrowserProfile::applySettings(profile);
@@ -1054,12 +1075,12 @@ static int browserAuditSmoke(BrowserApplication &application,
     Engine::Page *enginePage =
         WebEnginePageAdapter::forPage(view->page());
     enginePage->insertScript(Engine::Script{
-        QStringLiteral("arora-browseraudit-capture"),
+        QStringLiteral("arktos-browseraudit-capture"),
         QString::fromUtf8(kBrowserAuditCaptureJs),
         Engine::InjectionPoint::DocumentCreation,
         0 /* main world */, false });
 
-    const QUrl suiteUrl(qEnvironmentVariable("ARORA_AUDIT_URL",
+    const QUrl suiteUrl(qEnvironmentVariable("ARKTOS_AUDIT_URL",
         QStringLiteral("https://browseraudit.com/test"
                        "?categories=*&sendresults=false")));
     qInfo() << "browseraudit-smoke: mode" << mode << "loading"
@@ -1076,12 +1097,12 @@ static int browserAuditSmoke(BrowserApplication &application,
             return;
         enginePage->runJavaScript(
             QStringLiteral("JSON.stringify({"
-                           "done: window.__aroraDone === true,"
-                           " n: (window.__aroraResults || []).length,"
+                           "done: window.__arktosDone === true,"
+                           " n: (window.__arktosResults || []).length,"
                            " fw: typeof browserAuditTestFramework,"
                            " wrapped: !!(window.browserAuditTestFramework"
                            "            && browserAuditTestFramework"
-                           "                  .__aroraWrapped),"
+                           "                  .__arktosWrapped),"
                            " ui: typeof browserAuditUI,"
                            " rs: document.readyState})"),
             [=, &application](const QVariant &status) {
@@ -1102,8 +1123,8 @@ static int browserAuditSmoke(BrowserApplication &application,
                 enginePage->runJavaScript(
                     QStringLiteral("JSON.stringify({"
                                    "userAgent: navigator.userAgent,"
-                                   "summary: window.__aroraSummary || null,"
-                                   "results: window.__aroraResults || []})"),
+                                   "summary: window.__arktosSummary || null,"
+                                   "results: window.__arktosResults || []})"),
                     [=, &application](const QVariant &payload) {
                         const QByteArray json =
                             payload.toString().toUtf8();
@@ -1160,7 +1181,7 @@ static int browserAuditSmoke(BrowserApplication &application,
     });
     poller->start();
 
-    int timeoutMs = qEnvironmentVariableIntValue("ARORA_AUDIT_TIMEOUT_MS");
+    int timeoutMs = qEnvironmentVariableIntValue("ARKTOS_AUDIT_TIMEOUT_MS");
     if (timeoutMs <= 0)
         timeoutMs = 30 * 60 * 1000;
     QTimer::singleShot(timeoutMs, &application, [&application]() {
@@ -1184,18 +1205,18 @@ static int browserAuditSmoke(BrowserApplication &application,
 // same as --browseraudit-smoke.
 static const char kAnonIceProbeJs[] = R"JS(
 (function () {
-    window.__aroraIce = { done: false, candidates: [], error: null };
+    window.__arktosIce = { done: false, candidates: [], error: null };
     window.addEventListener('load', function () {
         try {
             if (typeof RTCPeerConnection !== 'function') {
-                window.__aroraIce.error = 'RTCPeerConnection unavailable';
-                window.__aroraIce.done = true;
+                window.__arktosIce.error = 'RTCPeerConnection unavailable';
+                window.__arktosIce.done = true;
                 return;
             }
             var pc = new RTCPeerConnection({ iceServers: [] });
             pc.onicecandidate = function (event) {
                 if (event.candidate)
-                    window.__aroraIce.candidates.push(
+                    window.__arktosIce.candidates.push(
                         String(event.candidate.candidate));
             };
             pc.createDataChannel('x');
@@ -1203,12 +1224,12 @@ static const char kAnonIceProbeJs[] = R"JS(
                 return pc.setLocalDescription(offer);
             });
             setTimeout(function () {
-                window.__aroraIce.done = true;
+                window.__arktosIce.done = true;
                 try { pc.close(); } catch (e) {}
             }, 4000);
         } catch (e) {
-            window.__aroraIce.error = String(e);
-            window.__aroraIce.done = true;
+            window.__arktosIce.error = String(e);
+            window.__arktosIce.done = true;
         }
     });
 })();
@@ -1252,7 +1273,7 @@ static const char kAnonExtractJs[] = R"JS(
             historyLength: history.length,
             screen: { w: screen.width, h: screen.height,
                       dpr: window.devicePixelRatio },
-            ice: window.__aroraIce || null
+            ice: window.__arktosIce || null
         }
     });
 })()
@@ -1260,7 +1281,7 @@ static const char kAnonExtractJs[] = R"JS(
 
 static const char kAnonSettleJs[] = R"JS(
 JSON.stringify({
-    ice: !!(window.__aroraIce && window.__aroraIce.done),
+    ice: !!(window.__arktosIce && window.__arktosIce.done),
     dns: ['srvdiv1', 'srvdiv2', 'srvdiv3'].filter(function (id) {
         var el = document.getElementById(id);
         return el && el.innerText.trim().length > 0;
@@ -1281,19 +1302,19 @@ JSON.stringify({
 static int anonSmoke(BrowserApplication &application, WebView *view)
 {
     const QString outPath = qEnvironmentVariable(
-        "ARORA_ANON_OUT",
+        "ARKTOS_ANON_OUT",
         QStringLiteral("/tmp/anon-check.json"));
 
     view->window()->resize(1024, 768);
     view->window()->show();
 
     view->enginePage()->insertScript(Engine::Script{
-        QStringLiteral("arora-anon-ice-probe"),
+        QStringLiteral("arktos-anon-ice-probe"),
         QString::fromUtf8(kAnonIceProbeJs),
         Engine::InjectionPoint::DocumentCreation,
         0 /* main world */, false });
 
-    const QUrl target(qEnvironmentVariable("ARORA_ANON_URL",
+    const QUrl target(qEnvironmentVariable("ARKTOS_ANON_URL",
         QStringLiteral("https://ipduh.com/privacy-test/")));
     qInfo() << "anon-smoke: loading" << target << "->" << outPath;
 
@@ -1313,7 +1334,7 @@ static int anonSmoke(BrowserApplication &application, WebView *view)
         timer.start();
         return timer;
     }();
-    int settleMs = qEnvironmentVariableIntValue("ARORA_ANON_SETTLE_MS");
+    int settleMs = qEnvironmentVariableIntValue("ARKTOS_ANON_SETTLE_MS");
     if (settleMs <= 0)
         settleMs = 60 * 1000;
 
@@ -1401,7 +1422,7 @@ static int anonSmoke(BrowserApplication &application, WebView *view)
     });
     poller->start();
 
-    int timeoutMs = qEnvironmentVariableIntValue("ARORA_ANON_TIMEOUT_MS");
+    int timeoutMs = qEnvironmentVariableIntValue("ARKTOS_ANON_TIMEOUT_MS");
     if (timeoutMs <= 0)
         timeoutMs = 3 * 60 * 1000;
     QTimer::singleShot(timeoutMs, &application, [&application]() {
@@ -1435,11 +1456,11 @@ static int anonSmoke(BrowserApplication &application, WebView *view)
 //     actually ran/loaded.
 //
 // Environment:
-//   ARORA_BADSSL_OUT        output path (default /tmp/badssl.json)
-//   ARORA_BADSSL_ONLY       substring filter on the case name —
+//   ARKTOS_BADSSL_OUT        output path (default /tmp/badssl.json)
+//   ARKTOS_BADSSL_ONLY       substring filter on the case name —
 //                           BADSSL03 re-runs a single fixed case with
-//                           e.g. ARORA_BADSSL_ONLY=revoked
-//   ARORA_BADSSL_TIMEOUT_MS per-case budget (default 30000)
+//                           e.g. ARKTOS_BADSSL_ONLY=revoked
+//   ARKTOS_BADSSL_TIMEOUT_MS per-case budget (default 30000)
 struct BadSslCase {
     const char *group;
     const char *name;
@@ -1568,26 +1589,26 @@ static const char kBadSslProbeJs[] = R"JS(
 
 static int badSslSmoke(BrowserApplication &application, WebView *view)
 {
-    const QString outPath = qEnvironmentVariable("ARORA_BADSSL_OUT",
+    const QString outPath = qEnvironmentVariable("ARKTOS_BADSSL_OUT",
         QStringLiteral("/tmp/badssl.json"));
-    const QString only = qEnvironmentVariable("ARORA_BADSSL_ONLY");
+    const QString only = qEnvironmentVariable("ARKTOS_BADSSL_ONLY");
     int caseTimeoutMs =
-        qEnvironmentVariableIntValue("ARORA_BADSSL_TIMEOUT_MS");
+        qEnvironmentVariableIntValue("ARKTOS_BADSSL_TIMEOUT_MS");
     if (caseTimeoutMs <= 0)
         caseTimeoutMs = 30000;
 
     // BADSSL03: the client-certificate case only goes green with a
-    // cert in the profile's store — ARORA_CLIENTCERT_FILE (+optional
-    // ARORA_CLIENTCERT_PASSPHRASE) installs one for the run and arms
+    // cert in the profile's store — ARKTOS_CLIENTCERT_FILE (+optional
+    // ARKTOS_CLIENTCERT_PASSPHRASE) installs one for the run and arms
     // non-interactive selection.  Unset, the case is recorded on the
     // cert-less path (HTTP 400 — cert-less Chrome parity).
     const QString clientCertFile =
-        qEnvironmentVariable("ARORA_CLIENTCERT_FILE");
+        qEnvironmentVariable("ARKTOS_CLIENTCERT_FILE");
     if (!clientCertFile.isEmpty()) {
         if (BrowserProfile::addClientCertificateFile(
                 view->webPage()->profile(), clientCertFile,
-                qgetenv("ARORA_CLIENTCERT_PASSPHRASE")))
-            qputenv("ARORA_CLIENTCERT_AUTOSELECT", "1");
+                qgetenv("ARKTOS_CLIENTCERT_PASSPHRASE")))
+            qputenv("ARKTOS_CLIENTCERT_AUTOSELECT", "1");
         else
             qInfo() << "badssl-smoke: WARN client cert"
                     << clientCertFile << "did not install";
@@ -1775,10 +1796,10 @@ static int badSslSmoke(BrowserApplication &application, WebView *view)
 
             QString outcome;
             if (!r->cur.certInterstitial.isEmpty()
-                || href.startsWith(QLatin1String("arora-cert-error:")))
+                || href.startsWith(QLatin1String("arktos-cert-error:")))
                 outcome = QStringLiteral("blocked:cert-interstitial");
             else if (!r->cur.httpWarning.isEmpty()
-                || href.startsWith(QLatin1String("arora-http-warning:")))
+                || href.startsWith(QLatin1String("arktos-http-warning:")))
                 outcome = QStringLiteral("blocked:http-warning");
             else if (timedOut)
                 outcome = QStringLiteral("timeout");
@@ -1882,12 +1903,12 @@ static const char kXsLeakCaptureJs[] = R"JS(
         window.exportToServer = function () { return Promise.resolve(); };
         Promise.resolve(button.onclick())
             .then(function () {
-                window.__aroraResults = xsLeakDump();
-                window.__aroraDone = true;
+                window.__arktosResults = xsLeakDump();
+                window.__arktosDone = true;
             }, function (err) {
-                window.__aroraError = String(err);
-                window.__aroraResults = xsLeakDump();
-                window.__aroraDone = true;
+                window.__arktosError = String(err);
+                window.__arktosResults = xsLeakDump();
+                window.__arktosDone = true;
             });
     }, 50);
     // A full timeout sweep of the battery is the worst case; the C++
@@ -1911,9 +1932,9 @@ static const char kXsLeakCaptureJs[] = R"JS(
         }
         return {
             exported: typeof window.exportResult === 'function'
-                ? window.exportResult('Arora', 'Linux', '') : null,
+                ? window.exportResult('Arktos', 'Linux', '') : null,
             rows: rows,
-            error: window.__aroraError || null
+            error: window.__arktosError || null
         };
     };
 })();
@@ -1924,7 +1945,7 @@ static const char kXsLeakCaptureJs[] = R"JS(
 // objects, so unrun tests show their current state).
 static const char kXsLeakStatusJs[] = R"JS(
 JSON.stringify({
-    done: window.__aroraDone === true,
+    done: window.__arktosDone === true,
     finished: Array.prototype.filter.call(
         document.querySelectorAll('#leakTable tr'),
         function (r) {
@@ -1932,8 +1953,8 @@ JSON.stringify({
         }).length,
     total: document.getElementById('leakTable')
         ? document.getElementById('leakTable').rows.length : 0,
-    dump: (window.__aroraDone === true
-           || window.__aroraTimedOut === true)
+    dump: (window.__arktosDone === true
+           || window.__arktosTimedOut === true)
         && typeof window.xsLeakDump === 'function'
         ? window.xsLeakDump() : null,
     rs: document.readyState
@@ -1946,7 +1967,7 @@ static int xsLeakSmoke(BrowserApplication &application, WebView *view,
     const QString mode = permissive ? QStringLiteral("open")
                                     : QStringLiteral("defaults");
     const QString outPath = qEnvironmentVariable(
-        "ARORA_XSLEAK_OUT",
+        "ARKTOS_XSLEAK_OUT",
         QStringLiteral("/tmp/xsleak-%1.json").arg(mode));
 
     // The suite drives itself through promises and popup windows —
@@ -1956,7 +1977,7 @@ static int xsLeakSmoke(BrowserApplication &application, WebView *view,
     view->window()->show();
 
     view->enginePage()->insertScript(Engine::Script{
-        QStringLiteral("arora-xsleak-capture"),
+        QStringLiteral("arktos-xsleak-capture"),
         QString::fromUtf8(kXsLeakCaptureJs),
         Engine::InjectionPoint::DocumentCreation,
         0 /* main world */, false });
@@ -2032,7 +2053,7 @@ static int xsLeakSmoke(BrowserApplication &application, WebView *view,
             });
     };
 
-    const QUrl suiteUrl(qEnvironmentVariable("ARORA_XSLEAK_URL",
+    const QUrl suiteUrl(qEnvironmentVariable("ARKTOS_XSLEAK_URL",
         QStringLiteral("https://xsinator.com/")));
     qInfo() << "xsleak-smoke: mode" << mode << "loading" << suiteUrl
             << "->" << outPath;
@@ -2074,14 +2095,14 @@ static int xsLeakSmoke(BrowserApplication &application, WebView *view,
     poller->start();
 
     int timeoutMs =
-        qEnvironmentVariableIntValue("ARORA_XSLEAK_TIMEOUT_MS");
+        qEnvironmentVariableIntValue("ARKTOS_XSLEAK_TIMEOUT_MS");
     if (timeoutMs <= 0)
         timeoutMs = 20 * 60 * 1000;
     QTimer::singleShot(timeoutMs, &application, [=, &application]() {
         // Still dump whatever the suite produced — a partial result
         // table distinguishes a stalled run from a dead page.
         view->enginePage()->runJavaScript(
-            QStringLiteral("window.__aroraTimedOut = true"),
+            QStringLiteral("window.__arktosTimedOut = true"),
             [=, &application](const QVariant &) { dumpResults(false); });
     });
 
@@ -2107,7 +2128,7 @@ static int xsLeakSmoke(BrowserApplication &application, WebView *view,
 static int pingSpotterSmoke(BrowserApplication &application, WebView *view)
 {
     view->window()->show();
-    const QUrl site(qEnvironmentVariable("ARORA_PINGSPOTTER_URL",
+    const QUrl site(qEnvironmentVariable("ARKTOS_PINGSPOTTER_URL",
         QStringLiteral("https://apps.armin.dev/ping-spotter/")));
     qInfo() << "pingspotter-smoke: loading" << site;
 
@@ -2174,19 +2195,19 @@ static int pingSpotterSmoke(BrowserApplication &application, WebView *view)
 // working channel — the regression net for both reported suspects:
 // a stalled qrc subresource in the interceptor path (STALL01's
 // mechanism aimed at the start page's own qrc:///qtwebchannel/
-// qwebchannel.js, qrc:/startpage.css and qrc:/arora.svg fetches —
+// qwebchannel.js, qrc:/startpage.css and qrc:/arktos.svg fetches —
 // any one of them spinning keeps isLoading() true forever) and the
-// channel-registration ordering ('arora' registers on urlChanged at
+// channel-registration ordering ('arktos' registers on urlChanged at
 // commit; the page's init() handshake at onload must still resolve
 // it on every load).
 //
 // The shared custom subscription is armed with the same widened uBO
 // shape that produced the original hang — a global $script
-// redirect-rule whose arora-resource: stub re-entered the matcher —
+// redirect-rule whose arktos-resource: stub re-entered the matcher —
 // plus rules naming the start page's own qrc subresources, so every
 // one of the fifty loads crosses the interceptor with hostile rules
 // live.  Each load must emit loadFinished inside the per-load
-// deadline, then resolve channel.objects.arora — proven by the
+// deadline, then resolve channel.objects.arktos — proven by the
 // page's own update() filling document.title and the search button
 // — and answer an explicit searchUrl() round-trip, the call the
 // search box itself makes.
@@ -2210,7 +2231,7 @@ static int bidiSmoke(BrowserApplication &application, WebView *view)
         bool sawNetTiming = false;
         bool sawCookies = false;
         bool sawCache = false;
-        // DEVT13: per-domain probe verdicts through the arora.cdp
+        // DEVT13: per-domain probe verdicts through the arktos.cdp
         // passthrough — id -> domain name.
         QHash<quint64, QString> probes;
         int probesAnswered = 0;
@@ -2253,7 +2274,7 @@ static int bidiSmoke(BrowserApplication &application, WebView *view)
             finish(ok, ok ? QStringLiteral("all checks green")
                           : QStringLiteral("network event missing "
                                            "terminal/timing data, or "
-                                           "arora.cdp probes "
+                                           "arktos.cdp probes "
                                            "unanswered/failed"));
         }
     };
@@ -2289,7 +2310,7 @@ static int bidiSmoke(BrowserApplication &application, WebView *view)
         wrap[QStringLiteral("params")] = params;
         wrap[QStringLiteral("context")] = sm->context;
         const quint64 nid = sm->client.sendCommand(
-            QStringLiteral("arora.cdp"),
+            QStringLiteral("arktos.cdp"),
             QJsonDocument(wrap).toJson(QJsonDocument::Compact));
         if (nid)
             sm->funcs.insert(nid, next);
@@ -2445,7 +2466,7 @@ static int bidiSmoke(BrowserApplication &application, WebView *view)
                 QByteArray("{\"context\":\"") + pick.toUtf8()
                 + QByteArray("\"}"));
             // DEVT13: probe each CDP domain the panel cares about
-            // through the arora.cdp passthrough — cheapest real method
+            // through the arktos.cdp passthrough — cheapest real method
             // per domain, session-scoped (page domains only exist on
             // the page session; Tracing lives on the browser target).
             static const struct {
@@ -2464,7 +2485,10 @@ static int bidiSmoke(BrowserApplication &application, WebView *view)
                 {"Page", "Page.getResourceTree", "{}", true},
                 {"Security", "Security.enable", "{}", true},
                 {"Storage", "Storage.getCookies", "{}", true},
-                {"Performance", "Performance.getMetrics", "{}", true},
+                // DEVT21: enable, not getMetrics — an un-enabled
+                // getMetrics answers clean-but-empty, which reads
+                // "up" while serving no data.
+                {"Performance", "Performance.enable", "{}", true},
                 {"Tracing", "Tracing.getCategories", "{}", false},
             };
             for (const auto &probe : kProbes) {
@@ -2476,7 +2500,7 @@ static int bidiSmoke(BrowserApplication &application, WebView *view)
                 if (probe.session)
                     params[QStringLiteral("context")] = pick;
                 const quint64 id = sm->client.sendCommand(
-                    QStringLiteral("arora.cdp"),
+                    QStringLiteral("arktos.cdp"),
                     QJsonDocument(params).toJson(
                         QJsonDocument::Compact));
                 if (id)
@@ -2548,7 +2572,7 @@ static int bidiSmoke(BrowserApplication &application, WebView *view)
     sm->client.connectToEngine();
     if (sm->client.state() == BidiClient::Unavailable) {
         // exit() before exec() is a no-op — return the code directly.
-#ifndef ARORA_RUSTCORE
+#ifndef ARKTOS_RUSTCORE
         // Same convention as --adblock-rust-smoke: an absent backend
         // is a skip, not a failure.
         qInfo() << "bidi-smoke: SKIP" << sm->client.unavailableReason();
@@ -2575,6 +2599,878 @@ static int bidiSmoke(BrowserApplication &application, WebView *view)
     return rc;
 }
 
+// DEVT17: --bidi-elements-smoke drives the REAL BidiPanel UI end to
+// end — connect, combo claim, Elements lazy DOM fetch — the way the
+// dock does it, where --bidi-smoke only proves the wire.
+// DEVT19 grows it into the parity legs: after the tree materializes
+// it expands body, selects a real element (the styles chain's
+// Attributes/Computed styles/Box model groups must fill from live
+// CDP answers), mutates the page's DOM (the MutationObserver-driven
+// live refresh must grow the tree), and runs the find bar (the hit
+// must land as the current item).  PASS when every stage lands.
+static int bidiElementsSmoke(BrowserApplication &application,
+                             WebView *view)
+{
+    BidiPanel *panel = new BidiPanel;
+    panel->resize(640, 420);
+    panel->show();
+    // Give the page real element content so a populated tree is
+    // distinguishable from the "loading…" placeholder.
+    view->setHtml(QStringLiteral(
+        "<html><head><title>elements-smoke</title></head>"
+        "<body><h1 id=\"t\">elem</h1><p class=\"x\">para</p>"
+        "</body></html>"),
+        QUrl(QStringLiteral("http://elements-smoke.test/")));
+
+    const auto finish = [&application](bool pass, const QString &why) {
+        static bool done = false;
+        if (done)
+            return;
+        done = true;
+        qInfo() << "bidi-elements-smoke:" << (pass ? "PASS" : "FAIL")
+                << why;
+        application.exit(pass ? 0 : 1);
+    };
+
+    auto stage = std::make_shared<int>(0);
+    QTimer *poll = new QTimer(panel);
+    QObject::connect(poll, &QTimer::timeout, panel,
+                     [panel, view, finish, stage]() {
+        QComboBox *combo = panel->findChild<QComboBox *>(
+            QStringLiteral("bidiContextCombo"));
+        QTreeWidget *tree = panel->findChild<QTreeWidget *>(
+            QStringLiteral("bidiElementsTree"));
+        QTreeWidget *styles = panel->findChild<QTreeWidget *>(
+            QStringLiteral("bidiElementsStyles"));
+        QLineEdit *find = panel->findChild<QLineEdit *>(
+            QStringLiteral("bidiElementsFind"));
+        if (!combo || !tree || !styles || !find)
+            return;
+        if (combo->currentData().toString().isEmpty())
+            return; // still waiting on getTree
+        if (tree->topLevelItemCount() < 1)
+            return;
+        QTreeWidgetItem *root = tree->topLevelItem(0);
+        // DEVT22: tree rows paint Chrome's <tag attr="v"> markup —
+        // prefix-match on the "<tag" open or a substring probe.
+        const auto childByLabel =
+            [](QTreeWidgetItem *item, const QString &prefix) {
+                for (int i = 0; i < item->childCount(); ++i) {
+                    if (item->child(i)->text(0).startsWith(prefix))
+                        return item->child(i);
+                }
+                return static_cast<QTreeWidgetItem *>(nullptr);
+            };
+        const auto childContaining =
+            [](QTreeWidgetItem *item, const QString &needle) {
+                for (int i = 0; i < item->childCount(); ++i) {
+                    if (item->child(i)->text(0).contains(needle))
+                        return item->child(i);
+                }
+                return static_cast<QTreeWidgetItem *>(nullptr);
+            };
+        const auto stylesGroup =
+            [styles](const QString &header) -> QTreeWidgetItem * {
+            for (int i = 0; i < styles->topLevelItemCount(); ++i) {
+                QTreeWidgetItem *s = styles->topLevelItem(i);
+                if (s->text(0) == header)
+                    return s;
+            }
+            return nullptr;
+        };
+        QTreeWidgetItem *body = childByLabel(
+            root, QStringLiteral("<body"));
+
+        switch (*stage) {
+        case 0: {
+            // Wait for real element rows (index paths, not the
+            // placeholder), then expand body so its lazy fetch runs.
+            bool real = false;
+            for (int i = 0; i < root->childCount(); ++i) {
+                if (!root->child(i)->data(0, Qt::UserRole).isNull())
+                    real = true;
+            }
+            if (!real || !body)
+                return;
+            body->setExpanded(true);
+            *stage = 1;
+            return;
+        }
+        case 1: {
+            // body's children materialized — select the real <p> so
+            // the objectId -> nodeId -> styles chain runs.
+            if (!body)
+                return;
+            QTreeWidgetItem *para = childByLabel(
+                body, QStringLiteral("<p"));
+            if (!para || para->data(0, Qt::UserRole).isNull())
+                return;
+            tree->setCurrentItem(para);
+            *stage = 2;
+            return;
+        }
+        case 2: {
+            // The styles pane must fill its groups from live CDP
+            // answers — real computed values plus the DEVT22
+            // box-model diagram holding real numbers.
+            QTreeWidgetItem *computed =
+                stylesGroup(QStringLiteral("Computed styles"));
+            QTreeWidgetItem *box =
+                stylesGroup(QStringLiteral("Box model"));
+            QWidget *boxView = panel->findChild<QWidget *>(
+                QStringLiteral("bidiElementsBoxModel"));
+            if (!computed || !box || !boxView
+                || computed->childCount() < 1
+                || boxView->property("state").toString()
+                       != QLatin1String("model"))
+                return;
+            // Mutate the page's DOM — the MutationObserver should
+            // report it and grow the tree without a manual refresh.
+            view->page()->runJavaScript(QStringLiteral(
+                "var p=document.createElement('p');"
+                "p.id='mut';p.textContent='mutated';"
+                "document.body.appendChild(p);"));
+            *stage = 3;
+            return;
+        }
+        case 3: {
+            // The live refresh re-pulls materialized branches —
+            // wait for the new <p id=mut> row to land under body.
+            if (!body)
+                return;
+            if (!childContaining(body, QStringLiteral("id=\"mut\"")))
+                return;
+            find->setText(QStringLiteral("#mut"));
+            *stage = 4;
+            return;
+        }
+        case 4: {
+            // The debounced search answers index paths; the hit
+            // selects through the lazy-walk like the inspect pick.
+            QTreeWidgetItem *cur = tree->currentItem();
+            if (!cur || !cur->text(0).contains(QLatin1String("mut")))
+                return;
+            finish(true, QStringLiteral("ctx=%1 styles+box+live+find")
+                             .arg(combo->currentData().toString()));
+            return;
+        }
+        }
+    });
+    poll->start(200);
+    QTimer::singleShot(25000, panel, [finish, stage]() {
+        finish(false, QStringLiteral("timeout in stage %1").arg(*stage));
+    });
+    return application.exec();
+}
+
+// DEVT18: --bidi-network-smoke drives the REAL BidiPanel's Network
+// tab against a live in-process HTTP server — tst_devtools feeds
+// onEvent synthesized JSON, which can't catch a live-delivery gap in
+// the waterfall's timing fields (the bug report: no vertical graph
+// in the live panel).  An in-flight poll waits for the context
+// selector to attach (that is what arms CDP Network.enable on the
+// page session), then navigates the real WebView to the fixture.
+// PASS when real requests land with start/end times, at least one
+// row carries the response.timing TTFB split, and the Waterfall
+// column both sits inside the viewport and paints colored bars.
+static int bidiNetworkSmoke(BrowserApplication &application,
+                            WebView *view)
+{
+#ifndef ARKTOS_RUSTCORE
+    // Same convention as --bidi-smoke: an absent backend is a skip,
+    // not a failure.
+    Q_UNUSED(application);
+    Q_UNUSED(view);
+    qInfo() << "bidi-network-smoke: SKIP (built without rustcore)";
+    return 0;
+#else
+    auto done = std::make_shared<bool>(false);
+    const auto finish = [&application, done](bool pass,
+                                             const QString &why) {
+        if (*done)
+            return;
+        *done = true;
+        qInfo().noquote() << "bidi-network-smoke:"
+                          << (pass ? "PASS" : "FAIL") << why;
+        application.exit(pass ? 0 : 1);
+    };
+
+    // The fixture page plus typed subresources — Document/Stylesheet/
+    // Script/Image/XHR hit different waterfall swatches, and /slow.png
+    // stretches the window so the zoomed axis gets exercised too.
+    QTcpServer *server = new QTcpServer(&application);
+    if (!server->listen(QHostAddress::LocalHost)) {
+        finish(false, QStringLiteral("listen: %1")
+                          .arg(server->errorString()));
+        return application.exec();
+    }
+    const quint16 port = server->serverPort();
+    const QByteArray indexBody = QByteArray(
+        "<html><head><link rel=\"stylesheet\" href=\"/style.css\">"
+        "<script src=\"/app.js\"></script></head><body>"
+        "<img src=\"/img.png\"><img src=\"/slow.png\">"
+        "<script>fetch('/api.json')</script></body></html>");
+    const auto respond = [](QTcpSocket *client, const QByteArray &mime,
+                            const QByteArray &body) {
+        client->write("HTTP/1.1 200 OK\r\nContent-Type: " + mime
+                      + "\r\nContent-Length: "
+                      + QByteArray::number(body.size())
+                      + "\r\nConnection: close\r\n\r\n" + body);
+        client->disconnectFromHost();
+    };
+    QObject::connect(server, &QTcpServer::newConnection, &application,
+                     [server, indexBody, respond]() {
+        QTcpSocket *client = server->nextPendingConnection();
+        auto header = std::make_shared<QByteArray>();
+        auto served = std::make_shared<bool>(false);
+        QObject::connect(client, &QTcpSocket::readyRead, client,
+                         [client, header, served, indexBody, respond]() {
+            if (*served)
+                return;
+            header->append(client->readAll());
+            const int end = header->indexOf("\r\n\r\n");
+            if (end < 0)
+                return;
+            *served = true;
+            const QByteArray line = header->left(end).split('\n')
+                                        .first().simplified();
+            const QByteArray path = line.split(' ').value(1, "/");
+            if (path == "/")
+                respond(client, "text/html", indexBody);
+            else if (path == "/style.css")
+                respond(client, "text/css",
+                        "body{background:#fff;margin:0}");
+            else if (path == "/app.js")
+                respond(client, "application/javascript",
+                        "window.__ns=1;");
+            else if (path == "/img.png")
+                respond(client, "image/png",
+                        QByteArray("\x89PNG\r\n\x1a\n", 8)
+                        + QByteArray(64, 'p'));
+            else if (path == "/api.json")
+                respond(client, "application/json", "{\"ok\":true}");
+            else if (path == "/slow.png") {
+                // A ~900ms straggler so the waterfall window spans
+                // long enough for tick steps and the dense zoom.
+                QTimer::singleShot(900, client, [client, respond]() {
+                    respond(client, "image/png",
+                            QByteArray(64, 's'));
+                });
+            } else {
+                respond(client, "text/plain", "nf");
+            }
+        });
+        QObject::connect(client, &QTcpSocket::disconnected, client,
+                         &QTcpSocket::deleteLater);
+    });
+
+    BidiPanel *panel = new BidiPanel;
+    const int panelWidth =
+        qEnvironmentVariableIntValue("ARKTOS_BIDI_NET_W");
+    panel->resize(panelWidth > 0 ? panelWidth : 980, 460);
+    panel->show();
+
+    auto navigated = std::make_shared<bool>(false);
+    QTimer *poll = new QTimer(panel);
+    QObject::connect(poll, &QTimer::timeout, panel, [=]() mutable {
+        QComboBox *combo = panel->findChild<QComboBox *>(
+            QStringLiteral("bidiContextCombo"));
+        QTableView *netView = panel->findChild<QTableView *>(
+            QStringLiteral("bidiNetworkView"));
+        if (!combo || !netView)
+            return;
+        if (!*navigated) {
+            // The combo selection is what fires the context-scoped
+            // probe commands the bridge attaches on — wait for it,
+            // then give attach + Network.enable a beat before the
+            // page load so the Document row is captured too.
+            if (combo->currentData().toString().isEmpty())
+                return;
+            *navigated = true;
+            const QUrl page(QStringLiteral(
+                "http://127.0.0.1:%1/").arg(port));
+            QTimer::singleShot(1500, panel, [view, page]() {
+                view->loadUrl(page);
+            });
+            return;
+        }
+        QAbstractItemModel *model = netView->model();
+        if (!model)
+            return;
+        // Roles mirror BidiNetworkModel::Role (Qt::UserRole + n).
+        const int rows = model->rowCount();
+        int started = 0, finished = 0, timed = 0;
+        QStringList detail;
+        for (int r = 0; r < rows; ++r) {
+            const double s = model->data(model->index(r, 0),
+                                         Qt::UserRole + 1).toDouble();
+            const double e = model->data(model->index(r, 0),
+                                         Qt::UserRole + 2).toDouble();
+            const double t = model->data(model->index(r, 0),
+                                         Qt::UserRole + 9).toDouble();
+            if (s >= 0.0)
+                ++started;
+            if (e >= 0.0)
+                ++finished;
+            if (t >= 0.0)
+                ++timed;
+            detail << QStringLiteral("%1[s=%2 e=%3 t=%4]")
+                          .arg(model->data(model->index(r, 0)).toString(),
+                               QString::number(s, 'f', 1),
+                               QString::number(e, 'f', 1),
+                               QString::number(t, 'f', 1));
+        }
+        // Wait for the straggler to complete so the verdict runs on
+        // a settled recording.
+        if (rows < 4 || finished < 4)
+            return;
+        // The real user path: switch to the Network tab — the page's
+        // first show is what should run the column fit before the
+        // waterfall is ever looked at.
+        QTabWidget *tabs = panel->findChild<QTabWidget *>();
+        for (int i = 0; tabs && i < tabs->count(); ++i) {
+            if (tabs->widget(i)->isAncestorOf(netView))
+                tabs->setCurrentIndex(i);
+        }
+        QCoreApplication::processEvents();
+        QHeaderView *head = netView->horizontalHeader();
+        const int fallCol = model->columnCount() - 1;
+        const int fx = head->sectionViewportPosition(fallCol);
+        const int fw = head->sectionSize(fallCol);
+        const int vw = netView->viewport()->width();
+        const QScrollBar *hsb = netView->horizontalScrollBar();
+        const QImage shot = netView->viewport()->grab().toImage();
+        int colored = 0;
+        const int x0 = qMax(0, fx), x1 = qMin(shot.width(), fx + fw);
+        for (int y = 0; y < shot.height(); ++y) {
+            for (int x = x0; x < x1; ++x) {
+                const QRgb p = shot.pixel(x, y);
+                const int spread =
+                    qMax(qMax(qRed(p), qGreen(p)), qBlue(p))
+                    - qMin(qMin(qRed(p), qGreen(p)), qBlue(p));
+                if (spread > 40)
+                    ++colored;
+            }
+        }
+        const bool onScreen = fx >= 0 && fx < vw;
+        const bool ok = started >= 4 && finished >= 4 && timed >= 1
+            && onScreen && colored > 40;
+        finish(ok, QStringLiteral(
+                   "rows=%1 start=%2 end=%3 ttfb=%4 fall[x=%5 w=%6 "
+                   "vw=%7 hscroll=%8/%9] barPx=%10 %11")
+                   .arg(rows).arg(started).arg(finished).arg(timed)
+                   .arg(fx).arg(fw).arg(vw)
+                   .arg(hsb ? hsb->value() : -1)
+                   .arg(hsb ? hsb->maximum() : -1)
+                   .arg(colored).arg(detail.join(QLatin1Char(' '))));
+    });
+    poll->start(250);
+    QTimer::singleShot(45000, panel, [finish]() {
+        finish(false, QStringLiteral("timeout waiting for network rows"));
+    });
+    return application.exec();
+#endif
+}
+
+// DEVT20: --bidi-sources-smoke drives the REAL BidiPanel's Sources
+// tab end to end on a live page — tst_devtools feeds synthesized
+// JSON which cannot prove the bridge forwards the Debugger.* event
+// stream at all.  The poll stages: context attach -> navigate the
+// fixture -> the resource tree enumerates frame+script -> selecting
+// the script fills the view through the debugger's own copy -> a
+// url:line breakpoint trips the ticking interval into a real
+// paused state with call frames -> Resume unwinds the chrome.
+static int bidiSourcesSmoke(BrowserApplication &application,
+                            WebView *view)
+{
+#ifndef ARKTOS_RUSTCORE
+    // Same convention as --bidi-smoke: an absent backend is a skip,
+    // not a failure.
+    Q_UNUSED(application);
+    Q_UNUSED(view);
+    qInfo() << "bidi-sources-smoke: SKIP (built without rustcore)";
+    return 0;
+#else
+    auto done = std::make_shared<bool>(false);
+    const auto finish = [&application, done](bool pass,
+                                             const QString &why) {
+        if (*done)
+            return;
+        *done = true;
+        qInfo().noquote() << "bidi-sources-smoke:"
+                          << (pass ? "PASS" : "FAIL") << why;
+        application.exit(pass ? 0 : 1);
+    };
+
+    QTcpServer *server = new QTcpServer(&application);
+    if (!server->listen(QHostAddress::LocalHost)) {
+        finish(false, QStringLiteral("listen: %1")
+                          .arg(server->errorString()));
+        return application.exec();
+    }
+    const quint16 port = server->serverPort();
+    // The breakpoint leg relies on line 3 being the counter bump
+    // inside tick() — keep it there.
+    const QByteArray jsBody = QByteArray(
+        "window.__ticks = 0;\n"
+        "function tick() {\n"
+        "  window.__ticks++;\n"
+        "  document.title = 't' + window.__ticks;\n"
+        "}\n"
+        "setInterval(tick, 120);\n");
+    const QByteArray indexBody = QByteArray(
+        "<html><head><title>sources-smoke</title>"
+        "<link rel=\"stylesheet\" href=\"/style.css\">"
+        "<script src=\"/app.js\"></script></head>"
+        "<body><p>src</p></body></html>");
+    const auto respond = [](QTcpSocket *client, const QByteArray &mime,
+                            const QByteArray &body) {
+        client->write("HTTP/1.1 200 OK\r\nContent-Type: " + mime
+                      + "\r\nContent-Length: "
+                      + QByteArray::number(body.size())
+                      + "\r\nConnection: close\r\n\r\n" + body);
+        client->disconnectFromHost();
+    };
+    QObject::connect(server, &QTcpServer::newConnection, &application,
+                     [server, indexBody, jsBody, respond]() {
+        QTcpSocket *client = server->nextPendingConnection();
+        auto header = std::make_shared<QByteArray>();
+        auto served = std::make_shared<bool>(false);
+        QObject::connect(client, &QTcpSocket::readyRead, client,
+                         [client, header, served, indexBody, jsBody,
+                          respond]() {
+            if (*served)
+                return;
+            header->append(client->readAll());
+            const int end = header->indexOf("\r\n\r\n");
+            if (end < 0)
+                return;
+            *served = true;
+            const QByteArray line = header->left(end).split('\n')
+                                        .first().simplified();
+            const QByteArray path = line.split(' ').value(1, "/");
+            if (path == "/")
+                respond(client, "text/html", indexBody);
+            else if (path == "/app.js")
+                respond(client, "application/javascript", jsBody);
+            else if (path == "/style.css")
+                respond(client, "text/css", "body{margin:0}");
+            else
+                respond(client, "text/plain", "nf");
+        });
+        QObject::connect(client, &QTcpSocket::disconnected, client,
+                         &QTcpSocket::deleteLater);
+    });
+
+    BidiPanel *panel = new BidiPanel;
+    panel->resize(900, 480);
+    panel->show();
+
+    auto stage = std::make_shared<int>(0);
+    auto navigated = std::make_shared<bool>(false);
+    QTimer *poll = new QTimer(panel);
+    QObject::connect(poll, &QTimer::timeout, panel, [=]() {
+        QComboBox *combo = panel->findChild<QComboBox *>(
+            QStringLiteral("bidiContextCombo"));
+        QTreeWidget *tree = panel->findChild<QTreeWidget *>(
+            QStringLiteral("bidiSourcesTree"));
+        QPlainTextEdit *srcView = panel->findChild<QPlainTextEdit *>(
+            QStringLiteral("bidiSourceView"));
+        QSpinBox *bpLine = panel->findChild<QSpinBox *>(
+            QStringLiteral("bidiSourcesBpLine"));
+        QToolButton *bpSet = panel->findChild<QToolButton *>(
+            QStringLiteral("bidiSourcesBpSet"));
+        QListWidget *bpList = panel->findChild<QListWidget *>(
+            QStringLiteral("bidiSourcesBpList"));
+        QListWidget *frames = panel->findChild<QListWidget *>(
+            QStringLiteral("bidiSourcesCallStack"));
+        QLabel *status = panel->findChild<QLabel *>(
+            QStringLiteral("bidiDbgStatus"));
+        QToolButton *resume = panel->findChild<QToolButton *>(
+            QStringLiteral("bidiDbgResume"));
+        if (!combo || !tree || !srcView || !bpLine || !bpSet
+            || !bpList || !frames || !status || !resume)
+            return;
+        if (!*navigated) {
+            // The combo selection is what fires the context-scoped
+            // probes the bridge attaches on — pin it to THIS view's
+            // page target (the browser process exposes sibling
+            // targets too, so the first row is not reliably ours),
+            // then give attach + Debugger.enable a beat before the
+            // page load.
+            const QString want = view->page()->devToolsId();
+            if (want.isEmpty())
+                return;
+            int row = -1;
+            for (int i = 0; i < combo->count(); ++i) {
+                if (combo->itemData(i).toString() == want) {
+                    row = i;
+                    break;
+                }
+            }
+            if (row < 0)
+                return;
+            if (combo->currentIndex() != row)
+                combo->setCurrentIndex(row);
+            *navigated = true;
+            const QUrl page(QStringLiteral(
+                "http://127.0.0.1:%1/").arg(port));
+            QTimer::singleShot(1500, panel, [view, page]() {
+                view->loadUrl(page);
+            });
+            return;
+        }
+        switch (*stage) {
+        case 0: {
+            // DEVT23: hunt the app.js leaf anywhere under the Page
+            // root — the navigator is frame -> origin -> path
+            // folders, so a leaf can sit at any depth.
+            const QString js = QStringLiteral(
+                "http://127.0.0.1:%1/app.js").arg(port);
+            const std::function<QTreeWidgetItem *(QTreeWidgetItem *)>
+                find = [&js, &find](QTreeWidgetItem *it)
+                    -> QTreeWidgetItem * {
+                for (int i = 0; i < it->childCount(); ++i) {
+                    QTreeWidgetItem *c = it->child(i);
+                    if (c->data(0, Qt::UserRole).toString() == js)
+                        return c;
+                    if (QTreeWidgetItem *hit = find(c))
+                        return hit;
+                }
+                return nullptr;
+            };
+            QTreeWidgetItem *hit = nullptr;
+            for (int i = 0; i < tree->topLevelItemCount() && !hit;
+                 ++i)
+                hit = find(tree->topLevelItem(i));
+            if (!hit)
+                return;
+            tree->setCurrentItem(hit);
+            *stage = 1;
+            return;
+        }
+        case 1: {
+            // The debugger's own copy of the script lands in the
+            // view — then the breakpoint row must be live (the
+            // Debugger probe answered) before we arm one.
+            if (!srcView->toPlainText().contains(
+                    QStringLiteral("setInterval")))
+                return;
+            if (!bpSet->isEnabled())
+                return;
+            bpLine->setValue(3);
+            bpSet->click();
+            *stage = 2;
+            return;
+        }
+        case 2: {
+            // The setBreakpointByUrl answer registered the row.
+            if (bpList->count() < 1)
+                return;
+            *stage = 3;
+            return;
+        }
+        case 3: {
+            // The ticking interval must trip the breakpoint into a
+            // real paused state with call frames.
+            if (frames->count() < 1)
+                return;
+            if (!frames->item(0)->text().contains(
+                    QStringLiteral("tick"))) {
+                finish(false, QStringLiteral(
+                           "paused but wrong frame: %1")
+                           .arg(frames->item(0)->text()));
+                return;
+            }
+            resume->click();
+            *stage = 4;
+            return;
+        }
+        case 4: {
+            // Debugger.resumed cleared the chrome.
+            if (frames->count() > 0 || status->isVisible())
+                return;
+            finish(true, QStringLiteral(
+                       "resources+source+bp+pause+resume"));
+            return;
+        }
+        }
+    });
+    poll->start(200);
+    QTimer::singleShot(30000, panel, [finish, stage, panel]() {
+        QTreeWidget *tree = panel->findChild<QTreeWidget *>(
+            QStringLiteral("bidiSourcesTree"));
+        QComboBox *combo = panel->findChild<QComboBox *>(
+            QStringLiteral("bidiContextCombo"));
+        QStringList dump;
+        if (tree) {
+            const std::function<void(QTreeWidgetItem *, int)> dump1 =
+                [&dump, &dump1](QTreeWidgetItem *it, int depth) {
+                dump << QString(depth * 2, QLatin1Char(' '))
+                        + it->text(0);
+                for (int i = 0; i < it->childCount(); ++i)
+                    dump1(it->child(i), depth + 1);
+            };
+            for (int i = 0; i < tree->topLevelItemCount(); ++i)
+                dump1(tree->topLevelItem(i), 0);
+        }
+        finish(false, QStringLiteral(
+                   "timeout in stage %1 ctx=[%2] tree=[%3]")
+                   .arg(*stage)
+                   .arg(combo ? combo->currentData().toString()
+                              : QStringLiteral("?"))
+                   .arg(dump.join(QLatin1Char('|'))));
+    });
+    return application.exec();
+#endif
+}
+
+// DEVT21: --bidi-perfmem-smoke drives the REAL BidiPanel's
+// Performance + Memory tabs end to end on a live page — tst_devtools
+// feeds synthesized JSON which cannot prove the Profiler/HeapProfiler
+// captures answer on a real endpoint.  The poll stages: context
+// attach -> navigate the busy fixture -> probes apply -> the metrics
+// poll ticks with nonzero counters -> a ~1.5s Profiler.start/stop
+// capture fills the self/total table -> allocation sampling fills the
+// heap table -> the heap summary reports used/total plus site count.
+static int bidiPerfMemSmoke(BrowserApplication &application,
+                            WebView *view)
+{
+#ifndef ARKTOS_RUSTCORE
+    // Same convention as --bidi-smoke: an absent backend is a skip,
+    // not a failure.
+    Q_UNUSED(application);
+    Q_UNUSED(view);
+    qInfo() << "bidi-perfmem-smoke: SKIP (built without rustcore)";
+    return 0;
+#else
+    auto done = std::make_shared<bool>(false);
+    const auto finish = [&application, done](bool pass,
+                                             const QString &why) {
+        if (*done)
+            return;
+        *done = true;
+        qInfo().noquote() << "bidi-perfmem-smoke:"
+                          << (pass ? "PASS" : "FAIL") << why;
+        application.exit(pass ? 0 : 1);
+    };
+
+    QTcpServer *server = new QTcpServer(&application);
+    if (!server->listen(QHostAddress::LocalHost)) {
+        finish(false, QStringLiteral("listen: %1")
+                          .arg(server->errorString()));
+        return application.exec();
+    }
+    const quint16 port = server->serverPort();
+    // Named functions doing measurable CPU work plus steady
+    // allocation — the profiler needs self time and the heap
+    // sampler needs live allocation sites.
+    const QByteArray indexBody = QByteArray(
+        "<html><head><title>perfmem-smoke</title><script>\n"
+        "window.__junk = [];\n"
+        "function spin(n) { var s = 0;\n"
+        "  for (var i = 0; i < n; i++) s += Math.sqrt(i);\n"
+        "  return s; }\n"
+        "function alloc() {\n"
+        "  for (var i = 0; i < 4000; i++)\n"
+        "    window.__junk.push({a: i, b: 'x' + i}); }\n"
+        "setInterval(function() { spin(300000); alloc(); }, 80);\n"
+        "</script></head><body><p>pm</p></body></html>");
+    QObject::connect(server, &QTcpServer::newConnection, &application,
+                     [server, indexBody]() {
+        QTcpSocket *client = server->nextPendingConnection();
+        auto served = std::make_shared<bool>(false);
+        QObject::connect(client, &QTcpSocket::readyRead, client,
+                         [client, served, indexBody]() {
+            if (*served)
+                return;
+            if (client->readAll().indexOf("\r\n\r\n") < 0)
+                return;
+            *served = true;
+            client->write("HTTP/1.1 200 OK\r\nContent-Type: text/html"
+                          "\r\nContent-Length: "
+                          + QByteArray::number(indexBody.size())
+                          + "\r\nConnection: close\r\n\r\n"
+                          + indexBody);
+            client->disconnectFromHost();
+        });
+        QObject::connect(client, &QTcpSocket::disconnected, client,
+                         &QTcpSocket::deleteLater);
+    });
+
+    BidiPanel *panel = new BidiPanel;
+    panel->resize(900, 480);
+    panel->show();
+
+    auto stage = std::make_shared<int>(0);
+    auto navigated = std::make_shared<bool>(false);
+    auto cpuStopAt = std::make_shared<qint64>(0);
+    QTimer *poll = new QTimer(panel);
+    QObject::connect(poll, &QTimer::timeout, panel, [=]() {
+        QComboBox *combo = panel->findChild<QComboBox *>(
+            QStringLiteral("bidiContextCombo"));
+        QTabWidget *tabs = panel->findChild<QTabWidget *>();
+        QWidget *perfPage = panel->findChild<QWidget *>(
+            QStringLiteral("bidiPerfPage"));
+        QWidget *memPage = panel->findChild<QWidget *>(
+            QStringLiteral("bidiMemoryPage"));
+        QTableWidget *metrics = panel->findChild<QTableWidget *>(
+            QStringLiteral("bidiPerfMetrics"));
+        QTableWidget *cpu = panel->findChild<QTableWidget *>(
+            QStringLiteral("bidiPerfCpu"));
+        QToolButton *record = panel->findChild<QToolButton *>(
+            QStringLiteral("bidiPerfRecord"));
+        QTableWidget *heap = panel->findChild<QTableWidget *>(
+            QStringLiteral("bidiMemoryHeap"));
+        QToolButton *collect = panel->findChild<QToolButton *>(
+            QStringLiteral("bidiMemoryCollect"));
+        QToolButton *snap = panel->findChild<QToolButton *>(
+            QStringLiteral("bidiMemorySnapshot"));
+        QLabel *memStatus = panel->findChild<QLabel *>(
+            QStringLiteral("bidiMemoryStatus"));
+        if (!combo || !tabs || !perfPage || !memPage || !metrics
+            || !cpu || !record || !heap || !collect || !snap
+            || !memStatus)
+            return;
+        if (!*navigated) {
+            // Pin the combo to THIS view's page target — the browser
+            // exposes sibling targets too (same convention as
+            // --bidi-sources-smoke).
+            const QString want = view->page()->devToolsId();
+            if (want.isEmpty())
+                return;
+            int row = -1;
+            for (int i = 0; i < combo->count(); ++i) {
+                if (combo->itemData(i).toString() == want) {
+                    row = i;
+                    break;
+                }
+            }
+            if (row < 0)
+                return;
+            if (combo->currentIndex() != row)
+                combo->setCurrentIndex(row);
+            *navigated = true;
+            const QUrl page(QStringLiteral(
+                "http://127.0.0.1:%1/").arg(port));
+            QTimer::singleShot(1500, panel, [view, page]() {
+                view->loadUrl(page);
+            });
+            return;
+        }
+        switch (*stage) {
+        case 0:
+            // Land on the Performance tab — once the probes apply,
+            // applyDomainSupport arms the metrics poll itself.
+            tabs->setCurrentWidget(perfPage);
+            *stage = 1;
+            return;
+        case 1: {
+            // Live metrics — require rows AND a nonzero counter; a
+            // dead endpoint paints nothing.
+            if (metrics->rowCount() < 1)
+                return;
+            bool nonzero = false;
+            for (int i = 0; i < metrics->rowCount(); ++i) {
+                QTableWidgetItem *v = metrics->item(i, 1);
+                if (v && !v->text().startsWith(QLatin1Char('0'))
+                    && v->text() != QLatin1String("-"))
+                    nonzero = true;
+            }
+            if (!nonzero)
+                return;
+            if (!record->isEnabled())
+                return;
+            record->setChecked(true);
+            *cpuStopAt = QDateTime::currentMSecsSinceEpoch() + 1500;
+            *stage = 2;
+            return;
+        }
+        case 2:
+            if (QDateTime::currentMSecsSinceEpoch() < *cpuStopAt)
+                return;
+            record->setChecked(false);
+            *stage = 3;
+            return;
+        case 3: {
+            // The busy fixture must produce >0 rows with plausible
+            // self time.
+            if (cpu->rowCount() < 1)
+                return;
+            bool self = false;
+            for (int i = 0; i < cpu->rowCount(); ++i) {
+                QTableWidgetItem *v = cpu->item(i, 1);
+                if (v) {
+                    QString t = v->text();
+                    t.remove(QLatin1String(" ms"));
+                    if (t.toDouble() > 0.0)
+                        self = true;
+                }
+            }
+            if (!self) {
+                finish(false, QStringLiteral(
+                           "cpu profile rows but zero self time"));
+                return;
+            }
+            if (!collect->isEnabled() || !snap->isEnabled())
+                return;
+            tabs->setCurrentWidget(memPage);
+            collect->click();
+            *stage = 4;
+            return;
+        }
+        case 4:
+            // The 2s allocation sample must produce site rows.
+            if (heap->rowCount() < 1)
+                return;
+            snap->click();
+            *stage = 5;
+            return;
+        case 5:
+            // The summary line composes used/total + site count
+            // once both legs answered.
+            if (!memStatus->text().contains(
+                    QStringLiteral("used of"))
+                || !memStatus->text().contains(
+                    QStringLiteral("allocation sites")))
+                return;
+            finish(true, QStringLiteral(
+                     "metrics+cpu+heap+summary"));
+            return;
+        }
+    });
+    poll->start(200);
+    QTimer::singleShot(40000, panel, [finish, stage, panel]() {
+        QTableWidget *metrics = panel->findChild<QTableWidget *>(
+            QStringLiteral("bidiPerfMetrics"));
+        QTableWidget *cpu = panel->findChild<QTableWidget *>(
+            QStringLiteral("bidiPerfCpu"));
+        QTableWidget *heap = panel->findChild<QTableWidget *>(
+            QStringLiteral("bidiMemoryHeap"));
+        QLabel *memStatus = panel->findChild<QLabel *>(
+            QStringLiteral("bidiMemoryStatus"));
+        QLabel *perfOff = panel->findChild<QLabel *>(
+            QStringLiteral("bidiPerfOffline"));
+        QLabel *memOff = panel->findChild<QLabel *>(
+            QStringLiteral("bidiMemoryOffline"));
+        finish(false, QStringLiteral(
+                   "timeout in stage %1 metrics=%2 cpu=%3 heap=%4 "
+                   "memStatus=[%5] perfOff=[%6] memOff=[%7]")
+                   .arg(*stage)
+                   .arg(metrics ? metrics->rowCount() : -1)
+                   .arg(cpu ? cpu->rowCount() : -1)
+                   .arg(heap ? heap->rowCount() : -1)
+                   .arg(memStatus ? memStatus->text()
+                                  : QStringLiteral("?"))
+                   .arg(perfOff && perfOff->isVisible()
+                        ? perfOff->text() : QStringLiteral("-"))
+                   .arg(memOff && memOff->isVisible()
+                        ? memOff->text() : QStringLiteral("-")));
+    });
+    return application.exec();
+#endif
+}
+
 static int startPageSmoke(BrowserApplication &application, WebView *view)
 {
     AdBlockManager *manager = AdBlockManager::instance();
@@ -2583,7 +3479,7 @@ static int startPageSmoke(BrowserApplication &application, WebView *view)
         custom->setEnabled(true);
     custom->addRule(AdBlockRule(QLatin1String("*$script,redirect-rule=noopjs")));
     custom->addRule(AdBlockRule(QLatin1String("qwebchannel.js$script")));
-    custom->addRule(AdBlockRule(QLatin1String("arora.svg$image")));
+    custom->addRule(AdBlockRule(QLatin1String("arktos.svg$image")));
     // addRule -> rulesChanged -> queued matcher rebuild; force it so
     // the snapshot is armed before the first load, then confirm it
     // through the IO-thread view of the rules — a run whose blocker
@@ -2623,7 +3519,7 @@ static int startPageSmoke(BrowserApplication &application, WebView *view)
     });
 
     // init()'s handshake runs at onload; by loadFinished the channel
-    // client exists iff 'arora' was registered in time.  The probe
+    // client exists iff 'arktos' was registered in time.  The probe
     // reports the whole page-side state so a failure says which
     // layer broke, and arms a searchUrl() round-trip once the
     // client is live.
@@ -2631,19 +3527,19 @@ static int startPageSmoke(BrowserApplication &application, WebView *view)
         "(function(){"
         "  var s = document.getElementById('searchButton');"
         "  var e = document.getElementById('lineEdit');"
-        "  var ready = (typeof arora === 'object' && arora !== null)"
+        "  var ready = (typeof arktos === 'object' && arktos !== null)"
         "      && document.title.length > 0"
         "      && !!s && s.value.length > 0"
         "      && !!e && e.placeholder.length > 0;"
         "  if (ready && !window.__spArmed) {"
         "      window.__spArmed = true;"
         "      window.__spUrl = '';"
-        "      arora.searchUrl('start01probe', function(u) {"
+        "      arktos.searchUrl('start01probe', function(u) {"
         "          window.__spUrl = String(u); });"
         "  }"
         "  return [(ready ? 1 : 0),"
-        "      (typeof window.__aroraMainCall),"
-        "      (arora === null ? 'null' : typeof arora),"
+        "      (typeof window.__arktosMainCall),"
+        "      (arktos === null ? 'null' : typeof arktos),"
         "      document.title,"
         "      (s ? s.value : 'MISSING'),"
         "      (e ? e.placeholder : 'MISSING'),"
@@ -2843,7 +3739,7 @@ static int sandboxProbe(BrowserApplication &application, WebView *view,
     };
 
     report(QStringLiteral("env-marker"),
-           qEnvironmentVariable("ARORA_SANDBOXED")
+           qEnvironmentVariable("ARKTOS_SANDBOXED")
                == QLatin1String("bwrap"));
 
     QFile allowed(workdir + QStringLiteral("/allowed.txt"));
@@ -2884,7 +3780,7 @@ static int sandboxProbe(BrowserApplication &application, WebView *view,
     // The probe's own profile check: a file anywhere in $HOME outside
     // the denylist must be writable — downloads rely on this.
     const QString homeProbe = QDir::homePath()
-        + QStringLiteral("/.arora-sandbox-probe-write");
+        + QStringLiteral("/.arktos-sandbox-probe-write");
     QFile homeFile(homeProbe);
     const bool homeOk = homeFile.open(QIODevice::WriteOnly)
         && homeFile.write("x") != -1;
@@ -2986,7 +3882,7 @@ static int sandboxSmoke()
     command[0] = bwrap;
     QByteArray out;
     QProcessEnvironment env = baseEnv;
-    env.remove(QStringLiteral("ARORA_SANDBOXED"));
+    env.remove(QStringLiteral("ARKTOS_SANDBOXED"));
     const bool probeOk = runChild(command.takeFirst(), command, env,
                                   &out)
         && out.contains("sandbox-probe: RESULT PASS");
@@ -3004,10 +3900,10 @@ static int sandboxSmoke()
                    && secret.readAll() == "topsecret");
     }
 
-    // Stage 2: the real self-wrap path — ARORA_SANDBOX_FORCE wraps the
+    // Stage 2: the real self-wrap path — ARKTOS_SANDBOX_FORCE wraps the
     // flagged run through maybeReexec(); the wrapped --sandbox-status
     // reports the marker only a bwrap child can see.
-    env.insert(QStringLiteral("ARORA_SANDBOX_FORCE"),
+    env.insert(QStringLiteral("ARKTOS_SANDBOX_FORCE"),
                QStringLiteral("1"));
     const bool selfWrap = runChild(
         program, {QStringLiteral("--sandbox-status")}, env, &out)
@@ -3022,21 +3918,21 @@ static int sandboxSmoke()
 
     // Stage 4: graceful fallback — bwrap resolution fails and the run
     // continues unsandboxed with a warning instead of failing.
-    env.insert(QStringLiteral("ARORA_BWRAP"),
+    env.insert(QStringLiteral("ARKTOS_BWRAP"),
                QStringLiteral("/nonexistent/bwrap"));
     const bool fallback = runChild(
         program, {QStringLiteral("--quit-after-load")}, env, &out)
         && out.contains("running without");
     report(QStringLiteral("missing-bwrap-fallback"), fallback);
-    env.remove(QStringLiteral("ARORA_BWRAP"));
+    env.remove(QStringLiteral("ARKTOS_BWRAP"));
 
     // Stage 5: the generated launcher script, executed from a scratch
     // bindir — it must wrap (status reports the marker) and honour
-    // ARORA_NO_SANDBOX.
+    // ARKTOS_NO_SANDBOX.
     QDir().mkpath(dir + QStringLiteral("/bin"));
     const QString binDir = dir + QStringLiteral("/bin");
-    const QString scriptPath = binDir + QStringLiteral("/arora-sandbox");
-    bool scriptOk = QFile::link(program, binDir + QStringLiteral("/arora"));
+    const QString scriptPath = binDir + QStringLiteral("/arktos-sandbox");
+    bool scriptOk = QFile::link(program, binDir + QStringLiteral("/arktos"));
     {
         QFile script(scriptPath);
         scriptOk = scriptOk && script.open(QIODevice::WriteOnly);
@@ -3048,13 +3944,13 @@ static int sandboxSmoke()
                 | QFile::ReadOther | QFile::ExeOther);
         }
     }
-    env.remove(QStringLiteral("ARORA_SANDBOX_FORCE"));
+    env.remove(QStringLiteral("ARKTOS_SANDBOX_FORCE"));
     const bool scriptWraps = scriptOk
         && runChild(scriptPath, {QStringLiteral("--sandbox-status")},
                     env, &out)
         && out.contains("this process sandboxed: yes");
     report(QStringLiteral("launcher-script-wraps"), scriptWraps);
-    env.insert(QStringLiteral("ARORA_NO_SANDBOX"), QStringLiteral("1"));
+    env.insert(QStringLiteral("ARKTOS_NO_SANDBOX"), QStringLiteral("1"));
     const bool scriptHatch = runChild(
         scriptPath, {QStringLiteral("--sandbox-status")}, env, &out)
         && out.contains("this process sandboxed: no");
@@ -3106,7 +4002,7 @@ static int engineSmoke()
     // frame, and file: round-trips identically through every backend
     // the smoke drives (servo included).
     const QString fixturePath = QDir::temp().filePath(
-        QLatin1String("arora-engine-smoke.html"));
+        QLatin1String("arktos-engine-smoke.html"));
     {
         QFile fixture(fixturePath);
         if (!fixture.open(QIODevice::WriteOnly)) {
@@ -3393,12 +4289,12 @@ static int servoLifecycleSmoke()
     const auto pumpDeletes = [] {
         QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     };
-#ifdef ARORA_SERVO
+#ifdef ARKTOS_SERVO
     // ENG29: the resolved artifact's profile flag and the marker the
     // engine surfaces show must agree — the flag is what
     // artifactPath() picked (env override included), the marker is
     // what the user sees.  Run once under each fixture (default
-    // resolution -> release; ARORA_SERVO_EMBED_LIB -> a debug path)
+    // resolution -> release; ARKTOS_SERVO_EMBED_LIB -> a debug path)
     // to pin both directions; the loud qWarning fires in resolve().
     report(QStringLiteral("artifact-debug-marker"),
            ServoBackend::artifactIsDebug()
@@ -3407,7 +4303,7 @@ static int servoLifecycleSmoke()
 #endif
 
     const QString fixturePath = QDir::temp().filePath(
-        QLatin1String("arora-servo-smoke.html"));
+        QLatin1String("arktos-servo-smoke.html"));
     {
         QFile fixture(fixturePath);
         if (!fixture.open(QIODevice::WriteOnly)) {
@@ -3475,8 +4371,8 @@ static int servoLifecycleSmoke()
             // at swap time: the source tab's chromium start page
             // re-resolves to the servo variant, still a qrc: fetch
             // through the same host resolver.  The title only reaches
-            // "Welcome to Arora!" if startpage.js loaded (a qrc:
-            // SUBresource fetch) AND the injected arora shim drove
+            // "Welcome to Arktos!" if startpage.js loaded (a qrc:
+            // SUBresource fetch) AND the injected arktos shim drove
             // update() — one assert that covers the whole stack.
             const QUrl startQrc(
                 QLatin1String("qrc:/startpage-servo.html"));
@@ -3485,13 +4381,13 @@ static int servoLifecycleSmoke()
             }, 30000);
             pumpUntil([engineTab]() {
                 return engineTab->title()
-                        == QLatin1String("Welcome to Arora!");
+                        == QLatin1String("Welcome to Arktos!");
             }, 15000);
             report(QStringLiteral("swap-startpage-commit"),
                    page->url() == startQrc);
             report(QStringLiteral("swap-startpage-title"),
                    engineTab->title()
-                       == QLatin1String("Welcome to Arora!"));
+                       == QLatin1String("Welcome to Arktos!"));
 
             // ENG21: the 'empty space' regression — a committed url
             // is not enough, the servo tab must land rendered PIXELS.
@@ -3552,8 +4448,8 @@ static int servoLifecycleSmoke()
                 const char *raw;
                 const char *title;
             } qrcPages[] = {
-                {"qrc:/startpage-servo.html", "Welcome to Arora!"},
-                {"qrc:/startpage-tor.html", "Welcome to Arora!"},
+                {"qrc:/startpage-servo.html", "Welcome to Arktos!"},
+                {"qrc:/startpage-tor.html", "Welcome to Arktos!"},
                 {"qrc:/notfound.html", "%1"},
             };
             for (const auto &internal : qrcPages) {
@@ -3632,7 +4528,7 @@ static int servoLifecycleSmoke()
                        && tabs.engineTab(0) == engineTab);
             }
         }
-#ifdef ARORA_SERVO
+#ifdef ARKTOS_SERVO
         // ENG20: panic containment — the reported abort was a Servo
         // painter panic unwinding across the se_* extern boundary.
         // ffi_guard now catches every export and poisons the instance;
@@ -3671,7 +4567,7 @@ static int servoLifecycleSmoke()
             // (paint side).  Pace/direction/clamp are asserted; raw
             // timings are reported, never gated (hardware-dependent).
             const QString scrollPath = QDir::temp().filePath(
-                QLatin1String("arora-servo-scroll.html"));
+                QLatin1String("arktos-servo-scroll.html"));
             {
                 // ENG32: Servo 0.7 lays this document out far shorter
                 // than the nominal px height (scrollHeight probe reads
@@ -3750,7 +4646,7 @@ static int servoLifecycleSmoke()
                     ? title.mid(prefix.size()).toDouble() : -1.0;
             };
             const bool traceSettle =
-                !qgetenv("ARORA_SERVO_SMOKE_TRACE").isEmpty();
+                !qgetenv("ARKTOS_SERVO_SMOKE_TRACE").isEmpty();
             const auto settleScrollY = [&](qreal last) -> qreal {
                 int probeFails = 0;
                 QElapsedTimer quietStreak;
@@ -3936,7 +4832,7 @@ static int servoLifecycleSmoke()
             const qreal notchBasePx =
                 qMax(1, QApplication::styleHints()->wheelScrollLines())
                 * 53.0;
-            const qreal ySliceStart = scrollToTop();
+            scrollToTop();
             servoView->resetScrollStats();
             sendWheel(-120, false);
             pumpUntil([]() { return false; }, 900);
@@ -4105,7 +5001,7 @@ static int servoLifecycleSmoke()
         report(QStringLiteral("swap-back"),
                tabs.reloadTabInEngine(0, QStringLiteral("webengine")));
         pumpDeletes();
-#ifdef ARORA_SERVO
+#ifdef ARKTOS_SERVO
         // ENG27: the destroy above ran with the panic injection armed
         // — the shim caught it AND still released the slot.
         qunsetenv("SE_SELFTEST_DESTROY_PANIC");
@@ -4115,7 +5011,7 @@ static int servoLifecycleSmoke()
 #endif
         report(QStringLiteral("reswap-recovers"),
                tabs.reloadTabInEngine(0, QStringLiteral("servo")));
-#ifdef ARORA_SERVO
+#ifdef ARKTOS_SERVO
         EngineTab *recovered = tabs.engineTab(0);
         ServoView *recoveredView = recovered && recovered->page()
             ? qobject_cast<ServoView *>(recovered->page()->view())
@@ -4282,7 +5178,7 @@ static int servoLifecycleSmoke()
             ProfileSettings().remove(QLatin1String("MainWindow/defaultEngine"));
     }
 
-#ifdef ARORA_SERVO
+#ifdef ARKTOS_SERVO
     // (d) a freed slot is really free — the direct-API path (the old
     // "second-page-refused" leg's counterpart) now gets a fresh page
     // AND a live fresh instance, not a refusal and not the dead graph.
@@ -4566,24 +5462,24 @@ int main(int argc, char **argv)
     // sandbox before anything else happens.  Dev/utility runs (any
     // --flag except --tor) pass through unwrapped so the harnesses keep
     // their deterministic environments; --no-sandbox,
-    // ARORA_NO_SANDBOX=1 and the sandbox/enabled settings key are the
+    // ARKTOS_NO_SANDBOX=1 and the sandbox/enabled settings key are the
     // escape hatches, and a missing backend degrades to a warning.
     SandboxManager::maybeReexec(argc, argv);
 
-#ifdef ARORA_RUSTDL
-    // SAND02: `arora --download-worker` is the confined download
+#ifdef ARKTOS_RUSTDL
+    // SAND02: `arktos --download-worker` is the confined download
     // subprocess RustDownloadEngine spawns under bwrap.  It never
     // builds the GUI app or touches the profile — dispatch before
     // anything global exists.  (maybeReexec already passed: a
     // non-browsing flag never re-wraps, and a wrapped worker carries
-    // ARORA_SANDBOXED so it is idempotent either way.)
+    // ARKTOS_SANDBOXED so it is idempotent either way.)
     for (int i = 1; i < argc; ++i) {
         if (qstrcmp(argv[i], "--download-worker") == 0)
             return downloadWorkerMain();
     }
 #endif
 
-    // PDF02: `arora --pdf-worker` is the confined rasterization
+    // PDF02: `arktos --pdf-worker` is the confined rasterization
     // subprocess PdfDocumentClient spawns under bwrap — same
     // early-dispatch discipline as --download-worker: no GUI app, no
     // profile, just the stdio protocol in pdfworker.h.
@@ -4595,7 +5491,7 @@ int main(int argc, char **argv)
     // Zero-cost wall clock for --perf-smoke's cold-start checkpoints.
     QElapsedTimer perfTimer;
     perfTimer.start();
-    // PERF03: --profile-startup / ARORA_PROFILE_STARTUP=1 timeline —
+    // PERF03: --profile-startup / ARKTOS_PROFILE_STARTUP=1 timeline —
     // marks print "profile-startup: <ms> <stage>" on stderr.
     StartupProfile::start();
 
@@ -4603,8 +5499,8 @@ int main(int argc, char **argv)
     Q_INIT_RESOURCE(data);
 
     // Custom URL schemes must be registered before the application
-    // exists: arora-file:// directory listings (MIG04), abp:subscribe
-    // adblock links (MIG09), arora-resource:// bundled $redirect= stubs
+    // exists: arktos-file:// directory listings (MIG04), abp:subscribe
+    // adblock links (MIG09), arktos-resource:// bundled $redirect= stubs
     // (ADB01).  Apart from this constraint Qt6 WebEngineWidgets needs
     // no explicit initialize() call — QtWebEngineQuick::initialize()
     // is for the Quick module only; the engine spins up lazily with
@@ -4704,18 +5600,18 @@ int main(int argc, char **argv)
     }
     // QSettings resolution needs the application identity; the
     // BrowserApplication constructor sets the same values again.
-    QCoreApplication::setOrganizationName(QLatin1String("Arora"));
-    QCoreApplication::setApplicationName(QLatin1String("Arora"));
+    QCoreApplication::setOrganizationName(QLatin1String("Arktos"));
+    QCoreApplication::setApplicationName(QLatin1String("Arktos"));
     // PKG02: inside flatpak the desktop entry is the app id — set it so
     // the Wayland app_id / taskbar association matches
-    // io.arora.Arora.desktop instead of a bare "arora".
+    // com.arktos_browser.Arktos.desktop instead of a bare "arktos".
     if (QFileInfo::exists(QLatin1String("/.flatpak-info")))
-        QGuiApplication::setDesktopFileName(QLatin1String("io.arora.Arora"));
+        QGuiApplication::setDesktopFileName(QLatin1String("com.arktos_browser.Arktos"));
 
     // SMOKE01: a smoke run must never write to the user's real
     // config — QSettings ignores QStandardPaths' test mode, so the
-    // pinned fixtures below used to land in the live ~/.config/Arora/
-    // Arora.conf and a mid-run kill left them dirty (the url-bar
+    // pinned fixtures below used to land in the live ~/.config/Arktos/
+    // Arktos.conf and a mid-run kill left them dirty (the url-bar
     // search-fallback flip the user hit twice).  Redirect the XDG
     // roots into a throwaway dir before the first QSettings is
     // constructed: every QSettings AND QStandardPaths write then
@@ -4723,7 +5619,7 @@ int main(int argc, char **argv)
     // which inherit the environment — and a kill -9 leaks nothing
     // but the temp dir itself.
     //
-    // ARORA_SMOKE_STORE marks the store root for spawned children:
+    // ARKTOS_SMOKE_STORE marks the store root for spawned children:
     // a smoke that re-execs itself (fingerprint-smoke, telemetry's
     // prefetch probe, the sandbox wraps) needs the child to see the
     // parent's seeded settings, so the child REUSES the inherited
@@ -4732,7 +5628,7 @@ int main(int argc, char **argv)
     std::unique_ptr<QTemporaryDir> smokeTempDir;
     if (smokeRun) {
         QStandardPaths::setTestModeEnabled(true);
-        const QByteArray inheritedEnv = qgetenv("ARORA_SMOKE_STORE");
+        const QByteArray inheritedEnv = qgetenv("ARKTOS_SMOKE_STORE");
         QString inherited = QFile::decodeName(inheritedEnv);
         while (inherited.endsWith(QLatin1Char('/')))
             inherited.chop(1);
@@ -4742,10 +5638,10 @@ int main(int argc, char **argv)
         } else {
             smokeTempDir.reset(new QTemporaryDir(
                 QDir::temp().filePath(
-                    QStringLiteral("arora-smoke-XXXXXX"))));
+                    QStringLiteral("arktos-smoke-XXXXXX"))));
             if (smokeTempDir->isValid()) {
                 storeRoot = smokeTempDir->path();
-                qputenv("ARORA_SMOKE_STORE",
+                qputenv("ARKTOS_SMOKE_STORE",
                         QFile::encodeName(storeRoot));
                 qputenv("XDG_CONFIG_HOME", QFile::encodeName(
                     smokeTempDir->filePath(QStringLiteral("config"))));
@@ -4782,12 +5678,62 @@ int main(int argc, char **argv)
         }
     }
 
+    // BRAND01: move the pre-rebrand (Arora) data/config/cache roots
+    // under the new Arktos identity BEFORE anything resolves a store
+    // path — a renamed-in-place tree is then picked up by every later
+    // boot step (wipe marker, layout migrations, profile factories)
+    // as if it had always lived there.  Same loud-failure contract:
+    // qCritical + migration-brand.failed, boot continues, nothing was
+    // deleted and the next run retries.
+    {
+        QString brandError;
+        if (!BrowserPaths::migrateLegacyIdentity(&brandError))
+            qCritical() << "main:" << brandError;
+    }
+
+    // PROF03: a 'Delete Profile' request survives the requested
+    // process exit as arktos-profile-wipe.pending in the data dir.
+    // Apply it HERE — before the application object exists, so before
+    // any settings read, before the named QtWebEngine profile and
+    // before the first WebContents.  The wiping process is waited out
+    // (the marker carries its pid) so teardown writes cannot land in
+    // the fresh tree; then data + cache roots, the settings file and
+    // the marker itself are removed and the boot continues clean.
+    // Downloads (user files), packages and the system tor binary are
+    // outside those roots and never touched.
+    ProfileMenuActions::applyPendingProfileWipe();
+
     // CRASH02: install the crash reporter as early as the data dir
     // resolves (smoke runs land it in their isolated store).  A fatal
     // signal or std::terminate now leaves marker + backtrace in
     // crashreport.log and on stderr instead of a silent exit.
-    CrashReporter::install(BrowserPaths::dataFilePath(
+    CrashReporter::install(BrowserPaths::globalDataFilePath(
         QLatin1String("crashreport.log")));
+
+    // MPROF01: first-boot profile layout.  Runs before the application
+    // object — hence before any manager resolves a store path — so the
+    // migration is deterministic rather than triggered lazily by the
+    // first dataFilePath() call.  On failure ensureDataLayout reports
+    // loudly (qCritical + migration-v1.failed at the data root); the
+    // boot continues since nothing was deleted and the next run
+    // retries, but a colliding payload is never silently split.
+    BrowserPaths::ensureDataLayout();
+
+    // VSEC02: relocate the pre-change engine store — <data root>/
+    // QtWebEngine/arktos[-<id>] — into the persona trees (or the
+    // vault's engine-hold for a sealed profile) BEFORE any named
+    // QWebEngineProfile exists: a profile that already opened its
+    // storage cannot be re-pointed.  Same loud-failure contract as
+    // the layout migration — qCritical + migration-v2.failed at the
+    // data root, boot continues, nothing was deleted unsafely.
+    // Idempotent: re-runs every boot until no root engine dirs
+    // remain, and also fires lazily from the profile factories in
+    // test harnesses that skip this line.
+    {
+        QString engineError;
+        if (!BrowserPaths::ensureEngineStorageLayout(&engineError))
+            qCritical() << "main:" << engineError;
+    }
 
     // DOH01: --doh-smoke seeds the strict custom-DoH mode with a dead
     // loopback endpoint BEFORE applyChromiumFlags reads the keys, so
@@ -4869,7 +5815,7 @@ int main(int argc, char **argv)
     // forwards — real page loads must succeed through the tap, and
     // every CONNECT/Host target is recorded for classification.  The
     // dns-prefetch and DoH keys are pinned so the measurement does not
-    // depend on the operator's settings (ARORA_TELEMETRY_PREFETCH=1
+    // depend on the operator's settings (ARKTOS_TELEMETRY_PREFETCH=1
     // arms prefetch instead — the differential proves the detector).
     quint16 telemetryProxyPort = 0;
 #if defined(Q_OS_UNIX)
@@ -4881,7 +5827,7 @@ int main(int argc, char **argv)
         settings.beginGroup(QLatin1String("privacy"));
         settings.setValue(QLatin1String("dnsPrefetch"),
                           qEnvironmentVariableIntValue(
-                              "ARORA_TELEMETRY_PREFETCH") == 1);
+                              "ARKTOS_TELEMETRY_PREFETCH") == 1);
         settings.setValue(QLatin1String("secureDnsMode"), 0);
         settings.endGroup();
     }
@@ -4924,7 +5870,8 @@ int main(int argc, char **argv)
     for (int i = 1; i < argc; ++i) {
         const QByteArray arg(argv[i]);
         if (arg == "--tor" || arg == "--tor-window-smoke"
-            || arg == "--tor-newtab-smoke") {
+            || arg == "--tor-newtab-smoke"
+            || arg == "--tor-firstsearch-smoke") {
             BrowserApplication::setTorMode(true);
             break;
         }
@@ -4986,7 +5933,7 @@ int main(int argc, char **argv)
     QCommandLineParser parser;
     parser.setApplicationDescription(
         QCoreApplication::translate("main",
-            "Arora — a lightweight cross-platform web browser."));
+            "Arktos — a lightweight cross-platform web browser."));
     parser.addHelpOption();
     parser.addVersionOption();
     parser.addPositionalArgument(
@@ -5000,13 +5947,13 @@ int main(int argc, char **argv)
             "traffic through a managed tor daemon's SOCKS5 listener "
             "on a dedicated off-the-record profile.")));
     // SAND01: user-facing sandbox controls.  --no-sandbox is the
-    // flag spelling of the ARORA_NO_SANDBOX=1 escape hatch;
+    // flag spelling of the ARKTOS_NO_SANDBOX=1 escape hatch;
     // --sandbox-status reports the backend and the active policy.
     parser.addOption(QCommandLineOption(
         QLatin1String("no-sandbox"),
         QCoreApplication::translate("main",
             "Run without the filesystem sandbox (equivalent to "
-            "ARORA_NO_SANDBOX=1).")));
+            "ARKTOS_NO_SANDBOX=1).")));
     parser.addOption(QCommandLineOption(
         QLatin1String("sandbox-status"),
         QCoreApplication::translate("main",
@@ -5018,6 +5965,19 @@ int main(int argc, char **argv)
             "Internal: filesystem probe executed inside the sandbox "
             "(spawned by --sandbox-smoke)."),
         QLatin1String("workdir")));
+    // MPROF06: bind this run to a registry persona.  Like every
+    // option flag it makes the run standalone (no single-instance
+    // forwarding) — which is also what a second concurrent profile
+    // wants — and the standalone harness below hands the id to
+    // webEngineProfileFor() so --quit-after-load and the smokes can
+    // drive any profile, not just the default one.  A non-slug id
+    // degrades to "default" inside BrowserProfile::profileFor().
+    parser.addOption(QCommandLineOption(
+        QLatin1String("profile"),
+        QCoreApplication::translate("main",
+            "Run this (standalone) instance bound to the given "
+            "browser profile id, as listed in the Profile Manager."),
+        QLatin1String("id")));
     // Internal development/verification flags.
     const char *const internalOptions[] = {
         "quit-after-load",
@@ -5035,8 +5995,10 @@ int main(int argc, char **argv)
         "sigterm-smoke", "sigterm-child-smoke",
         "referer-smoke", "container-smoke",
         "tor-window-smoke", "tor-circuit-click-smoke", "tor-newtab-smoke",
+        "tor-firstsearch-smoke",
         "sorry-smoke", "icons-smoke", "seclvl-smoke",
         "ping-smoke", "httpsonly-smoke", "resourceblock-smoke",
+        "urlclean-smoke",
         "fingerprint-smoke", "fingerprint-child-smoke",
         "fingerprint-inject-smoke", "fingerprint-inject-seed",
         "reader-smoke", "reader-live",
@@ -5051,9 +6013,14 @@ int main(int argc, char **argv)
         "sleep-smoke", "palette-smoke", "pip-smoke", "tabstrip-smoke",
         "startpage-smoke", "crash-smoke",
         "sandbox-smoke", "write-sandbox-launcher",
-        "bidi-smoke", "pdf-smoke", "pdfview-smoke", "printpreview-smoke",
+        "bidi-smoke", "bidi-elements-smoke", "bidi-network-smoke",
+        "bidi-sources-smoke", "bidi-perfmem-smoke",
+        "pdf-smoke",
+        "pdfview-smoke", "printpreview-smoke",
         "parallel-download-smoke", "parallel-download-off-smoke",
         "ingress-smoke",
+        "profile-wipe-smoke", "profile-wipe-child-smoke",
+        "profile-wipe-arm-smoke",
         "engine-list", "engine-smoke", "servo-smoke",
         "vault-smoke", "vault-smoke-seed", "vault-smoke-dirty-seed",
     };
@@ -5150,7 +6117,151 @@ int main(int argc, char **argv)
     if (args.contains(QLatin1String("--servo-smoke")))
         return servoLifecycleSmoke();
 
-    // TOR02: `arora --tor` is a standalone process running the real
+    // PROF03: 'Delete Profile' end-to-end — three processes on one
+    // isolated smoke store (the children inherit ARKTOS_SMOKE_STORE).
+    // The orchestrator seeds settings + data/cache files, the arm
+    // child schedules the wipe and exits (the marker's pid dies with
+    // it, so the wipe child's liveness wait skips), and the wipe
+    // child's boot sees the marker and wipes in main() before the
+    // application object — and therefore any profile or WebContents —
+    // exists.  Its assertions below then run on the fresh boot.
+    if (args.contains(QLatin1String("--profile-wipe-arm-smoke"))) {
+        int failures = 0;
+        const auto wipeCheck = [&failures](bool ok, const char *what) {
+            qInfo() << "profile-wipe-smoke:" << what
+                    << (ok ? "PASS" : "FAIL");
+            if (!ok)
+                ++failures;
+        };
+        // Seed the stores a profile wipe must catch — history writes
+        // through to the data-dir store, the cookie lands in the
+        // persistent profile's Network/ tree.
+        HistoryManager::instance()->addHistoryEntry(
+            QLatin1String("http://wipe-seed.test/"));
+        CookieJar *jar =
+            CookieJar::instance(BrowserProfile::normalProfile());
+        jar->setCookies({QNetworkCookie("wipe-seed", "1")});
+        // setCookie is async IPC into the profile's network context —
+        // give it a beat to land before this process exits.
+        QEventLoop flushLoop;
+        QTimer::singleShot(600, &flushLoop, &QEventLoop::quit);
+        flushLoop.exec();
+        wipeCheck(ProfileMenuActions::scheduleProfileWipe()
+                      && ProfileMenuActions::wipePending(),
+                  "arm wrote the wipe marker");
+        return failures ? 1 : 0;
+    }
+
+    if (args.contains(QLatin1String("--profile-wipe-child-smoke"))) {
+        int failures = 0;
+        const auto wipeCheck = [&failures](bool ok, const char *what) {
+            qInfo() << "profile-wipe-smoke:" << what
+                    << (ok ? "PASS" : "FAIL");
+            if (!ok)
+                ++failures;
+        };
+        // The wipe ran before the application object existed — every
+        // store that outlived it is a bug.
+        wipeCheck(!ProfileMenuActions::wipePending(),
+                  "marker consumed by the boot wipe");
+        wipeCheck(QSettings()
+                      .value(QLatin1String("profilewipe/seed")).isNull(),
+                  "settings wiped");
+        wipeCheck(!QFile::exists(BrowserPaths::dataFilePath(
+                      QLatin1String("profile-wipe-seed.txt"))),
+                  "data-dir seed file removed");
+        const QString cacheRoot = QStandardPaths::writableLocation(
+            QStandardPaths::CacheLocation);
+        wipeCheck(!QFile::exists(cacheRoot
+                      + QLatin1String("/profile-wipe-seed.txt")),
+                  "cache-dir seed file removed");
+        wipeCheck(!HistoryManager::instance()->historyContains(
+                      QLatin1String("http://wipe-seed.test/")),
+                  "history wiped");
+        const QString profileStorage =
+            BrowserProfile::normalProfile()->persistentStoragePath();
+        wipeCheck(!QFile::exists(profileStorage
+                      + QLatin1String("/Network/Cookies")),
+                  "cookie store wiped");
+        wipeCheck(CookieJar::instance(BrowserProfile::normalProfile())
+                      ->cookies().isEmpty(),
+                  "cookie mirror empty");
+        return failures ? 1 : 0;
+    }
+
+    if (args.contains(QLatin1String("--profile-wipe-smoke"))) {
+        int failures = 0;
+        const auto wipeCheck = [&failures](bool ok, const char *what) {
+            qInfo() << "profile-wipe-smoke:" << what
+                    << (ok ? "PASS" : "FAIL");
+            if (!ok)
+                ++failures;
+        };
+        // Seed the store the children inherit — a settings key plus
+        // marker files in the data and cache roots.
+        {
+            QSettings settings;
+            settings.setValue(QLatin1String("profilewipe/seed"),
+                              QLatin1String("present"));
+            settings.sync();
+        }
+        const QString dataSeed = BrowserPaths::dataFilePath(
+            QLatin1String("profile-wipe-seed.txt"));
+        {
+            QFile file(dataSeed);
+            if (file.open(QIODevice::WriteOnly))
+                file.write("seed\n");
+        }
+        const QString cacheRoot = QStandardPaths::writableLocation(
+            QStandardPaths::CacheLocation);
+        QDir().mkpath(cacheRoot);
+        const QString cacheSeed =
+            cacheRoot + QLatin1String("/profile-wipe-seed.txt");
+        {
+            QFile file(cacheSeed);
+            if (file.open(QIODevice::WriteOnly))
+                file.write("seed\n");
+        }
+        wipeCheck(QFile::exists(dataSeed) && QFile::exists(cacheSeed),
+                  "seed files landed");
+
+        const auto runChild = [](const QString &flag) {
+            QProcess child;
+            child.setProcessChannelMode(QProcess::ForwardedChannels);
+            child.start(QCoreApplication::applicationFilePath(),
+                        QStringList() << flag);
+            if (!child.waitForFinished(120000))
+                return -1;
+            return child.exitStatus() == QProcess::NormalExit
+                ? child.exitCode() : -1;
+        };
+        wipeCheck(runChild(QLatin1String("--profile-wipe-arm-smoke"))
+                      == 0,
+                  "arm child scheduled the wipe and exited");
+        wipeCheck(ProfileMenuActions::wipePending(),
+                  "marker survived the arm child's exit");
+        wipeCheck(runChild(QLatin1String("--profile-wipe-child-smoke"))
+                      == 0,
+                  "wipe child booted onto the marker and wiped");
+        wipeCheck(!ProfileMenuActions::wipePending(), "marker removed");
+        wipeCheck(!QFile::exists(dataSeed), "data seed removed");
+        wipeCheck(!QFile::exists(cacheSeed), "cache seed removed");
+        // The child's fresh boot may have re-created the settings
+        // file — the seeded key is what must not survive.  Read the
+        // file directly so a stale conf cache cannot mask the wipe.
+        QString settingsContent;
+        QFile settingsFile(QSettings().fileName());
+        if (settingsFile.open(QIODevice::ReadOnly))
+            settingsContent = QString::fromUtf8(settingsFile.readAll());
+        wipeCheck(!settingsContent.contains(
+                      QLatin1String("profilewipe")),
+                  "seeded settings key gone");
+        qInfo() << "profile-wipe-smoke:"
+                << (failures == 0 ? "PASS" : "FAIL");
+        return failures ? 1 : 0;
+    }
+
+    // TOR02: `arktos --tor` is a standalone process running the real
     // browser UI — every request exits through the managed daemon's
     // SOCKS5 listener (the application proxy is process-global, hence
     // the separate process).  postLaunch() defers the first navigation
@@ -5160,7 +6271,8 @@ int main(int argc, char **argv)
             && !args.contains(QLatin1String("--tor-window-smoke"))
             && !args.contains(
                    QLatin1String("--tor-circuit-click-smoke"))
-            && !args.contains(QLatin1String("--tor-newtab-smoke"))) {
+            && !args.contains(QLatin1String("--tor-newtab-smoke"))
+            && !args.contains(QLatin1String("--tor-firstsearch-smoke"))) {
         // A tor window is a real browsing session — it takes the
         // same crash-loop sentinel (its own key) + exit breadcrumb
         // as the normal path above.
@@ -5268,9 +6380,9 @@ int main(int argc, char **argv)
         if (google) {
             manager->setEngineForKeyword(QLatin1String("sgk"), google);
             const QUrl keyed =
-                TabWidget::guessUrlFromString(QLatin1String("sgk arora"));
-            check(QLatin1String("'sgk arora' -> keyword engine"),
-                  keyed == google->searchUrl(QLatin1String("arora")),
+                TabWidget::guessUrlFromString(QLatin1String("sgk arktos"));
+            check(QLatin1String("'sgk arktos' -> keyword engine"),
+                  keyed == google->searchUrl(QLatin1String("arktos")),
                   keyed);
             manager->setEngineForKeyword(QLatin1String("sgk"), nullptr);
         } else {
@@ -5359,14 +6471,22 @@ int main(int argc, char **argv)
             || args.contains(QLatin1String("--vault-smoke-dirty-seed")))
         return vaultSmoke(application, args);
 
-    QWebEngineProfile *profile = BrowserApplication::webEngineProfile();
+    // MPROF06: --profile <id> rebinds the whole harness — the stub
+    // view, its cookie jar and every service prepareProfile()
+    // attaches — to that persona's named QWebEngineProfile.  Empty
+    // keeps the default browsing profile.
+    const QString harnessProfileId =
+        parser.value(QLatin1String("profile"));
+    QWebEngineProfile *profile = harnessProfileId.isEmpty()
+        ? BrowserApplication::webEngineProfile()
+        : BrowserApplication::webEngineProfileFor(harnessProfileId);
     CookieJar *cookieJar = CookieJar::instance(profile);
     NetworkAccessManager *networkAccessManager =
         BrowserApplication::networkAccessManager();
     DownloadManager *downloadManager = BrowserApplication::downloadManager();
 
     QMainWindow window;
-    window.setWindowTitle(QStringLiteral("Arora"));
+    window.setWindowTitle(QStringLiteral("Arktos"));
 
     WebView *view = new WebView(profile, &window);
     window.setCentralWidget(view);
@@ -5402,7 +6522,7 @@ int main(int argc, char **argv)
         WebView *tab = browserWindow->currentTab();
 
         const QString fixturePath = QDir::temp().filePath(
-            QLatin1String("arora-app-smoke.html"));
+            QLatin1String("arktos-app-smoke.html"));
         {
             QFile fixture(fixturePath);
             if (!fixture.open(QIODevice::WriteOnly)) {
@@ -5436,7 +6556,7 @@ int main(int argc, char **argv)
 
     // Headless verification hook: exit once the first page load
     // succeeds so CI can prove WebEngine ran (autotests/smoke style).
-    // Failed navigations are skipped so the file:// -> arora-file://
+    // Failed navigations are skipped so the file:// -> arktos-file://
     // directory-listing redirect still counts when it completes.
     if (args.contains(QLatin1String("--quit-after-load"))) {
         QObject::connect(view, &QWebEngineView::loadFinished,
@@ -5492,6 +6612,21 @@ int main(int argc, char **argv)
     // DEVT03: engine-neutral devtools channel end-to-end.
     if (args.contains(QLatin1String("--bidi-smoke")))
         return bidiSmoke(application, view);
+    // DEVT17: the Elements tree through the real panel UI.
+    if (args.contains(QLatin1String("--bidi-elements-smoke")))
+        return bidiElementsSmoke(application, view);
+    // DEVT18: the Network tab's waterfall through the real panel UI
+    // plus a live wire — the gap fixture tests can't cover.
+    if (args.contains(QLatin1String("--bidi-network-smoke")))
+        return bidiNetworkSmoke(application, view);
+    // DEVT20: the Sources tab — resources, debugger source, a real
+    // breakpoint pause with call frames, and resume.
+    if (args.contains(QLatin1String("--bidi-sources-smoke")))
+        return bidiSourcesSmoke(application, view);
+    // DEVT21: the Performance + Memory tabs — live metrics, a real
+    // CPU capture, heap sampling, and the heap summary.
+    if (args.contains(QLatin1String("--bidi-perfmem-smoke")))
+        return bidiPerfMemSmoke(application, view);
 
     // BADSSL02: live-site measurement — loads every badssl.com
     // matrix case on the browsing profile and records per-case
@@ -5506,22 +6641,22 @@ int main(int argc, char **argv)
         return pingSpotterSmoke(application, view);
 
     // BADSSL03: --clientcert-smoke verifies the TLS client-certificate
-    // path end to end.  ARORA_CLIENTCERT_FILE (.pem key+cert — leaf
+    // path end to end.  ARKTOS_CLIENTCERT_FILE (.pem key+cert — leaf
     // first — or a .p12/.pfx bundle; passphrase via
-    // ARORA_CLIENTCERT_PASSPHRASE) is installed into the browsing
+    // ARKTOS_CLIENTCERT_PASSPHRASE) is installed into the browsing
     // profile's in-memory clientCertificateStore, selection is armed
     // non-interactively (the picker dialog cannot run under offscreen
-    // QPA), and ARORA_CLIENTCERT_URL (default
+    // QPA), and ARKTOS_CLIENTCERT_URL (default
     // https://client.badssl.com/) is loaded.  PASS when the page
-    // commits without Arora's error chrome and without the site's
+    // commits without Arktos's error chrome and without the site's
     // HTTP-400 "No required SSL certificate was sent" fallback body.
     if (args.contains(QLatin1String("--clientcert-smoke"))) {
         const QString certFile =
-            qEnvironmentVariable("ARORA_CLIENTCERT_FILE");
+            qEnvironmentVariable("ARKTOS_CLIENTCERT_FILE");
         if (certFile.isEmpty()
             || !BrowserProfile::addClientCertificateFile(
                     profile, certFile,
-                    qgetenv("ARORA_CLIENTCERT_PASSPHRASE"))) {
+                    qgetenv("ARKTOS_CLIENTCERT_PASSPHRASE"))) {
             qInfo() << "clientcert-smoke: FAIL (cannot install"
                     << certFile << ")";
             // exit() before exec() is a no-op — the probe must fail
@@ -5529,8 +6664,8 @@ int main(int argc, char **argv)
             // timeout kills it.
             return 1;
         }
-        qputenv("ARORA_CLIENTCERT_AUTOSELECT", "1");
-        const QUrl certUrl(qEnvironmentVariable("ARORA_CLIENTCERT_URL",
+        qputenv("ARKTOS_CLIENTCERT_AUTOSELECT", "1");
+        const QUrl certUrl(qEnvironmentVariable("ARKTOS_CLIENTCERT_URL",
                 QStringLiteral("https://client.badssl.com/")));
         view->window()->show();
         QTimer::singleShot(0, &application,
@@ -5606,7 +6741,7 @@ int main(int argc, char **argv)
     if (downloadSmokeIndex != -1 && args.count() > downloadSmokeIndex + 1) {
         const QUrl downloadUrl(args.at(downloadSmokeIndex + 1));
         const QString smokeDir =
-            QDir::temp().filePath(QLatin1String("arora-download-smoke"));
+            QDir::temp().filePath(QLatin1String("arktos-download-smoke"));
         QDir().mkpath(smokeDir);
         downloadManager->setDownloadDirectory(smokeDir);
         // A save-as prompt can't be answered under offscreen QPA.
@@ -5773,7 +6908,7 @@ int main(int argc, char **argv)
         });
 
         const QString smokeDir = QDir::temp().filePath(
-            QLatin1String("arora-pdl-smoke"));
+            QLatin1String("arktos-pdl-smoke"));
         QDir().mkpath(smokeDir);
         downloadManager->setDownloadDirectory(smokeDir);
         // A save-as prompt can't be answered under offscreen QPA.
@@ -5856,13 +6991,13 @@ int main(int argc, char **argv)
     // blocked-domain cookie is rejected. Exits 0 on PASS.
     if (args.contains(QLatin1String("--cookie-smoke"))) {
         QTimer::singleShot(0, &application, [cookieJar]() {
-            QNetworkCookie allowed("arora_smoke", "1");
+            QNetworkCookie allowed("arktos_smoke", "1");
             allowed.setDomain(QLatin1String("example.com"));
             cookieJar->setCookiesFromUrl(QList<QNetworkCookie>() << allowed,
                                          QUrl(QLatin1String("http://example.com/")));
 
             cookieJar->setBlockedCookies(QStringList() << QLatin1String("blocked.example"));
-            QNetworkCookie blocked("arora_blocked", "1");
+            QNetworkCookie blocked("arktos_blocked", "1");
             blocked.setDomain(QLatin1String("blocked.example"));
             cookieJar->setCookiesFromUrl(QList<QNetworkCookie>() << blocked,
                                          QUrl(QLatin1String("http://blocked.example/")));
@@ -5881,7 +7016,7 @@ int main(int argc, char **argv)
                 cookieJar->cookiesForUrl(QUrl(QLatin1String("http://blocked.example/")));
             bool found = false;
             for (const QNetworkCookie &cookie : allowed)
-                found |= (cookie.name() == "arora_smoke");
+                found |= (cookie.name() == "arktos_smoke");
             const bool pass = blocked.isEmpty() && found;
             if (!pass && ++*cookiePollTicks <= 20)
                 return; // retry for ~10s
@@ -6045,7 +7180,7 @@ int main(int argc, char **argv)
                 QByteArray body;
                 QByteArray extra;
                 if (path == QLatin1String("/page")) {
-                    extra = "Set-Cookie: arora_priv_first=1\r\n";
+                    extra = "Set-Cookie: arktos_priv_first=1\r\n";
                     // PERF01: the two sequential identical fetches are
                     // the repeated-subresource workload the verdict
                     // cache exists for — the second /i request is the
@@ -6064,7 +7199,7 @@ int main(int argc, char **argv)
                         + QByteArray::number(port) + "/nav'})</script>"
                         + "</body></html>";
                 } else {
-                    extra = "Set-Cookie: arora_priv_third=1\r\n";
+                    extra = "Set-Cookie: arktos_priv_third=1\r\n";
                     body = QByteArrayLiteral(
                            "GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00"
                            "\x00\x00\x00!\xf9\x04\x00\x00\x00\x00\x00,\x00"
@@ -6101,10 +7236,10 @@ int main(int argc, char **argv)
             bool first = false;
             for (const QNetworkCookie &c :
                  cookieJar->cookiesForUrl(QUrl(QLatin1String("http://127.0.0.1/"))))
-                first |= (c.name() == "arora_priv_first");
+                first |= (c.name() == "arktos_priv_first");
             bool third = false;
             for (const QNetworkCookie &c : cookieJar->cookiesForUrl(thirdUrl))
-                third |= (c.name() == "arora_priv_third");
+                third |= (c.name() == "arktos_priv_third");
             // PERF01: both identical /i fetches must hit the wire —
             // only then is the repeat request's cache hit certain to
             // have happened.
@@ -6145,6 +7280,163 @@ int main(int argc, char **argv)
         // The page's own script drives the renderer-initiated
         // cross-site navigation to /nav (the referer probe) after the
         // duplicate subresource fetches complete — see the fixture.
+    }
+
+    // POL04: live ClearURLs verification over real WebEngine
+    // navigations.  A fixture ruleset declares the loopback host a
+    // redirector so the unwrap/restrip pipeline is provable without
+    // hitting google.com: leg A navigates a /redir?u=<target> URL and
+    // the interceptor must rewrite it client-side to the stripped
+    // target (the redirector path never reaches the wire, the URL bar
+    // shows the clean URL, and the removed-tracker tally counts both
+    // the unwrapped hop and the stripped parameter); leg B exempts the
+    // site and proves tracking params then pass through dirty.
+    // Exits 0 on PASS.
+    if (args.contains(QLatin1String("--urlclean-smoke"))) {
+#ifdef ARKTOS_RUSTCORE
+        for (AdBlockSubscription *s : AdBlockManager::instance()->subscriptions())
+            s->setEnabled(false);
+        // The fixture set replaces the vendored rules for this
+        // process — the run exits when the smoke finishes.
+        const QByteArray rules = QByteArrayLiteral(
+            "{\"version\":1,"
+            "\"params\":[\"utm_*\",\"fbclid\"],"
+            "\"unwrap\":[{\"host\":\"127.0.0.1\",\"path\":\"/redir\","
+            "\"param\":\"u\"}]}");
+        if (rc_urlstrip_load_rules(
+                reinterpret_cast<const uint8_t *>(rules.constData()),
+                size_t(rules.size())) != RC_OK) {
+            qInfo() << "urlclean-smoke: FAIL (ruleset rejected)";
+            return 1;
+        }
+        QTcpServer *server = new QTcpServer(&application);
+        if (!server->listen(QHostAddress::LocalHost)) {
+            qInfo() << "urlclean-smoke: FAIL (listen)"
+                    << server->errorString();
+            return 1;
+        }
+        const quint16 port = server->serverPort();
+        auto observed = std::make_shared<QHash<QString, QByteArray>>();
+        QObject::connect(server, &QTcpServer::newConnection, &application,
+                         [server, observed]() {
+            QTcpSocket *client = server->nextPendingConnection();
+            QObject::connect(client, &QTcpSocket::readyRead, client,
+                             [client, observed]() {
+                const QByteArray request = client->readAll();
+                const int splitAt = request.indexOf("\r\n\r\n");
+                const QByteArray head = splitAt == -1 ? request
+                    : request.left(splitAt);
+                const QList<QByteArray> lines = head.split('\n');
+                for (const QByteArray &line : lines) {
+                    if (line.startsWith("GET ")) {
+                        const QString path = QString::fromLatin1(
+                            line.mid(4, line.indexOf(" HTTP/") - 4)
+                                .trimmed());
+                        const QString key = QLatin1String("path:") + path;
+                        (*observed)[key] = QByteArray::number(
+                            observed->value(key).toInt() + 1);
+                    }
+                }
+                const QByteArray body = "<html><body>ok</body></html>";
+                const QByteArray reply =
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"
+                    "Content-Length: " + QByteArray::number(body.size())
+                    + "\r\nConnection: close\r\n\r\n" + body;
+                client->write(reply);
+                client->disconnectFromHost();
+            });
+        });
+
+        const QString base =
+            QStringLiteral("http://127.0.0.1:%1").arg(port);
+        const QString inner =
+            base + QLatin1String("/target?utm_source=x&keep=1");
+        const QUrl wrapUrl(QString(
+            base + QLatin1String("/redir?u=")
+            + QString::fromLatin1(QUrl::toPercentEncoding(inner))
+            + QLatin1String("&fbclid=w")));
+        const QUrl dirtyUrl(
+            base + QLatin1String("/dirty?utm_source=z&ok=3"));
+
+        auto stage = std::make_shared<int>(0);
+        auto ticks = std::make_shared<int>(0);
+        auto urlBarAtTarget = std::make_shared<QUrl>();
+        // The tally is per-page: it is read once leg A's cleaned
+        // follow-up request commits (still describing that page) and
+        // again after leg B's dirty navigation settles it to zero.
+        auto tallyAtTarget = std::make_shared<int>(-1);
+        QTimer *poll = new QTimer(&application);
+        QObject::connect(poll, &QTimer::timeout, &application,
+                         [&application, view, poll, stage, ticks,
+                          observed, dirtyUrl, urlBarAtTarget,
+                          tallyAtTarget]() {
+            if (++*ticks > 40) {
+                qInfo() << "urlclean-smoke: FAIL (timeout)"
+                        << "stage:" << *stage
+                        << "observed:" << observed->keys();
+                application.exit(1);
+                return;
+            }
+            if (*stage == 0) {
+                // Leg A: /redir?u=<inner>&fbclid=w must reach the wire
+                // only as the unwrapped+stripped /target?keep=1.
+                if (!observed->contains(
+                        QLatin1String("path:/target?keep=1")))
+                    return;
+                *urlBarAtTarget = view->url();
+                // One unwrapped hop + one stripped utm_source on the
+                // unwrapped target = 2.
+                *tallyAtTarget =
+                    PrivacyRequestInterceptor::trackersRemovedCount(
+                        QLatin1String("127.0.0.1"));
+                // Leg B: exempt the site — cleaning must disengage.
+                PrivacyRequestInterceptor::allowUrlCleanExempt(
+                    QLatin1String("127.0.0.1"), false);
+                *stage = 1;
+                view->loadUrl(dirtyUrl);
+                return;
+            }
+            if (!observed->contains(
+                    QLatin1String("path:/dirty?utm_source=z&ok=3")))
+                return;
+            poll->stop();
+            PrivacyRequestInterceptor::clearUrlCleanExempt(
+                QLatin1String("127.0.0.1"));
+            bool redirOnWire = false;
+            bool trackerOnWire = false;
+            for (const QString &key : observed->keys()) {
+                const QString path = key.mid(5);
+                redirOnWire |= path.startsWith(QLatin1String("/redir"));
+                // Leg A's tracker params must never appear; leg B's
+                // utm_source is expected (exempt host).
+                trackerOnWire |= path.contains(QLatin1String("fbclid"))
+                    || (path.startsWith(QLatin1String("/target"))
+                        && path.contains(QLatin1String("utm_source")));
+            }
+            // Leg B's navigation settles the tally: the current page
+            // cleaned nothing, so an honest counter now reads 0.
+            const int tallyAfterDirty =
+                PrivacyRequestInterceptor::trackersRemovedCount(
+                    QLatin1String("127.0.0.1"));
+            const bool pass = !redirOnWire && !trackerOnWire
+                && urlBarAtTarget->path() == QLatin1String("/target")
+                && urlBarAtTarget->query() == QLatin1String("keep=1")
+                && *tallyAtTarget == 2 && tallyAfterDirty == 0;
+            qInfo() << "urlclean-smoke:" << (pass ? "PASS" : "FAIL")
+                    << "redirOnWire:" << redirOnWire
+                    << "trackerOnWire:" << trackerOnWire
+                    << "urlBar:" << *urlBarAtTarget
+                    << "trackersRemoved:" << *tallyAtTarget
+                    << "tallyAfterDirty:" << tallyAfterDirty
+                    << "observed:" << observed->keys();
+            application.exit(pass ? 0 : 1);
+        });
+        poll->start(250);
+        view->loadUrl(wrapUrl);
+#else
+        qInfo() << "urlclean-smoke: SKIP (built without ARKTOS_RUSTCORE)";
+        return 0;
+#endif
     }
 
     // REF01: deterministic referer matrix over the two loopback
@@ -6841,7 +8133,7 @@ int main(int argc, char **argv)
     //     https: (proxy sees CONNECT up.test:443), the 502'd tunnel
     //     fails the load and the host lands in the downgrade set
     //   1 retried http:// — now vetoed and swapped for the
-    //     arora-http-warning: interstitial; no up.test request ever
+    //     arktos-http-warning: interstitial; no up.test request ever
     //     reaches the proxy
     //   2 proceed — the session exception lets http:// through and
     //     the proxy serves it
@@ -6862,7 +8154,7 @@ int main(int argc, char **argv)
         qInfo() << "httpsonly-smoke: FAIL (proxy unsupported here)";
         finish(1);
         return application.exec();
-#endif
+#else
         if (httpOnlyProxyPort == 0) {
             qInfo() << "httpsonly-smoke: FAIL (proxy listen)";
             finish(1);
@@ -6960,7 +8252,7 @@ int main(int argc, char **argv)
                 // The downgraded host stays http: — HTTPS-Only must
                 // veto it for the warning page, off the wire entirely.
                 if (view->url().scheme()
-                        != QLatin1String("arora-http-warning"))
+                        != QLatin1String("arktos-http-warning"))
                     break;
                 if (gets.contains(QLatin1String("up.test")))
                     return fail("refused http request reached the proxy");
@@ -6996,7 +8288,7 @@ int main(int argc, char **argv)
                 break;
             case 3:
                 if (view->url().scheme()
-                        != QLatin1String("arora-http-warning"))
+                        != QLatin1String("arktos-http-warning"))
                     break;
                 if (!gets.contains(QLatin1String("redir.test")))
                     return fail("redirect source never served");
@@ -7010,7 +8302,7 @@ int main(int argc, char **argv)
                 if (!*finishSeen)
                     break;
                 if (view->url().scheme()
-                        == QLatin1String("arora-http-warning"))
+                        == QLatin1String("arktos-http-warning"))
                     return fail("https navigation hit the warning");
                 if (!connects.contains(QLatin1String("tls.test")))
                     return fail("https CONNECT never reached the proxy");
@@ -7055,6 +8347,7 @@ int main(int argc, char **argv)
             qInfo() << "httpsonly-smoke: FAIL (overall timeout)";
             finish(1);
         });
+#endif
     }
 
     // SECLVL e2e: the Mullvad-style security tiers against a local
@@ -7827,7 +9120,7 @@ int main(int argc, char **argv)
 
             // XBEL round-trip through a temp file
             const QString tmpFile = QDir::temp().filePath(
-                QLatin1String("arora-bookmarks-smoke.xbel"));
+                QLatin1String("arktos-bookmarks-smoke.xbel"));
             XbelWriter writer;
             const bool wrote = writer.write(tmpFile, manager->bookmarks());
             XbelReader reader;
@@ -7915,7 +9208,7 @@ int main(int argc, char **argv)
         }
 
         // SENG02: the bundled descriptors' <Alias> keywords seed on
-        // first use — "b arora" routes to Bing's search template.
+        // first use — "b arktos" routes to Bing's search template.
         const struct {
             const char *keyword;
             const char *engineName;
@@ -7935,7 +9228,7 @@ int main(int argc, char **argv)
             }
         }
         const QUrl keywordUrl = manager->convertKeywordSearchToUrl(
-            QLatin1String("b arora"));
+            QLatin1String("b arktos"));
         if (!keywordUrl.isValid()
                 || !keywordUrl.host().endsWith(QLatin1String("bing.com"))) {
             qInfo() << "search-smoke: FAIL (keyword url" << keywordUrl << ")";
@@ -7961,7 +9254,7 @@ int main(int argc, char **argv)
         // Location-bar keyword search ("g terms" -> engine search url).
         manager->setEngineForKeyword(QLatin1String("g"), google);
         ok = ok && manager->convertKeywordSearchToUrl(
-                QLatin1String("g arora")).isValid();
+                QLatin1String("g arktos")).isValid();
 
         // The widget side constructs offscreen.
         LocationBar locationBar(&window);
@@ -7977,13 +9270,13 @@ int main(int argc, char **argv)
             // Suggestions: a throwaway engine pointed at a local file
             // reply exercises the JSON suggestion parser end-to-end.
             const QString fixturePath = QDir::temp().filePath(
-                QLatin1String("arora-suggest-smoke.json"));
+                QLatin1String("arktos-suggest-smoke.json"));
             QFile fixture(fixturePath);
             if (!fixture.open(QIODevice::WriteOnly)) {
                 qInfo() << "search-smoke: FAIL (cannot write fixture)";
                 return 1;
             }
-            fixture.write("[\"arora\",[\"arora browser\",\"arora git\"]]");
+            fixture.write("[\"arktos\",[\"arktos browser\",\"arktos git\"]]");
             fixture.close();
 
             OpenSearchEngine *suggest = new OpenSearchEngine(&application);
@@ -7996,13 +9289,13 @@ int main(int argc, char **argv)
                              &application,
                              [&application, fixturePath](const QStringList &suggestions) {
                 const bool pass = suggestions.count() == 2
-                    && suggestions.at(0) == QLatin1String("arora browser");
+                    && suggestions.at(0) == QLatin1String("arktos browser");
                 qInfo() << "search-smoke:" << (pass ? "PASS" : "FAIL")
                         << "suggestions:" << suggestions;
                 QFile::remove(fixturePath);
                 application.exit(pass ? 0 : 1);
             });
-            suggest->requestSuggestions(QLatin1String("arora"));
+            suggest->requestSuggestions(QLatin1String("arktos"));
             QTimer::singleShot(15000, &application,
                                [&application]() { application.exit(1); });
         }
@@ -8084,11 +9377,11 @@ int main(int argc, char **argv)
                 || view->url() != QUrl(QLatin1String("about:blank")))
                 return;
             adblockSmokeStage = 3;
-            // WebPage::schedulePageScripts armed the "arora:adblock-
+            // WebPage::schedulePageScripts armed the "arktos:adblock-
             // cosmetic" DocumentReady script at commit, so the style
             // element must already exist by loadFinished.
             view->enginePage()->runJavaScript(
-                QLatin1String("!!document.getElementById('arora-adblock')"),
+                QLatin1String("!!document.getElementById('arktos-adblock')"),
                 [&application](const QVariant &result) {
                     const bool pass = result.toBool();
                     qInfo() << "adblock-smoke: cosmetic injection"
@@ -8211,7 +9504,7 @@ int main(int argc, char **argv)
 
     // Headless verification for MIG10: stored form data is filled into
     // a loaded page by the injected autofill.js; a submit is reported
-    // back through the aroraAutofill channel object and merged into the
+    // back through the arktosAutofill channel object and merged into the
     // store; an off-the-record page is still filled (old private-mode
     // parity) but must never be captured; and the store round-trips
     // through autofill.dat.  Exits 0 on PASS for all stages.
@@ -8222,7 +9515,7 @@ int main(int argc, char **argv)
         AutoFillManager *autoFill = AutoFillManager::instance();
 
         const QString fixturePath = QDir::temp().filePath(
-            QLatin1String("arora-autofill-smoke.html"));
+            QLatin1String("arktos-autofill-smoke.html"));
         QFile fixture(fixturePath);
         if (!fixture.open(QIODevice::WriteOnly)) {
             qInfo() << "autofill-smoke: FAIL (cannot write fixture)";
@@ -8260,7 +9553,7 @@ int main(int argc, char **argv)
 
         // Capture on the main (persistent) profile: a requestSubmit()
         // fires the submit event, the injected listener serializes the
-        // form and reports it through the aroraAutofill bridge, which
+        // form and reports it through the arktosAutofill bridge, which
         // replaces the seeded entry via autoFillChanged.
         QObject::connect(autoFill, &AutoFillManager::autoFillChanged,
                          &application,
@@ -8350,7 +9643,7 @@ int main(int argc, char **argv)
                         // build still writes autofill.dat.
                         bool sealed = false;
                         {
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
                             const QLatin1String storeName(
                                 "autofill-store.dat");
 #else
@@ -8443,7 +9736,7 @@ int main(int argc, char **argv)
     // and the expected outcome.  Decisions normalize to
     // 0=allow 1=block 2=stub-redirect 3=url-rewrite ($removeparam).
     if (args.contains(QLatin1String("--adblock-rust-smoke"))) {
-#if defined(ARORA_ADBLOCK_RUST)
+#if defined(ARKTOS_ADBLOCK_RUST)
         AdBlockManager *manager = AdBlockManager::instance();
         AdBlockSubscription *custom = manager->customRules();
         // Disable everything but the custom corpus so the probes are
@@ -8572,7 +9865,7 @@ int main(int argc, char **argv)
         };
 
         const QString cssPath = QDir::temp().filePath(
-            QLatin1String("arora-settings-smoke.css"));
+            QLatin1String("arktos-settings-smoke.css"));
         {
             QFile css(cssPath);
             if (css.open(QIODevice::WriteOnly))
@@ -8601,7 +9894,7 @@ int main(int argc, char **argv)
         bool foundStyleScript = false;
         const QList<QWebEngineScript> scripts = profile->scripts()->toList();
         for (const QWebEngineScript &script : scripts)
-            foundStyleScript |= script.name() == QLatin1String("aroraUserStyleSheet");
+            foundStyleScript |= script.name() == QLatin1String("arktosUserStyleSheet");
         check(foundStyleScript, "userStyleSheet script");
 
         check(AcceptLanguageDialog::httpString(
@@ -8651,7 +9944,7 @@ int main(int argc, char **argv)
     // read back through window.getSelection().  Exits 0 on PASS.
     if (args.contains(QLatin1String("--find-smoke"))) {
         const QString fixturePath = QDir::temp().filePath(
-            QLatin1String("arora-find-smoke.html"));
+            QLatin1String("arktos-find-smoke.html"));
         {
             QFile fixture(fixturePath);
             if (!fixture.open(QIODevice::WriteOnly)) {
@@ -8834,7 +10127,7 @@ int main(int argc, char **argv)
     // PlainTextEditSearch.  Exits 0 on PASS.
     if (args.contains(QLatin1String("--source-smoke"))) {
         const QString fixturePath = QDir::temp().filePath(
-            QLatin1String("arora-source-smoke.html"));
+            QLatin1String("arktos-source-smoke.html"));
         const QByteArray bytes =
             "<html><!--c--><body><p class=\"x\">needle &amp; more</p>"
             "</body></html>";
@@ -8851,8 +10144,8 @@ int main(int argc, char **argv)
         // The dead-fetch leg must reach the viewer's fetch timeout in
         // seconds, not the 15s production bound; per-stage timings go
         // to the log so the parallel leg's numbers stay visible.
-        qputenv("ARORA_SOURCE_FETCH_TIMEOUT_MS", "5000");
-        qputenv("ARORA_SOURCE_TIMING", "1");
+        qputenv("ARKTOS_SOURCE_FETCH_TIMEOUT_MS", "5000");
+        qputenv("ARKTOS_SOURCE_TIMING", "1");
 
         // Cosmetic adblock rules would be injected into the serialized
         // DOM the viewer compares against (see --find-smoke); suspend
@@ -9079,13 +10372,13 @@ int main(int argc, char **argv)
     // fixture is probed, entered, controlled and exited end to end —
     // overlay presence, article text surviving while clutter drops,
     // the image kept, in-chrome font/theme controls persisting through
-    // the aroraReader channel bridge, exit restoring the live DOM (no
+    // the arktosReader channel bridge, exit restoring the live DOM (no
     // reload), a JS-side exit reaching C++, a non-article refusal, and
     // the JavascriptEnabled-lift path that lets the reader work on a
     // script-blocked page.  Exits 0 on PASS.
     if (args.contains(QLatin1String("--reader-smoke"))) {
         const QDir fixtureDir(
-            QDir::temp().filePath(QLatin1String("arora-reader-smoke")));
+            QDir::temp().filePath(QLatin1String("arktos-reader-smoke")));
         if (!fixtureDir.mkpath(QLatin1String("."))) {
             qInfo() << "reader-smoke: FAIL (cannot make fixture dir)";
             return 1;
@@ -9183,14 +10476,14 @@ int main(int argc, char **argv)
             QTimer::singleShot(ms, qApp, fn);
         };
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
         // Under the Rust core (RDR01) the reader surface is a
-        // dedicated overlay web view ("aroraReaderView") with
+        // dedicated overlay web view ("arktosReaderView") with
         // Qt-widget chrome — assertions eval JS inside its own page
         // and click the real buttons instead of poking a shadow DOM.
         auto overlayView = [&]() -> QWebEngineView * {
             return view->findChild<QWebEngineView *>(
-                QLatin1String("aroraReaderView"));
+                QLatin1String("arktosReaderView"));
         };
         auto surfaceJs = [&](const QString &script,
                              std::function<void(const QVariant &)> cb) {
@@ -9204,9 +10497,9 @@ int main(int argc, char **argv)
         };
         auto clickControls = [&](std::function<void()> then) {
             QToolButton *inc = view->findChild<QToolButton *>(
-                QLatin1String("aroraReaderFontInc"));
+                QLatin1String("arktosReaderFontInc"));
             QToolButton *themeBtn = view->findChild<QToolButton *>(
-                QLatin1String("aroraReaderTheme"));
+                QLatin1String("arktosReaderTheme"));
             if (inc)
                 inc->click();
             if (themeBtn)
@@ -9215,7 +10508,7 @@ int main(int argc, char **argv)
         };
         auto clickExit = [&](std::function<void()> then) {
             QToolButton *btn = view->findChild<QToolButton *>(
-                QLatin1String("aroraReaderExit"));
+                QLatin1String("arktosReaderExit"));
             if (btn)
                 btn->click();
             then();
@@ -9252,7 +10545,7 @@ int main(int argc, char **argv)
         auto surfaceJs = evalJs;
         auto clickControls = [&](std::function<void()> then) {
             evalJs(QLatin1String(
-                "var h=document.getElementById('arora-reader-host');"
+                "var h=document.getElementById('arktos-reader-host');"
                 "h.shadowRoot.querySelector('.font-inc').click();"
                 "h.shadowRoot.querySelector('.theme').click();"
                 "'clicked';"),
@@ -9260,7 +10553,7 @@ int main(int argc, char **argv)
         };
         auto clickExit = [&](std::function<void()> then) {
             evalJs(QLatin1String(
-                "document.getElementById('arora-reader-host').shadowRoot"
+                "document.getElementById('arktos-reader-host').shadowRoot"
                 ".querySelector('.exit').click();"
                 "'ok';"),
                 [&](const QVariant &) { then(); });
@@ -9343,7 +10636,7 @@ int main(int argc, char **argv)
                 // The post-load probe is async; give it a beat, then
                 // ask the driver directly.
                 settle(600, [&]() {
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
                     // The Rust probe already ran post-load; a stub
                     // page must report not-article-like.
                     const bool probePass = !reader->isAvailable();
@@ -9355,12 +10648,12 @@ int main(int argc, char **argv)
                     }
                     nonArticleEnter();
 #else
-                    // SEC24+READ05: __aroraReader lives in the
+                    // SEC24+READ05: __arktosReader lives in the
                     // reader's isolated world — a main-world eval
                     // cannot see it, so this probe goes through the
                     // driver's own entry point.
                     reader->runDriver(
-                        QLatin1String("window.__aroraReader.probe();"),
+                        QLatin1String("window.__arktosReader.probe();"),
                         [&](const QVariant &probe) {
                         const bool probePass = probe.isValid()
                             && !probe.toBool()
@@ -9382,7 +10675,7 @@ int main(int argc, char **argv)
         // Stage: overlay structure — title kept, marker paragraphs
         // present, clutter nav dropped, image carried over.
         auto stageVerifyOverlay = [&]() {
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
             if (!overlayView()) {
                 fail("shadow-host");
                 return;
@@ -9391,7 +10684,7 @@ int main(int argc, char **argv)
             whenSurfaceReady([&]() {
 #endif
             surfaceJs(QLatin1String(
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
                 "(function(){var c=document.querySelector('.content');"
                 "return {ok:!!c,"
                 "title:document.querySelector('.title').textContent,"
@@ -9399,7 +10692,7 @@ int main(int argc, char **argv)
                 "imgs:c.querySelectorAll('img').length,"
                 "clutter:!!document.querySelector('#clutter')};}())"
 #else
-                "(function(){var h=document.getElementById('arora-reader-host');"
+                "(function(){var h=document.getElementById('arktos-reader-host');"
                 "if(!h||!h.shadowRoot)return {ok:false};"
                 "var r=h.shadowRoot;var c=r.querySelector('.content');"
                 "return {ok:true,"
@@ -9429,7 +10722,7 @@ int main(int argc, char **argv)
 
                 // Stage: the in-overlay controls — A+ bumps the font
                 // and persists; the theme button flips to dark.
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
                 overlayFontSizeBefore =
                     ProfileSettings().value(QLatin1String("reader/fontSize"), 19)
                         .toInt();
@@ -9437,7 +10730,7 @@ int main(int argc, char **argv)
 #else
                 evalJs(QLatin1String(
                     "getComputedStyle(document.getElementById("
-                    "'arora-reader-host').shadowRoot.querySelector("
+                    "'arktos-reader-host').shadowRoot.querySelector("
                     "'.wrap')).fontSize;"),
                     [&](const QVariant &before) {
                     overlayFontSizeBefore = before.toString()
@@ -9467,7 +10760,7 @@ int main(int argc, char **argv)
                                 [&](bool) {
                                 evalJs(QLatin1String(
                                     "({gone:!document.getElementById("
-                                    "'arora-reader-host'),"
+                                    "'arktos-reader-host'),"
                                     "nav:!!document.getElementById("
                                     "'clutter')});"),
                                     [&](const QVariant &r) {
@@ -9477,7 +10770,7 @@ int main(int argc, char **argv)
                                             .toBool()
                                         && m.value(QLatin1String("nav"))
                                             .toBool()
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
                                         && !overlayView()
 #endif
                                         ;
@@ -9607,7 +10900,7 @@ int main(int argc, char **argv)
         };
         auto overlay = [&]() -> QWidget * {
             return view->findChild<QWidget *>(
-                QLatin1String("aroraReaderOverlay"));
+                QLatin1String("arktosReaderOverlay"));
         };
 
         // Wait until the probe settles: available, or three settled
@@ -9637,9 +10930,9 @@ int main(int argc, char **argv)
                 }
                 // Content check under the Rust overlay: the surface
                 // is its own QWebEngineView holding .content.
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
                 QWebEngineView *surface = view->findChild<QWebEngineView *>(
-                    QLatin1String("aroraReaderView"));
+                    QLatin1String("arktosReaderView"));
                 if (!surface) {
                     fail("surface");
                     return;
@@ -9776,7 +11069,7 @@ int main(int argc, char **argv)
         AdBlockManager::instance()->setEnabled(false);
 
         const QDir fixtureDir(
-            QDir::temp().filePath(QLatin1String("arora-pip-smoke")));
+            QDir::temp().filePath(QLatin1String("arktos-pip-smoke")));
         if (!fixtureDir.mkpath(QLatin1String("."))) {
             qInfo() << "pip-smoke: FAIL (cannot make fixture dir)";
             return 1;
@@ -10000,11 +11293,11 @@ int main(int argc, char **argv)
                     if (!active) {
                         evalJs(QLatin1String(
                             "({promise:window.__pipPromise,"
-                            "chan:typeof window.__aroraMainCall,"
+                            "chan:typeof window.__arktosMainCall,"
                             "uaAtClick:window.__uaAtClick,"
                             "clicks:window.__clicks,"
                             "tagged:document.querySelectorAll("
-                            "'video[data-arora-pip]').length});"),
+                            "'video[data-arktos-pip]').length});"),
                             [&, fail](const QVariant &r) {
                             qInfo() << "pip-smoke: page-request diag"
                                     << r.toMap();
@@ -10186,7 +11479,7 @@ int main(int argc, char **argv)
                         "return {paused:v.paused,"
                         "hidden:getComputedStyle(v).display==='none',"
                         "ph:!!document.querySelector("
-                        "'.arora-pip-placeholder'),"
+                        "'.arktos-pip-placeholder'),"
                         "pipEl:document.pictureInPictureElement===v};}())"),
                         [&](const QVariant &r) {
                         const QVariantMap m = r.toMap();
@@ -10273,7 +11566,7 @@ int main(int argc, char **argv)
                                                 "return {shown:getComputedStyle(v)"
                                                 ".display!=='none',"
                                                 "ph:!!document.querySelector("
-                                                "'.arora-pip-placeholder'),"
+                                                "'.arktos-pip-placeholder'),"
                                                 "t:v.currentTime,"
                                                 "left:window.__pipLeft};}())"),
                                                 [&](const QVariant &r) {
@@ -10349,7 +11642,7 @@ int main(int argc, char **argv)
         qInfo() << "browser-smoke: new-tab action PASS (2 tabs)";
 
         const QString fixturePath = QDir::temp().filePath(
-            QLatin1String("arora-browser-smoke.html"));
+            QLatin1String("arktos-browser-smoke.html"));
         {
             QFile fixture(fixturePath);
             if (!fixture.open(QIODevice::WriteOnly)) {
@@ -10766,7 +12059,7 @@ int main(int argc, char **argv)
         //     live frame exists to snapshot; tab 1 stays blank for
         //     the icon-fallback check.
         const QString fixturePath = QDir::temp().filePath(
-            QLatin1String("arora-tabstrip-smoke.html"));
+            QLatin1String("arktos-tabstrip-smoke.html"));
         {
             QFile fixture(fixturePath);
             if (!fixture.open(QIODevice::WriteOnly)) {
@@ -10980,7 +12273,7 @@ int main(int argc, char **argv)
         // its own renderer under --site-per-process, without leaning
         // on a third loopback hostname.
         const QString fixturePath = QDir::temp().filePath(
-            QLatin1String("arora-sleep-heavy.html"));
+            QLatin1String("arktos-sleep-heavy.html"));
         {
             QFile fixture(fixturePath);
             if (!fixture.open(QIODevice::WriteOnly)) {
@@ -11317,7 +12610,7 @@ int main(int argc, char **argv)
 
         // Manifest-V3 fixture on disk.
         extDir = QDir::temp().filePath(
-            QLatin1String("arora-ext-smoke"));
+            QLatin1String("arktos-ext-smoke"));
         QDir().mkpath(extDir);
         {
             QFile manifestFile(extDir + QLatin1String("/manifest.json"));
@@ -11327,7 +12620,7 @@ int main(int argc, char **argv)
             }
             manifestFile.write(
                 "{\"manifest_version\":3,"
-                "\"name\":\"arora-smoke-ext\","
+                "\"name\":\"arktos-smoke-ext\","
                 "\"version\":\"0.1\","
                 "\"description\":\"EXT01 smoke fixture\","
                 "\"permissions\":[\"storage\",\"tabs\",\"nativeMessaging\"],"
@@ -11347,7 +12640,7 @@ int main(int argc, char **argv)
         const ExtensionManager::Manifest manifest =
             ExtensionManager::inspectManifest(extDir);
         check(manifest.valid && manifest.manifestVersion == 3
-              && manifest.name == QLatin1String("arora-smoke-ext")
+              && manifest.name == QLatin1String("arktos-smoke-ext")
               && manifest.hasBackground && manifest.hasAction
               && manifest.permissions.size() == 3
               && manifest.hostPermissions.size() == 1,
@@ -11361,7 +12654,7 @@ int main(int argc, char **argv)
         check(!mv2.valid && !mv2.error.isEmpty(),
               "missing manifest reported");
 
-        const QString scriptDir = ExtensionManager::userScriptsPath();
+        const QString scriptDir = ExtensionManager::instance()->userScriptsPath();
         const QString scriptPath = scriptDir
             + QLatin1String("/smoke-user.js");
         {
@@ -11392,7 +12685,7 @@ int main(int argc, char **argv)
 
         QObject::connect(extensions, &ExtensionManager::extensionLoaded,
             &application, [&](const ExtensionManager::ExtensionInfo &info) {
-            if (info.name != QLatin1String("arora-smoke-ext"))
+            if (info.name != QLatin1String("arktos-smoke-ext"))
                 return;
             check(info.loaded && info.error.isEmpty(),
                   "loadExtension finished");
@@ -11433,7 +12726,7 @@ int main(int argc, char **argv)
 
         QObject::connect(extensions, &ExtensionManager::extensionInstalled,
             &application, [&](const ExtensionManager::ExtensionInfo &info) {
-            if (info.name != QLatin1String("arora-smoke-ext")) {
+            if (info.name != QLatin1String("arktos-smoke-ext")) {
                 qInfo() << "extension-smoke: installFinished ignored"
                         << "name:" << info.name << "id:" << info.id
                         << "installed:" << info.installed
@@ -11501,18 +12794,18 @@ int main(int argc, char **argv)
         ExtensionBackgroundRuntime *runtime =
             ExtensionBackgroundRuntime::instance();
 
-        // EXT15: ARORA_EXTHOST_SMOKE_DIR=<unpacked ext dir> hosts a
+        // EXT15: ARKTOS_EXTHOST_SMOKE_DIR=<unpacked ext dir> hosts a
         // REAL extension instead of the generated fixture — the
         // background boot then verifies zero unshimmed-API errors
         // (the EXT13-measured delta drives the checklist) and dumps
         // the shim gap/note/touched diagnostics.  The provided dir
         // is never deleted; the generated fixture still is.
         const QString realExtDir =
-            qEnvironmentVariable("ARORA_EXTHOST_SMOKE_DIR");
+            qEnvironmentVariable("ARKTOS_EXTHOST_SMOKE_DIR");
         const bool realExt = !realExtDir.isEmpty();
         extDir = realExt ? realExtDir
                          : QDir::temp().filePath(
-                               QLatin1String("arora-ext-host-smoke"));
+                               QLatin1String("arktos-ext-host-smoke"));
         QDir().mkpath(extDir);
         if (!realExt) {
             QFile manifestFile(extDir + QLatin1String("/manifest.json"));
@@ -11523,7 +12816,7 @@ int main(int argc, char **argv)
             }
             manifestFile.write(
                 "{\"manifest_version\":3,"
-                "\"name\":\"arora-host-smoke-ext\","
+                "\"name\":\"arktos-host-smoke-ext\","
                 "\"version\":\"0.1\","
                 "\"description\":\"EXT14 hosted-runtime fixture\","
                 "\"permissions\":[\"storage\",\"tabs\","
@@ -11693,13 +12986,13 @@ int main(int argc, char **argv)
                 // the bridge handshake completed.
                 check(true, "host reached Ready");
                 host->page()->runJavaScript(QStringLiteral(
-                    "JSON.stringify({state:__aroraHost.state,"
-                    "bridge:__aroraHost.bridgeUp,"
+                    "JSON.stringify({state:__arktosHost.state,"
+                    "bridge:__arktosHost.bridgeUp,"
                     "bg:self.__hostedBgRan||null,"
                     "installed:self.__hostedInstalled===true,"
-                    "shim:!!(window.__aroraShim),"
-                    "errors:(__aroraHost.errors||[]),"
-                    "probe:(window.__aroraShim?__aroraShim.probe()"
+                    "shim:!!(window.__arktosShim),"
+                    "errors:(__arktosHost.errors||[]),"
+                    "probe:(window.__arktosShim?__arktosShim.probe()"
                     ":null),"
                     "runtime:typeof (chrome&&chrome.runtime)})"),
                     [&, host](const QVariant &v) {
@@ -11789,7 +13082,7 @@ int main(int argc, char **argv)
                         "self.__smokeProbe={done:false,step:'init'};"
                         "(async function(){"
                         " var o={};__smokeProbe.step='area';"
-                        " var area=__aroraShim.storageArea('session');"
+                        " var area=__arktosShim.storageArea('session');"
                         " __smokeProbe.step='set';"
                         " await area.set({sk:'sv'});"
                         " __smokeProbe.step='get';"
@@ -11799,17 +13092,17 @@ int main(int argc, char **argv)
                         "   var done=false;"
                         "   chrome.alarms.onAlarm.addListener("
                         "     function(a){if(!done&&a.name==="
-                        "       'arora-smoke-alarm'){"
+                        "       'arktos-smoke-alarm'){"
                         "       done=true;o.alarm=true;r();}});"
-                        "   chrome.alarms.create('arora-smoke-alarm',"
+                        "   chrome.alarms.create('arktos-smoke-alarm',"
                         "     {delayInMinutes:0.002}).then(function(){"
                         "       __smokeProbe.step='alarm-created';"
                         "       return chrome.alarms.get("
-                        "         'arora-smoke-alarm');}).then("
+                        "         'arktos-smoke-alarm');}).then("
                         "         function(v){o.alarmListed=!!v;});"
                         "   setTimeout(function(){"
                         "     if(!done){done=true;"
-                        "       chrome.alarms.get('arora-smoke-alarm')"
+                        "       chrome.alarms.get('arktos-smoke-alarm')"
                         "         .then(function(v){"
                         "           o.alarmStillListed=!!v;"
                         "           o.alarm=false;r();});"
@@ -11963,7 +13256,7 @@ int main(int argc, char **argv)
                     // the whole EXT16 surface.
                     host->page()->runJavaScript(QStringLiteral(
                         "chrome.contextMenus.create({id:"
-                        "'arora-smoke-menu',title:'Smoke',"
+                        "'arktos-smoke-menu',title:'Smoke',"
                         "contexts:['all']},function(){});"),
                         [&](const QVariant &) {
                         smokeWindow = application.newMainWindow();
@@ -11990,7 +13283,7 @@ int main(int argc, char **argv)
                         Engine::ContextMenuInfo cinfo;
                         ExtensionEventHub::deliverMenuClicked(
                             extensionId,
-                            QStringLiteral("arora-smoke-menu"),
+                            QStringLiteral("arktos-smoke-menu"),
                             cinfo, tw->currentWebView());
                         if (tw->count() > 1)
                             tw->closeTab(1);
@@ -12120,10 +13413,10 @@ int main(int argc, char **argv)
                 }
                 ++*probeTicks;
                 popupPage->runJavaScript(QStringLiteral(
-                    "JSON.stringify({up:!!(window.__aroraHost"
-                    "&&__aroraHost.bridgeUp),"
-                    "shim:!!window.__aroraShim,"
-                    "st:window.__aroraHost?__aroraHost.state:null,"
+                    "JSON.stringify({up:!!(window.__arktosHost"
+                    "&&__arktosHost.bridgeUp),"
+                    "shim:!!window.__arktosShim,"
+                    "st:window.__arktosHost?__arktosHost.state:null,"
                     "boot:self.__popupBootRan||null})"),
                     [&](const QVariant &v) {
                     const QJsonObject o = QJsonDocument::fromJson(
@@ -12194,7 +13487,7 @@ int main(int argc, char **argv)
                         " try{o.stGet=await new Promise("
                         "   function(res){var st=setTimeout("
                         "   function(){res('timeout')},5000);"
-                        "   chrome.storage.local.get('__arora_probe__',"
+                        "   chrome.storage.local.get('__arktos_probe__',"
                         "   function(i){clearTimeout(st);res({"
                         "   le:(chrome.runtime.lastError?String("
                         "   chrome.runtime.lastError.message):null),"
@@ -12362,10 +13655,10 @@ int main(int argc, char **argv)
                     // EXT17 diagnostics: the preamble captures page
                     // errors — dump them plus the relay port count
                     // so a stalled bootstrap explains itself.
-                    "errs:(window.__aroraHost?__aroraHost.errors"
+                    "errs:(window.__arktosHost?__arktosHost.errors"
                     " .slice(0,6):[]),"
-                    "ports:(window.__aroraShim&&__aroraShim.ports"
-                    " ?Object.keys(__aroraShim.ports).length:-1),"
+                    "ports:(window.__arktosShim&&__arktosShim.ports"
+                    " ?Object.keys(__arktosShim.ports).length:-1),"
                     "appRoot:(document.querySelector('app-root')"
                     " ?document.querySelector('app-root')"
                     " .innerHTML.length:-1),"
@@ -12387,8 +13680,8 @@ int main(int argc, char **argv)
                     // The popup's own shim diagnostics — which APIs
                     // its scripts touched and which answered typed
                     // errors.  A silent bootstrap stall reads here.
-                    "shimProbe:(window.__aroraShim"
-                    " ?__aroraShim.probe():null)});"
+                    "shimProbe:(window.__arktosShim"
+                    " ?__arktosShim.probe():null)});"
                     "}catch(e){return 'evalerr:'"
                     "+String(e);}})()"),
                     [&](const QVariant &v) {
@@ -12530,7 +13823,7 @@ int main(int argc, char **argv)
                                          : nullptr;
                             if (dumpPage) {
                             dumpPage->runJavaScript(QStringLiteral(
-                                "(function(){try{var s=__aroraShim;"
+                                "(function(){try{var s=__arktosShim;"
                                 "var p={};for(var k in s.ports)"
                                 "p[k]={name:s.ports[k].name,"
                                 "disc:s.ports[k].disconnected,"
@@ -12541,7 +13834,7 @@ int main(int argc, char **argv)
                                 "evs[en]=s.events[en].__count();"
                                 "return JSON.stringify({ports:p,"
                                 "evs:evs,touched:s.touched,"
-                                "errs:(__aroraHost.errors||[])"
+                                "errs:(__arktosHost.errors||[])"
                                 " .slice(0,8)});"
                                 "}catch(e){return 'evalerr:'"
                                 "+String(e);}})()"),
@@ -12740,7 +14033,7 @@ int main(int argc, char **argv)
                             "if(t){try{chrome.tabs.sendMessage(t.id,"
                             "{command:'autofillPage',"
                             "fillScript:{script:[]},"
-                            "pageDetailsUuid:'arora-smoke'},"
+                            "pageDetailsUuid:'arktos-smoke'},"
                             "function(r){self.__af.resp=(r===undefined)"
                             "?null:String(r);self.__af.le="
                             "(chrome.runtime.lastError?String("
@@ -12873,7 +14166,7 @@ int main(int argc, char **argv)
             &application, [&](const ExtensionManager::ExtensionInfo &info) {
             if (!realExt
                     && info.name
-                           != QLatin1String("arora-host-smoke-ext"))
+                           != QLatin1String("arktos-host-smoke-ext"))
                 return;
             if (!info.error.isEmpty())
                 qInfo() << "extension-smoke: loadExtension error:"
@@ -12945,7 +14238,7 @@ int main(int argc, char **argv)
 
         // MV3 fixture — same shape as --extension-smoke.
         otrExtDir = QDir::temp().filePath(
-            QLatin1String("arora-ext-otr-smoke"));
+            QLatin1String("arktos-ext-otr-smoke"));
         QDir().mkpath(otrExtDir);
         {
             QFile manifestFile(otrExtDir
@@ -12956,7 +14249,7 @@ int main(int argc, char **argv)
             }
             manifestFile.write(
                 "{\"manifest_version\":3,"
-                "\"name\":\"arora-otr-smoke-ext\","
+                "\"name\":\"arktos-otr-smoke-ext\","
                 "\"version\":\"0.1\","
                 "\"description\":\"EXT04 OTR fixture\","
                 "\"permissions\":[\"storage\"],"
@@ -13030,7 +14323,7 @@ int main(int argc, char **argv)
                 for (const ExtensionManager::ExtensionInfo &entry
                      : ExtensionManager::instance()->extensions()) {
                     if (entry.name
-                        == QLatin1String("arora-otr-smoke-ext"))
+                        == QLatin1String("arktos-otr-smoke-ext"))
                         leaked = true;
                 }
                 check(!leaked,
@@ -13108,7 +14401,7 @@ int main(int argc, char **argv)
               QStringLiteral("bitwarden package vendored in %1")
                   .arg(bwDir));
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
         if (!bwZipPath.isEmpty()) {
             // rustcore verifies the archive structure and classifies
             // the embedded manifest.
@@ -13440,18 +14733,18 @@ int main(int argc, char **argv)
             popup.write("<html><body>health probe</body></html>");
             return dir;
         };
-        putFixture(QStringLiteral("arora-health-live"),
+        putFixture(QStringLiteral("arktos-health-live"),
             QStringLiteral("\"storage\""),
             QByteArray(
                 "chrome.runtime.onMessage.addListener("
                 "function(m,s,r){"
-                "if(m&&m.__aroraHealthProbe)r({pong:true});});\n"));
-        putFixture(QStringLiteral("arora-health-limited"),
+                "if(m&&m.__arktosHealthProbe)r({pong:true});});\n"));
+        putFixture(QStringLiteral("arktos-health-limited"),
             QStringLiteral("\"notifications\",\"storage\""),
             QByteArray(
                 "chrome.runtime.onInstalled.addListener("
                 "function(){});\n"));
-        putFixture(QStringLiteral("arora-health-dead"),
+        putFixture(QStringLiteral("arktos-health-dead"),
             QStringLiteral("\"notifications\",\"webNavigation\""),
             QByteArray(
                 "throw new Error('eval crash — same shape as "
@@ -13460,9 +14753,9 @@ int main(int argc, char **argv)
         // name → expected terminal health once the probe lands.
         const QList<QPair<QString, ExtensionManager::ExtensionHealth>>
             expected = {
-                {QStringLiteral("arora-health-live"), EH::Healthy},
-                {QStringLiteral("arora-health-limited"), EH::Limited},
-                {QStringLiteral("arora-health-dead"), EH::NotSupported},
+                {QStringLiteral("arktos-health-live"), EH::Healthy},
+                {QStringLiteral("arktos-health-limited"), EH::Limited},
+                {QStringLiteral("arktos-health-dead"), EH::NotSupported},
             };
 
         // Drive: install all three (each lands disabled), enable as
@@ -13615,7 +14908,7 @@ int main(int argc, char **argv)
     // page-level navigator.serviceWorker registration as the control.
     // The matrix goes to the log as mv3-health-smoke lines; PASS/FAIL
     // covers harness mechanics only — capability gaps are data, not
-    // failures.  Reproduce: ./arora --mv3-health-smoke.
+    // failures.  Reproduce: ./arktos --mv3-health-smoke.
     if (args.contains(QLatin1String("--mv3-health-smoke"))) {
         int mv3Failures = 0;
         const auto check = [&mv3Failures](bool ok, const QString &what) {
@@ -13637,7 +14930,7 @@ int main(int argc, char **argv)
         // Fixture extension on disk — Bitwarden's permission set so
         // the namespace matrix answers "what does Bitwarden see".
         const QString mv3Dir = QDir::temp().filePath(
-            QLatin1String("arora-mv3-health-b"));
+            QLatin1String("arktos-mv3-health-b"));
         QDir().mkpath(mv3Dir);
         const auto putFile = [mv3Dir, die](const QString &name,
                                            const QByteArray &body) {
@@ -13648,7 +14941,7 @@ int main(int argc, char **argv)
         };
         putFile(QLatin1String("manifest.json"), QByteArray(R"JSON({
   "manifest_version": 3,
-  "name": "arora-mv3-health",
+  "name": "arktos-mv3-health",
   "version": "1.1",
   "description": "EXT11 MV3 platform health probe",
   "permissions": ["activeTab","alarms","clipboardRead","clipboardWrite",
@@ -13889,7 +15182,7 @@ int main(int argc, char **argv)
 )JS"));
 
         // EXT08's production popup host deliberately uses a plain
-        // QWebEnginePage (no arora channel/page policy leaks into
+        // QWebEnginePage (no arktos channel/page policy leaks into
         // extension chrome) — the probe uses the same shape, plus the
         // console-message forwarder the diagnostic needs.
         struct Mv3ProbePage : public QWebEnginePage {
@@ -14263,7 +15556,7 @@ int main(int argc, char **argv)
             ++*enableTries;
             for (const ExtensionManager::ExtensionInfo &info
                  : mv3->extensions()) {
-                if (info.name != QLatin1String("arora-mv3-health"))
+                if (info.name != QLatin1String("arktos-mv3-health"))
                     continue;
                 if (mv3ExtId.isEmpty()) {
                     check(info.installed && info.error.isEmpty(),
@@ -14384,11 +15677,13 @@ int main(int argc, char **argv)
               QStringLiteral("compareVersions: dotted-quad"));
 
         // Update-check opt-in round-trips through QSettings.
-        const bool savedAutoCheck = ExtensionManager::updateCheckEnabled();
-        ExtensionManager::setUpdateCheckEnabled(!savedAutoCheck);
-        check(ExtensionManager::updateCheckEnabled() == !savedAutoCheck,
+        const bool savedAutoCheck =
+            ExtensionManager::instance()->updateCheckEnabled();
+        ExtensionManager::instance()->setUpdateCheckEnabled(!savedAutoCheck);
+        check(ExtensionManager::instance()->updateCheckEnabled()
+                  == !savedAutoCheck,
               QStringLiteral("auto-check setting round-trip"));
-        ExtensionManager::setUpdateCheckEnabled(savedAutoCheck);
+        ExtensionManager::instance()->setUpdateCheckEnabled(savedAutoCheck);
 
         // The manifest "key" pins the extension id across versions:
         // id = sha256(der)[0..15] with each nibble mapped to a..p.
@@ -14466,7 +15761,7 @@ int main(int argc, char **argv)
         };
 
         const QString smokeDir = QDir::temp().filePath(
-            QLatin1String("arora-extupdate-smoke"));
+            QLatin1String("arktos-extupdate-smoke"));
         const auto writeExtension = [&smokeDir](const QString &name,
                 const QString &version, const QString &updateUrl,
                 bool keyed) -> QString {
@@ -14875,7 +16170,7 @@ int main(int argc, char **argv)
             application.exit(failures ? 1 : 0);
         });
         view->loadUrl(QUrl(QLatin1String(
-            "https://www.google.com/search?q=arora+browser")));
+            "https://www.google.com/search?q=arktos+browser")));
 
         // exec() must run while 'failures' is still alive: the lambdas
         // above capture it by reference.
@@ -14937,7 +16232,7 @@ int main(int argc, char **argv)
         int namStatus = -1;
         QStringList namHeaders;
         QNetworkRequest namRequest(QUrl(QLatin1String(
-            "https://www.google.com/search?q=arora+browser")));
+            "https://www.google.com/search?q=arktos+browser")));
         namRequest.setHeader(QNetworkRequest::UserAgentHeader,
                              BrowserProfile::defaultHttpUserAgent());
         QNetworkReply *namReply = networkAccessManager->get(namRequest);
@@ -14955,7 +16250,7 @@ int main(int argc, char **argv)
 
         const QUrl warmUrl(QLatin1String("https://www.google.com/"));
         const QUrl searchUrl(QLatin1String(
-            "https://www.google.com/search?q=arora+browser"));
+            "https://www.google.com/search?q=arktos+browser"));
         QElapsedTimer timer;
         timer.start();
         int stage = 0;
@@ -15046,11 +16341,11 @@ int main(int argc, char **argv)
         QStringList fixtureUrls;
         for (int i = 1; i <= 3; ++i) {
             const QString path = QDir::temp().filePath(
-                QStringLiteral("arora-session-%1.html").arg(i));
+                QStringLiteral("arktos-session-%1.html").arg(i));
             QFile fixture(path);
             if (fixture.open(QIODevice::WriteOnly)) {
                 fixture.write(QStringLiteral(
-                    "<html><head><title>arora-session-%1</title>"
+                    "<html><head><title>arktos-session-%1</title>"
                     "</head><body>%1</body></html>").arg(i).toUtf8());
             }
             fixtureUrls << QUrl::fromLocalFile(path).toString();
@@ -15065,7 +16360,7 @@ int main(int argc, char **argv)
             ProfileSettings().setValue(QLatin1String("MainWindow/startupPages"),
                                  QStringList());
             ProfileSettings().remove(QLatin1String("sessions"));
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
             rustCoreEnsureDataDir();
             rc_session_clear();
 #endif
@@ -15085,7 +16380,7 @@ int main(int argc, char **argv)
             BrowserMainWindow *privateWindow = application.newMainWindow();
             const QUrl privateUrl = QUrl::fromLocalFile(
                 QDir::temp().filePath(
-                    QLatin1String("arora-session-private.html")));
+                    QLatin1String("arktos-session-private.html")));
             privateWindow->tabWidget()->loadUrl(privateUrl,
                                                 TabWidget::CurrentTab);
             {
@@ -15102,7 +16397,7 @@ int main(int argc, char **argv)
             sessionCheck(
                 ProfileSettings().value(QLatin1String("sessions/lastSession"))
                     .isNull()
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
                     && rc_session_exists() == 0
 #endif
                     ,
@@ -15114,7 +16409,7 @@ int main(int argc, char **argv)
                              &application,
                              [sessionCheck, fixtureUrls,
                               &sessionFailures]() {
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
                 // RCORE03: the session lives in the rustcore store —
                 // read the file the window-close just wrote, check the
                 // "ARSS" magic, then walk the decoded manifest.
@@ -15254,7 +16549,7 @@ int main(int argc, char **argv)
                     // A fixture title proves the tab actually loaded,
                     // not just that its url was scheduled.
                     titlesOk &= tab->title().contains(
-                        QStringLiteral("arora-session-%1").arg(i + 1));
+                        QStringLiteral("arktos-session-%1").arg(i + 1));
                 }
                 if (got == fixtureUrls && tabWidget->currentIndex() == 1
                     && titlesOk) {
@@ -15305,11 +16600,11 @@ int main(int argc, char **argv)
         QStringList fixtureUrls;
         for (int i = 1; i <= 3; ++i) {
             const QString path = QDir::temp().filePath(
-                QStringLiteral("arora-sigterm-%1.html").arg(i));
+                QStringLiteral("arktos-sigterm-%1.html").arg(i));
             QFile fixture(path);
             if (fixture.open(QIODevice::WriteOnly)) {
                 fixture.write(QStringLiteral(
-                    "<html><head><title>arora-sigterm-%1</title>"
+                    "<html><head><title>arktos-sigterm-%1</title>"
                     "</head><body>%1</body></html>").arg(i).toUtf8());
             }
             fixtureUrls << QUrl::fromLocalFile(path).toString();
@@ -15325,7 +16620,7 @@ int main(int argc, char **argv)
 
         if (sigtermChildSmoke) {
             ProfileSettings().remove(QLatin1String("sessions"));
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
             rustCoreEnsureDataDir();
             rc_session_clear();
 #endif
@@ -15374,7 +16669,7 @@ int main(int argc, char **argv)
                                          QStringLiteral("int")};
         for (const QString &signal : signalNames) {
             ProfileSettings().remove(QLatin1String("sessions"));
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
             rustCoreEnsureDataDir();
             rc_session_clear();
 #endif
@@ -15405,7 +16700,7 @@ int main(int argc, char **argv)
             QStringList restoredUrls;
             qint64 restoredCurrent = -1;
             int windowCount = 0;
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
             QFile sessionFile(BrowserPaths::dataFilePath(
                 QLatin1String(RC_SESSION_FILE)));
             QByteArray blob;
@@ -15500,7 +16795,7 @@ int main(int argc, char **argv)
         ProfileSettings().setValue(QLatin1String("MainWindow/startupPages"),
                              QStringList());
         ProfileSettings().remove(QLatin1String("sessions"));
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
         rustCoreEnsureDataDir();
         rc_session_clear();
 #endif
@@ -15541,7 +16836,7 @@ int main(int argc, char **argv)
         floorCheck(application.mainWindows().isEmpty(),
                    "windows dropped for next leg");
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
         // Leg 2 — a session manifest with a valid header but an empty
         // window list: restore succeeds yet leaves zero windows; the
         // floor must still produce one.
@@ -15622,6 +16917,7 @@ int main(int argc, char **argv)
             floorCheck(!s.value(sentinelKey, true).toBool(),
                        "clean exit disarms sentinel");
         }
+#if defined(SIGHUP)
         BrowserProfile::markSessionTerminated(SIGHUP);
         {
             ProfileSettings s;
@@ -15633,6 +16929,7 @@ int main(int argc, char **argv)
             floorCheck(!s.value(sentinelKey, true).toBool(),
                        "signal exit disarms sentinel");
         }
+#endif
         // Arm then re-arm: the second start must score one unclean
         // exit against the counter.
         BrowserProfile::markSessionStart();
@@ -15676,7 +16973,7 @@ int main(int argc, char **argv)
                        "termination flush records SIGTERM");
             floorCheck(!s.value(sentinelKey, true).toBool(),
                        "termination flush disarms sentinel");
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
             floorCheck(rc_session_exists() == 1,
                        "termination flush wrote the session");
 #endif
@@ -15692,14 +16989,14 @@ int main(int argc, char **argv)
     }
 
     // CRASH02: --crash-smoke dies deliberately by the fault named in
-    // ARORA_CRASH_SMOKE (segv|abrt|terminate; default segv) so the
+    // ARKTOS_CRASH_SMOKE (segv|abrt|terminate; default segv) so the
     // crash reporter's marker + backtrace can be verified end-to-end —
     // the process exits BY the signal, which is the assertion the
     // caller checks.
     if (args.contains(QLatin1String("--crash-smoke"))) {
-        const QByteArray kind = qgetenv("ARORA_CRASH_SMOKE");
+        const QByteArray kind = qgetenv("ARKTOS_CRASH_SMOKE");
         qInfo() << "crash-smoke: log" << CrashReporter::logPath()
-                << "kind" << (kind.isEmpty() ? "segv" : kind);
+                << "kind" << (kind.isEmpty() ? QByteArray("segv") : kind);
         fflush(nullptr);
         if (kind == "abrt")
             std::abort();
@@ -15717,8 +17014,8 @@ int main(int argc, char **argv)
     // large-history model load, plus the profile-tree permission sweep
     // (SEC12) that runs on the startup path.  Always exits 0; the
     // numbers go into task notes rather than a pass/fail gate.
-    // Workload sizes are overridable through ARORA_PERF_HISTORY_N and
-    // ARORA_PERF_TREE_N.
+    // Workload sizes are overridable through ARKTOS_PERF_HISTORY_N and
+    // ARKTOS_PERF_TREE_N.
     if (args.contains(QLatin1String("--perf-smoke"))) {
         qInfo() << "perf-smoke: app-ctor" << appCtorMs << "ms"
                 << "(single-instance, profile bring-up, services)";
@@ -15729,7 +17026,7 @@ int main(int argc, char **argv)
         // the seed must already exist for the menu bench below to see
         // a populated history.  Oldest->newest QByteArray blocks,
         // newest-first in memory.
-        const int envHistoryN = qEnvironmentVariableIntValue("ARORA_PERF_HISTORY_N");
+        const int envHistoryN = qEnvironmentVariableIntValue("ARKTOS_PERF_HISTORY_N");
         const int historyN = envHistoryN > 0 ? envHistoryN : 40000;
         const QString historyPath =
             BrowserPaths::dataFilePath(QLatin1String("history"));
@@ -15849,7 +17146,7 @@ int main(int argc, char **argv)
         };
         QList<QIcon> perfIcons;
         for (const char *name : iconNames)
-            perfIcons.append(AroraIcon::getChrome(QLatin1String(name)));
+            perfIcons.append(ArktosIcon::getChrome(QLatin1String(name)));
         const int iconPasses = 300;
         step.restart();
         {
@@ -15867,7 +17164,7 @@ int main(int argc, char **argv)
         {
             QPainter iconPainter(&iconCanvas);
             for (int i = 0; i < iconPasses; ++i) {
-                const QIcon icon = AroraIcon::getChrome(
+                const QIcon icon = ArktosIcon::getChrome(
                     QLatin1String("view-history"));
                 icon.paint(&iconPainter, QRect(0, 0, 24, 24));
             }
@@ -15913,10 +17210,10 @@ int main(int argc, char **argv)
         // runs on the startup path (applySettings) — measure it on a
         // synthetic tree.  Files are created with the default umask so
         // the first pass repairs and the second verifies.
-        const int envTreeN = qEnvironmentVariableIntValue("ARORA_PERF_TREE_N");
+        const int envTreeN = qEnvironmentVariableIntValue("ARKTOS_PERF_TREE_N");
         const int treeN = envTreeN > 0 ? envTreeN : 5000;
         QTemporaryDir tree(QDir::temp().filePath(
-            QLatin1String("arora-perf-XXXXXX")));
+            QLatin1String("arktos-perf-XXXXXX")));
         if (!tree.isValid()) {
             qInfo() << "perf-smoke: FAIL (cannot create tree dir)";
             return 1;
@@ -15961,14 +17258,14 @@ int main(int argc, char **argv)
 
         const QString binary = TorManager::resolveBinary();
         if (binary.isEmpty()) {
-            torFail(QLatin1String("no tor binary — set ARORA_TOR_BINARY "
+            torFail(QLatin1String("no tor binary — set ARKTOS_TOR_BINARY "
                                   "or run BuildProcess/fetch-tor.sh"));
             return application.exec();
         }
         qInfo() << "tor-smoke: using" << binary;
 
         QTemporaryDir torDir(QDir::temp().filePath(
-            QLatin1String("arora-tor-smoke-XXXXXX")));
+            QLatin1String("arktos-tor-smoke-XXXXXX")));
         if (!torDir.isValid()) {
             torFail(QLatin1String("cannot create data directory"));
             return application.exec();
@@ -16191,9 +17488,9 @@ int main(int argc, char **argv)
 
         // TOR09: the tor window's first tab is itself newTab() — it
         // lands on the tor-branded start page at once, on the same
-        // qrc + arora-channel contract as the standard page.  The
+        // qrc + arktos-channel contract as the standard page.  The
         // channel is armed but must stay bare of the privileged
-        // bridges; "arora" itself registers when the qrc commit lands
+        // bridges; "arktos" itself registers when the qrc commit lands
         // (asserted in the async section once loads have had turns).
         WebView *torStartTab = torWindow->currentTab();
         if (!torStartTab
@@ -16211,7 +17508,7 @@ int main(int argc, char **argv)
                 || torChannel->registeredObjects().contains(
                        QLatin1String("external"))
                 || torChannel->registeredObjects().contains(
-                       QLatin1String("aroraAutofill"))) {
+                       QLatin1String("arktosAutofill"))) {
             torWinFail(QLatin1String(
                 "tor page channel missing or not bare"));
             return application.exec();
@@ -16336,10 +17633,10 @@ int main(int argc, char **argv)
         // once the channel handshake resolves, so poll it rather
         // than racing the signal.
         while (newTabPageTab->title()
-                       != QLatin1String("Welcome to Arora!")
+                       != QLatin1String("Welcome to Arktos!")
                && newTabDeadline.elapsed() < 15000)
             application.processEvents(QEventLoop::AllEvents, 50);
-        if (newTabPageTab->title() != QLatin1String("Welcome to Arora!")) {
+        if (newTabPageTab->title() != QLatin1String("Welcome to Arktos!")) {
             torWinFail(QString::fromLatin1(
                 "tor start page on a New Tab never committed —"
                 " url=%1 title=%2 committed=%3 signals=%4")
@@ -16569,7 +17866,7 @@ int main(int argc, char **argv)
                             return;
                         }
                         // TOR09: by now the first tab's qrc commit
-                        // registered "arora" and the page's own
+                        // registered "arktos" and the page's own
                         // translate() run filled its title — probe
                         // the DOM for the tor logo block + search
                         // field and the resolved page-side object.
@@ -16579,16 +17876,16 @@ int main(int argc, char **argv)
                         if (!startPage || !startPage->webChannel()
                                 || !startPage->webChannel()
                                         ->registeredObjects().contains(
-                                            QLatin1String("arora"))) {
+                                            QLatin1String("arktos"))) {
                             torWinFail(QLatin1String(
-                                "tor start page channel missing arora"));
+                                "tor start page channel missing arktos"));
                             return;
                         }
                         // runJavaScript runs in ApplicationWorld —
-                        // the page-global arora var (MainWorld) is
+                        // the page-global arktos var (MainWorld) is
                         // out of reach, but the DOM is shared:
                         // headerTitle only fills once the channel's
-                        // arora.translate() callback has resolved.
+                        // arktos.translate() callback has resolved.
                         startTab->enginePage()->runJavaScript(
                             QStringLiteral(
                                 "(function(){"
@@ -16671,9 +17968,9 @@ int main(int argc, char **argv)
     // BrowserApplication::startPageUrl — on a real BrowserMainWindow
     // with the fail-closed proxy and TorRequestInterceptor armed.
     // qrc loads need no network, so the daemon is optional:
-    // ARORA_TOR_BINARY=faketor.py bootstraps the manager for a fully
+    // ARKTOS_TOR_BINARY=faketor.py bootstraps the manager for a fully
     // live run, but the leg passes either way.  Invoke as
-    // `arora --tor --tor-newtab-smoke`; exits 0 on PASS.
+    // `arktos --tor --tor-newtab-smoke`; exits 0 on PASS.
     if (args.contains(QLatin1String("--tor-newtab-smoke"))) {
         auto newtabFail = [&application](const QString &why) {
             qInfo() << "tor-newtab-smoke: FAIL" << why;
@@ -16681,7 +17978,7 @@ int main(int argc, char **argv)
         };
         if (!BrowserApplication::isTorMode() || !application.torManager()) {
             newtabFail(QLatin1String(
-                "tor mode not armed — run `arora --tor --tor-newtab-smoke`"));
+                "tor mode not armed — run `arktos --tor --tor-newtab-smoke`"));
             return application.exec();
         }
         BrowserMainWindow *torWindow = application.newMainWindow();
@@ -16723,12 +18020,12 @@ int main(int argc, char **argv)
         qInfo() << "tor-newtab-smoke: new tab navigated to" << expected;
 
         // …and it must actually COMMIT on the tor profile: the qrc
-        // document loads, the channel registers "arora", and the
+        // document loads, the channel registers "arktos", and the
         // page's own translate() fills the title.  The qrc commit and
         // the channel handshake resolve on separate turns, so the DOM
         // probe re-issues until the page answers or the deadline
         // below trips — a failed load never commits, never registers
-        // "arora", and times out into FAIL.  Same probe TOR09's
+        // "arktos", and times out into FAIL.  Same probe TOR09's
         // window smoke runs on the first tab.
         QTimer *probeTimer = new QTimer(&application);
         probeTimer->setInterval(250);
@@ -16739,7 +18036,7 @@ int main(int argc, char **argv)
             QWebEnginePage *page = newTab->page();
             if (!page || !page->webChannel()
                     || !page->webChannel()->registeredObjects().contains(
-                            QLatin1String("arora")))
+                            QLatin1String("arktos")))
                 return;
             probeTimer->stop();
             newTab->enginePage()->runJavaScript(
@@ -16752,7 +18049,7 @@ int main(int argc, char **argv)
                     const QStringList parts = probe.split(QLatin1Char('|'));
                     if (parts.size() != 2
                             || parts.at(0)
-                                    != QLatin1String("Welcome to Arora!")
+                                    != QLatin1String("Welcome to Arktos!")
                             || parts.at(1).isEmpty()) {
                         // translate() still resolving — retry.
                         probeTimer->start();
@@ -16771,6 +18068,249 @@ int main(int argc, char **argv)
         });
     }
 
+    // Live reproduction + verification for TOR17 — the third "first
+    // search fails on a fresh tor window" report, on a build that
+    // already carries the TOR12/14 hold machinery.  The faketor seams
+    // could not reproduce the failure, so this leg drives the user
+    // flow verbatim against the REAL bundled daemon: a cold window,
+    // then the omnibox path (loadString — the exact call
+    // lineEditReturnPressed makes) fired the moment the window
+    // exists, plus the start page's window.location.href search on a
+    // second tab.  An "Error loading page" commit on either tab is
+    // the regression signature — the allowed intermediate state is
+    // the honest "Tor is still starting" pending page, which must
+    // resolve on its own.  PASS when both searches commit a real
+    // remote document.  Run with ARKTOS_TOR_DEBUG=1 for the
+    // hold/retry state-machine trace.  Needs the real daemon +
+    // outbound connectivity: `arktos --tor --tor-firstsearch-smoke`,
+    // exit 0 on PASS.
+    if (args.contains(QLatin1String("--tor-firstsearch-smoke"))) {
+        auto fsFail = [&application](const QString &why) {
+            qInfo() << "tor-firstsearch-smoke: FAIL" << why;
+            application.exit(1);
+        };
+        TorManager *torManager = application.torManager();
+        if (!BrowserApplication::isTorMode() || !torManager) {
+            fsFail(QLatin1String(
+                "tor mode not armed — run "
+                "`arktos --tor --tor-firstsearch-smoke`"));
+            return application.exec();
+        }
+        if (TorManager::resolveBinary().isEmpty()) {
+            fsFail(QLatin1String(
+                "no tor binary — run BuildProcess/fetch-tor.sh"));
+            return application.exec();
+        }
+
+        BrowserMainWindow *torWindow = application.newMainWindow();
+        torWindow->show();
+        TabWidget *tabWidget = torWindow->tabWidget();
+        WebView *omniTab = torWindow->currentTab();
+        if (!omniTab) {
+            fsFail(QLatin1String("no first tab on the tor window"));
+            return application.exec();
+        }
+
+        // Resolve the targets exactly the way the user's input would.
+        const QUrl omniTarget = TabWidget::guessUrlFromString(
+            QStringLiteral("arktos browser"), true);
+        const QUrl pageTarget = TabWidget::guessUrlFromString(
+            QStringLiteral("tor project"), true);
+        if (!omniTarget.isValid()
+                || !(omniTarget.scheme() == QLatin1String("https")
+                     || omniTarget.scheme() == QLatin1String("http"))) {
+            fsFail(QLatin1String(
+                "omnibox did not resolve the search to a remote url"));
+            return application.exec();
+        }
+        qInfo() << "tor-firstsearch-smoke: omnibox target" << omniTarget
+                << "page target" << pageTarget;
+
+        // Per-leg state — committed flips on the first loadFinished
+        // that lands a real remote document under the leg's tab.
+        struct LegState {
+            WebView *tab = nullptr;
+            QUrl target;
+            const char *name = "";
+            bool committed = false;
+            bool errorFlashed = false;
+            QString lastError;
+        };
+        auto *omniLeg = new LegState{omniTab, omniTarget, "omnibox",
+                                     false, false, QString()};
+        auto *pageLeg = new LegState{nullptr, pageTarget, "page-form",
+                                     false, false, QString()};
+
+        const auto watchTab = [&application, fsFail](
+                WebView *tab, LegState *leg) {
+            leg->tab = tab;
+            QObject::connect(tab, &QWebEngineView::loadStarted,
+                             &application, [leg]() {
+                qInfo() << "tor-firstsearch-smoke:" << leg->name
+                        << "loadStarted";
+            });
+            QObject::connect(tab, &QWebEngineView::urlChanged,
+                             &application, [leg](const QUrl &u) {
+                qInfo() << "tor-firstsearch-smoke:" << leg->name
+                        << "url ->" << u;
+            });
+            QObject::connect(tab, &QWebEngineView::loadFinished,
+                             &application, [leg, fsFail](bool ok) {
+                qInfo() << "tor-firstsearch-smoke:" << leg->name
+                        << "loadFinished" << ok << leg->tab->url();
+                const QString scheme = leg->tab->url().scheme();
+                const bool remote = scheme == QLatin1String("https")
+                        || scheme == QLatin1String("http");
+                if (!ok) {
+                    // A failed commit on a remote url is the live
+                    // regression itself — Chromium's net::ERR_* page
+                    // flashed (the pending page only masks it after).
+                    // Held navigations are refused before load() and
+                    // never emit this.
+                    if (remote)
+                        fsFail(QString::fromLatin1(
+                            "%1 search navigation failed at "
+                            "commit-time (url %2)")
+                            .arg(QLatin1String(leg->name),
+                                 leg->tab->url().toString()));
+                    return;
+                }
+                // The warm-up pending page is a setHtml() — its commit
+                // reports a phantom loadFinished(true) under the FAILED
+                // url, so "ok + remote scheme" alone cannot tell a real
+                // document from the pending page.  The generated docs
+                // carry fixed titles; only a foreign title counts.
+                if (remote)
+                    leg->committed = true;   // provisional — the verdict
+                                             // poll re-checks the title
+            });
+            // The regression signature: an error-page commit on the
+            // searching tab.  The warm-up pending page ("Connecting
+            // to the Tor network") is the allowed honest state — it
+            // must resolve without user action; the deadline below
+            // enforces that part.
+            QObject::connect(tab, &QWebEngineView::titleChanged,
+                             &application, [leg, fsFail](
+                                 const QString &title) {
+                qInfo() << "tor-firstsearch-smoke:" << leg->name
+                        << "title ->" << title;
+                if (title.startsWith(QLatin1String("Error loading page"))
+                        && !leg->errorFlashed) {
+                    leg->errorFlashed = true;
+                    fsFail(QString::fromLatin1(
+                        "%1 search committed an error page — the "
+                        "error-flash regression (url %2)")
+                        .arg(QLatin1String(leg->name),
+                             leg->tab->url().toString()));
+                }
+            });
+            QObject::connect(tab, &WebView::statusBarMessage,
+                             &application, [leg](const QString &text) {
+                if (!text.isEmpty())
+                    qInfo() << "tor-firstsearch-smoke:" << leg->name
+                            << "status:" << text;
+            });
+        };
+
+        watchTab(omniTab, omniLeg);
+
+        // Leg 1 — the omnibox: fire immediately, at the coldest point
+        // a user can reach (window up, daemon still bootstrapping).
+        qInfo() << "tor-firstsearch-smoke: firing omnibox search,"
+                   " daemon state" << int(torManager->state())
+                << "readyElapsed" << torManager->readyElapsed();
+        tabWidget->loadString(QStringLiteral("arktos browser"));
+
+        // Leg 2 — the start-page form: a second tab on the tor start
+        // page, then the same window.location.href hop its
+        // formSubmitted() makes once the qrc document commits.
+        tabWidget->newTabPage();
+        WebView *pageTab = torWindow->currentTab();
+        if (!pageTab || pageTab == omniTab) {
+            fsFail(QLatin1String("newTabPage made no second tab"));
+            return application.exec();
+        }
+        watchTab(pageTab, pageLeg);
+        auto *pageFired = new bool(false);
+        QTimer *pagePoll = new QTimer(&application);
+        pagePoll->setInterval(200);
+        QObject::connect(pagePoll, &QTimer::timeout, &application,
+                         [pageTab, pageTarget, pagePoll, pageFired]() {
+            if (*pageFired
+                    || pageTab->url()
+                           != QUrl(QStringLiteral(
+                                   "qrc:/startpage-tor.html")))
+                return;
+            *pageFired = true;
+            pagePoll->stop();
+            qInfo() << "tor-firstsearch-smoke: firing start-page"
+                       " search via window.location.href";
+            pageTab->enginePage()->runJavaScript(
+                QStringLiteral("window.location.href = '")
+                + pageTarget.toString() + QLatin1Char('\''));
+        });
+        pagePoll->start();
+
+        // Verdict poll: both legs committed a REAL document — the
+        // pending page's phantom success carries its fixed title, so
+        // the title must read foreign before the leg counts — or the
+        // deadline dumps the hold state and fails.
+        const auto legDone = [](const LegState *leg) {
+            const QString title = leg->tab->title();
+            return leg->committed && !title.isEmpty()
+                && !title.startsWith(
+                       QLatin1String("Connecting to the Tor"))
+                && !title.startsWith(
+                       QLatin1String("Error loading page"));
+        };
+        QTimer *verdictPoll = new QTimer(&application);
+        verdictPoll->setInterval(500);
+        QObject::connect(verdictPoll, &QTimer::timeout, &application,
+                         [&application, omniLeg, pageLeg, legDone,
+                          verdictPoll]() {
+            if (!legDone(omniLeg) || !legDone(pageLeg))
+                return;
+            verdictPoll->stop();
+            qInfo() << "tor-firstsearch-smoke: PASS —"
+                       " omnibox:" << omniLeg->tab->url()
+                    << "| page-form:" << pageLeg->tab->url();
+            application.exit(0);
+        });
+        verdictPoll->start();
+
+        QElapsedTimer *firstsearchClock = new QElapsedTimer();
+        firstsearchClock->start();
+        QTimer::singleShot(240000, &application,
+                           [fsFail, omniLeg, pageLeg, torManager,
+                            firstsearchClock]() {
+            const QString state = QString::fromLatin1(
+                "omnibox: committed=%1 url=%2 title=%3 status='%4' | "
+                "page-form: committed=%5 url=%6 title=%7 status='%8' | "
+                "daemon state=%9 readyElapsed=%10 usableCircuit=%11 "
+                "circuits=%12")
+                .arg(omniLeg->committed)
+                .arg(omniLeg->tab ? omniLeg->tab->url().toString()
+                                  : QString())
+                .arg(omniLeg->tab ? omniLeg->tab->title() : QString())
+                .arg(omniLeg->tab ? omniLeg->tab->lastStatusBarText()
+                                  : QString())
+                .arg(pageLeg->committed)
+                .arg(pageLeg->tab ? pageLeg->tab->url().toString()
+                                  : QString())
+                .arg(pageLeg->tab ? pageLeg->tab->title() : QString())
+                .arg(pageLeg->tab ? pageLeg->tab->lastStatusBarText()
+                                  : QString())
+                .arg(int(torManager->state()))
+                .arg(torManager->readyElapsed())
+                .arg(torManager->hasUsableCircuit())
+                .arg(torManager->circuits().size());
+            fsFail(QLatin1String("timeout after ")
+                   + QString::number(firstsearchClock->elapsed())
+                   + QLatin1String("ms — ") + state);
+        });
+        return application.exec();
+    }
+
     // Headless reproduction/verification for TOR10: a real user click
     // on the tor circuit button crashed the app.  Drive the exact
     // press path — InstantPopup's mouse-press handler calls the
@@ -16781,7 +18321,7 @@ int main(int argc, char **argv)
     // dumps a backtrace so a crash attributes without gdb.  Use xvfb
     // for real popup windows when available — offscreen refuses the
     // popup grab but still drives the full populate/repopulate path.
-    // ARORA_TOR_BINARY=faketor.py makes it deterministic.  Exits 0 on
+    // ARKTOS_TOR_BINARY=faketor.py makes it deterministic.  Exits 0 on
     // PASS.
     if (args.contains(QLatin1String("--tor-circuit-click-smoke"))) {
         auto clickFail = [&application](const QString &why) {
@@ -16899,7 +18439,7 @@ int main(int argc, char **argv)
                         return;
                     }
                     const QByteArray grabDir =
-                        qgetenv("ARORA_TOR_GRAB_DIR");
+                        qgetenv("ARKTOS_TOR_GRAB_DIR");
                     if (!grabDir.isEmpty()) {
                         const QString dir =
                             QString::fromLocal8Bit(grabDir);
@@ -16973,7 +18513,7 @@ int main(int argc, char **argv)
     // Headless verification for ICONS01: each bundled set must render
     // every registered icon name, a theme switch must reach already
     // created icons, the -dark recolor variants must engage under a
-    // dark palette, and the bundled fallback (arora-tabler) must
+    // dark palette, and the bundled fallback (arktos-tabler) must
     // resolve when the active theme misses a name.  Fully
     // synchronous — no event loop.
     if (args.contains(QLatin1String("--icons-smoke"))) {
@@ -16992,16 +18532,16 @@ int main(int argc, char **argv)
             return count;
         };
 
-        const QStringList names = AroraIcon::names();
+        const QStringList names = ArktosIcon::names();
         check(QLatin1String("name count"), names.count() >= 30);
         const QStringList sets = { QLatin1String("adwaita"),
                                    QLatin1String("breeze"),
                                    QLatin1String("tabler") };
         for (const QString &set : sets) {
-            AroraIcon::setTheme(set);
+            ArktosIcon::setTheme(set);
             int missing = 0;
             for (const QString &name : names) {
-                const QImage image = AroraIcon::get(name)
+                const QImage image = ArktosIcon::get(name)
                     .pixmap(QSize(24, 24)).toImage();
                 if (image.isNull() || opaquePixels(image) == 0) {
                     qInfo() << "icons-smoke: missing" << set << name;
@@ -17015,7 +18555,7 @@ int main(int argc, char **argv)
             // slip through here) and reload/stop at the arrows' visual
             // weight, not a heavier filled style.
             auto navImage = [](const QLatin1String &iconName) {
-                return AroraIcon::get(iconName)
+                return ArktosIcon::get(iconName)
                     .pixmap(QSize(18, 18)).toImage();
             };
             bool monochrome = true;
@@ -17061,7 +18601,7 @@ int main(int argc, char **argv)
 
             // getOnDark serves the tor chrome's dark surfaces: light
             // glyphs from the -dark file, falling back to get().
-            const QImage onDark = AroraIcon::getOnDark(
+            const QImage onDark = ArktosIcon::getOnDark(
                 QLatin1String("go-previous"))
                 .pixmap(QSize(18, 18)).toImage();
             qlonglong darkLum = 0;
@@ -17080,10 +18620,10 @@ int main(int argc, char **argv)
 
         // Live apply: an existing QIcon follows setThemeName — that
         // is what makes the Settings combo need no widget rewiring.
-        AroraIcon::setTheme(QLatin1String("adwaita"));
-        const QIcon live = AroraIcon::get(QLatin1String("go-previous"));
+        ArktosIcon::setTheme(QLatin1String("adwaita"));
+        const QIcon live = ArktosIcon::get(QLatin1String("go-previous"));
         const QImage before = live.pixmap(QSize(24, 24)).toImage();
-        AroraIcon::setTheme(QLatin1String("tabler"));
+        ArktosIcon::setTheme(QLatin1String("tabler"));
         check(QLatin1String("live switch"),
               before != live.pixmap(QSize(24, 24)).toImage());
 
@@ -17092,10 +18632,10 @@ int main(int argc, char **argv)
         const QPalette savedPalette = qApp->palette();
         qApp->setPalette(BrowserTheme::darkPalette());
         check(QLatin1String("dark variant selection"),
-              AroraIcon::effectiveThemeName(QLatin1String("tabler"))
-                  == QLatin1String("arora-tabler-dark"));
-        AroraIcon::setTheme(QLatin1String("tabler"));
-        const QImage darkImage = AroraIcon::get(QLatin1String("go-previous"))
+              ArktosIcon::effectiveThemeName(QLatin1String("tabler"))
+                  == QLatin1String("arktos-tabler-dark"));
+        ArktosIcon::setTheme(QLatin1String("tabler"));
+        const QImage darkImage = ArktosIcon::get(QLatin1String("go-previous"))
             .pixmap(QSize(24, 24)).toImage();
         qlonglong luminance = 0;
         int opaque = 0;
@@ -17114,10 +18654,10 @@ int main(int argc, char **argv)
         // ICONS12: the retired "native" id (and any unknown pick)
         // migrates to the default bundled set, so a profile pinned to
         // it still renders light -dark art on dark chrome.
-        AroraIcon::setTheme(QLatin1String("native"));
+        ArktosIcon::setTheme(QLatin1String("native"));
         check(QLatin1String("retired id migrates"),
-              QIcon::themeName() == QLatin1String("arora-tabler-dark"));
-        const QImage nativeDark = AroraIcon::get(
+              QIcon::themeName() == QLatin1String("arktos-tabler-dark"));
+        const QImage nativeDark = ArktosIcon::get(
             QLatin1String("go-previous")).pixmap(QSize(24, 24)).toImage();
         luminance = 0;
         opaque = 0;
@@ -17137,15 +18677,15 @@ int main(int argc, char **argv)
         // ICONS13: the bundled Tabler set is the last resort — under
         // a theme that does not exist at all, names still resolve
         // through the fallback theme rather than painting blank.
-        QIcon::setThemeName(QLatin1String("arora-does-not-exist"));
+        QIcon::setThemeName(QLatin1String("arktos-does-not-exist"));
         check(QLatin1String("bundled fallback"),
-              !AroraIcon::get(QLatin1String("tab-new"))
+              !ArktosIcon::get(QLatin1String("tab-new"))
                    .pixmap(QSize(16, 16)).isNull());
         check(QLatin1String("bundled fallback (nav)"),
-              !AroraIcon::get(QLatin1String("go-previous"))
+              !ArktosIcon::get(QLatin1String("go-previous"))
                    .pixmap(QSize(16, 16)).isNull());
 
-        AroraIcon::setTheme(AroraIcon::theme());
+        ArktosIcon::setTheme(ArktosIcon::theme());
         qInfo() << "icons-smoke:" << (failures == 0 ? "PASS" : "FAIL")
                 << failures << "failures";
         return failures == 0 ? 0 : 1;
@@ -17725,7 +19265,7 @@ int main(int argc, char **argv)
         networkAccessManager->loadSettings();
 
         const bool prefetchArmed =
-            qEnvironmentVariableIntValue("ARORA_TELEMETRY_PREFETCH") == 1;
+            qEnvironmentVariableIntValue("ARKTOS_TELEMETRY_PREFETCH") == 1;
         check(profile->settings()->testAttribute(
                   QWebEngineSettings::DnsPrefetchEnabled) == prefetchArmed,
               QStringLiteral("DnsPrefetchEnabled matches pinned value"));
@@ -17749,12 +19289,12 @@ int main(int argc, char **argv)
 
         // Browsed targets: two navigation legs (one single-host site,
         // one search-engine query) plus a download leg, all over the
-        // tapped proxy.  ARORA_TELEMETRY_URLS overrides the set.
+        // tapped proxy.  ARKTOS_TELEMETRY_URLS overrides the set.
         QStringList urls{
             QStringLiteral("https://example.com/"),
-            QStringLiteral("https://html.duckduckgo.com/html/?q=arora"),
+            QStringLiteral("https://html.duckduckgo.com/html/?q=arktos"),
         };
-        const QByteArray envUrls = qgetenv("ARORA_TELEMETRY_URLS");
+        const QByteArray envUrls = qgetenv("ARKTOS_TELEMETRY_URLS");
         if (!envUrls.isEmpty()) {
             urls = QString::fromUtf8(envUrls).split(
                 QLatin1Char(','), Qt::SkipEmptyParts);
@@ -17788,7 +19328,7 @@ int main(int argc, char **argv)
         // Download leg — the file lands in a scratch dir, never the
         // operator's real Downloads.
         const QString downloadDir = QDir::temp().filePath(
-            QStringLiteral("arora-telemetry-dl"));
+            QStringLiteral("arktos-telemetry-dl"));
         QDir().mkpath(downloadDir);
         downloadManager->setDownloadDirectory(downloadDir);
         {
@@ -17817,7 +19357,7 @@ int main(int argc, char **argv)
 
         // Settle: telemetry often fires on a delay after activity.
         int settleMs =
-            qEnvironmentVariableIntValue("ARORA_TELEMETRY_SETTLE_MS");
+            qEnvironmentVariableIntValue("ARKTOS_TELEMETRY_SETTLE_MS");
         if (settleMs <= 0)
             settleMs = 15000;
         telemetryWait(settleMs);
@@ -17835,7 +19375,7 @@ int main(int argc, char **argv)
         };
         QStringList extraContent;
         const QByteArray envContent =
-            qgetenv("ARORA_TELEMETRY_CONTENT_HOSTS");
+            qgetenv("ARKTOS_TELEMETRY_CONTENT_HOSTS");
         for (const QByteArray &entry : envContent.split(',')) {
             const QString host =
                 QString::fromUtf8(entry).trimmed().toLower();
@@ -17925,7 +19465,7 @@ int main(int argc, char **argv)
             const QString probeHost =
                 probeTag + QLatin1String(".invalid");
             const QString logPath = QDir::temp().filePath(
-                QStringLiteral("arora-telemetry-netlog-%1.json")
+                QStringLiteral("arktos-telemetry-netlog-%1.json")
                     .arg(armed ? QLatin1String("on")
                                : QLatin1String("off")));
             QFile::remove(logPath);
@@ -17945,9 +19485,9 @@ int main(int argc, char **argv)
                        QStringLiteral("--log-net-log=%1"
                                       " --net-log-capture-mode=Everything")
                            .arg(logPath));
-            env.insert(QStringLiteral("ARORA_TELEMETRY_PROBE_HOST"),
+            env.insert(QStringLiteral("ARKTOS_TELEMETRY_PROBE_HOST"),
                        probeHost);
-            env.insert(QStringLiteral("ARORA_TELEMETRY_PREFETCH"),
+            env.insert(QStringLiteral("ARKTOS_TELEMETRY_PREFETCH"),
                        armed ? QStringLiteral("1")
                              : QStringLiteral("0"));
 
@@ -18174,7 +19714,7 @@ int main(int argc, char **argv)
         const QUrl pdfUrl(QStringLiteral("http://127.0.0.1:%1/doc.pdf").arg(port));
         const QUrl fakeUrl(QStringLiteral("http://127.0.0.1:%1/fake.pdf").arg(port));
         const QString downloadDir = QDir::temp().filePath(
-            QStringLiteral("arora-pdf-smoke-%1").arg(QCoreApplication::applicationPid()));
+            QStringLiteral("arktos-pdf-smoke-%1").arg(QCoreApplication::applicationPid()));
 
         auto phase = std::make_shared<int>(0);
         auto gotLoad = std::make_shared<bool>(false);
@@ -18233,9 +19773,9 @@ int main(int argc, char **argv)
                 check(QStringLiteral("viewer dir link refused"),
                       !PdfSupport::managedViewerNavAllowed(u,
                           QUrl(QLatin1String("file:///etc/"))));
-                check(QStringLiteral("viewer arora-file link refused"),
+                check(QStringLiteral("viewer arktos-file link refused"),
                       !PdfSupport::managedViewerNavAllowed(u,
-                          QUrl(QLatin1String("arora-file:///etc/"))));
+                          QUrl(QLatin1String("arktos-file:///etc/"))));
                 check(QStringLiteral("viewer https link allowed"),
                       PdfSupport::managedViewerNavAllowed(u,
                           QUrl(QLatin1String("https://example.com/"))));
@@ -18321,7 +19861,7 @@ int main(int argc, char **argv)
         });
     }
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // PDF02: the shell-owned, engine-neutral document view.  Covers:
     //   (a) the document client — open/geometry/raster/find through
     //       whichever backend launched (bwrap-worker when a sandbox
@@ -18492,7 +20032,7 @@ int main(int argc, char **argv)
             // Print handoff: rasters painted through the client into
             // a QPrinter — no engine involved anywhere.
             const QString printPath = QDir::temp().filePath(
-                QStringLiteral("arora-pdfview-print-%1.pdf")
+                QStringLiteral("arktos-pdfview-print-%1.pdf")
                     .arg(QCoreApplication::applicationPid()));
             QPrinter printer;
             printer.setOutputFormat(QPrinter::PdfFormat);
@@ -18696,7 +20236,7 @@ int main(int argc, char **argv)
         }
 
         // (d) the worker sandbox sees no $HOME and none of the host
-        // data dir — only /arora-rt mounts and system roots.
+        // data dir — only /arktos-rt mounts and system roots.
         if (!SandboxManager::bwrapPath().isEmpty()) {
             QHash<QString, bool> probes;
             QString probeError;
@@ -18832,7 +20372,7 @@ int main(int argc, char **argv)
                 "the quick brown fox jumps over the lazy dog</p>")
                     .arg(i);
         const QString fixturePath = QDir::temp().filePath(
-            QLatin1String("arora-printpreview-smoke.html"));
+            QLatin1String("arktos-printpreview-smoke.html"));
         {
             QFile fixture(fixturePath);
             if (!fixture.open(QIODevice::WriteOnly)) {
@@ -18962,7 +20502,7 @@ int main(int argc, char **argv)
         // The print handoff: pages painted through the client into a
         // real QPrinter — the preview's Print button path.
         const QString printPath = QDir::temp().filePath(
-            QStringLiteral("arora-printpreview-print-%1.pdf")
+            QStringLiteral("arktos-printpreview-print-%1.pdf")
                 .arg(QCoreApplication::applicationPid()));
         QPrinter printer;
         printer.setOutputFormat(QPrinter::PdfFormat);
@@ -18990,14 +20530,14 @@ int main(int argc, char **argv)
     // TELEM02: child half of the DNS-prefetch probe — boots with
     // privacy/dnsPrefetch pre-pinned by the parent and a netlog path
     // in QTWEBENGINE_CHROMIUM_FLAGS, serves a fixture page that
-    // references ARORA_TELEMETRY_PROBE_HOST only via rel=dns-prefetch
+    // references ARKTOS_TELEMETRY_PROBE_HOST only via rel=dns-prefetch
     // and a plain anchor, loads it, and waits long enough for a
     // resolver job to appear in the log before exiting.
     if (args.contains(QLatin1String("--telemetry-prefetch-child-smoke"))) {
         const QString probeHost = QString::fromUtf8(
-            qgetenv("ARORA_TELEMETRY_PROBE_HOST"));
+            qgetenv("ARKTOS_TELEMETRY_PROBE_HOST"));
         const bool armed =
-            qEnvironmentVariableIntValue("ARORA_TELEMETRY_PREFETCH") == 1;
+            qEnvironmentVariableIntValue("ARKTOS_TELEMETRY_PREFETCH") == 1;
         if (probeHost.isEmpty()) {
             qInfo() << "telemetry-prefetch-child: FAIL (no probe host)";
             return 1;
@@ -19087,7 +20627,7 @@ int main(int argc, char **argv)
         socketPoll->start();
 #endif
 
-        int windowMs = qEnvironmentVariableIntValue("ARORA_TELEMETRY_MS");
+        int windowMs = qEnvironmentVariableIntValue("ARKTOS_TELEMETRY_MS");
         if (windowMs <= 0)
             windowMs = 30000;
         qInfo() << "telemetry-smoke: watching" << windowMs
@@ -19177,7 +20717,7 @@ int main(int argc, char **argv)
             bool done = false;
             bool result = true;   // fail closed on eval trouble
             view->page()->runJavaScript(
-                QLatin1String("window.__aroraIngressPwned === true"),
+                QLatin1String("window.__arktosIngressPwned === true"),
                 [&done, &result](const QVariant &v) {
                     result = v.toBool();
                     done = true;
@@ -19192,7 +20732,7 @@ int main(int argc, char **argv)
         // the runJavaScript probes and the navigation->consent-prompt
         // path a real renderer to work against.
         const QString fixturePath = QDir::temp().filePath(
-            QLatin1String("arora-ingress-smoke.html"));
+            QLatin1String("arktos-ingress-smoke.html"));
         {
             QFile fixture(fixturePath);
             if (!fixture.open(QIODevice::WriteOnly)
@@ -19212,18 +20752,18 @@ int main(int argc, char **argv)
         {
             const QUrl before = view->url();
             tabWidget->loadStringFromUntrustedSource(
-                QLatin1String("javascript:window.__aroraIngressPwned=true"));
+                QLatin1String("javascript:window.__arktosIngressPwned=true"));
             check(view->url() == before && !pwned(),
                   QStringLiteral("argv lane refuses javascript:"));
             tabWidget->loadStringFromUntrustedSource(
-                QLatin1String("   javascript:window.__aroraIngressPwned=true"));
+                QLatin1String("   javascript:window.__arktosIngressPwned=true"));
             check(view->url() == before && !pwned(),
                   QStringLiteral("argv lane refuses padded javascript:"));
             check(QUrl(QLatin1String("JaVaScRiPt:x")).scheme()
                       == QLatin1String("javascript"),
                   QStringLiteral("QUrl lowercases the scheme"));
             tabWidget->loadStringFromUntrustedSource(
-                QLatin1String("JaVaScRiPt:window.__aroraIngressPwned=true"));
+                QLatin1String("JaVaScRiPt:window.__arktosIngressPwned=true"));
             check(view->url() == before && !pwned(),
                   QStringLiteral("argv lane refuses case-mangled javascript:"));
 
@@ -19244,15 +20784,15 @@ int main(int argc, char **argv)
             // level unknown schemes dead-end even earlier: deny by
             // default either way.
 
-            // An aroramessage:// operand takes the NAVIGATION lane —
+            // An arktosmessage:// operand takes the NAVIGATION lane —
             // the socket control channel only exists inside
             // messageReceived(), which argv never reaches.
             tabWidget->loadStringFromUntrustedSource(
-                QLatin1String("aroramessage://getwinid"));
+                QLatin1String("arktosmessage://getwinid"));
             telemetryWait(500);
             QCoreApplication::processEvents();
             check(view->url() == before && !pwned(),
-                  QStringLiteral("aroramessage:// operand dead-ends, not the control channel"));
+                  QStringLiteral("arktosmessage:// operand dead-ends, not the control channel"));
 
             check(WebView::isUrlAllowedOnUntrustedInput(
                       QUrl(QLatin1String("data:text/html,<p>x</p>"))),
@@ -19270,7 +20810,7 @@ int main(int argc, char **argv)
         QLocalSocket *serverSide = nullptr;
         {
             const QString pairPath = QDir::temp().filePath(
-                QLatin1String("arora-ingress-pair"));
+                QLatin1String("arktos-ingress-pair"));
             QFile::remove(pairPath);
             const bool pairOk =
                 pairServer.listen(pairPath);
@@ -19301,11 +20841,11 @@ int main(int argc, char **argv)
             const QUrl before = view->url();
             // Control lane: getwinid answers on the wire and must
             // not navigate.
-            feed(QByteArrayLiteral("aroramessage://getwinid"));
+            feed(QByteArrayLiteral("arktosmessage://getwinid"));
             const bool replyReady = client->waitForReadyRead(3000);
             const QByteArray reply = client->readAll();
             const bool gotWinid =
-                reply.startsWith(QByteArrayLiteral("aroramessage://winid"));
+                reply.startsWith(QByteArrayLiteral("arktosmessage://winid"));
             if (!gotWinid || view->url() != before)
                 qInfo() << "ingress-smoke: getwinid diagnostics ready"
                         << replyReady << "reply" << reply
@@ -19314,7 +20854,7 @@ int main(int argc, char **argv)
                   QStringLiteral("getwinid control answers, no navigation"));
 
             // Unknown control token — ignored entirely.
-            feed(QByteArrayLiteral("aroramessage://bogus"));
+            feed(QByteArrayLiteral("arktosmessage://bogus"));
             const bool silent = !client->waitForReadyRead(300);
             check(silent && view->url() == before,
                   QStringLiteral("unknown control message ignored"));
@@ -19322,7 +20862,7 @@ int main(int argc, char **argv)
             // Namespace confusion: a control token carrying a url
             // stays in the control lane — the first token wins.
             feed(QByteArrayLiteral(
-                "aroramessage://getwinid javascript:window.__aroraIngressPwned=true"));
+                "arktosmessage://getwinid javascript:window.__arktosIngressPwned=true"));
             client->waitForReadyRead(3000);
             client->readAll();
             check(view->url() == before && !pwned(),
@@ -19330,7 +20870,7 @@ int main(int argc, char **argv)
 
             // Url lane: javascript: refused, an allowed url navigates.
             feed(QByteArrayLiteral(
-                "javascript:window.__aroraIngressPwned=true"));
+                "javascript:window.__arktosIngressPwned=true"));
             check(view->url() == before && !pwned(),
                   QStringLiteral("socket lane refuses javascript:"));
             feed(fixtureUrl.toEncoded());
@@ -19346,7 +20886,7 @@ int main(int argc, char **argv)
             QMetaObject::invokeMethod(
                 &application, "openUrl",
                 Q_ARG(QUrl, QUrl(QLatin1String(
-                    "javascript:window.__aroraIngressPwned=true"))));
+                    "javascript:window.__arktosIngressPwned=true"))));
             check(view->url() == before && !pwned(),
                   QStringLiteral("openUrl refuses javascript:"));
             QMetaObject::invokeMethod(
@@ -19424,7 +20964,7 @@ int main(int argc, char **argv)
             };
             QStringList positional;
             bool torSet = false;
-            check(parseTor({QLatin1String("arora"),
+            check(parseTor({QLatin1String("arktos"),
                             QLatin1String("--tor"),
                             QLatin1String("http://example.invalid")},
                            &positional, &torSet)
@@ -19432,7 +20972,7 @@ int main(int argc, char **argv)
                       && positional == QStringList(
                              QLatin1String("http://example.invalid")),
                   QStringLiteral("--tor operand lands in the positional slot"));
-            check(parseTor({QLatin1String("arora"),
+            check(parseTor({QLatin1String("arktos"),
                             QLatin1String("--tor"),
                             QLatin1String("javascript:alert(1)")},
                            &positional, nullptr)
@@ -19441,7 +20981,7 @@ int main(int argc, char **argv)
                       && !WebView::isUrlAllowedOnUntrustedInput(
                              QUrl(QLatin1String("javascript:alert(1)"))),
                   QStringLiteral("--tor javascript: operand is positional + gated downstream"));
-            check(!parseTor({QLatin1String("arora"),
+            check(!parseTor({QLatin1String("arktos"),
                              QLatin1String("--tor=javascript:x")},
                             nullptr, nullptr),
                   QStringLiteral("--tor=<value> is a parser error"));
@@ -19449,7 +20989,7 @@ int main(int argc, char **argv)
 
         // (d)+(e) child processes — hermetic HOME/XDG so neither the
         // real profile nor the real runtime socket is touched.
-        // ARORA_NO_SANDBOX keeps the launch paths deterministic.
+        // ARKTOS_NO_SANDBOX keeps the launch paths deterministic.
         {
             QTemporaryDir childHome;
             QTemporaryDir runtimeDir;
@@ -19480,15 +21020,15 @@ int main(int argc, char **argv)
                             childHome.filePath(QLatin1String("data")));
             childEnv.insert(QLatin1String("XDG_CACHE_HOME"),
                             childHome.filePath(QLatin1String("cache")));
-            childEnv.insert(QLatin1String("ARORA_TOR_BINARY"), fakeTor);
-            childEnv.insert(QLatin1String("ARORA_NO_SANDBOX"),
+            childEnv.insert(QLatin1String("ARKTOS_TOR_BINARY"), fakeTor);
+            childEnv.insert(QLatin1String("ARKTOS_NO_SANDBOX"),
                             QLatin1String("1"));
 
             const QString self = QCoreApplication::applicationFilePath();
             const auto runtimeSockets = [&runtimeDir]() {
                 // A unix socket is S_IFSOCK — QDir::System, not Files.
                 return QDir(runtimeDir.path()).entryList(
-                    {QLatin1String("Arora*")},
+                    {QLatin1String("Arktos*")},
                     QDir::Files | QDir::System);
             };
 
@@ -19508,7 +21048,7 @@ int main(int argc, char **argv)
             check(torSpawns && runtimeSockets().isEmpty(),
                   QStringLiteral("--tor process never starts the single-instance server"));
 
-            // A normal arora cannot forward into the tor process:
+            // A normal arktos cannot forward into the tor process:
             // with no listener it must become its own instance — the
             // socket file appearing proves that.
             QProcess plainChild;
@@ -19527,7 +21067,7 @@ int main(int argc, char **argv)
                         << "stderr-tail:"
                         << plainChild.readAllStandardError().right(600);
             check(socketAppeared,
-                  QStringLiteral("plain arora becomes its own instance "
+                  QStringLiteral("plain arktos becomes its own instance "
                                  "(nothing forwarded to --tor)"));
             if (socketAppeared) {
                 const QFileInfo dirInfo(runtimeDir.path());

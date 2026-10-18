@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -32,20 +32,35 @@ class QWebEngineProfile;
 namespace BrowserProfile {
 
 // The persistent "normal" browsing profile.  QWebEngineProfile::
-// defaultProfile() is itself off-the-record in Qt6 (MIG06), so Arora
-// browses on the named profile "arora".  Lazily created, qApp-owned.
+// defaultProfile() is itself off-the-record in Qt6 (MIG06), so Arktos
+// browses on the named profile "arktos".  Lazily created, qApp-owned.
 QWebEngineProfile *normalProfile();
 
 // Lazily created off-the-record profile for private browsing (MIG03):
 // nothing — cookies, cache, storage — persists to disk.
 QWebEngineProfile *privateProfile();
 
-// TOR02: dedicated off-the-record profile for `arora --tor`.  Also
+// TOR02: dedicated off-the-record profile for `arktos --tor`.  Also
 // unnamed (memory-only), but deliberately distinct from
 // privateProfile() so the two modes can never share state and the
 // tor profile can carry its own hardening (HTTPS-first interceptor,
 // normalized UA, no extensions, no WebChannel bridges).
 QWebEngineProfile *torProfile();
+
+// MPROF03: the persistent named profile for a registry persona —
+// storageName "arktos-<id>" (id "default" resolves to normalProfile()).
+// Lazily created, qApp-owned, tagged "arktosProfileId" so profileIdFor
+// resolves it without parsing.  This is the full persona factory
+// window binding uses: a first-created profile also runs the
+// deferred site-storage sweep, and service attachment rides along
+// through BrowserApplication::prepareProfile() (called from
+// BrowserApplication::webEngineProfileFor).
+QWebEngineProfile *profileFor(const QString &profileId);
+
+// The already-materialized named persona profiles (never creates —
+// for broadcast sweeps like WebPage::setUserAgent that must reach
+// every live profile without spinning up dormant personas).
+QList<QWebEngineProfile *> createdPersonaProfiles();
 
 // The private profile only if it has already been brought up —
 // nullptr otherwise.  For callers that want to adjust an existing
@@ -58,6 +73,20 @@ QWebEngineProfile *privateProfileIfCreated();
 // without materializing the profile on normal runs.
 QWebEngineProfile *torProfileIfCreated();
 
+// MPROF02: the registry profile a QWebEngineProfile belongs to — the
+// key every per-profile app singleton (HistoryManager::
+// instanceFor(id) & friends) resolves a page's profile through.
+// Resolution order: the "arktosProfileId" dynamic property the profile
+// factories tag at creation (BrowserProfile::normalProfile, MPROF03's
+// profileFor(id), ContainerManager::profileFor) wins; otherwise the
+// storageName is parsed — "arktos" is id "default", "arktos-<id>" is id
+// <id>.  Unnamed (off-the-record) profiles, container profiles that
+// were never tagged and anything else resolve to "default": a
+// profile with no declared persona must never alias a real one.
+// App-side stores have their own isOffTheRecord() gates, so the
+// fallback cannot leak private browsing state to disk either.
+QString profileIdFor(QWebEngineProfile *profile);
+
 // UA03: the Chrome milestone the default UA presents on the wire.
 // Sites version-sniff "Chrome/<major>" to nag "browser out of date" —
 // honestly reporting the bundled Chromium reads stale as soon as its
@@ -69,7 +98,7 @@ QWebEngineProfile *torProfileIfCreated();
 // it as stale again.
 int presentedChromeMajor();
 
-// The user agent Arora sends when no override is configured (UA01):
+// The user agent Arktos sends when no override is configured (UA01):
 // Qt's factory UA minus the "QtWebEngine/<ver>" product token, which
 // bot-detection fingerprints as automation (Google /sorry/ blocks),
 // with the Chrome/<ver> token presenting presentedChromeMajor() (UA03).
@@ -77,7 +106,7 @@ QString defaultHttpUserAgent();
 
 // UAG01: the effective UA for a context — a non-empty override wins
 // verbatim (a switcher preset or the user's custom string), otherwise
-// the factory UA is de-badged and bumped.  Under ARORA_RUSTCORE the
+// the factory UA is de-badged and bumped.  Under ARKTOS_RUSTCORE the
 // construction runs in rustcore (rc_ua_build); the Qt builder is the
 // no-rust implementation, the FFI-failure fallback and the
 // parity-test seam.
@@ -89,7 +118,7 @@ QString buildHttpUserAgentQt(const QString &factoryUserAgent,
 QString effectiveHttpUserAgent(const QString &overrideUserAgent);
 
 // The Sec-CH-UA full version a UA implies (applyClientHints' input) —
-// rc_ua_brand_version under ARORA_RUSTCORE, the Qt version below as
+// rc_ua_brand_version under ARKTOS_RUSTCORE, the Qt version below as
 // fallback/parity seam.
 QString presentedBrandVersion(const QString &httpUserAgent,
                               const QString &engineVersion);
@@ -118,7 +147,7 @@ void applyClientHints(QWebEngineProfile *profile);
 //                         and setHttpAcceptLanguage
 // Settings with no WebEngine equivalent (DeveloperExtrasEnabled,
 // ZoomTextOnly, maximumPagesInCache, the access-keys feature) are
-// intentionally not applied; see MIG11 notes in .devin/Arora-Task.md.
+// intentionally not applied; see MIG11 notes in .devin/Arktos-Task.md.
 void applySettings(QWebEngineProfile *profile);
 
 // REF01: (re)installs the named <meta name="referrer"> injection
@@ -128,7 +157,7 @@ void applySettings(QWebEngineProfile *profile);
 // that pin a level after the profile was already prepared.
 void installReferrerPolicy(QWebEngineProfile *profile);
 
-// SAFE06: (re)installs the named "arora:fingerprint" injection script
+// SAFE06: (re)installs the named "arktos:fingerprint" injection script
 // — canvas readout noise, generic WebGL identity and normalized
 // navigator device hints — when privacy/fingerprintProtection is on,
 // unconditionally on the tor profile; removes it otherwise.  The
@@ -236,7 +265,7 @@ bool addClientCertificateFile(QWebEngineProfile *profile,
 //     on a CHECK in the in-process GPU thread when the viz display
 //     compositor binds; software compositing sidesteps the CHECK while
 //     the GPU process — and therefore WebGL/canvas acceleration —
-//     stays alive.  Also armed by ARORA_DISABLE_GPU_COMPOSITING=1 or
+//     stays alive.  Also armed by ARKTOS_DISABLE_GPU_COMPOSITING=1 or
 //     automatically once two consecutive starts end uncleanly.
 // Flags are process-lifetime — toggling the settings needs a restart.
 void applyChromiumFlags();

@@ -166,12 +166,12 @@ protected:
 
 private:
     bool confirmAddition(OpenSearchEngine *engine);
-#if !defined(ARORA_RUSTCORE)
+#if !defined(ARKTOS_RUSTCORE)
     // SENG02: bind a descriptor's <Alias> keywords to free slots —
     // never steals a live binding.
     void bindDefaultKeywords(OpenSearchEngine *engine);
 #endif
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // OSE01: one-shot migration of the legacy descriptor dir +
     // QSettings openSearch keys into the rustcore searchengines.json
     // store — runs once on first load, then retires the old paths.

@@ -14,12 +14,12 @@
 #   * rewrites .devin/COVERAGE.md with the src/ baseline
 #
 # Env:
-#   ARORA_COVERAGE_MIN=N   exit non-zero when src/ line coverage < N
+#   ARKTOS_COVERAGE_MIN=N   exit non-zero when src/ line coverage < N
 #                          (default 85 — raised from 80 by COV05/COV08
 #                          after COV09-COV12 lifted the baseline; set 0
 #                          for report-only)
-#   ARORA_COVERAGE_JOBS=N  parallel make jobs (default: nproc, max 4)
-#   ARORA_COVERAGE_KEEP=1  keep the instrumented build tree for
+#   ARKTOS_COVERAGE_JOBS=N  parallel make jobs (default: nproc, max 4)
+#   ARKTOS_COVERAGE_KEEP=1  keep the instrumented build tree for
 #                          inspection instead of deleting it
 
 set -u
@@ -27,10 +27,10 @@ set -u
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 REPORT_MD="$ROOT/.devin/COVERAGE.md"
 
-JOBS=${ARORA_COVERAGE_JOBS:-$(nproc 2>/dev/null || echo 2)}
+JOBS=${ARKTOS_COVERAGE_JOBS:-$(nproc 2>/dev/null || echo 2)}
 [ "$JOBS" -gt 4 ] && JOBS=4
-MIN=${ARORA_COVERAGE_MIN:-85}
-KEEP=${ARORA_COVERAGE_KEEP:-0}
+MIN=${ARKTOS_COVERAGE_MIN:-85}
+KEEP=${ARKTOS_COVERAGE_KEEP:-0}
 
 die() { echo "check-coverage: $*" >&2; exit 1; }
 
@@ -42,7 +42,7 @@ LLVM_COV=$(command -v llvm-cov-18 || command -v llvm-cov) \
 command -v python3 >/dev/null 2>&1 || die "python3 not found"
 command -v git >/dev/null 2>&1 || die "git not found"
 
-BUILD=$(mktemp -d /tmp/arora-cov.XXXXXX)
+BUILD=$(mktemp -d /tmp/arktos-cov.XXXXXX)
 echo "check-coverage: build tree $BUILD"
 
 # Copy tracked + untracked-nonignored files only: the source tree carries
@@ -58,7 +58,7 @@ cd "$BUILD" || die "cannot cd to $BUILD"
 QMAKE=$(command -v qmake6 || command -v qmake) || die "qmake not found"
 
 echo "check-coverage: qmake ($("$QMAKE" -query QT_VERSION), linux-clang) + make -j$JOBS"
-"$QMAKE" -spec linux-clang CONFIG+=coverage arora.pro || die "qmake failed"
+"$QMAKE" -spec linux-clang CONFIG+=coverage arktos.pro || die "qmake failed"
 make -j"$JOBS" sub-src sub-autotests || die "build failed"
 
 PROFDIR="$BUILD/.coverage"
@@ -77,7 +77,7 @@ export LLVM_PROFILE_FILE="$PROFDIR/%m%c.profraw"
 export QTWEBENGINE_CHROMIUM_FLAGS="--disable-gpu${QTWEBENGINE_CHROMIUM_FLAGS:+ $QTWEBENGINE_CHROMIUM_FLAGS}"
 
 # Isolate HOME: the tests and smokes read/write the real app profile
-# dirs (~/.local/share/Arora, ~/.qttest) — a scratch HOME keeps runs
+# dirs (~/.local/share/Arktos, ~/.qttest) — a scratch HOME keeps runs
 # deterministic and leaves the user's data untouched.
 HOME="$BUILD/.home"
 export HOME
@@ -97,7 +97,7 @@ TESTS_RC=$?
 #
 # COV11: every smoke run sets QStandardPaths test mode, which pins the
 # app-data dir at $HOME/.qttest/share — shared across ALL smoke legs
-# (only QSettings lands in the per-flag ARORA_SMOKE_STORE).  Legs that
+# (only QSettings lands in the per-flag ARKTOS_SMOKE_STORE).  Legs that
 # persist state (the adblock smokes write wildcard script-blocking
 # rules into adblock_subscription_custom) silently poison every later
 # leg — seclvl-smoke's fixture script was noopjs-redirected and its
@@ -123,14 +123,14 @@ SMOKE_FLAGS="--quit-after-load --app-smoke --browser-smoke --nam-smoke
 --ingress-smoke --engine-list --engine-smoke"
 for flag in $SMOKE_FLAGS; do
     [ "$flag" = "--restore-smoke" ] || rm -rf "$HOME/.qttest"
-    if timeout 240 ./arora "$flag" >/dev/null 2>&1; then
+    if timeout 240 ./arktos "$flag" >/dev/null 2>&1; then
         echo "check-coverage: smoke $flag PASS"
     else
         echo "check-coverage: smoke $flag exit=$? (tolerated)"
     fi
 done
 rm -rf "$HOME/.qttest"
-if timeout 240 ./arora --download-smoke "file://$BUILD/README.md" >/dev/null 2>&1; then
+if timeout 240 ./arktos --download-smoke "file://$BUILD/README.md" >/dev/null 2>&1; then
     echo "check-coverage: smoke --download-smoke PASS"
 else
     echo "check-coverage: smoke --download-smoke exit=$? (tolerated)"
@@ -139,7 +139,7 @@ fi
 # COV11: a refused connection drives the Interrupted/Cancelled arm of
 # --download-smoke (the happy-path leg above never reaches it).
 rm -rf "$HOME/.qttest"
-if timeout 240 ./arora --download-smoke "http://127.0.0.1:1/nope.bin" \
+if timeout 240 ./arktos --download-smoke "http://127.0.0.1:1/nope.bin" \
         >/dev/null 2>&1; then
     echo "check-coverage: smoke --download-smoke (refused) PASS"
 else
@@ -156,7 +156,7 @@ rm -rf "$HOME/.qttest"
 CCERT_DIR=$(mktemp -d "$BUILD/ccert.XXXXXX")
 if command -v openssl >/dev/null 2>&1 \
         && openssl req -x509 -newkey rsa:2048 -nodes -days 2 \
-            -subj "/CN=arora-clientcert-smoke" \
+            -subj "/CN=arktos-clientcert-smoke" \
             -keyout "$CCERT_DIR/key.pem" -out "$CCERT_DIR/cert.pem" \
             >/dev/null 2>&1; then
     cat "$CCERT_DIR/cert.pem" "$CCERT_DIR/key.pem" > "$CCERT_DIR/bundle.pem"
@@ -184,9 +184,9 @@ PYEOF
     done
     CCERT_PORT=$(cat "$CCERT_DIR/port" 2>/dev/null)
     if [ -n "$CCERT_PORT" ]; then
-        if ARORA_CLIENTCERT_FILE="$CCERT_DIR/bundle.pem" \
-            ARORA_CLIENTCERT_URL="http://127.0.0.1:$CCERT_PORT/" \
-            timeout 240 ./arora --clientcert-smoke >/dev/null 2>&1; then
+        if ARKTOS_CLIENTCERT_FILE="$CCERT_DIR/bundle.pem" \
+            ARKTOS_CLIENTCERT_URL="http://127.0.0.1:$CCERT_PORT/" \
+            timeout 240 ./arktos --clientcert-smoke >/dev/null 2>&1; then
             echo "check-coverage: smoke --clientcert-smoke (local) PASS"
         else
             echo "check-coverage: smoke --clientcert-smoke (local) exit=$? (tolerated)"
@@ -206,14 +206,14 @@ fi
 # (pdfworker.cpp itself is covered by the stdio drive below: the
 # client only spawns --pdf-worker under bwrap, so no override can
 # reach it from here.)
-if ARORA_BWRAP=/nonexistent timeout 240 ./arora --pdfview-smoke \
+if ARKTOS_BWRAP=/nonexistent timeout 240 ./arktos --pdfview-smoke \
         >/dev/null 2>&1; then
     echo "check-coverage: smoke --pdfview-smoke (no bwrap) PASS"
 else
     echo "check-coverage: smoke --pdfview-smoke (no bwrap) exit=$? (tolerated)"
 fi
 
-# COV08: `arora --download-worker` only ever runs inside a bwrap
+# COV08: `arktos --download-worker` only ever runs inside a bwrap
 # namespace in production, where it can't write its profraw — drive
 # the stdio JSONL protocol directly so downloadworker.cpp counts.
 # A loopback server serves a small blob; the driver answers gate
@@ -222,7 +222,7 @@ if timeout 240 python3 - "$BUILD" <<'PYEOF' >/dev/null 2>&1; then
 import functools, http.server, json, os, subprocess, sys, tempfile, threading, time
 
 build = sys.argv[1]
-arora = os.path.join(build, "arora")
+arktos = os.path.join(build, "arktos")
 fixture = tempfile.mkdtemp(prefix="dlfix-", dir=build)
 work_dir = tempfile.mkdtemp(prefix="dlwork-", dir=build)
 dest_dir = tempfile.mkdtemp(prefix="dldest-", dir=build)
@@ -234,7 +234,7 @@ handler = functools.partial(
 httpd = http.server.HTTPServer(("127.0.0.1", 0), handler)
 threading.Thread(target=httpd.serve_forever, daemon=True).start()
 
-proc = subprocess.Popen([arora, "--download-worker"],
+proc = subprocess.Popen([arktos, "--download-worker"],
                         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                         stderr=subprocess.DEVNULL)
 job = {"cmd": "job",
@@ -278,7 +278,7 @@ else
     echo "check-coverage: download-worker drive exit=$? (tolerated)"
 fi
 
-# COV08: `arora --pdf-worker` only ever runs inside a bwrap
+# COV08: `arktos --pdf-worker` only ever runs inside a bwrap
 # namespace in production, where it can't write its profraw — drive
 # the stdio JSONL protocol (pdfworker.h) directly so pdfworker.cpp
 # counts.  The fixture is the same sanitized two-page document
@@ -308,13 +308,13 @@ PDF_B64 = (
 )
 
 build = sys.argv[1]
-arora = os.path.join(build, "arora")
+arktos = os.path.join(build, "arktos")
 work_dir = tempfile.mkdtemp(prefix="pdfwork-", dir=build)
 pdf_path = os.path.join(work_dir, "doc.pdf")
 with open(pdf_path, "wb") as f:
     f.write(base64.b64decode(PDF_B64))
 
-proc = subprocess.Popen([arora, "--pdf-worker"],
+proc = subprocess.Popen([arktos, "--pdf-worker"],
                         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                         stderr=subprocess.DEVNULL)
 job = {"cmd": "job", "pdf": pdf_path, "work_dir": work_dir,
@@ -361,7 +361,7 @@ ls "$PROFDIR"/*.profraw >/dev/null 2>&1 || die "no profraw written"
 "$LLVM_PROFDATA" merge -sparse -o "$BUILD/coverage.profdata" \
     "$PROFDIR"/*.profraw || die "llvm-profdata merge failed"
 
-OBJECTS="-object ./arora"
+OBJECTS="-object ./arktos"
 for b in $(find autotests -type f -perm -u+x -name 'tst_*' ! -name '*.*'); do
     OBJECTS="$OBJECTS -object $b"
 done
@@ -440,7 +440,7 @@ fi
     echo 'linux-clang CONFIG+=coverage`, the autotest suite and the app'
     echo '`--*-smoke` flags run under `LLVM_PROFILE_FILE`, and llvm-cov'
     echo 'reports over `src/` only (generated moc/ui/rcc and test drivers'
-    echo 'excluded). `ARORA_COVERAGE_MIN=NN` turns it into a gate.'
+    echo 'excluded). `ARKTOS_COVERAGE_MIN=NN` turns it into a gate.'
     echo
     echo "## Totals (src/ only)"
     echo

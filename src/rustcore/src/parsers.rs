@@ -18,7 +18,7 @@
 //!      "keywords":[<Alias> defaults]}
 //!     A slot key is absent when no matching <Url> was accepted;
 //!     "keywords" is absent when no <Alias> element survived the
-//!     bounds check (SENG02's Arora extension).
+//!     bounds check (SENG02's Arktos extension).
 //!
 //!   * rc_updatemanifest_parse — extension self-update "gupdate"
 //!     manifests, remote XML fetched from each extension's update_url.
@@ -321,7 +321,7 @@ struct Description {
     search: Option<UrlSlot>,
     suggestions: Option<UrlSlot>,
     image: Option<UrlSlot>,
-    /// <Alias> elements — Arora's descriptor-carried default keyword
+    /// <Alias> elements — Arktos's descriptor-carried default keyword
     /// bindings (SENG02).
     keywords: Vec<String>,
 }
@@ -442,7 +442,7 @@ fn parse_opensearch(data: &[u8]) -> RcResult<Description> {
                         desc.have_image_url = true;
                     }
                     "Alias" => {
-                        // Arora extension: <Alias> declares a default
+                        // Arktos extension: <Alias> declares a default
                         // keyword binding; out-of-bounds or duplicate
                         // aliases drop, never the whole descriptor.
                         let kw = read_element_text(&mut scan)?;
@@ -459,7 +459,7 @@ fn parse_opensearch(data: &[u8]) -> RcResult<Description> {
                         let typ = attr_or_empty(&attrs, "type").to_owned();
                         let url = attr_or_empty(&attrs, "template").to_owned();
                         let method = attr_or_empty(&attrs, "method").to_owned();
-                        // Arora extension: <Url purpose="image"> is the
+                        // Arktos extension: <Url purpose="image"> is the
                         // image-search endpoint (SRCH04).
                         let purpose = attr_or_empty(&attrs, "purpose").to_owned();
 

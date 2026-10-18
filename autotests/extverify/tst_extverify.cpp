@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -31,12 +31,12 @@
 #include "browserapplication.h"
 #include "browserprofile.h"
 #include "extensionmanager.h"
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 
 #include <qwebengineprofile.h>
 #include <qwebengineextensionmanager.h>
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include <rustcore.h>
 #endif
 
@@ -137,7 +137,7 @@ static QByteArray packageZip()
     });
 }
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 // Calls rc_ext_verify_package and returns the verdict as a JSON object.
 static QJsonObject verifyPackage(const QByteArray &pkg,
                                  const QByteArray &expectedHash = QByteArray())
@@ -189,7 +189,7 @@ void tst_ExtVerify::cleanupTestCase()
 
 void tst_ExtVerify::packageVerify()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // A valid unsigned zip: classification, not failure — manifest
     // comes back pre-validated.
     {
@@ -281,7 +281,7 @@ void tst_ExtVerify::packageVerify()
 
 void tst_ExtVerify::manifestCheck()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     const QByteArray doc = QByteArrayLiteral(
         "{\"manifest_version\":3,\"name\":\"D\",\"version\":\"2\","
         "\"permissions\":[\"debugger\",\"cookies\",\"storage\"],"
@@ -321,7 +321,7 @@ void tst_ExtVerify::manifestCheck()
 
 void tst_ExtVerify::inspectManifestPackages()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // The review dialog now sees the real manifest for .zip installs.
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -563,7 +563,7 @@ void tst_ExtVerify::userScriptPermissions()
     manager->installOnProfile(profile);
 
     // The scripts dir is owner-only (0700) once provisioned.
-    const QString dirPath = ExtensionManager::userScriptsPath();
+    const QString dirPath = ExtensionManager::instance()->userScriptsPath();
     const QFileDevice::Permissions dirLeaked =
         QFileInfo(dirPath).permissions()
         & (QFileDevice::ReadGroup | QFileDevice::WriteGroup

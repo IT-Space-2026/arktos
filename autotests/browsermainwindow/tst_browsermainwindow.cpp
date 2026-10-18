@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, The Arora Authors
+ * Copyright (c) 2026, The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -37,6 +37,7 @@
 #include <qframe.h>
 #include <qhash.h>
 #include <qheaderview.h>
+#include <qinputdialog.h>
 #include <qlabel.h>
 #include <qlineedit.h>
 #include <qlistview.h>
@@ -62,12 +63,14 @@
 #include <qtoolbar.h>
 #include <qtoolbutton.h>
 #include <qtreeview.h>
+#include <qtreewidget.h>
 
 #include "browsermainwindow.h"
 #include "browserapplication.h"
 #include "bookmarknode.h"
 #include "browsertheme.h"
-#include "aroraicon.h"
+#include "arktosicon.h"
+#include "arktosstyle.h"
 #include "containermanager.h"
 #include "bookmarksdialog.h"
 #include "bookmarksmanager.h"
@@ -78,6 +81,11 @@
 #include "fakeengine.h"
 #include "history.h"
 #include "historymanager.h"
+#include "profilecontext.h"
+#include "profileidentity.h"
+#include "profileregistry.h"
+#include "profilemanagerdialog.h"
+#include "profilestore.h"
 #include "notesmodel.h"
 #include "pdfview.h"
 #include "printpreviewdialog.h"
@@ -108,7 +116,7 @@
 #include "extensionactionbar.h"
 #include "extensionmanager.h"
 #include "profilesettings.h"
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 #include "qtry.h"
 
 // Exposes the protected event handlers for direct dispatch.
@@ -200,6 +208,7 @@ private slots:
     void torStatusBarTheme();
     void torNavIconsDarkChrome();
     void torChromeGlyphsLegible();
+    void torReaderAccent();
     void darkChromeIcons();
     void darkThemeReaderGlyph();
     void torCircuitDropdown();
@@ -233,12 +242,16 @@ private slots:
     void downloadsSidebarClearList();
     void widgetTabBookmarksSafety();
     void tabStripCompactHeight();
+    void tabStripNoUnderlines();
     void stopReloadState();
     void extensionActionButtons();
     void navShieldPadlock();
     void navBarEditMode();
     void navBarOrderPersistence();
     void siteShieldButton();
+    void trustChromeRestore();
+    void profileButton();
+    void profileMenuEntries();
 };
 
 void tst_BrowserMainWindow::initTestCase()
@@ -253,7 +266,7 @@ void tst_BrowserMainWindow::initTestCase()
     // here — the bwrap worker spawns "<self> --pdf-worker", and self
     // is a qtest binary: that would rerun the whole suite as a child
     // (and recurse through this leg).
-    qputenv("ARORA_PDF_INPROC", "1");
+    qputenv("ARKTOS_PDF_INPROC", "1");
     qRegisterMetaType<QWebEnginePage *>("QWebEnginePage*");
     qRegisterMetaType<QAction *>("QAction*");
 }
@@ -558,7 +571,7 @@ void tst_BrowserMainWindow::toolsMenuDedup()
     // Field mode goes back to selecting the box text.
     ProfileSettings().setValue(QLatin1String("MainWindow/showSearchBox"), true);
     window->applySearchBoxVisibility();
-    window->toolbarSearch()->setText(QLatin1String("arora"));
+    window->toolbarSearch()->setText(QLatin1String("arktos"));
     webSearch->trigger();
     QVERIFY(window->toolbarSearch()->hasSelectedText());
     ProfileSettings().remove(QLatin1String("MainWindow/showSearchBox"));
@@ -688,7 +701,7 @@ void tst_BrowserMainWindow::menuIcons()
         iconSettings.value(QLatin1String("MainWindow/iconTheme"));
     iconSettings.setValue(QLatin1String("MainWindow/iconTheme"),
                           QLatin1String("tabler"));
-    AroraIcon::applyFromSettings();
+    ArktosIcon::applyFromSettings();
 
     SubWindow *window = new SubWindow;
     window->show();
@@ -859,7 +872,7 @@ void tst_BrowserMainWindow::menuIcons()
                               savedIconTheme);
     else
         iconSettings.remove(QLatin1String("MainWindow/iconTheme"));
-    AroraIcon::applyFromSettings();
+    ArktosIcon::applyFromSettings();
 #endif
 }
 
@@ -867,7 +880,7 @@ void tst_BrowserMainWindow::menuIcons()
 // glyph renders 100% in the palette's ButtonText (flat monochrome,
 // whichever theme served the base art), and the documented identity
 // exceptions keep their own colors: the Qt mark on About Qt, the
-// Arora mark on About <app>, and the container flyout's color chips.
+// Arktos mark on About <app>, and the container flyout's color chips.
 void tst_BrowserMainWindow::chromeIconsTinted()
 {
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
@@ -900,7 +913,7 @@ void tst_BrowserMainWindow::chromeIconsTinted()
 
     const QStringList brandRows = {
         QLatin1String("About Qt"),
-        // "About <app>" — the window icon, i.e. the Arora mark.
+        // "About <app>" — the window icon, i.e. the Arktos mark.
         QCoreApplication::applicationName().isEmpty()
             ? QLatin1String("About")
             : QStringLiteral("About %1")
@@ -1046,7 +1059,7 @@ void tst_BrowserMainWindow::chromeIconsTinted()
 #endif
 }
 
-// MENU06: Vivaldi-style application menu — an Arora logo + name
+// MENU06: Vivaldi-style application menu — an Arktos logo + name
 // button leads the navigation bar and drops down every real
 // top-level menu (shared QMenu objects in menubar order, so dynamic
 // menus stay live).  The menubar hides by default and View > Show
@@ -1065,29 +1078,31 @@ void tst_BrowserMainWindow::appMenuButton()
         QLatin1String("appMenuButton"));
     QVERIFY(button);
     QVERIFY(button->autoRaise());
-    // MENU13: icon-only; the text property stays "Arora" for screen
+    // MENU13: icon-only; the text property stays "Arktos" for screen
     // readers.
     QCOMPARE(button->toolButtonStyle(), Qt::ToolButtonIconOnly);
     QCOMPARE(button->popupMode(), QToolButton::InstantPopup);
-    QCOMPARE(button->text(), QLatin1String("Arora"));
+    QCOMPARE(button->text(), QLatin1String("Arktos"));
     QVERIFY(!button->icon().isNull());
     // MENU16: the MENU09 host + fixed 36px extent that rendered the
     // logo oversized are gone; the button is a direct bar child now.
-    // MENU17/MENU19: brand accent — its glyph rides ~60% over the
-    // bar's shared icon size (18 -> 28.8 -> 29) in a still-square
-    // cell, while the toolbar's own action buttons keep the shared
-    // size.
+    // MENU17/MENU19: brand accent — its glyph rides over the bar's
+    // shared icon size (18 -> 28.8 -> 29; ICONS10: +~15% -> 33) in a
+    // still-square cell, while the toolbar's own action buttons keep
+    // the shared size.
     QCOMPARE(button->iconSize().width(), button->iconSize().height());
     QVERIFY(qAbs(button->iconSize().height()
-                 - navBar->iconSize().height() * 1.6) <= 1.0);
+                 - navBar->iconSize().height() * 1.84) <= 1.0);
     QToolButton *sibling = qobject_cast<QToolButton *>(
         navBar->widgetForAction(navBar->actions().at(1)));
     QVERIFY(sibling);
     QCOMPARE(sibling->iconSize(), navBar->iconSize());
-    // The bigger glyph fills the face instead of stretching the row:
-    // the face caps at a square one pixel over the glyph, and the
-    // bar's compacted vertical margins hand back the pixels so the
-    // row keeps the height the location field drove.
+    // The bigger glyph fills a capped face instead of stretching the
+    // row wider: the face caps at a square one pixel over the glyph.
+    // ICONS10: at ~1.84x the paired accent faces (not the location
+    // field) drive the row — pin the bar to face + the compacted
+    // vertical margins so it cannot bloat further (38px at the 18px
+    // glyph, still under Firefox's ~40px toolbar).
     QVERIFY(button->sizeHint().height() > sibling->sizeHint().height());
     QCOMPARE(button->sizeHint().width(), button->sizeHint().height());
     QVERIFY(button->sizeHint().height()
@@ -1095,8 +1110,36 @@ void tst_BrowserMainWindow::appMenuButton()
     QLineEdit *navLocationBar = window->tabWidget()->currentLocationBar();
     QVERIFY(navLocationBar);
     QVERIFY(navBar->sizeHint().height()
-            <= navLocationBar->minimumHeight() + 8);
-    QVERIFY(!button->icon().pixmap(button->iconSize()).isNull());
+            <= button->sizeHint().height() + 4);
+    // ICONS10: pixel probe — the rendered mark fills the accent cell
+    // (not a shrunken glyph) and keeps the artwork's own aspect: a
+    // deliberately non-square request must letterbox to the centered
+    // square instead of stretching the mark to the cell's shape.
+    const auto opaqueBox = [](const QImage &image) {
+        QRect box;
+        for (int y = 0; y < image.height(); ++y)
+            for (int x = 0; x < image.width(); ++x)
+                if (image.pixelColor(x, y).alpha() > 100)
+                    box |= QRect(x, y, 1, 1);
+        return box;
+    };
+    const QImage mark =
+        button->icon().pixmap(button->iconSize()).toImage();
+    QVERIFY(!mark.isNull());
+    const QRect markBox = opaqueBox(mark);
+    QVERIFY(markBox.isValid());
+    QVERIFY(markBox.width() >= mark.width() * 3 / 5);
+    QVERIFY(markBox.height() >= mark.height() * 3 / 5);
+    const double markAspect =
+        double(markBox.width()) / markBox.height();
+    const QImage wide =
+        button->icon().pixmap(QSize(48, 24)).toImage();
+    const QRect wideBox = opaqueBox(wide);
+    QVERIFY(wideBox.isValid());
+    // A stretched paint would give ~2:1; the centered-square engine
+    // keeps the mark's own ~0.9 aspect at any cell shape.
+    QVERIFY(qAbs(double(wideBox.width()) / wideBox.height()
+                 - markAspect) < 0.1);
     QVERIFY(!button->toolTip().isEmpty());
     QVERIFY(!button->accessibleName().isEmpty());
 
@@ -1113,7 +1156,7 @@ void tst_BrowserMainWindow::appMenuButton()
     QCOMPARE(navBar->widgetForAction(navBar->actions().first()),
              button);
 
-    // MENU16: the trailing 'Arora' wordmark is gone — no brand label
+    // MENU16: the trailing 'Arktos' wordmark is gone — no brand label
     // child anywhere, and every bar action is a real movable item
     // carrying a navBarItemId (the unlisted fixed-tail slot no
     // longer exists).
@@ -1217,10 +1260,10 @@ void tst_BrowserMainWindow::appMenuButton()
         QVERIFY(window->menuBar()->font().pointSizeF()
                 < menuFont.pointSizeF());
 
-    // Offscreen grabs for visual review — set ARORA_MENU_GRAB_DIR to
+    // Offscreen grabs for visual review — set ARKTOS_MENU_GRAB_DIR to
     // a directory and the open dropdown + File submenu land there;
     // the tor leg below adds app-menu-tor.png.
-    const QByteArray menuGrabDir = qgetenv("ARORA_MENU_GRAB_DIR");
+    const QByteArray menuGrabDir = qgetenv("ARKTOS_MENU_GRAB_DIR");
     if (!menuGrabDir.isEmpty()) {
         QDir().mkpath(QString::fromLocal8Bit(menuGrabDir));
         appMenu->popup(button->mapToGlobal(
@@ -1335,10 +1378,11 @@ void tst_BrowserMainWindow::appMenuButton()
     const bool privateMenuFull = privateButton
         && privateButton->menu()
         && privateButton->menu()->actions().count() >= 8;
-    // MENU19: every window type gets the same ~1.6x brand glyph.
+    // MENU19/ICONS10: every window type gets the same ~1.84x brand
+    // glyph.
     const bool privateBarIcon = privateButton && privateBar
         && qAbs(privateButton->iconSize().height()
-                - privateBar->iconSize().height() * 1.6) <= 1.0
+                - privateBar->iconSize().height() * 1.84) <= 1.0
         && privateButton->iconSize().width()
             == privateButton->iconSize().height();
     const bool privateBarHidden =
@@ -1397,13 +1441,13 @@ void tst_BrowserMainWindow::appMenuButton()
                        .remove(QLatin1Char('&'))
                    == QLatin1String("Quit");
     }
-    // MENU19: the tor button follows the same ~1.6x accent — the
-    // violet bar keeps the row height too (the stylesheet's
+    // MENU19/ICONS10: the tor button follows the same ~1.84x accent —
+    // the violet bar keeps the row height too (the stylesheet's
     // StyleChange rebuilds the layout margins and NavBarToolBar
     // re-compacts them).
     const bool torBarIcon = torButton && torNavBar
         && qAbs(torButton->iconSize().height()
-                - torNavBar->iconSize().height() * 1.6) <= 1.0
+                - torNavBar->iconSize().height() * 1.84) <= 1.0
         && torButton->iconSize().width()
             == torButton->iconSize().height();
     // MENU08: the violet window's dropdown is enlarged identically —
@@ -1626,7 +1670,7 @@ void tst_BrowserMainWindow::devToolsSubmenu()
     QVERIFY(chromium->isEnabled());
     QVERIFY(!toolsMenu->actions().constLast()->isSeparator());
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     QCOMPARE(entries.size(), 2);
     QVERIFY(bidi);
     QVERIFY(bidi->isEnabled());
@@ -2091,7 +2135,7 @@ void tst_BrowserMainWindow::searchBoxVisibility()
     QVERIFY(!window->toolbarSearch()->isButtonMode());
     QVERIFY(!window->toolbarSearch()->isHidden());
     QVERIFY(!window->toolbarSearch()->isReadOnly());
-    window->toolbarSearch()->setText(QLatin1String("arora"));
+    window->toolbarSearch()->setText(QLatin1String("arktos"));
     QVERIFY(QMetaObject::invokeMethod(window, "webSearch"));
     QVERIFY(window->toolbarSearch()->hasSelectedText());
     closeWindow(window);
@@ -2333,9 +2377,9 @@ void tst_BrowserMainWindow::torChromeTheme()
         window, QPoint(inactiveRect.center().x(),
                        inactiveRect.bottom() - 3)));
 
-    // Offscreen grab for visual review — set ARORA_TOR_GRAB_DIR to a
+    // Offscreen grab for visual review — set ARKTOS_TOR_GRAB_DIR to a
     // directory and the tor window lands there as tor-window.png.
-    const QByteArray grabDir = qgetenv("ARORA_TOR_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_TOR_GRAB_DIR");
     if (!grabDir.isEmpty()) {
         QDir().mkpath(QString::fromLocal8Bit(grabDir));
         window->grab().save(QString::fromLocal8Bit(grabDir)
@@ -2430,7 +2474,7 @@ void tst_BrowserMainWindow::torStatusBarTheme()
         settings.value(QLatin1String("MainWindow/iconTheme"));
     settings.setValue(QLatin1String("MainWindow/iconTheme"),
                       QLatin1String("adwaita"));
-    AroraIcon::applyFromSettings();
+    ArktosIcon::applyFromSettings();
     BrowserTheme::previewColorScheme(Qt::ColorScheme::Light);
 
     // Normal-window baseline: no tor sheet, platform palette.
@@ -2509,9 +2553,9 @@ void tst_BrowserMainWindow::torStatusBarTheme()
     BrowserTheme::applyColorScheme();
     QApplication::processEvents();
 
-    // Offscreen grab for visual review — set ARORA_TOR_GRAB_DIR to a
+    // Offscreen grab for visual review — set ARKTOS_TOR_GRAB_DIR to a
     // directory and the tor status bar lands there.
-    const QByteArray grabDir = qgetenv("ARORA_TOR_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_TOR_GRAB_DIR");
     if (!grabDir.isEmpty()) {
         QDir().mkpath(QString::fromLocal8Bit(grabDir));
         bar->grab().save(QString::fromLocal8Bit(grabDir)
@@ -2526,7 +2570,7 @@ void tst_BrowserMainWindow::torStatusBarTheme()
                           savedTheme);
     else
         settings.remove(QLatin1String("MainWindow/iconTheme"));
-    AroraIcon::applyFromSettings();
+    ArktosIcon::applyFromSettings();
 
     QVERIFY(sheet.contains(QLatin1String("4a3372")));
     QVERIFY(textLightness > 150);
@@ -2589,7 +2633,7 @@ void tst_BrowserMainWindow::torNavIconsDarkChrome()
         settings.value(QLatin1String("MainWindow/iconTheme"));
     settings.setValue(QLatin1String("MainWindow/iconTheme"),
                       QLatin1String("adwaita"));
-    AroraIcon::applyFromSettings();
+    ArktosIcon::applyFromSettings();
     BrowserTheme::previewColorScheme(Qt::ColorScheme::Light);
 
     SubWindow *plain = new SubWindow;
@@ -2691,9 +2735,9 @@ void tst_BrowserMainWindow::torNavIconsDarkChrome()
                         out.menuReload = luminance(action->icon());
             }
             // Offscreen grab for visual review — set
-            // ARORA_TOR_GRAB_DIR and the tor nav bars land there as
+            // ARKTOS_TOR_GRAB_DIR and the tor nav bars land there as
             // tor-nav-icons-<theme>.png.
-            const QByteArray grabDir = qgetenv("ARORA_TOR_GRAB_DIR");
+            const QByteArray grabDir = qgetenv("ARKTOS_TOR_GRAB_DIR");
             if (grabName && !grabDir.isEmpty()) {
                 QDir().mkpath(QString::fromLocal8Bit(grabDir));
                 navBar->grab().save(
@@ -2715,14 +2759,14 @@ void tst_BrowserMainWindow::torNavIconsDarkChrome()
     // retired — every selectable set is bundled now).
     settings.setValue(QLatin1String("MainWindow/iconTheme"),
                       QLatin1String("breeze"));
-    AroraIcon::applyFromSettings();
+    ArktosIcon::applyFromSettings();
     const TorNavLum breezeTheme = measureTorBar("breeze");
 
     BrowserTheme::applyColorScheme();
     if (savedTheme.isValid())
         settings.setValue(QLatin1String("MainWindow/iconTheme"),
                           savedTheme);
-    AroraIcon::applyFromSettings();
+    ArktosIcon::applyFromSettings();
 
     // Light-palette normal window: dark glyphs.  Tor window: light
     // glyphs — readable on the violet bar under any theme.
@@ -2790,7 +2834,7 @@ void tst_BrowserMainWindow::torChromeGlyphsLegible()
         settings.value(QLatin1String("MainWindow/iconTheme"));
     settings.setValue(QLatin1String("MainWindow/iconTheme"),
                       QLatin1String("adwaita"));
-    AroraIcon::applyFromSettings();
+    ArktosIcon::applyFromSettings();
     BrowserTheme::previewColorScheme(Qt::ColorScheme::Light);
 
     // Normal-window baseline: the rail keeps the app palette's dark
@@ -2814,7 +2858,7 @@ void tst_BrowserMainWindow::torChromeGlyphsLegible()
     // An article-shaped file — Readability's probe wants a title plus
     // several dense paragraphs before it reports a verdict.
     const QString articlePath =
-        QDir::temp().filePath(QLatin1String("arora-trust20-article.html"));
+        QDir::temp().filePath(QLatin1String("arktos-trust20-article.html"));
     {
         QFile article(articlePath);
         QVERIFY(article.open(QIODevice::WriteOnly));
@@ -2862,9 +2906,48 @@ void tst_BrowserMainWindow::torChromeGlyphsLegible()
         return lums;
     };
 
-    // At open: reader glyph light, rail strip violet with light
+    // THEM06: once the article verdict lands the glyph honestly wears
+    // the accent mark — the tor glyph-scale violet — which is darker
+    // than the chrome text the plain-state assert gates on (and so was
+    // the stray app-blue it replaced).  A flat luminance assert read the
+    // legitimate accent as a stale dark bake whenever the verdict won
+    // the race against the measurement, so the reader checks below
+    // are state-aware: a suggested glyph's dominant ink must BE the
+    // accent (the button's override when one is set, else the palette
+    // accent), a plain glyph must stay light.
+    const auto readerInkOk = [&reader]() -> bool {
+        const QImage image =
+            reader->icon().pixmap(QSize(18, 18)).toImage();
+        QHash<QRgb, int> counts;
+        int best = 0;
+        QColor ink;
+        for (int y = 0; y < image.height(); ++y)
+            for (int x = 0; x < image.width(); ++x) {
+                const QColor color = image.pixelColor(x, y);
+                if (color.alpha() > 200) {
+                    const int n = ++counts[color.rgb()];
+                    if (n > best) {
+                        best = n;
+                        ink = color;
+                    }
+                }
+            }
+        if (!ink.isValid())
+            return false;
+        if (reader->property("suggested").toBool()) {
+            const QColor accent = reader->accentOverride().isValid()
+                ? reader->accentOverride()
+                : reader->palette().color(QPalette::Accent);
+            return qAbs(ink.red() - accent.red()) <= 2
+                && qAbs(ink.green() - accent.green()) <= 2
+                && qAbs(ink.blue() - accent.blue()) <= 2;
+        }
+        return qGray(ink.rgb()) > 140;
+    };
+
+    // At open: reader glyph on-theme, rail strip violet with light
     // glyphs, fold toggle light.
-    const qlonglong readerOpen = luminance(reader->icon());
+    const bool readerOpen = readerInkOk();
     const QList<qlonglong> railOpen = railLums();
     const qlonglong railOpenSelected =
         luminance(rail->tabIcon(0), QIcon::Selected);
@@ -2873,31 +2956,32 @@ void tst_BrowserMainWindow::torChromeGlyphsLegible()
         rail->grab().toImage().pixelColor(2, 2);
 
     // The real verdict path: a file:// page needs no tor circuit —
-    // loadFinished probes Readability and availableChanged flips the
-    // button on, exactly the mid-scroll refresh the report caught.
+    // loadFinished probes Readability and availableChanged drives the
+    // "suggested" accent on the always-visible button (READ04),
+    // exactly the mid-scroll refresh the report caught.
     view->load(QUrl::fromLocalFile(articlePath));
-    QTRY_VERIFY_WITH_TIMEOUT(!reader->isHidden(), 20000);
-    const qlonglong readerVerdict = luminance(reader->icon());
+    QTRY_VERIFY_WITH_TIMEOUT(view->readerMode()->isAvailable(), 20000);
+    const bool readerVerdict = readerInkOk();
 
     // Rebind/unbind — the tab-switch refresh path.
     reader->setWebView(nullptr);
     reader->setWebView(view);
-    const qlonglong readerRebind = luminance(reader->icon());
+    const bool readerRebind = readerInkOk();
 
     // Nav-bar edit mode re-setStyleSheet()s the bar — the repolish
     // window where the transient dark palette used to bake in.  A
-    // refresh inside the settling window must still land light (or
+    // refresh inside the settling window must still land on-theme (or
     // be rebaked by the PaletteChange that follows).
     window->navBarEditAction()->trigger();
     QApplication::processEvents();
     reader->setWebView(nullptr);
     reader->setWebView(view);
-    const qlonglong readerEditOn = luminance(reader->icon());
+    const bool readerEditOn = readerInkOk();
     window->navBarEditAction()->trigger();
     QApplication::processEvents();
     reader->setWebView(nullptr);
     reader->setWebView(view);
-    const qlonglong readerEditOff = luminance(reader->icon());
+    const bool readerEditOff = readerInkOk();
     const QList<qlonglong> railAfterEdit = railLums();
     const qlonglong foldAfterEdit = luminance(fold->icon());
 
@@ -2907,18 +2991,18 @@ void tst_BrowserMainWindow::torChromeGlyphsLegible()
     QApplication::processEvents();
     reader->setWebView(nullptr);
     reader->setWebView(view);
-    const qlonglong readerDark = luminance(reader->icon());
+    const bool readerDark = readerInkOk();
     const QList<qlonglong> railDark = railLums();
     BrowserTheme::previewColorScheme(Qt::ColorScheme::Light);
     QApplication::processEvents();
     reader->setWebView(nullptr);
     reader->setWebView(view);
-    const qlonglong readerBackLight = luminance(reader->icon());
+    const bool readerBackLight = readerInkOk();
     const QList<qlonglong> railBackLight = railLums();
 
-    // Offscreen grab for visual review — ARORA_TOR_GRAB_DIR picks up
+    // Offscreen grab for visual review — ARKTOS_TOR_GRAB_DIR picks up
     // the rail + reader states.
-    const QByteArray grabDir = qgetenv("ARORA_TOR_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_TOR_GRAB_DIR");
     if (!grabDir.isEmpty()) {
         QDir().mkpath(QString::fromLocal8Bit(grabDir));
         rail->grab().save(QString::fromLocal8Bit(grabDir)
@@ -2935,7 +3019,7 @@ void tst_BrowserMainWindow::torChromeGlyphsLegible()
                           savedTheme);
     else
         settings.remove(QLatin1String("MainWindow/iconTheme"));
-    AroraIcon::applyFromSettings();
+    ArktosIcon::applyFromSettings();
     QFile::remove(articlePath);
 
     // Normal window unchanged: dark glyphs on a light strip.
@@ -2950,16 +3034,18 @@ void tst_BrowserMainWindow::torChromeGlyphsLegible()
     QVERIFY(railOpenSelected > 140);
     QVERIFY(foldOpen > 140);
     QVERIFY(isViolet(railBackground));
-    // Reader: light at open, and still light through the probe
+    // Reader: on-theme at open, and still on-theme through the probe
     // verdict, tab rebinding, the edit-mode repolish and a live
-    // scheme flip — no path may leave a stale dark bake.
-    QVERIFY(readerOpen > 140);
-    QVERIFY(readerVerdict > 140);
-    QVERIFY(readerRebind > 140);
-    QVERIFY(readerEditOn > 140);
-    QVERIFY(readerEditOff > 140);
-    QVERIFY(readerDark > 140);
-    QVERIFY(readerBackLight > 140);
+    // scheme flip — no path may leave a stale dark bake, and the
+    // suggested mark must come out of the tor accent, not the app
+    // palette's blue.
+    QVERIFY(readerOpen);
+    QVERIFY(readerVerdict);
+    QVERIFY(readerRebind);
+    QVERIFY(readerEditOn);
+    QVERIFY(readerEditOff);
+    QVERIFY(readerDark);
+    QVERIFY(readerBackLight);
     for (const qlonglong lum : railAfterEdit)
         QVERIFY(lum > 140);
     QVERIFY(foldAfterEdit > 140);
@@ -2967,6 +3053,161 @@ void tst_BrowserMainWindow::torChromeGlyphsLegible()
         QVERIFY(lum > 140);
     for (const qlonglong lum : railBackLight)
         QVERIFY(lum > 140);
+}
+
+// THEM06: the reader glyph's accent states resolve QPalette::Accent —
+// on the tor window that stayed the app palette's blue, so the
+// suggested mark and the active page fill painted a stray blue on the
+// violet bar.  The tor palette seed now hands the engine the lighter
+// glyph-scale violet accent — the raised step the badge pill and the
+// sidebar rail's selection wear is too close to the surface to stay
+// legible as a thin outline — while a normal window keeps its own
+// surface accent.  A file:// article drives the real Readability
+// verdict so the suggested state is honest; a click exercises the
+// active fill.
+void tst_BrowserMainWindow::torReaderAccent()
+{
+    const auto dominantInk = [](const QIcon &icon, const QSize &size)
+            -> QColor {
+        const QImage image = icon.pixmap(size).toImage();
+        QHash<QRgb, int> counts;
+        int best = 0;
+        QColor dominant;
+        for (int y = 0; y < image.height(); ++y)
+            for (int x = 0; x < image.width(); ++x) {
+                const QColor color = image.pixelColor(x, y);
+                if (color.alpha() > 200) {
+                    const int n = ++counts[color.rgb()];
+                    if (n > best) {
+                        best = n;
+                        dominant = color;
+                    }
+                }
+            }
+        if (!dominant.isValid())
+            return dominant;
+        return QColor(dominant.red(), dominant.green(), dominant.blue());
+    };
+    const auto inkMatch = [](const QColor &a, const QColor &b) {
+        return qAbs(a.red() - b.red()) <= 2
+            && qAbs(a.green() - b.green()) <= 2
+            && qAbs(a.blue() - b.blue()) <= 2;
+    };
+
+    const QString articlePath =
+        QDir::temp().filePath(QLatin1String("arktos-them06-article.html"));
+    {
+        QFile article(articlePath);
+        QVERIFY(article.open(QIODevice::WriteOnly));
+        article.write("<html><head><title>An article</title></head>"
+                      "<body><article><h1>An article</h1>");
+        for (int i = 0; i < 12; ++i)
+            article.write("<p>Lorem ipsum dolor sit amet, consectetur "
+                          "adipiscing elit, sed do eiusmod tempor "
+                          "incididunt ut labore et dolore magna aliqua. "
+                          "Ut enim ad minim veniam, quis nostrud "
+                          "exercitation ullamco laboris nisi ut aliquip "
+                          "ex ea commodo consequat.</p>");
+        article.write("</article></body></html>");
+    }
+    const QSize iconSize(18, 18);
+
+    // Normal window: the suggested mark keeps the surface's own
+    // accent — whatever the platform palette resolves, unchanged.
+    QColor plainSuggested;
+    QColor plainAccent;
+    {
+        SubWindow *plain = new SubWindow;
+        plain->resize(1000, 600);
+        plain->show();
+        QApplication::processEvents();
+        ReaderButton *reader = plain->findChild<ReaderButton *>(
+            QLatin1String("navReaderButton"));
+        QVERIFY(reader);
+        WebView *tab = plain->currentTab();
+        ReaderMode *mode = tab->readerMode();
+        QVERIFY(mode);
+        tab->loadUrl(QUrl::fromLocalFile(articlePath));
+        QTRY_VERIFY_WITH_TIMEOUT(mode->isAvailable(), 20000);
+        QVERIFY(reader->property("suggested").toBool());
+        plainSuggested = dominantInk(reader->icon(), iconSize);
+        plainAccent = reader->palette().color(QPalette::Accent);
+        closeWindow(plain);
+    }
+
+    // Tor window: the same mark must come out of the tor accent
+    // family — the override the window installs, then the painted
+    // pixels of both accent states.
+    QColor torSuggested;
+    QColor torActive;
+    QColor torAccentOverride;
+    // A leg that fails mid-test would otherwise leak tor mode into
+    // every later test in the process.
+    struct TorGuard {
+        ~TorGuard() { BrowserApplication::setTorMode(false); }
+    } torGuard;
+    BrowserApplication::setTorMode(true);
+    {
+        SubWindow *window = new SubWindow;
+        window->resize(1000, 600);
+        window->show();
+        QApplication::processEvents();
+        ReaderButton *reader = window->findChild<ReaderButton *>(
+            QLatin1String("navReaderButton"));
+        QVERIFY(reader);
+        torAccentOverride = reader->accentOverride();
+        WebView *tab = window->currentTab();
+        ReaderMode *mode = tab->readerMode();
+        QVERIFY(mode);
+        tab->loadUrl(QUrl::fromLocalFile(articlePath));
+        QTRY_VERIFY_WITH_TIMEOUT(mode->isAvailable(), 20000);
+        QVERIFY(reader->property("suggested").toBool());
+        torSuggested = dominantInk(reader->icon(), iconSize);
+        // The active state fills the page with the accent — its
+        // dominant ink is the fill color itself.
+        reader->click();
+        QTRY_VERIFY_WITH_TIMEOUT(mode->isActive(), 20000);
+        torActive = dominantInk(reader->icon(), iconSize);
+        reader->click();
+        QTRY_VERIFY_WITH_TIMEOUT(!mode->isActive(), 20000);
+        closeWindow(window);
+    }
+    BrowserApplication::setTorMode(false);
+    QFile::remove(articlePath);
+
+    const QColor torAccent = ArktosStyle::torChromeAccentColor();
+    // THEM07's regression pin: glyph-scale marks on the violet bar
+    // must hold >=3:1 against the surface — the raised color (~1.6:1)
+    // is what painted the muddy raised box in the screenshot.
+    QVERIFY2(ArktosStyle::contrastRatio(torAccent,
+                                     ArktosStyle::torChromeColor())
+                 >= 3.0,
+             qPrintable(QStringLiteral("tor accent %1 too dark on %2")
+                        .arg(torAccent.name())
+                        .arg(ArktosStyle::torChromeColor().name())));
+    QVERIFY2(inkMatch(plainSuggested, plainAccent),
+             qPrintable(QStringLiteral("plain suggested %1 vs accent %2")
+                        .arg(plainSuggested.name())
+                        .arg(plainAccent.name())));
+    QVERIFY2(inkMatch(torAccentOverride, torAccent),
+             qPrintable(QStringLiteral("tor accent override %1 vs %2")
+                        .arg(torAccentOverride.name())
+                        .arg(torAccent.name())));
+    QVERIFY2(inkMatch(torSuggested, torAccent),
+             qPrintable(QStringLiteral("tor suggested %1 vs %2")
+                        .arg(torSuggested.name()).arg(torAccent.name())));
+    QVERIFY2(inkMatch(torActive, torAccent),
+             qPrintable(QStringLiteral("tor active %1 vs %2")
+                        .arg(torActive.name()).arg(torAccent.name())));
+    // The regression pin: the platform accent is a blue (green or
+    // blue channel leads red) — the tor mark must read violet
+    // (red over green) instead.
+    QVERIFY2(torSuggested.red() > torSuggested.green(),
+             qPrintable(QStringLiteral("tor suggested not violet: %1")
+                        .arg(torSuggested.name())));
+    QVERIFY2(torActive.red() > torActive.green(),
+             qPrintable(QStringLiteral("tor active not violet: %1")
+                        .arg(torActive.name())));
 }
 
 // ICONS05: the normal window's chrome under a dark palette.  The
@@ -2993,14 +3234,14 @@ void tst_BrowserMainWindow::darkChromeIcons()
     };
 
     // Pin the default bundled set explicitly — under the forced dark
-    // palette it must resolve arora-tabler-dark (ICONS12: the
+    // palette it must resolve arktos-tabler-dark (ICONS12: the
     // "native" id the bug report hit is retired).
     ProfileSettings settings;
     const QVariant savedTheme =
         settings.value(QLatin1String("MainWindow/iconTheme"));
     settings.setValue(QLatin1String("MainWindow/iconTheme"),
                       QLatin1String("tabler"));
-    AroraIcon::applyFromSettings();
+    ArktosIcon::applyFromSettings();
 
     SubWindow *window = new SubWindow;
     window->resize(1000, 600);
@@ -3037,9 +3278,9 @@ void tst_BrowserMainWindow::darkChromeIcons()
     const qlonglong darkZoomOut = luminance(zoomOut->icon());
     const qlonglong darkSidebar = luminance(sidebarAction->icon());
 
-    // Offscreen grabs for visual review — set ARORA_DARK_GRAB_DIR to
+    // Offscreen grabs for visual review — set ARKTOS_DARK_GRAB_DIR to
     // a directory and the dark nav bar + full window land there.
-    const QByteArray grabDir = qgetenv("ARORA_DARK_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_DARK_GRAB_DIR");
     if (!grabDir.isEmpty()) {
         QDir().mkpath(QString::fromLocal8Bit(grabDir));
         navBar->grab().save(QString::fromLocal8Bit(grabDir)
@@ -3060,7 +3301,7 @@ void tst_BrowserMainWindow::darkChromeIcons()
     if (savedTheme.isValid())
         settings.setValue(QLatin1String("MainWindow/iconTheme"),
                           savedTheme);
-    AroraIcon::applyFromSettings();
+    ArktosIcon::applyFromSettings();
 
     QVERIFY(darkBack > 140);
     QVERIFY(darkForward > 140);
@@ -3137,7 +3378,7 @@ void tst_BrowserMainWindow::darkThemeReaderGlyph()
     // A file:// article — the real Readability verdict flips the
     // button visible, no server needed.
     const QString articlePath = QDir::temp().filePath(
-        QLatin1String("arora-trust21-article.html"));
+        QLatin1String("arktos-trust21-article.html"));
     {
         QFile article(articlePath);
         QVERIFY(article.open(QIODevice::WriteOnly));
@@ -3152,8 +3393,15 @@ void tst_BrowserMainWindow::darkThemeReaderGlyph()
                           "ex ea commodo consequat.</p>");
         article.write("</article></body></html>");
     }
-    window->currentTab()->loadUrl(QUrl::fromLocalFile(articlePath));
-    QTRY_VERIFY_WITH_TIMEOUT(!reader->isHidden(), 20000);
+    WebView *tab = window->currentTab();
+    ReaderMode *mode = tab->readerMode();
+    QVERIFY(mode);
+    // Settle on a page that can never probe article-positive —
+    // whatever the default start page's verdict may be is immaterial
+    // once a real navigation bumps the probe generation.
+    tab->loadUrl(QUrl(QLatin1String("about:blank")));
+    QTRY_VERIFY_WITH_TIMEOUT(!mode->isAvailable() && !tab->isLoading(),
+                             20000);
 
     const QSize iconSize(18, 18);
 
@@ -3161,21 +3409,34 @@ void tst_BrowserMainWindow::darkThemeReaderGlyph()
     // same flat tint the chrome-tinted siblings carry — and the icon
     // serves the bar's 18px request at full size (the baked 16px
     // pixmap forced an upscale, which is what made it read grey).
+    // Measured BEFORE the article loads: once the Readability verdict
+    // lands the glyph honestly wears the Accent "suggested" mark, so
+    // the ButtonText contract only holds on a non-article page.
     const QColor lightReader = dominantInk(reader->icon(), iconSize);
     const QColor lightSibling = dominantInk(backAction->icon(),
                                             iconSize);
     const QSize lightServed = reader->icon().pixmap(iconSize).size();
 
     BrowserTheme::previewColorScheme(Qt::ColorScheme::Dark);
+    // A leg that fails mid-test would otherwise leak the forced dark
+    // palette into every later test in the process (the restore below
+    // never runs on QFAIL) — re-resolve on scope exit instead.
+    struct PaletteGuard {
+        ~PaletteGuard() { BrowserTheme::applyColorScheme(); }
+    } paletteGuard;
     QApplication::processEvents();
     QApplication::processEvents();
 
     const QPalette darkPalette = QApplication::palette();
     const QColor darkTint =
         darkPalette.color(QPalette::Normal, QPalette::ButtonText);
+    const QColor darkAccent =
+        darkPalette.color(QPalette::Normal, QPalette::Accent);
     const QColor darkDim =
         darkPalette.color(QPalette::Disabled, QPalette::ButtonText);
 
+    // Still on the non-article page: the dark glyph must match the
+    // siblings' plain ButtonText ink.
     const QColor darkReader = dominantInk(reader->icon(), iconSize);
     const QColor darkSibling = dominantInk(backAction->icon(),
                                            iconSize);
@@ -3186,11 +3447,19 @@ void tst_BrowserMainWindow::darkThemeReaderGlyph()
 
     // Active (checked) state keeps its deliberate accent mark — it
     // must not collapse to the plain tint, and the engine still
-    // serves it at the requested size.  The button is checkable so
-    // click() flips its own flag instantly; the icon only rebakes on
+    // serves it at the requested size.  Load the article and gate on
+    // the probe verdict first: a click that outruns the commit enters
+    // on the empty url and is honestly declined, and READ04 keeps the
+    // button present on every engine tab so isHidden is no real gate.
+    // Post-verdict the glyph wears the suggested accent — READ04's
+    // availability affordance (accent outline + dot), not the plain
+    // ButtonText ink.  The button is checkable so click() flips its
+    // own flag instantly; the icon only rebakes on
     // ReaderMode::activeChanged — wait on the mode, not the flag.
-    ReaderMode *mode = window->currentTab()->readerMode();
-    QVERIFY(mode);
+    tab->loadUrl(QUrl::fromLocalFile(articlePath));
+    QTRY_VERIFY_WITH_TIMEOUT(mode->isAvailable(), 20000);
+    QVERIFY(!reader->isHidden());
+    const QColor darkSuggested = dominantInk(reader->icon(), iconSize);
     reader->click();
     QTRY_VERIFY_WITH_TIMEOUT(mode->isActive(), 20000);
     const QColor activeInk = dominantInk(reader->icon(), iconSize);
@@ -3199,7 +3468,7 @@ void tst_BrowserMainWindow::darkThemeReaderGlyph()
     reader->click();
     QTRY_VERIFY_WITH_TIMEOUT(!mode->isActive(), 20000);
 
-    const QByteArray grabDir = qgetenv("ARORA_DARK_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_DARK_GRAB_DIR");
     if (!grabDir.isEmpty()) {
         QDir().mkpath(QString::fromLocal8Bit(grabDir));
         navBar->grab().save(QString::fromLocal8Bit(grabDir)
@@ -3207,12 +3476,26 @@ void tst_BrowserMainWindow::darkThemeReaderGlyph()
     }
 
     // Live flip back — the glyph re-follows the light palette without
-    // a restart or a reload.
+    // a restart or a reload.  Return to a non-article page first so
+    // the comparison is plain-ink vs plain-ink: on the article the
+    // "suggested" state honestly paints Accent, which is not what the
+    // baseline measured.
+    tab->loadUrl(QUrl(QLatin1String("about:blank")));
+    QTRY_VERIFY_WITH_TIMEOUT(!mode->isAvailable(), 20000);
     BrowserTheme::applyColorScheme();
     QApplication::processEvents();
     QApplication::processEvents();
     const QColor lightReaderAgain = dominantInk(reader->icon(),
                                                 iconSize);
+
+    // The suggested affordance under the restored light palette:
+    // reload the article and check the accent mark there too.
+    tab->loadUrl(QUrl::fromLocalFile(articlePath));
+    QTRY_VERIFY_WITH_TIMEOUT(mode->isAvailable(), 20000);
+    const QColor lightAccent =
+        QApplication::palette().color(QPalette::Normal,
+                                      QPalette::Accent);
+    const QColor lightSuggested = dominantInk(reader->icon(), iconSize);
 
     closeWindow(window);
     BrowserTheme::applyColorScheme();
@@ -3227,6 +3510,20 @@ void tst_BrowserMainWindow::darkThemeReaderGlyph()
     QVERIFY2(inkMatch(darkReader, darkTint),
              qPrintable(QStringLiteral("dark ink %1 vs tint %2")
                         .arg(darkReader.name()).arg(darkTint.name())));
+    // The suggested affordance reads as the palette accent — and
+    // visibly differs from the plain chrome tint.
+    QVERIFY2(inkMatch(lightSuggested, lightAccent),
+             qPrintable(QStringLiteral("suggested ink %1 vs accent %2")
+                        .arg(lightSuggested.name())
+                        .arg(lightAccent.name())));
+    QVERIFY2(inkMatch(darkSuggested, darkAccent),
+             qPrintable(QStringLiteral("dark suggested %1 vs accent %2")
+                        .arg(darkSuggested.name())
+                        .arg(darkAccent.name())));
+    QVERIFY2(!inkMatch(darkSuggested, darkTint),
+             qPrintable(QStringLiteral("dark suggested %1 matches "
+                                       "plain tint %2")
+                        .arg(darkSuggested.name()).arg(darkTint.name())));
     // Disabled reads the palette's dimmed tone like every sibling —
     // not Qt's generated ghosting of a white glyph (a near-white
     // fade that reads *brighter* than the siblings' dimmed tint).
@@ -3361,10 +3658,10 @@ void tst_BrowserMainWindow::torCircuitDropdown()
         stateTexts = dropPanel->contentLines();
     }
 
-    // Offscreen grabs for visual review — set ARORA_TOR_GRAB_DIR to a
+    // Offscreen grabs for visual review — set ARKTOS_TOR_GRAB_DIR to a
     // directory and the nav bar, flag glyphs and a fabricated circuit
     // panel land there.
-    const QByteArray grabDir = qgetenv("ARORA_TOR_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_TOR_GRAB_DIR");
     if (!grabDir.isEmpty()) {
         const QString dir = QString::fromLocal8Bit(grabDir);
         QDir().mkpath(dir);
@@ -3454,9 +3751,9 @@ void tst_BrowserMainWindow::torCircuitPopupFirstShow()
 }
 
 // TOR09: the tor window's bundled start page — a violet-branded qrc
-// variant on the same arora-channel contract.  about:home resolves to
+// variant on the same arktos-channel contract.  about:home resolves to
 // it, the window's first tab and every fresh/private tab load it, and
-// the channel arms only "arora" on qrc commits — the privileged
+// the channel arms only "arktos" on qrc commits — the privileged
 // bridges stay unregistered in tor.
 void tst_BrowserMainWindow::torStartPage()
 {
@@ -3498,11 +3795,11 @@ void tst_BrowserMainWindow::torStartPage()
         && !channel->registeredObjects().contains(
             QLatin1String("external"))
         && !channel->registeredObjects().contains(
-            QLatin1String("aroraAutofill"))
+            QLatin1String("arktosAutofill"))
         && !channel->registeredObjects().contains(
-            QLatin1String("aroraPip"))
+            QLatin1String("arktosPip"))
         && !channel->registeredObjects().contains(
-            QLatin1String("aroraReader"));
+            QLatin1String("arktosReader"));
 
     // A second fresh tab and a private tab take the same start page.
     window->tabWidget()->newTab();
@@ -3529,15 +3826,15 @@ void tst_BrowserMainWindow::torStartPage()
         cmdTitle = cmdTab->title();
     }
 
-    // The qrc commit registers "arora" on the channel and the page's
+    // The qrc commit registers "arktos" on the channel and the page's
     // own translate() run fills the header text — the DOM probe below
     // is the proof the whole handshake completed in tor mode.
-    // runJavaScript runs in ApplicationWorld, so the page-global arora
+    // runJavaScript runs in ApplicationWorld, so the page-global arktos
     // var (MainWorld) is out of reach, but the DOM is shared:
-    // headerTitle only fills once the channel's arora.translate()
+    // headerTitle only fills once the channel's arktos.translate()
     // callback has resolved.  The probe races the still-committing
     // load, so it re-issues until the post-load document answers.
-    bool aroraRegistered = false;
+    bool arktosRegistered = false;
     QString dom;
     if (firstTab && channel) {
         const QString probe = QStringLiteral(
@@ -3559,13 +3856,13 @@ void tst_BrowserMainWindow::torStartPage()
             for (int waited = 0; !jsDone && waited < 5000; waited += 50)
                 QTest::qWait(50);
         }
-        aroraRegistered = channel->registeredObjects().contains(
-            QLatin1String("arora"));
+        arktosRegistered = channel->registeredObjects().contains(
+            QLatin1String("arktos"));
     }
 
-    // Offscreen grab for visual review — set ARORA_TOR_GRAB_DIR to a
+    // Offscreen grab for visual review — set ARKTOS_TOR_GRAB_DIR to a
     // directory and the rendered tor start page lands there.
-    const QByteArray grabDir = qgetenv("ARORA_TOR_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_TOR_GRAB_DIR");
     if (!grabDir.isEmpty() && firstTab) {
         const QString dir = QString::fromLocal8Bit(grabDir);
         QDir().mkpath(dir);
@@ -3585,10 +3882,10 @@ void tst_BrowserMainWindow::torStartPage()
     QCOMPARE(torTabUrl, torStart);
     QCOMPARE(privTabUrl, torStart);
     QCOMPARE(cmdTabUrl, torStart);
-    QCOMPARE(cmdTitle, QStringLiteral("Welcome to Arora!"));
+    QCOMPARE(cmdTitle, QStringLiteral("Welcome to Arktos!"));
     QVERIFY(channel);
     QVERIFY(bareChannel);
-    QVERIFY(aroraRegistered);
+    QVERIFY(arktosRegistered);
     QCOMPARE(dom, QStringLiteral("T|S|H"));
 }
 
@@ -3657,7 +3954,7 @@ void tst_BrowserMainWindow::torTitleBar()
     const QMargins ring = window->contentsMargins();
 
     // The drawn title stays live on windowTitle changes.
-    window->setWindowTitle(QLatin1String("Relay page - Arora (Tor)"));
+    window->setWindowTitle(QLatin1String("Relay page - Arktos (Tor)"));
     const QString syncedTitle =
         titleText ? titleText->text() : QString();
 
@@ -3698,9 +3995,9 @@ void tst_BrowserMainWindow::torTitleBar()
         restoredRing = window->contentsMargins();
     }
 
-    // Offscreen grab for visual review — set ARORA_TOR_GRAB_DIR
+    // Offscreen grab for visual review — set ARKTOS_TOR_GRAB_DIR
     // (captured in the restored-normal state before the minimize leg).
-    const QByteArray grabDir = qgetenv("ARORA_TOR_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_TOR_GRAB_DIR");
     if (!grabDir.isEmpty()) {
         QDir().mkpath(QString::fromLocal8Bit(grabDir));
         window->grab().save(QString::fromLocal8Bit(grabDir)
@@ -3762,7 +4059,7 @@ void tst_BrowserMainWindow::torTitleBar()
     QVERIFY(maximize);
     QVERIFY(close);
     QCOMPARE(shownTitle, realTitle);
-    QCOMPARE(syncedTitle, QStringLiteral("Relay page - Arora (Tor)"));
+    QCOMPARE(syncedTitle, QStringLiteral("Relay page - Arktos (Tor)"));
     QVERIFY(ring.left() >= TorTitleBar::FrameMargin);
     QVERIFY(isViolet(ringColor));
     QVERIFY(isViolet(barColor));
@@ -3802,10 +4099,10 @@ void tst_BrowserMainWindow::torTitleBarTitle()
     QVERIFY(menuBar);
 
     const QString shortTitle =
-        QLatin1String("Welcome to Arora! - Arora (Tor)");
+        QLatin1String("Welcome to Arktos! - Arktos (Tor)");
     const QString longTitle = QLatin1String(
         "A very long page title that keeps going and going until it "
-        "would never fit on any reasonable window - Arora (Tor)");
+        "would never fit on any reasonable window - Arktos (Tor)");
 
     // A normal-length title keeps its full text and the corner claims
     // its full hint — the menu items are what move right.
@@ -3956,7 +4253,7 @@ void tst_BrowserMainWindow::servoStartPage()
     // DOM probe: the logo div sits directly under the search field,
     // its stylesheet resolves the bundled logo asset, the search box
     // exists, and headerTitle only fills once the channel's
-    // arora.translate() callback has resolved — the same handshake
+    // arktos.translate() callback has resolved — the same handshake
     // proof torStartPage uses.  The probe runs on whichever WebView
     // renders the branded page (firstTab when the pick degraded,
     // servoTab under a live backend).
@@ -3990,9 +4287,9 @@ void tst_BrowserMainWindow::servoStartPage()
         }
     }
 
-    // Offscreen grab for visual review — set ARORA_SERVO_GRAB_DIR to
+    // Offscreen grab for visual review — set ARKTOS_SERVO_GRAB_DIR to
     // a directory and the rendered servo start page lands there.
-    const QByteArray grabDir = qgetenv("ARORA_SERVO_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_SERVO_GRAB_DIR");
     if (!grabDir.isEmpty() && domTab) {
         const QString dir = QString::fromLocal8Bit(grabDir);
         QDir().mkpath(dir);
@@ -4022,7 +4319,7 @@ void tst_BrowserMainWindow::servoStartPage()
 }
 
 // PTAB02: private tabs get their own branded start page — a deep
-// navy variant of the tor page carrying the Arora logo, the search
+// navy variant of the tor page carrying the Arktos logo, the search
 // box and an original sunglasses glyph.  The pick is context-keyed:
 // precedence tor > private > servo > standard, so a private tab
 // shows something branded even on the servo engine pick (which
@@ -4093,7 +4390,7 @@ void tst_BrowserMainWindow::privateStartPage()
 
     // DOM probe on the private tab: the sunglasses mark sits under
     // the search field, the search box exists, and headerTitle only
-    // fills once the channel's arora.translate() callback has
+    // fills once the channel's arktos.translate() callback has
     // resolved — the same handshake proof torStartPage uses.
     QString dom;
     if (privTab) {
@@ -4117,14 +4414,14 @@ void tst_BrowserMainWindow::privateStartPage()
                 QTest::qWait(50);
         }
     }
-    const bool aroraRegistered = privChannel
+    const bool arktosRegistered = privChannel
         && privChannel->registeredObjects().contains(
-            QLatin1String("arora"));
+            QLatin1String("arktos"));
 
-    // Offscreen grab for visual review — set ARORA_PRIVATE_GRAB_DIR
+    // Offscreen grab for visual review — set ARKTOS_PRIVATE_GRAB_DIR
     // to a directory and the rendered private start page lands
     // there.
-    const QByteArray grabDir = qgetenv("ARORA_PRIVATE_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_PRIVATE_GRAB_DIR");
     if (!grabDir.isEmpty() && privTab) {
         window->tabWidget()->setCurrentWidget(privTab);
         const QString dir = QString::fromLocal8Bit(grabDir);
@@ -4159,7 +4456,7 @@ void tst_BrowserMainWindow::privateStartPage()
     QCOMPARE(privTabUrl, privateStart);
     QCOMPARE(childTabUrl, privateStart);
     QVERIFY(privChannel);
-    QVERIFY(aroraRegistered);
+    QVERIFY(arktosRegistered);
     QCOMPARE(dom, QStringLiteral("P|S|H"));
 }
 
@@ -4377,7 +4674,7 @@ void tst_BrowserMainWindow::readerModeButton()
 //              showing a header over an empty column.
 //   /danger  — sanitizer regression: real text renders while script,
 //              on*-attributes and javascript: URLs stay stripped.
-//   /tamper  — READ05: the page main-world-redefines __aroraReader,
+//   /tamper  — READ05: the page main-world-redefines __arktosReader,
 //              Readability and isProbablyReaderable to fake a refusal
 //              and a "PWNED" article.  Extraction runs in an isolated
 //              world, so the real article still renders.
@@ -4446,12 +4743,12 @@ static QHash<QByteArray, QByteArray> readerFixturePages()
         "<img src=\"about:blank\" onerror=\"window.__pwned=3\">"
         "</article></body></html>";
     // READ05: main-world forgeries of everything the driver used to
-    // define — a refusal __aroraReader, a fake Readability that emits
+    // define — a refusal __arktosReader, a fake Readability that emits
     // a PWNED article, a readerable helper that lies.  None of it may
     // matter: the pipeline runs in a world the page cannot see.
     pages["/tamper"] = "<html><head><title>Tamper Article</title>"
         "<script>"
-        "window.__aroraReader={probe:function(){return false},"
+        "window.__arktosReader={probe:function(){return false},"
         "enter:function(){return {ok:false}}};"
         "window.isProbablyReaderable=function(){return false};"
         "window.Readability=function(){return{parse:function(){"
@@ -4569,12 +4866,12 @@ void tst_BrowserMainWindow::readerModeContent()
     QCOMPARE(reader->isActive(), expectActive);
     QCOMPARE(!messageSpy.isEmpty(), expectMessage);
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // RDR01: the article lives in the overlay widget's own
     // QWebEngineView — read .content off its page.
     const auto readerContent = [&]() -> QString {
         QWebEngineView *readerView = view->findChild<QWebEngineView *>(
-            QLatin1String("aroraReaderView"));
+            QLatin1String("arktosReaderView"));
         if (!readerView || !readerView->page())
             return QString();
         auto state = std::make_shared<QPair<QVariant, bool>>(
@@ -4597,7 +4894,7 @@ void tst_BrowserMainWindow::readerModeContent()
     const auto readerContent = [&]() -> QString {
         return evalJs(QStringLiteral(
             "(function(){"
-            "var h=document.getElementById('arora-reader-host');"
+            "var h=document.getElementById('arktos-reader-host');"
             "var f=h&&h.shadowRoot"
             "?h.shadowRoot.querySelector('iframe.frame'):null;"
             "var d=f?f.contentDocument:null;"
@@ -4627,20 +4924,20 @@ void tst_BrowserMainWindow::readerModeContent()
         // simply never mattered.  This also proves the leg is not
         // vacuous: the fake probe really answers false there.
         QCOMPARE(evalJs(QStringLiteral(
-            "window.__aroraReader.probe()")).toBool(), false);
+            "window.__arktosReader.probe()")).toBool(), false);
         QCOMPARE(evalJs(QStringLiteral(
             "new Readability(document).parse().title"))
             .toString(), QLatin1String("PWNED"));
     }
 
     if (path == QByteArray("/hostile") && expectActive) {
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
         // The fixture's payloads fire on the served page itself — the
         // observable flag for a leak is the READER VIEW's own window:
         // anything the sanitizer missed would have run there when the
         // article document rendered.
         QWebEngineView *readerView = view->findChild<QWebEngineView *>(
-            QLatin1String("aroraReaderView"));
+            QLatin1String("arktosReaderView"));
         QVERIFY(readerView);
         auto pwned = std::make_shared<QPair<QVariant, bool>>(
             QVariant(), false);
@@ -4661,7 +4958,7 @@ void tst_BrowserMainWindow::readerModeContent()
         // FRAME's window, where the extracted markup renders.
         QCOMPARE(evalJs(QStringLiteral(
             "(function(){"
-            "var h=document.getElementById('arora-reader-host');"
+            "var h=document.getElementById('arktos-reader-host');"
             "var f=h.shadowRoot.querySelector('iframe.frame');"
             "return String(f.contentWindow.__pwned);"
             "})()")), QLatin1String("undefined"));
@@ -4672,7 +4969,7 @@ void tst_BrowserMainWindow::readerModeContent()
         // no-allow-scripts keeps it inert.
         QCOMPARE(evalJs(QStringLiteral(
             "(function(){"
-            "var h=document.getElementById('arora-reader-host');"
+            "var h=document.getElementById('arktos-reader-host');"
             "var f=h.shadowRoot.querySelector('iframe.frame');"
             "var d=f.contentDocument;"
             "d.body.innerHTML='<img src=x onerror=\"window.__pwned=42\">'"
@@ -4902,9 +5199,9 @@ void tst_BrowserMainWindow::homePageModes()
         return QUrl::fromLocalFile(path);
     };
     const QUrl homeFixture = writeFixture(
-        QLatin1String("arora-pref04-home.html"));
+        QLatin1String("arktos-pref04-home.html"));
     const QUrl secondFixture = writeFixture(
-        QLatin1String("arora-pref04-second.html"));
+        QLatin1String("arktos-pref04-second.html"));
     QVERIFY(homeFixture.isValid() && secondFixture.isValid());
 
     SubWindow *window = new SubWindow;
@@ -5194,18 +5491,21 @@ void tst_BrowserMainWindow::sidebarPanel()
     toggle->trigger();
     QVERIFY(dock->isVisible());
     QVERIFY(toggle->isChecked());
-    // First show builds the panel: four sections over the shared
-    // bookmarks/history/downloads models plus the notes editor.
+    // First show builds the panel: five sections over the shared
+    // bookmarks/history/downloads models plus the notes editor and
+    // the Workspaces group overview.
     SidebarPanel *panel = window->sidebarPanel();
     QVERIFY(panel);
     QVERIFY(panel->tabs());
-    QCOMPARE(panel->tabs()->count(), 4);
+    QCOMPARE(panel->tabs()->count(), 5);
     QVERIFY(panel->findChild<QWidget *>(
                 QLatin1String("sidebarBookmarksView")));
     QVERIFY(panel->findChild<QWidget *>(
                 QLatin1String("sidebarHistoryView")));
     QVERIFY(panel->findChild<QWidget *>(
                 QLatin1String("sidebarDownloadsView")));
+    QVERIFY(panel->findChild<QWidget *>(
+                QLatin1String("sidebarWorkspacesTree")));
     QVERIFY(panel->notes());
 
     // SIDE02: the switcher is a vertical icon rail — entries carry
@@ -5279,19 +5579,19 @@ void tst_BrowserMainWindow::sidebarPanel()
     // rail keeps registry order when it comes back.
     SidebarPanel::setPanelVisible("history", false);
     window->applySidebarSettings();
-    QCOMPARE(panel->tabs()->count(), 3);
+    QCOMPARE(panel->tabs()->count(), 4);
     QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     QVERIFY(!panel->findChild<QWidget *>(
                 QLatin1String("sidebarHistoryView")));
     SidebarPanel::setPanelVisible("history", true);
     window->applySidebarSettings();
-    QCOMPARE(panel->tabs()->count(), 4);
+    QCOMPARE(panel->tabs()->count(), 5);
     QCOMPARE(panel->tabs()->tabText(1), QLatin1String("History"));
 
     // Offscreen panel grab for visual review — set
-    // ARORA_SIDEBAR_GRAB_DIR to a directory and the panel lands there
-    // as sidebar-panel.png (same convention as ARORA_SETTINGS_GRAB_DIR).
-    const QByteArray sidebarGrabDir = qgetenv("ARORA_SIDEBAR_GRAB_DIR");
+    // ARKTOS_SIDEBAR_GRAB_DIR to a directory and the panel lands there
+    // as sidebar-panel.png (same convention as ARKTOS_SETTINGS_GRAB_DIR).
+    const QByteArray sidebarGrabDir = qgetenv("ARKTOS_SIDEBAR_GRAB_DIR");
     if (!sidebarGrabDir.isEmpty()) {
         QDir().mkpath(QString::fromLocal8Bit(sidebarGrabDir));
         qApp->processEvents();
@@ -5641,19 +5941,21 @@ void tst_BrowserMainWindow::sidebarPanelOrder()
     window->show();
     SidebarPanel *panel = window->sidebarPanel();
     QVERIFY(panel);
-    QCOMPARE(panel->tabs()->count(), 4);
+    QCOMPARE(panel->tabs()->count(), 5);
     QCOMPARE(panel->tabs()->tabText(0), QLatin1String("Bookmarks"));
 
-    // A full reorder re-sequences the rail live.
+    // A full reorder re-sequences the rail live — a panel the stored
+    // order does not name appends in registry position.
     SidebarPanel::setPanelOrder(
         QStringList{ QLatin1String("notes"), QLatin1String("bookmarks"),
                      QLatin1String("history"),
                      QLatin1String("downloads") });
     window->applySidebarSettings();
-    QCOMPARE(panel->tabs()->count(), 4);
+    QCOMPARE(panel->tabs()->count(), 5);
     QCOMPARE(panel->tabs()->tabText(0), QLatin1String("Notes"));
     QCOMPARE(panel->tabs()->tabText(1), QLatin1String("Bookmarks"));
     QCOMPARE(panel->tabs()->tabText(3), QLatin1String("Downloads"));
+    QCOMPARE(panel->tabs()->tabText(4), QLatin1String("Workspaces"));
 
     // A partial order keeps the named ids up front and appends the
     // rest in registry order.
@@ -5665,16 +5967,17 @@ void tst_BrowserMainWindow::sidebarPanelOrder()
     QCOMPARE(panel->tabs()->tabText(1), QLatin1String("Bookmarks"));
     QCOMPARE(panel->tabs()->tabText(2), QLatin1String("History"));
     QCOMPARE(panel->tabs()->tabText(3), QLatin1String("Notes"));
+    QCOMPARE(panel->tabs()->tabText(4), QLatin1String("Workspaces"));
 
     // Order and visibility compose — hiding the front entry pulls the
     // next one up, restoring lands it back in its ordered slot.
     SidebarPanel::setPanelVisible("downloads", false);
     window->applySidebarSettings();
-    QCOMPARE(panel->tabs()->count(), 3);
+    QCOMPARE(panel->tabs()->count(), 4);
     QCOMPARE(panel->tabs()->tabText(0), QLatin1String("Bookmarks"));
     SidebarPanel::setPanelVisible("downloads", true);
     window->applySidebarSettings();
-    QCOMPARE(panel->tabs()->count(), 4);
+    QCOMPARE(panel->tabs()->count(), 5);
     QCOMPARE(panel->tabs()->tabText(0), QLatin1String("Downloads"));
 
     // The order survives a fresh window's construction.
@@ -5811,7 +6114,7 @@ void tst_BrowserMainWindow::sidebarPanelOptions()
     lazyWindow->show();
     QVERIFY(lazyWindow->sidebarPanel());
     SidebarPanel *lazyPanel = lazyWindow->sidebarPanel();
-    QCOMPARE(lazyPanel->tabs()->count(), 4);
+    QCOMPARE(lazyPanel->tabs()->count(), 5);
     QVERIFY(!lazyPanel->findChild<QWidget *>(
                 QLatin1String("sidebarDownloadsView")));
     lazyPanel->showDownloads();
@@ -6119,9 +6422,9 @@ void tst_BrowserMainWindow::sidebarHistoryControls()
     QCOMPARE(model->rowCount(model->index(0, 0)), 1);
 
     // Offscreen grab of the History page (combo + clear button +
-    // grouped tree) for visual review — same ARORA_SIDEBAR_GRAB_DIR
+    // grouped tree) for visual review — same ARKTOS_SIDEBAR_GRAB_DIR
     // convention as sidebarPanel, lands as sidebar-history.png.
-    const QByteArray sidebarGrabDir = qgetenv("ARORA_SIDEBAR_GRAB_DIR");
+    const QByteArray sidebarGrabDir = qgetenv("ARKTOS_SIDEBAR_GRAB_DIR");
     if (!sidebarGrabDir.isEmpty()) {
         QDir().mkpath(QString::fromLocal8Bit(sidebarGrabDir));
         panel->tabs()->setCurrentWidget(view->parentWidget());
@@ -6931,9 +7234,9 @@ void tst_BrowserMainWindow::downloadsSidebarClearList()
     QTRY_VERIFY_WITH_TIMEOUT(activeItem->downloading(), 30000);
     QVERIFY(clearButton->isEnabled());
 
-    // Offscreen grab for visual review — ARORA_SIDEBAR_GRAB_DIR gets
+    // Offscreen grab for visual review — ARKTOS_SIDEBAR_GRAB_DIR gets
     // downloads-clear.png: populated list + enabled header button.
-    const QByteArray grabDir = qgetenv("ARORA_SIDEBAR_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_SIDEBAR_GRAB_DIR");
     if (!grabDir.isEmpty()) {
         QDir().mkpath(QString::fromLocal8Bit(grabDir));
         qApp->processEvents();
@@ -7125,9 +7428,9 @@ void tst_BrowserMainWindow::tabStripCompactHeight()
     QVERIFY(qAbs(close->geometry().center().y()
                  - bar->tabRect(0).center().y()) <= 2);
 
-    if (qEnvironmentVariableIsSet("ARORA_STRIP_GRAB_DIR")) {
+    if (qEnvironmentVariableIsSet("ARKTOS_STRIP_GRAB_DIR")) {
         const QString dir =
-            qEnvironmentVariable("ARORA_STRIP_GRAB_DIR");
+            qEnvironmentVariable("ARKTOS_STRIP_GRAB_DIR");
         bar->grab().save(dir + QLatin1String("/strip.png"));
     }
 
@@ -7167,14 +7470,85 @@ void tst_BrowserMainWindow::tabStripCompactHeight()
                      "ghost fill below the selected row: pixel %1 vs "
                      "strip tail %2").arg(below, 0, 16).arg(tail, 0, 16)));
     }
-    if (qEnvironmentVariableIsSet("ARORA_STRIP_GRAB_DIR")) {
+    if (qEnvironmentVariableIsSet("ARKTOS_STRIP_GRAB_DIR")) {
         const QString dir =
-            qEnvironmentVariable("ARORA_STRIP_GRAB_DIR");
+            qEnvironmentVariable("ARKTOS_STRIP_GRAB_DIR");
         bar->grab().save(dir + QLatin1String("/strip-vertical.png"));
     }
     settings.remove(QLatin1String("tabs/tabBarPosition"));
 
     settings.remove(QLatin1String("tabs/containerDisplay"));
+    closeWindow(window);
+}
+
+// TABS10: a resting tab must not read as underlined — the strip's
+// resting edge seam is gone, and the pane's top border (the same
+// seam continued under the page) no longer boxes the browser's tab
+// widget.  Probe each resting tab's bottom-edge row for a run of
+// pixels darker than the strip background; a painted hairline is
+// tens of px while text/dots never reach that row.
+void tst_BrowserMainWindow::tabStripNoUnderlines()
+{
+    SubWindow *window = new SubWindow;
+    window->resize(900, 600);
+    window->show();
+    TabWidget *tabWidget = window->tabWidget();
+    tabWidget->newTabAction()->trigger();
+    tabWidget->newTabAction()->trigger();
+    for (int i = 0; i < 20; ++i)
+        QApplication::processEvents();
+
+    TabBar *bar = tabWidget->findChild<TabBar *>();
+    QVERIFY(bar);
+    QVERIFY(bar->count() >= 3);
+    bar->setCurrentIndex(0);
+    QApplication::processEvents();
+
+    const int bgGray = qGray(bar->palette().color(QPalette::Window).rgb());
+    const QImage strip = bar->grab().toImage();
+    for (int i = 1; i < bar->count(); ++i) {
+        const QRect rect = bar->tabRect(i);
+        int run = 0;
+        int best = 0;
+        for (int x = rect.left() + 6; x <= rect.right() - 6; ++x) {
+            if (qGray(strip.pixel(x, rect.bottom())) < bgGray - 12) {
+                ++run;
+                best = qMax(best, run);
+            } else {
+                run = 0;
+            }
+        }
+        QVERIFY2(best < 30, qPrintable(QStringLiteral(
+            "resting tab %1 carries a %2px underline").arg(i).arg(best)));
+    }
+
+    // The pane's 1px border is gone on the browser's tab widget: the
+    // seam band between the strip and the view carries no line —
+    // every row there is plain background (the pane border used to
+    // paint one separator-colored row across the full width).
+    QWidget *view = tabWidget->currentWidget();
+    QVERIFY(view);
+    const int viewTop = view->mapTo(tabWidget, QPoint(0, 0)).y();
+    const int barBottom = bar->geometry().bottom();
+    const QImage pane = tabWidget->grab().toImage();
+    const int paneGray = qGray(tabWidget->palette()
+                               .color(QPalette::Window).rgb());
+    for (int y = barBottom + 1; y < viewTop && y < pane.height(); ++y) {
+        int run = 0;
+        int best = 0;
+        for (int x = 0; x < pane.width(); ++x) {
+            if (qGray(pane.pixel(x, y)) < paneGray - 12) {
+                ++run;
+                best = qMax(best, run);
+            } else {
+                run = 0;
+            }
+        }
+        QVERIFY2(best < 30, qPrintable(QStringLiteral(
+            "pane seam row %1 still paints a %2px line")
+            .arg(y).arg(best)));
+    }
+
     closeWindow(window);
 }
 
@@ -7570,10 +7944,10 @@ void tst_BrowserMainWindow::extensionActionButtons()
             .startsWith(QLatin1String("chrome-extension")));
     }
 
-    // Optional visual review: ARORA_EXT_GRAB_DIR=<dir> grabs the
+    // Optional visual review: ARKTOS_EXT_GRAB_DIR=<dir> grabs the
     // window (button strip visible right of the url bar) and the
     // open action popup.
-    const QByteArray grabDir = qgetenv("ARORA_EXT_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_EXT_GRAB_DIR");
     if (!grabDir.isEmpty()) {
         QTRY_VERIFY_WITH_TIMEOUT(
             popupView->page()->isLoading() == false, 15000);
@@ -7685,6 +8059,30 @@ void tst_BrowserMainWindow::navShieldPadlock()
         bar->findChild<SitePadlockButton *>();
     QVERIFY(padlock);
 
+    // TRUST24: the padlock is live chrome, not a stale slot — it is
+    // visible, bound to the active view, and sits as the field's
+    // leftmost left-side widget (the site icon follows it).
+    QVERIFY(padlock->isVisible());
+    QCOMPARE(padlock->webView(), first);
+    QVERIFY(!padlock->icon().isNull());
+    QVERIFY(!padlock->icon().pixmap(padlock->iconSize()).isNull());
+    LocationBarSiteIcon *siteIcon =
+        bar->findChild<LocationBarSiteIcon *>();
+    QVERIFY(siteIcon);
+    QVERIFY(bar->isAncestorOf(padlock));
+    QVERIFY(bar->isAncestorOf(siteIcon));
+    QVERIFY(padlock->mapTo(bar, QPoint(0, 0)).x()
+            <= siteIcon->mapTo(bar, QPoint(0, 0)).x());
+
+    // Widget geometry, not just the action list: the shield's rect
+    // ends at or before the field host's left edge — nothing it
+    // paints can land inside the url field.
+    const QRect shieldRect = shield->geometry();
+    const QRect hostRect = splitter->geometry();
+    QVERIFY(shieldRect.isValid() && hostRect.isValid());
+    QVERIFY(shieldRect.right() <= hostRect.left());
+    QVERIFY(!shieldRect.intersects(hostRect));
+
     // Tab switch rebinds the shared shield; the padlock belongs to the
     // tab's own bar, so each page keeps its own verdict.
     WebView *second = window->tabWidget()->makeNewTab(true);
@@ -7695,9 +8093,9 @@ void tst_BrowserMainWindow::navShieldPadlock()
     window->tabWidget()->setCurrentIndex(1);
     QCOMPARE(shield->panel()->webView(), second);
 
-    // Offscreen grabs for visual review — set ARORA_TRUST_GRAB_DIR to a
+    // Offscreen grabs for visual review — set ARKTOS_TRUST_GRAB_DIR to a
     // directory; normal + tor + private nav rows land there.
-    const QByteArray grabDir = qgetenv("ARORA_TRUST_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_TRUST_GRAB_DIR");
     if (!grabDir.isEmpty()) {
         QDir().mkpath(QString::fromLocal8Bit(grabDir));
         navBar->grab().save(QString::fromLocal8Bit(grabDir)
@@ -7781,7 +8179,7 @@ void tst_BrowserMainWindow::navBarEditMode()
     QStringList labels;
     QList<bool> visibleFlags;
     QList<QAction *> menuActions;
-    const QByteArray grabDir = qgetenv("ARORA_NAVBAR_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_NAVBAR_GRAB_DIR");
     const auto inspectPopup = [&labels, &visibleFlags,
                                &menuActions,
                                &grabDir](const char *grabName) {
@@ -7903,8 +8301,8 @@ void tst_BrowserMainWindow::navBarEditMode()
     QVERIFY(indicator->isHidden());
     QCOMPARE(reloadSpy.count(), 0);
 
-    // Second leg: the last item (sidebar toggle) can move into the
-    // middle — drops are not tail/boundary special cases.
+    // Second leg: the tail item (sidebar toggle, resolved by id) can
+    // move into the middle — drops are not boundary special cases.
     QWidget *sidebarButton = navBar->widgetForAction(sidebarToggle);
     QVERIFY(sidebarButton);
     QTest::mousePress(sidebarButton, Qt::LeftButton, Qt::NoModifier,
@@ -8052,7 +8450,7 @@ void tst_BrowserMainWindow::navBarOrderPersistence()
         QStringLiteral("forward"), QStringLiteral("stopReload"),
         QStringLiteral("home"), QStringLiteral("reader"),
         QStringLiteral("siteShield"), QStringLiteral("locationBar"),
-        QStringLiteral("sidebar")};
+        QStringLiteral("sidebar"), QStringLiteral("profileButton")};
 
     SubWindow *window = new SubWindow;
     window->resize(1400, 700);
@@ -8087,7 +8485,7 @@ void tst_BrowserMainWindow::navBarOrderPersistence()
         QStringLiteral("back"), QStringLiteral("forward"),
         QStringLiteral("home"), QStringLiteral("reader"),
         QStringLiteral("siteShield"), QStringLiteral("locationBar"),
-        QStringLiteral("sidebar")};
+        QStringLiteral("sidebar"), QStringLiteral("profileButton")};
     QCOMPARE(window->navBarOrder(), draggedOrder);
     {
         ProfileSettings settings;
@@ -8128,7 +8526,7 @@ void tst_BrowserMainWindow::navBarOrderPersistence()
         QStringLiteral("stopReload"), QStringLiteral("forward"),
         QStringLiteral("home"), QStringLiteral("reader"),
         QStringLiteral("siteShield"), QStringLiteral("locationBar"),
-        QStringLiteral("sidebar")};
+        QStringLiteral("sidebar"), QStringLiteral("profileButton")};
     QCOMPARE(window->navBarOrder(), resyncedOrder);
     QCOMPARE(second->navBarOrder(), resyncedOrder);
     {
@@ -8151,8 +8549,9 @@ void tst_BrowserMainWindow::navBarOrderPersistence()
 
     // Stale/partial stored orders degrade gracefully: unknown ids
     // (including ones only another window type carries, like
-    // torBadge) drop, and items the list doesn't name keep their
-    // stock sequence at the end — the bar can never corrupt.
+    // torBadge) drop, and items the list doesn't name resurface at
+    // their stock slots — the bar can never corrupt, and chrome the
+    // stored list predates lands where it belongs.
     {
         ProfileSettings settings;
         settings.setValue(key, QStringList{
@@ -8163,16 +8562,7 @@ void tst_BrowserMainWindow::navBarOrderPersistence()
     SubWindow *third = new SubWindow;
     third->show();
     QApplication::processEvents();
-    QCOMPARE(third->navBarOrder(),
-             (QStringList{QStringLiteral("back"),
-                          QStringLiteral("sidebar"),
-                          QStringLiteral("appMenu"),
-                          QStringLiteral("forward"),
-                          QStringLiteral("stopReload"),
-                          QStringLiteral("home"),
-                          QStringLiteral("reader"),
-                          QStringLiteral("siteShield"),
-                          QStringLiteral("locationBar")}));
+    QCOMPARE(third->navBarOrder(), stockOrder);
     closeWindow(third);
 
     // A corrupt non-list value falls back to stock entirely.
@@ -8208,15 +8598,16 @@ void tst_BrowserMainWindow::navBarOrderPersistence()
     QCOMPARE(torWindow->navBarOrder(),
              (QStringList{QStringLiteral("torBadge"),
                           QStringLiteral("appMenu"),
-                          QStringLiteral("sidebar"),
-                          QStringLiteral("back"),
                           QStringLiteral("forward"),
                           QStringLiteral("stopReload"),
                           QStringLiteral("home"),
                           QStringLiteral("reader"),
                           QStringLiteral("torCircuit"),
                           QStringLiteral("siteShield"),
-                          QStringLiteral("locationBar")}));
+                          QStringLiteral("locationBar"),
+                          QStringLiteral("sidebar"),
+                          QStringLiteral("back"),
+                          QStringLiteral("profileButton")}));
     QVERIFY(torBar->styleSheet().contains(QLatin1String("#4a3372")));
     closeWindow(torWindow);
     BrowserApplication::setTorMode(false);
@@ -8318,7 +8709,7 @@ void tst_BrowserMainWindow::siteShieldButton()
     QVERIFY(fieldRect.left() - shieldRect.right() <= 20);
 
     // Offscreen grab for visual review — [reader][shield][field].
-    const QByteArray grabDir = qgetenv("ARORA_NAVBAR_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_NAVBAR_GRAB_DIR");
     if (!grabDir.isEmpty()) {
         QDir().mkpath(QString::fromLocal8Bit(grabDir));
         navBar->grab().save(QString::fromLocal8Bit(grabDir)
@@ -8405,6 +8796,466 @@ void tst_BrowserMainWindow::siteShieldButton()
         settings.remove(key);
         settings.sync();
     }
+
+    closeWindow(window);
+}
+
+// TRUST24: the regression walked in through chrome state, not through
+// the stock construction path — a nav-bar order serialized by a build
+// that never knew the 'siteShield' id must not park the shield at the
+// bar's tail (it belongs pinned left of the url field), and a
+// session-restored window must surface the padlock bound to the
+// restored tab's view.
+void tst_BrowserMainWindow::trustChromeRestore()
+{
+    const QLatin1String key("navbar/order");
+
+    // Stale order — the pre-TRUST14 layout's persisted list names
+    // every item the bar had then, so 'siteShield' is simply absent.
+    // A window built on it still lands the shield directly left of
+    // the field, not appended behind the tail items.
+    {
+        QSettings settings;
+        settings.setValue(key, QStringList{
+            QStringLiteral("appMenu"), QStringLiteral("back"),
+            QStringLiteral("forward"), QStringLiteral("stopReload"),
+            QStringLiteral("home"), QStringLiteral("reader"),
+            QStringLiteral("locationBar"), QStringLiteral("sidebar"),
+            QStringLiteral("profileButton")});
+        settings.sync();
+    }
+    SubWindow *stale = new SubWindow;
+    stale->resize(1200, 700);
+    stale->show();
+    QApplication::processEvents();
+    const QStringList staleOrder = stale->navBarOrder();
+    QCOMPARE(staleOrder.indexOf(QLatin1String("siteShield")),
+             staleOrder.indexOf(QLatin1String("locationBar")) - 1);
+    QToolBar *staleBar = stale->findChild<QToolBar *>(
+        QLatin1String("NavigationToolBar"));
+    QVERIFY(staleBar);
+    SiteShieldButton *staleShield =
+        staleBar->findChild<SiteShieldButton *>(
+            QLatin1String("navSiteShield"));
+    QVERIFY(staleShield);
+    QCOMPARE(staleShield->parentWidget(), staleBar);
+    QVERIFY(staleShield->isVisible());
+    QWidget *staleSplitter = stale->findChild<QWidget *>(
+        QLatin1String("navigationSplitter"));
+    QVERIFY(staleSplitter);
+    QVERIFY(staleShield->geometry().right()
+            <= staleSplitter->geometry().left());
+    QVERIFY(!staleShield->geometry().intersects(
+        staleSplitter->geometry()));
+    closeWindow(stale);
+    {
+        QSettings settings;
+        settings.remove(key);
+        settings.sync();
+    }
+
+    // Session round-trip — restoreState() re-lays the bar through
+    // QMainWindow::restoreState and rebuilds the tab strip; the
+    // restored window still carries exactly one bar-side shield and
+    // a padlock bound to the restored tab's own view.
+    SubWindow *source = new SubWindow;
+    source->resize(1200, 700);
+    source->show();
+    QVERIFY(QTest::qWaitForWindowExposed(source));
+    const QByteArray state = source->saveState();
+    closeWindow(source);
+
+    SubWindow *restored = new SubWindow;
+    restored->resize(1200, 700);
+    restored->restoreState(state);
+    restored->show();
+    QVERIFY(QTest::qWaitForWindowExposed(restored));
+    QApplication::processEvents();
+
+    QToolBar *restoredBar = restored->findChild<QToolBar *>(
+        QLatin1String("NavigationToolBar"));
+    QVERIFY(restoredBar);
+    const QList<SiteShieldButton *> shields =
+        restored->findChildren<SiteShieldButton *>();
+    QCOMPARE(shields.size(), 1);
+    SiteShieldButton *shield = shields.first();
+    QCOMPARE(shield->parentWidget(), restoredBar);
+    QVERIFY(shield->isVisible());
+    QCOMPARE(restored->navBarOrder().indexOf(QLatin1String("siteShield")),
+             restored->navBarOrder().indexOf(
+                 QLatin1String("locationBar")) - 1);
+
+    QWidget *splitter = restored->findChild<QWidget *>(
+        QLatin1String("navigationSplitter"));
+    QVERIFY(splitter);
+    QVERIFY(shield->geometry().right()
+            <= splitter->geometry().left());
+    QVERIFY(!shield->geometry().intersects(splitter->geometry()));
+
+    LocationBar *bar = qobject_cast<LocationBar *>(
+        restored->tabWidget()->currentLocationBar());
+    QVERIFY(bar);
+    QVERIFY(!bar->findChild<SiteShieldButton *>());
+    SitePadlockButton *padlock =
+        bar->findChild<SitePadlockButton *>();
+    QVERIFY(padlock);
+    QVERIFY(padlock->isVisible());
+    QCOMPARE(padlock->webView(), restored->currentTab());
+    LocationBarSiteIcon *siteIcon =
+        bar->findChild<LocationBarSiteIcon *>();
+    QVERIFY(siteIcon);
+    QVERIFY(padlock->mapTo(bar, QPoint(0, 0)).x()
+            <= siteIcon->mapTo(bar, QPoint(0, 0)).x());
+
+    // Loaded-page leg — the padlock tracks the committed url's
+    // verdict (plaintext fixture -> unlocked amber; the https states
+    // are pinned by tst_sitepanel's decision-table legs).  The pixel
+    // probe proves the slot paints an actual glyph, not a blanked
+    // unbound button.
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    const QByteArray body = "<html><body>trust fixture</body></html>";
+    QObject::connect(&server, &QTcpServer::newConnection, &server,
+                     [&server, &body]() {
+        QTcpSocket *socket = server.nextPendingConnection();
+        socket->setParent(&server);
+        socket->readAll();
+        socket->write(QByteArray("HTTP/1.1 200 OK\r\n"
+                                 "Content-Type: text/html\r\n"
+                                 "Content-Length: ")
+                      + QByteArray::number(body.size())
+                      + "\r\n\r\n" + body);
+        socket->disconnectFromHost();
+    });
+    restored->currentTab()->loadUrl(
+        QUrl(QStringLiteral("http://127.0.0.1:%1/page")
+                 .arg(server.serverPort())));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        int(padlock->state())
+            == int(SitePadlockButton::State::UnlockedYellow),
+        20000);
+    QVERIFY(padlock->isVisible());
+    QCOMPARE(padlock->webView(), restored->currentTab());
+
+    // https verdict on the same bound button — an https url's state
+    // is a locked tier regardless of fixture transport.
+    QCOMPARE(int(SitePadlockButton::stateFor(
+                 QUrl(QStringLiteral("https://a.example/")))),
+             int(SitePadlockButton::State::LockedYellow));
+
+    // Pixel probe of the field's left slot — the padlock's glyph
+    // strokes stand out from the field's base color.
+    const QImage fieldGrab = bar->grab().toImage();
+    const QPoint slotTopLeft = padlock->mapTo(bar, QPoint(0, 0));
+    const QRect slotRect(slotTopLeft, padlock->size());
+    const QColor base =
+        bar->palette().color(QPalette::Base);
+    int inkPixels = 0;
+    for (int x = slotRect.left(); x <= slotRect.right(); ++x) {
+        for (int y = slotRect.top(); y <= slotRect.bottom(); ++y) {
+            if (!fieldGrab.valid(x, y))
+                continue;
+            const QColor pixel = fieldGrab.pixelColor(x, y);
+            if (qAbs(pixel.red() - base.red())
+                    + qAbs(pixel.green() - base.green())
+                    + qAbs(pixel.blue() - base.blue()) > 60)
+                ++inkPixels;
+        }
+    }
+    QVERIFY2(inkPixels > 4,
+             "padlock slot painted no glyph — unbound or blanked");
+    closeWindow(restored);
+}
+
+// PROF01: the profile button is the rightmost nav-bar widget — its
+// face matched to the app-menu logo on the left — dropping the
+// single-profile identity menu (circular avatar + editable name).
+// The name persists in the profile registry and repaints live on
+// every window through the shared ProfileIdentity; the default
+// avatar is the bundled silhouette until PROF02 lets the user pick a
+// picture.
+void tst_BrowserMainWindow::profileButton()
+{
+    {
+        QSettings settings;
+        settings.remove(QLatin1String("navbar/order"));
+        settings.sync();
+        // MPROF01: the display name lives in the profile registry —
+        // reset it there, not in QSettings.
+        ProfileContext context =
+            ProfileRegistry::instance()->activeProfile();
+        context.name = QStringLiteral("Profile");
+        ProfileRegistry::instance()->updateProfile(context);
+    }
+
+    SubWindow *window = new SubWindow;
+    window->resize(1400, 700);
+    window->show();
+    QApplication::processEvents();
+    QToolBar *navBar = window->findChild<QToolBar *>(
+        QLatin1String("NavigationToolBar"));
+    QVERIFY(navBar);
+    QToolButton *button = window->findChild<QToolButton *>(
+        QLatin1String("profileButton"));
+    QVERIFY(button);
+    QVERIFY(button->autoRaise());
+    QCOMPARE(button->toolButtonStyle(), Qt::ToolButtonIconOnly);
+    QCOMPARE(button->popupMode(), QToolButton::InstantPopup);
+    QCOMPARE(button->text(), QLatin1String("Profile"));
+    QVERIFY(!button->toolTip().isEmpty());
+    QVERIFY(!button->accessibleName().isEmpty());
+    QVERIFY(!button->icon().isNull());
+
+    // Rightmost: the button's own action is the bar's last item and
+    // carries the stable NAVB04 id so edit mode covers it.
+    QAction *profileAction = nullptr;
+    for (QAction *action : navBar->actions()) {
+        if (navBar->widgetForAction(action) == button)
+            profileAction = action;
+    }
+    QVERIFY(profileAction);
+    QCOMPARE(navBar->actions().last(), profileAction);
+    QCOMPARE(profileAction->property("navBarItemId").toString(),
+             QLatin1String("profileButton"));
+
+    // Face-matched to the app-menu logo on the left — same oversized
+    // iconSize (the shared ~1.84x accent on the bar's 18px) and the
+    // same capped square face one pixel over the glyph.
+    QToolButton *appButton = window->findChild<QToolButton *>(
+        QLatin1String("appMenuButton"));
+    QVERIFY(appButton);
+    QCOMPARE(button->iconSize(), appButton->iconSize());
+    QCOMPARE(button->sizeHint().width(), button->sizeHint().height());
+    QVERIFY(button->sizeHint().height()
+            >= button->iconSize().height());
+    QVERIFY(button->sizeHint().height()
+            <= button->iconSize().height() + 1);
+
+    // The dropdown scaffolds the identity menu: a header row with a
+    // 32px circular avatar + the persisted profile name, then the
+    // rename entry — PROF02/PROF03 append below.
+    QMenu *menu = button->menu();
+    QVERIFY(menu);
+    QLabel *nameLabel = menu->findChild<QLabel *>(
+        QLatin1String("profileMenuName"));
+    QVERIFY(nameLabel);
+    QCOMPARE(nameLabel->text(), QLatin1String("Profile"));
+    QLabel *avatarLabel = menu->findChild<QLabel *>(
+        QLatin1String("profileMenuAvatar"));
+    QVERIFY(avatarLabel);
+    QVERIFY(!avatarLabel->pixmap().isNull());
+    QAction *rename = menu->findChild<QAction *>(
+        QLatin1String("profileRenameAction"));
+    QVERIFY(rename);
+
+    // No custom avatar under the isolated test profile — the face is
+    // the bundled silhouette, a real mostly-painted disc.
+    QVERIFY(!ProfileIdentity::instance()->hasCustomAvatar());
+    const QImage face =
+        button->icon().pixmap(button->iconSize()).toImage();
+    int opaque = 0;
+    for (int y = 0; y < face.height(); ++y)
+        for (int x = 0; x < face.width(); ++x)
+            if (face.pixelColor(x, y).alpha() > 100)
+                ++opaque;
+    QVERIFY(opaque > face.width() * face.height() / 2);
+
+    // Rename leg: the dialog persists the registry name and the shared
+    // ProfileIdentity repaints every window's header live.
+    SubWindow *second = new SubWindow;
+    second->show();
+    QApplication::processEvents();
+    QToolButton *secondButton = second->findChild<QToolButton *>(
+        QLatin1String("profileButton"));
+    QVERIFY(secondButton);
+    QMenu *secondMenu = secondButton->menu();
+    QVERIFY(secondMenu);
+    QLabel *secondName = secondMenu->findChild<QLabel *>(
+        QLatin1String("profileMenuName"));
+    QVERIFY(secondName);
+    QCOMPARE(secondName->text(), QLatin1String("Profile"));
+
+    QTimer::singleShot(150, qApp, []() {
+        if (QInputDialog *dialog = qobject_cast<QInputDialog *>(
+                QApplication::activeModalWidget())) {
+            dialog->setTextValue(QLatin1String("Ada"));
+            dialog->accept();
+        }
+    });
+    rename->trigger();
+    QTRY_COMPARE_WITH_TIMEOUT(
+        ProfileIdentity::instance()->name(), QLatin1String("Ada"),
+        5000);
+    QCOMPARE(ProfileRegistry::instance()->activeProfile().name,
+             QLatin1String("Ada"));
+    QCOMPARE(nameLabel->text(), QLatin1String("Ada"));
+    QCOMPARE(secondName->text(), QLatin1String("Ada"));
+
+    // A blank rename falls back to the default — no empty header.
+    QTimer::singleShot(150, qApp, []() {
+        if (QInputDialog *dialog = qobject_cast<QInputDialog *>(
+                QApplication::activeModalWidget())) {
+            dialog->setTextValue(QLatin1String("   "));
+            dialog->accept();
+        }
+    });
+    rename->trigger();
+    QTRY_COMPARE_WITH_TIMEOUT(
+        ProfileIdentity::instance()->name(), QLatin1String("Profile"),
+        5000);
+    QCOMPARE(nameLabel->text(), QLatin1String("Profile"));
+
+    closeWindow(second);
+    closeWindow(window);
+
+    // Tor window: the button keeps the bar's right edge — the "Tor"
+    // badge parks one slot left of it — and the neutral silhouette
+    // stays legible on the violet chrome (the disc's ~150 luminance
+    // reads far above the ~55 violet).
+    BrowserApplication::setTorMode(true);
+    SubWindow *torWindow = new SubWindow;
+    torWindow->resize(1200, 700);
+    torWindow->show();
+    QApplication::processEvents();
+    QToolBar *torBar = torWindow->findChild<QToolBar *>(
+        QLatin1String("NavigationToolBar"));
+    QVERIFY(torBar);
+    QToolButton *torButton = torWindow->findChild<QToolButton *>(
+        QLatin1String("profileButton"));
+    QVERIFY(torButton);
+    QAction *torProfile = nullptr;
+    QAction *torBadge = nullptr;
+    for (QAction *action : torBar->actions()) {
+        if (torBar->widgetForAction(action) == torButton)
+            torProfile = action;
+        if (action->property("navBarItemId").toString()
+                == QLatin1String("torBadge"))
+            torBadge = action;
+    }
+    QVERIFY(torProfile);
+    QCOMPARE(torBar->actions().last(), torProfile);
+    QVERIFY(torBadge);
+    QCOMPARE(torBar->actions().indexOf(torBadge),
+             torBar->actions().indexOf(torProfile) - 1);
+    const QImage torFace =
+        torButton->icon().pixmap(QSize(29, 29)).toImage();
+    qlonglong lum = 0;
+    int torOpaque = 0;
+    for (int y = 0; y < torFace.height(); ++y)
+        for (int x = 0; x < torFace.width(); ++x) {
+            const QColor color = torFace.pixelColor(x, y);
+            if (color.alpha() > 100) {
+                lum += qGray(color.rgb());
+                ++torOpaque;
+            }
+        }
+    QVERIFY(torOpaque > 0);
+    QVERIFY(lum / torOpaque > 100);
+
+    closeWindow(torWindow);
+    BrowserApplication::setTorMode(false);
+
+    {
+        ProfileContext context =
+            ProfileRegistry::instance()->activeProfile();
+        context.name = QStringLiteral("Profile");
+        ProfileRegistry::instance()->updateProfile(context);
+    }
+}
+
+// MPROF05: the profile menu carries the switcher submenu and the
+// Profile Manager entry; the manager is also reachable from Tools so
+// it is discoverable without the nav button (the app menu embeds the
+// shared Tools menu).  Since MPROF03's window binding, every 'New
+// Window' row is enabled and opens a window bound to that profile.
+void tst_BrowserMainWindow::profileMenuEntries()
+{
+    SubWindow *window = new SubWindow;
+    window->resize(1400, 700);
+    window->show();
+    QApplication::processEvents();
+    QToolButton *button = window->findChild<QToolButton *>(
+        QLatin1String("profileButton"));
+    QVERIFY(button);
+    QMenu *menu = button->menu();
+    QVERIFY(menu);
+
+    QAction *managerAction = menu->findChild<QAction *>(
+        QLatin1String("profileManagerAction"));
+    QVERIFY(managerAction);
+    QVERIFY(!managerAction->text().isEmpty());
+
+    QAction *submenuAction = menu->findChild<QAction *>(
+        QLatin1String("profileNewWindowMenu"));
+    QVERIFY(submenuAction);
+    QMenu *newWindowMenu = submenuAction->menu();
+    QVERIFY(newWindowMenu);
+
+    // The submenu populates on open.  Offscreen, show() fires
+    // aboutToShow the same way a real popup does.
+    newWindowMenu->show();
+    QApplication::processEvents();
+    newWindowMenu->hide();
+    QVERIFY(!newWindowMenu->actions().isEmpty());
+    QAction *defaultEntry = nullptr;
+    for (QAction *action : newWindowMenu->actions()) {
+        if (action->data().toString() == QLatin1String("default"))
+            defaultEntry = action;
+    }
+    QVERIFY(defaultEntry);
+    QVERIFY(defaultEntry->isEnabled());
+    QVERIFY(defaultEntry->isChecked());
+
+    // A second profile lists as an enabled row — triggering it opens
+    // a real window bound to that persona (MPROF03).
+    ProfileStore *store = ProfileStore::instance();
+    QVERIFY(store->createProfile(QLatin1String("Suite")).isValid());
+    newWindowMenu->show();
+    QApplication::processEvents();
+    newWindowMenu->hide();
+    QAction *suiteEntry = nullptr;
+    for (QAction *action : newWindowMenu->actions()) {
+        if (action->data().toString() == QLatin1String("suite"))
+            suiteEntry = action;
+    }
+    QVERIFY(suiteEntry);
+    QVERIFY(suiteEntry->isEnabled());
+    const int windowsBefore =
+        BrowserApplication::instance()->mainWindows().count();
+    suiteEntry->trigger();
+    QApplication::processEvents();
+    BrowserMainWindow *suiteWindow = nullptr;
+    for (BrowserMainWindow *candidate
+         : BrowserApplication::instance()->mainWindows()) {
+        if (candidate && candidate->profileId()
+                == QLatin1String("suite"))
+            suiteWindow = candidate;
+    }
+    QVERIFY(suiteWindow);
+    QCOMPARE(BrowserApplication::instance()->mainWindows().count(),
+             windowsBefore + 1);
+    closeWindow(suiteWindow);
+    store->deleteProfile(QLatin1String("suite"));
+
+    // Triggering the manager action opens the shared dialog; closing
+    // drops the singleton so the next open rereads the registry.
+    managerAction->trigger();
+    QTRY_VERIFY(ProfileManagerDialog::instance());
+    ProfileManagerDialog::instance()->close();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QVERIFY(!ProfileManagerDialog::instance());
+
+    // Tools > Profiles... reaches the same manager.
+    QAction *toolsAction = window->findChild<QAction *>(
+        QLatin1String("toolsProfilesAction"));
+    QVERIFY(toolsAction);
+    QVERIFY(toolsAction->isVisible());
+    toolsAction->trigger();
+    QTRY_VERIFY(ProfileManagerDialog::instance());
+    QCOMPARE(ProfileManagerDialog::instance()->profileTree
+                 ->topLevelItemCount() >= 1, true);
+    ProfileManagerDialog::instance()->close();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
 
     closeWindow(window);
 }

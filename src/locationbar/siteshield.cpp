@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,8 +20,9 @@
 #include "siteshield.h"
 
 #include "adblockmanager.h"
-#include "aroraicon.h"
-#include "arorastyle.h"
+#include "browserprofile.h"
+#include "arktosicon.h"
+#include "arktosstyle.h"
 #include "browserapplication.h"
 #include "browsertheme.h"
 #include "domainblocklist.h"
@@ -170,6 +171,15 @@ void SiteShieldButton::setWebView(WebView *webView)
                 this, [this](int) { refreshIcon(); });
         connect(webView, &QWebEngineView::loadFinished,
                 this, [this](bool) { refreshIcon(); });
+        // MPROF02: follow the adblock manager this view's persona
+        // owns (UniqueConnection across persona revisits).
+        QWebEnginePage *page = webView->page();
+        connect(AdBlockManager::instanceFor(
+                    BrowserProfile::profileIdFor(
+                        page ? page->profile() : nullptr)),
+                &AdBlockManager::rulesChanged,
+                this, &SiteShieldButton::refreshIcon,
+                Qt::UniqueConnection);
     }
     refreshIcon();
 }
@@ -240,7 +250,7 @@ void SiteShieldButton::refreshIcon()
     // stylesheet lifts ButtonText to the light chrome text color, so
     // the shield stays legible there and on a forced dark theme
     // alike, instead of painting the app's dark glyph.
-    const QIcon shield = AroraIcon::getChrome(
+    const QIcon shield = ArktosIcon::getChrome(
         QLatin1String("security-high"), palette());
 
     m_trustLevel.clear();
@@ -259,7 +269,9 @@ void SiteShieldButton::refreshIcon()
     // icon size so the overlay follows the icon growth.
     const int px = iconSize().width();
     const QSize iconPx(px, px);
-    AdBlockManager *adblock = AdBlockManager::instance();
+    QWebEnginePage *page = m_webView->page();
+    AdBlockManager *adblock = AdBlockManager::instanceFor(
+        BrowserProfile::profileIdFor(page ? page->profile() : nullptr));
     const QString host = m_webView->url().host();
     const bool whitelisted = adblock->isSiteWhitelisted(host);
     QIcon icon;
@@ -317,9 +329,9 @@ void SiteShieldButton::refreshIcon()
                 painter.fontMetrics().horizontalAdvance(text) + 4);
             const QRect badge(16 - w, 7, w, 9);
             painter.setPen(Qt::NoPen);
-            painter.setBrush(AroraStyle::accentFillColor(palette()));
+            painter.setBrush(ArktosStyle::accentFillColor(palette()));
             painter.drawRoundedRect(badge, 2, 2);
-            painter.setPen(AroraStyle::onAccentColor(palette()));
+            painter.setPen(ArktosStyle::onAccentColor(palette()));
             painter.drawText(badge, Qt::AlignCenter, text);
             tip += tr(" — %1 requests blocked").arg(blocked);
         }
@@ -330,8 +342,8 @@ void SiteShieldButton::refreshIcon()
         // count badge occupies the right one.
         if (jsBlocked) {
             const qreal x = blocked > 0 ? 0.5 : 9.5;
-            painter.setBrush(AroraStyle::accentFillColor(palette()));
-            painter.setPen(AroraStyle::onAccentColor(palette()));
+            painter.setBrush(ArktosStyle::accentFillColor(palette()));
+            painter.setPen(ArktosStyle::onAccentColor(palette()));
             painter.drawEllipse(QRectF(x, 9.5, 6.0, 6.0));
             tip += tr(" — JavaScript blocked");
         }

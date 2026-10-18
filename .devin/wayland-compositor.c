@@ -14,7 +14,7 @@
  *         cc -O1 -I. -o wayland-compositor wayland-compositor.c \
  *            xdg-shell-code.c $(pkg-config --cflags --libs wayland-server)
  * Run:    XDG_RUNTIME_DIR=/some/dir ./wayland-compositor
- *         (socket name: $WAYLAND_DISPLAY or "arora-smoke")
+ *         (socket name: $WAYLAND_DISPLAY or "arktos-smoke")
  */
 
 #include <signal.h>
@@ -489,7 +489,7 @@ int main(void)
     /* Fixed socket name — the harness gives us a dedicated XDG_RUNTIME_DIR. */
     const char *sock = getenv("WAYLAND_DISPLAY");
     if (!sock || !*sock)
-        sock = "arora-smoke";
+        sock = "arktos-smoke";
     if (wl_display_add_socket(g_display, sock) < 0) {
         fprintf(stderr, "wl_display_add_socket(%s) failed\n", sock);
         return 1;

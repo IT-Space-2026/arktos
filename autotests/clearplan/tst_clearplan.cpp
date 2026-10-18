@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,7 +18,7 @@
  */
 
 #include <QtTest/QtTest>
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 
 #include <clearprivatedata.h>
 
@@ -32,13 +32,13 @@
 #include <qjsonobject.h>
 #include <qwebengineprofile.h>
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 #include <rustcore.h>
 #endif
 
 // CLR01: the clear-private-data decision is a (period, categories,
 // scope) -> ordered op list produced by the planner (rustcore under
-// ARORA_RUSTCORE, the identical Qt table otherwise) and executed
+// ARKTOS_RUSTCORE, the identical Qt table otherwise) and executed
 // per-store.  These tests pin the op vocabulary, the OTR scoping
 // rule (a private-context plan must contain no op that touches a
 // persistent store) and the execution itself against seeded stores.
@@ -60,7 +60,7 @@ private slots:
     void executeRangedKeepsOldRows();
     void otrPlanLeavesPersistentStores();
     void unknownOpSkipped();
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     void parityCorpus_data();
     void parityCorpus();
     void ffiBadInput();
@@ -333,7 +333,7 @@ void tst_ClearPlan::unknownOpSkipped()
     QVERIFY(history->icon(url).cacheKey() != seededIcon.cacheKey());
 }
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 void tst_ClearPlan::parityCorpus_data()
 {
     QTest::addColumn<QString>("period");

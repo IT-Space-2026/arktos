@@ -7,10 +7,10 @@
 # hang every load:
 #   *$script,redirect-rule=noopjs,from=...,to=...
 #     — from=/to= were silently ignored, globalizing the rule into a
-#       redirect-every-script filter whose arora-resource: target then
+#       redirect-every-script filter whose arktos-resource: target then
 #       re-entered the same matcher and spun the redirect chain.
 #   *$script,redirect-rule=noopjs  (deliberately global, legal syntax)
-#     — still exercises the arora-resource: re-entry guard on every
+#     — still exercises the arktos-resource: re-entry guard on every
 #       script fetch of every test page.
 #   $image,3p  /  *$3p,xhr
 #     — 3p/1p spellings were ignored, dropping the party constraint.
@@ -25,8 +25,8 @@ set -u
 cd "$(dirname "$0")/.."
 . ./.devin/qt-env.sh
 
-ARORA=./arora
-[ -x "$ARORA" ] || { echo "FAIL: ./arora not built" >&2; exit 2; }
+ARORA=./arktos
+[ -x "$ARORA" ] || { echo "FAIL: ./arktos not built" >&2; exit 2; }
 
 ITERATIONS=${1:-10}
 LOAD_TIMEOUT=10
@@ -46,8 +46,8 @@ $image,3p,denyallow=cdn77.org|gstatic.com,from=pussyspace.com|pussyspace.net
 example.com##.never-matches-anything
 EOF
 
-mkdir -p "$HOME_DIR/.config/Arora" "$HOME_DIR/.local/share/Arora/Arora"
-cat > "$HOME_DIR/.config/Arora/Arora.conf" <<EOF
+mkdir -p "$HOME_DIR/.config/Arktos" "$HOME_DIR/.local/share/Arktos/Arktos"
+cat > "$HOME_DIR/.config/Arktos/Arktos.conf" <<EOF
 [AdBlock]
 enabled=true
 remoteListsConsent=1

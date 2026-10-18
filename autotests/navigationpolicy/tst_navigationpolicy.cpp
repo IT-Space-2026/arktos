@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,7 +28,7 @@
 // 1:1.
 
 #include <QtTest>
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 
 #include "navigationpolicy.h"
 #include "privacyrequestinterceptor.h"
@@ -69,6 +69,10 @@ private:
         NavigationPolicy::setDowngradeTtlMs(30 * 60 * 1000);
         // Drain any leftovers from previous cases.
         NavigationPolicy::clearHttpAllowance(QStringLiteral("ex.example"));
+        for (const QString &h : NavigationPolicy::urlCleanExemptHosts())
+            NavigationPolicy::clearUrlCleanExempt(h);
+        NavigationPolicy::clearUrlCleanExempt(QStringLiteral("example.com"));
+        NavigationPolicy::clearUrlCleanExempt(QStringLiteral("real.example"));
     }
 
 private slots:
@@ -85,6 +89,7 @@ private slots:
     void refererLevels();
     void torModeUpgradesEverythingButOnion();
     void cookieGateMatrix();
+    void urlCleaning();
     void granularApiMatchesInterceptors();
     void failureImpliesDowngradeTable();
     void verdictCache();
@@ -352,6 +357,20 @@ void tst_NavigationPolicy::torModeUpgradesEverythingButOnion()
     v = NavigationPolicy::evaluate(
         torReq(QStringLiteral("http://abc.onion/i.png"), 4));
     QCOMPARE(v.action, PolicyVerdict::Action::Allow);
+    // MEM07: loopback / LAN / .local hosts stay http under tor too —
+    // they have no TLS to upgrade to and could never exit anyway.
+    const QStringList localExempt = {
+        QStringLiteral("http://localhost:8080/x"),
+        QStringLiteral("http://127.0.0.1/x"),
+        QStringLiteral("http://10.1.2.3/x"),
+        QStringLiteral("http://192.168.1.1/x"),
+        QStringLiteral("http://router.local/x"),
+    };
+    for (const QString &u : localExempt) {
+        const auto r = NavigationPolicy::evaluate(torReq(u, 0));
+        QVERIFY2(r.action == PolicyVerdict::Action::Allow,
+                 qPrintable(u));
+    }
     // At least Trimmed referer even under EngineDefault.
     auto snap = defaultSnapshot();
     snap.refererPolicy = 0;
@@ -403,6 +422,115 @@ void tst_NavigationPolicy::cookieGateMatrix()
                  {QStringLiteral("a.com")}));
     QVERIFY(!gate(2, false, true, QStringLiteral("xa.com"), {},
                   {QStringLiteral("a.com")}));
+}
+
+// POL04: ClearURLs-style navigation cleaning — redirect unwrapping,
+// domain-scoped params, per-site exemptions and the removal count a
+// redirect verdict carries for the shield badge.
+void tst_NavigationPolicy::urlCleaning()
+{
+#if defined(ARKTOS_RUSTCORE)
+    // A google /url redirector unwraps to its real destination on a
+    // main-frame navigation — and reports the dropped tracker units.
+    auto v = NavigationPolicy::evaluate(makeRequest(
+        QStringLiteral("https://www.google.com/url"
+                       "?q=https%3A%2F%2Freal.example%2Flanding"
+                       "&sa=U&ved=x"),
+        0));
+    QCOMPARE(v.action, PolicyVerdict::Action::Redirect);
+    QCOMPARE(v.redirectUrl.toString(),
+             QStringLiteral("https://real.example/landing"));
+    QCOMPARE(v.reason, QByteArray("unwrap"));
+    QVERIFY(v.cleanedCount >= 1);
+
+    // The same URL as a subresource never unwraps — its google-scoped
+    // params still strip, and the 'q' target survives in place.
+    v = NavigationPolicy::evaluate(makeRequest(
+        QStringLiteral("https://www.google.com/url"
+                       "?q=https%3A%2F%2Freal.example%2F&ved=x"),
+        4));
+    QCOMPARE(v.action, PolicyVerdict::Action::Redirect);
+    QCOMPARE(v.reason, QByteArray("strip"));
+    QVERIFY(v.redirectUrl.toString().startsWith(
+        QStringLiteral("https://www.google.com/url?q=")));
+
+    // Scoped params strip only on their tracker domain — 'ref' is a
+    // functional param everywhere except amazon.*.
+    v = NavigationPolicy::evaluate(makeRequest(
+        QStringLiteral("https://amazon.com/dp/B00?ref_=as_li&x=1"), 0));
+    QCOMPARE(v.action, PolicyVerdict::Action::Redirect);
+    QCOMPARE(v.redirectUrl.toString(),
+             QStringLiteral("https://amazon.com/dp/B00?x=1"));
+    v = NavigationPolicy::evaluate(makeRequest(
+        QStringLiteral("https://shop.example/p?ref=aff&id=7"), 0));
+    QCOMPARE(v.action, PolicyVerdict::Action::Allow);
+
+    // A functional param survives alongside a stripped global tracker
+    // — and the verdict counts exactly the one removed unit.
+    v = NavigationPolicy::evaluate(makeRequest(
+        QStringLiteral("https://example.com/search?q=shoes&utm_source=n"),
+        0));
+    QCOMPARE(v.action, PolicyVerdict::Action::Redirect);
+    QCOMPARE(v.redirectUrl.toString(),
+             QStringLiteral("https://example.com/search?q=shoes"));
+    QCOMPARE(v.cleanedCount, 1);
+
+    // Per-site exemption leaves the host's URLs dirty until cleared;
+    // subdomains inherit through the suffix match.
+    NavigationPolicy::allowUrlCleanExempt(
+        QStringLiteral("example.com"), false);
+    QVERIFY(NavigationPolicy::isUrlCleanExempt(
+        QStringLiteral("example.com")));
+    QVERIFY(NavigationPolicy::isUrlCleanExempt(
+        QStringLiteral("www.example.com")));
+    v = NavigationPolicy::evaluate(makeRequest(
+        QStringLiteral("https://example.com/search?q=shoes&utm_source=n"),
+        0));
+    QCOMPARE(v.action, PolicyVerdict::Action::Allow);
+    NavigationPolicy::clearUrlCleanExempt(QStringLiteral("example.com"));
+    v = NavigationPolicy::evaluate(makeRequest(
+        QStringLiteral("https://example.com/search?q=shoes&utm_source=n"),
+        0));
+    QCOMPARE(v.action, PolicyVerdict::Action::Redirect);
+
+    // An exempt unwrap target is never adopted — the redirector hop
+    // stands instead of being cleaned away.
+    NavigationPolicy::allowUrlCleanExempt(
+        QStringLiteral("real.example"), false);
+    v = NavigationPolicy::evaluate(makeRequest(
+        QStringLiteral("https://duckduckgo.com/l/"
+                       "?uddg=https%3A%2F%2Freal.example%2F"),
+        0));
+    QCOMPARE(v.action, PolicyVerdict::Action::Allow);
+    NavigationPolicy::clearUrlCleanExempt(QStringLiteral("real.example"));
+
+    // The persistent half rides the snapshot's urlclean_exceptions.
+    auto snap = defaultSnapshot();
+    snap.urlCleanExceptions << QStringLiteral("Saved.Example");
+    NavigationPolicy::loadSnapshot(snap);
+    QVERIFY(NavigationPolicy::isUrlCleanExempt(
+        QStringLiteral("www.saved.example")));
+    v = NavigationPolicy::evaluate(makeRequest(
+        QStringLiteral("https://saved.example/?utm_source=x"), 0));
+    QCOMPARE(v.action, PolicyVerdict::Action::Allow);
+    resetPolicy();
+#else
+    // No-rust build: the ruleset lives in rustcore so URLs pass
+    // through untouched — the exemption API still answers so the
+    // shield row can read/write it.
+    auto v = NavigationPolicy::evaluate(makeRequest(
+        QStringLiteral("https://example.com/?utm_source=x"), 0));
+    QCOMPARE(v.action, PolicyVerdict::Action::Allow);
+    NavigationPolicy::allowUrlCleanExempt(QStringLiteral("example.com"),
+                                          false);
+    QVERIFY(NavigationPolicy::isUrlCleanExempt(
+        QStringLiteral("example.com")));
+    QVERIFY(NavigationPolicy::isUrlCleanExempt(
+        QStringLiteral("www.example.com")));
+    NavigationPolicy::clearUrlCleanExempt(QStringLiteral("example.com"));
+    QVERIFY(!NavigationPolicy::isUrlCleanExempt(
+        QStringLiteral("example.com")));
+#endif
 }
 
 void tst_NavigationPolicy::granularApiMatchesInterceptors()

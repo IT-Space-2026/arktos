@@ -43,7 +43,7 @@
 #include "networkaccessmanager.h"
 #include "trancolist.h"
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "sitedecisionstore.h"
 #endif
 
@@ -60,10 +60,11 @@
 
 // #define ADBLOCKMANAGER_DEBUG
 
-AdBlockManager *AdBlockManager::s_adBlockManager = nullptr;
-
-AdBlockManager::AdBlockManager(QObject *parent)
+AdBlockManager::AdBlockManager(QObject *parent,
+                               const QString &profileId)
     : QObject(parent)
+    , m_profileId(BrowserPaths::isProfileId(profileId)
+                      ? profileId : BrowserPaths::activeProfileId())
     , m_loaded(false)
     , m_enabled(true)
     , m_saveTimer(new AutoSaver(this))
@@ -82,11 +83,18 @@ AdBlockManager::~AdBlockManager()
 
 AdBlockManager *AdBlockManager::instance()
 {
-    if (!s_adBlockManager) {
-        // Set a parent that will delete us before the application exits
-        s_adBlockManager = new AdBlockManager(NetworkAccessManager::instance());
-    }
-    return s_adBlockManager;
+    return instanceFor(BrowserPaths::activeProfileId());
+}
+
+AdBlockManager *AdBlockManager::instanceFor(const QString &profileId)
+{
+    const QString id = BrowserPaths::isProfileId(profileId)
+            ? profileId : BrowserPaths::activeProfileId();
+    static QHash<QString, QPointer<AdBlockManager>> managers;
+    QPointer<AdBlockManager> &manager = managers[id];
+    if (!manager)
+        manager = new AdBlockManager(qApp, id);
+    return manager;
 }
 
 bool AdBlockManager::isEnabled() const
@@ -113,7 +121,7 @@ void AdBlockManager::setEnabled(bool enabled)
 
 bool AdBlockManager::rustEngineAvailable()
 {
-#if defined(ARORA_ADBLOCK_RUST)
+#if defined(ARKTOS_ADBLOCK_RUST)
     return true;
 #else
     return false;
@@ -122,7 +130,13 @@ bool AdBlockManager::rustEngineAvailable()
 
 AdBlockManager::Engine AdBlockManager::storedEngine()
 {
-    const QString value = ProfileSettings().value(
+    return storedEngine(BrowserPaths::activeProfileId());
+}
+
+AdBlockManager::Engine AdBlockManager::storedEngine(
+        const QString &profileId)
+{
+    const QString value = ProfileSettings(profileId).value(
         QLatin1String("AdBlock/engine")).toString();
     // ADBLK01: Brave adblock-rust is the default — an absent or empty
     // key selects it.  Only an explicit opt-out (a persisted "cpp" or
@@ -134,16 +148,16 @@ AdBlockManager::Engine AdBlockManager::storedEngine()
 
 AdBlockManager::Engine AdBlockManager::engine() const
 {
-    const Engine stored = storedEngine();
+    const Engine stored = storedEngine(m_profileId);
     return stored == RustEngine && rustEngineAvailable()
             ? RustEngine : NativeEngine;
 }
 
 void AdBlockManager::setEngine(Engine engine)
 {
-    if (storedEngine() == engine)
+    if (storedEngine(m_profileId) == engine)
         return;
-    ProfileSettings().setValue(QLatin1String("AdBlock/engine"),
+    ProfileSettings(m_profileId).setValue(QLatin1String("AdBlock/engine"),
                          engine == RustEngine
                          ? QLatin1String("rust") : QLatin1String("cpp"));
     // rulesChanged rebuilds the matcher snapshot; the Rust engine is
@@ -159,7 +173,13 @@ bool AdBlockManager::rustEngineInUse() const
 
 AdBlockManager::RemoteListsConsent AdBlockManager::remoteListsConsent()
 {
-    const int value = ProfileSettings().value(
+    return remoteListsConsent(BrowserPaths::activeProfileId());
+}
+
+AdBlockManager::RemoteListsConsent AdBlockManager::remoteListsConsent(
+        const QString &profileId)
+{
+    const int value = ProfileSettings(profileId).value(
         QLatin1String("AdBlock/remoteListsConsent"),
         int(RemoteListsUndecided)).toInt();
     if (value < int(RemoteListsUndecided) || value > int(RemoteListsGranted))
@@ -169,19 +189,30 @@ AdBlockManager::RemoteListsConsent AdBlockManager::remoteListsConsent()
 
 void AdBlockManager::setRemoteListsConsent(RemoteListsConsent consent)
 {
-    ProfileSettings().setValue(QLatin1String("AdBlock/remoteListsConsent"),
-                         int(consent));
+    setRemoteListsConsent(BrowserPaths::activeProfileId(), consent);
+}
+
+void AdBlockManager::setRemoteListsConsent(const QString &profileId,
+                                           RemoteListsConsent consent)
+{
+    ProfileSettings(profileId).setValue(
+        QLatin1String("AdBlock/remoteListsConsent"), int(consent));
 }
 
 bool AdBlockManager::remoteListsAllowed()
 {
-    return remoteListsConsent() == RemoteListsGranted;
+    return remoteListsAllowed(BrowserPaths::activeProfileId());
+}
+
+bool AdBlockManager::remoteListsAllowed(const QString &profileId)
+{
+    return remoteListsConsent(profileId) == RemoteListsGranted;
 }
 
 void AdBlockManager::grantRemoteLists()
 {
-    if (remoteListsConsent() != RemoteListsGranted)
-        setRemoteListsConsent(RemoteListsGranted);
+    if (remoteListsConsent(m_profileId) != RemoteListsGranted)
+        setRemoteListsConsent(m_profileId, RemoteListsGranted);
     // Only stale or never-fetched remote lists need the kick — a
     // freshly downloaded list should not be re-fetched on every
     // enable.
@@ -204,7 +235,8 @@ void AdBlockManager::grantRemoteLists()
 
 void AdBlockManager::maybePromptForListConsent(QWidget *parent)
 {
-    if (remoteListsConsent() != RemoteListsUndecided || !isEnabled())
+    if (remoteListsConsent(m_profileId) != RemoteListsUndecided
+        || !isEnabled())
         return;
     bool hasRemoteSubscription = false;
     const QList<AdBlockSubscription*> list = subscriptions();
@@ -218,7 +250,7 @@ void AdBlockManager::maybePromptForListConsent(QWidget *parent)
         return;
     const QMessageBox::StandardButton choice = QMessageBox::question(parent,
         tr("Download Ad-Blocking Filter Lists?"),
-        tr("Arora is configured to block ads and trackers using the "
+        tr("Arktos is configured to block ads and trackers using the "
            "community filter lists EasyList, EasyPrivacy, and uBlock "
            "filters. Enabling them downloads the lists once from "
            "easylist.to and ublockorigin.github.io and refreshes them "
@@ -229,7 +261,7 @@ void AdBlockManager::maybePromptForListConsent(QWidget *parent)
     if (choice == QMessageBox::Yes)
         grantRemoteLists();
     else
-        setRemoteListsConsent(RemoteListsDeclined);
+        setRemoteListsConsent(m_profileId, RemoteListsDeclined);
 }
 
 AdBlockNetwork *AdBlockManager::network()
@@ -269,7 +301,7 @@ void AdBlockManager::installOnProfile(QWebEngineProfile *profile,
     // the scheme itself is registered in main() before QApplication.
     profile->installUrlSchemeHandler(AdBlockSchemeAccessHandler::schemeName(),
                                      new AdBlockSchemeAccessHandler(this));
-    // arora-resource:// serves the bundled $redirect= stub resources.
+    // arktos-resource:// serves the bundled $redirect= stub resources.
     profile->installUrlSchemeHandler(AdBlockResourceHandler::schemeName(),
                                      new AdBlockResourceHandler(this));
 }
@@ -298,7 +330,7 @@ public:
     {
         Engine::RequestDecision out;
         // STALL01: same scheme guard as the interceptor — internal
-        // schemes (qrc:, arora-resource:, data:, abp:, ...) never
+        // schemes (qrc:, arktos-resource:, data:, abp:, ...) never
         // reach the filter lists.
         if (!AdBlockRequestInterceptor::isWebRequestScheme(
                     request.url.scheme()))
@@ -398,15 +430,15 @@ AdBlockPage *AdBlockManager::page()
     return m_adBlockPage;
 }
 
-static QUrl customSubscriptionLocation()
+QString AdBlockManager::customSubscriptionFile() const
 {
-    QString fileName = BrowserPaths::dataFilePath(QLatin1String("adblock_subscription_custom"));
-    return QUrl::fromLocalFile(fileName);
+    return BrowserPaths::profileDataFilePath(
+        m_profileId, QLatin1String("adblock_subscription_custom"));
 }
 
-QUrl AdBlockManager::customSubscriptionUrl()
+QUrl AdBlockManager::customSubscriptionUrl() const
 {
-    QUrl location = customSubscriptionLocation();
+    QUrl location = QUrl::fromLocalFile(customSubscriptionFile());
     QString encodedUrl = QString::fromUtf8(location.toEncoded());
     QUrl url(QString(QLatin1String("abp:subscribe?location=%1&title=%2"))
             .arg(encodedUrl)
@@ -416,7 +448,7 @@ QUrl AdBlockManager::customSubscriptionUrl()
 
 AdBlockSubscription *AdBlockManager::customRules()
 {
-    QUrl location = customSubscriptionLocation();
+    QUrl location = QUrl::fromLocalFile(customSubscriptionFile());
     for (AdBlockSubscription *subscription : m_subscriptions) {
         if (subscription->location() == location)
             return subscription;
@@ -503,10 +535,38 @@ AdBlockSubscription *AdBlockManager::subscribeRemoteList(
                              // or refetch — the box was already ticked
     // Ticking the preset (or calling this) is explicit consent — grant
     // and fetch now rather than waiting for the next staleness sweep.
-    if (remoteListsConsent() != RemoteListsGranted)
-        setRemoteListsConsent(RemoteListsGranted);
+    if (remoteListsConsent(m_profileId) != RemoteListsGranted)
+        setRemoteListsConsent(m_profileId, RemoteListsGranted);
     subscription->updateNow();
     return subscription;
+}
+
+void AdBlockManager::promptSubscribe(const QUrl &subscribeUrl)
+{
+    AdBlockSubscription *subscription = new AdBlockSubscription(subscribeUrl, this);
+
+    // The subscription title arrives inside the abp:subscribe URL —
+    // page-controlled, so render it literally.
+    QMessageBox box(QMessageBox::Question, tr("Subscribe?"),
+            tr("Subscribe to this AdBlock subscription?\n%1").arg(subscription->title()),
+            QMessageBox::Yes | QMessageBox::No);
+    box.setTextFormat(Qt::PlainText);
+    box.setDefaultButton(QMessageBox::No);
+    const QMessageBox::StandardButton result =
+        static_cast<QMessageBox::StandardButton>(box.exec());
+    if (result == QMessageBox::No) {
+        delete subscription;
+    } else {
+        // TELEM01: clicking Subscribe is consent to fetch the list —
+        // the constructor's automatic update was consent-gated, so
+        // kick the download here.
+        setRemoteListsConsent(m_profileId, RemoteListsGranted);
+        addSubscription(subscription);
+        subscription->updateNow();
+        AdBlockDialog *dialog = showDialog();
+        dialog->selectSubscription(subscription);
+        dialog->setFocus();
+    }
 }
 
 void AdBlockManager::save()
@@ -517,7 +577,7 @@ void AdBlockManager::save()
     if (!m_loaded)
         return;
 
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     settings.beginGroup(QLatin1String("AdBlock"));
     settings.setValue(QLatin1String("enabled"), m_enabled);
     QStringList subscriptions;
@@ -540,7 +600,7 @@ void AdBlockManager::load()
         return;
     m_loaded = true;
 
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     settings.beginGroup(QLatin1String("AdBlock"));
     m_enabled = settings.value(QLatin1String("enabled"), m_enabled).toBool();
 
@@ -617,7 +677,7 @@ void AdBlockManager::load()
         m_subscriptions.append(adBlockSubscription);
     }
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // SITED01: retire site-whitelist rules from the custom-rules file
     // into the Rust store — they are per-site decisions, not list
     // content.  Only an already-loaded custom subscription is
@@ -626,8 +686,10 @@ void AdBlockManager::load()
     // "@@||<host>^$document" exactly as siteWhitelistFilter produces;
     // anything else stays where it is.
     AdBlockSubscription *custom = nullptr;
+    const QUrl customLocation =
+        QUrl::fromLocalFile(customSubscriptionFile());
     for (AdBlockSubscription *subscription : m_subscriptions) {
-        if (subscription->location() == customSubscriptionLocation()) {
+        if (subscription->location() == customLocation) {
             custom = subscription;
             break;
         }
@@ -692,7 +754,7 @@ bool AdBlockManager::isSiteWhitelisted(const QString &host)
     const QString key = siteWhitelistKey(host);
     if (key.isEmpty())
         return false;
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // subscriptions() forces load() — the one-shot custom-rules
     // migration — before the store is consulted.
     subscriptions();
@@ -714,7 +776,7 @@ void AdBlockManager::setSiteWhitelisted(const QString &host, bool whitelisted)
     const QString key = siteWhitelistKey(host);
     if (key.isEmpty())
         return;
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     subscriptions();
     if (whitelisted)
         SiteDecisionStore::set(SiteDecisionStore::KindAdBlock,

@@ -13,7 +13,7 @@
  *
  * Contract (spec c): every API method either works or throws a TYPED
  * error the shim surfaces to ExtensionInfo::health — recorded into
- * __aroraShim.gaps and forwarded via invoke('shim','gap').  APIs that
+ * __arktosShim.gaps and forwarded via invoke('shim','gap').  APIs that
  * are legitimately absent (no browser surface exists) answer
  * {ok:false,error:'unsupported'} the same way — nothing silently
  * no-ops.
@@ -57,13 +57,13 @@
  */
 (function () {
     'use strict';
-    var host = window.__aroraHost;
-    var cfg = window.__ARORA_HOST_CONFIG;
-    if (!host || !cfg || !cfg.id || window.__aroraShim)
+    var host = window.__arktosHost;
+    var cfg = window.__ARKTOS_HOST_CONFIG;
+    if (!host || !cfg || !cfg.id || window.__arktosShim)
         return;
 
     var LOG_CAP = 500;
-    var shim = window.__aroraShim = {
+    var shim = window.__arktosShim = {
         version: 3,
         gaps: [],       // typed errors observed (health surface)
         notes: [],      // benign diagnostics (recorded registrations,
@@ -125,15 +125,15 @@
     function onHostEvent(name, payload) {
         // Host->page pushes: relay envelopes/responses and (from
         // EXT16) real event deliveries into the shim event registry.
-        if (name === '__arora.relay') {
+        if (name === '__arktos.relay') {
             onRelayMessage(payload);
             return;
         }
-        if (name === '__arora.relayResponse') {
+        if (name === '__arktos.relayResponse') {
             onRelayResponse(payload);
             return;
         }
-        if (name === '__arora.portConnect') {
+        if (name === '__arktos.portConnect') {
             // A sibling context offered a port — accept it on behalf
             // of this context's runtime.onConnect listeners.
             if (payload && payload.chan) {
@@ -149,14 +149,14 @@
             }
             return;
         }
-        if (name === '__arora.portMessage') {
+        if (name === '__arktos.portMessage') {
             if (payload && shim.ports[payload.portId])
                 shim.ports[payload.portId].onMessage
                     .__fire([payload.msg,
                              shim.ports[payload.portId]]);
             return;
         }
-        if (name === '__arora.portDisconnect') {
+        if (name === '__arktos.portDisconnect') {
             if (payload && shim.ports[payload.portId]) {
                 var dp = shim.ports[payload.portId];
                 dp.disconnected = true;
@@ -585,7 +585,7 @@
             note('chrome.tabs: native binding kept — filling missing '
                  + 'members');
             for (var tk in tabsNsRef) {
-                if (tk === '__aroraShim')
+                if (tk === '__arktosShim')
                     continue;
                 if (chrome.tabs[tk] === undefined)
                     safeSet(chrome.tabs, tk, tabsNsRef[tk],
@@ -706,8 +706,8 @@
     }
 
     function envelopeOf(msg) {
-        if (msg && msg.__aroraMsg && msg.__aroraMsg.mid)
-            return msg.__aroraMsg;
+        if (msg && msg.__arktosMsg && msg.__arktosMsg.mid)
+            return msg.__arktosMsg;
         return null;
     }
 
@@ -973,7 +973,7 @@
                 touch('chrome.runtime.sendMessage');
                 var mid = cfg.id + '#' + (++shim.seq) + '#'
                           + Date.now();
-                var envelope = { __aroraMsg: { mid: mid, msg: msg,
+                var envelope = { __arktosMsg: { mid: mid, msg: msg,
                                                extId: cfg.id,
                                                senderUrl:
                                                    String(location
@@ -1141,7 +1141,7 @@
         // EXT17: connection events get the onMessage treatment.  A
         // native onConnect may exist — but a native connect can only
         // target the dead service worker, so the extension's listener
-        // must ALSO land on the shim event the __arora.portConnect
+        // must ALSO land on the shim event the __arktos.portConnect
         // delivery fires.  The real Bitwarden popup opened its
         // 'session' port into exactly this dead end (the bg-side port
         // registered but onConnect never fired — Angular's bootstrap
@@ -1341,7 +1341,7 @@
     // (the EXT13 spike measured it working, and replacing it would
     // fork the extension's state).  The bridge store backs contexts
     // where the bindings are absent and is exercised directly via
-    // __aroraShim.storageArea().
+    // __arktosShim.storageArea().
     function bridgeStorageArea(areaName) {
         var areaEvent = makeEvent('storage.' + areaName + '.onChanged');
         function afterMutate(result) {
@@ -1725,7 +1725,7 @@
         'onReplaced', 'onZoomChange'];
     if (typeof chrome !== 'undefined') {
         var realTabs = chrome.tabs || {};
-        var tabsNs = { __aroraShim: true };
+        var tabsNs = { __arktosShim: true };
         for (var te = 0; te < tabsEvents.length; ++te) {
             // Shim events replace inert/absent event objects — EXT16
             // pushes real browser signals into them via hostEvent.
@@ -1839,7 +1839,7 @@
     // are the shim events EXT16 pushes.  create/update/remove keep
     // their typed-error stubs via fillNs below.
     if (typeof chrome !== 'undefined') {
-        var winNs = { __aroraShim: true };
+        var winNs = { __arktosShim: true };
         var winEventNames = ['onCreated', 'onRemoved',
             'onFocusChanged', 'onBoundsChanged'];
         for (var wne = 0; wne < winEventNames.length; ++wne)
@@ -2102,7 +2102,7 @@
                 var p = call('sidePanel', 'setOptions',
                              { options: options || {} });
                 note('chrome.sidePanel.setOptions: options recorded '
-                     + 'host-side; Arora has no side-panel surface');
+                     + 'host-side; Arktos has no side-panel surface');
                 if (cb)
                     p.then(function () { cb(); }, function () { cb(); });
                 return p.then(function () {});
@@ -2424,7 +2424,7 @@
                 if (!noted[p]) {
                     noted[p] = 1;
                     note(p + ' accessed — ' + path
-                         + ' has no Arora surface');
+                         + ' has no Arktos surface');
                 }
                 return function () {
                     var cb = null;

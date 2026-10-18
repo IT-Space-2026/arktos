@@ -18,14 +18,14 @@ p, li { white-space: pre-wrap; }
 &lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2010 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2026-2027 Janos Szenfner&lt;/p&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;a href=&quot;https://github.com/janos-szenfner/arora&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;https://github.com/janos-szenfner/arora&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;a href=&quot;https://github.com/arktos-browser/arktos&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;https://github.com/arktos-browser/arktos&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
         <translation>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
 &lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
 p, li { white-space: pre-wrap; }
 &lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2010 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2026-2027 Janos Szenfner&lt;/p&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;a href=&quot;https://github.com/janos-szenfner/arora&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;https://github.com/janos-szenfner/arora&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;a href=&quot;https://github.com/arktos-browser/arktos&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;https://github.com/arktos-browser/arktos&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
     </message>
     <message>
         <source>Authors</source>
@@ -52,8 +52,8 @@ p, li { white-space: pre-wrap; }
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2008 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
     </message>
     <message>
-        <source>&lt;a href=&quot;http://arora-browser.org&quot;&gt;http://arora-browser.org&lt;/a&gt;</source>
-        <translation>&lt;a href=&quot;http://arora-browser.org&quot;&gt;http://arora-browser.org&lt;/a&gt;</translation>
+        <source>&lt;a href=&quot;http://arktos-browser.com&quot;&gt;http://arktos-browser.com&lt;/a&gt;</source>
+        <translation>&lt;a href=&quot;http://arktos-browser.com&quot;&gt;http://arktos-browser.com&lt;/a&gt;</translation>
     </message>
     <message>
         <source>Close</source>
@@ -203,10 +203,10 @@ p, li { white-space: pre-wrap; }
         <translation>Kas laadida alla reklaamide blokeerimise filtriloendid?</translation>
     </message>
     <message>
-        <source>Arora is configured to block ads and trackers using the community filter lists EasyList, EasyPrivacy, and uBlock filters. Enabling them downloads the lists once from easylist.to and ublockorigin.github.io and refreshes them about once a week.
+        <source>Arktos is configured to block ads and trackers using the community filter lists EasyList, EasyPrivacy, and uBlock filters. Enabling them downloads the lists once from easylist.to and ublockorigin.github.io and refreshes them about once a week.
 
 Until you choose, no list downloads are made and the blocker simply has no remote rules. You can change this later under Tools &gt; Ad Block.</source>
-        <translation>Arora on seadistatud blokeerima reklaame ja jälgijaid kogukonna filtriloendite EasyList, EasyPrivacy ja uBlocki filtrite abil. Nende lubamisel laaditakse loendid üks kord alla aadressitelt easylist.to ja ublockorigin.github.io ning neid värskendatakse umbes kord nädalas.
+        <translation>Arktos on seadistatud blokeerima reklaame ja jälgijaid kogukonna filtriloendite EasyList, EasyPrivacy ja uBlocki filtrite abil. Nende lubamisel laaditakse loendid üks kord alla aadressitelt easylist.to ja ublockorigin.github.io ning neid värskendatakse umbes kord nädalas.
 
 Kuni valikut ei tehta, ühtegi loendit alla ei laadita ja blokeerijal pole lihtsalt kaugreegleid. Seda saab hiljem muuta menüüst Tööriistad &gt; Reklaamiblokeerija.</translation>
     </message>
@@ -321,8 +321,8 @@ Kuni valikut ei tehta, ühtegi loendit alla ei laadita ja blokeerijal pole lihts
         <translation>Filtriloendite eelseadistused</translation>
     </message>
     <message>
-        <source>Tick a list to subscribe to it; Arora downloads it once and refreshes it about once a week. Unticking disables the subscription. Lists already subscribed to (including the defaults) show as ticked.</source>
-        <translation>Märgi loend, et seda tellida; Arora laadib selle üks kord alla ja värskendab seda umbes kord nädalas. Märke eemaldamine keelab tellimuse. Juba tellitud loendid (sealhulgas vaikeväärtused) kuvatakse märgituna.</translation>
+        <source>Tick a list to subscribe to it; Arktos downloads it once and refreshes it about once a week. Unticking disables the subscription. Lists already subscribed to (including the defaults) show as ticked.</source>
+        <translation>Märgi loend, et seda tellida; Arktos laadib selle üks kord alla ja värskendab seda umbes kord nädalas. Märke eemaldamine keelab tellimuse. Juba tellitud loendid (sealhulgas vaikeväärtused) kuvatakse märgituna.</translation>
     </message>
 </context>
 <context>
@@ -433,7 +433,7 @@ Kuni valikut ei tehta, ühtegi loendit alla ei laadita ja blokeerijal pole lihts
     </message>
 </context>
 <context>
-    <name>AroraIcon</name>
+    <name>ArktosIcon</name>
     <message>
         <source>Native</source>
         <translation>Natiivne</translation>
@@ -866,12 +866,12 @@ Do you want to quit anyway?</source>
         <translation>Taastamine ebaõnnestus</translation>
     </message>
     <message>
-        <source>The saved session will not being restored because last time it was restored Arora crashed.</source>
-        <translation type="obsolete">Salvestatud sessiooni ei taastata, sest viimane kord kui Arora seda üritas, jooksis ta kokku.</translation>
+        <source>The saved session will not being restored because last time it was restored Arktos crashed.</source>
+        <translation type="obsolete">Salvestatud sessiooni ei taastata, sest viimane kord kui Arktos seda üritas, jooksis ta kokku.</translation>
     </message>
     <message>
-        <source>Arora crashed while trying to restore this session.  Should I try again?</source>
-        <translation>Arora jooksis sessiooni taastamisel kokku. Kas proovida uuesti?</translation>
+        <source>Arktos crashed while trying to restore this session.  Should I try again?</source>
+        <translation>Arktos jooksis sessiooni taastamisel kokku. Kas proovida uuesti?</translation>
     </message>
 </context>
 <context>
@@ -1070,8 +1070,8 @@ Do you want to quit anyway?</source>
         <translation>Lähemalt &amp;Qt kohta</translation>
     </message>
     <message>
-        <source>About &amp;Arora</source>
-        <translation type="obsolete">Lähemalt &amp;Arora kohta</translation>
+        <source>About &amp;Arktos</source>
+        <translation type="obsolete">Lähemalt &amp;Arktos kohta</translation>
     </message>
     <message>
         <source>Navigation</source>
@@ -1094,13 +1094,13 @@ Do you want to quit anyway?</source>
         <translation>Peida tööriistariba</translation>
     </message>
     <message>
-        <source>Arora</source>
-        <translation type="obsolete">Arora</translation>
+        <source>Arktos</source>
+        <translation type="obsolete">Arktos</translation>
     </message>
     <message>
-        <source>%1 - Arora</source>
+        <source>%1 - Arktos</source>
         <comment>Page title and Browser name</comment>
-        <translation>%1 - Arora</translation>
+        <translation>%1 - Arktos</translation>
     </message>
     <message>
         <source>Open Web Resource</source>
@@ -2451,14 +2451,14 @@ Kas soovite siiski väljuda?</translation>
     </message>
 </context>
 <context>
-    <name>JavaScriptAroraObject</name>
+    <name>JavaScriptArktosObject</name>
     <message>
-        <source>Welcome to Arora!</source>
-        <translation>Tere tulemast Arorasse!</translation>
+        <source>Welcome to Arktos!</source>
+        <translation>Tere tulemast Arktosesse!</translation>
     </message>
     <message>
-        <source>Arora Start</source>
-        <translation>Arora avaleht</translation>
+        <source>Arktos Start</source>
+        <translation>Arktos avaleht</translation>
     </message>
     <message>
         <source>Search!</source>
@@ -2469,8 +2469,8 @@ Kas soovite siiski väljuda?</translation>
         <translation>Otsingutulemusi pakub</translation>
     </message>
     <message>
-        <source>About Arora</source>
-        <translation>Lähemalt Arora kohta</translation>
+        <source>About Arktos</source>
+        <translation>Lähemalt Arktos kohta</translation>
     </message>
 </context>
 <context>
@@ -3349,8 +3349,8 @@ liiga pikk.</translation>
         <translation>Väljumisel kustuta ajalugu, küpsised, saitide salvestusruum ja puhverdatud andmed — kõik, mida privaatsete andmete kustutamine hõlmab. Saidid, kuhu oled sisse logitud, logitakse välja.</translation>
     </message>
     <message>
-        <source>Clear browsing data when Arora exits</source>
-        <translation>Kustuta lehitsemisandmed Arora sulgemisel</translation>
+        <source>Clear browsing data when Arktos exits</source>
+        <translation>Kustuta lehitsemisandmed Arktos sulgemisel</translation>
     </message>
     <message>
         <source>PDF Documents</source>
@@ -3857,8 +3857,8 @@ liiga pikk.</translation>
         <translation>Teema:</translation>
     </message>
     <message>
-        <source>Color scheme for Arora&apos;s own windows, menus and dialogs. &quot;System default&quot; follows the desktop preference.</source>
-        <translation>Värviskeem Arora enda akendele, menüüdele ja dialoogidele. &quot;Süsteemi vaikimisi&quot; järgib töölaua eelistust.</translation>
+        <source>Color scheme for Arktos&apos;s own windows, menus and dialogs. &quot;System default&quot; follows the desktop preference.</source>
+        <translation>Värviskeem Arktos enda akendele, menüüdele ja dialoogidele. &quot;Süsteemi vaikimisi&quot; järgib töölaua eelistust.</translation>
     </message>
     <message>
         <source>Theme</source>
@@ -3881,8 +3881,8 @@ liiga pikk.</translation>
         <translation>Kehtib rakenduse raamile; lehesisu tume režiim on eraldi seade &quot;Renderda lehed tumeda režiimiga&quot; allpool.</translation>
     </message>
     <message>
-        <source>Pages that ship their own dark theme use it; light-only pages get a heuristic color inversion with a contrast floor so text stays readable. Images and videos are not inverted. Only web content is affected — Arora&apos;s own windows keep the desktop palette.</source>
-        <translation>Lehed, millel on oma tume teema, kasutavad seda; ainult heledad lehed saavad heuristilise värvipööramise kontrasti alampiiriga, et tekst jääks loetavaks. Pilte ja videoid ei pöörata. Mõjutatud on ainult veebisisu — Arora enda aknad säilitavad töölaua paleti.</translation>
+        <source>Pages that ship their own dark theme use it; light-only pages get a heuristic color inversion with a contrast floor so text stays readable. Images and videos are not inverted. Only web content is affected — Arktos&apos;s own windows keep the desktop palette.</source>
+        <translation>Lehed, millel on oma tume teema, kasutavad seda; ainult heledad lehed saavad heuristilise värvipööramise kontrasti alampiiriga, et tekst jääks loetavaks. Pilte ja videoid ei pöörata. Mõjutatud on ainult veebisisu — Arktos enda aknad säilitavad töölaua paleti.</translation>
     </message>
     <message>
         <source>Render pages in dark mode</source>
@@ -4069,8 +4069,8 @@ liiga pikk.</translation>
         <translation>Eemalda iga allalaadimine selle lõpetamisel</translation>
     </message>
     <message>
-        <source>Render pages on the GPU. Turned off, Arora adds --disable-gpu to the engine flags — the switch latches at startup, so the change takes effect on the next launch.</source>
-        <translation>Renderda lehed GPU-l. Välja lülitatuna lisab Arora mootori lippudele --disable-gpu — lüliti rakendub käivitusel, seega muudatus jõustub järgmisel käivitusel.</translation>
+        <source>Render pages on the GPU. Turned off, Arktos adds --disable-gpu to the engine flags — the switch latches at startup, so the change takes effect on the next launch.</source>
+        <translation>Renderda lehed GPU-l. Välja lülitatuna lisab Arktos mootori lippudele --disable-gpu — lüliti rakendub käivitusel, seega muudatus jõustub järgmisel käivitusel.</translation>
     </message>
     <message>
         <source>Use Hardware Acceleration When Available</source>
@@ -5396,12 +5396,12 @@ ainult sellega — võti tuletatakse mälus ega kirjutata kettale.</translation>
         <translation>Kohalik sisu</translation>
     </message>
     <message>
-        <source>TLS verified by Arora</source>
-        <translation>TLS-i verifitseeris Arora</translation>
+        <source>TLS verified by Arktos</source>
+        <translation>TLS-i verifitseeris Arktos</translation>
     </message>
     <message>
-        <source>TLS verified by Arora (%1)</source>
-        <translation>TLS-i verifitseeris Arora (%1)</translation>
+        <source>TLS verified by Arktos (%1)</source>
+        <translation>TLS-i verifitseeris Arktos (%1)</translation>
     </message>
     <message>
         <source>The certificate chain was re-verified independently of the web engine.</source>
@@ -5997,8 +5997,8 @@ Igaüks võrgus võiks andmeid lugeda või muuta — sealhulgas salasõnu.</tran
         <translation>Ühendamisel aadressiga: %1.</translation>
     </message>
     <message>
-        <source>Check the address for errors such as &lt;b&gt;ww&lt;/b&gt;.arora-browser.org instead of &lt;b&gt;www&lt;/b&gt;.arora-browser.org</source>
-        <translation>Kontrolli aadressi vigade suhtes, nt &lt;b&gt;ww&lt;/b&gt;.arora-browser.org asemel &lt;b&gt;www&lt;/b&gt;.arora-browser.org</translation>
+        <source>Check the address for errors such as &lt;b&gt;ww&lt;/b&gt;.arktos-browser.com instead of &lt;b&gt;www&lt;/b&gt;.arktos-browser.com</source>
+        <translation>Kontrolli aadressi vigade suhtes, nt &lt;b&gt;ww&lt;/b&gt;.arktos-browser.com asemel &lt;b&gt;www&lt;/b&gt;.arktos-browser.com</translation>
     </message>
     <message>
         <source>If your computer or network is protected by a firewall or proxy, make sure that the browser is permitted to access the network.</source>
@@ -6041,20 +6041,20 @@ Igaüks võrgus võiks andmeid lugeda või muuta — sealhulgas salasõnu.</tran
         <translation>&lt;li&gt;SHA-256 sõrmejälg: %1&lt;/li&gt;</translation>
     </message>
     <message>
-        <source>&lt;a id=&quot;back&quot; href=&quot;arora-cert-error:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
-        <translation>&lt;a id=&quot;back&quot; href=&quot;arora-cert-error:back?n=%1&quot;&gt;Tagasi turvalisse kohta&lt;/a&gt;</translation>
+        <source>&lt;a id=&quot;back&quot; href=&quot;arktos-cert-error:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
+        <translation>&lt;a id=&quot;back&quot; href=&quot;arktos-cert-error:back?n=%1&quot;&gt;Tagasi turvalisse kohta&lt;/a&gt;</translation>
     </message>
     <message>
-        <source>&lt;a id=&quot;proceed&quot; href=&quot;arora-cert-error:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
-        <translation>&lt;a id=&quot;proceed&quot; href=&quot;arora-cert-error:proceed?n=%1&quot;&gt;Jätka ikkagi (ebaturvaline)&lt;/a&gt;</translation>
+        <source>&lt;a id=&quot;proceed&quot; href=&quot;arktos-cert-error:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
+        <translation>&lt;a id=&quot;proceed&quot; href=&quot;arktos-cert-error:proceed?n=%1&quot;&gt;Jätka ikkagi (ebaturvaline)&lt;/a&gt;</translation>
     </message>
     <message>
         <source>This site&apos;s certificate is not trusted</source>
         <translation>Selle saidi sertifikaat pole usaldusväärne</translation>
     </message>
     <message>
-        <source>Arora cannot verify the identity of %1. The certificate presented by the server is invalid — continuing could expose the connection to an attacker.</source>
-        <translation>Arora ei saa %1 identiteeti verifitseerida. Serveri esitatud sertifikaat on vigane — jätkamine võib ühenduse ründajale avada.</translation>
+        <source>Arktos cannot verify the identity of %1. The certificate presented by the server is invalid — continuing could expose the connection to an attacker.</source>
+        <translation>Arktos ei saa %1 identiteeti verifitseerida. Serveri esitatud sertifikaat on vigane — jätkamine võib ühenduse ründajale avada.</translation>
     </message>
     <message>
         <source>%1 (issued by %2, expires %3)</source>
@@ -6069,16 +6069,16 @@ Igaüks võrgus võiks andmeid lugeda või muuta — sealhulgas salasõnu.</tran
         <translation>Sait aadressil %1 palub sul end sertifikaadiga tuvastada.  Vali saatmiseks üks või tühista, et jätkata tuvastamata.</translation>
     </message>
     <message>
-        <source>&lt;a id=&quot;back&quot; href=&quot;arora-http-warning:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
-        <translation>&lt;a id=&quot;back&quot; href=&quot;arora-http-warning:back?n=%1&quot;&gt;Tagasi turvalisse kohta&lt;/a&gt;</translation>
+        <source>&lt;a id=&quot;back&quot; href=&quot;arktos-http-warning:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
+        <translation>&lt;a id=&quot;back&quot; href=&quot;arktos-http-warning:back?n=%1&quot;&gt;Tagasi turvalisse kohta&lt;/a&gt;</translation>
     </message>
     <message>
-        <source>&lt;a id=&quot;proceed&quot; href=&quot;arora-http-warning:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
-        <translation>&lt;a id=&quot;proceed&quot; href=&quot;arora-http-warning:proceed?n=%1&quot;&gt;Jätka ikkagi (ebaturvaline)&lt;/a&gt;</translation>
+        <source>&lt;a id=&quot;proceed&quot; href=&quot;arktos-http-warning:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
+        <translation>&lt;a id=&quot;proceed&quot; href=&quot;arktos-http-warning:proceed?n=%1&quot;&gt;Jätka ikkagi (ebaturvaline)&lt;/a&gt;</translation>
     </message>
     <message>
-        <source>&lt;a id=&quot;always&quot; href=&quot;arora-http-warning:always?n=%1&quot;&gt;Always allow HTTP on this site&lt;/a&gt;</source>
-        <translation>&lt;a id=&quot;always&quot; href=&quot;arora-http-warning:always?n=%1&quot;&gt;Luba HTTP sellel saidil alati&lt;/a&gt;</translation>
+        <source>&lt;a id=&quot;always&quot; href=&quot;arktos-http-warning:always?n=%1&quot;&gt;Always allow HTTP on this site&lt;/a&gt;</source>
+        <translation>&lt;a id=&quot;always&quot; href=&quot;arktos-http-warning:always?n=%1&quot;&gt;Luba HTTP sellel saidil alati&lt;/a&gt;</translation>
     </message>
     <message>
         <source>Insecure connection: %1</source>
@@ -6089,8 +6089,8 @@ Igaüks võrgus võiks andmeid lugeda või muuta — sealhulgas salasõnu.</tran
         <translation>See sait ei toeta HTTPS-i</translation>
     </message>
     <message>
-        <source>Arora stopped %1 from loading because it can only be reached over an unencrypted HTTP connection.  Anyone on the network path can read or change everything sent to or received from this site — including passwords and cookies.</source>
-        <translation>Arora peatas %1 laadimise, sest see on kättesaadav ainult krüpteerimata HTTP-ühenduse kaudu.  Igaüks võrguteel võib lugeda või muuta kõike, mida sellele saidile saadetakse või sealt saadetakse — sealhulgas salasõnu ja küpsiseid.</translation>
+        <source>Arktos stopped %1 from loading because it can only be reached over an unencrypted HTTP connection.  Anyone on the network path can read or change everything sent to or received from this site — including passwords and cookies.</source>
+        <translation>Arktos peatas %1 laadimise, sest see on kättesaadav ainult krüpteerimata HTTP-ühenduse kaudu.  Igaüks võrguteel võib lugeda või muuta kõike, mida sellele saidile saadetakse või sealt saadetakse — sealhulgas salasõnu ja küpsiseid.</translation>
     </message>
     <message>
         <source>Requested address: %1</source>
@@ -6101,12 +6101,12 @@ Igaüks võrgus võiks andmeid lugeda või muuta — sealhulgas salasõnu.</tran
         <translation>Sait ei pruugi lihtsalt turvalist versiooni pakkuda või võrguründaja võis ühenduse tagasi HTTP-le alandada.</translation>
     </message>
     <message>
-        <source>&lt;a id=&quot;back&quot; href=&quot;arora-site-block:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
-        <translation>&lt;a id=&quot;back&quot; href=&quot;arora-site-block:back?n=%1&quot;&gt;Tagasi turvalisse kohta&lt;/a&gt;</translation>
+        <source>&lt;a id=&quot;back&quot; href=&quot;arktos-site-block:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
+        <translation>&lt;a id=&quot;back&quot; href=&quot;arktos-site-block:back?n=%1&quot;&gt;Tagasi turvalisse kohta&lt;/a&gt;</translation>
     </message>
     <message>
-        <source>&lt;a id=&quot;proceed&quot; href=&quot;arora-site-block:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
-        <translation>&lt;a id=&quot;proceed&quot; href=&quot;arora-site-block:proceed?n=%1&quot;&gt;Jätka ikkagi (ebaturvaline)&lt;/a&gt;</translation>
+        <source>&lt;a id=&quot;proceed&quot; href=&quot;arktos-site-block:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
+        <translation>&lt;a id=&quot;proceed&quot; href=&quot;arktos-site-block:proceed?n=%1&quot;&gt;Jätka ikkagi (ebaturvaline)&lt;/a&gt;</translation>
     </message>
     <message>
         <source>Dangerous site blocked: %1</source>
@@ -6117,8 +6117,8 @@ Igaüks võrgus võiks andmeid lugeda või muuta — sealhulgas salasõnu.</tran
         <translation>See sait on kohalikus andmepüügi/pahavara blokeerimisloendis</translation>
     </message>
     <message>
-        <source>Arora stopped %1 from loading because the domain is listed as serving phishing or malware.  Visiting it can steal credentials or infect this computer.</source>
-        <translation>Arora peatas %1 laadimise, sest domeen on märgitud andmepüüki või pahavara levitavaks.  Selle külastamine võib varastada kasutajatunnuseid või nakatada selle arvuti.</translation>
+        <source>Arktos stopped %1 from loading because the domain is listed as serving phishing or malware.  Visiting it can steal credentials or infect this computer.</source>
+        <translation>Arktos peatas %1 laadimise, sest domeen on märgitud andmepüüki või pahavara levitavaks.  Selle külastamine võib varastada kasutajatunnuseid või nakatada selle arvuti.</translation>
     </message>
     <message>
         <source>The list is a local copy — no lookup left this computer.  Proceeding is remembered only for this session.</source>
@@ -6129,8 +6129,8 @@ Igaüks võrgus võiks andmeid lugeda või muuta — sealhulgas salasõnu.</tran
         <translation>Google piiras selle ühenduse sagedust.</translation>
     </message>
     <message>
-        <source>This is Google&apos;s bot check, not an Arora error — it temporarily flagged search traffic from this profile. Complete the prompt below or try again later; or switch the default search engine under Tools &gt; Options &gt; Search.</source>
-        <translation>See on Google&apos;i robotikontroll, mitte Arora viga — see märkis ajutiselt selle profiili otsinguliikluse. Täida allolev viip või proovi hiljem uuesti; või vaheta vaikimisi otsingumootorit jaotises Tööriistad &gt; Suvandid &gt; Otsing.</translation>
+        <source>This is Google&apos;s bot check, not an Arktos error — it temporarily flagged search traffic from this profile. Complete the prompt below or try again later; or switch the default search engine under Tools &gt; Options &gt; Search.</source>
+        <translation>See on Google&apos;i robotikontroll, mitte Arktos viga — see märkis ajutiselt selle profiili otsinguliikluse. Täida allolev viip või proovi hiljem uuesti; või vaheta vaikimisi otsingumootorit jaotises Tööriistad &gt; Suvandid &gt; Otsing.</translation>
     </message>
     <message>
         <source>If the address is correct, try checking the network connection.</source>
@@ -6376,8 +6376,8 @@ Kas lubada?</translation>
 <context>
     <name>main</name>
     <message>
-        <source>Arora — a lightweight cross-platform web browser.</source>
-        <translation>Arora — kerge platvormideülene veebilehitseja.</translation>
+        <source>Arktos — a lightweight cross-platform web browser.</source>
+        <translation>Arktos — kerge platvormideülene veebilehitseja.</translation>
     </message>
     <message>
         <source>Url to open on startup.</source>
@@ -6388,8 +6388,8 @@ Kas lubada?</translation>
         <translation>Ava Tori aken: eraldi protsess, mis suunab kogu liikluse hallatava tor-deemoni SOCKS5-kuulaja kaudu spetsiaalsel off-the-record-profiilil.</translation>
     </message>
     <message>
-        <source>Run without the filesystem sandbox (equivalent to ARORA_NO_SANDBOX=1).</source>
-        <translation>Käivita ilma failisüsteemi liivakastita (vastab ARORA_NO_SANDBOX=1).</translation>
+        <source>Run without the filesystem sandbox (equivalent to ARKTOS_NO_SANDBOX=1).</source>
+        <translation>Käivita ilma failisüsteemi liivakastita (vastab ARKTOS_NO_SANDBOX=1).</translation>
     </message>
     <message>
         <source>Print the sandbox backend, state and active policy, then exit.</source>

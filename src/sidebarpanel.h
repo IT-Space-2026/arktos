@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -47,12 +47,15 @@ class QStackedWidget;
 class QTabWidget;
 class QTextBrowser;
 class QToolButton;
+class QTreeWidget;
+class QTreeWidgetItem;
 class SearchLineEdit;
 class TreeSortFilterProxyModel;
 
 // SIDE01: the content widget of the optional Vivaldi-style sidebar
-// dock.  Four switchable sections — bookmarks, history, downloads and
-// the NOTE02 multi-note notes page — over the existing shared models.
+// dock.  Five switchable sections — bookmarks, history, downloads,
+// the NOTE02 multi-note notes page, and the TABGRP03 Workspaces
+// tab-group overview — over the existing shared models.
 class SidebarPanel : public QWidget
 {
     Q_OBJECT
@@ -76,7 +79,7 @@ public:
     struct Panel {
         QByteArray id;
         QString title;
-        QByteArray iconName;    // freedesktop-style AroraIcon name
+        QByteArray iconName;    // freedesktop-style ArktosIcon name
         std::function<QWidget *(SidebarPanel *)> create;
     };
 
@@ -171,6 +174,11 @@ private slots:
     void setOpenNoteMarkdown(bool markdown);
     void updateNoteBodyPage();
     void insertCurrentPageUrl();
+    // TABGRP03: the Workspaces page — the group's tree rebuilds on the
+    // window's tabGroupsChanged()/tabsChanged(), and a member click
+    // activates its tab (or expands the collapsed group first).
+    void refreshWorkspaces();
+    void openWorkspaceMember(QTreeWidgetItem *item);
 
 private:
     static QList<Panel> &registry();
@@ -194,6 +202,7 @@ private:
     QWidget *buildHistoryPage();
     QWidget *buildDownloadsPage();
     QWidget *buildNotesPage();
+    QWidget *buildWorkspacesPage();
     int indexOfPanel(const QByteArray &id) const;
     QModelIndex selectedBookmarkFolder() const;
     // DOWN04: the item behind the list's current row (nullptr when
@@ -245,6 +254,10 @@ private:
     QPointer<QLineEdit> m_noteTitle;
     QPointer<QPlainTextEdit> m_notes;
     QPersistentModelIndex m_editingNote;
+    // TABGRP03: the Workspaces page — an empty-state/list stack and
+    // the group tree it swaps to once the window has tab groups.
+    QPointer<QStackedWidget> m_workspacesStack;
+    QPointer<QTreeWidget> m_workspacesTree;
     AutoSaver *m_autoSaver;
     // SIDE09: sidebar/lazyLoad — visible panels sit behind a
     // placeholder page until first selected.

@@ -60,11 +60,12 @@
 #include "profilesettings.h"
 
 #include "autosaver.h"
+#include "browserpaths.h"
 #include "browserprofile.h"
 #include "flowlayout.h"
 #include "pdfsupport.h"
 #include "webenginebackend.h"
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
 #include "rustdownloadengine.h"
 #endif
 
@@ -179,7 +180,7 @@ DownloadItem::DownloadItem(Engine::DownloadRequest *download, bool requestFileNa
     progressBar->setMaximum(0);
     // UIP02: this row packs three compact buttons — exempt it from the
     // dialog-wide minimum button width/height polish.
-    setProperty("aroraNoButtonPolish", true);
+    setProperty("arktosNoButtonPolish", true);
     tryAgainButton->hide();
     applyDetailsCardStyle();
     expandButton->setAccessibleName(tr("Show download details"));
@@ -195,7 +196,8 @@ DownloadItem::DownloadItem(Engine::DownloadRequest *download, bool requestFileNa
     updateDetails();
 
     if (!requestFileName) {
-        ProfileSettings settings;
+        ProfileSettings settings(m_manager
+            ? m_manager->profileId() : BrowserPaths::activeProfileId());
         settings.beginGroup(QLatin1String("downloadmanager"));
         m_requestFileName = settings.value(QLatin1String("alwaysPromptForFileName"), false).toBool();
     }
@@ -203,7 +205,7 @@ DownloadItem::DownloadItem(Engine::DownloadRequest *download, bool requestFileNa
     init();
 }
 
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
 DownloadItem::DownloadItem(RustDownloadEngine *engine, bool requestFileName, QWidget *parent)
     : DownloadItem(static_cast<Engine::DownloadRequest*>(nullptr),
                    requestFileName, parent)
@@ -231,7 +233,7 @@ DownloadItem::DownloadItem(RustDownloadEngine *engine, bool requestFileName, QWi
 void DownloadItem::init()
 {
     bool haveBackend = m_download != nullptr;
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
     haveBackend = haveBackend || m_engine != nullptr;
 #endif
     if (!haveBackend)
@@ -272,7 +274,7 @@ void DownloadItem::init()
         connect(m_download, &Engine::DownloadRequest::totalBytesChanged,
                 this, &DownloadItem::downloadProgressUpdate);
     }
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
     else if (m_engine)
         m_url = m_engine->url();
 #endif
@@ -310,7 +312,7 @@ void DownloadItem::attach(Engine::DownloadRequest *download)
 void DownloadItem::getFileName()
 {
     if (m_gettingFileName || (!m_download
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
         && !m_engine
 #endif
             ))
@@ -346,7 +348,7 @@ void DownloadItem::getFileName()
     // The prompt spins a nested event loop, so the request can die
     // underneath us; both backends are QPoiners → QPointers.
     bool backendGone = !m_download;
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
     backendGone = backendGone && !m_engine;
 #endif
     if (backendGone || !confirmSafeToSave(fileName)) {
@@ -378,7 +380,7 @@ void DownloadItem::getFileName()
         m_download->setDownloadFileName(info.fileName());
         m_download->accept(QString());
     }
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
     else if (m_engine) {
         m_engine->setDownloadDirectory(info.absolutePath());
         m_engine->setDownloadFileName(info.fileName());
@@ -617,7 +619,7 @@ void DownloadItem::stop()
         // the DownloadCancelled state transition finishes the item
         m_download->cancel();
     }
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
     else if (m_engine) {
         m_engine->cancel();
     }
@@ -653,7 +655,7 @@ void DownloadItem::restartDownload()
     if (m_url.isEmpty() || downloading())
         return;
 
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
     if (m_engine) {
         // The engine object survives — restart() rewinds it and the
         // normal filename/accept flow in init() re-issues dl_start.
@@ -962,7 +964,7 @@ void DownloadItem::downloadStateChanged(Engine::DownloadRequest::State state)
     case Engine::DownloadRequest::State::Cancelled:
     case Engine::DownloadRequest::State::Interrupted:
         if (m_finishedDownloading || (!m_download
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
             && !m_engine
 #endif
                 ))
@@ -976,7 +978,7 @@ void DownloadItem::downloadStateChanged(Engine::DownloadRequest::State state)
             QString reason;
             if (m_download)
                 reason = m_download->interruptReasonString();
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
             else if (m_engine)
                 reason = m_engine->interruptReasonString();
 #endif
@@ -1000,7 +1002,7 @@ void DownloadItem::downloadStateChanged(Engine::DownloadRequest::State state)
 void DownloadItem::downloadProgressUpdate()
 {
     if (!m_download
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
         && !m_engine
 #endif
             )
@@ -1012,7 +1014,7 @@ void DownloadItem::downloadProgressUpdate()
 
     if (m_download)
         m_bytesReceived = m_download->receivedBytes();
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
     else if (m_engine)
         m_bytesReceived = m_engine->receivedBytes();
 #endif
@@ -1038,7 +1040,7 @@ qint64 DownloadItem::bytesTotal() const
 {
     if (m_download)
         return m_download->totalBytes();
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
     if (m_engine)
         return m_engine->totalBytes();
 #endif
@@ -1075,7 +1077,7 @@ double DownloadItem::currentSpeed() const
 void DownloadItem::updateInfoLabel()
 {
     if (!m_download
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
         && !m_engine
 #endif
             )
@@ -1167,7 +1169,7 @@ bool DownloadItem::downloading() const
 bool DownloadItem::downloadedSuccessfully() const
 {
     bool haveBackend = m_download != nullptr;
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
     haveBackend = haveBackend || m_engine != nullptr;
 #endif
     if (haveBackend)
@@ -1179,7 +1181,7 @@ Engine::Page *DownloadItem::page() const
 {
     if (m_download)
         return m_download->page();
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
     if (m_engine)
         return WebEnginePageAdapter::forPage(m_engine->page());
 #endif
@@ -1190,7 +1192,7 @@ QString DownloadItem::mimeType() const
 {
     if (m_download)
         return m_download->mimeType();
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
     if (m_engine)
         return m_engine->mimeType();
 #endif
@@ -1201,7 +1203,7 @@ QString DownloadItem::suggestedFileName() const
 {
     if (m_download)
         return m_download->suggestedFileName();
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
     if (m_engine)
         return m_engine->suggestedFileName();
 #endif
@@ -1212,7 +1214,7 @@ Engine::DownloadRequest::State DownloadItem::currentState() const
 {
     if (m_download)
         return m_download->state();
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
     if (m_engine)
         return static_cast<Engine::DownloadRequest::State>(m_engine->state());
 #endif
@@ -1224,7 +1226,7 @@ bool DownloadItem::isFinished() const
 {
     if (m_download)
         return m_download->isFinished();
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
     if (m_engine)
         return m_engine->isFinished();
 #endif
@@ -1245,7 +1247,7 @@ void DownloadItem::finished()
         // A completed download should never arrive user-executable.
         removeExecutableBit(m_outputFileName);
     }
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
     else if (m_engine) {
         m_bytesReceived = m_engine->receivedBytes();
         removeExecutableBit(m_outputFileName);
@@ -1274,26 +1276,41 @@ void DownloadItem::finished()
   */
 DownloadManager *DownloadManager::instance()
 {
-    // Lazily created controller.  Not parented on qApp: a QWidget
-    // cannot take a non-widget parent, and a static QPointer keeps the
+    return instanceFor(BrowserPaths::activeProfileId());
+}
+
+DownloadManager *DownloadManager::instanceFor(const QString &profileId)
+{
+    // Lazily created controllers.  Not parented on qApp: a QWidget
+    // cannot take a non-widget parent, and static QPointers keep the
     // lookup cheap without a leak-on-purpose flag.
-    static QPointer<DownloadManager> manager;
+    const QString id = BrowserPaths::isProfileId(profileId)
+        ? profileId : BrowserPaths::activeProfileId();
+    static QHash<QString, QPointer<DownloadManager>> managers;
+    QPointer<DownloadManager> &manager = managers[id];
     if (!manager)
-        manager = new DownloadManager();
+        manager = new DownloadManager(id);
     return manager;
 }
 
 DownloadManager::DownloadManager(QWidget *parent)
+    : DownloadManager(QString(), parent)
+{
+}
+
+DownloadManager::DownloadManager(const QString &profileId, QWidget *parent)
     : QWidget(parent)
     , m_autoSaver(new AutoSaver(this))
     , m_model(new DownloadModel(this, this))
+    , m_profileId(BrowserPaths::isProfileId(profileId)
+                  ? profileId : BrowserPaths::activeProfileId())
     , m_iconProvider()
     , m_retryPage(nullptr)
     , m_retryPageOtr(nullptr)
     , m_removePolicy(Never)
     , m_requestFileNameNext(false)
 {
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     settings.beginGroup(QLatin1String("downloadmanager"));
     QString defaultLocation = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
     if (defaultLocation.isEmpty())
@@ -1327,7 +1344,7 @@ Engine::Page *DownloadManager::retryPage(bool offTheRecord)
             // profile.
             ? new QWebEnginePage(this)
             // QWebEngineProfile::defaultProfile() is itself off-the-record
-            // in Qt6 — normal retries go through Arora's persistent
+            // in Qt6 — normal retries go through Arktos's persistent
             // profile (MIG11).
             : new QWebEnginePage(BrowserProfile::normalProfile(), this);
         installOnProfile(WebEngineProfileAdapter::forProfile(page->profile()));
@@ -1386,7 +1403,9 @@ bool DownloadManager::allowQuit()
 
 bool DownloadManager::externalDownload(const QUrl &url)
 {
-    ProfileSettings settings;
+    // Static helper with no page context — reads the active persona's
+    // downloadmanager/external* keys like the pre-MPROF02 code did.
+    ProfileSettings settings(BrowserPaths::activeProfileId());
     settings.beginGroup(QLatin1String("downloadmanager"));
     if (!settings.value(QLatin1String("external"), false).toBool())
         return false;
@@ -1433,7 +1452,7 @@ void DownloadManager::download(Engine::Page *page, const QUrl &url, bool request
     if (externalDownload(url))
         return;
 
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
     // DLACC06: the accelerated engine is the default — canHandle()
     // is the single claim gate (selector, http(s) scheme, and the
     // DLACC04 proxy rules: in tor the download exits via the managed
@@ -1506,7 +1525,7 @@ void DownloadManager::handleDownloadRequested(Engine::DownloadRequest *download)
         return;
     }
 
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
     // DLACC06: the accelerated engine (default since the selector's
     // key defaults to rust) takes over the transfer when canHandle()
     // allows — Chromium's own fetch is cancelled and only its
@@ -1621,7 +1640,7 @@ void DownloadManager::setRemovePolicy(RemovePolicy policy)
 
 void DownloadManager::save() const
 {
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     settings.beginGroup(QLatin1String("downloadmanager"));
     QMetaEnum removePolicyEnum = staticMetaObject.enumerator(staticMetaObject.indexOfEnumerator("RemovePolicy"));
     settings.setValue(QLatin1String("removeDownloadsPolicy"), QLatin1String(removePolicyEnum.valueToKey(m_removePolicy)));
@@ -1660,7 +1679,7 @@ void DownloadManager::save() const
 
 void DownloadManager::load()
 {
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     settings.beginGroup(QLatin1String("downloadmanager"));
     QByteArray value = settings.value(QLatin1String("removeDownloadsPolicy"), QLatin1String("Never")).toByteArray();
     QMetaEnum removePolicyEnum = staticMetaObject.enumerator(staticMetaObject.indexOfEnumerator("RemovePolicy"));

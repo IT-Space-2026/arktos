@@ -2,8 +2,8 @@
 //!
 //! The renderer is `hayro` — a pure-Rust rasterizer whose whole
 //! dependency tree forbids unsafe code — running inside the
-//! `arora --pdf-worker` confined subprocess (bwrap allowlist: the
-//! staged PDF read-only at a fixed /arora-rt path, a per-view work
+//! `arktos --pdf-worker` confined subprocess (bwrap allowlist: the
+//! staged PDF read-only at a fixed /arktos-rt path, a per-view work
 //! dir as the only writable mount, no network, no $HOME).  Every
 //! PDF reaching this module has already been through the
 //! `pdfsanitize` rewrite, so the bytes are structurally clean; the

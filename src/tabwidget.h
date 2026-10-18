@@ -102,9 +102,9 @@ class QToolButton;
 // live in-process drag session in TabBar so stale or foreign data can
 // never move a tab.  Shared by the strip, the page view and the
 // location bar so every drop surface recognizes it.
-inline QLatin1String aroraTabMimeType()
+inline QLatin1String arktosTabMimeType()
 {
-    return QLatin1String("application/x-arora-tab");
+    return QLatin1String("application/x-arktos-tab");
 }
 
 /*!
@@ -120,6 +120,11 @@ class TabWidget : public QTabWidget
 signals:
     // tab widget signals
     void tabsChanged();
+    // TABGRP03: group metadata or membership changed — a rename,
+    // recolor, collapse/expand, join or leave.  The sidebar's
+    // Workspaces listing rebuilds on it; tabsChanged() still covers
+    // strip-level churn (add/close/reorder/title).
+    void tabGroupsChanged();
     void lastTabClosed();
 
     // current tab signals
@@ -186,6 +191,13 @@ public:
     // The container the tab at index belongs to — the default
     // container id for normal and off-the-record pages.
     QString containerIdForTab(int index) const;
+    // MPROF03: the persona this strip is bound to — the owning
+    // BrowserMainWindow's profile binding.  A bare TabWidget (some
+    // autotests) has no window and resolves "default".  Tab creation
+    // resolves engine profiles and persona-scoped stores (container
+    // registry, history) through this id — NOT the ambient one — so
+    // background work in an unfocused window can never cross personas.
+    QString profileId() const;
     // PTAB01: true when the tab's page browses off-the-record — the
     // tab marker, the menu gates and the child-tab inheritance all
     // key on the page profile, not the window-global private flag.
@@ -281,6 +293,12 @@ public:
     // The tab at index is the only visible member of a collapsed group.
     bool isTabGroupChip(int index) const;
     bool hasCollapsedTabGroup() const;
+    // TABGRP03: titles of the group's DETACHED members — a collapsed
+    // group's hidden stack plus any member filtered into a non-active
+    // container level — in store order.  Feeds the sidebar's
+    // Workspaces member listing; visible members' titles come off the
+    // strip through tabDisplayTitle().
+    QStringList tabGroupHiddenMemberTitles(const QString &groupId) const;
     // Creates an unnamed group (rotating palette color) holding the tab
     // — returns the new group id, "" when index has no web view.
     QString createTabGroup(int index);
@@ -293,10 +311,16 @@ public:
     void setTabGroupColor(const QString &groupId, const QColor &color);
     void setTabGroupCollapsed(const QString &groupId, bool collapsed);
     void ungroupTabs(const QString &groupId);
+    // TABGRP02: closes every member of the group — visible, collapsed-
+    // hidden and container-level-hidden alike — through the normal
+    // close path so each lands on the recently-closed stack.  Above
+    // one member the shared tabs/confirmClosingMultipleTabs pref gates
+    // a warning that reports the real (hidden-inclusive) count.
+    void closeTabGroup(const QString &groupId);
 
     QByteArray saveState() const;
     bool restoreState(const QByteArray &state);
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // RCORE03: the session record set the rustcore session store
     // consumes — the same fields saveState() streams into the blob,
     // structured so the core owns the schema (per-tab url, container
@@ -325,14 +349,13 @@ public:
 
 protected:
     void changeEvent(QEvent *event) override;
-    void paintEvent(QPaintEvent *event) override;
     // OMNI01: the routing decision is split so the autotest can
     // corpus-diff the implementations — under CONFIG+=rustcore
     // guessUrlFromString() resolves the rustcore verdict first and
     // only falls back to the in-tree heuristic on FFI trouble;
     // no-rust builds always take the reference path.
     static QUrl guessUrlFromStringCpp(const QString &url, bool privateContext);
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     static QUrl guessUrlFromStringRust(const QString &url, bool privateContext);
 #endif
 
@@ -367,9 +390,18 @@ public slots:
     // the page and restores the scroll position.
     void sleepTab(int index = -1);
     void wakeTab(int index = -1);
+    // MEM08: the manual memory flush — a background tab discards
+    // through the sleep path (the only honest release of the
+    // renderer's per-navigation retention); the current tab can't
+    // stay discarded while visible, so it gets a discard+reactivate
+    // pulse that reloads the current entry instead.  freeBackground-
+    // TabsMemory() is the window-level leg — every eligible
+    // background tab through the same discard.
+    void freeTabMemory(int index);
+    void freeBackgroundTabsMemory();
     // TABS13: move the tab at index into target's strip at
     // targetIndex (-1 appends) — the tear-off and cross-window-merge
-    // back end of the bar's arora-tab drags.  The page widget itself
+    // back end of the bar's arktos-tab drags.  The page widget itself
     // moves, so history, scroll position and in-flight loads ride
     // along untouched; every record keyed on it (pin flag, rename
     // override, group binding, sleep/pending-restore state,
@@ -412,6 +444,12 @@ public slots:
     // least idleMs milliseconds.  The settings-driven timer calls
     // this; the smoke test drives it directly.
     void suspendIdleTabs(qint64 idleMs);
+    // MEM06: periodic low-priority purge — freeze-pulses every
+    // eligible background tab so the engine releases soft-retained
+    // memory (the per-navigation heap MEM05 measured) while the
+    // page stays loaded.  The settings-driven timer calls this;
+    // tests drive it directly like suspendIdleTabs.
+    void purgeInactiveTabs();
     // PREFUI05: the effective idle-suspend interval — the Memory
     // Saver setting, or the forced 10-minute cap while Energy Saver
     // is active (0 = the sweep is off).
@@ -502,7 +540,17 @@ private:
     void finishTabSleepCapture(WebView *webView, bool automatic,
                              const QVariant &result);
     void applySleepVisuals(int index, bool sleeping);
+    // MEM08: the current-tab half of freeTabMemory — Qt refuses to
+    // discard a visible page, so the page is flagged hidden for the
+    // discard window and reactivated right after (the last composited
+    // frame stays put; the engine reloads the current entry).
+    // reportFreedMemory re-samples the tab's renderer RSS ~2s after
+    // the flush so the statusbar figure is measured, not assumed.
+    void flushCurrentTabMemory(WebView *webView);
+    void reportFreedMemory(WebView *webView, qint64 beforeKb);
     void updateSleepTimer();
+    // MEM06: (re)arm the purge sweep after a settings reload.
+    void updatePurgeTimer();
     // PREFUI05: re-apply the Energy Saver caps live — suspend clock,
     // immediate sweep, loading-spinner pause.
     void applyEnergyCaps();
@@ -690,6 +738,11 @@ private:
     QHash<WebView *, TabSleepState> m_sleepStates;
     QTimer *m_sleepTimer = nullptr;
     qint64 m_suspendIdleMs = 0;
+    // MEM06: the purge sweep's own timer + opt-out.  Unrelated to
+    // the sleep clock — a frozen page keeps its data, so the pulse
+    // can run on a much shorter cadence than idle discard.
+    QTimer *m_purgeTimer = nullptr;
+    bool m_memoryPurge = true;
 
     // PREFUI04: session-restore deferral — the tab keeps its slot,
     // saved title and favicon while its page is never loaded; the

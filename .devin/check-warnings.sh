@@ -18,13 +18,13 @@
 # only multiply identical diagnostics.
 #
 # Env:
-#   ARORA_WARN_BUILD=DIR  reuse an existing warnings tree instead of
+#   ARKTOS_WARN_BUILD=DIR  reuse an existing warnings tree instead of
 #                         copying the sources to a fresh mktemp dir —
 #                         lets a killed run resume (objects already
 #                         built are kept, the log is appended).
 #                         Implies KEEP.
-#   ARORA_WARN_JOBS=N     parallel make jobs (default: 2, capped at 4)
-#   ARORA_WARN_KEEP=1     keep a fresh warnings build tree
+#   ARKTOS_WARN_JOBS=N     parallel make jobs (default: 2, capped at 4)
+#   ARKTOS_WARN_KEEP=1     keep a fresh warnings build tree
 #
 # Exit status: 0 when the build produced zero warnings/errors, 1 when
 # diagnostics were found (they are printed deduplicated), or when the
@@ -33,11 +33,11 @@ set -u
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
-JOBS=${ARORA_WARN_JOBS:-2}
+JOBS=${ARKTOS_WARN_JOBS:-2}
 case $JOBS in *[!0-9]*|'') JOBS=2;; esac
 [ "$JOBS" -gt 4 ] && JOBS=4
-KEEP=${ARORA_WARN_KEEP:-0}
-RESUME=${ARORA_WARN_BUILD:-}
+KEEP=${ARKTOS_WARN_KEEP:-0}
+RESUME=${ARKTOS_WARN_BUILD:-}
 
 die() { echo "check-warnings: $*" >&2; exit 1; }
 
@@ -47,9 +47,9 @@ command -v git >/dev/null 2>&1 || die "git not found"
 if [ -n "$RESUME" ]; then
     BUILD=$RESUME
     KEEP=1
-    [ -d "$BUILD" ] || die "ARORA_WARN_BUILD dir $BUILD does not exist"
+    [ -d "$BUILD" ] || die "ARKTOS_WARN_BUILD dir $BUILD does not exist"
 else
-    BUILD=$(mktemp -d /tmp/arora-warn.XXXXXX)
+    BUILD=$(mktemp -d /tmp/arktos-warn.XXXXXX)
     # Copy tracked + untracked-nonignored files only: the source tree
     # carries in-tree Makefiles/.obj/binaries that would confuse the
     # fresh build.
@@ -67,7 +67,7 @@ QMAKE=$(command -v qmake6 || command -v qmake) || die "qmake not found"
 
 LOG="$BUILD/warnings-build.log"
 echo "check-warnings: qmake ($("$QMAKE" -query QT_VERSION), CONFIG+=no-rust) + make -j$JOBS (src + tools)"
-"$QMAKE" "CONFIG+=no-rust" arora.pro >>"$LOG" 2>&1 || die "qmake failed (see $LOG)"
+"$QMAKE" "CONFIG+=no-rust" arktos.pro >>"$LOG" 2>&1 || die "qmake failed (see $LOG)"
 # One make invocation per subdir: tools/ shares src/'s OBJECTS_DIR and
 # MOC_DIR (src.pri anchors them at $$PWD), and passing multiple subdir
 # goals at once bypasses the CONFIG+=ordered serialization so two

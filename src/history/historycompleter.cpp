@@ -24,7 +24,8 @@
 #include "historymanager.h"
 #include "safetext.h"
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
+#include "browserpaths.h"
 #include "rustcorebridge.h"
 
 #include <qfileinfo.h>
@@ -118,7 +119,7 @@ void HistoryCompletionModel::setSearchString(QString str)
     m_wordMatcher.setPattern(QLatin1String("\\b") + QRegularExpression::escape(str));
     m_wordMatcher.setPatternOptions(QRegularExpression::CaseInsensitiveOption);
     m_searchString = std::move(str);
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // OMNI01: the rustcore source re-queries its ranked rows for the
     // new term; the legacy filter model needs no such push.
     if (RustHistorySuggestModel *suggest =
@@ -188,7 +189,7 @@ bool HistoryCompletionModel::lessThan(const QModelIndex &left, const QModelIndex
     return (frecency_r < frecency_l);
 }
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 RustHistorySuggestModel::RustHistorySuggestModel(QObject *parent)
     : QAbstractTableModel(parent)
 {
@@ -219,6 +220,14 @@ void RustHistorySuggestModel::refresh()
 {
     beginResetModel();
     m_rows.clear();
+    // Anchor the process-global rust history store to the active
+    // profile's database — per-profile HistoryManager instances
+    // re-bind it as they run (MPROF02); the window's completer follows
+    // the window profile — the ambient persona (MPROF03).
+    const QByteArray dbPath = BrowserPaths::profileDataFilePath(
+        BrowserPaths::activeProfileId(),
+        QLatin1String("history.db")).toUtf8();
+    rc_hist_open(dbPath.constData());
     // The cap bounds the FFI marshal; the dropdown never shows more.
     const QByteArray t = m_term.toUtf8();
     if (char *json = rc_history_suggest(t.constData(), 500)) {
@@ -295,7 +304,7 @@ QVariant RustHistorySuggestModel::data(const QModelIndex &index,
     }
     return QVariant();
 }
-#endif // ARORA_RUSTCORE
+#endif // ARKTOS_RUSTCORE
 
 OmniboxCompletionModel::OmniboxCompletionModel(
         HistoryCompletionModel *historyCompletionModel, QObject *parent)

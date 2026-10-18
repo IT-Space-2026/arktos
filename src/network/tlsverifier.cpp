@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,7 +28,7 @@
 #include <qpointer.h>
 #include <qthreadpool.h>
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "rustcore.h"
 #endif
 
@@ -87,7 +87,7 @@ void TlsVerifier::probeUrl(const QUrl &url)
 
 void TlsVerifier::probeHost(const QString &host, quint16 port, quint32 flags)
 {
-#if !defined(ARORA_RUSTCORE)
+#if !defined(ARKTOS_RUSTCORE)
     Q_UNUSED(host);
     Q_UNUSED(port);
     Q_UNUSED(flags);

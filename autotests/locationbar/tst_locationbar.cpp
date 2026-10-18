@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, The Arora Authors
+ * Copyright (c) 2026, The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -62,7 +62,7 @@
 #include "toolbarsearch.h"
 #include "webpermissionmanager.h"
 #include "profilesettings.h"
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 #include "qtry.h"
 
 // Exposes the protected event handlers for direct dispatch.
@@ -578,7 +578,28 @@ void tst_LocationBar::shieldPopupFirstShow()
         QLatin1String("sitePermissions"));
     QVERIFY(permissions);
     QVERIFY(permissions->findChildren<QPushButton*>().isEmpty());
-    const QSize noRowHint = panel->sizeHint();
+    // The baseline must be a settled render: the panel's populate
+    // runs on the web-view load signals, which can land after the
+    // isLoading gate above, and the view's url() can still be a
+    // transient about:blank (empty host -> empty trust verdict ->
+    // hidden Trust section) when it runs.  A late refresh then
+    // flips the Trust section on for the now-resolved host and the
+    // shrink leg diffs against a stale hint.  Refresh until the hint
+    // survives an event-pump window unchanged so both legs measure
+    // the same chrome.
+    QSize noRowHint;
+    QElapsedTimer settle;
+    settle.start();
+    for (;;) {
+        panel->refresh();
+        const QSize hint = panel->sizeHint();
+        QTest::qWait(100);
+        panel->refresh();
+        noRowHint = panel->sizeHint();
+        if (hint == noRowHint)
+            break;
+        QVERIFY(settle.elapsed() < 10000);
+    }
 
     // Grow leg: a remembered permission lands while the popup is
     // closed — written through a non-singleton manager so the panel's
@@ -634,7 +655,7 @@ void tst_LocationBar::omniboxSuggestions()
     // A hermetic engine: its suggest endpoint is a local file so the
     // enabled-path check never leaves the box.
     const QString fixturePath = QDir::temp().filePath(
-        QLatin1String("arora-omnibox-suggest.json"));
+        QLatin1String("arktos-omnibox-suggest.json"));
     {
         QFile fixture(fixturePath);
         QVERIFY(fixture.open(QIODevice::WriteOnly));
@@ -669,7 +690,12 @@ void tst_LocationBar::omniboxSuggestions()
     OmniboxSuggestions provider(&model, &completer, this);
     connect(&bar, &QLineEdit::textEdited,
             &provider, &OmniboxSuggestions::scheduleSuggestions);
-    QCOMPARE(model.data(model.index(0, 1)).toString(), QString());
+    // The leg asserts suggestion behavior, not a pristine history:
+    // earlier legs that served a real page (shieldPopupFirstShow)
+    // leave the visited URL in the shared HistoryManager, and the
+    // completer stack legitimately surfaces it below the suggestion
+    // block.  What must start empty is the suggestion block itself.
+    QVERIFY(model.suggestions().isEmpty());
 
     // Every app-side request the NAM creates reports through this
     // signal — a suggest fetch cannot hide from it.
@@ -767,9 +793,9 @@ void tst_LocationBar::omniboxScopedCompletions()
     HistoryManager *historyManager = BrowserApplication::historyManager();
     historyManager->clear();
     historyManager->addHistoryEntry(
-        QLatin1String("http://scoped-history.example/arora"));
+        QLatin1String("http://scoped-history.example/arktos"));
     historyManager->updateHistoryEntry(
-        QUrl(QLatin1String("http://scoped-history.example/arora")),
+        QUrl(QLatin1String("http://scoped-history.example/arktos")),
         QLatin1String("Scoped History Page"));
     historyManager->addHistoryEntry(
         QLatin1String("http://unrelated.example/"));
@@ -814,7 +840,7 @@ void tst_LocationBar::omniboxScopedCompletions()
     QCOMPARE(model.rowCount(), 1);
     QCOMPARE(model.data(model.index(0, 0),
                         HistoryModel::UrlStringRole).toString(),
-             QLatin1String("http://scoped-history.example/arora"));
+             QLatin1String("http://scoped-history.example/arktos"));
 
     // Stale suggestion rows must not leak into a scoped view.
     model.setSearchText(QLatin1String("scoped"));
@@ -893,7 +919,7 @@ void tst_LocationBar::omniboxScopedCompletions()
 
     bookmarks->removeBookmark(bookmark);
     historyManager->removeHistoryEntry(
-        QUrl(QLatin1String("http://scoped-history.example/arora")));
+        QUrl(QLatin1String("http://scoped-history.example/arktos")));
     historyManager->removeHistoryEntry(
         QUrl(QLatin1String("http://unrelated.example/")));
     ScopeShortcuts::reset();
@@ -949,7 +975,7 @@ void tst_LocationBar::domainEmphasis_data()
     QTest::newRow("no-authority") << QString("qrc:/startpage.html")
                                   << QString();
     QTest::newRow("internal-empty-authority")
-        << QString("arora-file:///tmp/") << QString();
+        << QString("arktos-file:///tmp/") << QString();
     QTest::newRow("plain-text") << QString("just words")
                                 << QString();
 }

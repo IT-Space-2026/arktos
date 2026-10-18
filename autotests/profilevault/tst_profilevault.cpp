@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,7 +18,7 @@
  */
 
 #include <QtTest/QtTest>
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 
 #include <qdir.h>
 #include <qfile.h>
@@ -28,7 +28,7 @@
 
 #include <filesystem>
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 #include <rustcore.h>
 #endif
 
@@ -46,7 +46,7 @@ class tst_ProfileVault : public QObject
     Q_OBJECT
 
 private slots:
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     void sealVerifyUnsealRoundTrip();
     void threefishRoundTrip();
     void wrongPasswordIsDistinct();
@@ -61,7 +61,7 @@ private slots:
 #endif
 };
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 
 static QByteArray utf8(const QString &s)
 {
@@ -395,7 +395,7 @@ void tst_ProfileVault::badArguments()
              RC_EMPTY_PASSPHRASE);
 }
 
-#else // !ARORA_RUSTCORE
+#else // !ARKTOS_RUSTCORE
 
 void tst_ProfileVault::noRustBuildInert()
 {

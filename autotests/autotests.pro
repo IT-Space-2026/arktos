@@ -4,8 +4,8 @@ SUBDIRS  = \
     accessibility \
     adblock \
     addbookmarkdialog \
-    aroraicon \
-    arorastyle \
+    arktosicon \
+    arktosstyle \
     autofill \
     autosaver \
     bookmarknode \
@@ -33,6 +33,7 @@ SUBDIRS  = \
     htmlbookmarks \
     httponly \
     locationbar \
+    memcycle \
     modelmenu \
     modeltoolbar \
     navigationpolicy \
@@ -49,8 +50,14 @@ SUBDIRS  = \
     privatebrowsing \
     privacy \
     profileavatar \
+    profilecontext \
+    profilee2e \
+    profilemanager \
+    profilemanagers \
+    profilemenu \
     profilesettings \
     profilevault \
+    profilewindow \
     vaulte2e \
     vaultengine \
     qrcode \
@@ -72,6 +79,7 @@ SUBDIRS  = \
     torinterceptor \
     tormanager \
     trancolist \
+    updatechecker \
     useragent \
     urlcleaner \
     utils \

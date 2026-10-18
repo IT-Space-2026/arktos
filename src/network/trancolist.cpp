@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -34,7 +34,7 @@
 #include <qsavefile.h>
 #include <qsettings.h>
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include <rustcore.h>
 #endif
 
@@ -118,7 +118,7 @@ void TrancoList::setSourcesForTest(const QList<Source> &sources)
 
 void TrancoList::updateIfStale()
 {
-#if !defined(ARORA_RUSTCORE)
+#if !defined(ARKTOS_RUSTCORE)
     return;   // no consumer for the file — fetch nothing
 #endif
     // TELEM01: identical consent gate to the remote filter lists —
@@ -135,7 +135,7 @@ void TrancoList::updateIfStale()
 
 void TrancoList::updateNow()
 {
-#if !defined(ARORA_RUSTCORE)
+#if !defined(ARKTOS_RUSTCORE)
     emit updateFinished(false);
     return;
 #else
@@ -221,7 +221,7 @@ void TrancoList::replyFinished()
 
 void TrancoList::maybeCommit()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // Commit each drop point separately: the bodies have different
     // container shapes, so they land under their own file names and
     // a bad fetch can only ever cost its own file.
@@ -241,7 +241,7 @@ void TrancoList::maybeCommit()
         // would break the crate's PK-magic sniff.  Plaintext CSV
         // gets the provenance comment the blocklist file carries.
         if (!body.startsWith("PK\x03\x04")) {
-            out += "# Arora site-rank list update\n# sources: ";
+            out += "# Arktos site-rank list update\n# sources: ";
             for (const Source &source : m_sources) {
                 if (source.fileName == fileName) {
                     out += source.url.host().toUtf8();

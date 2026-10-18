@@ -38,8 +38,8 @@ SchemeAccessHandler::SchemeAccessHandler(QObject *parent)
 }
 
 // SEC06/SAFE01: serves the in-app warning interstitials at
-// <scheme>:interstitial?n=<nonce> — arora-cert-error: for certificate
-// errors, arora-http-warning: for HTTPS-Only blocks.  An interstitial
+// <scheme>:interstitial?n=<nonce> — arktos-cert-error: for certificate
+// errors, arktos-http-warning: for HTTPS-Only blocks.  An interstitial
 // cannot be delivered with setHtml(): a data: document committed on
 // top of a failed navigation is sandboxed by Chromium — its links to
 // a custom scheme land on about:blank#blocked and never reach
@@ -126,13 +126,13 @@ void SchemeAccessHandler::installInterstitialHandlers(QWebEngineProfile *profile
     if (installed.contains(profile))
         return;
     profile->installUrlSchemeHandler(
-            QByteArrayLiteral("arora-cert-error"),
+            QByteArrayLiteral("arktos-cert-error"),
             new InterstitialSchemeHandler(profile));
     profile->installUrlSchemeHandler(
-            QByteArrayLiteral("arora-http-warning"),
+            QByteArrayLiteral("arktos-http-warning"),
             new InterstitialSchemeHandler(profile));
     profile->installUrlSchemeHandler(
-            QByteArrayLiteral("arora-site-block"),
+            QByteArrayLiteral("arktos-site-block"),
             new InterstitialSchemeHandler(profile));
     installed.insert(profile);
     QObject::connect(profile, &QObject::destroyed, profile, [profile]() {
@@ -143,7 +143,7 @@ void SchemeAccessHandler::installInterstitialHandlers(QWebEngineProfile *profile
 void SchemeAccessHandler::registerUrlSchemes()
 {
     // file:// is a built-in scheme and cannot take a custom handler, so
-    // directory listings are served on arora-file:// instead (WebPage
+    // directory listings are served on arktos-file:// instead (WebPage
     // redirects file:// directory navigations there).
     QWebEngineUrlScheme scheme(FileAccessHandler::schemeName());
     scheme.setSyntax(QWebEngineUrlScheme::Syntax::Path);
@@ -157,35 +157,35 @@ void SchemeAccessHandler::registerUrlSchemes()
                     | QWebEngineUrlScheme::ViewSourceAllowed);
     QWebEngineUrlScheme::registerScheme(scheme);
 
-    // SEC06: arora-cert-error: carries the certificate-error
+    // SEC06: arktos-cert-error: carries the certificate-error
     // interstitial (served by InterstitialSchemeHandler from the nonce
     // registry) and its action links (proceed/back), which
     // WebPage::acceptNavigationRequest resolves and refuses.  The
     // scheme must be registered or clicks go down Chromium's
     // external-protocol path and never reach that virtual.
     QWebEngineUrlScheme certErrorScheme(
-        QByteArrayLiteral("arora-cert-error"));
+        QByteArrayLiteral("arktos-cert-error"));
     certErrorScheme.setSyntax(QWebEngineUrlScheme::Syntax::Path);
     certErrorScheme.setFlags(QWebEngineUrlScheme::SecureScheme);
     QWebEngineUrlScheme::registerScheme(certErrorScheme);
 
-    // SAFE01: arora-http-warning: carries the HTTPS-Only warning
+    // SAFE01: arktos-http-warning: carries the HTTPS-Only warning
     // interstitial from the same nonce registry; its action links are
     // proceed (allow this host once) / always (persist an exception)
-    // / back.  Same registration requirement as arora-cert-error.
+    // / back.  Same registration requirement as arktos-cert-error.
     QWebEngineUrlScheme httpWarningScheme(
-        QByteArrayLiteral("arora-http-warning"));
+        QByteArrayLiteral("arktos-http-warning"));
     httpWarningScheme.setSyntax(QWebEngineUrlScheme::Syntax::Path);
     httpWarningScheme.setFlags(QWebEngineUrlScheme::SecureScheme);
     QWebEngineUrlScheme::registerScheme(httpWarningScheme);
 
-    // SEC18: arora-site-block: carries the anti-phishing/malware
+    // SEC18: arktos-site-block: carries the anti-phishing/malware
     // domain-block warning interstitial from the same nonce registry;
     // its action links are proceed (allow this host for the session)
     // / back — there is deliberately no "always": a persisted bypass
     // of a listed hostile domain is a foot-gun.
     QWebEngineUrlScheme siteBlockScheme(
-        QByteArrayLiteral("arora-site-block"));
+        QByteArrayLiteral("arktos-site-block"));
     siteBlockScheme.setSyntax(QWebEngineUrlScheme::Syntax::Path);
     siteBlockScheme.setFlags(QWebEngineUrlScheme::SecureScheme);
     QWebEngineUrlScheme::registerScheme(siteBlockScheme);

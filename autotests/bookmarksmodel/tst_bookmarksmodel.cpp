@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,7 +18,7 @@
 #include <bookmarksmanager.h>
 #include <bookmarksmodel.h>
 #include <bookmarknode.h>
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 #include <qjsonobject.h>
 #endif
 
@@ -41,7 +41,7 @@ private slots:
     void mime();
     void dropUrls();
     void indexForNode();
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     void rustPersistence();
     void rustHtmlImportExport();
 #endif
@@ -113,16 +113,16 @@ void tst_BookmarksModel::addRemove()
     QVERIFY(menuIndex.isValid());
     QCOMPARE(model->rowCount(menuIndex), 0);
 
-    BookmarkNode *bookmark = makeBookmark(QLatin1String("Arora"),
-                                          QLatin1String("https://arora-browser.org"));
+    BookmarkNode *bookmark = makeBookmark(QLatin1String("Arktos"),
+                                          QLatin1String("https://arktos-browser.com"));
     manager.addBookmark(menu, bookmark);
     QCOMPARE(model->rowCount(menuIndex), 1);
 
     QModelIndex child = model->index(0, 0, menuIndex);
     QCOMPARE(model->node(child), bookmark);
-    QCOMPARE(model->data(child).toString(), QLatin1String("Arora"));
+    QCOMPARE(model->data(child).toString(), QLatin1String("Arktos"));
     QCOMPARE(model->data(model->index(0, 1, menuIndex)).toString(),
-             QLatin1String("https://arora-browser.org"));
+             QLatin1String("https://arktos-browser.com"));
 
     // The removal skips nothing here (only menu/toolbar folders are
     // protected) and routes through the undo stack.
@@ -148,8 +148,8 @@ void tst_BookmarksModel::dataRoles()
     clearFolder(manager, menu);
     QModelIndex menuIndex = model->index(menu);
 
-    BookmarkNode *bookmark = makeBookmark(QLatin1String("Arora"),
-                                          QLatin1String("https://arora-browser.org"));
+    BookmarkNode *bookmark = makeBookmark(QLatin1String("Arktos"),
+                                          QLatin1String("https://arktos-browser.com"));
     BookmarkNode *separator = new BookmarkNode(BookmarkNode::Separator);
     manager.addBookmark(menu, bookmark);
     manager.addBookmark(menu, separator, 0);
@@ -167,9 +167,9 @@ void tst_BookmarksModel::dataRoles()
     QCOMPARE(model->data(second, BookmarksModel::TypeRole).toInt(),
              int(BookmarkNode::Bookmark));
     QCOMPARE(model->data(second, BookmarksModel::UrlStringRole).toString(),
-             QLatin1String("https://arora-browser.org"));
+             QLatin1String("https://arktos-browser.com"));
     QCOMPARE(model->data(second, BookmarksModel::UrlRole).toUrl(),
-             QUrl(QLatin1String("https://arora-browser.org")));
+             QUrl(QLatin1String("https://arktos-browser.com")));
     QVERIFY(model->data(second, Qt::DecorationRole).isValid());
     QVERIFY(model->data(first, Qt::DecorationRole).isValid());
 }
@@ -190,8 +190,8 @@ void tst_BookmarksModel::flags()
     QVERIFY(!(menuFlags & Qt::ItemIsDragEnabled));
     QVERIFY(!(menuFlags & Qt::ItemIsEditable));
 
-    BookmarkNode *bookmark = makeBookmark(QLatin1String("Arora"),
-                                          QLatin1String("https://arora-browser.org"));
+    BookmarkNode *bookmark = makeBookmark(QLatin1String("Arktos"),
+                                          QLatin1String("https://arktos-browser.com"));
     manager.addBookmark(menu, bookmark);
     QModelIndex child0 = model->index(0, 0, menuIndex);
     QModelIndex child1 = model->index(0, 1, menuIndex);
@@ -242,8 +242,8 @@ void tst_BookmarksModel::mime()
     QVERIFY(types.contains(QLatin1String("text/uri-list")));
 
     clearFolder(manager, manager.menu());
-    BookmarkNode *bookmark = makeBookmark(QLatin1String("Arora"),
-                                          QLatin1String("https://arora-browser.org"));
+    BookmarkNode *bookmark = makeBookmark(QLatin1String("Arktos"),
+                                          QLatin1String("https://arktos-browser.com"));
     manager.addBookmark(manager.menu(), bookmark);
     QModelIndex menuIndex = model->index(manager.menu());
     QModelIndex child = model->index(0, 0, menuIndex);
@@ -252,7 +252,7 @@ void tst_BookmarksModel::mime()
     QVERIFY(mime->hasFormat(QLatin1String("application/bookmarks.xbel")));
     QCOMPARE(mime->urls().count(), 1);
     QCOMPARE(mime->urls().first(),
-             QUrl(QLatin1String("https://arora-browser.org")));
+             QUrl(QLatin1String("https://arktos-browser.com")));
     delete mime;
 }
 
@@ -311,7 +311,7 @@ void tst_BookmarksModel::indexForNode()
     QCOMPARE(model->index(manager.bookmarks()), QModelIndex());
 }
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 // RCORE02: edits write through to the Rust XBEL store; a fresh
 // manager reloads them from bookmarks.xbel (atomic Rust write).
 void tst_BookmarksModel::rustPersistence()
@@ -439,7 +439,7 @@ void tst_BookmarksModel::rustHtmlImportExport()
         clearFolder(manager, menu);
     }
 }
-#endif // ARORA_RUSTCORE
+#endif // ARKTOS_RUSTCORE
 
 QTEST_MAIN(tst_BookmarksModel)
 #include "tst_bookmarksmodel.moc"

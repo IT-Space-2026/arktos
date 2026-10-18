@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -46,6 +46,9 @@ inline constexpr char KindAdBlock[] = "adblock";
 // clearnet interceptor applies a hit as the User-Agent request
 // header; tor never consults the kind.
 inline constexpr char KindUserAgent[] = "uaspoof";
+// POL04: per-site link-cleaning exemptions — host -> "" (presence =
+// opt out of the shield's ClearURLs-style cleaner for that host).
+inline constexpr char KindUrlClean[] = "urlclean";
 
 // Fetch the stored value; false when no row exists (or the call
 // failed — callers treat both as "no decision").
@@ -59,12 +62,34 @@ bool clear(const char *kind);
 bool replace(const char *kind, const QHash<QString, QString> &entries);
 // Every row of kind, sorted by key.
 QHash<QString, QString> entries(const char *kind);
+
+// MPROF02: profile-scoped variants for the kinds that are persona
+// data (KindCookie, KindContainer) — they anchor the rust store at
+// profiles/<id>/ so each profile gets its own sitedecisions.json.
+// Every other kind stays machine-global through the plain overloads,
+// which pin the default profile's store file (the recommendation in
+// the MPROF02 spec: site trust/permission decisions are
+// persona-independent).
+bool get(const QString &profileId, const char *kind,
+         const QString &key, QString *value);
+bool set(const QString &profileId, const char *kind,
+         const QString &key, const QString &value);
+bool remove(const QString &profileId, const char *kind,
+            const QString &key);
+bool replace(const QString &profileId, const char *kind,
+             const QHash<QString, QString> &entries);
+QHash<QString, QString> entries(const QString &profileId,
+                                const char *kind);
 // The whole store as a JSON document — the read-locked policy
 // snapshot for IO-thread consumers.
 QByteArray snapshot();
+QByteArray snapshot(const QString &profileId);
 // Longest-suffix host match: fills *value (and *matchedKey when
 // non-null) for the rule governing host.  False when nothing matches.
 bool lookup(const char *kind, const QString &host, QString *value,
+            QString *matchedKey = nullptr);
+bool lookup(const QString &profileId, const char *kind,
+            const QString &host, QString *value,
             QString *matchedKey = nullptr);
 // Whether the store file exists — the legacy-import gate.
 bool storePresent();

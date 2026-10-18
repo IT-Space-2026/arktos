@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -46,7 +46,7 @@
 #include "extensionshimbackend.h"
 #include "engineinterface.h"
 #include "profilesettings.h"
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 #include "qtry.h"
 #include "tabwidget.h"
 #include "webview.h"
@@ -438,25 +438,25 @@ void tst_ExtensionManager::consentGate()
 
 void tst_ExtensionManager::storePaths()
 {
-    QVERIFY(!ExtensionManager::updatesPath().isEmpty());
-    QVERIFY(QDir(ExtensionManager::updatesPath()).exists());
-    QVERIFY(!ExtensionManager::userScriptsPath().isEmpty());
+    QVERIFY(!ExtensionManager::instance()->updatesPath().isEmpty());
+    QVERIFY(QDir(ExtensionManager::instance()->updatesPath()).exists());
+    QVERIFY(!ExtensionManager::instance()->userScriptsPath().isEmpty());
     // EXT05: the userscript store must be owner-only.
-    QVERIFY(!(QFileInfo(ExtensionManager::userScriptsPath())
+    QVERIFY(!(QFileInfo(ExtensionManager::instance()->userScriptsPath())
                   .permissions()
               & (QFileDevice::ReadGroup | QFileDevice::WriteGroup
                  | QFileDevice::ExeGroup | QFileDevice::ReadOther
                  | QFileDevice::WriteOther | QFileDevice::ExeOther)));
 
-    const bool saved = ExtensionManager::updateCheckEnabled();
-    ExtensionManager::setUpdateCheckEnabled(!saved);
-    QCOMPARE(ExtensionManager::updateCheckEnabled(), !saved);
-    ExtensionManager::setUpdateCheckEnabled(saved);
-    QCOMPARE(ExtensionManager::updateCheckEnabled(), saved);
+    const bool saved = ExtensionManager::instance()->updateCheckEnabled();
+    ExtensionManager::instance()->setUpdateCheckEnabled(!saved);
+    QCOMPARE(ExtensionManager::instance()->updateCheckEnabled(), !saved);
+    ExtensionManager::instance()->setUpdateCheckEnabled(saved);
+    QCOMPARE(ExtensionManager::instance()->updateCheckEnabled(), saved);
 }
 
 // EXT06: earlier legs of this test installed into the user's real
-// "arora" profile when the binary ran outside runTests.sh (which
+// "arktos" profile when the binary ran outside runTests.sh (which
 // sandboxes HOME) — the fixtures showed up in the live Extensions
 // list as tst-upd/tst-old/tst-noext.  QTEST_MAIN now enables
 // QStandardPaths test mode before BrowserApplication builds the
@@ -477,7 +477,7 @@ void tst_ExtensionManager::profileIsolation()
                  .arg(installPath)));
     QVERIFY2(!installPath.startsWith(
                  QDir::homePath()
-                     + QLatin1String("/.local/share/Arora")),
+                     + QLatin1String("/.local/share/Arktos")),
              qPrintable(QStringLiteral(
                  "extension install path leaked into the real profile: %1")
                  .arg(installPath)));
@@ -514,7 +514,7 @@ void tst_ExtensionManager::bundledInstall()
     QCOMPARE(zipFile.write(package), qint64(package.size()));
     zipFile.close();
 
-    qputenv("ARORA_BUNDLED_EXTENSIONS_DIR", root.toUtf8());
+    qputenv("ARKTOS_BUNDLED_EXTENSIONS_DIR", root.toUtf8());
     QCOMPARE(ExtensionManager::bundledExtensionsPath(), root);
 
     ExtensionManager *manager = ExtensionManager::instance();
@@ -631,7 +631,7 @@ void tst_ExtensionManager::bundledInstall()
     }
     QTest::qWait(500);
 
-    qputenv("ARORA_BUNDLED_EXTENSIONS_DIR", QByteArray());
+    qputenv("ARKTOS_BUNDLED_EXTENSIONS_DIR", QByteArray());
     QDir(root).removeRecursively();
 }
 
@@ -749,7 +749,7 @@ void tst_ExtensionManager::updateCheckLoopback()
     QCOMPARE(resA.availableVersion, QStringLiteral("2.0.0"));
     QVERIFY(!resA.savedTo.isEmpty());
     QVERIFY(QFile::exists(resA.savedTo));
-    QVERIFY(resA.savedTo.startsWith(ExtensionManager::updatesPath()));
+    QVERIFY(resA.savedTo.startsWith(ExtensionManager::instance()->updatesPath()));
     QVERIFY(resA.installable);
 
     // Older offer -> upToDate, no package fetch.
@@ -1186,8 +1186,8 @@ void tst_ExtensionManager::hostedBackgroundRuntime()
     };
     const QJsonObject state = QJsonDocument::fromJson(
         eval(runtime->host(id)->page(), QStringLiteral(
-            "JSON.stringify({state:__aroraHost.state,"
-            "bridge:__aroraHost.bridgeUp,"
+            "JSON.stringify({state:__arktosHost.state,"
+            "bridge:__arktosHost.bridgeUp,"
             "bg:self.__hostedBgRan||null,"
             "runtime:typeof (chrome&&chrome.runtime),"
             "storage:typeof (chrome&&chrome.storage"
@@ -1224,7 +1224,7 @@ void tst_ExtensionManager::hostedBackgroundRuntime()
         "self.__probe = {done:false};"
         "(async function(){"
         " var out={};"
-        " var area=__aroraShim.storageArea('session');"
+        " var area=__arktosShim.storageArea('session');"
         " await area.set({k:'v'});"
         " var got=await area.get('k');"
         " out.stored=(got&&got.k==='v');"
@@ -1278,7 +1278,7 @@ void tst_ExtensionManager::hostedBackgroundRuntime()
     const QJsonObject probe = QJsonDocument::fromJson(
         eval(runtime->host(id)->page(), QStringLiteral(
             "JSON.stringify({out:self.__probe.out||{},"
-            "err:self.__probe.err||null,gaps:__aroraShim.gaps})"))
+            "err:self.__probe.err||null,gaps:__arktosShim.gaps})"))
             .toString().toUtf8()).object();
     QVERIFY2(probe.value(QLatin1String("err")).toString().isEmpty(),
              qPrintable(QStringLiteral("probe threw: %1")
@@ -1685,13 +1685,13 @@ void tst_ExtensionManager::extensionMessageRelay()
     // send fans out to the same-extension peer only.
     const int peers = runtime->relaySend(
         &bg, m1,
-        QJsonObject{{QStringLiteral("__aroraMsg"),
+        QJsonObject{{QStringLiteral("__arktosMsg"),
                      QJsonObject{{QStringLiteral("mid"), m1}}}});
     QCOMPARE(peers, 1);
     QCOMPARE(popupEvents.size(), 1);
     QCOMPARE(otherEvents.size(), 0);
     QCOMPARE(popupEvents.first().at(0).toString(),
-             QStringLiteral("__arora.relay"));
+             QStringLiteral("__arktos.relay"));
     QCOMPARE(popupEvents.first().at(1).toJsonObject()
              .value(QLatin1String("mid")).toString(), m1);
 
@@ -1707,7 +1707,7 @@ void tst_ExtensionManager::extensionMessageRelay()
         QJsonValue(QStringLiteral("pong"))));
     QCOMPARE(bgEvents.size(), 1);
     QCOMPARE(bgEvents.first().at(0).toString(),
-             QStringLiteral("__arora.relayResponse"));
+             QStringLiteral("__arktos.relayResponse"));
     QCOMPARE(bgEvents.first().at(1).toJsonObject()
              .value(QLatin1String("response")).toString(),
              QStringLiteral("pong"));
@@ -1762,7 +1762,7 @@ void tst_ExtensionManager::extensionMessageRelay()
                                 "popup.html")), 1);
     QCOMPARE(popupEvents.size(), 3);
     QCOMPARE(popupEvents.last().at(0).toString(),
-             QStringLiteral("__arora.portConnect"));
+             QStringLiteral("__arktos.portConnect"));
     // EXT18: the delivered sender carries the connecting document's
     // url — Bitwarden's internal-sender gate keys on it.
     QCOMPARE(popupEvents.last().at(1).toJsonObject()
@@ -1776,7 +1776,7 @@ void tst_ExtensionManager::extensionMessageRelay()
                  QJsonValue(QStringLiteral("hello"))), 1);
     QCOMPARE(popupEvents.size(), 4);
     QCOMPARE(popupEvents.last().at(0).toString(),
-             QStringLiteral("__arora.portMessage"));
+             QStringLiteral("__arktos.portMessage"));
     QCOMPARE(popupEvents.last().at(1).toJsonObject()
              .value(QLatin1String("msg")).toString(),
              QStringLiteral("hello"));
@@ -2253,8 +2253,8 @@ void tst_ExtensionManager::extensionPopupContext()
                      + QStringLiteral("/popup.html")));
     QTRY_VERIFY_WITH_TIMEOUT(
         eval(popup, QStringLiteral(
-            "!!(window.__aroraHost&&__aroraHost.bridgeUp"
-            "&&window.__aroraShim)")).toBool(),
+            "!!(window.__arktosHost&&__arktosHost.bridgeUp"
+            "&&window.__arktosShim)")).toBool(),
         30000);
     QCOMPARE(eval(popup, QStringLiteral(
                  "self.__popupBootRan===true")).toBool(),
@@ -2262,7 +2262,7 @@ void tst_ExtensionManager::extensionPopupContext()
     // The page injection skipped the background loader — the
     // document marks itself 'page'-kind.
     QCOMPARE(eval(popup, QStringLiteral(
-                 "window.__aroraHost.kind")).toString(),
+                 "window.__arktosHost.kind")).toString(),
              QStringLiteral("page"));
 
     // --- popup -> hosted background sendMessage --------------------
@@ -2338,8 +2338,8 @@ void tst_ExtensionManager::extensionPopupContext()
         runtime->hasExtensionPage(livePage), 15000);
     QTRY_VERIFY_WITH_TIMEOUT(
         eval(livePage, QStringLiteral(
-            "!!(window.__aroraHost&&__aroraHost.bridgeUp"
-            "&&window.__aroraShim)")).toBool(),
+            "!!(window.__arktosHost&&__arktosHost.bridgeUp"
+            "&&window.__arktosShim)")).toBool(),
         30000);
     QCOMPARE(eval(livePage, QStringLiteral(
                  "self.__popupBootRan===true")).toBool(),

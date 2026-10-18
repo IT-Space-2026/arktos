@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -43,7 +43,7 @@
 
 #include <memory>
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 #include "rustcore.h"
 
 #include <qboxlayout.h>
@@ -159,10 +159,10 @@ QString readerDocument(const QVariantMap &article, const QString &theme)
 }
 
 } // namespace
-#endif // ARORA_RUSTCORE
+#endif // ARKTOS_RUSTCORE
 
 // The script world the reader driver runs in — non-zero, so page
-// JavaScript can neither see nor tamper with __aroraReader,
+// JavaScript can neither see nor tamper with __arktosReader,
 // Readability, or the extraction pipeline (READ05).  The DOM is
 // shared across worlds, so probing, cloning, and overlay
 // construction behave exactly as they did in the main world.
@@ -192,26 +192,26 @@ ReaderMode::ReaderMode(WebView *view)
     , m_probeRetries(0)
 {
     // The bridge rides the page's existing channel (same registration
-    // point as "external"/"aroraAutofill").  Tor pages carry a bare
-    // channel (TOR09 — the qrc start page's "arora" object only), so
+    // point as "external"/"arktosAutofill").  Tor pages carry a bare
+    // channel (TOR09 — the qrc start page's "arktos" object only), so
     // the registration itself is gated on the mode: the overlay still
     // works there, minus persistence and JS-side exit notification.
     if (!BrowserApplication::isTorMode()) {
         if (QWebChannel *channel = m_view->page()->webChannel())
-            channel->registerObject(QLatin1String("aroraReader"), m_bridge);
+            channel->registerObject(QLatin1String("arktosReader"), m_bridge);
 
         // READ05: the driver lives in an isolated world that has no
         // channel transport, so its chrome reports through DOM
         // CustomEvents; reader-forward.js relays them to the bridge.
-        // SEC24: the relay itself must run in AroraChannelWorld — the
+        // SEC24: the relay itself must run in ArktosChannelWorld — the
         // channel bootstrap exists only there now, and DOM events
         // cross worlds on the shared document.
         QFile forwardFile(QLatin1String(":reader-forward.js"));
         if (forwardFile.open(QIODevice::ReadOnly)) {
             QWebEngineScript forward;
-            forward.setName(QLatin1String("arora:reader-forward"));
+            forward.setName(QLatin1String("arktos:reader-forward"));
             forward.setInjectionPoint(QWebEngineScript::DocumentCreation);
-            forward.setWorldId(Engine::AroraChannelWorld);
+            forward.setWorldId(Engine::ArktosChannelWorld);
             forward.setRunsOnSubFrames(false);
             forward.setSourceCode(
                 QString::fromUtf8(forwardFile.readAll()));
@@ -225,7 +225,7 @@ ReaderMode::ReaderMode(WebView *view)
             this, &ReaderMode::onLoadFinished);
     connect(m_view, &QWebEngineView::urlChanged,
             this, &ReaderMode::onUrlChanged);
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // The Rust overlay tracks the view's geometry.
     m_view->installEventFilter(this);
 #endif
@@ -275,7 +275,7 @@ QString ReaderMode::scriptBundle() const
 
 void ReaderMode::setActive(bool active)
 {
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     if (!active)
         closeOverlay();
 #endif
@@ -286,7 +286,7 @@ void ReaderMode::setActive(bool active)
     emit availableChanged(isAvailable());
 }
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 bool ReaderMode::eventFilter(QObject *watched, QEvent *event)
 {
     if (watched == m_view && m_overlay
@@ -388,7 +388,7 @@ void ReaderMode::runDriver(
     // at ReaderWorldId even though the channel moved — it never
     // touches the channel itself; its chrome events cross worlds on
     // the shared document and reader-forward.js (running in
-    // AroraChannelWorld) relays them to the "aroraReader" bridge.
+    // ArktosChannelWorld) relays them to the "arktosReader" bridge.
     WebEnginePageAdapter::runJavaScriptLiftedOn(page, program, callback,
                                               ReaderWorldId);
 }
@@ -408,7 +408,7 @@ void ReaderMode::probe()
     // Stale callbacks from an older document must not flip the new
     // page's verdict — the generation ticks on every navigation.
     const int generation = m_probeGeneration;
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // The Rust probe runs isProbablyReaderable's equivalent over the
     // serialized DOM — no script eval in the page world.
     collectHtml([self, generation, url = page->url()](const QString &html) {
@@ -429,7 +429,7 @@ void ReaderMode::probe()
             static_cast<size_t>(utf8.size())) > 0);
     });
 #else
-    runDriver(QLatin1String("window.__aroraReader.probe();"),
+    runDriver(QLatin1String("window.__arktosReader.probe();"),
             [self, generation](const QVariant &result) {
         if (self && self->m_probeGeneration == generation)
             self->probeFinished(result.toBool());
@@ -459,7 +459,7 @@ void ReaderMode::probeFinished(bool available)
     });
 }
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 // The serialized-DOM grab rides the same JavaScript-injection channel
 // runJavaScript uses, so it needs the same JavascriptEnabled lift as
 // runDriver when page scripts are blocked (JSCTL/Safer tiers).
@@ -519,7 +519,7 @@ void ReaderMode::collectHtml(
 }
 #endif
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 void ReaderMode::showOverlay(const QVariantMap &article)
 {
     closeOverlay();
@@ -531,7 +531,7 @@ void ReaderMode::showOverlay(const QVariantMap &article)
     const QString startTheme = theme();
 
     QWidget *overlay = new QWidget(m_view);
-    overlay->setObjectName(QLatin1String("aroraReaderOverlay"));
+    overlay->setObjectName(QLatin1String("arktosReaderOverlay"));
     QVBoxLayout *layout = new QVBoxLayout(overlay);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
@@ -539,15 +539,15 @@ void ReaderMode::showOverlay(const QVariantMap &article)
     // The chrome bar — real widgets, so it needs no channel and
     // persists preferences on tor pages too.
     QWidget *bar = new QWidget(overlay);
-    bar->setObjectName(QLatin1String("aroraReaderBar"));
+    bar->setObjectName(QLatin1String("arktosReaderBar"));
     const bool dark = startTheme == QLatin1String("dark");
     bar->setStyleSheet(QStringLiteral(
-        "#aroraReaderBar{background:%1;color:%2}"
-        "#aroraReaderBar QLabel{font:13px system-ui;opacity:.7}"
-        "#aroraReaderBar QToolButton{font:13px system-ui;color:%2;"
+        "#arktosReaderBar{background:%1;color:%2}"
+        "#arktosReaderBar QLabel{font:13px system-ui;opacity:.7}"
+        "#arktosReaderBar QToolButton{font:13px system-ui;color:%2;"
         "background:transparent;border:1px solid transparent;"
         "border-radius:4px;padding:3px 8px}"
-        "#aroraReaderBar QToolButton:hover{"
+        "#arktosReaderBar QToolButton:hover{"
         "background:rgba(127,127,127,.18);"
         "border-color:rgba(127,127,127,.35)}")
         .arg(dark ? QLatin1String("#262628") : QLatin1String("#efece4"),
@@ -556,20 +556,20 @@ void ReaderMode::showOverlay(const QVariantMap &article)
     barLayout->setContentsMargins(16, 6, 16, 6);
     QLabel *tag = new QLabel(tr("Reader"), bar);
     QToolButton *fontDec = new QToolButton(bar);
-    fontDec->setObjectName(QLatin1String("aroraReaderFontDec"));
+    fontDec->setObjectName(QLatin1String("arktosReaderFontDec"));
     fontDec->setText(QStringLiteral("A\u2212"));
     fontDec->setToolTip(tr("Smaller text"));
     QToolButton *fontInc = new QToolButton(bar);
-    fontInc->setObjectName(QLatin1String("aroraReaderFontInc"));
+    fontInc->setObjectName(QLatin1String("arktosReaderFontInc"));
     fontInc->setText(QStringLiteral("A+"));
     fontInc->setToolTip(tr("Larger text"));
     QToolButton *themeBtn = new QToolButton(bar);
-    themeBtn->setObjectName(QLatin1String("aroraReaderTheme"));
+    themeBtn->setObjectName(QLatin1String("arktosReaderTheme"));
     themeBtn->setText(dark ? QStringLiteral("\u2600")
                            : QStringLiteral("\u263E"));
     themeBtn->setToolTip(tr("Switch between light and dark"));
     QToolButton *exitBtn = new QToolButton(bar);
-    exitBtn->setObjectName(QLatin1String("aroraReaderExit"));
+    exitBtn->setObjectName(QLatin1String("arktosReaderExit"));
     exitBtn->setText(tr("Exit reader view"));
     barLayout->addWidget(tag);
     barLayout->addWidget(fontDec);
@@ -583,7 +583,7 @@ void ReaderMode::showOverlay(const QVariantMap &article)
     // profile, so images and links resolve through the same proxy,
     // cookie and interceptor context the page has.
     QWebEngineView *readerView = new QWebEngineView(overlay);
-    readerView->setObjectName(QLatin1String("aroraReaderView"));
+    readerView->setObjectName(QLatin1String("arktosReaderView"));
     readerView->setPage(new ReaderOverlayPage(
         page->profile(), baseUrl, m_view, readerView));
     readerView->setHtml(readerDocument(article, startTheme), baseUrl);
@@ -611,12 +611,12 @@ void ReaderMode::showOverlay(const QVariantMap &article)
         themeBtn->setText(darkNext ? QStringLiteral("\u2600")
                                    : QStringLiteral("\u263E"));
         bar->setStyleSheet(QStringLiteral(
-            "#aroraReaderBar{background:%1;color:%2}"
-            "#aroraReaderBar QLabel{font:13px system-ui;opacity:.7}"
-            "#aroraReaderBar QToolButton{font:13px system-ui;color:%2;"
+            "#arktosReaderBar{background:%1;color:%2}"
+            "#arktosReaderBar QLabel{font:13px system-ui;opacity:.7}"
+            "#arktosReaderBar QToolButton{font:13px system-ui;color:%2;"
             "background:transparent;border:1px solid transparent;"
             "border-radius:4px;padding:3px 8px}"
-            "#aroraReaderBar QToolButton:hover{"
+            "#arktosReaderBar QToolButton:hover{"
             "background:rgba(127,127,127,.18);"
             "border-color:rgba(127,127,127,.35)}")
             .arg(darkNext ? QLatin1String("#262628")
@@ -645,7 +645,7 @@ void ReaderMode::closeOverlay()
     overlay->hide();
     overlay->deleteLater();
 }
-#endif // ARORA_RUSTCORE
+#endif // ARKTOS_RUSTCORE
 
 void ReaderMode::enter()
 {
@@ -666,7 +666,7 @@ void ReaderMode::enter()
         setActive(false);
     }
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     {
         const QUrl pageUrl = page->url();
         m_busy = true;
@@ -734,7 +734,7 @@ void ReaderMode::enter()
     QPointer<ReaderMode> self(this);
     // Phase one: extract() in the isolated world returns the raw
     // Readability fragment.  Nothing it produced is trusted yet.
-    runDriver(QLatin1String("window.__aroraReader.extract();"),
+    runDriver(QLatin1String("window.__arktosReader.extract();"),
             [self](const QVariant &result) {
         if (!self)
             return;
@@ -788,7 +788,7 @@ void ReaderMode::enter()
         opts[QLatin1String("siteName")] =
             map.value(QLatin1String("siteName")).toString();
         opts[QLatin1String("content")] = sanitized.html;
-        const QString call = QLatin1String("window.__aroraReader.enter(")
+        const QString call = QLatin1String("window.__arktosReader.enter(")
             + QString::fromUtf8(
                 QJsonDocument(opts).toJson(QJsonDocument::Compact))
             + QLatin1String(");");
@@ -813,12 +813,12 @@ void ReaderMode::exit()
 {
     if (!m_active)
         return;
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     setActive(false);
     return;
 #endif
     QPointer<ReaderMode> self(this);
-    runDriver(QLatin1String("window.__aroraReader.exit();"),
+    runDriver(QLatin1String("window.__arktosReader.exit();"),
             [self](const QVariant &) {
         if (self)
             self->setActive(false);

@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,11 +17,11 @@
  * Boston, MA  02110-1301  USA
  */
 
-#ifndef ARORA_RUSTCORE_H
-#define ARORA_RUSTCORE_H
+#ifndef ARKTOS_RUSTCORE_H
+#define ARKTOS_RUSTCORE_H
 
 /*
- * C ABI for libarora_rustcore — the shared, engine-neutral Rust core
+ * C ABI for libarktos_rustcore — the shared, engine-neutral Rust core
  * (RCORE01).  Stable rules for every component landing here:
  *
  *  - Fallible functions return RcStatus; RC_OK is the only success.
@@ -400,7 +400,7 @@ RcStatus rc_pdf_sanitize(const uint8_t *data, size_t len,
 
 /* --- pdf document rasterization (PDF02) -----------------------------
  * The shell-owned document view renders pages through this surface,
- * normally inside the `arora --pdf-worker` confined subprocess (one
+ * normally inside the `arktos --pdf-worker` confined subprocess (one
  * document per worker).  The same calls work in-process as the
  * fallback when no sandbox backend exists.
  *
@@ -1096,4 +1096,4 @@ RcStatus rv_rewrap(const char *blobPathUtf8,
 }
 #endif
 
-#endif // ARORA_RUSTCORE_H
+#endif // ARKTOS_RUSTCORE_H

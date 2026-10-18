@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, The Arora Authors
+ * Copyright (c) 2026, The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@
 
 // SEC18: the local anti-phishing/malware domain blocklist —
 // shouldBlockDomain, the veto in WebPage::acceptNavigationRequest,
-// the nonce-bound arora-site-block: interstitial it swaps in, its
+// the nonce-bound arktos-site-block: interstitial it swaps in, its
 // proceed/back action links (session-scoped only, no persisted
 // exception), the consume-once blocked-nav registry, the
 // privacy/domainBlocklist toggle, and the consent-gated updater's
@@ -42,10 +42,10 @@
 #include "schemeaccesshandler.h"
 #include "webpage.h"
 #include "webview.h"
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 #include "qtry.h"
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include <rustcore.h>
 #endif
 
@@ -127,7 +127,7 @@ bool tst_DomainBlock::waitInterstitialCommit(WebPage *page,
         for (int i = baseline; i < loaded.count(); ++i)
             committed |= loaded.at(i).at(0).toBool();
         if (committed
-            && page->url().scheme() == QLatin1String("arora-site-block"))
+            && page->url().scheme() == QLatin1String("arktos-site-block"))
             return true;
         QTest::qWait(50);
     }
@@ -190,7 +190,7 @@ void tst_DomainBlock::cleanupTestCase()
     PrivacyRequestInterceptor::loadSettings();
     // The fixture override the updater wrote goes with the suite.
     QFile::remove(DomainBlocklist::listFilePath());
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     rc_blocklist_reload();
 #endif
 }
@@ -200,7 +200,7 @@ void tst_DomainBlock::init()
     QSettings settings;
     settings.setValue(QLatin1String("privacy/domainBlocklist"), true);
     PrivacyRequestInterceptor::loadSettings();
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // Every test starts from a known fixture list — never the
     // vendored seed or a stale download.
     const QByteArray fixture =
@@ -226,7 +226,7 @@ void tst_DomainBlock::cleanup()
 void tst_DomainBlock::blockDecision()
 {
     using P = PrivacyRequestInterceptor;
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     QVERIFY(P::shouldBlockDomain(
                 QUrl("http://bad-fixture.test/")));
     QVERIFY(P::shouldBlockDomain(
@@ -264,7 +264,7 @@ void tst_DomainBlock::blockDecision()
 
 void tst_DomainBlock::builtinSeedBlocks()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // The vendored seed blocks without any override file at all —
     // remove a stale updater output, re-point the core at the real
     // data dir and re-merge.
@@ -278,7 +278,7 @@ void tst_DomainBlock::builtinSeedBlocks()
     QCOMPARE(rc_blocklist_check("testsafebrowsing.appspot.com"), 1);
     // Unlisted domains are unaffected.
     QCOMPARE(rc_blocklist_check("example.com"), 0);
-    QCOMPARE(rc_blocklist_check("arora-browser.org"), 0);
+    QCOMPARE(rc_blocklist_check("arktos-browser.com"), 0);
 #endif
 }
 
@@ -286,7 +286,7 @@ void tst_DomainBlock::warningCommits()
 {
     const QString host = QStringLiteral("bad-fixture.test");
     forgetHost(host);
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     QWebEngineProfile profile;   // off-the-record: no disk writes
     WebView view(&profile);
     view.resize(800, 600);
@@ -306,9 +306,9 @@ void tst_DomainBlock::warningCommits()
     QVERIFY(html.contains(QLatin1String("id=\"back\"")));
     QVERIFY(html.contains(QLatin1String("id=\"proceed\"")));
     QVERIFY(html.contains(
-        QLatin1String("arora-site-block:proceed?n=")));
+        QLatin1String("arktos-site-block:proceed?n=")));
     QVERIFY(html.contains(
-        QLatin1String("arora-site-block:back?n=")));
+        QLatin1String("arktos-site-block:back?n=")));
     // Deliberately never offered: no persisted bypass of a listed
     // hostile domain — not even on a persistent profile.
     QVERIFY(!html.contains(QLatin1String("id=\"always\"")));
@@ -328,7 +328,7 @@ void tst_DomainBlock::warningCommits()
 
 void tst_DomainBlock::proceedAllowsHostSession()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     const QString host = QStringLiteral("bad-fixture.test");
     forgetHost(host);
     QWebEngineProfile profile;
@@ -360,7 +360,7 @@ void tst_DomainBlock::proceedAllowsHostSession()
 
 void tst_DomainBlock::forgedLinkIgnored()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     const QString host = QStringLiteral("bad-fixture.test");
     forgetHost(host);
     QWebEngineProfile profile;
@@ -376,7 +376,7 @@ void tst_DomainBlock::forgedLinkIgnored()
     // A proceed link without the rendered nonce resolves nothing.
     evalSync(page, QLatin1String(
         "var a = document.createElement('a');"
-        "a.id = 'forge'; a.href = 'arora-site-block:proceed?n=forged';"
+        "a.id = 'forge'; a.href = 'arktos-site-block:proceed?n=forged';"
         "a.textContent = 'forge'; document.body.appendChild(a); true"));
     QVERIFY(clickElement(&view, QLatin1String("forge")));
     QTest::qWait(1000);
@@ -392,7 +392,7 @@ void tst_DomainBlock::forgedLinkIgnored()
 
 void tst_DomainBlock::redirectHopWarns()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     const QString host = QStringLiteral("bad-fixture.test");
     forgetHost(host);
     QWebEngineProfile profile;
@@ -413,7 +413,7 @@ void tst_DomainBlock::redirectHopWarns()
 
 void tst_DomainBlock::subframeNotWarned()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     const QString host = QStringLiteral("bad-fixture.test");
     forgetHost(host);
     QWebEngineProfile profile;
@@ -511,7 +511,7 @@ private:
 
 void tst_DomainBlock::updateConsentGate()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // Declined consent -> updateIfStale never fetches.
     AdBlockManager::setRemoteListsConsent(AdBlockManager::RemoteListsDeclined);
     QSettings().remove(QLatin1String("privacy/domainBlocklistUpdated"));
@@ -530,7 +530,7 @@ void tst_DomainBlock::updateConsentGate()
 
 void tst_DomainBlock::updateRoundTrip()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // Granted consent + a stale stamp -> updateIfStale fetches the
     // fixture feed, writes the override file and reloads the core.
     AdBlockManager::setRemoteListsConsent(AdBlockManager::RemoteListsGranted);
@@ -583,7 +583,7 @@ int main(int argc, char *argv[])
 {
     Q_INIT_RESOURCE(htmls);
     Q_INIT_RESOURCE(data);
-    // arora-site-block: must be registered before the browsing
+    // arktos-site-block: must be registered before the browsing
     // profile spins up (same order as main.cpp) — unregistered schemes
     // go down Chromium's external-protocol path and never reach
     // acceptNavigationRequest.

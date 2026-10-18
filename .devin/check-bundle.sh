@@ -11,20 +11,20 @@
 #    bundled binary natively on Wayland — the user's real session is never
 #    touched.
 #
-# Env overrides: QTDIR, ARORA_BUNDLE_DIR, ARORA_BUNDLE_KEEP=1 to keep the
+# Env overrides: QTDIR, ARKTOS_BUNDLE_DIR, ARKTOS_BUNDLE_KEEP=1 to keep the
 # bundle for inspection.
 
 set -euo pipefail
 
 SRCROOT="$(cd "$(dirname "$0")/.." && pwd)"
 QTDIR="${QTDIR:-$HOME/Qt/6.12.0/gcc_64}"
-BUNDLE="${ARORA_BUNDLE_DIR:-$(mktemp -d /tmp/arora-bundle.XXXXXX)/Arora}"
-SCRATCH="$(mktemp -d /tmp/arora-check-bundle.XXXXXX)"
+BUNDLE="${ARKTOS_BUNDLE_DIR:-$(mktemp -d /tmp/arktos-bundle.XXXXXX)/Arktos}"
+SCRATCH="$(mktemp -d /tmp/arktos-check-bundle.XXXXXX)"
 COMP_PID=""
 
 cleanup() {
     [ -n "$COMP_PID" ] && kill "$COMP_PID" 2>/dev/null || true
-    if [ -z "${ARORA_BUNDLE_KEEP:-}" ] && [ -z "${ARORA_BUNDLE_DIR:-}" ]; then
+    if [ -z "${ARKTOS_BUNDLE_KEEP:-}" ] && [ -z "${ARKTOS_BUNDLE_DIR:-}" ]; then
         rm -rf "$(dirname "$BUNDLE")"
     fi
     rm -rf "$SCRATCH"
@@ -36,21 +36,21 @@ pass() { echo "check-bundle: PASS: $*"; }
 
 echo "check-bundle: bundling into $BUNDLE"
 "$SRCROOT/BuildProcess/bundle-linux.sh" "$BUNDLE"
-[ -x "$BUNDLE/arora" ] || fail "no launcher in $BUNDLE"
-[ -x "$BUNDLE/arora-sandbox" ] || fail "no sandbox launcher in $BUNDLE"
-[ -x "$BUNDLE/bin/arora" ] || fail "no binary in $BUNDLE/bin"
+[ -x "$BUNDLE/arktos" ] || fail "no launcher in $BUNDLE"
+[ -x "$BUNDLE/arktos-sandbox" ] || fail "no sandbox launcher in $BUNDLE"
+[ -x "$BUNDLE/bin/arktos" ] || fail "no binary in $BUNDLE/bin"
 [ -f "$BUNDLE/bin/qt.conf" ] || fail "no qt.conf"
 
 # -- 1. ldd: nothing resolves to $QTDIR or fails entirely -------------------
 missing=$(bwrap --dev-bind / / --tmpfs "$QTDIR" -- \
     env -i HOME="$SCRATCH/home" PATH=/usr/bin:/bin \
     LD_LIBRARY_PATH="$BUNDLE/lib" \
-    ldd "$BUNDLE/bin/arora" 2>&1 | grep -cE 'not found' || true)
+    ldd "$BUNDLE/bin/arktos" 2>&1 | grep -cE 'not found' || true)
 [ "$missing" -eq 0 ] || fail "$missing unresolved libs with $QTDIR hidden"
 leaked=$(bwrap --dev-bind / / --tmpfs "$QTDIR" -- \
     env -i HOME="$SCRATCH/home" PATH=/usr/bin:/bin \
     LD_LIBRARY_PATH="$BUNDLE/lib" \
-    ldd "$BUNDLE/bin/arora" 2>&1 | grep -c "$QTDIR" || true)
+    ldd "$BUNDLE/bin/arktos" 2>&1 | grep -c "$QTDIR" || true)
 [ "$leaked" -eq 0 ] || fail "$leaked libs still resolve into $QTDIR"
 pass "self-containment: 0 missing libs, 0 references to $QTDIR"
 
@@ -61,19 +61,19 @@ sandbox() {
 
 # -- 2. offscreen smoke ------------------------------------------------------
 out=$(sandbox QT_QPA_PLATFORM=offscreen \
-      "$BUNDLE/arora" --quit-after-load 2>&1) || fail "offscreen run: $out"
+      "$BUNDLE/arktos" --quit-after-load 2>&1) || fail "offscreen run: $out"
 echo "$out" | grep -q loadFinished || fail "offscreen: no loadFinished"
 pass "offscreen: --quit-after-load exit 0"
 
-# The bundled arora-sandbox launcher must chain through the wrapper (which
-# sets LD_LIBRARY_PATH).  ARORA_NO_SANDBOX exercises that chain without
+# The bundled arktos-sandbox launcher must chain through the wrapper (which
+# sets LD_LIBRARY_PATH).  ARKTOS_NO_SANDBOX exercises that chain without
 # nesting a second bwrap inside this script's own.
-out=$(sandbox QT_QPA_PLATFORM=offscreen ARORA_NO_SANDBOX=1 \
-      "$BUNDLE/arora-sandbox" --sandbox-status 2>&1) \
-    || fail "arora-sandbox run: $out"
+out=$(sandbox QT_QPA_PLATFORM=offscreen ARKTOS_NO_SANDBOX=1 \
+      "$BUNDLE/arktos-sandbox" --sandbox-status 2>&1) \
+    || fail "arktos-sandbox run: $out"
 echo "$out" | grep -q "this process sandboxed: no" \
-    || fail "arora-sandbox status: $out"
-pass "arora-sandbox launcher chains through the bundle wrapper"
+    || fail "arktos-sandbox status: $out"
+pass "arktos-sandbox launcher chains through the bundle wrapper"
 
 # -- 3. native Wayland smoke -------------------------------------------------
 mkdir -p "$SCRATCH/xdgrun"
@@ -89,17 +89,17 @@ cc -O1 -I"$SCRATCH" -o "$SCRATCH/wayland-compositor" \
 
 # Pin WAYLAND_DISPLAY: the compositor names its socket after it, and an
 # ambient session value (e.g. wayland-0) would otherwise desync it from
-# the fixed "arora-smoke" the client below connects to.
-XDG_RUNTIME_DIR="$SCRATCH/xdgrun" WAYLAND_DISPLAY=arora-smoke \
+# the fixed "arktos-smoke" the client below connects to.
+XDG_RUNTIME_DIR="$SCRATCH/xdgrun" WAYLAND_DISPLAY=arktos-smoke \
     "$SCRATCH/wayland-compositor" > "$SCRATCH/comp.log" 2>&1 &
 COMP_PID=$!
 sleep 0.5
 kill -0 "$COMP_PID" || { cat "$SCRATCH/comp.log"; fail "compositor exited"; }
 
 out=$(sandbox \
-      XDG_RUNTIME_DIR="$SCRATCH/xdgrun" WAYLAND_DISPLAY=arora-smoke \
+      XDG_RUNTIME_DIR="$SCRATCH/xdgrun" WAYLAND_DISPLAY=arktos-smoke \
       QT_QPA_PLATFORM=wayland QTWEBENGINE_CHROMIUM_FLAGS=--disable-gpu \
-      "$BUNDLE/arora" --quit-after-load 2>&1) || fail "wayland run: $out"
+      "$BUNDLE/arktos" --quit-after-load 2>&1) || fail "wayland run: $out"
 echo "$out" | grep -q loadFinished || fail "wayland: no loadFinished"
 kill "$COMP_PID" 2>/dev/null || true
 COMP_PID=""

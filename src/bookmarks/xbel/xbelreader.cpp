@@ -64,7 +64,7 @@
 
 #include <qfile.h>
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "rustcore.h"
 #endif
 
@@ -117,7 +117,7 @@ BookmarkNode *XbelReader::read(QIODevice *device)
     // Qt6 removed QXmlStreamEntityResolver: expand the entities the old
     // XmlEntityResolver resolved (just &nbsp;) before parsing.
     data.replace("&nbsp;", " ");
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // SEC19: a structural gate in memory-safe Rust proves the
     // document is well-formed, rooted at <xbel> and within the depth
     // bound before Qt's parser sees a byte.  It only rejects what

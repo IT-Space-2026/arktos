@@ -9,12 +9,12 @@ Generated: 2026-10-10 on commit a645851 (+ in-flight audit commits).
 ## Method
 
 All heavy phases run serialized inside a detached systemd user unit
-(`/tmp/arora-audit01`, `arora-seq.service`) because the task-loop's
+(`/tmp/arktos-audit01`, `arktos-seq.service`) because the task-loop's
 per-run tree cap (2048 MB RSS) kills any in-shell build: a single
 `g++ -fanalyzer` TU peaks near 900 MB and `src/main.cpp` exceeds 11 GB
 (see below). Phases: check-static → check-sanitize (+ key smokes) →
 check-leaks → bounded valgrind → no-rust build → check-tidy →
-`make check` on the real tree (`arora-finalcheck.service`, gated on
+`make check` on the real tree (`arktos-finalcheck.service`, gated on
 `seq.done`).
 
 Both audit trees were re-synced to post-merge HEAD (31 changed files —
@@ -31,7 +31,7 @@ snapshot).
 | clang-tidy 22.1.8 | user-local pip wheel (~/venvs/aqt) — new `.devin/check-tidy.sh` harness |
 | clazy | NOT available (no prebuilt binary, no sudo) — documented gap, same as STAT01 |
 | ASan+UBSan (clang, CONFIG+=sanitize) | via check-sanitize.sh |
-| LSan | via check-leaks.sh (ARORA_SANITIZE_LEAKS) |
+| LSan | via check-leaks.sh (ARKTOS_SANITIZE_LEAKS) |
 | valgrind memcheck | bounded: 3 smallest non-WebEngine tests |
 
 ## (a) Static analysis
@@ -80,7 +80,7 @@ passes. Noted honestly rather than silently skipped.
 **clang --analyze:** 8 in-tree findings + 1 Qt-header:
 
 - `main.cpp:934` `cplusplus.NewDeleteLeaks` — **REAL (benign)**:
-  ARORA_AUDIT_WIRE smoke harness allocated a QWebEngineView
+  ARKTOS_AUDIT_WIRE smoke harness allocated a QWebEngineView
   unconditionally, then abandoned it when the "webview" wire path built
   a real WebView instead. FIXED (a645851 — allocate lazily in the else
   branch).
@@ -157,7 +157,7 @@ generated code and Qt-header noise). Per-class verdicts:
 
 ## (b) Memory/UB — ASan+UBSan+LSan
 
-Instrumented build `/tmp/arora-san.2G69yK` (no-rust config, post-merge
+Instrumented build `/tmp/arktos-san.2G69yK` (no-rust config, post-merge
 sources), clang ASan+UBSan, isolated HOME, offscreen:
 
 **Suite:** ~67 test programs ran; 3 aborted on ONE upstream crash —
@@ -233,9 +233,9 @@ isolation (tabwidget 3/0, containermanager 34/0).
 
 ## (d) Regression
 
-- **Default build `make -j4 check`** (`arora-finalcheck2.scope`,
+- **Default build `make -j4 check`** (`arktos-finalcheck2.scope`,
   isolated HOME): **RC=0 — all 72 test programs passed, 0 failed.**
-- **No-Rust build** (`/tmp/arora-audit01/norust-tree`): built clean;
+- **No-Rust build** (`/tmp/arktos-audit01/norust-tree`): built clean;
   suite ran 71 programs — the single failure
   (`tst_ContainerManager::tabCookieIsolation`) was the live-profile
   pollution above; re-verified 34/0 under the isolated HOME.
@@ -244,7 +244,7 @@ isolation (tabwidget 3/0, containermanager 34/0).
   `--download-smoke file://README.md` PASS (26 841 bytes to managed
   dir); `--tor-window-smoke` PASS — `IsTor:true` via both NAM and
   WebEngine over a real bootstrapped circuit
-  (ARORA_TOR_BINARY=~/opt/tor-expert-bundle/tor/tor; one transient
+  (ARKTOS_TOR_BINARY=~/opt/tor-expert-bundle/tor/tor; one transient
   exit-node RemoteHostClosedError, PASS on retry — live-network
   flake, not code).
 

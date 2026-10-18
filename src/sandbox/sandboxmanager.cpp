@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -39,13 +39,13 @@ namespace {
 
 // The environment marker a wrapped process carries.  Any value means
 // "already inside" — the value itself names the backend.
-const char kSandboxedEnv[] = "ARORA_SANDBOXED";
+const char kSandboxedEnv[] = "ARKTOS_SANDBOXED";
 
 // Dev-only escape hatches: the env var, the --no-sandbox flag and the
 // sandbox/enabled QSettings key (documented in README; not in the UI).
 bool disabledByEnvOrFlag(int argc, char **argv)
 {
-    if (!qgetenv("ARORA_NO_SANDBOX").isEmpty())
+    if (!qgetenv("ARKTOS_NO_SANDBOX").isEmpty())
         return true;
     for (int i = 1; i < argc; ++i) {
         if (QLatin1String(argv[i]) == QLatin1String("--no-sandbox"))
@@ -56,8 +56,8 @@ bool disabledByEnvOrFlag(int argc, char **argv)
 
 bool disabledBySettings()
 {
-    const QSettings settings(QStringLiteral("Arora"),
-                             QStringLiteral("Arora"));
+    const QSettings settings(QStringLiteral("Arktos"),
+                             QStringLiteral("Arktos"));
     return !settings.value(QStringLiteral("sandbox/enabled"), true)
             .toBool();
 }
@@ -66,7 +66,7 @@ bool disabledBySettings()
 
 QString SandboxManager::bwrapPath()
 {
-    const QByteArray overridePath = qgetenv("ARORA_BWRAP");
+    const QByteArray overridePath = qgetenv("ARKTOS_BWRAP");
     if (!overridePath.isEmpty()) {
         const QString path = QString::fromLocal8Bit(overridePath);
         return QFileInfo(path).isExecutable() ? path : QString();
@@ -76,9 +76,9 @@ QString SandboxManager::bwrapPath()
 
 namespace {
 
-// Browsing launches are arora [url...] and arora --tor — anything else
+// Browsing launches are arktos [url...] and arktos --tor — anything else
 // carrying an option flag is a dev/smoke/utility run that keeps its
-// deterministic unsandboxed environment.  ARORA_SANDBOX_FORCE=1 wraps
+// deterministic unsandboxed environment.  ARKTOS_SANDBOX_FORCE=1 wraps
 // flagged runs too (the smoke harness uses it to prove the fallback).
 bool launchIsBrowsing(int argc, char **argv)
 {
@@ -122,7 +122,7 @@ QString SandboxManager::backendName()
 QString SandboxManager::statusReport()
 {
     QStringList lines;
-    lines << QStringLiteral("Arora sandbox status");
+    lines << QStringLiteral("Arktos sandbox status");
     lines << QStringLiteral("  backend: %1").arg(backendName());
     lines << QStringLiteral("  this process sandboxed: %1")
                  .arg(isSandboxed() ? QStringLiteral("yes")
@@ -155,7 +155,7 @@ void SandboxManager::maybeReexec(int argc, char **argv)
         return;
     if (disabledByEnvOrFlag(argc, argv) || disabledBySettings())
         return;
-    const bool forced = qgetenv("ARORA_SANDBOX_FORCE") == "1";
+    const bool forced = qgetenv("ARKTOS_SANDBOX_FORCE") == "1";
     if (!forced && !launchIsBrowsing(argc, argv))
         return;
 
@@ -164,15 +164,15 @@ void SandboxManager::maybeReexec(int argc, char **argv)
     if (bwrap.isEmpty()) {
         // Never hard-fail: the sandbox is defense-in-depth, not a
         // launch requirement.
-        qWarning("Arora: bwrap not found — running without the "
-                 "filesystem sandbox (ARORA_NO_SANDBOX=1 silences this)");
+        qWarning("Arktos: bwrap not found — running without the "
+                 "filesystem sandbox (ARKTOS_NO_SANDBOX=1 silences this)");
         return;
     }
 
     const QString program =
         QFileInfo(QStringLiteral("/proc/self/exe")).canonicalFilePath();
     if (program.isEmpty()) {
-        qWarning("Arora: cannot resolve /proc/self/exe — running "
+        qWarning("Arktos: cannot resolve /proc/self/exe — running "
                  "unsandboxed");
         return;
     }
@@ -186,7 +186,7 @@ void SandboxManager::maybeReexec(int argc, char **argv)
     storage.reserve(command.size());
     for (const QString &piece : command)
         storage.append(piece.toLocal8Bit());
-    storage[0] = bwrap.toLocal8Bit(); // honour the ARORA_BWRAP override
+    storage[0] = bwrap.toLocal8Bit(); // honour the ARKTOS_BWRAP override
     QVector<char *> execArgv;
     execArgv.reserve(storage.size() + 1);
     for (QByteArray &piece : storage)
@@ -195,7 +195,7 @@ void SandboxManager::maybeReexec(int argc, char **argv)
 
     // execvp only returns on failure — warn and continue unsandboxed.
     if (execvp(execArgv[0], execArgv.data()) == -1)
-        qWarning("Arora: failed to enter bwrap sandbox: %s — running "
+        qWarning("Arktos: failed to enter bwrap sandbox: %s — running "
                  "unsandboxed", strerror(errno));
     return;
 #elif defined(Q_OS_MACOS)
@@ -204,7 +204,7 @@ void SandboxManager::maybeReexec(int argc, char **argv)
     const QString sandboxExec = QStandardPaths::findExecutable(
         QStringLiteral("sandbox-exec"));
     if (sandboxExec.isEmpty()) {
-        qWarning("Arora: sandbox-exec not found — running unsandboxed");
+        qWarning("Arktos: sandbox-exec not found — running unsandboxed");
         return;
     }
     const QString profile =
@@ -223,7 +223,7 @@ void SandboxManager::maybeReexec(int argc, char **argv)
         execArgv.append(piece.data());
     execArgv.append(nullptr);
     execvp(sandboxExec.toLocal8Bit().constData(), execArgv.data());
-    qWarning("Arora: failed to enter seatbelt sandbox — running "
+    qWarning("Arktos: failed to enter seatbelt sandbox — running "
              "unsandboxed");
     return;
 #elif defined(Q_OS_OPENBSD)
@@ -241,10 +241,10 @@ void SandboxManager::maybeReexec(int argc, char **argv)
             failed = true;
     }
     if (unveil(nullptr, nullptr) == -1 || failed)
-        qWarning("Arora: unveil() failed — continuing with partial "
+        qWarning("Arktos: unveil() failed — continuing with partial "
                  "sandbox");
     if (pledge(plan.pledgePromises.toLocal8Bit().constData(), nullptr) == -1)
-        qWarning("Arora: pledge() failed — continuing unsandboxed");
+        qWarning("Arktos: pledge() failed — continuing unsandboxed");
     return;
 #elif defined(Q_OS_WIN)
     // UNTESTED-ON-TARGET: AppContainer cannot wrap the running process
@@ -253,7 +253,7 @@ void SandboxManager::maybeReexec(int argc, char **argv)
     // The generated manifest (AppContainerGenerator, unit-tested on
     // Linux) is the launcher's rule source; the CreateProcess wiring
     // is deliberately not landed blind — the stub fails soft.
-    qWarning("Arora: AppContainer sandbox backend is compiled but the "
+    qWarning("Arktos: AppContainer sandbox backend is compiled but the "
              "re-exec launcher is not implemented on this platform yet "
              "— running unsandboxed");
     return;
@@ -264,12 +264,12 @@ void SandboxManager::maybeReexec(int argc, char **argv)
     // needs a launcher split (spawn a child inside a capsicum'd
     // environment), which is not implemented; fail soft with a clear
     // warning instead of pretending.
-    qWarning("Arora: no sandbox backend on FreeBSD — Capsicum needs a "
+    qWarning("Arktos: no sandbox backend on FreeBSD — Capsicum needs a "
              "launcher split that is not implemented yet; running "
              "unsandboxed");
     return;
 #else
-    qWarning("Arora: no sandbox backend on this platform — running "
+    qWarning("Arktos: no sandbox backend on this platform — running "
              "unsandboxed");
     return;
 #endif

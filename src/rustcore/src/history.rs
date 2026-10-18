@@ -574,7 +574,7 @@ mod tests {
 
     fn temp_db(name: &str) -> String {
         let dir = std::env::temp_dir().join(format!(
-            "arora-hist-{}-{}-{}",
+            "arktos-hist-{}-{}-{}",
             name,
             std::process::id(),
             std::time::SystemTime::now()

@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -50,7 +50,7 @@ namespace CrashReporter {
 
 // Installs the handlers.  logFilePath is where the marker +
 // backtrace land (its parent directory is created); the
-// ARORA_CRASH_LOG environment variable overrides the path entirely
+// ARKTOS_CRASH_LOG environment variable overrides the path entirely
 // (test/support hook).  Returns the resolved log path, or an empty
 // string on platforms without POSIX signal support.
 QString install(const QString &logFilePath);

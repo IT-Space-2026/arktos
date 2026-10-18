@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -40,24 +40,27 @@
 
 #include "adblockmanager.h"
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "sitedecisionstore.h"
 #include <rustcore.h>
 #endif
 #include "adblockrule.h"
 #include "adblocksubscription.h"
-#include "aroraicon.h"
+#include "arktosicon.h"
+#include "browserapplication.h"
 #include "cookiejar.h"
 #include "fingerprintprotector.h"
 #include "popupblocker.h"
+#include "privacyrequestinterceptor.h"
 #include "sitepadlock.h"
 #include "sitepanel.h"
 #include "siteshield.h"
 #include "tlsverifier.h"
 #include "tlsfixture.h"
+#include "webpage.h"
 #include "webpermissionmanager.h"
 #include "webview.h"
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 #include "qtry.h"
 
 // Minimal HTTP/1.0 responder — same pattern as tst_webpermissions.
@@ -126,6 +129,7 @@ private slots:
     void padlockStateMatrix();
     void padlockFollowsPage();
     void padlockPopup();
+    void padlockTorStates();
 };
 
 void tst_SitePanel::initTestCase()
@@ -166,6 +170,9 @@ void tst_SitePanel::cleanup()
     PopupBlocker::instance()->clearSessionHosts();
     // PRIV06: a failed fingerprint-row leg must not leak an exemption.
     FingerprintProtector::instance()->clearException(
+        QLatin1String("127.0.0.1"));
+    // POL04: same for the link-cleaning exemption.
+    PrivacyRequestInterceptor::clearUrlCleanExempt(
         QLatin1String("127.0.0.1"));
 
     // TRUST03: a gating leg that bailed mid-run must not leave the
@@ -208,7 +215,7 @@ void tst_SitePanel::siteWhitelistToggle()
 {
     AdBlockManager *manager = AdBlockManager::instance();
     QVERIFY(!manager->isSiteWhitelisted(QLatin1String("example.com")));
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     const int rowsBefore =
         SiteDecisionStore::entries(SiteDecisionStore::KindAdBlock).count();
 #endif
@@ -218,7 +225,7 @@ void tst_SitePanel::siteWhitelistToggle()
 
     // Toggling twice must not stack duplicate rules.
     manager->setSiteWhitelisted(QLatin1String("example.com"), true);
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // The whitelist is a keyed row in the decision store — a second
     // toggle rewrites the same row, so duplication is impossible.
     {
@@ -357,6 +364,17 @@ void tst_SitePanel::panelWithoutPage()
     QVERIFY(popups);
     QVERIFY(!popups->isEnabled());
     QVERIFY(!popups->isChecked());
+
+    // POL04: same for link cleaning — and nothing was cleaned, so the
+    // count line stays hidden.
+    QCheckBox *clean = panel.findChild<QCheckBox*>(
+        QLatin1String("siteCleanLinks"));
+    QVERIFY(clean);
+    QVERIFY(!clean->isEnabled());
+    QLabel *cleanedCount = panel.findChild<QLabel*>(
+        QLatin1String("siteCleanedCount"));
+    QVERIFY(cleanedCount);
+    QVERIFY(cleanedCount->isHidden());
 
     QPushButton *clear = panel.findChild<QPushButton*>(
         QLatin1String("siteClearData"));
@@ -519,7 +537,7 @@ void tst_SitePanel::panelForSite()
     // under the header.
     QWidget *trust = panel.findChild<QWidget*>(QLatin1String("siteTrust"));
     QVERIFY(trust);
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     QVERIFY(!trust->isHidden());
     const QList<QLabel*> trustLabels = trust->findChildren<QLabel*>();
     QVERIFY(trustLabels.count() >= 2); // header + >=1 signal line
@@ -553,6 +571,27 @@ void tst_SitePanel::panelForSite()
     panel.refresh();
     QVERIFY(spoof->isChecked());
     protector->clearException(host);
+
+    // POL04: the link-cleaning row mirrors the per-site exemption —
+    // unchecking exempts the host in the policy's live set, rechecking
+    // clears it.  The count line stays hidden: this load cleaned
+    // nothing.  (Session-scoped — the test page is off-the-record.)
+    QCheckBox *clean = panel.findChild<QCheckBox*>(
+        QLatin1String("siteCleanLinks"));
+    QVERIFY(clean);
+    QVERIFY(clean->isEnabled());
+    QVERIFY(clean->isChecked());
+    clean->setChecked(false);
+    QVERIFY(PrivacyRequestInterceptor::isUrlCleanExempt(host));
+    panel.refresh();
+    QVERIFY(!clean->isChecked());
+    clean->setChecked(true);
+    QVERIFY(!PrivacyRequestInterceptor::isUrlCleanExempt(host));
+    QLabel *cleanedCount = panel.findChild<QLabel*>(
+        QLatin1String("siteCleanedCount"));
+    QVERIFY(cleanedCount);
+    QVERIFY(cleanedCount->isHidden());
+    PrivacyRequestInterceptor::clearUrlCleanExempt(host);
 }
 
 // TRUST08: the verdict-to-lines mapping against the live rustcore
@@ -561,7 +600,7 @@ void tst_SitePanel::panelForSite()
 // the other tests in this binary.
 void tst_SitePanel::trustSignalLines()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     const QByteArray tranco = "4,known-fixture.test\n1,paypal.com\n";
     QCOMPARE(rc_tranco_load(
                  reinterpret_cast<const uint8_t *>(tranco.constData()),
@@ -617,7 +656,7 @@ void tst_SitePanel::trustSignalLines()
 // green/unknown leave the lock alone while amber and red repaint it.
 void tst_SitePanel::trustBadgeLevels()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     SiteShieldButton::clearTrustCache();
     const QByteArray tranco = "4,known-fixture.test\n1,paypal.com\n";
     QCOMPARE(rc_tranco_load(
@@ -657,7 +696,7 @@ void tst_SitePanel::trustBadgeLevels()
     QVERIFY(SiteShieldButton::trustLevelFor(QString(), true).isEmpty());
 
     // Icon treatment: only "amber" and "red" repaint the shield.
-    const QIcon shield = AroraIcon::get(QLatin1String("security-high"));
+    const QIcon shield = ArktosIcon::get(QLatin1String("security-high"));
     const QSize px(20, 20);
     const QImage plain = shield.pixmap(px).toImage();
     QCOMPARE(SiteShieldButton::tintedBadge(
@@ -683,7 +722,7 @@ void tst_SitePanel::trustBadgeLevels()
 // the same host does (the https bit is part of the key).
 void tst_SitePanel::trustBadgeCache()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     SiteShieldButton::clearTrustCache();
     const int before = SiteShieldButton::trustLookupCount();
 
@@ -724,7 +763,7 @@ void tst_SitePanel::trustBadgeCache()
 // load ambers the shield, a non-web scheme drops the badge entirely.
 void tst_SitePanel::trustBadgeNavigation()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     SiteShieldButton::clearTrustCache();
 #endif
 
@@ -739,7 +778,7 @@ void tst_SitePanel::trustBadgeNavigation()
     view.load(server.url());
     QTRY_COMPARE(loadSpy.count(), 1);
     QVERIFY(!shield.icon().isNull());
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // 127.0.0.1 is unranked and the page is plaintext http — amber.
     QCOMPARE(shield.trustBadge(), QLatin1String("amber"));
 #else
@@ -759,7 +798,7 @@ void tst_SitePanel::trustBadgeNavigation()
 // of the badge cache key, so the next call is a miss).
 void tst_SitePanel::trustGating()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     QSettings settings;
     settings.remove(QLatin1String("trust/enabled"));
     settings.remove(QLatin1String("trust/lookalike"));
@@ -862,7 +901,7 @@ void tst_SitePanel::trustGating()
 // level maps to a distinct color.
 void tst_SitePanel::trustSectionHeader()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     LocalHttpServer server;
     QVERIFY(server.start());
 
@@ -952,10 +991,10 @@ void tst_SitePanel::padlockStateMatrix()
              int(S::PlainUnlocked));
     QCOMPARE(int(SitePadlockButton::stateFor(QUrl(QLatin1String("file:///etc/passwd")))),
              int(S::PlainUnlocked));
-    QCOMPARE(int(SitePadlockButton::stateFor(QUrl(QLatin1String("arora-file:///tmp/")))),
+    QCOMPARE(int(SitePadlockButton::stateFor(QUrl(QLatin1String("arktos-file:///tmp/")))),
              int(S::PlainUnlocked));
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     const QByteArray tranco =
         "4,known-fixture.test\n1,localhost\n2,paypal.com\n";
     QCOMPARE(rc_tranco_load(
@@ -1102,7 +1141,7 @@ void tst_SitePanel::padlockStateMatrix()
 // per-tab by construction.
 void tst_SitePanel::padlockFollowsPage()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     SiteShieldButton::clearTrustCache();
 #endif
 
@@ -1164,7 +1203,7 @@ void tst_SitePanel::padlockPopup()
     QWidget *trust =
         popup->findChild<QWidget*>(QLatin1String("padlockPopupTrust"));
     QVERIFY(trust);
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // Unlisted loopback host — the informative line shows.
     QVERIFY(trust->isVisibleTo(popup));
     const QList<QLabel *> lines = trust->findChildren<QLabel*>();
@@ -1185,6 +1224,81 @@ void tst_SitePanel::padlockPopup()
         trust->findChild<QLabel*>(QLatin1String("padlockPopupTrustOff"));
     QVERIFY(off);
     settings.remove(QLatin1String("trust/enabled"));
+}
+
+// TRUST23: on a tor window the second-opinion probe is forbidden (a
+// direct handshake would bypass the managed SOCKS route and
+// de-anonymize the user), so the padlock's TLS leg is the engine's
+// own chain validation — a committed https page means the chain
+// verified.  Tranco-known https -> green, the same tier a normal
+// window reaches through the probe; unranked -> neutral yellow;
+// flagged -> red.  The verdict read happens inside the mode flip so
+// a failing QCOMPARE can never leak setTorMode(true) into later
+// tests.
+void tst_SitePanel::padlockTorStates()
+{
+    typedef SitePadlockButton::State S;
+
+#if defined(ARKTOS_RUSTCORE)
+    const QByteArray tranco = "4,tor-known-fixture.test\n";
+    QCOMPARE(rc_tranco_load(
+                 reinterpret_cast<const uint8_t *>(tranco.constData()),
+                 size_t(tranco.size())),
+             RC_OK);
+    const QByteArray block = "tor-threat-fixture.test\n";
+    QCOMPARE(rc_blocklist_load(
+                 reinterpret_cast<const uint8_t *>(block.constData()),
+                 size_t(block.size())),
+             RC_OK);
+    SiteShieldButton::clearTrustCache();
+
+    BrowserApplication::setTorMode(true);
+    // No probe ever lands under tor — the status cache stays empty.
+    const int tlsStatus = int(TlsVerifier::instance()->statusFor(
+        QLatin1String("tor-known-fixture.test")));
+    const int known = int(SitePadlockButton::stateFor(QUrl(
+        QLatin1String("https://tor-known-fixture.test/"))));
+    const int obscure = int(SitePadlockButton::stateFor(QUrl(
+        QLatin1String("https://tor-obscure-fixture.test/"))));
+    const int threat = int(SitePadlockButton::stateFor(QUrl(
+        QLatin1String("https://tor-threat-fixture.test/"))));
+    const int plain = int(SitePadlockButton::stateFor(QUrl(
+        QLatin1String("http://tor-known-fixture.test/"))));
+    BrowserApplication::setTorMode(false);
+
+    QCOMPARE(tlsStatus, int(TlsVerifier::Status::None));
+    QCOMPARE(known, int(S::LockedGreen));
+    QCOMPARE(obscure, int(S::LockedYellow));
+    QCOMPARE(threat, int(S::LockedRed));
+    QCOMPARE(plain, int(S::UnlockedYellow));
+
+    // A user proceeding past the cert interstitial on a ranked host
+    // is the one tor page that must NOT wear green — the committed
+    // chain failed the engine's own check.  The override is injected
+    // through the WebPage test seam rather than a live handshake.
+    QWebEngineProfile profile;
+    WebPage::addCertErrorOverrideForTesting(&profile,
+        QLatin1String("tor-known-fixture.test"),
+        QLatin1String("deadbeef"));
+    QVERIFY(WebPage::certificateErrorOverridden(
+        QLatin1String("tor-known-fixture.test")));
+    BrowserApplication::setTorMode(true);
+    const int overridden = int(SitePadlockButton::stateFor(QUrl(
+        QLatin1String("https://tor-known-fixture.test/"))));
+    BrowserApplication::setTorMode(false);
+    QCOMPARE(overridden, int(S::LockedRed));
+
+    SiteShieldButton::clearTrustCache();
+    rc_sitetrust_reload();
+#else
+    // No crate: no verdict and no probe — every web page lands on the
+    // neutral tier even under tor, locked iff https.
+    BrowserApplication::setTorMode(true);
+    const int locked = int(SitePadlockButton::stateFor(QUrl(
+        QLatin1String("https://a.example/"))));
+    BrowserApplication::setTorMode(false);
+    QCOMPARE(locked, int(S::LockedYellow));
+#endif
 }
 
 QTEST_MAIN(tst_SitePanel)

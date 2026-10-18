@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2026, The Arora Authors
+ * Copyright (c) 2026, The Arktos Authors
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -37,7 +37,7 @@ class QUrl;
 /*
     Serves the bundled stub ("redirect") resources that adblock
     $redirect= / $redirect-rule= rules point at, on the
-    arora-resource:// scheme.  The resource table is compiled in
+    arktos-resource:// scheme.  The resource table is compiled in
     (generated programmatically for the images) so nothing on disk or
     in a filter list can influence what gets served.
 

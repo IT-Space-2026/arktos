@@ -366,7 +366,7 @@ mod tests {
         assert!(l.len() >= 10);
         assert!(l.contains("testsafebrowsing.appspot.com"));
         assert!(!l.contains("example.com"));
-        assert!(!l.contains("arora-browser.org"));
+        assert!(!l.contains("arktos-browser.com"));
     }
 
     #[test]

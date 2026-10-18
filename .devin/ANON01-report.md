@@ -6,15 +6,15 @@ the SEC15/BADSSL01 convention (app-side / engine-side / test-stale).
 
 ## Method
 
-`./arora --anon-smoke` (new in `src/main.cpp`, modeled on
+`./arktos --anon-smoke` (new in `src/main.cpp`, modeled on
 `--browseraudit-smoke`) loads `https://ipduh.com/privacy-test/` on the
-real application profile (named `arora` profile, CookieJar,
+real application profile (named `arktos` profile, CookieJar,
 PrivacyRequestInterceptor + adblock, WebView handlers), injects a
 DocumentCreation `QWebEngineScript` that arms an RTCPeerConnection
 ICE-gather probe, polls until the page's async probes settle (DNS
 resolver readouts, header anomaly scan, font/storage checks), then
 writes the rendered report sections + direct JS probes to
-`$ARORA_ANON_OUT` (default `/tmp/anon-check.json`). The flag hits a live
+`$ARKTOS_ANON_OUT` (default `/tmp/anon-check.json`). The flag hits a live
 site so it stays out of check-coverage's SMOKE_FLAGS, same as
 `--browseraudit-smoke`.
 

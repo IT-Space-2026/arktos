@@ -91,7 +91,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "arora-rustcore"
+name = "arktos-rustcore"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",

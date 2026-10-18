@@ -1,8 +1,10 @@
 TEMPLATE = app
 
-TARGET = arora
+TARGET = arktos
 mac {
-    TARGET = Arora
+    TARGET = Arktos
+    ICON = $$PWD/../BuildProcess/browser.icns
+    QMAKE_INFO_PLIST = $$PWD/../BuildProcess/Info_mac.plist
 }
 
 DEFINES += \
@@ -28,25 +30,25 @@ unix {
     translations.files += .qm/locale
 
     desktop.path = $$DATADIR/applications
-    desktop.files += ../BuildProcess/arora.desktop
+    desktop.files += ../BuildProcess/arktos.desktop
 
     iconxpm.path = $$DATADIR/pixmaps
-    iconxpm.files += data/arora.xpm
+    iconxpm.files += data/arktos.xpm
 
     iconsvg.path = $$DATADIR/icons/hicolor/scalable/apps
-    iconsvg.files += data/arora.svg
+    iconsvg.files += data/arktos.svg
 
     icon16.path = $$DATADIR/icons/hicolor/16x16/apps
-    icon16.files += data/16x16/arora.png
+    icon16.files += data/16x16/arktos.png
 
     icon32.path = $$DATADIR/icons/hicolor/32x32/apps
-    icon32.files += data/32x32/arora.png
+    icon32.files += data/32x32/arktos.png
 
     icon128.path = $$DATADIR/icons/hicolor/128x128/apps
-    icon128.files += data/128x128/arora.png
+    icon128.files += data/128x128/arktos.png
 
     icon512.path = $$DATADIR/icons/hicolor/512x512/apps
-    icon512.files += data/512x512/arora.png
+    icon512.files += data/512x512/arktos.png
 
     # Distros/users can drop a customized useragents.xml into PKGDATADIR;
     # UserAgentMenu prefers it over the compiled-in resource.
@@ -62,16 +64,16 @@ unix {
                         data/extensions/PROVENANCE.txt
 
     man.path = $$DATADIR/man/man1
-    man.files += data/arora.1
+    man.files += data/arktos.1
 
     # SAND01: the generated bwrap launcher installs next to the binary
-    # as `arora-sandbox`.  `executable` makes qmake install it 755.
+    # as `arktos-sandbox`.  `executable` makes qmake install it 755.
     sandboxlauncher.path = $$BINDIR
-    sandboxlauncher.files += sandbox/arora-sandbox
+    sandboxlauncher.files += sandbox/arktos-sandbox
     sandboxlauncher.CONFIG += executable
 
     man-compress.path = $$DATADIR/man/man1
-    man-compress.extra = "" "gzip -9 -f \$(INSTALL_ROOT)/$$DATADIR/man/man1/arora.1" ""
+    man-compress.extra = "" "gzip -9 -f \$(INSTALL_ROOT)/$$DATADIR/man/man1/arktos.1" ""
     man-compress.depends = install_man
 
     GNOME_DEFAULT_APPS_PATH = $$system(pkg-config --variable=defappsdir gnome-default-applications)
@@ -80,7 +82,7 @@ unix {
         INSTALLS += gnome-default-app
 
         gnome-default-app.path = $$GNOME_DEFAULT_APPS_PATH
-        gnome-default-app.files = ../BuildProcess/arora.xml
+        gnome-default-app.files = ../BuildProcess/arktos.xml
     }
 }
 }

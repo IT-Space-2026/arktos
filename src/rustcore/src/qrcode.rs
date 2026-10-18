@@ -73,10 +73,10 @@ mod tests {
     }
 
     // The 29x29 ground truth the C++ autotest pins for
-    // "https://arora.example/clean?id=42" at ECC M — produced by an
+    // "https://arktos.example/clean?id=42" at ECC M — produced by an
     // independent implementation of the same algorithm.  Matching it
     // proves the crate port is bit-identical to the vendored encoder.
-    const REF_TEXT: &str = "https://arora.example/clean?id=42";
+    const REF_TEXT: &str = "https://arktos.example/clean?id=42";
     const REF_MATRIX: [&str; 29] = [
         "11111110011010011011101111111",
         "10000010000000000110101000001",

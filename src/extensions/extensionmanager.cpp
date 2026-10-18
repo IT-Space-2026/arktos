@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,7 +27,7 @@
 #include "browserprofile.h"
 #include "networkaccessmanager.h"
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "rustcore.h"
 #endif
 
@@ -90,7 +90,7 @@ static ExtensionManager::ExtensionInfo infoFrom(const QWebEngineExtensionInfo &i
 
 // The canonical UI-facing manager: the first prepared non-off-the-
 // record profile's manager.  prepareProfile() hands out profiles in
-// order, so this is the "arora" browsing profile.
+// order, so this is the "arktos" browsing profile.
 static QWebEngineExtensionManager *managerFor(
         const QList<QPointer<QWebEngineProfile>> &profiles)
 {
@@ -146,7 +146,7 @@ static bool isFetchableUpdateUrl(const QUrl &url)
 }
 }
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 // EXT06: the review dialog consumes PRE-VALIDATED manifest fields —
 // rc_ext_manifest_check parses the schema + permission lists in Rust
 // and this maps its verdict onto the UI-facing Manifest.  The raw
@@ -240,10 +240,12 @@ static ExtensionManager::Manifest inspectPackageManifest(const QString &path)
                       "structure-checked only.");
     return manifest;
 }
-#endif // ARORA_RUSTCORE
+#endif // ARKTOS_RUSTCORE
 
-ExtensionManager::ExtensionManager(QObject *parent)
+ExtensionManager::ExtensionManager(const QString &profileId, QObject *parent)
     : QObject(parent)
+    , m_profileId(BrowserPaths::isProfileId(profileId)
+                  ? profileId : BrowserPaths::activeProfileId())
 {
     // EXT12: every lifecycle pulse (load/install/uninstall + the
     // enable/disable settle) fans out through changed() — coalesce
@@ -273,9 +275,17 @@ ExtensionManager::ExtensionManager(QObject *parent)
 
 ExtensionManager *ExtensionManager::instance()
 {
-    static ExtensionManager *manager = nullptr;
+    return instanceFor(BrowserPaths::activeProfileId());
+}
+
+ExtensionManager *ExtensionManager::instanceFor(const QString &profileId)
+{
+    const QString id = BrowserPaths::isProfileId(profileId)
+        ? profileId : BrowserPaths::activeProfileId();
+    static QHash<QString, QPointer<ExtensionManager>> managers;
+    QPointer<ExtensionManager> &manager = managers[id];
     if (!manager)
-        manager = new ExtensionManager(qApp);
+        manager = new ExtensionManager(id, qApp);
     return manager;
 }
 
@@ -345,8 +355,9 @@ void ExtensionManager::installOnProfile(QWebEngineProfile *profile)
             this, [this, profile](const QWebEngineExtensionInfo &info) {
         const ExtensionInfo plain = infoFrom(info);
         // SEC25: the pin and any tamper flag die with the extension.
-        ProfileSettings().remove(integritySettingsKey(
-            profile->storageName(), plain.id));
+        ProfileSettings(BrowserProfile::profileIdFor(profile))
+            .remove(integritySettingsKey(
+                profile->storageName(), plain.id));
         m_tamperedIds.remove(plain.id);
         // EXT12: its health verdict too.
         m_healthVerdicts.remove(plain.id);
@@ -370,7 +381,7 @@ void ExtensionManager::installOnProfile(QWebEngineProfile *profile)
         connect(this, &ExtensionManager::changed,
                 runtime, &ExtensionBackgroundRuntime::syncNow);
     }
-    if (!qEnvironmentVariableIsSet("ARORA_EXTHOST_OFF"))
+    if (!qEnvironmentVariableIsSet("ARKTOS_EXTHOST_OFF"))
         ExtensionBackgroundRuntime::instance()->attachProfile(profile);
 
     scheduleAutoUpdateCheck();
@@ -586,7 +597,7 @@ void ExtensionManager::setExtensionEnabled(const QString &id, bool enabled)
 QString ExtensionManager::bundledExtensionsPath()
 {
     const QString overrideDir = QString::fromLocal8Bit(
-        qgetenv("ARORA_BUNDLED_EXTENSIONS_DIR"));
+        qgetenv("ARKTOS_BUNDLED_EXTENSIONS_DIR"));
     if (!overrideDir.isEmpty())
         return overrideDir;
     const QString installed = BrowserApplication::installedDataDirectory()
@@ -652,7 +663,7 @@ void ExtensionManager::installBundledExtensions(QWebEngineProfile *profile)
     const QString settingsKey = QLatin1String("extensions/bundled/")
         + (profile->storageName().isEmpty()
            ? QStringLiteral("default") : profile->storageName());
-    ProfileSettings settings;
+    ProfileSettings settings(BrowserProfile::profileIdFor(profile));
     const QStringList consumed = settings.value(settingsKey).toStringList();
     QStringList satisfied;
 
@@ -689,13 +700,14 @@ void ExtensionManager::installBundledExtensions(QWebEngineProfile *profile)
 
         PendingBundle pending;
         pending.engine = extensions;
+        pending.profileId = BrowserProfile::profileIdFor(profile);
         pending.settingsKey = settingsKey;
         pending.fileName = name;
         pending.stem = stem;
         pending.enable = fresh;
         m_bundledPending.append(pending);
 
-        // Consent: bundling IS Arora's approval — the grant is made
+        // Consent: bundling IS Arktos's approval — the grant is made
         // programmatically on this internal path but still flows
         // through the one-shot gate (consumed by this install), so a
         // manual retry of the same path later needs a real review.
@@ -729,7 +741,8 @@ void ExtensionManager::finishBundledInstall(const ExtensionInfo &info)
         m_bundledPending.removeAt(i);
         if (!info.error.isEmpty() || !info.installed)
             return;
-        ProfileSettings settings;
+        ProfileSettings settings(pending.profileId.isEmpty()
+                                 ? m_profileId : pending.profileId);
         QStringList consumed =
             settings.value(pending.settingsKey).toStringList();
         if (!consumed.contains(pending.fileName)) {
@@ -759,7 +772,7 @@ ExtensionManager::Manifest ExtensionManager::inspectManifest(const QString &path
     else if (info.isFile() && info.fileName() == QLatin1String("manifest.json"))
         manifestPath = info.absoluteFilePath();
     else if (info.isFile() && info.suffix() == QLatin1String("zip")) {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
         // EXT06: the archive is verified in Rust and its embedded
         // manifest comes back pre-classified — the review dialog
         // shows real permissions for packages now.
@@ -782,7 +795,7 @@ ExtensionManager::Manifest ExtensionManager::inspectManifest(const QString &path
         manifest.error = tr("cannot read %1").arg(manifestPath);
         return manifest;
     }
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // EXT06: schema + permissions are parsed in Rust — the fields
     // below come back pre-classified, never from raw JSON on this side.
     const QByteArray raw = file.readAll();
@@ -873,7 +886,7 @@ ExtensionManager::Manifest ExtensionManager::inspectManifest(const QString &path
         manifest.error = tr("Qt WebEngine supports Manifest V3 extensions only "
                             "(this package declares version %1).")
             .arg(manifest.manifestVersion);
-#endif // ARORA_RUSTCORE
+#endif // ARKTOS_RUSTCORE
     return manifest;
 }
 
@@ -1101,7 +1114,7 @@ void ExtensionManager::pinInstalledExtension(QWebEngineProfile *profile,
     const QByteArray hash = extensionTreeHash(info.path);
     if (hash.isEmpty())
         return;
-    ProfileSettings().setValue(
+    ProfileSettings(BrowserProfile::profileIdFor(profile)).setValue(
         integritySettingsKey(profile->storageName(), info.id),
         QString::fromLatin1(hash));
 }
@@ -1151,7 +1164,7 @@ void ExtensionManager::verifyInstalledIntegrity(QWebEngineProfile *profile)
         if (plain.builtin)
             continue;
         const QString key = integritySettingsKey(storage, info.id());
-        ProfileSettings settings;
+        ProfileSettings settings(BrowserProfile::profileIdFor(profile));
         const QString pinned = settings.value(key).toString();
         const QString current =
             QString::fromLatin1(extensionTreeHash(info.path()));
@@ -1209,14 +1222,14 @@ void ExtensionManager::verifyInstalledIntegrity(QWebEngineProfile *profile)
 #if QT_CONFIG(webengine_extensions)
 // Runs inside the extension-origin page.  Drives a timed
 // sendMessage ping at the background context and then samples
-// getContexts; the result lands on window.__aroraExtHealth for the
+// getContexts; the result lands on window.__arktosExtHealth for the
 // C++ side to poll (runJavaScript cannot await a promise).
 static const char kHealthProbeScript[] = R"JS(
 (function () {
     var R = {runtime: false};
     function done() {
-        try { window.__aroraExtHealth = JSON.stringify(R); }
-        catch (e) { window.__aroraExtHealth = '{"runtime":false}'; }
+        try { window.__arktosExtHealth = JSON.stringify(R); }
+        catch (e) { window.__arktosExtHealth = '{"runtime":false}'; }
     }
     try {
         R.runtime = (typeof chrome !== 'undefined')
@@ -1249,7 +1262,7 @@ static const char kHealthProbeScript[] = R"JS(
         if (!settled) { settled = true; finishPing('TIMEOUT'); }
     }, 6000);
     try {
-        chrome.runtime.sendMessage({__aroraHealthProbe: 1},
+        chrome.runtime.sendMessage({__arktosHealthProbe: 1},
             function (resp) {
                 if (settled) return;
                 settled = true;
@@ -1394,7 +1407,7 @@ void ExtensionManager::startNextHealthProbe()
     m_healthVerdicts.insert(info.id, ProbeVerdict::Pending);
 
     // A bare page on the extension's profile — deliberately not the
-    // app's WebPage subclass, same as the EXT08 popup host: no arora
+    // app's WebPage subclass, same as the EXT08 popup host: no arktos
     // channel objects or page policy leak into extension chrome.
     QWebEnginePage *page = new QWebEnginePage(profile);
     m_healthPage = page;
@@ -1428,7 +1441,7 @@ void ExtensionManager::startNextHealthProbe()
     // pageInjectionSource gate) — the probe measures the engine's
     // real worker and needs pristine chrome.* bindings.
     page->load(QUrl(QStringLiteral(
-        "chrome-extension://%1/manifest.json#arora-healthprobe")
+        "chrome-extension://%1/manifest.json#arktos-healthprobe")
                         .arg(info.id)));
     // Watchdog: a wedged load or a dropped eval must not stall the
     // queue — an unmeasurable extension stays static-classified.
@@ -1461,7 +1474,7 @@ void ExtensionManager::runHealthProbeScript()
         }
         ++*tries;
         page->runJavaScript(
-            QStringLiteral("window.__aroraExtHealth || ''"),
+            QStringLiteral("window.__arktosExtHealth || ''"),
             [this, poll, tries](const QVariant &result) {
                 const QByteArray json = result.toString().toUtf8();
                 if (json.isEmpty() && *tries <= 30)
@@ -1580,10 +1593,10 @@ void ExtensionManager::abandonHealthProbe()
     m_healthQueue.clear();
 }
 
-QString ExtensionManager::userScriptsPath()
+QString ExtensionManager::userScriptsPath() const
 {
-    const QString directory =
-        BrowserPaths::dataFilePath(QLatin1String("userscripts"));
+    const QString directory = BrowserPaths::profileDataFilePath(
+        m_profileId, QLatin1String("userscripts"));
     QDir().mkpath(directory);
     // EXT05: every file here executes in each page's ApplicationWorld
     // — the store must stay owner-only so another account cannot
@@ -1676,10 +1689,10 @@ void ExtensionManager::reloadUserScripts(QWebEngineProfile *profile)
 // member names, and an embedded readable manifest.json are all
 // required.  Rejected packages are never written.
 
-QString ExtensionManager::updatesPath()
+QString ExtensionManager::updatesPath() const
 {
-    const QString directory =
-        BrowserPaths::dataFilePath(QLatin1String("extension-updates"));
+    const QString directory = BrowserPaths::profileDataFilePath(
+        m_profileId, QLatin1String("extension-updates"));
     QDir().mkpath(directory);
     return directory;
 }
@@ -1725,7 +1738,7 @@ bool ExtensionManager::parseUpdateManifest(const QByteArray &xml,
         QString hash;   // hash_sha256 — declared package digest (hex)
     };
     QList<Offer> offers;
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // SEC19: remote XML is parsed by memory-safe Rust — the crate
     // hands back {"offers":[[appid,status,codebase,version,
     // hash_sha256],...]} and every policy decision below stays
@@ -1790,7 +1803,7 @@ bool ExtensionManager::parseUpdateManifest(const QByteArray &xml,
             .arg(reader.errorString());
         return false;
     }
-#endif // ARORA_RUSTCORE
+#endif // ARKTOS_RUSTCORE
     if (offers.isEmpty()) {
         result->error = tr("update manifest carries no updatecheck entry");
         return false;
@@ -1842,16 +1855,16 @@ bool ExtensionManager::parseUpdateManifest(const QByteArray &xml,
     return true;
 }
 
-bool ExtensionManager::updateCheckEnabled()
+bool ExtensionManager::updateCheckEnabled() const
 {
-    return ProfileSettings().value(QLatin1String("extensions/autoUpdateCheck"),
-                             false).toBool();
+    return ProfileSettings(m_profileId).value(
+        QLatin1String("extensions/autoUpdateCheck"), false).toBool();
 }
 
 void ExtensionManager::setUpdateCheckEnabled(bool enabled)
 {
-    ProfileSettings().setValue(QLatin1String("extensions/autoUpdateCheck"),
-                         enabled);
+    ProfileSettings(m_profileId).setValue(
+        QLatin1String("extensions/autoUpdateCheck"), enabled);
 }
 
 bool ExtensionManager::updateCheckInProgress() const
@@ -2018,7 +2031,7 @@ void ExtensionManager::fetchUpdatePackage(const UpdateResult &result)
             const QByteArray body = reply->readAll();
             const QByteArray expected =
                 QByteArray::fromHex(job.result.packageHash.toLatin1());
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
             // EXT06: verify the fetched bytes before they hit disk —
             // the update manifest's declared hash (when it carries
             // one), the zip/CRX3 structure, member names and a
@@ -2130,8 +2143,9 @@ void ExtensionManager::finishUpdateCheck()
 {
     if (m_updateJobs.isEmpty() && m_updateCheckRunning) {
         m_updateCheckRunning = false;
-        ProfileSettings().setValue(QLatin1String("extensions/lastUpdateCheck"),
-                             QDateTime::currentSecsSinceEpoch());
+        ProfileSettings(m_profileId).setValue(
+            QLatin1String("extensions/lastUpdateCheck"),
+            QDateTime::currentSecsSinceEpoch());
         emit updateCheckFinished(m_updateResults);
     }
 }
@@ -2158,7 +2172,7 @@ void ExtensionManager::maybeAutoUpdateCheck()
 {
     if (!updateCheckEnabled() || m_updateCheckRunning)
         return;
-    const qint64 last = ProfileSettings()
+    const qint64 last = ProfileSettings(m_profileId)
         .value(QLatin1String("extensions/lastUpdateCheck"), 0).toLongLong();
     if (QDateTime::currentSecsSinceEpoch() - last < 20 * 60 * 60)
         return;

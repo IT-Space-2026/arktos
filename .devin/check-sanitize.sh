@@ -12,19 +12,19 @@
 #     dedupes them into .devin/SANITIZER.md
 #
 # LeakSanitizer is deliberately OFF (detect_leaks=0): the leak hunt is
-# MEM01's job, which reuses this harness with ARORA_SANITIZE_LEAKS=1.
+# MEM01's job, which reuses this harness with ARKTOS_SANITIZE_LEAKS=1.
 #
 # Env:
-#   ARORA_SANITIZE_BUILD=dir resume an existing instrumented tree
+#   ARKTOS_SANITIZE_BUILD=dir resume an existing instrumented tree
 #                            instead of copying fresh — lets a killed
 #                            run keep its objects (same pattern as
-#                            ARORA_STATIC_BUILD/ARORA_LEAKS_BUILD).
+#                            ARKTOS_STATIC_BUILD/ARKTOS_LEAKS_BUILD).
 #                            Implies KEEP.
-#   ARORA_SANITIZE_LEAKS=1   enable LSan (default off — MEM01 flips it)
-#   ARORA_SANITIZE_STRICT=1  build CONFIG+=sanitize-strict (UBSan
+#   ARKTOS_SANITIZE_LEAKS=1   enable LSan (default off — MEM01 flips it)
+#   ARKTOS_SANITIZE_STRICT=1  build CONFIG+=sanitize-strict (UBSan
 #                            findings become fatal instead of logged)
-#   ARORA_SANITIZE_JOBS=N    parallel make jobs (default: nproc, max 4)
-#   ARORA_SANITIZE_KEEP=1    keep the instrumented build tree
+#   ARKTOS_SANITIZE_JOBS=N    parallel make jobs (default: nproc, max 4)
+#   ARKTOS_SANITIZE_KEEP=1    keep the instrumented build tree
 #
 # Exit status: 0 when the suite ran with zero sanitizer reports, 1 on
 # build failure or any surviving report (the gate).
@@ -33,11 +33,11 @@ set -u
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 REPORT_MD="$ROOT/.devin/SANITIZER.md"
 
-JOBS=${ARORA_SANITIZE_JOBS:-$(nproc 2>/dev/null || echo 2)}
+JOBS=${ARKTOS_SANITIZE_JOBS:-$(nproc 2>/dev/null || echo 2)}
 [ "$JOBS" -gt 4 ] && JOBS=4
-KEEP=${ARORA_SANITIZE_KEEP:-0}
-LEAKS=${ARORA_SANITIZE_LEAKS:-0}
-STRICT=${ARORA_SANITIZE_STRICT:-0}
+KEEP=${ARKTOS_SANITIZE_KEEP:-0}
+LEAKS=${ARKTOS_SANITIZE_LEAKS:-0}
+STRICT=${ARKTOS_SANITIZE_STRICT:-0}
 
 die() { echo "check-sanitize: $*" >&2; exit 1; }
 
@@ -47,13 +47,13 @@ command -v git >/dev/null 2>&1 || die "git not found"
 CONFIG=sanitize
 [ "$STRICT" = "1" ] && CONFIG=sanitize-strict
 
-if [ -n "${ARORA_SANITIZE_BUILD:-}" ]; then
-    BUILD=$ARORA_SANITIZE_BUILD
-    [ -d "$BUILD/src" ] || die "ARORA_SANITIZE_BUILD=$BUILD is not a build tree"
+if [ -n "${ARKTOS_SANITIZE_BUILD:-}" ]; then
+    BUILD=$ARKTOS_SANITIZE_BUILD
+    [ -d "$BUILD/src" ] || die "ARKTOS_SANITIZE_BUILD=$BUILD is not a build tree"
     KEEP=1
     echo "check-sanitize: resuming instrumented tree $BUILD (CONFIG+=$CONFIG)"
 else
-    BUILD=$(mktemp -d /tmp/arora-san.XXXXXX)
+    BUILD=$(mktemp -d /tmp/arktos-san.XXXXXX)
     echo "check-sanitize: build tree $BUILD (CONFIG+=$CONFIG)"
 
     cd "$ROOT" || die "cannot cd to $ROOT"
@@ -67,9 +67,9 @@ cd "$BUILD" || die "cannot cd to $BUILD"
 
 QMAKE=$(command -v qmake6 || command -v qmake) || die "qmake not found"
 
-if [ -z "${ARORA_SANITIZE_BUILD:-}" ]; then
+if [ -z "${ARKTOS_SANITIZE_BUILD:-}" ]; then
     echo "check-sanitize: qmake ($("$QMAKE" -query QT_VERSION), linux-clang) + make -j$JOBS"
-    "$QMAKE" -spec linux-clang "CONFIG+=$CONFIG" arora.pro || die "qmake failed"
+    "$QMAKE" -spec linux-clang "CONFIG+=$CONFIG" arktos.pro || die "qmake failed"
 fi
 make -j"$JOBS" sub-src sub-autotests || die "build failed"
 
@@ -103,7 +103,7 @@ SMOKE_FLAGS="--quit-after-load --app-smoke --browser-smoke --nam-smoke
 --extension-smoke --extension-otr-smoke --ua-smoke"
 for flag in $SMOKE_FLAGS; do
     name=$(echo "$flag" | tr -d -)
-    timeout 240 ./arora "$flag" >"$LOGDIR/smoke-$name.log" 2>&1
+    timeout 240 ./arktos "$flag" >"$LOGDIR/smoke-$name.log" 2>&1
     rc=$?
     if [ "$rc" -eq 0 ]; then
         echo "check-sanitize: smoke $flag PASS"
@@ -111,7 +111,7 @@ for flag in $SMOKE_FLAGS; do
         echo "check-sanitize: smoke $flag exit=$rc (tolerated)"
     fi
 done
-timeout 240 ./arora --download-smoke "file://$BUILD/README.md" \
+timeout 240 ./arktos --download-smoke "file://$BUILD/README.md" \
     >"$LOGDIR/smoke-downloadsmoke.log" 2>&1 \
     && echo "check-sanitize: smoke --download-smoke PASS" \
     || echo "check-sanitize: smoke --download-smoke exit=$? (tolerated)"
@@ -145,8 +145,8 @@ COUNT=$(grep -c . "$FINDINGS" 2>/dev/null || echo 0)
     echo 'Instrumented copy of the tree is built in a throwaway dir with'
     echo '`-fsanitize=address,undefined`; the autotest suite and every'
     echo '`--*-smoke` flag run offscreen under an isolated HOME.'
-    echo 'LeakSanitizer is off by default (MEM01); ARORA_SANITIZE_LEAKS=1'
-    echo 'enables it, ARORA_SANITIZE_STRICT=1 makes UBSan findings fatal.'
+    echo 'LeakSanitizer is off by default (MEM01); ARKTOS_SANITIZE_LEAKS=1'
+    echo 'enables it, ARKTOS_SANITIZE_STRICT=1 makes UBSan findings fatal.'
     echo
     echo "## Result"
     echo

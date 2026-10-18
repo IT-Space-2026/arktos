@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, The Arora Authors
+ * Copyright (c) 2026, The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -62,7 +62,7 @@
 #include "tabwidget.h"
 #include "toolbarsearch.h"
 #include "tormanager.h"
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 #include "qtry.h"
 
 // Exposes the protected event handlers for direct dispatch.
@@ -1015,7 +1015,7 @@ void tst_WebView::dropUrl()
     // A drop with neither urls nor text decodes to nothing — the
     // view leaves the current page alone.
     QMimeData opaqueMime;
-    opaqueMime.setData(QLatin1String("application/x-arora-test"),
+    opaqueMime.setData(QLatin1String("application/x-arktos-test"),
                        QByteArray("payload"));
     const QUrl before = view.url();
     view.sendDrop(&opaqueMime);
@@ -1158,7 +1158,7 @@ void tst_WebView::findText()
     QObject::connect(&view, &QWebEngineView::loadFinished, &view,
                      [loaded](bool) { *loaded = true; });
     view.setHtml(QStringLiteral(
-        "<html><body>hello arora hello</body></html>"));
+        "<html><body>hello arktos hello</body></html>"));
     QTRY_VERIFY_WITH_TIMEOUT(*loaded, 15000);
 
     WebViewSearch search(&view);
@@ -1195,7 +1195,7 @@ void tst_WebView::findText()
     QToolButton *highlight = search.findChild<QToolButton*>(
         QLatin1String("highlightAllButton"));
     QVERIFY(highlight);
-    edit->setText(QLatin1String("arora"));
+    edit->setText(QLatin1String("arktos"));
     highlight->setChecked(true);
     QTRY_VERIFY_WITH_TIMEOUT(info->text() == QLatin1String("1/1"), 15000);
     highlight->setChecked(false);
@@ -1340,7 +1340,7 @@ void tst_WebView::contextMenuLinkPrivateTorActions()
     // A file: link target loads without a network, so the opened
     // view's url settles deterministically.
     const QString fixturePath = QDir::temp().filePath(
-        QLatin1String("arora-cont07-target.html"));
+        QLatin1String("arktos-cont07-target.html"));
     {
         QFile fixture(fixturePath);
         QVERIFY(fixture.open(QIODevice::WriteOnly));
@@ -1515,7 +1515,7 @@ void tst_WebView::contextMenuLinkPrivateTorActions()
 // the tor/OTR isolations must be structural (entries absent or
 // remapped), never just a refused load.  'Open in New Tor Window' is
 // asserted present but never triggered here — it would spawn a real
-// `arora --tor` process; its argv shape and receiving-side re-gate
+// `arktos --tor` process; its argv shape and receiving-side re-gate
 // are locked by tst_browserapp::torWindowHandoffGate.
 void tst_WebView::contextMenuLinkCrossProfileMatrix()
 {
@@ -1527,7 +1527,7 @@ void tst_WebView::contextMenuLinkCrossProfileMatrix()
     // A file: target loads with no network so opened views settle
     // deterministically.
     const QString fixturePath = QDir::temp().filePath(
-        QLatin1String("arora-cont08-target.html"));
+        QLatin1String("arktos-cont08-target.html"));
     {
         QFile fixture(fixturePath);
         QVERIFY(fixture.open(QIODevice::WriteOnly));
@@ -2016,6 +2016,21 @@ void tst_WebView::linkOpenRefererDiscipline()
             awaitDetachedView(&view, QLatin1String("http"));
         QVERIFY2(detached,
                  qPrintable(entry + QLatin1String(" produced no view")));
+        // The request hitting the server only means headers were
+        // received — the load can still be in-flight, and closing the
+        // view then aborts it ("Discarded") so loadFinished(true) and
+        // the history insert below never happen.  Wait for the load
+        // to finish before the request/close checks race it.  The
+        // page's committed url (not the view's m_initialUrl echo)
+        // distinguishes "finished before the spy attached" from
+        // "load not started yet".
+        QSignalSpy detachedFin(detached->page(),
+                               &QWebEnginePage::loadFinished);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            !detachedFin.isEmpty()
+            || (detached->webPage()->url() == server.url(target)
+                && !detached->isLoading()),
+            15000);
         const bool sameProfile =
             detached->webPage()->profile() == view.webPage()->profile();
         const bool got = awaitRequest(target, 1);
@@ -2143,7 +2158,9 @@ void tst_WebView::contextMenuPageActions()
 // regardless of which actions the menu carries.
 void tst_WebView::contextMenuSelectionToNote()
 {
-    TestWebView view;
+    // MPROF02: the note lands in the page's own profile's store —
+    // bind the view to the app profile so it is the persistent one.
+    TestWebView view(BrowserApplication::webEngineProfile());
     view.resize(800, 600);
     view.show();
 

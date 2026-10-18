@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -31,7 +31,7 @@
 // Topics so far: "credentials" (the rc_cred_* map changed),
 // "bookmarks" and "history" (the RCORE02 stores), "autofill" (the
 // RCORE05 record set).
-// Compiled only under CONFIG+=rustcore (ARORA_RUSTCORE).
+// Compiled only under CONFIG+=rustcore (ARKTOS_RUSTCORE).
 class RustCoreBridge : public QObject
 {
     Q_OBJECT
@@ -53,5 +53,15 @@ private:
 // idempotent call the SecureStore shim makes before every op, so
 // test-mode data-dir switches propagate (RCORE02).
 void rustCoreEnsureDataDir();
+
+// MPROF02: points the crate at a SPECIFIC profile's dir —
+// profiles/<id>/ instead of the active profile's.  The rust store is
+// process-global: switching dirs drops its cached keys and the
+// decoded credential/autofill maps (per rc_set_data_dir), and every
+// DirCache re-stamps, so alternating profiles is correct but
+// expensive — callers anchor per operation batch, never per page
+// load.  An empty or non-slug id resolves to the default profile,
+// matching BrowserPaths::profileDataDir.
+void rustCoreEnsureDataDirFor(const QString &profileId);
 
 #endif // RUSTCOREBRIDGE_H

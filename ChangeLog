@@ -1,3 +1,18 @@
+1.0 — Arktos: first release
+- Rebranded the project from Arora to Arktos (BRAND01): product name,
+  website (https://arktos-browser.com) and repository
+  (https://github.com/arktos-browser/arktos), the binary, install
+  paths (/usr/lib/arktos, /usr/share/arktos), desktop file, Flatpak
+  app id (com.arktos_browser.Arktos), deb/rpm/NSIS/metainfo metadata,
+  icons, man pages and every user-visible string now say Arktos;
+  About credits read "Copyright © 2026-2027 Janos Szenfner" plus the
+  new repository link. The first-run migration moves the old Arora
+  data root, settings file and cache leaf into the new Arktos
+  locations — existing profiles, vaults, settings and engine stores
+  are carried across, never orphaned. (Leftover "arora" tokens in the
+  log below name the pre-rebrand product, file formats or storage
+  identifiers that existed at the time.)
+
 0.12 (unreleased) — Qt 6 port + feature rebuild
 Core / Qt 6 port:
 - Complete port from Qt4/WebKit to Qt 6/WebEngine: WebView, WebPage, tab
@@ -44,7 +59,7 @@ Core / Qt 6 port:
   which keeps WebGL/canvas acceleration while moving page compositing
   to software — after two consecutive unclean exits, and exposes the
   same mitigation as a Preferences checkbox and the
-  ARORA_DISABLE_GPU_COMPOSITING env override (CRASH01).
+  ARKTOS_DISABLE_GPU_COMPOSITING env override (CRASH01).
 - Printing can no longer kill the browser: an accepted print dialog
   describing an unprintable target (no configured printer, a file
   output path that can't be written) is refused with a readable error
@@ -66,7 +81,7 @@ Core / Qt 6 port:
   (Servo) say so instead of opening an empty dialog (PRINT01).
 
 UI:
-- Light/dark follows the desktop scheme; ARORA_COLOR_SCHEME override
+- Light/dark follows the desktop scheme; ARKTOS_COLOR_SCHEME override
   (UIP01).
 - Central icon provider + bundled Adwaita/Breeze/Tabler sets, light and
   dark variants (ICONS01).
@@ -101,6 +116,14 @@ UI:
   or unpins it, and pin state is restored with the session
   (TABS04, TABS14).
 - Named, color-coded tab groups (TABGRP01).
+- Tab groups gained a Close Group context-menu action that closes
+  every member — including a collapsed group's hidden tabs — through
+  the normal close path so Recently Closed Tab can restore them, with
+  a confirmation naming the real member count above the multi-close
+  threshold; and dragging a tab now previews the drop-to-group stack
+  by tinting the hovered tab's middle band (or a collapsed group's
+  chip) with the group color while the edge quarters keep the reorder
+  meaning (TABGRP02).
 - Compact tab strip: a container tab no longer inflates the whole
   bar — the container's accent line and name chip now paint inside a
   standard-height tab row instead of stacking a chip band on top of
@@ -900,6 +923,14 @@ UI:
   shrinks while images and fixed-pixel layout stay put, the change is
   per tab, and it survives reloads and navigations. Text that pins a
   pixel size in CSS does not scale — an honest Chromium limit (VIEW08).
+- Diagnosed the "memory indicator always climbs on article → back"
+  report: the status-bar readout is honest — it polls the real
+  /proc RSS of the tab's renderer — and the climb is real renderer
+  memory. A scripted 20-cycle loopback fixture (tst_memcycle) shows a
+  monotonic ~5.4 MB/cycle climb on every surface including a bare
+  engine control with no Arora wiring, so the retention lives in
+  Chromium's per-navigation session-history handling, not in any
+  Arora object; the fix pass is tracked separately (MEM05/MEM06).
 - Profile picture pipeline: a qApp-owned ProfileIdentity owns the
   display name ("profile/name", default "Profile") and the custom
   avatar at <data-dir>/profile-avatar.png, emitting nameChanged /
@@ -911,6 +942,61 @@ UI:
   silhouette.  Ready-made 'Change Picture...' / 'Remove Picture'
   actions ship via ProfileAvatarActions for the profile menu to
   pick up (PROF04) (PROF02).
+- Profile button on the navigation bar: a round avatar now closes the
+  bar's right edge (mirroring the Arora logo button on the left) and
+  drops a menu showing the profile avatar and name — "Edit Profile
+  Name..." renames it and the new name shows on every open window
+  right away and is kept across restarts. Until you pick a picture
+  the face is a neutral silhouette that stays readable on the
+  violet Tor bar too; the button is a normal navigation-bar item, so
+  Edit Navigation Bar can move it like any other (PROF01).
+- Multiple browser profiles: the profile button's menu gains a "New
+  Window" submenu listing every profile and a "Profile Manager..."
+  entry, and the same manager opens from Tools > Profiles... and
+  Preferences > General.  The manager lists each profile with its
+  avatar, name and data size, and can create, rename, set a picture
+  for, delete and open a window on a profile — deleting asks you to
+  type the profile name first, and the default profile cannot be
+  deleted.  Profiles are kept under their own data folders with a
+  shared registry, ready for per-profile windows once that layer
+  lands; until then, opening a window on another profile is disabled
+  with an explanation rather than silently falling back (MPROF05).
+- The profile menu also carries the hygiene actions now: Clear
+  History, Clear Cookies and Clear Cache each wipe exactly their
+  category through the same plan engine as Clear Private Data (one
+  confirmation apiece), and a red "Delete Profile" row wipes the
+  whole persona — the confirm dialog itemizes what goes (history,
+  cookies, cache, settings, extensions state, sessions, name and
+  avatar) and makes you type the profile name, then arms a
+  wipe-pending marker, restarts the browser and erases the data and
+  cache roots plus settings before any profile exists again, so a
+  live profile can never be deleted out from under a running window
+  (PROF03).
+- Profile lock: a profile can be sealed behind a password from the
+  Profile Manager — the password dialog offers a strength hint and a
+  cipher picker whose default is AES-256-GCM + HMAC-SHA-512, with an
+  explicitly unaudited Threefish-1024 opt-in, and sealing encrypts
+  the profile's data folder at rest.  Locked profiles show as
+  "Locked" in the manager, report their sealed size, and refuse to
+  open until unlocked; a failed unlock says honestly whether the
+  password was wrong or the vault itself failed integrity checks.
+  "Lock Profile" on the profile menu seals the active profile with a
+  progress dialog and is disabled while its windows are still open;
+  Preferences can lock a vaulted profile automatically when its last
+  window closes or after an idle timeout, and a browser that exited
+  uncleanly while a profile was unlocked offers to re-seal it on the
+  next launch.  Seal/unseal run on worker threads and canceling a
+  seal rolls back to honest plaintext — a half-sealed profile is
+  never presented as locked.  On this branch the vault engine seam
+  runs the unavailable stub until the Rust vault FFI lands
+  (PVAULT03).
+- Tab strips no longer draw a line under resting tabs: the thin seam
+  that ran along the strip's page-facing edge (and gapped under the
+  active tab, so some tabs looked underlined and some didn't) is gone
+  on Top/Bottom bars, resting rows on the Left/Right rail no longer
+  carry a bottom hairline, and the page content is no longer boxed by
+  a frame under the strip.  Tab-to-tab separators and group/container
+  accent stripes are unchanged (TABS10).
 - Settings split for the coming multi-profile support: every
   persona-flavored preference — privacy toggles, homepage and
   startup pages, search-engine choice, cookie policy, downloads
@@ -924,6 +1010,54 @@ UI:
   file remains a harmless read fallback. Only the "default" profile
   exists today; this is the storage plumbing the profile switching
   work binds to (MPROF04).
+- The app's data stores are per-profile too: history, bookmarks,
+  autofill, cookie rules, adblock subscriptions, containers,
+  extensions, download history, notes and the credential store each
+  resolve a profile-keyed instance that reads and writes under
+  `profiles/<id>/`, and page-level actions (notes, custom adblock
+  rules, the site panel and shield) follow the profile of the page
+  they act on. Private and Tor browsing stay volatile — nothing
+  reaches any profile's store. Still no visible change: every window
+  runs the default profile until window↔profile binding lands
+  (MPROF02).
+- Windows bind to profiles for real: every browser window carries the
+  profile it was opened on — its tabs browse on that profile's own
+  WebEngine profile (separate cookies, cache and storage) and its
+  history, bookmarks, settings, containers and download history write
+  under `profiles/<id>/`. The profile menu's "New Window" submenu and
+  the Profile Manager's Open Window open a window on any profile;
+  File > New Window and link-spawned windows inherit the opener's
+  profile, and a saved session restores every window on the profile
+  it was saved under — a deleted profile's windows come back on
+  default rather than resurrecting its data folder. Private windows
+  on any profile share one memory-only off-the-record overlay that
+  writes nothing to disk; site trust and permission decisions stay
+  global — they are not persona data (MPROF03).
+- Multi-profile integration verified end to end: a dedicated
+  autotest drives two live profiles through real windows, engine
+  cookie stores and a loopback navigation probe — history,
+  bookmarks, settings, cookies, identities and containers stay
+  disjoint, a pre-multi-profile data directory upgrades intact into
+  the default profile, and private/Tor sessions write nothing to any
+  persona's store. New `arora --profile <id>` flag launches a
+  standalone instance bound to a registry persona (useful for a
+  second concurrent instance). Profiles are local-only: there is no
+  sync service and nothing leaves the data directory (MPROF06).
+- Help > "Check for Updates..." asks github.com for the newest Arora
+  release and reports the honest outcome — up to date, newer version,
+  no releases published yet, or couldn't check.  The dialog always
+  links the full releases page, and its download button picks the
+  package matching the host OS (Windows installer .exe, macOS .dmg,
+  distro-appropriate .deb/.rpm on Linux with .flatpak as the generic
+  fallback, explicit choice when the distro can't be detected) and
+  runs it through the normal download manager; releases without a
+  matching package fall back to opening the release page.  The check
+  is manual-only — nothing ever phones home on its own — and the
+  entry is disabled on Tor windows so no direct github.com request
+  can leak out of a Tor session (UPD01).
+- The update check now refuses release manifests larger than 1 MiB —
+  a hostile or wedged endpoint can no longer make Arora buffer an
+  unbounded response before the JSON parse rejects it (AUDIT03).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
@@ -1042,7 +1176,7 @@ Security:
   Seatbelt (macOS), AppContainer manifest (Windows) and
   unveil/pledge (OpenBSD) generators ship from the same declarative
   policy, marked untested-on-target; `arora-sandbox` is the packaged
-  launcher script, `--no-sandbox`/`ARORA_NO_SANDBOX=1`/the
+  launcher script, `--no-sandbox`/`ARKTOS_NO_SANDBOX=1`/the
   sandbox/enabled setting are the escape hatches, and
   `--sandbox-status` reports the live backend and policy. The
   self-contained bundle now also ships `arora-sandbox` (SAND03).
@@ -1057,7 +1191,7 @@ Security:
   process and answer the worker over a stdin/stdout protocol, so the
   sandboxed path is policy-identical; if the wrap cannot start the
   download falls back to the in-process engine. Escape hatches:
-  `ARORA_DL_NO_SANDBOX=1` or `downloadmanager/sandboxedWorker=false`.
+  `ARKTOS_DL_NO_SANDBOX=1` or `downloadmanager/sandboxedWorker=false`.
   Seatbelt/AppContainer/unveil worker policies generate from the
   same inputs but are untested off-Linux.
 - In-browser PDF viewer + sanitize-on-view pipeline (PDF01): PDFs open
@@ -1287,6 +1421,15 @@ Tor:
   now waits for the generated page commit to land before it
   re-dispatches, so the bounded retry chain actually runs to its
   honest end (TOR14).
+- The first search on a fresh Tor window no longer fails once more:
+  the bootstrap-and-circuit hold was already right — the last
+  failure sat one layer lower, in the engine's proxy switch itself.
+  The real SOCKS endpoint is now applied the moment the daemon
+  reports its listener (during bootstrap, not at the end) and a
+  throwaway warm-up request makes the network layer notice the
+  switch, so a navigation released on the first usable circuit can
+  no longer resolve against the dead placeholder proxy and flash an
+  error page (TOR17).
 - Tor window polish: the reader-mode button can no longer revert to a
   black glyph when a state change lands inside a stylesheet repolish —
   it re-bakes its icon whenever the palette/style settles, the way the
@@ -1437,6 +1580,28 @@ Build, tests & tools:
   overrides (download-model flags, tree-view key handling), and a
   truncated GIF fixture; the test suite now runs in an isolated HOME so
   it can no longer read or mutate the live browser profile.
+- Audit slice B (AUDIT03): clang-tidy pass over 331 translation units
+  plus triage of every new STAT02 analyzer finding — the tor/webdriver
+  socket pump no longer shuts down or sends on a descriptor that is
+  already closed, vault zeroization uses a direct volatile cast, and
+  four confirmed-dead members (an uncalled vault getter, an adblock
+  exception setter, a vestigial extension handshake flag, an unused
+  tor test seam) are gone; Qt-ownership false positives are documented
+  in .devin/STAT02-triage.md.
+- Audit slice C (AUDIT04): security delta re-check of the update
+  checker, vault engine-hold restore and the Windows dual-mode
+  installer. A hostile release manifest can no longer aim the update
+  download at an arbitrary host or non-http(s) scheme — asset URLs
+  must resolve to the GitHub release surface (https) or the check
+  endpoint's own host, and the release title can no longer smuggle
+  markup into the dialog. On Tor windows the update check's sinks now
+  refuse too, not just the check itself — neither the download button
+  nor the "all releases" link can leak a github.com request onto the
+  clearnet. A symlink planted in a locked profile's vault hold
+  directories can no longer inject a foreign engine store or reroute
+  the restored data outside the sealed tree on unlock, and the
+  same instant-swap window on the hold restore is now re-verified.
+  Consolidated report: .devin/security/AUDIT02-report.md.
 0.2 (unreleased) — Qt 6 port in progress
 Build system:
     The Rust components are now the default code path: a plain `qmake` auto-detects a cargo toolchain (PATH, then ~/.cargo/bin) and builds rustcore (credential/autofill/session/bookmark/history stores, the OpenSearch engine registry, per-site decisions, url-strip, blocklist, TLS probe), rustdl (accelerated downloads) and the adblock-rust engine as part of `make`. The C++ implementations remain as the no-toolchain fallback — opt out with `qmake CONFIG+=no-rust` or per crate with `CONFIG-=rustcore` / `CONFIG-=rustdl` / `CONFIG-=adblock_rust`. With no Rust toolchain at all qmake warns loudly and builds the Qt paths so the tree always configures.
@@ -1556,7 +1721,7 @@ Test suite (TST01):
     Porting the tests surfaced three real fixes in the application: AdBlockManager::load() now skips stored subscriptions that duplicate an already-loaded one (the custom-rules subscription can exist before load runs), AdBlockSubscription correctly parses percent-encoded lastUpdate timestamps, and DownloadItem no longer lets two simultaneous downloads claim the same file name (previously they could overwrite each other — only on-disk files were deduplicated).
 
 Coverage (COV01):
-    `make check-coverage` measures test coverage for src/ using clang source-based instrumentation (lcov is not available): it builds an instrumented copy of the tree with `qmake -spec linux-clang CONFIG+=coverage`, runs the whole autotest suite and every --*-smoke check headless, and writes the totals plus a per-file table to .devin/COVERAGE.md. Runs are fully isolated from the user's real profile data. The first baseline stands at 62% of source lines; setting ARORA_COVERAGE_MIN=NN turns the target into a hard gate.
+    `make check-coverage` measures test coverage for src/ using clang source-based instrumentation (lcov is not available): it builds an instrumented copy of the tree with `qmake -spec linux-clang CONFIG+=coverage`, runs the whole autotest suite and every --*-smoke check headless, and writes the totals plus a per-file table to .devin/COVERAGE.md. Runs are fully isolated from the user's real profile data. The first baseline stands at 62% of source lines; setting ARKTOS_COVERAGE_MIN=NN turns the target into a hard gate.
 
 Coverage (COV02):
     Three new test programs raise coverage of the highest-value untested logic: tst_networkcookiejar exercises the application network cookie jar (domain matching including the two-level-domain blacklist, path/secure/expiry filtering, state save/restore), tst_cookiemodel covers the cookie and cookie-exception table models, and tst_bookmarksmodel covers the bookmarks tree model including drag-and-drop mime data and undo-stack edits. Overall src/ line coverage is now 65.8% — the cookie exception model is at 96%, the network cookie jar at 93%, the bookmarks model at 84%.
@@ -1569,7 +1734,7 @@ User agent (UA01):
     The Tools > User Agent presets were a 2009 time capsule (IE 6-8, Opera 10/Presto, Safari 4, dead crawlers) and are refreshed to current Chrome/Edge/Firefox/Safari desktop and Android/iOS mobile entries plus current Googlebot/Bingbot. Custom override strings still work from the menu and now reach the off-the-record private profile too — the port previously wrote them to an unused WebEngine profile and cleared overrides by writing an empty user agent.
 
 Coverage (COV04):
-    Nine new test programs push src/ line coverage to 80.5% (was 69.4%) and `make check-coverage` now enforces 80% by default (ARORA_COVERAGE_MIN). The suite now exercises the assembled application end to end offscreen: BrowserApplication services and session save/restore, full BrowserMainWindow chrome (menus, dialog slots, state serialization, the close-multiple-tabs confirmation), the history/bookmark model-driven menus and toolbars, the settings dialog, the network access manager's auth/proxy/SSL dialogs against a local server, single-instance plumbing, and the toolbar search widget.
+    Nine new test programs push src/ line coverage to 80.5% (was 69.4%) and `make check-coverage` now enforces 80% by default (ARKTOS_COVERAGE_MIN). The suite now exercises the assembled application end to end offscreen: BrowserApplication services and session save/restore, full BrowserMainWindow chrome (menus, dialog slots, state serialization, the close-multiple-tabs confirmation), the history/bookmark model-driven menus and toolbars, the settings dialog, the network access manager's auth/proxy/SSL dialogs against a local server, single-instance plumbing, and the toolbar search widget.
     Testing the dialogs surfaced two real fixes: OpenSearchEngineModel::flags() answered non-zero for invalid indexes (Qt 6's model tester aborts on that), and BrowserApplication::saveSession() never refreshed its in-memory copy of the saved session so "restore session" could report nothing to restore until the next launch.
 
 Downloads hardening (SEC01):
@@ -1635,11 +1800,12 @@ Parser fuzzing (FUZZ01):
     Added a libFuzzer harness (clang, AddressSanitizer + UndefinedBehaviorSanitizer) covering every parser that consumes hostile input: AdBlock rules, OpenSearch XML, XBEL bookmarks, the serialized history file, cookie-jar state blobs, bounded QDataStream list decoding, SecureStore sealed blobs and the htmlToXBel importer. Run it with `make check-fuzz` (or .devin/run-fuzz.sh <seconds>); seed corpora and dictionaries live under fuzz/. Two code paths were extracted so the fuzzers drive real production code: history-file decoding moved out of HistoryManager::load() into HistoryParser, and htmlToXBel's conversion core moved out of main() into a callable converter.
 
 Sanitizer sweep (HARD01):
-    Added an AddressSanitizer+UndefinedBehaviorSanitizer build variant (CONFIG+=sanitize under clang, or CONFIG+=sanitize-strict for fatal UBSan) and a `make check-sanitize` gate that builds an instrumented copy of the tree, runs the whole autotest suite and every --*-smoke check offscreen, and reports findings in .devin/SANITIZER.md (leak detection is off by default; ARORA_SANITIZE_LEAKS=1 opts in). The sweep caught real bugs now fixed: BookmarkNode::add could pass an out-of-range offset to QList::insert (Qt 6 extends the list with uninitialized slots instead of clamping), two BrowserMainWindow booleans were read uninitialized when saving fullscreen state, smoke-check lambdas captured block-local state that died before exec() ran them, and a bookmarks autotest dereferenced a node after deleting it.
+    Added an AddressSanitizer+UndefinedBehaviorSanitizer build variant (CONFIG+=sanitize under clang, or CONFIG+=sanitize-strict for fatal UBSan) and a `make check-sanitize` gate that builds an instrumented copy of the tree, runs the whole autotest suite and every --*-smoke check offscreen, and reports findings in .devin/SANITIZER.md (leak detection is off by default; ARKTOS_SANITIZE_LEAKS=1 opts in). The sweep caught real bugs now fixed: BookmarkNode::add could pass an out-of-range offset to QList::insert (Qt 6 extends the list with uninitialized slots instead of clamping), two BrowserMainWindow booleans were read uninitialized when saving fullscreen state, smoke-check lambdas captured block-local state that died before exec() ran them, and a bookmarks autotest dereferenced a node after deleting it.
     The sweep also exposed a Clear Private Data hazard: deleting Chromium's live storage trees under a running browser can wedge the storage services so the next navigation hangs outright (bisected: Local Storage, IndexedDB, Service Worker and WebStorage removals each break on their own). Site-data clearing therefore keeps only the in-session page sweep and drops a sentinel file — the on-disk storage trees are removed at the next profile startup, before any page exists. A navigation that races the clear path's async profile work can also lose its transaction (the load hangs until retried); the window is subhuman in real use and self-heals on reload.
 
 Static-analysis sweep (STAT01):
     Added a `make check-static` sweep that builds a throwaway copy of the tree with GCC's -fanalyzer on every translation unit, then replays each compile line through the clang static analyzer (deduplicated to one run per source file). The full deduplicated output and per-finding triage are committed to .devin/STAT01-report.md and .devin/STAT01-triage.md. The sweep found zero actionable bugs: every in-tree finding is a known analyzer limitation around Qt — QPointer guards and connect() context-object lifetimes it cannot see, throwing operator new modeled as fallible, std::function payloads Qt owns and frees, and '<unknown>' uninitialized-value noise inside implicitly-shared internals. clang-tidy/cppcheck/scan-build are unavailable on this machine (no sudo), so the sweep is g++ -fanalyzer + clang++ --analyze.
+    Re-ran the sweep over the post-audit tree (STAT02): 508 GCC and 8 clang in-tree findings deduplicated against the STAT01 baseline down to 22 sites needing fresh triage (.devin/STAT02-findings.txt), queued for the follow-up audit slice.
 
 Memory-leak sweep (MEM01):
     Added a `make check-leaks` gate (.devin/check-leaks.sh) that runs the autotest suite and every --*-smoke check under LeakSanitizer (detect_leaks=1 on the ASan build), then reruns the suite under valgrind memcheck (QT_ENABLE_REGEXP_JIT=0 — pcre2's JIT floods memcheck with false positives). Every reported leak is classified by allocation site: the gate fails on anything allocated in Arora code and records upstream Qt/WebEngine/system noise in .devin/LEAKS.md. Suppression files: .devin/lsan.supp (leaf third-party libraries only — LSan matches suppressions against every stack frame, so Qt-wide patterns would hide our own leaks) and .devin/valgrind.supp.
@@ -1681,13 +1847,13 @@ Tab settings (TABS01):
     The settings dialog's "Tabs" page is now named "Tab Settings" and gains a "Tab bar position" selector (Top/Bottom/Left/Right), saved to the existing tabs settings group and applied live to every open window as well as to newly created ones. On Left/Right the tab strip runs vertically — tabs stay movable, the context menu and close buttons keep working, and dragging a tab away from the strip (sideways, not upward) still tears it out; the corner "+" and shared close buttons are hidden in the vertical positions because QTabWidget does not lay corner widgets out there — New Tab remains on the File menu, the Ctrl+T-class shortcut, and the tab bar's context menu and empty-area double-click.
 
 Tor daemon (TOR01):
-    Arora can now launch and manage its own Tor daemon as a child process — the foundation for private windows that route through Tor. The manager prefers a system `tor` (PATH, /usr/bin/tor or the ARORA_TOR_BINARY override) and falls back to a bundled Tor Expert Bundle (BuildProcess/fetch-tor.sh downloads the official per-platform bundle into the package data area; no binaries are committed). Tor runs with a private data directory, a loopback SOCKS5 listener and control port on auto-assigned ports, and cookie authentication; the browser takes control-protocol ownership, tracks bootstrap progress to 100% before declaring the proxy ready, and shuts the daemon down cleanly when the app exits — it never runs as root. `./arora --tor-smoke` verifies the whole path end to end against a real daemon.
+    Arora can now launch and manage its own Tor daemon as a child process — the foundation for private windows that route through Tor. The manager prefers a system `tor` (PATH, /usr/bin/tor or the ARKTOS_TOR_BINARY override) and falls back to a bundled Tor Expert Bundle (BuildProcess/fetch-tor.sh downloads the official per-platform bundle into the package data area; no binaries are committed). Tor runs with a private data directory, a loopback SOCKS5 listener and control port on auto-assigned ports, and cookie authentication; the browser takes control-protocol ownership, tracks bootstrap progress to 100% before declaring the proxy ready, and shuts the daemon down cleanly when the app exits — it never runs as root. `./arora --tor-smoke` verifies the whole path end to end against a real daemon.
 
 Tor window (TOR02):
     File → "New Tor Window" (or `arora --tor`) opens a dedicated Tor browsing window as a separate Arora process — QtWebEngine's proxy is process-global, so Tor routing cannot be a per-tab feature. The window owns its own managed daemon, arms a fail-closed SOCKS5 proxy (127.0.0.1:1) until bootstrap completes so nothing leaks onto clearnet, and then routes every tab in the window through the discovered SOCKS listener. Browsing uses a dedicated off-the-record profile — memory-only cache, no history, cookies, storage or autofill persisted — and is hardened: no extensions, no WebChannel bridge objects, autofill and search suggestions forced off, the user's configured clearnet proxy ignored, and plain-http requests upgraded to https except on .onion hosts. A violet toolbar accent, a "Tor" badge and a "(Tor)" title marker keep Tor windows unmistakable; statusbar messages track bootstrap. Normal windows are untouched. `./arora --tor-window-smoke` verifies the whole contract end to end — fail-closed arm, OTR profile, and `check.torproject.org/api/ip` answering IsTor:true through both the application fetch manager and the WebEngine page stack.
 
 Look and feel (UIP01):
-    Arora now follows the desktop light/dark preference (QStyleHints::colorScheme, Qt 6.5+): on desktops that report a dark scheme but ship a widget style that cannot darken (Windows, macOS, plain Fusion) the browser installs a Fusion-based dark palette, and it tracks live preference changes via colorSchemeChanged. ARORA_COLOR_SCHEME=dark|light overrides the desktop preference for systems that do not report one. Chrome colors that fought dark themes were fixed — the download item's info text uses the palette's placeholder color instead of hardcoded gray and the search-field magnifier glyph tracks the palette instead of painting darkGray.
+    Arora now follows the desktop light/dark preference (QStyleHints::colorScheme, Qt 6.5+): on desktops that report a dark scheme but ship a widget style that cannot darken (Windows, macOS, plain Fusion) the browser installs a Fusion-based dark palette, and it tracks live preference changes via colorSchemeChanged. ARKTOS_COLOR_SCHEME=dark|light overrides the desktop preference for systems that do not report one. Chrome colors that fought dark themes were fixed — the download item's info text uses the palette's placeholder color instead of hardcoded gray and the search-field magnifier glyph tracks the palette instead of painting darkGray.
     The cramped Qt4-era metrics were relaxed: the navigation toolbar gains margins and item spacing, the address bar and toolbar search share a taller omnibox height, the bookmarks bar gets modest padding, and tabs carry a minimum thickness.
     The Clear Private Data dialog indents its item list under the heading and pins the buttons to the bottom, and a stale fixed-width spacer in the Preferences downloads group no longer forces the page's minimum width. Fractional-scaling fix: the search button now renders its glyph at the device pixel ratio instead of a fixed 12x16 image that blurred on 1.25x/1.5x displays.
     Icon artwork and theme wiring are untouched by design.
@@ -1760,7 +1926,7 @@ Default search engine (DENG01):
 Startup and menu responsiveness (PERF03):
     Startup no longer stalls inside the application constructor: profile bring-up used to build the adblock matcher's rules snapshot synchronously — a full parse of every subscribed filter list — and built it twice. The interceptor now installs with its first snapshot deferred to a queued warmup that runs once the startup navigation is already dispatched; measured on a real profile the constructor dropped ~750→~200ms and first-window-shown ~755→~590ms, with the rules parse (~500ms total) running while the first page is in flight (requests in between see an empty ruleset, i.e. allow-all — documented tradeoff).
     Menus backed by large models (history, bookmarks) no longer rebuild their whole action tree on every open: ModelMenu repopulates only when the model or a populate-time input changed since the last show — a benchmarked 10,000-entry menu went from ~90ms to ~0ms on reopen while the first build is unchanged.
-    New `./arora --profile-startup` option (or ARORA_PROFILE_STARTUP=1) prints a millisecond timeline of the startup stages to stderr, and `--perf-smoke` additionally reports populated-history and flat-menu open/reopen latency.
+    New `./arora --profile-startup` option (or ARKTOS_PROFILE_STARTUP=1) prints a millisecond timeline of the startup stages to stderr, and `--perf-smoke` additionally reports populated-history and flat-menu open/reopen latency.
 
 Custom DNS-over-HTTPS (DOH01):
     Qt 6's native QWebEngineGlobalSettings::setDnsMode (available since Qt WebEngine 6.6) turns out to expose exactly what the earlier privacy pass concluded was unreachable, so the "Secure DNS" checkbox is now a mode selector: Off (system resolver), Automatic upgrade for resolvers on Chromium's known-provider list, Custom server with system fallback, and Custom server in strict mode — strict fails resolution rather than letting a lookup leak out over plain DNS when the DoH endpoint is down. The endpoint field defaults to https://cloudflare-dns.com/dns-query and accepts any https:// DoH URI template.
@@ -1805,7 +1971,7 @@ CSP and sandbox conformance audit (SEC14):
 
 browseraudit.com full-suite baseline (SEC15):
     Fixed a real subframe-loading regression found by the audit: Chromium's built-in error pages are enabled again, so a failed iframe/frame load now commits an error document and fires its load event like other browsers — pages that wait on a subframe's load event (including failed loads) no longer hang. The custom Arora error page for failed main-frame loads is unchanged.
-    A new headless harness (`arora --browseraudit-smoke`, plus a bare-engine `--browseraudit-bare` control and an ARORA_AUDIT_WIRE bisection switch) runs the complete 431-test browseraudit.com suite and captures per-test outcomes to JSON. Baseline on Chromium 140: 383 pass / 48 warning / 0 critical / 0 skip on the real profile, every warning classified — full report with per-category table in .devin/SEC15-browseraudit.md (raw captures in .devin/sec15/). Highlights: no critical failures anywhere; the app adds no security gaps over the bare engine; most warnings are 2015-era test expectations (Content-Length is now a CORS-safelisted header, CSP3 'self' covers wss:, the site's own HTTPS redirect breaks its plain-http HSTS probes, and 300 ms observation windows race modern Chromium's deferred worker/manifest/report scheduling). One real engine gap: QtWebEngine never fetches <link rel="manifest"> documents, so manifest-src allow-tests warn.
+    A new headless harness (`arora --browseraudit-smoke`, plus a bare-engine `--browseraudit-bare` control and an ARKTOS_AUDIT_WIRE bisection switch) runs the complete 431-test browseraudit.com suite and captures per-test outcomes to JSON. Baseline on Chromium 140: 383 pass / 48 warning / 0 critical / 0 skip on the real profile, every warning classified — full report with per-category table in .devin/SEC15-browseraudit.md (raw captures in .devin/sec15/). Highlights: no critical failures anywhere; the app adds no security gaps over the bare engine; most warnings are 2015-era test expectations (Content-Length is now a CORS-safelisted header, CSP3 'self' covers wss:, the site's own HTTPS redirect breaks its plain-http HSTS probes, and 300 ms observation windows race modern Chromium's deferred worker/manifest/report scheduling). One real engine gap: QtWebEngine never fetches <link rel="manifest"> documents, so manifest-src allow-tests warn.
 
 XS-Leak audit baseline classified (XSLEAK02):
     The xsinator.com cross-site leak battery was baseline-measured and every vector dispositioned in .devin/XSLEAK01-report.md. All 18 leaking vectors trace to engine-side surfaces Chromium's embedder API cannot reach (subresource load/error oracles, frame counting, resource timing, redirect and URL-length probes, CORP/CORB, download detection) — the report names the specific missing API for each. Arora's own code is not implicated: the application network manager and its disk cache are not in the page-load path, the download accept path is not observable to page script, and the custom scheme handlers already refuse remote initiators. The app's defaults do explain two of the three timed-out vectors — the popup blocker dead-ends feature-string window.open calls used by test orchestration, and the privacy ping blocker stops CSP report delivery — which the follow-up fix pass will attribute before any engine write-off.
@@ -1949,6 +2115,10 @@ Rust core credential storage (RCORE01):
 Tracking-parameter stripping (SEC17):
     The Rust core gains a ClearURLs-style URL cleaner: a vendored ruleset (src/rustcore/data/urlstrip-rules.json — exact and prefix parameter matchers for utm_*, fbclid, gclid, _ga and the usual marketing-automation ids, with per-site exceptions) is matched in memory-safe Rust over attacker-controlled URLs and exposed as strip(url)->url over the C ABI. The ruleset is reloadable at runtime — a urlstrip-rules.json dropped into the application data directory overrides the vendored copy, and a malformed replacement is rejected without disturbing the active rules.
     When built with `CONFIG+=rustcore`, the privacy request interceptor (and the Tor profile's) strips GET/HEAD requests before they leave: a URL that only differs by tracking parameters is redirected to the clean form, folded into the existing https-first redirect so a tracked http navigation still costs a single hop. Query order, duplicate parameters, percent-encoding and fragments are preserved; non-http(s) URLs and POST bodies are untouched. The privacy/stripTrackingParams setting (default on) disables it cleanly, and no-Rust builds keep their existing behavior unchanged — this complements the "Copy Clean Link" context action, which still uses the C++ UrlCleaner for UI-side copying.
+
+Link cleaning built into the shield (POL04/POL05):
+    The tracking-parameter cleaner grew the two pieces that separate a cleaner from a ruleset: per-domain scoped rules — names like Amazon's ref or Google's ved that are trackers only where the rules list them, so the same name stays a functional parameter everywhere else — and redirect unwrapping, a hand-curated table of redirector host+path+param patterns (google.com/url?q=, l.facebook.com/l.php?u=, duckduckgo.com/l/?uddg=, Outlook safelinks, Reddit/YouTube/VK/Tumblr out-links and a dozen more) whose named parameter decodes to the real destination that replaces the whole wrapper. Unwrapping fires only on top-level navigations — a subresource hop may depend on the redirector's own response — is bounded at three chained hops, skips exempt destinations, and re-vets the unwrapped host through the domain blocklist so a redirector cannot smuggle a request somewhere a direct navigation would be refused.
+    Cleaning is now a first-class shield feature. The site panel gains a "Clean tracking links on this site" toggle — unchecking exempts the host and its subdomains from cleaning entirely (session-only on off-the-record pages, durable rows ride the site-decision store) — plus an honest "N trackers removed" line that counts what the current page's own navigation actually dropped: one per stripped parameter plus one per adopted redirect hop, settling back to zero when the next page cleans nothing. The master switch is the new "Clean tracking links as you navigate" checkbox on Preferences → Privacy (privacy/urlCleaning, default on; the SEC17-era stripTrackingParams key is still honored as a legacy fallback and kept in sync on save). "Copy Clean Link" is unchanged.
 
 Phishing and malware domain blocklist (SEC18):
     When built with `CONFIG+=rustcore`, main-frame navigations to domains on a local anti-phishing/malware list are refused before the page loads — a "poor man's Safe Browsing" with no per-URL lookups ever leaving the machine. The matcher lives in the Rust core (memory-safe over attacker-controlled hostnames) over a vendored seed list merged with an updatable copy; a listed domain blocks itself and every subdomain but never a lookalike, and listed IPs exact-match only. Blocked navigations show a warning interstitial naming the domain, with "Back to safety" and a session-only "Proceed anyway" — no persisted bypass of a listed hostile domain by design.
@@ -2620,18 +2790,18 @@ Engine-layer test suite (ENG06):
     The engine abstraction now carries its own regression net instead of borrowing WebEngine fixtures. autotests/fakeengine.h grew from a do-nothing stub into the shared reference Engine::Backend — a pure-Qt implementation covering navigation/history/zoom/find/script eval/lifecycle/render-process-identity/profile policy+storage/downloads/view ownership, every member a stageable field so a test dials in exactly the behavior it probes; the same header now backs the adapter parity tests, the per-tab swap suite and the tab-strip engine legs. `arora --engine-smoke` scripts navigation, zoom, find and script evaluation against every registered backend and diffs the observable traces: shared-contract failures (load completion, url echo, progress reaching 100, signal ordering, event kinds, terminal url) fail the run while capability-shaped divergences (progress ladders, title phrasing, unsupported script eval) are logged, not failed — the matrix runs green over WebEngine and Servo. New switcher legs drive a mid-load swap and foreign-tab close edges by widget identity; the mid-load leg caught and fixed a real bug where the swap restarted the last committed page instead of the in-flight navigation target. The memory indicator is now verified against the process-identity contract on both the fake (no process) and a live WebEngine renderer pid.
 
 Policy verdict memoization (PERF01):
-    Repeated subresource requests no longer pay the full JSON-marshal/FFI/parse cost of a NavigationPolicy::evaluate per request. evaluate() now memoizes non-main-frame verdicts in a bounded (4096-entry) cache keyed on the entire request manifest — url, first-party url, resource type, method, privacy scope, tor flag, script tier and minimum referer level, plus a length-prefixed fingerprint of every request header so Referer- and Sec-Fetch-relevant verdicts can never alias — and stamped with a monotonic verdict-state generation. The Rust core (and the no-rust fallback) bumps that generation on every mutation that could flip a verdict: snapshot/policy reloads, downgrade marks and HTTP/blocklist allowances, urlstrip ruleset and blocklist swaps, and data-directory switches; entries stamped with an older generation are never served. Main frames stay uncached — their decisions read wall-clock downgrade TTLs and carry consume-once blocked-navigation side effects — and off-the-record/Tor scopes hash into the key so private verdicts never alias normal-scope ones. The cache never crosses into GUI state and ARORA_POLICY_CACHE_OFF=1 disables it for diagnostics; tst_navigationpolicy's verdictCache case pins the hit/miss/staleness contract and --privacy-smoke now reports requestsSeen/policyEvals/cacheHits so a repeated subresource fetch is observed skipping the backend evaluation entirely.
+    Repeated subresource requests no longer pay the full JSON-marshal/FFI/parse cost of a NavigationPolicy::evaluate per request. evaluate() now memoizes non-main-frame verdicts in a bounded (4096-entry) cache keyed on the entire request manifest — url, first-party url, resource type, method, privacy scope, tor flag, script tier and minimum referer level, plus a length-prefixed fingerprint of every request header so Referer- and Sec-Fetch-relevant verdicts can never alias — and stamped with a monotonic verdict-state generation. The Rust core (and the no-rust fallback) bumps that generation on every mutation that could flip a verdict: snapshot/policy reloads, downgrade marks and HTTP/blocklist allowances, urlstrip ruleset and blocklist swaps, and data-directory switches; entries stamped with an older generation are never served. Main frames stay uncached — their decisions read wall-clock downgrade TTLs and carry consume-once blocked-navigation side effects — and off-the-record/Tor scopes hash into the key so private verdicts never alias normal-scope ones. The cache never crosses into GUI state and ARKTOS_POLICY_CACHE_OFF=1 disables it for diagnostics; tst_navigationpolicy's verdictCache case pins the hit/miss/staleness contract and --privacy-smoke now reports requestsSeen/policyEvals/cacheHits so a repeated subresource fetch is observed skipping the backend evaluation entirely.
 
 Engine switcher explains locked tabs (ENG19):
     The engine indicator no longer vanishes in contexts where switching is refused — a disappearance users read as a bug. In Tor windows, on private tabs, and while a container tab level is active, the nav-row button now stays visible but greyed-out, with a tooltip and status tip naming the reason ("Tor windows are locked to Chromium…", "private tabs stay on the built-in engine…", "engine switching is unavailable while a container tab level is active"); the swap itself stays unreachable as before. Widget tabs (Preferences, History) and installs with a single registered engine still hide the cell outright — there is no engine choice to explain. Dead targets are honest too: when Servo's one-tab-per-session view slot is already taken, "Reload in Servo" appears disabled with the reason instead of failing silently, and the button stays live so swapping back to Chromium always works.
 Rust coverage gate (COV06):
-    `make check-rustcoverage` — now also a `make check` prerequisite — measures per-crate line coverage over every shipped Rust crate (rustcore, rustdl, the ad-block engine; new crates are picked up automatically, spikes excluded) with cargo-llvm-cov and enforces an 85% minimum each. ARORA_RUST_COVERAGE_MIN overrides the gate; machines without cargo or the pinned cargo-llvm-cov tool skip cleanly, matching the optional-Rust build rules. Each run refreshes the per-crate table in .devin/COVERAGE.md; current coverage is 86.9% (rustcore), 89.3% (rustdl) and 90.5% (adblock).
+    `make check-rustcoverage` — now also a `make check` prerequisite — measures per-crate line coverage over every shipped Rust crate (rustcore, rustdl, the ad-block engine; new crates are picked up automatically, spikes excluded) with cargo-llvm-cov and enforces an 85% minimum each. ARKTOS_RUST_COVERAGE_MIN overrides the gate; machines without cargo or the pinned cargo-llvm-cov tool skip cleanly, matching the optional-Rust build rules. Each run refreshes the per-crate table in .devin/COVERAGE.md; current coverage is 86.9% (rustcore), 89.3% (rustdl) and 90.5% (adblock).
 
 Rust unit-test lift (COV07):
     rustcore's line coverage rose from 86.9% to 91.6%. The CDP-to-BiDi translator now has a loopback socket harness that exercises command dispatch, the session attach flow, event translations, websocket frame boundaries, discovery/handshake rejection paths and the FFI entry points end to end against a scripted fake devtools server, and the network-policy engine's whole call_json op surface — flags, referrer shaping, upgrade/downgrade marks, http allowances, blocked-navigation bookkeeping, the domain blocklist and the probe ops — plus its parser and URL-helper edges are under test. The snapshot loader also learned to drop whitespace-only https-only exception entries.
 
 C++ coverage drivers + refreshed baseline (COV09):
-    The make check-coverage harness now also exercises the pdf, pdfview, sigterm, servo, crash and fingerprint-inject smokes plus the write-sandbox-launcher utility, a second --pdfview-smoke pass under ARORA_BWRAP=/nonexistent covering the in-process raster fallback real bwrap-less systems take, and direct stdio JSONL drives for `arora --download-worker` and `arora --pdf-worker` — both subprocesses only ever run inside bwrap in production, where their profiles can't reach the coverage dir. New autotest legs cover the ad-block cosmetic-script payload builder, the BiDi devtools panel's JSON handlers, the model toolbar's drag/drop and context-menu paths, and the popup-blocker location-bar indicator. The regenerated src/ baseline moved from 77.97% to 83.36% line coverage.
+    The make check-coverage harness now also exercises the pdf, pdfview, sigterm, servo, crash and fingerprint-inject smokes plus the write-sandbox-launcher utility, a second --pdfview-smoke pass under ARKTOS_BWRAP=/nonexistent covering the in-process raster fallback real bwrap-less systems take, and direct stdio JSONL drives for `arora --download-worker` and `arora --pdf-worker` — both subprocesses only ever run inside bwrap in production, where their profiles can't reach the coverage dir. New autotest legs cover the ad-block cosmetic-script payload builder, the BiDi devtools panel's JSON handlers, the model toolbar's drag/drop and context-menu paths, and the popup-blocker location-bar indicator. The regenerated src/ baseline moved from 77.97% to 83.36% line coverage.
 
 C++ coverage: no ~0% files left (COV10):
     A new tst_torinterceptor autotest drives the tor profile's request interceptor — previously the suite's only ~0%-coverage source file at 8% lines — through every verdict arm against a throwaway off-the-record profile and a loopback fixture: clearnet http-to-https upgrades (main frame and subresource, including the script-type snapshot branch), the .onion exemption, Allow verdicts with referer rewriting, the Safer script gate, the domain blocklist beating the upgrade stage, and non-web scheme passes. The file now measures 100% lines and the regenerated src/ baseline moved from 83.36% to 83.43% — no source file with more than 100 instrumented lines reports near-zero coverage.
@@ -2640,7 +2810,7 @@ C++ coverage: mid-tier lifted to 85.5% (COV11):
     The src/ baseline moved from 83.43% to 85.50% line coverage, clearing the 85% gate target with drift margin. The harness now isolates each smoke leg's shared test-mode data dir — leftover ad-block subscription rules were silently neutering every later JavaScript-dependent leg, which had kept the security-level smoke's whole phase machine uncovered — and the client-certificate smoke runs against a locally minted PEM + loopback fixture instead of live badssl, with an added refused-connection download leg for the interrupted/cancelled arms. New tests cover the extension manager's permission lists, parsers, consent and update fetch (tst_extensionmanager), the PDF view's keyboard/wheel/drag, find-bar and print arms (driven inside --pdfview-smoke), the tab bar's container header-band gestures (tst_tabbar containerBandEvents), the bookmarks dialog's open/edit/new-folder/context-menu slots, the XBEL reader's error and element-mix paths, and the download graph's populated paintEvent.
 
 C++ coverage gate now enforces 85% (COV12):
-    `make check-coverage`'s ARORA_COVERAGE_MIN default is 85 (raised from the original 80 gate set when the baseline stood at 80.5%) against an honestly measured 85.50% src/ line baseline, so coverage regressions now fail the check instead of drifting. The regenerated .devin/COVERAGE.md header records the COV01->COV05/COV08 gate lineage.
+    `make check-coverage`'s ARKTOS_COVERAGE_MIN default is 85 (raised from the original 80 gate set when the baseline stood at 80.5%) against an honestly measured 85.50% src/ line baseline, so coverage regressions now fail the check instead of drifting. The regenerated .devin/COVERAGE.md header records the COV01->COV05/COV08 gate lineage.
 
 Servo tabs render real page pixels again (ENG21):
     A tab swapped onto Servo showed only empty space — the pinned libservo_embed.so artifact predated the panic-containment source's se_resize fix, which routes resizes through WebView::resize so the painter's bookkeeping (document view, repaint, pipeline display list) actually runs; the stale document view left WebRender compositing nothing (and asserting on GL state under a debug artifact, which then poisoned the instance into a permanently blank tab). The rebuilt artifact renders loaded pages correctly — the start page, internal qrc pages and real files all land pixels in the tab widget — and --servo-smoke now guards the regression with a servo-renders-pixels leg that grabs the engine view and fails on a solid-color frame rather than settling for "no crash".
@@ -2679,7 +2849,7 @@ Extensions now report honest health instead of a fake "Enabled" (EXT12):
 Servo tabs show an honest memory figure instead of "MEM —" (ENG26):
     The status-bar memory readout used to blank on a Servo engine tab — Servo renders in-process, so there is no per-tab renderer pid for the widget to poll and it had nothing honest to show. The engine interface now carries a resident-memory surface (a kB figure plus a "shared" flag, with the /proc VmRSS parse shared by every backend), and the Servo page reports the host process's real RSS marked as shared: the readout shows "MEM <n> (shared)" with a tooltip explaining the number covers the chrome and every other tab too — a real figure, never a fake per-tab one. WebEngine tabs still report their own renderer's RSS, and the indicator rebinds cleanly when a tab switches engines or a crashed Servo view is restarted in place.
 Extensions with background scripts get a hosted background context (EXT14):
-    Qt WebEngine's MV3 host cannot actually run most extension background bundles (its service-worker support is a subset and half the chrome.* surface has no embedder delegate), so enabled extensions that declare a background now get one anyway: a hidden page on the extension's own profile at its real chrome-extension:// origin runs a generated bootstrap that installs a shim preamble — error capture, service-worker globals, and a handshake over the dedicated 'chromeBridge' WebChannel — then executes the extension's real background scripts in manifest order. The installed package is never modified, so extension integrity verification still applies. The hidden context is kept answerable under Chromium's background throttling (active-lifecycle pin plus a periodic wake nudge), a crashing background can only take down its own render process and reports through the extension's health state in Settings → Extensions instead of the console, and disabling or removing the extension tears the host down cleanly. The bridge today carries the handshake and error reporting — calls into not-yet-implemented chrome.* surfaces answer a typed 'unimplemented' error that surfaces in the health row rather than silently no-op'ing; the real API surface arrives with the follow-up shim work. Set ARORA_EXTHOST_OFF=1 to disable the hosted runtime entirely.
+    Qt WebEngine's MV3 host cannot actually run most extension background bundles (its service-worker support is a subset and half the chrome.* surface has no embedder delegate), so enabled extensions that declare a background now get one anyway: a hidden page on the extension's own profile at its real chrome-extension:// origin runs a generated bootstrap that installs a shim preamble — error capture, service-worker globals, and a handshake over the dedicated 'chromeBridge' WebChannel — then executes the extension's real background scripts in manifest order. The installed package is never modified, so extension integrity verification still applies. The hidden context is kept answerable under Chromium's background throttling (active-lifecycle pin plus a periodic wake nudge), a crashing background can only take down its own render process and reports through the extension's health state in Settings → Extensions instead of the console, and disabling or removing the extension tears the host down cleanly. The bridge today carries the handshake and error reporting — calls into not-yet-implemented chrome.* surfaces answer a typed 'unimplemented' error that surfaces in the health row rather than silently no-op'ing; the real API surface arrives with the follow-up shim work. Set ARKTOS_EXTHOST_OFF=1 to disable the hosted runtime entirely.
 The History sidebar can now filter by period and clear itself (HIST03):
     A compact combo in the History sidebar's header row narrows the day
     groups to Today, This Week, This Month, or All — the choice persists
@@ -2832,7 +3002,7 @@ Extension toolbar popups no longer render blank white (EXT19):
 Servo wheel scrolling uses the compositor fast path with smooth easing (ENG33):
     Wheel scrolling on a Servo tab still felt slow and "chubby" after frame pacing landed (ENG31): every delivered delta still round-tripped through Servo's script thread for DOM wheel dispatch before the scroll was allowed to run, each notch landed as a single hard jump, and rapid notches never accelerated. Wheel input now rides a new compositor-direct export in the servo-embed shim — se_scroll feeds the delta straight into the painter's scroll tree, where it lands as a webrender APZ scroll-offset transaction on the next update (no script round-trip, no re-layout, damage-limited repaint) — and an explicit event-loop wake in the shim keeps a queued scroll from stalling on an idle page, which libservo's queue-only notify_scroll_event would otherwise allow. On top of the faster path, each notch eases out across about 4–6 frames as proportional slices of the remaining distance (the shape of native smooth-scroll animations, capped well below a teleport), and repeated notches inside a short window ramp the multiplier to 3.5x like the system-scroll acceleration Chrome and Firefox apply — a flick covers real ground instead of crawling at one notch-distance per frame. Trade-off, documented in the shim and accepted for this experimental backend: DOM wheel listeners do not fire and preventDefault cannot veto on the fast path, so wheel-intercepting widgets degrade to a normal scroll; hosts on older artifacts keep the DOM-correct se_wheel route automatically. The --servo-smoke scroll bench gained largest-step and settle instrumentation plus slice/accel/pixel-delta legs; on the llvmpipe release build a lone notch now lands over ~5 paints instead of one jump and a rapid 6-notch flick covers roughly 2.3x the flat distance. The honest ceiling is unchanged: every frame is still a full-surface llvmpipe raster, so peak scroll rate stays bounded by paint cost.
 - The compositor scroll path gained a live kill-switch (ENG34): setting
-  ARORA_SERVO_SCROLL_PATH=wheel before launch returns Servo wheel input
+  ARKTOS_SERVO_SCROLL_PATH=wheel before launch returns Servo wheel input
   to the DOM-correct se_wheel route — DOM wheel listeners and
   preventDefault work again — for pages whose wheel-intercepting
   widgets regress on the fast path, without a rebuild.
@@ -2851,6 +3021,150 @@ Servo wheel scrolling uses the compositor fast path with smooth easing (ENG33):
   (deb/rpm/flatpak), Picture-in-Picture plumbing, zoom wiring and the
   SourceViewer pipeline — are now present on this lane alongside the
   Rust components and Servo scroll work.
+Inactive tabs now release memory without being reloaded (MEM06):
+    The renderer kept every visited page for instant back/forward —
+    measured at ~5 MB per navigation and never freed until the OS
+    pressures it. Preferences → Performance → Memory Saver gains
+    "Reclaim memory from inactive tabs every few minutes" (on by
+    default): a short freeze pulse on each idle background tab makes
+    the engine collect those pages while the tab stays loaded, so it
+    never reloads when you return. Tabs that are loading, playing
+    sound, or downloading are skipped. The status-bar memory figure
+    now also says its number is memory the engine reclaims when the
+    system needs it.
+Memory coverage audit across every tab surface (MEM07):
+    The article→back memory climb was measured per surface — normal,
+    private, background, torn-off window, engine tab, a bare engine
+    control, and a real Tor window whose page loads verifiably rode a
+    SOCKS tunnel. Every surface shows the same ~4–8 MB/cycle renderer
+    climb as the bare engine control, while the application's own
+    memory stays essentially flat — confirming the growth is the web
+    engine's reclaimable retention, not an Arora leak in any specific
+    profile or interceptor path. The audit also fixed Tor mode
+    force-upgrading plain HTTP on localhost/LAN addresses to HTTPS,
+    which made local services unreachable in Tor windows.
+Manual memory flush on the tab context menu (MEM08):
+    The tab right-click menu gains "Free Memory" next to Sleep/Wake.
+    On a background tab it discards the page outright — the only
+    honest release of the renderer's per-navigation retention — while
+    keeping the slot, title and favicon (the same machinery as Sleep
+    Tab, including the unsaved-form refusal). The current tab can't
+    stay discarded while visible, so its entry reads "Reload & Free
+    Memory" and runs a discard+reactivate pulse that rebuilds the
+    page's web contents and reloads the current entry — briefly, the
+    tab's last painted frame stays on screen, so the only visible
+    effect is the reload itself. Roughly two seconds later the status
+    bar reports the measured result — "Freed ~N MB" from the tab's
+    renderer RSS before and after — or "No memory freed" / "already
+    asleep" when nothing moved. The same menu's "Free Memory in
+    Background Tabs" flushes every quiet background tab at once
+    (skipping the current tab, pinned tabs, loading/audible/
+    downloading tabs and dirty forms).
+Padlock verdict on Tor windows (TRUST23):
+    The address-bar padlock used to sit amber on every Tor-window
+    page: its green tier needs an independent TLS second opinion,
+    and that probe is a direct handshake that can never run over Tor
+    without de-anonymizing the user. The padlock now lets the
+    engine's own chain validation stand in for the probe on Tor
+    windows — TLS still rides the tunnel end-to-end, and a page only
+    commits once the chain verifies — so a known, verified HTTPS site
+    earns the same green it would on a normal window. Little-known
+    sites stay honest amber, and one new red applies everywhere:
+    proceeding past a certificate-error page means the committed
+    chain FAILED the engine's check, so the padlock (and its popover,
+    which now says so outright) renders red for the rest of the
+    session.
+BiDi Dev Tools tab selector re-matches instead of stranding pages on "no debug target" (DEVT16):
+    A web tab that opened or finished loading while the BiDi panel's
+    target snapshot was stale stayed disabled as "no debug target"
+    forever — the selector compared the tab's url against a getTree
+    snapshot that page navigations never refreshed, and even a fresh
+    snapshot could disagree in spelling (typed "http://site" vs the
+    committed "http://site/"). The selector now re-merges whenever
+    the bridge reports a context's url moving, matches the two url
+    forms through normalization, pairs a lone failed-navigation tab
+    with its lone chrome-error target, and shows "attaching…" with a
+    short bounded retry while the debug channel is live — "no debug
+    target" is now the verdict only after the retries come back
+    empty, so every real WebEngine tab ends up selectable.
+BiDi Dev Tools Elements tab shows the selected page's real DOM tree (DEVT17):
+    The Elements page could come up empty or stuck on "loading…" even
+    though the page loaded fine: housekeeping replies from the debug
+    channel were mistaken for the context list and silently wiped it,
+    the tree only re-fetched at the start of a navigation — before the
+    new document existed — a rebuilt tab selector could move to a
+    different page without repopulating, and a refused or vanished
+    fetch was dropped without a trace. The tree now re-fetches when
+    the document actually finishes parsing (and once more at load if
+    it is still empty), every selection change repopulates it, real
+    replies can no longer clobber the tab list, and a failed fetch
+    shows an honest error row that re-expanding retries.
+
+BiDi Dev Tools Network waterfall stays on screen in narrow docks (DEVT18):
+    The timing bars themselves were arriving fine — the Waterfall
+    column was being pushed entirely off the right edge at real dock
+    widths because the request table kept every fixed column at its
+    preferred width before falling back to horizontal scrolling. Under
+    pressure the fixed columns now give up their slack down to their
+    floors, and the Initiator column yields before the graph can leave
+    the viewport; it returns once the table fits it again.
+
+Multi-profile foundation — data layout is now per-profile (MPROF01):
+    The application's data directory gains a profiles/<id>/ layout
+    with a profiles.json registry (id, display name, avatar, created
+    timestamp; the id is an immutable filesystem slug). On first boot
+    the existing single-profile stores — history (including the live
+    SQLite WAL sidecars), bookmarks, autofill, adblock subscriptions,
+    containers, userscripts, extension data, notes, secure-store keys,
+    session and download parts — are moved into profiles/default/ by
+    rename, never copy-then-delete, and a migration-v1.done marker
+    records the clean pass; a partial move resumes on the next boot
+    and a colliding payload is reported loudly instead of silently
+    splitting state. Machine-global state (crash log, Tor bundle,
+    QtWebEngine's own namespaced stores, the wipe marker, the
+    registry itself) stays at the data root. There is no visible
+    behavior change yet: every window still runs the default profile
+    until the per-profile managers and window binding land.
+Reader-mode button no longer paints blue on Tor windows (THEM06):
+    On a Tor window's violet navigation bar the reader-mode icon kept
+    the application palette's blue accent: its "suggested" outline+dot
+    and its active page-fill both resolved QPalette::Accent, which the
+    tor stylesheet never reseeds (a stylesheet repolish rebuilds the
+    widget palette, so a palette-level seed cannot survive anyway).
+    The button now carries an accent override applied to the icon's
+    palette snapshot at paint time, and Tor windows set it to the tor
+    raised violet — the same family the Tor badge pill and sidebar
+    selection already wear. Suggested and active states stay
+    distinguishable but in-theme; normal windows are unchanged.
+Per-profile app singletons (MPROF02):
+    The global qApp singletons — HistoryManager, BookmarksManager,
+    AutoFillManager, CookieJar, AdBlockManager, ContainerManager,
+    ExtensionManager, DownloadManager, NotesModel and SecureStore —
+    are now keyed by registry profile: each gained an
+    instanceFor(profileId) returning a qApp-owned per-persona
+    instance (instance() still aliases the active profile, "default"
+    today). A page's persona resolves through
+    BrowserProfile::profileIdFor: the "aroraProfileId" tag the profile
+    factories set wins, otherwise the storage name is parsed —
+    "arora-<id>" names persona <id> while "arora-container-*" resolves
+    through its owner tag — and unnamed, foreign or off-the-record
+    profiles fall back to "default" so they can never alias a real
+    persona's store. Process-global Rust stores (history database,
+    site decisions, credential/autofill maps) are re-anchored to the
+    caller's profiles/<id>/ directory before every entry point, so two
+    live personas can never write into each other's stores. Site
+    decisions split honestly: trust, permission and adblock-site
+    verdicts stay on the shared default-profile store (trust is not
+    persona data) while per-host cookie rules are per-persona. Tor and
+    private profiles resolve to the default persona's managers —
+    mode-level, not persona-level — and off-the-record pages feed
+    nothing: history, notes, jars and autofill all stay volatile.
+    Notes made on a page now land in that page's profile's notes
+    store; the pre-split <data>/notes/<storageName>.json file is
+    adopted into profiles/default/ on first read. Verified by the new
+    tst_profilemanagers suite: two personas write disjoint stores,
+    seeded history/bookmarks/notes/secrets stay invisible across ids,
+    and the off-the-record legs confirm nothing persists.
 
 Password-sealed profile vaults in the Rust core (PVAULT01):
     The rustcore crate gains a profilevault module behind the C ABI:
@@ -2920,6 +3234,172 @@ Profile vault seal/unseal engine (PVAULT02):
     unseal over existing plaintext without explicit confirmation.
     No-Rust builds keep the class compiled but inert.
 
+Security audit of the multi-profile + vault stack (VSEC01):
+    A post-landing adversarial review of the merged multi-profile and
+    profile-vault code (full report: .devin/security/VSEC01-report.md)
+    closed six real holes. The first-boot data-layout migration now
+    refuses to move symlinked payloads or into a symlinked profiles/
+    tree — a planted link can no longer be carried into
+    profiles/default/ where every later open() would resolve to the
+    attacker's target. Error pages shown in private windows can no
+    longer scrub entries out of the default profile's persistent
+    history. Auto-lock now keys off the closing window's own persona
+    instead of whichever profile happens to hold focus, so locking on
+    last-window-close actually fires for the right profile. No path
+    can open a window on a sealed profile anymore — session restore,
+    the profile menu and the profile manager offer an unlock prompt
+    instead, and the window factory itself fails closed. The
+    profiles.json avatar field is sanitized to a plain basename on
+    load and on write, closing a path-traversal primitive that could
+    steer avatar reads and deletes outside the profile directory. And
+    the secure-store KDF parameter file is now bounds-checked before
+    Argon2 runs, so a hand-edited securestore.kdf can no longer abort
+    the process with an arbitrary memory demand. The audit also
+    verified the vault crypto (fresh key+salt per seal, per-chunk
+    nonces, MAC-before-plaintext unseal, algo_id under the header MAC)
+    and the FFI panic surface clean; the one headline gap — a locked
+    profile still leaves Chromium's own on-disk storage (cookies,
+    localStorage, disk cache) outside the sealed set — is filed as
+    follow-up task VSEC02.
+
+    VSEC02 closes that gap: every named persona profile now roots its
+    engine storage inside the sealed tree — cookies, localStorage,
+    IndexedDB, service workers and visited links land in
+    profiles/<id>/QtWebEngine and pack into the vault archive on lock,
+    so a locked profile no longer leaves Chromium-side plaintext on
+    disk. The HTTP disk cache deliberately rides the vault's existing
+    "cache" exclusion as disposable plaintext. Existing installs are
+    migrated on first boot: the old data-root QtWebEngine/arora[-<id>]
+    trees move into their persona (or park inside the vault's
+    engine-hold for a profile that is already locked, restored on
+    unlock), with the same symlink-refusal and collision-abort
+    discipline as the earlier data-layout migration — a planted link
+    or a both-sides store fails loudly instead of merging or following
+    the link. Container profiles keep their storage under
+    profiles/<persona>/containers/<cid>/ and now keep their cache under
+    the owning persona's excluded cache tree as well, and
+    off-the-record/Tor profiles remain memory-only with nothing on
+    disk to relocate.
+
+BiDi Dev Tools Elements panel reaches live parity (DEVT19):
+    The Elements tab reported "dead" in the BiDi panel now works end
+    to end against a real page: the DOM tree populates lazily and
+    refreshes itself on page mutations (a page-side MutationObserver
+    re-materializes expanded branches instead of going stale), and
+    selecting a node fills a grouped inspector — Attributes, Computed
+    styles, and Box model — through the CDP DOM/CSS domains with
+    honest fallbacks when a domain does not answer. A find bar
+    (Ctrl+F) searches by selector, tag, id, class, or text and steps
+    through matches, and attribute values are editable in place via
+    DOM.setAttributeValue. Two shared bugs that made probes look dead
+    are fixed along the way: stale domain verdicts no longer survive a
+    reconnect, and a single dropped probe reply can no longer leave
+    every tab stuck uninitialized — unanswered domains now declare
+    "probe timed out" instead of pretending to work.
+- 2026-10-17 DEVT20: BiDi Sources parity — the rust bridge now forwards Debugger.paused/resumed/scriptParsed/breakpointResolved and Page.frameNavigated verbatim (context injected) under a new "debugger" subscription the client requests, and the Sources tab grew the Chrome debugger surface: resource tree re-pulls on navigation + load milestones (debounced), scripts read via Debugger.getScriptSource with Page.getResourceContent fallback, breakpoint rows re-point at the resolved url:line, and a pause/resume/step-over/into/out toolbar plus call-stack list and paused-line highlight drive off Debugger.paused/resumed — verified: tst_devtools 18/18 +1 skip, --bidi-sources-smoke PASS "resources+source+bp+pause+resume", make check rc=0 (89 programs 0 failed) offscreen --disable-gpu
+
+BiDi Dev Tools Performance + Memory panels reach live parity (DEVT21):
+    The Performance tab now actually ticks: the live metrics table
+    fills once a second while the tab is shown (a latent bug is fixed
+    along the way — the domain probe used Performance.getMetrics,
+    which answers empty until Performance.enable, so the tab looked
+    "up" but served no data). The record toggle captures a real CPU
+    profile through Profiler.start/stop and summarizes it as top
+    functions by self and total time. The Memory tab's allocation
+    sampling still aggregates HeapProfiler samples per function, and
+    a new "Heap summary" button adds the one-shot overview Chrome's
+    Memory panel leads with: the JS heap's used and total size plus
+    the top allocation sites, honestly labelled as a sampling
+    estimate. Tabs whose CDP domain does not answer still show the
+    disabled-with-reason fallback naming the exact error.
+
+Tor reader-mode accent made legible on the violet bar (THEM07):
+    The Tor window's reader-mode button picked up the tor raised
+    violet for its "suggested" outline and active page-fill — a shade
+    only a notch lighter than the toolbar itself, so the accent read
+    as a muddy raised box instead of a mark. The button now paints
+    those marks in a lighter violet from the same family (~3.7:1
+    against the bar): the suggested state reads as a light violet
+    outline + dot and the active state as a filled light-violet page,
+    matching the flat light glyphs beside it. Fill-scale elements —
+    the Tor badge pill, the sidebar rail selection — keep the deeper
+    raised violet where the contrast holds; normal windows are
+    unchanged.
+Navigation-bar trust chrome restored to contract (TRUST24):
+    A navigation-bar order serialized by a build that predates the
+    site shield (or that predates any later chrome item) used to park
+    every item it didn't name at the bar's tail — the shield could end
+    up pasted at the far right of the row instead of holding its slot
+    directly left of the url field, and once any later drag re-wrote
+    the order the misplacement became permanent. Stored orders now
+    keep each unnamed item at its stock slot — the shield resurfaces
+    immediately left of the address bar on every window type — while
+    the arrangement the list actually names is preserved verbatim.
+    The contract is pinned by new test legs: exactly one shield, a
+    toolbar child never inside the field, physically left of the
+    location-bar host with no overlap, and a per-tab padlock that is
+    present, visible, bound to the tab's view and painting a real
+    verdict glyph through session restore and a live page load.
+BiDi Dev Tools Elements tab reads like Chrome DevTools now (DEVT22):
+    The Elements tab's pieces all existed but didn't look or behave
+    like Chrome's: the inspect/reload/search buttons floated in an
+    unbounded strip, the DOM tree showed flat selector text, the find
+    bar had no results list, and the box model rendered as plain text
+    rows. The toolbar is now a compact bordered bar docked at the top
+    with a live element count on its right edge. Tree rows paint real
+    markup — <tag attr="value"> lines with the tag in the accent
+    color, attribute names muted, and quoted values link-colored —
+    while the breadcrumb trail and the live-refresh matching keep the
+    compact tag#id.class form internally. The styles rail's Box model
+    section is a real nested-boxes diagram (margin/border/padding/
+    content with the DOM.getBoxModel edge numbers) instead of text
+    rows, and the find dock lists every match's markup line —
+    clicking a hit selects the node in the tree just like stepping
+    through matches does.
+BiDi Dev Tools Sources tab reads like Chrome DevTools now (DEVT23):
+    The Sources tab's left pane listed raw per-origin resources in
+    flat type groups; Chrome organizes the page tree by frame, then
+    origin, then the directories the urls actually live under. The
+    navigator is now that tree: a "Page" root with "top" (plus one
+    row per subframe), each frame's resources grouped under their
+    origin's host label, and files laid out in folders mirroring
+    the url path — chains of folders that each contain a single
+    folder fold into one "a/b" row exactly like Chrome's folder
+    merging. The source view stands alone in the center, and the
+    debugger surface moved into Chrome's right rail: the
+    pause/step controls row on top, then collapsible sections —
+    Breakpoints (set-a-line row plus the active list) and Call
+    Stack live and expandable, while Watch, Scope, XHR/fetch
+    Breakpoints, DOM Breakpoints, Global Listeners and Event
+    Listener Breakpoints sit collapsed and honestly disabled with
+    a tooltip naming the debug surface the endpoint doesn't
+    expose.
+
+Larger, correctly-proportioned app logo button (ICONS10):
+    The Arora logo button at the left of the navigation bar read
+    small next to its siblings; the brand glyph now sits ~15%
+    bigger (~1.84x the shared nav icon size, 33px at the default
+    18px density) and the profile button on the right edge grew in
+    step so the bar's two brand faces stay matched. The mark keeps
+    its own aspect ratio at any cell shape — the icon engine
+    letterboxes it into a centered square, so it can never be
+    stretched into an ellipse — and the bar's compacted margins
+    keep the row at face height + margins.
+
+Tab groups read as named headers, plus a Workspaces panel (TABGRP03):
+    A run of grouped tabs now opens with a labeled header segment in
+    the group's color — the group's name, or its member count while
+    the group is unnamed — instead of the bare colored rail the
+    strip used to paint. On a horizontal strip the run's leader
+    widens by the segment's width so the title keeps its full metric
+    and never sits under the chip; on vertical tab strips the header
+    lives in the row's reserved top band. Renaming a group updates
+    the segment live, and a collapsed group keeps its "name (N)"
+    chip as before. The sidebar gained a fifth section, Workspaces,
+    listing every tab group in the window with each member's title —
+    collapsed and container-filtered members included, marked as
+    detached — where clicking a member activates its tab and
+    clicking a collapsed group expands it back onto the strip.
 Servo tabs enforce AdBlock; devtools entries admit when the engine cannot (ENG35):
     AdBlock did nothing on Servo tabs — the engine reported every
     resource load but had no veto. The servo-embed shim now consults

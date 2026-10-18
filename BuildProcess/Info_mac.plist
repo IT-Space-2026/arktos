@@ -7,11 +7,17 @@
         <key>CFBundlePackageType</key>
         <string>APPL</string>
         <key>CFBundleGetInfoString</key>
-        <string>Arora web browser</string>
+        <string>Arktos web browser</string>
         <key>CFBundleIdentifier</key>
-        <string>com.Arora.Arora</string>
+        <string>com.arktos-browser.Arktos</string>
         <key>CFBundleExecutable</key>
         <string>@EXECUTABLE@</string>
+        <key>NSPrincipalClass</key>
+        <string>NSApplication</string>
+        <key>NSHighResolutionCapable</key>
+        <true/>
+        <key>LSMinimumSystemVersion</key>
+        <string>13.0</string>
         <key>CFBundleDocumentTypes</key>
         <array>
                 <dict>
@@ -36,6 +42,6 @@
                 </dict>
         </array>
         <key>NOTE</key>
-        <string>Arora Browser by the Arora team</string>
+        <string>Arktos Browser by the Arktos team</string>
 </dict>
 </plist>

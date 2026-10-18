@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,7 +18,7 @@
  */
 
 #include <QtTest/QtTest>
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 
 #include <profilevault.h>
 
@@ -159,12 +159,13 @@ void tst_VaultEngine::init()
 void tst_VaultEngine::layout()
 {
     QVERIFY(ProfileVault::isAvailable());
-    // The pre-MPROF seam: "default" IS the data root — exactly what
-    // profiles/default becomes once MPROF01 lands on this lane.
+    // MPROF01 landed first on the merged tree: "default" lives at
+    // profiles/default/ like every other id.
     QCOMPARE(ProfileVault::profileDirFor(QStringLiteral("default")),
              QDir::cleanPath(
                  QStandardPaths::writableLocation(
-                     QStandardPaths::AppDataLocation)));
+                     QStandardPaths::AppDataLocation)
+                 + QLatin1String("/profiles/default")));
     QVERIFY(profileDir().endsWith(
         QLatin1String("/profiles/pvaulttest")));
     // Artifacts are siblings of the profile dir, never inside it.

@@ -13,7 +13,7 @@
 #
 #   The gate deliberately does NOT trust .devin/lsan.supp.  LSan
 #   suppression matching is any-frame (verified on this build), so a
-#   `leak:libQt6Core` entry would also hide Arora allocations made
+#   `leak:libQt6Core` entry would also hide Arktos allocations made
 #   inside Qt-driven call chains.  lsan.supp therefore only lists leaf
 #   third-party libraries that can never call into our code, and is
 #   meant for interactive use — the classification is what gates.
@@ -32,20 +32,20 @@
 #   binaries under the repo root.
 #
 # Env:
-#   ARORA_LEAKS_BUILD=dir    resume an existing instrumented tree
-#   ARORA_LEAKS_LSAN_LOGS=dir  reuse an existing phase-1 log corpus
+#   ARKTOS_LEAKS_BUILD=dir    resume an existing instrumented tree
+#   ARKTOS_LEAKS_LSAN_LOGS=dir  reuse an existing phase-1 log corpus
 #                            instead of rerunning suite+smokes (for
 #                            resuming after an interrupted run; the
 #                            classifier must still show 0 our-code
 #                            blocks for the gate to pass)
-#   ARORA_LEAKS_JOBS=N       make jobs for the ASan build (default 4)
-#   ARORA_LEAKS_VGJOBS=N     parallel valgrind tests (default 2)
-#   ARORA_LEAKS_VGLOGS=dir   reuse an existing phase-2 valgrind corpus
+#   ARKTOS_LEAKS_JOBS=N       make jobs for the ASan build (default 4)
+#   ARKTOS_LEAKS_VGJOBS=N     parallel valgrind tests (default 2)
+#   ARKTOS_LEAKS_VGLOGS=dir   reuse an existing phase-2 valgrind corpus
 #                            instead of rerunning the suite (one
 #                            <testdir>.log per test binary; the gate
 #                            still requires a log for every test)
-#   ARORA_LEAKS_KEEP=1       keep the instrumented build tree
-#   ARORA_LEAKS_VALGRIND=0   skip phase 2
+#   ARKTOS_LEAKS_KEEP=1       keep the instrumented build tree
+#   ARKTOS_LEAKS_VALGRIND=0   skip phase 2
 #   VALGRIND=path            default: /snap/bin/valgrind, else PATH
 #
 # Writes .devin/LEAKS.md.  Exit 0 iff no leak is allocated in our code
@@ -55,11 +55,11 @@ set -u
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 REPORT_MD="$ROOT/.devin/LEAKS.md"
 
-JOBS=${ARORA_LEAKS_JOBS:-4}
-VGJOBS=${ARORA_LEAKS_VGJOBS:-2}
-KEEP=${ARORA_LEAKS_KEEP:-0}
-DO_VG=${ARORA_LEAKS_VALGRIND:-1}
-BUILD=${ARORA_LEAKS_BUILD:-}
+JOBS=${ARKTOS_LEAKS_JOBS:-4}
+VGJOBS=${ARKTOS_LEAKS_VGJOBS:-2}
+KEEP=${ARKTOS_LEAKS_KEEP:-0}
+DO_VG=${ARKTOS_LEAKS_VALGRIND:-1}
+BUILD=${ARKTOS_LEAKS_BUILD:-}
 
 die() { echo "check-leaks: $*" >&2; exit 1; }
 
@@ -70,10 +70,10 @@ command -v python3 >/dev/null 2>&1 || die "python3 not found (log classifier)"
 # ---------------- phase 1: build + run under LSan ----------------
 
 if [ -n "$BUILD" ]; then
-    [ -d "$BUILD/src" ] || die "ARORA_LEAKS_BUILD=$BUILD is not a build tree"
+    [ -d "$BUILD/src" ] || die "ARKTOS_LEAKS_BUILD=$BUILD is not a build tree"
     echo "check-leaks: resuming instrumented tree $BUILD"
 else
-    BUILD=$(mktemp -d /tmp/arora-leaks.XXXXXX)
+    BUILD=$(mktemp -d /tmp/arktos-leaks.XXXXXX)
     echo "check-leaks: build tree $BUILD"
     cd "$ROOT" || die "cannot cd to $ROOT"
     git ls-files -z -c -o --exclude-standard | tar --null -T - -cf - \
@@ -83,7 +83,7 @@ else
     . "$ROOT/.devin/qt-env.sh"
     QMAKE=$(command -v qmake6 || command -v qmake) || die "qmake not found"
     echo "check-leaks: qmake ($("$QMAKE" -query QT_VERSION)) + make -j$JOBS"
-    "$QMAKE" -spec linux-clang "CONFIG+=sanitize" arora.pro || die "qmake failed"
+    "$QMAKE" -spec linux-clang "CONFIG+=sanitize" arktos.pro || die "qmake failed"
     make -j"$JOBS" sub-src sub-autotests || die "build failed"
 fi
 
@@ -91,7 +91,7 @@ HOME="$BUILD/.home"
 export HOME
 mkdir -p "$HOME"
 
-LOGDIR=${ARORA_LEAKS_LSAN_LOGS:-$BUILD/leaklogs}
+LOGDIR=${ARKTOS_LEAKS_LSAN_LOGS:-$BUILD/leaklogs}
 mkdir -p "$LOGDIR"
 
 # Same ASan budget as check-sanitize.sh; detect_leaks=1 is the whole
@@ -106,7 +106,7 @@ command -v llvm-symbolizer-18 >/dev/null 2>&1 \
 command -v llvm-symbolizer >/dev/null 2>&1 \
     && export ASAN_SYMBOLIZER_PATH=$(command -v llvm-symbolizer)
 
-if [ -z "${ARORA_LEAKS_LSAN_LOGS:-}" ]; then
+if [ -z "${ARKTOS_LEAKS_LSAN_LOGS:-}" ]; then
     echo "check-leaks: running autotest suite under LSan"
     (cd "$BUILD/autotests" && ./runTests.sh) >"$LOGDIR/suite.log" 2>&1
     TESTS_RC=$?
@@ -119,10 +119,10 @@ if [ -z "${ARORA_LEAKS_LSAN_LOGS:-}" ]; then
 --extension-smoke --ua-smoke"
     for flag in $SMOKE_FLAGS; do
         name=$(echo "$flag" | tr -d -)
-        timeout 300 "$BUILD/arora" "$flag" >"$LOGDIR/smoke-$name.log" 2>&1 \
+        timeout 300 "$BUILD/arktos" "$flag" >"$LOGDIR/smoke-$name.log" 2>&1 \
             || echo "check-leaks: smoke $flag exit=$? (tolerated)"
     done
-    timeout 300 "$BUILD/arora" --download-smoke "file://$BUILD/README.md" \
+    timeout 300 "$BUILD/arktos" --download-smoke "file://$BUILD/README.md" \
         >"$LOGDIR/smoke-downloadsmoke.log" 2>&1 \
         || echo "check-leaks: smoke --download-smoke exit=$? (tolerated)"
 else
@@ -218,11 +218,11 @@ if [ "$DO_VG" = "1" ]; then
     fi
     if [ -z "$VALGRIND" ]; then
         echo "check-leaks: WARNING: no valgrind found — phase 2 skipped"
-    elif [ ! -x "$ROOT/arora" ]; then
+    elif [ ! -x "$ROOT/arktos" ]; then
         echo "check-leaks: WARNING: no in-tree build — run qmake && make first; phase 2 skipped"
     else
         export QT_ENABLE_REGEXP_JIT=0
-        VGLOG=${ARORA_LEAKS_VGLOGS:-$BUILD/vglogs}
+        VGLOG=${ARKTOS_LEAKS_VGLOGS:-$BUILD/vglogs}
         mkdir -p "$VGLOG"
         # --trace-children=no: exec'd QtWebEngineProcess helpers run
         # natively — nothing of ours executes in them, and tracing them
@@ -248,7 +248,7 @@ if [ "$DO_VG" = "1" ]; then
         # (rc=42, nonzero ERROR SUMMARY) do NOT decide — the classifier
         # below sites every record; upstream Chromium noise is expected
         # and reported, only records allocated in our code fail.
-        if [ -n "${ARORA_LEAKS_VGLOGS:-}" ]; then
+        if [ -n "${ARKTOS_LEAKS_VGLOGS:-}" ]; then
             echo "check-leaks: reusing valgrind corpus $VGLOG ($(ls "$VGLOG"/*.log 2>/dev/null | wc -l) logs)"
             echo "$TESTLIST" | while read -r d b; do
                 log="$VGLOG/$(echo "$d" | tr / _).log"
@@ -420,7 +420,7 @@ fi
     echo "## Result"
     echo
     echo "autotest suite exit: $TESTS_RC"
-    echo "LSan leak blocks: $TOTAL total — **$OURS in Arora code**, $UPSTREAM upstream"
+    echo "LSan leak blocks: $TOTAL total — **$OURS in Arktos code**, $UPSTREAM upstream"
     echo "${VG_SUMMARY:-valgrind: skipped}"
     echo
     echo '```'
@@ -430,7 +430,7 @@ fi
 
 echo "check-leaks: report written to ${REPORT_MD#$ROOT/}"
 
-if [ "$KEEP" != "1" ] && [ -z "${ARORA_LEAKS_BUILD:-}" ]; then
+if [ "$KEEP" != "1" ] && [ -z "${ARKTOS_LEAKS_BUILD:-}" ]; then
     rm -rf "$BUILD"
 else
     echo "check-leaks: keeping $BUILD (logs in $LOGDIR)"

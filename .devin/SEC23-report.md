@@ -8,7 +8,7 @@ this task owns the process-boundary side.
 
 ### (a) Positional argv URL
 
-`arora <url>` resolves through two sinks, both already gated:
+`arktos <url>` resolves through two sinks, both already gated:
 
 - **Standalone harness** (`main.cpp`): the `--quit-after-load`-style
   path refuses `!WebView::isUrlAllowedOnUntrustedInput(firstUrl)`
@@ -39,7 +39,7 @@ case-mangled — `QUrl` lowercases the scheme), `vbscript:` and
 `data:`/`file:` gate-allowed, and a `file://` fixture proves the lane
 still navigates permitted URLs.
 
-**Coverage** (end-to-end child): `arora --quit-after-load
+**Coverage** (end-to-end child): `arktos --quit-after-load
 javascript:alert(1)` exits 0 with "Ignoring untrusted argv url" on
 stderr — the gate fires before the stub window's first load.
 
@@ -90,11 +90,11 @@ leaves the page untouched with no script execution;
 
 - `argumentUrl()` picks the last non-dash argument — the operand is
   positional; `--tor` is a flag (`QCommandLineOption` with no value
-  name), so `arora --tor <url>` lands `<url>` in
+  name), so `arktos --tor <url>` lands `<url>` in
   `positionalArguments()` and `--tor=<anything>` is a hard parser
   error.  Nothing passes through a shell anywhere on the path
   (`QProcess` argv forms only; the tor daemon spawn is
-  `ARORA_TOR_BINARY`/path + fixed args).
+  `ARKTOS_TOR_BINARY`/path + fixed args).
 - `torStartup()` funnels the operand through
   `loadStringFromUntrustedSource()` — same gate.
 - Any `--` argument sets `m_standalone` before the single-instance
@@ -105,10 +105,10 @@ leaves the page untouched with no script execution;
 **Coverage**: parser-level assertions (`--tor` operand lands
 positional, `javascript:` operand is positional *and* gated
 downstream, `--tor=<value>` is a parse error) plus live children:
-`arora --tor` (fake daemon via `ARORA_TOR_BINARY`) spawns **no**
-listener in a private `XDG_RUNTIME_DIR`, and a following `arora
+`arktos --tor` (fake daemon via `ARKTOS_TOR_BINARY`) spawns **no**
+listener in a private `XDG_RUNTIME_DIR`, and a following `arktos
 about:blank` cannot forward into it — it must create its own socket,
-proving nothing was delivered to the tor process.  `arora
+proving nothing was delivered to the tor process.  `arktos
 --tor=javascript:x` exits non-zero on the parser error.
 
 ### (e) Single-instance socket hardening
@@ -118,7 +118,7 @@ proving nothing was delivered to the tor process.  `arora
 chmod race), then forces the socket file to `0600`.
 `serverAddress()` binds inside `QStandardPaths::RuntimeLocation`
 (`$XDG_RUNTIME_DIR`, user-private by definition) with a
-`QDir::tempPath()/arora-<uid>` fallback; either way the containing
+`QDir::tempPath()/arktos-<uid>` fallback; either way the containing
 directory is forced `0700` and the server name is
 `Arora_<uid>_<gid>` — not a predictable shared `/tmp` name, and
 invisible to other users.
@@ -166,7 +166,7 @@ tab; `openLinksFromAppsIn=NewWindow` spawns an OTR window.
 
 ## Verification
 
-- `QT_QPA_PLATFORM=offscreen ./arora --ingress-smoke` → 29/29 PASS,
+- `QT_QPA_PLATFORM=offscreen ./arktos --ingress-smoke` → 29/29 PASS,
   exit 0.
 - Children run with hermetic `HOME`/`XDG_*` — the real profile and the
   real runtime socket are untouched (SMOKE01 store guard also

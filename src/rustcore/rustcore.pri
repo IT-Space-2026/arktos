@@ -1,6 +1,6 @@
 # Shared Rust core (RCORE01, default-on per RDEF01): credential
 # custody, the rc_cred_* store and future engine-neutral services
-# live in $$PWD (crate "arora-rustcore") behind the C ABI in
+# live in $$PWD (crate "arktos-rustcore") behind the C ABI in
 # include/rustcore.h.
 #
 # The flag is set by default in the project-root .qmake.conf whenever a cargo
@@ -18,24 +18,29 @@
 # `cargo deny` policy lives in $$PWD/deny.toml.
 
 rustcore:!no-rust {
-    CARGO = $$ARORA_CARGO
+    CARGO = $$ARKTOS_CARGO
     isEmpty(CARGO): CARGO = cargo
-    win32: RUSTCORE_LIB = $$PWD/target/release/arora_rustcore.lib
-    else:  RUSTCORE_LIB = $$PWD/target/release/libarora_rustcore.a
+    win32: RUSTCORE_LIB = $$PWD/target/release/arktos_rustcore.lib
+    else:  RUSTCORE_LIB = $$PWD/target/release/libarktos_rustcore.a
 
     cargo_rustcore.target = $$RUSTCORE_LIB
     # See rustdl.pri: scrub flag env vars a parent build system may
     # re-export into the recipe (flatpak-builder CFLAGS/CXXFLAGS leak).
     unix: cargo_rustcore.commands = cd $$PWD && \
         env -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS \
+        MACOSX_DEPLOYMENT_TARGET=$$QMAKE_MACOSX_DEPLOYMENT_TARGET \
         $$CARGO build --release
+    # MACOSX_DEPLOYMENT_TARGET: ld warns when rust objects carry a
+    # newer -version-min than the C++ link target ("built for newer
+    # 'macOS' version (26.5) than being linked (14.4)"). The var is
+    # empty on non-Apple platforms — a harmless no-op env there.
     win32: cargo_rustcore.commands = cd $$PWD && $$CARGO build --release
     cargo_rustcore.depends = $$PWD/Cargo.toml $$PWD/Cargo.lock \
         $$files($$PWD/src/*.rs, true) $$files($$PWD/data/*)
     QMAKE_EXTRA_TARGETS += cargo_rustcore
     PRE_TARGETDEPS += $$RUSTCORE_LIB
 
-    DEFINES += ARORA_RUSTCORE
+    DEFINES += ARKTOS_RUSTCORE
     INCLUDEPATH += $$PWD/include
     DEPENDPATH += $$PWD/include
     HEADERS += $$PWD/include/rustcore.h \
@@ -45,5 +50,6 @@ rustcore:!no-rust {
         $$PWD/../sitedecisionstore.cpp
     LIBS += $$RUSTCORE_LIB
     unix: LIBS += -ldl -lpthread -lm
+    win32: LIBS += -ladvapi32 -lbcrypt -lntdll -luserenv -lws2_32
     macx: LIBS += -framework Security -framework CoreFoundation
 }

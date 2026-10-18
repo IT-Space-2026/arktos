@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,13 +18,13 @@
  */
 
 #include <QtTest/QtTest>
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 
 #include <initializer_list>
 
 #include <commandpalette.h>
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 #include <qjsonarray.h>
 #include <qjsondocument.h>
 #include <qjsonobject.h>
@@ -47,7 +47,7 @@ private slots:
     void parityCorpus_data();
     void parityCorpus();
     void camelBoundaryBonus();
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     void matchRanking();
     void emptyQueryMruOrder();
     void nonAscii();
@@ -127,14 +127,14 @@ void tst_Palette::camelBoundaryBonus()
     const int rust = CommandPalette::fuzzyScore(
         QStringLiteral("hub"), QStringLiteral("GitHub"));
     QVERIFY(reference > 0);
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     QCOMPARE(rust, reference + 12);
 #else
     QCOMPARE(rust, reference);
 #endif
 }
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 static QByteArray matchRequest(const QJsonArray &items,
                                const QStringList &mru)
 {

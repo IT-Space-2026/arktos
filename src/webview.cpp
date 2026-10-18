@@ -70,6 +70,7 @@
 #include "addbookmarkdialog.h"
 #include "browserapplication.h"
 #include "browsermainwindow.h"
+#include "browserprofile.h"
 #include "containermanager.h"
 #include "extensionbackgroundhost.h"
 #include "extensioneventhub.h"
@@ -260,8 +261,9 @@ QString WebView::containerId() const
 {
     if (!m_page)
         return ContainerManager::defaultContainerId();
-    return ContainerManager::instance()
-        ->containerIdForProfile(m_page->profile());
+    return ContainerManager::instanceFor(
+        BrowserProfile::profileIdFor(m_page->profile()))
+            ->containerIdForProfile(m_page->profile());
 }
 
 // Translates the engine's context-menu payload into the interface's
@@ -483,8 +485,11 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
             menu->addAction(tr("Block Image"), this,
                     [this, position]() {
                 grabContextImage(position, false,
-                        [](const QUrl &resolved) {
-                    AdBlockManager::instance()->showDialog()
+                        [this](const QUrl &resolved) {
+                    AdBlockManager::instanceFor(
+                        BrowserProfile::profileIdFor(
+                            m_page ? m_page->profile() : nullptr))
+                            ->showDialog()
                         ->addCustomRule(resolved.toString());
                 });
             });
@@ -735,17 +740,26 @@ void WebView::openPageUrlInPrivateWindow(const QUrl &linkUrl)
         // off-the-record source: a page's profile is fixed at
         // creation, so the fresh window's default tab is replaced by
         // an off-the-record one — which also means no container
-        // binding is carried across.
-        BrowserMainWindow *window = application->newMainWindow();
-        if (WebView *privateTab =
-                window->tabWidget()->makeNewPrivateTab(true)) {
-            window->tabWidget()->closeTab(0);
-            newView = privateTab;
-        } else {
-            // The OTR tab could not be bound — closing the window is
-            // safer than letting the link land in its default tab.
-            window->close();
+        // binding is carried across.  MPROF03: the window binds to the
+        // SOURCE page's persona — the link's origin decides which
+        // profile's private overlay the new window browses in.
+        BrowserMainWindow *window = application->newMainWindow(
+            BrowserProfile::profileIdFor(
+                m_page ? m_page->profile() : nullptr));
+        if (window) {
+            if (WebView *privateTab =
+                    window->tabWidget()->makeNewPrivateTab(true)) {
+                window->tabWidget()->closeTab(0);
+                newView = privateTab;
+            } else {
+                // The OTR tab could not be bound — closing the window
+                // is safer than letting the link land in its default
+                // tab.
+                window->close();
+            }
         }
+        // VSEC01: null window = the source persona's vault is sealed —
+        // fall through to the standalone OTR view below.
     }
     if (!newView) {
         newView = new WebView(BrowserApplication::isTorMode()
@@ -842,7 +856,10 @@ void WebView::copyImageLocationToClipboard()
 void WebView::blockImage()
 {
     if (QAction *action = qobject_cast<QAction*>(sender()))
-        AdBlockManager::instance()->showDialog()->addCustomRule(action->data().toString());
+        AdBlockManager::instanceFor(
+            BrowserProfile::profileIdFor(
+                m_page ? m_page->profile() : nullptr))
+                ->showDialog()->addCustomRule(action->data().toString());
 }
 
 void WebView::bookmarkLink()
@@ -888,7 +905,8 @@ void WebView::addSelectionToNote()
     // window gets the volatile model: private selections never touch
     // disk.
     NotesModel *model = NotesModel::instance(
-        BrowserApplication::webEngineProfile());
+        m_page ? m_page->profile()
+               : BrowserApplication::webEngineProfile());
     if (!model)
         return;
     QString body = text;
@@ -926,7 +944,7 @@ void WebView::addSearchEngine(const QPoint &viewPos)
     qreal zoom = enginePage()->zoomFactor();
     if (zoom <= 0)
         zoom = 1.0;
-    const QString call = QStringLiteral("__aroraCtxSearch.formInfo(%1,%2);")
+    const QString call = QStringLiteral("__arktosCtxSearch.formInfo(%1,%2);")
         .arg(viewPos.x() / zoom)
         .arg(viewPos.y() / zoom);
     QPointer<WebView> self(this);
@@ -1209,13 +1227,24 @@ bool WebView::torMustQueue(const QUrl &url) const
         && scheme != QLatin1String("https")
         && scheme != QLatin1String("ws")
         && scheme != QLatin1String("wss")
-        && scheme != QLatin1String("ftp"))
+        && scheme != QLatin1String("ftp")) {
+        if (torDebugEnabled())
+            qInfo() << "tor-debug: gate pass (local scheme"
+                    << scheme + QLatin1Char(')') << url;
         return false;
+    }
     TorManager *tor = torManager();
-    if (!tor)
+    if (!tor) {
+        if (torDebugEnabled())
+            qInfo() << "tor-debug: gate pass (no manager)" << url;
         return false;
-    if (!tor->isReady())
+    }
+    if (!tor->isReady()) {
+        if (torDebugEnabled())
+            qInfo() << "tor-debug: gate HOLD (daemon state"
+                    << int(tor->state()) << QLatin1Char(')') << url;
         return true;
+    }
     // TOR12: `ready` alone is not the end of the wait — it only means
     // the SOCKS listener answers; the first stream-ridable circuit
     // can land seconds after it, and a nav dispatched into that cold
@@ -1223,8 +1252,23 @@ bool WebView::torMustQueue(const QUrl &url) const
     // circuit evidence arrives; past the warm-up bound the daemon is
     // settled and the nav takes its chances honestly.
     const qint64 elapsed = tor->readyElapsed();
-    return elapsed >= 0 && elapsed < torQueueWarmupMs()
-        && !tor->hasUsableCircuit();
+    // TOR17: a usable circuit is still not sufficient right after the
+    // SOCKS switch — Chromium re-reads QNetworkProxy from a lazy poll
+    // inside proxy resolution and the first request after the switch
+    // resolves on the STALE endpoint (ERR_PROXY_CONNECTION_FAILED on
+    // the fail-closed port).  BrowserApplication::warmTorProxy feeds
+    // that read a sacrificial probe; until it settles, keep holding.
+    const BrowserApplication *app = BrowserApplication::instance();
+    const bool proxyWarmed = !app || app->isTorProxyWarmed();
+    const bool hold = elapsed >= 0 && elapsed < torQueueWarmupMs()
+        && (!tor->hasUsableCircuit() || !proxyWarmed);
+    if (torDebugEnabled())
+        qInfo() << "tor-debug: gate" << (hold ? "HOLD" : "pass")
+                << "(readyElapsed" << elapsed
+                << "usableCircuit" << tor->hasUsableCircuit()
+                << "proxyWarmed" << proxyWarmed
+                << QLatin1Char(')') << url;
+    return hold;
 }
 
 // The wake-ups the queue needs: `ready` ends the bootstrap hold and
@@ -1248,6 +1292,15 @@ void WebView::torArmWakeup()
     // connected to.
     connect(tor, &QObject::destroyed, this,
             [this]() { m_torWakeupArmed = false; });
+    // TOR17: the proxy warm-up edge — the sacrificial probe settled,
+    // so the network service now resolves on the live SOCKS endpoint.
+    // The app object outlives any manager swap; arm once per view.
+    BrowserApplication *app = BrowserApplication::instance();
+    if (app && !m_torWarmWakeupArmed) {
+        m_torWarmWakeupArmed = true;
+        connect(app, &BrowserApplication::torProxyWarmed,
+                this, [this]() { torFlushQueuedLoad(); });
+    }
 }
 
 // Bounds the post-ready wait for circuit evidence.  The timer is
@@ -1282,6 +1335,8 @@ void WebView::torQueueLoad(const QUrl &url, const QString &title)
     setStatusBarText(
         tr("Tor is still starting — the page will load "
            "automatically when it is ready"));
+    if (torDebugEnabled())
+        qInfo() << "tor-debug: queued" << url;
 }
 
 bool WebView::torHoldNavigation(const QUrl &url)
@@ -1291,11 +1346,16 @@ bool WebView::torHoldNavigation(const QUrl &url)
     // just dispatched would loop the hold forever.
     if (url == m_torGraceReleaseUrl) {
         m_torGraceReleaseUrl.clear();
+        if (torDebugEnabled())
+            qInfo() << "tor-debug: grace release lets" << url
+                    << "through the hold once";
         return false;
     }
     if (!torMustQueue(url))
         return false;
     torQueueLoad(url, QString());
+    if (torDebugEnabled())
+        qInfo() << "tor-debug: page nav refused into the hold" << url;
     return true;
 }
 
@@ -1314,12 +1374,18 @@ void WebView::torFlushQueuedLoad()
     // page or the error page) can swallow a raced load() whole — the
     // queue stays put and the page's commit-landed edge calls back
     // in here.
-    if (m_page->generatedPageCommitPending())
+    if (m_page->generatedPageCommitPending()) {
+        if (torDebugEnabled())
+            qInfo() << "tor-debug: flush of" << m_torQueuedUrl
+                    << "deferred — generated commit in flight";
         return;
+    }
     const QUrl url = m_torQueuedUrl;
     const QString title = m_torQueuedTitle;
     m_torQueuedUrl.clear();
     m_torQueuedTitle.clear();
+    if (torDebugEnabled())
+        qInfo() << "tor-debug: flushing queued" << url;
     // Back through loadUrl() — a daemon that somehow is still not
     // ready (or has no usable circuit yet) re-queues instead of
     // dispatching into the fail-closed proxy.
@@ -1331,15 +1397,25 @@ void WebView::torGraceDispatch()
     if (m_torQueuedUrl.isEmpty())
         return;
     TorManager *tor = torManager();
-    if (tor && !tor->isReady())
+    if (tor && !tor->isReady()) {
         // Still bootstrapping — `ready` stays the wake-up; the grace
         // restarts when the flush there re-queues the url.
+        if (torDebugEnabled())
+            qInfo() << "tor-debug: grace fired while still starting"
+                    << "(state" << int(tor->state())
+                    << ") — keep holding" << m_torQueuedUrl;
         return;
+    }
     // A generated commit in flight swallows a raced dispatch — keep
     // the queue; the commit-landed edge flushes it and the re-queued
     // path re-arms the grace.
-    if (m_page->generatedPageCommitPending())
+    if (m_page->generatedPageCommitPending()) {
+        if (torDebugEnabled())
+            qInfo() << "tor-debug: grace dispatch of"
+                    << m_torQueuedUrl
+                    << "deferred — generated commit in flight";
         return;
+    }
     // Ready but no circuit evidence inside the grace — dispatch
     // anyway; the warm-up retry covers a failure and the error page
     // is honest about it.  TOR14: the dispatch still runs through
@@ -1351,6 +1427,9 @@ void WebView::torGraceDispatch()
     m_torQueuedUrl.clear();
     m_torQueuedTitle.clear();
     m_torGraceReleaseUrl = url;
+    if (torDebugEnabled())
+        qInfo() << "tor-debug: grace dispatch (no circuit evidence)"
+                << url;
     load(url);
 }
 
@@ -1388,9 +1467,14 @@ void WebView::loadUrl(const QUrl &url, const QString &title)
     // flushes it moments later.
     if (BrowserApplication::isTorMode()
         && m_page->generatedPageCommitPending()) {
+        if (torDebugEnabled())
+            qInfo() << "tor-debug: loadUrl" << url
+                    << "re-queued — generated commit in flight";
         torQueueLoad(url, title);
         return;
     }
+    if (torDebugEnabled() && BrowserApplication::isTorMode())
+        qInfo() << "tor-debug: dispatching" << url;
     load(url);
 }
 
@@ -1481,7 +1565,7 @@ void WebView::dragEnterEvent(QDragEnterEvent *event)
     // TABS13: a real tab drag never becomes a page navigation —
     // outside a tab bar it means tear-off, and the refused drop is
     // what the source bar's exec() reads.
-    if (event->mimeData()->hasFormat(aroraTabMimeType())) {
+    if (event->mimeData()->hasFormat(arktosTabMimeType())) {
         event->ignore();
         return;
     }
@@ -1491,7 +1575,7 @@ void WebView::dragEnterEvent(QDragEnterEvent *event)
 void WebView::dragMoveEvent(QDragMoveEvent *event)
 {
     event->ignore();
-    if (event->mimeData()->hasFormat(aroraTabMimeType()))
+    if (event->mimeData()->hasFormat(arktosTabMimeType()))
         return;
     if (event->source() != this) {
         if (!event->mimeData()->urls().isEmpty()) {
@@ -1511,7 +1595,7 @@ void WebView::dropEvent(QDropEvent *event)
 {
     // TABS13: a real tab drag must not load onto the page under the
     // cursor — the source bar treats the refused drop as a tear-off.
-    if (event->mimeData()->hasFormat(aroraTabMimeType())) {
+    if (event->mimeData()->hasFormat(arktosTabMimeType())) {
         event->ignore();
         return;
     }
@@ -1666,7 +1750,7 @@ void WebView::grabContextImage(const QPoint &viewPos, bool canvas,
     qreal zoom = enginePage()->zoomFactor();
     if (zoom <= 0)
         zoom = 1.0;
-    const QString call = QStringLiteral("__aroraCtxImage.%1(%2,%3);")
+    const QString call = QStringLiteral("__arktosCtxImage.%1(%2,%3);")
         .arg(QLatin1String(canvas ? "canvasData" : "imageUrl"))
         .arg(viewPos.x() / zoom)
         .arg(viewPos.y() / zoom);
@@ -1696,7 +1780,7 @@ void WebView::openContextPosterInTarget(const QPoint &viewPos,
     qreal zoom = enginePage()->zoomFactor();
     if (zoom <= 0)
         zoom = 1.0;
-    const QString call = QStringLiteral("__aroraCtxImage.posterUrl(%1,%2);")
+    const QString call = QStringLiteral("__arktosCtxImage.posterUrl(%1,%2);")
         .arg(viewPos.x() / zoom)
         .arg(viewPos.y() / zoom);
     QPointer<WebView> self(this);

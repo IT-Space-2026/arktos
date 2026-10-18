@@ -98,6 +98,10 @@ signals:
     // SLEEP01: the tab context menu's Sleep/Wake entries.
     void sleepTab(int index);
     void wakeTab(int index);
+    // MEM08: the tab context menu's memory flush — see
+    // TabWidget::freeTabMemory for the current-tab discard+reload.
+    void freeTabMemory(int index);
+    void freeBackgroundTabsMemory();
 
 public:
     TabBar(QWidget *parent = nullptr);
@@ -180,13 +184,20 @@ public:
     QToolButton *newTabButton() const;
 
     // TABS13: the live in-process tab-drag session — the (bar, page)
-    // pair behind an application/x-arora-tab payload, plus whether a
+    // pair behind an application/x-arktos-tab payload, plus whether a
     // drop already consumed it.  Static because a drag's endpoints
     // are two different bars; the mime token is validated against
     // this pair so a stale or foreign payload can never move a tab.
     // Exposed for the autotests' synthetic drop events.
     static void beginTabDragSession(TabBar *source, QWidget *page);
     static void endTabDragSession();
+
+    // TABGRP02: the tab a live in-bar drag would drop-stack into —
+    // the one whose middle band sits under the cursor, or a
+    // collapsed group's chip (whole rect).  -1 while no drop-stack
+    // target is hovered; paintEvent tints it as the merge preview.
+    // Exposed for the autotests' affordance legs.
+    int groupDropIndex() const { return m_groupDropIndex; }
 
 #ifdef AUTOTESTS
     // Test seam: drive a synthesized drop through dropEvent() — a
@@ -275,6 +286,18 @@ private:
     QString groupIdForTab(int index) const;
     bool isFirstInGroupRun(int index) const;
     QString groupChipLabel(int index) const;
+    // TABGRP03: the Vivaldi-style labeled group header — a run's first
+    // member carries a labeled chip segment with the group's name (or a
+    // member-count fallback while unnamed) instead of a bare colored
+    // chip.  groupHeaderReserve() is the leading-edge extent the
+    // segment borrows on a horizontal strip — the leader's title is
+    // drawn right of it, never under it.
+    QString groupHeaderLabel(int index) const;
+    int groupHeaderReserve(int index) const;
+    // TABGRP04: hit-test for the run leader's « collapse affordance —
+    // the header pill on a horizontal strip, the leader row's top
+    // band on a vertical one.  pos is strip-space (as tabRect).
+    bool isGroupHeaderHit(int index, const QPoint &pos) const;
     // TABS02/RSZ02: strip helpers — the resize grip on the strip's
     // content-facing edge (inner side for vertical strips, top/bottom
     // edge for horizontal ones), its painted affordance, and the
@@ -307,7 +330,7 @@ private:
     // and the payload decode — it only yields a bar+page that match
     // the live drag session.
     int insertIndexForDrop(const QPoint &stripPos) const;
-    static bool decodeAroraTabDrag(const QMimeData *mimeData,
+    static bool decodeArktosTabDrag(const QMimeData *mimeData,
                                    TabBar *&source, QWidget *&page);
     friend class TabWidget;
 
@@ -317,6 +340,8 @@ private:
     // tell a middle-of-tab drop (stack into a group) from a reorder.
     bool m_dragTracking;
     int m_draggedIndex;
+    // TABGRP02: the drop-to-group hover target — see groupDropIndex().
+    int m_groupDropIndex = -1;
     QAction *m_viewTabBarAction;
     QAction *m_iconOnlyTabsAction;
     bool m_showTabBarWhenOneTab;

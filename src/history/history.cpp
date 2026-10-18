@@ -62,7 +62,7 @@
 
 #include "history.h"
 
-#include "aroraicon.h"
+#include "arktosicon.h"
 #include "autosaver.h"
 #include "browserapplication.h"
 #include "historymanager.h"
@@ -389,8 +389,8 @@ void HistoryMenu::postPopulated()
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
     // ICONS07: the static tail rows carry icons like the initial
     // actions above them; the dynamic history entries stay iconless.
-    showAllAction->setIcon(AroraIcon::getChrome(QLatin1String("view-history")));
-    clearAction->setIcon(AroraIcon::getChrome(QLatin1String("edit-clear")));
+    showAllAction->setIcon(ArktosIcon::getChrome(QLatin1String("view-history")));
+    clearAction->setIcon(ArktosIcon::getChrome(QLatin1String("edit-clear")));
 #endif
 }
 
@@ -778,7 +778,7 @@ QVariant HistoryTreeModel::data(const QModelIndex &index, int role) const
             // re-resolves the theme live at paint time so a static
             // copy still follows icon-theme switches.
             static const QIcon icon =
-                AroraIcon::getChrome(QLatin1String("view-history"));
+                ArktosIcon::getChrome(QLatin1String("view-history"));
             return icon;
         }
         Q_FALLTHROUGH();

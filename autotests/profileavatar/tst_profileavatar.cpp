@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,12 +18,12 @@
  */
 
 #include <QtTest/QtTest>
-#include "profilesettings.h"
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 
 #include <profileavataractions.h>
 #include <profileavatardialog.h>
 #include <profileidentity.h>
+#include <profileregistry.h>
 
 #include <qaction.h>
 #include <qfileinfo.h>
@@ -124,7 +124,9 @@ void tst_ProfileAvatar::namePersistence()
     identity->setName(QStringLiteral("  Work  "));
     QCOMPARE(identity->name(), QStringLiteral("Work"));
     QCOMPARE(spy.count(), 1);
-    QCOMPARE(ProfileSettings().value(QLatin1String("profile/name")).toString(),
+    // MPROF01: the name lives in the profile registry now — the
+    // QSettings key is a legacy import only.
+    QCOMPARE(ProfileRegistry::instance()->activeProfile().name,
              QStringLiteral("Work"));
 
     // An empty name falls back to the default rather than persisting

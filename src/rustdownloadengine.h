@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -125,10 +125,10 @@ public:
     // confined worker subprocess rather than in this process.
     bool subprocessActive() const { return m_process != nullptr; }
     // Whether this build/host can spawn the confined worker (Linux +
-    // bwrap + a resolvable binary, unless ARORA_DL_NO_SANDBOX or the
+    // bwrap + a resolvable binary, unless ARKTOS_DL_NO_SANDBOX or the
     // downloadmanager/sandboxedWorker setting disables it).
     static bool sandboxedWorkerEnabled();
-    // The binary the worker re-execs — ARORA_WORKER_BINARY override
+    // The binary the worker re-execs — ARKTOS_WORKER_BINARY override
     // else this application ("" when neither is executable).
     static QString workerProgram();
     // Test/diag hook: extra paths the worker should probe inside its
@@ -155,7 +155,7 @@ private:
     void removeCookieFile();
 
     // ---- SAND02 subprocess backend ----
-    // On Linux the crate can run inside `arora --download-worker`
+    // On Linux the crate can run inside `arktos --download-worker`
     // under a restrictive bwrap wrap (see downloadworker.h for the
     // JSONL protocol).  accept() picks the subprocess whenever the
     // setting+env allow it and bwrap resolves; any failure before the
@@ -176,6 +176,7 @@ private:
 
     DlHandle m_handle;
     QPointer<QWebEnginePage> m_page;
+    QString m_profileId;        // MPROF02: owning persona for settings
     QUrl m_url;
     QString m_suggested;
     QString m_mimeType;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, The Arora Authors
+ * Copyright (c) 2026, The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,7 +23,7 @@
 
 #include <urlcleaner.h>
 
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 
 class tst_UrlCleaner : public QObject
 {

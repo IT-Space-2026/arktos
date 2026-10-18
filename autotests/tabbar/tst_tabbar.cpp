@@ -32,8 +32,9 @@
 #include <webview.h>
 #include <containermanager.h>
 #include <browserapplication.h>
+#include <engineinterface.h>
 #include "profilesettings.h"
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 #include "qtry.h"
 
 class tst_TabBar : public QObject
@@ -70,10 +71,13 @@ private slots:
     void horizontalTabResize();
     void verticalTabButtons();
     void contextMenuBaseEntries();
+    void freeMemoryMenuEntries();
     void contextMenuGroupEntries();
     void contextMenuContainerEntries();
     void chipsPaint();
     void tabMouseAndDragEvents();
+    void groupDropAffordance();
+    void groupHeaderSegments();
     void tabKeyShortcuts();
     void previewDwell();
     void iconOnlyTabs();
@@ -81,6 +85,7 @@ private slots:
     void newTabButton();
     void verticalRowHeight();
     void firefoxTabMetrics();
+    void noTabUnderlines();
 };
 
 // Subclass that exposes the protected functions.
@@ -456,9 +461,9 @@ void tst_TabBar::verticalTabRows()
                  "would stay inside a ~16px column")
                  .arg(maxX - minX + 1)));
 
-    // Offscreen grab for visual review — set ARORA_TABBAR_GRAB_DIR
+    // Offscreen grab for visual review — set ARKTOS_TABBAR_GRAB_DIR
     // to a directory to save it.
-    const QByteArray grabDir = qgetenv("ARORA_TABBAR_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_TABBAR_GRAB_DIR");
     if (!grabDir.isEmpty())
         image.save(QString::fromLocal8Bit(grabDir)
                    + QLatin1String("/vertical-rows.png"));
@@ -816,7 +821,7 @@ void tst_TabBar::verticalTabButtons()
 
 // COV05 — the tab-strip chrome lives on the TabWidget's own TabBar, so
 // everything below drives real TabWidgets (BrowserApplication comes
-// from qtest_arora.h's QTEST_MAIN).
+// from qtest_arktos.h's QTEST_MAIN).
 
 // contextMenuRequested() is a private slot that builds a stack-local
 // QMenu and exec()s it.  This helper fires the slot, then — inside
@@ -897,6 +902,54 @@ static bool triggerContextEntry(TabBar *bar, const QPoint &pos,
     return invoked && fired;
 }
 
+// Does any captured emission carry needle.
+static bool spyHasText(const QSignalSpy &spy, const QString &needle)
+{
+    for (const QList<QVariant> &args : spy) {
+        if (args.value(0).toString().contains(needle))
+            return true;
+    }
+    return false;
+}
+
+// Same dance as triggerContextEntry but inspects instead of firing —
+// copies the matched action's text/enabled and closes the menu.
+static bool inspectContextEntry(TabBar *bar, const QPoint &pos,
+                                const QString &label, QString *text,
+                                bool *enabled)
+{
+    bool found = false;
+    int tries = 0;
+    QTimer *timer = new QTimer(qApp);
+    timer->setInterval(80);
+    QObject::connect(timer, &QTimer::timeout, qApp,
+                     [label, text, enabled, &found, &tries, timer]() {
+        QMenu *menu = findPopupMenu();
+        if (!menu) {
+            if (++tries > 25)
+                timer->stop();
+            return;
+        }
+        timer->stop();
+        for (QAction *action : menu->actions()) {
+            if (QString(action->text()).remove(QLatin1Char('&'))
+                    .contains(label)) {
+                *text = action->text();
+                *enabled = action->isEnabled();
+                found = true;
+                break;
+            }
+        }
+        menu->close();
+    });
+    timer->start();
+    const bool invoked = QMetaObject::invokeMethod(
+        bar, "contextMenuRequested", Q_ARG(QPoint, pos));
+    timer->stop();
+    timer->deleteLater();
+    return invoked && found;
+}
+
 // The ungrouped-tab and empty-strip menus: action signal fan-out plus
 // the Sleep entry's enabled gate.
 void tst_TabBar::contextMenuBaseEntries()
@@ -970,6 +1023,100 @@ void tst_TabBar::contextMenuBaseEntries()
     QCOMPARE(widget.count(), 0);
 }
 
+// MEM08: the flush entries — per-tab "Free Memory" on a background
+// tab vs the honest "Reload & Free Memory" on the current one,
+// disabled on a never-loaded tab, live on a slept tab so the click
+// can report that, plus the window-level background-tabs leg.
+void tst_TabBar::freeMemoryMenuEntries()
+{
+    TabWidget widget;
+    widget.resize(800, 240);
+    widget.show();
+    TabBar *bar = widget.tabBar();
+    widget.newTab();                        // 0 — stays current
+    widget.newTab();                        // 1 — loaded background
+    widget.newTab();                        // 2 — never loaded
+    widget.webView(0)->loadUrl(
+        QUrl(QLatin1String("data:text/html,<p>fg</p>")));
+    widget.webView(1)->loadUrl(
+        QUrl(QLatin1String("data:text/html,<p>bg</p>")));
+    widget.setCurrentIndex(0);
+    QCOMPARE(widget.count(), 3);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !widget.webView(0)->isLoading()
+            && !widget.webView(1)->isLoading(), 15000);
+    QApplication::processEvents();
+
+    QString text;
+    bool enabled = false;
+
+    // Current tab: enabled, labeled as the reload it performs.
+    QVERIFY(inspectContextEntry(bar, bar->tabRect(0).center(),
+                                QLatin1String("Free Memory"),
+                                &text, &enabled));
+    QVERIFY(enabled);
+    QVERIFY(text.contains(QLatin1String("Reload")));
+    QVERIFY(text.contains(QLatin1String("Free Memory")));
+
+    // Background loaded tab: plain wording, enabled, and triggering
+    // it runs the real discard — the tab sleeps.
+    QVERIFY(inspectContextEntry(bar, bar->tabRect(1).center(),
+                                QLatin1String("Free Memory"),
+                                &text, &enabled));
+    QVERIFY(enabled);
+    QVERIFY(!text.contains(QLatin1String("Reload")));
+    QSignalSpy freed(bar, &TabBar::freeTabMemory);
+    QVERIFY(triggerContextEntry(bar, bar->tabRect(1).center(),
+                                QLatin1String("Free Memory")));
+    QCOMPARE(freed.count(), 1);
+    QCOMPARE(freed.takeFirst().at(0).toInt(), 1);
+    QTRY_VERIFY_WITH_TIMEOUT(widget.isTabSleeping(1), 10000);
+
+    // The slept tab keeps the entry — its click reports the tab is
+    // already discarded rather than discarding again.
+    QVERIFY(inspectContextEntry(bar, bar->tabRect(1).center(),
+                                QLatin1String("Free Memory"),
+                                &text, &enabled));
+    QVERIFY(enabled);
+    QSignalSpy statusSpy(&widget, &TabWidget::showStatusBarMessage);
+    QVERIFY(triggerContextEntry(bar, bar->tabRect(1).center(),
+                                QLatin1String("Free Memory")));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        spyHasText(statusSpy, QLatin1String("asleep")), 5000);
+
+    // The never-loaded tab's entry is disabled — nothing to free.
+    QVERIFY(inspectContextEntry(bar, bar->tabRect(2).center(),
+                                QLatin1String("Free Memory"),
+                                &text, &enabled));
+    QVERIFY(!enabled);
+
+    // The current tab's entry fires freeTabMemory(0) — the
+    // discard+reactivate reloads the page in place.
+    QSignalSpy fgFreed(bar, &TabBar::freeTabMemory);
+    QVERIFY(triggerContextEntry(bar, bar->tabRect(0).center(),
+                                QLatin1String("Free Memory")));
+    QCOMPARE(fgFreed.count(), 1);
+    QCOMPARE(fgFreed.takeFirst().at(0).toInt(), 0);
+    QVERIFY(!widget.isTabSleeping(0));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        widget.webView(0)->enginePage()->lifecycleState(),
+        Engine::Page::LifecycleState::Active, 15000);
+
+    // Window level: present even on an empty-strip click, emits the
+    // aggregate signal once.
+    const QRect lastRect = bar->tabRect(bar->count() - 1);
+    QVERIFY(lastRect.right() + 2 < bar->rect().right());
+    const QPoint emptyPoint(lastRect.right() + 2,
+                            lastRect.center().y());
+    QSignalSpy freedAll(bar, &TabBar::freeBackgroundTabsMemory);
+    QVERIFY(triggerContextEntry(bar, emptyPoint,
+                                QLatin1String("Background Tabs")));
+    QCOMPARE(freedAll.count(), 1);
+
+    while (widget.count())
+        widget.closeTab(0);
+}
+
 // A grouped tab's menu: collapse/expand, rename (QInputDialog), the
 // color submenu, remove-from-group and ungroup, plus "Add Tab to
 // Group" on the ungrouped side (new + existing entries).
@@ -1040,6 +1187,51 @@ void tst_TabBar::contextMenuGroupEntries()
     QVERIFY(triggerContextEntry(bar, bar->tabRect(1).center(),
                                 QLatin1String("ngroup")));
     QVERIFY(widget.tabGroupIds().isEmpty());
+
+    // TABGRP02: "Close Group" — a solo member is under the confirm
+    // threshold and closes outright.
+    const QString g2 = widget.createTabGroup(0);
+    QVERIFY(triggerContextEntry(bar, bar->tabRect(0).center(),
+                                QLatin1String("Close Group")));
+    QCOMPARE(widget.count(), 2);
+    QVERIFY(widget.tabGroupIds().isEmpty());
+
+    // A collapsed multi-member group prompts (the shared multi-close
+    // confirm, real count including the hidden member); answering Yes
+    // closes them all.
+    QSettings settings;
+    settings.setValue(QLatin1String("tabs/confirmClosingMultipleTabs"),
+                      true);
+    const QString g3 = widget.createTabGroup(0);
+    widget.addTabToGroup(1, g3);
+    widget.setTabGroupCollapsed(g3, true);
+    QCOMPARE(widget.count(), 1);   // just the chip
+    QCOMPARE(widget.tabGroupSize(g3), 2);
+    QString confirmText;
+    QTimer *clicker = new QTimer(qApp);
+    clicker->setInterval(50);
+    QObject::connect(clicker, &QTimer::timeout, qApp,
+                     [&confirmText, clicker]() {
+        QMessageBox *box = qobject_cast<QMessageBox *>(
+            QApplication::activeModalWidget());
+        if (!box)
+            return;
+        confirmText = box->text();
+        if (QAbstractButton *b = box->button(QMessageBox::Yes))
+            b->click();
+        else
+            box->reject();
+        clicker->stop();
+        clicker->deleteLater();
+    });
+    clicker->start();
+    QVERIFY(triggerContextEntry(bar, bar->tabRect(0).center(),
+                                QLatin1String("Close Group")));
+    clicker->stop();
+    clicker->deleteLater();
+    QVERIFY(confirmText.contains(QLatin1String("2 tabs")));
+    QCOMPARE(widget.count(), 0);
+    settings.remove(QLatin1String("tabs/confirmClosingMultipleTabs"));
 }
 
 // The container submenu (non-private/non-tor build): reopen entries,
@@ -1205,7 +1397,7 @@ void tst_TabBar::chipsPaint()
         const QByteArray prefix = qgetenv("TABSHOT_PREFIX");
         if (!prefix.isEmpty())
             strip.toImage().save(QString::fromLatin1(
-                "/tmp/arora-tabs-%1-%2.png")
+                "/tmp/arktos-tabs-%1-%2.png")
                 .arg(QString::fromLatin1(prefix),
                      shapeNames.at(shapeIndex)));
         QCOMPARE(bar->tabRect(containerIndex).height(),
@@ -1329,6 +1521,180 @@ void tst_TabBar::tabMouseAndDragEvents()
     QApplication::sendEvent(bar, &wheel);
     QEvent leave(QEvent::Leave);
     QApplication::sendEvent(bar, &leave);
+}
+
+// TABGRP02: the drop-to-group affordance — during a left-button tab
+// drag, hovering another tab's middle band marks it as the stack
+// target (groupDropIndex()) and paints the tint/badge overlay, the
+// edge quarters keep the reorder zone clear, a collapsed group's
+// chip previews on its whole rect, and the release performs exactly
+// the drop the affordance promised.
+void tst_TabBar::groupDropAffordance()
+{
+    TabWidget widget;
+    widget.resize(800, 240);
+    widget.show();
+    TabBar *bar = widget.tabBar();
+    // Fixed geometry, no native mid-drag reorder — the affordance
+    // tracks the hover position, not Qt's swaps.
+    bar->setMovable(false);
+    widget.newTab();
+    widget.newTab();
+    widget.newTab();
+    QCOMPARE(widget.count(), 3);
+    QApplication::processEvents();
+
+    auto sendMouse = [bar](QEvent::Type type, const QPoint &pos,
+                           Qt::MouseButton button,
+                           Qt::MouseButtons buttons) {
+        QMouseEvent event(type, QPointF(pos), QPointF(pos),
+                          button, buttons, Qt::NoModifier);
+        QApplication::sendEvent(bar, &event);
+    };
+
+    QCOMPARE(bar->groupDropIndex(), -1);
+
+    // Press tab 0 and drag onto tab 2's edge quarter first — the
+    // reorder zone stays dark; that grab is the paint baseline.
+    sendMouse(QEvent::MouseButtonPress, bar->tabRect(0).center(),
+              Qt::LeftButton, Qt::LeftButton);
+    const QRect target = bar->tabRect(2);
+    sendMouse(QEvent::MouseMove,
+              QPoint(target.left() + 2, target.center().y()),
+              Qt::NoButton, Qt::LeftButton);
+    QCOMPARE(bar->groupDropIndex(), -1);
+    const QImage edgeZone = bar->grab().toImage();
+
+    // Hovering the middle band lights the target up — the flag plus
+    // the tint/badge overlay both land.
+    sendMouse(QEvent::MouseMove, target.center(),
+              Qt::NoButton, Qt::LeftButton);
+    QCOMPARE(bar->groupDropIndex(), 2);
+    const QImage during = bar->grab().toImage();
+    QVERIFY(edgeZone.pixelColor(target.center())
+            != during.pixelColor(target.center()));
+
+    // Sliding back to the edge drops the preview again.
+    sendMouse(QEvent::MouseMove,
+              QPoint(target.left() + 2, target.center().y()),
+              Qt::NoButton, Qt::LeftButton);
+    QCOMPARE(bar->groupDropIndex(), -1);
+
+    // Back to the middle — releasing performs the promised stack.
+    sendMouse(QEvent::MouseMove, target.center(),
+              Qt::NoButton, Qt::LeftButton);
+    QCOMPARE(bar->groupDropIndex(), 2);
+    sendMouse(QEvent::MouseButtonRelease, target.center(),
+              Qt::LeftButton, Qt::NoButton);
+    QCOMPARE(bar->groupDropIndex(), -1);
+    // The dragged tab slides into the run — strip is [v1, v2, v0]
+    // with the trailing pair grouped.
+    const QString gid = widget.tabGroupId(2);
+    QVERIFY(!gid.isEmpty());
+    QCOMPARE(widget.tabGroupId(1), gid);
+    QCOMPARE(widget.tabGroupMembers(gid), QList<int>() << 1 << 2);
+
+    // A collapsed group's chip is a whole-rect stack target — even
+    // hovering its edge previews, and the drop adds the dragged tab
+    // straight into the hidden member list.
+    widget.setTabGroupCollapsed(gid, true);
+    QCOMPARE(widget.count(), 2);
+    QVERIFY(widget.isTabGroupChip(1));
+    const QRect chip = bar->tabRect(1);
+    sendMouse(QEvent::MouseButtonPress, bar->tabRect(0).center(),
+              Qt::LeftButton, Qt::LeftButton);
+    sendMouse(QEvent::MouseMove,
+              QPoint(chip.left() + 2, chip.center().y()),
+              Qt::NoButton, Qt::LeftButton);
+    QCOMPARE(bar->groupDropIndex(), 1);
+    sendMouse(QEvent::MouseButtonRelease,
+              QPoint(chip.left() + 2, chip.center().y()),
+              Qt::LeftButton, Qt::NoButton);
+    QCOMPARE(widget.count(), 1);   // the lone ungrouped tab joined
+    QCOMPARE(widget.tabGroupSize(gid), 3);
+}
+
+// TABGRP03: the Vivaldi-style labeled group header — a run's first
+// member carries a labeled chip segment (the group name, or the
+// member-count fallback while unnamed) instead of a bare colored
+// chip.  Horizontal strips widen the leader by the segment's reserve
+// and hand-draw the title right of it; vertical rows keep the header
+// in the reserved top band.  Rename lands live through
+// updateGeometry, and collapse still swaps the run for the chip.
+void tst_TabBar::groupHeaderSegments()
+{
+    TabWidget widget;
+    // Wide enough that four tabs never reach the squeeze — the strip
+    // renders each tab at its real size hint.
+    widget.resize(1200, 240);
+    widget.show();
+    TabBar *bar = widget.tabBar();
+    widget.newTab();
+    widget.newTab();
+    widget.newTab();
+    widget.newTab();
+    QApplication::processEvents();
+
+    // An UNNAMED group still gets a labeled segment — the count
+    // fallback — so the leader widens by the reserve while plain and
+    // non-leader tabs keep the shared metric.
+    const QString gid = widget.createTabGroup(1);
+    widget.groupTabWith(2, 1);
+    widget.setTabGroupColor(gid, QColor(Qt::red));
+    QApplication::processEvents();
+    // A grab forces the pending layout+paint — the run leader is
+    // wider than a plain tab by the segment's reserve, its run-mates
+    // keep the shared 225 metric.
+    const QImage strip = bar->grab().toImage();
+    const int plainWidth = bar->tabRect(0).width();
+    QVERIFY(bar->tabRect(1).width() > plainWidth);
+    QCOMPARE(bar->tabRect(2).width(), plainWidth);
+    QCOMPARE(bar->tabRect(3).width(), plainWidth);
+
+    // The segment is real paint, not just sizing: accent pixels show
+    // inside the leader's leading zone (above the content-edge rail).
+    {
+        const QRect rect = bar->tabRect(1);
+        bool found = false;
+        for (int x = rect.left() + 4;
+                x < rect.left() + 90 && !found; ++x) {
+            for (int y = rect.top() + 4;
+                    y < rect.bottom() - 5 && !found; ++y) {
+                const QColor c = strip.pixelColor(x, y);
+                if (c.red() > 150 && c.green() < 90 && c.blue() < 90)
+                    found = true;
+            }
+        }
+        QVERIFY(found);
+    }
+
+    // Rename lands live — the segment's text and reserve follow
+    // without a strip rebuild, resizing the leader.
+    const int unnamedWidth = bar->tabRect(1).width();
+    widget.renameTabGroup(gid, QLatin1String("Work"));
+    bar->grab();
+    QVERIFY(bar->tabRect(1).width() != unnamedWidth);
+    QCOMPARE(bar->tabRect(2).width(), plainWidth);
+
+    // Vertical rows give every labeled leader the header band —
+    // the count fallback on an unnamed group included.
+    widget.setTabPosition(QTabWidget::West);
+    QApplication::processEvents();
+    bar->grab();
+    QVERIFY(bar->tabRect(1).height() > bar->tabRect(0).height());
+    QCOMPARE(bar->tabRect(2).height(), bar->tabRect(0).height());
+
+    // Collapse still swaps the run for the single chip, and expanding
+    // restores the members' shared metric.
+    widget.setTabPosition(QTabWidget::North);
+    QApplication::processEvents();
+    widget.setTabGroupCollapsed(gid, true);
+    QVERIFY(widget.isTabGroupChip(1));
+    QCOMPARE(widget.tabGroupMembers(gid), QList<int>() << 1);
+    widget.setTabGroupCollapsed(gid, false);
+    QCOMPARE(widget.tabGroupMembers(gid), QList<int>() << 1 << 2);
+    bar->grab();
+    QCOMPARE(bar->tabRect(2).width(), plainWidth);
 }
 
 // Ctrl+1..9 TabShortcuts select tabs by index; the view-tab-bar
@@ -1764,8 +2130,8 @@ void tst_TabBar::newTabButton()
     QVERIFY(lastClose);
     QVERIFY(!lastClose->isVisible());
 
-    // Offscreen grabs for visual review — set ARORA_TABBAR_GRAB_DIR.
-    const QByteArray grabDir = qgetenv("ARORA_TABBAR_GRAB_DIR");
+    // Offscreen grabs for visual review — set ARKTOS_TABBAR_GRAB_DIR.
+    const QByteArray grabDir = qgetenv("ARKTOS_TABBAR_GRAB_DIR");
     if (!grabDir.isEmpty()) {
         const QString base = QString::fromLocal8Bit(grabDir);
         bar.setShape(QTabBar::RoundedNorth);
@@ -1929,8 +2295,8 @@ void tst_TabBar::firefoxTabMetrics()
             > bar.width() || bar.tabRect(0).x() < 0);
 
     // Offscreen grabs for visual review — 1 tab at the metric,
-    // many in equal-width squeeze.  ARORA_TABBAR_GRAB_DIR to save.
-    const QByteArray grabDir = qgetenv("ARORA_TABBAR_GRAB_DIR");
+    // many in equal-width squeeze.  ARKTOS_TABBAR_GRAB_DIR to save.
+    const QByteArray grabDir = qgetenv("ARKTOS_TABBAR_GRAB_DIR");
     if (!grabDir.isEmpty()) {
         const QString base = QString::fromLocal8Bit(grabDir);
         SubTabBar lone;
@@ -1949,6 +2315,100 @@ void tst_TabBar::firefoxTabMetrics()
         QApplication::processEvents();
         many.grab().save(base + QLatin1String("/ff-many.png"));
     }
+}
+
+// TABS10: no tab carries a line along its content-facing edge — the
+// strip's resting edge seam and the rail rows' bottom hairlines are
+// both gone (user report: "some tabs are underlined some are not").
+// Probe each resting tab's edge row for a run of pixels darker than
+// the strip's window color: label text never reaches that row, the
+// grip dots are ~3px, and a painted hairline is tens of px long.
+void tst_TabBar::noTabUnderlines()
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("tabs"));
+    settings.remove(QLatin1String("verticalTabWidth"));
+    settings.remove(QLatin1String("horizontalTabHeight"));
+
+    const auto longestDarkRun = [](const QImage &image, int y,
+                                   int left, int right, int bgGray) {
+        int best = 0;
+        int run = 0;
+        for (int x = left; x <= right; ++x) {
+            if (qGray(image.pixel(x, y)) < bgGray - 12) {
+                ++run;
+                best = qMax(best, run);
+            } else {
+                run = 0;
+            }
+        }
+        return best;
+    };
+
+    for (const QTabBar::Shape shape :
+         { QTabBar::RoundedNorth, QTabBar::RoundedSouth,
+           QTabBar::RoundedWest, QTabBar::RoundedEast }) {
+        SubTabBar bar;
+        bar.setShape(shape);
+        // Production strips are documentMode + non-expanding.
+        bar.setDocumentMode(true);
+        bar.setExpanding(false);
+        bar.show();
+        for (int i = 0; i < 4; ++i)
+            bar.addTab(QStringLiteral("Welcome to Arktos! %1").arg(i));
+        const bool vertical =
+            shape == QTabBar::RoundedWest || shape == QTabBar::RoundedEast;
+        bar.resize(vertical ? QSize(220, 400)
+                          : QSize(600, bar.sizeHint().height()));
+        bar.setCurrentIndex(1);   // resting tabs on both sides
+        QApplication::processEvents();
+
+        const int bgGray =
+            qGray(bar.palette().color(QPalette::Window).rgb());
+        QImage image = bar.grab().toImage();
+        for (int i = 0; i < bar.count(); ++i) {
+            if (i == bar.currentIndex())
+                continue;   // the active card owns its outline
+            const QRect rect = bar.tabRect(i);
+            // North/rows underline at the bottom edge; a bottom
+            // strip's seam sat at the top.
+            const int y = (shape == QTabBar::RoundedSouth)
+                ? rect.top() : rect.bottom();
+            QVERIFY(y >= 0 && y < image.height());
+            const int run = longestDarkRun(image, y,
+                                           rect.left() + 6,
+                                           rect.right() - 6, bgGray);
+            QVERIFY2(run < 30, qPrintable(QStringLiteral(
+                "shape %1 tab %2 edge row %3: %4px line")
+                .arg(shape).arg(i).arg(y).arg(run)));
+        }
+
+        // Hovered resting tab: the wash card stops inside the row,
+        // the edge row stays clean.
+        const QPoint hover = bar.tabRect(3).center();
+        QMouseEvent move(QEvent::MouseMove, QPointF(hover),
+                         QPointF(bar.mapToGlobal(hover)),
+                         Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(&bar, &move);
+        QApplication::processEvents();
+        image = bar.grab().toImage();
+        const QRect rect = bar.tabRect(3);
+        const int y = (shape == QTabBar::RoundedSouth)
+            ? rect.top() : rect.bottom();
+        const int run = longestDarkRun(image, y,
+                                       rect.left() + 6,
+                                       rect.right() - 6, bgGray);
+        QVERIFY2(run < 30, qPrintable(QStringLiteral(
+            "shape %1 hovered tab edge run %2px").arg(shape).arg(run)));
+
+        // Offscreen grab for visual review — ARKTOS_TABBAR_GRAB_DIR.
+        const QByteArray grabDir = qgetenv("ARKTOS_TABBAR_GRAB_DIR");
+        if (!grabDir.isEmpty())
+            image.save(QString::fromLocal8Bit(grabDir)
+                + QStringLiteral("/underline-%1.png").arg(int(shape)));
+    }
+
+    settings.endGroup();
 }
 
 QTEST_MAIN(tst_TabBar)

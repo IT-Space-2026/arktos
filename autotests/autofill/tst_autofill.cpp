@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,7 +18,7 @@
  */
 
 #include <QtTest/QtTest>
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 
 #include <autofillmanager.h>
 #include <browserpaths.h>
@@ -78,7 +78,7 @@ static QString retiredPath()
 
 static QString storePath()
 {
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     return BrowserPaths::dataFilePath(QLatin1String("autofill-store.dat"));
 #else
     return legacyPath();
@@ -237,7 +237,7 @@ void tst_AutoFill::legacySealedImport()
         AutoFillManager manager;
         QVERIFY(sameForms(manager.forms(), forms));
     }
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // The new store holds the records; the consumed file is retired.
     QVERIFY(QFile::exists(storePath()));
     QVERIFY(!QFile::exists(legacyPath()));
@@ -267,7 +267,7 @@ void tst_AutoFill::legacyPlaintextImport()
         AutoFillManager manager;
         QVERIFY(sameForms(manager.forms(), forms));
     }
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     QVERIFY(QFile::exists(storePath()));
     QVERIFY(!QFile::exists(legacyPath()));
 #endif
@@ -350,7 +350,7 @@ void tst_AutoFill::noPlaintextOnDisk()
     const QByteArray raw = file.readAll();
     QVERIFY(!raw.contains("4111111111111111"));
     QVERIFY(!raw.contains("alice"));
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     QVERIFY(!QFile::exists(legacyPath()));
 #endif
 }

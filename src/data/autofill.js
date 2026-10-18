@@ -1,9 +1,9 @@
 // Armed per navigation by AutoFillManager::scheduleOnPage() as a
 // per-page QWebEngineScript at DocumentReady in the channel world
-// (SEC24 — AroraChannelWorld, the isolated world the page's
+// (SEC24 — ArktosChannelWorld, the isolated world the page's
 // QWebChannel is bound to).  Fills stored form data immediately, and
 // — when CAPTURE_FLAG is true — reports submitted forms back through
-// the "aroraAutofill" QWebChannel object.  FORMS_JSON, CAPTURE_FLAG
+// the "arktosAutofill" QWebChannel object.  FORMS_JSON, CAPTURE_FLAG
 // and REPORT_TOKEN are substituted C++-side; all three stay inside
 // this closure in a world page script cannot enter, so the token
 // that authenticates a report is doubly unreachable (SEC08).
@@ -14,9 +14,9 @@
 // responses — the recurring "execCallbacks[message.id] is not a
 // function" errors (CHAN01) came from an autofill client colliding
 // with page-side channel users such as the start page.  WebPage arms
-// arora-channel.js at DocumentCreation in the same world, which owns
+// arktos-channel.js at DocumentCreation in the same world, which owns
 // the transport's dispatch and hands out one shared client via
-// __aroraChannel(); the fallback below keeps the attachToPage path
+// __arktosChannel(); the fallback below keeps the attachToPage path
 // working on pages that never ran the bootstrap.
 (function () {
     var savedForms = FORMS_JSON;
@@ -195,7 +195,7 @@
                 filled = true;
             }
             if (filled)
-                form.__aroraAddrId = savedAddress.id;
+                form.__arktosAddrId = savedAddress.id;
         }
     }
 
@@ -258,7 +258,7 @@
         }
         // A form our fill touched reports which stored address it
         // used — the MRU stamp back in the manager.
-        if (savedAddress && form.__aroraAddrId == savedAddress.id)
+        if (savedAddress && form.__arktosAddrId == savedAddress.id)
             data.usedAddressId = savedAddress.id;
         // Only forms carrying a password are ever stored (matches the
         // old passwordForms setting); address-shaped submits still
@@ -275,13 +275,13 @@
     }
 
     function connectChannel() {
-        // __aroraChannel (arora-channel.js) serves the one shared
+        // __arktosChannel (arktos-channel.js) serves the one shared
         // client; it queues this callback if the handshake is still
         // in flight, so no second client ever competes for the
         // transport's onmessage slot.
-        if (window.__aroraChannel) {
-            window.__aroraChannel(function (channel) {
-                bridge = channel.objects.aroraAutofill || null;
+        if (window.__arktosChannel) {
+            window.__arktosChannel(function (channel) {
+                bridge = channel.objects.arktosAutofill || null;
                 flushReports();
             });
             return;
@@ -293,7 +293,7 @@
         connecting = true;
         new QWebChannel(qt.webChannelTransport, function (channel) {
             connecting = false;
-            bridge = channel.objects.aroraAutofill || null;
+            bridge = channel.objects.arktosAutofill || null;
             flushReports();
         });
     }
@@ -311,12 +311,12 @@
         };
         // DOM events dispatch to listeners in every world on the
         // shared document, so both real submits and the synthetic
-        // 'arora:formsubmit' reach us from here.
+        // 'arktos:formsubmit' reach us from here.
         document.addEventListener('submit', function (event) {
             report(event.target);
         }, true);
         // form.submit() bypasses the submit event entirely — the
-        // 'arora:autofill-submit' main-world shim wraps the page's
+        // 'arktos:autofill-submit' main-world shim wraps the page's
         // HTMLFormElement.prototype.submit (a prototype patch only
         // sticks in the world that installs it, so it cannot live in
         // this isolated one) and re-dispatches each call as this
@@ -324,7 +324,7 @@
         // form already in the page's DOM — the attacker owns that
         // DOM anyway, so nothing is gained that a real submit
         // wouldn't give them.
-        document.addEventListener('arora:formsubmit', function (event) {
+        document.addEventListener('arktos:formsubmit', function (event) {
             report(event.target);
         }, true);
     }

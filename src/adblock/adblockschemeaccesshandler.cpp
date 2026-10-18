@@ -29,10 +29,7 @@
 #include "adblockschemeaccesshandler.h"
 
 #include "adblockmanager.h"
-#include "adblocksubscription.h"
-#include "adblockdialog.h"
 
-#include <qmessagebox.h>
 #include <qwebengineurlrequestjob.h>
 #include <qwebengineurlscheme.h>
 
@@ -60,8 +57,14 @@ void AdBlockSchemeAccessHandler::registerUrlScheme()
 
 void AdBlockSchemeAccessHandler::requestStarted(QWebEngineUrlRequestJob *job)
 {
-    if (job->requestMethod() != "GET"
-        || job->requestUrl().path() != QLatin1String("subscribe")) {
+    // Both abp:subscribe?... (path form) and abp://subscribe?...
+    // (host form) appear in the wild — reject only genuinely foreign
+    // abp: urls.
+    const QUrl requestUrl = job->requestUrl();
+    const bool subscribe = requestUrl.path() == QLatin1String("subscribe")
+        || requestUrl.host() == QLatin1String("subscribe")
+        || requestUrl.path() == QLatin1String("//subscribe");
+    if (job->requestMethod() != "GET" || !subscribe) {
         job->fail(QWebEngineUrlRequestJob::UrlInvalid);
         return;
     }
@@ -79,31 +82,12 @@ void AdBlockSchemeAccessHandler::handleSubscribe(QPointer<QWebEngineUrlRequestJo
     if (!job)
         return;
 
-    AdBlockSubscription *subscription = new AdBlockSubscription(job->requestUrl(), AdBlockManager::instance());
+    // MPROF: this handler's parent is the persona's own manager — the
+    // ambient instance() would add the subscription to whichever
+    // profile last had focus, not the one that hosted the click.
+    if (AdBlockManager *manager = qobject_cast<AdBlockManager *>(parent()))
+        manager->promptSubscribe(job->requestUrl());
 
-    // The subscription title arrives inside the abp:subscribe URL —
-    // page-controlled, so render it literally.
-    QMessageBox box(QMessageBox::Question, tr("Subscribe?"),
-            tr("Subscribe to this AdBlock subscription?\n%1").arg(subscription->title()),
-            QMessageBox::Yes | QMessageBox::No);
-    box.setTextFormat(Qt::PlainText);
-    box.setDefaultButton(QMessageBox::No);
-    const QMessageBox::StandardButton result =
-        static_cast<QMessageBox::StandardButton>(box.exec());
-    if (result == QMessageBox::No) {
-        delete subscription;
-    } else {
-        // TELEM01: clicking Subscribe is consent to fetch the list —
-        // the constructor's automatic update was consent-gated, so
-        // kick the download here.
-        AdBlockManager::setRemoteListsConsent(
-            AdBlockManager::RemoteListsGranted);
-        AdBlockManager::instance()->addSubscription(subscription);
-        subscription->updateNow();
-        AdBlockDialog *dialog = AdBlockManager::instance()->showDialog();
-        dialog->selectSubscription(subscription);
-        dialog->setFocus();
-    }
     // Nothing is ever served for abp: urls — they only carry the
     // subscription parameters handled above.
     job->fail(QWebEngineUrlRequestJob::RequestAborted);

@@ -1,13 +1,13 @@
 #!/usr/bin/make -f
 # debian/rules — hand-rolled, no debhelper. The build host has no
-# debhelper and Arora is qmake-built against a user-local Qt 6.12, so
+# debhelper and Arktos is qmake-built against a user-local Qt 6.12, so
 # the package ships the bundled runtime produced by
 # BuildProcess/bundle-linux.sh mapped onto an FHS layout under
-# /usr/lib/arora. The heavy lifting lives in .devin/pkg-deb.sh so the
+# /usr/lib/arktos. The heavy lifting lives in .devin/pkg-deb.sh so the
 # same code path serves `dpkg-buildpackage -b -us -uc -rfakeroot -d`
 # and the driver's own direct invocation.
 
-PKGPREFIX = debian/arora
+PKGPREFIX = debian/arktos
 
 build: build-arch build-indep
 
@@ -29,7 +29,7 @@ binary-indep:
 # incremental on the dev loop. `make distclean` by hand for a from-
 # scratch rebuild.
 clean:
-	rm -rf debian/arora debian/files debian/substvars \
+	rm -rf debian/arktos debian/files debian/substvars \
 	    debian/*.debhelper* debian/*.substvars
 
 .PHONY: build build-arch build-indep binary binary-arch binary-indep clean

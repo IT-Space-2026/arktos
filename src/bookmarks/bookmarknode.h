@@ -66,7 +66,7 @@
 #include <qlist.h>
 #include <qstringlist.h>
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 #include <stdint.h>
 #include <qbytearray.h>
 #endif
@@ -98,7 +98,7 @@ public:
     QString desc;
     bool expanded;
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // rustcore store handle (RCORE02); 0 means "not backed by the
     // Rust tree" — freshly created or imported nodes get a handle
     // when add() uploads them.  children() materializes lazily from
@@ -114,10 +114,19 @@ public:
     // store children this proxy has never seen.  Only valid while
     // m_children is empty (a freshly created node).
     void invalidateChildren() { if (m_children.isEmpty()) m_childrenLoaded = false; }
+    // MPROF02: zeroes every loaded handle without touching the store —
+    // the call a stale BookmarksManager makes before discarding its
+    // node view.  The tree those handles indexed was already freed by
+    // the incoming profile's rc_bm_load, so ~BookmarkNode's
+    // rc_bm_destroy would fire on dead handles that the store may
+    // have recycled onto the CURRENT profile's nodes — destroying the
+    // live tree.  Never walks unmaterialized children: materializing
+    // would query dead handles for the same reason.
+    void dropRustHandles();
 #endif
 
 private:
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     void materializeChildren();
     void rustUpload(uint64_t parent, int64_t row);
     void pushNodeFields() const;

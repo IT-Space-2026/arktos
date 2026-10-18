@@ -19,7 +19,7 @@
 
 #include "locationbar.h"
 
-#include "arorastyle.h"
+#include "arktosstyle.h"
 #include "clearbutton.h"
 #include "locationbarsiteicon.h"
 #include "popupblockerbutton.h"
@@ -267,7 +267,7 @@ void LocationBar::paintEvent(QPaintEvent *event)
     QColor backgroundColor = defaultBaseColor;
     if (m_webView && m_webView->url().scheme() == QLatin1String("https")
         && p.color(QPalette::Text).value() < 128) {
-        backgroundColor = AroraStyle::secureFieldColor();
+        backgroundColor = ArktosStyle::secureFieldColor();
     }
 
     // set the progress bar
@@ -278,7 +278,7 @@ void LocationBar::paintEvent(QPaintEvent *event)
             p.setBrush(QPalette::Base, backgroundColor);
         } else {
             const QColor loadingColor =
-                AroraStyle::loadingProgressColor(p);
+                ArktosStyle::loadingProgressColor(p);
 
             QLinearGradient gradient(0, 0, width(), 0);
             gradient.setColorAt(0, loadingColor);
@@ -297,7 +297,7 @@ void LocationBar::paintEvent(QPaintEvent *event)
     // field's bottom edge (the affordance the dead 0<progress<100
     // gradient used to provide mid-load).
     if (m_webView && m_webView->isLoading()) {
-        const QColor stripColor = AroraStyle::loadingProgressColor(p);
+        const QColor stripColor = ArktosStyle::loadingProgressColor(p);
         QPainter stripPainter(this);
         stripPainter.fillRect(QRect(1, height() - 3, width() - 2, 2),
                               stripColor);
@@ -402,7 +402,7 @@ void LocationBar::dragEnterEvent(QDragEnterEvent *event)
     const QMimeData *mimeData = event->mimeData();
     // TABS13: a real tab drag must not become an address load —
     // outside a tab bar it means tear-off.
-    if (mimeData->hasFormat(aroraTabMimeType())) {
+    if (mimeData->hasFormat(arktosTabMimeType())) {
         event->ignore();
         return;
     }
@@ -416,7 +416,7 @@ void LocationBar::dropEvent(QDropEvent *event)
 {
     const QMimeData *mimeData = event->mimeData();
 
-    if (mimeData->hasFormat(aroraTabMimeType())) {
+    if (mimeData->hasFormat(arktosTabMimeType())) {
         event->ignore();
         return;
     }

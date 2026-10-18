@@ -41,7 +41,7 @@
 #include <qstringlist.h>
 #include <qurlquery.h>
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "rustcore.h"
 #include "rustcorebridge.h"
 
@@ -103,7 +103,7 @@ QByteArray oseSource()
 }
 
 } // namespace
-#endif // ARORA_RUSTCORE
+#endif // ARKTOS_RUSTCORE
 
 OpenSearchManager::OpenSearchManager(QObject *parent)
     : QObject(parent)
@@ -366,7 +366,7 @@ bool OpenSearchManager::addEngine(OpenSearchEngine *engine)
     if (m_engines.contains(engine->name()))
         return false;
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // OSE01: the registry is canonical — the record writes through
     // immediately (keyword bindings arrive via setKeywordsForEngine).
     rustCoreEnsureDataDir();
@@ -406,7 +406,7 @@ bool OpenSearchManager::addEngine(OpenSearchEngine *engine)
     return true;
 }
 
-#if !defined(ARORA_RUSTCORE)
+#if !defined(ARKTOS_RUSTCORE)
 // SENG02: a descriptor's <Alias> elements are INITIAL keyword
 // bindings — claim only slots nobody holds, so a user binding
 // (explicit set or a later keywords-array restore) always wins.
@@ -430,7 +430,7 @@ void OpenSearchManager::removeEngine(const QString &name)
         return;
 
     OpenSearchEngine *engine = m_engines[name];
-#if !defined(ARORA_RUSTCORE)
+#if !defined(ARKTOS_RUSTCORE)
     for (const QString &keyword : m_keywords.keys(engine))
         m_keywords.remove(keyword);
 #endif
@@ -451,7 +451,7 @@ void OpenSearchManager::removeEngine(const QString &name)
     if (name == m_fieldEngine)
         m_fieldEngine.clear();
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     rustCoreEnsureDataDir();
     const QByteArray utf8 = name.toUtf8();
     // The record drops its keyword bindings with it.
@@ -466,7 +466,7 @@ void OpenSearchManager::removeEngine(const QString &name)
     if (QFile::exists(QLatin1String(":/searchengines/") + generateEngineFileName(name))
             && !m_removedBundled.contains(name)) {
         m_removedBundled.append(name);
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
         rc_ose_block_bundled(utf8.constData());
 #endif
     }
@@ -490,7 +490,7 @@ bool OpenSearchManager::moveEngine(const QString &name, int offset)
         return false;
 
     m_engineOrder.move(from, to);
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     rustCoreEnsureDataDir();
     const QByteArray json = oseJsonStringArray(m_engineOrder);
     rc_ose_reorder(reinterpret_cast<const uint8_t *>(json.constData()),
@@ -513,7 +513,7 @@ bool OpenSearchManager::renameEngine(const QString &oldName, const QString &newN
     if (m_engines.contains(trimmed))
         return false;
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // The store move keeps the record's keyword bindings and its
     // display-order slot — abort before touching any Qt state if it
     // fails.
@@ -550,7 +550,7 @@ bool OpenSearchManager::renameEngine(const QString &oldName, const QString &newN
     // resurrecting on the next load (same bookkeeping removeEngine
     // uses); naming an engine after a previously removed bundled one
     // unblocks it — the user's own engine with that name exists now.
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     if (QFile::exists(QLatin1String(":/searchengines/")
                       + generateEngineFileName(oldName))
             && !m_removedBundled.contains(oldName)) {
@@ -581,7 +581,7 @@ void OpenSearchManager::engineEdited(OpenSearchEngine *engine)
     if (!engine || m_engines.key(engine).isEmpty())
         return;
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // OSE01: engine objects carry no change notification — the edit
     // notification pushes the record through immediately.
     rustCoreEnsureDataDir();
@@ -636,7 +636,7 @@ void OpenSearchManager::saveDirectory(const QString &dirName)
 
 void OpenSearchManager::save()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // OSE01: mutations write through; the autosave still re-syncs the
     // engine objects (a direct field edit only marks the saver dirty)
     // and the display order.  The descriptor dir plus the keyword,
@@ -714,7 +714,7 @@ bool OpenSearchManager::loadDirectory(const QString &dirName)
     return success;
 }
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 // OSE01: one-shot migration from the legacy layout — the descriptor
 // directory, the openSearch/keywords array, engineOrder and
 // removedBundledEngines all move into searchengines.json, then the
@@ -786,12 +786,12 @@ void OpenSearchManager::importLegacyRegistry(ProfileSettings &settings)
     settings.remove(QLatin1String("engineOrder"));
     settings.remove(QLatin1String("removedBundledEngines"));
 }
-#endif // ARORA_RUSTCORE
+#endif // ARKTOS_RUSTCORE
 
 void OpenSearchManager::load()
 {
     StartupProfile::Scope profileScope("opensearch engines parse");
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // OSE01: searchengines.json is canonical; first access migrates
     // the legacy descriptor dir + QSettings openSearch keys.
     rustCoreEnsureDataDir();
@@ -935,7 +935,7 @@ void OpenSearchManager::load()
         m_current = m_engines.keys().at(0);
 
     emit currentEngineChanged();
-#endif // ARORA_RUSTCORE
+#endif // ARKTOS_RUSTCORE
 }
 
 bool OpenSearchManager::suggestionsEnabledForEngine(const QString &engineName) const
@@ -1013,7 +1013,7 @@ void OpenSearchManager::setSuggestionsOnlyWithKeyword(bool enabled)
 
 void OpenSearchManager::restoreDefaults()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // OSE01: the store-side restore clears the blocklist and re-adds
     // every bundled record, preserving keyword bindings.  Existing
     // objects refresh in place so consumers' pointers stay valid.
@@ -1088,7 +1088,7 @@ void OpenSearchManager::restoreDefaults()
         emit currentEngineChanged();
         emit changed();
     }
-#endif // ARORA_RUSTCORE
+#endif // ARKTOS_RUSTCORE
 }
 
 void OpenSearchManager::resetSearchPreferences()
@@ -1186,7 +1186,7 @@ QUrl OpenSearchManager::convertKeywordSearchToUrl(const QString &string)
     if (terms.isEmpty())
         return QUrl();
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // OSE01: resolution + expansion run in Rust (same result as the
     // engineForKeyword + searchUrl calls below).
     rustCoreEnsureDataDir();
@@ -1210,7 +1210,7 @@ OpenSearchEngine *OpenSearchManager::engineForKeyword(const QString &keyword) co
 {
     if (keyword.isEmpty())
         return nullptr;
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     rustCoreEnsureDataDir();
     const QByteArray utf8 = keyword.toUtf8();
     const QString name = QString::fromUtf8(
@@ -1225,7 +1225,7 @@ OpenSearchEngine *OpenSearchManager::engineForKeyword(const QString &keyword) co
 
 QStringList OpenSearchManager::keywords() const
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     rustCoreEnsureDataDir();
     return oseStringList(rc_ose_keywords());
 #else
@@ -1238,7 +1238,7 @@ void OpenSearchManager::setEngineForKeyword(const QString &keyword, OpenSearchEn
     if (keyword.isEmpty())
         return;
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     rustCoreEnsureDataDir();
     const QByteArray utf8 = keyword.toUtf8();
     if (!engine) {
@@ -1270,7 +1270,7 @@ void OpenSearchManager::setEngineForKeyword(const QString &keyword, OpenSearchEn
 
 QStringList OpenSearchManager::keywordsForEngine(OpenSearchEngine *engine) const
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     if (!engine)
         return QStringList();
     rustCoreEnsureDataDir();
@@ -1293,7 +1293,7 @@ void OpenSearchManager::setKeywordsForEngine(OpenSearchEngine *engine, const QSt
     if (!engine)
         return;
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     rustCoreEnsureDataDir();
     QStringList list;
     for (const QString &keyword : keywords) {

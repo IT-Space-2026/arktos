@@ -157,7 +157,7 @@
           <item row="0" column="0" colspan="4">
            <widget class="QRadioButton" name="homeStartPageRadio">
             <property name="toolTip">
-             <string>The Home button and homepage startup open the built-in Arora start page.</string>
+             <string>The Home button and homepage startup open the built-in Arktos start page.</string>
             </property>
             <property name="text">
              <string>Start Page</string>
@@ -218,7 +218,7 @@
           <item>
            <widget class="QRadioButton" name="startupLastSessionRadio">
             <property name="toolTip">
-             <string>Restore the windows and tabs that were open when Arora last closed.</string>
+             <string>Restore the windows and tabs that were open when Arktos last closed.</string>
             </property>
             <property name="text">
              <string>Last Session</string>
@@ -238,7 +238,7 @@
           <item>
            <widget class="QRadioButton" name="startupStartPageRadio">
             <property name="toolTip">
-             <string>Open the built-in Arora start page.</string>
+             <string>Open the built-in Arktos start page.</string>
             </property>
             <property name="text">
              <string>Start Page</string>
@@ -381,7 +381,7 @@
           <item>
            <widget class="QCheckBox" name="confirmExitCheck">
             <property name="toolTip">
-             <string>Ask before quitting Arora — from the Arora menu's Quit entry or when the last window closes.</string>
+             <string>Ask before quitting Arktos — from the Arktos menu's Quit entry or when the last window closes.</string>
             </property>
             <property name="text">
              <string>Show Exit Confirmation Dialog</string>
@@ -483,6 +483,101 @@
          <property name="text">
           <string>Show dedicated search box</string>
          </property>
+        </widget>
+       </item>
+       <item row="6" column="0" colspan="3">
+        <widget class="QGroupBox" name="profilesGroupBox">
+         <property name="title">
+          <string>Profiles</string>
+         </property>
+         <layout class="QVBoxLayout" name="profilesLayout">
+          <item>
+           <layout class="QHBoxLayout" name="profilesTopRow">
+            <item>
+             <widget class="QLabel" name="profilesLabel">
+              <property name="text">
+               <string>Profiles keep separate browsing identities — each profile has its own history, bookmarks and settings.</string>
+              </property>
+              <property name="wordWrap">
+               <bool>true</bool>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="manageProfilesButton">
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
+              </property>
+              <property name="toolTip">
+               <string>Create, rename, delete and open windows on browser profiles.</string>
+              </property>
+              <property name="text">
+               <string>Manage Profiles...</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="vaultRow">
+            <item>
+             <widget class="QCheckBox" name="vaultAutoLockCheck">
+              <property name="toolTip">
+               <string>Seal this profile's encrypted vault when its last window closes. Applies once a profile password is set in the Profile Manager.</string>
+              </property>
+              <property name="text">
+               <string>Lock this profile when its last window closes</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="vaultIdleLabel">
+              <property name="text">
+               <string>Also lock after</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QSpinBox" name="vaultIdleSpin">
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
+              </property>
+              <property name="toolTip">
+               <string>Idle time before an unlocked vaulted profile seals itself. Only applies while the profile has no open windows.</string>
+              </property>
+              <property name="specialValueText">
+               <string>Never</string>
+              </property>
+              <property name="suffix">
+               <string> min</string>
+              </property>
+              <property name="maximum">
+               <number>240</number>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <spacer name="vaultRowSpacer">
+              <property name="orientation">
+               <enum>Qt::Horizontal</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size>
+                <width>40</width>
+                <height>20</height>
+               </size>
+              </property>
+             </spacer>
+            </item>
+           </layout>
+          </item>
+         </layout>
         </widget>
        </item>
        <item row="7" column="0" colspan="3">
@@ -1565,7 +1660,7 @@
        <item row="5" column="1" colspan="4">
         <widget class="ThemePicker" name="themePicker">
          <property name="toolTip">
-          <string>Color scheme for Arora's own windows, menus and dialogs. &quot;Auto&quot; follows the desktop preference.</string>
+          <string>Color scheme for Arktos's own windows, menus and dialogs. &quot;Auto&quot; follows the desktop preference.</string>
          </property>
          <property name="accessibleName">
           <string>Window theme (Day/Night)</string>
@@ -1585,7 +1680,7 @@
        <item row="7" column="0" colspan="3">
         <widget class="QCheckBox" name="forceDarkMode">
          <property name="toolTip">
-          <string>Pages that ship their own dark theme use it; light-only pages get a heuristic color inversion with a contrast floor so text stays readable. Images and videos are not inverted. Only web content is affected — Arora's own windows keep the desktop palette.</string>
+          <string>Pages that ship their own dark theme use it; light-only pages get a heuristic color inversion with a contrast floor so text stays readable. Images and videos are not inverted. Only web content is affected — Arktos's own windows keep the desktop palette.</string>
          </property>
          <property name="text">
           <string>Render pages in dark mode</string>
@@ -2403,6 +2498,19 @@
            </widget>
           </item>
           <item>
+           <widget class="QCheckBox" name="urlCleaning">
+            <property name="toolTip">
+             <string>Remove known tracking parameters (utm_*, fbclid, gclid…) from links as you navigate, and unwrap known redirector links (google.com/url?q=, facebook l.php?u=, …) straight to the real destination — subresource requests are never rewritten, and sites needing a raw link can be exempted per-site from the shield panel.</string>
+            </property>
+            <property name="text">
+             <string>Clean tracking links as you navigate</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
            <widget class="QCheckBox" name="dnsPrefetch">
             <property name="toolTip">
              <string>Resolve the address of every site a page merely links to, before you click — this sends the names of sites you never visit to the DNS resolver. Off by default; enabling it only speeds up link navigation slightly.</string>
@@ -2447,7 +2555,7 @@
              <string>On quit, wipe history, cookies, site storage and caches — everything Clear Private Data covers. Sites you stay logged in to are signed out.</string>
             </property>
             <property name="text">
-             <string>Clear browsing data when Arora exits</string>
+             <string>Clear browsing data when Arktos exits</string>
             </property>
             <property name="checked">
              <bool>false</bool>
@@ -4237,7 +4345,7 @@
           <item>
            <widget class="QCheckBox" name="hardwareAccel">
             <property name="toolTip">
-             <string>Render pages on the GPU. Turned off, Arora adds --disable-gpu to the engine flags — the switch latches at startup, so the change takes effect on the next launch.</string>
+             <string>Render pages on the GPU. Turned off, Arktos adds --disable-gpu to the engine flags — the switch latches at startup, so the change takes effect on the next launch.</string>
             </property>
             <property name="text">
              <string>Use Hardware Acceleration When Available</string>
@@ -4303,6 +4411,19 @@
             </property>
             <property name="text">
              <string>Maximum Savings</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QCheckBox" name="backgroundPurge">
+            <property name="toolTip">
+             <string>Briefly freezes each inactive tab for a moment so the engine releases memory it keeps for fast back/forward navigation. The page stays loaded — no reload on return — but the tab may pause for a fraction of a second. Tabs that are loading, playing sound, or downloading are skipped. Works with or without the Memory Saver unload schedule above.</string>
+            </property>
+            <property name="text">
+             <string>Reclaim memory from inactive tabs every few minutes</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
             </property>
            </widget>
           </item>
@@ -4569,6 +4690,7 @@
   <tabstop>strictTlsCiphers</tabstop>
   <tabstop>secureDnsServer</tabstop>
   <tabstop>blockPings</tabstop>
+  <tabstop>urlCleaning</tabstop>
   <tabstop>dnsPrefetch</tabstop>
   <tabstop>blockRemoteFonts</tabstop>
   <tabstop>blockThirdPartyWebSockets</tabstop>
@@ -4612,6 +4734,7 @@
   <tabstop>removeAllAddressesButton</tabstop>
   <tabstop>hardwareAccel</tabstop>
   <tabstop>memorySaverNever</tabstop>
+  <tabstop>backgroundPurge</tabstop>
   <tabstop>prefetchResources</tabstop>
   <tabstop>resetPerformanceButton</tabstop>
   <tabstop>buttonBox</tabstop>

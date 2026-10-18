@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -54,5 +54,12 @@ void rustCoreEnsureDataDir()
     const QByteArray dir =
         QFileInfo(BrowserPaths::dataFilePath(QLatin1String(".rc")))
             .absolutePath().toUtf8();
+    rc_set_data_dir(dir.constData());
+}
+
+void rustCoreEnsureDataDirFor(const QString &profileId)
+{
+    const QByteArray dir =
+        BrowserPaths::profileDataDir(profileId).toUtf8();
     rc_set_data_dir(dir.constData());
 }

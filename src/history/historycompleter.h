@@ -84,7 +84,7 @@ private:
     bool m_isValid;
 };
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 // OMNI01: the rustcore history store serves the completer's rows —
 // rc_history_suggest() returns them already filtered on the term and
 // ranked by the summed frecency + word-boundary score, so this is a
@@ -120,7 +120,7 @@ private:
     QString m_term;
     QList<Row> m_rows;
 };
-#endif // ARORA_RUSTCORE
+#endif // ARKTOS_RUSTCORE
 
 // SRCH01: prepends live search-engine suggestions to the history
 // completion so the location bar acts like a modern omnibox.  The

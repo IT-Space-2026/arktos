@@ -21,7 +21,7 @@
 
 #include "opensearchenginedelegate.h"
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "rustcore.h"
 
 #include <qjsonobject.h>
@@ -296,7 +296,7 @@ QUrl OpenSearchEngine::buildUrl(const QString &searchTerm,
     if (templ.isEmpty())
         return QUrl();
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // OSE01: template expansion + query assembly run in Rust — the
     // port is byte-identical to the parseTemplate()/QUrlQuery
     // pipeline below (probed on Qt 6.12); the result is wrapped in
@@ -471,7 +471,7 @@ void OpenSearchEngine::setImageUrl(QString imageUrl)
     \property defaultKeywords
     \brief the keyword bindings this descriptor declares as defaults
 
-    Populated from <Alias> elements (an Arora extension — OpenSearch
+    Populated from <Alias> elements (an Arktos extension — OpenSearch
     1.1 has no keyword element).  These are INITIAL bindings applied
     when the engine is seeded or installed; the manager owns the live
     bindings and never re-reads this list, so a user removing or
@@ -723,7 +723,7 @@ void OpenSearchEngine::suggestionsObtained()
     if (response.isEmpty())
         return;
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // SEC19: remote JSON is parsed by memory-safe Rust; the reply
     // schema ([term, [s1, ...]]) is enforced there and a corrupt
     // reply simply yields no suggestions, like the old early returns.
@@ -760,7 +760,7 @@ void OpenSearchEngine::suggestionsObtained()
         suggestionsList.append(value.toString());
 
     emit suggestions(suggestionsList);
-#endif // ARORA_RUSTCORE
+#endif // ARKTOS_RUSTCORE
 }
 
 /*!
@@ -815,7 +815,7 @@ void OpenSearchEngine::setDelegate(OpenSearchEngineDelegate *delegate)
     \sa requestSuggestions()
 */
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 // OSE01: rc_opensearch_parse field map <-> engine marshaling.  The
 // schema is the one rustcore.h documents for rc_ose_get: name,
 // description, imageUrl plus a search/suggestions/image slot of
@@ -924,4 +924,4 @@ QJsonObject openSearchEngineToJson(const OpenSearchEngine *engine)
     }
     return root;
 }
-#endif // ARORA_RUSTCORE
+#endif // ARKTOS_RUSTCORE

@@ -1,0 +1,74 @@
+.TH ARKTOS "1" "May 2008"
+
+.SH NAME
+Arktos - Lightweight web browser based on Qt and WebEngine
+
+.SH SYNOPSIS
+.B arktos [Qt options] [url]
+
+.SH DESCRIPTION
+.B Arktos
+is a lightweight, cross-platform web browser using Qt 6 and the Qt WebEngine
+(Chromium) engine. It is based on the demo browser application shipped with Qt
+demos.
+
+.SH OPTIONS
+.SS Common Qt Options
+.TP
+.B -style style, -style=style
+Specify the Qt widget style to use (examples: plastique, cleanlooks).
+.TP
+.B -stylesheet stylesheet, -stylesheet=stylesheet
+Specify the user stylesheet to use when rendering widgets.
+.TP
+.B -session session, -session=session
+Restore the application from an earlier \fBsession\fR.
+.TP
+.B -widgetcount
+Print a debug message at the end about the number of widgets left undestroyed
+and the maximum number of widgets that existed at the same time.
+.TP
+.B -reverse
+Sets the application's layout direction to right-to-left.
+
+.SS Options Specific to Arktos
+.TP
+.B url
+The URL address to open in the browser.
+.TP
+.B \-\-tor
+Open a Tor window: a separate process routing all traffic through a
+managed tor daemon's SOCKS5 listener on an off-the-record profile.
+.TP
+.B \-\-no-sandbox
+Run without the filesystem sandbox. Browsing launches normally re-exec
+inside bubblewrap on Linux (credential stores and other browsers'
+profiles masked, /etc /usr /boot read-only); this flag is the escape
+hatch, equivalent to setting \fBARKTOS_NO_SANDBOX=1\fR or the
+\fBsandbox/enabled=false\fR settings key.
+.TP
+.B \-\-sandbox-status
+Print the sandbox backend, whether this process is wrapped, and the
+resolved policy, then exit.
+.PP
+The packaged \fBarktos-sandbox\fR launcher script (installed next to the
+binary) starts Arktos inside the same sandbox without relying on the
+self re-exec.
+
+.SH BUGS
+Please report bugs to \fIhttps://github.com/arktos-browser/arktos/issues\fR.
+
+.SH AUTHOR
+Arktos is developed by Janos Szenfner, based on the Arora browser
+by Benjamin C. Meyer. Copyright \(co 2026-2027 Janos Szenfner.
+See https://github.com/arktos-browser/arktos.
+.PP
+This manual page was written by Matvey Kozhev <sikon@ubuntu.com>.
+.PP
+Permission is granted to copy, distribute and/or modify this document under the
+terms of the
+GNU General Public License, Version 2 or any later version published by the Free
+Software Foundation.
+.PP
+On Debian systems, the complete text of the GNU General Public License can be
+found in /usr/share/common-licenses/GPL.

@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@
 
 // UAG01: the user-agent builder moved into rustcore.
 //
-// Under ARORA_RUSTCORE this asserts the Rust path (rc_ua_build /
+// Under ARKTOS_RUSTCORE this asserts the Rust path (rc_ua_build /
 // rc_ua_brand_version / rc_ua_presets / rc_ua_spoof*) produces
 // byte-identical output to the Qt builders it replaced, that the
 // presets file parses into the same action set, that the "uaspoof"
@@ -47,10 +47,10 @@
 #include "webview.h"
 #include "webpage.h"
 
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 #include "qtry.h"
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include <rustcore.h>
 #include "sitedecisionstore.h"
 #endif
@@ -153,7 +153,7 @@ private slots:
     void brandVersionCorpus();
     void vanillaShape();
     void presetsParse();
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     void spoofStore();
     void spoofRejectsInjection();
     void spoofAppliedOnWire();
@@ -176,7 +176,7 @@ void tst_UserAgent::init()
 {
     // The builder consults the stored override — start from none.
     QSettings().remove(QLatin1String("userAgent"));
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     SiteDecisionStore::reset();
 #endif
 }
@@ -189,7 +189,7 @@ void tst_UserAgent::cleanup()
         settings.setValue(QLatin1String("userAgent"), saved);
     else
         settings.remove(QLatin1String("userAgent"));
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     SiteDecisionStore::reset();
 #endif
 }
@@ -292,7 +292,7 @@ void tst_UserAgent::vanillaShape()
 
 void tst_UserAgent::presetsParse()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     QFile file(QLatin1String(":/useragents/useragents.xml"));
     QVERIFY(file.open(QIODevice::ReadOnly));
     const QByteArray xml = file.readAll();
@@ -353,7 +353,7 @@ void tst_UserAgent::presetsParse()
 #endif
 }
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 
 void tst_UserAgent::spoofStore()
 {

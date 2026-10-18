@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,7 +20,7 @@
 #include "commandpalette.h"
 #include "profilesettings.h"
 
-#include "arorastyle.h"
+#include "arktosstyle.h"
 #include "bookmarknode.h"
 #include "bookmarksmanager.h"
 #include "browserapplication.h"
@@ -45,7 +45,7 @@
 #include <qmenu.h>
 #include <qpainter.h>
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 #include <qjsonarray.h>
 #include <qjsondocument.h>
 #include <qjsonobject.h>
@@ -82,7 +82,7 @@ public:
 
         const bool selected = opt.state & QStyle::State_Selected;
         const QColor hintColor = selected
-            ? AroraStyle::selectionTextColor(opt.palette)
+            ? ArktosStyle::selectionTextColor(opt.palette)
             : opt.palette.color(QPalette::Active,
                                 QPalette::PlaceholderText);
         painter->save();
@@ -165,11 +165,11 @@ CommandPalette::CommandPalette(BrowserMainWindow *window)
     m_list->setItemDelegate(new PaletteDelegate(m_list));
 
     QVBoxLayout *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(AroraStyle::Spacing::Small,
-                               AroraStyle::Spacing::Small,
-                               AroraStyle::Spacing::Small,
-                               AroraStyle::Spacing::Small);
-    layout->setSpacing(AroraStyle::Spacing::Small);
+    layout->setContentsMargins(ArktosStyle::Spacing::Small,
+                               ArktosStyle::Spacing::Small,
+                               ArktosStyle::Spacing::Small,
+                               ArktosStyle::Spacing::Small);
+    layout->setSpacing(ArktosStyle::Spacing::Small);
     layout->addWidget(m_edit);
     layout->addWidget(m_list);
 
@@ -183,7 +183,7 @@ CommandPalette::CommandPalette(BrowserMainWindow *window)
 
 int CommandPalette::fuzzyScore(const QString &query, const QString &candidate)
 {
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // CPAL01: the rustcore scorer owns the ranking rule; -1 is also
     // the FFI's bad-pointer verdict.
     return int(rc_pal_score(query.toUtf8().constData(),
@@ -453,7 +453,7 @@ void CommandPalette::refilter()
 
     QList<QPair<int, int> > scored;   // (item index, score)
     bool ranked = false;
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     {
         // CPAL01: rc_pal_match ranks the whole set in the core —
         // {match,id} rows marshal in, ordered indices come back.

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2026, The Arora Authors
+ * Copyright (c) 2026, The Arktos Authors
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -32,29 +32,29 @@
 
 #include <qjsondocument.h>
 
-// C API implemented by src/adblock/rust (arora-adblock-ffi staticlib).
+// C API implemented by src/adblock/rust (arktos-adblock-ffi staticlib).
 extern "C" {
 
-struct AroraCheckResult {
+struct ArktosCheckResult {
     int action;             // 0 = allow, 1 = block, 2 = redirect
     char *redirect_url;     // data: URL or resource name
     char *rewritten_url;    // URL with $removeparam params stripped
 };
 
-AroraAdBlockEngine *arora_adblock_engine_new(const char *rules,
+ArktosAdBlockEngine *arktos_adblock_engine_new(const char *rules,
                                            size_t rules_len);
-int arora_adblock_engine_add_resource(AroraAdBlockEngine *engine,
+int arktos_adblock_engine_add_resource(ArktosAdBlockEngine *engine,
                                       const char *name, const char *mime,
                                       const unsigned char *content,
                                       size_t content_len);
-AroraCheckResult arora_adblock_engine_check(const AroraAdBlockEngine *engine,
+ArktosCheckResult arktos_adblock_engine_check(const ArktosAdBlockEngine *engine,
                                             const char *url,
                                             const char *source_url,
                                             const char *request_type);
-char *arora_adblock_engine_cosmetic(const AroraAdBlockEngine *engine,
+char *arktos_adblock_engine_cosmetic(const ArktosAdBlockEngine *engine,
                                     const char *url);
-void arora_adblock_engine_free(AroraAdBlockEngine *engine);
-void arora_adblock_string_free(char *s);
+void arktos_adblock_engine_free(ArktosAdBlockEngine *engine);
+void arktos_adblock_string_free(char *s);
 }
 
 // Maps QWebEngineUrlRequestInfo::ResourceType values (numeric, no
@@ -85,7 +85,7 @@ AdBlockRustEngine::AdBlockRustEngine()
 
 AdBlockRustEngine::~AdBlockRustEngine()
 {
-    arora_adblock_engine_free(m_engine);
+    arktos_adblock_engine_free(m_engine);
 }
 
 AdBlockRustEngine *AdBlockRustEngine::create(const QByteArray &ruleText)
@@ -94,7 +94,7 @@ AdBlockRustEngine *AdBlockRustEngine::create(const QByteArray &ruleText)
         return nullptr;
 
     AdBlockRustEngine *wrapper = new AdBlockRustEngine;
-    wrapper->m_engine = arora_adblock_engine_new(
+    wrapper->m_engine = arktos_adblock_engine_new(
         ruleText.constData(), size_t(ruleText.size()));
     if (!wrapper->m_engine) {
         delete wrapper;
@@ -110,7 +110,7 @@ AdBlockRustEngine *AdBlockRustEngine::create(const QByteArray &ruleText)
             QString::fromLatin1(name));
         if (!AdBlockResourceHandler::resourceFor(canonical, &mime, &body))
             continue;
-        arora_adblock_engine_add_resource(
+        arktos_adblock_engine_add_resource(
             wrapper->m_engine, name.constData(), mime.constData(),
             reinterpret_cast<const unsigned char *>(body.constData()),
             size_t(body.size()));
@@ -135,7 +135,7 @@ AdBlockDecision AdBlockRustEngine::check(const QUrl &url,
     const QByteArray sourceUtf8 = firstPartyUrl.isEmpty()
         ? urlUtf8 : firstPartyUrl.toEncoded();
     const QByteArray type = requestTypeName(resourceType);
-    const AroraCheckResult result = arora_adblock_engine_check(
+    const ArktosCheckResult result = arktos_adblock_engine_check(
         m_engine, urlUtf8.constData(), sourceUtf8.constData(),
         type.constData());
 
@@ -150,7 +150,7 @@ AdBlockDecision AdBlockRustEngine::check(const QUrl &url,
         } else {
             // A resolved bundled stub (or an unresolved resource name)
             // routes through the same canonical-name table the native
-            // path uses — arora-resource: is servable where a data:
+            // path uses — arktos-resource: is servable where a data:
             // redirect is refused by Chromium.
             const QByteArray canonical = !stubName.isEmpty()
                 ? stubName
@@ -173,8 +173,8 @@ AdBlockDecision AdBlockRustEngine::check(const QUrl &url,
         }
     }
 
-    arora_adblock_string_free(result.redirect_url);
-    arora_adblock_string_free(result.rewritten_url);
+    arktos_adblock_string_free(result.redirect_url);
+    arktos_adblock_string_free(result.rewritten_url);
     return decision;
 }
 
@@ -182,10 +182,10 @@ QJsonObject AdBlockRustEngine::cosmetic(const QUrl &documentUrl) const
 {
     QMutexLocker locker(&m_mutex);
     const QByteArray urlUtf8 = documentUrl.toEncoded();
-    char *json = arora_adblock_engine_cosmetic(m_engine, urlUtf8.constData());
+    char *json = arktos_adblock_engine_cosmetic(m_engine, urlUtf8.constData());
     if (!json)
         return QJsonObject();
     const QByteArray bytes(json);
-    arora_adblock_string_free(json);
+    arktos_adblock_string_free(json);
     return QJsonDocument::fromJson(bytes).object();
 }

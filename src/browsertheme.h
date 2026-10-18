@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -34,7 +34,7 @@ class QDialog;
 // that, switching to Fusion first since it is the one style that
 // honors a custom palette on every platform.
 //
-// ARORA_COLOR_SCHEME=dark|light overrides the desktop preference —
+// ARKTOS_COLOR_SCHEME=dark|light overrides the desktop preference —
 // mainly useful on desktops that do not report a scheme and for
 // headless testing (the offscreen QPA reports Unknown).
 //
@@ -96,7 +96,7 @@ signals:
 BrowserThemeNotifier *themeNotifier();
 
 // THEME01: tags the <html> element of a generated internal page
-// (htmls/*.html) so its dark-scheme CSS rules — the html.arora-dark
+// (htmls/*.html) so its dark-scheme CSS rules — the html.arktos-dark
 // selectors — engage while the chrome palette is dark.  The pages are
 // produced as QStrings at generation time, so prefers-color-scheme
 // (which follows the OS, not the app palette) is not an option.
@@ -111,7 +111,7 @@ void decorateInternalPage(QString &html);
 // platform theme) keeps rendering the button itself.
 //
 // Buttons inside a widget carrying the dynamic property
-// "aroraNoButtonPolish"=true (e.g. the compact per-download row
+// "arktosNoButtonPolish"=true (e.g. the compact per-download row
 // widget) are left alone — composite list rows need compact buttons.
 void polishDialogButtons(QDialog *dialog);
 

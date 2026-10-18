@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
 #include "webpage.h"
 #include "webview.h"
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 #include "rustcore.h"
 #endif
 
@@ -59,7 +59,7 @@ bool viewerEnabled()
 
 bool sanitizeEnabled()
 {
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     return ProfileSettings().value(QLatin1String("privacy/pdfSanitize"), true).toBool();
 #else
     return false;
@@ -68,7 +68,7 @@ bool sanitizeEnabled()
 
 bool shellViewEnabled()
 {
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     return ProfileSettings().value(QLatin1String("privacy/pdfShellView"), true).toBool();
 #else
     return false;
@@ -110,7 +110,7 @@ bool consumeBypass(WebPage *page, const QUrl &url)
 
 QByteArray sanitize(const QByteArray &input)
 {
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     if (input.isEmpty())
         return QByteArray();
     RcBuffer out = { nullptr, 0 };

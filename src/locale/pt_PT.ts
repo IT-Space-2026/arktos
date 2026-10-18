@@ -30,18 +30,18 @@ p, li { white-space: pre-wrap; }
 &lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2010 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2026-2027 Janos Szenfner&lt;/p&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;a href=&quot;https://github.com/janos-szenfner/arora&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;https://github.com/janos-szenfner/arora&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;a href=&quot;https://github.com/arktos-browser/arktos&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;https://github.com/arktos-browser/arktos&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
         <translation>&lt;!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0//EN" "http://www.w3.org/TR/REC-html40/strict.dtd"&gt;
 &lt;html&gt;&lt;head&gt;&lt;meta name="qrichtext" content="1" /&gt;&lt;style type="text/css"&gt;
 p, li { white-space: pre-wrap; }
 &lt;/style&gt;&lt;/head&gt;&lt;body style="font-size:9pt;"&gt;
 &lt;p style=" margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;"&gt;Copyright © 2007-2010 Benjamin C. Meyer &amp;lt;&lt;a href="mailto:ben@meyerhome.net"&gt;&lt;span style=" text-decoration: underline; color:#0057ae;"&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;
 &lt;p style=" margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;"&gt;Copyright © 2026-2027 Janos Szenfner&lt;/p&gt;
-&lt;p style=" margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;"&gt;&lt;a href="https://github.com/janos-szenfner/arora"&gt;&lt;span style=" text-decoration: underline; color:#0057ae;"&gt;https://github.com/janos-szenfner/arora&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
+&lt;p style=" margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;"&gt;&lt;a href="https://github.com/arktos-browser/arktos"&gt;&lt;span style=" text-decoration: underline; color:#0057ae;"&gt;https://github.com/arktos-browser/arktos&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
     </message>
     <message>
-        <source>&lt;a href=&quot;http://arora-browser.org&quot;&gt;http://arora-browser.org&lt;/a&gt;</source>
-        <translation>&lt;a href=&quot;http://arora-browser.org&quot;&gt;http://arora-browser.org&lt;/a&gt;</translation>
+        <source>&lt;a href=&quot;http://arktos-browser.com&quot;&gt;http://arktos-browser.com&lt;/a&gt;</source>
+        <translation>&lt;a href=&quot;http://arktos-browser.com&quot;&gt;http://arktos-browser.com&lt;/a&gt;</translation>
     </message>
     <message>
         <source>Authors</source>
@@ -210,10 +210,10 @@ p, li { white-space: pre-wrap; }
         <translation>Transferir Listas de Filtros de Bloqueio de Anúncios?</translation>
     </message>
     <message>
-        <source>Arora is configured to block ads and trackers using the community filter lists EasyList, EasyPrivacy, and uBlock filters. Enabling them downloads the lists once from easylist.to and ublockorigin.github.io and refreshes them about once a week.
+        <source>Arktos is configured to block ads and trackers using the community filter lists EasyList, EasyPrivacy, and uBlock filters. Enabling them downloads the lists once from easylist.to and ublockorigin.github.io and refreshes them about once a week.
 
 Until you choose, no list downloads are made and the blocker simply has no remote rules. You can change this later under Tools &gt; Ad Block.</source>
-        <translation>O Arora está configurado para bloquear anúncios e rastreadores usando as listas de filtros comunitárias EasyList, EasyPrivacy e os filtros uBlock. Ao activá-las, as listas são transferidas uma vez de easylist.to e ublockorigin.github.io e actualizadas cerca de uma vez por semana.
+        <translation>O Arktos está configurado para bloquear anúncios e rastreadores usando as listas de filtros comunitárias EasyList, EasyPrivacy e os filtros uBlock. Ao activá-las, as listas são transferidas uma vez de easylist.to e ublockorigin.github.io e actualizadas cerca de uma vez por semana.
 
 Até que escolha, não são feitas transferências de listas e o bloqueador simplesmente não tem regras remotas. Pode mudar isto depois em Ferramentas &gt; Bloqueio de Anúncios.</translation>
     </message>
@@ -335,8 +335,8 @@ Até que escolha, não são feitas transferências de listas e o bloqueador simp
         <translation>Predefinições de Listas de Filtros</translation>
     </message>
     <message>
-        <source>Tick a list to subscribe to it; Arora downloads it once and refreshes it about once a week. Unticking disables the subscription. Lists already subscribed to (including the defaults) show as ticked.</source>
-        <translation>Seleccione uma lista para a subscrever; o Arora transfere-a uma vez e actualiza-a cerca de uma vez por semana. Desseleccionar desactiva a subscrição. Listas já subscritas (incluindo as predefinidas) aparecem seleccionadas.</translation>
+        <source>Tick a list to subscribe to it; Arktos downloads it once and refreshes it about once a week. Unticking disables the subscription. Lists already subscribed to (including the defaults) show as ticked.</source>
+        <translation>Seleccione uma lista para a subscrever; o Arktos transfere-a uma vez e actualiza-a cerca de uma vez por semana. Desseleccionar desactiva a subscrição. Listas já subscritas (incluindo as predefinidas) aparecem seleccionadas.</translation>
     </message>
 </context>
 <context>
@@ -447,7 +447,7 @@ Até que escolha, não são feitas transferências de listas e o bloqueador simp
     </message>
 </context>
 <context>
-    <name>AroraIcon</name>
+    <name>ArktosIcon</name>
     <message>
         <source>Native</source>
         <translation>Nativo</translation>
@@ -728,8 +728,8 @@ Até que escolha, não são feitas transferências de listas e o bloqueador simp
         <translation type="vanished">Ferramenta htmlToXBel necessária</translation>
     </message>
     <message>
-        <source>htmlToXBel tool, which is shipped with Arora and is needed to import HTML bookmarks, is not installed or not available in the search paths.</source>
-        <translation type="vanished">A ferramenta htmlToXBel, a qual é disponibilizada juntamente com o Arora e é necessária para importar favoritos HTML, não está instalada ou não está disponível nos caminhos de busca.</translation>
+        <source>htmlToXBel tool, which is shipped with Arktos and is needed to import HTML bookmarks, is not installed or not available in the search paths.</source>
+        <translation type="vanished">A ferramenta htmlToXBel, a qual é disponibilizada juntamente com o Arktos e é necessária para importar favoritos HTML, não está instalada ou não está disponível nos caminhos de busca.</translation>
     </message>
     <message>
         <source>Loading Bookmark</source>
@@ -880,8 +880,8 @@ Deseja sair mesmo assim?</translation>
         <translation>Restauro falhado</translation>
     </message>
     <message>
-        <source>Arora crashed while trying to restore this session.  Should I try again?</source>
-        <translation>O Arora crashou enquanto tentava restaurar esta sessão.(sp)(sp)Devo tentar de novo?</translation>
+        <source>Arktos crashed while trying to restore this session.  Should I try again?</source>
+        <translation>O Arktos crashou enquanto tentava restaurar esta sessão.(sp)(sp)Devo tentar de novo?</translation>
     </message>
 </context>
 <context>
@@ -1298,9 +1298,9 @@ Deseja sair mesmo assim?</translation>
         <translation> — propósito %1</translation>
     </message>
     <message>
-        <source>%1 - Arora</source>
+        <source>%1 - Arktos</source>
         <comment>Page title and Browser name</comment>
-        <translation>%1 - Arora</translation>
+        <translation>%1 - Arktos</translation>
     </message>
     <message>
         <source>Open Web Resource</source>
@@ -2431,14 +2431,14 @@ Deseja sair mesmo assim?</translation>
     </message>
 </context>
 <context>
-    <name>JavaScriptAroraObject</name>
+    <name>JavaScriptArktosObject</name>
     <message>
-        <source>Welcome to Arora!</source>
-        <translation>Bem vindo ao Arora!</translation>
+        <source>Welcome to Arktos!</source>
+        <translation>Bem vindo ao Arktos!</translation>
     </message>
     <message>
-        <source>Arora Start</source>
-        <translation>Inicio do Arora</translation>
+        <source>Arktos Start</source>
+        <translation>Inicio do Arktos</translation>
     </message>
     <message>
         <source>Search!</source>
@@ -2449,8 +2449,8 @@ Deseja sair mesmo assim?</translation>
         <translation>Resultados de pesquisa disponibilizados por</translation>
     </message>
     <message>
-        <source>About Arora</source>
-        <translation>Acerca do Arora</translation>
+        <source>About Arktos</source>
+        <translation>Acerca do Arktos</translation>
     </message>
 </context>
 <context>
@@ -3780,8 +3780,8 @@ como código QR.</translation>
         <translation>Tema:</translation>
     </message>
     <message>
-        <source>Color scheme for Arora&apos;s own windows, menus and dialogs. &quot;System default&quot; follows the desktop preference.</source>
-        <translation>Esquema de cores para as janelas, menus e diálogos do próprio Arora. "Predefinição do sistema" segue a preferência do ambiente de trabalho.</translation>
+        <source>Color scheme for Arktos&apos;s own windows, menus and dialogs. &quot;System default&quot; follows the desktop preference.</source>
+        <translation>Esquema de cores para as janelas, menus e diálogos do próprio Arktos. "Predefinição do sistema" segue a preferência do ambiente de trabalho.</translation>
     </message>
     <message>
         <source>Theme</source>
@@ -3804,8 +3804,8 @@ como código QR.</translation>
         <translation>Aplica-se ao chrome da aplicação; o modo escuro do conteúdo das páginas é a definição separada "Renderizar páginas em modo escuro" abaixo.</translation>
     </message>
     <message>
-        <source>Pages that ship their own dark theme use it; light-only pages get a heuristic color inversion with a contrast floor so text stays readable. Images and videos are not inverted. Only web content is affected — Arora&apos;s own windows keep the desktop palette.</source>
-        <translation>Páginas que trazem o seu próprio tema escuro usam-no; páginas apenas claras recebem uma inversão heurística de cores com um limite de contraste para o texto ficar legível. Imagens e vídeos não são invertidos. Apenas o conteúdo web é afectado — as janelas do próprio Arora mantêm a paleta do ambiente de trabalho.</translation>
+        <source>Pages that ship their own dark theme use it; light-only pages get a heuristic color inversion with a contrast floor so text stays readable. Images and videos are not inverted. Only web content is affected — Arktos&apos;s own windows keep the desktop palette.</source>
+        <translation>Páginas que trazem o seu próprio tema escuro usam-no; páginas apenas claras recebem uma inversão heurística de cores com um limite de contraste para o texto ficar legível. Imagens e vídeos não são invertidos. Apenas o conteúdo web é afectado — as janelas do próprio Arktos mantêm a paleta do ambiente de trabalho.</translation>
     </message>
     <message>
         <source>Render pages in dark mode</source>
@@ -4060,8 +4060,8 @@ como código QR.</translation>
         <translation>Remover cada transferência quando termina</translation>
     </message>
     <message>
-        <source>Render pages on the GPU. Turned off, Arora adds --disable-gpu to the engine flags — the switch latches at startup, so the change takes effect on the next launch.</source>
-        <translation>Renderizar páginas na GPU. Desligado, o Arora adiciona --disable-gpu às flags do motor — a opção fica fixada no arranque, pelo que a alteração tem efeito no próximo arranque.</translation>
+        <source>Render pages on the GPU. Turned off, Arktos adds --disable-gpu to the engine flags — the switch latches at startup, so the change takes effect on the next launch.</source>
+        <translation>Renderizar páginas na GPU. Desligado, o Arktos adiciona --disable-gpu às flags do motor — a opção fica fixada no arranque, pelo que a alteração tem efeito no próximo arranque.</translation>
     </message>
     <message>
         <source>Use Hardware Acceleration When Available</source>
@@ -4320,8 +4320,8 @@ como código QR.</translation>
         <translation>Ao sair, limpar histórico, cookies, armazenamento de sites e caches — tudo o que Limpar Dados Privados cobre. A sessão é terminada nos sites onde continua com sessão iniciada.</translation>
     </message>
     <message>
-        <source>Clear browsing data when Arora exits</source>
-        <translation>Limpar dados de navegação quando o Arora termina</translation>
+        <source>Clear browsing data when Arktos exits</source>
+        <translation>Limpar dados de navegação quando o Arktos termina</translation>
     </message>
     <message>
         <source>PDF Documents</source>
@@ -5295,12 +5295,12 @@ chave é derivada em memória e nunca escrita no disco.</translation>
         <translation>Conteúdo local</translation>
     </message>
     <message>
-        <source>TLS verified by Arora</source>
-        <translation>TLS verificado pelo Arora</translation>
+        <source>TLS verified by Arktos</source>
+        <translation>TLS verificado pelo Arktos</translation>
     </message>
     <message>
-        <source>TLS verified by Arora (%1)</source>
-        <translation>TLS verificado pelo Arora (%1)</translation>
+        <source>TLS verified by Arktos (%1)</source>
+        <translation>TLS verificado pelo Arktos (%1)</translation>
     </message>
     <message>
         <source>The certificate chain was re-verified independently of the web engine.</source>
@@ -5897,8 +5897,8 @@ Qualquer pessoa na rede pode ler ou alterar os dados — incluindo palavras-pass
         <translation>Ao efectuar ligação a: %1.</translation>
     </message>
     <message>
-        <source>Check the address for errors such as &lt;b&gt;ww&lt;/b&gt;.arora-browser.org instead of &lt;b&gt;www&lt;/b&gt;.arora-browser.org</source>
-        <translation>Verifique o endereço por erros como &lt;b&gt;ww&lt;/b&gt;.arora-browser.org em vez de &lt;b&gt;www&lt;/b&gt;.arora-browser.org</translation>
+        <source>Check the address for errors such as &lt;b&gt;ww&lt;/b&gt;.arktos-browser.com instead of &lt;b&gt;www&lt;/b&gt;.arktos-browser.com</source>
+        <translation>Verifique o endereço por erros como &lt;b&gt;ww&lt;/b&gt;.arktos-browser.com em vez de &lt;b&gt;www&lt;/b&gt;.arktos-browser.com</translation>
     </message>
     <message>
         <source>If the address is correct, try checking the network connection.</source>
@@ -5945,20 +5945,20 @@ Qualquer pessoa na rede pode ler ou alterar os dados — incluindo palavras-pass
         <translation>&lt;li&gt;Impressão digital SHA-256: %1&lt;/li&gt;</translation>
     </message>
     <message>
-        <source>&lt;a id=&quot;back&quot; href=&quot;arora-cert-error:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
-        <translation>&lt;a id="back" href="arora-cert-error:back?n=%1"&gt;Voltar para segurança&lt;/a&gt;</translation>
+        <source>&lt;a id=&quot;back&quot; href=&quot;arktos-cert-error:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
+        <translation>&lt;a id="back" href="arktos-cert-error:back?n=%1"&gt;Voltar para segurança&lt;/a&gt;</translation>
     </message>
     <message>
-        <source>&lt;a id=&quot;proceed&quot; href=&quot;arora-cert-error:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
-        <translation>&lt;a id="proceed" href="arora-cert-error:proceed?n=%1"&gt;Continuar mesmo assim (inseguro)&lt;/a&gt;</translation>
+        <source>&lt;a id=&quot;proceed&quot; href=&quot;arktos-cert-error:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
+        <translation>&lt;a id="proceed" href="arktos-cert-error:proceed?n=%1"&gt;Continuar mesmo assim (inseguro)&lt;/a&gt;</translation>
     </message>
     <message>
         <source>This site&apos;s certificate is not trusted</source>
         <translation>O certificado deste site não é de confiança</translation>
     </message>
     <message>
-        <source>Arora cannot verify the identity of %1. The certificate presented by the server is invalid — continuing could expose the connection to an attacker.</source>
-        <translation>O Arora não consegue verificar a identidade de %1. O certificado apresentado pelo servidor é inválido — continuar poderá expor a ligação a um atacante.</translation>
+        <source>Arktos cannot verify the identity of %1. The certificate presented by the server is invalid — continuing could expose the connection to an attacker.</source>
+        <translation>O Arktos não consegue verificar a identidade de %1. O certificado apresentado pelo servidor é inválido — continuar poderá expor a ligação a um atacante.</translation>
     </message>
     <message>
         <source>%1 (issued by %2, expires %3)</source>
@@ -5973,16 +5973,16 @@ Qualquer pessoa na rede pode ler ou alterar os dados — incluindo palavras-pass
         <translation>O site em %1 pede-lhe para se identificar com um certificado.  Escolha um para enviar, ou cancele para continuar sem se identificar.</translation>
     </message>
     <message>
-        <source>&lt;a id=&quot;back&quot; href=&quot;arora-http-warning:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
-        <translation>&lt;a id="back" href="arora-http-warning:back?n=%1"&gt;Voltar para segurança&lt;/a&gt;</translation>
+        <source>&lt;a id=&quot;back&quot; href=&quot;arktos-http-warning:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
+        <translation>&lt;a id="back" href="arktos-http-warning:back?n=%1"&gt;Voltar para segurança&lt;/a&gt;</translation>
     </message>
     <message>
-        <source>&lt;a id=&quot;proceed&quot; href=&quot;arora-http-warning:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
-        <translation>&lt;a id="proceed" href="arora-http-warning:proceed?n=%1"&gt;Continuar mesmo assim (inseguro)&lt;/a&gt;</translation>
+        <source>&lt;a id=&quot;proceed&quot; href=&quot;arktos-http-warning:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
+        <translation>&lt;a id="proceed" href="arktos-http-warning:proceed?n=%1"&gt;Continuar mesmo assim (inseguro)&lt;/a&gt;</translation>
     </message>
     <message>
-        <source>&lt;a id=&quot;always&quot; href=&quot;arora-http-warning:always?n=%1&quot;&gt;Always allow HTTP on this site&lt;/a&gt;</source>
-        <translation>&lt;a id="always" href="arora-http-warning:always?n=%1"&gt;Permitir sempre HTTP neste site&lt;/a&gt;</translation>
+        <source>&lt;a id=&quot;always&quot; href=&quot;arktos-http-warning:always?n=%1&quot;&gt;Always allow HTTP on this site&lt;/a&gt;</source>
+        <translation>&lt;a id="always" href="arktos-http-warning:always?n=%1"&gt;Permitir sempre HTTP neste site&lt;/a&gt;</translation>
     </message>
     <message>
         <source>Insecure connection: %1</source>
@@ -5993,8 +5993,8 @@ Qualquer pessoa na rede pode ler ou alterar os dados — incluindo palavras-pass
         <translation>Este site não suporta HTTPS</translation>
     </message>
     <message>
-        <source>Arora stopped %1 from loading because it can only be reached over an unencrypted HTTP connection.  Anyone on the network path can read or change everything sent to or received from this site — including passwords and cookies.</source>
-        <translation>O Arora impediu %1 de carregar porque só pode ser alcançado por uma ligação HTTP não cifrada.  Qualquer pessoa no caminho da rede pode ler ou alterar tudo o que é enviado ou recebido deste site — incluindo palavras-passe e cookies.</translation>
+        <source>Arktos stopped %1 from loading because it can only be reached over an unencrypted HTTP connection.  Anyone on the network path can read or change everything sent to or received from this site — including passwords and cookies.</source>
+        <translation>O Arktos impediu %1 de carregar porque só pode ser alcançado por uma ligação HTTP não cifrada.  Qualquer pessoa no caminho da rede pode ler ou alterar tudo o que é enviado ou recebido deste site — incluindo palavras-passe e cookies.</translation>
     </message>
     <message>
         <source>Requested address: %1</source>
@@ -6005,12 +6005,12 @@ Qualquer pessoa na rede pode ler ou alterar os dados — incluindo palavras-pass
         <translation>O site pode simplesmente não oferecer uma versão segura, ou a ligação pode ter sido despromovida para HTTP por um atacante na rede.</translation>
     </message>
     <message>
-        <source>&lt;a id=&quot;back&quot; href=&quot;arora-site-block:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
-        <translation>&lt;a id="back" href="arora-site-block:back?n=%1"&gt;Voltar para segurança&lt;/a&gt;</translation>
+        <source>&lt;a id=&quot;back&quot; href=&quot;arktos-site-block:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
+        <translation>&lt;a id="back" href="arktos-site-block:back?n=%1"&gt;Voltar para segurança&lt;/a&gt;</translation>
     </message>
     <message>
-        <source>&lt;a id=&quot;proceed&quot; href=&quot;arora-site-block:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
-        <translation>&lt;a id="proceed" href="arora-site-block:proceed?n=%1"&gt;Continuar mesmo assim (inseguro)&lt;/a&gt;</translation>
+        <source>&lt;a id=&quot;proceed&quot; href=&quot;arktos-site-block:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
+        <translation>&lt;a id="proceed" href="arktos-site-block:proceed?n=%1"&gt;Continuar mesmo assim (inseguro)&lt;/a&gt;</translation>
     </message>
     <message>
         <source>Dangerous site blocked: %1</source>
@@ -6021,8 +6021,8 @@ Qualquer pessoa na rede pode ler ou alterar os dados — incluindo palavras-pass
         <translation>Este site está na lista local de bloqueio de phishing/malware</translation>
     </message>
     <message>
-        <source>Arora stopped %1 from loading because the domain is listed as serving phishing or malware.  Visiting it can steal credentials or infect this computer.</source>
-        <translation>O Arora impediu %1 de carregar porque o domínio está listado como servindo phishing ou malware.  Visitá-lo pode roubar credenciais ou infectar este computador.</translation>
+        <source>Arktos stopped %1 from loading because the domain is listed as serving phishing or malware.  Visiting it can steal credentials or infect this computer.</source>
+        <translation>O Arktos impediu %1 de carregar porque o domínio está listado como servindo phishing ou malware.  Visitá-lo pode roubar credenciais ou infectar este computador.</translation>
     </message>
     <message>
         <source>The list is a local copy — no lookup left this computer.  Proceeding is remembered only for this session.</source>
@@ -6033,8 +6033,8 @@ Qualquer pessoa na rede pode ler ou alterar os dados — incluindo palavras-pass
         <translation>A Google limitou a taxa desta ligação.</translation>
     </message>
     <message>
-        <source>This is Google&apos;s bot check, not an Arora error — it temporarily flagged search traffic from this profile. Complete the prompt below or try again later; or switch the default search engine under Tools &gt; Options &gt; Search.</source>
-        <translation>Esta é a verificação de bots da Google, não um erro do Arora — ela sinalizou temporariamente o tráfego de pesquisa deste perfil. Complete o desafio abaixo ou tente de novo mais tarde; ou mude o motor de busca predefinido em Ferramentas &gt; Opções &gt; Pesquisa.</translation>
+        <source>This is Google&apos;s bot check, not an Arktos error — it temporarily flagged search traffic from this profile. Complete the prompt below or try again later; or switch the default search engine under Tools &gt; Options &gt; Search.</source>
+        <translation>Esta é a verificação de bots da Google, não um erro do Arktos — ela sinalizou temporariamente o tráfego de pesquisa deste perfil. Complete o desafio abaixo ou tente de novo mais tarde; ou mude o motor de busca predefinido em Ferramentas &gt; Opções &gt; Pesquisa.</translation>
     </message>
 </context>
 <context>
@@ -6308,8 +6308,8 @@ Permiti-lo?</translation>
 <context>
     <name>main</name>
     <message>
-        <source>Arora — a lightweight cross-platform web browser.</source>
-        <translation>Arora — um navegador web leve e multi-plataforma.</translation>
+        <source>Arktos — a lightweight cross-platform web browser.</source>
+        <translation>Arktos — um navegador web leve e multi-plataforma.</translation>
     </message>
     <message>
         <source>Url to open on startup.</source>
@@ -6320,8 +6320,8 @@ Permiti-lo?</translation>
         <translation>Abrir uma janela Tor: um processo separado que encaminha todo o tráfego pelo listener SOCKS5 de um daemon tor gerido num perfil dedicado fora-de-registo.</translation>
     </message>
     <message>
-        <source>Run without the filesystem sandbox (equivalent to ARORA_NO_SANDBOX=1).</source>
-        <translation>Correr sem a sandbox de sistema de ficheiros (equivalente a ARORA_NO_SANDBOX=1).</translation>
+        <source>Run without the filesystem sandbox (equivalent to ARKTOS_NO_SANDBOX=1).</source>
+        <translation>Correr sem a sandbox de sistema de ficheiros (equivalente a ARKTOS_NO_SANDBOX=1).</translation>
     </message>
     <message>
         <source>Print the sandbox backend, state and active policy, then exit.</source>

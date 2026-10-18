@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@
 
 #include "tabpreview.h"
 
-#include "arorastyle.h"
+#include "arktosstyle.h"
 #include "tabbar.h"
 #include "tabwidget.h"
 #include "webview.h"
@@ -67,11 +67,11 @@ TabPreview::TabPreview(TabBar *bar)
     m_thumbnail->setFixedWidth(ThumbWidth);
 
     QVBoxLayout *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(AroraStyle::Spacing::Medium,
-                               AroraStyle::Spacing::Medium,
-                               AroraStyle::Spacing::Medium,
-                               AroraStyle::Spacing::Medium);
-    layout->setSpacing(AroraStyle::Spacing::Small);
+    layout->setContentsMargins(ArktosStyle::Spacing::Medium,
+                               ArktosStyle::Spacing::Medium,
+                               ArktosStyle::Spacing::Medium,
+                               ArktosStyle::Spacing::Medium);
+    layout->setSpacing(ArktosStyle::Spacing::Small);
     layout->addWidget(m_thumbnail, 0, Qt::AlignHCenter);
     layout->addWidget(m_title);
     layout->addWidget(m_detail);

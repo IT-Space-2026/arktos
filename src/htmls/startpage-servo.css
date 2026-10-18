@@ -12,11 +12,34 @@
 
 html {
     min-height: 100%;
-    background: linear-gradient(to bottom, #ccc 0%, #fff 50%, #fff 100%);
+    background:
+        radial-gradient(120% 55% at 50% -8%,
+            rgba(63, 210, 240, 0.20) 0%,
+            rgba(162, 78, 245, 0.10) 45%,
+            rgba(162, 78, 245, 0) 75%),
+        linear-gradient(to bottom, #ccc 0%, #fff 50%, #fff 100%);
 }
 
 body {
-    margin-top: 100px;
+    margin-top: 0;
+}
+
+/* Aurora stage: same wave composition as startpage.css — the
+   servo variant keeps the default palette (ENG13: no recolor). */
+#aurora {
+    position: relative;
+    height: 240px;
+    margin-top: 20px;
+    background: url("aurora-wave.svg") no-repeat center 0 / 1600px 300px;
+}
+
+#aurora img {
+    position: absolute;
+    left: 50%;
+    top: 18px;
+    width: 170px;
+    height: 170px;
+    margin-left: -85px;
 }
 
 #header, #search, #servologo {
@@ -30,8 +53,15 @@ body {
 }
 
 #header {
-    background: linear-gradient(to bottom, #228 0%, #66a 90%, #668 100%);
+    background:
+        radial-gradient(130% 220% at 85% -40%,
+            rgba(34, 245, 154, 0.28) 0%,
+            rgba(63, 210, 240, 0.16) 40%,
+            rgba(63, 210, 240, 0) 70%),
+        linear-gradient(to bottom, #228 0%, #66a 90%, #668 100%);
+    box-shadow: 0 2px 14px rgba(63, 210, 240, 0.35);
     height: 20px;
+    text-align: center;
 }
 
 #header h1 {
@@ -39,13 +69,7 @@ body {
     font-size: 1.7em;
     color: #fff;
     font-weight: bold;
-}
-
-#header img {
-    display: inline;
-    float: right;
-    height: 150px;
-    margin-top: -80px;
+    text-shadow: 0 1px 6px rgba(34, 245, 154, 0.45);
 }
 
 #search {
@@ -54,6 +78,7 @@ body {
     color: #000;
     text-align: center;
     padding-top: 40px !important;
+    border-top: 2px solid rgba(63, 210, 240, 0.65);
 }
 
 #search fieldset {
@@ -64,11 +89,26 @@ body {
     width: 65%;
 }
 
-#search input[type=submit] {
-    width: 25%;
+#search input[type=text]:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(63, 210, 240, 0.8),
+                0 0 12px rgba(34, 245, 154, 0.35);
 }
 
-/* The logo is a background image, not an <img>: the arora-dark flip
+#search input[type=submit] {
+    width: 25%;
+    background: linear-gradient(to right, #2ad3ee 0%, #7a5cf0 100%);
+    color: #fff;
+    border: 0;
+    border-radius: 4px;
+    padding: 2px 0;
+}
+
+#search input[type=submit]:hover {
+    background: linear-gradient(to right, #22f59a 0%, #3fd2f0 55%, #a24ef5 100%);
+}
+
+/* The logo is a background image, not an <img>: the arktos-dark flip
    below swaps in the negative (light-wordmark) brand variant without
    any markup or script. */
 #servologo {
@@ -79,20 +119,42 @@ body {
     background-size: contain;
 }
 
-/* THEME01: the start page adds the arora-dark class on <html> from
-   the arora channel's darkChrome property — the app chrome palette,
+/* THEME01: the start page adds the arktos-dark class on <html> from
+   the arktos channel's darkChrome property — the app chrome palette,
    not the OS's prefers-color-scheme. */
-html.arora-dark {
-    background: linear-gradient(to bottom, #2a2a30 0%, #1e1e23 50%, #1e1e23 100%);
+html.arktos-dark {
+    background:
+        radial-gradient(130% 60% at 50% -10%,
+            rgba(34, 245, 154, 0.14) 0%,
+            rgba(63, 210, 240, 0.12) 35%,
+            rgba(162, 78, 245, 0.16) 60%,
+            rgba(162, 78, 245, 0) 80%),
+        linear-gradient(to bottom, #151820 0%, #101218 55%, #0c0e13 100%);
 }
-html.arora-dark body {
+html.arktos-dark body {
     color: #e4e4e8;
 }
-html.arora-dark #search {
-    background: linear-gradient(to right, #2e3440 0%, #39404f 50%, #2e3440 100%);
-    color: #e4e4e8;
+html.arktos-dark #header {
+    background:
+        radial-gradient(130% 220% at 85% -40%,
+            rgba(34, 245, 154, 0.30) 0%,
+            rgba(63, 210, 240, 0.18) 40%,
+            rgba(63, 210, 240, 0) 70%),
+        linear-gradient(to bottom, #1b2240 0%, #2c2a55 90%, #262441 100%);
+    box-shadow: 0 2px 18px rgba(63, 210, 240, 0.30),
+                0 0 34px rgba(162, 78, 245, 0.18);
 }
-html.arora-dark #servologo {
+html.arktos-dark #search {
+    background: linear-gradient(to right, #232a3d 0%, #2d3448 50%, #232a3d 100%);
+    color: #e4e4e8;
+    border-top-color: rgba(63, 210, 240, 0.85);
+}
+html.arktos-dark #search input[type=text] {
+    background: #181c28;
+    color: #e4e4e8;
+    border: 1px solid #3a4260;
+}
+html.arktos-dark #servologo {
     background-image: url("qrc:/servo-logo-dark.svg");
 }
 

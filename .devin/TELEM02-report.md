@@ -17,19 +17,19 @@ The smoke:
 
 1. Pins `privacy/dnsPrefetch` and `privacy/secureDnsMode` to known
    values so the measurement is independent of the operator's settings
-   (`ARORA_TELEMETRY_PREFETCH=1` arms prefetch instead — used by the
+   (`ARKTOS_TELEMETRY_PREFETCH=1` arms prefetch instead — used by the
    detector-differential, restored afterwards).
 2. Drives the real browsing session through the tap: navigation to
    example.com, a DuckDuckGo HTML search query, and a file download
-   (`ARORA_TELEMETRY_URLS` overrides the leg list;
-   `ARORA_TELEMETRY_SETTLE_MS` the post-activity watch window).
+   (`ARKTOS_TELEMETRY_URLS` overrides the leg list;
+   `ARKTOS_TELEMETRY_SETTLE_MS` the post-activity watch window).
 3. Polls `/proc/net` the whole session for process-tree sockets that
    bypass the proxy (QUIC, direct connects, stray DNS).
 4. Classifies every observed endpoint:
 
    | Verdict | Rule |
    |---------|------|
-   | `content` | host is, is a subdomain of, or shares the registrable domain of a browsed host (plus `ARORA_TELEMETRY_CONTENT_HOSTS` extras) |
+   | `content` | host is, is a subdomain of, or shares the registrable domain of a browsed host (plus `ARKTOS_TELEMETRY_CONTENT_HOSTS` extras) |
    | `essential:cert-validation` | engine-managed OCSP/CRL/CT endpoints (`*ocsp*`, `*crl*`, `*.pki.goog`) |
    | `proxied-upstream` | socket-scan endpoint that is one of the capture proxy's own upstream dials |
    | `essential:system-dns` | socket-scan endpoint on :53/:853 — the forwarding proxy's own resolver traffic |

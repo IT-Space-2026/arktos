@@ -48,7 +48,7 @@
 #include <qwebengineprofile.h>
 #include <qwebengineview.h>
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "rustcore.h"
 #include "rustcorebridge.h"
 
@@ -182,7 +182,7 @@ static qint64 clearPlanPeriodSecs(const QString &period)
 
 QJsonArray ClearPrivateData::plan(const QString &period, quint32 categories, bool otr)
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // CLR01: the decision lives in rustcore — the Qt transliteration
     // below is byte-identical (the autotest corpus proves it) and
     // serves as the no-rust implementation, the FFI-failure fallback
@@ -415,7 +415,7 @@ void ClearPrivateData::executePlan(const QJsonArray &ops)
             settings.beginGroup(QLatin1String("sessions"));
             settings.remove(QLatin1String("lastSession"));
             settings.endGroup();
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
             rustCoreEnsureDataDir();
             rc_session_clear();
 #endif

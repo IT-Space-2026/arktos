@@ -300,8 +300,8 @@ copy_map() { # assoc-name srcroot outdir [sed-expr...]
 }
 
 index_theme() { # dir name comment [inherits]
-    # ICONS13: sparse sets inherit arora-tabler (the full-coverage
-    # set) — dark variants inherit arora-tabler-dark so a missed name
+    # ICONS13: sparse sets inherit arktos-tabler (the full-coverage
+    # set) — dark variants inherit arktos-tabler-dark so a missed name
     # resolves to light-stroke art on dark chrome.
     {
         cat <<EOF
@@ -380,60 +380,60 @@ EOF
 }
 
 # --- light variants ---------------------------------------------------
-copy_map ADWAITA_MAP "$ADWAITA" "$OUT/arora-adwaita"
-copy_map BREEZE_MAP  "$BREEZE"  "$OUT/arora-breeze"
-copy_map TABLER_MAP  "$TABLER"  "$OUT/arora-tabler" \
+copy_map ADWAITA_MAP "$ADWAITA" "$OUT/arktos-adwaita"
+copy_map BREEZE_MAP  "$BREEZE"  "$OUT/arktos-breeze"
+copy_map TABLER_MAP  "$TABLER"  "$OUT/arktos-tabler" \
     -e 's/stroke="currentColor"/stroke="#3d3d3d"/g'
-copy_map LUCIDE_MAP  "$LUCIDE"  "$OUT/arora-lucide" \
+copy_map LUCIDE_MAP  "$LUCIDE"  "$OUT/arktos-lucide" \
     -e 's/stroke="currentColor"/stroke="#3d3d3d"/g'
-write_reload "$OUT/arora-adwaita" "#2e3436" 1.7 16 "$RELOAD_ARC16" "$RELOAD_HEAD16"
-write_reload "$OUT/arora-breeze"  "#232629" 1   16 "$RELOAD_ARC16" "$RELOAD_HEAD16"
-write_reload "$OUT/arora-tabler"  "#3d3d3d" 2   24 "$RELOAD_ARC24" "$RELOAD_HEAD24"
-write_reload "$OUT/arora-lucide"  "#3d3d3d" 2   24 "$RELOAD_ARC24" "$RELOAD_HEAD24"
-write_onion  "$OUT/arora-tabler"  "#3d3d3d"
-write_onion  "$OUT/arora-lucide"  "#3d3d3d"
-write_stop   "$OUT/arora-breeze"  "#232629" 1
+write_reload "$OUT/arktos-adwaita" "#2e3436" 1.7 16 "$RELOAD_ARC16" "$RELOAD_HEAD16"
+write_reload "$OUT/arktos-breeze"  "#232629" 1   16 "$RELOAD_ARC16" "$RELOAD_HEAD16"
+write_reload "$OUT/arktos-tabler"  "#3d3d3d" 2   24 "$RELOAD_ARC24" "$RELOAD_HEAD24"
+write_reload "$OUT/arktos-lucide"  "#3d3d3d" 2   24 "$RELOAD_ARC24" "$RELOAD_HEAD24"
+write_onion  "$OUT/arktos-tabler"  "#3d3d3d"
+write_onion  "$OUT/arktos-lucide"  "#3d3d3d"
+write_stop   "$OUT/arktos-breeze"  "#232629" 1
 
-index_theme "$OUT/arora-adwaita" "Arora Adwaita" \
+index_theme "$OUT/arktos-adwaita" "Arktos Adwaita" \
     "Bundled Adwaita symbolic icons (CC-BY-SA-3.0/LGPL-3+ or CC-BY-SA-4.0)" \
-    arora-tabler
-index_theme "$OUT/arora-breeze" "Arora Breeze" \
+    arktos-tabler
+index_theme "$OUT/arktos-breeze" "Arktos Breeze" \
     "Bundled KDE Breeze icons (LGPL-3+)" \
-    arora-tabler
-index_theme "$OUT/arora-tabler" "Arora Tabler" \
+    arktos-tabler
+index_theme "$OUT/arktos-tabler" "Arktos Tabler" \
     "Bundled Tabler outline icons (MIT)"
-index_theme "$OUT/arora-lucide" "Arora Lucide" \
+index_theme "$OUT/arktos-lucide" "Arktos Lucide" \
     "Bundled Lucide icons (ISC; partly derived from Feather, MIT)" \
-    arora-tabler
+    arktos-tabler
 
 # --- dark variants ----------------------------------------------------
-copy_map ADWAITA_MAP "$ADWAITA" "$OUT/arora-adwaita-dark" \
+copy_map ADWAITA_MAP "$ADWAITA" "$OUT/arktos-adwaita-dark" \
     -e 's/#2e3436/#e8e8e8/g' -e 's/#2e3434/#e8e8e8/g' -e 's/#505050/#b0b0b0/g'
-copy_map BREEZE_MAP  "$BREEZE"  "$OUT/arora-breeze-dark" \
+copy_map BREEZE_MAP  "$BREEZE"  "$OUT/arktos-breeze-dark" \
     -e 's/#232629/#eff0f1/g' -e 's/#666666/#a0a0a0/g'
-copy_map TABLER_MAP  "$TABLER"  "$OUT/arora-tabler-dark" \
+copy_map TABLER_MAP  "$TABLER"  "$OUT/arktos-tabler-dark" \
     -e 's/stroke="currentColor"/stroke="#e8e8e8"/g'
-copy_map LUCIDE_MAP  "$LUCIDE"  "$OUT/arora-lucide-dark" \
+copy_map LUCIDE_MAP  "$LUCIDE"  "$OUT/arktos-lucide-dark" \
     -e 's/stroke="currentColor"/stroke="#e8e8e8"/g'
-write_reload "$OUT/arora-adwaita-dark" "#e8e8e8" 1.7 16 "$RELOAD_ARC16" "$RELOAD_HEAD16"
-write_reload "$OUT/arora-breeze-dark"  "#eff0f1" 1   16 "$RELOAD_ARC16" "$RELOAD_HEAD16"
-write_reload "$OUT/arora-tabler-dark"  "#e8e8e8" 2   24 "$RELOAD_ARC24" "$RELOAD_HEAD24"
-write_reload "$OUT/arora-lucide-dark"  "#e8e8e8" 2   24 "$RELOAD_ARC24" "$RELOAD_HEAD24"
-write_onion  "$OUT/arora-tabler-dark"  "#e8e8e8"
-write_onion  "$OUT/arora-lucide-dark"  "#e8e8e8"
-write_stop   "$OUT/arora-breeze-dark"  "#eff0f1" 1
+write_reload "$OUT/arktos-adwaita-dark" "#e8e8e8" 1.7 16 "$RELOAD_ARC16" "$RELOAD_HEAD16"
+write_reload "$OUT/arktos-breeze-dark"  "#eff0f1" 1   16 "$RELOAD_ARC16" "$RELOAD_HEAD16"
+write_reload "$OUT/arktos-tabler-dark"  "#e8e8e8" 2   24 "$RELOAD_ARC24" "$RELOAD_HEAD24"
+write_reload "$OUT/arktos-lucide-dark"  "#e8e8e8" 2   24 "$RELOAD_ARC24" "$RELOAD_HEAD24"
+write_onion  "$OUT/arktos-tabler-dark"  "#e8e8e8"
+write_onion  "$OUT/arktos-lucide-dark"  "#e8e8e8"
+write_stop   "$OUT/arktos-breeze-dark"  "#eff0f1" 1
 
-index_theme "$OUT/arora-adwaita-dark" "Arora Adwaita Dark" \
+index_theme "$OUT/arktos-adwaita-dark" "Arktos Adwaita Dark" \
     "Dark-scheme recolor of the bundled Adwaita symbolic icons" \
-    arora-tabler-dark
-index_theme "$OUT/arora-breeze-dark" "Arora Breeze Dark" \
+    arktos-tabler-dark
+index_theme "$OUT/arktos-breeze-dark" "Arktos Breeze Dark" \
     "Dark-scheme recolor of the bundled KDE Breeze icons" \
-    arora-tabler-dark
-index_theme "$OUT/arora-tabler-dark" "Arora Tabler Dark" \
+    arktos-tabler-dark
+index_theme "$OUT/arktos-tabler-dark" "Arktos Tabler Dark" \
     "Dark-scheme recolor of the bundled Tabler outline icons" \
-    arora-tabler
-index_theme "$OUT/arora-lucide-dark" "Arora Lucide Dark" \
+    arktos-tabler
+index_theme "$OUT/arktos-lucide-dark" "Arktos Lucide Dark" \
     "Dark-scheme recolor of the bundled Lucide icons" \
-    arora-tabler-dark
+    arktos-tabler-dark
 
 echo "bundled icon themes regenerated in $OUT"

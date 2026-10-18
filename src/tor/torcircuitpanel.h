@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -37,7 +37,7 @@ class TorChainView;
 // The non-circuit states (daemon off, connecting, failed, dead
 // control link) render in the same surface as an info line.
 //
-// HONESTY: the chain shown is Arora's shared display circuit — the
+// HONESTY: the chain shown is Arktos's shared display circuit — the
 // busiest-BUILT circuit the daemon carries
 // (TorManager::displayCircuitId).  This process does not implement
 // Tor Browser's stream isolation by URL-bar domain, so the hops are

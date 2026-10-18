@@ -3,12 +3,12 @@
 Platform-wide MV3 health check + Bitwarden root-cause + cheap-lever
 sweep. Diagnosis-only slice; the only code that landed is the
 `--mv3-health-smoke` diagnostic harness in `src/main.cpp`.
-Reproduce: `cd src && make && ../arora --mv3-health-smoke`
+Reproduce: `cd src && make && ../arktos --mv3-health-smoke`
 (headless-safe; results are `mv3-health-smoke:` qInfo lines).
 
 ## Method
 
-A purpose-built fixture extension (`arora-mv3-health`, MV3 manifest
+A purpose-built fixture extension (`arktos-mv3-health`, MV3 manifest
 carrying Bitwarden's full permission set) is installed + enabled on the
 isolated smoke profile, then measured from inside its own JS contexts:
 
@@ -106,7 +106,7 @@ absence.
 ## EXT08 popup host — ruled out
 
 The probe used EXT08's production shape verbatim: plain
-`QWebEnginePage` on the browsing profile, no arora channel/page
+`QWebEnginePage` on the browsing profile, no arktos channel/page
 policy. The popup loads (`loadFinished` PASS), serves
 `chrome-extension://` correctly, and receives the enabled-extension
 API context. All observed failures originate inside the extension's

@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,10 +14,11 @@
 // sidebar/notes scratch-pad migration.
 
 #include <QtTest/QtTest>
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 
 #include <modeltest.h>
 #include <notesmodel.h>
+#include <browserpaths.h>
 #include <browserprofile.h>
 
 #include <qfile.h>
@@ -321,13 +322,16 @@ void tst_NotesModel::markdownFlag()
 void tst_NotesModel::instancePerProfile()
 {
     // The shared normal-profile store: same object on repeat calls,
-    // persistent (the named "arora" profile has a storageName).
+    // persistent.  MPROF02 anchors it at the default persona's data
+    // dir (<data>/profiles/default/notes.json).
     NotesModel *normal = NotesModel::instance(BrowserProfile::normalProfile());
     QVERIFY(normal);
     QVERIFY(normal->isPersistent());
     QCOMPARE(NotesModel::instance(BrowserProfile::normalProfile()),
              normal);
-    QVERIFY(normal->storageFile().endsWith(QLatin1String("arora.json")));
+    QCOMPARE(normal->storageFile(),
+             BrowserPaths::profileDataFilePath(
+                 QStringLiteral("default"), QLatin1String("notes.json")));
 
     // An unnamed (off-the-record) profile gets a distinct volatile
     // store — private notes never reach disk.

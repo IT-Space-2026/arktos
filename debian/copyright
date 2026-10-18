@@ -1,10 +1,10 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Upstream-Name: arora
-Source: https://github.com/janos-szenfner/arora
+Upstream-Name: arktos
+Source: https://github.com/arktos-browser/arktos
 
 Files: *
 Copyright: 2007-2011 Benjamin C. Meyer (icefox) and contributors
-           2024-2026 Arora Qt 6 port contributors (see AUTHORS)
+           2026-2027 Janos Szenfner (see AUTHORS for all contributors)
 License: GPL-2+
  This program is free software; you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by

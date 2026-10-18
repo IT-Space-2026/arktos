@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,8 +19,8 @@
 
 #include "pipwindow.h"
 
-#include "aroraicon.h"
-#include "arorastyle.h"
+#include "arktosicon.h"
+#include "arktosstyle.h"
 
 #include <qapplication.h>
 #include <qboxlayout.h>
@@ -92,7 +92,7 @@ PipWindow::PipWindow(QWebEngineProfile *profile, const QVariantMap &video,
     title->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 
     m_returnButton = new QToolButton(strip);
-    m_returnButton->setIcon(AroraIcon::getChrome(
+    m_returnButton->setIcon(ArktosIcon::getChrome(
             QLatin1String("view-restore")));
     m_returnButton->setToolTip(tr("Return video to tab"));
     m_returnButton->setAutoRaise(true);
@@ -100,7 +100,7 @@ PipWindow::PipWindow(QWebEngineProfile *profile, const QVariantMap &video,
             this, [this]() { emit returnToTab(m_lastState); });
 
     QToolButton *closeButton = new QToolButton(strip);
-    closeButton->setIcon(AroraIcon::getChrome(
+    closeButton->setIcon(ArktosIcon::getChrome(
             QLatin1String("window-close")));
     closeButton->setToolTip(tr("Close"));
     closeButton->setAutoRaise(true);
@@ -108,10 +108,10 @@ PipWindow::PipWindow(QWebEngineProfile *profile, const QVariantMap &video,
             this, [this]() { close(); });
 
     QHBoxLayout *stripLayout = new QHBoxLayout(strip);
-    stripLayout->setContentsMargins(AroraStyle::Spacing::Medium,
-                                    AroraStyle::Spacing::Small,
-                                    AroraStyle::Spacing::Small,
-                                    AroraStyle::Spacing::Small);
+    stripLayout->setContentsMargins(ArktosStyle::Spacing::Medium,
+                                    ArktosStyle::Spacing::Small,
+                                    ArktosStyle::Spacing::Small,
+                                    ArktosStyle::Spacing::Small);
     stripLayout->addWidget(title);
     stripLayout->addWidget(m_returnButton);
     stripLayout->addWidget(closeButton);
@@ -119,7 +119,7 @@ PipWindow::PipWindow(QWebEngineProfile *profile, const QVariantMap &video,
             Qt::AlignBottom | Qt::AlignRight);
 
     m_view->setPage(m_page);
-    m_channel->registerObject(QLatin1String("aroraPipPlayer"), m_bridge);
+    m_channel->registerObject(QLatin1String("arktosPipPlayer"), m_bridge);
     m_page->setWebChannel(m_channel);
 
     QVBoxLayout *layout = new QVBoxLayout(this);

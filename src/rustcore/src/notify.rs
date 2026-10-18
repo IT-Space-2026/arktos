@@ -1,6 +1,6 @@
 //! Change-notification callback registry — the Rust half of the
 //! callback -> Qt-signal bridge.  One process-wide callback (a fn
-//! pointer + opaque userdata) is enough for Arora: the Qt side
+//! pointer + opaque userdata) is enough for Arktos: the Qt side
 //! (RustCoreBridge) re-emits each topic as a queued Qt signal, so a
 //! Rust worker thread never touches the GUI thread directly.
 //!

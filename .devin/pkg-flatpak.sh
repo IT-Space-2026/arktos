@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # pkg-flatpak.sh — PKG02 flatpak packaging driver.
 #
-# Builds io.arora.Arora.yaml with flatpak-builder inside org.flatpak.Builder
+# Builds com.arktos_browser.Arktos.yaml with flatpak-builder inside org.flatpak.Builder
 # (user-local, no host flatpak-builder needed), produces an installable
-# single-file bundle dist/io.arora.Arora_<ver>.flatpak, installs it into
+# single-file bundle dist/com.arktos_browser.Arktos_<ver>.flatpak, installs it into
 # the user flatpak installation, and verifies it launches offscreen with
 # the engine + bundled tor reachable.
 #
@@ -22,18 +22,18 @@
 # sandbox build). `--clean` instead exports `git archive HEAD`, proving
 # the committed tree is what a flathub-style build would see.
 #
-# Env: ARORA_PKG_JOBS (default 2), ARORA_VERSION (default 0.2),
-#      ARORA_PKG_KEEP=1 keeps the export dir, SKIP_TOR_SMOKE=1 skips the
+# Env: ARKTOS_PKG_JOBS (default 2), ARKTOS_VERSION (default 1.0),
+#      ARKTOS_PKG_KEEP=1 keeps the export dir, SKIP_TOR_SMOKE=1 skips the
 #      real-tor bootstrap check in verify.
 
 set -euo pipefail
 
 SRCROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APPID=io.arora.Arora
+APPID=com.arktos_browser.Arktos
 MANIFEST=$APPID.yaml
 BUILDER=org.flatpak.Builder
-VER="${ARORA_VERSION:-0.2}"
-JOBS="${ARORA_PKG_JOBS:-2}"
+VER="${ARKTOS_VERSION:-1.0}"
+JOBS="${ARKTOS_PKG_JOBS:-2}"
 BUILDTOP="$SRCROOT/flatpak/.build"
 STATE="$BUILDTOP/state"          # persistent flatpak-builder state (dl cache)
 REPO="$BUILDTOP/repo"
@@ -101,9 +101,9 @@ cmd_install() {
         [ -d "$REPO" ] || fail "no repo at $REPO — run build first"
         note "bundle install unavailable — installing via file:// remote"
         flatpak remote-add --user --if-not-exists --no-gpg-verify \
-            arora-pkg-local "file://$REPO"
-        flatpak install --user -y arora-pkg-local "$APPID"
-        flatpak remote-delete --user --force arora-pkg-local || true
+            arktos-pkg-local "file://$REPO"
+        flatpak install --user -y arktos-pkg-local "$APPID"
+        flatpak remote-delete --user --force arktos-pkg-local || true
     fi
     flatpak info "$APPID" >/dev/null || fail "app did not install"
     note "installed: $(flatpak info "$APPID" | grep -E 'ID:|Branch:|Origin:|Commit:' | tr -s ' ' | tr '\n' ' ')"
@@ -126,6 +126,15 @@ cmd_verify() {
 
     flatpak info "$APPID" >/dev/null 2>&1 \
         || fail "$APPID not installed — run install first"
+
+    # -- icons: rename-icon must have produced app-id-named icons ---------
+    fp_run --command=/bin/sh "$APPID" -c \
+        'ls /app/share/icons/hicolor/*/apps/com.arktos_browser.Arktos.* >/dev/null 2>&1' \
+        || fail "no com.arktos_browser.Arktos icons in the flatpak (rename-icon failed)"
+    fp_run --command=/bin/sh "$APPID" -c \
+        'grep -q "^Icon=com.arktos_browser.Arktos$" /app/share/applications/com.arktos_browser.Arktos.desktop' \
+        || fail "desktop file Icon= not rewritten to com.arktos_browser.Arktos"
+    note "icons + desktop Icon= present (renamed to $APPID)"
 
     # -- payload: bundled tor present + runs in the sandbox ----------------
     fp_run --command=/bin/sh "$APPID" -c \

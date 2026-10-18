@@ -66,7 +66,7 @@
 #include "acceptlanguagedialog.h"
 #include "adblockmanager.h"
 #include "adblocknetwork.h"
-#include "arorastyle.h"
+#include "arktosstyle.h"
 #include "autosaver.h"
 #include "autofillmanager.h"
 #include "bookmarksmanager.h"
@@ -86,7 +86,10 @@
 #include "networkaccessmanager.h"
 #include "pdfsupport.h"
 #include "privacyrequestinterceptor.h"
+#include "profileregistry.h"
+#include "profilestore.h"
 #include "profilevault.h"
+#include "vaultdialogs.h"
 #include "webenginebackend.h"
 #include "schemeaccesshandler.h"
 #include "securestore.h"
@@ -99,7 +102,7 @@
 
 #include <qjsonarray.h>
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 #include "rustcore.h"
 #include "rustcorebridge.h"
 
@@ -123,6 +126,8 @@
 #include <qstatusbar.h>
 #include <qstylehints.h>
 #include <qtemporarydir.h>
+#include <qtimer.h>
+#include <qwebenginepage.h>
 #include <qwebengineprofile.h>
 #include <qwebenginesettings.h>
 
@@ -178,7 +183,12 @@ void BrowserApplication::prepareProfile(QWebEngineProfile *profile)
             AcceptLanguageDialog::httpString(
                 AcceptLanguageDialog::normalizedAcceptLanguages())));
     }
-    DownloadManager::instance()->installOnProfile(
+    // MPROF02: managers are per-persona — a named "arktos-<id>" or
+    // container profile resolves its owning registry profile, tor
+    // and off-the-record profiles resolve to the default persona's
+    // (mode-level) store set.
+    const QString ownerId = BrowserProfile::profileIdFor(profile);
+    DownloadManager::instanceFor(ownerId)->installOnProfile(
         WebEngineProfileAdapter::forProfile(profile));
     if (!BrowserApplication::isTorMode()) {
         // BADSSL03: TLS client certificates are strong user identity —
@@ -191,19 +201,23 @@ void BrowserApplication::prepareProfile(QWebEngineProfile *profile)
     // the first window.  postLaunch() queues the rebuild once the
     // startup navigation is underway; requests made in between see an
     // empty ruleset (allow-all).
-    AdBlockManager::instance()->installOnProfile(profile, true);
+    AdBlockManager *adBlock =
+        BrowserApplication::isTorMode()
+            ? AdBlockManager::instance()
+            : AdBlockManager::instanceFor(ownerId);
+    adBlock->installOnProfile(profile, true);
     if (BrowserApplication::isTorMode()) {
         // A profile accepts exactly one request interceptor — the
         // HTTPS-first upgrade wraps the adblock matcher inside
         // TorRequestInterceptor.
         profile->setUrlRequestInterceptor(new TorRequestInterceptor(
-            AdBlockManager::instance()->network(), profile));
+            adBlock->network(), profile));
     } else {
         // PRIV01: the adblock-only interceptor installOnProfile set is
         // replaced by the composite that also runs the privacy stages
         // (HTTPS-first navigation upgrade + cross-site referrer trim).
         profile->setUrlRequestInterceptor(new PrivacyRequestInterceptor(
-            AdBlockManager::instance()->network(), profile));
+            adBlock->network(), profile));
     }
     if (!BrowserApplication::isTorMode()) {
         // QWebEngineExtensionManager wiring + user-scripts injection.
@@ -212,7 +226,7 @@ void BrowserApplication::prepareProfile(QWebEngineProfile *profile)
         // EXT04) — but still receives user scripts.  The tor profile
         // gets neither — extensions and injected scripts are
         // fingerprintable surface; keep it that way (hard refusal).
-        ExtensionManager::instance()->installOnProfile(profile);
+        ExtensionManager::instanceFor(ownerId)->installOnProfile(profile);
     }
 }
 
@@ -221,11 +235,14 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
     , m_standalone(false)
     , quitting(false)
     , m_torManager(nullptr)
+    , m_torProxyWarmed(true)
+    , m_torProxyWarmSeq(0)
+    , m_torProxyProbe(nullptr)
 {
-    QCoreApplication::setOrganizationName(QLatin1String("Arora"));
-    QCoreApplication::setOrganizationDomain(QLatin1String("arora-browser.org"));
-    QCoreApplication::setApplicationName(QLatin1String("Arora"));
-    QCoreApplication::setApplicationVersion(QLatin1String("0.12"
+    QCoreApplication::setOrganizationName(QLatin1String("Arktos"));
+    QCoreApplication::setOrganizationDomain(QLatin1String("arktos-browser.com"));
+    QCoreApplication::setApplicationName(QLatin1String("Arktos"));
+    QCoreApplication::setApplicationVersion(QLatin1String("1.0"
 #ifdef GITVERSION
     " (Git: " GITCHANGENUMBER " " GITVERSION ")"
 #endif
@@ -259,13 +276,13 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
         const QString url = argumentUrl();
         if (!url.isEmpty())
             sendMessage(url.toUtf8());
-        // If we could connect to another Arora then exit
-        QString message = QString(QLatin1String("aroramessage://getwinid"));
+        // If we could connect to another Arktos then exit
+        QString message = QString(QLatin1String("arktosmessage://getwinid"));
         if (sendMessage(message.toUtf8(), 500))
             return;
 
 #ifdef BROWSERAPPLICATION_DEBUG
-        qDebug() << "BrowserApplication::" << __FUNCTION__ << "I am the only arora";
+        qDebug() << "BrowserApplication::" << __FUNCTION__ << "I am the only arktos";
 #endif
 
         // not sure what else to do...
@@ -289,7 +306,7 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
     // typography from one source.  Install after applyColorScheme() so
     // the proxy wraps the post-scheme style; the hook re-wraps and
     // re-resolves on every later flip.
-    AroraStyle::install();
+    ArktosStyle::install();
 
 #if defined(Q_OS_MACOS)
     QApplication::setQuitOnLastWindowClosed(false);
@@ -308,10 +325,27 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
             QNetworkProxy::Socks5Proxy, QStringLiteral("127.0.0.1"), 1));
 
         m_torDataDir.reset(new QTemporaryDir(
-            QDir::temp().filePath(QLatin1String("arora-tor-XXXXXX"))));
+            QDir::temp().filePath(QLatin1String("arktos-tor-XXXXXX"))));
         m_torManager = new TorManager(this);
         if (m_torDataDir->isValid())
             m_torManager->setDataDirectory(m_torDataDir->path());
+        // TOR17: re-point the application proxy the moment the control
+        // channel learns the SOCKS endpoint — the listener is bound at
+        // daemon startup, long before ready().  A request that does
+        // reach the listener early just dies inside tor — fail-closed
+        // is preserved either way.  Chromium's network service,
+        // though, re-reads QNetworkProxy only from a lazy poll inside
+        // proxy resolution: the first request after every switch
+        // still resolves on the STALE endpoint (the live-trace
+        // signature was a first-search ERR_PROXY_CONNECTION_FAILED on
+        // the fail-closed port at ready+0.5s).  warmTorProxy() feeds
+        // that stale read a sacrificial probe instead of the user's
+        // search.
+        connect(m_torManager, &TorManager::socksListenerDiscovered,
+                this, [this](const QNetworkProxy &proxy) {
+            QNetworkProxy::setApplicationProxy(proxy);
+            warmTorProxy();
+        });
         connect(m_torManager, &TorManager::ready,
                 this, [this](const QNetworkProxy &proxy) {
             QNetworkProxy::setApplicationProxy(proxy);
@@ -360,7 +394,11 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
     webEngineProfile();
     StartupProfile::mark("ctor: browsing profile + services prepared");
 
-    ProfileSettings settings;
+    // MPROF03: the app session manifest anchors to the PRIMARY
+    // persona's store — the blob enumerates windows across every
+    // persona, so it must not drift with whichever window was last
+    // focused.
+    ProfileSettings settings(ProfileSettings::defaultId());
     settings.beginGroup(QLatin1String("sessions"));
     m_lastSession = settings.value(QLatin1String("lastSession")).toByteArray();
     settings.endGroup();
@@ -370,9 +408,19 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
             this, &BrowserApplication::lastWindowClosed);
 #endif
 
+    // PVAULT03: every exec()-unwinding quit (last window closed,
+    // qApp->quit()) takes this hook; quitBrowser's ::exit() calls
+    // sealUnlockedProfilesAtShutdown() directly since it never gets
+    // here.
+    connect(this, &QCoreApplication::aboutToQuit, this, []() {
+        if (BrowserApplication::instance()
+            && !BrowserApplication::isTorMode())
+            ProfileVault::instance()->sealUnlockedProfilesAtShutdown();
+    });
+
     // setting this in the postLaunch actually takes a lot more time
     // because the event has to be propagated to everyone.
-    setWindowIcon(QIcon(QLatin1String(":128x128/arora.png")));
+    setWindowIcon(QIcon(QLatin1String(":128x128/arktos.png")));
 
 #ifndef AUTOTESTS
     QTimer::singleShot(0, this, &BrowserApplication::postLaunch);
@@ -478,7 +526,7 @@ void BrowserApplication::messageReceived(QLocalSocket *socket)
         return;
 
     // Got a normal url
-    if (!message.startsWith(QLatin1String("aroramessage://"))) {
+    if (!message.startsWith(QLatin1String("arktosmessage://"))) {
         // SEC02/SEC09: a forwarded url must never become script
         // execution — the single-instance socket is reachable by
         // anything running as this user.  The javascript: check moved
@@ -493,31 +541,38 @@ void BrowserApplication::messageReceived(QLocalSocket *socket)
             qWarning() << "Possible recursive openUrl called, ignoring url:" << m_lastAskedUrl;
             return;
         }
-        mainWindow()->tabWidget()->loadStringFromUntrustedSource(message, tab);
+        // VSEC01: mainWindow() may return null when every manifest
+        // persona is sealed — a forwarded url has no prompt context,
+        // so the message is dropped rather than crashing.
+        if (BrowserMainWindow *mw = mainWindow())
+            mw->tabWidget()->loadStringFromUntrustedSource(message, tab);
         return;
     }
 
-    if (message.startsWith(QLatin1String("aroramessage://getwinid"))) {
+    if (message.startsWith(QLatin1String("arktosmessage://getwinid"))) {
 #ifdef Q_OS_WIN
         QString winid = QString(QLatin1String("%1")).arg((qlonglong)mainWindow()->winId());
 #else
-        mainWindow()->show();
-        mainWindow()->setFocus();
-        mainWindow()->raise();
-        mainWindow()->activateWindow();
-        alert(mainWindow());
+        BrowserMainWindow *mw = mainWindow();
+        if (!mw)
+            return;
+        mw->show();
+        mw->setFocus();
+        mw->raise();
+        mw->activateWindow();
+        alert(mw);
         QString winid;
 #endif
 #ifdef BROWSERAPPLICATION_DEBUG
         qDebug() << "BrowserApplication::" << __FUNCTION__ << "sending win id" << winid << mainWindow()->winId();
 #endif
-        QString message = QLatin1String("aroramessage://winid/") + winid;
+        QString message = QLatin1String("arktosmessage://winid/") + winid;
         socket->write(message.toUtf8());
         socket->waitForBytesWritten(2000);
         return;
     }
 
-    if (message.startsWith(QLatin1String("aroramessage://winid"))) {
+    if (message.startsWith(QLatin1String("arktosmessage://winid"))) {
         QString winid = message.mid(21);
 #ifdef BROWSERAPPLICATION_DEBUG
         qDebug() << "BrowserApplication::" << __FUNCTION__ << "got win id:" << winid;
@@ -560,7 +615,7 @@ void BrowserApplication::quitBrowser()
             ? tr("There are %1 windows and %2 tabs open\n"
                  "Do you want to quit anyway?")
                   .arg(m_mainWindows.count()).arg(tabCount)
-            : tr("Do you want to quit Arora?");
+            : tr("Do you want to quit Arktos?");
         int ret = QMessageBox::warning(widget, QString(), question,
                            QMessageBox::Yes | QMessageBox::No,
                            QMessageBox::No);
@@ -571,8 +626,11 @@ void BrowserApplication::quitBrowser()
     saveSession();
     clearPrivateDataOnExit();
     // PVAULT02: the explicit-quit path bypasses the destructor — run
-    // the auto-lock re-seal here too, after all stores flushed.
-    ProfileVault::instance()->sealUnlockedProfilesAtShutdown();
+    // the auto-lock re-seal here too, after all stores flushed and
+    // before the clean-exit record, so a crash mid-seal still reports
+    // a dirty boot rather than a clean one.
+    if (!isTorMode())
+        ProfileVault::instance()->sealUnlockedProfilesAtShutdown();
     // SESS02: ::exit() never unwinds to main()'s markSessionCleanExit,
     // so an explicit Quit would leave the sentinel armed and score as
     // a crash on the next start — record the clean exit first.
@@ -617,7 +675,7 @@ void BrowserApplication::postLaunch()
         } else if (!url.isEmpty()) {
             // SEC09: argv urls are untrusted input, same as a
             // forwarded second-instance message — an external program
-            // invoking `arora javascript:...` must not get script
+            // invoking `arktos javascript:...` must not get script
             // execution in the new window.
             switch (startupMode()) {
             case LastSessionStartup: {
@@ -648,6 +706,17 @@ void BrowserApplication::postLaunch()
                 break;
             }
         }
+    } else if (!isTorMode()) {
+        // VSEC01: no window at all means the launch placeholder was
+        // refused by the seal gate — the ambient persona is Locked.
+        // Session restore owns the per-persona unlock prompt, so it
+        // still runs windowless; a declined manifest simply skips its
+        // windows and the vault bring-up below offers the unlock.
+        if (startupMode() == LastSessionStartup)
+            restoreLastSession();
+        const QString url = argumentUrl();
+        if (!url.isEmpty() && !m_mainWindows.isEmpty())
+            mainWindow()->tabWidget()->loadStringFromUntrustedSource(url);
     }
     StartupProfile::mark("postLaunch: navigation dispatched");
 
@@ -658,6 +727,32 @@ void BrowserApplication::postLaunch()
     // BrowserMainWindow.  Standalone runs manage their own windows.
     if (!isStandalone() || isTorMode())
         ensureSessionWindow();
+
+    // PVAULT03: vault bring-up, queued past the first window so the
+    // dialogs have a parent — the dirty-boot re-seal offer for every
+    // profile the last run left in plaintext, then the unlock prompt
+    // if the active profile is still sealed.  Tor processes never
+    // touch the vault (OTR — nothing persists to seal).
+    if (!isTorMode()) {
+        QTimer::singleShot(0, this, [this]() {
+            ProfileVault *vault = ProfileVault::instance();
+            // mainWindow() would auto-create on an empty list — the
+            // seal gate makes that return null, so pass the parent
+            // explicitly instead.
+            BrowserMainWindow *parent =
+                m_mainWindows.isEmpty() ? nullptr : mainWindow();
+            for (const QString &id : vault->dirtyProfiles())
+                VaultUi::offerReseal(vault, id, parent);
+            const QString active = ProfileStore::activeProfileId();
+            if (!VaultUi::ensureUnlocked(vault, active, parent))
+                return;
+            // VSEC01: when every manifest window sat on the sealed
+            // persona, restore skipped them all — the just-unlocked
+            // profile still needs a window.
+            if (m_mainWindows.isEmpty())
+                newMainWindow(active);
+        });
+    }
 
     // PERF03: the heavyweight stores were forced synchronously here —
     // after the first window painted but before the startup
@@ -797,11 +892,70 @@ void BrowserApplication::clean()
 
 static const qint32 BrowserApplicationMagic = 0xec;
 
+// MPROF03: the one honest normalization for a window's persona
+// binding — the id must be a valid slug AND a persona the registry
+// still carries.  A deleted profile or a crafted session blob
+// degrades to "default" rather than reviving a stale profiles/<id>/
+// tree; an empty id inherits the ambient persona (the focused
+// window's, so File>New Window and link-spawned windows stay on the
+// opener's profile).
+static QString normalizedWindowProfileId(const QString &profileId)
+{
+    const QString id = profileId.isEmpty()
+        ? BrowserPaths::activeProfileId() : profileId;
+    if (!BrowserPaths::isProfileId(id))
+        return QStringLiteral("default");
+    if (!ProfileRegistry::instance()->profile(id).isValid()) {
+        // The UI lane's ProfileStore writes the same profiles.json —
+        // a persona created this session may not be in our cached
+        // read yet; one fresh read before declaring the id missing.
+        ProfileRegistry::instance()->reload();
+        if (!ProfileRegistry::instance()->profile(id).isValid())
+            return QStringLiteral("default");
+    }
+    return id;
+}
+
+// The pre-existing window a session restore is allowed to reuse: only
+// a pristine placeholder (a single never-navigated tab).  Anything
+// with real state is never disturbed by a restore.
+static bool isPristineSessionWindow(BrowserMainWindow *window)
+{
+    return window && window->tabWidget()
+        && window->tabWidget()->totalTabCount() <= 1
+        && (!window->tabWidget()->currentWebView()
+            || window->tabWidget()->currentWebView()->url().isEmpty());
+}
+
+// VSEC01: a session manifest can name any registry persona —
+// including a sealed one.  A Locked profile must never reopen
+// silently: its plaintext is packed away, and stores would mint
+// empty files the next unseal then refuses to overwrite.  Restore
+// gets one unlock prompt per sealed persona; a decline is remembered
+// so a manifest with several windows on it prompts once, not N times.
+static bool vaultUnlockForRestore(const QString &persona,
+                                  QSet<QString> *declined,
+                                  QWidget *parent)
+{
+    ProfileVault *vault = ProfileVault::instance();
+    if (!vault->isLocked(persona))
+        return true;
+    if (declined->contains(persona))
+        return false;
+    if (VaultUi::ensureUnlocked(vault, persona, parent))
+        return true;
+    declined->insert(persona);
+    return false;
+}
+
 void BrowserApplication::saveSession()
 {
     if (quitting)
         return;
-    ProfileSettings settings;
+    // MPROF03: the session manifest is app-level state spanning every
+    // persona's windows — pin it to the primary persona's store rather
+    // than letting it follow the ambient (focused) window.
+    ProfileSettings settings(ProfileSettings::defaultId());
     settings.beginGroup(QLatin1String("MainWindow"));
     settings.setValue(QLatin1String("restoring"), false);
     settings.endGroup();
@@ -813,21 +967,28 @@ void BrowserApplication::saveSession()
 
     settings.beginGroup(QLatin1String("sessions"));
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // RCORE03: the rustcore session store owns the schema and the
     // file — a JSON manifest per window (opaque shell blob, structured
     // tab records with container binding + engine tag + opaque
     // engine-state blob), atomically installed as session.dat.
-    rustCoreEnsureDataDir();
+    // Anchored to the primary persona's rust store like the QSettings
+    // manifest above.
+    rustCoreEnsureDataDirFor(QStringLiteral("default"));
     QJsonArray windows;
     for (int i = 0; i < m_mainWindows.count(); ++i) {
         BrowserMainWindow *window = m_mainWindows.at(i);
         QJsonObject win = window->tabWidget()->sessionStateJson();
         win.insert(QLatin1String("shell"), QString::fromLatin1(
             window->saveState(false).toBase64()));
+        // MPROF03: the window's persona binding restores it on the
+        // right named profile — a missing key reads as "default".
+        win.insert(QLatin1String("profile"), window->profileId());
         windows.append(win);
     }
     QJsonObject root;
+    // Manifest schema v1 — the per-window "profile" key is an optional
+    // extension the rust core preserves verbatim.
     root.insert(QLatin1String("version"), 1);
     root.insert(QLatin1String("windows"), windows);
     const QByteArray manifest =
@@ -848,7 +1009,7 @@ void BrowserApplication::saveSession()
     rc_string_free(err);
 #endif
 
-    int version = 2;
+    int version = 3; // MPROF03: v3 tails each window with its persona id
 
     QByteArray data;
     QBuffer buffer(&data);
@@ -859,8 +1020,10 @@ void BrowserApplication::saveSession()
     stream << qint32(version);
 
     stream << qint32(m_mainWindows.count());
-    for (int i = 0; i < m_mainWindows.count(); ++i)
+    for (int i = 0; i < m_mainWindows.count(); ++i) {
+        stream << m_mainWindows.at(i)->profileId();
         stream << m_mainWindows.at(i)->saveState();
+    }
     settings.setValue(QLatin1String("lastSession"), data);
     settings.endGroup();
     m_lastSession = data;
@@ -899,9 +1062,14 @@ bool BrowserApplication::ensureSessionWindow()
         qWarning() << "BrowserApplication: startup produced no browser"
                       " window — opening a fallback";
         BrowserMainWindow *window = newMainWindow();
-        window->tabWidget()->loadUrl(startPageUrl(),
-                                     TabWidget::CurrentTab);
-        created = true;
+        if (window) {
+            window->tabWidget()->loadUrl(startPageUrl(),
+                                         TabWidget::CurrentTab);
+            created = true;
+        }
+        // VSEC01: null means the ambient persona is sealed — the
+        // postLaunch bring-up owns the unlock prompt and re-creates
+        // the window on success.
     }
     // The same blank-ness one level down: a window whose strip ended
     // empty (e.g. every restored tab detached into a filtered
@@ -916,8 +1084,10 @@ bool BrowserApplication::ensureSessionWindow()
 
 bool BrowserApplication::canRestoreSession() const
 {
-#ifdef ARORA_RUSTCORE
-    rustCoreEnsureDataDir();
+#ifdef ARKTOS_RUSTCORE
+    // Session manifests anchor to the primary persona's rust store —
+    // see saveSession().
+    rustCoreEnsureDataDirFor(QStringLiteral("default"));
     if (rc_session_exists())
         return true;
 #endif
@@ -957,16 +1127,17 @@ bool BrowserApplication::restoreLastSession()
         settings.beginGroup(QLatin1String("MainWindow"));
         if (settings.value(QLatin1String("restoring"), false).toBool()) {
             QMessageBox::StandardButton result = QMessageBox::question(nullptr, tr("Restore failed"),
-                tr("Arora crashed while trying to restore this session.  Should I try again?"), QMessageBox::Yes | QMessageBox::No);
+                tr("Arktos crashed while trying to restore this session.  Should I try again?"), QMessageBox::Yes | QMessageBox::No);
             if (result == QMessageBox::No)
                 return false;
         }
     }
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // RCORE03: the canonical store is the rustcore session file — the
     // crate validated the whole blob before it reached us, so RC_OK
     // means the window set is complete and safe to arm the guard on.
-    rustCoreEnsureDataDir();
+    // Anchored to the primary persona's store like saveSession().
+    rustCoreEnsureDataDirFor(QStringLiteral("default"));
     {
         RcBuffer stored{nullptr, 0};
         const RcStatus sessionStatus = rc_session_load(&stored);
@@ -987,13 +1158,41 @@ bool BrowserApplication::restoreLastSession()
                 // session can never loop the crash prompt.
                 settings.setValue(QLatin1String("restoring"), true);
             }
+            QSet<QString> declinedUnlock;
             for (int i = 0; i < windows.count(); ++i) {
                 const QJsonObject win = windows.at(i).toObject();
+                // MPROF03: each window restores on the persona it was
+                // saved under — a missing key or a since-deleted
+                // profile degrades to "default" honestly (empty never
+                // inherits the ambient persona here — the manifest
+                // predates the binding, so "default" is the only
+                // honest reading).
+                const QString rawPersona =
+                    win.value(QLatin1String("profile")).toString();
+                const QString persona = normalizedWindowProfileId(
+                    rawPersona.isEmpty() ? QStringLiteral("default")
+                                         : rawPersona);
+                BrowserMainWindow *preExisting =
+                    (i == 0 && m_mainWindows.count() >= 1)
+                    ? mainWindow() : nullptr;
                 BrowserMainWindow *newWindow = nullptr;
-                if (i == 0 && m_mainWindows.count() >= 1) {
-                    newWindow = mainWindow();
+                if (preExisting && preExisting->profileId() == persona) {
+                    newWindow = preExisting;
                 } else {
-                    newWindow = newMainWindow();
+                    // VSEC01: a sealed persona unlocks on request
+                    // (one prompt each) or the window is skipped.
+                    if (!vaultUnlockForRestore(
+                            persona, &declinedUnlock, preExisting))
+                        continue;
+                    newWindow = newMainWindow(persona);
+                    if (!newWindow)
+                        continue;
+                    // The launch placeholder stays a pristine blank —
+                    // close it so a non-default session doesn't leave a
+                    // stray default window behind.
+                    if (preExisting
+                            && isPristineSessionWindow(preExisting))
+                        preExisting->close();
                 }
                 // The shell blob carries no tabs (saveState(false));
                 // the structured record set restores them.
@@ -1011,8 +1210,8 @@ bool BrowserApplication::restoreLastSession()
         // the old reader, and the next save writes the new file.
     }
 #endif
-    int version = 2;
     QList<QByteArray> windows;
+    QStringList windowProfiles;
     QBuffer buffer(&m_lastSession);
     QDataStream stream(&buffer);
     buffer.open(QIODevice::ReadOnly);
@@ -1021,7 +1220,9 @@ bool BrowserApplication::restoreLastSession()
     qint32 v;
     stream >> marker;
     stream >> v;
-    if (marker != BrowserApplicationMagic || v != version)
+    // v3 adds the per-window persona id ahead of each state blob; a v2
+    // blob (or older) restores every window on the default persona.
+    if (marker != BrowserApplicationMagic || (v != 2 && v != 3))
         return false;
 
     qint32 windowCount;
@@ -1035,12 +1236,17 @@ bool BrowserApplication::restoreLastSession()
     if (windowCount < 0 || windowCount > maxWindows)
         return false;
     for (qint32 i = 0; i < windowCount; ++i) {
+        QString profileId;
+        if (v >= 3)
+            stream >> profileId;
         QByteArray windowState;
         stream >> windowState;
         if (stream.status() != QDataStream::Ok)
             return false;
         windows.append(windowState);
+        windowProfiles.append(profileId);
     }
+    QSet<QString> declinedUnlock;
     {
         ProfileSettings settings;
         settings.beginGroup(QLatin1String("MainWindow"));
@@ -1051,11 +1257,29 @@ bool BrowserApplication::restoreLastSession()
         settings.setValue(QLatin1String("restoring"), true);
     }
     for (int i = 0; i < windows.count(); ++i) {
+        // A v2 blob (or a truncated v3 tail) leaves the id empty —
+        // restore on "default", never the ambient persona.
+        const QString rawPersona = windowProfiles.at(i);
+        const QString persona = normalizedWindowProfileId(
+            rawPersona.isEmpty() ? QStringLiteral("default")
+                                 : rawPersona);
+        BrowserMainWindow *preExisting =
+            (i == 0 && m_mainWindows.count() >= 1)
+            ? mainWindow() : nullptr;
         BrowserMainWindow *newWindow = nullptr;
-        if (i == 0 && m_mainWindows.count() >= 1) {
-            newWindow = mainWindow();
+        if (preExisting && preExisting->profileId() == persona) {
+            newWindow = preExisting;
         } else {
-            newWindow = newMainWindow();
+            // VSEC01: sealed personas get one unlock prompt each; a
+            // decline or a refused window skips that manifest slot.
+            if (!vaultUnlockForRestore(
+                    persona, &declinedUnlock, preExisting))
+                continue;
+            newWindow = newMainWindow(persona);
+            if (!newWindow)
+                continue;
+            if (preExisting && isPristineSessionWindow(preExisting))
+                preExisting->close();
         }
         newWindow->restoreState(windows.at(i));
     }
@@ -1110,14 +1334,29 @@ void BrowserApplication::openUrl(const QUrl &url)
                       " from the QDesktopServices handler:" << url;
         return;
     }
-    mainWindow()->tabWidget()->loadUrl(url);
+    // VSEC01: null when the ambient persona is sealed — the url is
+    // dropped rather than silently minting a window on a vault.
+    if (BrowserMainWindow *mw = mainWindow())
+        mw->tabWidget()->loadUrl(url);
 }
 
-BrowserMainWindow *BrowserApplication::newMainWindow()
+BrowserMainWindow *BrowserApplication::newMainWindow(const QString &profileId)
 {
     if (!m_mainWindows.isEmpty())
         mainWindow()->m_autoSaver->saveIfNeccessary();
-    BrowserMainWindow *browser = new BrowserMainWindow();
+    const QString bound = normalizedWindowProfileId(profileId);
+    // VSEC01: hard seal gate — a window must never exist on a Locked
+    // persona.  Its app-side stores would mint fresh plaintext into a
+    // dir the vault believes is packed away (the next unseal then
+    // refuses to overwrite it), while the user's sealed data stays
+    // unread.  The factory fails closed; the callers that own a
+    // prompt context — session restore, the postLaunch bring-up, the
+    // profile manager — run VaultUi::ensureUnlocked first.  Every
+    // caller MUST handle a null return.
+    if (!isTorMode() && ProfileVault::instance()->isLocked(bound))
+        return nullptr;
+    BrowserMainWindow *browser =
+        new BrowserMainWindow(nullptr, Qt::WindowFlags(), bound);
     m_mainWindows.prepend(browser);
     connect(this, &BrowserApplication::privacyChanged,
             browser, &BrowserMainWindow::privacyChanged);
@@ -1125,9 +1364,13 @@ BrowserMainWindow *BrowserApplication::newMainWindow()
     // SESS02: if this turns out to be the last browser window, a stray
     // visible top-level (a dialog outliving its parent window) would
     // keep the process running windowless — windowDestroyed() forces
-    // the clean exit the close was meant to be.
-    connect(browser, &QObject::destroyed,
-            this, &BrowserApplication::windowDestroyed);
+    // the clean exit the close was meant to be.  VSEC01: the lambda
+    // pins the CLOSING window's persona — the ambient
+    // activeProfileId() could be a different profile entirely, and
+    // auto-lock keyed to it would both miss this persona's last
+    // window and spuriously count against the focused one.
+    connect(browser, &QObject::destroyed, this,
+            [this, bound]() { windowDestroyed(bound); });
 #endif
     browser->show();
     if (m_mainWindows.count() == 1)
@@ -1135,11 +1378,11 @@ BrowserMainWindow *BrowserApplication::newMainWindow()
     return browser;
 }
 
-void BrowserApplication::windowDestroyed()
+void BrowserApplication::windowDestroyed(const QString &profileId)
 {
     // Defer past the destroyed() emission — the QPointer in
     // m_mainWindows does not clear until ~QObject unwinds.
-    QTimer::singleShot(0, this, [this]() {
+    QTimer::singleShot(0, this, [this, profileId]() {
         if (quitting)
             return;
         // Standalone smokes open and close windows in scripted order —
@@ -1147,6 +1390,16 @@ void BrowserApplication::windowDestroyed()
         if (isStandalone() && !isTorMode())
             return;
         clean();
+        // PVAULT03 + VSEC01: auto-lock runs on EVERY destroyed
+        // window, keyed to the persona the closing window was bound
+        // to — not just when the process goes windowless and not the
+        // ambient persona.  The vault itself decides whether that
+        // persona's last window is gone (openWindowCount counts live
+        // windows by binding), so closing a "work" window while a
+        // "default" window still stands locks "work" on schedule and
+        // never touches "default".
+        if (!isTorMode())
+            ProfileVault::instance()->noteWindowClosed(profileId);
         if (!m_mainWindows.isEmpty())
             return;
         // If no visible top-level survived, quitOnLastWindowClosed is
@@ -1177,10 +1430,11 @@ void BrowserApplication::windowDestroyed()
     });
 }
 
-BrowserMainWindow *BrowserApplication::newMainWindowInContainer(const QString &containerId)
+BrowserMainWindow *BrowserApplication::newMainWindowInContainer(
+    const QString &containerId, const QString &profileId)
 {
-    BrowserMainWindow *browser = newMainWindow();
-    if (containerId.isEmpty() || isPrivate() || isTorMode())
+    BrowserMainWindow *browser = newMainWindow(profileId);
+    if (!browser || containerId.isEmpty() || isPrivate() || isTorMode())
         return browser;
     TabWidget *tabs = browser->tabWidget();
     // The window constructor already made a default (inheriting) first
@@ -1215,21 +1469,36 @@ CookieJar *BrowserApplication::cookieJar()
     return CookieJar::instance(webEngineProfile());
 }
 
-QWebEngineProfile *BrowserApplication::webEngineProfile()
+QWebEngineProfile *BrowserApplication::webEngineProfileFor(const QString &profileId)
 {
-    // MIG11: the lazy profile singletons live in BrowserProfile so
-    // compiled modules share the same named "arora"/OTR profiles.
-    // prepareProfile() attaches the app-level services the first time a
-    // profile is handed out — this is where the off-the-record profile
-    // picks up its cookie jar, scheme handlers, download manager and
-    // adblock interceptor when private browsing starts.
+    // MPROF03: window-bound spelling of webEngineProfile() — the
+    // caller's persona resolves through BrowserProfile::profileFor so
+    // a "work"-bound window browses on "arktos-work" instead of the
+    // default "arktos" profile.  Mode profiles still win outright:
+    // tor takes the dedicated tor profile and private browsing the
+    // shared OTR overlay (memory-only — one unnamed profile safely
+    // serves every persona; the app-side stores gate on
+    // isOffTheRecord themselves).
     QWebEngineProfile *profile = isTorMode()
         ? BrowserProfile::torProfile()
         : isPrivate()
             ? BrowserProfile::privateProfile()
-            : BrowserProfile::normalProfile();
+            : BrowserProfile::profileFor(profileId);
     prepareProfile(profile);
     return profile;
+}
+
+QWebEngineProfile *BrowserApplication::webEngineProfile()
+{
+    // MIG11: the lazy profile singletons live in BrowserProfile so
+    // compiled modules share the same named "arktos"/OTR profiles.
+    // prepareProfile() attaches the app-level services the first time a
+    // profile is handed out — this is where the off-the-record profile
+    // picks up its cookie jar, scheme handlers, download manager and
+    // adblock interceptor when private browsing starts.  MPROF03: the
+    // ambient spelling — context-less callers get the focused window's
+    // persona.
+    return webEngineProfileFor(BrowserPaths::activeProfileId());
 }
 
 QWebEngineProfile *BrowserApplication::privateWebEngineProfile()
@@ -1284,15 +1553,23 @@ QIcon BrowserApplication::icon(const QUrl &url)
 
 QString BrowserApplication::installedDataDirectory()
 {
-#if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
-    // PACK01: prefer the relocatable-bundle layout (<bindir>/../share/arora)
+#if defined(Q_OS_UNIX)
+    // PACK01: prefer the relocatable-bundle layout (<bindir>/../share/arktos)
     // over the compile-time PKGDATADIR so an unpacked bundle finds its
     // shipped translations and useragents.xml wherever it is extracted.
-    const QString bundled = QDir(qApp->applicationDirPath()
-                                 + QLatin1String("/../share/arora"))
-                            .absolutePath();
-    if (QFileInfo::exists(bundled))
-        return bundled;
+    // On macOS <bindir> is Contents/MacOS, so this resolves to
+    // Contents/share/arktos — and Contents/Resources is the conventional
+    // macOS data location, checked first.
+    const QString appDir = qApp->applicationDirPath();
+    for (const QLatin1String rel : {
+#ifdef Q_OS_MACOS
+             QLatin1String("/../Resources/share/arktos"),
+#endif
+             QLatin1String("/../share/arktos")}) {
+        const QString bundled = QDir(appDir + rel).absolutePath();
+        if (QFileInfo::exists(bundled))
+            return bundled;
+    }
 #endif
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS) && defined(PKGDATADIR)
     return QLatin1String(PKGDATADIR);
@@ -1446,6 +1723,62 @@ QString BrowserApplication::defaultEngineId()
 TorManager *BrowserApplication::torManager() const
 {
     return m_torManager;
+}
+
+bool BrowserApplication::isTorProxyWarmed() const
+{
+    return m_torProxyWarmed;
+}
+
+// TOR17: Chromium's network service re-reads QNetworkProxy only from a
+// lazy poll inside proxy resolution — and the request that triggers
+// the poll still resolves on the STALE endpoint, so the first
+// navigation after every setApplicationProxy() eats a
+// net::ERR_PROXY_CONNECTION_FAILED on the fail-closed port (measured
+// on 6.12: the sacrificial request at +490ms post-switch still failed;
+// every later one used the new config).  Feed that stale read a
+// probe on the tor profile instead of the user's search; the queue
+// gate (WebView::torMustQueue) holds remote navigations until the
+// probe settles so the stale read is never user-facing.
+void BrowserApplication::warmTorProxy()
+{
+    m_torProxyWarmed = false;
+    const qint64 seq = ++m_torProxyWarmSeq;
+    if (m_torProxyProbe) {
+        // A restart re-points the proxy and re-warms — a still-flying
+        // probe from the last round must not settle this one.
+        m_torProxyProbe->disconnect(this);
+        m_torProxyProbe->triggerAction(QWebEnginePage::Stop);
+        m_torProxyProbe->deleteLater();
+    }
+    QWebEngineProfile *profile = BrowserProfile::torProfile();
+    prepareProfile(profile);
+    m_torProxyProbe = new QWebEnginePage(profile, this);
+    connect(m_torProxyProbe, &QWebEnginePage::loadFinished,
+            this, [this, seq](bool) {
+        if (seq == m_torProxyWarmSeq)
+            markTorProxyWarmed();
+    });
+    // check.torproject.org is the canonical "is tor working" endpoint;
+    // the probe's own outcome is irrelevant — its resolution refreshes
+    // the proxy config either way.
+    m_torProxyProbe->load(QUrl(QStringLiteral(
+        "https://check.torproject.org/api/ip")));
+    // The resolution runs within milliseconds of the request entering
+    // the network service — never hold user navigations on the rest
+    // of the probe's lifecycle.
+    QTimer::singleShot(3000, this, [this, seq]() {
+        if (seq == m_torProxyWarmSeq)
+            markTorProxyWarmed();
+    });
+}
+
+void BrowserApplication::markTorProxyWarmed()
+{
+    if (m_torProxyWarmed)
+        return;
+    m_torProxyWarmed = true;
+    emit torProxyWarmed();
 }
 
 bool BrowserApplication::isUrlAllowedOnTorArgv(const QString &operand)

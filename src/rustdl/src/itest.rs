@@ -631,7 +631,7 @@ fn segmented_with_cookie_file_and_full_options() {
     // The option surface the Qt side sends with a real page —
     // UA + first_party + scope + referer policy all at once.
     let opts = cstr(&format!(
-        r#"{{"user_agent":"AroraTest/1.0","first_party":"http://127.0.0.1:{}/warmup","scope":"","referer_policy":0}}"#,
+        r#"{{"user_agent":"ArktosTest/1.0","first_party":"http://127.0.0.1:{}/warmup","scope":"","referer_policy":0}}"#,
         fx.port
     ));
     let mut h: DlHandle = 0;

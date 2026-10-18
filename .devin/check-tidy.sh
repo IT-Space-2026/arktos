@@ -14,14 +14,14 @@
 # build-time audit tool, not a shipped dependency.
 #
 # Env:
-#   ARORA_TIDY_BUILD=dir   build tree with generated Makefiles +
+#   ARKTOS_TIDY_BUILD=dir   build tree with generated Makefiles +
 #                          moc/ui/qrc artifacts (default:
-#                          /tmp/arora-audit01/static-tree — the
+#                          /tmp/arktos-audit01/static-tree — the
 #                          check-static pass-1 tree fits exactly)
-#   ARORA_TIDY_DIRS="dirs" Makefile search roots under the build tree
+#   ARKTOS_TIDY_DIRS="dirs" Makefile search roots under the build tree
 #                          (default: "src tools")
-#   ARORA_TIDY_JOBS=N      parallel clang-tidy jobs (default 4)
-#   ARORA_TIDY_CHECKS=str  check glob list
+#   ARKTOS_TIDY_JOBS=N      parallel clang-tidy jobs (default 4)
+#   ARKTOS_TIDY_CHECKS=str  check glob list
 #                          (default 'bugprone-*,cert-*,clang-analyzer-*')
 #   CLANG_TIDY=path        clang-tidy binary
 #                          (default ~/venvs/aqt/bin/clang-tidy, then
@@ -31,17 +31,17 @@
 # findings are triaged into .devin/AUDIT01-report.md by hand.
 set -u
 
-BUILD=${ARORA_TIDY_BUILD:-/tmp/arora-audit01/static-tree}
-DIRS=${ARORA_TIDY_DIRS:-"src tools"}
-JOBS=${ARORA_TIDY_JOBS:-4}
-CHECKS=${ARORA_TIDY_CHECKS:-'bugprone-*,cert-*,clang-analyzer-*'}
+BUILD=${ARKTOS_TIDY_BUILD:-/tmp/arktos-audit01/static-tree}
+DIRS=${ARKTOS_TIDY_DIRS:-"src tools"}
+JOBS=${ARKTOS_TIDY_JOBS:-4}
+CHECKS=${ARKTOS_TIDY_CHECKS:-'bugprone-*,cert-*,clang-analyzer-*'}
 TIDY=${CLANG_TIDY:-$HOME/venvs/aqt/bin/clang-tidy}
 command -v "$TIDY" >/dev/null 2>&1 || TIDY=$(command -v clang-tidy || true)
 
 die() { echo "check-tidy: $*" >&2; exit 1; }
 
 [ -n "$TIDY" ] || die "clang-tidy not found (pip wheel expected in ~/venvs/aqt)"
-[ -d "$BUILD/src" ] || die "ARORA_TIDY_BUILD=$BUILD is not a build tree"
+[ -d "$BUILD/src" ] || die "ARKTOS_TIDY_BUILD=$BUILD is not a build tree"
 
 cd "$BUILD" || die "cannot cd to $BUILD"
 # shellcheck disable=SC1090

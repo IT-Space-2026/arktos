@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,8 +17,8 @@
  * Boston, MA  02110-1301  USA
  */
 
-#ifndef ARORA_ARGON2ID_H
-#define ARORA_ARGON2ID_H
+#ifndef ARKTOS_ARGON2ID_H
+#define ARKTOS_ARGON2ID_H
 
 // Bundled Argon2id (version 0x13) key-derivation, pure C99, no OS
 // dependencies — SEC13 requires the master-passphrase KDF to build
@@ -38,7 +38,7 @@ extern "C" {
 // Argon2id with the given time cost (passes), memory cost (KiB) and
 // lane count.  Returns 0 on success, -1 on invalid parameters or
 // allocation failure.  The output buffer is always wiped on failure.
-int arora_argon2id(void *out, size_t outlen,
+int arktos_argon2id(void *out, size_t outlen,
                    const void *password, size_t passwordLen,
                    const void *salt, size_t saltLen,
                    uint32_t timeCost, uint32_t memoryKiB,
@@ -48,4 +48,4 @@ int arora_argon2id(void *out, size_t outlen,
 }
 #endif
 
-#endif // ARORA_ARGON2ID_H
+#endif // ARKTOS_ARGON2ID_H

@@ -1,6 +1,6 @@
 // SAFE06: anti-fingerprinting countermeasures, installed on the
 // profile as a QWebEngineScript (DocumentCreation, MainWorld,
-// subframes included, name "arora:fingerprint") by
+// subframes included, name "arktos:fingerprint") by
 // BrowserProfile::installFingerprintProtection when
 // privacy/fingerprintProtection is on — always on for the tor
 // profile.  MainWorld is required: the spoofed globals must be the
@@ -215,7 +215,7 @@
     spoofNavigator('deviceMemory', 8);
 
     // Plugin enumeration: real Chrome still exposes the internal
-    // PDF-viewer plugins while Arora has none — the uniform answer
+    // PDF-viewer plugins while Arktos has none — the uniform answer
     // is an empty list like Tor Browser's.
     try {
         var emptyPlugins = Object.create(PluginArray.prototype);

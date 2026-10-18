@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,12 +18,12 @@
  */
 #include "statusbarwidgets.h"
 
-#include "arorastyle.h"
+#include "arktosstyle.h"
 #include "downloadmanager.h"
 #include "engineinterface.h"
 #include "enginetab.h"
 #include "webview.h"
-#include "utils/aroraicon.h"
+#include "utils/arktosicon.h"
 
 #include <qboxlayout.h>
 #include <qcoreapplication.h>
@@ -49,7 +49,7 @@ LoadingIndicator::LoadingIndicator(QWidget *parent)
 
     QHBoxLayout *layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(AroraStyle::Spacing::Small);
+    layout->setSpacing(ArktosStyle::Spacing::Small);
     m_bar->setRange(0, 100);
     m_bar->setTextVisible(false);
     m_bar->setFixedSize(72, 10);
@@ -163,7 +163,7 @@ ZoomControl::ZoomControl(QWidget *parent)
     layout->addWidget(m_valueButton);
     layout->addWidget(m_inButton);
 
-    m_outButton->setIcon(AroraIcon::getChrome(QLatin1String("zoom-out")));
+    m_outButton->setIcon(ArktosIcon::getChrome(QLatin1String("zoom-out")));
     m_outButton->setAutoRaise(true);
     m_outButton->setIconSize(QSize(14, 14));
     m_outButton->setToolTip(tr("Zoom Out"));
@@ -174,7 +174,7 @@ ZoomControl::ZoomControl(QWidget *parent)
     // not jitter the status bar on every zoom step.
     m_valueButton->setMinimumWidth(
         fontMetrics().horizontalAdvance(QLatin1String("300%")) + 12);
-    m_inButton->setIcon(AroraIcon::getChrome(QLatin1String("zoom-in")));
+    m_inButton->setIcon(ArktosIcon::getChrome(QLatin1String("zoom-in")));
     m_inButton->setAutoRaise(true);
     m_inButton->setIconSize(QSize(14, 14));
     m_inButton->setToolTip(tr("Zoom In"));
@@ -223,8 +223,8 @@ void ZoomControl::useOnDarkIcons()
 {
     // ICONS06: flat-tinted glyphs, same as the nav cluster — Qt's
     // generated Disabled ghosting washed out on the violet bar.
-    m_outButton->setIcon(AroraIcon::getTinted(QLatin1String("zoom-out")));
-    m_inButton->setIcon(AroraIcon::getTinted(QLatin1String("zoom-in")));
+    m_outButton->setIcon(ArktosIcon::getTinted(QLatin1String("zoom-out")));
+    m_inButton->setIcon(ArktosIcon::getTinted(QLatin1String("zoom-in")));
 }
 
 void ZoomControl::setZoom(int zoom)
@@ -330,13 +330,15 @@ void MemIndicator::refresh()
                         : tr("MEM %1").arg(formatRss(kb)))
                      : tr("MEM —"));
     m_label->setToolTip(shared
-        ? tr("Resident memory of the whole Arora process — this "
+        ? tr("Resident memory of the whole Arktos process — this "
              "engine renders in-process, so no per-tab figure "
              "exists; the number covers the chrome and every other "
              "tab too.")
         : tr("Resident memory of the current tab's renderer "
              "process, read from /proc/<pid>/status every "
-             "2 seconds."));
+             "2 seconds. It rises as you navigate — the engine "
+             "holds the pages for fast back/forward and reclaims "
+             "the memory when the system needs it."));
 }
 
 qint64 MemIndicator::residentMemoryKb(qint64 pid)

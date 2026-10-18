@@ -18,11 +18,11 @@
 # the end when the markers are absent).
 #
 # Env:
-#   ARORA_RUST_COVERAGE_MIN=N  per-crate line-coverage gate (default 85;
+#   ARKTOS_RUST_COVERAGE_MIN=N  per-crate line-coverage gate (default 85;
 #                               set 0 for report-only)
-#   ARORA_RUSTCOV_MIN=N        legacy alias for the gate (kept for
+#   ARKTOS_RUSTCOV_MIN=N        legacy alias for the gate (kept for
 #                               existing docs/CI invocations)
-#   ARORA_RUSTCOV_JOBS=N       cargo build jobs for the instrumented
+#   ARKTOS_RUSTCOV_JOBS=N       cargo build jobs for the instrumented
 #                               build (default 2 — the loop's memory
 #                               watchdog)
 #
@@ -35,8 +35,8 @@ set -u
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 REPORT_MD="$ROOT/.devin/COVERAGE.md"
-MIN=${ARORA_RUST_COVERAGE_MIN:-${ARORA_RUSTCOV_MIN:-85}}
-JOBS=${ARORA_RUSTCOV_JOBS:-2}
+MIN=${ARKTOS_RUST_COVERAGE_MIN:-${ARKTOS_RUSTCOV_MIN:-85}}
+JOBS=${ARKTOS_RUSTCOV_JOBS:-2}
 
 note() { echo "check-rustcoverage: $*"; }
 die() { echo "check-rustcoverage: FAIL — $*" >&2; exit 1; }
@@ -118,7 +118,7 @@ body = [start, "", "## Rust crates (COV05)", "",
         " `cargo llvm-cov --workspace --json --summary-only`,"
         f" gated at {gate}% minimum per crate by"
         " `make check` (.devin/check-rustcoverage.sh;"
-        " `ARORA_RUST_COVERAGE_MIN` overrides).", "",
+        " `ARKTOS_RUST_COVERAGE_MIN` overrides).", "",
         "| Crate | Lines |", "|-------|-------|"]
 for d, p in rows:
     body.append(f"| {d} | {p}% |")

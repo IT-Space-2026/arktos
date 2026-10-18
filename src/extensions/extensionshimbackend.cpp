@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -101,11 +101,11 @@ int idFor(const QObject *object)
     if (!object)
         return -1;
     static int next = 1;
-    const QVariant v = object->property("aroraExtObjectId");
+    const QVariant v = object->property("arktosExtObjectId");
     if (v.isValid() && v.toInt() > 0)
         return v.toInt();
     const int id = next++;
-    const_cast<QObject *>(object)->setProperty("aroraExtObjectId", id);
+    const_cast<QObject *>(object)->setProperty("arktosExtObjectId", id);
     return id;
 }
 
@@ -1283,7 +1283,7 @@ QJsonObject ExtensionShimBackend::invokeContextMenus(
 }
 
 // -------------------------------------------------------------------
-// chrome.sidePanel — Arora has no side-panel surface; options are
+// chrome.sidePanel — Arktos has no side-panel surface; options are
 // recorded honestly so EXT17/later work can render them.
 // -------------------------------------------------------------------
 
@@ -1308,7 +1308,7 @@ QJsonObject ExtensionShimBackend::invokeSidePanel(
 }
 
 // -------------------------------------------------------------------
-// chrome.notifications — no notification presenter exists in Arora;
+// chrome.notifications — no notification presenter exists in Arktos;
 // mutations answer a typed 'unsupported' (the shim records the gap),
 // getAll answers the honest empty set.
 // -------------------------------------------------------------------

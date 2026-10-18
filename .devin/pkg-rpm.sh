@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # pkg-rpm.sh — PKG03 RPM packaging driver (openSUSE-compatible spec).
 #
-# Produces dist/arora-<ver>-<rel>.<arch>.rpm from rpm/arora.spec. The
+# Produces dist/arktos-<ver>-<rel>.<arch>.rpm from rpm/arktos.spec. The
 # package carries the SAME payload as the .deb (PKG01): the
 # self-contained bundle from BuildProcess/bundle-linux.sh mapped onto
-# the FHS — /usr/bin/arora launcher + private Qt 6.12 / QtWebEngine
-# under /usr/lib/arora. The rust crates link statically (.a) so there
+# the FHS — /usr/bin/arktos launcher + private Qt 6.12 / QtWebEngine
+# under /usr/lib/arktos. The rust crates link statically (.a) so there
 # are no rust .so artifacts to ship; libservo_embed does not exist yet
 # (ENG03 gates it).
 #
@@ -21,7 +21,7 @@
 #                the staged tree (DIR defaults to rpm/buildroot); with
 #                an .rpm argument, extract + ldd + headless launch when
 #                rpm tooling exists
-#   srctar       dist/arora-<ver>.tar.gz — git ls-files export like
+#   srctar       dist/arktos-<ver>.tar.gz — git ls-files export like
 #                pkg-flatpak.sh (dirty tree; --clean uses git archive)
 #   pack         rpmbuild -bb into dist/ (requires rpmbuild)
 #   container    print the openSUSE container build command for hosts
@@ -33,20 +33,20 @@
 # the local verification is the spec+stage legs; the binary rpm build
 # is verified via the container path.
 #
-# Env: QTDIR, ARORA_PKG_JOBS (default 2), ARORA_VERSION (default 0.2),
-#      ARORA_QMAKE_CONFIG, ARORA_PKG_KEEP=1.
+# Env: QTDIR, ARKTOS_PKG_JOBS (default 2), ARKTOS_VERSION (default 1.0),
+#      ARKTOS_QMAKE_CONFIG, ARKTOS_PKG_KEEP=1.
 
 set -euo pipefail
 
 SRCROOT="$(cd "$(dirname "$0")/.." && pwd)"
 QTDIR="${QTDIR:-$HOME/Qt/6.12.0/gcc_64}"
-JOBS="${ARORA_PKG_JOBS:-2}"
-VER="${ARORA_VERSION:-0.2}"
-PKG=arora
-SPEC="$SRCROOT/rpm/arora.spec"
+JOBS="${ARKTOS_PKG_JOBS:-2}"
+VER="${ARKTOS_VERSION:-1.0}"
+PKG=arktos
+SPEC="$SRCROOT/rpm/arktos.spec"
 BUILDROOT="$SRCROOT/rpm/buildroot"
 DIST="$SRCROOT/dist"
-LIBDIR=usr/lib/arora   # bundle payload home inside the package
+LIBDIR=usr/lib/arktos   # bundle payload home inside the package
 
 fail() { echo "pkg-rpm: FAIL: $*" >&2; exit 1; }
 note() { echo "pkg-rpm: $*"; }
@@ -59,12 +59,12 @@ cmd_build() {
     for c in rustdl rustcore; do
         d="$SRCROOT/src/$c"
         [ -f "$d/Cargo.toml" ] || continue
-        [ -f "$d/target/release/libarora_$c.a" ] && continue
+        [ -f "$d/target/release/libarktos_$c.a" ] && continue
         command -v cargo >/dev/null || continue
         (cd "$d" && cargo build --release --locked) \
             || fail "cargo build failed: $c"
     done
-    QTDIR="$QTDIR" ARORA_PKG_JOBS="$JOBS" \
+    QTDIR="$QTDIR" ARKTOS_PKG_JOBS="$JOBS" \
         "$SRCROOT/.devin/pkg-deb.sh" build
 }
 
@@ -72,7 +72,7 @@ cmd_stage() {
     local D="$1"
     # One shared payload implementation: identical FHS tree for both
     # package formats, byte-for-byte consistent with the deb.
-    QTDIR="$QTDIR" ARORA_PKG_JOBS="$JOBS" \
+    QTDIR="$QTDIR" ARKTOS_PKG_JOBS="$JOBS" \
         "$SRCROOT/.devin/pkg-deb.sh" stage "$D"
     note "staged $D"
 }
@@ -196,7 +196,7 @@ cmd_verify() {
         f="${f#$D}"
         local owned="" d
         for e in $entries; do
-            # unquoted RHS: glob %files entries (arora.1*) match too
+            # unquoted RHS: glob %files entries (arktos.1*) match too
             [[ "$f" == $e ]] && owned=1 && break
         done
         for d in $dirs; do
@@ -242,8 +242,8 @@ verify_rpm() {
     [ -f "$rpm" ] || fail "no .rpm at $rpm"
     command -v rpm2cpio >/dev/null \
         || fail "no rpm tooling on this host — run 'pkg-rpm.sh container'"
-    R="$(mktemp -d /tmp/arora-rpmverify.XXXXXX)"
-    [ -n "${ARORA_PKG_KEEP:-}" ] || trap "rm -rf '$R'" EXIT
+    R="$(mktemp -d /tmp/arktos-rpmverify.XXXXXX)"
+    [ -n "${ARKTOS_PKG_KEEP:-}" ] || trap "rm -rf '$R'" EXIT
     (cd "$R" && rpm2cpio "$rpm" | cpio -idm --quiet)
 
     # payload coverage: the spec's %files paths must all be in the rpm
@@ -262,20 +262,20 @@ verify_rpm() {
     m=$(bwrap --dev-bind / / --tmpfs "$QTDIR" -- \
         env -i PATH=/usr/bin:/bin \
         LD_LIBRARY_PATH="$R/$LIBDIR/lib" \
-        ldd "$R/$LIBDIR/bin/arora" \
+        ldd "$R/$LIBDIR/bin/arktos" \
             "$R/$LIBDIR/libexec/QtWebEngineProcess" 2>&1 \
         | grep -cE 'not found' || true)
     [ "$m" -eq 0 ] || fail "$m unresolved libs in rpm payload"
 
     mkdir -p "$R/home"
-    sed "s|/usr/lib/arora|$R/usr/lib/arora|g" \
-        "$R/usr/bin/arora" > "$R/arora-rebased"
-    chmod 0755 "$R/arora-rebased"
+    sed "s|/usr/lib/arktos|$R/usr/lib/arktos|g" \
+        "$R/usr/bin/arktos" > "$R/arktos-rebased"
+    chmod 0755 "$R/arktos-rebased"
     bwrap --dev-bind / / --tmpfs "$QTDIR" -- \
         env -i HOME="$R/home" PATH=/usr/bin:/bin \
         QT_QPA_PLATFORM=offscreen \
         QTWEBENGINE_CHROMIUM_FLAGS=--disable-gpu \
-        "$R/arora-rebased" --quit-after-load >"$R/launch.log" 2>&1 || {
+        "$R/arktos-rebased" --quit-after-load >"$R/launch.log" 2>&1 || {
             cat "$R/launch.log" >&2
             fail "installed binary did not launch (log above)"
         }
@@ -287,8 +287,8 @@ verify_rpm() {
 cmd_srctar() {
     local out="$DIST/$PKG-$VER.tar.gz" tmp mode="${1:-dirty}"
     mkdir -p "$DIST"
-    tmp="$(mktemp -d /tmp/arora-srctar.XXXXXX)"
-    [ -n "${ARORA_PKG_KEEP:-}" ] || trap "rm -rf '$tmp'" EXIT
+    tmp="$(mktemp -d /tmp/arktos-srctar.XXXXXX)"
+    [ -n "${ARKTOS_PKG_KEEP:-}" ] || trap "rm -rf '$tmp'" EXIT
     mkdir -p "$tmp/$PKG-$VER"
     if [ "$mode" = clean ]; then
         git -C "$SRCROOT" archive HEAD | tar -x -C "$tmp/$PKG-$VER"
@@ -298,8 +298,8 @@ cmd_srctar() {
             | (cd "$SRCROOT" && tar --null -cf - -T -) \
             | tar -x -C "$tmp/$PKG-$VER"
     fi
-    [ -f "$tmp/$PKG-$VER/rpm/arora.spec" ] \
-        || fail "export has no rpm/arora.spec"
+    [ -f "$tmp/$PKG-$VER/rpm/arktos.spec" ] \
+        || fail "export has no rpm/arktos.spec"
     tar -czf "$out" -C "$tmp" "$PKG-$VER"
     note "wrote $out"
 }
@@ -335,13 +335,13 @@ container — bind-mount the tree and the relocatable Qt:
       opensuse/tumbleweed bash -lc '
         zypper --non-interactive install -y rpm-build gcc-c++ make git binutils file cargo rust &&
         cd /src && QTDIR=/qt/6.12.0/gcc_64 ./.devin/pkg-rpm.sh pack &&
-        ./.devin/pkg-rpm.sh verify dist/arora-*.rpm'
+        ./.devin/pkg-rpm.sh verify dist/arktos-*.rpm'
 
 (docker works identically.) zypper and the cargo crate fetch in
 %build need network inside the container; the qt6-*-devel
 BuildRequires are the system-Qt names for documentation/OBS — the
 bundled payload uses the mounted Qt so they need not be installed for
-this local rpmbuild. Result: dist/arora-$VER-0.*.rpm
+this local rpmbuild. Result: dist/arktos-$VER-0.*.rpm
 EOF
 }
 

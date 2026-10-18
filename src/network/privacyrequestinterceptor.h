@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -332,10 +332,35 @@ public:
     // filter list), so the match is memory-safe over attacker
     // URLs.  strippedUrl() is the pure decision both interceptors
     // redirect through: the cleaned URL, or `url` unchanged when no
-    // rule fired — and when Arora is built without CONFIG+=rustcore,
+    // rule fired — and when Arktos is built without CONFIG+=rustcore,
     // or the privacy/stripTrackingParams toggle (default on) is off.
     static bool stripTrackingParamsEnabled();
     static QUrl strippedUrl(const QUrl &url);
+
+    // POL04: per-site link-cleaning exemptions behind the shield
+    // panel's "Clean tracking links" row — same session/persistent
+    // split as allowHttpForHost: the policy keeps the live host sets,
+    // the site-decision store (or QSettings in no-rust builds) keeps
+    // the durable rows loaded into the policy snapshot.
+    static bool isUrlCleanExempt(const QString &host);
+    static void allowUrlCleanExempt(const QString &host, bool persistent);
+    static void clearUrlCleanExempt(const QString &host);
+    static QStringList urlCleanExemptHosts();
+
+    // POL04: per-page cleaning tally behind the shield panel's
+    // "N trackers removed" line.  The cleaning stage reports how many
+    // tracker units a redirect dropped (stripped params + adopted
+    // unwrap hops) on the verdict; each interceptor calls
+    // noteMainFrameRequest() for every top-level request — a request
+    // that is NOT the marked cleaned URL of the previous cleaning
+    // redirect settles that host's count — and noteCleanedRedirect()
+    // whenever a redirect verdict carries one on.  The count a page
+    // displays is therefore exactly what its own navigation cleaned:
+    // self-resetting per load, no GUI-side baseline to race.
+    static void noteMainFrameRequest(const QUrl &url);
+    static void noteCleanedRedirect(const QUrl &to, int removed);
+    static int trackersRemovedCount(const QString &host);
+    static void resetTrackerCounts();   // test seam
 
     // DLACC04: the loopback/private/LAN/.onion classifier behind the
     // https-first/https-only exemptions, shared with the rustdl
@@ -349,7 +374,7 @@ public:
     // seed ∪ <data dir>/blocklist-domains.txt, exact + parent-suffix
     // match; no remote lookups ever).  A main-frame navigation to a
     // listed host is refused and WebPage shows the
-    // arora-site-block: warning interstitial; "proceed" remembers the
+    // arktos-site-block: warning interstitial; "proceed" remembers the
     // host for the session only (the choice is logged, nothing is
     // persisted — a durable bypass of a listed hostile domain is a
     // foot-gun SAFE01's http exception can afford to be and this list

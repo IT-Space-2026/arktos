@@ -762,8 +762,8 @@ void tst_DownloadManager::externalHandler()
         "file:///etc/passwd",
         "data:text/plain;base64,aGk=",
         "blob:https://example.com/id",
-        "arora-resource:noop.js",
-        "arora-file:///tmp",
+        "arktos-resource:noop.js",
+        "arktos-file:///tmp",
         "smb://evil.example/share",
         "mailto:a@b.c",
     };
@@ -1252,14 +1252,14 @@ void tst_DownloadManager::revealTarget()
 
 // DOWN03: the launch path itself.  Only the guaranteed-safe legs run
 // in the suite — the real reveal spawns the DE's file manager, so it
-// is gated behind ARORA_LIVE_FM for manual verification on a live
+// is gated behind ARKTOS_LIVE_FM for manual verification on a live
 // session.
 void tst_DownloadManager::revealInFileManager()
 {
     // Nothing to reveal must never launch or crash.
     QVERIFY(!DownloadItem::revealInFileManager(QString()));
 
-    if (!qEnvironmentVariableIsSet("ARORA_LIVE_FM"))
+    if (!qEnvironmentVariableIsSet("ARKTOS_LIVE_FM"))
         return;
 
     QTemporaryDir dir;

@@ -387,7 +387,7 @@ mod tests {
     fn article_extracts() {
         let v = verdict(
             &article_page(),
-            Some("file:///tmp/arora-reader-smoke/article.html"),
+            Some("file:///tmp/arktos-reader-smoke/article.html"),
         );
         assert!(v["probably"].as_bool().unwrap());
         assert!(v["ok"].as_bool().unwrap(), "verdict: {v}");

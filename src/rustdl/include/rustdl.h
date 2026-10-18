@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,11 +17,11 @@
  * Boston, MA  02110-1301  USA
  */
 
-#ifndef ARORA_RUSTDL_H
-#define ARORA_RUSTDL_H
+#ifndef ARKTOS_RUSTDL_H
+#define ARKTOS_RUSTDL_H
 
 /*
- * C ABI for libarora_rustdl — the accelerated download engine
+ * C ABI for libarktos_rustdl — the accelerated download engine
  * (DLACC03/DLACC06).  Rules, mirroring rustcore:
  *
  *  - Fallible functions return DlStatus; DL_OK is the only success.
@@ -203,4 +203,4 @@ char *dl_output_path(DlHandle handle);
 }
 #endif
 
-#endif // ARORA_RUSTDL_H
+#endif // ARKTOS_RUSTDL_H

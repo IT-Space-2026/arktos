@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2026, The Arora Authors
+ * Copyright (c) 2026, The Arktos Authors
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -36,15 +36,15 @@
 #include <qmutex.h>
 
 class QUrl;
-struct AroraAdBlockEngine;
+struct ArktosAdBlockEngine;
 
 /*
     Thin Qt wrapper over Brave's adblock-rust engine, reached through
     the C FFI static library in rust/.  Only compiled when qmake is
-    invoked with CONFIG+=adblock_rust (DEFINES += ARORA_ADBLOCK_RUST);
+    invoked with CONFIG+=adblock_rust (DEFINES += ARKTOS_ADBLOCK_RUST);
     the native C++ matcher remains the default engine.
 
-    Arora keeps its own subscription manager, UI and on-disk rule
+    Arktos keeps its own subscription manager, UI and on-disk rule
     storage; this class only does the matching.  AdBlockNetwork
     serializes the enabled subscriptions' rules into ABP/uBO list
     text and hands them to adblock::Engine, which natively applies
@@ -84,9 +84,9 @@ private:
     AdBlockRustEngine();
     Q_DISABLE_COPY_MOVE(AdBlockRustEngine)
 
-    AroraAdBlockEngine *m_engine;
+    ArktosAdBlockEngine *m_engine;
     // resolved data: stub URL -> canonical resource name, so a
-    // $redirect decision can be served through the arora-resource:
+    // $redirect decision can be served through the arktos-resource:
     // handler instead of a data: redirect Chromium refuses.
     QHash<QByteArray, QByteArray> m_stubUrls;
     mutable QMutex m_mutex;

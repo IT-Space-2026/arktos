@@ -6,13 +6,13 @@
 #
 #   BuildProcess/fetch-tor.sh [version] [destdir]
 #
-# destdir defaults to ${XDG_DATA_HOME:-~/.local/share}/Arora/Arora/tor
+# destdir defaults to ${XDG_DATA_HOME:-~/.local/share}/Arktos/Arktos/tor
 # so the binary lands at <AppDataLocation>/tor/tor.  Set
-# ARORA_TOR_PREFIX to override.  The download is verified against the
+# ARKTOS_TOR_PREFIX to override.  The download is verified against the
 # sha256sums-unsigned-build.txt published on dist.torproject.org.
 set -eu
 
-VERSION=${1:-15.0.24}
+VERSION=${1:-15.0.25}
 
 case "$(uname -s)" in
     Linux)  os=linux ;;
@@ -26,7 +26,7 @@ case "$(uname -m)" in
     *)              echo "unsupported arch: $(uname -m)" >&2; exit 1 ;;
 esac
 
-DEST=${ARORA_TOR_PREFIX:-${XDG_DATA_HOME:-$HOME/.local/share}/Arora/Arora}/tor
+DEST=${ARKTOS_TOR_PREFIX:-${XDG_DATA_HOME:-$HOME/.local/share}/Arktos/Arktos}/tor
 TARBALL="tor-expert-bundle-${os}-${arch}-${VERSION}.tar.gz"
 BASE="https://dist.torproject.org/torbrowser/${VERSION}"
 SUMS="sha256sums-unsigned-build.txt"

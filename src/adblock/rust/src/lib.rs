@@ -1,12 +1,12 @@
-//! C FFI wrapper around Brave's adblock-rust engine for Arora (ADB02).
+//! C FFI wrapper around Brave's adblock-rust engine for Arktos (ADB02).
 //!
-//! Arora keeps its own subscription manager, rule storage and cosmetic
+//! Arktos keeps its own subscription manager, rule storage and cosmetic
 //! pipeline; this library only delegates the heavy matching work:
 //!
-//!   * `arora_adblock_engine_new`    — build an Engine from filter text
-//!   * `arora_adblock_engine_add_resource` — register a $redirect= stub
-//!   * `arora_adblock_engine_check`  — block/allow/redirect/removeparam
-//!   * `arora_adblock_engine_cosmetic` — hide selectors + injected script
+//!   * `arktos_adblock_engine_new`    — build an Engine from filter text
+//!   * `arktos_adblock_engine_add_resource` — register a $redirect= stub
+//!   * `arktos_adblock_engine_check`  — block/allow/redirect/removeparam
+//!   * `arktos_adblock_engine_cosmetic` — hide selectors + injected script
 //!
 //! All entry points are panic-safe (catch_unwind) and treat their inputs
 //! as untrusted: bad pointers or unparseable requests degrade to
@@ -26,20 +26,20 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 ///
 /// `use_resources` replaces the engine's whole resource storage on
 /// every call, so resources are accumulated here and replayed in full.
-pub struct AroraAdBlockEngine {
+pub struct ArktosAdBlockEngine {
     engine: Engine,
     resources: Vec<Resource>,
 }
 
-/// Decision returned by arora_adblock_engine_check().
+/// Decision returned by arktos_adblock_engine_check().
 ///
 /// `redirect_url` and `rewritten_url` are heap-allocated C strings the
-/// caller must release with arora_adblock_string_free().  `redirect_url`
+/// caller must release with arktos_adblock_string_free().  `redirect_url`
 /// carries a `data:` URL produced from a bundled stub resource when a
 /// `$redirect=` rule matched; `rewritten_url` is the URL with
 /// `$removeparam` parameters stripped.
 #[repr(C)]
-pub struct AroraCheckResult {
+pub struct ArktosCheckResult {
     /// 0 = allow, 1 = block, 2 = redirect to redirect_url.
     pub action: i32,
     pub redirect_url: *mut c_char,
@@ -50,7 +50,7 @@ pub struct AroraCheckResult {
 /// `{"hide":[selectors...],"generichide":bool,"script":"..."}`.
 /// `script` is empty unless scriptlet resources were registered.
 #[repr(C)]
-pub struct AroraCosmeticResult {
+pub struct ArktosCosmeticResult {
     pub json: *mut c_char,
 }
 
@@ -65,8 +65,8 @@ fn to_c_string(s: String) -> *mut c_char {
     CString::new(s).map_or(ptr::null_mut(), |c| c.into_raw())
 }
 
-fn allow_result() -> AroraCheckResult {
-    AroraCheckResult {
+fn allow_result() -> ArktosCheckResult {
+    ArktosCheckResult {
         action: 0,
         redirect_url: ptr::null_mut(),
         rewritten_url: ptr::null_mut(),
@@ -78,12 +78,12 @@ fn allow_result() -> AroraCheckResult {
 ///
 /// # Safety
 /// `rules` must point to `len` readable bytes.  The returned handle must
-/// be freed with arora_adblock_engine_free().
+/// be freed with arktos_adblock_engine_free().
 #[no_mangle]
-pub unsafe extern "C" fn arora_adblock_engine_new(
+pub unsafe extern "C" fn arktos_adblock_engine_new(
     rules: *const c_char,
     rules_len: usize,
-) -> *mut AroraAdBlockEngine {
+) -> *mut ArktosAdBlockEngine {
     catch_unwind(AssertUnwindSafe(|| {
         if rules.is_null() || rules_len == 0 {
             return ptr::null_mut();
@@ -92,7 +92,7 @@ pub unsafe extern "C" fn arora_adblock_engine_new(
         let Ok(text) = std::str::from_utf8(bytes) else {
             return ptr::null_mut();
         };
-        Box::into_raw(Box::new(AroraAdBlockEngine {
+        Box::into_raw(Box::new(ArktosAdBlockEngine {
             engine: Engine::new_with_list_text(text),
             resources: Vec::new(),
         }))
@@ -108,8 +108,8 @@ pub unsafe extern "C" fn arora_adblock_engine_new(
 /// `name`/`mime` must be NUL-terminated; `content` must point to `len`
 /// readable bytes.
 #[no_mangle]
-pub unsafe extern "C" fn arora_adblock_engine_add_resource(
-    engine: *mut AroraAdBlockEngine,
+pub unsafe extern "C" fn arktos_adblock_engine_add_resource(
+    engine: *mut ArktosAdBlockEngine,
     name: *const c_char,
     mime: *const c_char,
     content: *const u8,
@@ -155,14 +155,14 @@ pub unsafe extern "C" fn arora_adblock_engine_add_resource(
 ///
 /// # Safety
 /// `url`/`source_url`/`request_type` must be NUL-terminated or null.
-/// Free the returned strings with arora_adblock_string_free().
+/// Free the returned strings with arktos_adblock_string_free().
 #[no_mangle]
-pub unsafe extern "C" fn arora_adblock_engine_check(
-    engine: *const AroraAdBlockEngine,
+pub unsafe extern "C" fn arktos_adblock_engine_check(
+    engine: *const ArktosAdBlockEngine,
     url: *const c_char,
     source_url: *const c_char,
     request_type: *const c_char,
-) -> AroraCheckResult {
+) -> ArktosCheckResult {
     catch_unwind(AssertUnwindSafe(|| {
         let Some(engine) = (unsafe { engine.as_ref() }) else {
             return allow_result();
@@ -195,13 +195,13 @@ pub unsafe extern "C" fn arora_adblock_engine_check(
 }
 
 /// Returns the cosmetic filtering payload for `url` as a JSON string
-/// the caller frees with arora_adblock_string_free(), or null.
+/// the caller frees with arktos_adblock_string_free(), or null.
 ///
 /// # Safety
 /// `url` must be NUL-terminated.
 #[no_mangle]
-pub unsafe extern "C" fn arora_adblock_engine_cosmetic(
-    engine: *const AroraAdBlockEngine,
+pub unsafe extern "C" fn arktos_adblock_engine_cosmetic(
+    engine: *const ArktosAdBlockEngine,
     url: *const c_char,
 ) -> *mut c_char {
     catch_unwind(AssertUnwindSafe(|| {
@@ -224,10 +224,10 @@ pub unsafe extern "C" fn arora_adblock_engine_cosmetic(
 /// Frees an engine handle.
 ///
 /// # Safety
-/// `engine` must be a handle returned by arora_adblock_engine_new(),
+/// `engine` must be a handle returned by arktos_adblock_engine_new(),
 /// or null.
 #[no_mangle]
-pub unsafe extern "C" fn arora_adblock_engine_free(engine: *mut AroraAdBlockEngine) {
+pub unsafe extern "C" fn arktos_adblock_engine_free(engine: *mut ArktosAdBlockEngine) {
     if !engine.is_null() {
         drop(unsafe { Box::from_raw(engine) });
     }
@@ -238,7 +238,7 @@ pub unsafe extern "C" fn arora_adblock_engine_free(engine: *mut AroraAdBlockEngi
 /// # Safety
 /// `s` must be a pointer handed out by this library, or null.
 #[no_mangle]
-pub unsafe extern "C" fn arora_adblock_string_free(s: *mut c_char) {
+pub unsafe extern "C" fn arktos_adblock_string_free(s: *mut c_char) {
     if !s.is_null() {
         drop(unsafe { CString::from_raw(s) });
     }
@@ -249,25 +249,25 @@ mod tests {
     use super::*;
     use std::ffi::CString;
 
-    fn build(rules: &str) -> *mut AroraAdBlockEngine {
-        unsafe { arora_adblock_engine_new(rules.as_ptr().cast(), rules.len()) }
+    fn build(rules: &str) -> *mut ArktosAdBlockEngine {
+        unsafe { arktos_adblock_engine_new(rules.as_ptr().cast(), rules.len()) }
     }
 
-    fn add(e: *mut AroraAdBlockEngine, name: &str, mime: &str, body: &[u8]) {
+    fn add(e: *mut ArktosAdBlockEngine, name: &str, mime: &str, body: &[u8]) {
         let name = CString::new(name).unwrap();
         let mime = CString::new(mime).unwrap();
         unsafe {
-            arora_adblock_engine_add_resource(
+            arktos_adblock_engine_add_resource(
                 e, name.as_ptr(), mime.as_ptr(), body.as_ptr(), body.len(),
             );
         }
     }
 
-    fn check(e: *mut AroraAdBlockEngine, url: &str, src: &str, ty: &str) -> AroraCheckResult {
+    fn check(e: *mut ArktosAdBlockEngine, url: &str, src: &str, ty: &str) -> ArktosCheckResult {
         let url = CString::new(url).unwrap();
         let src = CString::new(src).unwrap();
         let ty = CString::new(ty).unwrap();
-        unsafe { arora_adblock_engine_check(e, url.as_ptr(), src.as_ptr(), ty.as_ptr()) }
+        unsafe { arktos_adblock_engine_check(e, url.as_ptr(), src.as_ptr(), ty.as_ptr()) }
     }
 
     #[test]
@@ -298,7 +298,7 @@ mod tests {
             assert_eq!(CStr::from_ptr(r.rewritten_url).to_str().unwrap(),
                        "http://param.example/x?k=2");
         }
-        unsafe { arora_adblock_engine_free(e) };
+        unsafe { arktos_adblock_engine_free(e) };
     }
 
     #[test]
@@ -306,12 +306,12 @@ mod tests {
         let e = build("smoke.example##.ad-banner\n");
         assert!(!e.is_null());
         let url = CString::new("http://smoke.example/").unwrap();
-        let json = unsafe { arora_adblock_engine_cosmetic(e, url.as_ptr()) };
+        let json = unsafe { arktos_adblock_engine_cosmetic(e, url.as_ptr()) };
         assert!(!json.is_null());
         unsafe {
             let s = CStr::from_ptr(json).to_string_lossy();
             assert!(s.contains(".ad-banner"), "got {s}");
         }
-        unsafe { arora_adblock_engine_free(e) };
+        unsafe { arktos_adblock_engine_free(e) };
     }
 }

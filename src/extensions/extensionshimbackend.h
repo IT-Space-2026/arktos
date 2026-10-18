@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -53,7 +53,7 @@ class QWebEngineProfile;
 //   i18n.*       — _locales/<lang>/messages.json lookup
 //   permissions.*— manifest-declared contains/getAll fallback
 //   contextMenus.*— per-extension item registry (EXT16 renders)
-//   sidePanel.*  — options recorded (Arora has no side-panel surface)
+//   sidePanel.*  — options recorded (Arktos has no side-panel surface)
 //   notifications.* — typed 'unsupported' (no notification presenter)
 //   runtime.*    — context bookkeeping (getViews counts)
 //   shim.*       — diagnostics channel: 'note' -> notes(), 'gap' ->
@@ -111,7 +111,7 @@ public:
     static QJsonObject windowObject(class BrowserMainWindow *window);
 
     // EXT17: the flat _locales/<lang>/messages.json map — shared by
-    // invokeI18n (bridge fetch) and the injected __ARORA_HOST_CONFIG
+    // invokeI18n (bridge fetch) and the injected __ARKTOS_HOST_CONFIG
     // so getMessage resolves synchronously before page scripts run.
     static QJsonObject i18nMessages(const QString &extensionPath);
 

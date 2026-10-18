@@ -41,7 +41,7 @@
 #include <toolbarsearch.h>
 #include <webpage.h>
 #include <webview.h>
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 
 class tst_WebPage : public QObject
 {
@@ -267,7 +267,7 @@ void tst_WebPage::initTestCase()
 
     QDesktopServices::setUrlHandler(QLatin1String("mailto"), this, "openUrl");
     QDesktopServices::setUrlHandler(QLatin1String("ftp"), this, "openUrl");
-    QDesktopServices::setUrlHandler(QLatin1String("aroraext"), this, "openUrl");
+    QDesktopServices::setUrlHandler(QLatin1String("arktosext"), this, "openUrl");
 
     // SAFE02: the form-post tests pin the HTTPS policy keys; stash
     // the user's values so nothing leaks past the suite.
@@ -295,7 +295,7 @@ void tst_WebPage::cleanupTestCase()
 {
     QDesktopServices::unsetUrlHandler(QLatin1String("mailto"));
     QDesktopServices::unsetUrlHandler(QLatin1String("ftp"));
-    QDesktopServices::unsetUrlHandler(QLatin1String("aroraext"));
+    QDesktopServices::unsetUrlHandler(QLatin1String("arktosext"));
 
     QSettings settings;
     settings.setValue("userAgent", QString());
@@ -422,7 +422,7 @@ void tst_WebPage::acceptNavigationRequest_data()
 
     // Registered internal schemes and the built-ins are unaffected —
     // no prompt, the navigation proceeds to the scheme handler.
-    QTest::newRow("arora-resource-0") << Qt::NoButton << Qt::NoModifier << true << QUrl("arora-resource:/noop.js") << QWebEnginePage::NavigationTypeLinkClicked << true << 1 << false;
+    QTest::newRow("arktos-resource-0") << Qt::NoButton << Qt::NoModifier << true << QUrl("arktos-resource:/noop.js") << QWebEnginePage::NavigationTypeLinkClicked << true << 1 << false;
     QTest::newRow("abp-0") << Qt::NoButton << Qt::NoModifier << true << QUrl("abp:subscribe?location=http://x/list.txt") << QWebEnginePage::NavigationTypeLinkClicked << true << 1 << false;
     QTest::newRow("viewsource-0") << Qt::NoButton << Qt::NoModifier << true << QUrl("view-source:http://www.foo.com") << QWebEnginePage::NavigationTypeLinkClicked << true << 1 << false;
 
@@ -508,7 +508,7 @@ void tst_WebPage::externalProtocolPrompt()
     // consent path — the gate is "browser-handled or prompt", not a
     // protocol allowlist.  The test-side url handler traps the
     // QDesktopServices hand-off so nothing reaches the real desktop.
-    const QUrl custom(QStringLiteral("aroraext:thing"));
+    const QUrl custom(QStringLiteral("arktosext:thing"));
     QVERIFY(!page.call_acceptNavigationRequest(custom,
         QWebEnginePage::NavigationTypeLinkClicked, true));
     QVERIFY(answerModal(QMessageBox::Open));
@@ -756,10 +756,10 @@ void tst_WebPage::popupClickBlocking()
 void tst_WebPage::handleUnsupportedContent()
 {
     // WebEngine reports failed loads through loadFinished(false);
-    // WebPage answers them with the Arora not-found page.
+    // WebPage answers them with the Arktos not-found page.
     SubWebPage page;
     QSignalSpy spy(&page, SIGNAL(loadFinished(bool)));
-    page.load(QUrl("http://nonexistent.arora-test.invalid/test.html"));
+    page.load(QUrl("http://nonexistent.arktos-test.invalid/test.html"));
     QTRY_VERIFY_WITH_TIMEOUT(spy.count() >= 1, 15000);
     QCOMPARE(spy.at(0).at(0).toBool(), false);
 }
@@ -836,20 +836,20 @@ void tst_WebPage::javaScriptObjects()
     // The QtWebKit addToJavaScriptWindowObject() bridge was replaced by
     // a QWebChannel.  SEC08: only the two web-facing objects are
     // registered unconditionally — "external" (consent-gated
-    // AddSearchProvider) and "aroraAutofill" (token-gated submitForm).
-    // "arora" is published only while the main frame shows an internal
+    // AddSearchProvider) and "arktosAutofill" (token-gated submitForm).
+    // "arktos" is published only while the main frame shows an internal
     // qrc page (webChannelStartPage covers the registration).
     SubWebPage page;
     QWebChannel *channel = page.webChannel();
     QVERIFY(channel);
     QVERIFY(channel->registeredObjects().contains(QLatin1String("external")));
-    QVERIFY(!channel->registeredObjects().contains(QLatin1String("arora")));
-    QVERIFY(channel->registeredObjects().contains(QLatin1String("aroraAutofill")));
+    QVERIFY(!channel->registeredObjects().contains(QLatin1String("arktos")));
+    QVERIFY(channel->registeredObjects().contains(QLatin1String("arktosAutofill")));
 }
 
-// SEC08: the "arora" object appears on the channel only for internal
+// SEC08: the "arktos" object appears on the channel only for internal
 // qrc pages, and the start page's bridge hop actually reaches it.
-// SEC24: the channel transport lives in AroraChannelWorld — the main
+// SEC24: the channel transport lives in ArktosChannelWorld — the main
 // world sees neither it nor the bootstrap's helpers.
 void tst_WebPage::webChannelStartPage()
 {
@@ -860,15 +860,15 @@ void tst_WebPage::webChannelStartPage()
             && loaded.last().at(0).toBool(), 15000);
 
     QVERIFY2(page.webChannel()->registeredObjects()
-                .contains(QLatin1String("arora")),
-             "arora object must be registered for qrc pages");
+                .contains(QLatin1String("arktos")),
+             "arktos object must be registered for qrc pages");
 
     // The start page's bridge client translates the chrome text and
     // reports the current engine name — proving the whitelisted
     // forwarder round-trips for the one page meant to have the object.
     QTRY_COMPARE_WITH_TIMEOUT(
         evalSync(&page, QLatin1String("document.title")).toString(),
-        QStringLiteral("Welcome to Arora!"), 15000);
+        QStringLiteral("Welcome to Arktos!"), 15000);
     const QString engineName = ToolbarSearch::openSearchManager()
             ->currentEngineName();
     QVERIFY(!engineName.isEmpty());
@@ -878,23 +878,23 @@ void tst_WebPage::webChannelStartPage()
 
     // currentEngineName is a plain string now — the channel must never
     // hand a live QObject* (with writable properties/slots) to script.
-    // Read it in the channel world, where the __aroraChannel bootstrap
+    // Read it in the channel world, where the __arktosChannel bootstrap
     // lives; the main world gets no transport to verify against.
     QVERIFY(evalSync(&page, QLatin1String(
-        "window.__aroraChannel(function (c) {"
+        "window.__arktosChannel(function (c) {"
         "  window.__engineType ="
-        "    typeof c.objects.arora.currentEngineName;"
-        "}); 'armed'"), Engine::AroraChannelWorld)
+        "    typeof c.objects.arktos.currentEngineName;"
+        "}); 'armed'"), Engine::ArktosChannelWorld)
             .toString() == QLatin1String("armed"));
     QTRY_COMPARE_WITH_TIMEOUT(
         evalSync(&page, QLatin1String("window.__engineType"),
-                 Engine::AroraChannelWorld).toString(),
+                 Engine::ArktosChannelWorld).toString(),
         QStringLiteral("string"), 15000);
 
     // The main world stays clean: no transport, no bootstrap, no
     // channel client constructor.
     QCOMPARE(evalSync(&page, QLatin1String(
-        "[typeof window.qt, typeof window.__aroraChannel,"
+        "[typeof window.qt, typeof window.__arktosChannel,"
         " typeof window.QWebChannel].join(',')")).toString(),
              QStringLiteral("undefined,undefined,undefined"));
 
@@ -905,11 +905,11 @@ void tst_WebPage::webChannelStartPage()
 
 // SEC24: a hostile page used to be able to open its own QWebChannel
 // client — the transport was injected into the main world and
-// qwebchannel.js is public — and reach aroraAutofill.submitForm
-// directly.  The channel now lives in AroraChannelWorld: the page
+// qwebchannel.js is public — and reach arktosAutofill.submitForm
+// directly.  The channel now lives in ArktosChannelWorld: the page
 // gets no transport and no channel constructor, so enumeration is
 // impossible outright; the ONLY reachable calls are the forwarder's
-// whitelist, which refuses aroraAutofill/arora/'aroraReader' calls
+// whitelist, which refuses arktosAutofill/arktos/'arktosReader' calls
 // before they can touch a bridge object.
 void tst_WebPage::webChannelForgedAutofillReport()
 {
@@ -923,21 +923,21 @@ void tst_WebPage::webChannelForgedAutofillReport()
         "<script>"
         "window.__probe=[typeof window.qt,"
         " typeof window.QWebChannel,"
-        " typeof window.__aroraChannel].join(',');"
+        " typeof window.__arktosChannel].join(',');"
         "window.__forged='pending';"
-        "window.__arora='pending';"
+        "window.__legacy='pending';"
         "window.__reader='pending';"
         "var forged={name:'login',hasPassword:true,elements:["
         " {name:'user',value:'forgeduser'},"
         " {name:'pw',value:'forgedpass'}]};"
-        "window.__aroraMainCall('aroraAutofill','submitForm',"
+        "window.__arktosMainCall('arktosAutofill','submitForm',"
         " 'forged',String(location.href),forged)"
         " .then(function(){window.__forged='accepted'},"
         "       function(){window.__forged='refused'});"
-        "window.__aroraMainCall('arora','translate','x')"
-        " .then(function(){window.__arora='accepted'},"
-        "       function(){window.__arora='refused'});"
-        "window.__aroraMainCall('aroraReader','notifyExited')"
+        "window.__arktosMainCall('arktos','translate','x')"
+        " .then(function(){window.__legacy='accepted'},"
+        "       function(){window.__legacy='refused'});"
+        "window.__arktosMainCall('arktosReader','notifyExited')"
         " .then(function(){window.__reader='accepted'},"
         "       function(){window.__reader='refused'});"
         "window.__state='done';"
@@ -970,13 +970,13 @@ void tst_WebPage::webChannelForgedAutofillReport()
     // Every non-whitelisted object is refused by the forwarder.
     QTRY_COMPARE_WITH_TIMEOUT(
         evalSync(page, QLatin1String(
-            "[window.__forged, window.__arora, window.__reader]"
+            "[window.__forged, window.__legacy, window.__reader]"
             ".join(',')")).toString(),
         QStringLiteral("refused,refused,refused"), 15000);
 
     // The capture shim itself still arms in the main world — it is
     // the legitimate submit relay, not a privileged surface (a forged
-    // arora:formsubmit only reports values from the page's own DOM
+    // arktos:formsubmit only reports values from the page's own DOM
     // through the real consent path, same as a genuine submit).
     QTRY_VERIFY_WITH_TIMEOUT(evalSync(page, QLatin1String(
         "HTMLFormElement.prototype.submit.toString()"
@@ -994,7 +994,7 @@ void tst_WebPage::webChannelForgedAutofillReport()
         QTest::qWait(50);
     }
     QVERIFY2(!modalSeen,
-             "forged aroraAutofill.submitForm raised the save prompt");
+             "forged arktosAutofill.submitForm raised the save prompt");
     QVERIFY2(autoFill->forms().isEmpty(),
              "forged submitForm wrote to the autofill store");
 
@@ -1015,7 +1015,7 @@ void tst_WebPage::webChannelAddSearchProviderConsent()
         "<?xml version=\"1.0\"?>"
         "<OpenSearchDescription "
         "xmlns=\"http://a9.com/-/spec/opensearch/1.1/\">"
-        "<ShortName>AroraChannelTest</ShortName>"
+        "<ShortName>ArktosChannelTest</ShortName>"
         "<Description>engine added through the channel</Description>"
         "<Url method=\"get\" type=\"text/html\" "
         "template=\"http://127.0.0.1/search?q={searchTerms}\"/>"
@@ -1029,8 +1029,8 @@ void tst_WebPage::webChannelAddSearchProviderConsent()
 
     OpenSearchManager *manager = ToolbarSearch::openSearchManager();
     // Clear a leftover from an interrupted previous run.
-    if (manager->engineExists(QLatin1String("AroraChannelTest")))
-        manager->removeEngine(QLatin1String("AroraChannelTest"));
+    if (manager->engineExists(QLatin1String("ArktosChannelTest")))
+        manager->removeEngine(QLatin1String("ArktosChannelTest"));
 
     QWebEngineProfile profile(QStringLiteral("tst_webpage_search"));
     WebView view(&profile);
@@ -1055,7 +1055,7 @@ void tst_WebPage::webChannelAddSearchProviderConsent()
     QVERIFY(answerModal(QMessageBox::No));
     QTest::qWait(300);
     QCOMPARE(server.engineHits, 0);
-    QVERIFY(!manager->engineExists(QLatin1String("AroraChannelTest")));
+    QVERIFY(!manager->engineExists(QLatin1String("ArktosChannelTest")));
 
     // Accept: the descriptor is fetched and the install prompt (which
     // names the parsed engine and its host) still runs.
@@ -1063,9 +1063,9 @@ void tst_WebPage::webChannelAddSearchProviderConsent()
     QVERIFY(answerModal(QMessageBox::Yes));   // fetch consent
     QVERIFY(answerModal(QMessageBox::Yes));   // install confirmation
     QTRY_VERIFY_WITH_TIMEOUT(
-        manager->engineExists(QLatin1String("AroraChannelTest")), 5000);
+        manager->engineExists(QLatin1String("ArktosChannelTest")), 5000);
     QCOMPARE(server.engineHits, 1);
-    manager->removeEngine(QLatin1String("AroraChannelTest"));
+    manager->removeEngine(QLatin1String("ArktosChannelTest"));
 
     // A non-web scheme must be rejected before any prompt or fetch.
     page->runJavaScript(QLatin1String(
@@ -1146,7 +1146,7 @@ void tst_WebPage::webChannelAutofillIsolation()
         "<input id='u' name='user' type='text'>"
         "<input id='p' name='pw' type='password'></form>"
         "<script>"
-        "window.__state=(typeof window.__aroraMainCall==='function')"
+        "window.__state=(typeof window.__arktosMainCall==='function')"
         " ?'done':'missing';"
         "</script></body></html>");
 
@@ -1183,7 +1183,7 @@ void tst_WebPage::webChannelAutofillIsolation()
         "document.getElementById('p').value='isolatedpw';"
         "document.forms[0].dispatchEvent("
         "  new Event('submit', {bubbles:true, cancelable:true}));"
-        "window.__aroraMainCall('external','AddSearchProvider',"
+        "window.__arktosMainCall('external','AddSearchProvider',"
         "  'file:///etc/passwd')"
         "  .then(function () { window.__pageCall='done'; },"
         "        function () { window.__pageCall='refused'; });"));
@@ -1401,7 +1401,7 @@ void tst_WebPage::webChannelAutofillAddressOtr()
     QCOMPARE(evalSync(page, QLatin1String(
         "document.getElementById('an').value")).toString(), QString());
     QVERIFY(evalSync(page, QLatin1String(
-        "document.forms[0].__aroraAddrId === undefined")).toBool());
+        "document.forms[0].__arktosAddrId === undefined")).toBool());
 
     page->runJavaScript(QLatin1String(
         "document.getElementById('an').value='Otr Person';"

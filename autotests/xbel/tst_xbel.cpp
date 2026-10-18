@@ -319,7 +319,7 @@ void tst_Xbel::hostileInput()
 // The error arms hostileInput doesn't reach: unreadable devices/files,
 // an oversized sparse file, a non-1.0 version, and the element mix at
 // every level (top-level bookmark/separator/unknown, folder desc +
-// unknown, bookmark desc + unknown).  Under ARORA_RUSTCORE the
+// unknown, bookmark desc + unknown).  Under ARKTOS_RUSTCORE the
 // structural gate refuses malformed input first — these fixtures are
 // all well-formed <xbel> documents so they sail through the gate and
 // exercise the Qt arms underneath it.

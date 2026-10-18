@@ -46,7 +46,7 @@ exists(../.git/HEAD) {
 # Only main.cpp (listed in src.pro) is compiled plus the live lists
 # below. The original file lists are kept as the porting checklist —
 # each MIG task moves its files into the live lists.
-# Ownership map: .devin/Arora-Task.md.
+# Ownership map: .devin/Arktos-Task.md.
 #
 # MIG14 moved in: aboutdialog, browsermainwindow, tabbar, tabwidget,
 # useragent.pri — plus browserapplication, which the chrome needs for
@@ -87,7 +87,7 @@ HEADERS += \
     $$PWD/acceptlanguagedialog.h \
     $$PWD/addressdialog.h \
     $$PWD/argon2id.h \
-    $$PWD/arorastyle.h \
+    $$PWD/arktosstyle.h \
     $$PWD/autofilldialog.h \
     $$PWD/autofillmanager.h \
     $$PWD/autosaver.h \
@@ -119,8 +119,14 @@ HEADERS += \
     $$PWD/printpreviewdialog.h \
     $$PWD/profileavataractions.h \
     $$PWD/profileavatardialog.h \
+    $$PWD/profilebutton.h \
+    $$PWD/profilecontext.h \
     $$PWD/profileidentity.h \
+    $$PWD/profilemanagerdialog.h \
+    $$PWD/profilemenuactions.h \
+    $$PWD/profileregistry.h \
     $$PWD/profilesettings.h \
+    $$PWD/profilestore.h \
     $$PWD/profilevault.h \
     $$PWD/qrcodedialog.h \
     $$PWD/qrcodegen.hpp \
@@ -149,13 +155,16 @@ HEADERS += \
     $$PWD/themepicker.h \
     $$PWD/tabwidget.h \
     $$PWD/toolbarsearch.h \
+    $$PWD/updatechecker.h \
+    $$PWD/updatedialog.h \
     $$PWD/urlcleaner.h \
+    $$PWD/vaultdialogs.h \
     $$PWD/webactionmapper.h \
     $$PWD/webpage.h \
     $$PWD/webpermissionmanager.h \
     $$PWD/webview.h \
     $$PWD/webviewsearch.h \
-    $$PWD/utils/aroraicon.h \
+    $$PWD/utils/arktosicon.h \
     $$PWD/utils/crashreporter.h \
     $$PWD/utils/edittableview.h \
     $$PWD/utils/edittreeview.h \
@@ -174,12 +183,13 @@ SOURCES += \
     $$PWD/acceptlanguagedialog.cpp \
     $$PWD/addressdialog.cpp \
     $$PWD/argon2id.c \
-    $$PWD/arorastyle.cpp \
+    $$PWD/arktosstyle.cpp \
     $$PWD/autofilldialog.cpp \
     $$PWD/autofillmanager.cpp \
     $$PWD/autosaver.cpp \
     $$PWD/browserapplication.cpp \
     $$PWD/browsermainwindow.cpp \
+    $$PWD/browserpaths.cpp \
     $$PWD/browserprofile.cpp \
     $$PWD/browsertheme.cpp \
     $$PWD/clearbutton.cpp \
@@ -205,8 +215,13 @@ SOURCES += \
     $$PWD/printpreviewdialog.cpp \
     $$PWD/profileavataractions.cpp \
     $$PWD/profileavatardialog.cpp \
+    $$PWD/profilebutton.cpp \
     $$PWD/profileidentity.cpp \
+    $$PWD/profilemanagerdialog.cpp \
+    $$PWD/profilemenuactions.cpp \
+    $$PWD/profileregistry.cpp \
     $$PWD/profilesettings.cpp \
+    $$PWD/profilestore.cpp \
     $$PWD/profilevault.cpp \
     $$PWD/qrcodedialog.cpp \
     $$PWD/qrcodegen.cpp \
@@ -233,13 +248,16 @@ SOURCES += \
     $$PWD/themepicker.cpp \
     $$PWD/tabwidget.cpp \
     $$PWD/toolbarsearch.cpp \
+    $$PWD/updatechecker.cpp \
+    $$PWD/updatedialog.cpp \
     $$PWD/urlcleaner.cpp \
+    $$PWD/vaultdialogs.cpp \
     $$PWD/webactionmapper.cpp \
     $$PWD/webpage.cpp \
     $$PWD/webpermissionmanager.cpp \
     $$PWD/webview.cpp \
     $$PWD/webviewsearch.cpp \
-    $$PWD/utils/aroraicon.cpp \
+    $$PWD/utils/arktosicon.cpp \
     $$PWD/utils/crashreporter.cpp \
     $$PWD/utils/edittableview.cpp \
     $$PWD/utils/edittreeview.cpp \
@@ -277,6 +295,6 @@ mac {
 }
 
 unix {
-    PKGDATADIR = $$DATADIR/arora
+    PKGDATADIR = $$DATADIR/arktos
     DEFINES += DATADIR=\\\"$$DATADIR\\\" PKGDATADIR=\\\"$$PKGDATADIR\\\"
 }

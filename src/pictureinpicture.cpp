@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -85,14 +85,14 @@ PictureInPicture::PictureInPicture(WebView *view)
     , m_nonceCounter(0)
 {
     // The bridge rides the page's existing channel (same registration
-    // point as "external"/"aroraReader").  Tor pages carry a bare
-    // channel (TOR09 — the qrc start page's "arora" object only), so
+    // point as "external"/"arktosReader").  Tor pages carry a bare
+    // channel (TOR09 — the qrc start page's "arktos" object only), so
     // the registration itself is gated on the mode: the shim then
     // rejects with NotSupportedError while the manual pop-out paths
     // (runJavaScript only) still work.
     if (!BrowserApplication::isTorMode()) {
         if (QWebChannel *channel = m_view->page()->webChannel())
-            channel->registerObject(QLatin1String("aroraPip"), m_bridge);
+            channel->registerObject(QLatin1String("arktosPip"), m_bridge);
     }
 
     // A real navigation kills the popped-out element's document — the
@@ -198,7 +198,7 @@ void PictureInPicture::beginPopOut(const QString &nonce,
     if (m_window)
         m_window->close();
     QPointer<PictureInPicture> self(this);
-    const QString call = QLatin1String("__aroraPipCtl.tag(")
+    const QString call = QLatin1String("__arktosPipCtl.tag(")
         + pipJsLiteral(nonce) + QLatin1String(", ")
         + pipJsLiteral(spec) + QLatin1String(");");
     runPageJs(call, [self, nonce](const QVariant &result) {
@@ -275,7 +275,7 @@ void PictureInPicture::onTagged(const QString &nonce,
 void PictureInPicture::detach(const QString &nonce)
 {
     QPointer<PictureInPicture> self(this);
-    const QString call = QLatin1String("__aroraPipCtl.detach(")
+    const QString call = QLatin1String("__arktosPipCtl.detach(")
         + pipJsLiteral(nonce) + QLatin1String(");");
     runPageJs(call, [self, nonce](const QVariant &result) {
         if (!self)
@@ -308,7 +308,7 @@ void PictureInPicture::onWindowClosing(const QVariantMap &state,
         // fires the leave event if restore() already removed the tag.
         if (m_view) {
             const QString call =
-                QLatin1String("__aroraPipCtl.restore(")
+                QLatin1String("__arktosPipCtl.restore(")
                 + pipJsLiteral(nonce) + QLatin1String(", ")
                 + pipJsLiteral(state) + QLatin1String(");");
             runPageJs(call);

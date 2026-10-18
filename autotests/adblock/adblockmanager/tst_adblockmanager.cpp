@@ -38,7 +38,7 @@
 #include "adblocksubscription.h"
 #include "profilesettings.h"
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "sitedecisionstore.h"
 #endif
 
@@ -116,7 +116,7 @@ void tst_AdBlockManager::init()
     // so the seed is written only after it is gone.
     ProfileSettings settings;
     settings.clear();
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // The site whitelist moved out of the custom-rules file into the
     // decision store — start each test from an empty set.
     SiteDecisionStore::clear(SiteDecisionStore::KindAdBlock);
@@ -463,7 +463,7 @@ void tst_AdBlockManager::engineSelection()
     // Brave engine, effective only when the build ships it.
     QCOMPARE(int(AdBlockManager::storedEngine()),
              int(AdBlockManager::RustEngine));
-#if defined(ARORA_ADBLOCK_RUST)
+#if defined(ARKTOS_ADBLOCK_RUST)
     QVERIFY(AdBlockManager::rustEngineAvailable());
     QCOMPARE(int(manager->engine()), int(AdBlockManager::RustEngine));
 #else
@@ -486,7 +486,7 @@ void tst_AdBlockManager::engineSelection()
     QCOMPARE(int(manager->engine()), int(AdBlockManager::NativeEngine));
     QCOMPARE(spy.count(), 1);
 
-#if defined(ARORA_ADBLOCK_RUST)
+#if defined(ARKTOS_ADBLOCK_RUST)
     manager->setEngine(AdBlockManager::RustEngine);
     QCOMPARE(int(manager->engine()), int(AdBlockManager::RustEngine));
     // The engine only builds when there is rule text to parse — feed

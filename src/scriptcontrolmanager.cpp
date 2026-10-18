@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -34,7 +34,7 @@
 static QReadWriteLock s_snapshotLock;
 static QStringList s_allowedSnapshot;
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "sitedecisionstore.h"
 
 // SITED01: one-shot import of the legacy "scriptcontrol" QSettings
@@ -101,7 +101,7 @@ static void persistScriptRules(const QStringList &allowed,
 ScriptControlManager::ScriptControlManager(QObject *parent)
     : QObject(parent)
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     importLegacyScriptRules();
     const QHash<QString, QString> rows =
         SiteDecisionStore::entries(SiteDecisionStore::KindJavaScript);
@@ -248,7 +248,7 @@ void ScriptControlManager::setRuleForHost(const QString &host, Rule rule,
         else if (rule == Block)
             m_blocked.append(normalized);
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
         persistScriptRules(m_allowed, m_blocked);
 #else
         ProfileSettings settings;
@@ -280,7 +280,7 @@ void ScriptControlManager::clearPersistentRules()
 {
     m_allowed.clear();
     m_blocked.clear();
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     SiteDecisionStore::clear(SiteDecisionStore::KindJavaScript);
 #else
     ProfileSettings settings;
@@ -328,9 +328,9 @@ static bool isInternalScheme(const QString &scheme)
 {
     static const QSet<QString> schemes = {
         QStringLiteral("about"),
-        QStringLiteral("arora-cert-error"),
-        QStringLiteral("arora-file"),
-        QStringLiteral("arora-resource"),
+        QStringLiteral("arktos-cert-error"),
+        QStringLiteral("arktos-file"),
+        QStringLiteral("arktos-resource"),
         QStringLiteral("abp"),
         QStringLiteral("chrome"),
         QStringLiteral("chrome-extension"),

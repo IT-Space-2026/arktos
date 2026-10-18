@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -33,7 +33,7 @@
 #include <qsavefile.h>
 #include <qsettings.h>
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include <rustcore.h>
 #endif
 
@@ -92,7 +92,7 @@ void DomainBlocklist::setSourcesForTest(const QList<QUrl> &sources)
 
 void DomainBlocklist::updateIfStale()
 {
-#if !defined(ARORA_RUSTCORE)
+#if !defined(ARKTOS_RUSTCORE)
     return;   // no consumer for the file — fetch nothing
 #endif
     // TELEM01: identical consent gate to the remote filter lists —
@@ -109,7 +109,7 @@ void DomainBlocklist::updateIfStale()
 
 void DomainBlocklist::updateNow()
 {
-#if !defined(ARORA_RUSTCORE)
+#if !defined(ARKTOS_RUSTCORE)
     emit updateFinished(false);
     return;
 #else
@@ -185,11 +185,11 @@ void DomainBlocklist::replyFinished()
 
 void DomainBlocklist::maybeCommit()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     if (!m_merged.trimmed().isEmpty()) {
         const QString path = listFilePath();
         QByteArray out =
-            "# Arora SEC18 merged domain blocklist\n"
+            "# Arktos SEC18 merged domain blocklist\n"
             "# sources: ";
         for (const QUrl &source : m_sources) {
             out += source.host().toUtf8();

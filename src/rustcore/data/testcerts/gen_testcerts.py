@@ -89,8 +89,8 @@ def main():
     ca_key = key()
     ca = (
         x509.CertificateBuilder()
-        .subject_name(name("Arora Test CA"))
-        .issuer_name(name("Arora Test CA"))
+        .subject_name(name("Arktos Test CA"))
+        .issuer_name(name("Arktos Test CA"))
         .public_key(ca_key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(NOW - datetime.timedelta(days=3650))

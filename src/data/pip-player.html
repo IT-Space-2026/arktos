@@ -3,7 +3,7 @@
      loads it via setHtml() with the __PIP_CONFIG__ marker replaced by
      a JSON video descriptor (src, time, paused, rate, volume, muted,
      loop, poster).  Playback state is pushed back to C++ over the
-     page's own QWebChannel ("aroraPipPlayer") so closing the window
+     page's own QWebChannel ("arktosPipPlayer") so closing the window
      can hand the position back to the source tab. -->
 <html>
 <head>
@@ -39,7 +39,7 @@ window.__PIP_CONFIG__ = null;
     if (window.qt && qt.webChannelTransport
         && typeof QWebChannel !== 'undefined') {
         new QWebChannel(qt.webChannelTransport, function (channel) {
-            bridge = channel.objects.aroraPipPlayer;
+            bridge = channel.objects.arktosPipPlayer;
             if (bridge)
                 bridge.notifyReady();
             push(true);

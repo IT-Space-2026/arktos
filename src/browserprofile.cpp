@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -31,6 +31,7 @@
 #include <qdir.h>
 #include <qfile.h>
 #include <qfileinfo.h>
+#include <qhash.h>
 #include <qjsondocument.h>
 #include <qjsonobject.h>
 #include <qregularexpression.h>
@@ -46,11 +47,12 @@
 #include <qwebengineclienthints.h>
 #include <qwebengineglobalsettings.h>
 #include <qwebengineprofile.h>
+#include <qwebengineprofilebuilder.h>
 #include <qwebenginescript.h>
 #include <qwebenginescriptcollection.h>
 #include <qwebenginesettings.h>
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include <rustcore.h>
 #endif
 
@@ -64,19 +66,73 @@ namespace BrowserProfile {
 static quint16 s_bidiDebugPort = 0;
 static QString s_bidiDebugOrigin;
 
+// VSEC02: the pre-change engine store lived at <data root>/
+// QtWebEngine/arktos[-<id>] — outside the sealed tree.  The relocation
+// sweep must run before the first named profile exists (a profile
+// that already opened storage cannot be re-pointed), so every persona
+// factory funnels through this once-guard; main() also runs it
+// outright at boot.
+static void ensureEngineStorageOnce()
+{
+    static const bool done = [] {
+        QString error;
+        if (!BrowserPaths::ensureEngineStorageLayout(&error))
+            qWarning() << "browserprofile: engine storage relocation"
+                          " unfinished -" << error;
+        return true;
+    }();
+    Q_UNUSED(done);
+}
+
+// VSEC02: construct the named persona profile with its roots already
+// inside profiles/<id>/ — QtWebEngine/ seals with the vault's packed
+// tree, cache/QtWebEngine rides the "cache" exclusion (disposable
+// plaintext while locked, same honesty as the app-side cache).  The
+// paths MUST ride the builder, not setPersistentStoragePath() after
+// construction: the post-construction setter re-creates the profile's
+// PrefService and ExtensionPrefs while the ExtensionRegistrar the
+// loader already built still holds the stale pair, and the next
+// enableExtension() dereferences the dead ExtensionPrefs (upstream Qt
+// bug — verified on 6.12: enable on a re-pointed profile segfaults).
+static QWebEngineProfile *newBoundEngineProfile(const QString &storageName,
+                                                const QString &profileId)
+{
+    ensureEngineStorageOnce();
+    QWebEngineProfileBuilder builder;
+    builder.setPersistentStoragePath(
+        BrowserPaths::engineStorageDir(profileId));
+    builder.setCachePath(BrowserPaths::engineCacheDir(profileId));
+    QWebEngineProfile *profile = builder.createProfile(storageName, qApp);
+    // Qt materializes the name-keyed default dir at construction
+    // (<data root>/QtWebEngine/<storageName>) — empty residue, never a
+    // payload.  rmdir only removes an empty dir, so a populated one
+    // (the sweep never ran) survives for the next sweep's loud
+    // handling rather than being unlinked here.
+    QDir().rmdir(BrowserPaths::dataRoot()
+                 + QLatin1String("/QtWebEngine/")
+                 + profile->storageName());
+    return profile;
+}
+
 QWebEngineProfile *normalProfile()
 {
     // Lazily-created so callers do not need to coordinate with main():
     // every user (main.cpp, CookieJar::instance(), the settings dialog)
-    // gets the same named "arora" profile.
+    // gets the same named "arktos" profile.
     static QWebEngineProfile *profile = nullptr;
     if (!profile) {
-        profile = new QWebEngineProfile(QLatin1String("arora"), qApp);
+        profile = newBoundEngineProfile(QLatin1String("arktos"),
+                                        QStringLiteral("default"));
+        // MPROF02: the tag lets profileIdFor() resolve this object
+        // without re-parsing the storage name.
+        profile->setProperty("arktosProfileId",
+                             QLatin1String("default"));
         // HARD01: a previous session's site-data clear may have
         // deferred its service-coupled storage trees to this moment —
         // the profile exists but no page has ever used it, so the
         // directories can be removed without wedging the storage
-        // services (see clearSiteStorage).
+        // services (see clearSiteStorage).  The VSEC02 rename carries
+        // the sentinel file along with the tree it targets.
         clearDeferredSiteStorage(profile->persistentStoragePath());
     }
     return profile;
@@ -114,6 +170,62 @@ QWebEngineProfile *torProfileIfCreated()
     return s_torProfile;
 }
 
+// MPROF03: created named persona profiles, keyed by id — "default"
+// is never an entry (it aliases normalProfile()).
+static QHash<QString, QWebEngineProfile *> s_personaProfiles;
+
+QWebEngineProfile *profileFor(const QString &profileId)
+{
+    if (!BrowserPaths::isProfileId(profileId)
+            || profileId == QLatin1String("default"))
+        return normalProfile();
+    QWebEngineProfile *&profile = s_personaProfiles[profileId];
+    if (!profile) {
+        profile = newBoundEngineProfile(
+            QLatin1String("arktos-") + profileId, profileId);
+        profile->setProperty("arktosProfileId", profileId);
+        // HARD01: same first-bring-up contract as normalProfile() — a
+        // deferred clear targeted THIS profile's storage tree, so it
+        // has to be swept before any page binds the services.
+        clearDeferredSiteStorage(profile->persistentStoragePath());
+    }
+    return profile;
+}
+
+QList<QWebEngineProfile *> createdPersonaProfiles()
+{
+    return s_personaProfiles.values();
+}
+
+QString profileIdFor(QWebEngineProfile *profile)
+{
+    if (!profile)
+        return QLatin1String("default");
+    // The explicit tag the factories set wins — it is the only channel
+    // that can express an off-the-record profile's persona (MPROF03's
+    // per-id OTR overlay) or a container profile's owner id.
+    const QVariant tag = profile->property("arktosProfileId");
+    if (tag.isValid()) {
+        const QString id = tag.toString();
+        if (BrowserPaths::isProfileId(id))
+            return id;
+    }
+    const QString name = profile->storageName();
+    if (name == QLatin1String("arktos"))
+        return QLatin1String("default");
+    // "arktos-<id>" is MPROF03's per-profile storage name; container
+    // profiles are "arktos-container-<uuid>" and must NOT parse here —
+    // they resolve through the tag their manager sets (an untagged
+    // container lands on the default fallback like everything else).
+    if (name.startsWith(QLatin1String("arktos-"))
+            && !name.startsWith(QLatin1String("arktos-container-"))) {
+        const QString id = name.mid(6);
+        if (BrowserPaths::isProfileId(id))
+            return id;
+    }
+    return QLatin1String("default");
+}
+
 int presentedChromeMajor()
 {
     return 155;
@@ -137,7 +249,7 @@ QString buildHttpUserAgentQt(const QString &factoryUserAgent,
 QString buildHttpUserAgent(const QString &factoryUserAgent,
                            const QString &overrideUserAgent)
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // UAG01: the construction decision lives in rustcore — the Qt
     // builder below is byte-identical (the autotest corpus proves
     // it) and serves as the no-rust/FFI-failure path.
@@ -182,7 +294,7 @@ QString defaultHttpUserAgent()
     // UA01: Qt's factory UA carries a "QtWebEngine/<ver>" product
     // token that bot-detection fingerprints as automation — Google's
     // /sorry/ interstitial fired on a plain google.com search.  Vanilla
-    // Chrome strings do not trip it, so Arora ships Qt's own default
+    // Chrome strings do not trip it, so Arktos ships Qt's own default
     // minus that token; the platform tokens stay accurate.  UA03: the
     // Chrome/<major> milestone is bumped to presentedChromeMajor() —
     // sites version-sniff it to nag "browser out of date" once the
@@ -214,7 +326,7 @@ QString presentedBrandVersionQt(const QString &httpUserAgent,
 QString presentedBrandVersion(const QString &httpUserAgent,
                               const QString &engineVersion)
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     if (char *out = rc_ua_brand_version(
             httpUserAgent.toUtf8().constData(),
             engineVersion.toUtf8().constData())) {
@@ -265,7 +377,7 @@ void applyClientHints(QWebEngineProfile *profile)
 // user style sheet by name before inserting the new one.
 static void installUserStyleSheet(QWebEngineProfile *profile, const QUrl &url)
 {
-    const QString name = QLatin1String("aroraUserStyleSheet");
+    const QString name = QLatin1String("arktosUserStyleSheet");
     QWebEngineScriptCollection *scripts = profile->scripts();
     const QList<QWebEngineScript> installed = scripts->toList();
     for (const QWebEngineScript &script : installed) {
@@ -337,7 +449,7 @@ static void installUserStyleSheet(QWebEngineProfile *profile, const QUrl &url)
 // applyRefererPolicy's minimumLevel argument.
 void installReferrerPolicy(QWebEngineProfile *profile)
 {
-    const QString name = QLatin1String("aroraReferrerPolicy");
+    const QString name = QLatin1String("arktosReferrerPolicy");
     QWebEngineScriptCollection *scripts = profile->scripts();
     const QList<QWebEngineScript> installed = scripts->toList();
     for (const QWebEngineScript &script : installed) {
@@ -393,7 +505,7 @@ void installReferrerPolicy(QWebEngineProfile *profile)
 // site code runs.
 void installFingerprintProtection(QWebEngineProfile *profile)
 {
-    const QString name = QLatin1String("arora:fingerprint");
+    const QString name = QLatin1String("arktos:fingerprint");
     QWebEngineScriptCollection *scripts = profile->scripts();
     const QList<QWebEngineScript> installed = scripts->toList();
     for (const QWebEngineScript &script : installed) {
@@ -425,7 +537,17 @@ void applySettings(QWebEngineProfile *profile)
 {
     QWebEngineSettings *engineSettings = profile->settings();
 
-    ProfileSettings settings;
+    // MPROF03: bind the persona the profile OBJECT belongs to, not the
+    // ambient one — engine settings applied to profile "alpha" must
+    // come from profiles/alpha/settings.ini regardless of which window
+    // happened to trigger the (re)application.  Container profiles
+    // resolve to their owner's id through the tag; the shared OTR and
+    // tor profiles have no persona and read the default's websettings.
+    ProfileSettings settings(profileIdFor(profile));
+    // Root-scoped sibling for the keys that live outside the
+    // websettings/network groups (privacy/*, userAgent) — same
+    // persona binding, no group prefix.
+    ProfileSettings rootSettings(profileIdFor(profile));
     settings.beginGroup(QLatin1String("websettings"));
 
     QFont standardFont(engineSettings->fontFamily(QWebEngineSettings::StandardFont),
@@ -465,12 +587,12 @@ void applySettings(QWebEngineProfile *profile)
     // outside the tunnel).  Opt-in only; tor pins it off
     // unconditionally in prepareProfile regardless of this setting.
     engineSettings->setAttribute(QWebEngineSettings::DnsPrefetchEnabled,
-        ProfileSettings().value(QLatin1String("privacy/dnsPrefetch"), false).toBool());
+        rootSettings.value(QLatin1String("privacy/dnsPrefetch"), false).toBool());
 
     // POL03: Chromium's auto-dark for web contents — pages that ship
     // their own dark scheme (prefers-color-scheme: dark) use it, and
     // light-only pages get a heuristic inversion; images and video
-    // are left alone.  This only ever recolors page CONTENT — Arora's
+    // are left alone.  This only ever recolors page CONTENT — Arktos's
     // own widgets keep the desktop palette.
     engineSettings->setAttribute(QWebEngineSettings::ForceDarkMode,
         settings.value(QLatin1String("forceDarkMode"), false).toBool());
@@ -487,7 +609,7 @@ void applySettings(QWebEngineProfile *profile)
     // Chromium's own store out of the loop.
     const int securityLevel = qBound(
         int(PrivacyRequestInterceptor::Standard),
-        ProfileSettings().value(QLatin1String("privacy/securityLevel"),
+        rootSettings.value(QLatin1String("privacy/securityLevel"),
                           int(PrivacyRequestInterceptor::Standard)).toInt(),
         int(PrivacyRequestInterceptor::Safest));
     engineSettings->setAttribute(
@@ -518,14 +640,14 @@ void applySettings(QWebEngineProfile *profile)
     // on); applyChromiumFlags() couples the same setting to the
     // stronger Chromium IP-handling policy at process level.
     engineSettings->setAttribute(QWebEngineSettings::WebRTCPublicInterfacesOnly,
-        ProfileSettings().value(QLatin1String("privacy/webrtcIpProtection"), true).toBool());
+        rootSettings.value(QLatin1String("privacy/webrtcIpProtection"), true).toBool());
 
     // PING01: <a ping> auditing rides the same privacy/blockPings
     // toggle as the interceptor's sendBeacon/CSP-report drop — with
     // the attribute off Chromium never initiates the ping, and the
     // interceptor catches anything that still slips.
     engineSettings->setAttribute(QWebEngineSettings::HyperlinkAuditingEnabled,
-        !ProfileSettings().value(QLatin1String("privacy/blockPings"), true).toBool());
+        !rootSettings.value(QLatin1String("privacy/blockPings"), true).toBool());
 
     // PDF01: Chromium's built-in PDFium viewer, bound to the
     // privacy/pdfViewer toggle (default on) — PDFium parses inside
@@ -534,7 +656,7 @@ void applySettings(QWebEngineProfile *profile)
     // Applied per profile, so normal, private, tor and container
     // profiles all follow the toggle.
     engineSettings->setAttribute(QWebEngineSettings::PdfViewerEnabled,
-        ProfileSettings().value(QLatin1String("privacy/pdfViewer"), true).toBool());
+        rootSettings.value(QLatin1String("privacy/pdfViewer"), true).toBool());
 
     // PRIV01: refresh the request interceptor's IO-thread snapshot
     // (https-first upgrade, referrer trim) alongside the profile
@@ -590,7 +712,7 @@ void applySettings(QWebEngineProfile *profile)
     // unset, send the de-badged vanilla UA rather than Qt's factory
     // default — the "QtWebEngine/<ver>" token trips Google's bot check.
     const QString userAgent =
-        settings.value(QLatin1String("userAgent")).toString();
+        rootSettings.value(QLatin1String("userAgent")).toString();
     profile->setHttpUserAgent(effectiveHttpUserAgent(userAgent));
     applyClientHints(profile);
 
@@ -692,12 +814,12 @@ static const char *const exitWipeDirs[] = {
 
 static QString deferredWipeSentinel(const QString &storagePath)
 {
-    return storagePath + QLatin1String("/arora-site-wipe.pending");
+    return storagePath + QLatin1String("/arktos-site-wipe.pending");
 }
 
 static QString exitWipeSentinel(const QString &storagePath)
 {
-    return storagePath + QLatin1String("/arora-exit-wipe.pending");
+    return storagePath + QLatin1String("/arktos-exit-wipe.pending");
 }
 
 bool clearSiteStorage(QWebEngineProfile *profile)
@@ -782,16 +904,27 @@ bool clearDeferredSiteStorage(const QString &storagePath)
         return true;
     const QString sentinelPath = deferredWipeSentinel(storagePath);
     const QString exitSentinelPath = exitWipeSentinel(storagePath);
-    const bool siteWipe = QFile::exists(sentinelPath);
-    const bool exitWipe = QFile::exists(exitSentinelPath);
+    // Sentinels dropped by the pre-rebrand binary keep their arora-*
+    // names after the identity migration carries the tree across —
+    // honor and remove both spellings.
+    const QString legacySentinelPath =
+        storagePath + QLatin1String("/arora-site-wipe.pending");
+    const QString legacyExitSentinelPath =
+        storagePath + QLatin1String("/arora-exit-wipe.pending");
+    const bool siteWipe = QFile::exists(sentinelPath)
+        || QFile::exists(legacySentinelPath);
+    const bool exitWipe = QFile::exists(exitSentinelPath)
+        || QFile::exists(legacyExitSentinelPath);
     if (!siteWipe && !exitWipe)
         return true;
 
     bool ok = removeSiteDataTrees(storagePath, exitWipe);
-    if (siteWipe)
-        ok &= QFile::remove(sentinelPath);
-    if (exitWipe)
-        ok &= QFile::remove(exitSentinelPath);
+    for (const QString &path :
+         {sentinelPath, exitSentinelPath, legacySentinelPath,
+          legacyExitSentinelPath}) {
+        if (QFile::exists(path))
+            ok &= QFile::remove(path);
+    }
     ensureUserOnlyPermissions(storagePath);
     return ok;
 }
@@ -962,7 +1095,7 @@ void applyChromiumFlags()
     // compositor to software while the GPU process — and therefore
     // WebGL/canvas acceleration — stays alive, which is why it is
     // the surgical pick over --disable-gpu.  Three arming paths:
-    // the websettings toggle, ARORA_DISABLE_GPU_COMPOSITING (an
+    // the websettings toggle, ARKTOS_DISABLE_GPU_COMPOSITING (an
     // explicit =0 even overrides a stored "on", for a one-shot
     // verification run), and the crash-loop counter — two
     // consecutive unclean starts auto-engage it and persist the
@@ -972,9 +1105,9 @@ void applyChromiumFlags()
     // an earlier crash and then died uncleanly itself — i.e. two
     // consecutive crashes, which is the arming threshold.
     bool disableGpuCompositing;
-    if (qEnvironmentVariableIsSet("ARORA_DISABLE_GPU_COMPOSITING")) {
+    if (qEnvironmentVariableIsSet("ARKTOS_DISABLE_GPU_COMPOSITING")) {
         disableGpuCompositing =
-            qEnvironmentVariableIntValue("ARORA_DISABLE_GPU_COMPOSITING")
+            qEnvironmentVariableIntValue("ARKTOS_DISABLE_GPU_COMPOSITING")
                 != 0;
     } else {
         if (settings.value(QLatin1String("browser/gpuCrashCount"), 0)
@@ -1109,8 +1242,10 @@ static const char *terminationSignalName(int signalNumber)
         return "SIGTERM";
     case SIGINT:
         return "SIGINT";
+#ifdef SIGHUP
     case SIGHUP:
         return "SIGHUP";
+#endif
     default:
         return "signal";
     }
@@ -1130,15 +1265,15 @@ void markSessionStart()
         // zero trace.
         settings.setValue(QLatin1String("browser/lastExit"),
             QLatin1String("unclean (crash or external kill)"));
-        qWarning("arora: previous session ended uncleanly "
+        qWarning("arktos: previous session ended uncleanly "
                  "(crash or external kill)");
     } else {
-        // The 'arora exited, rc=X' breadcrumb — the record the last
+        // The 'arktos exited, rc=X' breadcrumb — the record the last
         // run's exit path wrote, echoed on the next start.
         const QString lastExit =
             settings.value(QLatin1String("browser/lastExit")).toString();
         if (!lastExit.isEmpty())
-            qInfo("arora: last exit: %s", qPrintable(lastExit));
+            qInfo("arktos: last exit: %s", qPrintable(lastExit));
     }
     settings.setValue(sentinel, true);
     // The crash this detects never lets a destructor flush — force the
@@ -1264,7 +1399,8 @@ bool addClientCertificateFile(QWebEngineProfile *profile,
 
 void loadClientCertificates(QWebEngineProfile *profile)
 {
-    const QDir dir(BrowserPaths::dataFilePath(
+    const QDir dir(BrowserPaths::profileDataFilePath(
+            profileIdFor(profile),
             QLatin1String("clientcertificates")));
     const QFileInfoList files = dir.entryInfoList(
             QStringList() << QStringLiteral("*.pem")

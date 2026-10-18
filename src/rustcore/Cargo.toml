@@ -1,8 +1,8 @@
 [package]
-name = "arora-rustcore"
+name = "arktos-rustcore"
 version = "0.1.0"
 edition = "2021"
-description = "Arora shared Rust core — engine-neutral app services behind a C FFI"
+description = "Arktos shared Rust core — engine-neutral app services behind a C FFI"
 license = "GPL-2.0-or-later"
 publish = false
 

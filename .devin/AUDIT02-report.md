@@ -29,7 +29,7 @@ forms (.pri FORMS)↔disk check, header-declaration↔call-site count across
 - No orphaned qrc assets — every `<file>` entry resolves, and every file
   under the qrc-covered dirs is listed (the `data/*.png` hits are covered
   by `data/graphics/graphics.qrc` / `data/searchengines/searchengines.qrc`;
-  `arora.1`/`.xpm`/install icons are desktop-install assets, not resources).
+  `arktos.1`/`.xpm`/install icons are desktop-install assets, not resources).
 - MIG06/MIG07-flagged statics (`s_historyManager`, `s_bookmarksManager`)
   already cleaned — confirmed gone.
 
@@ -37,7 +37,7 @@ forms (.pri FORMS)↔disk check, header-declaration↔call-site count across
 
 | Twin pair | Verdict |
 |-----------|---------|
-| `NavigationPolicy::rewrittenReferer` (C++ fallback) vs `policy.rs rewritten_referer` | **Aligned.** Both post-REFER01: EngineDefault verbatim, Never empty, https→http empty, cross-site empty at Strict, else the SOURCE's bare origin. `referer_origin` in Rust replicates QUrl's default-port drop (test `referer_origin_drops_default_ports`). The C++ copy is the documented `!ARORA_RUSTCORE` fallback — an intentional twin, not drift. |
+| `NavigationPolicy::rewrittenReferer` (C++ fallback) vs `policy.rs rewritten_referer` | **Aligned.** Both post-REFER01: EngineDefault verbatim, Never empty, https→http empty, cross-site empty at Strict, else the SOURCE's bare origin. `referer_origin` in Rust replicates QUrl's default-port drop (test `referer_origin_drops_default_ports`). The C++ copy is the documented `!ARKTOS_RUSTCORE` fallback — an intentional twin, not drift. |
 | `refererForRequest` vs `referer_directive` | **Aligned.** Same gate order: max(policy, minLevel) → level 0 keep → non-http(s) keep → empty header keep → non-http referer keep → set. |
 | `DomainBlocklist` / `TrancoList` | **No twin drift.** C++ side is fetch+commit only (HTTPS guard, one redirect hop, 64MB cap); matching/probing lives entirely in rustcore (`blocklist::check`, `rc_tranco_rank`). |
 | XBEL read/write vs `bookmarks.rs` | **No twin drift.** Store load/save is Rust (`rc_bm_load`/`rc_bm_save`/`rc_bm_load_mem`). The C++ `XbelReader`/`XbelWriter` only handle the drag-and-drop mime fragment path (`application/bookmarks.xbel`) — a subtree-fragment shape the store FFI doesn't expose. `xbelreader.cpp` already defers to `rc_xbel_check` for validation. |

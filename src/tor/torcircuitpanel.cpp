@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@
 
 #include "torcircuitpanel.h"
 
-#include "arorastyle.h"
+#include "arktosstyle.h"
 #include "torcircuitbutton.h"
 
 #include <qboxlayout.h>
@@ -215,11 +215,11 @@ TorCircuitPanel::TorCircuitPanel(QWidget *parent)
         tr("The relays in the current Tor circuit."));
 
     QVBoxLayout *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(AroraStyle::Spacing::Large,
-                               AroraStyle::Spacing::Medium,
-                               AroraStyle::Spacing::Large,
-                               AroraStyle::Spacing::Medium);
-    layout->setSpacing(AroraStyle::Spacing::Medium);
+    layout->setContentsMargins(ArktosStyle::Spacing::Large,
+                               ArktosStyle::Spacing::Medium,
+                               ArktosStyle::Spacing::Large,
+                               ArktosStyle::Spacing::Medium);
+    layout->setSpacing(ArktosStyle::Spacing::Medium);
 
     m_title = new QLabel(this);
     QFont titleFont = m_title->font();

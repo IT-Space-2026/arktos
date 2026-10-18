@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, The Arora Authors
+ * Copyright (c) 2026, The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,9 +18,9 @@
  */
 
 // COV03: end-to-end coverage for the custom URL scheme handlers under
-// a real offscreen WebEngine — arora-file:// directory listings
+// a real offscreen WebEngine — arktos-file:// directory listings
 // (FileAccessHandler), the file:// directory redirect in WebPage,
-// arora-resource:// bundled adblock stubs (AdBlockResourceHandler) and
+// arktos-resource:// bundled adblock stubs (AdBlockResourceHandler) and
 // abp:subscribe links (AdBlockSchemeAccessHandler).  Custom schemes
 // must be registered before BrowserApplication brings up the browsing
 // profile, so this test uses a custom main() instead of QTEST_MAIN.
@@ -226,10 +226,10 @@ void tst_SchemeHandlers::resourceNames()
     QCOMPARE(AdBlockResourceHandler::canonicalResourceName(name), canonical);
 
     QCOMPARE(AdBlockResourceHandler::schemeName(),
-             QByteArrayLiteral("arora-resource"));
+             QByteArrayLiteral("arktos-resource"));
 
     FileAccessHandler fileHandler;
-    QCOMPARE(fileHandler.scheme(), QByteArrayLiteral("arora-file"));
+    QCOMPARE(fileHandler.scheme(), QByteArrayLiteral("arktos-file"));
     AdBlockSchemeAccessHandler abpHandler;
     QCOMPARE(abpHandler.scheme(), QByteArrayLiteral("abp"));
 }
@@ -255,10 +255,10 @@ void tst_SchemeHandlers::stubResources()
     QVERIFY(!AdBlockResourceHandler::resourceFor("no-such-stub", &mimeType, &body));
 
     QCOMPARE(AdBlockResourceHandler::urlForResource("noop.js"),
-             QUrl(QLatin1String("arora-resource:/noop.js")));
+             QUrl(QLatin1String("arktos-resource:/noop.js")));
 }
 
-// arora-file:// renders the app's own directory listing.
+// arktos-file:// renders the app's own directory listing.
 void tst_SchemeHandlers::fileSchemeListing()
 {
     QTemporaryDir dir;
@@ -277,7 +277,7 @@ void tst_SchemeHandlers::fileSchemeListing()
 
     WebPage page(m_profile);
     const QUrl url = FileAccessHandler::urlForLocalPath(dir.path());
-    QCOMPARE(url.scheme(), QLatin1String("arora-file"));
+    QCOMPARE(url.scheme(), QLatin1String("arktos-file"));
     QVERIFY(loadSync(&page, url));
 
     const QString html = pageHtml(&page);
@@ -287,17 +287,17 @@ void tst_SchemeHandlers::fileSchemeListing()
     QVERIFY(html.contains(QLatin1String("Show Hidden Files")));
 
     // SEC02: a listing page may still navigate into a child directory —
-    // an arora-file initiator is local and allowed.
+    // an arktos-file initiator is local and allowed.
     std::shared_ptr<bool> navDone(new bool(false));
     QObject::connect(&page, &QWebEnginePage::loadFinished, &page,
                      [navDone](bool) { *navDone = true; });
     page.runJavaScript(QStringLiteral(
-        "location.href='arora-file:%1/cov03dir'").arg(dir.path()));
+        "location.href='arktos-file:%1/cov03dir'").arg(dir.path()));
     QVERIFY(waitFor(navDone));
     QVERIFY(pageHtml(&page).contains(QLatin1String("Contents of")));
 }
 
-// Navigating to a file:// directory bounces to arora-file:// inside
+// Navigating to a file:// directory bounces to arktos-file:// inside
 // WebPage::acceptNavigationRequest so the handler can list it.
 void tst_SchemeHandlers::fileSchemeRedirect()
 {
@@ -313,11 +313,11 @@ void tst_SchemeHandlers::fileSchemeRedirect()
     std::shared_ptr<bool> done(new bool(false));
     std::shared_ptr<bool> ok(new bool(false));
     // The rejected file:// navigation may emit loadFinished(false)
-    // before the redirected arora-file load; only the arora-file
+    // before the redirected arktos-file load; only the arktos-file
     // result counts.
     QObject::connect(&page, &QWebEnginePage::loadFinished, &page,
                      [&page, done, ok](bool result) {
-        if (page.url().scheme() == QLatin1String("arora-file")) {
+        if (page.url().scheme() == QLatin1String("arktos-file")) {
             *done = true;
             *ok = result;
         }
@@ -334,7 +334,7 @@ void tst_SchemeHandlers::fileSchemeErrors()
 
     // Directory that does not exist.
     QVERIFY(loadAndFail(&page, QUrl(QLatin1String(
-        "arora-file:/nonexistent-cov03-dir-xyz"))));
+        "arktos-file:/nonexistent-cov03-dir-xyz"))));
 
     // A regular file is not this handler's job.
     QTemporaryDir dir;
@@ -398,7 +398,7 @@ void tst_SchemeHandlers::resourceScheme()
     QVERIFY(loadSync(&page,
                      AdBlockResourceHandler::urlForResource("noop.html")));
     QVERIFY(loadAndFail(&page,
-                        QUrl(QLatin1String("arora-resource:/bogus-stub"))));
+                        QUrl(QLatin1String("arktos-resource:/bogus-stub"))));
 }
 
 void tst_SchemeHandlers::abpSchemeInvalid()

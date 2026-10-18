@@ -65,8 +65,8 @@
 
 #include "acceptlanguagedialog.h"
 #include "adblockmanager.h"
-#include "aroraicon.h"
-#include "arorastyle.h"
+#include "arktosicon.h"
+#include "arktosstyle.h"
 #include "addressdialog.h"
 #include "autofilldialog.h"
 #include "autofillmanager.h"
@@ -93,6 +93,9 @@
 #include "opensearchmanager.h"
 #include "popupblocker.h"
 #include "privacyrequestinterceptor.h"
+#include "profilemanagerdialog.h"
+#include "profilestore.h"
+#include "profilevault.h"
 #include "safetext.h"
 #include "scopeshortcuts.h"
 #include "scriptcontrolmanager.h"
@@ -211,14 +214,14 @@ SettingsDialog::SettingsDialog(QWidget *parent)
          i < pagesList->count()
          && i < int(sizeof(pageIcons) / sizeof(pageIcons[0])); ++i) {
         if (QListWidgetItem *item = pagesList->item(i))
-            item->setIcon(AroraIcon::getChrome(QLatin1String(pageIcons[i])));
+            item->setIcon(ArktosIcon::getChrome(QLatin1String(pageIcons[i])));
     }
     // ICONS02: with no explicit iconSize the view paints each icon at
     // whatever nominal size the resolved asset carries — themes ship
     // mixed 16/22/32 assets, so rows render unevenly and the label
     // baselines drift.  Pin the extent at the widget level (never in
     // the theme files) so every current and future set is uniform;
-    // it's widget state, so a runtime AroraIcon::setTheme re-resolve
+    // it's widget state, so a runtime ArktosIcon::setTheme re-resolve
     // can't regrow it.
     // PREFUI08: at the stock font beside 16px glyphs the nav read
     // cramped — bump the list font ~30% relative to the app font
@@ -248,7 +251,7 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     // text.
     pagesList->setFixedWidth(pagesList->sizeHintForColumn(0)
                              + 2 * pagesList->frameWidth()
-                             + AroraStyle::Spacing::Medium);
+                             + ArktosStyle::Spacing::Medium);
 
     // UIP06: the stack's sizeHint is the tallest page, which can
     // exceed the screen and push the button box out of reach.
@@ -277,27 +280,27 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     // identical on every page and pages pack tighter (most no longer
     // need their scroll area at a sane window size).
     layout()->setContentsMargins(
-        AroraStyle::Spacing::Medium, AroraStyle::Spacing::Medium,
-        AroraStyle::Spacing::Medium, AroraStyle::Spacing::Medium);
+        ArktosStyle::Spacing::Medium, ArktosStyle::Spacing::Medium,
+        ArktosStyle::Spacing::Medium, ArktosStyle::Spacing::Medium);
     for (int i = 0; i < tabWidget->count(); ++i) {
         QWidget *surface = tabWidget->widget(i);
         if (QScrollArea *area = qobject_cast<QScrollArea *>(surface))
             surface = area->widget();
         if (surface && surface->layout()) {
             surface->layout()->setContentsMargins(
-                AroraStyle::Spacing::Medium, AroraStyle::Spacing::Medium,
-                AroraStyle::Spacing::Medium, AroraStyle::Spacing::Medium);
+                ArktosStyle::Spacing::Medium, ArktosStyle::Spacing::Medium,
+                ArktosStyle::Spacing::Medium, ArktosStyle::Spacing::Medium);
             // THEM03: one Medium step between sections — uic leaves
             // the style's ad-hoc default otherwise.
-            surface->layout()->setSpacing(AroraStyle::Spacing::Medium);
+            surface->layout()->setSpacing(ArktosStyle::Spacing::Medium);
         }
     }
     const QList<QGroupBox *> groups = findChildren<QGroupBox *>();
     for (QGroupBox *box : groups) {
         if (QLayout *boxLayout = box->layout())
             boxLayout->setContentsMargins(
-                AroraStyle::Spacing::Medium, AroraStyle::Spacing::Small,
-                AroraStyle::Spacing::Medium, AroraStyle::Spacing::Medium);
+                ArktosStyle::Spacing::Medium, ArktosStyle::Spacing::Small,
+                ArktosStyle::Spacing::Medium, ArktosStyle::Spacing::Medium);
     }
 
     connect(exceptionsButton, &QPushButton::clicked, this, &SettingsDialog::showExceptions);
@@ -310,7 +313,15 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     connect(startupSpecificPagesRadio, &QRadioButton::toggled,
             startupPagesEdit, &QPlainTextEdit::setEnabled);
 
-    // ICONS01: one entry per AroraIcon::themeIds() — itemData carries
+    // MPROF05: the Profile Manager is discoverable without the
+    // nav-bar button — same dialog the Tools > Profiles... entry and
+    // the profile-menu item open.
+    connect(manageProfilesButton, &QPushButton::clicked, this, [this]() {
+        ProfileManagerDialog::showManager(
+            this, ProfileStore::activeProfileId());
+    });
+
+    // ICONS01: one entry per ArktosIcon::themeIds() — itemData carries
     // the id.
     // ICONS03: each option previews a strip of the set's own chrome
     // glyphs painted side-by-side into one pixmap — a single
@@ -328,9 +339,9 @@ SettingsDialog::SettingsDialog(QWidget *parent)
                               chromeIconExtent);
     iconThemeCombo->setIconSize(previewExtent);
     const qreal previewDpr = iconThemeCombo->devicePixelRatioF();
-    for (const QString &id : AroraIcon::themeIds()) {
+    for (const QString &id : ArktosIcon::themeIds()) {
         const int row = iconThemeCombo->count();
-        iconThemeCombo->addItem(AroraIcon::themeDisplayName(id), id);
+        iconThemeCombo->addItem(ArktosIcon::themeDisplayName(id), id);
         QPixmap strip(previewExtent * previewDpr);
         strip.setDevicePixelRatio(previewDpr);
         strip.fill(Qt::transparent);
@@ -338,7 +349,7 @@ SettingsDialog::SettingsDialog(QWidget *parent)
         int painted = 0;
         for (const char *name : previewNames) {
             const QIcon glyph =
-                AroraIcon::iconForTheme(id, QLatin1String(name));
+                ArktosIcon::iconForTheme(id, QLatin1String(name));
             if (glyph.isNull())
                 continue;
             glyph.paint(&painter,
@@ -353,7 +364,7 @@ SettingsDialog::SettingsDialog(QWidget *parent)
             // A set that resolves none of the preview names keeps the
             // old single-glyph behavior rather than painting blank.
             iconThemeCombo->setItemIcon(
-                row, AroraIcon::iconForTheme(
+                row, ArktosIcon::iconForTheme(
                          id, QLatin1String("view-refresh")));
         }
     }
@@ -384,7 +395,7 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     // loadFromSettings.
     for (const SidebarPanel::Panel &panel : SidebarPanel::orderedPanels()) {
         QListWidgetItem *item = new QListWidgetItem(
-            AroraIcon::getChrome(QLatin1String(panel.iconName)), panel.title,
+            ArktosIcon::getChrome(QLatin1String(panel.iconName)), panel.title,
             sidebarPanelsList);
         item->setData(Qt::UserRole, panel.id);
         item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
@@ -418,7 +429,7 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     // round-trips instead of being silently rewritten to built-in.
     downloadEngineCombo->setItemData(0, QLatin1String("builtin"));
     downloadEngineCombo->setItemData(1, QLatin1String("rust"));
-#ifndef ARORA_RUSTDL
+#ifndef ARKTOS_RUSTDL
     if (QStandardItemModel *engineModel =
             qobject_cast<QStandardItemModel *>(downloadEngineCombo->model())) {
         if (QStandardItem *accelerated = engineModel->item(1)) {
@@ -580,7 +591,7 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     // round-trips instead of being silently rewritten to Built-in.
     adblockEngineCombo->setItemData(0, QLatin1String("cpp"));
     adblockEngineCombo->setItemData(1, QLatin1String("rust"));
-#ifndef ARORA_ADBLOCK_RUST
+#ifndef ARKTOS_ADBLOCK_RUST
     if (QStandardItemModel *engineModel =
             qobject_cast<QStandardItemModel *>(adblockEngineCombo->model())) {
         if (QStandardItem *rust = engineModel->item(1)) {
@@ -920,14 +931,14 @@ void SettingsDialog::retranslate()
             tr("This build of Qt WebEngine was compiled without "
                "extension support."));
     }
-#ifndef ARORA_RUSTDL
+#ifndef ARKTOS_RUSTDL
     if (QStandardItemModel *engineModel =
             qobject_cast<QStandardItemModel *>(downloadEngineCombo->model())) {
         if (QStandardItem *accelerated = engineModel->item(1))
             accelerated->setText(tr("Accelerated (Rust) — not in this build"));
     }
 #endif
-#ifndef ARORA_ADBLOCK_RUST
+#ifndef ARKTOS_ADBLOCK_RUST
     if (QStandardItemModel *engineModel =
             qobject_cast<QStandardItemModel *>(adblockEngineCombo->model())) {
         if (QStandardItem *rust = engineModel->item(1)) {
@@ -1176,12 +1187,41 @@ void SettingsDialog::loadFromSettings()
                 item->data(Qt::UserRole).toByteArray())
                 ? Qt::Checked : Qt::Unchecked);
     }
-    const QString iconTheme = AroraIcon::theme();
+    const QString iconTheme = ArktosIcon::theme();
     const int iconThemeIndex = iconThemeCombo->findData(iconTheme);
     iconThemeCombo->setCurrentIndex(iconThemeIndex < 0 ? 0 : iconThemeIndex);
     const int engineIndex =
         renderEngineCombo->findData(EngineRegistry::defaultBackendId());
     renderEngineCombo->setCurrentIndex(engineIndex < 0 ? 0 : engineIndex);
+
+    // PVAULT03: the vault prefs are per-profile — they live in
+    // profiles/<id>.vault.conf, not QSettings, and only mean
+    // something once a password has vaulted the active profile.
+    {
+        ProfileVault *vault = ProfileVault::instance();
+        const QString id = ProfileStore::activeProfileId();
+        const bool vaulted = vault->isVaulted(id);
+        vaultAutoLockCheck->setChecked(vault->autoLock(id));
+        vaultIdleSpin->setValue(vault->idleLockMinutes(id));
+        vaultAutoLockCheck->setEnabled(vaulted);
+        vaultIdleSpin->setEnabled(vaulted);
+        vaultIdleLabel->setEnabled(vaulted);
+        // Keep the .ui tooltips around — the unvaulted hint replaces
+        // them and a later vaulted load must restore, not stack.
+        for (QWidget *widget : { static_cast<QWidget *>(
+                 vaultAutoLockCheck),
+                 static_cast<QWidget *>(vaultIdleSpin) }) {
+            if (widget->property("vaultBaseTip").isNull())
+                widget->setProperty("vaultBaseTip", widget->toolTip());
+            const QString baseTip =
+                widget->property("vaultBaseTip").toString();
+            widget->setToolTip(
+                vaulted ? baseTip
+                        : tr("Set a password on the profile in the "
+                             "Profile Manager to lock its data at "
+                             "rest."));
+        }
+    }
     settings.endGroup();
 
     // SIDE09: the working panel options live under sidebar/ (outside
@@ -1291,7 +1331,7 @@ void SettingsDialog::loadFromSettings()
     // value falls back to built-in.  DLACC06: rust is the default on
     // builds shipping the crate — without it a fresh profile must not
     // land on the disabled Accelerated row.
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
     const QLatin1String defaultEngine("rust");
 #else
     const QLatin1String defaultEngine("builtin");
@@ -1460,6 +1500,12 @@ void SettingsDialog::loadFromSettings()
     secureDnsServer->setEnabled(secureDnsMode->currentIndex() >= 2);
     strictTlsCiphers->setChecked(settings.value(QLatin1String("tlsStrictCiphers"), true).toBool());
     blockPings->setChecked(settings.value(QLatin1String("blockPings"), true).toBool());
+    // POL04: canonical key; the SEC17-era stripTrackingParams bool is
+    // the legacy alias older profiles may still carry.
+    urlCleaning->setChecked(
+        settings.value(QLatin1String("urlCleaning"),
+            settings.value(QLatin1String("stripTrackingParams"), true))
+            .toBool());
     // PREFUI04: the toggle moved to the Performance page in its
     // positive form — the persisted privacy/blockPrefetch key (and
     // its default-on semantics) is unchanged.
@@ -1591,6 +1637,11 @@ void SettingsDialog::loadFromSettings()
                                     : memorySaverMaximum;
         }
         saverPick->setChecked(true);
+        // MEM06: the purge checkbox sits in the Memory Saver group
+        // but is independent of the radios — it is on by default
+        // and works even when the unload schedule is "Never".
+        backgroundPurge->setChecked(settings.value(
+            QLatin1String("tabs/memoryPurge"), true).toBool());
     }
     settings.beginGroup(QLatin1String("performance"));
     hardwareAccel->setChecked(settings.value(
@@ -1627,7 +1678,7 @@ void SettingsDialog::loadFromSettings()
 
     // EXT03: the opt-in background update check (default off).
     extensionAutoUpdateCheck->setChecked(
-        ExtensionManager::updateCheckEnabled());
+        ExtensionManager::instance()->updateCheckEnabled());
 }
 
 void SettingsDialog::saveToSettings()
@@ -1671,6 +1722,17 @@ void SettingsDialog::saveToSettings()
                       sidebarDockArea->currentIndex() == 1
                       ? int(Qt::RightDockWidgetArea)
                       : int(Qt::LeftDockWidgetArea));
+    // PVAULT03: the auto-lock prefs persist into profiles/<id>/
+    // vault.conf — only when the profile is vaulted; writing the
+    // conf for an unvaulted profile would mark it vaulted.
+    {
+        ProfileVault *vault = ProfileVault::instance();
+        const QString id = ProfileStore::activeProfileId();
+        if (vault->isVaulted(id)) {
+            vault->setAutoLock(id, vaultAutoLockCheck->isChecked());
+            vault->setIdleLockMinutes(id, vaultIdleSpin->value());
+        }
+    }
     // SIDE02: persist the rail's per-panel checkboxes (the keys live
     // under sidebar/panels/, not this group — write through the
     // panel's own helpers).  Live application happens below via each
@@ -1710,7 +1772,7 @@ void SettingsDialog::saveToSettings()
                       sidebarLazyLoadCheck->isChecked());
     // Applies to existing icons live — QIcon theme lookups re-resolve
     // on setThemeName, no widget rewiring needed.
-    AroraIcon::setTheme(iconTheme);
+    ArktosIcon::setTheme(iconTheme);
 
     // THEME01: chrome color scheme — persisted under browser/ and
     // applied live.  applyColorScheme() re-reads the key through
@@ -1898,6 +1960,12 @@ void SettingsDialog::saveToSettings()
     settings.setValue(QLatin1String("secureDns"), secureDnsMode->currentIndex() != 0);
     settings.setValue(QLatin1String("tlsStrictCiphers"), strictTlsCiphers->isChecked());
     settings.setValue(QLatin1String("blockPings"), blockPings->isChecked());
+    settings.setValue(QLatin1String("urlCleaning"), urlCleaning->isChecked());
+    // The SEC17-era key stays in sync so a profile opened by an older
+    // build (or the interceptor's legacy fallback read) sees the same
+    // toggle state.
+    settings.setValue(QLatin1String("stripTrackingParams"),
+                      urlCleaning->isChecked());
     // PREFUI04: same key, written by the positive-form checkbox that
     // now lives on the Performance page.
     settings.setValue(QLatin1String("blockPrefetch"),
@@ -2019,6 +2087,10 @@ void SettingsDialog::saveToSettings()
         settings.setValue(QLatin1String("suspendTabsMinutes"), 30);
     else if (memorySaverMaximum->isChecked())
         settings.setValue(QLatin1String("suspendTabsMinutes"), 10);
+    // MEM06: applies live through the same per-TabWidget
+    // loadSettings() fan-out -> updatePurgeTimer().
+    settings.setValue(QLatin1String("memoryPurge"),
+                      backgroundPurge->isChecked());
     settings.setValue(QLatin1String("openTargetBlankLinksIn"), openTargetBlankLinksIn->currentIndex());
     settings.setValue(QLatin1String("openLinksFromAppsIn"), openLinksFromAppsIn->currentIndex());
     settings.setValue(QLatin1String("containerDisplay"), containerDisplayCombo->currentIndex());
@@ -2058,7 +2130,7 @@ void SettingsDialog::saveToSettings()
 
     // EXT03: opt-in background update check — applies immediately;
     // the next scheduled slot reads the stored value.
-    ExtensionManager::setUpdateCheckEnabled(
+    ExtensionManager::instance()->setUpdateCheckEnabled(
         extensionAutoUpdateCheck->isChecked());
 
     // Re-apply: the profile-level settings (was
@@ -2223,6 +2295,7 @@ void SettingsDialog::resetPerformanceSettings()
     settings.beginGroup(QLatin1String("tabs"));
     settings.remove(QLatin1String("suspendTabs"));
     settings.remove(QLatin1String("suspendTabsMinutes"));
+    settings.remove(QLatin1String("memoryPurge"));
     settings.endGroup();
     settings.beginGroup(QLatin1String("privacy"));
     settings.remove(QLatin1String("blockPrefetch"));
@@ -3104,7 +3177,7 @@ void SettingsDialog::extensionSelectionChanged()
             lines << tr("Source: %1").arg(info.path);
         // EXT06: document where installed extensions live on disk so
         // stale ones can be cleaned out by hand (Remove uninstalls
-        // through the profile while Arora is running).
+        // through the profile while Arktos is running).
         if (info.installed && !info.builtin) {
             const QString installPath =
                 ExtensionManager::instance()->installPath();
@@ -3114,7 +3187,7 @@ void SettingsDialog::extensionSelectionChanged()
         if (info.actionPopupUrl.isValid())
             lines << (info.hosted
                 ? tr("Declares a toolbar action — its popup gets the "
-                     "hosted shim when opened; Arora has no toolbar "
+                     "hosted shim when opened; Arktos has no toolbar "
                      "button for it yet.")
                 : tr("Declares a toolbar action — Qt WebEngine has no "
                      "extension toolbar, so its popup will not appear."));
@@ -3275,7 +3348,8 @@ void SettingsDialog::refreshUserScripts()
 void SettingsDialog::openUserScriptsFolder()
 {
     QDesktopServices::openUrl(
-        QUrl::fromLocalFile(ExtensionManager::userScriptsPath()));
+        QUrl::fromLocalFile(
+            ExtensionManager::instance()->userScriptsPath()));
 }
 
 void SettingsDialog::reloadUserScripts()

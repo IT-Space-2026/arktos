@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -123,7 +123,7 @@ void PrintPreviewDialog::setPage(QWebEnginePage *page,
         return;
     }
     m_tempDir = new QTemporaryDir(
-        QDir::temp().filePath(QStringLiteral("arora-print-preview-XXXXXX")));
+        QDir::temp().filePath(QStringLiteral("arktos-print-preview-XXXXXX")));
     if (!m_tempDir->isValid()) {
         delete m_tempDir;
         m_tempDir = nullptr;

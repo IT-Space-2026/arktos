@@ -20,7 +20,7 @@
 #include <QtTest/QtTest>
 #include <QtGui/QtGui>
 #include "profilesettings.h"
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 
 #include <browserapplication.h>
 #include <browsermainwindow.h>
@@ -111,11 +111,15 @@ private slots:
     void omniboxEnterDispatch();
     void omniboxTabScope();
     void tabGroups();
+    void closeTabGroup();
+    void groupWorkspaceSignals();
     void pinnedTabs();
     void iconOnlyTabStrip();
     void reopenClosedTab();
     void engineSwapStripState();
     void sleepingTabs();
+    void memoryPurge();
+    void freeTabMemory();
     void containerTabs();
     void tabSlotDrive();
     void newTabStartPage();
@@ -127,6 +131,17 @@ private slots:
     void verticalRailRowOverlap();
     void tabButtonBandAnchor();
 };
+
+// MEM08: does any captured emission carry needle — the statusbar
+// report assertions keep re-scanning a growing spy.
+static bool spyHasText(const QSignalSpy &spy, const QString &needle)
+{
+    for (const QList<QVariant> &args : spy) {
+        if (args.value(0).toString().contains(needle))
+            return true;
+    }
+    return false;
+}
 
 // Subclass that exposes the protected functions.
 class SubTabWidget : public TabWidget
@@ -1066,7 +1081,7 @@ void tst_TabWidget::tabHoverPreviews()
 void tst_TabWidget::tabThumbnailStaleness()
 {
     const QString fixturePath = QDir::temp().filePath(
-        QLatin1String("arora-tprev02-fixture.html"));
+        QLatin1String("arktos-tprev02-fixture.html"));
     {
         QFile fixture(fixturePath);
         QVERIFY(fixture.open(QIODevice::WriteOnly));
@@ -1573,6 +1588,157 @@ void tst_TabWidget::tabGroups()
     }
 }
 
+// TABGRP02: "Close Group" — every member (a collapsed group's hidden
+// ones included) dies through the normal close path and lands on the
+// recently-closed stack; the shared confirmClosingMultipleTabs pref
+// gates groups above one member and reports the real,
+// hidden-inclusive count.
+void tst_TabWidget::closeTabGroup()
+{
+    QSettings settings;
+    settings.setValue(QLatin1String("tabs/confirmClosingMultipleTabs"),
+                      false);
+
+    SubTabWidget widget;
+    for (int i = 0; i < 4; ++i)
+        widget.newTab();
+    WebView *v2 = widget.webView(2);
+    WebView *v3 = widget.webView(3);
+    QVERIFY(v2 && v3);
+
+    // Unknown ids are a no-op.
+    widget.closeTabGroup(QStringLiteral("no-such-group"));
+    QCOMPARE(widget.count(), 4);
+    QVERIFY(!widget.hasRecentlyClosedTabs());
+
+    const QString gid = widget.createTabGroup(0);
+    widget.addTabToGroup(1, gid);
+    QCOMPARE(widget.tabGroupSize(gid), 2);
+    // Blank tabs never enter the recently-closed stack by design —
+    // give the members real urls so the undo leg can land.
+    const QUrl u0(QLatin1String("data:text/plain,grp-a"));
+    const QUrl u1(QLatin1String("data:text/plain,grp-b"));
+    widget.webView(0)->loadUrl(u0);
+    widget.webView(1)->loadUrl(u1);
+    QTRY_COMPARE_WITH_TIMEOUT(widget.webView(0)->url(), u0, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(widget.webView(1)->url(), u1, 5000);
+
+    // Collapse to the chip — the close takes the hidden member too
+    // and leaves the ungrouped tabs standing.
+    widget.setTabGroupCollapsed(gid, true);
+    QCOMPARE(widget.count(), 3);
+    QVERIFY(widget.isTabGroupChip(0));
+    widget.closeTabGroup(gid);
+    QCOMPARE(widget.count(), 2);
+    QCOMPARE(widget.webView(0), v2);
+    QCOMPARE(widget.webView(1), v3);
+    QVERIFY(widget.tabGroupIds().isEmpty());
+    // Both members went through pushRecentlyClosedTab — undo works.
+    QVERIFY(widget.hasRecentlyClosedTabs());
+    QVERIFY(widget.recentlyClosedTabsAction()->isEnabled());
+    emit widget.recentlyClosedTabsAction()->menu()->aboutToShow();
+    QCOMPARE(widget.recentlyClosedTabsAction()->menu()
+                 ->actions().count(), 2);
+
+    // The confirm path: pref on, a collapsed two-member group must
+    // ask and report the hidden-inclusive count.
+    settings.setValue(QLatin1String("tabs/confirmClosingMultipleTabs"),
+                      true);
+    const QString g2 = widget.createTabGroup(0);
+    widget.addTabToGroup(1, g2);
+    widget.setTabGroupCollapsed(g2, true);
+    QCOMPARE(widget.count(), 1);   // just the chip
+    QCOMPARE(widget.tabGroupSize(g2), 2);
+
+    const auto answerNextBox = [](QMessageBox::StandardButton button,
+                                  QString *captured) {
+        QTimer::singleShot(120, qApp, [button, captured]() {
+            QMessageBox *box = qobject_cast<QMessageBox *>(
+                QApplication::activeModalWidget());
+            if (!box)
+                return;
+            *captured = box->text();
+            if (QAbstractButton *b = box->button(button))
+                b->click();
+            else
+                box->reject();
+        });
+    };
+
+    // "No" keeps everything — group, chip and hidden member alike.
+    QString boxText;
+    answerNextBox(QMessageBox::No, &boxText);
+    widget.closeTabGroup(g2);
+    QVERIFY(boxText.contains(QLatin1String("2 tabs")));
+    QCOMPARE(widget.count(), 1);
+    QCOMPARE(widget.tabGroupSize(g2), 2);
+    QVERIFY(widget.tabGroupIsCollapsed(g2));
+
+    // "Yes" closes all members — the hidden one included.
+    boxText.clear();
+    answerNextBox(QMessageBox::Yes, &boxText);
+    widget.closeTabGroup(g2);
+    QVERIFY(boxText.contains(QLatin1String("2 tabs")));
+    QCOMPARE(widget.count(), 0);
+    QVERIFY(widget.tabGroupIds().isEmpty());
+
+    // A one-member group sits under the confirm threshold — it must
+    // close without prompting.  rejectModal is only a safety net for
+    // a wrongly-opened box (which would deadlock the test).
+    widget.newTab();
+    const QString lone = widget.createTabGroup(0);
+    rejectModal();
+    widget.closeTabGroup(lone);
+    QCOMPARE(widget.count(), 0);
+
+    settings.remove(QLatin1String("tabs/confirmClosingMultipleTabs"));
+}
+
+// TABGRP03: the Workspaces overview consumes group metadata live —
+// every group mutator emits tabGroupsChanged so the panel (and the
+// strip) repaint, and hidden-member titles surface collapsed
+// (and container-filtered) members the strip no longer shows.
+void tst_TabWidget::groupWorkspaceSignals()
+{
+    SubTabWidget widget;
+    QSignalSpy groupSpy(&widget, SIGNAL(tabGroupsChanged()));
+    QVERIFY(groupSpy.isValid());
+    for (int i = 0; i < 4; ++i)
+        widget.newTab();
+
+    // Every mutator bumps the signal — create, add, rename, color,
+    // collapse/expand, remove and ungroup.
+    int emissions = 0;
+    const QString gid = widget.createTabGroup(0);
+    QCOMPARE(groupSpy.count(), ++emissions);
+    widget.addTabToGroup(1, gid);
+    QCOMPARE(groupSpy.count(), ++emissions);
+    widget.renameTabGroup(gid, QStringLiteral("Work"));
+    QCOMPARE(groupSpy.count(), ++emissions);
+    widget.setTabGroupColor(gid, QColor(Qt::blue));
+    QCOMPARE(groupSpy.count(), ++emissions);
+
+    // Collapsed members leave the strip but keep their titles in the
+    // hidden-member list the Workspaces tree renders.
+    QVERIFY(widget.tabGroupHiddenMemberTitles(gid).isEmpty());
+    widget.setTabGroupCollapsed(gid, true);
+    QCOMPARE(groupSpy.count(), ++emissions);
+    QCOMPARE(widget.count(), 3);
+    QCOMPARE(widget.tabGroupHiddenMemberTitles(gid).count(), 1);
+    widget.setTabGroupCollapsed(gid, false);
+    QCOMPARE(groupSpy.count(), ++emissions);
+    QVERIFY(widget.tabGroupHiddenMemberTitles(gid).isEmpty());
+
+    // Removing a member and ungrouping the rest still notify — and
+    // the accessor answers empty for unknown ids.
+    widget.removeTabFromGroup(1);
+    QCOMPARE(groupSpy.count(), ++emissions);
+    widget.ungroupTabs(gid);
+    QCOMPARE(groupSpy.count(), ++emissions);
+    QVERIFY(widget.tabGroupHiddenMemberTitles(
+                QLatin1String("no-such-group")).isEmpty());
+}
+
 // TABS04: pinned tabs — a contiguous leading prefix that keeps its
 // titles (TABS14: favicon + title like any tab, never the old
 // icon-only tile), survives "Close Other Tabs", ignores middle-click,
@@ -1683,9 +1849,9 @@ void tst_TabWidget::pinnedTabs()
     widget.setTabTitleOverride(0, QString());
     QApplication::processEvents();
 
-    if (qEnvironmentVariableIsSet("ARORA_STRIP_GRAB_DIR")) {
+    if (qEnvironmentVariableIsSet("ARKTOS_STRIP_GRAB_DIR")) {
         const QString dir =
-            qEnvironmentVariable("ARORA_STRIP_GRAB_DIR");
+            qEnvironmentVariable("ARKTOS_STRIP_GRAB_DIR");
         bar->grab().save(dir + QLatin1String("/strip-pinned.png"));
     }
 
@@ -1824,9 +1990,9 @@ void tst_TabWidget::pinnedTabs()
                  "no title text painted inside the pinned row");
         QVERIFY2(titleInk(vbar, 1) > 20,
                  "no title text painted inside a plain row");
-        if (qEnvironmentVariableIsSet("ARORA_STRIP_GRAB_DIR")) {
+        if (qEnvironmentVariableIsSet("ARKTOS_STRIP_GRAB_DIR")) {
             const QString dir =
-                qEnvironmentVariable("ARORA_STRIP_GRAB_DIR");
+                qEnvironmentVariable("ARKTOS_STRIP_GRAB_DIR");
             vbar->grab().save(
                 dir + QLatin1String("/strip-pinned-vertical.png"));
         }
@@ -1885,9 +2051,9 @@ void tst_TabWidget::iconOnlyTabStrip()
     QApplication::processEvents();
     QVERIFY(bar->tabRect(widget.count() - 1).width() <= tile + 8);
 
-    if (qEnvironmentVariableIsSet("ARORA_STRIP_GRAB_DIR")) {
+    if (qEnvironmentVariableIsSet("ARKTOS_STRIP_GRAB_DIR")) {
         const QString dir =
-            qEnvironmentVariable("ARORA_STRIP_GRAB_DIR");
+            qEnvironmentVariable("ARKTOS_STRIP_GRAB_DIR");
         bar->grab().save(dir + QLatin1String("/strip-icononly.png"));
     }
 
@@ -1899,9 +2065,9 @@ void tst_TabWidget::iconOnlyTabStrip()
     QVERIFY(!bar->iconOnlyTabs());
     QVERIFY(bar->tabRect(2).width() > tile + 8);
 
-    if (qEnvironmentVariableIsSet("ARORA_STRIP_GRAB_DIR")) {
+    if (qEnvironmentVariableIsSet("ARKTOS_STRIP_GRAB_DIR")) {
         const QString dir =
-            qEnvironmentVariable("ARORA_STRIP_GRAB_DIR");
+            qEnvironmentVariable("ARKTOS_STRIP_GRAB_DIR");
         bar->grab().save(dir + QLatin1String("/strip-titled.png"));
     }
 
@@ -2188,8 +2354,14 @@ void tst_TabWidget::sleepingTabs()
     QVERIFY(!widget.isTabSleeping(0));
 
     // Selecting a slept tab wakes it.
+    QSignalSpy waked(view1->page(), &QWebEnginePage::loadFinished);
     widget.setCurrentIndex(1);
     QVERIFY(!widget.isTabSleeping(1));
+    // The wake fires a fresh navigation — a load() issued while it is
+    // still in-flight is merged into it by WebEngine and commits
+    // without its own loadStarted.  Wait for the restore to finish so
+    // the clean-navigation leg below exercises a real navigation.
+    QTRY_VERIFY_WITH_TIMEOUT(!waked.isEmpty(), 15000);
     QCOMPARE(widget.sleepingTabCount(), 0);
 
     // Waking an awake tab and sleeping the current tab are no-ops.
@@ -2225,6 +2397,154 @@ void tst_TabWidget::sleepingTabs()
     QVERIFY(!widget.isTabSleeping(2));
     QCOMPARE(widget.sleepingTabCount(), 1);
     widget.wakeTab(1);
+
+    while (widget.count())
+        widget.closeTab(0);
+}
+
+// MEM06: purgeInactiveTabs freeze-pulses eligible background tabs —
+// the page goes Frozen then restores Active a fraction of a second
+// later — while the current tab and never-loaded tabs are skipped.
+void tst_TabWidget::memoryPurge()
+{
+    SubTabWidget widget;
+    widget.newTab();                       // index 0, current
+    widget.newTab();                       // index 1, background
+    widget.newTab();                       // index 2, never loaded
+    widget.setCurrentIndex(0);
+
+    WebView *view0 = widget.webView(0);
+    WebView *view1 = widget.webView(1);
+    QVERIFY(view0 && view1);
+    QSignalSpy loaded(view1->page(), &QWebEnginePage::loadFinished);
+    view1->load(QUrl("data:text/html,<title>t</title>body"));
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded.isEmpty(), 15000);
+    QTRY_VERIFY(!view1->enginePage()->isLoading());
+
+    using LS = Engine::Page::LifecycleState;
+    QCOMPARE(view1->enginePage()->lifecycleState(), LS::Active);
+
+    widget.purgeInactiveTabs();
+    QTRY_COMPARE_WITH_TIMEOUT(
+        view1->enginePage()->lifecycleState(), LS::Frozen, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        view1->enginePage()->lifecycleState(), LS::Active, 10000);
+
+    // The current tab is never frozen by the sweep; an empty tab has
+    // no page to purge.
+    QCOMPARE(view0->enginePage()->lifecycleState(), LS::Active);
+    QVERIFY(widget.webView(2));
+    QCOMPARE(widget.webView(2)->enginePage()->lifecycleState(), LS::Active);
+
+    // A sleeping (discarded) tab is skipped by the sweep and the
+    // deferred unfreeze never revives it.
+    widget.sleepTab(1);
+    QTRY_VERIFY_WITH_TIMEOUT(widget.isTabSleeping(1), 10000);
+    widget.purgeInactiveTabs();
+    QTest::qWait(800);                     // past the ~600ms pulse window
+    QCOMPARE(view1->enginePage()->lifecycleState(), LS::Discarded);
+
+    while (widget.count())
+        widget.closeTab(0);
+}
+
+// MEM08: the manual flush — a background tab discards outright via
+// the sleep path (its renderer association drops to nothing); the
+// current tab takes a discard+reactivate pulse that reloads the
+// entry; and the deferred statusbar report measures the real RSS
+// delta instead of claiming a figure.
+void tst_TabWidget::freeTabMemory()
+{
+    SubTabWidget widget;
+    widget.newTab();                        // 0 — current, cycled
+    widget.newTab();                        // 1 — background, cycled
+    widget.newTab();                        // 2 — never loaded
+    widget.setCurrentIndex(0);
+    WebView *view0 = widget.webView(0);
+    WebView *view1 = widget.webView(1);
+    QVERIFY(view0 && view1 && widget.webView(2));
+
+    // A few unique real documents per tab — the retained session
+    // documents are what the flush releases.
+    const QString pad(96 * 1024, QLatin1Char('x'));
+    for (int i = 0; i < 6; ++i) {
+        for (WebView *view : {view0, view1}) {
+            QSignalSpy loaded(view->page(),
+                              &QWebEnginePage::loadFinished);
+            view->load(QUrl(QLatin1String("data:text/html,<p>")
+                            + QString::number(i) + pad));
+            QTRY_VERIFY_WITH_TIMEOUT(!loaded.isEmpty(), 15000);
+        }
+    }
+
+    using LS = Engine::Page::LifecycleState;
+    const qint64 beforeBgKb =
+        view1->enginePage()->residentMemoryKb();
+    const qint64 beforeFgKb =
+        view0->enginePage()->residentMemoryKb();
+    qInfo() << "freeTabMemory: rendererKb before" << beforeFgKb
+            << beforeBgKb;
+
+    QSignalSpy statusSpy(&widget, &TabWidget::showStatusBarMessage);
+
+    // Background leg — the flush IS the discard; the page's renderer
+    // association drops to nothing.
+    widget.freeTabMemory(1);
+    QTRY_VERIFY_WITH_TIMEOUT(widget.isTabSleeping(1), 10000);
+    QCOMPARE(view1->enginePage()->lifecycleState(), LS::Discarded);
+    if (beforeBgKb > 0) {
+        QTRY_VERIFY_WITH_TIMEOUT(
+            view1->enginePage()->residentMemoryKb() <= 0, 10000);
+    }
+
+    // A second click on the slept tab reports the state rather than
+    // re-discarding.
+    widget.freeTabMemory(1);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        spyHasText(statusSpy, QLatin1String("asleep")), 5000);
+
+    // ~2s out the first flush's measured report lands — the renderer
+    // is gone, so it reads as a real freed figure.
+    if (beforeBgKb > 0) {
+        QTRY_VERIFY_WITH_TIMEOUT(
+            spyHasText(statusSpy, QLatin1String("Freed")), 6000);
+    }
+
+    // Current leg — discard+reactivate reloads the entry in place.
+    QSignalSpy reloaded(view0->page(), &QWebEnginePage::loadFinished);
+    widget.freeTabMemory(0);
+    // The discard lands synchronously; reactivation follows ~300ms
+    // later and drives the reload.
+    QCOMPARE(view0->enginePage()->lifecycleState(), LS::Discarded);
+    QTRY_VERIFY_WITH_TIMEOUT(!reloaded.isEmpty(), 15000);
+    QTRY_COMPARE_WITH_TIMEOUT(view0->enginePage()->lifecycleState(),
+                              LS::Active, 10000);
+    QVERIFY(!widget.isTabSleeping(0));
+    if (beforeFgKb > 0) {
+        // The fresh WebContents' renderer reads below the cycled
+        // figure — retained session documents are gone.
+        QTRY_VERIFY_WITH_TIMEOUT(
+            view0->enginePage()->residentMemoryKb() > 0
+                && view0->enginePage()->residentMemoryKb()
+                       < beforeFgKb,
+            15000);
+    }
+
+    // Window-level leg — every eligible background tab at once; the
+    // empty tab is skipped by sleepBlockReason.
+    widget.wakeTab(1);
+    QTRY_VERIFY_WITH_TIMEOUT(!widget.isTabSleeping(1), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !view1->enginePage()->isLoading(), 15000);
+    widget.freeBackgroundTabsMemory();
+    QTRY_VERIFY_WITH_TIMEOUT(widget.isTabSleeping(1), 10000);
+    QVERIFY(!widget.isTabSleeping(0));
+    QVERIFY(!widget.isTabSleeping(2));
+    // Nothing left to take — the aggregate reports it honestly.
+    widget.freeBackgroundTabsMemory();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        spyHasText(statusSpy, QLatin1String("No background tabs")),
+        5000);
 
     while (widget.count())
         widget.closeTab(0);
@@ -2453,10 +2773,10 @@ void tst_TabWidget::newTabStartPage()
     QTRY_COMPARE_WITH_TIMEOUT(view->url(),
         QUrl(QLatin1String("qrc:/startpage.html")), 15000);
     // document.title is written by the page's own update() through
-    // the 'arora' channel — its arrival proves the handshake ran,
+    // the 'arktos' channel — its arrival proves the handshake ran,
     // not just that the qrc bytes committed.
     QTRY_COMPARE_WITH_TIMEOUT(view->title(),
-        QStringLiteral("Welcome to Arora!"), 15000);
+        QStringLiteral("Welcome to Arktos!"), 15000);
 
     // A custom homepage redirects the same command.
     settings.setValue(QLatin1String("MainWindow/home"),
@@ -2941,11 +3261,11 @@ void tst_TabWidget::tabTransfer()
     // Refusals: a marked no-transfer page (a future engine backend's
     // host widget) stays put.
     QWidget *marked = source.widget(0);
-    marked->setProperty("aroraNoTabTransfer", true);
+    marked->setProperty("arktosNoTabTransfer", true);
     QVERIFY(!source.moveTabTo(0, &target));
     QCOMPARE(source.count(), 1);
     QCOMPARE(target.count(), 4);
-    marked->setProperty("aroraNoTabTransfer", QVariant());
+    marked->setProperty("arktosNoTabTransfer", QVariant());
 
     // OTR boundary: a private page keeps its off-the-record profile
     // through the move; a persistent page is refused while the
@@ -2971,7 +3291,7 @@ void tst_TabWidget::tabTransfer()
     QVERIFY(!source.moveTabTo(-1, &target));
     QVERIFY(!source.moveTabTo(9, &target));
 
-    // The full drop path: a live drag session + arora-tab mime over
+    // The full drop path: a live drag session + arktos-tab mime over
     // the target bar inserts at the drop slot instead of loading the
     // url into the hovered tab.
     source.newTab();
@@ -2988,7 +3308,7 @@ void tst_TabWidget::tabTransfer()
     QMimeData mime;
     mime.setUrls(QList<QUrl>() << QUrl(QStringLiteral("https://a.example/")));
     mime.setText(QStringLiteral("https://a.example/"));
-    mime.setData(QLatin1String(aroraTabMimeType()),
+    mime.setData(QLatin1String(arktosTabMimeType()),
                  QByteArray::number(quintptr(sourceBar)) + ':'
                  + QByteArray::number(quintptr(dragged)));
     // A drop on the tab-2 midpoint inserts there.
@@ -3020,7 +3340,7 @@ void tst_TabWidget::tabTransfer()
         QOverload<const QUrl &, TabWidget::OpenUrlIn>::of(&TabBar::loadUrl));
     QMimeData foreign;
     foreign.setUrls(QList<QUrl>() << QUrl(QStringLiteral("https://b.example/")));
-    foreign.setData(QLatin1String(aroraTabMimeType()),
+    foreign.setData(QLatin1String(arktosTabMimeType()),
                     QByteArrayLiteral("1234:5678"));
     QDropEvent staleDrop(QPointF(dropPos), Qt::MoveAction, &foreign,
                          Qt::LeftButton, Qt::NoModifier);
@@ -3106,8 +3426,8 @@ void tst_TabWidget::newTabButton()
     QCOMPARE(widget.count(), count + 1);
 
     // Offscreen grabs of the real chrome for visual review — set
-    // ARORA_TABWIDGET_GRAB_DIR.
-    const QByteArray grabDir = qgetenv("ARORA_TABWIDGET_GRAB_DIR");
+    // ARKTOS_TABWIDGET_GRAB_DIR.
+    const QByteArray grabDir = qgetenv("ARKTOS_TABWIDGET_GRAB_DIR");
     if (!grabDir.isEmpty()) {
         const QString base = QString::fromLocal8Bit(grabDir);
         bar->grab().save(base + QLatin1String("/plus-rail.png"));
@@ -3305,7 +3625,7 @@ void tst_TabWidget::verticalTabRowTextBounds()
         verifyRail(bar, QStringLiteral("violet %1").arg(position),
                    violet);
 
-        const QByteArray grabDir = qgetenv("ARORA_TABWIDGET_GRAB_DIR");
+        const QByteArray grabDir = qgetenv("ARKTOS_TABWIDGET_GRAB_DIR");
         if (!grabDir.isEmpty()) {
             const QString base = QString::fromLocal8Bit(grabDir)
                 + (position == 2 ? QLatin1String("/rows-left")
@@ -3330,7 +3650,7 @@ void tst_TabWidget::verticalTabRowTextBounds()
         TabBar *bar = buildRail(widget);
         QImage dark;
         verifyRail(bar, QStringLiteral("dark"), dark);
-        const QByteArray grabDir = qgetenv("ARORA_TABWIDGET_GRAB_DIR");
+        const QByteArray grabDir = qgetenv("ARKTOS_TABWIDGET_GRAB_DIR");
         if (!grabDir.isEmpty())
             dark.save(QString::fromLocal8Bit(grabDir)
                       + QLatin1String("/rows-dark.png"));
@@ -3490,9 +3810,9 @@ void tst_TabWidget::verticalRailRowOverlap()
         QApplication::processEvents();
         QCOMPARE(widget.count(), count + 1);
 
-        if (qEnvironmentVariableIsSet("ARORA_TABWIDGET_GRAB_DIR")) {
+        if (qEnvironmentVariableIsSet("ARKTOS_TABWIDGET_GRAB_DIR")) {
             const QString dir =
-                qEnvironmentVariable("ARORA_TABWIDGET_GRAB_DIR");
+                qEnvironmentVariable("ARKTOS_TABWIDGET_GRAB_DIR");
             bar->grab().save(dir + (position == 2
                 ? QLatin1String("/rail-overlap-left.png")
                 : QLatin1String("/rail-overlap-right.png")));
@@ -3649,7 +3969,7 @@ void tst_TabWidget::tabButtonBandAnchor()
     QApplication::processEvents();
     verifyAnchors(QStringLiteral("automatic again"));
 
-    const QByteArray grabDir = qgetenv("ARORA_TABWIDGET_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_TABWIDGET_GRAB_DIR");
     if (!grabDir.isEmpty())
         bar->grab().save(QString::fromLocal8Bit(grabDir)
                          + QLatin1String("/band-anchor.png"));

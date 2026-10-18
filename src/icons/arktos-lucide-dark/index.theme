@@ -1,0 +1,11 @@
+[Icon Theme]
+Name=Arktos Lucide Dark
+Comment=Dark-scheme recolor of the bundled Lucide icons
+Directories=icons
+Inherits=arktos-tabler-dark
+
+[icons]
+Size=16
+Type=Scalable
+MinSize=8
+MaxSize=256

@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="300" viewBox="0 0 1600 300">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0"    stop-color="#2ec8f5" stop-opacity="0.95"/>
+      <stop offset="0.55" stop-color="#4a8fe8" stop-opacity="0.9"/>
+      <stop offset="1"    stop-color="#6b5fd4" stop-opacity="0.9"/>
+    </linearGradient>
+    <!-- logo aurora colors for the top ribbons -->
+    <linearGradient id="gTop" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0"    stop-color="#22f59a" stop-opacity="0.95"/>
+      <stop offset="0.55" stop-color="#3fd2f0" stop-opacity="0.9"/>
+      <stop offset="1"    stop-color="#a24ef5" stop-opacity="0.9"/>
+    </linearGradient>
+    <filter id="soft" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="14"/>
+    </filter>
+    <filter id="ribbon" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="5"/>
+    </filter>
+  </defs>
+  <!-- The wave is drawn so its ribbons enter the logo's left edge
+       (~x715,y89) and exit the right edge (~x885,y91) at exactly the
+       heights where the icon's own aurora strokes leave the icon.
+       The dome crests at x800,y~22 — hidden behind the logo, whose
+       ribbons arch to the same apex, reading as one continuous arc. -->
+  <path d="M -80 165 C 260 140 480 105 640 88 C 720 80 765 42 800 34 C 835 42 862 76 885 80 C 1060 95 1330 118 1680 160"
+        fill="none" stroke="url(#g)" stroke-width="110" opacity="0.30" filter="url(#soft)"/>
+  <path d="M -80 140 C 250 120 480 90 640 75 C 720 67 760 30 800 22 C 840 30 860 70 885 74 C 1050 90 1300 105 1680 145"
+        fill="none" stroke="url(#gTop)" stroke-width="18" opacity="0.9" filter="url(#ribbon)"/>
+  <path d="M -80 175 C 260 152 500 122 650 108 C 725 100 765 58 800 50 C 835 58 858 96 890 100 C 1060 112 1310 138 1680 180"
+        fill="none" stroke="url(#g)" stroke-width="11" opacity="0.75" filter="url(#ribbon)"/>
+  <path d="M -80 105 C 300 88 500 62 645 50 C 720 44 758 14 800 8 C 842 14 856 50 890 52 C 1060 60 1300 76 1680 105"
+        fill="none" stroke="url(#gTop)" stroke-width="7" opacity="0.55" filter="url(#ribbon)"/>
+</svg>

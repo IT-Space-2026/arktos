@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -29,6 +29,8 @@
 
 #include <stdint.h>
 
+class QTimer;
+
 // PVAULT02: the Qt-side profile vault engine — orchestrates the
 // rustcore "ARV1" FFI (PVAULT01's rv_seal/rv_unseal/rv_verify/
 // rv_inspect/rv_rewrap) into the lock/unlock lifecycle the UI drives.
@@ -48,6 +50,19 @@
 //                             means we died with plaintext live
 //   <id>.vault/cache-hold/    excluded dir held aside while locked
 //   <id>.vault/profiles-hold/ same, for the nested profiles/ dir
+//   <id>.vault/engine-hold/   VSEC02: the pre-change engine store
+//                             (root QtWebEngine/arktos[-<id>]) parked
+//                             here by the boot sweep when the profile
+//                             was already sealed; restored into
+//                             profiles/<id>/QtWebEngine on unseal,
+//                             erased as stale when the blob already
+//                             carries engine state.  Honest caveat:
+//                             while the persona stays locked this is
+//                             PLAINTEXT beside the blob — it is a
+//                             migration way-station for a store the
+//                             password can't be re-sealed without,
+//                             and unseal refuses to follow it through
+//                             any symlinked component (AUDIT04).
 //   <id>.vault/pre-unlock/    overwrite-unseal parking slot
 //
 // Exclusions from the sealed tree (top-level names):
@@ -61,6 +76,28 @@
 //                 sealing it would swallow them (and erase their
 //                 vaults).  Post-MPROF the profile dir IS
 //                 profiles/<id> and the exclusion is a harmless no-op.
+//
+// VSEC02 boundary amendment — the vault now seals the ENGINE store
+// too.  Every named persona profile calls
+// setPersistentStoragePath(profiles/<id>/QtWebEngine) before first
+// use (BrowserProfile::normalProfile/profileFor), so cookies,
+// localStorage/IndexedDB, service workers and visited-link state
+// land inside the packed tree; the pre-change root-level
+// QtWebEngine/arktos[-<id>]/ dirs are migrated into it by
+// BrowserPaths::ensureEngineStorageLayout (symlink refusal,
+// collision abort), or parked under engine-hold/ when the profile
+// was already sealed — unseal() restores them whole.  The engine
+// http cache lives at profiles/<id>/cache/QtWebEngine and rides the
+// "cache" exclusion by design: disposable plaintext while locked.
+// vault.conf records the boundary (engine_storage, engine_cache) so
+// rv_inspect/lock-state audits verify the claim instead of
+// assuming.  Container profiles keep their roots under
+// profiles/<id>/containers/<cid>/ (sealed) with their cache beside
+// the persona's; OTR/Tor profiles are unnamed and write nothing.
+// AUDIT04: every hold restore path applies the relocation sweep's
+// lstat discipline — a link at engine-hold/, <name>-hold/ or the
+// restored destination is dropped unfollowed, never renamed into or
+// routed out of the profile tree.
 //
 // Secure erase is ONE zero overwrite + fsync per file, then unlink.
 // On SSD/CoW media wear-leveling and snapshots mean old blocks may
@@ -83,6 +120,13 @@
 // teardown ordering either way.  Never lock a profile with open
 // windows (seal refuses HasOpenWindows); never unseal over existing
 // plaintext without allowOverwrite.
+//
+// VSEC01: with MPROF03 live the window gate is per-persona —
+// BrowserApplication::newMainWindow fails closed on a Locked id,
+// and the closing window's OWN bound id drives noteWindowClosed
+// (the ambient persona is not a substitute).  "Never lock a profile
+// with open windows" is enforced by openWindowCount() counting
+// windows by their bound persona.
 //
 // Without CONFIG+=rustcore the class still compiles — isAvailable()
 // is false and every operation returns Unavailable, so call sites
@@ -108,9 +152,20 @@ public:
         HasOpenWindows,   // lock refused — profile still has windows
         NoPassword,       // re-lock with no cached/explicit password
         Io,               // filesystem or other FFI failure
-        Unavailable       // built without rustcore
+        Unavailable,      // built without rustcore
+        Canceled          // UI-side state — ops themselves can't be
+                          // canceled mid-flight (the FFI is
+                          // synchronous); produced when a wait
+                          // dialog is dismissed
     };
     Q_ENUM(Error)
+
+    // Cipher ids — mirror RC_VAULT_ALGO_* so dialogs can name the
+    // choice without pulling the FFI header in.
+    enum VaultAlgo {
+        AlgoAes256Gcm = 0x01,     // AES-256-GCM + HMAC-SHA-512
+        AlgoThreefishXex = 0x02   // Threefish-1024 XEX + HMAC-Skein-512
+    };
 
     // Marker-derived truth (vault.conf is a record, not the state):
     //   lock marker              -> Locked
@@ -199,6 +254,48 @@ public:
     // Called at the tail of ~BrowserApplication and quitBrowser().
     void sealUnlockedProfilesAtShutdown();
 
+    // ---- PVAULT03 merge surface ----------------------------------
+    // The ui lane's facade entry points, folded onto this engine.
+    // vault.conf exists — a password vaulted this profile, sealed or
+    // not.
+    bool isVaulted(const QString &profileId) const;
+    // Vaulted and currently open in plaintext.
+    bool isUnlocked(const QString &profileId) const;
+    // Configured cipher id from vault.conf (AlgoAes256Gcm default).
+    quint8 algo(const QString &profileId) const;
+    // The sealed blob's path for display — no existence check.
+    static QString blobPathFor(const QString &profileId);
+
+    // Windows currently bound to this id (MPROF03 live binding).
+    int openWindowCount(const QString &profileId) const;
+    // The Lock gate — `reason` carries the blocking cause for
+    // tooltips: engine missing, not vaulted, already locked, an
+    // interrupted seal, or windows still open.
+    bool canLockNow(const QString &profileId,
+                    QString *reason = nullptr) const;
+
+    // Session password custody (set by unseal()/setPassword(), wiped
+    // at seal/shutdown) — lock paths re-seal without re-prompting.
+    QByteArray sessionPassword(const QString &profileId) const;
+    // Set-password entry: caches the session password and records
+    // the algo pick in vault.conf — nothing is sealed yet, the dir
+    // stays live.
+    Error setPassword(const QString &profileId,
+                      const QByteArray &password, quint8 algo);
+
+    // Idle lock in minutes; 0 (default) means never.  The
+    // m_idleTimer/eventFilter pair enforces it once installed.
+    int idleLockMinutes(const QString &profileId) const;
+    void setIdleLockMinutes(const QString &profileId, int minutes);
+
+    // PVAULT03 hook: a window on `profileId` went away — seal when
+    // the state + auto_lock pref say so and no windows remain on the
+    // id.  Never disarms the dirty marker: the session may continue.
+    void noteWindowClosed(const QString &profileId);
+
+    // Honest user-facing text for an Error.
+    static QString statusText(int error);
+
 #ifdef AUTOTESTS
     // Drops every cached password + the window-gate override.
     void resetForTests();
@@ -215,6 +312,12 @@ signals:
     void profileLocked(const QString &profileId);
     void profileUnlocked(const QString &profileId);
     void dirtyDetected(const QString &profileId);
+    // Vault-relevant state flipped for the profile — repaint
+    // triggers for the manager/menu (PVAULT03 merge surface).
+    void vaultChanged(const QString &profileId);
+
+private slots:
+    void checkIdleDeadlines();
 
 private:
     explicit ProfileVault(QObject *parent = nullptr);
@@ -227,7 +330,9 @@ private:
                    QString *error) const;
     void cachePassword(const QString &id, const QByteArray &password);
     void dropPassword(const QString &id);
-#ifdef ARORA_RUSTCORE
+    bool eventFilter(QObject *watched, QEvent *event) override;
+    void installIdleTracking();
+#ifdef ARKTOS_RUSTCORE
     Error mapStatus(int status, const QString &fallback) const;
     static void progressTrampoline(uint64_t done, uint64_t total,
                                    void *userdata);
@@ -237,6 +342,8 @@ private:
     // auto-lock re-seal.  Wiped on lock/shutdown.
     QHash<QString, QByteArray> m_passwords;
     mutable QString m_lastError;
+    QTimer *m_idleTimer = nullptr;
+    qint64 m_lastActivityMs = 0;
 #ifdef AUTOTESTS
     int m_testGate = -1; // -1 none, 0 no windows, 1 windows open
 #endif

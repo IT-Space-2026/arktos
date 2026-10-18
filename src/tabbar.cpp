@@ -63,8 +63,8 @@
 #include "tabbar.h"
 #include "profilesettings.h"
 
-#include "aroraicon.h"
-#include "arorastyle.h"
+#include "arktosicon.h"
+#include "arktosstyle.h"
 #include "browserapplication.h"
 #include "containermanager.h"
 #include "energysaver.h"
@@ -125,7 +125,7 @@ static QMouseEvent shiftedMouseEvent(const QMouseEvent *event,
 
 // TABS13: the live in-process tab drag — the bar the drag left and
 // the page widget being moved.  The mime token is only trusted when
-// it names this pair, so stale or foreign application/x-arora-tab
+// it names this pair, so stale or foreign application/x-arktos-tab
 // data can never reach a tab.
 static QPointer<TabBar> s_tabDragSource;
 static QPointer<QWidget> s_tabDragPage;
@@ -152,15 +152,15 @@ void TabBar::endTabDragSession()
 // The mime payload is "<source bar>:<page widget>" — it only yields a
 // pair when it matches the live session, which foreign data can never
 // name.
-bool TabBar::decodeAroraTabDrag(const QMimeData *mimeData,
+bool TabBar::decodeArktosTabDrag(const QMimeData *mimeData,
                                 TabBar *&source, QWidget *&page)
 {
     source = nullptr;
     page = nullptr;
-    if (!mimeData || !mimeData->hasFormat(aroraTabMimeType()))
+    if (!mimeData || !mimeData->hasFormat(arktosTabMimeType()))
         return false;
     const QList<QByteArray> parts =
-        mimeData->data(aroraTabMimeType()).split(':');
+        mimeData->data(arktosTabMimeType()).split(':');
     if (parts.size() != 2)
         return false;
     bool okBar = false, okPage = false;
@@ -325,13 +325,13 @@ TabBar::TabBar(QWidget *parent)
     // chrome's flat text color the way ICONS06 does, and give the
     // hover/pressed states the violet bar's own shades.
     if (BrowserApplication::isTorMode()) {
-        m_newTabButton->setIcon(AroraIcon::getTinted(
-            QLatin1String("tab-new"), AroraStyle::torTextColor(),
-            AroraStyle::torDimTextColor()));
+        m_newTabButton->setIcon(ArktosIcon::getTinted(
+            QLatin1String("tab-new"), ArktosStyle::torTextColor(),
+            ArktosStyle::torDimTextColor()));
         m_newTabButton->setStyleSheet(
-            AroraStyle::torToolButtonStyleSheet());
+            ArktosStyle::torToolButtonStyleSheet());
     } else {
-        m_newTabButton->setIcon(AroraIcon::getChrome(QLatin1String("tab-new")));
+        m_newTabButton->setIcon(ArktosIcon::getChrome(QLatin1String("tab-new")));
     }
     connect(m_newTabButton, &QAbstractButton::clicked,
             this, &TabBar::newTab);
@@ -414,10 +414,10 @@ void TabBar::installCloseButton(int index)
     QToolButton *button = new QToolButton(this);
     button->setAutoRaise(true);
     button->setToolButtonStyle(Qt::ToolButtonIconOnly);
-    // Resolves through AroraIcon: the active icon theme first, the
+    // Resolves through ArktosIcon: the active icon theme first, the
     // bundled sets' dark variants when the palette is dark, and the
     // bundled Tabler set as the last-resort fallback.
-    button->setIcon(AroraIcon::getChrome(QLatin1String("window-close")));
+    button->setIcon(ArktosIcon::getChrome(QLatin1String("window-close")));
     button->setIconSize(QSize(12, 12));
     // TABS07: an uncapped QToolButton hints ~19px tall, and QTabBar
     // stretches the strip to max(text, widget) + padding — the button
@@ -503,6 +503,10 @@ void TabBar::leaveEvent(QEvent *event)
     if (m_bandHoverHeader != -1 || m_bandDropHeader != -1) {
         m_bandHoverHeader = -1;
         m_bandDropHeader = -1;
+        update();
+    }
+    if (m_groupDropIndex != -1) {
+        m_groupDropIndex = -1;
         update();
     }
     m_previewTimer->stop();
@@ -698,6 +702,24 @@ void TabBar::contextMenuRequested(const QPoint &position)
                 emit sleepTab(index);
         });
 
+        // MEM08: the manual flush.  A background tab discards through
+        // the SLEEP01 path; the current tab can't stay discarded while
+        // visible, so its entry is a discard+reactivate — labeled as
+        // the reload the user will see.  A slept tab's renderer is
+        // already gone; the entry stays live so the click reports
+        // that instead of pretending to do work.
+        const WebView *flushView = tabWidget->webView(index);
+        QAction *freeAction = menu.addAction(
+            !sleeping && index == tabWidget->currentIndex()
+                ? tr("Reload && Free Memory")
+                : tr("Free Memory"));
+        freeAction->setEnabled(
+            sleeping
+            || (flushView && flushView->enginePage()
+                && !flushView->url().isEmpty()));
+        connect(freeAction, &QAction::triggered, this,
+                [this, index]() { emit freeTabMemory(index); });
+
         // TABGRP01: tab groups — an ungrouped tab gets "Add Tab to
         // Group" (new group or any existing one); a grouped tab gets
         // the group-level actions plus a way out.
@@ -774,6 +796,13 @@ void TabBar::contextMenuRequested(const QPoint &position)
                            [tabWidget, groupId]() {
                 tabWidget->ungroupTabs(groupId);
             });
+            // TABGRP02: destructive close of the whole group — every
+            // member (a collapsed group's hidden ones included) goes
+            // through the normal close path so undo still works.
+            menu.addAction(tr("Close &Group"), this,
+                           [tabWidget, groupId]() {
+                tabWidget->closeTabGroup(groupId);
+            });
         }
 
         menu.addSeparator();
@@ -793,6 +822,12 @@ void TabBar::contextMenuRequested(const QPoint &position)
         action->setData(index);
     }
     menu.addAction(tr("Reload All Tabs"), this, &TabBar::reloadAllTabs);
+    // MEM08: the window-level leg — every discardable background tab
+    // goes through the same sleep path; the handler reports the count.
+    QAction *freeAll = menu.addAction(
+        tr("Free Memory in &Background Tabs"), this,
+        [this]() { emit freeBackgroundTabsMemory(); });
+    freeAll->setEnabled(tabWidget->count() > 1);
     menu.addSeparator();
     menu.addAction(tabWidget->bookmarkTabsAction());
     // TABS09: the icon-only view toggle is a strip-level entry — it
@@ -866,6 +901,12 @@ void TabBar::mouseReleaseEvent(QMouseEvent *event)
     const int band = containerStripHeight();
     const QPoint pos = event->position().toPoint();
     const bool inBand = band > 0 && pos.y() >= 0 && pos.y() < band;
+    // TABGRP02: the press index clears below before the drop-stacking
+    // leg runs — snapshot the drag source now so a drag whose tab
+    // never swapped (it stayed in its own slot) still resolves the
+    // dragged tab.  Same resolution the band-rebind leg uses.
+    const int dragSource = m_draggedIndex >= 0
+        ? m_draggedIndex : m_pressedTabIndex;
     if (event->button() == Qt::LeftButton) {
         // CONT06: a release in the header band finishes one of two
         // gestures — a tab drag landing on a header rebinds the tab
@@ -881,6 +922,7 @@ void TabBar::mouseReleaseEvent(QMouseEvent *event)
                 && tabWidget) {
                 m_dragTracking = false;
                 m_draggedIndex = -1;
+                m_groupDropIndex = -1;
                 m_bandDropHeader = -1;
                 tabWidget->reopenTabInContainer(
                     dragged, tabWidget->containerHeaders().value(header));
@@ -948,26 +990,32 @@ void TabBar::mouseReleaseEvent(QMouseEvent *event)
     // stacks into its group — Chrome's drop-to-group gesture.  The
     // middle quarter bands at the run's edges still mean "reorder to
     // this slot" so a drop on a tab's edge is never misread.
+    // TABGRP02: a collapsed group's chip is the whole group rendered
+    // as a pill — its entire rect is the stack zone, and the same
+    // zone is what mouseMoveEvent previews with m_groupDropIndex.
     if (event->button() == Qt::LeftButton && m_dragTracking) {
-        const int dragged = m_draggedIndex;
+        const int dragged = dragSource;
         m_dragTracking = false;
+        m_groupDropIndex = -1;
         if (dragged >= 0) {
             const QPoint pos = stripPos(event->position().toPoint());
             const int over = tabAt(pos);
             if (over != -1 && over != dragged) {
+                TabWidget *tabWidget =
+                    qobject_cast<TabWidget*>(parentWidget());
                 const QRect r = tabRect(over);
                 const bool middle = verticalTabShape(shape())
                     ? (pos.y() > r.top() + r.height() / 4
                        && pos.y() < r.bottom() - r.height() / 4)
                     : (pos.x() > r.left() + r.width() / 4
                        && pos.x() < r.right() - r.width() / 4);
-                if (middle) {
-                    if (TabWidget *tabWidget =
-                            qobject_cast<TabWidget*>(parentWidget()))
-                        tabWidget->groupTabWith(dragged, over);
-                }
+                const bool chip =
+                    tabWidget && tabWidget->isTabGroupChip(over);
+                if ((chip || middle) && tabWidget)
+                    tabWidget->groupTabWith(dragged, over);
             }
         }
+        update();
     }
 
     if (band > 0) {
@@ -1030,12 +1078,24 @@ void TabBar::mousePressEvent(QMouseEvent *event)
         // tabMoved tracker so the release can see where the tab went.
         m_dragTracking = true;
         m_draggedIndex = -1;
+        m_groupDropIndex = -1;
         // TABGRP01: clicking a collapsed group's chip expands it.
         TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
         const int index = tabAt(m_dragStartPos);
         if (tabWidget && index >= 0 && tabWidget->isTabGroupChip(index))
             tabWidget->setTabGroupCollapsed(tabWidget->tabGroupId(index),
                                             false);
+        // TABGRP04: the mirror gesture — a press on a run leader's «
+        // header pill collapses the group.  It consumes the press so
+        // no selection or move drag arms under a pill the user meant
+        // as a button.
+        else if (index >= 0 && isGroupHeaderHit(index, m_dragStartPos)) {
+            tabWidget->setTabGroupCollapsed(tabWidget->tabGroupId(index),
+                                            true);
+            m_pressedTabIndex = -1;
+            m_dragTracking = false;
+            return;
+        }
     }
     if (band > 0) {
         QMouseEvent shifted = shiftedMouseEvent(event, QPointF(0, -band));
@@ -1170,15 +1230,17 @@ void TabBar::mouseMoveEvent(QMouseEvent *event)
             QPointer<QWidget> page = (tabWidget && index >= 0)
                 ? tabWidget->widget(index) : nullptr;
             if (page) {
-                mimeData->setData(aroraTabMimeType(),
+                mimeData->setData(arktosTabMimeType(),
                     QByteArray::number(quintptr(this)) + ':'
                         + QByteArray::number(quintptr(page.data())));
                 beginTabDragSession(this, page);
             }
             drag->setMimeData(mimeData);
             // TABGRP01: a tear-off leaves the bar — the in-bar
-            // drop-stack tracking stops here.
+            // drop-stack tracking stops here, and so does the
+            // TABGRP02 hover affordance (the drop can't stack).
             m_dragTracking = false;
+            m_groupDropIndex = -1;
             // TABS02: and so does the move-drag tracking — the bar is
             // about to spend the drag inside QDrag::exec().
             m_moveDragActive = false;
@@ -1225,6 +1287,39 @@ void TabBar::mouseMoveEvent(QMouseEvent *event)
             hideNativeMovingTab();
             update();
         }
+    }
+
+    // TABGRP02: while a left-button tab drag is live, mark the tab
+    // whose middle band sits under the cursor — or a collapsed
+    // group's chip, whose whole rect stacks — so paintEvent can
+    // preview the merge instead of leaving the gesture blind.
+    // Edge quarters stay reorder zones and never light up.  The
+    // hover test mirrors the release path's drop rule exactly, so
+    // the affordance can never promise a stack the drop won't do.
+    int groupTarget = -1;
+    if (!inBand && m_dragTracking
+        && (event->buttons() & Qt::LeftButton)) {
+        const int dragged = m_draggedIndex >= 0
+            ? m_draggedIndex : m_pressedTabIndex;
+        const int over = tabAt(spos);
+        if (dragged >= 0 && over >= 0 && over != dragged) {
+            const QRect r = tabRect(over);
+            const TabWidget *tabWidget =
+                qobject_cast<TabWidget*>(parentWidget());
+            const bool chip =
+                tabWidget && tabWidget->isTabGroupChip(over);
+            const bool middle = verticalTabShape(shape())
+                ? (spos.y() > r.top() + r.height() / 4
+                   && spos.y() < r.bottom() - r.height() / 4)
+                : (spos.x() > r.left() + r.width() / 4
+                   && spos.x() < r.right() - r.width() / 4);
+            if (chip || middle)
+                groupTarget = over;
+        }
+    }
+    if (groupTarget != m_groupDropIndex) {
+        m_groupDropIndex = groupTarget;
+        update();
     }
 }
 
@@ -1273,10 +1368,10 @@ void TabBar::dropEvent(QDropEvent *event)
     // legacy url payload — the page itself moves (or reorders back on
     // its own strip), never loads onto the tab under the cursor.
     // Only a payload matching the live drag session gets here; stale
-    // or foreign x-arora-tab data falls through to the url path.
+    // or foreign x-arktos-tab data falls through to the url path.
     TabBar *sourceBar = nullptr;
     QWidget *page = nullptr;
-    if (decodeAroraTabDrag(mimeData, sourceBar, page)) {
+    if (decodeArktosTabDrag(mimeData, sourceBar, page)) {
         TabWidget *source = sourceBar
             ? qobject_cast<TabWidget*>(sourceBar->parentWidget())
             : nullptr;
@@ -1860,9 +1955,74 @@ QString TabBar::groupChipLabel(int index) const
         return QString();
     const QString name = tabWidget->tabGroupName(gid);
     const int size = tabWidget->tabGroupSize(gid);
+    // TABGRP04: the » marker is the expand affordance — the chip's
+    // tap opens the group to the right of it.
     return name.isEmpty()
-        ? tr("%1 tabs").arg(size)
-        : tr("%1 (%2)").arg(name).arg(size);
+        ? tr("» %1 tabs").arg(size)
+        : tr("» %1 (%2)").arg(name).arg(size);
+}
+
+// TABGRP03: the labeled header segment a group's run leader wears —
+// the group name, or the member count as fallback so an unnamed group
+// still reads as a labeled segment (the same "N tabs" wording the
+// collapsed chip uses) rather than a bare colored rail.  Suppressed
+// on the collapsed chip (it carries its own label), under the
+// icon-only view mode, and on non-leader members.
+QString TabBar::groupHeaderLabel(int index) const
+{
+    TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
+    const QString gid = groupIdForTab(index);
+    if (!tabWidget || gid.isEmpty() || m_iconOnlyTabs
+        || tabWidget->isTabGroupChip(index)
+        || !isFirstInGroupRun(index))
+        return QString();
+    const QString name = tabWidget->tabGroupName(gid);
+    // TABGRP04: the « marker is the collapse affordance — tapping the
+    // header folds the group's members back into its chip.
+    return name.isEmpty()
+        ? tr("« %1 tabs").arg(tabWidget->tabGroupSize(gid))
+        : tr("« %1").arg(name);
+}
+
+// The extent the header segment borrows at the run leader's leading
+// edge on a horizontal strip — pill width plus its margins.  The
+// leader's tab is widened by the same extent in tabSizeHint() so the
+// title keeps its full metric; on a vertical strip the header is the
+// reserved top band instead and nothing is borrowed here.
+int TabBar::groupHeaderReserve(int index) const
+{
+    const QString label = groupHeaderLabel(index);
+    if (label.isEmpty() || verticalTabShape(shape()))
+        return 0;
+    return qMin(120, QFontMetrics(containerChipFont())
+                    .horizontalAdvance(label) + 10) + 8;
+}
+
+bool TabBar::isGroupHeaderHit(int index, const QPoint &pos) const
+{
+    if (index < 0 || groupHeaderLabel(index).isEmpty())
+        return false;
+    const QRect rect = tabRect(index);
+    const int chipHeight =
+        QFontMetrics(containerChipFont()).height() + 4;
+    if (verticalTabShape(shape())) {
+        // Vertical rows reserve the header as the row's top band.
+        return pos.x() >= rect.left() + 2 && pos.x() <= rect.right() - 2
+            && pos.y() >= rect.top() + 2
+            && pos.y() <= rect.top() + 2 + chipHeight;
+    }
+    QStyleOptionTab option;
+    initStyleOption(&option, index);
+    option.text = tabText(index);
+    const QRect textRect = style()->subElementRect(
+        QStyle::SE_TabBarTabText, &option, this);
+    const int reserve = groupHeaderReserve(index);
+    if (textRect.width() - reserve <= 24)
+        return false;
+    const QRect pill(textRect.left(),
+                     rect.top() + (rect.height() - chipHeight) / 2,
+                     reserve - 8, chipHeight);
+    return pill.contains(pos);
 }
 
 // TABS17: the readable band a vertical row's label and side widgets
@@ -1873,12 +2033,11 @@ QString TabBar::groupChipLabel(int index) const
 // under the pill.
 QRect TabBar::rowLabelRect(const QRect &rowRect, int index) const
 {
-    const QString gid = groupIdForTab(index);
-    if (gid.isEmpty() || m_iconOnlyTabs || !isFirstInGroupRun(index))
+    if (groupIdForTab(index).isEmpty())
         return rowRect;
-    const TabWidget *tabWidget =
-        qobject_cast<TabWidget*>(parentWidget());
-    if (!tabWidget || tabWidget->tabGroupName(gid).isEmpty())
+    // TABGRP03: the header band rides every labeled run leader —
+    // named groups and the member-count fallback alike.
+    if (groupHeaderLabel(index).isEmpty())
         return rowRect;
     QRect rect = rowRect;
     rect.setTop(rect.top()
@@ -2178,9 +2337,8 @@ void TabBar::paintEvent(QPaintEvent *event)
             // WCAG pick — a lightness threshold misjudges saturated
             // mid-tone accents (the turquoise container color reads
             // light enough for white text but only gives ~2:1).
-            const QColor textColor = AroraStyle::contrastTextColor(accent);
+            const QColor textColor = ArktosStyle::contrastTextColor(accent);
             const QRect rect = tabRect(index);
-            const QString name = tabWidget->tabGroupName(gid);
 
             if (tabWidget->isTabGroupChip(index)) {
                 // Collapsed: the whole tab reads as the group chip.
@@ -2229,17 +2387,19 @@ void TabBar::paintEvent(QPaintEvent *event)
                 break;
             }
 
-            // The name pill sits just inside the rail on the run's
-            // first member — tabSizeHint() reserved its extent.
-            // TABS09: icon-only mode keeps the strip uniformly
-            // icon-sized — the accent rail still marks the group but
-            // the pill would only paint clipped over the favicon.
-            if (name.isEmpty() || !isFirstInGroupRun(index)
-                || m_iconOnlyTabs)
+            // TABGRP03: the run leader carries the group's header — a
+            // labeled chip segment with the name (or the member-count
+            // fallback while unnamed), so every group reads as a named
+            // header instead of a bare colored chip.  TABS09:
+            // icon-only mode keeps the strip uniformly icon-sized —
+            // the rail still marks the group but a segment would only
+            // paint clipped over the favicon.
+            const QString headerLabel = groupHeaderLabel(index);
+            if (headerLabel.isEmpty())
                 continue;
-            const int pillWidth = QFontMetrics(chipFont)
-                .horizontalAdvance(name) + 12;
             QRect pill;
+            QStyleOptionTab option;
+            bool titleUnderPill = false;
             switch (shape()) {
             case QTabBar::RoundedWest:
             case QTabBar::TriangularWest: {
@@ -2255,15 +2415,25 @@ void TabBar::paintEvent(QPaintEvent *event)
                              rect.width() - strip - 4, chipHeight);
                 break;
             }
-            default:
-                // Horizontal bars: the pill anchors at the leading
-                // edge, vertically centered — the reserved width
-                // pushes the tab's label right of it.
-                pill = QRect(rect.left() + 4,
+            default: {
+                // Horizontal bars: the segment sits just ahead of the
+                // title's text rect — tabSizeHint() widened the leader
+                // by the reserve so the title keeps its metric, and
+                // initStyleOption() cleared the style's label so the
+                // hand-drawn title below never runs under the chip.
+                initStyleOption(&option, index);
+                option.text = tabText(index);
+                const QRect textRect = style()->subElementRect(
+                    QStyle::SE_TabBarTabText, &option, this);
+                const int reserve = groupHeaderReserve(index);
+                if (textRect.width() - reserve <= 24)
+                    continue;   // too narrow — the title keeps the space
+                titleUnderPill = true;
+                pill = QRect(textRect.left(),
                              rect.top() + (rect.height() - chipHeight) / 2,
-                             qMin(pillWidth, rect.width() - 8),
-                             chipHeight);
+                             reserve - 8, chipHeight);
                 break;
+            }
             }
             if (pill.width() < 16)
                 continue;
@@ -2275,11 +2445,67 @@ void TabBar::paintEvent(QPaintEvent *event)
             painter.setFont(chipFont);
             painter.setPen(textColor);
             const QString elided = painter.fontMetrics().elidedText(
-                name, Qt::ElideRight, pill.width() - 8);
+                headerLabel, Qt::ElideRight, pill.width() - 8);
             painter.drawText(pill.adjusted(4, 0, -4, 0),
                              Qt::AlignCenter | Qt::AlignVCenter, elided);
             painter.restore();
+            if (titleUnderPill) {
+                // The leader's title, elided into the space right of
+                // the header segment — the style's copy was cleared
+                // for exactly the tabs that reach here.
+                const QRect textRect = style()->subElementRect(
+                    QStyle::SE_TabBarTabText, &option, this);
+                const QRect titleRect = textRect.adjusted(
+                    groupHeaderReserve(index), 0, 0, 0);
+                painter.save();
+                painter.setPen(option.state & QStyle::State_Enabled
+                    ? option.palette.color(QPalette::WindowText)
+                    : option.palette.color(QPalette::Disabled,
+                                           QPalette::WindowText));
+                painter.drawText(titleRect,
+                                 Qt::AlignCenter | Qt::AlignVCenter,
+                                 fontMetrics().elidedText(
+                                     tabText(index), elideMode(),
+                                     titleRect.width(),
+                                     Qt::TextShowMnemonic));
+                painter.restore();
+            }
         }
+    }
+
+    // TABGRP02: drop-to-group affordance — the tracked hover target
+    // previews the merge: a translucent tint in the color the group
+    // would wear (its real color when the target is grouped, the
+    // palette accent otherwise) plus a small '+' badge marking the
+    // stack.  Painted last so it reads over the group rails and the
+    // collapsed chip's pill.
+    if (m_groupDropIndex >= 0 && m_groupDropIndex < count()) {
+        QColor accent = palette().color(QPalette::Highlight);
+        if (tabWidget) {
+            const QColor groupColor = tabWidget->tabGroupColor(
+                tabWidget->tabGroupId(m_groupDropIndex));
+            if (groupColor.isValid())
+                accent = groupColor;
+        }
+        const QRect rect = tabRect(m_groupDropIndex);
+        painter.save();
+        painter.setRenderHint(QPainter::Antialiasing);
+        QColor fill = accent;
+        fill.setAlpha(70);
+        painter.setBrush(fill);
+        painter.setPen(QPen(accent, 2));
+        painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), 6, 6);
+        const int badge = 14;
+        const QRect badgeRect(rect.center().x() - badge / 2,
+                              rect.center().y() - badge / 2,
+                              badge, badge);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(accent);
+        painter.drawEllipse(badgeRect);
+        painter.setPen(ArktosStyle::contrastTextColor(accent));
+        painter.drawText(badgeRect, Qt::AlignCenter,
+                         QLatin1String("+"));
+        painter.restore();
     }
 
     // RSZ02: the grip affordance paints in physical space — the
@@ -2319,6 +2545,21 @@ void TabBar::initStyleOption(QStyleOptionTab *option, int tabIndex) const
                     textRect.width() - reserve,
                     Qt::TextShowMnemonic);
             }
+        }
+    }
+    // TABGRP03: a horizontal run leader's header segment borrows the
+    // title's leading edge — the style would paint the title under
+    // it, so the label is cleared here and hand-drawn right of the
+    // segment in paintEvent().  A tab too narrow to keep a 24px
+    // title stub keeps its title; the segment drops instead
+    // (paintEvent() re-tests the same bound).
+    if (!verticalTabShape(shape()) && !option->text.isEmpty()) {
+        const int reserve = groupHeaderReserve(tabIndex);
+        if (reserve > 0) {
+            const QRect textRect = style()->subElementRect(
+                QStyle::SE_TabBarTabText, option, this);
+            if (textRect.width() - reserve > 24)
+                option->text.clear();
         }
     }
 }
@@ -2363,12 +2604,8 @@ QSize TabBar::tabSizeHint(int index) const
         int rowHeight = m_tabStripHeight > 0
             ? qMax(automaticThickness, m_tabStripHeight)
             : automaticThickness;
-        if (!gid.isEmpty() && !m_iconOnlyTabs) {
-            TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
-            if (tabWidget && isFirstInGroupRun(index)
-                && !tabWidget->tabGroupName(gid).isEmpty())
-                rowHeight += QFontMetrics(containerChipFont()).height() + 6;
-        }
+        if (!gid.isEmpty() && !groupHeaderLabel(index).isEmpty())
+            rowHeight += QFontMetrics(containerChipFont()).height() + 6;
         // TABS14: a pinned row is an ordinary titled row — the
         // strip's shared width and row height, title included.
         // TABS09: the icon-only mode collapses the strip to an icon
@@ -2381,8 +2618,10 @@ QSize TabBar::tabSizeHint(int index) const
             if (tabWidget && tabWidget->isTabGroupChip(index)) {
                 const int labelWidth = QFontMetrics(containerChipFont())
                     .horizontalAdvance(groupChipLabel(index)) + 28;
+                // TABGRP04: doubled like the horizontal chip — the
+                // close affordance must not sit on the label.
                 rowWidth = qMin(m_verticalTabWidth,
-                                qMax(rowWidth, labelWidth));
+                                qMax(rowWidth, 2 * labelWidth));
             }
         }
         return QSize(rowWidth + qMax(0, chip.width()),
@@ -2399,15 +2638,17 @@ QSize TabBar::tabSizeHint(int index) const
         return QSize(iconSize().width() + 20,
                      thickness + chip.height());
     }
-    // TABGRP01: a collapsed group's chip shrinks to its label instead
+    // TABGRP01: a collapsed group's chip sizes from its label instead
     // of the member's title — it is not a titled tab and keeps its
-    // own compact sizing.
+    // own compact sizing.  TABGRP04: double the label width so the
+    // close button sits well clear of the label — the single-width
+    // chip parked the X right under the title.
     if (!gid.isEmpty()) {
         TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
         if (tabWidget && tabWidget->isTabGroupChip(index)) {
             const int labelWidth = QFontMetrics(containerChipFont())
                 .horizontalAdvance(groupChipLabel(index)) + 20;
-            return QSize(qMin(sizeHint.width(), labelWidth),
+            return QSize(qMin(sizeHint.width(), 2 * labelWidth),
                          thickness + chip.height());
         }
     }
@@ -2427,8 +2668,12 @@ QSize TabBar::tabSizeHint(int index) const
         ? (m_tabMaxWidth > 0 ? qMin(m_tabMinWidth, m_tabMaxWidth)
                            : m_tabMinWidth)
         : 0;
-    return QSize(qBound(floor, firefoxTabWidth + chip.width(),
-                        qMax(cap, floor)),
+    // TABGRP03: a run leader widens by its header segment's reserve —
+    // the segment is group chrome ahead of the title, not title
+    // space, so it may also ride past a tabMaxWidth cap.
+    const int header = groupHeaderReserve(index);
+    return QSize(qBound(floor, firefoxTabWidth + chip.width() + header,
+                        qMax(cap, floor) + header),
                  thickness + chip.height());
 }
 
@@ -2553,34 +2798,17 @@ void TabBar::paintResizeGrip(QPainter *painter)
     const bool active = m_gripHovered || m_resizing;
     if (active)
         painter->fillRect(zone, palette().color(QPalette::Mid));
-    painter->setPen(palette().color(
-        active ? QPalette::Dark : QPalette::Mid));
+    // No resting edge line on a horizontal strip: a seam that gaps
+    // under the selected card reads as an underline under every
+    // resting tab.  The vertical rail keeps its continuous inner-edge
+    // divider — one line beside the whole rail, not under the rows.
     if (verticalTabShape(shape())) {
+        painter->setPen(palette().color(
+            active ? QPalette::Dark : QPalette::Mid));
         const int x = (shape() == QTabBar::RoundedEast
                        || shape() == QTabBar::TriangularEast)
             ? zone.left() : zone.right();
         painter->drawLine(x, zone.top(), x, zone.bottom());
-    } else {
-        const int y = (shape() == QTabBar::RoundedSouth
-                       || shape() == QTabBar::TriangularSouth)
-            ? zone.top() : zone.bottom();
-        // THEM02: the edge line opens under the selected card so
-        // the active tab merges into the page instead of being
-        // boxed by the grip's resting line.  Vertical rails keep
-        // the divider behind their floating cards.
-        const QRect sel = currentIndex() >= 0
-            ? tabRect(currentIndex()) : QRect();
-        if (sel.isValid()
-                && sel.intersects(zone.adjusted(0, -1, 0, 1))) {
-            const int gapLeft = sel.left() - 1;
-            const int gapRight = sel.right() + 1;
-            if (zone.left() < gapLeft)
-                painter->drawLine(zone.left(), y, gapLeft - 1, y);
-            if (gapRight < zone.right())
-                painter->drawLine(gapRight + 1, y, zone.right(), y);
-        } else {
-            painter->drawLine(zone.left(), y, zone.right(), y);
-        }
     }
     // The handle rides the zone's center — a vertical stack for
     // vertical strips, a horizontal run for horizontal ones.

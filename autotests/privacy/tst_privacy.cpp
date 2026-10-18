@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,7 +24,7 @@
 // layer it consults (upgrade candidacy, the session downgrade set)
 // plus the pieces that are directly observable:
 //   - CookieJar::isAllowedForHost third-party semantics
-//   - the arora-site-wipe / arora-exit-wipe sentinel handling in
+//   - the arktos-site-wipe / arktos-exit-wipe sentinel handling in
 //     BrowserProfile::clearDeferredSiteStorage()
 //   - QTWEBENGINE_CHROMIUM_FLAGS composition in applyChromiumFlags()
 //   - the pure referer rewrite decision (rewrittenReferer) and the
@@ -34,7 +34,7 @@
 
 #include <QtTest/QtTest>
 #include "profilesettings.h"
-#include <qtest_arora.h>
+#include <qtest_arktos.h>
 
 #include <acceptlanguagedialog.h>
 #include <adblocknetwork.h>
@@ -60,7 +60,7 @@
 #include <qwebenginesettings.h>
 #include <qwebengineurlrequestinfo.h>
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include <rustcore.h>
 #endif
 
@@ -100,6 +100,7 @@ private slots:
     void stripTrackingParams_data();
     void stripTrackingParams();
     void stripToggleAndExceptions();
+    void urlCleanTally();
 
     void thirdPartyCookies();
     void thirdPartyCookieExceptions();
@@ -133,6 +134,7 @@ private:
     QVariant m_savedBlockPrefetch;
     QVariant m_savedBlockThirdPartyWs;
     QVariant m_savedStripTrackingParams;
+    QVariant m_savedUrlCleaning;
     QVariant m_savedAcceptLanguages;
     QVariant m_savedForceDarkMode;
     QVariant m_savedAutoscroll;
@@ -182,6 +184,8 @@ void tst_Privacy::initTestCase()
         settings.value(QLatin1String("privacy/blockThirdPartyWebSockets"));
     m_savedStripTrackingParams =
         settings.value(QLatin1String("privacy/stripTrackingParams"));
+    m_savedUrlCleaning =
+        settings.value(QLatin1String("privacy/urlCleaning"));
     m_savedTzSet = qEnvironmentVariableIsSet("TZ");
     m_savedTz = qgetenv("TZ");
 }
@@ -222,6 +226,7 @@ void tst_Privacy::cleanupTestCase()
     restoreSetting(settings, QLatin1String("privacy/blockPrefetch"), m_savedBlockPrefetch);
     restoreSetting(settings, QLatin1String("privacy/blockThirdPartyWebSockets"), m_savedBlockThirdPartyWs);
     restoreSetting(settings, QLatin1String("privacy/stripTrackingParams"), m_savedStripTrackingParams);
+    restoreSetting(settings, QLatin1String("privacy/urlCleaning"), m_savedUrlCleaning);
     PrivacyRequestInterceptor::loadSettings();
     if (m_savedTzSet)
         qputenv("TZ", m_savedTz);
@@ -232,7 +237,7 @@ void tst_Privacy::cleanupTestCase()
 void tst_Privacy::init()
 {
     // Pin the interceptor policy so the tests don't depend on the
-    // developer machine's real Arora settings.
+    // developer machine's real Arktos settings.
     ProfileSettings settings;
     settings.beginGroup(QLatin1String("privacy"));
     settings.setValue(QLatin1String("httpsFirst"), true);
@@ -245,6 +250,7 @@ void tst_Privacy::init()
     settings.setValue(QLatin1String("blockPrefetch"), true);
     settings.setValue(QLatin1String("blockThirdPartyWebSockets"), false);
     settings.setValue(QLatin1String("stripTrackingParams"), true);
+    settings.setValue(QLatin1String("urlCleaning"), true);
     settings.endGroup();
     PrivacyRequestInterceptor::loadSettings();
     PrivacyRequestInterceptor::clearDowngradedHosts();
@@ -441,9 +447,9 @@ void tst_Privacy::downgradeScopeIsolation()
     // namespaces must not collide.
     QWebEngineProfile otrA;
     QWebEngineProfile otrB;
-    QWebEngineProfile named(QStringLiteral("arora-scopetest"));
+    QWebEngineProfile named(QStringLiteral("arktos-scopetest"));
     QCOMPARE(PrivacyRequestInterceptor::downgradeScope(&named),
-             QStringLiteral("arora-scopetest"));
+             QStringLiteral("arktos-scopetest"));
     QVERIFY(PrivacyRequestInterceptor::downgradeScope(&otrA)
             != PrivacyRequestInterceptor::downgradeScope(&otrB));
     QVERIFY(PrivacyRequestInterceptor::downgradeScope(&otrA)
@@ -966,7 +972,7 @@ void tst_Privacy::stripTrackingParams()
 {
     QFETCH(QString, url);
     QFETCH(QString, expected);
-#if !defined(ARORA_RUSTCORE)
+#if !defined(ARKTOS_RUSTCORE)
     // No-rust build: the strip stage is absent — the URL passes
     // through untouched (modulo QUrl's own %-escape normalization).
     expected = QString::fromUtf8(QUrl(url).toEncoded());
@@ -984,14 +990,32 @@ void tst_Privacy::stripToggleAndExceptions()
 
     ProfileSettings settings;
     settings.beginGroup(QLatin1String("privacy"));
-    settings.setValue(QLatin1String("stripTrackingParams"), false);
+    // POL04: privacy/urlCleaning is the canonical key.
+    settings.setValue(QLatin1String("urlCleaning"), false);
     settings.endGroup();
     PrivacyRequestInterceptor::loadSettings();
     QVERIFY(!PrivacyRequestInterceptor::stripTrackingParamsEnabled());
     init();
     QVERIFY(PrivacyRequestInterceptor::stripTrackingParamsEnabled());
 
-#if defined(ARORA_RUSTCORE)
+    // A profile written by an older build carries only the SEC17-era
+    // key — it still lands as the fallback.
+    settings.beginGroup(QLatin1String("privacy"));
+    settings.remove(QLatin1String("urlCleaning"));
+    settings.setValue(QLatin1String("stripTrackingParams"), false);
+    settings.endGroup();
+    PrivacyRequestInterceptor::loadSettings();
+    QVERIFY(!PrivacyRequestInterceptor::stripTrackingParamsEnabled());
+    // …and the canonical key wins over the legacy one.
+    settings.beginGroup(QLatin1String("privacy"));
+    settings.setValue(QLatin1String("urlCleaning"), true);
+    settings.endGroup();
+    PrivacyRequestInterceptor::loadSettings();
+    QVERIFY(PrivacyRequestInterceptor::stripTrackingParamsEnabled());
+    init();
+    QVERIFY(PrivacyRequestInterceptor::stripTrackingParamsEnabled());
+
+#if defined(ARKTOS_RUSTCORE)
     typedef PrivacyRequestInterceptor P;
     // Per-site exceptions ride the ruleset: a host where stripping
     // breaks auth is exempt entirely, a keep-list spares named params
@@ -1032,6 +1056,41 @@ void tst_Privacy::stripToggleAndExceptions()
     QCOMPARE(P::strippedUrl(QUrl("https://e.com/?utm_source=x&ok=1")),
              QUrl("https://e.com/?ok=1"));
 #endif
+}
+
+// POL04: the per-page "N trackers removed" tally the shield panel
+// reads — a cleaning redirect's count survives its own follow-up
+// request (the marked clean URL) and settles on the next real
+// navigation.
+void tst_Privacy::urlCleanTally()
+{
+    typedef PrivacyRequestInterceptor P;
+    P::resetTrackerCounts();
+    QCOMPARE(P::trackersRemovedCount(QStringLiteral("example.com")), 0);
+
+    // A cleaning redirect tallies under the destination host and
+    // marks its target — the follow-up request for that URL is the
+    // same page load, so the count survives it.
+    P::noteCleanedRedirect(QUrl("https://example.com/search?q=shoes"),
+                           3);
+    QCOMPARE(P::trackersRemovedCount(QStringLiteral("example.com")), 3);
+    P::noteMainFrameRequest(QUrl("https://example.com/search?q=shoes"));
+    QCOMPARE(P::trackersRemovedCount(QStringLiteral("example.com")), 3);
+
+    // The marker is consumed by that follow-up: a fresh navigation to
+    // any other URL on the host settles the tally to zero — the next
+    // page load reports only what it cleaned itself.
+    P::noteMainFrameRequest(QUrl("https://example.com/other"));
+    QCOMPARE(P::trackersRemovedCount(QStringLiteral("example.com")), 0);
+
+    // Chained redirects accumulate under the final host and re-mark.
+    P::noteCleanedRedirect(QUrl("https://b.example/hop"), 1);
+    P::noteMainFrameRequest(QUrl("https://b.example/hop"));
+    P::noteCleanedRedirect(QUrl("https://b.example/landing"), 2);
+    P::noteMainFrameRequest(QUrl("https://b.example/landing"));
+    QCOMPARE(P::trackersRemovedCount(QStringLiteral("b.example")), 3);
+
+    P::resetTrackerCounts();
 }
 
 // XSLEAK03: loopback fixture for the cross-site e2e checks.  One
@@ -1132,7 +1191,7 @@ private:
         } else if (target.startsWith("/frame")) {
             // SameSite=None is required because Chromium drops
             // Lax-by-default third-party cookies on its own — with it,
-            // only Arora's cookie filter can veto this Set-Cookie, so
+            // only Arktos's cookie filter can veto this Set-Cookie, so
             // the armed/disarmed phases isolate the filter's effect.
             // (Secure rides along because SameSite=None demands it;
             // Chromium accepts Secure cookies from loopback origins.)
@@ -1366,7 +1425,7 @@ void tst_Privacy::deferredWipe()
     QVERIFY(root.exists(QStringLiteral("Network")));
 
     // Site-wipe sentinel: site data goes, Network/Cache stay.
-    QFile sentinel(root.filePath(QStringLiteral("arora-site-wipe.pending")));
+    QFile sentinel(root.filePath(QStringLiteral("arktos-site-wipe.pending")));
     QVERIFY(sentinel.open(QIODevice::WriteOnly));
     sentinel.close();
     QVERIFY(BrowserProfile::clearDeferredSiteStorage(tmp.path()));
@@ -1377,7 +1436,7 @@ void tst_Privacy::deferredWipe()
     QVERIFY(root.exists(QStringLiteral("Network")));
     QVERIFY(root.exists(QStringLiteral("Cache")));
     QVERIFY(root.exists(QStringLiteral("KeepMe")));
-    QVERIFY(!root.exists(QStringLiteral("arora-site-wipe.pending")));
+    QVERIFY(!root.exists(QStringLiteral("arktos-site-wipe.pending")));
 }
 
 void tst_Privacy::deferredExitWipe()
@@ -1389,7 +1448,7 @@ void tst_Privacy::deferredExitWipe()
 
     // The clear-on-exit sentinel additionally removes Chromium's
     // Network/ (cookie db, HSTS) and cache trees.
-    QFile sentinel(root.filePath(QStringLiteral("arora-exit-wipe.pending")));
+    QFile sentinel(root.filePath(QStringLiteral("arktos-exit-wipe.pending")));
     QVERIFY(sentinel.open(QIODevice::WriteOnly));
     sentinel.close();
     QVERIFY(BrowserProfile::clearDeferredSiteStorage(tmp.path()));
@@ -1398,7 +1457,7 @@ void tst_Privacy::deferredExitWipe()
     QVERIFY(!root.exists(QStringLiteral("Cache")));
     QVERIFY(!root.exists(QStringLiteral("Code Cache")));
     QVERIFY(root.exists(QStringLiteral("KeepMe")));
-    QVERIFY(!root.exists(QStringLiteral("arora-exit-wipe.pending")));
+    QVERIFY(!root.exists(QStringLiteral("arktos-exit-wipe.pending")));
 }
 
 void tst_Privacy::chromiumFlags()
@@ -1576,7 +1635,7 @@ void tst_Privacy::chromiumFlags()
                 .contains(QLatin1String("ParallelDownloading")));
 
     // CRASH01: the GPU-compositor safe mode — off by default, armed by
-    // the websettings toggle, by ARORA_DISABLE_GPU_COMPOSITING (an
+    // the websettings toggle, by ARKTOS_DISABLE_GPU_COMPOSITING (an
     // explicit =0 overrides a stored "on"), and auto-engaged — with
     // the toggle persisted — once browser/gpuCrashCount records an
     // unclean start (a stored 1 already means two consecutive
@@ -1584,7 +1643,7 @@ void tst_Privacy::chromiumFlags()
     // after applyChromiumFlags already read it).
     ProfileSettings().remove(QLatin1String("websettings/disableGpuCompositing"));
     ProfileSettings().remove(QLatin1String("browser/gpuCrashCount"));
-    qunsetenv("ARORA_DISABLE_GPU_COMPOSITING");
+    qunsetenv("ARKTOS_DISABLE_GPU_COMPOSITING");
     qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
     BrowserProfile::applyChromiumFlags();
     QVERIFY(!QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
@@ -1597,17 +1656,17 @@ void tst_Privacy::chromiumFlags()
     QVERIFY(QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
                 .contains(QLatin1String("--disable-gpu-compositing")));
 
-    qputenv("ARORA_DISABLE_GPU_COMPOSITING", "0");
+    qputenv("ARKTOS_DISABLE_GPU_COMPOSITING", "0");
     qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
     BrowserProfile::applyChromiumFlags();
     QVERIFY(!QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
                  .contains(QLatin1String("--disable-gpu-compositing")));
-    qputenv("ARORA_DISABLE_GPU_COMPOSITING", "1");
+    qputenv("ARKTOS_DISABLE_GPU_COMPOSITING", "1");
     qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
     BrowserProfile::applyChromiumFlags();
     QVERIFY(QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
                 .contains(QLatin1String("--disable-gpu-compositing")));
-    qunsetenv("ARORA_DISABLE_GPU_COMPOSITING");
+    qunsetenv("ARKTOS_DISABLE_GPU_COMPOSITING");
     ProfileSettings().remove(QLatin1String("websettings/disableGpuCompositing"));
 
     // No recorded crash leaves it off; a recorded one — which only

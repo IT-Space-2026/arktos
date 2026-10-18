@@ -78,7 +78,7 @@
 #include <qwebenginecookiestore.h>
 #include <qwebengineprofile.h>
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "sitedecisionstore.h"
 #endif
 
@@ -89,6 +89,7 @@
 CookieJar::CookieJar(QWebEngineProfile *profile, QObject *parent)
     : QObject(parent)
     , m_profile(profile ? profile : QWebEngineProfile::defaultProfile())
+    , m_profileId(BrowserProfile::profileIdFor(m_profile))
     , m_store(m_profile->cookieStore())
     , m_saveTimer(new AutoSaver(this))
     , m_filterTrackingCookies(false)
@@ -141,6 +142,11 @@ CookieJar *CookieJar::instance(QWebEngineProfile *profile)
     return jar;
 }
 
+CookieJar *CookieJar::instanceFor(const QString &profileId)
+{
+    return instance(BrowserProfile::profileFor(profileId));
+}
+
 CookieJar::~CookieJar()
 {
     // The store can already be gone during WebEngine teardown; the
@@ -173,7 +179,7 @@ void CookieJar::clear()
 
 void CookieJar::loadSettings()
 {
-    ProfileSettings settings;
+    ProfileSettings settings(m_profileId);
     settings.beginGroup(QLatin1String("cookies"));
     QByteArray value = settings.value(QLatin1String("acceptCookies"),
                                       QLatin1String("AcceptOnlyFromSitesNavigatedTo")).toByteArray();
@@ -193,7 +199,7 @@ void CookieJar::loadSettings()
     m_sessionLength = settings.value(QLatin1String("sessionLength"), -1).toInt();
 
     settings.beginGroup(QLatin1String("exceptions"));
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // SITED01: one-shot import — replay the three legacy exception
     // lists into the Rust store ("block"/"allow"/"session" values),
     // then retire the group after the writes land.
@@ -209,12 +215,14 @@ void CookieJar::loadSettings()
         for (const QString &host : legacySession) {
             if (!host.isEmpty())
                 allWritten = SiteDecisionStore::set(
+                    m_profileId,
                     SiteDecisionStore::KindCookie,
                     host, QLatin1String("session")) && allWritten;
         }
         for (const QString &host : legacyAllow) {
             if (!host.isEmpty())
                 allWritten = SiteDecisionStore::set(
+                    m_profileId,
                     SiteDecisionStore::KindCookie,
                     host, QLatin1String("allow")) && allWritten;
         }
@@ -223,6 +231,7 @@ void CookieJar::loadSettings()
         for (const QString &host : legacyBlock) {
             if (!host.isEmpty())
                 allWritten = SiteDecisionStore::set(
+                    m_profileId,
                     SiteDecisionStore::KindCookie,
                     host, QLatin1String("block")) && allWritten;
         }
@@ -238,7 +247,8 @@ void CookieJar::loadSettings()
     m_exceptions_allow.clear();
     m_exceptions_allowForSession.clear();
     const QHash<QString, QString> rows =
-        SiteDecisionStore::entries(SiteDecisionStore::KindCookie);
+        SiteDecisionStore::entries(m_profileId,
+                                   SiteDecisionStore::KindCookie);
     for (auto it = rows.constBegin(); it != rows.constEnd(); ++it) {
         if (it.value() == QLatin1String("block"))
             m_exceptions_block.append(it.key());
@@ -269,8 +279,11 @@ void CookieJar::save()
 {
     // The cookies themselves are persisted by the WebEngine profile
     // (setPersistentCookiesPolicy); only the policy and the exception
-    // lists are ours to store.
-    ProfileSettings settings;
+    // lists are ours to store.  An off-the-record jar never writes
+    // either (MPROF02).
+    if (m_profile->isOffTheRecord())
+        return;
+    ProfileSettings settings(m_profileId);
     settings.beginGroup(QLatin1String("cookies"));
 
     QMetaEnum acceptPolicyEnum = staticMetaObject.enumerator(staticMetaObject.indexOfEnumerator("AcceptPolicy"));
@@ -283,7 +296,7 @@ void CookieJar::save()
     settings.setValue(QLatin1String("blockThirdPartyCookies"), m_blockThirdPartyCookies);
     settings.setValue(QLatin1String("sessionLength"), m_sessionLength);
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // The three lists mirror into one kind — merged with the same
     // precedence the filter resolves (block > allow > session).
     QHash<QString, QString> rows;
@@ -293,7 +306,8 @@ void CookieJar::save()
         rows.insert(host, QLatin1String("allow"));
     for (const QString &host : m_exceptions_block)
         rows.insert(host, QLatin1String("block"));
-    SiteDecisionStore::replace(SiteDecisionStore::KindCookie, rows);
+    SiteDecisionStore::replace(m_profileId,
+                               SiteDecisionStore::KindCookie, rows);
 #else
     settings.beginGroup(QLatin1String("exceptions"));
     settings.setValue(QLatin1String("block"), m_exceptions_block);

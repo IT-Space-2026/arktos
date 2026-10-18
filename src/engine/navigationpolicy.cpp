@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
 #include <qmutex.h>
 #include <qtenvironmentvariables.h>
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 
 // ============================================================
 // Rust-backed implementation — every decision is delegated to the
@@ -147,6 +147,10 @@ static PolicyVerdict evaluateUncached(const PolicyRequest &request)
         verdict.redirectUrl = QUrl::fromEncoded(
             v.value(QStringLiteral("url")).toString().toUtf8());
         verdict.reason = v.value(QStringLiteral("reason")).toString().toUtf8();
+        // POL04: the cleaning stage reports how many tracker units it
+        // dropped — the interceptors tally it for the shield panel.
+        verdict.cleanedCount =
+            v.value(QStringLiteral("removed")).toInt();
         if (!verdict.redirectUrl.isValid()) {
             verdict.action = PolicyVerdict::Action::Allow; // fail open
         }
@@ -203,6 +207,9 @@ void NavigationPolicy::loadSnapshot(const Snapshot &s)
     QJsonArray exceptions;
     for (const QString &h : s.httpsOnlyExceptions) exceptions.append(h);
     m[QStringLiteral("https_only_exceptions")] = exceptions;
+    QJsonArray cleanExceptions;
+    for (const QString &h : s.urlCleanExceptions) cleanExceptions.append(h);
+    m[QStringLiteral("urlclean_exceptions")] = cleanExceptions;
     const QByteArray body = jsonBytes(m);
     rc_policy_load_snapshot(
         reinterpret_cast<const uint8_t *>(body.constData()),
@@ -329,6 +336,44 @@ void NavigationPolicy::clearHttpAllowance(const QString &host)
 QStringList NavigationPolicy::httpExceptionHosts()
 {
     const QVariant v = policyCall(QStringLiteral("http_exceptions"),
+                                  QJsonObject());
+    return v.isValid() ? v.toStringList() : QStringList();
+}
+
+// POL04: per-site link-cleaning exemptions, mirroring the
+// allow_http/clear_http_allowance split — the policy keeps the live
+// host sets, persistence stays in the Qt-side decision store.
+bool NavigationPolicy::isUrlCleanExempt(const QString &host)
+{
+    QJsonObject a;
+    a[QStringLiteral("host")] = host;
+    return callBool(QStringLiteral("is_urlclean_exempt"), a, false);
+}
+
+bool NavigationPolicy::allowUrlCleanExempt(const QString &host,
+                                           bool persistent)
+{
+    QJsonObject a;
+    a[QStringLiteral("host")] = host;
+    a[QStringLiteral("persistent")] = persistent;
+    const QVariant v = policyCall(QStringLiteral("urlclean_exempt"), a);
+    if (!v.isValid())
+        return false;
+    return v.toJsonObject()
+        .value(QStringLiteral("persist_needed"))
+        .toBool();
+}
+
+void NavigationPolicy::clearUrlCleanExempt(const QString &host)
+{
+    QJsonObject a;
+    a[QStringLiteral("host")] = host;
+    policyCall(QStringLiteral("clear_urlclean_exempt"), a);
+}
+
+QStringList NavigationPolicy::urlCleanExemptHosts()
+{
+    const QVariant v = policyCall(QStringLiteral("urlclean_exempt_hosts"),
                                   QJsonObject());
     return v.isValid() ? v.toStringList() : QStringList();
 }
@@ -532,7 +577,7 @@ QUrl NavigationPolicy::strippedUrl(const QUrl &url)
 
 } // namespace Engine
 
-#else // !ARORA_RUSTCORE — legacy Qt fallback, kept 1:1 with the pre-refactor code
+#else // !ARKTOS_RUSTCORE — legacy Qt fallback, kept 1:1 with the pre-refactor code
 
 #include <qdatetime.h>
 #include <qhostaddress.h>
@@ -571,6 +616,14 @@ static QMutex s_httpAllowLock;
 static QSet<QString> s_sessionHttpAllowed;
 static QSet<QString> s_persistedHttpAllowed;
 static const int maxHttpAllowedHosts = 256;
+
+// POL04: per-site link-cleaning exemptions (no-rust build — the
+// ruleset lives in rustcore so these only shadow the store for a
+// hypothetical cleaning stage; kept 1:1 with the rust policy sets).
+static QMutex s_urlCleanLock;
+static QSet<QString> s_sessionUrlCleanExempt;
+static QSet<QString> s_persistedUrlCleanExempt;
+static const int maxUrlCleanExempt = 256;
 
 static QMutex s_blockedNavLock;
 static QSet<QString> s_blockedHttpNavs;
@@ -621,8 +674,20 @@ void NavigationPolicy::loadSnapshot(const Snapshot &snap)
         if (!lowered.isEmpty())
             persisted.insert(lowered);
     }
-    const QMutexLocker lock(&s_httpAllowLock);
-    s_persistedHttpAllowed = persisted;
+    {
+        const QMutexLocker lock(&s_httpAllowLock);
+        s_persistedHttpAllowed = persisted;
+    }
+    QSet<QString> cleanExempt;
+    for (const QString &host : snap.urlCleanExceptions) {
+        const QString lowered = host.toLower();
+        if (!lowered.isEmpty())
+            cleanExempt.insert(lowered);
+    }
+    {
+        const QMutexLocker lock(&s_urlCleanLock);
+        s_persistedUrlCleanExempt = cleanExempt;
+    }
     bumpEvalGeneration();
 }
 
@@ -993,6 +1058,68 @@ QStringList NavigationPolicy::httpExceptionHosts()
     return hosts;
 }
 
+// POL04 — host-set member check with the site-decision store's
+// suffix semantics: 'example.com' exempts 'www.example.com' too.
+static bool hostSetContains(const QSet<QString> &set, const QString &host)
+{
+    for (const QString &entry : set) {
+        if (host == entry
+            || (host.endsWith(entry)
+                && host.size() > entry.size()
+                && host.at(host.size() - entry.size() - 1)
+                       == QLatin1Char('.')))
+            return true;
+    }
+    return false;
+}
+
+bool NavigationPolicy::isUrlCleanExempt(const QString &host)
+{
+    const QString lowered = host.toLower();
+    const QMutexLocker lock(&s_urlCleanLock);
+    return hostSetContains(s_sessionUrlCleanExempt, lowered)
+        || hostSetContains(s_persistedUrlCleanExempt, lowered);
+}
+
+bool NavigationPolicy::allowUrlCleanExempt(const QString &host,
+                                           bool persistent)
+{
+    const QString lowered = host.toLower();
+    if (lowered.isEmpty())
+        return false;
+    bool persistNeeded = false;
+    {
+        const QMutexLocker lock(&s_urlCleanLock);
+        if (s_sessionUrlCleanExempt.size() < maxUrlCleanExempt)
+            s_sessionUrlCleanExempt.insert(lowered);
+        if (persistent && !s_persistedUrlCleanExempt.contains(lowered)) {
+            s_persistedUrlCleanExempt.insert(lowered);
+            persistNeeded = true;
+        }
+    }
+    bumpEvalGeneration();
+    return persistNeeded;
+}
+
+void NavigationPolicy::clearUrlCleanExempt(const QString &host)
+{
+    const QString lowered = host.toLower();
+    {
+        const QMutexLocker lock(&s_urlCleanLock);
+        s_sessionUrlCleanExempt.remove(lowered);
+        s_persistedUrlCleanExempt.remove(lowered);
+    }
+    bumpEvalGeneration();
+}
+
+QStringList NavigationPolicy::urlCleanExemptHosts()
+{
+    const QMutexLocker lock(&s_urlCleanLock);
+    QStringList hosts = s_persistedUrlCleanExempt.values();
+    hosts.sort();
+    return hosts;
+}
+
 void NavigationPolicy::recordBlockedHttpNav(const QUrl &url)
 {
     const QMutexLocker lock(&s_blockedNavLock);
@@ -1311,8 +1438,13 @@ static PolicyVerdict evaluateTor(const PolicyRequest &req)
             || req.method == QByteArrayLiteral("HEAD"))
         && hasQuery(url))
         target = NavigationPolicy::strippedUrl(url);
+    // Loopback/private-net hosts stay http: (MEM07): isUpgradeCandidate
+    // exempts them on the https-first path because a local service has
+    // no certificate to upgrade to — the tor path shares that reality
+    // (a relayed LAN request can never exit anyway), and .onion is
+    // already inside isPrivateOrLocalHost.
     if (url.scheme() == QLatin1String("http")
-        && !url.host().endsWith(QLatin1String(".onion"))) {
+        && !NavigationPolicy::isPrivateOrLocalHost(url.host())) {
         target.setScheme(QLatin1String("https"));
         v.action = PolicyVerdict::Action::Redirect;
         v.redirectUrl = target;
@@ -1418,7 +1550,7 @@ bool NavigationPolicy::cookieFilter(const CookieGateInput &input)
 
 } // namespace Engine
 
-#endif // ARORA_RUSTCORE
+#endif // ARKTOS_RUSTCORE
 
 // ============================================================
 // PERF01 — per-request verdict memoization (shared, both builds).
@@ -1464,7 +1596,7 @@ bool NavigationPolicy::cookieFilter(const CookieGateInput &input)
 //     and re-populates — a hostile page cannot grow it without
 //     limit.
 //
-// ARORA_POLICY_CACHE_OFF=1 disables memoization (diagnostic escape
+// ARKTOS_POLICY_CACHE_OFF=1 disables memoization (diagnostic escape
 // hatch — the per-request path is then the pre-PERF01 pipeline,
 // still timed for the stats counters).
 
@@ -1517,7 +1649,7 @@ QByteArray verdictKey(const PolicyRequest &req)
 
 quint64 evalGeneration()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     return rc_policy_eval_generation();
 #else
     return s_evalGeneration.loadRelaxed();
@@ -1538,7 +1670,7 @@ PolicyVerdict evaluateTimed(const PolicyRequest &request)
 PolicyVerdict NavigationPolicy::evaluate(const PolicyRequest &request)
 {
     static const bool cacheEnabled =
-        !qEnvironmentVariableIsSet("ARORA_POLICY_CACHE_OFF");
+        !qEnvironmentVariableIsSet("ARKTOS_POLICY_CACHE_OFF");
     // 0 == QWebEngineUrlRequestInfo::ResourceTypeMainFrame /
     // Engine::ResourceType::MainFrame — never memoized (see above).
     if (!cacheEnabled || request.resourceType == 0) {

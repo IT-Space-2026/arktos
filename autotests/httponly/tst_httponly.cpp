@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, The Arora Authors
+ * Copyright (c) 2026, The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,14 +19,14 @@
 
 // SAFE01: HTTPS-Only strict mode — the veto in
 // WebPage::acceptNavigationRequest, the nonce-bound
-// arora-http-warning: interstitial it swaps in, its proceed/back/
+// arktos-http-warning: interstitial it swaps in, its proceed/back/
 // always action links, the session + persisted host exceptions, and
 // the pure shouldWarnHttp decision (including the https-first
 // ordering and the loopback/LAN/.onion exemptions).
 //
 // The full request path — proxy-observable upgrade ordering, the
 // interceptor-side block of hops that bypass the navigation hook, and
-// the off toggle — is covered by ./arora --httpsonly-smoke.
+// the off toggle — is covered by ./arktos --httpsonly-smoke.
 
 #include <QtTest/QtTest>
 #include <QtNetwork/QtNetwork>
@@ -36,13 +36,13 @@
 
 #include "privacyrequestinterceptor.h"
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "sitedecisionstore.h"
 #endif
 #include "schemeaccesshandler.h"
 #include "webpage.h"
 #include "webview.h"
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 #include "qtry.h"
 
 // Promotes the protected navigation hook so tests can drive redirect
@@ -140,7 +140,7 @@ bool tst_HttpOnly::waitInterstitialCommit(WebPage *page,
         for (int i = baseline; i < loaded.count(); ++i)
             committed |= loaded.at(i).at(0).toBool();
         if (committed
-            && page->url().scheme() == QLatin1String("arora-http-warning"))
+            && page->url().scheme() == QLatin1String("arktos-http-warning"))
             return true;
         QTest::qWait(50);
     }
@@ -312,9 +312,9 @@ void tst_HttpOnly::warningCommits()
     QVERIFY(html.contains(QLatin1String("id=\"back\"")));
     QVERIFY(html.contains(QLatin1String("id=\"proceed\"")));
     QVERIFY(html.contains(
-        QLatin1String("arora-http-warning:proceed?n=")));
+        QLatin1String("arktos-http-warning:proceed?n=")));
     QVERIFY(html.contains(
-        QLatin1String("arora-http-warning:back?n=")));
+        QLatin1String("arktos-http-warning:back?n=")));
     // Off-the-record profiles never offer the persistent exception.
     QVERIFY(!html.contains(QLatin1String("id=\"always\"")));
 
@@ -385,7 +385,7 @@ void tst_HttpOnly::alwaysPersistsException()
     QVERIFY(clickElement(&view, QLatin1String("always")));
     QTRY_VERIFY_WITH_TIMEOUT(
         PrivacyRequestInterceptor::isHttpAllowedHost(host), 10000);
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     QTRY_VERIFY_WITH_TIMEOUT(
         SiteDecisionStore::entries(SiteDecisionStore::KindHttpAllow)
             .contains(host), 10000);
@@ -430,14 +430,14 @@ void tst_HttpOnly::otrRendersNoAlwaysLink()
     QVERIFY(!nonce.isEmpty());
     evalSync(page, QString::fromLatin1(
         "var a = document.createElement('a');"
-        "a.id = 'forge'; a.href = 'arora-http-warning:always?n=%1';"
+        "a.id = 'forge'; a.href = 'arktos-http-warning:always?n=%1';"
         "a.textContent = 'forge'; document.body.appendChild(a); true")
         .arg(nonce));
     QVERIFY(clickElement(&view, QLatin1String("forge")));
     QTRY_VERIFY_WITH_TIMEOUT(
         PrivacyRequestInterceptor::isHttpAllowedHost(host), 10000);
     QTest::qWait(500);
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     QVERIFY(!SiteDecisionStore::entries(SiteDecisionStore::KindHttpAllow)
                 .contains(host));
 #else
@@ -501,7 +501,7 @@ void tst_HttpOnly::forgedLinkIgnored()
     // A proceed link without the rendered nonce resolves nothing.
     evalSync(page, QLatin1String(
         "var a = document.createElement('a');"
-        "a.id = 'forge'; a.href = 'arora-http-warning:proceed?n=forged';"
+        "a.id = 'forge'; a.href = 'arktos-http-warning:proceed?n=forged';"
         "a.textContent = 'forge'; document.body.appendChild(a); true"));
     QVERIFY(clickElement(&view, QLatin1String("forge")));
     QTest::qWait(1000);
@@ -569,7 +569,7 @@ int main(int argc, char *argv[])
 {
     Q_INIT_RESOURCE(htmls);
     Q_INIT_RESOURCE(data);
-    // arora-http-warning: must be registered before the browsing
+    // arktos-http-warning: must be registered before the browsing
     // profile spins up (same order as main.cpp) — unregistered schemes
     // go down Chromium's external-protocol path and never reach
     // acceptNavigationRequest.

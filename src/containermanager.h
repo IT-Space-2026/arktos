@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -38,7 +38,7 @@ class QWidget;
     localStorage/IndexedDB, service workers, the http cache and
     permissions are all partitioned by the engine itself.  The default
     container — the unlabeled browsing context — keeps using the
-    shared "arora" profile and is identified by an empty id.
+    shared "arktos" profile and is identified by an empty id.
 
     The registry (id/name/color) is a QSettings "containers" group so
     it survives restarts; profiles themselves are materialized lazily
@@ -47,7 +47,7 @@ class QWidget;
     cookie jar, scheme handlers, settings, download manager, adblock +
     privacy interceptor, extensions).
 
-    Scope notes (see .devin/Arora-Task.md CONT01-05): tab assignment
+    Scope notes (see .devin/Arktos-Task.md CONT01-05): tab assignment
     and the management UI land in CONT02/CONT03; this is the core —
     registry, lazy profiles and the isolation plumbing.
 */
@@ -62,15 +62,25 @@ public:
         QColor color;
     };
 
-    explicit ContainerManager(QObject *parent = nullptr);
+    // profileId names the registry profile whose containers this
+    // manager owns (MPROF02); an empty or non-slug id binds the
+    // ambient (focused window's) profile.
+    explicit ContainerManager(QObject *parent = nullptr,
+                              const QString &profileId = QString());
     ~ContainerManager();
 
     // Lazy qApp-owned singleton — same pattern as
     // HistoryManager::instance()/AdBlockManager::instance().
     static ContainerManager *instance();
+    // MPROF02: the container registry of a specific profile — one
+    // instance per registry id, qApp-owned.  The registry, site
+    // rules and <profile dir>/containers/<id> storage roots are all
+    // scoped to that profile.
+    static ContainerManager *instanceFor(const QString &profileId);
+    QString profileId() const { return m_profileId; }
 
     // The default (unlabeled) container's id.  Everything that is not
-    // a registered container — including the normal "arora" profile —
+    // a registered container — including the normal "arktos" profile —
     // maps to it.
     static QString defaultContainerId();
 
@@ -114,13 +124,13 @@ public:
     // storage root.  Only meaningful for registered ids.
     QString storagePath(const QString &id) const;
 
-    // CONT05: the on-disk locations Qt derives from the container's
-    // storage name — <CacheLocation>/QtWebEngine/<storageName> for the
-    // http cache, and the mostly-empty default storage dir
-    // <AppDataLocation>/QtWebEngine/<storageName> Qt creates at profile
-    // construction before persistentStoragePath is overridden.  Both
-    // are computed WITHOUT materializing the profile so deletion and
-    // clear-data paths reach containers never used this session.
+    // The on-disk locations container cleanup must reach WITHOUT
+    // materializing the profile.  VSEC02: the http cache now lives
+    // under the owning persona's cache/ tree (profiles/<persona>/
+    // cache/containers/<id>) so it rides the vault's "cache"
+    // exclusion with the persona's own engine cache; the residue
+    // default storage dir Qt keys off the storage name stays at
+    // <AppDataLocation>/QtWebEngine/<storageName>.
     QString cachePathFor(const QString &id) const;
     QString defaultDataPathFor(const QString &id) const;
 
@@ -194,6 +204,7 @@ private:
     // authoritative, the per-container list the persisted mirror.
     void saveSiteRules(const QString &id) const;
 
+    QString m_profileId;
     QList<Container> m_containers;
     // Materialized profiles only, keyed by container id.  The default
     // container is never an entry — it lives in BrowserProfile.

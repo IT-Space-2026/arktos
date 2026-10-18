@@ -1,0 +1,10 @@
+[Icon Theme]
+Name=Arktos Tabler
+Comment=Bundled Tabler outline icons (MIT)
+Directories=icons
+
+[icons]
+Size=16
+Type=Scalable
+MinSize=8
+MaxSize=256

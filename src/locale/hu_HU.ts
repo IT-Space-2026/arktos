@@ -22,14 +22,14 @@ p, li { white-space: pre-wrap; }
 &lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2010 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2026-2027 Janos Szenfner&lt;/p&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;a href=&quot;https://github.com/janos-szenfner/arora&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;https://github.com/janos-szenfner/arora&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;a href=&quot;https://github.com/arktos-browser/arktos&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;https://github.com/arktos-browser/arktos&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
         <translation>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
 &lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
 p, li { white-space: pre-wrap; }
 &lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Minden jog fenntartva © 2007-2010 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Minden jog fenntartva © 2026-2027 Janos Szenfner&lt;/p&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;a href=&quot;https://github.com/janos-szenfner/arora&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;https://github.com/janos-szenfner/arora&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;a href=&quot;https://github.com/arktos-browser/arktos&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;https://github.com/arktos-browser/arktos&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
     </message>
     <message>
         <source>Authors</source>
@@ -56,8 +56,8 @@ p, li { white-space: pre-wrap; }
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Minden jog fenntartva © 2007-2009 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
     </message>
     <message>
-        <source>&lt;a href=&quot;http://arora-browser.org&quot;&gt;http://arora-browser.org&lt;/a&gt;</source>
-        <translation>&lt;a href=&quot;http://arora-browser.org&quot;&gt;http://arora-browser.org&lt;/a&gt;</translation>
+        <source>&lt;a href=&quot;http://arktos-browser.com&quot;&gt;http://arktos-browser.com&lt;/a&gt;</source>
+        <translation>&lt;a href=&quot;http://arktos-browser.com&quot;&gt;http://arktos-browser.com&lt;/a&gt;</translation>
     </message>
     <message>
         <source>Close</source>
@@ -199,10 +199,10 @@ p, li { white-space: pre-wrap; }
         <translation>Letölti a hirdetésblokkoló szűrőlistákat?</translation>
     </message>
     <message>
-        <source>Arora is configured to block ads and trackers using the community filter lists EasyList, EasyPrivacy, and uBlock filters. Enabling them downloads the lists once from easylist.to and ublockorigin.github.io and refreshes them about once a week.
+        <source>Arktos is configured to block ads and trackers using the community filter lists EasyList, EasyPrivacy, and uBlock filters. Enabling them downloads the lists once from easylist.to and ublockorigin.github.io and refreshes them about once a week.
 
 Until you choose, no list downloads are made and the blocker simply has no remote rules. You can change this later under Tools &gt; Ad Block.</source>
-        <translation>Az Arora az EasyList, EasyPrivacy és uBlock közösségi szűrőlistákkal blokkolja a hirdetéseket és a nyomkövetőket. Engedélyezéskor a listák egyszer letöltődnek az easylist.to és ublockorigin.github.io oldalakról, és körülbelül hetente frissülnek.
+        <translation>Az Arktos az EasyList, EasyPrivacy és uBlock közösségi szűrőlistákkal blokkolja a hirdetéseket és a nyomkövetőket. Engedélyezéskor a listák egyszer letöltődnek az easylist.to és ublockorigin.github.io oldalakról, és körülbelül hetente frissülnek.
 
 Amíg nem dönt, nem történik listaletöltés, és a blokkoló egyszerűen nem rendelkezik távoli szabályokkal. Ez később az Eszközök &gt; Hirdetésblokkolás menüpontban módosítható.</translation>
     </message>
@@ -324,8 +324,8 @@ Amíg nem dönt, nem történik listaletöltés, és a blokkoló egyszerűen nem
         <translation>Szűrőlista-előbeállítások</translation>
     </message>
     <message>
-        <source>Tick a list to subscribe to it; Arora downloads it once and refreshes it about once a week. Unticking disables the subscription. Lists already subscribed to (including the defaults) show as ticked.</source>
-        <translation>Jelöljen be egy listát a feliratkozáshoz; az Arora egyszer letölti, és körülbelül hetente frissíti. A jelölés törlése letiltja a feliratkozást. A már feliratkozott listák (beleértve az alapértelmezetteket) bejelölve jelennek meg.</translation>
+        <source>Tick a list to subscribe to it; Arktos downloads it once and refreshes it about once a week. Unticking disables the subscription. Lists already subscribed to (including the defaults) show as ticked.</source>
+        <translation>Jelöljen be egy listát a feliratkozáshoz; az Arktos egyszer letölti, és körülbelül hetente frissíti. A jelölés törlése letiltja a feliratkozást. A már feliratkozott listák (beleértve az alapértelmezetteket) bejelölve jelennek meg.</translation>
     </message>
 </context>
 <context>
@@ -436,7 +436,7 @@ Amíg nem dönt, nem történik listaletöltés, és a blokkoló egyszerűen nem
     </message>
 </context>
 <context>
-    <name>AroraIcon</name>
+    <name>ArktosIcon</name>
     <message>
         <source>Native</source>
         <translation>Natív</translation>
@@ -799,8 +799,8 @@ Mégis importálja őket?</translation>
         <translation type="vanished">htmlToXBel eszköz szükséges</translation>
     </message>
     <message>
-        <source>htmlToXBel tool, which is shipped with Arora and is needed to import HTML bookmarks, is not installed or not available in the search paths.</source>
-        <translation type="vanished">A HTML könyvjelzők importálására szolgáló, az Arora részeként szállított htmlToXBel eszköz nincs telepítve, vagy nem érhető el a keresési útvonalon.</translation>
+        <source>htmlToXBel tool, which is shipped with Arktos and is needed to import HTML bookmarks, is not installed or not available in the search paths.</source>
+        <translation type="vanished">A HTML könyvjelzők importálására szolgáló, az Arktos részeként szállított htmlToXBel eszköz nincs telepítve, vagy nem érhető el a keresési útvonalon.</translation>
     </message>
     <message>
         <source>Loading Bookmark</source>
@@ -891,12 +891,12 @@ Biztosan ki akar lépni?</translation>
         <translation>A visszaállítás sikertelen</translation>
     </message>
     <message>
-        <source>The saved session will not be restored because Arora crashed while trying to restore this session.</source>
-        <translation type="obsolete">Az elmentett munkamenet nem kerül visszaállításra, mert az Arora összeomlott a művelet közben.</translation>
+        <source>The saved session will not be restored because Arktos crashed while trying to restore this session.</source>
+        <translation type="obsolete">Az elmentett munkamenet nem kerül visszaállításra, mert az Arktos összeomlott a művelet közben.</translation>
     </message>
     <message>
-        <source>Arora crashed while trying to restore this session.  Should I try again?</source>
-        <translation>Az Arora összeomlott a munkamenet visszaállítása közben.  Megpróbálja újra?</translation>
+        <source>Arktos crashed while trying to restore this session.  Should I try again?</source>
+        <translation>Az Arktos összeomlott a munkamenet visszaállítása közben.  Megpróbálja újra?</translation>
     </message>
 </context>
 <context>
@@ -1321,9 +1321,9 @@ Biztosan ki akar lépni?</translation>
         <translation> — cél: %1</translation>
     </message>
     <message>
-        <source>%1 - Arora</source>
+        <source>%1 - Arktos</source>
         <comment>Page title and Browser name</comment>
-        <translation>%1 - Arora</translation>
+        <translation>%1 - Arktos</translation>
     </message>
     <message>
         <source>Open Web Resource</source>
@@ -2390,14 +2390,14 @@ Biztosan ki akar lépni?</translation>
     </message>
 </context>
 <context>
-    <name>JavaScriptAroraObject</name>
+    <name>JavaScriptArktosObject</name>
     <message>
-        <source>Welcome to Arora!</source>
-        <translation>Üdvözli az Arora!</translation>
+        <source>Welcome to Arktos!</source>
+        <translation>Üdvözli az Arktos!</translation>
     </message>
     <message>
-        <source>Arora Start</source>
-        <translation>Arora Kezdőlap</translation>
+        <source>Arktos Start</source>
+        <translation>Arktos Kezdőlap</translation>
     </message>
     <message>
         <source>Search!</source>
@@ -2408,8 +2408,8 @@ Biztosan ki akar lépni?</translation>
         <translation>A keresési találatokat biztosítja:</translation>
     </message>
     <message>
-        <source>About Arora</source>
-        <translation>Az Arora névjegye</translation>
+        <source>About Arktos</source>
+        <translation>Az Arktos névjegye</translation>
     </message>
 </context>
 <context>
@@ -3811,8 +3811,8 @@ QR-kóddá legyen kódolva.</translation>
         <translation>Téma:</translation>
     </message>
     <message>
-        <source>Color scheme for Arora&apos;s own windows, menus and dialogs. &quot;System default&quot; follows the desktop preference.</source>
-        <translation>Színséma az Arora saját ablakaihoz, menüihez és párbeszédablakaihoz. A &quot;Rendszer alapértelmezett&quot; az asztali beállítást követi.</translation>
+        <source>Color scheme for Arktos&apos;s own windows, menus and dialogs. &quot;System default&quot; follows the desktop preference.</source>
+        <translation>Színséma az Arktos saját ablakaihoz, menüihez és párbeszédablakaihoz. A &quot;Rendszer alapértelmezett&quot; az asztali beállítást követi.</translation>
     </message>
     <message>
         <source>Theme</source>
@@ -3835,8 +3835,8 @@ QR-kóddá legyen kódolva.</translation>
         <translation>Az alkalmazás keretére vonatkozik; az oldaltartalom sötét módját a lenti külön &quot;Oldalak sötét módban történő megjelenítése&quot; beállítás szabályozza.</translation>
     </message>
     <message>
-        <source>Pages that ship their own dark theme use it; light-only pages get a heuristic color inversion with a contrast floor so text stays readable. Images and videos are not inverted. Only web content is affected — Arora&apos;s own windows keep the desktop palette.</source>
-        <translation>A saját sötét témával rendelkező oldalak azt használják; a csak világos oldalak heurisztikus színinvertálást kapnak minimális kontraszttal, hogy a szöveg olvasható maradjon. A képek és videók nem invertálódnak. Csak a webtartalom érintett — az Arora saját ablakai az asztali palettát tartják.</translation>
+        <source>Pages that ship their own dark theme use it; light-only pages get a heuristic color inversion with a contrast floor so text stays readable. Images and videos are not inverted. Only web content is affected — Arktos&apos;s own windows keep the desktop palette.</source>
+        <translation>A saját sötét témával rendelkező oldalak azt használják; a csak világos oldalak heurisztikus színinvertálást kapnak minimális kontraszttal, hogy a szöveg olvasható maradjon. A képek és videók nem invertálódnak. Csak a webtartalom érintett — az Arktos saját ablakai az asztali palettát tartják.</translation>
     </message>
     <message>
         <source>Render pages in dark mode</source>
@@ -4055,8 +4055,8 @@ QR-kóddá legyen kódolva.</translation>
         <translation>Az egyes letöltések eltávolítása befejezéskor</translation>
     </message>
     <message>
-        <source>Render pages on the GPU. Turned off, Arora adds --disable-gpu to the engine flags — the switch latches at startup, so the change takes effect on the next launch.</source>
-        <translation>Oldalak megjelenítése GPU-n. Kikapcsolva az Arora hozzáadja a --disable-gpu kapcsolót a motorjelzőkhöz — a kapcsoló indításkor rögzül, így a módosítás a következő indításkor lép érvénybe.</translation>
+        <source>Render pages on the GPU. Turned off, Arktos adds --disable-gpu to the engine flags — the switch latches at startup, so the change takes effect on the next launch.</source>
+        <translation>Oldalak megjelenítése GPU-n. Kikapcsolva az Arktos hozzáadja a --disable-gpu kapcsolót a motorjelzőkhöz — a kapcsoló indításkor rögzül, így a módosítás a következő indításkor lép érvénybe.</translation>
     </message>
     <message>
         <source>Use Hardware Acceleration When Available</source>
@@ -4323,8 +4323,8 @@ QR-kóddá legyen kódolva.</translation>
         <translation>Kilépéskor törli az előzményeket, sütiket, webhelytárakat és gyorsítótárakat — mindent, amit a Személyes adatok törlése lefed. Azokból a webhelyekből, amelyekbe bejelentkezve marad, kijelentkezteti.</translation>
     </message>
     <message>
-        <source>Clear browsing data when Arora exits</source>
-        <translation>Böngészési adatok törlése az Arora kilépésekor</translation>
+        <source>Clear browsing data when Arktos exits</source>
+        <translation>Böngészési adatok törlése az Arktos kilépésekor</translation>
     </message>
     <message>
         <source>PDF Documents</source>
@@ -5330,12 +5330,12 @@ kulcs a memóriában készül, és soha nem kerül lemezre.</translation>
         <translation>Helyi tartalom</translation>
     </message>
     <message>
-        <source>TLS verified by Arora</source>
-        <translation>A TLS-t az Arora ellenőrizte</translation>
+        <source>TLS verified by Arktos</source>
+        <translation>A TLS-t az Arktos ellenőrizte</translation>
     </message>
     <message>
-        <source>TLS verified by Arora (%1)</source>
-        <translation>A TLS-t az Arora ellenőrizte (%1)</translation>
+        <source>TLS verified by Arktos (%1)</source>
+        <translation>A TLS-t az Arktos ellenőrizte (%1)</translation>
     </message>
     <message>
         <source>The certificate chain was re-verified independently of the web engine.</source>
@@ -5937,8 +5937,8 @@ Bárki a hálózaton elolvashatja vagy módosíthatja az adatokat — beleértve
         <translation>Kapcsolódás: %1.</translation>
     </message>
     <message>
-        <source>Check the address for errors such as &lt;b&gt;ww&lt;/b&gt;.arora-browser.org instead of &lt;b&gt;www&lt;/b&gt;.arora-browser.org</source>
-        <translation>Nem vétett hibát a hivatkozás beírásakor? (pl. &quot;&lt;b&gt;ww&lt;/b&gt;.arora-browser.org&quot; a &quot;&lt;b&gt;www&lt;/b&gt;.arora-browser.org&quot; helyett)</translation>
+        <source>Check the address for errors such as &lt;b&gt;ww&lt;/b&gt;.arktos-browser.com instead of &lt;b&gt;www&lt;/b&gt;.arktos-browser.com</source>
+        <translation>Nem vétett hibát a hivatkozás beírásakor? (pl. &quot;&lt;b&gt;ww&lt;/b&gt;.arktos-browser.com&quot; a &quot;&lt;b&gt;www&lt;/b&gt;.arktos-browser.com&quot; helyett)</translation>
     </message>
     <message>
         <source>If the address is correct, try checking the network connection.</source>
@@ -5985,20 +5985,20 @@ Bárki a hálózaton elolvashatja vagy módosíthatja az adatokat — beleértve
         <translation>&lt;li&gt;SHA-256-ujjlenyomat: %1&lt;/li&gt;</translation>
     </message>
     <message>
-        <source>&lt;a id=&quot;back&quot; href=&quot;arora-cert-error:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
-        <translation>&lt;a id=&quot;back&quot; href=&quot;arora-cert-error:back?n=%1&quot;&gt;Vissza a biztonságba&lt;/a&gt;</translation>
+        <source>&lt;a id=&quot;back&quot; href=&quot;arktos-cert-error:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
+        <translation>&lt;a id=&quot;back&quot; href=&quot;arktos-cert-error:back?n=%1&quot;&gt;Vissza a biztonságba&lt;/a&gt;</translation>
     </message>
     <message>
-        <source>&lt;a id=&quot;proceed&quot; href=&quot;arora-cert-error:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
-        <translation>&lt;a id=&quot;proceed&quot; href=&quot;arora-cert-error:proceed?n=%1&quot;&gt;Folytatás mindenképp (nem biztonságos)&lt;/a&gt;</translation>
+        <source>&lt;a id=&quot;proceed&quot; href=&quot;arktos-cert-error:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
+        <translation>&lt;a id=&quot;proceed&quot; href=&quot;arktos-cert-error:proceed?n=%1&quot;&gt;Folytatás mindenképp (nem biztonságos)&lt;/a&gt;</translation>
     </message>
     <message>
         <source>This site&apos;s certificate is not trusted</source>
         <translation>A webhely tanúsítványa nem megbízható</translation>
     </message>
     <message>
-        <source>Arora cannot verify the identity of %1. The certificate presented by the server is invalid — continuing could expose the connection to an attacker.</source>
-        <translation>Az Arora nem tudja ellenőrizni a(z) %1 azonosítóját. A kiszolgáló által bemutatott tanúsítvány érvénytelen — a folytatás támadónak teheti ki a kapcsolatot.</translation>
+        <source>Arktos cannot verify the identity of %1. The certificate presented by the server is invalid — continuing could expose the connection to an attacker.</source>
+        <translation>Az Arktos nem tudja ellenőrizni a(z) %1 azonosítóját. A kiszolgáló által bemutatott tanúsítvány érvénytelen — a folytatás támadónak teheti ki a kapcsolatot.</translation>
     </message>
     <message>
         <source>%1 (issued by %2, expires %3)</source>
@@ -6013,16 +6013,16 @@ Bárki a hálózaton elolvashatja vagy módosíthatja az adatokat — beleértve
         <translation>A(z) %1 webhely tanúsítvánnyal kéri azonosítania magát.  Válasszon ki egyet elküldésre, vagy kattintson a Mégse gombra az azonosítás nélküli folytatáshoz.</translation>
     </message>
     <message>
-        <source>&lt;a id=&quot;back&quot; href=&quot;arora-http-warning:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
-        <translation>&lt;a id=&quot;back&quot; href=&quot;arora-http-warning:back?n=%1&quot;&gt;Vissza a biztonságba&lt;/a&gt;</translation>
+        <source>&lt;a id=&quot;back&quot; href=&quot;arktos-http-warning:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
+        <translation>&lt;a id=&quot;back&quot; href=&quot;arktos-http-warning:back?n=%1&quot;&gt;Vissza a biztonságba&lt;/a&gt;</translation>
     </message>
     <message>
-        <source>&lt;a id=&quot;proceed&quot; href=&quot;arora-http-warning:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
-        <translation>&lt;a id=&quot;proceed&quot; href=&quot;arora-http-warning:proceed?n=%1&quot;&gt;Folytatás mindenképp (nem biztonságos)&lt;/a&gt;</translation>
+        <source>&lt;a id=&quot;proceed&quot; href=&quot;arktos-http-warning:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
+        <translation>&lt;a id=&quot;proceed&quot; href=&quot;arktos-http-warning:proceed?n=%1&quot;&gt;Folytatás mindenképp (nem biztonságos)&lt;/a&gt;</translation>
     </message>
     <message>
-        <source>&lt;a id=&quot;always&quot; href=&quot;arora-http-warning:always?n=%1&quot;&gt;Always allow HTTP on this site&lt;/a&gt;</source>
-        <translation>&lt;a id=&quot;always&quot; href=&quot;arora-http-warning:always?n=%1&quot;&gt;HTTP mindig engedélyezve ezen a webhelyen&lt;/a&gt;</translation>
+        <source>&lt;a id=&quot;always&quot; href=&quot;arktos-http-warning:always?n=%1&quot;&gt;Always allow HTTP on this site&lt;/a&gt;</source>
+        <translation>&lt;a id=&quot;always&quot; href=&quot;arktos-http-warning:always?n=%1&quot;&gt;HTTP mindig engedélyezve ezen a webhelyen&lt;/a&gt;</translation>
     </message>
     <message>
         <source>Insecure connection: %1</source>
@@ -6033,8 +6033,8 @@ Bárki a hálózaton elolvashatja vagy módosíthatja az adatokat — beleértve
         <translation>Ez a webhely nem támogatja a HTTPS-t</translation>
     </message>
     <message>
-        <source>Arora stopped %1 from loading because it can only be reached over an unencrypted HTTP connection.  Anyone on the network path can read or change everything sent to or received from this site — including passwords and cookies.</source>
-        <translation>Az Arora leállította a(z) %1 betöltését, mert az csak titkosítatlan HTTP-kapcsolaton érhető el.  Bárki a hálózati útvonalon elolvashatja vagy módosíthatja a webhelynek küldött vagy onnan kapott mindent — beleértve a jelszavakat és sütiket.</translation>
+        <source>Arktos stopped %1 from loading because it can only be reached over an unencrypted HTTP connection.  Anyone on the network path can read or change everything sent to or received from this site — including passwords and cookies.</source>
+        <translation>Az Arktos leállította a(z) %1 betöltését, mert az csak titkosítatlan HTTP-kapcsolaton érhető el.  Bárki a hálózati útvonalon elolvashatja vagy módosíthatja a webhelynek küldött vagy onnan kapott mindent — beleértve a jelszavakat és sütiket.</translation>
     </message>
     <message>
         <source>Requested address: %1</source>
@@ -6045,12 +6045,12 @@ Bárki a hálózaton elolvashatja vagy módosíthatja az adatokat — beleértve
         <translation>Lehet, hogy a webhely egyszerűen nem kínál biztonságos változatot, vagy egy hálózati támadó visszafejtette a kapcsolatot HTTP-re.</translation>
     </message>
     <message>
-        <source>&lt;a id=&quot;back&quot; href=&quot;arora-site-block:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
-        <translation>&lt;a id=&quot;back&quot; href=&quot;arora-site-block:back?n=%1&quot;&gt;Vissza a biztonságba&lt;/a&gt;</translation>
+        <source>&lt;a id=&quot;back&quot; href=&quot;arktos-site-block:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
+        <translation>&lt;a id=&quot;back&quot; href=&quot;arktos-site-block:back?n=%1&quot;&gt;Vissza a biztonságba&lt;/a&gt;</translation>
     </message>
     <message>
-        <source>&lt;a id=&quot;proceed&quot; href=&quot;arora-site-block:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
-        <translation>&lt;a id=&quot;proceed&quot; href=&quot;arora-site-block:proceed?n=%1&quot;&gt;Folytatás mindenképp (nem biztonságos)&lt;/a&gt;</translation>
+        <source>&lt;a id=&quot;proceed&quot; href=&quot;arktos-site-block:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
+        <translation>&lt;a id=&quot;proceed&quot; href=&quot;arktos-site-block:proceed?n=%1&quot;&gt;Folytatás mindenképp (nem biztonságos)&lt;/a&gt;</translation>
     </message>
     <message>
         <source>Dangerous site blocked: %1</source>
@@ -6061,8 +6061,8 @@ Bárki a hálózaton elolvashatja vagy módosíthatja az adatokat — beleértve
         <translation>Ez a webhely a helyi adathalász/kártevő-blokklistán szerepel</translation>
     </message>
     <message>
-        <source>Arora stopped %1 from loading because the domain is listed as serving phishing or malware.  Visiting it can steal credentials or infect this computer.</source>
-        <translation>Az Arora leállította a(z) %1 betöltését, mert a domain adathalász- vagy kártevőkiszolgálóként van listázva.  Meglátogatása hitelesítőadat-lopást vagy a számítógép megfertőzését okozhatja.</translation>
+        <source>Arktos stopped %1 from loading because the domain is listed as serving phishing or malware.  Visiting it can steal credentials or infect this computer.</source>
+        <translation>Az Arktos leállította a(z) %1 betöltését, mert a domain adathalász- vagy kártevőkiszolgálóként van listázva.  Meglátogatása hitelesítőadat-lopást vagy a számítógép megfertőzését okozhatja.</translation>
     </message>
     <message>
         <source>The list is a local copy — no lookup left this computer.  Proceeding is remembered only for this session.</source>
@@ -6073,8 +6073,8 @@ Bárki a hálózaton elolvashatja vagy módosíthatja az adatokat — beleértve
         <translation>A Google sebességkorlátozta ezt a kapcsolatot.</translation>
     </message>
     <message>
-        <source>This is Google&apos;s bot check, not an Arora error — it temporarily flagged search traffic from this profile. Complete the prompt below or try again later; or switch the default search engine under Tools &gt; Options &gt; Search.</source>
-        <translation>Ez a Google robotellenőrzése, nem Arora-hiba — ideiglenesen megjelölte az ebből a profilból érkező keresési forgalmat. Töltse ki az alábbi ellenőrzést, vagy próbálja később; esetleg váltson alapértelmezett keresőmotort az Eszközök &gt; Beállítások &gt; Keresés menüben.</translation>
+        <source>This is Google&apos;s bot check, not an Arktos error — it temporarily flagged search traffic from this profile. Complete the prompt below or try again later; or switch the default search engine under Tools &gt; Options &gt; Search.</source>
+        <translation>Ez a Google robotellenőrzése, nem Arktos-hiba — ideiglenesen megjelölte az ebből a profilból érkező keresési forgalmat. Töltse ki az alábbi ellenőrzést, vagy próbálja később; esetleg váltson alapértelmezett keresőmotort az Eszközök &gt; Beállítások &gt; Keresés menüben.</translation>
     </message>
     <message>
         <source>Resending POST request</source>
@@ -6356,8 +6356,8 @@ Engedélyezi?</translation>
 <context>
     <name>main</name>
     <message>
-        <source>Arora — a lightweight cross-platform web browser.</source>
-        <translation>Arora — egy könnyű, platformok közti webböngésző.</translation>
+        <source>Arktos — a lightweight cross-platform web browser.</source>
+        <translation>Arktos — egy könnyű, platformok közti webböngésző.</translation>
     </message>
     <message>
         <source>Url to open on startup.</source>
@@ -6368,8 +6368,8 @@ Engedélyezi?</translation>
         <translation>Tor-ablak megnyitása: egy külön folyamat, amely az összes forgalmat egy felügyelt tor-démon SOCKS5-figyelőjén keresztül irányítja egy dedikált, nyilvántartás nélküli profilon.</translation>
     </message>
     <message>
-        <source>Run without the filesystem sandbox (equivalent to ARORA_NO_SANDBOX=1).</source>
-        <translation>Futtatás fájlrendszerszandbox nélkül (egyenértékű az ARORA_NO_SANDBOX=1 beállítással).</translation>
+        <source>Run without the filesystem sandbox (equivalent to ARKTOS_NO_SANDBOX=1).</source>
+        <translation>Futtatás fájlrendszerszandbox nélkül (egyenértékű az ARKTOS_NO_SANDBOX=1 beállítással).</translation>
     </message>
     <message>
         <source>Print the sandbox backend, state and active policy, then exit.</source>

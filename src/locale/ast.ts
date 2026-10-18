@@ -24,8 +24,8 @@ p, li { white-space: pre-wrap; }
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2010 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
     </message>
     <message>
-        <source>&lt;a href=&quot;http://arora-browser.org&quot;&gt;http://arora-browser.org&lt;/a&gt;</source>
-        <translation>&lt;a href=&quot;http://arora-browser.org&quot;&gt;http://arora-browser.org&lt;/a&gt;</translation>
+        <source>&lt;a href=&quot;http://arktos-browser.com&quot;&gt;http://arktos-browser.com&lt;/a&gt;</source>
+        <translation>&lt;a href=&quot;http://arktos-browser.com&quot;&gt;http://arktos-browser.com&lt;/a&gt;</translation>
     </message>
     <message>
         <source>Authors</source>
@@ -345,8 +345,8 @@ p, li { white-space: pre-wrap; }
         <translation>Riques la ferramienta htmlToXBel</translation>
     </message>
     <message>
-        <source>htmlToXBel tool, which is shipped with Arora and is needed to import HTML bookmarks, is not installed or not available in the search paths.</source>
-        <translation>La ferramienta htmlToXBel, que vien con Arora y ye necesaria pa importar marcadores HTML, nun ta instalada o nun ta disponible nes rutes de gueta.</translation>
+        <source>htmlToXBel tool, which is shipped with Arktos and is needed to import HTML bookmarks, is not installed or not available in the search paths.</source>
+        <translation>La ferramienta htmlToXBel, que vien con Arktos y ye necesaria pa importar marcadores HTML, nun ta instalada o nun ta disponible nes rutes de gueta.</translation>
     </message>
     <message>
         <source>Loading Bookmark</source>
@@ -425,12 +425,12 @@ Do you want to quit anyway?</source>
         <translation>Falló la recuperación</translation>
     </message>
     <message>
-        <source>The saved session will not be restored because Arora crashed while trying to restore this session.</source>
-        <translation type="obsolete">La sesión guardada nun puede recuperase darréu que Arora falló durante la cabera recuperación.</translation>
+        <source>The saved session will not be restored because Arktos crashed while trying to restore this session.</source>
+        <translation type="obsolete">La sesión guardada nun puede recuperase darréu que Arktos falló durante la cabera recuperación.</translation>
     </message>
     <message>
-        <source>Arora crashed while trying to restore this session.  Should I try again?</source>
-        <translation>Arora falló tentando de recuperar esta sesión.  ¿Vuelvo intentalo?</translation>
+        <source>Arktos crashed while trying to restore this session.  Should I try again?</source>
+        <translation>Arktos falló tentando de recuperar esta sesión.  ¿Vuelvo intentalo?</translation>
     </message>
 </context>
 <context>
@@ -662,11 +662,11 @@ Clear Private Data
         <translation>Anubrir la barra de marcadores</translation>
     </message>
     <message>
-        <source>%1 - Arora</source>
+        <source>%1 - Arktos</source>
         <comment>
 Page title and Browser name
 </comment>
-        <translation type="obsolete">%1 - Arora</translation>
+        <translation type="obsolete">%1 - Arktos</translation>
     </message>
     <message>
         <source>Open Web Resource</source>
@@ -795,9 +795,9 @@ Download Manager
         <translation>Tocante a &amp;%1</translation>
     </message>
     <message>
-        <source>%1 - Arora</source>
+        <source>%1 - Arktos</source>
         <comment>Page title and Browser name</comment>
-        <translation>%1 - Arora</translation>
+        <translation>%1 - Arktos</translation>
     </message>
     <message>
         <source>Stop</source>
@@ -1270,14 +1270,14 @@ Do you want to quit anyway?</source>
     </message>
 </context>
 <context>
-    <name>JavaScriptAroraObject</name>
+    <name>JavaScriptArktosObject</name>
     <message>
-        <source>Welcome to Arora!</source>
-        <translation>¡Benvida a Arora!</translation>
+        <source>Welcome to Arktos!</source>
+        <translation>¡Benvida a Arktos!</translation>
     </message>
     <message>
-        <source>Arora Start</source>
-        <translation>Aniciu d&apos;Arora</translation>
+        <source>Arktos Start</source>
+        <translation>Aniciu d&apos;Arktos</translation>
     </message>
     <message>
         <source>Search!</source>
@@ -1288,8 +1288,8 @@ Do you want to quit anyway?</source>
         <translation>Resultaos de la gueta dafechos por</translation>
     </message>
     <message>
-        <source>About Arora</source>
-        <translation>Tocante a Arora</translation>
+        <source>About Arktos</source>
+        <translation>Tocante a Arktos</translation>
     </message>
 </context>
 <context>
@@ -2150,8 +2150,8 @@ Do you really want to close this page?
         <translation>Cuando se coneuta a: %1.</translation>
     </message>
     <message>
-        <source>Check the address for errors such as &lt;b&gt;ww&lt;/b&gt;.arora-browser.org instead of &lt;b&gt;www&lt;/b&gt;.arora-browser.org</source>
-        <translation>Comproba que nun hai errores na direición como&lt;b&gt;ww&lt;/b&gt;.arora-browser.org en llugar de &lt;b&gt;www&lt;/b&gt;.arora-browser.org</translation>
+        <source>Check the address for errors such as &lt;b&gt;ww&lt;/b&gt;.arktos-browser.com instead of &lt;b&gt;www&lt;/b&gt;.arktos-browser.com</source>
+        <translation>Comproba que nun hai errores na direición como&lt;b&gt;ww&lt;/b&gt;.arktos-browser.com en llugar de &lt;b&gt;www&lt;/b&gt;.arktos-browser.com</translation>
     </message>
     <message>
         <source>If your computer or network is protected by a firewall or proxy, make sure that the browser is permitted to access the network.</source>
@@ -2231,8 +2231,8 @@ Do you really want to close this page?
 <context>
     <name>main</name>
     <message>
-        <source>Arora — a lightweight cross-platform web browser.</source>
-        <translation>Arora — un restolador web llixeru multiplataforma.</translation>
+        <source>Arktos — a lightweight cross-platform web browser.</source>
+        <translation>Arktos — un restolador web llixeru multiplataforma.</translation>
     </message>
     <message>
         <source>Url to open on startup.</source>

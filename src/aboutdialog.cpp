@@ -20,7 +20,7 @@
 
 #include "aboutdialog.h"
 
-#include "arorastyle.h"
+#include "arktosstyle.h"
 
 #include <qdialogbuttonbox.h>
 #include <qfile.h>
@@ -69,10 +69,10 @@ void AboutDialog::displayFile(const QString &fileName, const QString &title)
     buttonBox.setCenterButtons(true);
     layout.addWidget(&textEdit);
     layout.addWidget(&buttonBox);
-    layout.setContentsMargins(AroraStyle::Spacing::Medium,
-                              AroraStyle::Spacing::Medium,
-                              AroraStyle::Spacing::Medium,
-                              AroraStyle::Spacing::Medium);
+    layout.setContentsMargins(ArktosStyle::Spacing::Medium,
+                              ArktosStyle::Spacing::Medium,
+                              ArktosStyle::Spacing::Medium,
+                              ArktosStyle::Spacing::Medium);
 
     dialog.setLayout(&layout);
     dialog.setWindowTitle(title);

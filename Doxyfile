@@ -1,4 +1,4 @@
-# Doxyfile — Arora API reference
+# Doxyfile — Arktos API reference
 #
 # Regenerated for the Qt 6 port.  The previous config was written for
 # doxygen 1.5.7.1 (2009) and carried tags removed in doxygen 1.9+
@@ -13,9 +13,9 @@
 #---------------------------------------------------------------------------
 # Project
 #---------------------------------------------------------------------------
-PROJECT_NAME           = "Arora"
+PROJECT_NAME           = "Arktos"
 PROJECT_BRIEF          = "a Qt 6 / QtWebEngine web browser"
-PROJECT_NUMBER         = 0.12
+PROJECT_NUMBER         = 1.0
 OUTPUT_DIRECTORY       = doc
 OUTPUT_LANGUAGE        = English
 BRIEF_MEMBER_DESC      = YES

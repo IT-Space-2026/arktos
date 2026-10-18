@@ -74,7 +74,7 @@ class DownloadManager;
 class QEvent;
 class QShowEvent;
 class QWebEnginePage;
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
 class RustDownloadEngine;
 #endif
 
@@ -95,7 +95,7 @@ signals:
 
 public:
     DownloadItem(Engine::DownloadRequest *download = nullptr, bool requestFileName = false, QWidget *parent = nullptr);
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
     // Card backed by the rustdl accelerated engine instead of a
     // Chromium request (DLACC06).  The engine object is re-parented
     // to the item.
@@ -208,7 +208,7 @@ private:
     bool isFinished() const;
 
     QPointer<Engine::DownloadRequest> m_download;
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
     QPointer<RustDownloadEngine> m_engine;
 #endif
     // DOWN02: the owning manager, captured at construction — the item
@@ -270,12 +270,19 @@ public:
     };
     Q_ENUM(RemovePolicy)
 
-    DownloadManager(QWidget *parent = nullptr);
+    explicit DownloadManager(QWidget *parent = nullptr);
+    explicit DownloadManager(const QString &profileId,
+                             QWidget *parent = nullptr);
     ~DownloadManager();
 
     // Lazy app singleton — replaces BrowserApplication::downloadManager()
     // while browserapplication.cpp is uncompiled (MIG15 delegates).
     static DownloadManager *instance();
+    // MPROF02: the manager for a registry persona — download history
+    // and policy persist under profiles/<id>/; instance() aliases the
+    // active profile.  Repeat calls for one id return the same object.
+    static DownloadManager *instanceFor(const QString &profileId);
+    QString profileId() const { return m_profileId; }
 
     int activeDownloads() const;
     // DOWN05: true when cleanup() would actually drop a row — the
@@ -321,7 +328,7 @@ public:
     // handler (Settings > downloadmanager/externalPath).  The url
     // becomes a raw argv argument to another program, so only real
     // remote-download schemes are passed — file:, data:, blob:,
-    // javascript: and the arora-* schemes are refused and fall back to
+    // javascript: and the arktos-* schemes are refused and fall back to
     // the internal download path.  Static so autotests can drive it
     // without a live download.
     static bool externalDownload(const QUrl &url);
@@ -353,6 +360,7 @@ private:
 
     AutoSaver *m_autoSaver;
     DownloadModel *m_model;
+    QString m_profileId;        // MPROF02: owning persona
     QScopedPointer<QFileIconProvider> m_iconProvider;
     QWebEnginePage *m_retryPage;
     QWebEnginePage *m_retryPageOtr;

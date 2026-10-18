@@ -5,7 +5,7 @@
 // contextimage.js / fetchLinks.js pattern), so the namespace installs
 // itself once per document and stays available.
 //
-//   __aroraCtxSearch.formInfo(x, y) -> { ok:true, action, fields,
+//   __arktosCtxSearch.formInfo(x, y) -> { ok:true, action, fields,
 //                                        submits, label }
 //                                    | { ok:false, reason, method? }
 //
@@ -20,7 +20,7 @@
 // the submit buttons' {label, n} so the caller can ask which one
 // carries the query when a form has several.
 (function () {
-    if (window.__aroraCtxSearch)
+    if (window.__arktosCtxSearch)
         return;
     var ctl = {};
 
@@ -139,5 +139,5 @@
                  label: label ? label.trim() : '' };
     };
 
-    window.__aroraCtxSearch = ctl;
+    window.__arktosCtxSearch = ctl;
 }())

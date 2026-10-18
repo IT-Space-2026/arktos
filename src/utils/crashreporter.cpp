@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -91,8 +91,8 @@ void emitReport(int signalNumber, const char *reason, const void *addr)
     char header[768];
     int length = ::snprintf(
         header, sizeof(header),
-        "ARORA CRASH pid=%d signal=%d (%s)%s%s addr=%p\n"
-        "ARORA CRASH log: %s\n",
+        "ARKTOS CRASH pid=%d signal=%d (%s)%s%s addr=%p\n"
+        "ARKTOS CRASH log: %s\n",
         int(::getpid()), signalNumber, signalName(signalNumber),
         reason ? " reason=" : "", reason ? reason : "", addr,
         s_logPath[0] ? s_logPath : "(unavailable)");
@@ -167,7 +167,7 @@ void installOne(int signalNumber)
 
 QString CrashReporter::install(const QString &logFilePath)
 {
-    QString path = QFile::decodeName(qgetenv("ARORA_CRASH_LOG"));
+    QString path = QFile::decodeName(qgetenv("ARKTOS_CRASH_LOG"));
     if (path.isEmpty())
         path = logFilePath;
     const QString directory =

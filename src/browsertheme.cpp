@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,7 +20,7 @@
 #include "browsertheme.h"
 #include "profilesettings.h"
 
-#include "arorastyle.h"
+#include "arktosstyle.h"
 
 #include <qapplication.h>
 #include <qdialog.h>
@@ -51,7 +51,7 @@ static void restoreSavedPalette()
 
 Qt::ColorScheme BrowserTheme::systemColorScheme()
 {
-    const QByteArray override_ = qgetenv("ARORA_COLOR_SCHEME").toLower();
+    const QByteArray override_ = qgetenv("ARKTOS_COLOR_SCHEME").toLower();
     if (override_ == "dark")
         return Qt::ColorScheme::Dark;
     if (override_ == "light")
@@ -63,7 +63,7 @@ Qt::ColorScheme BrowserTheme::preferredColorScheme()
 {
     // THEME01: the user's Appearance pick is the top input; the
     // default ("system", or an absent key) falls through to the env
-    // override then the platform — so ARORA_COLOR_SCHEME keeps driving
+    // override then the platform — so ARKTOS_COLOR_SCHEME keeps driving
     // headless/testing runs exactly as before.
     const QString choice = ProfileSettings()
         .value(QLatin1String("browser/colorScheme"),
@@ -83,9 +83,9 @@ bool BrowserTheme::isDarkPalette(const QPalette &palette)
 QPalette BrowserTheme::darkPalette()
 {
     // THEM04: the forced dark variant lives with the rest of the
-    // chrome palette definitions in AroraStyle — one source for all
+    // chrome palette definitions in ArktosStyle — one source for all
     // variants (system / dark / tor).
-    return AroraStyle::darkPalette();
+    return ArktosStyle::darkPalette();
 }
 
 static void applyScheme(Qt::ColorScheme scheme)
@@ -118,10 +118,10 @@ static void applyScheme(Qt::ColorScheme scheme)
     if (darkWanted) {
         if (!s_forced) {
             s_savedPalette = QApplication::palette();
-            // THEME01: the app style may be AroraStyle's polish proxy
+            // THEME01: the app style may be ArktosStyle's polish proxy
             // — capture the name of the real style underneath so the
             // restore path recreates something QStyleFactory knows.
-            s_savedStyleName = AroraStyle::baseStyleName();
+            s_savedStyleName = ArktosStyle::baseStyleName();
         }
         // windowsvista/macos ignore palettes; a stylesheet style has no
         // name and already owns the look — leave those alone style-wise
@@ -165,7 +165,7 @@ void BrowserTheme::decorateInternalPage(QString &html)
 {
     if (qApp && isDarkPalette(qApp->palette()))
         html.replace(QLatin1String("<html"),
-                     QLatin1String("<html class=\"arora-dark\""));
+                     QLatin1String("<html class=\"arktos-dark\""));
 }
 
 void BrowserTheme::polishDialogButtons(QDialog *dialog)
@@ -180,11 +180,11 @@ void BrowserTheme::polishDialogButtons(QDialog *dialog)
     const int minimumHeight = fm.height() + 14;
     const QList<QPushButton *> buttons = dialog->findChildren<QPushButton *>();
     for (QPushButton *button : buttons) {
-        bool exempt = button->property("aroraNoButtonPolish").toBool();
+        bool exempt = button->property("arktosNoButtonPolish").toBool();
         for (QWidget *parent = button->parentWidget();
              !exempt && parent && parent != dialog;
              parent = parent->parentWidget())
-            exempt = parent->property("aroraNoButtonPolish").toBool();
+            exempt = parent->property("arktosNoButtonPolish").toBool();
         if (exempt)
             continue;
         if (button->minimumWidth() < minimumWidth)

@@ -45,12 +45,12 @@ int main(int argc, char **argv)
 {
     SingleApplication application(argc, argv);
     // Match the browser's scope so QStandardPaths finds the same data dir.
-    QCoreApplication::setOrganizationName(QLatin1String("Arora"));
-    QCoreApplication::setOrganizationDomain(QLatin1String("arora-browser.org"));
-    QCoreApplication::setApplicationName(QLatin1String("Arora"));
+    QCoreApplication::setOrganizationName(QLatin1String("Arktos"));
+    QCoreApplication::setOrganizationDomain(QLatin1String("arktos-browser.com"));
+    QCoreApplication::setApplicationName(QLatin1String("Arktos"));
 
     if (application.sendMessage(QByteArray())) {
-        qWarning() << "To prevent the loss of any history please exit Arora while this is tool is being run";
+        qWarning() << "To prevent the loss of any history please exit Arktos while this is tool is being run";
         return 1;
     }
 
@@ -58,8 +58,8 @@ int main(int argc, char **argv)
     args.takeFirst();
     if (args.isEmpty()) {
         QTextStream stream(stdout);
-        stream << "arora-placesimport is a tool for importing browser history from Firefox 3 and up" << Qt::endl;
-        stream << "arora-placesinfo ~/.mozilla/firefox/[profile-dir]/places.sqlite" << Qt::endl;
+        stream << "arktos-placesimport is a tool for importing browser history from Firefox 3 and up" << Qt::endl;
+        stream << "arktos-placesinfo ~/.mozilla/firefox/[profile-dir]/places.sqlite" << Qt::endl;
         return 0;
     }
 

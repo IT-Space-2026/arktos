@@ -11,7 +11,7 @@
 //! Three pieces:
 //!
 //!   * build_ua — the effective-UA decision.  A context JSON carries
-//!     the engine's factory UA, the Chrome milestone Arora presents
+//!     the engine's factory UA, the Chrome milestone Arktos presents
 //!     (UA03) and any configured override; the override wins verbatim,
 //!     otherwise the factory string is de-badged (the
 //!     "QtWebEngine/<ver>" token Google's bot check fingerprints,
@@ -526,7 +526,7 @@ mod tests {
     fn spoof_table_roundtrip() {
         let _guard = crate::store::test_lock();
         let dir = std::env::temp_dir().join(format!(
-            "arora-ua-test-{}",
+            "arktos-ua-test-{}",
             std::process::id()
         ));
         std::fs::create_dir_all(&dir).unwrap();
@@ -579,7 +579,7 @@ mod tests {
     fn spoof_rejects_header_injection() {
         let _guard = crate::store::test_lock();
         let dir = std::env::temp_dir().join(format!(
-            "arora-ua-inj-{}",
+            "arktos-ua-inj-{}",
             std::process::id()
         ));
         std::fs::create_dir_all(&dir).unwrap();

@@ -85,6 +85,7 @@ class ToolbarSearch;
 class QToolButton;
 class TorCircuitButton;
 class TorStatusBanner;
+class UpdateDialog;
 class WebView;
 class QSplitter;
 class QFrame;
@@ -96,6 +97,7 @@ class LoadingIndicator;
 class ZoomControl;
 class MemIndicator;
 class NetIndicator;
+class ProfileButton;
 
 /*!
     The MainWindow of the Browser Application.
@@ -107,9 +109,24 @@ class BrowserMainWindow : public QMainWindow
     Q_OBJECT
 
 public:
-    BrowserMainWindow(QWidget *parent = nullptr, Qt::WindowFlags flags = Qt::WindowFlags());
+    // MPROF03: profileId binds the window to a registry persona.
+    // Normalization here is slug-only (BrowserPaths::isProfileId,
+    // non-slug -> "default") — BrowserApplication::newMainWindow is
+    // the honest entry point that additionally verifies the id
+    // against ProfileRegistry; the raw ctor stays the test seam.
+    // The binding is fixed at construction: every WebView the window
+    // creates browses on the persona's named QWebEngineProfile (a
+    // private window/tab swaps onto the shared OTR overlay, a tor
+    // window onto the tor profile, a container tab onto the
+    // container profile), and the window's app-side stores — history,
+    // bookmarks, settings, cookies — resolve the same id.
+    BrowserMainWindow(QWidget *parent = nullptr,
+                      Qt::WindowFlags flags = Qt::WindowFlags(),
+                      const QString &profileId = QString());
     ~BrowserMainWindow();
     QSize sizeHint() const override;
+    // The persona this window is bound to ("default" when unbound).
+    QString profileId() const;
 
 public:
     static BrowserMainWindow *parentWindow(QWidget *widget);
@@ -213,6 +230,9 @@ private slots:
     void webSearch();
     void clearPrivateData();
     void aboutApplication();
+    // UPD01: Help > Check for Updates... — opens the single update
+    // dialog and starts the (manual) releases lookup.
+    void checkForUpdates();
     void downloadManager();
     void selectLineEdit();
 
@@ -377,6 +397,9 @@ private:
     QAction *m_toolsCommandPaletteAction;
     QAction *m_toolsWebSearchAction;
     QAction *m_toolsDownloadsAction;
+    // MPROF05: Tools > Profiles… — the manager reachable without the
+    // nav-bar button (the app menu embeds the shared Tools menu).
+    QAction *m_toolsProfilesAction;
     QAction *m_toolsClearPrivateDataAction;
     QAction *m_toolsLockStoreAction;
     // DEVT04: engine-facing tools under Tools > Development Tools.
@@ -389,6 +412,11 @@ private:
 
     QMenu *m_helpMenu;
     QAction *m_helpChangeLanguageAction;
+    // UPD01: Help > Check for Updates... — manual-only GitHub
+    // releases lookup; disabled outright on tor windows (a direct
+    // github.com call must never leave a tor session).
+    QAction *m_helpCheckUpdatesAction;
+    QPointer<UpdateDialog> m_updateDialog;
     QAction *m_helpAboutQtAction;
     QAction *m_helpAboutApplicationAction;
 
@@ -442,6 +470,10 @@ private:
     // built with, captured before the stored order is applied).
     QAction *m_navBarEditAction = nullptr;
     QAction *m_navBarResetAction = nullptr;
+    // PROF01: single-profile identity button — the rightmost nav-bar
+    // item, dropdown scaffolded by ProfileButton/ProfileIdentity.
+    ProfileButton *m_profileButton = nullptr;
+    QAction *m_profileButtonAction = nullptr;
     bool m_navBarEditMode = false;
     bool m_navBarDragging = false;
     QPointer<QAction> m_navBarDragAction;
@@ -455,6 +487,10 @@ private:
 #endif
     BookmarksToolBar *m_bookmarksToolbar;
 
+    // MPROF03: the persona binding — declared ahead of m_tabWidget so
+    // the init list sets it before any widget the window constructs
+    // can resolve the window's profile.
+    QString m_profileId;
     TabWidget *m_tabWidget;
 
     // UIP04: permanent status-bar widgets bound to the current tab.

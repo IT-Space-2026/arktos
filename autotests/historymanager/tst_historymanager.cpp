@@ -18,9 +18,10 @@
  */
 
 #include <QtTest/QtTest>
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 
 #include <browserpaths.h>
+#include <browserprofile.h>
 #include <historymanager.h>
 #include <history.h>
 #include <historycompleter.h>
@@ -131,7 +132,7 @@ private slots:
     void setHistory();
     void saveload_data();
     void saveload();
-#ifndef ARORA_RUSTCORE
+#ifndef ARKTOS_RUSTCORE
     void icons();
     void iconsFromPage();
 #else
@@ -303,16 +304,22 @@ void tst_HistoryManager::addHistoryEntry_private()
 
     const QUrl url(QStringLiteral("data:text/plain,private-page"));
 
-    // Control: a page on a persisted profile is recorded.
-    QWebEngineProfile normalProfile(QStringLiteral("arora-historytest"));
+    // Control: a page on a persisted profile is recorded — in the
+    // store the page's profile resolves to (MPROF02 keys managers by
+    // persona, so an "arktos-<id>" storage name lands in that profile).
+    QWebEngineProfile normalProfile(QStringLiteral("arktos-historytest"));
+    HistoryManager *resolved = HistoryManager::instanceFor(
+        BrowserProfile::profileIdFor(&normalProfile));
+    resolved->setHistory(HistoryList());
     WebPage normalPage(&normalProfile);
     QSignalSpy normalSpy(&normalPage, &QWebEnginePage::loadFinished);
     normalPage.load(url);
     QTRY_VERIFY_WITH_TIMEOUT(normalSpy.count() >= 1, 15000);
-    QTRY_VERIFY(manager->history().count() == 1);
-    QCOMPARE(manager->history().first().url, url.toString());
+    QTRY_VERIFY(resolved->history().count() == 1);
+    QCOMPARE(resolved->history().first().url, url.toString());
+    QVERIFY(manager->history().isEmpty());
 
-    manager->setHistory(HistoryList());
+    resolved->setHistory(HistoryList());
 
     // Off-the-record pages must never reach the manager.
     QWebEngineProfile otrProfile;
@@ -322,9 +329,10 @@ void tst_HistoryManager::addHistoryEntry_private()
     privatePage.load(url);
     QTRY_VERIFY_WITH_TIMEOUT(otrSpy.count() >= 1, 15000);
     QTest::qWait(200);
+    QVERIFY(resolved->history().isEmpty());
     QVERIFY(manager->history().isEmpty());
 
-    manager->setHistory(HistoryList());
+    resolved->setHistory(HistoryList());
 }
 
 void tst_HistoryManager::addHistoryEntry_url()
@@ -527,7 +535,7 @@ void tst_HistoryManager::saveload()
     }
 }
 
-#ifndef ARORA_RUSTCORE
+#ifndef ARKTOS_RUSTCORE
 static QImage iconImage(const QIcon &icon)
 {
     return icon.pixmap(8).toImage().convertToFormat(QImage::Format_ARGB32);
@@ -599,7 +607,7 @@ void tst_HistoryManager::iconsFromPage()
     manager->clearIcons();
     manager->setHistory(HistoryList());
 
-    QWebEngineProfile profile(QStringLiteral("arora-historyicontest"));
+    QWebEngineProfile profile(QStringLiteral("arktos-historyicontest"));
     WebPage page(&profile);
     QSignalSpy iconSpy(&page, &QWebEnginePage::iconChanged);
     page.load(url);
@@ -677,7 +685,7 @@ void tst_HistoryManager::legacyImport()
     }
     QFile::remove(path);
 }
-#endif // ARORA_RUSTCORE
+#endif // ARKTOS_RUSTCORE
 
 void tst_HistoryManager::big()
 {

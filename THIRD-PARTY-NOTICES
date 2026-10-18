@@ -1,9 +1,9 @@
 THIRD-PARTY NOTICES
 ===================
 
-Arora itself is licensed under the GNU General Public License, version 2
+Arktos itself is licensed under the GNU General Public License, version 2
 or later (see LICENSE.GPL2, LICENSE.GPL3 and GPLHEADER). Most source
-files carry an Arora copyright header (Benjamin C. Meyer and other
+files carry an Arktos copyright header (Benjamin C. Meyer and other
 contributors — see AUTHORS).
 
 This file lists the third-party code, data and runtime dependencies
@@ -21,13 +21,13 @@ downloadmanager, tabbar, tabwidget, webview, webpage, webactionmapper,
 modelmenu/modeltoolbar, and most of src/bookmarks/, src/history/,
 src/network/cookiejar/, src/opensearch/, src/sourceviewer*, searchlineedit,
 clearbutton, history completion, etc.) descend from Trolltech's Qt
-demonstration browser and carry a second license block below the Arora
+demonstration browser and carry a second license block below the Arktos
 one: GNU GPL version 2.0 or 3.0 (recipient's choice), plus the
 "Trolltech GPL Exception version 1.2". Used here under the GPL — fully
-compatible with Arora's GPL-2+.
+compatible with Arktos's GPL-2+.
 
 Note: those headers reference a GPL_EXCEPTION.txt "in this package"
-that upstream Arora never shipped. The exception only grants
+that upstream Arktos never shipped. The exception only grants
 *additional* rights, so its absence is not a compliance problem; the
 canonical text ships inside Qt 4.x source packages as
 GPL_EXCEPTION.txt.
@@ -43,7 +43,7 @@ singleapplication, edittableview, edittreeview, lineedit, squeezelabel,
 treesortfilterproxymodel, languagemanager and safetext are BSD-licensed
 ("Redistribution and use in source and binary forms ..."). See
 src/utils/README: the utils classes are intentionally BSD or public
-domain so they can be reused outside Arora. The full notice text is in
+domain so they can be reused outside Arktos. The full notice text is in
 each file header.
 
 The same BSD 3-clause terms apply to these non-utils files, which carry
@@ -63,7 +63,7 @@ Original code by Benjamin Meyer (benjamin.meyer@torchmobile.com).
 
 networkcookiejar.{h,cpp}, networkcookiejar_p.h, twoleveldomains_p.h and
 trie_p.h are licensed under MPL 1.1 / GPL 2.0+ / LGPL 2.1+ (recipient's
-choice). Arora uses them under the GPL option — compatible.
+choice). Arktos uses them under the GPL option — compatible.
 
 ----------------------------------------------------------------------
 4. autotests/modeltest/ — GPL 2.0 (test-only)
@@ -74,15 +74,15 @@ Labs"). modeltest is GPL-2.0 per its header and is only linked into
 test binaries, never into the shipped application.
 
 ----------------------------------------------------------------------
-5. Arora icon artwork — GPL 2.0
+5. Arktos icon artwork — GPL 2.0
 ----------------------------------------------------------------------
 
-src/data/arora.svg (and the rendered PNG/XPM/ICO/ICNS derivatives under
-src/data/ and BuildProcess/) is "Arora icon" by Jens Bache-Wiig,
+src/data/arktos.svg (and the rendered PNG/XPM/ICO/ICNS derivatives under
+src/data/ and BuildProcess/) is "Arktos icon" by Jens Bache-Wiig,
 1/5/2008, licensed GPL-2.0 — recorded in the SVG's embedded RDF
 metadata. The other bundled graphics in src/data/graphics/ (addtab,
 closetab, defaulticon, history, private, loading.gif) were committed by
-the Arora project and are covered by the project license.
+the Arktos project and are covered by the project license.
 
 ----------------------------------------------------------------------
 6. Mozilla/Arc90 Readability — Apache License 2.0
@@ -94,7 +94,7 @@ src/data/Readability.js and src/data/Readability-readerable.js are the
 Mozilla Readability library, release 0.6.0 ("heavily based on Arc90's
 readability.js 1.7.1"), vendored unmodified for Reader Mode. Licensed
 under the Apache License, Version 2.0 — the license header is preserved
-in each file. src/data/reader.js is Arora-authored glue; the engine is
+in each file. src/data/reader.js is Arktos-authored glue; the engine is
 also consumed inside src/rustcore via the dom_smoothie crate (see
 section 8).
 
@@ -136,7 +136,7 @@ crate's Cargo.toml; full lockfile at src/adblock/rust/Cargo.lock):
   (MIT OR Apache-2.0) AND Unicode-3.0:
       unicode-ident
 
-All of the above are permissive or MPL-2.0 and compatible with Arora's
+All of the above are permissive or MPL-2.0 and compatible with Arktos's
 GPL-2+ distribution; the adblock crate is file-level copyleft (MPL-2.0),
 satisfied by shipping this source tree.
 
@@ -144,7 +144,7 @@ satisfied by shipping this source tree.
 8. Rust core library — src/rustcore (linked into every build)
 ----------------------------------------------------------------------
 
-The arora-rustcore static/cdylib links the following crates (licenses
+The arktos-rustcore static/cdylib links the following crates (licenses
 read from each crate's Cargo.toml; full lockfile at
 src/rustcore/Cargo.lock; allowlist policy in src/rustcore/deny.toml).
 Direct dependencies: aes-gcm, argon2, zeroize, getrandom, serde_json,
@@ -258,13 +258,13 @@ section 6), dom_query, qrcodegen, hayro.
       r-efi
 
 All of the above are permissive or MPL-2.0/BSD-compatible and
-combinable with Arora's GPL-2+ distribution.
+combinable with Arktos's GPL-2+ distribution.
 
 ----------------------------------------------------------------------
 9. Rust download engine — src/rustdl
 ----------------------------------------------------------------------
 
-The arora-rustdl static/cdylib (segmented HTTP(S) downloads) links
+The arktos-rustdl static/cdylib (segmented HTTP(S) downloads) links
 reqwest on rustls plus the following crates (licenses read from each
 crate's Cargo.toml; full lockfile at src/rustdl/Cargo.lock; allowlist
 policy in src/rustdl/deny.toml). Direct dependencies: reqwest,
@@ -348,7 +348,7 @@ serde_json (+ tempfile, dev-only).
   MIT OR Apache-2.0 OR LGPL-2.1-or-later:
       r-efi
 
-All of the above are permissive and compatible with Arora's GPL-2+
+All of the above are permissive and compatible with Arktos's GPL-2+
 distribution.
 
 ----------------------------------------------------------------------
@@ -410,7 +410,7 @@ The Site Trust / privacy features consume third-party data sets:
 
 OpenSearch 1.1 XML descriptors for Google, Google I'm Feeling Lucky,
 Yahoo, Wikipedia, YouTube and Reddit. The descriptor files themselves
-are trivial Arora-authored XML (OpenSearch spec); the service names and
+are trivial Arktos-authored XML (OpenSearch spec); the service names and
 any favicons fetched via their <Image> URLs at runtime are trademarks /
 assets of their respective owners.
 
@@ -424,16 +424,16 @@ inherit uncovered names from Tabler — plus mechanically recolored
 -dark variants) are vendored as qrc icon themes. Each directory
 carries its own LICENSE file; summary:
 
-  * arora-adwaita{,-dark} — Adwaita Icon Theme, © the GNOME Project.
+  * arktos-adwaita{,-dark} — Adwaita Icon Theme, © the GNOME Project.
     LGPL-3+ or CC-BY-SA-3.0-US at the recipient's choice (newer artwork
     CC-BY-SA-4.0). Source: gitlab.gnome.org/GNOME/adwaita-icon-theme.
-  * arora-breeze{,-dark} — KDE Breeze Icons, © Uri Herrera and others.
+  * arktos-breeze{,-dark} — KDE Breeze Icons, © Uri Herrera and others.
     LGPL-3+ (upstream explicitly extends the LGPL to its icon artwork).
     Source: github.com/KDE/breeze-icons.
-  * arora-tabler{,-dark} — Tabler Icons, © 2020-2026 Paweł Kuna. MIT.
+  * arktos-tabler{,-dark} — Tabler Icons, © 2020-2026 Paweł Kuna. MIT.
     Source: github.com/tabler/tabler-icons. Also the fallback root the
     other sets inherit and QIcon::setFallbackThemeName resolves.
-  * arora-lucide{,-dark} — Lucide Icons, © Lucide contributors. ISC;
+  * arktos-lucide{,-dark} — Lucide Icons, © Lucide contributors. ISC;
     some glyphs are derived from Feather (© Cole Bemis, MIT — see the
     bundled LICENSE). Source: github.com/lucide-icons/lucide
     (lucide-static 1.53.0).
@@ -476,7 +476,7 @@ GPL-2.0-or-later. Full lockfile: spikes/servo/servo-embed/Cargo.lock.
 17. Runtime dependencies (NOT vendored into this repository)
 ----------------------------------------------------------------------
 
-  * Qt 6 — GNU LGPL v3 / GPL v3 / commercial (The Qt Company). Arora is
+  * Qt 6 — GNU LGPL v3 / GPL v3 / commercial (The Qt Company). Arktos is
     a Qt application; qwebchannel.js used by the start page is served
     from Qt's own qrc:///qtwebchannel/ resource.
   * QtWebEngine — embeds Chromium/Blink (BSD-3-Clause) plus Chromium's
@@ -487,7 +487,7 @@ GPL-2.0-or-later. Full lockfile: spikes/servo/servo-embed/Cargo.lock.
     file plus LICENSE.GPL2/GPL3 in dist/ alongside the Qt libraries.
   * OpenSSL libcrypto — Apache License 2.0 (OpenSSL 3.x) / OpenSSL+SSLeay
     (1.x). src/securestore.cpp resolves EVP symbols at runtime via
-    QLibrary for AES-256-GCM; Arora does not link or ship OpenSSL.
+    QLibrary for AES-256-GCM; Arktos does not link or ship OpenSSL.
     (The Rust TLS stack uses rustls with ring/AWS-LC instead — see
     sections 8-9.)
 
@@ -512,11 +512,11 @@ in installed or bundled builds.
 20. Everything else
 ----------------------------------------------------------------------
 
-All remaining source, .ui files, src/htmls/ pages, the Arora-authored
-src/data/*.js helpers (autofill.js, fetchLinks.js, arora-channel.js,
+All remaining source, .ui files, src/htmls/ pages, the Arktos-authored
+src/data/*.js helpers (autofill.js, fetchLinks.js, arktos-channel.js,
 contextimage.js, fingerprint.js, pip*.js, reader.js — everything except
 the Readability files of section 6), useragents.xml, bundled adblock
 stub resources (generated byte arrays in adblockresourcehandler.cpp),
 tools/, fuzz harnesses, BuildProcess/ and .devin/ scripts are
-Arora-authored and covered by GPL-2+ (2026 additions marked "The Arora
+Arktos-authored and covered by GPL-2+ (2026 additions marked "The Arktos
 Authors").

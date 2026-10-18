@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@
 
 // SITED01: the consolidated per-site decision store.
 //
-// Under ARORA_RUSTCORE this exercises the SiteDecisionStore façade
+// Under ARKTOS_RUSTCORE this exercises the SiteDecisionStore façade
 // end to end — round-trips, whole-kind replace, the suffix lookup,
 // the IO-thread snapshot, corrupt-row tolerance and, above all, the
 // one-shot migration of every legacy QSettings/INI store into the
@@ -40,6 +40,7 @@
 #include <qwebengineprofile.h>
 
 #include "browserpaths.h"
+#include "profilesettings.h"
 #include "containermanager.h"
 #include "cookiejar.h"
 #include "popupblocker.h"
@@ -50,7 +51,7 @@
 #include "adblockrule.h"
 #include "adblocksubscription.h"
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "sitedecisionstore.h"
 #endif
 
@@ -67,7 +68,7 @@ private slots:
     void init();
     void cleanup();
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     void storeRoundTrip();
     void replaceAndLookup();
     void snapshotReflectsChange();
@@ -106,7 +107,7 @@ void tst_SiteDecisions::init()
     settings.remove(QLatin1String("cookies"));
     settings.remove(QLatin1String("privacy"));
     settings.remove(QLatin1String("AdBlock"));
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     SiteDecisionStore::reset();
 #endif
 }
@@ -115,7 +116,7 @@ void tst_SiteDecisions::cleanup()
 {
 }
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 
 void tst_SiteDecisions::storeRoundTrip()
 {
@@ -302,7 +303,11 @@ void tst_SiteDecisions::legacyMigration()
 
     // Adblock site whitelist: a canonical document exception in the
     // custom-rules file, plus the subscription entry that loads it.
-    const QString customFile = BrowserPaths::dataFilePath(
+    // MPROF02 anchors both to the default persona — a real upgrade's
+    // root copy reaches profiles/default via BrowserPaths'
+    // ensureDataLayout rename pass, which already ran.
+    const QString customFile = BrowserPaths::profileDataFilePath(
+        QStringLiteral("default"),
         QLatin1String("adblock_subscription_custom"));
     {
         QFile file(customFile);
@@ -316,9 +321,11 @@ void tst_SiteDecisions::legacyMigration()
     const QString customSub = QLatin1String(
         "abp:subscribe?location=%1&title=Custom%20Rules")
         .arg(QString::fromUtf8(customLocation.toEncoded()));
-    settings.setValue(QLatin1String("AdBlock/subscriptions"),
-                      QStringList() << customSub);
-    settings.sync();
+    {
+        ProfileSettings profileSettings(QStringLiteral("default"));
+        profileSettings.setValue(QLatin1String("AdBlock/subscriptions"),
+                                 QStringList() << customSub);
+    }
 
     // -- the migrations ------------------------------------------------
 
@@ -454,7 +461,7 @@ void tst_SiteDecisions::persistenceAcrossReload()
              QLatin1String("some-id"));
 }
 
-#else // !ARORA_RUSTCORE — the fallback contract
+#else // !ARKTOS_RUSTCORE — the fallback contract
 
 void tst_SiteDecisions::noRustKeepsQSettings()
 {

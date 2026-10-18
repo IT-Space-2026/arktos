@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -97,7 +97,7 @@ private:
     QPoint m_dragPos;
 };
 
-// Channel object registered as "aroraPipPlayer" on the player page.
+// Channel object registered as "arktosPipPlayer" on the player page.
 // The player document is ours, so the trust boundary is narrow, but
 // keep it to plain value types like the other bridges.
 class PipPlayerBridge : public QObject

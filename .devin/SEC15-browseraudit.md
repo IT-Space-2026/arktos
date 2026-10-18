@@ -6,20 +6,20 @@ control run for attribution.
 
 ## Method
 
-`./arora --browseraudit-smoke` (new in `src/main.cpp`) loads
+`./arktos --browseraudit-smoke` (new in `src/main.cpp`) loads
 `https://browseraudit.com/test?categories=*&sendresults=false` on the
-real application profile (named `arora` profile, CookieJar,
+real application profile (named `arktos` profile, CookieJar,
 PrivacyRequestInterceptor + adblock, extensions, userscripts, WebView
 with its `loadFinished` handlers). A `QWebEngineScript` injected at
 DocumentCreation wraps `browserAuditTestFramework.start()` and records
 every test's id/title/behaviour/outcome/duration/category path; on
-suite end the JSON is written to `$ARORA_AUDIT_OUT`
+suite end the JSON is written to `$ARKTOS_AUDIT_OUT`
 (default `/tmp/browseraudit-app.json`).
 
 `--browseraudit-bare` does the same on a throwaway off-the-record
 profile + plain `QWebEngineView` — no CookieJar, interceptor, WebPage
 navigation policy or WebView handlers. Divergence between the two
-profiles attributes failures to app wiring. `ARORA_AUDIT_WIRE=<csv>`
+profiles attributes failures to app wiring. `ARKTOS_AUDIT_WIRE=<csv>`
 (settings,cookies,interceptor,extensions,webpage,webview,autofill,
 cosmetic,bar,contained,nofinish) re-applies individual pieces of the
 app wiring onto the bare profile for bisection.
@@ -102,7 +102,7 @@ actual security failure fired on either profile.
   `background:` image in the iframe) must reach the server within the
   suite's 300 ms result-check window. Verified on a local probe server:
   the font fetch **does** land in app mode (~20 ms after the other
-  requests); it is delayed, never blocked. Bisection (`ARORA_AUDIT_WIRE`,
+  requests); it is delayed, never blocked. Bisection (`ARKTOS_AUDIT_WIRE`,
   sequential runs): a plain `QWebEngineView` + `WebPage` + interceptor +
   cookies + settings + both `loadFinished` callees → 40/40 pass;
   `wire=webview` reproduces all 16 warnings; disconnecting
@@ -113,7 +113,7 @@ actual security failure fired on either profile.
   after the suite's deadline on a real WAN. The individual callees do
   not reproduce on a plain view, so the trigger is the WebView-context
   `loadFinished` path, not one callee. Adblock logged zero blocks
-  for these runs (ARORA_DEBUG_BLOCK instrumentation); cookie rotation,
+  for these runs (ARKTOS_DEBUG_BLOCK instrumentation); cookie rotation,
   profile storage, GPU sandboxing all ruled out by the bisect matrix.
 
   **RESOLVED by SEC16A:** the per-load JS moved off `loadFinished`

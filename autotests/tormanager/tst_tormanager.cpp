@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -94,13 +94,13 @@ void tst_TorManager::binaryResolution()
     // different daemon than the user asked for.  Env vars are
     // process-wide, so restore the caller's value for the tests that
     // follow (realDaemonLifecycle uses it).
-    const QByteArray original = qgetenv("ARORA_TOR_BINARY");
-    qputenv("ARORA_TOR_BINARY", "/nonexistent/tor-binary");
+    const QByteArray original = qgetenv("ARKTOS_TOR_BINARY");
+    qputenv("ARKTOS_TOR_BINARY", "/nonexistent/tor-binary");
     QVERIFY(TorManager::resolveBinary().isEmpty());
     if (original.isEmpty())
-        qunsetenv("ARORA_TOR_BINARY");
+        qunsetenv("ARKTOS_TOR_BINARY");
     else
-        qputenv("ARORA_TOR_BINARY", original);
+        qputenv("ARKTOS_TOR_BINARY", original);
 
     // The default data directory lives under the app data dir (test
     // mode redirects that under the system temp).
@@ -1180,13 +1180,13 @@ void tst_TorManager::statusBanner()
 }
 
 // Same lifecycle against a real tor daemon — skipped when no binary
-// resolves (CI/dev boxes can point ARORA_TOR_BINARY at an expert
+// resolves (CI/dev boxes can point ARKTOS_TOR_BINARY at an expert
 // bundle).  This one does real bootstrap over the tor network.
 void tst_TorManager::realDaemonLifecycle()
 {
     const QString binary = TorManager::resolveBinary();
     if (binary.isEmpty())
-        QSKIP("no tor binary found — set ARORA_TOR_BINARY or run "
+        QSKIP("no tor binary found — set ARKTOS_TOR_BINARY or run "
               "BuildProcess/fetch-tor.sh");
 
     QTemporaryDir dir;

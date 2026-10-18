@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, The Arora Authors
+ * Copyright (c) 2026, The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,7 +26,7 @@
 
 // PERF03: opt-in startup / menu-population timing.  Enabled by the
 // --profile-startup command-line flag (see main.cpp) or the
-// ARORA_PROFILE_STARTUP=1 environment variable.  Every mark() prints
+// ARKTOS_PROFILE_STARTUP=1 environment variable.  Every mark() prints
 // the milliseconds elapsed since start() plus a stage label, so a
 // cold-start log reads directly as a timeline; Scope additionally
 // reports the wall time spent inside a single function.  All output
@@ -37,7 +37,7 @@ namespace StartupProfile {
 
 inline bool &flag()
 {
-    static bool enabled = qEnvironmentVariableIsSet("ARORA_PROFILE_STARTUP");
+    static bool enabled = qEnvironmentVariableIsSet("ARKTOS_PROFILE_STARTUP");
     return enabled;
 }
 

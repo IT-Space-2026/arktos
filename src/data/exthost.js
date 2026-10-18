@@ -2,10 +2,10 @@
  * EXT14 hosted-background preamble — embedded inside the generated
  * per-extension injection that ExtensionBackgroundHost arms at
  * DocumentCreation (MainWorld) on the host page at the extension's
- * own chrome-extension:// origin.  __ARORA_HOST_CONFIG is set by the
+ * own chrome-extension:// origin.  __ARKTOS_HOST_CONFIG is set by the
  * generated prelude: {id, name, scripts:[...]}.  This file provides:
  *
- *   - the __aroraHost state object the C++ host polls
+ *   - the __arktosHost state object the C++ host polls
  *     (booting -> ready | failed:<reason>),
  *   - error capture (window error + unhandledrejection) forwarded to
  *     the host side once the bridge is up,
@@ -22,11 +22,11 @@
  */
 (function () {
     'use strict';
-    var cfg = window.__ARORA_HOST_CONFIG;
-    if (!cfg || !cfg.id || window.__aroraHost)
+    var cfg = window.__ARKTOS_HOST_CONFIG;
+    if (!cfg || !cfg.id || window.__arktosHost)
         return;
 
-    var host = window.__aroraHost = {
+    var host = window.__arktosHost = {
         id: cfg.id,
         name: cfg.name || '',
         // EXT17: 'background' is the hidden host page; 'page' is an
@@ -80,11 +80,11 @@
         };
     }
 
-    // Keepalive readout — ExtensionBackgroundHost nudges __aroraWake
+    // Keepalive readout — ExtensionBackgroundHost nudges __arktosWake
     // on a timer; the interval ticks make residual throttling
     // observable from the host side.
     setInterval(function () { host.ticks++; }, 500);
-    window.__aroraWake = function () {
+    window.__arktosWake = function () {
         host.lastNudge = Date.now();
         return host.ticks;
     };
@@ -107,10 +107,10 @@
             return;     // the hidden host page renders nothing anyway
         var render = function () {
             if (!document.documentElement
-                    || document.getElementById('arora-ext-bridge-fail'))
+                    || document.getElementById('arktos-ext-bridge-fail'))
                 return;
             var el = document.createElement('div');
-            el.id = 'arora-ext-bridge-fail';
+            el.id = 'arktos-ext-bridge-fail';
             el.setAttribute('style',
                 'position:fixed;top:0;left:0;right:0;'
                 + 'z-index:2147483647;background:#7f1d1d;color:#fff;'
@@ -183,7 +183,7 @@
                         // failure panel.
                         try {
                             var failEl = document.getElementById(
-                                'arora-ext-bridge-fail');
+                                'arktos-ext-bridge-fail');
                             if (failEl && failEl.parentNode)
                                 failEl.parentNode.removeChild(failEl);
                         } catch (e) {}

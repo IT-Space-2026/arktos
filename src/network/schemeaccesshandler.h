@@ -32,7 +32,7 @@ class SchemeAccessHandler : public QWebEngineUrlSchemeHandler
 public:
     SchemeAccessHandler(QObject *parent = nullptr);
 
-    // The scheme this handler serves, e.g. "arora-file".
+    // The scheme this handler serves, e.g. "arktos-file".
     virtual QByteArray scheme() const = 0;
 
     // Declares every application scheme with QWebEngineUrlScheme.
@@ -45,8 +45,8 @@ public:
     static void installAll(QWebEngineProfile *profile, QObject *parent = nullptr);
 
     // SEC06/SAFE01: interstitial plumbing shared by the
-    // certificate-error (arora-cert-error:) and HTTPS-Only warning
-    // (arora-http-warning:) pages.  WebPage renders the per-warning
+    // certificate-error (arktos-cert-error:) and HTTPS-Only warning
+    // (arktos-http-warning:) pages.  WebPage renders the per-warning
     // markup and publishes it under a random nonce; the
     // InterstitialSchemeHandler serves it on the IO thread for
     // <scheme>:interstitial?n=<nonce>.  The nonce is also what WebPage

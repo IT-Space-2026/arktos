@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, The Arora Authors
+ * Copyright (c) 2026, The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -71,10 +71,10 @@
 #include "webpage.h"
 #include "modeltest.h"
 #include "profilesettings.h"
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 #include "qtry.h"
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "sitedecisionstore.h"
 #endif
 
@@ -162,7 +162,7 @@ void tst_Dialogs::initTestCase()
     QCoreApplication::setApplicationName("tst_dialogs");
     ProfileSettings settings;
     settings.clear();
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // Per-site decisions outlive the ProfileSettings wipe — start clean.
     SiteDecisionStore::reset();
 #endif
@@ -194,7 +194,7 @@ void tst_Dialogs::aboutDialog()
     QVERIFY(author->text().contains(QLatin1String("Benjamin C. Meyer")));
     QVERIFY(author->text().contains(QLatin1String("Janos Szenfner")));
     QVERIFY(author->text().contains(
-        QLatin1String("href=\"https://github.com/janos-szenfner/arora\"")));
+        QLatin1String("href=\"https://github.com/arktos-browser/arktos\"")));
 
     // The Authors button shows :AUTHORS — the maintainer is listed first.
     QFile authorsFile(QLatin1String(":AUTHORS"));
@@ -510,7 +510,7 @@ void tst_Dialogs::autoFillAddresses()
     // must decode as an empty list, not a corrupt read.  (The
     // plaintext shape exercises the unsealed branch; the sealed
     // branch shares decodePayload.)
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // The rustcore store is canonical once it exists — clear it so
     // the legacy file below is exercised as the import source.
     QFile::remove(BrowserPaths::dataFilePath(
@@ -974,7 +974,7 @@ void tst_Dialogs::clearSiteData()
     // clear leaves the deferred-wipe sentinel for the next profile
     // startup instead of removing them now.
     QVERIFY(QFileInfo::exists(storagePath
-            + QLatin1String("/arora-site-wipe.pending")));
+            + QLatin1String("/arktos-site-wipe.pending")));
 
     // Simulated restart: the deferred wipe is run on a COPY of the
     // seeded tree (running it on the live tree would itself wedge
@@ -1053,7 +1053,7 @@ void tst_Dialogs::deferredSiteWipe()
 
     // With the sentinel the deferred trees and files go, unrelated
     // entries stay and the sentinel itself is consumed.
-    QFile sentinel(tree.filePath(QLatin1String("arora-site-wipe.pending")));
+    QFile sentinel(tree.filePath(QLatin1String("arktos-site-wipe.pending")));
     QVERIFY(sentinel.open(QIODevice::WriteOnly));
     sentinel.close();
     QVERIFY(BrowserProfile::clearDeferredSiteStorage(tree.path()));
@@ -1061,10 +1061,10 @@ void tst_Dialogs::deferredSiteWipe()
     QVERIFY(!QFileInfo::exists(tree.filePath(QLatin1String("Trust Tokens"))));
     QVERIFY(QFileInfo::exists(tree.filePath(QLatin1String("Keep Me"))));
     QVERIFY(!QFileInfo::exists(tree.filePath(
-                QLatin1String("arora-site-wipe.pending"))));
+                QLatin1String("arktos-site-wipe.pending"))));
 }
 
-// UIP01: ARORA_COLOR_SCHEME drives preferredColorScheme() so the whole
+// UIP01: ARKTOS_COLOR_SCHEME drives preferredColorScheme() so the whole
 // install/restore path is deterministic under the offscreen QPA (which
 // reports Qt::ColorScheme::Unknown).
 void tst_Dialogs::colorSchemeApply()
@@ -1073,29 +1073,29 @@ void tst_Dialogs::colorSchemeApply()
     const QColor platformWindow =
         QApplication::palette().color(QPalette::Window);
 
-    qputenv("ARORA_COLOR_SCHEME", "dark");
+    qputenv("ARKTOS_COLOR_SCHEME", "dark");
     BrowserTheme::applyColorScheme();
     QVERIFY(BrowserTheme::paletteIsForced());
     QVERIFY(BrowserTheme::isDarkPalette(QApplication::palette()));
     QVERIFY(QApplication::palette().color(QPalette::Text).lightness() > 128);
 
-    qputenv("ARORA_COLOR_SCHEME", "light");
+    qputenv("ARKTOS_COLOR_SCHEME", "light");
     BrowserTheme::applyColorScheme();
     QVERIFY(!BrowserTheme::paletteIsForced());
     QVERIFY(!BrowserTheme::isDarkPalette(QApplication::palette()));
     QCOMPARE(QApplication::palette().color(QPalette::Window), platformWindow);
-    qunsetenv("ARORA_COLOR_SCHEME");
+    qunsetenv("ARKTOS_COLOR_SCHEME");
 }
 
 // THEME01: the persisted browser/colorScheme pick sits above the env
 // override — an explicit light/dark wins, "system" (or an absent key)
-// falls through to ARORA_COLOR_SCHEME then the platform.
+// falls through to ARKTOS_COLOR_SCHEME then the platform.
 void tst_Dialogs::themeSettingPrecedence()
 {
     ProfileSettings settings;
     settings.remove(QLatin1String("browser/colorScheme"));
 
-    qputenv("ARORA_COLOR_SCHEME", "dark");
+    qputenv("ARKTOS_COLOR_SCHEME", "dark");
     QCOMPARE(BrowserTheme::preferredColorScheme(), Qt::ColorScheme::Dark);
     // An explicit pick beats the env override both ways.
     settings.setValue(QLatin1String("browser/colorScheme"),
@@ -1103,7 +1103,7 @@ void tst_Dialogs::themeSettingPrecedence()
     QCOMPARE(BrowserTheme::preferredColorScheme(), Qt::ColorScheme::Light);
     settings.setValue(QLatin1String("browser/colorScheme"),
                       QLatin1String("dark"));
-    qputenv("ARORA_COLOR_SCHEME", "light");
+    qputenv("ARKTOS_COLOR_SCHEME", "light");
     QCOMPARE(BrowserTheme::preferredColorScheme(), Qt::ColorScheme::Dark);
     // "system" hands the decision back to env/platform.
     settings.setValue(QLatin1String("browser/colorScheme"),
@@ -1111,7 +1111,7 @@ void tst_Dialogs::themeSettingPrecedence()
     QCOMPARE(BrowserTheme::preferredColorScheme(), Qt::ColorScheme::Light);
 
     settings.remove(QLatin1String("browser/colorScheme"));
-    qunsetenv("ARORA_COLOR_SCHEME");
+    qunsetenv("ARKTOS_COLOR_SCHEME");
 }
 
 // THEME01: generated branded pages (error pages, dirlist) are tagged
@@ -1123,7 +1123,7 @@ void tst_Dialogs::internalPageDarkDecoration()
     const QString light =
         QStringLiteral("<html><body>err</body></html>");
 
-    qputenv("ARORA_COLOR_SCHEME", "light");
+    qputenv("ARKTOS_COLOR_SCHEME", "light");
     BrowserTheme::applyColorScheme();
     QString html = light;
     BrowserTheme::decorateInternalPage(html);
@@ -1131,21 +1131,21 @@ void tst_Dialogs::internalPageDarkDecoration()
 
     QSignalSpy schemeSpy(BrowserTheme::themeNotifier(),
                          &BrowserTheme::BrowserThemeNotifier::chromeSchemeChanged);
-    qputenv("ARORA_COLOR_SCHEME", "dark");
+    qputenv("ARKTOS_COLOR_SCHEME", "dark");
     BrowserTheme::applyColorScheme();
     QCOMPARE(schemeSpy.count(), 1);
     html = light;
     BrowserTheme::decorateInternalPage(html);
-    QVERIFY(html.contains(QLatin1String("class=\"arora-dark\"")));
+    QVERIFY(html.contains(QLatin1String("class=\"arktos-dark\"")));
 
     // Flipping back lights the notifier again and stops the tagging.
-    qputenv("ARORA_COLOR_SCHEME", "light");
+    qputenv("ARKTOS_COLOR_SCHEME", "light");
     BrowserTheme::applyColorScheme();
     QCOMPARE(schemeSpy.count(), 2);
     html = light;
     BrowserTheme::decorateInternalPage(html);
     QCOMPARE(html, light);
-    qunsetenv("ARORA_COLOR_SCHEME");
+    qunsetenv("ARKTOS_COLOR_SCHEME");
 }
 
 // UIP01: dialogs render in both schemes — every visible direct child
@@ -1202,17 +1202,17 @@ void tst_Dialogs::dialogsRenderInBothSchemes()
 {
     QStringList failures;
 
-    qputenv("ARORA_COLOR_SCHEME", "light");
+    qputenv("ARKTOS_COLOR_SCHEME", "light");
     BrowserTheme::applyColorScheme();
     const int lightLevel = renderDialogs(&failures);
 
-    qputenv("ARORA_COLOR_SCHEME", "dark");
+    qputenv("ARKTOS_COLOR_SCHEME", "dark");
     BrowserTheme::applyColorScheme();
     const int darkLevel = renderDialogs(&failures);
 
-    qputenv("ARORA_COLOR_SCHEME", "light");
+    qputenv("ARKTOS_COLOR_SCHEME", "light");
     BrowserTheme::applyColorScheme();
-    qunsetenv("ARORA_COLOR_SCHEME");
+    qunsetenv("ARKTOS_COLOR_SCHEME");
 
     QVERIFY2(failures.isEmpty(), qPrintable(failures.join(QLatin1String("; "))));
     QVERIFY(darkLevel < lightLevel);
@@ -1222,7 +1222,7 @@ void tst_Dialogs::dialogsRenderInBothSchemes()
 // width so captions like "OK" don't collapse the button, and a taller
 // minimum height.  Applied via size constraints (no stylesheet), it
 // must never shrink an explicit larger minimum, and composite rows
-// flagged "aroraNoButtonPolish" keep their compact buttons.
+// flagged "arktosNoButtonPolish" keep their compact buttons.
 void tst_Dialogs::dialogButtonPolish()
 {
     QDialog dialog;
@@ -1242,7 +1242,7 @@ void tst_Dialogs::dialogButtonPolish()
 
     // Exempt composite rows are left compact.
     QWidget *row = new QWidget(&dialog);
-    row->setProperty("aroraNoButtonPolish", true);
+    row->setProperty("arktosNoButtonPolish", true);
     QPushButton *rowButton =
         new QPushButton(QLatin1String("Stop"), row);
     BrowserTheme::polishDialogButtons(&dialog);
