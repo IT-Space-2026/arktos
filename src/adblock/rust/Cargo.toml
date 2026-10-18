@@ -9,6 +9,6 @@ publish = false
 crate-type = ["staticlib"]
 
 [dependencies]
-adblock = "0.13.3"
+adblock = { version = "0.13.3", features = ["content-blocking"] }
 base64 = "0.23.1"
 serde_json = "1.0.151"

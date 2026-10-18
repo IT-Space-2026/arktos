@@ -67,6 +67,15 @@ public:
     // text is empty or the engine cannot be built.
     [[nodiscard]] static AdBlockRustEngine *create(const QByteArray &ruleText);
 
+    // WKB01: converts serialized filter text into a WebKit/Safari
+    // content-blocker JSON document — {"rules":[...],"dropped":[...],
+    // "meta":{...}} — for a WebKitUserContentFilterStore on the
+    // webkit spine.  The rules array is ready to compile as-is;
+    // dropped lists every source rule that could not be expressed,
+    // each with a stable reason code.  Null QByteArray on empty
+    // input or conversion failure.
+    static QByteArray contentBlockerJson(const QByteArray &ruleText);
+
     bool isValid() const { return m_engine != nullptr; }
 
     // Same contract as AdBlockNetwork::match: Redirect decisions carry

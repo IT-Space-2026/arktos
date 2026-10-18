@@ -3555,3 +3555,25 @@ WebKit spike fixtures added (WKB06):
     input-click.html and nav-target.html form the two-page
     click-navigation fixture, and eval-proof.html exposes typed
     globals for the evaluate_javascript round-trip leg.
+EasyList → WebKit content-blocker JSON export (WKB01): the Rust
+    ad-block engine can now emit a Safari-format content-blocker
+    rule list — the JSON document WebKit's
+    WebKitUserContentFilterStore compiles — for the upcoming WebKit
+    engine spine. AdBlockRustEngine::contentBlockerJson converts
+    serialized EasyList text into {rules, dropped, meta}: url-filter
+    regexes with resource-type/load-type scoping and
+    if-domain/unless-domain restrictions, @@ exception rules ordered
+    for ignore-previous-rules semantics, ## cosmetic rules as
+    css-display-none, and $badfilter honored by filter id. Rules
+    Safari cannot express ($redirect, $csp, $removeparam, scriptlets,
+    full regexes, …) are never silently lost — each lands in the
+    dropped channel with a stable reason code, and meta carries the
+    conversion counts.
+Rebrand repair sweep (BRAND01 casualties caught by the suite): the
+    TLS test-certificate fixtures are regenerated properly — a
+    bytewise name patch had corrupted their DER encoding; the
+    QR-code reference matrices are regenerated for the renamed
+    payload (upstream Nayuki encoder as ground truth, verified
+    against both the Rust crate and the vendored C++ encoder); and
+    the About dialog once again credits original Arora author
+    Benjamin C. Meyer.
