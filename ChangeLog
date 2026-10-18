@@ -3469,3 +3469,18 @@ Post-port leak re-audit, instrumented build + scan pass (MEM09):
     as the previous audit. Raw tally lives in .devin/MEM09-scan.md;
     the kept instrumented tree hands off to the lifecycle/valgrind
     pass.
+Lifecycle leak re-audit, churn legs + fix pass (MEM10): deleting a
+    browser profile now releases its entire live world instead of
+    leaving it allocated until process exit — the per-persona history,
+    bookmarks, autofill, ad-block, container, extension, download,
+    notes and identity instances, its cookie jars, and its named
+    WebEngine profile are torn down in safe order when the profile is
+    removed (refused while a window still uses it). Off-the-record
+    profiles and their per-object stores now self-clean on teardown.
+    The audit's new churn legs — persona create/close/delete,
+    multi-persona identity churn, vault seal/unseal/lock cycles, and
+    private-window teardown — run under LeakSanitizer with zero leaks
+    in application code; bounded valgrind on the new binaries is
+    likewise clean. Also fixed the per-connection buffer the previous
+    scan flagged in the browser-window test fixture. Details in
+    .devin/MEM10-report.md.
