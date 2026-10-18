@@ -1,5 +1,5 @@
 You are an autonomous task runner for the repository at
-/home/szefi/Documents/arktos (Arora — a Qt WebKit-era browser being
+/home/szefi/Documents/arora (Arora — a Qt WebKit-era browser being
 ported from Qt 4.5 to Qt 6.x / QtWebEngine).
 
 Your job in THIS run:
@@ -29,7 +29,7 @@ Your job in THIS run:
    - Qt toolchain lives at ~/Qt/6.12.0/gcc_64 — source `.devin/qt-env.sh`
      (or set QTDIR/PATH accordingly) before qmake/make. NO sudo, ever:
      everything is user-local.
-   - Build with `cd /home/szefi/Documents/arktos && qmake && make -j2`
+   - Build with `cd /home/szefi/Documents/arora && qmake && make -j2`
      (or per the task's own build hint — the tree is being migrated,
      so the build may be partially broken; fix what your task touches).
    - Run GUI/test binaries headless: QT_QPA_PLATFORM=offscreen or
