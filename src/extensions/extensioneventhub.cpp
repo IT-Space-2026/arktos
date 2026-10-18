@@ -32,6 +32,7 @@
 #include <qaction.h>
 #include <qapplication.h>
 #include <qdatetime.h>
+#include <qfile.h>
 #include <qjsonarray.h>
 #include <qmenu.h>
 #include <qtimer.h>
@@ -39,6 +40,8 @@
 #include <qwebengineloadinginfo.h>
 #include <qwebenginepage.h>
 #include <qwebengineprofile.h>
+#include <qwebenginescript.h>
+#include <qwebenginescriptcollection.h>
 
 namespace {
 
@@ -249,6 +252,33 @@ void ExtensionEventHub::emitNavEvent(WebView *view,
                                                            details);
 }
 
+// ER04 — the page-side DocumentCreation probe's report, arriving over
+// the page's arktosExt channel object (ExtensionPageBridge's
+// 'navDomReady' op).  Browser-scoped, not extension-scoped:
+// webNavigation.* fan-out is gated on the manifest permission
+// downstream (eventGate).  The 'loading' gate is the forge guard —
+// the forwarder whitelist lets ANY world on the page reach the op,
+// so a hostile page can report its own milestone early inside a
+// genuine navigation but can never invent one: outside an in-flight
+// load the call is a no-op, and the dedupe flag keeps the real probe
+// and the completion fallback from double-firing.  Reports belonging
+// to a cycle that already failed (the dying document, or the error
+// page about to commit) or to a browser-internal commit are dropped
+// too — Chrome fires no onDOMContentLoaded for either.
+bool ExtensionEventHub::onDomContentLoaded(WebView *view)
+{
+    auto it = m_tabs.find(view);
+    if (it == m_tabs.end() || !it->loading || it->domReadyEmitted
+            || it->loadFailed || it->internalPage || it->errorPageLoad)
+        return false;
+    it->domReadyEmitted = true;
+    ++m_domReadyProbeHits;
+    emitNavEvent(view,
+                 QStringLiteral("webNavigation.onDOMContentLoaded"),
+                 view->url());
+    return true;
+}
+
 bool ExtensionEventHub::eventFilter(QObject *watched, QEvent *event)
 {
     if (m_tracking
@@ -284,14 +314,50 @@ void ExtensionEventHub::wireView(WebView *view)
     QWebEnginePage *page = view->page();
     if (webPage) {
         connect(webPage, &WebPage::aboutToLoadUrl, this,
-                [this, view](const QUrl &url) {
-            emitNavEvent(view,
-                         QStringLiteral("webNavigation.onBeforeNavigate"),
-                         url);
+                [this, view, webPage](const QUrl &url) {
+            auto it = m_tabs.find(view);
+            if (it == m_tabs.end())
+                return;
+            it->pendingUrl = url.toString();
+            // A generated commit — the error page setHtml()ed after a
+            // failure, counted by generatedPageCommitPending — is a
+            // browser-internal document, not a navigation: Chrome
+            // fires no webNavigation events for it.
+            it->internalPage = webPage->generatedPageCommitPending();
+            if (!it->internalPage)
+                emitNavEvent(
+                    view,
+                    QStringLiteral("webNavigation.onBeforeNavigate"),
+                    url);
         });
     }
     if (!page)
         return;
+    // ER04 — the onDOMContentLoaded probe.  Qt surfaces no engine
+    // signal for the milestone; this DocumentCreation-point script in
+    // the channel world warms the lazy channel client and registers
+    // the DOMContentLoaded listener whose report reaches
+    // ExtensionPageBridge's 'navDomReady' op (-> onDomContentLoaded
+    // here).  Property-guarded so a tracking toggle's re-wire stays
+    // idempotent; page-level scripts never inject on originless
+    // data:/about: documents (measured, ER01) — the loadFinished
+    // fallback below emits the event at completion there.
+    if (!view->property("arktosNavProbe").toBool()) {
+        view->setProperty("arktosNavProbe", true);
+        QFile probeFile(QLatin1String(":extnavdcl.js"));
+        if (probeFile.open(QIODevice::ReadOnly)) {
+            QWebEngineScript probe;
+            probe.setName(QLatin1String("arktos:extnav-dcl"));
+            probe.setInjectionPoint(QWebEngineScript::DocumentCreation);
+            probe.setWorldId(Engine::ArktosChannelWorld);
+            probe.setRunsOnSubFrames(false);
+            probe.setSourceCode(QString::fromUtf8(probeFile.readAll()));
+            page->scripts().insert(probe);
+        } else {
+            qWarning() << "ExtensionEventHub: cannot open"
+                          ":extnavdcl.js";
+        }
+    }
     connect(page, &QWebEnginePage::loadStarted, this,
             [this, view]() {
         auto it = m_tabs.find(view);
@@ -299,10 +365,31 @@ void ExtensionEventHub::wireView(WebView *view)
             return;
         it->loading = true;
         it->lastError.clear();
-        it->lastUrl = view->url().toString();
+        it->loadFailed = false;
+        it->errorPageLoad = false;
+        it->domReadyEmitted = false;
+        // The committing url: aboutToLoadUrl already reported the
+        // target (per accepted redirect hop) — view->url() still
+        // names the outgoing document at loadStarted, so Chrome's
+        // details.url must come from pendingUrl, not url().
+        const QString target = it->pendingUrl.isEmpty()
+            ? view->url().toString() : it->pendingUrl;
+        it->lastUrl = target;
+        if (it->internalPage) {
+            // The generated error page's own commit: still a real
+            // load cycle for flags and the spinner, but invisible to
+            // webNavigation — and the tab's url stays the failed one,
+            // so the data: document url must not leak into
+            // tabs.onUpdated either.
+            emitTabUpdated(view,
+                           QJsonObject{
+                               {QStringLiteral("status"),
+                                QStringLiteral("loading")}});
+            return;
+        }
         emitNavEvent(view,
                      QStringLiteral("webNavigation.onCommitted"),
-                     view->url(),
+                     QUrl(target),
                      QJsonObject{
                          {QStringLiteral("transitionType"),
                           QStringLiteral("link")},
@@ -313,8 +400,7 @@ void ExtensionEventHub::wireView(WebView *view)
                        QJsonObject{
                            {QStringLiteral("status"),
                             QStringLiteral("loading")},
-                           {QStringLiteral("url"),
-                            view->url().toString()}});
+                           {QStringLiteral("url"), target}});
     });
     connect(page, &QWebEnginePage::loadFinished, this,
             [this, view](bool ok) {
@@ -322,11 +408,32 @@ void ExtensionEventHub::wireView(WebView *view)
         if (it == m_tabs.end())
             return;
         it->loading = false;
-        if (ok) {
+        // An internal commit — Arktos's generated error page or a
+        // Chromium isErrorPage document — is not a navigation and
+        // ends its cycle silently.  The flags are per-cycle: cleared
+        // here so a later real load reports normally even if its
+        // aboutToLoadUrl never ran.
+        const bool internal = it->internalPage || it->errorPageLoad;
+        it->internalPage = false;
+        it->errorPageLoad = false;
+        if (ok && !internal) {
+            // The DOMContentLoaded milestone physically passed even
+            // where the probe could not inject (originless
+            // data:/about: documents run no page-level scripts —
+            // measured, ER01): emit the event at completion so the
+            // committed -> domContentLoaded -> completed ordering
+            // still holds, timestamped at the honest observation.
+            if (!it->domReadyEmitted) {
+                it->domReadyEmitted = true;
+                emitNavEvent(
+                    view,
+                    QStringLiteral("webNavigation.onDOMContentLoaded"),
+                    view->url());
+            }
             emitNavEvent(view,
                          QStringLiteral("webNavigation.onCompleted"),
                          view->url());
-        } else {
+        } else if (!internal) {
             QJsonObject extra{
                 {QStringLiteral("error"),
                  QStringLiteral("net::")
@@ -335,9 +442,14 @@ void ExtensionEventHub::wireView(WebView *view)
             if (!it->lastError.isEmpty())
                 extra.insert(QStringLiteral("errorDetail"),
                              it->lastError);
+            // Chrome's details.url is the url that FAILED — the
+            // pending navigation target, not the still-displayed
+            // document url() may still report.
             emitNavEvent(view,
                          QStringLiteral("webNavigation.onErrorOccurred"),
-                         view->url(), extra);
+                         it->pendingUrl.isEmpty()
+                             ? view->url() : QUrl(it->pendingUrl),
+                         extra);
         }
         emitTabUpdated(view,
                        QJsonObject{
@@ -345,13 +457,20 @@ void ExtensionEventHub::wireView(WebView *view)
                             QStringLiteral("complete")}});
     });
     // The failure detail rides loadingChanged, not loadFinished —
-    // stash it so onErrorOccurred can answer a real net:: name.
+    // stash it so onErrorOccurred can answer a real net:: name.  The
+    // isErrorPage flag marks infos belonging to Chromium's own error
+    // document: sticky for the rest of the cycle (later infos report
+    // isErrorPage=false again, before its loadFinished), reset at
+    // loadStarted and cleared at loadFinished.
     connect(page, &QWebEnginePage::loadingChanged, this,
             [this, view](const QWebEngineLoadingInfo &info) {
         auto it = m_tabs.find(view);
         if (it == m_tabs.end())
             return;
+        if (info.isErrorPage())
+            it->errorPageLoad = true;
         if (info.status() == QWebEngineLoadingInfo::LoadFailedStatus) {
+            it->loadFailed = true;
             it->lastError = info.errorString();
             it->lastErrorCode = info.errorCode();
             it->lastErrorDomain = int(info.errorDomain());
@@ -362,9 +481,13 @@ void ExtensionEventHub::wireView(WebView *view)
         auto it = m_tabs.find(view);
         if (it == m_tabs.end())
             return;
-        emitTabUpdated(view,
-                       QJsonObject{{QStringLiteral("url"),
-                                    url.toString()}});
+        // The generated error page's data: commit reports a
+        // urlChanged too — the tab's url stays the failed one in
+        // Chrome's model, so no changeInfo.url for it.
+        if (!it->internalPage)
+            emitTabUpdated(view,
+                           QJsonObject{{QStringLiteral("url"),
+                                        url.toString()}});
         // Same-document commits never produce loadStarted — Chrome
         // names them onReferenceFragmentUpdated (fragment-only) or
         // onHistoryStateUpdated (pushState/replaceState) instead.

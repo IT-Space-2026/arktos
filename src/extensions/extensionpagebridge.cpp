@@ -21,6 +21,7 @@
 
 #include "browsermainwindow.h"
 #include "extensionbackgroundhost.h"
+#include "extensioneventhub.h"
 #include "extensionshimbackend.h"
 #include "tabwidget.h"
 #include "webview.h"
@@ -137,6 +138,27 @@ QJsonObject ExtensionPageBridge::invoke(const QString &op,
         }
         reply.insert(QStringLiteral("ok"), true);
         reply.insert(QStringLiteral("id"), extensionId);
+        return reply;
+    }
+
+    // ER04 — the channel-world DocumentCreation probe reporting the
+    // DOMContentLoaded milestone for webNavigation.  Browser-scoped,
+    // NOT extension-scoped: it carries no 'ext' and needs no coverage
+    // check — the hub re-verifies a genuine in-flight load on a
+    // tracked tab before emitting, which is what keeps the op safe
+    // under the forwarder whitelist (a forged call outside a real
+    // navigation is a no-op).
+    if (op == QLatin1String("navDomReady")) {
+        if (!m_page)
+            return pageBridgeErr(QStringLiteral("no-page"));
+        WebView *view = nullptr;
+        if (QWebEngineView *engineView = QWebEngineView::forPage(m_page))
+            view = qobject_cast<WebView *>(engineView);
+        if (!view || !ExtensionEventHub::instance()
+                         ->onDomContentLoaded(view))
+            return pageBridgeErr(QStringLiteral("not-loading"));
+        QJsonObject reply;
+        reply.insert(QStringLiteral("ok"), true);
         return reply;
     }
 

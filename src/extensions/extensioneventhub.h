@@ -48,6 +48,13 @@ struct ContextMenuInfo;
 //                        shim backend already mints for tabs.query
 //   chrome.webNavigation onBeforeNavigate (WebPage::aboutToLoadUrl)
 //                        onCommitted (main-frame loadStarted)
+//                        onDOMContentLoaded (a DocumentCreation-
+//                        point probe script in the channel world
+//                        reports the milestone through arktosExt's
+//                        'navDomReady' op — Qt has no engine signal
+//                        for it; originless documents that run no
+//                        page scripts get it emitted at load
+//                        completion so ordering still holds)
 //                        onCompleted/onErrorOccurred (loadFinished
 //                        with the loadingChanged failure detail)
 //                        onHistoryStateUpdated/onReferenceFragment-
@@ -115,6 +122,19 @@ public:
                                    const Engine::ContextMenuInfo &info,
                                    WebView *view);
 
+    // ER04 — the page-side DocumentReady probe's report, arriving as
+    // ExtensionPageBridge's 'navDomReady' op.  Emits
+    // webNavigation.onDOMContentLoaded only while a real load is in
+    // flight on a tracked tab and only once per navigation — the
+    // forwarder whitelist makes the op page-callable, so the load
+    // gate is what keeps a forged call a no-op.  Returns whether the
+    // event was emitted.
+    bool onDomContentLoaded(WebView *view);
+    // Accepted probe reports — the test leg distinguishes the real
+    // page-side signal from the load-completion fallback on
+    // originless documents.
+    int domReadyProbeHits() const { return m_domReadyProbeHits; }
+
     // Every top-level BrowserMainWindow — the real window set.  The
     // app's m_mainWindows registry deliberately excludes private
     // windows and is empty under qtest (windows constructed
@@ -178,9 +198,30 @@ private:
                             // window->id map may be gone by then
         int index = -1;
         bool loading = false;
+        // This load cycle already failed — loadingChanged reported
+        // LoadFailedStatus: late probe reports (the dying document,
+        // or the error page about to commit) are dropped.
+        bool loadFailed = false;
+        // The current load cycle is a browser-internal commit —
+        // Arktos's generated error page (the setHtml counted by
+        // WebPage::generatedPageCommitPending) or a Chromium
+        // isErrorPage document: not a navigation, so no
+        // webNavigation.* events describe it.
+        bool internalPage = false;
+        // Chromium's own error page — isErrorPage on the cycle's
+        // loadingChanged infos; same suppression.
+        bool errorPageLoad = false;
+        // onDOMContentLoaded dedupe — set by the page probe's report
+        // or the completion-time fallback, reset at loadStarted.
+        bool domReadyEmitted = false;
         // The last committed url — same-document urlChanged hops are
         // classified against it (fragment vs history-state update).
         QString lastUrl;
+        // The in-flight navigation's target — aboutToLoadUrl reports
+        // it (updated per accepted redirect hop).  view->url() still
+        // names the outgoing document at loadStarted, so onCommitted
+        // and onErrorOccurred must report this, not url().
+        QString pendingUrl;
         // The last failed load's detail — onErrorOccurred answers a
         // net:: name + the engine's own error code/string.
         QString lastError;
@@ -202,6 +243,7 @@ private:
     // can answer isWindowClosing honestly.
     QSet<QObject *> m_dyingWindows;
     int m_focusWindowId = -2;   // -2 = unset (first scan is quiet)
+    int m_domReadyProbeHits = 0;
     QTimer *m_scan = nullptr;
 };
 

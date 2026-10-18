@@ -1902,8 +1902,8 @@ void tst_ExtensionManager::extensionEventSurfaces()
         "['onCreated','onUpdated','onActivated','onRemoved'].forEach(\n"
         " function(e){chrome.tabs[e].addListener(\n"
         "  self.__extRec('tabs.'+e));});\n"
-        "['onBeforeNavigate','onCommitted','onCompleted',\n"
-        " 'onErrorOccurred'].forEach(function(e){\n"
+        "['onBeforeNavigate','onCommitted','onDOMContentLoaded',\n"
+        " 'onCompleted','onErrorOccurred'].forEach(function(e){\n"
         " chrome.webNavigation[e].addListener(\n"
         "  self.__extRec('webNavigation.'+e));});\n"
         "chrome.contextMenus.onClicked.addListener(\n"
@@ -2065,6 +2065,14 @@ void tst_ExtensionManager::extensionEventSurfaces()
             || sawEvent(runtime->host(idA)->page(),
                         QStringLiteral("webNavigation.onErrorOccurred")),
         15000);
+    // ER04 — the originless data: document runs no page-level
+    // probe, so onDOMContentLoaded arrives via the hub's
+    // completion-time fallback — present, and ordered between
+    // onCommitted and onCompleted.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        sawEvent(runtime->host(idA)->page(),
+                 QStringLiteral("webNavigation.onDOMContentLoaded")),
+        15000);
 
     // Payload shape — the onUpdated entry carries
     // (tabId, changeInfo, tab); the committed entry carries
@@ -2150,6 +2158,157 @@ void tst_ExtensionManager::extensionEventSurfaces()
                             > order.value(QLatin1String("l0")).toInt(-1),
                  "onUpdated loading precedes complete");
     }
+
+    // ER04 — webNavigation causal order on the data: navigation:
+    // onCommitted -> onDOMContentLoaded -> onCompleted (details.url
+    // is the committed url on all three).
+    {
+        const QJsonObject navOrder = QJsonDocument::fromJson(
+            eval(runtime->host(idA)->page(), QStringLiteral(
+                "(function(){var evs=self.__extEvents||[];"
+                "function ix(n){for(var i=0;i<evs.length;++i)"
+                " if(evs[i].n===n&&evs[i].a[0]&&evs[i].a[0].url"
+                "  &&evs[i].a[0].url.indexOf('data:text/html')===0)"
+                "  return i;return -1;}"
+                "return JSON.stringify({"
+                "c:ix('webNavigation.onCommitted'),"
+                "d:ix('webNavigation.onDOMContentLoaded'),"
+                "f:ix('webNavigation.onCompleted')});})()"))
+            .toString().toUtf8()).object();
+        QVERIFY2(navOrder.value(QLatin1String("c")).toInt(-1) >= 0
+                     && navOrder.value(QLatin1String("d")).toInt(-1)
+                            > navOrder.value(QLatin1String("c"))
+                                  .toInt(-1)
+                     && navOrder.value(QLatin1String("f")).toInt(-1)
+                            > navOrder.value(QLatin1String("d"))
+                                  .toInt(-1),
+                 qPrintable(QStringLiteral(
+                     "webNavigation committed < domContentLoaded "
+                     "< completed — nav events: %1")
+                     .arg(eval(runtime->host(idA)->page(),
+                          QStringLiteral(
+                              "JSON.stringify((self.__extEvents||[])"
+                              ".filter(function(e){return e.n"
+                              ".indexOf('webNavigation.')===0;}))"))
+                          .toString())));
+    }
+
+    // ER04 — a real-origin navigation exercises the page-side
+    // DOMContentLoaded probe itself (page-level scripts DO inject on
+    // http:); the hub's probe-hit counter separates the real signal
+    // from the completion fallback above.
+    QTcpServer navServer;
+    QVERIFY(navServer.listen(QHostAddress::LocalHost));
+    const QString navBase = QStringLiteral("http://127.0.0.1:%1")
+        .arg(navServer.serverPort());
+    QObject::connect(&navServer, &QTcpServer::newConnection, this,
+                     [&]() {
+        QTcpSocket *socket = navServer.nextPendingConnection();
+        QObject::connect(socket, &QTcpSocket::readyRead, socket,
+                         [socket]() {
+            const QByteArray req = socket->readAll();
+            // The page pulls a slow subresource so loadFinished
+            // lands well after DOMContentLoaded — the probe's
+            // channel hop gets a comfortable window.
+            const QByteArray body = req.startsWith("GET /slow")
+                ? QByteArray("\x89PNG\r\n\x1a\n")
+                : QByteArray("<html><body>nav"
+                             "<img src=\"/slow\">"
+                             "</body></html>");
+            const QByteArray reply =
+                "HTTP/1.1 200\r\nContent-Length: "
+                + QByteArray::number(body.size())
+                + "\r\nConnection: close\r\n\r\n" + body;
+            if (req.startsWith("GET /slow"))
+                QTimer::singleShot(400, socket,
+                                   [socket, reply]() {
+                    socket->write(reply);
+                    socket->disconnectFromHost();
+                });
+            else {
+                socket->write(reply);
+                socket->disconnectFromHost();
+            }
+        });
+    });
+    const int probesBefore = hub->domReadyProbeHits();
+    view->load(QUrl(navBase + QStringLiteral("/nav")));
+    QTRY_VERIFY_WITH_TIMEOUT(hub->domReadyProbeHits() > probesBefore,
+                             30000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(runtime->host(idA)->page(), QStringLiteral(
+            "(function(){var evs=self.__extEvents||[];"
+            "function ix(n){for(var i=0;i<evs.length;++i)"
+            " if(evs[i].n===n&&evs[i].a[0]&&evs[i].a[0].url==='%1/nav')"
+            "  return i;return -1;}"
+            "var c=ix('webNavigation.onCommitted'),"
+            "d=ix('webNavigation.onDOMContentLoaded'),"
+            "f=ix('webNavigation.onCompleted');"
+            "return c>=0&&d>c&&f>d;})()")
+                .arg(navBase)).toBool(),
+        30000);
+
+    // ER04 — a refused connection must emit onErrorOccurred, never
+    // silence: bind a port, drop the listener, then navigate at it.
+    quint16 deadPort = 0;
+    {
+        QTcpServer dead;
+        QVERIFY(dead.listen(QHostAddress::LocalHost));
+        deadPort = dead.serverPort();
+    }
+    const QString deadUrl = QStringLiteral("http://127.0.0.1:%1/")
+        .arg(deadPort);
+    view->load(QUrl(deadUrl));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(runtime->host(idA)->page(), QStringLiteral(
+            "(self.__extEvents||[]).some(function(e){"
+            " return e.n==='webNavigation.onErrorOccurred'&&e.a[0]"
+            "  &&e.a[0].url==='%1'"
+            "  &&typeof e.a[0].error==='string'"
+            "  &&e.a[0].error.indexOf('net::ERR_')===0;})")
+                .arg(deadUrl)).toBool(),
+        30000);
+    // The failure's error page is a browser-internal generated commit
+    // (WebPage::setHtml, counted by generatedPageCommitPending) — no
+    // webNavigation events may describe it, and the tab's url stays
+    // the failed one.  Settle the cycle with a real navigation, then
+    // assert nothing webNavigation-shaped was emitted for this tab
+    // between the failure and that next navigation's onBeforeNavigate.
+    view->load(QUrl(navBase + QStringLiteral("/done")));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(runtime->host(idA)->page(), QStringLiteral(
+            "(self.__extEvents||[]).some(function(e){"
+            " return e.n==='webNavigation.onCompleted'&&e.a[0]"
+            "  &&e.a[0].url==='%1/done';})")
+                .arg(navBase)).toBool(),
+        30000);
+    const QString deadLeak = eval(runtime->host(idA)->page(),
+        QStringLiteral(
+            "(function(){var evs=self.__extEvents||[];"
+            "var ei=-1,bi=-1,tid=-1;"
+            "for(var i=0;i<evs.length;++i){var e=evs[i];"
+            " if(e.n.indexOf('webNavigation.')!==0)continue;"
+            " var a=e.a[0]||{};"
+            " if(e.n==='webNavigation.onErrorOccurred'"
+            "    &&a.url==='%1'){ei=i;tid=a.tabId;}"
+            " if(e.n==='webNavigation.onBeforeNavigate'"
+            "    &&a.url==='%2/done')bi=i;}"
+            "if(ei<0||bi<0)return 'missing-boundary:'+ei+','+bi;"
+            "for(var j=ei+1;j<bi;++j){var x=evs[j];"
+            " if(x.n.indexOf('webNavigation.')===0&&x.a[0]"
+            "    &&x.a[0].tabId===tid)"
+            "  return 'leak:'+x.n+':'+(x.a[0].url||'');}"
+            "return '';})()")
+            .arg(deadUrl).arg(navBase)).toString();
+    QVERIFY2(deadLeak.isEmpty(),
+             qPrintable(QStringLiteral(
+                 "internal error-page commit leaked: %1 — nav "
+                 "events: %2")
+                 .arg(deadLeak)
+                 .arg(eval(runtime->host(idA)->page(), QStringLiteral(
+                     "JSON.stringify((self.__extEvents||[]).filter("
+                     "function(e){return e.n.indexOf('webNavigation.')"
+                     "===0;}))")).toString())));
 
     // --- permission gating -------------------------------------------
     // B declares no webNavigation permission — the whole family is

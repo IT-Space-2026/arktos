@@ -3505,3 +3505,13 @@ Lifecycle leak re-audit, churn legs + fix pass (MEM10): deleting a
     likewise clean. Also fixed the per-connection buffer the previous
     scan flagged in the browser-window test fixture. Details in
     .devin/MEM10-report.md.
+Extensions (webNavigation): chrome.webNavigation.onDOMContentLoaded
+    now fires — a DocumentCreation-point probe script in the isolated
+    extension channel world reports the milestone through the page
+    bridge, gated on a genuine in-flight load so forged calls are
+    inert. Originless documents (data:, about:) get the event at load
+    completion so committed/domContentLoaded/completed ordering still
+    holds. onCommitted/onErrorOccurred now report the navigation
+    target (aboutToLoadUrl) rather than the still-displayed document,
+    and the browser's internal error page no longer produces
+    webNavigation events for a failed navigation — Chrome parity.

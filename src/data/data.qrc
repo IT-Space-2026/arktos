@@ -21,6 +21,7 @@
     <file>exthost.js</file>
     <file>extshim.js</file>
     <file>extagent.js</file>
+    <file>extnavdcl.js</file>
     <file>../../AUTHORS</file>
     <file>../../LICENSE.GPL2</file>
 </qresource>

@@ -12873,7 +12873,8 @@ int main(int argc, char **argv)
                 "['onCreated','onUpdated','onActivated','onRemoved']"
                 ".forEach(function(e){chrome.tabs[e].addListener("
                 " self.__extRec('tabs.'+e));});\n"
-                "['onBeforeNavigate','onCommitted','onCompleted',"
+                "['onBeforeNavigate','onCommitted',"
+                "'onDOMContentLoaded','onCompleted',"
                 "'onErrorOccurred'].forEach(function(e){\n"
                 " chrome.webNavigation[e].addListener("
                 " self.__extRec('webNavigation.'+e));});\n"
@@ -13242,7 +13243,8 @@ int main(int argc, char **argv)
                             "chrome.tabs[e].addListener("
                             " self.__extRec('tabs.'+e));});"
                             "['onBeforeNavigate','onCommitted',"
-                            "'onCompleted','onErrorOccurred'].forEach("
+                            "'onDOMContentLoaded','onCompleted',"
+                            "'onErrorOccurred'].forEach("
                             "function(e){chrome.webNavigation[e]"
                             ".addListener(self.__extRec("
                             "'webNavigation.'+e));});"
@@ -13326,7 +13328,10 @@ int main(int argc, char **argv)
                         && saw("tabs.onActivated") && saw("tabs.onRemoved")
                         && (!needNav
                             || (saw("webNavigation.onCommitted")
-                                && (saw("webNavigation.onCompleted")
+                                && ((saw("webNavigation."
+                                         "onDOMContentLoaded")
+                                     && saw("webNavigation."
+                                            "onCompleted"))
                                     || saw("webNavigation."
                                            "onErrorOccurred"))))
                         && (!needMenu
@@ -13343,7 +13348,8 @@ int main(int argc, char **argv)
                                 "onRemoved delivered in-page");
                     if (needNav)
                         check(true, "webNavigation onCommitted + "
-                                    "terminal delivered in-page");
+                                    "onDOMContentLoaded + terminal "
+                                    "delivered in-page");
                     if (needMenu)
                         check(true, "contextMenus.onClicked delivered "
                                     "in-page");
