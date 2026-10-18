@@ -744,19 +744,21 @@
                 .catch(function () {});
         }
         var wantAsync = false;
+        // ER01: page-originated messages carry a full C++-built
+        // MessageSender ({id, url: frameUrl, origin: page origin,
+        // tab, frameId}) — forward it verbatim so internal-only
+        // gates still see the honest external shape; a shim-context
+        // sender keeps its extension origin (senderIsInternal-style
+        // gates like Bitwarden's accept it).
+        var sender = (env && env.sender)
+            || { id: env && env.extId || cfg.id,
+                 url: env && env.senderUrl || undefined,
+                 origin: 'chrome-extension://'
+                         + (env && env.extId || cfg.id) };
         for (var i = 0; i < listeners.length; ++i) {
             try {
                 var r = listeners[i].call(
-                    null, msg,
-                    // A real MessageSender — sender.origin must equal
-                    // the extension origin or senderIsInternal-style
-                    // gates (Bitwarden's session/message handlers)
-                    // drop the delivery.
-                    { id: env && env.extId || cfg.id,
-                      url: env && env.senderUrl || undefined,
-                      origin: 'chrome-extension://'
-                              + (env && env.extId || cfg.id) },
-                    respond);
+                    null, msg, sender, respond);
                 if (r === true)
                     wantAsync = true;
                 else if (r !== undefined && !responded)

@@ -33,6 +33,7 @@
 #include <qstringlist.h>
 #include <qurl.h>
 
+class ExtensionPageBridge;
 class QTimer;
 class QWebChannel;
 class QWebEnginePage;
@@ -196,6 +197,18 @@ public:
     // chrome-extension://<id>/ origin: the action popup, options
     // pages, offscreen documents.
     static QString pageInjectionName(const QString &extensionId);
+    // ER01 page-agent injection — installs __arktosExtAgent +
+    // a scoped chrome.* in the shared AgentWorldId on every
+    // document; the union of this extension's content-script matches
+    // (contentScriptMatches) plus its host_permissions decide where
+    // chrome actually lands.
+    static QString pageAgentInjectionName(const QString &extensionId);
+    static QString contentScriptInjectionName(const QString &extensionId,
+                                              int index);
+    // Union of the manifest's content_scripts[].matches — the page
+    // agent's js-side grant list and the C++ agentCovers check share
+    // it with host_permissions.
+    QStringList contentScriptMatches() const { return m_csMatches; }
 
     // One bounded wake eval — the runtime calls it after pushing a
     // hostEvent so the delivery drains even while the hidden page's
@@ -215,6 +228,7 @@ private:
     QString m_extensionName;
     QString m_extensionPath;
     QStringList m_scripts;
+    QStringList m_csMatches;        // union content_scripts[].matches
     State m_state = State::Starting;
     QString m_error;
     QStringList m_errors;
@@ -320,6 +334,85 @@ public:
     // scrub rule the event fan-out does.
     bool seesUrls(const QString &extensionId, const QString &url) const;
 
+    // Whether the extension's manifest declares the named API
+    // permission — the page agent's chrome.storage gate.
+    bool hasExtensionPermission(const QString &extensionId,
+                                const QString &permission) const;
+
+    // ------------------------------------------------------------------
+    // ER01 — page agent plumbing.  The content-script half of the
+    // hosted runtime: each hosted extension's host arms a profile-
+    // wide QWebEngineScript pair (the page agent + its declared
+    // content_scripts) inside AgentWorldId — an isolated world the
+    // page's own script can share the DOM with but never see
+    // chrome.* in (Qt caps script worlds at 0..256, so the agents of
+    // every extension share ONE realm; each content script runs in a
+    // closure receiving its own extension's `chrome` binding).
+    // The agent's calls reach the per-WebPage 'arktosExt' channel
+    // object (ExtensionPageBridge) through the SEC24 whitelisted
+    // postMessage forwarder; because that transport is reachable by
+    // any world on the page, agentCovers() is re-run on EVERY call —
+    // the extension's host_permissions or declared content-script
+    // matches must cover the page's url, else the typed
+    // 'no-host-access' absent-API reply, never a silent no-op.
+    static constexpr quint32 AgentWorldId = 0x40;
+
+    // True while a hosted background exists for the id.
+    bool isHosted(const QString &extensionId) const;
+    // Per-call security check: is pageUrl covered by the extension's
+    // host_permissions or declared content-script matches?  Plain
+    // Chrome match semantics — originless documents (data:, about:)
+    // are never covered; the page-level channel bootstrap does not
+    // inject there anyway, so no bridge traffic could exist.
+    bool agentCovers(const QString &extensionId,
+                     const QUrl &pageUrl) const;
+
+    // The ExtensionPageBridge ops — send routes a page-originated
+    // chrome.runtime.sendMessage into the extension's registered
+    // shim contexts (host background, popup, options); respond
+    // resolves a pending host->page delivery (ER02's fan-in).
+    QJsonObject pageSend(ExtensionPageBridge *page,
+                         const QString &extensionId,
+                         const QString &mid,
+                         const QJsonValue &msg,
+                         const QJsonObject &sender);
+    QJsonObject pageRespond(ExtensionPageBridge *page,
+                            const QString &mid,
+                            const QJsonValue &response);
+    // Ports: a page-originated runtime.connect() registers the page
+    // end and fans '__arktos.portConnect' to the extension's shim
+    // contexts (their onConnect fires -> portAccept registers the
+    // remote ends).  Message/disconnect re-address to the surviving
+    // ends of either kind (ChromeBridge or ExtensionPageBridge).
+    QJsonObject pagePortConnect(ExtensionPageBridge *page,
+                                const QString &extensionId,
+                                const QString &chan,
+                                const QString &portId,
+                                const QString &name,
+                                const QJsonObject &sender);
+    QJsonObject pagePortAccept(ExtensionPageBridge *page,
+                               const QString &chan,
+                               const QString &portId);
+    QJsonObject pagePortMessage(ExtensionPageBridge *page,
+                                const QString &chan,
+                                const QString &portId,
+                                const QJsonValue &msg);
+    QJsonObject pagePortDisconnect(ExtensionPageBridge *page,
+                                   const QString &chan,
+                                   const QString &portId);
+    // The page (or its bridge) died — drop its pending sends and port
+    // ends; surviving ends get the honest portDisconnect push.
+    void unregisterPageContext(ExtensionPageBridge *page);
+    // ER02 seam — push a host->page message ('__arktos.deliver');
+    // the agent's 'respond' op resolves it back to 'waiter' as
+    // '__arktos.deliverResponse'.
+    void pageDeliver(ExtensionPageBridge *page,
+                     const QString &extensionId,
+                     const QString &mid,
+                     const QJsonValue &msg,
+                     const QJsonObject &sender,
+                     QObject *waiter);
+
     // EXT17 — chrome.runtime.getContexts backing: the registered
     // shim contexts of one extension as spec-shaped context entries
     // (contextType from the registered kind — BACKGROUND for the
@@ -373,8 +466,13 @@ private:
     };
     QList<RelayContext> m_relayContexts;
     int m_nextContextId = 0;
+    // ER01: pending origins are generalized to QObject — a page
+    // agent's sendMessage can wait for a shim context's reply
+    // exactly like a popup's can (the response is emitted on the
+    // right signal for each kind: hostEvent vs extEvent).
     struct PendingRelay {
-        QPointer<ChromeBridge> origin;
+        QPointer<QObject> origin;
+        QString extensionId;
         int peers = 0;
         int replies = 0;
     };
@@ -383,12 +481,25 @@ private:
 
     // Port channels: chan -> the registered ends.  An end owns its
     // local port id; messages arrive addressed by the sender's id
-    // and leave re-addressed to each remote end's own id.
+    // and leave re-addressed to each remote end's own id.  ER01: an
+    // end's target is a ChromeBridge (shim context) or an
+    // ExtensionPageBridge (page agent) — deliveries are emitted on
+    // hostEvent / extEvent respectively.
     struct PortEnd {
-        QPointer<ChromeBridge> bridge;
+        QPointer<QObject> target;
         QString localPortId;
     };
     QHash<QString, QList<PortEnd>> m_portEnds;
+
+    // ER01/ER02: host->page deliveries awaiting the page agent's
+    // 'respond' — mid -> {the page asked, the context awaiting the
+    // answer}.
+    struct PendingPageDelivery {
+        QPointer<QObject> waiter;
+        QPointer<ExtensionPageBridge> target;
+        QString extensionId;
+    };
+    QHash<QString, PendingPageDelivery> m_pageDeliveries;
 
     // EXT17: sibling-page bridges keyed by their page so an open
     // popup's channel is unregistered when the view goes away.

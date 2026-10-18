@@ -6,6 +6,7 @@ HEADERS += \
     $$PWD/extensionbackgroundhost.h \
     $$PWD/extensioneventhub.h \
     $$PWD/extensionmanager.h \
+    $$PWD/extensionpagebridge.h \
     $$PWD/extensionreviewdialog.h \
     $$PWD/extensionshimbackend.h
 
@@ -14,5 +15,6 @@ SOURCES += \
     $$PWD/extensionbackgroundhost.cpp \
     $$PWD/extensioneventhub.cpp \
     $$PWD/extensionmanager.cpp \
+    $$PWD/extensionpagebridge.cpp \
     $$PWD/extensionreviewdialog.cpp \
     $$PWD/extensionshimbackend.cpp

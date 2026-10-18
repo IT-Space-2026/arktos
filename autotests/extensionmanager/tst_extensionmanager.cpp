@@ -42,6 +42,7 @@
 #include "extensionbackgroundhost.h"
 #include "extensioneventhub.h"
 #include "extensionmanager.h"
+#include "extensionpagebridge.h"
 #include "extensionreviewdialog.h"
 #include "extensionshimbackend.h"
 #include "engineinterface.h"
@@ -49,6 +50,7 @@
 #include "qtest_arktos.h"
 #include "qtry.h"
 #include "tabwidget.h"
+#include "webpage.h"
 #include "webview.h"
 
 #include <qframe.h>
@@ -82,6 +84,7 @@ private slots:
     void extensionMessageRelay();
     void extensionEventSurfaces();
     void extensionPopupContext();
+    void extensionPageAgent();
     void actionPopupSelfWires();
     void realExtensionPopup();
     void bitwardenGapBaseline();
@@ -2445,6 +2448,327 @@ void tst_ExtensionManager::extensionPopupContext()
         }
         QVERIFY2(popupGone, "popup context closed with the page");
     }
+
+    manager->setExtensionEnabled(id, false);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 20000);
+    manager->removeExtension(id);
+    QDir(dir).removeRecursively();
+}
+
+// ER01 — the page agent.  A fixture extension declares
+// host_permissions + content_scripts on <all_urls>; its background
+// echoes sendMessage with the MessageSender it saw, and its declared
+// content script calls chrome.runtime.sendMessage from the injected
+// world.  The leg proves the whole path end to end: the profile-
+// wide agent injection lands in the shared AgentWorldId realm (and
+// NOT in the page's main world), the declared content script runs
+// through the closure that binds its own chrome, the message routes
+// through the page's arktosExt channel object into the hosted
+// background, and the response comes back.  The negative legs prove
+// the C++ gate: a foreign extension id and an uncovered url both get
+// the typed 'no-host-access' absent-API reply.
+void tst_ExtensionManager::extensionPageAgent()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extagent-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-agent\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"],"
+                "\"host_permissions\":[\"<all_urls>\"],"
+                "\"background\":{\"service_worker\":\"sw.js\"},"
+                "\"content_scripts\":[{\"matches\":[\"<all_urls>\"],"
+                "\"js\":[\"cs.js\"],\"run_at\":\"document_idle\"}]}");
+        f.close();
+        QFile w(dir + QLatin1String("/sw.js"));
+        QVERIFY(w.open(QIODevice::WriteOnly));
+        w.write(
+            "chrome.runtime.onMessage.addListener("
+            "function(m,s,r){"
+            " r({echo:m,"
+            "   senderId:(s&&s.id)||null,"
+            "   senderUrl:(s&&s.url)||null,"
+            "   senderOrigin:(s&&s.origin)||null,"
+            "   senderTab:!!(s&&s.tab)});"
+            " return false; });\n");
+        w.close();
+        QFile c(dir + QLatin1String("/cs.js"));
+        QVERIFY(c.open(QIODevice::WriteOnly));
+        c.write(
+            "window.__csReply='pending';\n"
+            "try{chrome.runtime.sendMessage({from:'cs',k:1},"
+            "function(r){"
+            "window.__csReply=(r===undefined)"
+            " ?{undef:true,"
+            "   err:(chrome.runtime.lastError"
+            "        &&chrome.runtime.lastError.message)||null}"
+            " :r;});}catch(e){window.__csReply={threw:String(e)};}\n");
+        c.close();
+    }
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    auto loaded = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-agent")
+                && info.error.isEmpty())
+            *loaded = info.id;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded->isEmpty(), 30000);
+    const QString id = *loaded;
+    manager->setExtensionEnabled(id, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(id)
+            && runtime->host(id)->state()
+                   == ExtensionBackgroundHost::State::Ready,
+        45000);
+    ExtensionBackgroundHost *host = runtime->host(id);
+    QVERIFY(host);
+    QVERIFY(host->contentScriptMatches()
+                .contains(QStringLiteral("<all_urls>")));
+
+    auto eval = [](QWebEnginePage *page, const QString &source,
+                   quint32 worldId = 0) {
+        auto result = std::make_shared<QVariant>();
+        page->runJavaScript(
+            source, worldId,
+            [result](const QVariant &v) { *result = v; });
+        QElapsedTimer t;
+        t.start();
+        while (!result->isValid() && t.elapsed() < 15000)
+            QTest::qWait(50);
+        return *result;
+    };
+    const quint32 agentWorld =
+        ExtensionBackgroundRuntime::AgentWorldId;
+    // Parenthesised: 'probe + ".field"' must bind to the whole
+    // fallback expression, not to the object literal (member access
+    // outranks '||', and a returned object QVariant is not toBool).
+    const QString probe = QStringLiteral(
+        "((window.__arktosExtAgents&&__arktosExtAgents['%1'])"
+        "||{active:false,bridgeUp:false})").arg(id);
+
+    // --- a page inside the extension's grants ----------------------
+    // Loopback http — a real origin where BOTH script levels land:
+    // the profile-level agent script injects everywhere, but
+    // WebPage's page-level channel bootstrap (the forwarder the
+    // agent talks through) does not run on data:/about: documents —
+    // measured with a world probe — so an originless page could
+    // never carry the bridge.
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    const QString base = QStringLiteral("http://127.0.0.1:%1")
+        .arg(server.serverPort());
+    QObject::connect(&server, &QTcpServer::newConnection,
+                     this, [&]() {
+        QTcpSocket *socket = server.nextPendingConnection();
+        QObject::connect(socket, &QTcpSocket::readyRead,
+                         socket, [socket]() {
+            socket->readAll();
+            const QByteArray body =
+                "<html><body>agent-page</body></html>";
+            socket->write(
+                "HTTP/1.1 200\r\nContent-Type: text/html\r\n"
+                "Content-Length: "
+                + QByteArray::number(body.size())
+                + "\r\nConnection: close\r\n\r\n" + body);
+            socket->disconnectFromHost();
+        });
+    });
+    auto *view = new QWebEngineView;
+    auto *page = new WebPage(
+        BrowserApplication::instance()->webEngineProfile(), view);
+    view->setPage(page);
+    QSignalSpy loadSpy(page, &QWebEnginePage::loadFinished);
+    page->load(QUrl(base + QStringLiteral("/agent")));
+    QTRY_VERIFY_WITH_TIMEOUT(loadSpy.count() >= 1, 30000);
+
+    // The agent installs + handshakes; the declared content script
+    // runs and gets its sendMessage answered by the hosted
+    // background.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(page, probe + QStringLiteral(".active"),
+             agentWorld).toBool(),
+        30000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(page, probe + QStringLiteral(".bridgeUp"),
+             agentWorld).toBool(),
+        30000);
+    {
+        bool csDone = false;
+        QElapsedTimer csWait;
+        csWait.start();
+        while (csWait.elapsed() < 30000 && !csDone) {
+            csDone = eval(page, QStringLiteral(
+                "window.__csReply&&window.__csReply!=='pending'"),
+                agentWorld).toBool();
+            if (!csDone)
+                QTest::qWait(200);
+        }
+        QVERIFY2(csDone, qPrintable(QStringLiteral(
+            "cs did not finish: %1")
+            .arg(eval(page, QStringLiteral(
+                 "JSON.stringify({reply:(typeof window.__csReply"
+                 "==='undefined')?'<unset>':window.__csReply,"
+                 "probe:(window.__arktosExtAgents"
+                 "&&__arktosExtAgents['%1'])"
+                 "?__arktosExtAgents['%1'].probe():null})").arg(id),
+                 agentWorld).toString())));
+    }
+    const QJsonObject reply = QJsonDocument::fromJson(
+        eval(page, QStringLiteral("JSON.stringify(window.__csReply)"),
+             agentWorld)
+            .toString().toUtf8()).object();
+    QVERIFY2(!reply.contains(QLatin1String("undef"))
+                 && !reply.contains(QLatin1String("threw")),
+             qPrintable(QStringLiteral("cs sendMessage failed: %1")
+                 .arg(eval(page, QStringLiteral(
+                      "JSON.stringify((window"
+                      ".__arktosExtAgents&&__arktosExtAgents"
+                      "['%1']||{}).probe"
+                      "?window.__arktosExtAgents['%1']"
+                      ".probe():null)").arg(id),
+                      agentWorld).toString())));
+    const QJsonObject echo =
+        reply.value(QLatin1String("echo")).toObject();
+    QCOMPARE(echo.value(QLatin1String("from")).toString(),
+             QStringLiteral("cs"));
+    QCOMPARE(echo.value(QLatin1String("k")).toInt(), 1);
+    // sender.url/origin are the honest page identity — not a
+    // chrome-extension: origin (that forgery is exactly what
+    // senderIsInternal gates must NOT see) and not whatever a
+    // caller passed in args: the bridge reads the committed url.
+    QCOMPARE(reply.value(QLatin1String("senderUrl")).toString(),
+             base + QStringLiteral("/agent"));
+    QCOMPARE(reply.value(QLatin1String("senderOrigin")).toString(),
+             base);
+    QCOMPARE(reply.value(QLatin1String("senderId")).toString(), id);
+
+    // The page's own world stays clean — our chrome.* lives only in
+    // the isolated agent realm.  (window.chrome itself is always an
+    // object: Chromium's built-in stub — the honest check is that
+    // neither our agent registry nor any runtime surface leaked.)
+    QCOMPARE(eval(page, QStringLiteral(
+        "typeof window.__arktosExtAgents")).toString(),
+             QStringLiteral("undefined"));
+    QCOMPARE(eval(page, QStringLiteral(
+        "typeof (window.chrome||{}).runtime")).toString(),
+             QStringLiteral("undefined"));
+
+    // --- the C++ transport end, driven directly --------------------
+    ExtensionPageBridge *bridge =
+        page->findChild<ExtensionPageBridge *>();
+    QVERIFY2(bridge, "WebPage carries the arktosExt bridge");
+    // hello is the scoping handshake: covered page -> ok.
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("hello"),
+                 QJsonObject{{QStringLiteral("ext"), id}})
+                 .value(QLatin1String("ok")).toBool(),
+             true);
+    // A full send round trip without JS in the loop: the pending mid
+    // resolves through the host's relay response.
+    QSignalSpy eventSpy(bridge, &ExtensionPageBridge::extEvent);
+    const QString mid = id + QStringLiteral("#direct#1");
+    const QJsonObject send = bridge->invoke(
+        QStringLiteral("send"),
+        QJsonObject{{QStringLiteral("ext"), id},
+                    {QStringLiteral("mid"), mid},
+                    {QStringLiteral("msg"),
+                     QJsonObject{{QStringLiteral("greet"),
+                                  QStringLiteral("hi")}}},
+                    {QStringLiteral("senderUrl"),
+                     page->url().toString()}});
+    QVERIFY2(send.value(QLatin1String("ok")).toBool(),
+             qPrintable(send.value(QLatin1String("error"))
+                            .toString()));
+    QVERIFY(send.value(QLatin1String("result")).toObject()
+                .value(QLatin1String("peers")).toInt() >= 1);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        [&]() {
+            for (const QList<QVariant> &args : eventSpy) {
+                if (args.value(0).toString()
+                        != QLatin1String("__arktos.extResponse"))
+                    continue;
+                if (args.value(1).toJsonObject()
+                        .value(QLatin1String("mid")).toString() == mid)
+                    return true;
+            }
+            return false;
+        }(), 20000);
+    for (const QList<QVariant> &args : eventSpy) {
+        if (args.value(1).toJsonObject()
+                .value(QLatin1String("mid")).toString() != mid)
+            continue;
+        const QJsonObject response = args.value(1).toJsonObject()
+            .value(QLatin1String("response")).toObject();
+        QCOMPARE(response.value(QLatin1String("echo")).toObject()
+                     .value(QLatin1String("greet")).toString(),
+                 QStringLiteral("hi"));
+    }
+
+    // --- the gate: typed errors, never silence ----------------------
+    // A foreign extension id (not hosted, no grants) gets the
+    // absent-API reply even on a covered page.
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("hello"),
+                 QJsonObject{{QStringLiteral("ext"),
+                              QStringLiteral(
+                                  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-host-access"));
+    // A mid outside the extension's namespace never reaches routing.
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("send"),
+                 QJsonObject{{QStringLiteral("ext"), id},
+                             {QStringLiteral("mid"),
+                              QStringLiteral("other#x#1")},
+                             {QStringLiteral("msg"),
+                              QJsonObject{}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-mid"));
+
+    // --- an uncovered page: no chrome, no bridge answers -------------
+    auto *view2 = new QWebEngineView;
+    auto *page2 = new WebPage(
+        BrowserApplication::instance()->webEngineProfile(), view2);
+    view2->setPage(page2);
+    QSignalSpy loadSpy2(page2, &QWebEnginePage::loadFinished);
+    // qrc: is outside every match scheme — the agent registers but
+    // stays inactive and the bridge refuses calls.
+    page2->load(QUrl(QStringLiteral("qrc:/pip-player.html")));
+    QTRY_VERIFY_WITH_TIMEOUT(loadSpy2.count() >= 1, 30000);
+    ExtensionPageBridge *bridge2 =
+        page2->findChild<ExtensionPageBridge *>();
+    QVERIFY(bridge2);
+    QCOMPARE(bridge2->invoke(
+                 QStringLiteral("hello"),
+                 QJsonObject{{QStringLiteral("ext"), id}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-host-access"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(page2, QStringLiteral(
+            "!!(window.__arktosExtAgents"
+            "&&__arktosExtAgents['%1'])").arg(id),
+            agentWorld).toBool(),
+        15000);
+    QCOMPARE(eval(page2, probe + QStringLiteral(".active"),
+                  agentWorld).toBool(),
+             false);
+
+    view->deleteLater();
+    view2->deleteLater();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
 
     manager->setExtensionEnabled(id, false);
     QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 20000);

@@ -23,6 +23,7 @@
 #include "browserprofile.h"
 #include "extensioneventhub.h"
 #include "extensionmanager.h"
+#include "extensionpagebridge.h"
 #include "extensionshimbackend.h"
 
 #include <qapplication.h>
@@ -294,10 +295,31 @@ private:
 // "<extId>#..." prefix the shim mints is re-verified host-side rather
 // than trusted — a bridge may only touch mids/chans its own
 // extension owns.
+bool ownsRelayKey(const QString &extensionId, const QString &key)
+{
+    return !extensionId.isEmpty()
+        && key.startsWith(extensionId + QLatin1Char('#'));
+}
+
 bool ownsRelayKey(const ChromeBridge *bridge, const QString &key)
 {
-    return bridge
-        && key.startsWith(bridge->extensionId() + QLatin1Char('#'));
+    return bridge && ownsRelayKey(bridge->extensionId(), key);
+}
+
+// ER01: a port end / pending origin can be a shim context
+// (ChromeBridge — the event leaves on hostEvent) or a page agent
+// (ExtensionPageBridge — extEvent).  The chan's "<extId>#" prefix
+// carries the same-extension scope for page ends, which have no
+// extensionId() of their own (one bridge serves every extension's
+// agent on that page).
+void emitToEnd(QObject *target, const QString &name,
+               const QJsonObject &payload)
+{
+    if (auto *bridge = qobject_cast<ChromeBridge *>(target)) {
+        emit bridge->hostEvent(name, payload);
+    } else if (auto *page = qobject_cast<ExtensionPageBridge *>(target)) {
+        emit page->extEvent(name, payload);
+    }
 }
 
 // The injection runs on every page of the profile — the gate has to
@@ -460,6 +482,220 @@ QString extensionCodeSource(const QString &extensionPath,
     }
     return source;
 }
+
+// ------------------------------------------------------------------
+// ER01 — page agent + declared content scripts.  Both ride the
+// profile's script collection in the shared AgentWorldId realm (the
+// page's own world never sees chrome.*); the agent installs
+// __arktosExtAgents[<id>] with a scoped chrome object and each
+// content script is wrapped in a closure receiving THAT extension's
+// binding — the shared realm is what lets Qt's 256-world cap scale
+// to many extensions.
+// ------------------------------------------------------------------
+
+// One manifest content_scripts[] entry, sanitized for injection.
+struct ContentScriptEntry {
+    QStringList matches;
+    QStringList excludeMatches;
+    QStringList jsFiles;
+    QStringList cssFiles;
+    QString runAt;              // document_start | document_end |
+                                // document_idle
+    bool allFrames = false;
+    QString world;              // 'ISOLATED' (default) | 'MAIN'
+};
+
+// Read + sanitize manifest "content_scripts".  Paths get the same
+// treatment as background scripts: plain relative paths only —
+// scheme/absolute/traversal entries never become injected source.
+QList<ContentScriptEntry> parseContentScripts(
+        const QJsonObject &manifest, QStringList *matchUnion)
+{
+    QList<ContentScriptEntry> out;
+    const QJsonArray entries =
+        manifest.value(QStringLiteral("content_scripts")).toArray();
+    auto cleanPaths = [](const QJsonArray &files) {
+        QStringList cleaned;
+        for (const QJsonValue &v : files) {
+            const QString path = v.toString();
+            if (path.isEmpty() || path.startsWith(QLatin1Char('/'))
+                    || path.contains(QLatin1Char(':'))
+                    || path.split(QLatin1Char('/')).contains(
+                        QStringLiteral("..")))
+                continue;
+            cleaned.append(path);
+        }
+        return cleaned;
+    };
+    for (const QJsonValue &v : entries) {
+        const QJsonObject o = v.toObject();
+        ContentScriptEntry entry;
+        for (const QJsonValue &m :
+                 o.value(QStringLiteral("matches")).toArray()) {
+            const QString pattern = m.toString();
+            if (!pattern.isEmpty()) {
+                entry.matches.append(pattern);
+                if (matchUnion
+                        && !matchUnion->contains(pattern))
+                    matchUnion->append(pattern);
+            }
+        }
+        for (const QJsonValue &m :
+                 o.value(QStringLiteral("exclude_matches")).toArray())
+            entry.excludeMatches.append(m.toString());
+        entry.jsFiles = cleanPaths(
+            o.value(QStringLiteral("js")).toArray());
+        entry.cssFiles = cleanPaths(
+            o.value(QStringLiteral("css")).toArray());
+        entry.runAt = o.value(QStringLiteral("run_at"))
+            .toString(QStringLiteral("document_idle"));
+        entry.allFrames =
+            o.value(QStringLiteral("all_frames")).toBool(false);
+        entry.world = o.value(QStringLiteral("world"))
+            .toString(QStringLiteral("ISOLATED"));
+        if (!entry.matches.isEmpty()
+                && (!entry.jsFiles.isEmpty()
+                    || !entry.cssFiles.isEmpty()))
+            out.append(entry);
+    }
+    return out;
+}
+
+// The page-agent payload: __ARKTOS_EXT_CONFIG + src/data/extagent.js.
+// hostPerms + grants (content-script match union) seed the js-side
+// coverage gate; the C++ bridge re-verifies on every call.
+QString agentInjectionSource(const QString &extensionId,
+                             const QString &extensionName,
+                             const QString &extensionPath,
+                             const QJsonObject &manifest,
+                             const QStringList &contentMatches)
+{
+    QJsonObject config;
+    config.insert(QStringLiteral("id"), extensionId);
+    config.insert(QStringLiteral("name"), extensionName);
+    config.insert(QStringLiteral("manifest"), manifest);
+    config.insert(QStringLiteral("i18n"),
+                  ExtensionShimBackend::i18nMessages(extensionPath));
+    QJsonArray grants;
+    for (const QString &m : contentMatches)
+        grants.append(m);
+    config.insert(QStringLiteral("grants"), grants);
+    config.insert(QStringLiteral("hostPerms"),
+                  manifest.value(QStringLiteral("host_permissions")));
+
+    QString source = QStringLiteral("(function(){")
+        + QLatin1String("window.__ARKTOS_EXT_CONFIG=")
+        + QString::fromUtf8(
+            QJsonDocument(config).toJson(QJsonDocument::Compact))
+        + QLatin1Char(';');
+    source += resourceText(QStringLiteral(":extagent.js"));
+    source += QLatin1String("})();");
+    return source;
+}
+
+// A declared content script wrapped for the shared agent world:
+// waits (boundedly) for this extension's agent, re-checks the
+// entry's matches/exclude_matches against the live url (the agent's
+// own grant check already passed), then runs the files inside a
+// closure that binds `chrome` to THIS extension's object.
+// run_at document_idle is approximated by the DocumentReady
+// injection point (Qt has no separate idle point; the document is
+// already interactive when it lands).
+QString contentScriptSource(const QString &extensionId,
+                            int index,
+                            const QString &extensionPath,
+                            const ContentScriptEntry &entry)
+{
+    QJsonObject gate;
+    QJsonArray matches;
+    for (const QString &m : entry.matches)
+        matches.append(m);
+    QJsonArray excludes;
+    for (const QString &m : entry.excludeMatches)
+        excludes.append(m);
+    gate.insert(QStringLiteral("matches"), matches);
+    gate.insert(QStringLiteral("excludeMatches"), excludes);
+
+    const QString agentKey = jsLiteral(extensionId);
+    QString body;
+    body += QLatin1String("(function(){var __key=")
+        + agentKey
+        + QLatin1String(";var __ent=")
+        + QString::fromUtf8(
+            QJsonDocument(gate).toJson(QJsonDocument::Compact))
+        + QLatin1Char(';')
+        // Same-document double-fire guard (pushState re-commits on
+        // some sites re-run DocumentCreation scripts in Chromium).
+        + QLatin1String("var __guard='__arktosCsRan_'+__key+'_")
+        + QString::number(index)
+        + QLatin1String("';if(window[__guard])return;")
+        + QLatin1String(
+            "var __tries=0;"
+            "function __agent(){var a=window.__arktosExtAgents;"
+            "return a&&a[__key]||null;}"
+            "function __gate(){var a=__agent();"
+            "if(!a)return 'wait';"
+            "if(!a.active)return 'stop';"
+            "try{var u=String(location.href);"
+            "if(a.matchAny(__ent.matches,u)"
+            "&&!a.matchAny(__ent.excludeMatches,u))return 'go';"
+            "}catch(e){}"
+            "return 'stop';}"
+            "(function __when(){"
+            "var g=__gate();"
+            "if(g==='go'){window[__guard]=true;__run();return;}"
+            "if(g==='wait'&&++__tries<400){"
+            "setTimeout(__when,10);return;}"
+            "})();"
+            "function __run(){"
+            "var __a=__agent();if(!__a)return;"
+            "try{__css();}catch(e){"
+            "try{__a.errors.push('cs-css: '+String(e&&e.message||e));"
+            "}catch(_){}}"
+            "try{(function(chrome,browser){"
+            );
+
+    // The extension's own files, inlined in manifest order — the
+    // same read+merge the background loader uses (lazy webpack
+    // chunks ride along in the synchronous pass).
+    const QString code =
+        extensionCodeSource(extensionPath, entry.jsFiles);
+    body += code;
+    body += QLatin1String(
+        "})(__a.chrome,__a.chrome);}catch(e){"
+        "try{__a.errors.push('cs: '+String(e&&e.message||e)"
+        "+(e&&e.stack?' @'+String(e.stack).split('\\n')"
+        ".slice(1,4).join(' <-'):''));}catch(_){}}"
+        "}"
+        // css — the manifest's css[] becomes <style> elements,
+        // deferred until a documentElement exists (DocumentCreation
+        // lands before <head>).
+        "function __css(){"
+        "var __styles=[");
+    const QDir dir(extensionPath);
+    bool first = true;
+    for (const QString &rel : entry.cssFiles) {
+        QFile file(dir.absoluteFilePath(rel));
+        if (!file.open(QIODevice::ReadOnly))
+            continue;
+        if (!first)
+            body += QLatin1Char(',');
+        first = false;
+        body += jsLiteral(QString::fromUtf8(file.readAll()));
+    }
+    body += QLatin1String(
+        "];"
+        "if(!__styles.length)return;"
+        "function __ins(){var h=document.head"
+        "||document.documentElement;"
+        "if(!h){setTimeout(__ins,10);return;}"
+        "for(var i=0;i<__styles.length;++i){"
+        "var s=document.createElement('style');"
+        "s.textContent=__styles[i];h.appendChild(s);}}"
+        "__ins();}"
+        "})();");
+    return body;
+}
 }
 
 QUrl ExtensionBackgroundHost::hostUrl(const QString &extensionId)
@@ -478,6 +714,19 @@ QString ExtensionBackgroundHost::pageInjectionName(
     const QString &extensionId)
 {
     return QStringLiteral("arktos-extpage-") + extensionId;
+}
+
+QString ExtensionBackgroundHost::pageAgentInjectionName(
+    const QString &extensionId)
+{
+    return QStringLiteral("arktos-extagent-") + extensionId;
+}
+
+QString ExtensionBackgroundHost::contentScriptInjectionName(
+    const QString &extensionId, int index)
+{
+    return QStringLiteral("arktos-extcs-") + extensionId
+        + QLatin1Char('-') + QString::number(index);
 }
 
 ExtensionBackgroundHost::ExtensionBackgroundHost(
@@ -609,6 +858,50 @@ ExtensionBackgroundHost::ExtensionBackgroundHost(
             pageInjectionSource(extensionId, extensionName,
                                 extensionPath));
         profile->scripts()->insert(pages);
+
+        // ER01 — the page agent + this extension's declared content
+        // scripts, profile-wide in the shared AgentWorldId isolated
+        // realm.  The agent installs a scoped chrome.* only where
+        // the extension's host_permissions/content-script matches
+        // cover the document; the ExtensionPageBridge on each
+        // WebPage re-verifies the coverage per call and routes
+        // chrome.runtime.sendMessage/connect traffic here.
+        const QJsonObject manifest =
+            m_bridge->backend()
+                ? m_bridge->backend()->manifestJson()
+                : QJsonObject();
+        const QList<ContentScriptEntry> contentScripts =
+            parseContentScripts(manifest, &m_csMatches);
+        QWebEngineScript agent;
+        agent.setName(pageAgentInjectionName(extensionId));
+        agent.setInjectionPoint(QWebEngineScript::DocumentCreation);
+        agent.setWorldId(
+            ExtensionBackgroundRuntime::AgentWorldId);
+        agent.setRunsOnSubFrames(true);
+        agent.setSourceCode(
+            agentInjectionSource(extensionId, extensionName,
+                                 extensionPath, manifest,
+                                 m_csMatches));
+        profile->scripts()->insert(agent);
+
+        for (int i = 0; i < contentScripts.size(); ++i) {
+            const ContentScriptEntry &entry = contentScripts.at(i);
+            QWebEngineScript cs;
+            cs.setName(contentScriptInjectionName(extensionId, i));
+            cs.setInjectionPoint(
+                entry.runAt == QLatin1String("document_start")
+                    ? QWebEngineScript::DocumentCreation
+                    : QWebEngineScript::DocumentReady);
+            // world:'MAIN' is approximated by the shared isolated
+            // realm (more isolation, same chrome binding) — the
+            // distinction is recorded, not silently dropped.
+            cs.setWorldId(ExtensionBackgroundRuntime::AgentWorldId);
+            cs.setRunsOnSubFrames(entry.allFrames);
+            cs.setSourceCode(
+                contentScriptSource(extensionId, i, extensionPath,
+                                    entry));
+            profile->scripts()->insert(cs);
+        }
     }
 
     m_poll = new QTimer(this);
@@ -638,10 +931,15 @@ ExtensionBackgroundHost::~ExtensionBackgroundHost()
         const QList<QWebEngineScript> installed =
             m_profile->scripts()->toList();
         const QString name = injectionName(m_extensionId);
+        const QString csPrefix =
+            QStringLiteral("arktos-extcs-") + m_extensionId
+            + QLatin1Char('-');
         for (const QWebEngineScript &script : installed) {
             if (script.name() == name
                 || script.name() == name + QLatin1String("-code")
-                || script.name() == pageInjectionName(m_extensionId))
+                || script.name() == pageInjectionName(m_extensionId)
+                || script.name() == pageAgentInjectionName(m_extensionId)
+                || script.name().startsWith(csPrefix))
                 m_profile->scripts()->remove(script);
         }
     }
@@ -1131,7 +1429,7 @@ void ExtensionBackgroundRuntime::unregisterRelayContext(
         QList<PortEnd> &ends = m_portEnds[chan];
         bool removed = false;
         for (int i = ends.size() - 1; i >= 0; --i) {
-            if (!ends.at(i).bridge || ends.at(i).bridge == bridge) {
+            if (!ends.at(i).target || ends.at(i).target == bridge) {
                 ends.removeAt(i);
                 removed = true;
             }
@@ -1143,11 +1441,11 @@ void ExtensionBackgroundRuntime::unregisterRelayContext(
             continue;
         }
         for (const PortEnd &end : std::as_const(ends)) {
-            if (end.bridge) {
-                emit end.bridge->hostEvent(
-                    QStringLiteral("__arktos.portDisconnect"),
-                    QJsonObject{{QStringLiteral("portId"),
-                                 end.localPortId}});
+            if (end.target) {
+                emitToEnd(end.target,
+                          QStringLiteral("__arktos.portDisconnect"),
+                          QJsonObject{{QStringLiteral("portId"),
+                                       end.localPortId}});
             }
         }
     }
@@ -1181,6 +1479,7 @@ int ExtensionBackgroundRuntime::relaySend(ChromeBridge *from,
     if (peers > 0) {
         PendingRelay pending;
         pending.origin = from;
+        pending.extensionId = from->extensionId();
         pending.peers = peers;
         m_relayPending.insert(mid, pending);
         QTimer *expiry = new QTimer(this);
@@ -1209,7 +1508,7 @@ bool ExtensionBackgroundRuntime::relayRespond(ChromeBridge *responder,
     // would otherwise inject a forged sendMessage response.
     if (!responder || !ownsRelayKey(responder, mid)
             || responder->extensionId()
-               != it.value().origin->extensionId())
+               != it.value().extensionId)
         return false;
     PendingRelay &pending = it.value();
     ++pending.replies;
@@ -1219,15 +1518,21 @@ bool ExtensionBackgroundRuntime::relayRespond(ChromeBridge *responder,
     // only resolve once every peer has answered.
     if (!defined && pending.replies < pending.peers)
         return true;
-    QPointer<ChromeBridge> origin = pending.origin;
+    QPointer<QObject> origin = pending.origin;
     m_relayPending.erase(it);
     if (QTimer *t = m_relayPendingTimers.take(mid))
         t->deleteLater();
-    emit origin->hostEvent(
-        QStringLiteral("__arktos.relayResponse"),
-        QJsonObject{{QStringLiteral("mid"), mid},
-                    {QStringLiteral("response"),
-                     defined ? response : QJsonValue(QJsonValue::Null)}});
+    const QJsonObject reply{
+        {QStringLiteral("mid"), mid},
+        {QStringLiteral("response"),
+         defined ? response : QJsonValue(QJsonValue::Null)}};
+    // ER01: a page-originated send resolves on the agent's extEvent
+    // channel; a shim context's on hostEvent like before.
+    emitToEnd(origin,
+              qobject_cast<ExtensionPageBridge *>(origin.data())
+                  ? QStringLiteral("__arktos.extResponse")
+                  : QStringLiteral("__arktos.relayResponse"),
+              reply);
     return true;
 }
 
@@ -1289,7 +1594,7 @@ void ExtensionBackgroundRuntime::relayPortAccept(
             || !ownsRelayKey(accepter, chan))
         return;
     for (const PortEnd &end : m_portEnds.value(chan)) {
-        if (end.bridge == accepter && end.localPortId == portId)
+        if (end.target == accepter && end.localPortId == portId)
             return;   // already registered
     }
     m_portEnds[chan].append(PortEnd{accepter, portId});
@@ -1304,21 +1609,25 @@ int ExtensionBackgroundRuntime::relayPortMessage(
     int delivered = 0;
     const QList<PortEnd> ends = m_portEnds.value(chan);
     for (const PortEnd &end : ends) {
-        if (!end.bridge)
+        if (!end.target)
             continue;
-        if (end.bridge->extensionId() != from->extensionId())
-            continue;   // never cross extension boundaries
-        if (end.bridge == from && end.localPortId == portId)
+        // Ends landed on this chan through prefix-checked registers
+        // only — the chan's "<extId>#" scope is the extension
+        // boundary for shim contexts and page ends alike.
+        if (end.target == from && end.localPortId == portId)
             continue;   // the sending end itself
-        emit end.bridge->hostEvent(
-            QStringLiteral("__arktos.portMessage"),
-            QJsonObject{{QStringLiteral("portId"), end.localPortId},
-                        {QStringLiteral("msg"), msg}});
+        emitToEnd(end.target,
+                  QStringLiteral("__arktos.portMessage"),
+                  QJsonObject{{QStringLiteral("portId"),
+                               end.localPortId},
+                              {QStringLiteral("msg"), msg}});
         ++delivered;
-        if (ExtensionBackgroundHost *host =
-                m_hosts.value(end.bridge->extensionId())) {
-            if (end.bridge == host->bridge())
-                host->nudge();
+        if (auto *cb = qobject_cast<ChromeBridge *>(end.target)) {
+            if (ExtensionBackgroundHost *host =
+                    m_hosts.value(cb->extensionId())) {
+                if (cb == host->bridge())
+                    host->nudge();
+            }
         }
     }
     return delivered;
@@ -1335,7 +1644,7 @@ void ExtensionBackgroundRuntime::relayPortDisconnect(
         return;
     QList<PortEnd> &ends = it.value();
     for (int i = ends.size() - 1; i >= 0; --i) {
-        if (ends.at(i).bridge == from
+        if (ends.at(i).target == from
                 && ends.at(i).localPortId == portId)
             ends.removeAt(i);
     }
@@ -1344,11 +1653,11 @@ void ExtensionBackgroundRuntime::relayPortDisconnect(
         return;
     }
     for (const PortEnd &end : std::as_const(ends)) {
-        if (end.bridge) {
-            emit end.bridge->hostEvent(
-                QStringLiteral("__arktos.portDisconnect"),
-                QJsonObject{{QStringLiteral("portId"),
-                             end.localPortId}});
+        if (end.target) {
+            emitToEnd(end.target,
+                      QStringLiteral("__arktos.portDisconnect"),
+                      QJsonObject{{QStringLiteral("portId"),
+                                   end.localPortId}});
         }
     }
 }
@@ -1450,6 +1759,13 @@ void scrubObject(QJsonObject &object)
 }
 
 } // namespace
+
+bool ExtensionBackgroundRuntime::hasExtensionPermission(
+        const QString &extensionId, const QString &permission) const
+{
+    return m_extPermissions.value(extensionId)
+        .contains(permission);
+}
 
 bool ExtensionBackgroundRuntime::seesUrls(const QString &extensionId,
                                           const QString &url) const
@@ -1562,4 +1878,321 @@ int ExtensionBackgroundRuntime::deliverEvent(
         const QJsonObject &payload)
 {
     return fanOut(name, payload, extensionId);
+}
+
+// -------------------------------------------------------------------
+// ER01 — page agent plumbing.  Each WebPage carries an 'arktosExt'
+// ExtensionPageBridge on its ArktosChannelWorld channel; the
+// per-extension agent running in AgentWorldId reaches it through
+// the SEC24 whitelisted postMessage forwarder.  agentCovers() is the
+// security boundary — the forwarder is reachable by ANY world on
+// the page, so every op re-proves the named extension's grants
+// against the live page url.  A denied page gets the typed
+// 'no-host-access' absent-API reply, matching what Chrome surfaces
+// as "extension not present".
+// -------------------------------------------------------------------
+
+bool ExtensionBackgroundRuntime::isHosted(
+        const QString &extensionId) const
+{
+    return m_hosts.value(extensionId) != nullptr;
+}
+
+bool ExtensionBackgroundRuntime::agentCovers(
+        const QString &extensionId, const QUrl &pageUrl) const
+{
+    const QString scheme = pageUrl.scheme();
+    if (scheme.isEmpty())
+        return false;
+    QStringList patterns = m_extHostPermissions.value(extensionId);
+    if (ExtensionBackgroundHost *host =
+            m_hosts.value(extensionId))
+        patterns += host->contentScriptMatches();
+    if (patterns.isEmpty())
+        return false;
+    // Originless documents (data:, about:) get no coverage — Chrome
+    // semantics, and here also a measured transport fact: WebPage's
+    // page-level channel bootstrap does not inject there (verified
+    // with a world probe), so no forwarder could ever carry the call.
+    for (const QString &pattern : patterns) {
+        if (hostCovers(pattern, pageUrl))
+            return true;
+    }
+    return false;
+}
+
+namespace {
+
+QJsonObject pageOk(const QJsonValue &v = QJsonValue())
+{
+    QJsonObject o;
+    o.insert(QStringLiteral("ok"), true);
+    if (!v.isUndefined())
+        o.insert(QStringLiteral("result"), v);
+    return o;
+}
+
+QJsonObject pageErr(const QString &code)
+{
+    QJsonObject o;
+    o.insert(QStringLiteral("ok"), false);
+    o.insert(QStringLiteral("error"), code);
+    return o;
+}
+
+} // namespace
+
+QJsonObject ExtensionBackgroundRuntime::pageSend(
+        ExtensionPageBridge *page, const QString &extensionId,
+        const QString &mid, const QJsonValue &msg,
+        const QJsonObject &sender)
+{
+    if (!page || mid.isEmpty() || msg.isUndefined()
+            || !ownsRelayKey(extensionId, mid))
+        return pageErr(QStringLiteral("invalid-argument"));
+
+    // Wrap the raw user message in the relay envelope the shim's
+    // envelopeOf() unwraps — {__arktosMsg:{mid,msg,extId,senderUrl}}
+    // — stamping the C++-built sender on at the same time: a forged
+    // senderUrl from the page side must not masquerade a message as
+    // extension-internal (Bitwarden's senderIsInternal gate keys on
+    // origin).
+    const QJsonObject envelope{
+        {QStringLiteral("__arktosMsg"),
+         QJsonObject{{QStringLiteral("mid"), mid},
+                     {QStringLiteral("msg"), msg},
+                     {QStringLiteral("extId"), extensionId},
+                     {QStringLiteral("sender"), sender},
+                     {QStringLiteral("senderUrl"),
+                      sender.value(QStringLiteral("url"))}}}};
+
+    int peers = 0;
+    const QJsonObject payload{{QStringLiteral("mid"), mid},
+                              {QStringLiteral("msg"), envelope}};
+    for (const RelayContext &ctx : m_relayContexts) {
+        if (!ctx.bridge
+                || ctx.bridge->extensionId() != extensionId)
+            continue;   // never cross extension boundaries
+        emit ctx.bridge->hostEvent(QStringLiteral("__arktos.relay"),
+                                   payload);
+        ++peers;
+        if (ExtensionBackgroundHost *host =
+                m_hosts.value(extensionId)) {
+            if (ctx.bridge == host->bridge())
+                host->nudge();
+        }
+    }
+    if (peers > 0) {
+        PendingRelay pending;
+        pending.origin = page;
+        pending.extensionId = extensionId;
+        pending.peers = peers;
+        m_relayPending.insert(mid, pending);
+        QTimer *expiry = new QTimer(this);
+        expiry->setSingleShot(true);
+        expiry->setInterval(30000);
+        connect(expiry, &QTimer::timeout, this, [this, mid]() {
+            m_relayPending.remove(mid);
+            if (QTimer *t = m_relayPendingTimers.take(mid))
+                t->deleteLater();
+        });
+        m_relayPendingTimers.insert(mid, expiry);
+        expiry->start();
+    }
+    return pageOk(QJsonObject{{QStringLiteral("peers"), peers}});
+}
+
+QJsonObject ExtensionBackgroundRuntime::pageRespond(
+        ExtensionPageBridge *page, const QString &mid,
+        const QJsonValue &response)
+{
+    auto it = m_pageDeliveries.find(mid);
+    if (it == m_pageDeliveries.end()
+            || it.value().target != page)
+        return pageErr(QStringLiteral("unknown-mid"));
+    const PendingPageDelivery delivery = it.value();
+    m_pageDeliveries.erase(it);
+    if (delivery.waiter) {
+        emitToEnd(delivery.waiter,
+                  QStringLiteral("__arktos.deliverResponse"),
+                  QJsonObject{{QStringLiteral("mid"), mid},
+                              {QStringLiteral("response"), response}});
+    }
+    return pageOk();
+}
+
+QJsonObject ExtensionBackgroundRuntime::pagePortConnect(
+        ExtensionPageBridge *page, const QString &extensionId,
+        const QString &chan, const QString &portId,
+        const QString &name, const QJsonObject &sender)
+{
+    if (!page || chan.isEmpty() || portId.isEmpty()
+            || !ownsRelayKey(extensionId, chan))
+        return pageErr(QStringLiteral("invalid-argument"));
+    m_portEnds[chan].append(PortEnd{page, portId});
+    int peers = 0;
+    const QJsonObject payload{
+        {QStringLiteral("chan"), chan},
+        {QStringLiteral("name"), name},
+        {QStringLiteral("sender"), sender}};
+    for (const RelayContext &ctx : m_relayContexts) {
+        if (!ctx.bridge
+                || ctx.bridge->extensionId() != extensionId)
+            continue;
+        emit ctx.bridge->hostEvent(
+            QStringLiteral("__arktos.portConnect"), payload);
+        ++peers;
+        if (ExtensionBackgroundHost *host =
+                m_hosts.value(extensionId)) {
+            if (ctx.bridge == host->bridge())
+                host->nudge();
+        }
+    }
+    return pageOk(QJsonObject{{QStringLiteral("peers"), peers}});
+}
+
+QJsonObject ExtensionBackgroundRuntime::pagePortAccept(
+        ExtensionPageBridge *page, const QString &chan,
+        const QString &portId)
+{
+    if (!page || chan.isEmpty() || portId.isEmpty())
+        return pageErr(QStringLiteral("invalid-argument"));
+    for (const PortEnd &end : m_portEnds.value(chan)) {
+        if (end.target == page && end.localPortId == portId)
+            return pageOk();   // already registered
+    }
+    m_portEnds[chan].append(PortEnd{page, portId});
+    return pageOk();
+}
+
+QJsonObject ExtensionBackgroundRuntime::pagePortMessage(
+        ExtensionPageBridge *page, const QString &chan,
+        const QString &portId, const QJsonValue &msg)
+{
+    if (!page || chan.isEmpty() || portId.isEmpty())
+        return pageErr(QStringLiteral("invalid-argument"));
+    int delivered = 0;
+    const QList<PortEnd> ends = m_portEnds.value(chan);
+    for (const PortEnd &end : ends) {
+        if (!end.target)
+            continue;
+        if (end.target == page && end.localPortId == portId)
+            continue;   // the sending end itself
+        emitToEnd(end.target,
+                  QStringLiteral("__arktos.portMessage"),
+                  QJsonObject{{QStringLiteral("portId"),
+                               end.localPortId},
+                              {QStringLiteral("msg"), msg}});
+        ++delivered;
+        if (auto *cb = qobject_cast<ChromeBridge *>(end.target)) {
+            if (ExtensionBackgroundHost *host =
+                    m_hosts.value(cb->extensionId())) {
+                if (cb == host->bridge())
+                    host->nudge();
+            }
+        }
+    }
+    return pageOk(QJsonObject{{QStringLiteral("delivered"),
+                               delivered}});
+}
+
+QJsonObject ExtensionBackgroundRuntime::pagePortDisconnect(
+        ExtensionPageBridge *page, const QString &chan,
+        const QString &portId)
+{
+    if (!page || chan.isEmpty() || portId.isEmpty())
+        return pageErr(QStringLiteral("invalid-argument"));
+    auto it = m_portEnds.find(chan);
+    if (it == m_portEnds.end())
+        return pageOk();
+    QList<PortEnd> &ends = it.value();
+    for (int i = ends.size() - 1; i >= 0; --i) {
+        if (ends.at(i).target == page
+                && ends.at(i).localPortId == portId)
+            ends.removeAt(i);
+    }
+    if (ends.isEmpty()) {
+        m_portEnds.erase(it);
+        return pageOk();
+    }
+    for (const PortEnd &end : std::as_const(ends)) {
+        if (end.target) {
+            emitToEnd(end.target,
+                      QStringLiteral("__arktos.portDisconnect"),
+                      QJsonObject{{QStringLiteral("portId"),
+                                   end.localPortId}});
+        }
+    }
+    return pageOk();
+}
+
+void ExtensionBackgroundRuntime::unregisterPageContext(
+        ExtensionPageBridge *page)
+{
+    if (!page)
+        return;
+    // Pending sends this page originated die with it — the hosted
+    // replies that arrive later find no slot (the page side is gone
+    // anyway).
+    const QStringList mids = m_relayPending.keys();
+    for (const QString &mid : mids) {
+        if (m_relayPending.value(mid).origin == page) {
+            if (QTimer *t = m_relayPendingTimers.take(mid))
+                t->deleteLater();
+            m_relayPending.remove(mid);
+        }
+    }
+    const QStringList dmids = m_pageDeliveries.keys();
+    for (const QString &mid : dmids) {
+        if (m_pageDeliveries.value(mid).target == page
+                || m_pageDeliveries.value(mid).waiter == page)
+            m_pageDeliveries.remove(mid);
+    }
+    // Port ends die with the page; the surviving ends get the honest
+    // onDisconnect (Bitwarden's setupExtensionDisconnectAction
+    // depends on it).
+    const QStringList chans = m_portEnds.keys();
+    for (const QString &chan : chans) {
+        QList<PortEnd> &ends = m_portEnds[chan];
+        bool removed = false;
+        for (int i = ends.size() - 1; i >= 0; --i) {
+            if (!ends.at(i).target || ends.at(i).target == page) {
+                ends.removeAt(i);
+                removed = true;
+            }
+        }
+        if (!removed)
+            continue;
+        if (ends.isEmpty()) {
+            m_portEnds.remove(chan);
+            continue;
+        }
+        for (const PortEnd &end : std::as_const(ends)) {
+            if (end.target) {
+                emitToEnd(end.target,
+                          QStringLiteral("__arktos.portDisconnect"),
+                          QJsonObject{{QStringLiteral("portId"),
+                                       end.localPortId}});
+            }
+        }
+    }
+}
+
+void ExtensionBackgroundRuntime::pageDeliver(
+        ExtensionPageBridge *page, const QString &extensionId,
+        const QString &mid, const QJsonValue &msg,
+        const QJsonObject &sender, QObject *waiter)
+{
+    if (!page || mid.isEmpty())
+        return;
+    PendingPageDelivery delivery;
+    delivery.waiter = waiter;
+    delivery.target = page;
+    delivery.extensionId = extensionId;
+    m_pageDeliveries.insert(mid, delivery);
+    emit page->extEvent(
+        QStringLiteral("__arktos.deliver"),
+        QJsonObject{{QStringLiteral("mid"), mid},
+                    {QStringLiteral("msg"), msg},
+                    {QStringLiteral("sender"), sender}});
 }

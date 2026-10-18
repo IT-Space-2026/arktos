@@ -45,7 +45,7 @@ xvfb-run — never touch the user's live display.
 | ID | Task | Status | Attempts | Notes |
 |----|------|--------|----------|-------|
 | ER00 | Bitwarden gap harness — env-gated test leg that loads the real unpacked bundle on an isolated profile and dumps every typed shim gap it produces — details below | done | 1 | needs:linux · bitwardenGapBaseline leg PASS: real bundle installs+hosts ready, popup bridges, 0 typed gaps at boot — baseline + touched-map in .devin/EXT-RUNTIME-BASELINE.md |
-| ER01 | Page agent — profile-wide QWebEngineScript giving web pages a chrome.runtime sendMessage bridge into the extension host — details below | pending | 0 | needs:task:ER00 |
+| ER01 | Page agent — profile-wide QWebEngineScript giving web pages a chrome.runtime sendMessage bridge into the extension host — details below | done | 1 | needs:task:ER00 · extensionPageAgent leg PASS: agent+declared cs inject in shared world 0x40, cs sendMessage echoes via hosted bg, sender/url/extid honest, typed denials, main world clean — full suite 32/32 (2 env skips); data: gets profile scripts but no page-level channel so coverage rejects it; Bitwarden popup SIGTRAP reproduced on clean ER00 tree too — pre-existing env issue, not this diff |
 | ER02 | tabs.sendMessage + runtime.onMessage delivery into web pages — details below | pending | 0 | needs:task:ER01 |
 | ER03 | Tab events — tabs.onCreated/onUpdated/onRemoved/onActivated dispatched into host pages — details below | pending | 0 | needs:task:ER01 |
 | ER04 | webNavigation events — onCommitted/onDOMContentLoaded/onCompleted/onErrorOccurred from WebView load signals — details below | pending | 0 | needs:task:ER03 |
@@ -94,6 +94,35 @@ the bridge answers ONLY for extensions whose host_permissions cover
 the page origin; everything else gets the typed absent-API reply.
 Verify: fixture extension's declared content script round-trips a
 message with its background through the agent on a data:/local page.
+
+Run notes (2026-10-18): transport picked (a) — the existing
+`arktos:channel` QWebChannel, reached via a whitelisted postMessage
+forwarder (`src/data/arktos-channel.js` now admits only
+`arktosExt.invoke`/`arktosExt.extEvent`); no bridge races the page
+because the agent queues calls until its `hello` handshake completes.
+One shared isolated world (`AgentWorldId = 0x40`) serves every
+extension agent — Qt caps world ids at 256 — with per-extension
+namespacing under `window.__arktosExtAgents[id]` and the scoped
+`chrome` object passed to each content script by closure, so no
+global `chrome` binding is installed anywhere. The C++ boundary is
+`ExtensionPageBridge` (`arktosExt` on each WebPage's channel):
+per-call coverage checks against the page's *committed* url, typed
+`invalid-mid`/`invalid-chan`/`no-host-access`/`no-storage-permission`
+denials, sender stamped from real tab metadata. Engine findings
+encoded as behavior, not worked around: page-level `scripts()` never
+inject on `data:`/`about:` documents (profile-level scripts do), so
+the covered-leg test uses loopback http and `agentCovers`/`hostCovers`
+reject originless schemes exactly like Chrome does; Chromium's own
+empty `window.chrome` persists in the main world (checked: no keys,
+no `runtime`, no `__arktosExtAgents`). `world:"MAIN"` content scripts
+run in the shared isolated realm (recorded approximation — more
+isolation, same scoped binding). Field check: the real Bitwarden
+popup leg (`realExtensionPopup`, `bitwardenGapBaseline`) SIGTRAPs
+during popup load in this environment — reproduced identically on the
+clean ER00 tree, with the agent disabled, on a fresh extension store
+and with WASM off, while a minimal extension popup passes — a
+pre-existing engine-level issue in Bitwarden's blessed-context app
+code, NOT this diff; deferred for separate investigation.
 
 ### ER02
 `tabs.sendMessage(tabId, message)` + `runtime.onMessage` delivery INTO
