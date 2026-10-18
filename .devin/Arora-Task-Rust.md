@@ -104,9 +104,10 @@ Rules for the agent working this file:
 | PVAULT02 | Profile vault engine: seal/unseal orchestration, dirty-crash recovery, cache exclusion, registry lock flag — details below | done | 1 | moved from main lane; C++/Qt side of the FFI — ProfileVault Qt engine over rv_* FFI: seal/unseal/dirty-recovery/vault.conf/auto-lock; tst_vaultengine 16/16, make check 4 gates PASS, suite green except documented env flakes |
 | PVAULT04 | Profile vault e2e: lock/unlock round-trip, tamper detection, crash-dirty re-seal offer — details below | done | 1 | wipeVault Delete-Profile backend (no password, owner-host honesty) + tst_vaulte2e 9/9 + --vault-smoke* real-process legs all PASS (locked boot unpacks nothing, quit-after-load blob-identical, _exit crash→boot detects→re-seal offer→locked, teardown auto-lock re-seals on disk) — UI steps are PVAULT03's calls into this same API (merge seam documented); make check: 4 gates PASS, 3/89 documented env flakes only — verified offscreen --disable-gpu |
 | MEM09 | Leak re-audit A: instrumented ASan/LSan build + scan of the new tst_profile*/tst_vault* binaries + tally — details below | done | 1 | merged origin/master → rust-work (3004079e); kept ASan/UBSan tree /tmp/arktos-leaks.mA8jKi = MEM10 handoff — carries throwaway patch: __lsan_do_leak_check() before qtest_arktos.h's QUAL05 _exit (the _exit had silently zeroed ALL QTEST_MAIN leak reports; patched binaries rebuilt in-tree only, never committed); all 13 focused binaries ran to completion under detect_leaks=1 fresh-HOME each — 71 blocks: 0 sited in src/, 1 ours (autotest fixture QByteArray tst_browsermainwindow.cpp:7595, 336B — MEM10 fix fodder), 70 upstream (fontconfig 20 / expat 26 / QtCore-WebEngine-libstdc++ families per MEM02); 0 test failures offscreen --disable-gpu; tally .devin/MEM09-scan.md |
-| MEM10 | Leak re-audit B: lifecycle churn legs + bounded valgrind + fix pass + report — details below | in_progress | 0 | needs:task:MEM09 — gate satisfied (MPROF03/06 on master); runs after MEM09 completes |
+| MEM10 | Leak re-audit B: lifecycle churn legs + bounded valgrind + fix pass + report — details below | done | 1 | needs:task:MEM09 — landed BrowserProfile::releasePersona + per-manager releaseFor wired into ProfileStore::deleteProfile (persona worlds now die on delete; was the latent leak class), MEM09 fixture QByteArray freed on socket destroyed; churn legs in tst_profilemanagers/profilewindow/vaultengine — LSan 12 binaries 0 ours/145 upstream, valgrind tst_profilemanagers+tst_vaultengine 0 our-code records, report .devin/MEM10-report.md |
 | ENG35 | AdBlock + BiDi on the Servo engine — wire request blocking through the WebResourceLoad hook; diagnose servo's devtools surface for BiDi, wire or honestly disable — details below | done | 2 | landed (2 runs — run1 built+verified smoke legs, run2 ran gates/suite+bookkeeping): shim se_set_load_gate + SeLoadInfo consulted inside load_web_resource BEFORE the resolver — non-zero return serves the SeHostReply verbatim (deny=empty 403, request never reaches fetch); Qt ServoView::cbLoadGate maps servo destination→ResourceType and resolves the policy through the OWNING profile (view→m_page→profile→requestPolicy — MPROF lesson), Block→403, Redirect→decision.stubBody/stubMime (servo can only serve, never re-issue; bare $removeparam rewrites degrade to Allow — documented); new AdBlockEnginePolicy = Engine::RequestPolicy spelling of the interceptor decision sharing the same network() snapshot incl. rust engine + noteBlockedRequest tally + isWebRequestScheme guard; installOnProfile(::Engine::Profile*) bound in addEngineTab for servo profiles only (WebEngine keeps its interceptor); capabilities().requestIntervention symbol-gated on se_set_load_gate — older artifacts report false honestly. BiDi verdict (diagnosed): servo v0.7.0 DOES ship a devtools server (devtools_server_enabled pref, TCP 127.0.0.1:7000) but it speaks the Firefox Remote Debugging Protocol (JSON packets, components/devtools/protocol.rs), NOT the CDP-over-WebSocket the BidiPanel client drives — real wiring is a separate project; devTools stays false, Tools-menu devtools rows + panel context combo disable servo tabs with 'devtools unavailable on Servo' (SERVO-SPIKE.md table corrected: interception partial→works, devtools CDP-flavored→Firefox-RDP absent-for-us). Cosmetic CSS hiding out of scope — no style-injection surface in this pin. Verified: --servo-smoke all 7 ENG35 legs PASS (load-gate-symbol, gate-policy-bound, adblock-allow-passes, gate-consults-policy, adblock-deny-tally, bidi-devtools-false, bidi-combo-disabled-reason; scroll-leg FAILs are the llvmpipe ~380ms/frame env flake under main-lane load, no scroll code touched), cargo shim rebuilt + symbol exported, qmake+make -j2 clean, make check 4 gates PASS (warnings no-rust build, supplychain, engine-audit, rustcoverage 90.50/91.68/89.25) + all adblock/webpage/webview suites 0 failed; 4 leg fails = documented env flakes only (darkThemeReaderGlyph, stopReloadState, shieldPopupFirstShow — same trio flagged in MPROF04/PVAULT04 worklogs, pre-date this diff; fileSchemeErrors PASS standalone) |
 | SEC19 | Second rank source (Majestic Million) + third threat feed (Phishing.Database) — details below | done | 1 | landed: Majestic second rank source (own 12-col grammar + majestic-million.csv file, min-rank merge, rc_tranco_file_entries guards each commit, per-source stamps) + Phishing.Database in DomainBlocklist; one Update gesture/consent gate covers all three — verified: cargo 254/254, tst_trancolist 8/8, tst_domainblock 13/13, tst_settingsdialog 56/56, make check 4 gates PASS + suite green except 4 documented env flakes |
+| WKB01 | EasyList→WebKit content-blocker JSON converter — Safari-format rule export from the adblock rule model — details below | pending | 0 | cross-lane item feeding the webkit spine's WK18; self-contained new module, commit to rust-work |
 
 ## Task details
 
@@ -591,3 +592,41 @@ Two list additions on the existing SEC18/TRUST13 pipeline, no new UI needed.
 **Attribution** — THIRD-PARTY-NOTICES + README credits rows for both feeds (Majestic Million terms: free for non-commercial use — check and note honestly; Phishing.Database MIT).
 
 **Verify**: unit legs — Majestic CSV parses (rank+domain, header skipped), merged rank = min across lists, unranked domain still unranked; blocklist leg — a Phishing.Database-style domain row blocks a main-frame nav; consent gate still blocks every fetch pre-consent; tst_domainblock + the siteTrust settings legs green; make check PASS.
+
+### WKB01
+
+EasyList→WebKit content-blocker JSON converter — the hard half of the
+webkit spine's WK18, fully testable without WPE installed. WebKit's
+adblock path is `WebKitUserContentFilterStore` + a JSON rule list
+(Safari content-blocker format: `trigger.url-filter` regex +
+`resource-type`, actions `block`/`block-cookies`/`css-display-none`).
+
+This lane's home is the Rust side — the adblock engine already lives
+in `src/adblock/rust/` (the `arktos_adblock_ffi` crate). Implement the
+converter THERE: a Rust function that takes parsed rule structures
+(read the existing crate's rule model first — reuse it, don't
+re-parse EasyList) and emits content-blocker JSON, exported through
+the FFI so C++ callers (and a later WebkitBackend) can fetch the
+compiled list. If the existing crate's rule shape genuinely can't
+carry what's needed, a small C++ adapter under
+`src/adblock/contentblocker/` reading `AdBlockRule` is the fallback —
+but prefer Rust: the rule parser + regex compilation already live
+there.
+
+- Covered: `||domain^` url-filter patterns → Safari `url-filter`
+  regexes; resource-type restrictions (script/image/stylesheet…);
+  `@@` exception rules → `ignore-previous-rules`; `##selector`
+  cosmetic rules → `css-display-none` with `if-domain`.
+- Dropped (counted, logged, listed in output metadata): `$redirect`,
+  `$rewrite`, `$csp`, `$removeparam`, scriptlet injections, regex
+  filters Safari can't express. Never silently drop — the converter
+  returns {rules, dropped:[{rule, why}]}; the drop list is a real
+  output channel (JSON sidecar or FFI struct), not a log line.
+- Tests: cargo legs in the crate (fixture EasyList .txt, assert
+  converted counts + a known-good conversion per rule class + drop
+  list contents); if an FFI surface lands, a small
+  `autotests/contentblocker/` Qt leg exercises it end-to-end.
+
+Verify: `cargo test` in the adblock crate passes with the new
+converter legs; the FFI surface (if added) gets an `ffi_surface` leg;
+`make check` gates green.
