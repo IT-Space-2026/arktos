@@ -43,6 +43,7 @@
 #include <qwidget.h>
 
 #include <qwebchannel.h>
+#include <qwebengineframe.h>
 #include <qwebenginepage.h>
 #include <qwebengineprofile.h>
 #include <qwebenginescript.h>
@@ -74,6 +75,7 @@ ChromeBridge::ChromeBridge(const QString &extensionId,
     : QObject(parent)
     , m_extensionId(extensionId)
     , m_extensionName(extensionName)
+    , m_extensionPath(extensionPath)
 {
     // EXT15 backend — storage store, host-timer alarms, the live
     // tab snapshot, action state, manifest-derived answers.  Its
@@ -155,6 +157,11 @@ QJsonObject ChromeBridge::invoke(const QString &ns,
             && method == QLatin1String("sendMessage")) {
         return invokeTabMessage(args);
     }
+    // ER07: chrome.scripting.executeScript — async the same way:
+    // the per-frame results resolve onto this bridge's hostEvent as
+    // '__arktos.execResult'.
+    if (ns == QLatin1String("scripting"))
+        return invokeScripting(method, args);
     if (!m_backend) {
         QJsonObject o;
         o.insert(QStringLiteral("ok"), false);
@@ -2127,6 +2134,402 @@ QJsonObject ChromeBridge::invokeTabMessage(const QJsonObject &args)
          QStringLiteral("chrome-extension://") + m_extensionId}};
     runtime->pageDeliver(page, m_extensionId, mid, msg, sender, this);
     return ok(QJsonObject{{QStringLiteral("delivered"), true}});
+}
+
+// -------------------------------------------------------------------
+// ER07 — chrome.scripting.executeScript: the product API.  The call
+// resolves a tab through the same registry chrome.tabs uses, gates on
+// the extension's declared 'scripting' permission and its
+// host_permissions covering the committed url — BEFORE any source is
+// generated into the page — then fans out over the frame tree via
+// QWebEngineFrame::runJavaScript.
+//
+// World emulation: 'ISOLATED' (default) runs in AgentWorldId — the
+// shared agent realm — inside a closure that binds `chrome`/`browser`
+// to THIS frame's scoped agent object, the exact surface declared
+// content scripts get.  'MAIN' runs in the page's own world with no
+// extension surface, matching Chrome where a main-world injection is
+// unprivileged.  Frame ids are traversal positions over the CURRENT
+// frame tree (0 = main frame, children depth-first) — unlike Chrome's
+// per-document ids they renumber if the tree mutates; callers only
+// ever learn them from our own results and event payloads.
+//
+// runJavaScript does not await a returned Promise (measured — see the
+// mv3-health smoke comment in main.cpp), so a thenable result parks
+// on the frame's __arktosExecResults registry under the exec key and
+// this side polls for a bounded window.  Chrome resolves the call
+// once injection has started even when the script throws, so a
+// throwing func lands as a per-frame {frameId, error} entry rather
+// than rejecting the whole call — the documented InjectionResult
+// shape; only injection-level failures (bad tab, no coverage, bad
+// args) reject typed.
+// -------------------------------------------------------------------
+
+namespace {
+
+// The frame tree as a depth-first list — index 0 is the main frame
+// and a frame's position IS the frame id this call answers for.
+void collectFrames(const QWebEngineFrame &frame,
+                   QList<QWebEngineFrame> *out)
+{
+    out->append(frame);
+    const QList<QWebEngineFrame> children = frame.children();
+    for (const QWebEngineFrame &child : children)
+        collectFrames(child, out);
+}
+
+// The injected source.  `func` evaluates INSIDE a closure whose
+// chrome/browser params carry the frame's scoped agent binding —
+// identifier resolution is lexical, so the payload sees the emulated
+// surface exactly like a declared content script does (and in the
+// MAIN world, where no agent registry exists, the page's own chrome
+// stub answers — Chrome parity).  A thenable result parks on
+// window.__arktosExecResults for the poll below; a JSON-incompatible
+// value drops to the honest result-less entry.
+QString execSource(const QString &extensionId,
+                   const QString &funcSource,
+                   const QJsonArray &execArgs,
+                   const QStringList &fileSources,
+                   const QString &key)
+{
+    QString argsJson = QString::fromUtf8(
+        QJsonDocument(execArgs).toJson(QJsonDocument::Compact));
+    // JSON permits raw U+2028/2029 — JS source does not.
+    argsJson.replace(QChar(0x2028), QStringLiteral("\\u2028"))
+        .replace(QChar(0x2029), QStringLiteral("\\u2029"));
+    QString source = QStringLiteral(
+        "(function(){var __key=%1;var __a=null;"
+        "try{__a=(window.__arktosExtAgents||{})[%2]||null;}catch(e){}"
+        "var __c=__a&&__a.chrome?__a.chrome"
+            ":(typeof chrome!=='undefined'?chrome:undefined);"
+        "try{var __r=(function(chrome,browser){")
+        .arg(jsLiteral(key), jsLiteral(extensionId));
+    if (!funcSource.isEmpty()) {
+        source += QStringLiteral("var __f=(") + funcSource
+            + QStringLiteral(");return __f.apply(null,") + argsJson
+            + QLatin1String(");");
+    } else {
+        // files: the merged source runs once inside the closure —
+        // a function body has no completion value, so the result is
+        // honestly absent where Chrome reports the last file's.
+        for (const QString &file : fileSources) {
+            source += file;
+            source += QLatin1Char('\n');
+        }
+    }
+    source += QLatin1String(
+        "}).call(window,__c,__c);"
+        "if(__r&&typeof __r.then==='function'){"
+        "var __reg=window.__arktosExecResults="
+            "window.__arktosExecResults||{};"
+        "__reg[__key]=null;"
+        "__r.then(function(v){var o={ok:true};"
+        "if(v!==undefined){try{JSON.stringify(v);o.v=v;}catch(e){}}"
+        "__reg[__key]=o;},"
+        "function(e){__reg[__key]={ok:false,"
+            "e:String(e&&e.message||e)};});"
+        "return {__exec:1,pending:true};}"
+        "var o={__exec:1,ok:true};"
+        "if(__r!==undefined){try{JSON.stringify(__r);o.v=__r;}"
+            "catch(e){}}"
+        "return o;}catch(e){"
+        "return {__exec:1,ok:false,e:String(e&&e.message||e)};}})()");
+    return source;
+}
+
+QJsonObject execResultEntry(int frameId, const QJsonObject &envelope)
+{
+    QJsonObject entry;
+    entry.insert(QStringLiteral("frameId"), frameId);
+    if (envelope.value(QLatin1String("ok")).toBool()) {
+        if (envelope.contains(QLatin1String("v")))
+            entry.insert(QStringLiteral("result"),
+                         envelope.value(QLatin1String("v")));
+    } else {
+        entry.insert(QStringLiteral("error"),
+                     envelope.value(QLatin1String("e")).toString());
+    }
+    return entry;
+}
+
+} // namespace
+
+QJsonObject ChromeBridge::invokeScripting(const QString &method,
+                                          const QJsonObject &args)
+{
+    auto ok = [](const QJsonValue &v = QJsonValue()) {
+        QJsonObject o;
+        o.insert(QStringLiteral("ok"), true);
+        if (!v.isUndefined())
+            o.insert(QStringLiteral("result"), v);
+        return o;
+    };
+    auto err = [](const QString &code) {
+        QJsonObject o;
+        o.insert(QStringLiteral("ok"), false);
+        o.insert(QStringLiteral("error"), code);
+        return o;
+    };
+    if (!m_backend)
+        return err(QStringLiteral("backend-gone"));
+    if (method != QLatin1String("executeScript"))
+        return err(QStringLiteral("unimplemented"));
+
+    const QString execId =
+        args.value(QStringLiteral("execId")).toString();
+    if (execId.isEmpty() || !ownsRelayKey(m_extensionId, execId))
+        return err(QStringLiteral("invalid-argument"));
+
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    // Chrome exposes chrome.scripting only to extensions that declare
+    // the 'scripting' permission — this call-level gate stands in for
+    // the absent namespace.
+    if (!runtime->hasExtensionPermission(
+            m_extensionId, QStringLiteral("scripting")))
+        return err(QStringLiteral("no-permission"));
+
+    const QJsonObject target =
+        args.value(QStringLiteral("target")).toObject();
+    if (!target.value(QStringLiteral("documentIds")).toArray()
+             .isEmpty())
+        // Document ids are a Chrome-internal handle we never mint —
+        // typed, never a silent main-frame substitution.
+        return err(QStringLiteral("unsupported"));
+    if (!target.contains(QStringLiteral("tabId")))
+        return err(QStringLiteral("invalid-argument"));
+    WebView *view = ExtensionShimBackend::viewForTabId(
+        int(target.value(QStringLiteral("tabId")).toDouble(-1)));
+    if (!view || !view->page())
+        return err(QStringLiteral("not-found"));
+    QWebEnginePage *page = view->page();
+    // The security boundary, BEFORE any source is generated into the
+    // page — the same check the page agent's per-call gate runs
+    // against the committed url.
+    if (!runtime->agentCovers(m_extensionId, page->url()))
+        return err(QStringLiteral("no-host-access"));
+
+    QList<QWebEngineFrame> frames;
+    const QWebEngineFrame mainFrame = page->mainFrame();
+    if (mainFrame.isValid())
+        collectFrames(mainFrame, &frames);
+    if (frames.isEmpty())
+        return err(QStringLiteral("no-frame"));
+
+    const bool allFrames =
+        target.value(QStringLiteral("allFrames")).toBool();
+    const QJsonArray frameIds =
+        target.value(QStringLiteral("frameIds")).toArray();
+    if (allFrames && !frameIds.isEmpty())
+        return err(QStringLiteral("invalid-argument"));
+    QList<int> selected;
+    if (allFrames) {
+        for (int i = 0; i < frames.size(); ++i)
+            selected.append(i);
+    } else if (!frameIds.isEmpty()) {
+        for (const QJsonValue &v : frameIds) {
+            const int fid = int(v.toDouble(-1));
+            if (fid < 0 || fid >= frames.size())
+                return err(QStringLiteral("not-found"));
+            if (!selected.contains(fid))
+                selected.append(fid);
+        }
+    } else {
+        selected.append(0);
+    }
+
+    const QString funcSource =
+        args.value(QStringLiteral("func")).toString();
+    const QJsonArray execArgs =
+        args.value(QStringLiteral("args")).toArray();
+    const QJsonArray filesArg =
+        args.value(QStringLiteral("files")).toArray();
+    const QString world =
+        args.value(QStringLiteral("world"))
+            .toString(QStringLiteral("ISOLATED"));
+    if (world != QLatin1String("ISOLATED")
+            && world != QLatin1String("MAIN"))
+        return err(QStringLiteral("invalid-argument"));
+    const quint32 worldId =
+        world == QLatin1String("MAIN")
+            ? quint32(QWebEngineScript::MainWorld)
+            : ExtensionBackgroundRuntime::AgentWorldId;
+
+    QStringList fileSources;
+    if (!filesArg.isEmpty()) {
+        if (!funcSource.isEmpty())
+            return err(QStringLiteral("invalid-argument"));
+        // Bundle files only — the same path hygiene the background
+        // loader applies: no absolute paths, schemes, or traversal.
+        qint64 total = 0;
+        const QDir dir(m_extensionPath);
+        for (const QJsonValue &v : filesArg) {
+            const QString rel = v.toString();
+            if (rel.isEmpty() || rel.startsWith(QLatin1Char('/'))
+                    || rel.contains(QLatin1Char(':'))
+                    || rel.split(QLatin1Char('/')).contains(
+                        QStringLiteral("..")))
+                return err(QStringLiteral("bad-path"));
+            QFile file(dir.absoluteFilePath(rel));
+            total += file.size();
+            if (file.size() > 4 * 1024 * 1024
+                    || total > 8 * 1024 * 1024
+                    || !file.open(QIODevice::ReadOnly))
+                return err(QStringLiteral("no-such-file"));
+            fileSources.append(QString::fromUtf8(file.readAll()));
+        }
+    } else if (funcSource.isEmpty()) {
+        return err(QStringLiteral("invalid-argument"));
+    }
+
+    PendingExec &pending = m_pendingExecs[execId];
+    pending.remaining = selected.size();
+    pending.frameIds = selected;
+    for (int i = 0; i < selected.size(); ++i)
+        pending.results.append(QJsonValue(QJsonValue::Null));
+    pending.expiry = new QTimer(this);
+    pending.expiry->setSingleShot(true);
+    pending.expiry->setInterval(20000);
+    connect(pending.expiry, &QTimer::timeout, this, [this, execId]() {
+        const auto it = m_pendingExecs.find(execId);
+        if (it == m_pendingExecs.end())
+            return;
+        QJsonArray results = it->results;
+        // Slots a dead or wedged frame never answered get the honest
+        // per-frame error rather than a fabricated result.
+        for (int i = 0; i < results.size(); ++i) {
+            if (results.at(i).isNull())
+                results.replace(i, QJsonObject{
+                    {QStringLiteral("frameId"),
+                     it->frameIds.at(i)},
+                    {QStringLiteral("error"),
+                     QStringLiteral("exec-timeout")}});
+        }
+        QTimer *timer = it->expiry;
+        m_pendingExecs.erase(it);
+        if (timer)
+            timer->deleteLater();
+        emit hostEvent(QStringLiteral("__arktos.execResult"),
+                       QJsonObject{{QStringLiteral("execId"), execId},
+                                   {QStringLiteral("ok"), true},
+                                   {QStringLiteral("results"),
+                                    results}});
+    });
+    pending.expiry->start();
+
+    const QPointer<ChromeBridge> self(this);
+    for (int slot = 0; slot < selected.size(); ++slot) {
+        const int frameId = selected.at(slot);
+        QWebEngineFrame frame = frames.at(frameId);
+        const QString key = execId + QLatin1Char('/')
+            + QString::number(frameId);
+        const QString source = execSource(m_extensionId, funcSource,
+                                          execArgs, fileSources, key);
+        frame.runJavaScript(
+            source, worldId,
+            [self, this, execId, slot, frameId, frame, worldId,
+             key](const QVariant &value) {
+                if (self)
+                    finishExecFrame(execId, slot, frameId, value,
+                                    frame, worldId, key);
+            });
+    }
+    return ok();
+}
+
+void ChromeBridge::finishExecFrame(const QString &execId, int slot,
+                                   int frameId, const QVariant &value,
+                                   QWebEngineFrame frame,
+                                   quint32 worldId, const QString &key)
+{
+    if (!m_pendingExecs.contains(execId))
+        return;   // expired already
+    const QJsonObject envelope = value.toJsonObject();
+    if (envelope.value(QLatin1String("__exec")).toInt() != 1) {
+        // The wrapper itself produced no answer — a func source that
+        // fails to parse dies at compile time, before the inner
+        // try/catch exists.  Chrome resolves with a bare entry and
+        // logs to the console; the error field carries it honestly.
+        finishExecSlot(execId, slot,
+                       QJsonObject{
+                           {QStringLiteral("frameId"), frameId},
+                           {QStringLiteral("error"),
+                            QStringLiteral("exec-failed")}});
+        return;
+    }
+    if (envelope.value(QLatin1String("pending")).toBool()) {
+        pollExecResult(execId, slot, frameId, frame, worldId, key, 60);
+        return;
+    }
+    finishExecSlot(execId, slot, execResultEntry(frameId, envelope));
+}
+
+void ChromeBridge::finishExecSlot(const QString &execId, int slot,
+                                  const QJsonObject &entry)
+{
+    const auto it = m_pendingExecs.find(execId);
+    if (it == m_pendingExecs.end())
+        return;
+    it->results.replace(slot, entry);
+    if (--it->remaining > 0)
+        return;
+    if (it->expiry) {
+        it->expiry->stop();
+        it->expiry->deleteLater();
+    }
+    const QJsonArray results = it->results;
+    m_pendingExecs.erase(it);
+    emit hostEvent(QStringLiteral("__arktos.execResult"),
+                   QJsonObject{{QStringLiteral("execId"), execId},
+                               {QStringLiteral("ok"), true},
+                               {QStringLiteral("results"), results}});
+}
+
+void ChromeBridge::pollExecResult(const QString &execId, int slot,
+                                  int frameId, QWebEngineFrame frame,
+                                  quint32 worldId, const QString &key,
+                                  int triesLeft)
+{
+    if (!m_pendingExecs.contains(execId))
+        return;
+    if (!frame.isValid() || triesLeft <= 0) {
+        finishExecSlot(execId, slot,
+                       QJsonObject{
+                           {QStringLiteral("frameId"), frameId},
+                           {QStringLiteral("error"),
+                            frame.isValid()
+                                ? QStringLiteral("exec-timeout")
+                                : QStringLiteral("frame-gone")}});
+        return;
+    }
+    const QPointer<ChromeBridge> self(this);
+    frame.runJavaScript(
+        QStringLiteral("(window.__arktosExecResults||{})[%1]||null")
+            .arg(jsLiteral(key)),
+        worldId,
+        [self, this, execId, slot, frameId, frame, worldId, key,
+         triesLeft](const QVariant &value) mutable {
+            if (!self)
+                return;
+            const QJsonObject envelope = value.toJsonObject();
+            if (!envelope.isEmpty()) {
+                frame.runJavaScript(
+                    QStringLiteral(
+                        "delete (window.__arktosExecResults||{})[%1]")
+                        .arg(jsLiteral(key)),
+                    worldId);
+                finishExecSlot(execId, slot,
+                               execResultEntry(frameId, envelope));
+                return;
+            }
+            QTimer::singleShot(150, this, [self, this, execId, slot,
+                                           frameId, frame, worldId,
+                                           key, triesLeft]() {
+                if (self)
+                    pollExecResult(execId, slot, frameId, frame,
+                                   worldId, key, triesLeft - 1);
+            });
+        });
 }
 
 QJsonObject ExtensionBackgroundRuntime::pageSend(

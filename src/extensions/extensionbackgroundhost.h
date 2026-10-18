@@ -36,6 +36,7 @@
 class ExtensionPageBridge;
 class QTimer;
 class QWebChannel;
+class QWebEngineFrame;
 class QWebEnginePage;
 class QWebEngineProfile;
 class QWebEngineView;
@@ -138,9 +139,38 @@ private:
     // page agent's response resolves onto it), so it lives at this
     // level like getCurrent rather than in the shared backend.
     QJsonObject invokeTabMessage(const QJsonObject &args);
+    // ER07: chrome.scripting.executeScript — async for the same
+    // reason: the per-frame results resolve onto THIS bridge's
+    // hostEvent as '__arktos.execResult', so dispatch lives here.
+    QJsonObject invokeScripting(const QString &method,
+                                const QJsonObject &args);
+    void finishExecFrame(const QString &execId, int slot,
+                         int frameId, const QVariant &value,
+                         QWebEngineFrame frame, quint32 worldId,
+                         const QString &key);
+    void finishExecSlot(const QString &execId, int slot,
+                        const QJsonObject &entry);
+    void pollExecResult(const QString &execId, int slot, int frameId,
+                        QWebEngineFrame frame, quint32 worldId,
+                        const QString &key, int triesLeft);
+
+    // ER07: in-flight executeScript fan-outs — execId -> one result
+    // slot per selected frame plus an expiry so a frame whose eval
+    // never answers cannot pin the call forever.
+    struct PendingExec {
+        int remaining = 0;
+        QList<int> frameIds;   // slot -> DFS frame position
+        QJsonArray results;
+        QTimer *expiry = nullptr;
+    };
+    QHash<QString, PendingExec> m_pendingExecs;
 
     QString m_extensionId;
     QString m_extensionName;
+    // ER07: executeScript's files[] resolve against the unpacked
+    // bundle — the bridge keeps its own copy since the backend's
+    // accessor is private.
+    QString m_extensionPath;
     // QPointer — a shared backend dies with the host that owns it;
     // a popup bridge must answer typed errors, not dangle.
     QPointer<ExtensionShimBackend> m_backend;

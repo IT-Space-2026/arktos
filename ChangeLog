@@ -3545,3 +3545,27 @@ Extensions (runtime decision gate): the hosted runtime's
     the gate verdict is PASS and the remaining work is mechanical
     namespace coverage, not isolation surgery. Evidence:
     .devin/EXT-RUNTIME-SPIKE.md.
+Extensions (scripting): chrome.scripting.executeScript now really
+    injects (ER07) — the hosted background's call resolves the tab
+    through the live-tab registry, re-proves the 'scripting'
+    permission and host-permission coverage of the committed URL
+    BEFORE any source reaches the page, then evals the payload per
+    frame through QWebEngineFrame::runJavaScript — allFrames and
+    frameIds address real subframes (depth-first ids, main frame = 0).
+    func is serialized across the channel and re-evaluated inside the
+    same compat preamble declared content scripts get — chrome/browser
+    bind to that frame's scoped agent object; args marshal as JSON;
+    files[] reads and merges bundle-relative sources with the loader's
+    path hygiene; world: 'MAIN' runs unprivileged in the page's own
+    world while the default 'ISOLATED' runs in the shared agent realm.
+    Returned Promises are awaited (runJavaScript never waits for
+    thenables — results park on a per-exec registry the host polls),
+    and a throwing func answers a per-frame {frameId, error} entry
+    instead of rejecting the call, Chrome's contract. Everything that
+    cannot work is typed, never silent: no-permission, no-host-access,
+    not-found (tab or frame), bad-path/no-such-file for bundle misses,
+    unsupported for documentIds (a Chrome-internal handle we never
+    mint). Every rejection lands in the extension's shimGaps ledger —
+    the extensionScripting autotest leg proves the round trip, the
+    subframe addressing, the promise await, the world placement, and
+    every denial path on real browser tabs.

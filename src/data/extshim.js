@@ -137,6 +137,10 @@
             onDeliverResponse(payload);
             return;
         }
+        if (name === '__arktos.execResult') {
+            onExecResult(payload);
+            return;
+        }
         if (name === '__arktos.portConnect') {
             // A sibling context offered a port — accept it on behalf
             // of this context's runtime.onConnect listeners.
@@ -682,6 +686,9 @@
     var msgPending = {};   // mid -> {finish, peers, replies}
     var deliverWait = {};  // mid -> {cb, resolve, reject, done} —
                            // ER02 tabs.sendMessage host->page waits
+    var execWait = {};     // execId -> {cb, resolve, reject, done,
+                           // fail} — ER07 scripting.executeScript
+                           // waits on '__arktos.execResult'
     var relayPeers = 0;
 
     // ER02: the page agent's 'respond' lands here — resolve the
@@ -712,6 +719,25 @@
             ? 'The message port closed before a response was received.'
             : 'Could not establish connection. '
               + 'Receiving end does not exist.');
+    }
+
+    // ER07: the per-frame results of a scripting.executeScript land
+    // here.  Chrome resolves the call once injection has started —
+    // even when the script threw — so the payload is always the
+    // results array (a throwing frame carries `error` on its entry,
+    // the documented InjectionResult shape); only injection-level
+    // failures rejected the call earlier via call()'s typed error.
+    function onExecResult(payload) {
+        if (!payload || !payload.execId)
+            return;
+        var entry = execWait[payload.execId];
+        if (!entry || entry.done)
+            return;
+        entry.done = true;
+        delete execWait[payload.execId];
+        var results = payload.results || [];
+        answerCb(entry.cb, results);
+        entry.resolve(results);
     }
 
     function contentKey(msg) {
@@ -2076,6 +2102,91 @@
             getAllFrames: function (details, cb) {
                 return failCall('webNavigation.getAllFrames',
                                 'unsupported', cb);
+            }
+        });
+    }
+
+    // --- chrome.scripting -----------------------------------------------------
+    // ER07 — the product API.  executeScript is bridge-backed: the
+    // host resolves the tab, re-proves 'scripting' + host coverage
+    // BEFORE any source reaches the page, then evals the payload per
+    // frame (ISOLATED -> the shared agent world with this extension's
+    // scoped chrome binding, MAIN -> the page's own world).  The func
+    // a caller hands us crosses the channel as serialized source —
+    // functions cannot marshal — exactly like Chrome's own
+    // serialize-then-inject.  The results ride back on
+    // '__arktos.execResult'.  The remaining surface stays a typed
+    // stub (fillNs below) until ER08/ER09 land it.
+    if (typeof chrome !== 'undefined') {
+        installNs('scripting', {
+            __arktosShim: true,
+            ExecutionWorld: { ISOLATED: 'ISOLATED', MAIN: 'MAIN' },
+            executeScript: function (injection, cb) {
+                touch('chrome.scripting.executeScript');
+                injection = injection || {};
+                var target = injection.target || {};
+                var execId = cfg.id + '#exec' + (++shim.seq) + '#'
+                             + Date.now();
+                return new Promise(function (resolve, reject) {
+                    var entry = { cb: cb, resolve: resolve,
+                                  reject: reject, done: false };
+                    // The call-level failure path — a typed error
+                    // from invoke (bad target, no host coverage) or
+                    // the safety net below.  Callback form answers
+                    // lastError + undefined like Chrome does.
+                    entry.fail = function (message) {
+                        if (entry.done)
+                            return;
+                        entry.done = true;
+                        delete execWait[execId];
+                        if (cb) {
+                            answerCb(cb, undefined, message);
+                            resolve(undefined);
+                            return;
+                        }
+                        var e = new Error(message);
+                        e.api = 'chrome.scripting.executeScript';
+                        reject(e);
+                    };
+                    execWait[execId] = entry;
+                    // A delivery whose answer never lands (frame
+                    // gone, channel dead) resolves typed rather
+                    // than hanging forever — same net sendMessage
+                    // carries.
+                    setTimeout(function () {
+                        entry.fail('chrome.scripting.executeScript: '
+                                   + 'exec-timeout');
+                    }, 15000);
+                    var funcSource = null;
+                    if (injection.func !== undefined
+                            && injection.func !== null)
+                        funcSource = String(injection.func);
+                    call('scripting', 'executeScript', {
+                        execId: execId,
+                        target: {
+                            tabId: target.tabId,
+                            frameIds: target.frameIds,
+                            allFrames: target.allFrames,
+                            documentIds: target.documentIds
+                        },
+                        func: funcSource,
+                        args: Array.isArray(injection.args)
+                            ? injection.args : [],
+                        files: Array.isArray(injection.files)
+                            ? injection.files : null,
+                        world: injection.world || 'ISOLATED',
+                        injectImmediately:
+                            !!injection.injectImmediately
+                    }).then(function () {
+                        // Accepted — the results land on
+                        // '__arktos.execResult'.
+                    }).catch(function (e) {
+                        entry.fail(e && e.message
+                            ? e.message
+                            : 'chrome.scripting.executeScript '
+                              + 'failed');
+                    });
+                });
             }
         });
     }

@@ -87,6 +87,7 @@ private slots:
     void extensionPopupContext();
     void extensionPageAgent();
     void extensionTabMessaging();
+    void extensionScripting();
     void actionPopupSelfWires();
     void realExtensionPopup();
     void bitwardenGapBaseline();
@@ -3686,6 +3687,541 @@ void tst_ExtensionManager::extensionTabMessaging()
     QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 20000);
     manager->removeExtension(id);
     QDir(dir).removeRecursively();
+}
+
+// ER07 — chrome.scripting.executeScript.  A fixture extension
+// declaring 'scripting' + <all_urls> drives the real call from its
+// hosted background: func/args/files forms land in the shared agent
+// world of a real browser tab and marshal Chrome-shaped results back
+// (thenables awaited through the parked-result poll); allFrames +
+// frameIds address real subframes.  The security legs prove the
+// gates run BEFORE any source reaches a page — an uncovered tab gets
+// a typed 'no-host-access' and an extension lacking the grant gets
+// 'no-permission' — never an injection.
+void tst_ExtensionManager::extensionScripting()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extscript-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-script\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\","
+                "\"scripting\"],\"host_permissions\":[\"<all_urls>\"],"
+                "\"background\":{\"service_worker\":\"sw.js\"},"
+                "\"content_scripts\":[{\"matches\":[\"<all_urls>\"],"
+                "\"js\":[\"cs.js\"],\"run_at\":\"document_idle\"}]}");
+        f.close();
+        QFile w(dir + QLatin1String("/sw.js"));
+        QVERIFY(w.open(QIODevice::WriteOnly));
+        w.write(
+            "chrome.runtime.onInstalled.addListener(function(){});\n");
+        w.close();
+        QFile c(dir + QLatin1String("/cs.js"));
+        QVERIFY(c.open(QIODevice::WriteOnly));
+        c.write("window.__csRan=true;\n");
+        c.close();
+        // files[] resolves against the unpacked bundle.
+        QFile j(dir + QLatin1String("/inject.js"));
+        QVERIFY(j.open(QIODevice::WriteOnly));
+        j.write("window.__injFileRan=(window.__injFileRan||0)+1;\n");
+        j.close();
+    }
+    // The consent/denial fixture: identical shape minus 'scripting'.
+    const QString dirB = QDir::temp().filePath(
+        QStringLiteral("tst-extscript-b-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirB));
+    {
+        QFile f(dirB + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-script-b\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"],"
+                "\"host_permissions\":[\"<all_urls>\"],"
+                "\"background\":{\"service_worker\":\"sw.js\"}}");
+        f.close();
+        QFile w(dirB + QLatin1String("/sw.js"));
+        QVERIFY(w.open(QIODevice::WriteOnly));
+        w.write(
+            "chrome.runtime.onInstalled.addListener(function(){});\n");
+        w.close();
+    }
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    auto loaded = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-script")
+                && info.error.isEmpty())
+            *loaded = info.id;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded->isEmpty(), 30000);
+    const QString id = *loaded;
+    manager->setExtensionEnabled(id, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(id)
+            && runtime->host(id)->state()
+                   == ExtensionBackgroundHost::State::Ready,
+        45000);
+    ExtensionBackgroundHost *host = runtime->host(id);
+    QVERIFY(host && host->bridge());
+    ChromeBridge *bridge = host->bridge();
+
+    auto loadedB = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loadedB](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-script-b")
+                && info.error.isEmpty())
+            *loadedB = info.id;
+    });
+    manager->grantConsent(dirB);
+    manager->loadExtension(dirB);
+    QTRY_VERIFY_WITH_TIMEOUT(!loadedB->isEmpty(), 30000);
+    const QString idB = *loadedB;
+    manager->setExtensionEnabled(idB, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(idB)
+            && runtime->host(idB)->state()
+                   == ExtensionBackgroundHost::State::Ready,
+        45000);
+    ExtensionBackgroundHost *hostB = runtime->host(idB);
+    QVERIFY(hostB && hostB->bridge());
+
+    auto eval = [](QWebEnginePage *page, const QString &source,
+                   quint32 worldId = 0) {
+        auto result = std::make_shared<QVariant>();
+        page->runJavaScript(
+            source, worldId,
+            [result](const QVariant &v) { *result = v; });
+        QElapsedTimer t;
+        t.start();
+        while (!result->isValid() && t.elapsed() < 15000)
+            QTest::qWait(50);
+        return *result;
+    };
+    const quint32 agentWorld =
+        ExtensionBackgroundRuntime::AgentWorldId;
+    const QString probe = QStringLiteral(
+        "((window.__arktosExtAgents&&__arktosExtAgents['%1'])"
+        "||{active:false,bridgeUp:false})").arg(id);
+
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    const QString base = QStringLiteral("http://127.0.0.1:%1")
+        .arg(server.serverPort());
+    QObject::connect(&server, &QTcpServer::newConnection,
+                     this, [&]() {
+        QTcpSocket *socket = server.nextPendingConnection();
+        QObject::connect(socket, &QTcpSocket::readyRead,
+                         socket, [socket]() {
+            const QByteArray req = socket->readAll();
+            const QByteArray body =
+                req.contains("GET /frame")
+                    ? QByteArray("<html><head><title>frame-doc"
+                                 "</title></head><body>f</body>"
+                                 "</html>")
+                    : QByteArray("<html><head><title>exec-target"
+                                 "</title></head><body>exec"
+                                 "<iframe src=\"/frame\"></iframe>"
+                                 "</body></html>");
+            socket->write(
+                "HTTP/1.1 200\r\nContent-Type: text/html\r\n"
+                "Content-Length: "
+                + QByteArray::number(body.size())
+                + "\r\nConnection: close\r\n\r\n" + body);
+            socket->disconnectFromHost();
+        });
+    });
+
+    BrowserMainWindow *window = new BrowserMainWindow;
+    TabWidget *tw = window->tabWidget();
+    QVERIFY(tw && tw->count() >= 1);
+    WebView *view = tw->webView(0);
+    QVERIFY(view && view->page());
+    QSignalSpy loadSpy(view->page(), &QWebEnginePage::loadFinished);
+    view->load(QUrl(base + QStringLiteral("/agent")));
+    QTRY_VERIFY_WITH_TIMEOUT(loadSpy.count() >= 1, 30000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(view->page(), probe + QStringLiteral(".bridgeUp"),
+             agentWorld).toBool(),
+        30000);
+    // The subframe must be committed before allFrames/frameIds
+    // address it.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(view->page(), QStringLiteral("window.length")).toInt()
+            >= 1,
+        15000);
+    const int tabId = ExtensionShimBackend::tabIdFor(view);
+    QVERIFY(tabId > 0);
+
+    // --- func form: result + the agent-world chrome binding --------
+    // The injected func's chrome.runtime.id resolves through the
+    // closure preamble to THIS extension's scoped agent object —
+    // the same surface declared content scripts get.
+    eval(host->page(), QStringLiteral(
+        "self.__ex1=undefined;"
+        "chrome.scripting.executeScript("
+        "{target:{tabId:%1},"
+        "func:function(){return {"
+        " title:document.title,"
+        " chromeId:(typeof chrome!=='undefined'"
+        "   &&chrome.runtime)?chrome.runtime.id:null}}},"
+        "function(r){self.__ex1={r:r||null,"
+        "err:(chrome.runtime.lastError"
+        "   &&chrome.runtime.lastError.message)"
+        "  ||((window.__arktosShim&&__arktosShim.lastError)"
+        "     &&__arktosShim.lastError.message)||null};});0")
+        .arg(tabId));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(),
+             QStringLiteral("self.__ex1!==undefined")).toBool(),
+        20000);
+    const QJsonObject ex1 = QJsonDocument::fromJson(
+        eval(host->page(),
+             QStringLiteral("JSON.stringify(self.__ex1)"))
+            .toString().toUtf8()).object();
+    QVERIFY2(!ex1.value(QLatin1String("r")).isNull()
+                 && !ex1.value(QLatin1String("r")).toArray()
+                        .isEmpty(),
+             qPrintable(QStringLiteral("executeScript failed: %1")
+                 .arg(eval(host->page(), QStringLiteral(
+                      "JSON.stringify(self.__ex1)")).toString())));
+    const QJsonObject ex1r0 =
+        ex1.value(QLatin1String("r")).toArray().at(0).toObject();
+    QCOMPARE(ex1r0.value(QLatin1String("frameId")).toInt(), 0);
+    QCOMPARE(ex1r0.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("title")).toString(),
+             QStringLiteral("exec-target"));
+    QCOMPARE(ex1r0.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("chromeId")).toString(),
+             id);
+    QVERIFY(ex1.value(QLatin1String("err")).isNull());
+
+    // --- args marshal into the func + ExecutionWorld enum ----------
+    eval(host->page(), QStringLiteral(
+        "self.__ex2=undefined;"
+        "self.__ex2w=(chrome.scripting.ExecutionWorld"
+        "  &&chrome.scripting.ExecutionWorld.ISOLATED)||null;"
+        "chrome.scripting.executeScript("
+        "{target:{tabId:%1},args:['alpha',3],"
+        "func:function(a,b){return a+'/'+b;}},"
+        "function(r){self.__ex2={r:r||null,"
+        "err:(window.__arktosShim&&__arktosShim.lastError"
+        "   &&__arktosShim.lastError.message)||null};});0")
+        .arg(tabId));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(),
+             QStringLiteral("self.__ex2!==undefined")).toBool(),
+        20000);
+    const QJsonObject ex2 = QJsonDocument::fromJson(
+        eval(host->page(),
+             QStringLiteral("JSON.stringify(self.__ex2)"))
+            .toString().toUtf8()).object();
+    QCOMPARE(ex2.value(QLatin1String("r")).toArray().at(0).toObject()
+                 .value(QLatin1String("result")).toString(),
+             QStringLiteral("alpha/3"));
+    QCOMPARE(eval(host->page(), QStringLiteral("self.__ex2w"))
+                 .toString(),
+             QStringLiteral("ISOLATED"));
+
+    // --- a returned Promise is awaited (parked + polled) ------------
+    eval(host->page(), QStringLiteral(
+        "self.__ex3=undefined;"
+        "chrome.scripting.executeScript("
+        "{target:{tabId:%1},"
+        "func:function(){return new Promise(function(res){"
+        " setTimeout(function(){res('async-ok');},50);});}},"
+        "function(r){self.__ex3={r:r||null};});0")
+        .arg(tabId));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(),
+             QStringLiteral("self.__ex3!==undefined")).toBool(),
+        20000);
+    QCOMPARE(QJsonDocument::fromJson(
+                 eval(host->page(),
+                      QStringLiteral("JSON.stringify(self.__ex3)"))
+                     .toString().toUtf8()).object()
+                 .value(QLatin1String("r")).toArray().at(0).toObject()
+                 .value(QLatin1String("result")).toString(),
+             QStringLiteral("async-ok"));
+
+    // --- files[] reads bundle content into the same world ----------
+    eval(host->page(), QStringLiteral(
+        "self.__ex4=undefined;"
+        "chrome.scripting.executeScript("
+        "{target:{tabId:%1},files:['inject.js']},"
+        "function(r){self.__ex4={r:r||null};});0")
+        .arg(tabId));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(),
+             QStringLiteral("self.__ex4!==undefined")).toBool(),
+        20000);
+    // The file ran in the shared agent world — a main-world probe
+    // must NOT see it.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(view->page(),
+             QStringLiteral("window.__injFileRan"),
+             agentWorld).toInt() == 1,
+        10000);
+    QVERIFY(eval(view->page(),
+                 QStringLiteral("window.__injFileRan")).toInt() == 0);
+
+    // --- allFrames + frameIds address real subframes ----------------
+    eval(host->page(), QStringLiteral(
+        "self.__ex5=undefined;"
+        "chrome.scripting.executeScript("
+        "{target:{tabId:%1,allFrames:true},"
+        "func:function(){return location.pathname;}},"
+        "function(r){self.__ex5={r:r||null};});0")
+        .arg(tabId));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(),
+             QStringLiteral("self.__ex5!==undefined")).toBool(),
+        20000);
+    const QJsonArray ex5r = QJsonDocument::fromJson(
+        eval(host->page(),
+             QStringLiteral("JSON.stringify(self.__ex5)"))
+            .toString().toUtf8()).object()
+        .value(QLatin1String("r")).toArray();
+    QVERIFY2(ex5r.size() >= 2,
+             qPrintable(QStringLiteral(
+                 "allFrames yielded %1 results")
+                 .arg(ex5r.size())));
+    QCOMPARE(ex5r.at(0).toObject()
+                 .value(QLatin1String("frameId")).toInt(), 0);
+    QCOMPARE(ex5r.at(0).toObject()
+                 .value(QLatin1String("result")).toString(),
+             QStringLiteral("/agent"));
+    QCOMPARE(ex5r.at(1).toObject()
+                 .value(QLatin1String("frameId")).toInt(), 1);
+    QCOMPARE(ex5r.at(1).toObject()
+                 .value(QLatin1String("result")).toString(),
+             QStringLiteral("/frame"));
+    eval(host->page(), QStringLiteral(
+        "self.__ex6=undefined;"
+        "chrome.scripting.executeScript("
+        "{target:{tabId:%1,frameIds:[1]},"
+        "func:function(){return location.pathname;}},"
+        "function(r){self.__ex6={r:r||null};});0")
+        .arg(tabId));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(),
+             QStringLiteral("self.__ex6!==undefined")).toBool(),
+        20000);
+    const QJsonArray ex6r = QJsonDocument::fromJson(
+        eval(host->page(),
+             QStringLiteral("JSON.stringify(self.__ex6)"))
+            .toString().toUtf8()).object()
+        .value(QLatin1String("r")).toArray();
+    QCOMPARE(ex6r.size(), 1);
+    QCOMPARE(ex6r.at(0).toObject()
+                 .value(QLatin1String("frameId")).toInt(), 1);
+    QCOMPARE(ex6r.at(0).toObject()
+                 .value(QLatin1String("result")).toString(),
+             QStringLiteral("/frame"));
+
+    // --- a throwing func resolves with a per-frame error ------------
+    // Chrome resolves once injection started — the throw surfaces as
+    // the entry's error field, not a call rejection.
+    eval(host->page(), QStringLiteral(
+        "self.__ex7=undefined;"
+        "chrome.scripting.executeScript("
+        "{target:{tabId:%1},"
+        "func:function(){throw new Error('boom');}},"
+        "function(r){self.__ex7={r:r||null};});0")
+        .arg(tabId));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(),
+             QStringLiteral("self.__ex7!==undefined")).toBool(),
+        20000);
+    const QJsonObject ex7r0 = QJsonDocument::fromJson(
+        eval(host->page(),
+             QStringLiteral("JSON.stringify(self.__ex7)"))
+            .toString().toUtf8()).object()
+        .value(QLatin1String("r")).toArray().at(0).toObject();
+    QVERIFY(ex7r0.value(QLatin1String("error")).toString()
+                .contains(QStringLiteral("boom")));
+
+    // --- host-permission miss: typed error BEFORE the page ---------
+    // qrc: sits outside '<all_urls>' — the agentCovers gate must
+    // refuse before a single byte is generated into the document.
+    WebView *view3 = tw->makeNewTab(false);
+    QVERIFY(view3 && view3->page());
+    QSignalSpy loadSpy3(view3->page(), &QWebEnginePage::loadFinished);
+    view3->load(QUrl(QStringLiteral("qrc:/pip-player.html")));
+    QTRY_VERIFY_WITH_TIMEOUT(loadSpy3.count() >= 1, 30000);
+    const int tabId3 = ExtensionShimBackend::tabIdFor(view3);
+    eval(host->page(), QStringLiteral(
+        "self.__ex8=undefined;"
+        "chrome.scripting.executeScript("
+        "{target:{tabId:%1},func:function(){return 1;}},"
+        "function(r){self.__ex8={r:(r===undefined)?'undef':'def',"
+        "err:(window.__arktosShim&&__arktosShim.lastError"
+        "   &&__arktosShim.lastError.message)||null};});0")
+        .arg(tabId3));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(),
+             QStringLiteral("self.__ex8!==undefined")).toBool(),
+        20000);
+    const QJsonObject ex8 = QJsonDocument::fromJson(
+        eval(host->page(),
+             QStringLiteral("JSON.stringify(self.__ex8)"))
+            .toString().toUtf8()).object();
+    QCOMPARE(ex8.value(QLatin1String("r")).toString(),
+             QStringLiteral("undef"));
+    QVERIFY(ex8.value(QLatin1String("err")).toString()
+                .contains(QStringLiteral("no-host-access")));
+
+    // --- the C++ gates, direct-driven -------------------------------
+    // 'scripting' permission absent -> refused before anything else.
+    QCOMPARE(hostB->bridge()->invoke(
+                 QStringLiteral("scripting"),
+                 QStringLiteral("executeScript"),
+                 QJsonObject{{QStringLiteral("execId"),
+                              idB + QStringLiteral("#execX")},
+                             {QStringLiteral("target"),
+                              QJsonObject{{QStringLiteral("tabId"),
+                                           tabId}}},
+                             {QStringLiteral("func"),
+                              QStringLiteral("function(){}")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+    // The execId prefix is a capability — a key outside the
+    // extension's own namespace never runs.
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("scripting"),
+                 QStringLiteral("executeScript"),
+                 QJsonObject{{QStringLiteral("execId"),
+                              QStringLiteral("other#e1")},
+                             {QStringLiteral("target"),
+                              QJsonObject{{QStringLiteral("tabId"),
+                                           tabId}}},
+                             {QStringLiteral("func"),
+                              QStringLiteral("function(){}")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    // No such tab.
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("scripting"),
+                 QStringLiteral("executeScript"),
+                 QJsonObject{{QStringLiteral("execId"),
+                              id + QStringLiteral("#e1")},
+                             {QStringLiteral("target"),
+                              QJsonObject{{QStringLiteral("tabId"),
+                                           424242}}},
+                             {QStringLiteral("func"),
+                              QStringLiteral("function(){}")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+    // documentIds — a handle we never mint — is honest unsupported,
+    // not a silent frame-0 substitution.
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("scripting"),
+                 QStringLiteral("executeScript"),
+                 QJsonObject{{QStringLiteral("execId"),
+                              id + QStringLiteral("#e2")},
+                             {QStringLiteral("target"),
+                              QJsonObject{{QStringLiteral("tabId"),
+                                           tabId},
+                                          {QStringLiteral("documentIds"),
+                                           QJsonArray{
+                                               QStringLiteral("d1")}}}},
+                             {QStringLiteral("func"),
+                              QStringLiteral("function(){}")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    // A frame id beyond the current tree.
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("scripting"),
+                 QStringLiteral("executeScript"),
+                 QJsonObject{{QStringLiteral("execId"),
+                              id + QStringLiteral("#e3")},
+                             {QStringLiteral("target"),
+                              QJsonObject{{QStringLiteral("tabId"),
+                                           tabId},
+                                          {QStringLiteral("frameIds"),
+                                           QJsonArray{77}}}},
+                             {QStringLiteral("func"),
+                              QStringLiteral("function(){}")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+    // func+files together — Chrome takes one or the other.
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("scripting"),
+                 QStringLiteral("executeScript"),
+                 QJsonObject{{QStringLiteral("execId"),
+                              id + QStringLiteral("#e4")},
+                             {QStringLiteral("target"),
+                              QJsonObject{{QStringLiteral("tabId"),
+                                           tabId}}},
+                             {QStringLiteral("func"),
+                              QStringLiteral("function(){}")},
+                             {QStringLiteral("files"),
+                              QJsonArray{QStringLiteral("inject.js")}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    // A file outside the bundle's own tree never reads.
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("scripting"),
+                 QStringLiteral("executeScript"),
+                 QJsonObject{{QStringLiteral("execId"),
+                              id + QStringLiteral("#e5")},
+                             {QStringLiteral("target"),
+                              QJsonObject{{QStringLiteral("tabId"),
+                                           tabId}}},
+                             {QStringLiteral("files"),
+                              QJsonArray{QStringLiteral(
+                                  "../manifest.json")}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("bad-path"));
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("scripting"),
+                 QStringLiteral("executeScript"),
+                 QJsonObject{{QStringLiteral("execId"),
+                              id + QStringLiteral("#e6")},
+                             {QStringLiteral("target"),
+                              QJsonObject{{QStringLiteral("tabId"),
+                                           tabId}}},
+                             {QStringLiteral("files"),
+                              QJsonArray{QStringLiteral(
+                                  "missing.js")}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-such-file"));
+
+    // The denial legs surface through the shim-gap ledger too — a
+    // typed failure is recorded, never silent.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        [&]() {
+            for (const QString &g : host->shimGaps()) {
+                if (g.contains(QStringLiteral("scripting"))
+                        && g.contains(QStringLiteral(
+                               "no-host-access")))
+                    return true;
+            }
+            return false;
+        }(), 15000);
+
+    window->deleteLater();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    manager->setExtensionEnabled(id, false);
+    manager->setExtensionEnabled(idB, false);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 20000);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(idB), 20000);
+    manager->removeExtension(id);
+    manager->removeExtension(idB);
+    QDir(dir).removeRecursively();
+    QDir(dirB).removeRecursively();
 }
 
 // SEC-EXT white-popup regression probe: replicate
