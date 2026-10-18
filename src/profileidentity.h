@@ -48,6 +48,9 @@ class ProfileIdentity : public QObject
 public:
     static ProfileIdentity *instance();
 
+    // On-disk avatar edge length written by setAvatarImage().
+    static constexpr int AvatarSize = 128;
+
     QString name() const;
     void setName(const QString &name);
 
@@ -61,6 +64,13 @@ public:
     // silhouette.  A null pixmap means even the fallback failed.
     QPixmap avatarPixmap(int extent) const;
 
+    // PROF02: scales image to AvatarSize and writes the avatar PNG
+    // atomically (QSaveFile's temp+rename).  Returns false on a null
+    // image or a write failure; emits avatarChanged() on success.
+    bool setAvatarImage(const QImage &image);
+    // Deletes the avatar file -> silhouette fallback.  Returns false
+    // only when an existing file could not be removed.
+    bool removeAvatar();
     // Drops the cached source and re-reads the avatar file — the
     // call PROF02 makes after saving/removing the file so every
     // window's button repaints.

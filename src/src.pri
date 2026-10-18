@@ -117,10 +117,13 @@ HEADERS += \
     $$PWD/popupblocker.h \
     $$PWD/positionpicker.h \
     $$PWD/printpreviewdialog.h \
+    $$PWD/profileavataractions.h \
+    $$PWD/profileavatardialog.h \
     $$PWD/profilebutton.h \
     $$PWD/profilecontext.h \
     $$PWD/profileidentity.h \
     $$PWD/profilemanagerdialog.h \
+    $$PWD/profilemenuactions.h \
     $$PWD/profilestore.h \
     $$PWD/profilevault.h \
     $$PWD/qrcodedialog.h \
@@ -207,9 +210,12 @@ SOURCES += \
     $$PWD/popupblocker.cpp \
     $$PWD/positionpicker.cpp \
     $$PWD/printpreviewdialog.cpp \
+    $$PWD/profileavataractions.cpp \
+    $$PWD/profileavatardialog.cpp \
     $$PWD/profilebutton.cpp \
     $$PWD/profileidentity.cpp \
     $$PWD/profilemanagerdialog.cpp \
+    $$PWD/profilemenuactions.cpp \
     $$PWD/profilestore.cpp \
     $$PWD/profilevault.cpp \
     $$PWD/qrcodedialog.cpp \

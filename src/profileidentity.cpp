@@ -27,6 +27,7 @@
 #include <qimagereader.h>
 #include <qpainter.h>
 #include <qpainterpath.h>
+#include <qsavefile.h>
 #include <qsettings.h>
 
 static const char kNameKey[] = "profile/name";
@@ -97,6 +98,39 @@ QImage ProfileIdentity::avatarSource() const
                 QLatin1String(kSilhouetteResource)).read();
     }
     return m_source;
+}
+
+bool ProfileIdentity::setAvatarImage(const QImage &image)
+{
+    if (image.isNull())
+        return false;
+    const QImage scaled = image.scaled(AvatarSize, AvatarSize,
+                                       Qt::IgnoreAspectRatio,
+                                       Qt::SmoothTransformation);
+    QSaveFile file(avatarFilePath());
+    if (!file.open(QIODevice::WriteOnly))
+        return false;
+    if (!scaled.save(&file, "PNG"))
+        return false;
+    if (!file.commit())
+        return false;
+    m_sourceLoaded = false;
+    m_source = QImage();
+    emit avatarChanged();
+    return true;
+}
+
+bool ProfileIdentity::removeAvatar()
+{
+    const QString path = avatarFilePath();
+    const bool hadAvatar = QFile::exists(path);
+    if (hadAvatar && !QFile::remove(path))
+        return false;
+    m_sourceLoaded = false;
+    m_source = QImage();
+    if (hadAvatar)
+        emit avatarChanged();
+    return true;
 }
 
 void ProfileIdentity::reloadAvatar()

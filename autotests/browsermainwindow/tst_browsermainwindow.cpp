@@ -50,6 +50,7 @@
 #include <qprinterinfo.h>
 #include <qprogressbar.h>
 #include <qpushbutton.h>
+#include <qscopeguard.h>
 #include <qsortfilterproxymodel.h>
 #include <qsplitter.h>
 #include <qstackedwidget.h>
@@ -81,8 +82,10 @@
 #include "fakeengine.h"
 #include "history.h"
 #include "historymanager.h"
+#include "profileavataractions.h"
 #include "profileidentity.h"
 #include "profilemanagerdialog.h"
+#include "profilemenuactions.h"
 #include "profilestore.h"
 #include "notesmodel.h"
 #include "pdfview.h"
@@ -4051,6 +4054,10 @@ void tst_BrowserMainWindow::torTitleBar()
 void tst_BrowserMainWindow::torTitleBarTitle()
 {
     BrowserApplication::setTorMode(true);
+    // A failed leg used to skip the restore below and leak tor mode
+    // into every later leg — guard it so a flake stays one failure.
+    const auto restoreTorMode = qScopeGuard(
+        []() { BrowserApplication::setTorMode(false); });
     SubWindow *window = new SubWindow;
     window->resize(1000, 600);
     window->show();
@@ -4150,7 +4157,6 @@ void tst_BrowserMainWindow::torTitleBarTitle()
     QApplication::processEvents();
 
     closeWindow(window);
-    BrowserApplication::setTorMode(false);
 
     QVERIFY(darkInk.first > 20);
     QCOMPARE(darkInk.second, 0);
@@ -9342,6 +9348,58 @@ void tst_BrowserMainWindow::profileMenuEntries()
                  ->topLevelItemCount() >= 1, true);
     ProfileManagerDialog::instance()->close();
     QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+
+    // PROF04: the avatar, hygiene and danger blocks are wired into
+    // the menu through the helper seams, not left as anchor comments.
+    ProfileAvatarActions *avatarActions =
+        button->findChild<ProfileAvatarActions *>();
+    QVERIFY(avatarActions);
+    ProfileMenuActions *menuActions =
+        button->findChild<ProfileMenuActions *>();
+    QVERIFY(menuActions);
+
+    const QList<QAction *> entries = menu->actions();
+    // Order: identity block (header, rename, switcher, manager,
+    // lock), separator, Change Picture…, Remove Picture, separator,
+    // the four Clear-* rows, separator, Delete Profile….
+    const int changeIx =
+        entries.indexOf(avatarActions->changePictureAction());
+    const int removeIx =
+        entries.indexOf(avatarActions->removePictureAction());
+    const int historyIx =
+        entries.indexOf(menuActions->clearHistoryAction());
+    const int cookiesIx =
+        entries.indexOf(menuActions->clearCookiesAction());
+    const int cacheIx = entries.indexOf(menuActions->clearCacheAction());
+    const int privateIx =
+        entries.indexOf(menuActions->clearPrivateDataAction());
+    const int deleteIx =
+        entries.indexOf(menuActions->deleteProfileAction());
+    QVERIFY(changeIx > entries.indexOf(managerAction));
+    QCOMPARE(removeIx, changeIx + 1);
+    QVERIFY(historyIx > removeIx);
+    QCOMPARE(cookiesIx, historyIx + 1);
+    QCOMPARE(cacheIx, cookiesIx + 1);
+    QCOMPARE(privateIx, cacheIx + 1);
+    QVERIFY(deleteIx > privateIx);
+    QVERIFY(entries.at(historyIx - 1)->isSeparator());
+    QVERIFY(entries.at(deleteIx - 1)->isSeparator());
+    QCOMPARE(deleteIx, entries.count() - 1);
+    QVERIFY(entries.at(changeIx - 1)->isSeparator());
+
+    // 'Remove Picture' tracks the custom-avatar state live: disabled
+    // with none, enabled once one lands, back to disabled after the
+    // row itself removes it — and the button face follows the same
+    // avatarChanged fan-out the header does.
+    QVERIFY(!avatarActions->removePictureAction()->isEnabled());
+    ProfileIdentity *identity = ProfileIdentity::instance();
+    QVERIFY(identity->setAvatarImage(
+        QImage(64, 64, QImage::Format_RGB32)));
+    QTRY_VERIFY(avatarActions->removePictureAction()->isEnabled());
+    QVERIFY(!button->icon().isNull());
+    avatarActions->removePictureAction()->trigger();
+    QVERIFY(!identity->hasCustomAvatar());
+    QTRY_VERIFY(!avatarActions->removePictureAction()->isEnabled());
 
     closeWindow(window);
 }

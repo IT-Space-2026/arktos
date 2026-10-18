@@ -3105,3 +3105,20 @@ Trust chrome works on Servo/foreign-engine tabs (TRUST25):
     an explanation rather than claiming values they can't produce.
     Switching between Chromium and Servo tabs rebinds the chrome in
     both directions.
+
+Profile menu gains avatar, hygiene and danger rows (PROF04):
+    The navigation-bar profile button's menu now wires in the blocks
+    the parallel lanes shipped: "Change Picture..." opens a
+    crop-and-zoom editor (drag to pan, wheel or slider to zoom,
+    circular preview of the button face) that saves a 128px avatar,
+    and "Remove Picture" — enabled only while a custom picture
+    exists — returns to the bundled silhouette. Under their own
+    separators sit the hygiene rows: "Clear History...",
+    "Clear Cookies...", "Clear Cache..." each run one confirm and
+    wipe only that store, and "Clear Private Data..." opens the
+    existing full dialog. The red "Delete Profile..." row asks twice
+    — an itemized confirm, then a type-DELETE-to-confirm gate — then
+    drops a wipe marker, restarts the browser, and the next boot
+    erases the profile's data, cache and settings before anything
+    loads: the fresh start comes up on the silhouette with the
+    default name and empty stores, while downloaded files are kept.

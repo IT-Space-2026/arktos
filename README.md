@@ -262,9 +262,14 @@ browsing profile:
   Tools > Profiles... and Preferences > General — which creates,
   renames, deletes (type-to-confirm; the default profile cannot be
   deleted) and opens windows on profiles kept under their own data
-  folders. A neutral silhouette is the default face until a custom
-  picture is chosen; it is a normal navigation-bar item, so Edit
-  Navigation Bar can reorder it.
+  folders. "Change Picture..." opens a crop-and-zoom avatar editor
+  and "Remove Picture" returns to the neutral silhouette default.
+  The menu also carries single-purpose hygiene rows — Clear
+  History, Clear Cookies, Clear Cache (one confirm, only that store
+  is wiped) and Clear Private Data for the full dialog — plus a red
+  "Delete Profile..." row that wipes the whole profile after a
+  double confirm and restarts the browser fresh. It is a normal
+  navigation-bar item, so Edit Navigation Bar can reorder it.
 - **Sharing** — "Copy Clean Link" strips tracking parameters;
   "Show QR" renders a link as a QR code.
 - **Preferences** — opens as a tab (one per window), Vivaldi-style

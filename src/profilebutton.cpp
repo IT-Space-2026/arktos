@@ -21,8 +21,10 @@
 
 #include "browserapplication.h"
 #include "browsermainwindow.h"
+#include "profileavataractions.h"
 #include "profileidentity.h"
 #include "profilemanagerdialog.h"
+#include "profilemenuactions.h"
 #include "profilestore.h"
 #include "profilevault.h"
 #include "vaultdialogs.h"
@@ -186,10 +188,27 @@ ProfileButton::ProfileButton(QWidget *parent)
     updateLockAction();
 
     m_menu->addSeparator();
-    // PROF02: 'Change Picture…' + 'Remove Picture' insert here,
-    // directly under the identity block.
-    // PROF03: the Clear-* hygiene section and 'Delete Profile'
-    // insert below, under their own separator.
+    // PROF02 avatar block — 'Change Picture…' + 'Remove Picture'
+    // directly under the identity block.  The helpers are button
+    // children so their confirms parent to the window and their
+    // lifetime matches the menu's.
+    ProfileAvatarActions *avatarActions = new ProfileAvatarActions(this);
+    avatarActions->changePictureAction()->setObjectName(
+        QLatin1String("profileChangePictureAction"));
+    avatarActions->removePictureAction()->setObjectName(
+        QLatin1String("profileRemovePictureAction"));
+    m_menu->addAction(avatarActions->changePictureAction());
+    m_menu->addAction(avatarActions->removePictureAction());
+
+    // PROF03 hygiene + danger blocks — single-purpose Clear-*
+    // wipes under their own separator, then the red 'Delete
+    // Profile…' row that schedules the marker+restart wipe.
+    m_menu->addSeparator();
+    ProfileMenuActions *menuActions = new ProfileMenuActions(this);
+    menuActions->setObjectName(QLatin1String("profileMenuActions"));
+    m_menu->addActions(menuActions->hygieneActions());
+    m_menu->addSeparator();
+    m_menu->addAction(menuActions->deleteProfileAction());
 
     ProfileIdentity *identity = ProfileIdentity::instance();
     connect(identity, &ProfileIdentity::nameChanged,

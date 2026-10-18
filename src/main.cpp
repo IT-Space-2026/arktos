@@ -65,6 +65,7 @@
 #include "pipwindow.h"
 #include "plaintexteditsearch.h"
 #include "printpreviewdialog.h"
+#include "profilemenuactions.h"
 #include "navigationpolicy.h"
 #include "privacyrequestinterceptor.h"
 #include "readermode.h"
@@ -5193,6 +5194,18 @@ int main(int argc, char **argv)
             return 2;
         }
     }
+
+    // PROF03: a 'Delete Profile' request survives the requested
+    // process exit as arora-profile-wipe.pending in the data dir.
+    // Apply it HERE — before the application object exists, so before
+    // any settings read, before the named QtWebEngine profile and
+    // before the first WebContents.  The wiping process is waited out
+    // (the marker carries its pid) so teardown writes cannot land in
+    // the fresh tree; then data + cache roots, the settings file and
+    // the marker itself are removed and the boot continues clean.
+    // Downloads (user files), packages and the system tor binary are
+    // outside those roots and never touched.
+    ProfileMenuActions::applyPendingProfileWipe();
 
     // CRASH02: install the crash reporter as early as the data dir
     // resolves (smoke runs land it in their isolated store).  A fatal
