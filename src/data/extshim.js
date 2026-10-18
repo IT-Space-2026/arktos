@@ -133,6 +133,10 @@
             onRelayResponse(payload);
             return;
         }
+        if (name === '__arktos.deliverResponse') {
+            onDeliverResponse(payload);
+            return;
+        }
         if (name === '__arktos.portConnect') {
             // A sibling context offered a port — accept it on behalf
             // of this context's runtime.onConnect listeners.
@@ -587,7 +591,12 @@
             for (var tk in tabsNsRef) {
                 if (tk === '__arktosShim')
                     continue;
-                if (chrome.tabs[tk] === undefined)
+                // sendMessage is an identity override like
+                // runtime.connect: the native binding can only reach
+                // the dead service worker, the hosted route is the
+                // live one — fill it even over a native member.
+                if (chrome.tabs[tk] === undefined
+                        || tk === 'sendMessage')
                     safeSet(chrome.tabs, tk, tabsNsRef[tk],
                             'chrome.tabs.' + tk);
             }
@@ -668,7 +677,39 @@
     // peers is inherent to the dual-context design and matches the
     // extension's own broadcast expectations.
     var msgPending = {};   // mid -> {finish, peers, replies}
+    var deliverWait = {};  // mid -> {cb, resolve, reject, done} —
+                           // ER02 tabs.sendMessage host->page waits
     var relayPeers = 0;
+
+    // ER02: the page agent's 'respond' lands here — resolve the
+    // matching tabs.sendMessage with Chrome's own error vocabulary:
+    // an answered delivery passes its value through; an empty answer
+    // distinguishes "receiving end does not exist" (no listeners)
+    // from "port closed" (listeners present, none responded).
+    function onDeliverResponse(payload) {
+        if (!payload || !payload.mid)
+            return;
+        var entry = deliverWait[payload.mid];
+        if (!entry || entry.done)
+            return;
+        var v = (payload.response === null
+                 || payload.response === undefined)
+            ? undefined : payload.response;
+        if (v !== undefined) {
+            entry.done = true;
+            delete deliverWait[payload.mid];
+            answerCb(entry.cb, v);
+            entry.resolve(v);
+            return;
+        }
+        // entry.fail owns the done flag — marking it here would
+        // turn the call below into a silent no-op and strand the
+        // callback AND the safety timer on a done entry.
+        entry.fail(payload.hadListeners
+            ? 'The message port closed before a response was received.'
+            : 'Could not establish connection. '
+              + 'Receiving end does not exist.');
+    }
 
     function contentKey(msg) {
         try { return String(JSON.stringify(msg)).slice(0, 512); }
@@ -1791,16 +1832,57 @@
                 cb = opts;
                 opts = undefined;
             }
-            if (realTabs.sendMessage) {
-                touch('chrome.tabs.sendMessage');
-                try {
-                    var r = realTabs.sendMessage.call(realTabs, tabId,
-                                                      msg, opts, cb);
-                    return r && r.then
-                        ? r : Promise.resolve(undefined);
-                } catch (e) {}
-            }
-            return failCall('tabs.sendMessage', 'unsupported', cb);
+            // ER02: the hosted route — the page agent is the only
+            // live receiving end (the native binding can only reach
+            // the dead service worker), so there is no native
+            // attempt: the bridge resolves the tab, gates the
+            // extension's host coverage BEFORE any push, emits
+            // '__arktos.deliver', and the reply returns as
+            // '__arktos.deliverResponse' -> onDeliverResponse.
+            touch('chrome.tabs.sendMessage');
+            var mid = cfg.id + '#' + (++shim.seq) + '#' + Date.now();
+            return new Promise(function (resolve, reject) {
+                var entry = { cb: cb, resolve: resolve,
+                              reject: reject, done: false };
+                entry.fail = function (message) {
+                    if (entry.done)
+                        return;
+                    entry.done = true;
+                    delete deliverWait[mid];
+                    if (cb) {
+                        // Callback form: lastError inside the call,
+                        // and the (dual-convention) promise resolves
+                        // rather than reject — Chrome hands back no
+                        // promise at all in the callback shape, so an
+                        // unhandled rejection must not appear.
+                        answerCb(cb, undefined, message);
+                        resolve(undefined);
+                        return;
+                    }
+                    var e = new Error(message);
+                    e.api = 'chrome.tabs.sendMessage';
+                    reject(e);
+                };
+                deliverWait[mid] = entry;
+                // Safety net: an accepted delivery whose answer never
+                // lands (channel died mid-flight) still resolves.
+                setTimeout(function () {
+                    entry.fail('The message port closed before a '
+                               + 'response was received.');
+                }, 15000);
+                call('tabs', 'sendMessage',
+                     { id: tabId, mid: mid, msg: msg,
+                       opts: opts || {} })
+                    .then(function () {
+                        // Delivery accepted — the answer arrives on
+                        // the deliverResponse push.
+                    })
+                    .catch(function (e) {
+                        entry.fail(e && e.message
+                            ? e.message
+                            : 'chrome.tabs.sendMessage failed');
+                    });
+            });
         };
         var tabsProxy = new Proxy(tabsNs, {
             get: function (t, prop) {

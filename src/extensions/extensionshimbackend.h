@@ -96,6 +96,10 @@ public:
     // consistent across query+get and (EXT16) event payloads.
     static int tabIdFor(const QObject *view);
     static int windowIdFor(const QObject *window);
+    // ER02: tabId -> the live WebView, resolved over the same
+    // window/tab set chrome.tabs.query enumerates (top-level
+    // windows, OTR/tor excluded).  nullptr when no tab carries it.
+    static class WebView *viewForTabId(int tabId);
 
     // The chrome.tabs object shape — shared by invokeTabs,
     // EXT16 event payloads and contextMenus.onClicked's tab arg.

@@ -85,6 +85,7 @@ private slots:
     void extensionEventSurfaces();
     void extensionPopupContext();
     void extensionPageAgent();
+    void extensionTabMessaging();
     void actionPopupSelfWires();
     void realExtensionPopup();
     void bitwardenGapBaseline();
@@ -2770,6 +2771,388 @@ void tst_ExtensionManager::extensionPageAgent()
     view2->deleteLater();
     QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
 
+    manager->setExtensionEnabled(id, false);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 20000);
+    manager->removeExtension(id);
+    QDir(dir).removeRecursively();
+}
+
+// ER02 — chrome.tabs.sendMessage: the host->page direction.  A
+// fixture extension's declared content script registers
+// chrome.runtime.onMessage (except on a designated no-listener
+// path); the hosted background calls chrome.tabs.sendMessage against
+// a real browser tab.  The round trip must cross the C++ dispatch
+// (tabId -> WebView -> ExtensionPageBridge -> '__arktos.deliver' ->
+// agent 'respond' -> '__arktos.deliverResponse'), and every failure
+// mode answers a typed error: wrong tabId, foreign mid, subframe
+// addressing, and a page the extension's grants do not cover.
+void tst_ExtensionManager::extensionTabMessaging()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-exttabmsg-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-tabmsg\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\","
+                "\"tabs\"],\"host_permissions\":[\"<all_urls>\"],"
+                "\"background\":{\"service_worker\":\"sw.js\"},"
+                "\"content_scripts\":[{\"matches\":[\"<all_urls>\"],"
+                "\"js\":[\"cs.js\"],\"run_at\":\"document_idle\"}]}");
+        f.close();
+        QFile w(dir + QLatin1String("/sw.js"));
+        QVERIFY(w.open(QIODevice::WriteOnly));
+        w.write(
+            "chrome.runtime.onInstalled.addListener(function(){});\n");
+        w.close();
+        QFile c(dir + QLatin1String("/cs.js"));
+        QVERIFY(c.open(QIODevice::WriteOnly));
+        c.write(
+            "window.__csSenders=[];\n"
+            "if(location.pathname!=='/nolistener'){"
+            "chrome.runtime.onMessage.addListener("
+            "function(m,s,r){"
+            " window.__csSenders.push("
+            "  {id:(s&&s.id)||null,"
+            "   url:(s&&s.url)||null,"
+            "   origin:(s&&s.origin)||null,"
+            "   hasTab:!!(s&&s.tab)});"
+            " r({got:m}); return false; });}\n");
+        c.close();
+    }
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    auto loaded = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-tabmsg")
+                && info.error.isEmpty())
+            *loaded = info.id;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded->isEmpty(), 30000);
+    const QString id = *loaded;
+    manager->setExtensionEnabled(id, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(id)
+            && runtime->host(id)->state()
+                   == ExtensionBackgroundHost::State::Ready,
+        45000);
+    ExtensionBackgroundHost *host = runtime->host(id);
+    QVERIFY(host && host->bridge());
+
+    auto eval = [](QWebEnginePage *page, const QString &source,
+                   quint32 worldId = 0) {
+        auto result = std::make_shared<QVariant>();
+        page->runJavaScript(
+            source, worldId,
+            [result](const QVariant &v) { *result = v; });
+        QElapsedTimer t;
+        t.start();
+        while (!result->isValid() && t.elapsed() < 15000)
+            QTest::qWait(50);
+        return *result;
+    };
+    const quint32 agentWorld =
+        ExtensionBackgroundRuntime::AgentWorldId;
+    const QString probe = QStringLiteral(
+        "((window.__arktosExtAgents&&__arktosExtAgents['%1'])"
+        "||{active:false,bridgeUp:false})").arg(id);
+
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    const QString base = QStringLiteral("http://127.0.0.1:%1")
+        .arg(server.serverPort());
+    QObject::connect(&server, &QTcpServer::newConnection,
+                     this, [&]() {
+        QTcpSocket *socket = server.nextPendingConnection();
+        QObject::connect(socket, &QTcpSocket::readyRead,
+                         socket, [socket]() {
+            socket->readAll();
+            const QByteArray body =
+                "<html><body>tabmsg</body></html>";
+            socket->write(
+                "HTTP/1.1 200\r\nContent-Type: text/html\r\n"
+                "Content-Length: "
+                + QByteArray::number(body.size())
+                + "\r\nConnection: close\r\n\r\n" + body);
+            socket->disconnectFromHost();
+        });
+    });
+
+    // A real tab — the tabId registry resolves only tabs a
+    // BrowserMainWindow's TabWidget hosts.
+    BrowserMainWindow *window = new BrowserMainWindow;
+    TabWidget *tw = window->tabWidget();
+    QVERIFY(tw && tw->count() >= 1);
+    WebView *view = tw->webView(0);
+    QVERIFY(view && view->page());
+    QSignalSpy loadSpy(view->page(), &QWebEnginePage::loadFinished);
+    view->load(QUrl(base + QStringLiteral("/agent")));
+    QTRY_VERIFY_WITH_TIMEOUT(loadSpy.count() >= 1, 30000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(view->page(), probe + QStringLiteral(".bridgeUp"),
+             agentWorld).toBool(),
+        30000);
+    const int tabId = ExtensionShimBackend::tabIdFor(view);
+    QVERIFY(tabId > 0);
+
+    // --- the host->page round trip ----------------------------------
+    eval(host->page(), QStringLiteral(
+        "self.__tsm=undefined;"
+        "chrome.tabs.sendMessage(%1,{fill:'x',n:7},function(r){"
+        "self.__tsm={r:(r===undefined)?null:r,"
+        "err:(chrome.runtime.lastError"
+        "   &&chrome.runtime.lastError.message)"
+        "  ||((window.__arktosShim&&__arktosShim.lastError)"
+        "     &&__arktosShim.lastError.message)||null};});0")
+        .arg(tabId));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(), QStringLiteral("self.__tsm!==undefined"))
+            .toBool(),
+        20000);
+    const QJsonObject tsm = QJsonDocument::fromJson(
+        eval(host->page(),
+             QStringLiteral("JSON.stringify(self.__tsm)"))
+            .toString().toUtf8()).object();
+    QVERIFY2(!tsm.value(QLatin1String("r")).isNull(),
+             qPrintable(QStringLiteral("sendMessage failed: %1")
+                 .arg(eval(host->page(), QStringLiteral(
+                      "JSON.stringify(self.__tsm)")).toString())));
+    QCOMPARE(tsm.value(QLatin1String("r")).toObject()
+                 .value(QLatin1String("got")).toObject()
+                 .value(QLatin1String("fill")).toString(),
+             QStringLiteral("x"));
+    QVERIFY(tsm.value(QLatin1String("err")).isNull());
+
+    // The content script saw a Chrome-shaped extension-context
+    // sender: its own extension id + extension origin, no .tab.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(view->page(), QStringLiteral(
+            "(window.__csSenders||[]).length>=1"),
+            agentWorld).toBool(),
+        10000);
+    const QJsonObject sender = QJsonDocument::fromJson(
+        eval(view->page(), QStringLiteral(
+            "JSON.stringify(window.__csSenders[0])"),
+            agentWorld).toString().toUtf8()).object();
+    QCOMPARE(sender.value(QLatin1String("id")).toString(), id);
+    QCOMPARE(sender.value(QLatin1String("origin")).toString(),
+             QStringLiteral("chrome-extension://") + id);
+    QCOMPARE(sender.value(QLatin1String("hasTab")).toBool(), false);
+
+    // --- a covered page with no listener -> honest no-receiver -----
+    WebView *view2 = tw->makeNewTab(false);
+    QVERIFY(view2 && view2->page());
+    QSignalSpy loadSpy2(view2->page(), &QWebEnginePage::loadFinished);
+    view2->load(QUrl(base + QStringLiteral("/nolistener")));
+    QTRY_VERIFY_WITH_TIMEOUT(loadSpy2.count() >= 1, 30000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(view2->page(), probe + QStringLiteral(".bridgeUp"),
+             agentWorld).toBool(),
+        30000);
+    const int tabId2 = ExtensionShimBackend::tabIdFor(view2);
+    eval(host->page(), QStringLiteral(
+        "self.__tsm2=undefined;self.__tsm2diag=undefined;"
+        "try{"
+        "var __sm=chrome.tabs.sendMessage;"
+        "self.__tsm2diag={fn:typeof __sm,"
+        "src:String(__sm&&__sm.toString()).slice(0,120)};"
+        "chrome.tabs.sendMessage(%1,{x:1},function(r){"
+        "try{self.__tsm2={r:(r===undefined)?'undef':'defined',"
+        "err:(chrome.runtime.lastError"
+        "   &&chrome.runtime.lastError.message)"
+        "  ||((window.__arktosShim&&__arktosShim.lastError)"
+        "     &&__arktosShim.lastError.message)||null};"
+        "}catch(e){self.__tsm2={r:'cbthrew',err:String(e)};}});"
+        "self.__tsm2diag.called=true;"
+        "}catch(e){self.__tsm2diag.threw=String(e&&e.stack||e);}")
+        .arg(tabId2));
+    {
+        QElapsedTimer wait2;
+        wait2.start();
+        while (!eval(host->page(),
+                     QStringLiteral("self.__tsm2!==undefined"))
+                    .toBool()
+               && wait2.elapsed() < 20000)
+            QTest::qWait(50);
+        if (!eval(host->page(),
+                  QStringLiteral("self.__tsm2!==undefined"))
+                 .toBool()) {
+            qWarning() << "TMSG DIAG host:"
+                       << eval(host->page(), QStringLiteral(
+                              "JSON.stringify(self.__tsm2diag)"))
+                              .toString();
+            qWarning() << "TMSG DIAG shim:"
+                       << eval(host->page(), QStringLiteral(
+                              "JSON.stringify(__arktosShim&&"
+                              "{notes:(__arktosShim.notes||[])"
+                              " .slice(-5),"
+                              "errors:(__arktosShim.errors||[])"
+                              " .slice(-5),"
+                              "lastErr:__arktosShim.lastError,"
+                              "touched:__arktosShim.touched}"
+                              "||null)")).toString();
+            eval(host->page(), QStringLiteral(
+                "setTimeout(function(){self.__tprobe=1;},200);0"));
+            QTest::qWait(1200);
+            qWarning() << "TMSG DIAG timer:"
+                       << eval(host->page(),
+                               QStringLiteral("self.__tprobe||0"))
+                              .toInt();
+            qWarning() << "TMSG DIAG agent:"
+                       << eval(view2->page(), QStringLiteral(
+                              "JSON.stringify((window.__arktosExtAgents"
+                              "&&__arktosExtAgents['%1']"
+                              "&&{active:__arktosExtAgents['%1'].active,"
+                              "deliveries:__arktosExtAgents['%1']"
+                              "  .deliveries,"
+                              "errors:__arktosExtAgents['%1'].errors})"
+                              "||null)").arg(id),
+                              agentWorld).toString();
+        }
+    }
+    QVERIFY(eval(host->page(), QStringLiteral("self.__tsm2!==undefined"))
+                .toBool());
+    const QJsonObject tsm2 = QJsonDocument::fromJson(
+        eval(host->page(),
+             QStringLiteral("JSON.stringify(self.__tsm2)"))
+            .toString().toUtf8()).object();
+    QCOMPARE(tsm2.value(QLatin1String("r")).toString(),
+             QStringLiteral("undef"));
+    QVERIFY(tsm2.value(QLatin1String("err")).toString().contains(
+        QStringLiteral("Could not establish connection")
+        .left(10)));
+
+    // --- the C++ gates, direct-driven ------------------------------
+    ChromeBridge *bridge = host->bridge();
+    // Wrong tab id — the registry has no such view.
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("tabs"),
+                 QStringLiteral("sendMessage"),
+                 QJsonObject{{QStringLiteral("id"), 424242},
+                             {QStringLiteral("mid"),
+                              id + QStringLiteral("#t#1")},
+                             {QStringLiteral("msg"),
+                              QJsonObject{}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+    // A mid outside the extension's namespace never routes.
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("tabs"),
+                 QStringLiteral("sendMessage"),
+                 QJsonObject{{QStringLiteral("id"), tabId},
+                             {QStringLiteral("mid"),
+                              QStringLiteral("other#x#1")},
+                             {QStringLiteral("msg"),
+                              QJsonObject{}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    // Subframe addressing is a documented gap — typed, not silently
+    // delivered to frame 0.
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("tabs"),
+                 QStringLiteral("sendMessage"),
+                 QJsonObject{{QStringLiteral("id"), tabId},
+                             {QStringLiteral("mid"),
+                              id + QStringLiteral("#t#2")},
+                             {QStringLiteral("msg"), QJsonObject{}},
+                             {QStringLiteral("opts"),
+                              QJsonObject{{QStringLiteral("frameId"),
+                                           1}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+
+    // --- an uncovered page: the push never happens ------------------
+    // The agentCovers gate runs BEFORE extEvent is emitted — an
+    // uncovered document must not even see the repost.  qrc: sits
+    // outside '<all_urls>'.
+    WebView *view3 = tw->makeNewTab(false);
+    QVERIFY(view3 && view3->page());
+    QSignalSpy loadSpy3(view3->page(), &QWebEnginePage::loadFinished);
+    view3->load(QUrl(QStringLiteral("qrc:/pip-player.html")));
+    QTRY_VERIFY_WITH_TIMEOUT(loadSpy3.count() >= 1, 30000);
+    const int tabId3 = ExtensionShimBackend::tabIdFor(view3);
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("tabs"),
+                 QStringLiteral("sendMessage"),
+                 QJsonObject{{QStringLiteral("id"), tabId3},
+                             {QStringLiteral("mid"),
+                              id + QStringLiteral("#t#3")},
+                             {QStringLiteral("msg"),
+                              QJsonObject{}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-host-access"));
+
+    // --- the C++ delivery seam itself -------------------------------
+    // A mid minted host-side: the extEvent push lands on the page
+    // bridge, the agent's respond resolves it back to THIS bridge as
+    // '__arktos.deliverResponse'.
+    ExtensionPageBridge *pageBridge =
+        view->page()->findChild<ExtensionPageBridge *>();
+    QVERIFY(pageBridge);
+    QSignalSpy pageSpy(pageBridge, &ExtensionPageBridge::extEvent);
+    QSignalSpy hostSpy(bridge, &ChromeBridge::hostEvent);
+    const QString mid = id + QStringLiteral("#direct#1");
+    const QJsonObject accepted = bridge->invoke(
+        QStringLiteral("tabs"), QStringLiteral("sendMessage"),
+        QJsonObject{{QStringLiteral("id"), tabId},
+                    {QStringLiteral("mid"), mid},
+                    {QStringLiteral("msg"),
+                     QJsonObject{{QStringLiteral("seam"),
+                                  QStringLiteral("1")}}}});
+    QVERIFY(accepted.value(QLatin1String("ok")).toBool());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        [&]() {
+            for (const QList<QVariant> &a : pageSpy) {
+                if (a.value(0).toString()
+                        == QLatin1String("__arktos.deliver")
+                    && a.value(1).toJsonObject()
+                           .value(QLatin1String("mid")).toString()
+                           == mid)
+                    return true;
+            }
+            return false;
+        }(), 20000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        [&]() {
+            for (const QList<QVariant> &a : hostSpy) {
+                if (a.value(0).toString()
+                        == QLatin1String("__arktos.deliverResponse")
+                    && a.value(1).toJsonObject()
+                           .value(QLatin1String("mid")).toString()
+                           == mid)
+                    return true;
+            }
+            return false;
+        }(), 20000);
+    for (const QList<QVariant> &a : hostSpy) {
+        if (a.value(0).toString()
+                != QLatin1String("__arktos.deliverResponse"))
+            continue;
+        const QJsonObject p = a.value(1).toJsonObject();
+        if (p.value(QLatin1String("mid")).toString() != mid)
+            continue;
+        QCOMPARE(p.value(QLatin1String("response")).toObject()
+                     .value(QLatin1String("got")).toObject()
+                     .value(QLatin1String("seam")).toString(),
+                 QStringLiteral("1"));
+    }
+
+    // deleteLater, not close(): three open tabs trip the
+    // confirmClosingMultipleTabs QMessageBox, which is modal and
+    // unanswerable headless.
+    window->deleteLater();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     manager->setExtensionEnabled(id, false);
     QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 20000);
     manager->removeExtension(id);

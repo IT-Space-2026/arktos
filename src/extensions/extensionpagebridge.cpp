@@ -220,7 +220,8 @@ QJsonObject ExtensionPageBridge::invoke(const QString &op,
     if (op == QLatin1String("respond"))
         return runtime->pageRespond(
             this, mid,
-            args.value(QLatin1String("response")));
+            args.value(QLatin1String("response")),
+            args.value(QLatin1String("hadListeners")).toBool());
     if (op == QLatin1String("portConnect"))
         return runtime->pagePortConnect(
             this, extensionId, chan,

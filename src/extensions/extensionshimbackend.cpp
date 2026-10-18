@@ -180,6 +180,25 @@ int ExtensionShimBackend::windowIdFor(const QObject *window)
     return idFor(window);
 }
 
+WebView *ExtensionShimBackend::viewForTabId(int tabId)
+{
+    if (tabId < 0)
+        return nullptr;
+    for (BrowserMainWindow *window
+         : ExtensionEventHub::browsingWindows()) {
+        if (!window || !window->tabWidget())
+            continue;
+        TabWidget *tw = window->tabWidget();
+        for (int i = 0; i < tw->count(); ++i) {
+            WebView *view = tw->webView(i);
+            if (ExtensionEventHub::trackable(view)
+                    && idFor(view) == tabId)
+                return view;
+        }
+    }
+    return nullptr;
+}
+
 QJsonObject ExtensionShimBackend::invoke(const QString &ns,
                                          const QString &method,
                                          const QJsonObject &args)

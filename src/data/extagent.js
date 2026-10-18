@@ -59,7 +59,8 @@
         gaps: [],           // typed errors (health surface, like the shim)
         notes: [],
         touched: {},
-        errors: []
+        errors: [],
+        deliveries: 0       // __arktos.deliver pushes addressed here
     };
     var LOG_CAP = 500;
 
@@ -420,6 +421,13 @@
             // back through 'respond'.
             if (!payload || !payload.mid)
                 return;
+            // The push reposts to EVERY agent on the document —
+            // 'ext' scopes it to the addressed extension so a
+            // sibling extension's listeners never fire on traffic
+            // that is not theirs.
+            if (payload.ext !== cfg.id)
+                return;
+            ++agent.deliveries;
             var mid = payload.mid;
             var sender = payload.sender
                 || { id: cfg.id };
@@ -431,7 +439,9 @@
                 rpc('respond', { mid: mid,
                                  response: value === undefined
                                      ? null : value })
-                    .catch(function () {});
+                    .catch(function (e) {
+                        record('respond: ' + String(e && e.message || e));
+                    });
             }
             var wantAsync = false;
             var listeners = shimEvents['runtime.onMessage']
@@ -455,7 +465,14 @@
             if (!responded && !wantAsync)
                 rpc('respond', { mid: mid, response: null,
                                  hadListeners: count > 0 })
-                    .catch(function () {});
+                    .then(function (r) {
+                        if (!r || r.ok !== true)
+                            record('respond refused: '
+                                   + JSON.stringify(r));
+                    })
+                    .catch(function (e) {
+                        record('respond: ' + String(e && e.message || e));
+                    });
             return;
         }
         if (name === '__arktos.portConnect') {

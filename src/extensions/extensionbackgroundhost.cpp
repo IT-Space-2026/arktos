@@ -25,6 +25,7 @@
 #include "extensionmanager.h"
 #include "extensionpagebridge.h"
 #include "extensionshimbackend.h"
+#include "webview.h"
 
 #include <qapplication.h>
 #include <qcoreapplication.h>
@@ -145,6 +146,13 @@ QJsonObject ChromeBridge::invoke(const QString &ns,
     if (ns == QLatin1String("tabs")
             && method == QLatin1String("getCurrent")) {
         return ExtensionShimBackend::tabForPageReply(m_contextPage);
+    }
+    // ER02: tabs.sendMessage — context-scoped like getCurrent: the
+    // calling bridge is the waiter the page agent's response
+    // resolves onto, so the dispatch lives at this level.
+    if (ns == QLatin1String("tabs")
+            && method == QLatin1String("sendMessage")) {
+        return invokeTabMessage(args);
     }
     if (!m_backend) {
         QJsonObject o;
@@ -1422,6 +1430,16 @@ void ExtensionBackgroundRuntime::unregisterRelayContext(
             m_relayPending.remove(mid);
         }
     }
+    // Host->page deliveries this bridge was waiting on die with it —
+    // a late page response finds no slot.
+    const QStringList dmids = m_pageDeliveries.keys();
+    for (const QString &mid : dmids) {
+        if (m_pageDeliveries.value(mid).waiter == bridge) {
+            m_pageDeliveries.remove(mid);
+            if (QTimer *t = m_pageDeliveryTimers.take(mid))
+                t->deleteLater();
+        }
+    }
     // Port ends owned by this bridge die with it; remaining ends get
     // the disconnect push so their onDisconnect fires honestly.
     const QStringList chans = m_portEnds.keys();
@@ -1942,6 +1960,80 @@ QJsonObject pageErr(const QString &code)
 
 } // namespace
 
+// ER02 — chrome.tabs.sendMessage: the host->page direction of the
+// hosted runtime's messaging.  The tab id resolves through the shim
+// backend's live-tab registry; the push rides the page's arktosExt
+// extEvent channel to the page agent, which fires runtime.onMessage
+// in the extension's isolated content-script realm and answers over
+// the 'respond' op — the reply reaches this bridge as
+// '__arktos.deliverResponse'.
+//
+// agentCovers is the security boundary and runs BEFORE any push:
+// extEvent reposts to window.postMessage('*') — every world on the
+// page, hostile main-world script included, sees whatever we emit —
+// so an extension without coverage on the committed url gets the
+// typed denial and the page never sees its traffic.  (Defined down
+// here with the page plumbing: it needs ownsRelayKey + emitToEnd's
+// sibling helpers from the anonymous namespace above.)
+QJsonObject ChromeBridge::invokeTabMessage(const QJsonObject &args)
+{
+    auto ok = [](const QJsonValue &v = QJsonValue()) {
+        QJsonObject o;
+        o.insert(QStringLiteral("ok"), true);
+        if (!v.isUndefined())
+            o.insert(QStringLiteral("result"), v);
+        return o;
+    };
+    auto err = [](const QString &code) {
+        QJsonObject o;
+        o.insert(QStringLiteral("ok"), false);
+        o.insert(QStringLiteral("error"), code);
+        return o;
+    };
+    const QString mid = args.value(QStringLiteral("mid")).toString();
+    const QJsonValue msg = args.value(QStringLiteral("msg"));
+    if (mid.isEmpty() || msg.isUndefined()
+            || !ownsRelayKey(m_extensionId, mid))
+        return err(QStringLiteral("invalid-argument"));
+    // options.frameId: the page's channel forwarder lives in the
+    // main frame only — subframe addressing is a documented gap,
+    // answered typed rather than silently mis-delivered to frame 0.
+    const QJsonObject opts =
+        args.value(QStringLiteral("opts")).toObject();
+    if (opts.contains(QStringLiteral("frameId"))
+            && int(opts.value(QStringLiteral("frameId"))
+                       .toDouble(-1)) != 0)
+        return err(QStringLiteral("unsupported"));
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    WebView *view = ExtensionShimBackend::viewForTabId(
+        int(args.value(QStringLiteral("id")).toDouble(-1)));
+    if (!view || !view->page())
+        return err(QStringLiteral("not-found"));
+    if (!runtime->agentCovers(m_extensionId, view->page()->url()))
+        return err(QStringLiteral("no-host-access"));
+    ExtensionPageBridge *page =
+        view->page()->findChild<ExtensionPageBridge *>();
+    if (!page)
+        return err(QStringLiteral("no-receiver"));
+    // A Chrome-shaped MessageSender for an extension context: the
+    // id is trusted from the bridge; url is the calling document's
+    // real url minus our internal marker fragment; no .tab field.
+    QString senderUrl;
+    if (m_contextPage) {
+        QUrl u = m_contextPage->url();
+        u.setFragment(QString());
+        senderUrl = u.toString();
+    }
+    const QJsonObject sender{
+        {QStringLiteral("id"), m_extensionId},
+        {QStringLiteral("url"), senderUrl},
+        {QStringLiteral("origin"),
+         QStringLiteral("chrome-extension://") + m_extensionId}};
+    runtime->pageDeliver(page, m_extensionId, mid, msg, sender, this);
+    return ok(QJsonObject{{QStringLiteral("delivered"), true}});
+}
+
 QJsonObject ExtensionBackgroundRuntime::pageSend(
         ExtensionPageBridge *page, const QString &extensionId,
         const QString &mid, const QJsonValue &msg,
@@ -2004,7 +2096,7 @@ QJsonObject ExtensionBackgroundRuntime::pageSend(
 
 QJsonObject ExtensionBackgroundRuntime::pageRespond(
         ExtensionPageBridge *page, const QString &mid,
-        const QJsonValue &response)
+        const QJsonValue &response, bool hadListeners)
 {
     auto it = m_pageDeliveries.find(mid);
     if (it == m_pageDeliveries.end()
@@ -2012,11 +2104,15 @@ QJsonObject ExtensionBackgroundRuntime::pageRespond(
         return pageErr(QStringLiteral("unknown-mid"));
     const PendingPageDelivery delivery = it.value();
     m_pageDeliveries.erase(it);
+    if (QTimer *t = m_pageDeliveryTimers.take(mid))
+        t->deleteLater();
     if (delivery.waiter) {
         emitToEnd(delivery.waiter,
                   QStringLiteral("__arktos.deliverResponse"),
                   QJsonObject{{QStringLiteral("mid"), mid},
-                              {QStringLiteral("response"), response}});
+                              {QStringLiteral("response"), response},
+                              {QStringLiteral("hadListeners"),
+                               hadListeners}});
     }
     return pageOk();
 }
@@ -2145,8 +2241,11 @@ void ExtensionBackgroundRuntime::unregisterPageContext(
     const QStringList dmids = m_pageDeliveries.keys();
     for (const QString &mid : dmids) {
         if (m_pageDeliveries.value(mid).target == page
-                || m_pageDeliveries.value(mid).waiter == page)
+                || m_pageDeliveries.value(mid).waiter == page) {
             m_pageDeliveries.remove(mid);
+            if (QTimer *t = m_pageDeliveryTimers.take(mid))
+                t->deleteLater();
+        }
     }
     // Port ends die with the page; the surviving ends get the honest
     // onDisconnect (Bitwarden's setupExtensionDisconnectAction
@@ -2190,9 +2289,39 @@ void ExtensionBackgroundRuntime::pageDeliver(
     delivery.target = page;
     delivery.extensionId = extensionId;
     m_pageDeliveries.insert(mid, delivery);
+    // Expiry like the relay's: a page with no live agent (or one
+    // whose listeners never answer) resolves the waiter with the
+    // honest no-response shape instead of pinning the slot.
+    QTimer *expiry = new QTimer(this);
+    expiry->setSingleShot(true);
+    expiry->setInterval(30000);
+    connect(expiry, &QTimer::timeout, this, [this, mid]() {
+        const auto it = m_pageDeliveries.find(mid);
+        if (it == m_pageDeliveries.end())
+            return;
+        const PendingPageDelivery pending = it.value();
+        m_pageDeliveries.erase(it);
+        if (QTimer *t = m_pageDeliveryTimers.take(mid))
+            t->deleteLater();
+        if (pending.waiter) {
+            emitToEnd(pending.waiter,
+                      QStringLiteral("__arktos.deliverResponse"),
+                      QJsonObject{
+                          {QStringLiteral("mid"), mid},
+                          {QStringLiteral("response"),
+                           QJsonValue(QJsonValue::Null)},
+                          {QStringLiteral("hadListeners"), false}});
+        }
+    });
+    m_pageDeliveryTimers.insert(mid, expiry);
+    expiry->start();
+    // The 'ext' scope tag lets each agent on the page drop pushes
+    // addressed to a sibling extension — the push reposts to every
+    // world on the document, so the check lives payload-side.
     emit page->extEvent(
         QStringLiteral("__arktos.deliver"),
         QJsonObject{{QStringLiteral("mid"), mid},
+                    {QStringLiteral("ext"), extensionId},
                     {QStringLiteral("msg"), msg},
                     {QStringLiteral("sender"), sender}});
 }

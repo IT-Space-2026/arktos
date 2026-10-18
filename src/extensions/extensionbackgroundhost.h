@@ -134,6 +134,10 @@ signals:
 private:
     QJsonObject invokeRelay(const QString &method,
                             const QJsonObject &args);
+    // ER02: tabs.sendMessage — needs the calling bridge itself (the
+    // page agent's response resolves onto it), so it lives at this
+    // level like getCurrent rather than in the shared backend.
+    QJsonObject invokeTabMessage(const QJsonObject &args);
 
     QString m_extensionId;
     QString m_extensionName;
@@ -378,7 +382,8 @@ public:
                          const QJsonObject &sender);
     QJsonObject pageRespond(ExtensionPageBridge *page,
                             const QString &mid,
-                            const QJsonValue &response);
+                            const QJsonValue &response,
+                            bool hadListeners);
     // Ports: a page-originated runtime.connect() registers the page
     // end and fans '__arktos.portConnect' to the extension's shim
     // contexts (their onConnect fires -> portAccept registers the
@@ -493,13 +498,15 @@ private:
 
     // ER01/ER02: host->page deliveries awaiting the page agent's
     // 'respond' — mid -> {the page asked, the context awaiting the
-    // answer}.
+    // answer}.  Entries expire like relay sends so an absent or
+    // silent receiver resolves the caller instead of pinning it.
     struct PendingPageDelivery {
         QPointer<QObject> waiter;
         QPointer<ExtensionPageBridge> target;
         QString extensionId;
     };
     QHash<QString, PendingPageDelivery> m_pageDeliveries;
+    QHash<QString, QTimer *> m_pageDeliveryTimers;
 
     // EXT17: sibling-page bridges keyed by their page so an open
     // popup's channel is unregistered when the view goes away.
