@@ -3506,3 +3506,15 @@ WebKit lane research — WebExtensions on WPE (WKB02): what a future
     WebKit's named script worlds plus reply-capable script messages make it
     a good port target later. Findings and sources in
     .devin/WEBKIT-EXTENSIONS.md.
+
+WebKit backend devtools surfaces researched (WKB04):
+    Ahead of the WPE WebKit engine work, .devin/WEBKIT-DEVTOOLS.md
+    records how developer tools can reach that backend: WPE exports no
+    embeddable WebKitWebInspector object — the local inspector is a
+    detached toplevel only — but the remote-inspector server plus the
+    inspector:// loopback client can host the full WebKit inspector
+    inside our own window. The report maps our BiDi/CDP panel's whole
+    command surface onto the WebKit inspector protocol (mostly
+    homonymous, a few honest-disable gaps), weighs WPE WebDriver as a
+    free automation surface, and recommends the WebKit backend report
+    devTools=false until a real inspect path is proven.
