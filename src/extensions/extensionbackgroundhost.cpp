@@ -2137,12 +2137,12 @@ QJsonObject ChromeBridge::invokeTabMessage(const QJsonObject &args)
 }
 
 // -------------------------------------------------------------------
-// ER07 — chrome.scripting.executeScript: the product API.  The call
-// resolves a tab through the same registry chrome.tabs uses, gates on
-// the extension's declared 'scripting' permission and its
-// host_permissions covering the committed url — BEFORE any source is
-// generated into the page — then fans out over the frame tree via
-// QWebEngineFrame::runJavaScript.
+// ER07/ER08 — chrome.scripting.executeScript + insertCSS/removeCSS:
+// the product API.  The call resolves a tab through the same registry
+// chrome.tabs uses, gates on the extension's declared 'scripting'
+// permission and its host_permissions covering the committed url —
+// BEFORE any source is generated into the page — then fans out over
+// the frame tree via QWebEngineFrame::runJavaScript.
 //
 // World emulation: 'ISOLATED' (default) runs in AgentWorldId — the
 // shared agent realm — inside a closure that binds `chrome`/`browser`
@@ -2153,6 +2153,11 @@ QJsonObject ChromeBridge::invokeTabMessage(const QJsonObject &args)
 // frame tree (0 = main frame, children depth-first) — unlike Chrome's
 // per-document ids they renumber if the tree mutates; callers only
 // ever learn them from our own results and event payloads.
+// insertCSS/removeCSS share every gate above and the same fan-out;
+// their payload is a ledger-keyed <style> upsert/removal in the agent
+// world (see cssSource) and they resolve void like Chrome — a
+// frame-level failure rejects the call, unlike executeScript whose
+// per-frame error field is part of the resolved value.
 //
 // runJavaScript does not await a returned Promise (measured — see the
 // mv3-health smoke comment in main.cpp), so a thenable result parks
@@ -2252,6 +2257,84 @@ QJsonObject execResultEntry(int frameId, const QJsonObject &envelope)
     return entry;
 }
 
+// Shared files[] loader — bundle-relative paths only, the same
+// hygiene the background loader applies: no absolute paths, schemes,
+// or traversal; size caps keep a hostile bundle from parking the
+// browser on a multi-GB read.  Answers the typed error code or empty.
+QString loadBundleFiles(const QString &extensionPath,
+                        const QJsonArray &filesArg, QStringList *out)
+{
+    qint64 total = 0;
+    const QDir dir(extensionPath);
+    for (const QJsonValue &v : filesArg) {
+        const QString rel = v.toString();
+        if (rel.isEmpty() || rel.startsWith(QLatin1Char('/'))
+                || rel.contains(QLatin1Char(':'))
+                || rel.split(QLatin1Char('/'))
+                       .contains(QStringLiteral("..")))
+            return QStringLiteral("bad-path");
+        QFile file(dir.absoluteFilePath(rel));
+        total += file.size();
+        if (file.size() > 4 * 1024 * 1024 || total > 8 * 1024 * 1024
+                || !file.open(QIODevice::ReadOnly))
+            return QStringLiteral("no-such-file");
+        out->append(QString::fromUtf8(file.readAll()));
+    }
+    return QString();
+}
+
+// ER08 — the insertCSS/removeCSS payload.  Runs in the agent world so
+// the per-frame ledger (window.__arktosCss) stays out of page reach;
+// each css text unit keys one <style> element.  insert upserts its
+// elements — Chrome dedupes a repeated key rather than stacking
+// duplicate sheets — and remove drops exactly the matching keys, a
+// never-inserted key being Chrome's silent no-op.  The ledger dies
+// with the document, matching Chrome where injected sheets live on
+// the committed document and vanish on navigation.
+//
+// 'USER' origin: a DOM <style> can only sit at author level — the
+// real user cascade level is unreachable from script — so origin
+// scopes the removal key (Chrome's observable contract) while the
+// sheet lands at author level; the approximation is recorded here,
+// not hidden.
+QString cssSource(bool insert, const QString &origin,
+                  const QStringList &units)
+{
+    QJsonArray arr;
+    for (const QString &u : units)
+        arr.append(u);
+    QString unitsJson = QString::fromUtf8(
+        QJsonDocument(arr).toJson(QJsonDocument::Compact));
+    unitsJson.replace(QChar(0x2028), QStringLiteral("\\u2028"))
+        .replace(QChar(0x2029), QStringLiteral("\\u2029"));
+    QString source = QStringLiteral(
+        "(function(){var __u=%1,__o=%2;"
+        "var __reg=window.__arktosCss=window.__arktosCss||{};"
+        "try{")
+        .arg(unitsJson, jsLiteral(origin));
+    if (insert) {
+        source += QStringLiteral(
+            "var __host=document.head||document.documentElement;"
+            "if(!__host)throw new Error('no-document');"
+            "for(var i=0;i<__u.length;++i){"
+            "var __k=__o+'\\n'+__u[i],__el=__reg[__k];"
+            "if(!__el||!__el.isConnected){"
+            "__el=document.createElement('style');"
+            "__el.setAttribute('data-arktos-css','');"
+            "__host.appendChild(__el);__reg[__k]=__el;}"
+            "__el.textContent=__u[i];}");
+    } else {
+        source += QStringLiteral(
+            "for(var i=0;i<__u.length;++i){"
+            "var __k=__o+'\\n'+__u[i],__el=__reg[__k];"
+            "if(__el){delete __reg[__k];__el.remove();}}");
+    }
+    source += QLatin1String(
+        "return {__exec:1,ok:true};}catch(e){"
+        "return {__exec:1,ok:false,e:String(e&&e.message||e)};}})()");
+    return source;
+}
+
 } // namespace
 
 QJsonObject ChromeBridge::invokeScripting(const QString &method,
@@ -2272,7 +2355,10 @@ QJsonObject ChromeBridge::invokeScripting(const QString &method,
     };
     if (!m_backend)
         return err(QStringLiteral("backend-gone"));
-    if (method != QLatin1String("executeScript"))
+    const bool insertCss = method == QLatin1String("insertCSS");
+    const bool cssOp =
+        insertCss || method == QLatin1String("removeCSS");
+    if (method != QLatin1String("executeScript") && !cssOp)
         return err(QStringLiteral("unimplemented"));
 
     const QString execId =
@@ -2344,42 +2430,62 @@ QJsonObject ChromeBridge::invokeScripting(const QString &method,
         args.value(QStringLiteral("args")).toArray();
     const QJsonArray filesArg =
         args.value(QStringLiteral("files")).toArray();
-    const QString world =
-        args.value(QStringLiteral("world"))
-            .toString(QStringLiteral("ISOLATED"));
-    if (world != QLatin1String("ISOLATED")
-            && world != QLatin1String("MAIN"))
-        return err(QStringLiteral("invalid-argument"));
-    const quint32 worldId =
-        world == QLatin1String("MAIN")
-            ? quint32(QWebEngineScript::MainWorld)
-            : ExtensionBackgroundRuntime::AgentWorldId;
 
+    // The per-frame payload.  executeScript honours world (the
+    // default ISOLATED is the agent world); insertCSS/removeCSS are
+    // Chrome-internal injections with no world parameter and always
+    // run in the agent world so the css ledger stays out of page
+    // reach.
+    quint32 worldId = ExtensionBackgroundRuntime::AgentWorldId;
     QStringList fileSources;
-    if (!filesArg.isEmpty()) {
-        if (!funcSource.isEmpty())
+    QStringList cssUnits;
+    QString cssOrigin;
+    if (cssOp) {
+        // Chrome takes exactly one of css/files; origin scopes the
+        // removal key ('AUTHOR' default — 'USER' is the documented
+        // cascade approximation recorded in cssSource).
+        cssOrigin = args.value(QStringLiteral("origin"))
+                        .toString(QStringLiteral("AUTHOR"));
+        if (cssOrigin != QLatin1String("AUTHOR")
+                && cssOrigin != QLatin1String("USER"))
             return err(QStringLiteral("invalid-argument"));
-        // Bundle files only — the same path hygiene the background
-        // loader applies: no absolute paths, schemes, or traversal.
-        qint64 total = 0;
-        const QDir dir(m_extensionPath);
-        for (const QJsonValue &v : filesArg) {
-            const QString rel = v.toString();
-            if (rel.isEmpty() || rel.startsWith(QLatin1Char('/'))
-                    || rel.contains(QLatin1Char(':'))
-                    || rel.split(QLatin1Char('/')).contains(
-                        QStringLiteral("..")))
-                return err(QStringLiteral("bad-path"));
-            QFile file(dir.absoluteFilePath(rel));
-            total += file.size();
-            if (file.size() > 4 * 1024 * 1024
-                    || total > 8 * 1024 * 1024
-                    || !file.open(QIODevice::ReadOnly))
-                return err(QStringLiteral("no-such-file"));
-            fileSources.append(QString::fromUtf8(file.readAll()));
+        const QJsonValue cssValue =
+            args.value(QStringLiteral("css"));
+        if (!cssValue.isUndefined() && !cssValue.isString())
+            return err(QStringLiteral("invalid-argument"));
+        if (cssValue.isString() && !filesArg.isEmpty())
+            return err(QStringLiteral("invalid-argument"));
+        if (cssValue.isString()) {
+            cssUnits.append(cssValue.toString());
+        } else {
+            if (filesArg.isEmpty())
+                return err(QStringLiteral("invalid-argument"));
+            const QString error = loadBundleFiles(
+                m_extensionPath, filesArg, &cssUnits);
+            if (!error.isEmpty())
+                return err(error);
         }
-    } else if (funcSource.isEmpty()) {
-        return err(QStringLiteral("invalid-argument"));
+    } else {
+        const QString world =
+            args.value(QStringLiteral("world"))
+                .toString(QStringLiteral("ISOLATED"));
+        if (world != QLatin1String("ISOLATED")
+                && world != QLatin1String("MAIN"))
+            return err(QStringLiteral("invalid-argument"));
+        if (world == QLatin1String("MAIN"))
+            worldId = quint32(QWebEngineScript::MainWorld);
+        if (!filesArg.isEmpty()) {
+            if (!funcSource.isEmpty())
+                return err(QStringLiteral("invalid-argument"));
+            // Bundle files only — the same path hygiene the
+            // background loader applies.
+            const QString error = loadBundleFiles(
+                m_extensionPath, filesArg, &fileSources);
+            if (!error.isEmpty())
+                return err(error);
+        } else if (funcSource.isEmpty()) {
+            return err(QStringLiteral("invalid-argument"));
+        }
     }
 
     PendingExec &pending = m_pendingExecs[execId];
@@ -2423,8 +2529,10 @@ QJsonObject ChromeBridge::invokeScripting(const QString &method,
         QWebEngineFrame frame = frames.at(frameId);
         const QString key = execId + QLatin1Char('/')
             + QString::number(frameId);
-        const QString source = execSource(m_extensionId, funcSource,
-                                          execArgs, fileSources, key);
+        const QString source =
+            cssOp ? cssSource(insertCss, cssOrigin, cssUnits)
+                  : execSource(m_extensionId, funcSource, execArgs,
+                               fileSources, key);
         frame.runJavaScript(
             source, worldId,
             [self, this, execId, slot, frameId, frame, worldId,

@@ -525,7 +525,7 @@ extension pages (popup, options, extension links in tabs) get the
 same shim injection and chromeBridge channel as the background, and
 the popup reaches its genuine vault login/unlock gate. Actual
 sign-in needs a real Bitwarden account; a few surfaces it touches
-(`chrome.notifications`, the CSS/dynamic-registration half of
+(`chrome.notifications`, the dynamic-registration half of
 `chrome.scripting`) answer typed errors that show up in its
 Settings → Extensions health row instead of failing silently.
 `chrome.scripting.executeScript` itself is served: the host
@@ -535,7 +535,10 @@ per frame in the content-script realm (or the page world with
 `world: "MAIN"`), and marshals Chrome-shaped results back — a
 throwing script answers a per-frame error entry rather than
 rejecting the call, and every denial is a typed error on the health
-row, never a silent no-op.
+row, never a silent no-op. `insertCSS`/`removeCSS` are served too:
+the same gates and per-frame fan-out drive a `<style>` ledger keyed
+by css source and origin, so an insert changes the page's computed
+style and the matching remove restores it.
 
 Enabled extensions that declare a background script additionally get
 a hosted background context: a hidden page on the extension's own

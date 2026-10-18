@@ -3569,3 +3569,24 @@ Extensions (scripting): chrome.scripting.executeScript now really
     the extensionScripting autotest leg proves the round trip, the
     subframe addressing, the promise await, the world placement, and
     every denial path on real browser tabs.
+Extensions (scripting): chrome.scripting.insertCSS/removeCSS now
+    really style the page (ER08) — Bitwarden's overlay css path.
+    Both calls share executeScript's gates: the 'scripting'
+    permission and host-permission coverage of the tab's committed
+    URL are re-proven BEFORE any css reaches a page, then the payload
+    fans out per frame (allFrames/frameIds over the same depth-first
+    tree) in the content-script realm, where a per-frame ledger keys
+    one <style> element per css source unit — insert upserts (Chrome
+    dedupes a repeated key rather than stacking sheets), remove drops
+    exactly the matching keys, and a never-inserted key is Chrome's
+    silent no-op. files[] reads bundle css with the loader's path
+    hygiene; the ledger dies with the document like Chrome's injected
+    sheets. origin ('AUTHOR'/'USER') scopes the removal key the way
+    Chrome scopes it; the cascade-level approximation — a DOM sheet
+    can only sit at author level — is recorded in the code, not
+    hidden. The calls resolve void like Chrome and a frame-level
+    failure rejects; every denial is a typed error in the shimGaps
+    ledger. The extensionScriptCss autotest leg proves the
+    measurable insert -> remove restore, the files form, origin
+    scoping, subframe targeting, the executeScript multi-file order,
+    and every typed denial on real browser tabs.

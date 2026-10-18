@@ -88,6 +88,7 @@ private slots:
     void extensionPageAgent();
     void extensionTabMessaging();
     void extensionScripting();
+    void extensionScriptCss();
     void actionPopupSelfWires();
     void realExtensionPopup();
     void bitwardenGapBaseline();
@@ -4205,6 +4206,593 @@ void tst_ExtensionManager::extensionScripting()
         [&]() {
             for (const QString &g : host->shimGaps()) {
                 if (g.contains(QStringLiteral("scripting"))
+                        && g.contains(QStringLiteral(
+                               "no-host-access")))
+                    return true;
+            }
+            return false;
+        }(), 15000);
+
+    window->deleteLater();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    manager->setExtensionEnabled(id, false);
+    manager->setExtensionEnabled(idB, false);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 20000);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(idB), 20000);
+    manager->removeExtension(id);
+    manager->removeExtension(idB);
+    QDir(dir).removeRecursively();
+    QDir(dirB).removeRecursively();
+}
+
+// ER08 — chrome.scripting.insertCSS/removeCSS + the executeScript
+// multi-file form.  A fixture extension declaring 'scripting' +
+// <all_urls> drives the real calls from its hosted background: the
+// css form must produce a measurable style change on the page and
+// removeCSS must restore it; the files form reads bundle css; the
+// origin argument scopes which insertion a removeCSS lifts; allFrames
+// reaches the iframe document.  The security legs prove the same
+// gates executeScript carries — 'scripting' permission and
+// host-permission coverage checked BEFORE any css reaches a page.
+void tst_ExtensionManager::extensionScriptCss()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extcss-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-css\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\","
+                "\"scripting\"],\"host_permissions\":[\"<all_urls>\"],"
+                "\"background\":{\"service_worker\":\"sw.js\"},"
+                "\"content_scripts\":[{\"matches\":[\"<all_urls>\"],"
+                "\"js\":[\"cs.js\"],\"run_at\":\"document_idle\"}]}");
+        f.close();
+        QFile w(dir + QLatin1String("/sw.js"));
+        QVERIFY(w.open(QIODevice::WriteOnly));
+        w.write(
+            "chrome.runtime.onInstalled.addListener(function(){});\n");
+        w.close();
+        QFile c(dir + QLatin1String("/cs.js"));
+        QVERIFY(c.open(QIODevice::WriteOnly));
+        c.write("window.__csRan=true;\n");
+        c.close();
+        // files[] css + multi-file executeScript resolve against the
+        // unpacked bundle.
+        QFile s(dir + QLatin1String("/overlay.css"));
+        QVERIFY(s.open(QIODevice::WriteOnly));
+        s.write("#box{visibility:hidden}\n");
+        s.close();
+        QFile a(dir + QLatin1String("/a.js"));
+        QVERIFY(a.open(QIODevice::WriteOnly));
+        a.write("window.__fileA=(window.__fileA||0)+1;\n");
+        a.close();
+        QFile b(dir + QLatin1String("/b.js"));
+        QVERIFY(b.open(QIODevice::WriteOnly));
+        b.write("window.__fileB=window.__fileA+1;\n");
+        b.close();
+    }
+    const QString dirB = QDir::temp().filePath(
+        QStringLiteral("tst-extcss-b-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirB));
+    {
+        QFile f(dirB + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-css-b\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"],"
+                "\"host_permissions\":[\"<all_urls>\"],"
+                "\"background\":{\"service_worker\":\"sw.js\"}}");
+        f.close();
+        QFile w(dirB + QLatin1String("/sw.js"));
+        QVERIFY(w.open(QIODevice::WriteOnly));
+        w.write(
+            "chrome.runtime.onInstalled.addListener(function(){});\n");
+        w.close();
+    }
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    auto loaded = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-css")
+                && info.error.isEmpty())
+            *loaded = info.id;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded->isEmpty(), 30000);
+    const QString id = *loaded;
+    manager->setExtensionEnabled(id, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(id)
+            && runtime->host(id)->state()
+                   == ExtensionBackgroundHost::State::Ready,
+        45000);
+    ExtensionBackgroundHost *host = runtime->host(id);
+    QVERIFY(host && host->bridge());
+    ChromeBridge *bridge = host->bridge();
+
+    auto loadedB = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loadedB](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-css-b")
+                && info.error.isEmpty())
+            *loadedB = info.id;
+    });
+    manager->grantConsent(dirB);
+    manager->loadExtension(dirB);
+    QTRY_VERIFY_WITH_TIMEOUT(!loadedB->isEmpty(), 30000);
+    const QString idB = *loadedB;
+    manager->setExtensionEnabled(idB, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(idB)
+            && runtime->host(idB)->state()
+                   == ExtensionBackgroundHost::State::Ready,
+        45000);
+    ExtensionBackgroundHost *hostB = runtime->host(idB);
+    QVERIFY(hostB && hostB->bridge());
+
+    auto eval = [](QWebEnginePage *page, const QString &source,
+                   quint32 worldId = 0) {
+        auto result = std::make_shared<QVariant>();
+        page->runJavaScript(
+            source, worldId,
+            [result](const QVariant &v) { *result = v; });
+        QElapsedTimer t;
+        t.start();
+        while (!result->isValid() && t.elapsed() < 15000)
+            QTest::qWait(50);
+        return *result;
+    };
+    const quint32 agentWorld =
+        ExtensionBackgroundRuntime::AgentWorldId;
+    const QString probe = QStringLiteral(
+        "((window.__arktosExtAgents&&__arktosExtAgents['%1'])"
+        "||{active:false,bridgeUp:false})").arg(id);
+    const QString display = QStringLiteral(
+        "getComputedStyle(document.getElementById('box')).display");
+    const QString subDisplay = QStringLiteral(
+        "getComputedStyle("
+        "window.frames[0].document.getElementById('box')).display");
+
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    const QString base = QStringLiteral("http://127.0.0.1:%1")
+        .arg(server.serverPort());
+    QObject::connect(&server, &QTcpServer::newConnection,
+                     this, [&]() {
+        QTcpSocket *socket = server.nextPendingConnection();
+        QObject::connect(socket, &QTcpSocket::readyRead,
+                         socket, [socket]() {
+            const QByteArray req = socket->readAll();
+            const QByteArray body =
+                req.contains("GET /frame")
+                    ? QByteArray("<html><head><title>frame-doc"
+                                 "</title></head><body>"
+                                 "<div id=\"box\">f</div>"
+                                 "</body></html>")
+                    : QByteArray("<html><head><title>css-target"
+                                 "</title></head><body>"
+                                 "<div id=\"box\">exec</div>"
+                                 "<iframe src=\"/frame\"></iframe>"
+                                 "</body></html>");
+            socket->write(
+                "HTTP/1.1 200\r\nContent-Type: text/html\r\n"
+                "Content-Length: "
+                + QByteArray::number(body.size())
+                + "\r\nConnection: close\r\n\r\n" + body);
+            socket->disconnectFromHost();
+        });
+    });
+
+    BrowserMainWindow *window = new BrowserMainWindow;
+    TabWidget *tw = window->tabWidget();
+    QVERIFY(tw && tw->count() >= 1);
+    WebView *view = tw->webView(0);
+    QVERIFY(view && view->page());
+    QSignalSpy loadSpy(view->page(), &QWebEnginePage::loadFinished);
+    view->load(QUrl(base + QStringLiteral("/agent")));
+    QTRY_VERIFY_WITH_TIMEOUT(loadSpy.count() >= 1, 30000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(view->page(), probe + QStringLiteral(".bridgeUp"),
+             agentWorld).toBool(),
+        30000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(view->page(), QStringLiteral("window.length")).toInt()
+            >= 1,
+        15000);
+    const int tabId = ExtensionShimBackend::tabIdFor(view);
+    QVERIFY(tabId > 0);
+    QCOMPARE(eval(view->page(), display).toString(),
+             QStringLiteral("block"));
+
+    // --- insertCSS(css) changes a measurable style -----------------
+    eval(host->page(), QStringLiteral(
+        "self.__c1=undefined;"
+        "chrome.scripting.insertCSS("
+        "{target:{tabId:%1},css:'#box{display:none}'},"
+        "function(){self.__c1={"
+        "err:(chrome.runtime.lastError"
+        "   &&chrome.runtime.lastError.message)"
+        "  ||((window.__arktosShim&&__arktosShim.lastError)"
+        "     &&__arktosShim.lastError.message)||null};});0")
+        .arg(tabId));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(),
+             QStringLiteral("self.__c1!==undefined")).toBool(),
+        20000);
+    QVERIFY(QJsonDocument::fromJson(
+                eval(host->page(),
+                     QStringLiteral("JSON.stringify(self.__c1)"))
+                    .toString().toUtf8()).object()
+                .value(QLatin1String("err")).isNull());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(view->page(), display).toString()
+            == QStringLiteral("none"),
+        10000);
+
+    // --- removeCSS(css) restores it --------------------------------
+    eval(host->page(), QStringLiteral(
+        "self.__c2=undefined;"
+        "chrome.scripting.removeCSS("
+        "{target:{tabId:%1},css:'#box{display:none}'},"
+        "function(){self.__c2={"
+        "err:(window.__arktosShim&&__arktosShim.lastError"
+        "   &&__arktosShim.lastError.message)||null};});0")
+        .arg(tabId));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(),
+             QStringLiteral("self.__c2!==undefined")).toBool(),
+        20000);
+    QVERIFY(QJsonDocument::fromJson(
+                eval(host->page(),
+                     QStringLiteral("JSON.stringify(self.__c2)"))
+                    .toString().toUtf8()).object()
+                .value(QLatin1String("err")).isNull());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(view->page(), display).toString()
+            == QStringLiteral("block"),
+        10000);
+
+    // --- files[] form + the promise flavour ------------------------
+    eval(host->page(), QStringLiteral(
+        "self.__c3=undefined;"
+        "chrome.scripting.insertCSS("
+        "{target:{tabId:%1},files:['overlay.css']})"
+        ".then(function(){self.__c3={ok:1};},"
+        "function(e){self.__c3={err:String(e&&e.message||e)};});0")
+        .arg(tabId));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(),
+             QStringLiteral("self.__c3!==undefined")).toBool(),
+        20000);
+    QVERIFY(QJsonDocument::fromJson(
+                eval(host->page(),
+                     QStringLiteral("JSON.stringify(self.__c3)"))
+                    .toString().toUtf8()).object()
+                .contains(QLatin1String("ok")));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(view->page(), QStringLiteral(
+            "getComputedStyle(document.getElementById('box'))"
+            ".visibility")).toString() == QStringLiteral("hidden"),
+        10000);
+    eval(host->page(), QStringLiteral(
+        "self.__c4=undefined;"
+        "chrome.scripting.removeCSS("
+        "{target:{tabId:%1},files:['overlay.css']})"
+        ".then(function(){self.__c4={ok:1};},"
+        "function(e){self.__c4={err:String(e&&e.message||e)};});0")
+        .arg(tabId));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(),
+             QStringLiteral("self.__c4!==undefined")).toBool(),
+        20000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(view->page(), QStringLiteral(
+            "getComputedStyle(document.getElementById('box'))"
+            ".visibility")).toString() == QStringLiteral("visible"),
+        10000);
+
+    // --- origin scopes the removal key ------------------------------
+    // A USER-origin insert is only lifted by a USER-origin remove —
+    // Chrome keys injected sheets by origin.
+    eval(host->page(), QStringLiteral(
+        "self.__c5=undefined;"
+        "chrome.scripting.insertCSS("
+        "{target:{tabId:%1},css:'#box{display:none}',origin:'USER'})"
+        ".then(function(){self.__c5={ok:1};},"
+        "function(e){self.__c5={err:String(e&&e.message||e)};});0")
+        .arg(tabId));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(),
+             QStringLiteral("self.__c5!==undefined")).toBool(),
+        20000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(view->page(), display).toString()
+            == QStringLiteral("none"),
+        10000);
+    eval(host->page(), QStringLiteral(
+        "self.__c6=undefined;"
+        "chrome.scripting.removeCSS("
+        "{target:{tabId:%1},css:'#box{display:none}',origin:'AUTHOR'})"
+        ".then(function(){self.__c6={ok:1};},"
+        "function(e){self.__c6={err:String(e&&e.message||e)};});0")
+        .arg(tabId));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(),
+             QStringLiteral("self.__c6!==undefined")).toBool(),
+        20000);
+    // AUTHOR remove is a no-op against the USER sheet.
+    QTest::qWait(400);
+    QCOMPARE(eval(view->page(), display).toString(),
+             QStringLiteral("none"));
+    eval(host->page(), QStringLiteral(
+        "self.__c7=undefined;"
+        "chrome.scripting.removeCSS("
+        "{target:{tabId:%1},css:'#box{display:none}',origin:'USER'})"
+        ".then(function(){self.__c7={ok:1};},"
+        "function(e){self.__c7={err:String(e&&e.message||e)};});0")
+        .arg(tabId));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(),
+             QStringLiteral("self.__c7!==undefined")).toBool(),
+        20000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(view->page(), display).toString()
+            == QStringLiteral("block"),
+        10000);
+
+    // --- removeCSS on never-inserted css resolves (Chrome no-op) ---
+    eval(host->page(), QStringLiteral(
+        "self.__c8=undefined;"
+        "chrome.scripting.removeCSS("
+        "{target:{tabId:%1},css:'#never-was-there{color:red}'})"
+        ".then(function(){self.__c8={ok:1};},"
+        "function(e){self.__c8={err:String(e&&e.message||e)};});0")
+        .arg(tabId));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(),
+             QStringLiteral("self.__c8!==undefined")).toBool(),
+        20000);
+    QVERIFY(QJsonDocument::fromJson(
+                eval(host->page(),
+                     QStringLiteral("JSON.stringify(self.__c8)"))
+                    .toString().toUtf8()).object()
+                .contains(QLatin1String("ok")));
+
+    // --- allFrames reaches the iframe document ----------------------
+    eval(host->page(), QStringLiteral(
+        "self.__c9=undefined;"
+        "chrome.scripting.insertCSS("
+        "{target:{tabId:%1,allFrames:true},css:'#box{display:none}'})"
+        ".then(function(){self.__c9={ok:1};},"
+        "function(e){self.__c9={err:String(e&&e.message||e)};});0")
+        .arg(tabId));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(),
+             QStringLiteral("self.__c9!==undefined")).toBool(),
+        20000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(view->page(), display).toString()
+            == QStringLiteral("none")
+            && eval(view->page(), subDisplay).toString()
+                   == QStringLiteral("none"),
+        10000);
+    // A frameIds-scoped remove lifts only that frame's sheet.
+    eval(host->page(), QStringLiteral(
+        "self.__c10=undefined;"
+        "chrome.scripting.removeCSS("
+        "{target:{tabId:%1,frameIds:[0]},css:'#box{display:none}'})"
+        ".then(function(){self.__c10={ok:1};},"
+        "function(e){self.__c10={err:String(e&&e.message||e)};});0")
+        .arg(tabId));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(),
+             QStringLiteral("self.__c10!==undefined")).toBool(),
+        20000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(view->page(), display).toString()
+            == QStringLiteral("block")
+            && eval(view->page(), subDisplay).toString()
+                   == QStringLiteral("none"),
+        10000);
+
+    // --- executeScript files[] runs the list in order ---------------
+    eval(host->page(), QStringLiteral(
+        "self.__c11=undefined;"
+        "chrome.scripting.executeScript("
+        "{target:{tabId:%1},files:['a.js','b.js']})"
+        ".then(function(){self.__c11={ok:1};},"
+        "function(e){self.__c11={err:String(e&&e.message||e)};});0")
+        .arg(tabId));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(),
+             QStringLiteral("self.__c11!==undefined")).toBool(),
+        20000);
+    // b.js read __fileA set by a.js — ordering inside the closure.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(view->page(), QStringLiteral("window.__fileB"),
+             agentWorld).toInt() == 2,
+        10000);
+
+    // --- the C++ gates, direct-driven -------------------------------
+    const QJsonObject target{{QStringLiteral("tabId"), tabId}};
+    // 'scripting' permission absent -> refused before anything else.
+    QCOMPARE(hostB->bridge()->invoke(
+                 QStringLiteral("scripting"),
+                 QStringLiteral("insertCSS"),
+                 QJsonObject{{QStringLiteral("execId"),
+                              idB + QStringLiteral("#c1")},
+                             {QStringLiteral("target"), target},
+                             {QStringLiteral("css"),
+                              QStringLiteral("#box{}")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+    QCOMPARE(hostB->bridge()->invoke(
+                 QStringLiteral("scripting"),
+                 QStringLiteral("removeCSS"),
+                 QJsonObject{{QStringLiteral("execId"),
+                              idB + QStringLiteral("#c2")},
+                             {QStringLiteral("target"), target},
+                             {QStringLiteral("css"),
+                              QStringLiteral("#box{}")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+    // css+files together / neither — Chrome takes exactly one.
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("scripting"),
+                 QStringLiteral("insertCSS"),
+                 QJsonObject{{QStringLiteral("execId"),
+                              id + QStringLiteral("#c3")},
+                             {QStringLiteral("target"), target},
+                             {QStringLiteral("css"),
+                              QStringLiteral("#box{}")},
+                             {QStringLiteral("files"),
+                              QJsonArray{QStringLiteral(
+                                  "overlay.css")}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("scripting"),
+                 QStringLiteral("removeCSS"),
+                 QJsonObject{{QStringLiteral("execId"),
+                              id + QStringLiteral("#c4")},
+                             {QStringLiteral("target"), target}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    // An origin outside AUTHOR/USER.
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("scripting"),
+                 QStringLiteral("insertCSS"),
+                 QJsonObject{{QStringLiteral("execId"),
+                              id + QStringLiteral("#c5")},
+                             {QStringLiteral("target"), target},
+                             {QStringLiteral("css"),
+                              QStringLiteral("#box{}")},
+                             {QStringLiteral("origin"),
+                              QStringLiteral("WEIRD")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    // Bundle-path hygiene — traversal and missing files stay typed.
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("scripting"),
+                 QStringLiteral("insertCSS"),
+                 QJsonObject{{QStringLiteral("execId"),
+                              id + QStringLiteral("#c6")},
+                             {QStringLiteral("target"), target},
+                             {QStringLiteral("files"),
+                              QJsonArray{QStringLiteral(
+                                  "../manifest.json")}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("bad-path"));
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("scripting"),
+                 QStringLiteral("insertCSS"),
+                 QJsonObject{{QStringLiteral("execId"),
+                              id + QStringLiteral("#c7")},
+                             {QStringLiteral("target"), target},
+                             {QStringLiteral("files"),
+                              QJsonArray{QStringLiteral(
+                                  "missing.css")}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-such-file"));
+    // No such tab / a frame id beyond the tree / documentIds.
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("scripting"),
+                 QStringLiteral("insertCSS"),
+                 QJsonObject{{QStringLiteral("execId"),
+                              id + QStringLiteral("#c8")},
+                             {QStringLiteral("target"),
+                              QJsonObject{{QStringLiteral("tabId"),
+                                           424242}}},
+                             {QStringLiteral("css"),
+                              QStringLiteral("#box{}")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("scripting"),
+                 QStringLiteral("insertCSS"),
+                 QJsonObject{{QStringLiteral("execId"),
+                              id + QStringLiteral("#c9")},
+                             {QStringLiteral("target"),
+                              QJsonObject{{QStringLiteral("tabId"),
+                                           tabId},
+                                          {QStringLiteral("frameIds"),
+                                           QJsonArray{77}}}},
+                             {QStringLiteral("css"),
+                              QStringLiteral("#box{}")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("scripting"),
+                 QStringLiteral("insertCSS"),
+                 QJsonObject{{QStringLiteral("execId"),
+                              id + QStringLiteral("#c10")},
+                             {QStringLiteral("target"),
+                              QJsonObject{{QStringLiteral("tabId"),
+                                           tabId},
+                                          {QStringLiteral("documentIds"),
+                                           QJsonArray{
+                                               QStringLiteral("d1")}}}},
+                             {QStringLiteral("css"),
+                              QStringLiteral("#box{}")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+
+    // --- an uncovered page: no css reaches it -----------------------
+    // qrc: sits outside '<all_urls>' — the agentCovers gate must
+    // refuse before a byte is generated into the document.
+    WebView *view3 = tw->makeNewTab(false);
+    QVERIFY(view3 && view3->page());
+    QSignalSpy loadSpy3(view3->page(), &QWebEnginePage::loadFinished);
+    view3->load(QUrl(QStringLiteral("qrc:/pip-player.html")));
+    QTRY_VERIFY_WITH_TIMEOUT(loadSpy3.count() >= 1, 30000);
+    const int tabId3 = ExtensionShimBackend::tabIdFor(view3);
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("scripting"),
+                 QStringLiteral("insertCSS"),
+                 QJsonObject{{QStringLiteral("execId"),
+                              id + QStringLiteral("#c11")},
+                             {QStringLiteral("target"),
+                              QJsonObject{{QStringLiteral("tabId"),
+                                           tabId3}}},
+                             {QStringLiteral("css"),
+                              QStringLiteral("#box{}")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-host-access"));
+    // Driven through the shim, the denial lands in the gap ledger.
+    eval(host->page(), QStringLiteral(
+        "self.__c12=undefined;"
+        "chrome.scripting.insertCSS("
+        "{target:{tabId:%1},css:'#box{display:none}'},"
+        "function(){self.__c12={"
+        "err:(window.__arktosShim&&__arktosShim.lastError"
+        "   &&__arktosShim.lastError.message)||null};});0")
+        .arg(tabId3));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(),
+             QStringLiteral("self.__c12!==undefined")).toBool(),
+        20000);
+    QVERIFY(QJsonDocument::fromJson(
+                eval(host->page(),
+                     QStringLiteral("JSON.stringify(self.__c12)"))
+                    .toString().toUtf8()).object()
+                .value(QLatin1String("err")).toString()
+                .contains(QStringLiteral("no-host-access")));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        [&]() {
+            for (const QString &g : host->shimGaps()) {
+                if (g.contains(QStringLiteral("insertCSS"))
                         && g.contains(QStringLiteral(
                                "no-host-access")))
                     return true;

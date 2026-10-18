@@ -733,9 +733,25 @@
         var entry = execWait[payload.execId];
         if (!entry || entry.done)
             return;
+        var results = payload.results || [];
+        if (entry.css) {
+            // ER08 — insertCSS/removeCSS resolve void like Chrome,
+            // but a frame-level failure (dead document, no insertion
+            // host) is a real injection failure and rejects the call.
+            for (var i = 0; i < results.length; ++i) {
+                if (results[i] && results[i].error) {
+                    entry.fail(String(results[i].error));
+                    return;
+                }
+            }
+            entry.done = true;
+            delete execWait[payload.execId];
+            answerCb(entry.cb, undefined);
+            entry.resolve(undefined);
+            return;
+        }
         entry.done = true;
         delete execWait[payload.execId];
-        var results = payload.results || [];
         answerCb(entry.cb, results);
         entry.resolve(results);
     }
@@ -2115,8 +2131,65 @@
     // a caller hands us crosses the channel as serialized source —
     // functions cannot marshal — exactly like Chrome's own
     // serialize-then-inject.  The results ride back on
-    // '__arktos.execResult'.  The remaining surface stays a typed
-    // stub (fillNs below) until ER08/ER09 land it.
+    // '__arktos.execResult'.  ER08 — insertCSS/removeCSS ride the
+    // same execId machinery (a per-frame css payload, the same
+    // '__arktos.execResult' answer) but resolve void like Chrome.
+    // registerContentScripts/updateContentScripts/
+    // getRegisteredContentScripts/unregisterContentScripts stay typed
+    // stubs (fillNs below) until ER09's registration work lands them.
+    function cssOp(method, injection, cb) {
+        touch('chrome.scripting.' + method);
+        injection = injection || {};
+        var target = injection.target || {};
+        var execId = cfg.id + '#css' + (++shim.seq) + '#'
+                     + Date.now();
+        return new Promise(function (resolve, reject) {
+            var entry = { cb: cb, resolve: resolve,
+                          reject: reject, done: false, css: true };
+            entry.fail = function (message) {
+                if (entry.done)
+                    return;
+                entry.done = true;
+                delete execWait[execId];
+                if (cb) {
+                    answerCb(cb, undefined, message);
+                    resolve(undefined);
+                    return;
+                }
+                var e = new Error(message);
+                e.api = 'chrome.scripting.' + method;
+                reject(e);
+            };
+            execWait[execId] = entry;
+            // The same safety net executeScript carries — a delivery
+            // whose answer never lands resolves typed rather than
+            // hanging forever.
+            setTimeout(function () {
+                entry.fail('chrome.scripting.' + method
+                           + ': exec-timeout');
+            }, 15000);
+            call('scripting', method, {
+                execId: execId,
+                target: {
+                    tabId: target.tabId,
+                    frameIds: target.frameIds,
+                    allFrames: target.allFrames,
+                    documentIds: target.documentIds
+                },
+                css: injection.css,
+                files: Array.isArray(injection.files)
+                    ? injection.files : null,
+                origin: injection.origin || 'AUTHOR'
+            }).then(function () {
+                // Accepted — the result lands on
+                // '__arktos.execResult'.
+            }).catch(function (e) {
+                entry.fail(e && e.message
+                    ? e.message
+                    : 'chrome.scripting.' + method + ' failed');
+            });
+        });
+    }
     if (typeof chrome !== 'undefined') {
         installNs('scripting', {
             __arktosShim: true,
@@ -2187,6 +2260,12 @@
                               + 'failed');
                     });
                 });
+            },
+            insertCSS: function (injection, cb) {
+                return cssOp('insertCSS', injection, cb);
+            },
+            removeCSS: function (injection, cb) {
+                return cssOp('removeCSS', injection, cb);
             }
         });
     }

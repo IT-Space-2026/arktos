@@ -139,9 +139,10 @@ private:
     // page agent's response resolves onto it), so it lives at this
     // level like getCurrent rather than in the shared backend.
     QJsonObject invokeTabMessage(const QJsonObject &args);
-    // ER07: chrome.scripting.executeScript — async for the same
-    // reason: the per-frame results resolve onto THIS bridge's
-    // hostEvent as '__arktos.execResult', so dispatch lives here.
+    // ER07/ER08: chrome.scripting.executeScript/insertCSS/removeCSS —
+    // async for the same reason: the per-frame results resolve onto
+    // THIS bridge's hostEvent as '__arktos.execResult', so dispatch
+    // lives here.
     QJsonObject invokeScripting(const QString &method,
                                 const QJsonObject &args);
     void finishExecFrame(const QString &execId, int slot,
@@ -154,7 +155,7 @@ private:
                         QWebEngineFrame frame, quint32 worldId,
                         const QString &key, int triesLeft);
 
-    // ER07: in-flight executeScript fan-outs — execId -> one result
+    // ER07/ER08: in-flight scripting fan-outs — execId -> one result
     // slot per selected frame plus an expiry so a frame whose eval
     // never answers cannot pin the call forever.
     struct PendingExec {
