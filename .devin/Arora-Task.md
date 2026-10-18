@@ -346,7 +346,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | AUDIT03 | Audit slice B: clang-tidy pass + STAT02 finding triage/fixes + dead-code sweep — details below | done | 1 | needs:task:AUDIT02. All 22 STAT02 findings triaged (QPointer/Qt-ownership FPs + 1 real bound); clang-tidy 22.1.8 over 331 TUs (773 in-tree → 3 real fixes: update-manifest 1MiB cap+test, socket-pump dead-fd guard, volatile zeroization cast); dead-code sweep removed 4 members. Triage doc: .devin/STAT02-triage.md — check-warnings 0, make check PASS |
 | AUDIT04 | Audit slice C: security delta re-check (UPD01/VSEC02/NSIS) + consolidated report — details below | done | 1 | needs:task:AUDIT03. 4 real fixes: asset URLs pinned to github/https-or-same-host surface, tor-mode sinks refuse (not just the check), release title rendered plaintext, planted-symlink engine/cache-hold can no longer inject a foreign store on unseal (+check→rename race re-verify, residue-erase link guard); NSIS SHCTX verified symmetric (no wrong-hive stranding). Consolidated report .devin/security/AUDIT02-report.md — tst_updatechecker 15/15, tst_profilee2e 22/22, make check PASS |
 
-| BRAND01 | Full rebrand Arora → Arktos (arktos-browser.com): user-visible strings, version 1.0, URLs, credits, start pages, packaging, data-dir migration — details below | blocked | 5 | blocked:exceeded 5 restarts |
+| BRAND01 | Full rebrand Arora → Arktos (arktos-browser.com): user-visible strings, version 1.0, URLs, credits, start pages, packaging, data-dir migration — details below | done | 5 | landed as 6794f964 + repo moved to github.com/arktos-browser/arktos (de3c152b); stale blocked row closed |
 
 ## Task details
 
