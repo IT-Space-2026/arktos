@@ -263,6 +263,7 @@ void tst_ProfileAvatar::saveWrites128Png()
 
     QVERIFY(identity->hasCustomAvatar());
     QCOMPARE(identity->avatar().width(), ProfileIdentity::AvatarSize);
+    QVERIFY(!identity->avatarPixmap(64).isNull());
 }
 
 void tst_ProfileAvatar::loadRemoveRoundTrip()
@@ -279,6 +280,9 @@ void tst_ProfileAvatar::loadRemoveRoundTrip()
     QVERIFY(!QFile::exists(path));
     QVERIFY(!identity->hasCustomAvatar());
     QVERIFY(identity->avatar().isNull());
+    // The silhouette fallback keeps a face — the button never goes
+    // blank when the custom file is gone.
+    QVERIFY(!identity->avatarPixmap(64).isNull());
     QCOMPARE(spy.count(), 2);
 
     // Removing with nothing to remove is a no-op, not an error.

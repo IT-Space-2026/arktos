@@ -290,15 +290,17 @@ browsing profile:
   profile: its tabs browse on that profile's engine profile, its
   history/bookmarks/settings write under `profiles/<id>/`, and a
   restored session reopens every window on the profile it was saved
-  under (a deleted profile falls back to default). The menu also carries the hygiene actions — Clear
-  History, Clear Cookies, Clear Cache (each wipes only its own
-  category) and Clear Private Data — plus a red **Delete Profile**
-  that itemizes what is destroyed, requires typing the profile name,
-  and wipes the data and settings roots at restart so a live profile
-  is never deleted out from under a running window. A neutral
-  silhouette is the default face until a custom picture is chosen;
-  it is a normal navigation-bar item, so Edit Navigation Bar can
-  reorder it.
+  under (a deleted profile falls back to default). "Change
+  Picture..." opens a crop-and-zoom avatar editor and "Remove
+  Picture" returns to the neutral silhouette. The menu also carries
+  the hygiene actions — Clear History, Clear Cookies, Clear Cache
+  (each wipes only its own category) and Clear Private Data — plus a
+  red **Delete Profile** that itemizes what is destroyed, requires
+  typing the profile name, and wipes the data and settings roots at
+  restart so a live profile is never deleted out from under a
+  running window. A neutral silhouette is the default face until a
+  custom picture is chosen; it is a normal navigation-bar item, so
+  Edit Navigation Bar can reorder it.
 - **Profile vaults (in progress)** — password-sealed profile storage:
   a profile's whole data folder is packed into a single tamper-evident
   encrypted archive when locked — including the engine's own stores

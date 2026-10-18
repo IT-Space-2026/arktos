@@ -35,6 +35,7 @@
 #include <clearprivatedata.h>
 #include <cookiejar.h>
 #include <historymanager.h>
+#include <profileidentity.h>
 #include <profilemenuactions.h>
 
 #include <qaction.h>
@@ -380,6 +381,12 @@ void tst_ProfileMenu::pendingWipeAppliesAtBoot()
         QVERIFY(file.open(QIODevice::WriteOnly));
         file.write("seed\n");
     }
+    // PROF04 cross-check: the full wipe eats the custom avatar file
+    // too — the restarted browser comes up on the silhouette.
+    ProfileIdentity *identity = ProfileIdentity::instance();
+    QVERIFY(identity->setAvatarImage(
+        QImage(64, 64, QImage::Format_RGB32)));
+    QVERIFY(identity->hasCustomAvatar());
     const QString cacheRoot = QStandardPaths::writableLocation(
         QStandardPaths::CacheLocation);
     QDir().mkpath(cacheRoot);
@@ -401,6 +408,7 @@ void tst_ProfileMenu::pendingWipeAppliesAtBoot()
     QVERIFY(!QFile::exists(dataSeed));
     QVERIFY(!QFile::exists(cacheSeed));
     QVERIFY(!QFile::exists(settingsFile));
+    QVERIFY(!identity->hasCustomAvatar());
     QVERIFY(QSettings()
                 .value(QLatin1String("profilewipe/seed")).isNull());
 }
