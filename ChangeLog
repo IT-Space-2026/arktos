@@ -1,7 +1,7 @@
 1.0 — Arktos: first release
 - Rebranded the project from Arora to Arktos (BRAND01): product name,
   website (https://arktos-browser.com) and repository
-  (https://github.com/arktos-browser/arktos), the binary, install
+  (https://github.com/IT-Space-2026/arktos), the binary, install
   paths (/usr/lib/arktos, /usr/share/arktos), desktop file, Flatpak
   app id (com.arktos_browser.Arktos), deb/rpm/NSIS/metainfo metadata,
   icons, man pages and every user-visible string now say Arktos;

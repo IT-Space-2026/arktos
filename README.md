@@ -10,7 +10,7 @@ rebuilt around privacy hardening, containers, Tor support and a
 modernized UI.
 
 Website: https://arktos-browser.com — sources and releases live at
-https://github.com/arktos-browser/arktos.
+https://github.com/IT-Space-2026/arktos.
 
 **Status: experimental.** Arktos is a work in progress and an
 experimental tool — it is provided **as is, without warranty of any
@@ -1024,4 +1024,4 @@ security failures or any other damage. Use it for testing, hacking and
 learning; treat it as a research browser, not a promise.
 
 Copyright © 2026-2027 Janos Szenfner —
-https://github.com/arktos-browser/arktos
+https://github.com/IT-Space-2026/arktos

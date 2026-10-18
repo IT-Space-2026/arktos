@@ -1,6 +1,6 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: arktos
-Source: https://github.com/arktos-browser/arktos
+Source: https://github.com/IT-Space-2026/arktos
 
 Files: *
 Copyright: 2007-2011 Benjamin C. Meyer (icefox) and contributors
