@@ -27,6 +27,8 @@
 #include <qstringlist.h>
 #include <qurl.h>
 
+namespace Engine { class Backend; }
+class EngineTab;
 class QCheckBox;
 class QComboBox;
 class QLabel;
@@ -80,6 +82,14 @@ public:
     explicit SitePanel(QWidget *parent = nullptr);
     void setWebView(WebView *webView);
     WebView *webView() const;
+    // TRUST25: the same binding for a foreign-engine tab — the
+    // info/trust sections all resolve from the tab's url, while the
+    // controls that need WebEngine machinery (profile cookie jar,
+    // interceptor tallies, lifted script wipes, per-site rules the
+    // engine never enforces) grey out honestly instead of answering
+    // for a surface that does not apply.
+    void setEngineTab(EngineTab *tab);
+    EngineTab *engineTab() const;
 
     // SHLD02: requests the blocker stopped on the current page load —
     // the shield button badges its icon with this.  The cumulative
@@ -115,6 +125,7 @@ signals:
 private:
     QString host() const;
     QUrl origin() const;
+    QUrl pageUrl() const;
     CookieJar *siteCookieJar() const;
     void applyCookieRule(int index);
     void toggleContentBlocking(bool checked);
@@ -137,6 +148,8 @@ private:
     static QList<TrustLine> trustSignals(const QString &host, bool isHttps);
 
     QPointer<WebView> m_webView;
+    QPointer<EngineTab> m_engineTab;
+    QPointer<Engine::Backend> m_engineBackend;
     QLabel *m_hostLabel;
     QLabel *m_securityLabel;
     QLabel *m_tlsLabel;

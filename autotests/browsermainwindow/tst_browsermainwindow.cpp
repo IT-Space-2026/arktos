@@ -247,6 +247,7 @@ private slots:
     void navBarOrderPersistence();
     void siteShieldButton();
     void trustChromeRestore();
+    void engineTabTrustChrome();
     void profileButton();
     void profileMenuEntries();
 };
@@ -8931,6 +8932,143 @@ void tst_BrowserMainWindow::trustChromeRestore()
     QVERIFY2(inkPixels > 4,
              "padlock slot painted no glyph — unbound or blanked");
     closeWindow(restored);
+}
+
+// TRUST25: the trust chrome binds the ACTIVE tab's surface, not a
+// WebView — a foreign-engine tab keeps the nav-bar shield enabled and
+// parks the same padlock a LocationBar carries in its plain bar's
+// left slot, both fed by the tab's own url/load signals.
+void tst_BrowserMainWindow::engineTabTrustChrome()
+{
+    // The engine-validated TLS branch must not read the tor one —
+    // leftover mode from an earlier leg would preempt the chip text.
+    BrowserApplication::setTorMode(false);
+
+    SubWindow *window = new SubWindow;
+    window->resize(1100, 700);
+    window->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+
+    SiteShieldButton *shield = window->findChild<SiteShieldButton *>(
+        QLatin1String("navSiteShield"));
+    QVERIFY(shield);
+    QVERIFY(shield->panel());
+
+    // The user report: an engine tab leaves currentTab() null, which
+    // used to disable the shield and lose the field padlock.  The
+    // fake backend models servo's degraded contract — no request
+    // hook, no per-tab process.
+    FakeEngineBackend backend;
+    EngineRegistry::registerBackend(&backend);
+    QVERIFY(window->tabWidget()->reloadTabInEngine(
+        0, QStringLiteral("fake")));
+    EngineTab *engine = window->tabWidget()->engineTab(0);
+    QVERIFY(engine);
+    QVERIFY(!window->currentTab());
+    QCOMPARE(window->tabWidget()->engineTab(
+                 window->tabWidget()->currentIndex()), engine);
+
+    const QUrl httpsUrl(QStringLiteral("https://engine.example/page"));
+    engine->load(httpsUrl);
+    QCOMPARE(engine->url(), httpsUrl);
+
+    // Shield: enabled on the engine tab, bound to the tab itself —
+    // the panel reports the real url and keeps the honest-disabled
+    // rows for what only WebEngine can answer.
+    QVERIFY(shield->isEnabled());
+    QCOMPARE(shield->engineTab(), engine);
+    QCOMPARE(shield->panel()->engineTab(), engine);
+    QVERIFY(!shield->panel()->webView());
+    QVERIFY(shield->toolTip().contains(
+        QLatin1String("does not run")));
+    QVERIFY(!shield->toolTip().contains(
+        QLatin1String("not available on this tab")));
+
+    // Panel honest-disabled surface — the rows the foreign engine
+    // cannot answer grey out, the engine-validated TLS chip reports.
+    if (QComboBox *jsRule = shield->panel()->findChild<QComboBox *>(
+            QLatin1String("siteJavaScriptRule")))
+        QVERIFY(!jsRule->isEnabled());
+    if (QPushButton *clearData = shield->panel()->findChild<QPushButton *>(
+            QLatin1String("siteClearData"))) {
+        QVERIFY(!clearData->isEnabled());
+        QVERIFY(!clearData->toolTip().isEmpty());
+    }
+    QLabel *panelTls = shield->panel()->findChild<QLabel *>(
+        QLatin1String("sitePanelTls"));
+    QVERIFY(panelTls);
+    // The panel lives inside a never-shown menu — isHidden() probes
+    // the chip's own visibility flag, not the ancestor chain.
+    QVERIFY(!panelTls->isHidden());
+    QVERIFY(panelTls->text().contains(
+        QLatin1String("TLS verified by Fake Engine")));
+
+    // Padlock: the engine tab's bar is a plain edit, but its left
+    // slot carries the same verdict button a LocationBar hosts.
+    QLineEdit *engineBar = window->tabWidget()->currentLocationBar();
+    QVERIFY(engineBar);
+    SitePadlockButton *padlock =
+        engineBar->findChild<SitePadlockButton *>();
+    QVERIFY(padlock);
+    QVERIFY(padlock->isVisible());
+    QCOMPARE(padlock->engineTab(), engine);
+    QVERIFY(!padlock->webView());
+    // https commit + an unranked host: the engine's own chain
+    // validation stands in for the probe, the verdict stays neutral —
+    // a locked amber lock, never a blank slot.
+    QCOMPARE(int(padlock->state()),
+             int(SitePadlockButton::stateFor(httpsUrl, true)));
+    QCOMPARE(int(padlock->state()),
+             int(SitePadlockButton::State::LockedYellow));
+    QVERIFY(!padlock->icon().isNull());
+    QLabel *popupTls = padlock->popup()
+        ? padlock->popup()->findChild<QLabel *>(
+              QLatin1String("padlockPopupTls"))
+        : nullptr;
+    QVERIFY(popupTls);
+    QVERIFY(!popupTls->isHidden());
+    QVERIFY(popupTls->text().contains(
+        QLatin1String("TLS verified by Fake Engine")));
+
+    // The verdict follows the tab's own navigation — an http commit
+    // drops the lock to the unlocked tier.
+    engine->load(QUrl(QStringLiteral("http://engine.example/plain")));
+    QCOMPARE(int(padlock->state()),
+             int(SitePadlockButton::State::UnlockedYellow));
+    engine->load(httpsUrl);
+    QCOMPARE(int(padlock->state()),
+             int(SitePadlockButton::State::LockedYellow));
+
+    // Switching to a WebEngine tab reverts both bindings; switching
+    // back rebinds the engine tab — the shield is never stranded.
+    window->tabWidget()->newTab();
+    QVERIFY(window->currentTab());
+    QVERIFY(!shield->engineTab());
+    QCOMPARE(shield->panel()->webView(), window->currentTab());
+    QVERIFY(shield->isEnabled());
+    QVERIFY(!shield->toolTip().contains(
+        QLatin1String("does not run")));
+    LocationBar *webBar = qobject_cast<LocationBar *>(
+        window->tabWidget()->currentLocationBar());
+    QVERIFY(webBar);
+    SitePadlockButton *webPadlock =
+        webBar->findChild<SitePadlockButton *>();
+    QVERIFY(webPadlock);
+    QCOMPARE(webPadlock->webView(), window->currentTab());
+    QVERIFY(!webPadlock->engineTab());
+
+    window->tabWidget()->setCurrentIndex(
+        window->tabWidget()->indexOf(engine));
+    QVERIFY(!window->currentTab());
+    QCOMPARE(shield->engineTab(), engine);
+    QCOMPARE(shield->panel()->engineTab(), engine);
+    QVERIFY(shield->isEnabled());
+    QCOMPARE(window->tabWidget()->currentLocationBar(), engineBar);
+    QCOMPARE(int(padlock->state()),
+             int(SitePadlockButton::State::LockedYellow));
+
+    closeWindow(window);
+    EngineRegistry::unregisterBackend(&backend);
 }
 
 // PROF01: the profile button is the rightmost nav-bar widget — its

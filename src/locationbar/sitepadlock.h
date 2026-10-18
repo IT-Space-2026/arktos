@@ -24,6 +24,8 @@
 #include <qtoolbutton.h>
 #include <qurl.h>
 
+namespace Engine { class Backend; }
+class EngineTab;
 class QFrame;
 class QLabel;
 class QMenu;
@@ -90,10 +92,21 @@ public:
     explicit SitePadlockButton(QWidget *parent = nullptr);
     void setWebView(WebView *webView);
     WebView *webView() const;
+    // TRUST25: the same binding for a foreign-engine tab — the
+    // EngineTab object is stable across the ENG28 in-place page swap
+    // and re-emits the load/url signals itself, so the padlock
+    // follows engine restarts with no rewiring.
+    void setEngineTab(EngineTab *tab);
+    EngineTab *engineTab() const;
 
     // The whole decision table as a pure function of the page url —
     // the icon/tooltip/popup render it and the autotest exercises it.
-    static State stateFor(const QUrl &url);
+    // engineValidated marks a tab whose own engine is the TLS
+    // authority (a foreign backend like Servo): the second-opinion
+    // probe can never run on it, so an https commit — which the
+    // engine only makes after validating the chain — stands in for
+    // the probe leg, exactly like TRUST23's tor reasoning.
+    static State stateFor(const QUrl &url, bool engineValidated = false);
 
     State state() const { return m_state; }
 
@@ -110,8 +123,11 @@ public slots:
 private:
     void rebuildPopup();
     QIcon makeIcon(State state) const;
+    QUrl boundUrl() const;
 
     QPointer<WebView> m_webView;
+    QPointer<EngineTab> m_engineTab;
+    QPointer<Engine::Backend> m_engineBackend;
     QMenu *m_menu;
     QFrame *m_popup;
     QLabel *m_popupHost;

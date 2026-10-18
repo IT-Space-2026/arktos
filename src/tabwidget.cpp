@@ -87,6 +87,7 @@
 #include "opensearchmanager.h"
 #include "safetext.h"
 #include "settings.h"
+#include "sitepadlock.h"
 #include "streamingutils.h"
 #include "tabbar.h"
 #include "toolbarsearch.h"
@@ -1251,7 +1252,7 @@ EngineTab *TabWidget::addEngineTab(Engine::Backend *backend, bool makeCurrent)
 
     // The parallel location-bar stack needs one widget per tab.  An
     // engine tab's bar is a plain LineEdit — LocationBar's
-    // site-icon/shield cluster is WebView-bound — but fully editable
+    // site-icon cluster is WebView-bound — but fully editable
     // like every other tab's (ENG14): Enter routes through
     // lineEditReturnPressed -> loadString -> loadUrl, which dispatches
     // a current-tab load to this tab's Engine::Page, and non-address
@@ -1263,6 +1264,16 @@ EngineTab *TabWidget::addEngineTab(Engine::Backend *backend, bool makeCurrent)
     // path.
     LineEdit *bar = new LineEdit(this);
     wireLocationBar(bar);
+    // TRUST25: the field's LeftSide padlock is part of the trust
+    // contract on every browsing tab — the foreign engine gets the
+    // same SitePadlockButton a LocationBar carries, bound to the
+    // EngineTab (whose own url/load signals keep it live through
+    // ENG28 page swaps).  The verdict is engine-agnostic: scheme +
+    // host trust, with the engine's own chain validation standing
+    // in for the TLS probe.
+    SitePadlockButton *padlock = new SitePadlockButton(bar);
+    padlock->setEngineTab(tab);
+    bar->addWidget(padlock, LineEdit::LeftSide);
     m_locationBars->addWidget(bar);
 
     // Tab-strip plumbing mirroring the WebView wiring in

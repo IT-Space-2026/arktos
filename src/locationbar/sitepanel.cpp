@@ -27,6 +27,8 @@
 #include "cookiejar.h"
 #include "domainblocklist.h"
 #include "engineinterface.h"
+#include "engineregistry.h"
+#include "enginetab.h"
 #include "fingerprintprotector.h"
 #include "popupblocker.h"
 #include "privacyrequestinterceptor.h"
@@ -296,8 +298,14 @@ SitePanel::SitePanel(QWidget *parent)
 
 void SitePanel::setWebView(WebView *webView)
 {
-    if (m_webView == webView)
+    // The engine-tab binding clears first — an early return while it
+    // is still set would keep stale connections alive.
+    if (m_webView == webView && !m_engineTab)
         return;
+    if (m_engineTab) {
+        disconnect(m_engineTab, nullptr, this, nullptr);
+        m_engineTab = nullptr;
+    }
     if (m_webView)
         disconnect(m_webView, nullptr, this, nullptr);
     m_webView = webView;
@@ -319,21 +327,75 @@ void SitePanel::setWebView(WebView *webView)
     refresh();
 }
 
+void SitePanel::setEngineTab(EngineTab *tab)
+{
+    if (m_engineTab == tab && !m_webView)
+        return;
+    if (m_webView) {
+        disconnect(m_webView, nullptr, this, nullptr);
+        m_webView = nullptr;
+    }
+    if (m_engineTab)
+        disconnect(m_engineTab, nullptr, this, nullptr);
+    m_engineTab = tab;
+    // The tab's backend pointer is raw — a stack-owned backend (the
+    // autotest fakes) can die while a bound tab still stands, and
+    // refresh paths still run during tab-stack teardown.  Keep it as
+    // a QPointer so a dead backend reads as absent; the registry
+    // membership probe is a plain pointer compare, safe even if the
+    // backend is already gone.
+    Engine::Backend *backend = tab ? tab->backend() : nullptr;
+    m_engineBackend = (backend
+        && EngineRegistry::backends().contains(backend))
+        ? backend : nullptr;
+    if (tab) {
+        // The tab re-emits the page's own beats — the same baseline/
+        // refresh rhythm the WebView signals drive.
+        connect(tab, &EngineTab::loadStarted,
+                this, [this]() { m_blockedBaseline = blockedTotal(); });
+        connect(tab, &EngineTab::urlChanged,
+                this, [this](const QUrl &) {
+            m_blockedBaseline = blockedTotal();
+            refresh();
+        });
+        connect(tab, &EngineTab::loadFinished,
+                this, [this](bool) { refresh(); });
+        // ENG28: the page object is swapped in place — pageUrl()
+        // re-resolves through the tab, so a plain repaint suffices.
+        connect(tab, &EngineTab::pageRecreated,
+                this, [this]() { refresh(); });
+        m_blockedBaseline = blockedTotal();
+    }
+    refresh();
+}
+
 WebView *SitePanel::webView() const
 {
     return m_webView;
 }
 
+EngineTab *SitePanel::engineTab() const
+{
+    return m_engineTab;
+}
+
+// The bound tab's url, whichever surface carries it.
+QUrl SitePanel::pageUrl() const
+{
+    return m_webView ? m_webView->url()
+                     : (m_engineTab ? m_engineTab->url() : QUrl());
+}
+
 QString SitePanel::host() const
 {
-    return m_webView ? m_webView->url().host() : QString();
+    return pageUrl().host();
 }
 
 // The broker keys permissions by bare scheme://host:port — normalize
 // the page url the same way so entries match.
 QUrl SitePanel::origin() const
 {
-    QUrl origin = m_webView ? m_webView->url() : QUrl();
+    QUrl origin = pageUrl();
     origin.setUserInfo(QString());
     origin.setPath(QString());
     origin.setQuery(QString());
@@ -366,7 +428,7 @@ void SitePanel::refresh()
     m_refreshing = true;
 
     const QString site = host();
-    const QUrl url = m_webView ? m_webView->url() : QUrl();
+    const QUrl url = pageUrl();
     const QString scheme = url.scheme();
     const bool hasSite = !site.isEmpty();
 
@@ -446,7 +508,23 @@ void SitePanel::refresh()
         break;
     case TlsVerifier::Status::Refused:
     case TlsVerifier::Status::None:
-        m_tlsLabel->setVisible(false);
+        // TRUST25: a foreign-engine tab is never probed, but an
+        // https page committed — its engine validated the chain
+        // end-to-end (same stand-in TRUST23 grants tor).  Report
+        // that instead of hiding the chip.
+        if (scheme == QLatin1String("https") && m_engineTab) {
+            const QString engine = m_engineBackend
+                ? m_engineBackend->displayName()
+                : tr("the engine");
+            m_tlsLabel->setText(
+                tr("TLS verified by %1 — the independent check does "
+                   "not run on this engine").arg(engine));
+            m_tlsLabel->setToolTip(QString());
+            m_tlsLabel->setPalette(palette());
+            m_tlsLabel->setVisible(true);
+        } else {
+            m_tlsLabel->setVisible(false);
+        }
         break;
     }
 
@@ -466,7 +544,11 @@ void SitePanel::refresh()
     } else {
         m_cookieRule->setCurrentIndex(0);
         m_cookieCount->setText(
-            hasSite ? QString() : tr("No site to scope cookies to"));
+            hasSite
+                ? (m_engineTab
+                       ? tr("Cookies are managed by this tab's engine")
+                       : QString())
+                : tr("No site to scope cookies to"));
     }
 
     AdBlockManager *adblock = AdBlockManager::instance();
@@ -476,6 +558,11 @@ void SitePanel::refresh()
         m_blockedCount->setText(tr("Content blocking is disabled"));
     else if (!hasSite)
         m_blockedCount->setText(tr("No web page to count"));
+    else if (m_engineTab)
+        // The interceptor only runs on WebEngine profiles — the
+        // tally cannot answer for a foreign engine's requests.
+        m_blockedCount->setText(
+            tr("Content blocking does not run on this engine"));
     else
         m_blockedCount->setText(
             tr("%1 requests blocked on this page")
@@ -483,25 +570,39 @@ void SitePanel::refresh()
 
     // The per-site row greys out while the master switch is off —
     // whitelisting a site is meaningless when nothing is blocked.
-    m_blockContent->setEnabled(hasSite && blockingOn
+    // TRUST25: the rule only gates WebEngine's interceptor, so on a
+    // foreign engine the toggle is honest-disabled rather than
+    // recording an exception nothing there enforces.
+    m_blockContent->setEnabled(hasSite && blockingOn && !m_engineTab
         && !adblock->siteWhitelistFilter(site).isEmpty());
     m_blockContent->setChecked(
         blockingOn && !adblock->isSiteWhitelisted(site));
     m_blockContent->setToolTip(
-        !blockingOn
-            ? tr("Content blocking is disabled globally")
-            : tr("Unchecked, this site's pages are exempted from "
-                 "content blocking (an @@||host^$document rule in "
-                 "your custom filters)."));
+        m_engineTab && hasSite
+            ? tr("Content blocking runs on Chromium tabs only")
+            : !blockingOn
+                ? tr("Content blocking is disabled globally")
+                : tr("Unchecked, this site's pages are exempted from "
+                     "content blocking (an @@||host^$document rule "
+                     "in your custom filters)."));
 
-    m_clearData->setEnabled(hasSite);
+    // Site-data wiping needs the WebEngine machinery (profile cookie
+    // jar + a lifted script into Chromium's storage) — on a foreign
+    // engine it could only do a partial, misleading wipe.
+    m_clearData->setEnabled(hasSite && !m_engineTab);
+    m_clearData->setToolTip(m_engineTab && hasSite
+        ? tr("Site-data wiping is only available on Chromium tabs")
+        : tr("Deletes this site's cookies and local storage."));
 
     ScriptControlManager *scripts = ScriptControlManager::instance();
     const bool webSite = hasSite
         && (scheme == QLatin1String("http")
             || scheme == QLatin1String("https"));
-    m_javaScriptRule->setEnabled(webSite);
-    if (webSite) {
+    // The per-site rule is enforced pre-navigation on WebEngine —
+    // a foreign engine never consults it, so claiming "JavaScript is
+    // blocked on this site" would be observably false there.
+    m_javaScriptRule->setEnabled(webSite && !m_engineTab);
+    if (webSite && !m_engineTab) {
         const int comboIndex = m_javaScriptRule->findData(
             int(scripts->ruleForHost(site)));
         m_javaScriptRule->setCurrentIndex(comboIndex >= 0 ? comboIndex : 0);
@@ -512,23 +613,36 @@ void SitePanel::refresh()
     } else {
         m_javaScriptRule->setCurrentIndex(0);
         m_javaScriptState->setText(
-            hasSite ? tr("JavaScript rules apply to web sites")
-                    : tr("No site to scope JavaScript to"));
+            m_engineTab ? tr("JavaScript rules apply on Chromium tabs")
+            : hasSite ? tr("JavaScript rules apply to web sites")
+                      : tr("No site to scope JavaScript to"));
     }
 
     // POPUP01: the exception is host-keyed like the JavaScript one —
-    // only real web sites get the toggle.
-    m_allowPopups->setEnabled(webSite);
+    // only real web sites get the toggle.  TRUST25: PopupBlocker is
+    // consulted by WebEngine's createWindow — a foreign engine never
+    // reads it, so the toggle greys out rather than record a promise
+    // nothing enforces.
+    m_allowPopups->setEnabled(webSite && !m_engineTab);
     m_allowPopups->setChecked(
         webSite && PopupBlocker::instance()->isAllowedHost(site));
+    m_allowPopups->setToolTip(m_engineTab && webSite
+        ? tr("Pop-up rules are enforced on Chromium tabs only")
+        : QString());
 
     // SAFE01: the HTTPS-Only exception is host-keyed like the others.
     // While the warning page itself is shown the url is the internal
     // interstitial (no host) — the row becomes meaningful once the
-    // user has proceeded onto the http: site.
-    m_allowHttp->setEnabled(webSite);
+    // user has proceeded onto the http: site.  TRUST25: the warning
+    // interstitial is raised by the WebEngine interceptor; a foreign
+    // engine makes its own upgrade calls, so the toggle greys out.
+    m_allowHttp->setEnabled(webSite && !m_engineTab);
     m_allowHttp->setChecked(
         webSite && PrivacyRequestInterceptor::isHttpAllowedHost(site));
+    m_allowHttp->setToolTip(m_engineTab && webSite
+        ? tr("HTTPS-Only warnings are raised on Chromium tabs only")
+        : tr("Skips the HTTPS-Only warning page for this host — its "
+             "pages load over plain HTTP without asking."));
 
     // SAFE06: the row is only meaningful while protection is active
     // on this page's profile — greyed with an explanation otherwise.
@@ -540,14 +654,16 @@ void SitePanel::refresh()
     m_spoofFingerprint->setChecked(protectionOn
                                    && !protector->isExempt(site));
     m_spoofFingerprint->setToolTip(
-        !webSite
-            ? tr("Fingerprint spoofing applies to web sites")
-            : !protectionOn
-                ? tr("Fingerprint spoofing is off — enable it in "
-                     "Settings > Privacy")
-                : tr("Unchecked, this host is exempted from the "
-                     "injected fingerprint countermeasures (takes "
-                     "effect on reload)."));
+        m_engineTab
+            ? tr("Fingerprint spoofing runs on Chromium tabs only")
+            : !webSite
+                ? tr("Fingerprint spoofing applies to web sites")
+                : !protectionOn
+                    ? tr("Fingerprint spoofing is off — enable it in "
+                         "Settings > Privacy")
+                    : tr("Unchecked, this host is exempted from the "
+                         "injected fingerprint countermeasures (takes "
+                         "effect on reload)."));
 
     rebuildPermissionRows();
     m_refreshing = false;
@@ -855,8 +971,7 @@ void SitePanel::rebuildTrustRows()
     }
 
     const QString site = host();
-    const QString scheme = m_webView ? m_webView->url().scheme()
-                                     : QString();
+    const QString scheme = pageUrl().scheme();
     const bool isHttps = scheme == QLatin1String("https");
     const bool webSite = !site.isEmpty()
         && (scheme == QLatin1String("http") || isHttps);

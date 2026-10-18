@@ -2267,7 +2267,15 @@ void BrowserMainWindow::setupToolBar()
                                  QLatin1String("siteShield"));
     navShieldAction->setVisible(true);
     const auto rebindTrust = [this]() {
-        m_siteShield->setWebView(currentTab());
+        // TRUST25: a foreign-engine tab still gets the trust chrome —
+        // the shield binds the EngineTab (its url/load signals and
+        // the host-keyed trust/whitelist lookups are engine-agnostic).
+        // Widget tabs bind nothing and render disabled as before.
+        if (WebView *view = currentTab())
+            m_siteShield->setWebView(view);
+        else
+            m_siteShield->setEngineTab(
+                m_tabWidget->engineTab(m_tabWidget->currentIndex()));
         // The padlock is per-tab (it lives in each bar), but the front
         // one re-evaluates here too — the trust surface reads its
         // QSettings keys live, and returning to a tab is often the

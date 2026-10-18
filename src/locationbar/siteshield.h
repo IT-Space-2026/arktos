@@ -24,6 +24,8 @@
 #include <qpointer.h>
 #include <qtoolbutton.h>
 
+namespace Engine { class Backend; }
+class EngineTab;
 class QMenu;
 class SitePanel;
 class WebView;
@@ -56,6 +58,14 @@ class SiteShieldButton : public QToolButton
 public:
     explicit SiteShieldButton(QWidget *parent = nullptr);
     void setWebView(WebView *webView);
+    // TRUST25: the same binding for a foreign-engine tab — the shield
+    // follows the tab's url/load signals itself, keeps the host-keyed
+    // trust badge and the per-site whitelist lookup (a global store,
+    // the only blocking persona a servo profile has), and drops the
+    // WebEngine-only decorations (blocked-count badge, JS-blocked dot,
+    // panel controls that cannot answer for the engine).
+    void setEngineTab(EngineTab *tab);
+    EngineTab *engineTab() const;
 
     // Test hook — the panel widget inside the button's menu.
     SitePanel *panel() const { return m_panel; }
@@ -84,6 +94,8 @@ private:
     void growMenuToFit();
 
     QPointer<WebView> m_webView;
+    QPointer<EngineTab> m_engineTab;
+    QPointer<Engine::Backend> m_engineBackend;
     QMenu *m_menu;
     SitePanel *m_panel;
     QString m_trustLevel;
