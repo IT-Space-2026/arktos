@@ -158,6 +158,13 @@ private:
     // option shapes.
     QJsonObject invokeContentScripts(const QString &method,
                                      const QJsonObject &args);
+    // ER10: chrome.offscreen.createDocument/closeDocument/hasDocument.
+    // createDocument is async like scripting.executeScript — the
+    // answer lands on this bridge's hostEvent as
+    // '__arktos.offscreenDone' once the spawned document's shim
+    // registers its relay context (the messaging-ready signal).
+    QJsonObject invokeOffscreen(const QString &method,
+                                const QJsonObject &args);
     void finishExecFrame(const QString &execId, int slot,
                          int frameId, const QVariant &value,
                          QWebEngineFrame frame, quint32 worldId,
@@ -508,9 +515,38 @@ public:
     // EXT17 — chrome.runtime.getContexts backing: the registered
     // shim contexts of one extension as spec-shaped context entries
     // (contextType from the registered kind — BACKGROUND for the
-    // host, POPUP for the action popup, TAB for a page hosted in a
-    // real tab).
+    // host, POPUP for the action popup, OFFSCREEN_DOCUMENT for an
+    // ER10 offscreen page, TAB for a page hosted in a real tab).
     QJsonArray contextsJson(const QString &extensionId) const;
+
+    // ------------------------------------------------------------------
+    // ER10 — chrome.offscreen.createDocument/hasDocument/closeDocument.
+    // Chrome's single-document model: at most one offscreen document
+    // per extension, a hidden navigation-locked QWebEngineView on the
+    // extension's own profile loaded at the declared bundle-relative
+    // URL — a second-class host page with NO toolbar wiring and the
+    // full EXT17 sibling shim (own ChromeBridge, shared backend,
+    // relay registration of kind 'offscreen'), so chrome.* calls and
+    // runtime messaging inside it work exactly like the popup's do.
+    // This is what Bitwarden's Argon2/localStorage/clipboard helpers
+    // need.  The engine's native binding is overridden shim-side —
+    // its document would carry no channel and no relay context.
+    //
+    // createDocument is async: the accepted call parks a pending op
+    // keyed by the caller-minted docId and resolves it (hostEvent
+    // '__arktos.offscreenDone') when the document's shim registers —
+    // the earliest moment a sendMessage to the document can land.
+    QJsonObject offscreenCreate(ChromeBridge *caller,
+                                const QString &docId,
+                                const QString &url,
+                                const QStringList &reasons,
+                                const QString &justification);
+    QJsonObject offscreenClose(const QString &extensionId);
+    bool offscreenHasDocument(const QString &extensionId) const;
+    // Test/diagnostics seams: the live page, and the recorded create
+    // parameters {url, reasons, justification}.
+    QWebEnginePage *offscreenPage(const QString &extensionId) const;
+    QJsonObject offscreenInfo(const QString &extensionId) const;
 
     // ER05 test seam — a simulated browser relaunch inside one
     // process: clears the per-session runtime.onStartup dedupe so
@@ -629,6 +665,36 @@ private:
     // EXT17: sibling-page bridges keyed by their page so an open
     // popup's channel is unregistered when the view goes away.
     QHash<QWebEnginePage *, QPointer<ChromeBridge>> m_pageBridges;
+
+    // ER10 — offscreen documents: extId -> the one document Chrome's
+    // single-document rule allows, and in-flight createDocument ops
+    // keyed by the caller-minted "<extId>#..." docId (the same
+    // capability-prefix convention as relay mids/execIds).
+    struct OffscreenDoc {
+        QPointer<QWebEngineView> view;   // owns page/bridge/channel
+        QPointer<QWebEnginePage> page;
+        QPointer<ChromeBridge> bridge;
+        QString url;
+        QStringList reasons;
+        QString justification;
+    };
+    struct PendingOffscreen {
+        QPointer<ChromeBridge> caller;
+        QString extensionId;
+    };
+    QHash<QString, OffscreenDoc> m_offscreenDocs;
+    QHash<QString, PendingOffscreen> m_offscreenOps;
+    QHash<QString, QTimer *> m_offscreenOpTimers;
+    bool isOffscreenBridge(ChromeBridge *bridge) const;
+    void resolveOffscreenOp(const QString &docId,
+                            const QString &error = QString());
+    // The offscreen document's shim registered its relay context —
+    // every pending createDocument op on that bridge resolves.
+    void resolveOffscreenOps(ChromeBridge *bridge);
+    void dropOffscreenDocument(const QString &extensionId);
+    // Push-then-wake for the hidden contexts an event/replay targets
+    // — the host page and any offscreen document.
+    void nudgeBridge(ChromeBridge *bridge);
 };
 
 #endif // EXTENSIONBACKGROUNDHOST_H

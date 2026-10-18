@@ -167,6 +167,10 @@ QJsonObject ChromeBridge::invoke(const QString &ns,
     // browser.contentScripts.* to chrome.contentScripts.*).
     if (ns == QLatin1String("contentScripts"))
         return invokeContentScripts(method, args);
+    // ER10: chrome.offscreen — context-scoped like tabs.sendMessage:
+    // the async createDocument resolves onto THIS bridge's hostEvent.
+    if (ns == QLatin1String("offscreen"))
+        return invokeOffscreen(method, args);
     if (!m_backend) {
         QJsonObject o;
         o.insert(QStringLiteral("ok"), false);
@@ -279,19 +283,22 @@ namespace {
 // QUAL03: setWebChannel binds 'chromeBridge' to the PAGE, not the
 // document — every frame of every later commit exposes the same
 // objects to that world.  The hosted view is therefore navigation-
-// locked: the main frame may only ever be the wrapper url, and
-// subframes must stay inside the extension's own origin.  Without
-// this, a hosted page navigated (or iframed) to foreign content
-// would hand that content the bridge — the extension's storage,
-// identity, and relay channels included.
+// locked: the main frame may only ever be its declared url (the
+// wrapper for the background host, the createDocument url for an
+// ER10 offscreen document), and subframes must stay inside the
+// extension's own origin.  Without this, a hosted page navigated (or
+// iframed) to foreign content would hand that content the bridge —
+// the extension's storage, identity, and relay channels included.
 class HostedBackgroundPage : public QWebEnginePage
 {
 public:
     HostedBackgroundPage(QWebEngineProfile *profile,
                          const QString &extensionId,
+                         const QUrl &mainUrl,
                          QObject *parent = nullptr)
         : QWebEnginePage(profile, parent)
         , m_extensionId(extensionId)
+        , m_mainUrl(mainUrl)
     {
     }
 
@@ -301,8 +308,7 @@ protected:
                                  bool isMainFrame) override
     {
         if (isMainFrame)
-            return url == ExtensionBackgroundHost::hostUrl(
-                       m_extensionId)
+            return url == m_mainUrl
                 || url == QUrl(QStringLiteral("about:blank"));
         return url.scheme() == QLatin1String("chrome-extension")
             && url.host() == m_extensionId;
@@ -310,6 +316,7 @@ protected:
 
 private:
     QString m_extensionId;
+    QUrl m_mainUrl;
 };
 
 // QUAL03: relay keys arrive inside caller-supplied arguments, so the
@@ -824,7 +831,8 @@ ExtensionBackgroundHost::ExtensionBackgroundHost(
     m_view = new QWebEngineView;
     // Navigation-locked page — see HostedBackgroundPage above: the
     // registered channel objects outlive any document change.
-    m_page = new HostedBackgroundPage(profile, extensionId, m_view);
+    m_page = new HostedBackgroundPage(profile, extensionId,
+                                      hostUrl(extensionId), m_view);
     m_view->setPage(m_page);
 
     m_channel = new QWebChannel(m_page);
@@ -1128,6 +1136,10 @@ void ExtensionBackgroundRuntime::attachProfile(QWebEngineProfile *profile)
 
 void ExtensionBackgroundRuntime::teardown(const QString &id)
 {
+    // ER10: the offscreen document dies with the extension — Chrome
+    // closes an extension's pages on unload, and its bridge's backend
+    // just died anyway.
+    dropOffscreenDocument(id);
     ExtensionBackgroundHost *host = m_hosts.take(id);
     if (host) {
         unregisterRelayContext(host->bridge());
@@ -1569,24 +1581,35 @@ QString ExtensionBackgroundRuntime::registerRelayContext(
 {
     if (!bridge)
         return QString();
+    // ER10: the runtime — not the page — knows a context is the
+    // offscreen document; pin its kind so getContexts reports
+    // OFFSCREEN_DOCUMENT and a pending createDocument can resolve.
+    QString contextKind = kind;
+    const bool isOffscreen = isOffscreenBridge(bridge);
+    if (isOffscreen)
+        contextKind = QStringLiteral("offscreen");
     for (int i = 0; i < m_relayContexts.size(); ++i) {
         if (m_relayContexts.at(i).bridge == bridge) {
             // A re-register refreshes kind/url (the page may learn
             // its role after attach).
-            m_relayContexts[i].kind = kind;
+            m_relayContexts[i].kind = contextKind;
             if (!url.isEmpty())
                 m_relayContexts[i].url = url;
+            if (isOffscreen)
+                resolveOffscreenOps(bridge);
             return m_relayContexts.at(i).contextId;
         }
     }
     RelayContext ctx;
     ctx.bridge = bridge;
-    ctx.kind = kind;
+    ctx.kind = contextKind;
     ctx.url = url;
-    ctx.contextId = bridge->extensionId() + QLatin1Char('|') + kind
-        + QLatin1Char('|')
+    ctx.contextId = bridge->extensionId() + QLatin1Char('|')
+        + contextKind + QLatin1Char('|')
         + QString::number(m_nextContextId++);
     m_relayContexts.append(ctx);
+    if (isOffscreen)
+        resolveOffscreenOps(bridge);
     return ctx.contextId;
 }
 
@@ -1667,11 +1690,7 @@ int ExtensionBackgroundRuntime::relaySend(ChromeBridge *from,
         ++peers;
         // A popup->background send lands on a throttled hidden page —
         // nudge it awake like the EXT16 event fan-out does.
-        if (ExtensionBackgroundHost *host =
-                m_hosts.value(ctx.bridge->extensionId())) {
-            if (ctx.bridge == host->bridge())
-                host->nudge();
-        }
+        nudgeBridge(ctx.bridge);
     }
     if (peers > 0) {
         PendingRelay pending;
@@ -1774,11 +1793,7 @@ int ExtensionBackgroundRuntime::relayPortConnect(
                         {QStringLiteral("name"), name},
                         {QStringLiteral("sender"), sender}});
         ++peers;
-        if (ExtensionBackgroundHost *host =
-                m_hosts.value(ctx.bridge->extensionId())) {
-            if (ctx.bridge == host->bridge())
-                host->nudge();
-        }
+        nudgeBridge(ctx.bridge);
     }
     return peers;
 }
@@ -1819,13 +1834,8 @@ int ExtensionBackgroundRuntime::relayPortMessage(
                                end.localPortId},
                               {QStringLiteral("msg"), msg}});
         ++delivered;
-        if (auto *cb = qobject_cast<ChromeBridge *>(end.target)) {
-            if (ExtensionBackgroundHost *host =
-                    m_hosts.value(cb->extensionId())) {
-                if (cb == host->bridge())
-                    host->nudge();
-            }
-        }
+        if (auto *cb = qobject_cast<ChromeBridge *>(end.target))
+            nudgeBridge(cb);
     }
     return delivered;
 }
@@ -2039,7 +2049,6 @@ int ExtensionBackgroundRuntime::fanOut(
 {
     const QString gate = eventGate(name);
     int delivered = 0;
-    QSet<QString> nudged;
     for (const RelayContext &ctx : m_relayContexts) {
         ChromeBridge *bridge = ctx.bridge;
         if (!bridge)
@@ -2052,14 +2061,10 @@ int ExtensionBackgroundRuntime::fanOut(
             continue;
         emit bridge->hostEvent(name, shapedPayload(extId, name, payload));
         ++delivered;
-        // Push-then-wake — a throttled hidden page drains the
-        // delivery promptly instead of waiting for its own nudge
-        // timer's next tick.
-        if (!nudged.contains(extId)) {
-            nudged.insert(extId);
-            if (ExtensionBackgroundHost *host = m_hosts.value(extId))
-                host->nudge();
-        }
+        // Push-then-wake — a throttled hidden page (host or
+        // offscreen document) drains the delivery promptly instead
+        // of waiting for its own nudge timer's next tick.
+        nudgeBridge(bridge);
     }
     return delivered;
 }
@@ -3639,11 +3644,7 @@ QJsonObject ExtensionBackgroundRuntime::pageSend(
         emit ctx.bridge->hostEvent(QStringLiteral("__arktos.relay"),
                                    payload);
         ++peers;
-        if (ExtensionBackgroundHost *host =
-                m_hosts.value(extensionId)) {
-            if (ctx.bridge == host->bridge())
-                host->nudge();
-        }
+        nudgeBridge(ctx.bridge);
     }
     if (peers > 0) {
         PendingRelay pending;
@@ -3709,11 +3710,7 @@ QJsonObject ExtensionBackgroundRuntime::pagePortConnect(
         emit ctx.bridge->hostEvent(
             QStringLiteral("__arktos.portConnect"), payload);
         ++peers;
-        if (ExtensionBackgroundHost *host =
-                m_hosts.value(extensionId)) {
-            if (ctx.bridge == host->bridge())
-                host->nudge();
-        }
+        nudgeBridge(ctx.bridge);
     }
     return pageOk(QJsonObject{{QStringLiteral("peers"), peers}});
 }
@@ -3751,13 +3748,8 @@ QJsonObject ExtensionBackgroundRuntime::pagePortMessage(
                                end.localPortId},
                               {QStringLiteral("msg"), msg}});
         ++delivered;
-        if (auto *cb = qobject_cast<ChromeBridge *>(end.target)) {
-            if (ExtensionBackgroundHost *host =
-                    m_hosts.value(cb->extensionId())) {
-                if (cb == host->bridge())
-                    host->nudge();
-            }
-        }
+        if (auto *cb = qobject_cast<ChromeBridge *>(end.target))
+            nudgeBridge(cb);
     }
     return pageOk(QJsonObject{{QStringLiteral("delivered"),
                                delivered}});
@@ -3895,4 +3887,354 @@ void ExtensionBackgroundRuntime::pageDeliver(
                     {QStringLiteral("ext"), extensionId},
                     {QStringLiteral("msg"), msg},
                     {QStringLiteral("sender"), sender}});
+}
+
+// -------------------------------------------------------------------
+// ER10 — chrome.offscreen.  Chrome's single-document model: at most
+// one offscreen document per extension, created by
+// createDocument({url, reasons, justification}).  Ours is a second-
+// class host page: a hidden, navigation-locked QWebEngineView on the
+// extension's profile loaded at the declared bundle-relative url,
+// wired through attachExtensionPage so the EXT17 sibling shim lands
+// the full chrome.* surface + relay context (kind 'offscreen' —
+// getContexts reports OFFSCREEN_DOCUMENT).  Chrome resolves
+// createDocument once the document is usable; the equivalent honest
+// signal here is the document's shim registering its relay context —
+// after it, runtime.sendMessage really reaches the page.
+// -------------------------------------------------------------------
+
+namespace {
+
+// Chrome's offscreen.Reason enum — validated, never silently
+// dropped; the recorded set is what offscreenInfo() echoes back.
+const QSet<QString> &offscreenReasons()
+{
+    static const QSet<QString> reasons = {
+        QStringLiteral("TESTING"), QStringLiteral("AUDIO_PLAYBACK"),
+        QStringLiteral("IFRAME_SCRIPTING"),
+        QStringLiteral("DOM_SCRAPING"), QStringLiteral("BLOBS"),
+        QStringLiteral("DOM_PARSER"), QStringLiteral("USER_MEDIA"),
+        QStringLiteral("DISPLAY_MEDIA"), QStringLiteral("WEB_RTC"),
+        QStringLiteral("CLIPBOARD"), QStringLiteral("LOCAL_STORAGE"),
+        QStringLiteral("WORKERS"), QStringLiteral("BATTERY_STATUS"),
+        QStringLiteral("MATCH_MEDIA"), QStringLiteral("GEOLOCATION"),
+        QStringLiteral("COLLECTION")};
+    return reasons;
+}
+
+} // namespace
+
+QJsonObject ChromeBridge::invokeOffscreen(const QString &method,
+                                          const QJsonObject &args)
+{
+    auto ok = [](const QJsonValue &v = QJsonValue()) {
+        QJsonObject o;
+        o.insert(QStringLiteral("ok"), true);
+        if (!v.isUndefined())
+            o.insert(QStringLiteral("result"), v);
+        return o;
+    };
+    auto err = [](const QString &code) {
+        QJsonObject o;
+        o.insert(QStringLiteral("ok"), false);
+        o.insert(QStringLiteral("error"), code);
+        return o;
+    };
+    if (!m_backend)
+        return err(QStringLiteral("backend-gone"));
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    // Chrome exposes chrome.offscreen only to extensions declaring
+    // the 'offscreen' permission — the call-level gate stands in for
+    // the absent namespace, same as chrome.scripting's.
+    if (!runtime->hasExtensionPermission(
+            m_extensionId, QStringLiteral("offscreen")))
+        return err(QStringLiteral("no-permission"));
+    if (method == QLatin1String("hasDocument"))
+        return ok(runtime->offscreenHasDocument(m_extensionId));
+    if (method == QLatin1String("closeDocument"))
+        return runtime->offscreenClose(m_extensionId);
+    if (method != QLatin1String("createDocument"))
+        return err(QStringLiteral("unimplemented"));
+
+    const QString docId = args.value(QStringLiteral("docId"))
+        .toString();
+    if (docId.isEmpty() || !ownsRelayKey(m_extensionId, docId))
+        return err(QStringLiteral("invalid-argument"));
+
+    // Chrome resolves parameters.url against the extension's origin
+    // and requires the document to be inside it — only a bundle-
+    // relative path (or the same-extension absolute spelling of
+    // one) may ever become the document.  Same hygiene as the
+    // background/files loaders: no schemes, no leading '/', no
+    // traversal.
+    QString rel = args.value(QStringLiteral("url")).toString();
+    const QString origin =
+        QStringLiteral("chrome-extension://") + m_extensionId;
+    if (rel.startsWith(origin + QLatin1Char('/')))
+        rel = rel.mid(origin.size() + 1);
+    if (rel.isEmpty() || rel.startsWith(QLatin1Char('/'))
+            || rel.contains(QLatin1Char(':'))
+            || rel.split(QLatin1Char('/')).contains(
+                QStringLiteral("..")))
+        return err(QStringLiteral("bad-path"));
+    const QString filePath = rel.section(QLatin1Char('?'), 0, 0)
+        .section(QLatin1Char('#'), 0, 0);
+    const QFileInfo fileInfo(
+        QDir(m_extensionPath).absoluteFilePath(filePath));
+    if (!fileInfo.isFile() || fileInfo.size() > 8 * 1024 * 1024)
+        return err(QStringLiteral("no-such-file"));
+
+    const QJsonArray reasonValues =
+        args.value(QStringLiteral("reasons")).toArray();
+    QStringList reasons;
+    for (const QJsonValue &v : reasonValues) {
+        const QString reason = v.toString();
+        if (!offscreenReasons().contains(reason))
+            return err(QStringLiteral("invalid-argument"));
+        if (!reasons.contains(reason))
+            reasons.append(reason);
+    }
+    if (reasons.isEmpty())
+        return err(QStringLiteral("invalid-argument"));
+    const QString justification =
+        args.value(QStringLiteral("justification")).toString();
+
+    return runtime->offscreenCreate(
+        this, docId, origin + QLatin1Char('/') + rel, reasons,
+        justification);
+}
+
+QJsonObject ExtensionBackgroundRuntime::offscreenCreate(
+        ChromeBridge *caller, const QString &docId, const QString &url,
+        const QStringList &reasons, const QString &justification)
+{
+    auto ok = [](const QJsonValue &v = QJsonValue()) {
+        QJsonObject o;
+        o.insert(QStringLiteral("ok"), true);
+        if (!v.isUndefined())
+            o.insert(QStringLiteral("result"), v);
+        return o;
+    };
+    auto err = [](const QString &code) {
+        QJsonObject o;
+        o.insert(QStringLiteral("ok"), false);
+        o.insert(QStringLiteral("error"), code);
+        return o;
+    };
+    if (!caller || docId.isEmpty())
+        return err(QStringLiteral("invalid-argument"));
+    const QString extId = caller->extensionId();
+    ExtensionBackgroundHost *host = m_hosts.value(extId);
+    if (!host || !host->page() || !host->page()->profile())
+        return err(QStringLiteral("not-hosted"));
+    QWebEngineProfile *profile = host->page()->profile();
+    if (m_offscreenDocs.contains(extId))
+        // Chrome's rule — the shim maps this code onto the verbatim
+        // message Bitwarden compares against.
+        return err(QStringLiteral("single-document"));
+
+    // The second-class host page: hidden, navigation-locked to the
+    // declared url, channel + shared-backend bridge attached BEFORE
+    // the load so the DocumentCreation shim's channel poll lands.
+    auto *view = new QWebEngineView;
+    auto *page = new HostedBackgroundPage(profile, extId,
+                                          QUrl(url), view);
+    view->setPage(page);
+    if (!attachExtensionPage(page, extId)) {
+        delete view;
+        return err(QStringLiteral("attach-failed"));
+    }
+
+    OffscreenDoc doc;
+    doc.view = view;
+    doc.page = page;
+    doc.bridge = m_pageBridges.value(page);
+    doc.url = url;
+    doc.reasons = reasons;
+    doc.justification = justification;
+    m_offscreenDocs.insert(extId, doc);
+
+    PendingOffscreen pending;
+    pending.caller = caller;
+    pending.extensionId = extId;
+    m_offscreenOps.insert(docId, pending);
+    QTimer *expiry = new QTimer(this);
+    expiry->setSingleShot(true);
+    expiry->setInterval(25000);
+    connect(expiry, &QTimer::timeout, this, [this, docId]() {
+        // The document exists but its shim never came up — honest
+        // timeout; the doc stays (hasDocument stays truthful) and
+        // its own bridge keeps retrying the channel.
+        resolveOffscreenOp(docId, QStringLiteral("boot-timeout"));
+    });
+    m_offscreenOpTimers.insert(docId, expiry);
+    expiry->start();
+
+    connect(page, &QWebEnginePage::loadFinished, this,
+            [this, extId, docId](bool loadOk) {
+        if (loadOk)
+            return;   // registration resolves the op
+        resolveOffscreenOp(docId, QStringLiteral("load-failed"));
+        dropOffscreenDocument(extId);
+    });
+    // Hidden pages get throttled — keep the document Active and
+    // nudged like the background host so the crypto/clipboard work
+    // it exists for stays answerable.  The nudge timer is parented
+    // to the page: it dies with the document.
+    QPointer<QWebEnginePage> guard(page);
+    QTimer *nudge = new QTimer(page);
+    nudge->setInterval(kNudgeMs);
+    connect(nudge, &QTimer::timeout, page, [guard]() {
+        if (guard)
+            guard->runJavaScript(QStringLiteral(
+                "window.__arktosWake&&__arktosWake()"));
+    });
+    nudge->start();
+    page->setLifecycleState(QWebEnginePage::LifecycleState::Active);
+    page->load(QUrl(url));
+    return ok();
+}
+
+QJsonObject ExtensionBackgroundRuntime::offscreenClose(
+        const QString &extensionId)
+{
+    // Closing with no live document is a typed failure, not a silent
+    // no-op — the caller learns the document it thought it held is
+    // already gone.
+    if (!m_offscreenDocs.contains(extensionId)) {
+        QJsonObject o;
+        o.insert(QStringLiteral("ok"), false);
+        o.insert(QStringLiteral("error"),
+                 QStringLiteral("no-document"));
+        return o;
+    }
+    dropOffscreenDocument(extensionId);
+    QJsonObject o;
+    o.insert(QStringLiteral("ok"), true);
+    return o;
+}
+
+bool ExtensionBackgroundRuntime::offscreenHasDocument(
+        const QString &extensionId) const
+{
+    const OffscreenDoc doc = m_offscreenDocs.value(extensionId);
+    return doc.page && doc.view;
+}
+
+QWebEnginePage *ExtensionBackgroundRuntime::offscreenPage(
+        const QString &extensionId) const
+{
+    return m_offscreenDocs.value(extensionId).page;
+}
+
+QJsonObject ExtensionBackgroundRuntime::offscreenInfo(
+        const QString &extensionId) const
+{
+    const OffscreenDoc doc = m_offscreenDocs.value(extensionId);
+    QJsonObject info;
+    if (doc.page)
+        info.insert(QStringLiteral("url"), doc.url);
+    if (!doc.reasons.isEmpty()) {
+        QJsonArray arr;
+        for (const QString &r : doc.reasons)
+            arr.append(r);
+        info.insert(QStringLiteral("reasons"), arr);
+    }
+    if (!doc.justification.isEmpty())
+        info.insert(QStringLiteral("justification"),
+                    doc.justification);
+    return info;
+}
+
+bool ExtensionBackgroundRuntime::isOffscreenBridge(
+        ChromeBridge *bridge) const
+{
+    if (!bridge)
+        return false;
+    const OffscreenDoc doc =
+        m_offscreenDocs.value(bridge->extensionId());
+    return doc.bridge && doc.bridge == bridge;
+}
+
+void ExtensionBackgroundRuntime::resolveOffscreenOp(
+        const QString &docId, const QString &error)
+{
+    const auto it = m_offscreenOps.find(docId);
+    if (it == m_offscreenOps.end())
+        return;
+    const PendingOffscreen op = it.value();
+    m_offscreenOps.erase(it);
+    if (QTimer *timer = m_offscreenOpTimers.take(docId))
+        timer->deleteLater();
+    if (!op.caller)
+        return;
+    QJsonObject done{{QStringLiteral("docId"), docId}};
+    if (error.isEmpty()) {
+        done.insert(QStringLiteral("ok"), true);
+    } else {
+        done.insert(QStringLiteral("ok"), false);
+        done.insert(QStringLiteral("error"), error);
+    }
+    emit op.caller->hostEvent(
+        QStringLiteral("__arktos.offscreenDone"), done);
+}
+
+void ExtensionBackgroundRuntime::resolveOffscreenOps(
+        ChromeBridge *bridge)
+{
+    if (!bridge)
+        return;
+    const QStringList docIds = m_offscreenOps.keys();
+    for (const QString &docId : docIds) {
+        const PendingOffscreen op = m_offscreenOps.value(docId);
+        if (op.extensionId != bridge->extensionId())
+            continue;
+        const OffscreenDoc doc =
+            m_offscreenDocs.value(op.extensionId);
+        if (doc.bridge && doc.bridge == bridge)
+            resolveOffscreenOp(docId);
+    }
+}
+
+void ExtensionBackgroundRuntime::dropOffscreenDocument(
+        const QString &extensionId)
+{
+    const OffscreenDoc doc = m_offscreenDocs.take(extensionId);
+    // A create op parked on a dying document must not hang — fail it
+    // before the view goes away.
+    const QStringList docIds = m_offscreenOps.keys();
+    for (const QString &docId : docIds) {
+        if (m_offscreenOps.value(docId).extensionId == extensionId)
+            resolveOffscreenOp(docId, QStringLiteral("host-gone"));
+    }
+    if (!doc.view)
+        return;
+    // detach unregisters the relay context and drops the page's
+    // bridge synchronously — hasDocument/getContexts are honest the
+    // moment closeDocument resolves.  The view itself goes away on
+    // the event loop: a closeDocument issued from inside the
+    // document must not tear down the channel while its own reply
+    // is still being marshaled.
+    if (doc.page)
+        detachExtensionPage(doc.page);
+    doc.view->deleteLater();
+}
+
+void ExtensionBackgroundRuntime::nudgeBridge(ChromeBridge *bridge)
+{
+    if (!bridge)
+        return;
+    const QString extId = bridge->extensionId();
+    if (ExtensionBackgroundHost *host = m_hosts.value(extId)) {
+        if (bridge == host->bridge()) {
+            host->nudge();
+            return;
+        }
+    }
+    const OffscreenDoc doc = m_offscreenDocs.value(extId);
+    if (doc.page && doc.bridge == bridge) {
+        doc.page->runJavaScript(QStringLiteral(
+            "window.__arktosWake&&__arktosWake()"));
+    }
 }

@@ -90,6 +90,7 @@ private slots:
     void extensionScripting();
     void extensionScriptCss();
     void extensionContentScriptRegistration();
+    void extensionOffscreen();
     void actionPopupSelfWires();
     void realExtensionPopup();
     void bitwardenGapBaseline();
@@ -6440,11 +6441,11 @@ void tst_ExtensionManager::bitwardenHandshakeGate()
     report << QStringLiteral(
         "- note: a fresh install has no enrolled account, so the "
         "real unlock-init (Argon2 in the offscreen document) is not "
-        "reachable from the harness.  chrome.offscreen resolves to a "
-        "live ENGINE binding here (hasDocument answered false — the "
-        "schema exists, the delegate may not) — whether "
-        "createDocument yields a working document is ER10's "
-        "measurement, not assumed.");
+        "reachable from the harness.  chrome.offscreen is the ER10 "
+        "shim binding — hasDocument answers through the bridge "
+        "(false with no live document) and createDocument spawns a "
+        "hidden bridge-backed page; the fixture coverage for that "
+        "lifecycle lives in extensionOffscreen().");
 
     for (const QString &line : report)
         qWarning().noquote() << line;
@@ -6470,6 +6471,326 @@ void tst_ExtensionManager::bitwardenHandshakeGate()
     manager->removeExtension(id);
     QTest::qWait(500);
     QDir(copyRoot).removeRecursively();
+}
+
+// ER10: chrome.offscreen — one hidden second-class host page per
+// extension.  A fixture extension declares the 'offscreen'
+// permission and drives the real flow from its background context:
+// hasDocument → false, typed denials (non-bundle URL, unknown
+// reason, empty reasons), createDocument spawning the hidden page
+// at the declared bundle-relative URL with the full shim + own
+// bridge + relay context, hasDocument → true, a JS probe inside the
+// document resolving through ITS bridge, getContexts reporting
+// OFFSCREEN_DOCUMENT with the recorded reasons, a duplicate create
+// failing with Chrome's verbatim single-document message, and
+// closeDocument releasing the page.  A second fixture without the
+// permission gets the typed 'no-permission' denial.
+void tst_ExtensionManager::extensionOffscreen()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString root = QDir::temp().filePath(
+        QStringLiteral("tst-extoff-%1")
+            .arg(QCoreApplication::applicationPid()));
+    const QString dir = writeExtension(
+        root, QStringLiteral("tst-off"), QStringLiteral("1.0.0"),
+        QString(), {QStringLiteral("offscreen")});
+    QVERIFY(!dir.isEmpty());
+    {
+        QFile html(dir + QLatin1String("/off.html"));
+        QVERIFY(html.open(QIODevice::WriteOnly));
+        html.write("<!doctype html><html><head>"
+                   "<script src=\"off.js\"></script>"
+                   "</head><body>off</body></html>\n");
+        html.close();
+        QFile js(dir + QLatin1String("/off.js"));
+        QVERIFY(js.open(QIODevice::WriteOnly));
+        js.write("self.__offBoot=!!(chrome&&chrome.runtime"
+                 "&&chrome.storage&&chrome.storage.local);\n");
+        js.close();
+    }
+    const QString noPermDir = writeExtension(
+        root, QStringLiteral("tst-offnp"), QStringLiteral("1.0.0"));
+    QVERIFY(!noPermDir.isEmpty());
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    auto loaded = std::make_shared<QString>();
+    auto loadedNp = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded, loadedNp](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-off")
+                && info.error.isEmpty())
+            *loaded = info.id;
+        if (info.name == QLatin1String("tst-offnp")
+                && info.error.isEmpty())
+            *loadedNp = info.id;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QElapsedTimer loadTimer;
+    loadTimer.start();
+    while (loaded->isEmpty() && loadTimer.elapsed() < 30000)
+        QTest::qWait(50);
+    const QString id = *loaded;
+    QVERIFY2(!id.isEmpty(), "fixture extension must install");
+
+    manager->setExtensionEnabled(id, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(id)
+            && runtime->host(id)->state()
+                   == ExtensionBackgroundHost::State::Ready,
+        45000);
+    ExtensionBackgroundHost *host = runtime->host(id);
+    QVERIFY(host && host->page());
+
+    auto eval = [](QWebEnginePage *page, const QString &source) {
+        auto result = std::make_shared<QVariant>();
+        page->runJavaScript(source,
+                            [result](const QVariant &v) {
+                                *result = v; });
+        QElapsedTimer t;
+        t.start();
+        while (!result->isValid() && t.elapsed() < 15000)
+            QTest::qWait(50);
+        return *result;
+    };
+    auto evalJson = [&eval](QWebEnginePage *page,
+                            const QString &source) {
+        return QJsonDocument::fromJson(
+            eval(page, source).toString().toUtf8()).object();
+    };
+
+    // Drive the whole create/deny/dup cycle from the background
+    // context — the async probe lands its findings on self.__off.
+    host->page()->runJavaScript(QStringLiteral(
+        "self.__off={done:false};"
+        "(async function(){"
+        " var out={};"
+        " out.hasBefore=await chrome.offscreen.hasDocument();"
+        " try{"
+        "  await chrome.offscreen.createDocument({url:"
+        "   'https://evil.example/x.html',reasons:['DOM_SCRAPING'],"
+        "   justification:'x'});"
+        "  out.badUrl='resolved';"
+        " }catch(e){out.badUrl=e.code||e.message;}"
+        " try{"
+        "  await chrome.offscreen.createDocument({url:'off.html',"
+        "   reasons:['NO_SUCH_REASON'],justification:'x'});"
+        "  out.badReason='resolved';"
+        " }catch(e){out.badReason=e.code||e.message;}"
+        " try{"
+        "  await chrome.offscreen.createDocument({url:'off.html',"
+        "   reasons:[],justification:'x'});"
+        "  out.emptyReason='resolved';"
+        " }catch(e){out.emptyReason=e.code||e.message;}"
+        " try{"
+        "  await chrome.offscreen.createDocument({url:'off.html',"
+        "   reasons:[chrome.offscreen.Reason.TESTING,"
+        "            chrome.offscreen.Reason.LOCAL_STORAGE],"
+        "   justification:'er10 test'});"
+        "  out.created=true;"
+        " }catch(e){out.createErr=(e.code||'')+'|'+e.message;}"
+        " out.hasAfter=await chrome.offscreen.hasDocument();"
+        " try{"
+        "  await chrome.offscreen.createDocument({url:'off.html',"
+        "   reasons:['TESTING'],justification:'x'});"
+        "  out.dup='resolved';"
+        " }catch(e){out.dup=e.message;out.dupCode=e.code;}"
+        " var ctx=await chrome.runtime.getContexts({});"
+        " out.contexts=(ctx||[]).map(function(c){"
+        "   return c.contextType;});"
+        " self.__off={done:true,out:out};"
+        "})().catch(function(e){"
+        " self.__off={done:true,fatal:String(e&&e.message||e)};});"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(), QStringLiteral(
+            "!!(self.__off&&self.__off.done)")).toBool(),
+        30000);
+    const QJsonObject probe = evalJson(
+        host->page(), QStringLiteral("JSON.stringify(self.__off)"));
+    QVERIFY2(!probe.contains(QLatin1String("fatal")),
+             qPrintable(QString::fromUtf8(
+                 QJsonDocument(probe).toJson(
+                     QJsonDocument::Compact))));
+    const QJsonObject out =
+        probe.value(QLatin1String("out")).toObject();
+
+    QCOMPARE(out.value(QLatin1String("hasBefore")).toBool(), false);
+    QCOMPARE(out.value(QLatin1String("badUrl")).toString(),
+             QStringLiteral("bad-path"));
+    QCOMPARE(out.value(QLatin1String("badReason")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(out.value(QLatin1String("emptyReason")).toString(),
+             QStringLiteral("invalid-argument"));
+    QVERIFY2(out.value(QLatin1String("created")).toBool(),
+             qPrintable(out.value(QLatin1String("createErr"))
+                            .toString()));
+    QCOMPARE(out.value(QLatin1String("hasAfter")).toBool(), true);
+    // Chrome's verbatim single-document message — Bitwarden's
+    // withDocument compares e.message against this string.
+    QCOMPARE(out.value(QLatin1String("dupCode")).toString(),
+             QStringLiteral("single-document"));
+    QCOMPARE(out.value(QLatin1String("dup")).toString(),
+             QStringLiteral(
+                 "Only a single offscreen document may be created."));
+    QVERIFY(out.value(QLatin1String("contexts")).toArray().contains(
+        QJsonValue(QStringLiteral("OFFSCREEN_DOCUMENT"))));
+
+    // The runtime reports the same truth host-side.
+    QVERIFY(runtime->offscreenHasDocument(id));
+    const QJsonObject info = runtime->offscreenInfo(id);
+    QCOMPARE(info.value(QLatin1String("url")).toString(),
+             QStringLiteral("chrome-extension://") + id
+                 + QStringLiteral("/off.html"));
+    QCOMPARE(info.value(QLatin1String("justification")).toString(),
+             QStringLiteral("er10 test"));
+    const QJsonArray reasons =
+        info.value(QLatin1String("reasons")).toArray();
+    QVERIFY(reasons.contains(
+        QJsonValue(QStringLiteral("TESTING"))));
+    QVERIFY(reasons.contains(
+        QJsonValue(QStringLiteral("LOCAL_STORAGE"))));
+
+    // The spawned page: own bridge + shim live, its own script ran
+    // (not the background worker's), and a chrome.storage call from
+    // inside it round-trips through ITS bridge — proof the hidden
+    // page is a real extension context, not a bare webview.
+    QWebEnginePage *offPage = runtime->offscreenPage(id);
+    QVERIFY(offPage);
+    QCOMPARE(offPage->url().toString(),
+             QStringLiteral("chrome-extension://") + id
+                 + QStringLiteral("/off.html"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(offPage, QStringLiteral(
+            "!!(window.__arktosHost&&__arktosHost.bridgeUp"
+            "&&window.__arktosShim)")).toBool(),
+        15000);
+    QCOMPARE(eval(offPage, QStringLiteral(
+                 "self.__offBoot===true")).toBool(),
+             true);
+    offPage->runJavaScript(QStringLiteral(
+        "self.__offIn={done:false};"
+        "(async function(){"
+        " await chrome.storage.local.set({offk:33});"
+        " var g=await chrome.storage.local.get('offk');"
+        " var h=await chrome.offscreen.hasDocument();"
+        " self.__offIn={done:true,out:{stored:g&&g.offk===33,"
+        "   selfHas:h,url:chrome.runtime.getURL('x')}};"
+        "})().catch(function(e){"
+        " self.__offIn={done:true,"
+        "  fatal:String(e&&e.message||e)};});"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(offPage, QStringLiteral(
+            "!!(self.__offIn&&self.__offIn.done)")).toBool(),
+        30000);
+    const QJsonObject inDocWrap = evalJson(offPage, QStringLiteral(
+        "JSON.stringify(self.__offIn)"));
+    QVERIFY2(!inDocWrap.contains(QLatin1String("fatal")),
+             qPrintable(QString::fromUtf8(
+                 QJsonDocument(inDocWrap).toJson(
+                     QJsonDocument::Compact))));
+    const QJsonObject inDoc =
+        inDocWrap.value(QLatin1String("out")).toObject();
+    QCOMPARE(inDoc.value(QLatin1String("stored")).toBool(), true);
+    QCOMPARE(inDoc.value(QLatin1String("selfHas")).toBool(), true);
+    QVERIFY(inDoc.value(QLatin1String("url")).toString().startsWith(
+        QStringLiteral("chrome-extension://") + id));
+
+    // closeDocument releases the document; hasDocument/getContexts
+    // turn honest again and the page is gone.
+    host->page()->runJavaScript(QStringLiteral(
+        "self.__offClose={done:false};"
+        "(async function(){"
+        " var o={};"
+        " await chrome.offscreen.closeDocument();"
+        " o.closed=true;"
+        " o.hasAfterClose=await chrome.offscreen.hasDocument();"
+        " var ctx=await chrome.runtime.getContexts({});"
+        " o.stillListed=(ctx||[]).some(function(c){"
+        "   return c.contextType==='OFFSCREEN_DOCUMENT';});"
+        " try{await chrome.offscreen.closeDocument();"
+        "  o.closeAgain='resolved';}"
+        " catch(e){o.closeAgain=e.code||e.message;}"
+        " self.__offClose={done:true,out:o};"
+        "})().catch(function(e){"
+        " self.__offClose={done:true,"
+        "  fatal:String(e&&e.message||e)};});"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(), QStringLiteral(
+            "!!(self.__offClose&&self.__offClose.done)")).toBool(),
+        30000);
+    const QJsonObject closed = evalJson(host->page(), QStringLiteral(
+        "JSON.stringify(self.__offClose)"));
+    QVERIFY2(!closed.contains(QLatin1String("fatal")),
+             qPrintable(QString::fromUtf8(
+                 QJsonDocument(closed).toJson(
+                     QJsonDocument::Compact))));
+    const QJsonObject cout =
+        closed.value(QLatin1String("out")).toObject();
+    QCOMPARE(cout.value(QLatin1String("closed")).toBool(), true);
+    QCOMPARE(cout.value(QLatin1String("hasAfterClose")).toBool(),
+             false);
+    QCOMPARE(cout.value(QLatin1String("stillListed")).toBool(),
+             false);
+    QCOMPARE(cout.value(QLatin1String("closeAgain")).toString(),
+             QStringLiteral("no-document"));
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QVERIFY(!runtime->offscreenHasDocument(id));
+    QVERIFY(!runtime->offscreenPage(id));
+
+    // No 'offscreen' permission → the whole namespace answers with
+    // the typed denial, never silently.
+    manager->grantConsent(noPermDir);
+    manager->loadExtension(noPermDir);
+    loadTimer.restart();
+    while (loadedNp->isEmpty() && loadTimer.elapsed() < 30000)
+        QTest::qWait(50);
+    const QString npId = *loadedNp;
+    QVERIFY2(!npId.isEmpty(), "no-permission fixture must install");
+    manager->setExtensionEnabled(npId, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(npId)
+            && runtime->host(npId)->state()
+                   == ExtensionBackgroundHost::State::Ready,
+        45000);
+    runtime->host(npId)->page()->runJavaScript(QStringLiteral(
+        "self.__offNp={done:false};"
+        "(async function(){"
+        " var o={};"
+        " try{await chrome.offscreen.hasDocument();"
+        "  o.has='resolved';}catch(e){o.has=e.code||e.message;}"
+        " try{await chrome.offscreen.createDocument({url:'off.html'"
+        "  ,reasons:['TESTING'],justification:'x'});"
+        "  o.create='resolved';}catch(e){o.create=e.code||e.message;}"
+        " self.__offNp={done:true,out:o};"
+        "})().catch(function(e){"
+        " self.__offNp={done:true,"
+        "  fatal:String(e&&e.message||e)};});"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(runtime->host(npId)->page(), QStringLiteral(
+            "!!(self.__offNp&&self.__offNp.done)")).toBool(),
+        30000);
+    const QJsonObject denied = evalJson(
+        runtime->host(npId)->page(), QStringLiteral(
+            "JSON.stringify(self.__offNp.out||{})"));
+    QCOMPARE(denied.value(QLatin1String("has")).toString(),
+             QStringLiteral("no-permission"));
+    QCOMPARE(denied.value(QLatin1String("create")).toString(),
+             QStringLiteral("no-permission"));
+
+    // --- teardown -----------------------------------------------------
+    manager->setExtensionEnabled(npId, false);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(npId), 20000);
+    manager->removeExtension(npId);
+    manager->setExtensionEnabled(id, false);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 20000);
+    manager->removeExtension(id);
+    QTest::qWait(500);
+    QDir(root).removeRecursively();
 }
 
 // EXT20: the engine forgets isEnabled across restarts — installed

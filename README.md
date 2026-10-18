@@ -547,6 +547,13 @@ navigation, every match pattern is re-proven against the
 extension's declared host coverage before anything is armed, and
 persistent registrations survive restarts (session-only ones die
 with the extension, all of them on uninstall).
+`chrome.offscreen.createDocument`/`hasDocument`/`closeDocument` are
+served too — the namespace Bitwarden's unlock path needs for
+Argon2/WASM and clipboard work: the call spawns a hidden
+navigation-locked page at the declared extension URL carrying the
+same shim, bridge and message relay as the popup, so code inside
+the document is a full extension context (`runtime.getContexts`
+lists it as `OFFSCREEN_DOCUMENT`).
 
 Enabled extensions that declare a background script additionally get
 a hosted background context: a hidden page on the extension's own

@@ -141,6 +141,10 @@
             onExecResult(payload);
             return;
         }
+        if (name === '__arktos.offscreenDone') {
+            onOffscreenDone(payload);
+            return;
+        }
         if (name === '__arktos.portConnect') {
             // A sibling context offered a port — accept it on behalf
             // of this context's runtime.onConnect listeners.
@@ -553,6 +557,7 @@
     var bridgeLocalRef = null, bridgeSessionRef = null;
     var wrappedOnMessageRef = null, shimSendMessageRef = null;
     var shimConnectRef = null;
+    var offscreenNsRef = null;   // ER10 — member-identity re-assert
     var rtImpls = {}, rtEventNames = null;
     // Connection events are re-asserted by IDENTITY, not presence —
     // a late native binding swap would otherwise strand the
@@ -672,6 +677,26 @@
                             'chrome.runtime.' + ra);
             }
         }
+        // ER10: offscreen's members are identity overrides (the
+        // native binding may exist and MUST be replaced — its
+        // document would carry no bridge/relay), so re-assert by
+        // identity the same way runtime.connect is.
+        if (offscreenNsRef) {
+            try {
+                if (!chrome.offscreen
+                        || typeof chrome.offscreen !== 'object') {
+                    installNs('offscreen', offscreenNsRef);
+                } else {
+                    for (var om in offscreenNsRef) {
+                        if (chrome.offscreen[om]
+                                !== offscreenNsRef[om])
+                            safeSet(chrome.offscreen, om,
+                                    offscreenNsRef[om],
+                                    'chrome.offscreen.' + om);
+                    }
+                }
+            } catch (e) {}
+        }
     }
 
     // --- messaging -----------------------------------------------------
@@ -689,6 +714,9 @@
     var execWait = {};     // execId -> {cb, resolve, reject, done,
                            // fail} — ER07 scripting.executeScript
                            // waits on '__arktos.execResult'
+    var docWait = {};      // docId -> {cb, resolve, reject, done,
+                           // fail} — ER10 offscreen.createDocument
+                           // waits on '__arktos.offscreenDone'
     var relayPeers = 0;
 
     // ER02: the page agent's 'respond' lands here — resolve the
@@ -754,6 +782,29 @@
         delete execWait[payload.execId];
         answerCb(entry.cb, results);
         entry.resolve(results);
+    }
+
+    // ER10: offscreen.createDocument resolves when the spawned
+    // document's shim registered its relay context — the earliest
+    // moment sendMessage really reaches it.  A typed failure lands
+    // as {ok:false,error}; 'single-document' maps onto Chrome's
+    // verbatim message (Bitwarden's withDocument compares
+    // e.message === "Only a single offscreen document may be
+    // created." — the exact string is part of the contract).
+    function onOffscreenDone(payload) {
+        if (!payload || !payload.docId)
+            return;
+        var entry = docWait[payload.docId];
+        if (!entry || entry.done)
+            return;
+        if (payload.ok) {
+            entry.done = true;
+            delete docWait[payload.docId];
+            answerCb(entry.cb);
+            entry.resolve();
+            return;
+        }
+        entry.fail(payload.error || 'offscreen-failed');
     }
 
     function contentKey(msg) {
@@ -2406,6 +2457,141 @@
                 return p;
             }
         });
+    }
+
+    // --- chrome.offscreen -------------------------------------------------
+    // ER10 — one second-class host page per extension (Chrome's
+    // single-document rule): the host spawns a hidden navigation-
+    // locked page at the declared bundle-relative url, carrying this
+    // same shim, its own chromeBridge and a relay registration of
+    // kind 'offscreen' — chrome.* and runtime messaging work inside
+    // it exactly like the popup's do.  The engine ships a NATIVE
+    // binding here (ER06 measured hasDocument answering false), but a
+    // natively-spawned document never gets our channel — a dead
+    // context for the messaging/localStorage/clipboard use the API
+    // exists for — so the members are identity overrides like
+    // runtime.connect: every call routes through the bridge.
+    // createDocument resolves when the spawned document's shim
+    // registers its relay context (the messaging-ready signal) and
+    // fails typed on a load/boot error.  Reasons and justification
+    // are recorded host-side (offscreenInfo) — 'getContexts' reports
+    // the context OFFSCREEN_DOCUMENT.
+    function offscreenError(api, code) {
+        var message = (code === 'single-document')
+            ? 'Only a single offscreen document may be created.'
+            : api + ': ' + code;
+        recordGap(api, code);
+        var e = new Error(message);
+        e.code = code;
+        e.api = api;
+        return e;
+    }
+    if (typeof chrome !== 'undefined') {
+        var offNs = {
+            __arktosShim: true,
+            Reason: {
+                TESTING: 'TESTING',
+                AUDIO_PLAYBACK: 'AUDIO_PLAYBACK',
+                IFRAME_SCRIPTING: 'IFRAME_SCRIPTING',
+                DOM_SCRAPING: 'DOM_SCRAPING',
+                BLOBS: 'BLOBS',
+                DOM_PARSER: 'DOM_PARSER',
+                USER_MEDIA: 'USER_MEDIA',
+                DISPLAY_MEDIA: 'DISPLAY_MEDIA',
+                WEB_RTC: 'WEB_RTC',
+                CLIPBOARD: 'CLIPBOARD',
+                LOCAL_STORAGE: 'LOCAL_STORAGE',
+                WORKERS: 'WORKERS',
+                BATTERY_STATUS: 'BATTERY_STATUS',
+                MATCH_MEDIA: 'MATCH_MEDIA',
+                GEOLOCATION: 'GEOLOCATION',
+                COLLECTION: 'COLLECTION'
+            },
+            hasDocument: function (cb) {
+                touch('chrome.offscreen.hasDocument');
+                var p = call('offscreen', 'hasDocument', {});
+                var q = p.then(function (v) { return !!v; });
+                if (cb)
+                    q.then(function (v) { answerCb(cb, v); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return q;
+            },
+            closeDocument: function (cb) {
+                touch('chrome.offscreen.closeDocument');
+                var p = call('offscreen', 'closeDocument', {})
+                    .then(function () {});
+                if (cb)
+                    p.then(function () { answerCb(cb); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p;
+            },
+            createDocument: function (parameters, cb) {
+                touch('chrome.offscreen.createDocument');
+                parameters = parameters || {};
+                var docId = cfg.id + '#doc' + (++shim.seq) + '#'
+                            + Date.now();
+                return new Promise(function (resolve, reject) {
+                    var entry = { cb: cb, resolve: resolve,
+                                  reject: reject, done: false };
+                    entry.fail = function (code) {
+                        if (entry.done)
+                            return;
+                        entry.done = true;
+                        delete docWait[docId];
+                        var e = offscreenError(
+                            'chrome.offscreen.createDocument', code);
+                        answerCb(cb, undefined, e.message);
+                        reject(e);
+                    };
+                    docWait[docId] = entry;
+                    // Same safety net the other deferred answers
+                    // carry — a delivery that never lands resolves
+                    // typed rather than hanging the caller.
+                    setTimeout(function () {
+                        entry.fail('boot-timeout');
+                    }, 30000);
+                    call('offscreen', 'createDocument', {
+                        docId: docId,
+                        url: parameters.url,
+                        reasons: parameters.reasons || null,
+                        justification:
+                            parameters.justification || null
+                    }).then(function () {
+                        // accepted — the answer lands on
+                        // '__arktos.offscreenDone'.
+                    }).catch(function (e) {
+                        entry.fail((e && e.code)
+                            ? String(e.code)
+                            : 'offscreen-failed');
+                    });
+                });
+            }
+        };
+        offscreenNsRef = offNs;
+        try {
+            if (chrome.offscreen
+                    && typeof chrome.offscreen.createDocument
+                           === 'function'
+                    && chrome.offscreen.createDocument
+                           !== offNs.createDocument)
+                note('chrome.offscreen: native binding overridden — '
+                     + 'an engine-spawned document would carry no '
+                     + 'chromeBridge or relay context');
+        } catch (e) {}
+        installNs('offscreen', offNs);
+        // installNs's member-fill keeps existing members — the
+        // native trio exists, so force the identity overrides.
+        if (chrome.offscreen && typeof chrome.offscreen === 'object') {
+            for (var om in offNs) {
+                if (chrome.offscreen[om] !== offNs[om])
+                    safeSet(chrome.offscreen, om, offNs[om],
+                            'chrome.offscreen.' + om);
+            }
+        }
     }
 
     // --- chrome.permissions ---------------------------------------------------

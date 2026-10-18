@@ -3615,3 +3615,23 @@ Extensions (scripting): dynamic content-script registration is
     register -> navigate -> inject -> unregister chain, persistence
     across a host respawn, every typed denial, and the consent split
     between the two surfaces.
+Extensions (offscreen): chrome.offscreen.createDocument/hasDocument/
+    closeDocument are served by the hosted runtime (ER10) — the
+    surface Bitwarden's unlock path needs for Argon2/WASM,
+    localStorage and clipboard work. createDocument spawns one hidden
+    second-class host page per extension at the declared
+    bundle-relative URL: navigation-locked to that document, no
+    toolbar wiring, carrying the full extension shim, its own
+    QWebChannel bridge and a relay registration — so chrome.* calls
+    and runtime messaging inside the document work exactly like the
+    popup's do, and runtime.getContexts reports it as
+    OFFSCREEN_DOCUMENT. The call resolves only when the document's
+    shim has registered (the earliest sendMessage can reach it), the
+    'offscreen' permission gates the whole namespace, and duplicate
+    creates fail with Chrome's verbatim single-document message while
+    foreign URLs, unknown or missing reasons, and double-closes all
+    land as typed errors in the gap ledger. closeDocument releases
+    the page safely — teardown defers so a close issued from inside
+    the document still gets its reply. The extensionOffscreen
+    autotest leg drives the full lifecycle including in-document
+    storage round-trips and every denial.
