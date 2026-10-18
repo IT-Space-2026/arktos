@@ -3122,3 +3122,15 @@ Profile menu gains avatar, hygiene and danger rows (PROF04):
     erases the profile's data, cache and settings before anything
     loads: the fresh start comes up on the silhouette with the
     default name and empty stores, while downloaded files are kept.
+
+WebKit backend devtools surfaces researched (WKB04):
+    Ahead of the WPE WebKit engine work, .devin/WEBKIT-DEVTOOLS.md
+    records how developer tools can reach that backend: WPE exports no
+    embeddable WebKitWebInspector object — the local inspector is a
+    detached toplevel only — but the remote-inspector server plus the
+    inspector:// loopback client can host the full WebKit inspector
+    inside our own window. The report maps our BiDi/CDP panel's whole
+    command surface onto the WebKit inspector protocol (mostly
+    homonymous, a few honest-disable gaps), weighs WPE WebDriver as a
+    free automation surface, and recommends the WebKit backend report
+    devTools=false until a real inspect path is proven.
