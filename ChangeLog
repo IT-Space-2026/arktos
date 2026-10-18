@@ -3518,3 +3518,18 @@ WebKit backend devtools surfaces researched (WKB04):
     homonymous, a few honest-disable gaps), weighs WPE WebDriver as a
     free automation surface, and recommends the WebKit backend report
     devTools=false until a real inspect path is proven.
+WebKit lane research — SOCKS5/Tor audit on WPE (WKB03): whether a
+    future WebKit engine backend could ever host a Tor mode is now a
+    documented question with an executable answer path, not a guess.
+    WebKit's proxy settings are scoped per network session — that is
+    per profile, matching our profile isolation model — and a socks://
+    proxy resolves DNS remotely at the proxy by design. Twelve leak
+    vectors were enumerated; the deciding risks are WebRTC ICE traffic
+    (UDP cannot traverse the SOCKS proxy, so WebRTC must be switched
+    off for Tor contexts) and DNS prefetching (must also be off), with
+    media/auxiliary paths expected clean but verified empirically. The
+    doc ships a rootless loopback fixture spec and a fifteen-step
+    checklist the webkit spine's WK21 audit will execute before any
+    "WebKit allowed for Tor" capability can exist — Tor stays
+    Chromium-locked until then. Findings and sources in
+    .devin/WEBKIT-TOR.md.
