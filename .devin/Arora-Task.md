@@ -349,7 +349,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | BRAND01 | Full rebrand Arora → Arktos (arktos-browser.com): user-visible strings, version 1.0, URLs, credits, start pages, packaging, data-dir migration — details below | done | 5 | landed as 6794f964 + repo moved to github.com/IT-Space-2026/arktos (de3c152b); stale blocked row closed |
 | WKB02 | WebKit-lane research: WebExtensions on WPE — what WebKitWebExtension (2.52+) really is vs chrome.* — details below | done | 1 | .devin/WEBKIT-EXTENSIONS.md — WebKitWebExtension (2.52+) is manifest.json parse-only; no load/run API through 2.54.1 (WebExtensionContext = unmerged PR #52242); embedder-built runtime is the only path (Epiphany precedent) and ports well to our hosted chrome.* runtime; all 4 questions answered with sourced refs |
 | WKB03 | WebKit-lane research: SOCKS5/Tor audit — WebKitNetworkProxySettings surface + leak vectors + test methodology — details below | done | 1 | .devin/WEBKIT-TOR.md — proxy settings are per-WebKitNetworkSession (= per-profile Tor scope OK, no per-tab); socks:// = socks5-first with remote DNS (ATYP=domainname); 12 leak vectors enumerated (WebRTC ICE UDP + DNS prefetch are the deciding risks, both pref-gated); loopback fixture spec (non-resolvable .leakcheck.test + socks/http/stun loggers + LD_PRELOAD resolver shim) with C1–C15 verbatim checklist + positive controls; verdict: conditional candidate, Tor stays Chromium-locked until WK21 executes |
-| WKB05 | WebKit-lane packaging strategy — how the WPE .so set ships inside our deb/rpm/flatpak + dep-manifest script — details below | pending | 0 | cross-lane item feeding the webkit spine; scripts + doc, commit to master |
+| WKB05 | WebKit-lane packaging strategy — how the WPE .so set ships inside our deb/rpm/flatpak + dep-manifest script — details below | done | 1 | .devin/WEBKIT-PACKAGING.md + .devin/wpe-deps.sh — measured on live ~/wpe sid-2.54.1: 72-file closure ~223M, floor GLIBC_2.43; deb/rpm = bundle under /usr/lib/arktos/wpe (noble ships no WPE, Fedora COPR-only, TW 2.52<floor), flatpak = in-manifest source build (KDE 6.11 glibc 2.42 kills sid binaries); staged diffs in doc; selftest+scan verified |
 
 ## Task details
 
@@ -2261,3 +2261,23 @@ changes STAGED in the doc but not applied to live packaging (live
 changes land on the webkit spine after the backend exists).
 Verify: script runs and emits a sane dep list against a local
 fixture dir; doc committed.
+
+Result (2026-10-18): `.devin/WEBKIT-PACKAGING.md` +
+`.devin/wpe-deps.sh` committed. Script: `scan` (transitive NEEDED
+closure, prefix-first resolution, dpkg -S host packages, dlopen-only
+payload class, PT_INTERP checks, glibc floors, curated distro matrix),
+`debs` (per-source-deb SHIP/DROP), `floor`, `selftest` (gcc fixture).
+Measured on the real ~/wpe sid-2.54.1 set: 72-file closure ≈223M,
+46 system sonames, 0 missing; payload floor GLIBC_2.43/GLIBCXX_3.4.30
+→ bundled glibc or source build mandatory. Verdicts: deb = bundle
+under /usr/lib/arktos/wpe (noble ships zero WPE; sid-only Depends is
+useless), launcher-execs-ld.so preferred over interp-patching; rpm =
+same bundle (Fedora: COPR-only since 2020 — spec row's "Fedora
+packages WPE" was stale; openSUSE TW has 2.52 < our 2.54 floor);
+flatpak = in-manifest source-build module (KDE 6.11/fd-25.08 glibc
+2.42 < 2.43 kills sid binaries; runtime already carries soup3/gst/
+icu77/xml2/jpeg62/etc — measured live). Staged (unapplied) diffs for
+fetch-wpe.sh, pkg-deb stage+launcher, spec Requires, manifest module
+in the doc. Gotchas recorded: gstreamer plugin ABI match (bundled
+1.28 vs noble 1.24), flite hard-NEEDED ~29M, inspector.gresource,
+bwrap runtime dep, MiniBrowser's libWPEBackend-fdo drag.

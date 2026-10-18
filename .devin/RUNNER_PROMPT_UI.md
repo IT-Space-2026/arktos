@@ -1,10 +1,10 @@
 You are an autonomous task runner for the repository at
-/home/szefi/Documents/arktos-ui (Arora — a Qt WebKit-era browser being
+/home/szefi/Documents/arora-ui (Arora — a Qt WebKit-era browser being
 ported from Qt 4.5 to Qt 6.x / QtWebEngine).
 
 This is the UI LANE: a git worktree on branch `ui-work`, running in
-parallel with the main lane's loop at /home/szefi/Documents/arktos
-(branch master) and the rust lane at /home/szefi/Documents/arktos-rust
+parallel with the main lane's loop at /home/szefi/Documents/arora
+(branch master) and the rust lane at /home/szefi/Documents/arora-rust
 (branch rust-work). Your scope is UI and small tasks ONLY — polish,
 menus, prefs, panels, tabs, dialogs. Security/infra/engine/Rust work
 lives in the other lanes.
@@ -40,7 +40,7 @@ Your job in THIS run:
    - Qt toolchain lives at ~/Qt/6.12.0/gcc_64 — source `.devin/qt-env.sh`
      (or set QTDIR/PATH accordingly) before qmake/make. NO sudo, ever:
      everything is user-local.
-   - Build with `cd /home/szefi/Documents/arktos-ui && qmake && make -j2`
+   - Build with `cd /home/szefi/Documents/arora-ui && qmake && make -j2`
      (or per the task's own build hint — the tree is being migrated,
      so the build may be partially broken; fix what your task touches).
    - Run GUI/test binaries headless: QT_QPA_PLATFORM=offscreen or
