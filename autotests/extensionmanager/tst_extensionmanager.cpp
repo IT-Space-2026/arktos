@@ -84,6 +84,7 @@ private slots:
     void extensionPopupContext();
     void actionPopupSelfWires();
     void realExtensionPopup();
+    void bitwardenGapBaseline();
     void enabledStatePersists();
 
 private:
@@ -175,6 +176,27 @@ private:
         worker.write(
             "chrome.runtime.onInstalled.addListener(function(){});\n");
         return dir;
+    }
+
+    // Plain recursive file copy for the ER00 fixture — the real
+    // bundle is read-only input; the leg installs from this copy.
+    static bool copyTree(const QString &from, const QString &to) {
+        const QDir src(from);
+        if (!src.exists() || !QDir().mkpath(to))
+            return false;
+        const QFileInfoList entries = src.entryInfoList(
+            QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden);
+        for (const QFileInfo &e : entries) {
+            const QString dst = to + QLatin1Char('/') + e.fileName();
+            if (e.isDir()) {
+                if (!copyTree(e.absoluteFilePath(), dst))
+                    return false;
+            } else if (e.isFile()
+                       && !QFile::copy(e.absoluteFilePath(), dst)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     // Installs the fixture dir and returns the Chromium-assigned id
@@ -2667,6 +2689,350 @@ void tst_ExtensionManager::realExtensionPopup()
     QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     manager->setExtensionEnabled(id, false);
     manager->removeExtension(id);
+}
+
+// ER00: the lane's work-order measurement.  Env-gated like
+// realExtensionPopup (ARKTOS_EXTTEST_DIR = the unpacked Bitwarden
+// bundle, treated READ-ONLY — the leg fixture-copies it to a temp
+// dir first), then INSTALLS the copy onto the sandboxed test
+// profile, enables it, waits out the hosted background boot, opens
+// the action popup the way ExtensionActionBar does, and records
+// every typed shim gap the bundle emits during boot: the backend's
+// forwarded list plus each context's __arktosShim.probe() (gaps,
+// notes, touched, audit, page errors).  The report prints to the
+// test log and, when ARKTOS_EXTTEST_OUT names a file, is written
+// there verbatim — that file is the committed baseline the ER lane
+// works down.
+void tst_ExtensionManager::bitwardenGapBaseline()
+{
+    const QString src = qEnvironmentVariable("ARKTOS_EXTTEST_DIR");
+    if (src.isEmpty())
+        QSKIP("set ARKTOS_EXTTEST_DIR to an unpacked extension dir");
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+    QVERIFY(QFile::exists(src + QLatin1String("/manifest.json")));
+
+    // Fixture copy — installing (and the hosted runtime's storage
+    // writes) must never touch the live profile's bundle.
+    const QString copyRoot = QDir::temp().filePath(
+        QStringLiteral("tst-bwgap-%1")
+            .arg(QCoreApplication::applicationPid()));
+    const QString dir = copyRoot + QLatin1String("/bundle");
+    QVERIFY2(copyTree(src, dir), "fixture copy of the bundle failed");
+    QVERIFY(QFile::exists(dir + QLatin1String("/manifest.json")));
+
+    const ExtensionManager::Manifest manifest =
+        ExtensionManager::inspectManifest(dir);
+    QVERIFY(manifest.valid);
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+
+    auto installed = std::make_shared<QString>();
+    auto finished = std::make_shared<bool>(false);
+    QObject::connect(manager, &ExtensionManager::extensionInstalled,
+                     this, [installed, finished](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.error.isEmpty())
+            *installed = info.id;
+        else
+            *installed = QStringLiteral("ERROR:") + info.error;
+        *finished = true;
+    });
+    QObject::connect(manager, &ExtensionManager::errorOccurred,
+                     this, [installed, finished](const QString &m) {
+        *installed = QStringLiteral("ERROR:") + m;
+        *finished = true;
+    });
+    manager->grantConsent(dir);
+    manager->installExtension(dir);
+    QElapsedTimer installTimer;
+    installTimer.start();
+    while (!*finished && installTimer.elapsed() < 90000)
+        QTest::qWait(100);
+    const QString id = *installed;
+    QVERIFY2(!id.isEmpty() && !id.startsWith(QLatin1String("ERROR:")),
+             qPrintable(QStringLiteral(
+                 "real bundle must install: %1").arg(id)));
+
+    // Hosted runtime on — Ready or Failed are both baseline data;
+    // only a never-spawned host is a leg failure.
+    manager->setExtensionEnabled(id, true);
+    ExtensionBackgroundHost *host = nullptr;
+    QElapsedTimer hostTimer;
+    hostTimer.start();
+    while (hostTimer.elapsed() < 120000) {
+        host = runtime->host(id);
+        if (host && host->state()
+                != ExtensionBackgroundHost::State::Starting)
+            break;
+        QTest::qWait(250);
+    }
+    QVERIFY2(host, "hosted background never spawned");
+    const QString hostState =
+        host->state() == ExtensionBackgroundHost::State::Ready
+            ? QStringLiteral("ready")
+            : QStringLiteral("failed:") + host->lastError();
+
+    auto eval = [](QWebEnginePage *p, const QString &source) {
+        auto result = std::make_shared<QVariant>();
+        p->runJavaScript(source,
+                         [result](const QVariant &v) { *result = v; });
+        QElapsedTimer t;
+        t.start();
+        while (!result->isValid() && t.elapsed() < 15000)
+            QTest::qWait(50);
+        return *result;
+    };
+
+    // Boot window — Bitwarden's background keeps initializing after
+    // Ready (storage reads, listener registrations, retries against
+    // unsupported surfaces).  Sample the backend gap list until it
+    // holds steady, capped so a chatty extension cannot stall the leg.
+    auto settle = [&host](int stableNeed, qint64 capMs) {
+        int lastCount = -1;
+        int stable = 0;
+        QElapsedTimer t;
+        t.start();
+        while (t.elapsed() < capMs) {
+            const int count = host ? host->shimGaps().size() : 0;
+            if (count == lastCount) {
+                if (++stable >= stableNeed)
+                    break;
+            } else {
+                stable = 0;
+                lastCount = count;
+            }
+            QTest::qWait(1000);
+        }
+    };
+    settle(4, 30000);
+
+    // --- open the action popup the way ExtensionActionBar does -----
+    QString popupPath = QStringLiteral("/popup/index.html");
+    for (const ExtensionManager::ExtensionInfo &info
+         : manager->extensions()) {
+        if (info.id == id && info.actionPopupUrl.isValid()) {
+            popupPath = info.actionPopupUrl.path();
+            break;
+        }
+    }
+    auto *frame = new QFrame(nullptr, Qt::Popup);
+    auto *view = new QWebEngineView(frame);
+    QWebEnginePage *page = new QWebEnginePage(
+        BrowserApplication::instance()->webEngineProfile(), view);
+    view->setPage(page);
+    auto popupCrashed = std::make_shared<bool>(false);
+    connect(page, &QWebEnginePage::renderProcessTerminated,
+            this, [popupCrashed](
+                QWebEnginePage::RenderProcessTerminationStatus s,
+                int code) {
+        *popupCrashed = true;
+        qWarning() << "BASELINE popup renderProcessTerminated"
+                   << int(s) << code;
+    });
+    frame->resize(360, 500);
+    view->load(QUrl(QStringLiteral("chrome-extension://") + id
+                    + popupPath));
+    frame->show();
+    bool popupBridged = false;
+    {
+        QElapsedTimer t;
+        t.start();
+        while (t.elapsed() < 45000) {
+            if (runtime->hasExtensionPage(page)) {
+                const QVariant up = eval(page, QStringLiteral(
+                    "!!(window.__arktosHost&&__arktosHost.bridgeUp)"));
+                if (up.toBool()) {
+                    popupBridged = true;
+                    break;
+                }
+            }
+            QTest::qWait(250);
+        }
+    }
+    settle(5, 60000);   // popup boot + retried calls settle down
+
+    // --- collect ----------------------------------------------------
+    const QString probeJs = QStringLiteral(
+        "JSON.stringify(function(){"
+        " var p=(window.__arktosShim&&__arktosShim.probe)"
+        "   ?__arktosShim.probe():null;"
+        " var h=window.__arktosHost||null;"
+        " return {probe:p,"
+        " host:h?{state:h.state,bridgeUp:!!h.bridgeUp,kind:h.kind,"
+        "   errors:h.errors.slice(0,60)}:null,"
+        " doc:{ready:document.readyState,title:document.title,"
+        "   url:location.href}};}())");
+    const QJsonObject hostProbe = QJsonDocument::fromJson(
+        eval(host->page(), probeJs).toString().toUtf8()).object();
+    const QJsonObject popupProbe = QJsonDocument::fromJson(
+        eval(page, probeJs).toString().toUtf8()).object();
+
+    QStringList gaps;
+    const auto addGaps = [&gaps](const QJsonArray &list) {
+        for (const QJsonValue &v : list) {
+            const QString g = v.toString();
+            if (!g.isEmpty() && !gaps.contains(g))
+                gaps.append(g);
+        }
+    };
+    for (const QString &g : host->shimGaps())
+        if (!gaps.contains(g))
+            gaps.append(g);
+    addGaps(hostProbe.value(QLatin1String("probe")).toObject()
+                .value(QLatin1String("gaps")).toArray());
+    addGaps(popupProbe.value(QLatin1String("probe")).toObject()
+                .value(QLatin1String("gaps")).toArray());
+    gaps.sort();
+
+    QStringList report;
+    report << QStringLiteral(
+        "# ER00 — hosted-runtime boot baseline");
+    report << QStringLiteral("generated: %1").arg(
+        QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+    report << QStringLiteral("bundle: %1 name=\"%2\" version=%3")
+        .arg(QFileInfo(src).fileName(), manifest.name,
+             manifest.version);
+    report << QStringLiteral("installed id: %1").arg(id);
+    report << QStringLiteral("host state: %1").arg(hostState);
+    report << QStringLiteral("popup bridge: %1%2")
+        .arg(popupBridged ? QStringLiteral("up")
+                          : QStringLiteral("down"))
+        .arg(*popupCrashed
+                 ? QStringLiteral(" (render process terminated)")
+                 : QString());
+    {
+        QStringList kinds;
+        for (const QJsonValue &c : runtime->contextsJson(id))
+            kinds.append(c.toObject()
+                .value(QLatin1String("contextType")).toString());
+        report << QStringLiteral("contexts: %1")
+            .arg(kinds.join(QLatin1String(", ")));
+    }
+    for (const ExtensionManager::ExtensionInfo &info
+         : manager->extensions()) {
+        if (info.id != id)
+            continue;
+        QString health = QStringLiteral("unknown");
+        switch (info.health) {
+        case ExtensionManager::ExtensionHealth::Healthy:
+            health = QStringLiteral("healthy");
+            break;
+        case ExtensionManager::ExtensionHealth::Limited:
+            health = QStringLiteral("limited");
+            break;
+        case ExtensionManager::ExtensionHealth::NotSupported:
+            health = QStringLiteral("not-supported");
+            break;
+        default:
+            break;
+        }
+        report << QStringLiteral(
+            "manager row: health=%1 hostState=%2 hostError=\"%3\"")
+            .arg(health, info.hostState, info.hostError);
+        report << QStringLiteral("  healthReason: %1")
+            .arg(info.healthReason);
+        report << QStringLiteral("  missingApis: %1")
+            .arg(info.missingApis.join(QLatin1String(", ")));
+        break;
+    }
+    report << QString();
+    report << QStringLiteral(
+        "## Typed shim gaps — the lane work order (%1 unique)")
+        .arg(gaps.size());
+    for (const QString &g : gaps)
+        report << QStringLiteral("- ") + g;
+    report << QString();
+
+    const auto probeSection =
+        [&report](const QString &title, const QJsonObject &wrap) {
+        const QJsonObject probe = wrap.value(QLatin1String("probe"))
+            .toObject();
+        const QJsonObject hostObj = wrap.value(QLatin1String("host"))
+            .toObject();
+        const QJsonObject doc = wrap.value(QLatin1String("doc"))
+            .toObject();
+        report << QStringLiteral("## %1").arg(title);
+        if (probe.isEmpty()) {
+            report << QStringLiteral("(no __arktosShim.probe — the "
+                                     "shim never landed here)");
+            report << QStringLiteral("doc: ready=%1 title=\"%2\"")
+                .arg(doc.value(QLatin1String("ready")).toString(),
+                     doc.value(QLatin1String("title")).toString());
+            report << QString();
+            return;
+        }
+        report << QStringLiteral("doc: ready=%1 title=\"%2\" url=%3")
+            .arg(doc.value(QLatin1String("ready")).toString(),
+                 doc.value(QLatin1String("title")).toString(),
+                 doc.value(QLatin1String("url")).toString());
+        report << QStringLiteral("host: state=%1 bridgeUp=%2 kind=%3")
+            .arg(hostObj.value(QLatin1String("state")).toString())
+            .arg(hostObj.value(QLatin1String("bridgeUp")).toBool())
+            .arg(hostObj.value(QLatin1String("kind")).toString());
+        const QJsonObject touched = probe
+            .value(QLatin1String("touched")).toObject();
+        QStringList touchList;
+        for (const QString &k : touched.keys())
+            touchList.append(QStringLiteral("%1=%2")
+                .arg(k).arg(touched.value(k).toInt()));
+        touchList.sort();
+        report << QStringLiteral("touched (%1): %2")
+            .arg(touchList.size())
+            .arg(touchList.join(QLatin1String(", ")));
+        report << QStringLiteral("notes (%1):")
+            .arg(probe.value(QLatin1String("notes")).toArray().size());
+        for (const QJsonValue &v
+             : probe.value(QLatin1String("notes")).toArray())
+            report << QStringLiteral("- ") + v.toString();
+        const QJsonArray missing = probe.value(QLatin1String("audit"))
+            .toObject().value(QLatin1String("missing")).toArray();
+        QStringList missList;
+        for (const QJsonValue &v : missing)
+            missList.append(v.toString());
+        report << QStringLiteral("audit.missing (%1): %2")
+            .arg(missList.size())
+            .arg(missList.join(QLatin1String(", ")));
+        const QJsonArray errors = hostObj
+            .value(QLatin1String("errors")).toArray();
+        report << QStringLiteral("errors (%1):").arg(errors.size());
+        for (const QJsonValue &v : errors)
+            report << QStringLiteral("- ") + v.toString();
+        report << QString();
+    };
+    probeSection(QStringLiteral("background context"), hostProbe);
+    probeSection(QStringLiteral("popup context"), popupProbe);
+
+    for (const QString &line : report)
+        qWarning().noquote() << line;
+
+    const QString out = qEnvironmentVariable("ARKTOS_EXTTEST_OUT");
+    if (!out.isEmpty()) {
+        QFile file(out);
+        if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            file.write(report.join(QLatin1Char('\n')).toUtf8());
+            file.write("\n");
+            file.close();
+        } else {
+            qWarning() << "BASELINE could not write" << out;
+        }
+    }
+    QVERIFY2(!gaps.isEmpty() || popupBridged
+                 || host->state() == ExtensionBackgroundHost::State::Ready,
+             "baseline leg produced no data — nothing measured");
+
+    // --- teardown ---------------------------------------------------
+    frame->close();
+    view->deleteLater();
+    frame->deleteLater();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    manager->setExtensionEnabled(id, false);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 20000);
+    manager->removeExtension(id);
+    QTest::qWait(500);
+    QDir(copyRoot).removeRecursively();
 }
 
 // EXT20: the engine forgets isEnabled across restarts — installed

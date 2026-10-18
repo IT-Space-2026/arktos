@@ -44,7 +44,7 @@ xvfb-run — never touch the user's live display.
 
 | ID | Task | Status | Attempts | Notes |
 |----|------|--------|----------|-------|
-| ER00 | Bitwarden gap harness — env-gated test leg that loads the real unpacked bundle on an isolated profile and dumps every typed shim gap it produces — details below | pending | 0 | needs:linux |
+| ER00 | Bitwarden gap harness — env-gated test leg that loads the real unpacked bundle on an isolated profile and dumps every typed shim gap it produces — details below | done | 1 | needs:linux · bitwardenGapBaseline leg PASS: real bundle installs+hosts ready, popup bridges, 0 typed gaps at boot — baseline + touched-map in .devin/EXT-RUNTIME-BASELINE.md |
 | ER01 | Page agent — profile-wide QWebEngineScript giving web pages a chrome.runtime sendMessage bridge into the extension host — details below | pending | 0 | needs:task:ER00 |
 | ER02 | tabs.sendMessage + runtime.onMessage delivery into web pages — details below | pending | 0 | needs:task:ER01 |
 | ER03 | Tab events — tabs.onCreated/onUpdated/onRemoved/onActivated dispatched into host pages — details below | pending | 0 | needs:task:ER01 |
