@@ -205,7 +205,7 @@ void CookieExceptionsModel::addHost(QString host, QStringList &add, QStringList 
         remove1.removeOne(host);
         remove2.removeOne(host);
     }
-    // avoid to have similar rules, with or without starting dot, eg "arora-browser.org" and ".arora-browser.org"
+    // avoid to have similar rules, with or without starting dot, eg "arktos-browser.com" and ".arktos-browser.com"
     // means the same domain.
     QString otherRule;
     if (host.startsWith(QLatin1Char('.'))) {

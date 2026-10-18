@@ -95,7 +95,7 @@ see that `QPointer` zeroes itself, so a null-check upstream is
 ### clang-tidy 22.1.8 (slice b)
 
 331 unique TUs analyzed against the STAT02 build tree
-(`ARORA_TIDY_BUILD=/tmp/arora-stat.un2m6A`, checks
+(`ARKTOS_TIDY_BUILD=/tmp/arktos-stat.un2m6A`, checks
 `bugprone-*,cert-*,clang-analyzer-*`): 773 in-tree findings —
 218 in generated `.moc`/`.ui` sources (excluded), 555 in real
 sources. The bulk re-confirms AUDIT01's documented idiom families
@@ -208,7 +208,7 @@ profile/vault menu-action wiring review.
 - `Q_INVOKABLE` bridges reached from injected JS, invisible to a
   C++-only scan: `ChromeBridge::reportError` (exthost.js/extshim.js),
   `PipPlayerBridge::notifyReady/notifyError/reportState`,
-  `JavaScriptAroraObject::currentEngineNameChanged`
+  `JavaScriptArktosObject::currentEngineNameChanged`
   (startpage.js channel).
 - Overrides/framework callbacks: `TabBar::tabRemoved`,
   `SourceHighlighter::highlightBlock`, `FlowLayout` size-hint

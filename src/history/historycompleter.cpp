@@ -24,7 +24,7 @@
 #include "historymanager.h"
 #include "safetext.h"
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 #include "browserpaths.h"
 #include "rustcorebridge.h"
 
@@ -119,7 +119,7 @@ void HistoryCompletionModel::setSearchString(QString str)
     m_wordMatcher.setPattern(QLatin1String("\\b") + QRegularExpression::escape(str));
     m_wordMatcher.setPatternOptions(QRegularExpression::CaseInsensitiveOption);
     m_searchString = std::move(str);
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // OMNI01: the rustcore source re-queries its ranked rows for the
     // new term; the legacy filter model needs no such push.
     if (RustHistorySuggestModel *suggest =
@@ -189,7 +189,7 @@ bool HistoryCompletionModel::lessThan(const QModelIndex &left, const QModelIndex
     return (frecency_r < frecency_l);
 }
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 RustHistorySuggestModel::RustHistorySuggestModel(QObject *parent)
     : QAbstractTableModel(parent)
 {
@@ -304,7 +304,7 @@ QVariant RustHistorySuggestModel::data(const QModelIndex &index,
     }
     return QVariant();
 }
-#endif // ARORA_RUSTCORE
+#endif // ARKTOS_RUSTCORE
 
 OmniboxCompletionModel::OmniboxCompletionModel(
         HistoryCompletionModel *historyCompletionModel, QObject *parent)

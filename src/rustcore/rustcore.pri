@@ -1,6 +1,6 @@
 # Shared Rust core (RCORE01, default-on per RDEF01): credential
 # custody, the rc_cred_* store and future engine-neutral services
-# live in $$PWD (crate "arora-rustcore") behind the C ABI in
+# live in $$PWD (crate "arktos-rustcore") behind the C ABI in
 # include/rustcore.h.
 #
 # The flag is set by default in the project-root .qmake.conf whenever a cargo
@@ -18,10 +18,10 @@
 # `cargo deny` policy lives in $$PWD/deny.toml.
 
 rustcore:!no-rust {
-    CARGO = $$ARORA_CARGO
+    CARGO = $$ARKTOS_CARGO
     isEmpty(CARGO): CARGO = cargo
-    win32: RUSTCORE_LIB = $$PWD/target/release/arora_rustcore.lib
-    else:  RUSTCORE_LIB = $$PWD/target/release/libarora_rustcore.a
+    win32: RUSTCORE_LIB = $$PWD/target/release/arktos_rustcore.lib
+    else:  RUSTCORE_LIB = $$PWD/target/release/libarktos_rustcore.a
 
     cargo_rustcore.target = $$RUSTCORE_LIB
     # See rustdl.pri: scrub flag env vars a parent build system may
@@ -40,7 +40,7 @@ rustcore:!no-rust {
     QMAKE_EXTRA_TARGETS += cargo_rustcore
     PRE_TARGETDEPS += $$RUSTCORE_LIB
 
-    DEFINES += ARORA_RUSTCORE
+    DEFINES += ARKTOS_RUSTCORE
     INCLUDEPATH += $$PWD/include
     DEPENDPATH += $$PWD/include
     HEADERS += $$PWD/include/rustcore.h \

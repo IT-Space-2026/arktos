@@ -83,7 +83,7 @@
 
 #include <qdebug.h>
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 #include "rustcorebridge.h"
 
 #include <qbuffer.h>
@@ -135,7 +135,7 @@ HistoryManager::HistoryManager(QObject *parent,
             m_saveTimer, &AutoSaver::changeOccurred);
     connect(this, &HistoryManager::entryRemoved,
             m_saveTimer, &AutoSaver::changeOccurred);
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     if (QCoreApplication::instance()) {
         // Rust-side writers announce the "history" topic through the
         // queued callback->signal bridge; mark the view dirty so the
@@ -170,7 +170,7 @@ HistoryManager *HistoryManager::instanceFor(const QString &profileId)
     return manager;
 }
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 void HistoryManager::ensureRustStore() const
 {
     // The rustcore history store is a single open database per
@@ -206,7 +206,7 @@ static QString iconStoreDir(const QString &profileId)
         profileId, QLatin1String("icons"));
 }
 
-#ifndef ARORA_RUSTCORE
+#ifndef ARKTOS_RUSTCORE
 static QString iconFilePath(const QString &profileId, const QString &host)
 {
     return iconStoreDir(profileId) + QLatin1Char('/')
@@ -217,7 +217,7 @@ static QString iconFilePath(const QString &profileId, const QString &host)
 
 QIcon HistoryManager::icon(const QUrl &url) const
 {
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     const QString key = historyIconKey(url);
     QIcon icon = m_icons.value(key);
     if (icon.isNull()) {
@@ -258,7 +258,7 @@ void HistoryManager::setIcon(const QUrl &url, const QIcon &icon)
     if (url.isEmpty() || icon.isNull())
         return;
     const QString host = url.host().toLower();
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     const QString key = historyIconKey(url);
     m_icons.insert(key, icon);
     const QImage image = icon.pixmap(QSize(32, 32)).toImage();
@@ -301,7 +301,7 @@ void HistoryManager::clearIcons()
     m_icons.clear();
     m_iconMisses.clear();
     QDir(iconStoreDir(m_profileId)).removeRecursively();
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     ensureRustStore();
     rc_hist_icon_clear();
 #endif
@@ -331,7 +331,7 @@ void HistoryManager::setHistory(const QList<HistoryEntry> &history, bool loadedA
 
     checkForExpired();
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // loadedAndSorted means the list came *from* the store (load());
     // anything else is a wholesale replace the store must mirror.
     if (!loadedAndSorted)
@@ -367,7 +367,7 @@ void HistoryManager::checkForExpired()
     if (m_daysToExpire < 0 || m_history.isEmpty())
         return;
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     ensureRustStore();
 #endif
     QDateTime now = QDateTime::currentDateTime();
@@ -387,7 +387,7 @@ void HistoryManager::checkForExpired()
         HistoryEntry item = m_history.takeLast();
         // remove from saved file also
         m_lastSavedUrl.clear();
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
         rc_hist_remove(item.url.toUtf8().constData(),
                        item.title.toUtf8().constData(),
                        item.dateTime.toMSecsSinceEpoch());
@@ -406,7 +406,7 @@ void HistoryManager::prependHistoryEntry(const HistoryEntry &item)
     // off-the-record (the old QWebSettings::PrivateBrowsingEnabled
     // global flag is gone).
     m_history.prepend(item);
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     ensureRustStore();
     rc_hist_add(item.url.toUtf8().constData(),
                 item.title.toUtf8().constData(),
@@ -422,7 +422,7 @@ void HistoryManager::updateHistoryEntry(const QUrl &url, const QString &title)
     for (int i = 0; i < m_history.count(); ++i) {
         if (url == m_history.at(i).url) {
             m_history[i].title = atomicString(title);
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
             ensureRustStore();
             rc_hist_update_title(url.toString().toUtf8().constData(),
                                  m_history[i].title.toUtf8().constData());
@@ -440,7 +440,7 @@ void HistoryManager::removeHistoryEntry(const HistoryEntry &item)
 {
     m_lastSavedUrl.clear();
     m_history.removeOne(item);
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     ensureRustStore();
     rc_hist_remove(item.url.toUtf8().constData(),
                    item.title.toUtf8().constData(),
@@ -490,7 +490,7 @@ void HistoryManager::clear()
     m_history.clear();
     m_atomicStringHash.clear();
     m_lastSavedUrl.clear();
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     ensureRustStore();
     rc_hist_clear();
 #endif
@@ -512,7 +512,7 @@ void HistoryManager::clearSince(qint64 sinceMs)
             emit entryRemoved(item);
         }
     }
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     ensureRustStore();
     rc_hist_clear_since(sinceMs);
 #endif
@@ -534,7 +534,7 @@ void HistoryManager::load()
     StartupProfile::Scope profileScope("history load");
     loadSettings();
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // The canonical store is <profile dir>/history.db (rusqlite); the
     // legacy QDataStream file is imported once, on first run.
     const QByteArray dbPath = BrowserPaths::profileDataFilePath(
@@ -593,7 +593,7 @@ void HistoryManager::load()
 #endif
 }
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 // One-shot migration: the legacy QDataStream "history" file is parsed
 // by the existing reader and written into history.db, which becomes
 // the canonical store from then on (the old file is left in place).
@@ -628,7 +628,7 @@ void HistoryManager::rustReplaceAll()
                     e.dateTime.toMSecsSinceEpoch());
     }
 }
-#endif // ARORA_RUSTCORE
+#endif // ARKTOS_RUSTCORE
 
 QString HistoryManager::atomicString(const QString &string) {
     QHash<QString, int>::const_iterator it = m_atomicStringHash.constFind(string);
@@ -645,7 +645,7 @@ void HistoryManager::save()
     settings.beginGroup(QLatin1String("history"));
     settings.setValue(QLatin1String("historyLimit"), m_daysToExpire);
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // history.db writes through on every mutation — nothing pending
     // to flush beyond the settings above.
     return;

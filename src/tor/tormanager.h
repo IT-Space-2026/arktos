@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -35,7 +35,7 @@ class QProcess;
 class QTimer;
 class TorControl;
 
-// TOR17: ARORA_TOR_DEBUG=1 turns on hold/retry state-machine tracing
+// TOR17: ARKTOS_TOR_DEBUG=1 turns on hold/retry state-machine tracing
 // (queue/refuse/dispatch/fire-retry decisions with reason codes) on
 // stderr — the live cold-start repro needs the decisions a unit seam
 // cannot show.  Free function so WebView/WebPage/TorManager share one
@@ -43,7 +43,7 @@ class TorControl;
 inline bool torDebugEnabled()
 {
     static const bool enabled =
-        qEnvironmentVariableIsSet("ARORA_TOR_DEBUG");
+        qEnvironmentVariableIsSet("ARKTOS_TOR_DEBUG");
     return enabled;
 }
 
@@ -75,7 +75,7 @@ struct TorCircuit
 //
 // QtWebEngine has no per-tab/per-profile proxy API (verified in the
 // 6.11.3 headers — QNetworkProxy::setApplicationProxy is
-// process-global), so Tor routing has to happen in a separate Arora
+// process-global), so Tor routing has to happen in a separate Arktos
 // process that sets the application proxy to this daemon's SOCKS5
 // listener.  That is also the privacy-correct design: Tor and clearnet
 // traffic can never share a profile.
@@ -122,7 +122,7 @@ public:
     ~TorManager() override;
 
     // Binary resolution order:
-    //   1. $ARORA_TOR_BINARY (explicit override — a set-but-missing
+    //   1. $ARKTOS_TOR_BINARY (explicit override — a set-but-missing
     //      path is an error, not a silent fallback)
     //   2. tor / tor.exe on PATH
     //   3. system locations (/usr/bin, /usr/local/bin, /usr/sbin)

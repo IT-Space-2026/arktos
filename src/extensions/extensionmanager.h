@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -273,13 +273,13 @@ public:
     // already carry extensions get it installed-but-disabled —
     // opting in is a Preferences checkbox away, and an existing
     // install is never force-enabled retroactively.  Consent is
-    // programmatic on this internal path (bundling IS Arora's
+    // programmatic on this internal path (bundling IS Arktos's
     // approval) but still flows through the same one-shot
     // grant/consume accounting, so a later manual install of the
     // same path needs a real review like any other.
     void installBundledExtensions(QWebEngineProfile *profile);
     // Directory scanned by installBundledExtensions():
-    // ARORA_BUNDLED_EXTENSIONS_DIR wins (tests/dev overrides), then
+    // ARKTOS_BUNDLED_EXTENSIONS_DIR wins (tests/dev overrides), then
     // <installedDataDirectory>/extensions, then the in-tree
     // data/extensions for uninstalled builds (the binary links into
     // src/ or the repository root).  Empty when none exists.

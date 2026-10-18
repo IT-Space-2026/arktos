@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,7 +18,7 @@
  */
 
 #include <QtTest/QtTest>
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 #include "qtry.h"
 
 #include <bookmarknode.h>
@@ -37,7 +37,7 @@
 #include <profilestore.h>
 #include <profilevault.h>
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include <sitedecisionstore.h>
 #endif
 
@@ -72,7 +72,7 @@
 //       must still observe (the regression sweep itself is `make
 //       check`; these legs pin the visible defaults).
 // The --quit-after-load-on-both-profiles leg runs against the built
-// browser via `arora --quit-after-load --profile <id>` — see the
+// browser via `arktos --quit-after-load --profile <id>` — see the
 // task's done-notes.
 class tst_ProfileE2E : public QObject
 {
@@ -81,6 +81,9 @@ class tst_ProfileE2E : public QObject
 private slots:
     void initTestCase();
 
+    // BRAND01 first — the pre-rebrand identity's stores must reach
+    // the new root before the MPROF legs build on it.
+    void legacyIdentityMigration();
     // (b) first — it wipes and reseeds the layout the persona legs
     // build on.
     void migrationEndToEnd();
@@ -214,6 +217,84 @@ void tst_ProfileE2E::initTestCase()
     // than midway through a leg.
     QVERIFY(BrowserPaths::ensureDataLayout());
     QCOMPARE(BrowserPaths::activeProfileId(), QStringLiteral("default"));
+}
+
+void tst_ProfileE2E::legacyIdentityMigration()
+{
+    // Resolve the pre-rebrand leaf the same way the migration does —
+    // swap org+app to the old identity, query, restore (test mode
+    // keeps every answer inside the qttest sandbox).
+    const auto leafFor = [](QStandardPaths::StandardLocation loc,
+                            const QString &org, const QString &app) {
+        const QString orgSaved = QCoreApplication::organizationName();
+        const QString appSaved = QCoreApplication::applicationName();
+        QCoreApplication::setOrganizationName(org);
+        QCoreApplication::setApplicationName(app);
+        const QString path = QStandardPaths::writableLocation(loc);
+        QCoreApplication::setOrganizationName(orgSaved);
+        QCoreApplication::setApplicationName(appSaved);
+        return path;
+    };
+    const QString oldData = leafFor(QStandardPaths::AppDataLocation,
+                                    QStringLiteral("Arora"),
+                                    QStringLiteral("Arora"));
+    const QString oldCache = leafFor(QStandardPaths::CacheLocation,
+                                     QStringLiteral("Arora"),
+                                     QStringLiteral("Arora"));
+    const QString newData =
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    const QString newCache =
+        QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+    QVERIFY(!oldData.isEmpty() && !newData.isEmpty());
+    QVERIFY2(oldData != newData, qPrintable(oldData));
+
+    // A both-roots-exist start would only exercise the loud-skip
+    // branch — clear so the real rename path runs.
+    QDir(newData).removeRecursively();
+    QDir(newCache).removeRecursively();
+    QDir(oldData).removeRecursively();
+    QDir(oldCache).removeRecursively();
+
+    // A seeded pre-rebrand store: app payloads plus a global file,
+    // the engine cache residue and the settings file.
+    const QByteArray historyBody("http://arora.example/|Old|x\n");
+    writeFile(oldData + QLatin1String("/history"), historyBody);
+    writeFile(oldData + QLatin1String("/profiles.json"),
+              "{\"version\":1,\"profiles\":[]}");
+    writeFile(oldCache + QLatin1String("/QtWebEngine/arora/cached"),
+              "cache-seed");
+    const QString oldConf =
+        QSettings(QStringLiteral("Arora"), QStringLiteral("Arora"))
+            .fileName();
+    const QString newConf = QSettings().fileName();
+    const bool confCheck = !oldConf.isEmpty() && !newConf.isEmpty()
+        && oldConf != newConf;
+    if (confCheck) {
+        QFile::remove(newConf);
+        writeFile(oldConf, "[General]\nseed=1\n");
+    }
+
+    QVERIFY(BrowserPaths::migrateLegacyIdentity());
+    QVERIFY(!QFile::exists(oldData));
+    QCOMPARE(readFile(newData + QLatin1String("/history")),
+             historyBody);
+    QVERIFY(QFile::exists(newData + QLatin1String("/profiles.json")));
+    QVERIFY(QFile::exists(
+        newCache + QLatin1String("/QtWebEngine/arora/cached")));
+    if (confCheck) {
+        QVERIFY(!QFile::exists(oldConf));
+        QVERIFY(QFile::exists(newConf));
+    }
+
+    // Idempotent: the old root is gone — a second pass is a no-op.
+    QVERIFY(BrowserPaths::migrateLegacyIdentity());
+
+    // Restore the clean baseline the later legs build on.
+    QDir(newData).removeRecursively();
+    QDir(newCache).removeRecursively();
+    if (confCheck)
+        QFile::remove(newConf);
+    QVERIFY(BrowserPaths::ensureDataLayout());
 }
 
 void tst_ProfileE2E::migrationEndToEnd()
@@ -359,7 +440,7 @@ void tst_ProfileE2E::personaBringup()
 void tst_ProfileE2E::engineStorageMigration()
 {
     // VSEC02: the pre-change engine store at <data root>/
-    // QtWebEngine/arora[-<id>] relocates into the owning persona —
+    // QtWebEngine/arktos[-<id>] relocates into the owning persona —
     // byte-intact, never split — while legacy cache twins are dropped
     // (disposable) rather than carried.
 
@@ -369,7 +450,7 @@ void tst_ProfileE2E::engineStorageMigration()
     // remove the root first so a planted link is never descended.
     QFile::remove(root() + QLatin1String("/QtWebEngine"));
     QDir(root() + QLatin1String("/QtWebEngine")).removeRecursively();
-    QFile::remove(root() + QLatin1String("/QtWebEngine/arora-evil"));
+    QFile::remove(root() + QLatin1String("/QtWebEngine/arktos-evil"));
     QFile::remove(root() + QLatin1String("/migration-v1.failed"));
     QFile::remove(root() + QLatin1String("/migration-v2.failed"));
     QFile::remove(root() + QLatin1String("/outside-target"));
@@ -380,20 +461,20 @@ void tst_ProfileE2E::engineStorageMigration()
     const QString movedId = QStringLiteral("e2emoved");
     QVERIFY(QDir().mkpath(profileDir(movedId)));
     const QByteArray cookieSeed("sqlite-cookie-seed");
-    writeFile(root() + QLatin1String("/QtWebEngine/arora-") + movedId
+    writeFile(root() + QLatin1String("/QtWebEngine/arktos-") + movedId
               + QLatin1String("/Network/Cookies"), cookieSeed);
-    // The default persona's pre-change store is "arora" (no suffix).
-    writeFile(root() + QLatin1String("/QtWebEngine/arora/Cookies"),
+    // The default persona's pre-change store is "arktos" (no suffix).
+    writeFile(root() + QLatin1String("/QtWebEngine/arktos/Cookies"),
               "default-cookie-seed");
     // Container stores are not persona dirs — left for the container
     // code's own cleanup, never migrated by this sweep.
     writeFile(root() + QLatin1String("/QtWebEngine/")
-              + QLatin1String("arora-container-zzz/x"), "x");
+              + QLatin1String("arktos-container-zzz/x"), "x");
     // A legacy cache twin — disposable, dropped not migrated.
     const QString cacheEngineRoot =
         QStandardPaths::writableLocation(QStandardPaths::CacheLocation)
         + QLatin1String("/QtWebEngine");
-    writeFile(cacheEngineRoot + QLatin1String("/arora-") + movedId
+    writeFile(cacheEngineRoot + QLatin1String("/arktos-") + movedId
               + QLatin1String("/cache_data"), "cache-seed");
 
     QString error;
@@ -406,17 +487,17 @@ void tst_ProfileE2E::engineStorageMigration()
     QCOMPARE(readFile(profileDir(QStringLiteral("default"))
                       + QLatin1String("/QtWebEngine/Cookies")),
              QByteArray("default-cookie-seed"));
-    QVERIFY(!QFile::exists(root() + QLatin1String("/QtWebEngine/arora-")
+    QVERIFY(!QFile::exists(root() + QLatin1String("/QtWebEngine/arktos-")
                            + movedId));
     QVERIFY(!QFile::exists(root() + QLatin1String(
-                               "/QtWebEngine/arora")));
+                               "/QtWebEngine/arktos")));
     // Container-named residue is not this sweep's business.
     QVERIFY(QFile::exists(root() + QLatin1String(
-                "/QtWebEngine/arora-container-zzz/x")));
-    QDir(root() + QLatin1String("/QtWebEngine/arora-container-zzz"))
+                "/QtWebEngine/arktos-container-zzz/x")));
+    QDir(root() + QLatin1String("/QtWebEngine/arktos-container-zzz"))
         .removeRecursively();
     // The cache twin is gone and nothing was carried across.
-    QVERIFY(!QFile::exists(cacheEngineRoot + QLatin1String("/arora-")
+    QVERIFY(!QFile::exists(cacheEngineRoot + QLatin1String("/arktos-")
                            + movedId));
     QVERIFY(!QFile::exists(profileDir(movedId)
                 + QLatin1String("/cache/QtWebEngine/cache_data")));
@@ -426,19 +507,19 @@ void tst_ProfileE2E::engineStorageMigration()
     const QString clashId = QStringLiteral("e2eclash");
     writeFile(profileDir(clashId) + QLatin1String("/QtWebEngine/new"),
               "new");
-    writeFile(root() + QLatin1String("/QtWebEngine/arora-") + clashId
+    writeFile(root() + QLatin1String("/QtWebEngine/arktos-") + clashId
               + QLatin1String("/old"), "old");
     QVERIFY(!BrowserPaths::ensureEngineStorageLayout(&error));
     QVERIFY2(error.contains(QLatin1String("exists")),
              qPrintable(error));
-    QCOMPARE(readFile(root() + QLatin1String("/QtWebEngine/arora-")
+    QCOMPARE(readFile(root() + QLatin1String("/QtWebEngine/arktos-")
                       + clashId + QLatin1String("/old")),
              QByteArray("old"));
     QCOMPARE(readFile(profileDir(clashId)
                       + QLatin1String("/QtWebEngine/new")),
              QByteArray("new"));
     QDir(profileDir(clashId)).removeRecursively();
-    QDir(root() + QLatin1String("/QtWebEngine/arora-") + clashId)
+    QDir(root() + QLatin1String("/QtWebEngine/arktos-") + clashId)
         .removeRecursively();
     QFile::remove(root() + QLatin1String("/migration-v2.failed"));
 
@@ -447,7 +528,7 @@ void tst_ProfileE2E::engineStorageMigration()
     // shared with the payload migration.
     writeFile(root() + QLatin1String("/outside-target"), "x");
     const QString linkPath =
-        root() + QLatin1String("/QtWebEngine/arora-evil");
+        root() + QLatin1String("/QtWebEngine/arktos-evil");
     QVERIFY(QFile::link(root() + QLatin1String("/outside-target"),
                         linkPath));
     QVERIFY(!BrowserPaths::ensureEngineStorageLayout(&error));
@@ -474,7 +555,7 @@ void tst_ProfileE2E::engineStorageUnderProfileTree()
     // excluded profiles/<id>/cache/QtWebEngine.
     QWebEngineProfile *def = BrowserProfile::normalProfile();
     // The harness's BrowserApplication ctor materialized the default
-    // profile while the app name was still "Arora" — its root resolves
+    // profile while the app name was still "Arktos" — its root resolves
     // under that name, not this binary's.  Assert the seal-shape
     // invariant, which is what VSEC02 actually promises: inside
     // profiles/<id>/, never the root-level QtWebEngine/<name> dir.
@@ -520,9 +601,9 @@ void tst_ProfileE2E::engineProfilesIsolated()
     QVERIFY(beta);
     QVERIFY(alpha != beta);
     QCOMPARE(alpha->storageName(),
-             QLatin1String("arora-") + m_alpha);
+             QLatin1String("arktos-") + m_alpha);
     QCOMPARE(beta->storageName(),
-             QLatin1String("arora-") + m_beta);
+             QLatin1String("arktos-") + m_beta);
     QCOMPARE(BrowserProfile::profileIdFor(alpha), m_alpha);
     QCOMPARE(BrowserProfile::profileIdFor(beta), m_beta);
 
@@ -703,10 +784,10 @@ void tst_ProfileE2E::cookieJarRuleIsolation()
     QCOMPARE(jarA->acceptPolicy(), CookieJar::AcceptNever);
     QCOMPARE(jarB->acceptPolicy(), betaDefault);
 
-    // Under ARORA_RUSTCORE the exception lists persist through the
+    // Under ARKTOS_RUSTCORE the exception lists persist through the
     // per-persona site-decision store — the rustcore path the
     // filter consults, not the ini file (cookiejar.cpp save()).
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // The jar debounces persistence through AutoSaver (~3s) — poll
     // the per-persona decision store until the write lands.
     QString decision;
@@ -929,7 +1010,7 @@ void tst_ProfileE2E::sealedPersonaRefusesWindow()
 
 void tst_ProfileE2E::engineVaultCoverage()
 {
-#if !defined(ARORA_RUSTCORE)
+#if !defined(ARKTOS_RUSTCORE)
     QSKIP("vault sealing needs a rustcore build");
 #else
     if (!ProfileVault::isAvailable())
@@ -948,7 +1029,7 @@ void tst_ProfileE2E::engineVaultCoverage()
         .removeRecursively();
     QDir(root() + QLatin1String("/e2evault.vault")).removeRecursively();
     QFile::remove(root() + QLatin1String(
-                      "/QtWebEngine/arora-e2evault"));
+                      "/QtWebEngine/arktos-e2evault"));
     const ProfileContext ctx = store->createProfile(
         QStringLiteral("e2evault"));
     QVERIFY(ctx.isValid());
@@ -991,7 +1072,7 @@ void tst_ProfileE2E::engineVaultCoverage()
     // Locked-boot scenario: the sweep finds this persona's legacy
     // root-level engine dir and must park it in the vault's
     // engine-hold — never inside the (nonexistent) sealed tree.
-    const QString legacy = root() + QLatin1String("/QtWebEngine/arora-")
+    const QString legacy = root() + QLatin1String("/QtWebEngine/arktos-")
         + id;
     writeFile(legacy + QLatin1String("/Network/Cookies"),
               "legacy-engine-seed");
@@ -1030,7 +1111,7 @@ void tst_ProfileE2E::engineVaultCoverage()
 
 void tst_ProfileE2E::engineHoldRejectsLinks()
 {
-#if !defined(ARORA_RUSTCORE)
+#if !defined(ARKTOS_RUSTCORE)
     QSKIP("vault sealing needs a rustcore build");
 #else
     // AUDIT04: a hold dir is only ever real — a symlinked
@@ -1179,7 +1260,7 @@ void tst_ProfileE2E::noEngineResidueAtRoot()
         | QDir::System);
     for (const QFileInfo &left : leftovers) {
         QVERIFY2(left.fileName().startsWith(
-                     QLatin1String("arora-container-")),
+                     QLatin1String("arktos-container-")),
                  qPrintable(left.absoluteFilePath()));
     }
 }
@@ -1188,7 +1269,7 @@ void tst_ProfileE2E::singleProfileBaseline()
 {
     // (c) the zero-change invariants a single-profile user observes:
     // every unscoped resolution lands on "default", which aliases the
-    // one "arora" engine profile and the profiles/default/ store.
+    // one "arktos" engine profile and the profiles/default/ store.
     QCOMPARE(BrowserPaths::activeProfileId(), QStringLiteral("default"));
     QCOMPARE(ProfileSettings::currentId(), QStringLiteral("default"));
     QCOMPARE(BrowserPaths::dataFilePath(QLatin1String("history")),

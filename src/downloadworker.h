@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,7 +20,7 @@
 #ifndef DOWNLOADWORKER_H
 #define DOWNLOADWORKER_H
 
-// SAND02: entry point for `arora --download-worker` — the confined
+// SAND02: entry point for `arktos --download-worker` — the confined
 // subprocess that runs the rustdl accelerated download engine.  The
 // process never creates a QApplication, never touches QtWebEngine and
 // never initialises the profile: it speaks a single-purpose JSONL

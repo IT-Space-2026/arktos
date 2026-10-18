@@ -196,7 +196,7 @@ void tst_OpenSearchReader::imageSearch()
     delete engine;
 }
 
-// SENG02: <Alias> elements (an Arora extension) declare default
+// SENG02: <Alias> elements (an Arktos extension) declare default
 // keyword bindings.  Duplicates, blanks and over-long entries drop
 // without hurting the rest of the descriptor.  A single <Alias>
 // trailing the favicon is still captured — the early-exit check

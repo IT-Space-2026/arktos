@@ -1,4 +1,4 @@
-# packages.yml — CI packaging pipeline for Arora.
+# packages.yml — CI packaging pipeline for Arktos.
 #
 # One job per distributable artifact. All jobs build from the same commit
 # and upload their result as a workflow artifact. No release is created —
@@ -14,10 +14,10 @@
 #
 # Coverage:
 #   deb      — .devin/pkg-deb.sh (dpkg-buildpackage path) → dist/*.deb
-#   rpm      — .devin/pkg-rpm.sh (rpmbuild, spec at rpm/arora.spec)
-#   flatpak  — flatpak-builder action → io.arora.Arora.flatpak
+#   rpm      — .devin/pkg-rpm.sh (rpmbuild, spec at rpm/arktos.spec)
+#   flatpak  — flatpak-builder action → com.arktos_browser.Arktos.flatpak
 #   windows  — qmake + nmake + windeployqt → zipped portable package
-#   macos    — qmake + make + macdeployqt → Arora.dmg
+#   macos    — qmake + make + macdeployqt → Arktos.dmg
 
 name: packages
 
@@ -65,7 +65,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: arora-deb
+          name: arktos-deb
           path: dist/*.deb
 
   rpm:
@@ -95,7 +95,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: arora-rpm
+          name: arktos-rpm
           path: dist/*.rpm
 
   flatpak:
@@ -112,8 +112,8 @@ jobs:
         # vendored cargo-sources.json keeps the build offline-exact.
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6.8
         with:
-          manifest-path: io.arora.Arora.yaml
-          bundle: io.arora.Arora.flatpak
+          manifest-path: com.arktos_browser.Arktos.yaml
+          bundle: com.arktos_browser.Arktos.flatpak
           repository-name: flathub
           repository-url: https://flathub.org/repo/flathub.flatpakrepo
           cache-key: flatpak-builder-${{ github.sha }}
@@ -121,8 +121,8 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: arora-flatpak
-          path: io.arora.Arora.flatpak
+          name: arktos-flatpak
+          path: com.arktos_browser.Arktos.flatpak
 
   windows:
     runs-on: windows-latest
@@ -177,7 +177,7 @@ jobs:
           rem vcvars env dies with this step — re-export the piece the
           rem NSIS step needs (CRT redist dir for the installer payload).
           echo VCToolsRedistDir=%VCToolsRedistDir%>> %GITHUB_ENV%
-          "%QTDIR%\bin\qmake.exe" -o Makefile arora.pro
+          "%QTDIR%\bin\qmake.exe" -o Makefile arktos.pro
           rem Packaging only needs the app — autotests/tools aren't
           rem deployed, and serial nmake over ~65 test binaries stalls
           rem the job for hours. Build just the src subdir target.
@@ -187,9 +187,9 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path deploy | Out-Null
-          Copy-Item arora.exe deploy\
-          & "$env:QTDIR\bin\windeployqt.exe" --release --no-translations deploy\arora.exe
-          # Arora data payload — installedDataDirectory() resolves to
+          Copy-Item arktos.exe deploy\
+          & "$env:QTDIR\bin\windeployqt.exe" --release --no-translations deploy\arktos.exe
+          # Arktos data payload — installedDataDirectory() resolves to
           # the exe dir on Windows, so stage beside it.
           Copy-Item -Recurse src\.qm\locale deploy\locale
           Copy-Item src\useragent\useragents.xml deploy\
@@ -207,7 +207,7 @@ jobs:
           tar -xzf $tb
           Copy-Item -Recurse tor deploy\tor
           Copy-Item -Recurse data deploy\data
-          Compress-Archive -Path deploy\* -DestinationPath arora-windows.zip
+          Compress-Archive -Path deploy\* -DestinationPath arktos-windows.zip
 
       - name: Installer (NSIS)
         shell: pwsh
@@ -235,9 +235,9 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: arora-windows
+          name: arktos-windows
           path: |
-            arora-windows.zip
+            arktos-windows.zip
             *Installer*.exe
 
   macos:
@@ -261,7 +261,7 @@ jobs:
 
       - name: Build
         run: |
-          "$QTDIR/bin/qmake" -o Makefile arora.pro
+          "$QTDIR/bin/qmake" -o Makefile arktos.pro
           make -j"$(sysctl -n hw.ncpu)"
 
       - name: Stage payload + bundled tor into the .app
@@ -270,33 +270,33 @@ jobs:
           # (compiled translations, useragents.xml, bundled extensions)
           # straight from the source tree into the bundle-relative path
           # installedDataDirectory() resolves.
-          mkdir -p Arora.app/Contents/Resources/share/arora
-          cp -a src/.qm/locale Arora.app/Contents/Resources/share/arora/
+          mkdir -p Arktos.app/Contents/Resources/share/arktos
+          cp -a src/.qm/locale Arktos.app/Contents/Resources/share/arktos/
           cp -a src/useragent/useragents.xml \
-                Arora.app/Contents/Resources/share/arora/
+                Arktos.app/Contents/Resources/share/arktos/
           cp -a src/data/extensions \
-                Arora.app/Contents/Resources/share/arora/
+                Arktos.app/Contents/Resources/share/arktos/
           # tor expert bundle where TorManager's bundled-layout
           # search (<bindir>/../lib/tor, binaryDir/../data) finds it.
-          ARORA_TOR_PREFIX="$PWD/torpayload" sh BuildProcess/fetch-tor.sh
-          mkdir -p Arora.app/Contents/lib
-          cp -a torpayload/tor Arora.app/Contents/lib/tor
-          cp -a torpayload/data Arora.app/Contents/lib/data
+          ARKTOS_TOR_PREFIX="$PWD/torpayload" sh BuildProcess/fetch-tor.sh
+          mkdir -p Arktos.app/Contents/lib
+          cp -a torpayload/tor Arktos.app/Contents/lib/tor
+          cp -a torpayload/data Arktos.app/Contents/lib/data
 
       - name: Package .dmg
         run: |
-          "$QTDIR/bin/macdeployqt" Arora.app -verbose=1
+          "$QTDIR/bin/macdeployqt" Arktos.app -verbose=1
           # macdeployqt's own -dmg output is a bare volume — no
           # /Applications link, no install affordance. Build the
           # classic drag-to-Applications layout ourselves: a staging
           # dir holding the .app beside an Applications symlink, then
           # a compressed UDZO image of it.
           mkdir dmg-root
-          cp -R Arora.app dmg-root/
+          cp -R Arktos.app dmg-root/
           ln -s /Applications dmg-root/Applications
-          hdiutil create -volname "Arora" -srcfolder dmg-root -ov -format UDZO Arora.dmg
+          hdiutil create -volname "Arktos" -srcfolder dmg-root -ov -format UDZO Arktos.dmg
 
       - uses: actions/upload-artifact@v7
         with:
-          name: arora-macos
+          name: arktos-macos
           path: '*.dmg'

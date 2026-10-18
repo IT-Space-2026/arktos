@@ -26,7 +26,7 @@
 # AND Cargo.lock together.
 #
 # Env:
-#   ARORA_SUPPLYCHAIN_OFFLINE=1  no-network mode: cargo deny --frozen
+#   ARKTOS_SUPPLYCHAIN_OFFLINE=1  no-network mode: cargo deny --frozen
 #                                and cargo audit -n --stale run purely
 #                                against the cached advisory DB +
 #                                registry index under ~/.cargo.  Fails
@@ -40,7 +40,7 @@
 set -u
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-OFFLINE=${ARORA_SUPPLYCHAIN_OFFLINE:-0}
+OFFLINE=${ARKTOS_SUPPLYCHAIN_OFFLINE:-0}
 
 note() { echo "check-supplychain: $*"; }
 die() { echo "check-supplychain: FAIL — $*" >&2; exit 1; }
@@ -69,7 +69,7 @@ if [ "$OFFLINE" = 1 ]; then
     DENY_FLAGS="--frozen"
     AUDIT_FLAGS="-n --stale"
     [ -d "$HOME/.cargo/advisory-db" ] \
-        || die "ARORA_SUPPLYCHAIN_OFFLINE=1 but no cached advisory DB at ~/.cargo/advisory-db"
+        || die "ARKTOS_SUPPLYCHAIN_OFFLINE=1 but no cached advisory DB at ~/.cargo/advisory-db"
 fi
 
 # spikes/ is excluded on purpose: spike harnesses are throwaway

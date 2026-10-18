@@ -1,13 +1,13 @@
-.TH ARORA "1" "May 2008"
+.TH ARKTOS "1" "May 2008"
 
 .SH NAME
-Arora - Lightweight web browser based on Qt and WebEngine
+Arktos - Lightweight web browser based on Qt and WebEngine
 
 .SH SYNOPSIS
-.B arora [Qt options] [url]
+.B arktos [Qt options] [url]
 
 .SH DESCRIPTION
-.B Arora
+.B Arktos
 is a lightweight, cross-platform web browser using Qt 6 and the Qt WebEngine
 (Chromium) engine. It is based on the demo browser application shipped with Qt
 demos.
@@ -31,7 +31,7 @@ and the maximum number of widgets that existed at the same time.
 .B -reverse
 Sets the application's layout direction to right-to-left.
 
-.SS Options Specific to Arora
+.SS Options Specific to Arktos
 .TP
 .B url
 The URL address to open in the browser.
@@ -44,22 +44,24 @@ managed tor daemon's SOCKS5 listener on an off-the-record profile.
 Run without the filesystem sandbox. Browsing launches normally re-exec
 inside bubblewrap on Linux (credential stores and other browsers'
 profiles masked, /etc /usr /boot read-only); this flag is the escape
-hatch, equivalent to setting \fBARORA_NO_SANDBOX=1\fR or the
+hatch, equivalent to setting \fBARKTOS_NO_SANDBOX=1\fR or the
 \fBsandbox/enabled=false\fR settings key.
 .TP
 .B \-\-sandbox-status
 Print the sandbox backend, whether this process is wrapped, and the
 resolved policy, then exit.
 .PP
-The packaged \fBarora-sandbox\fR launcher script (installed next to the
-binary) starts Arora inside the same sandbox without relying on the
+The packaged \fBarktos-sandbox\fR launcher script (installed next to the
+binary) starts Arktos inside the same sandbox without relying on the
 self re-exec.
 
 .SH BUGS
-Please report bugs to \fIhttps://github.com/Arora/arora/issues\fR.
+Please report bugs to \fIhttps://github.com/janos-szenfner/arktos/issues\fR.
 
 .SH AUTHOR
-The author of Arora is Benjamin C. Meyer <ben@meyerhome.net>.
+Arktos is developed by Janos Szenfner, based on the Arora browser
+by Benjamin C. Meyer. Copyright \(co 2026-2027 Janos Szenfner.
+See https://github.com/janos-szenfner/arktos.
 .PP
 This manual page was written by Matvey Kozhev <sikon@ubuntu.com>.
 .PP

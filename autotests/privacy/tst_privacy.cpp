@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,7 +24,7 @@
 // layer it consults (upgrade candidacy, the session downgrade set)
 // plus the pieces that are directly observable:
 //   - CookieJar::isAllowedForHost third-party semantics
-//   - the arora-site-wipe / arora-exit-wipe sentinel handling in
+//   - the arktos-site-wipe / arktos-exit-wipe sentinel handling in
 //     BrowserProfile::clearDeferredSiteStorage()
 //   - QTWEBENGINE_CHROMIUM_FLAGS composition in applyChromiumFlags()
 //   - the pure referer rewrite decision (rewrittenReferer) and the
@@ -34,7 +34,7 @@
 
 #include <QtTest/QtTest>
 #include "profilesettings.h"
-#include <qtest_arora.h>
+#include <qtest_arktos.h>
 
 #include <acceptlanguagedialog.h>
 #include <adblocknetwork.h>
@@ -60,7 +60,7 @@
 #include <qwebenginesettings.h>
 #include <qwebengineurlrequestinfo.h>
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include <rustcore.h>
 #endif
 
@@ -237,7 +237,7 @@ void tst_Privacy::cleanupTestCase()
 void tst_Privacy::init()
 {
     // Pin the interceptor policy so the tests don't depend on the
-    // developer machine's real Arora settings.
+    // developer machine's real Arktos settings.
     ProfileSettings settings;
     settings.beginGroup(QLatin1String("privacy"));
     settings.setValue(QLatin1String("httpsFirst"), true);
@@ -447,9 +447,9 @@ void tst_Privacy::downgradeScopeIsolation()
     // namespaces must not collide.
     QWebEngineProfile otrA;
     QWebEngineProfile otrB;
-    QWebEngineProfile named(QStringLiteral("arora-scopetest"));
+    QWebEngineProfile named(QStringLiteral("arktos-scopetest"));
     QCOMPARE(PrivacyRequestInterceptor::downgradeScope(&named),
-             QStringLiteral("arora-scopetest"));
+             QStringLiteral("arktos-scopetest"));
     QVERIFY(PrivacyRequestInterceptor::downgradeScope(&otrA)
             != PrivacyRequestInterceptor::downgradeScope(&otrB));
     QVERIFY(PrivacyRequestInterceptor::downgradeScope(&otrA)
@@ -972,7 +972,7 @@ void tst_Privacy::stripTrackingParams()
 {
     QFETCH(QString, url);
     QFETCH(QString, expected);
-#if !defined(ARORA_RUSTCORE)
+#if !defined(ARKTOS_RUSTCORE)
     // No-rust build: the strip stage is absent — the URL passes
     // through untouched (modulo QUrl's own %-escape normalization).
     expected = QString::fromUtf8(QUrl(url).toEncoded());
@@ -1015,7 +1015,7 @@ void tst_Privacy::stripToggleAndExceptions()
     init();
     QVERIFY(PrivacyRequestInterceptor::stripTrackingParamsEnabled());
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     typedef PrivacyRequestInterceptor P;
     // Per-site exceptions ride the ruleset: a host where stripping
     // breaks auth is exempt entirely, a keep-list spares named params
@@ -1191,7 +1191,7 @@ private:
         } else if (target.startsWith("/frame")) {
             // SameSite=None is required because Chromium drops
             // Lax-by-default third-party cookies on its own — with it,
-            // only Arora's cookie filter can veto this Set-Cookie, so
+            // only Arktos's cookie filter can veto this Set-Cookie, so
             // the armed/disarmed phases isolate the filter's effect.
             // (Secure rides along because SameSite=None demands it;
             // Chromium accepts Secure cookies from loopback origins.)
@@ -1425,7 +1425,7 @@ void tst_Privacy::deferredWipe()
     QVERIFY(root.exists(QStringLiteral("Network")));
 
     // Site-wipe sentinel: site data goes, Network/Cache stay.
-    QFile sentinel(root.filePath(QStringLiteral("arora-site-wipe.pending")));
+    QFile sentinel(root.filePath(QStringLiteral("arktos-site-wipe.pending")));
     QVERIFY(sentinel.open(QIODevice::WriteOnly));
     sentinel.close();
     QVERIFY(BrowserProfile::clearDeferredSiteStorage(tmp.path()));
@@ -1436,7 +1436,7 @@ void tst_Privacy::deferredWipe()
     QVERIFY(root.exists(QStringLiteral("Network")));
     QVERIFY(root.exists(QStringLiteral("Cache")));
     QVERIFY(root.exists(QStringLiteral("KeepMe")));
-    QVERIFY(!root.exists(QStringLiteral("arora-site-wipe.pending")));
+    QVERIFY(!root.exists(QStringLiteral("arktos-site-wipe.pending")));
 }
 
 void tst_Privacy::deferredExitWipe()
@@ -1448,7 +1448,7 @@ void tst_Privacy::deferredExitWipe()
 
     // The clear-on-exit sentinel additionally removes Chromium's
     // Network/ (cookie db, HSTS) and cache trees.
-    QFile sentinel(root.filePath(QStringLiteral("arora-exit-wipe.pending")));
+    QFile sentinel(root.filePath(QStringLiteral("arktos-exit-wipe.pending")));
     QVERIFY(sentinel.open(QIODevice::WriteOnly));
     sentinel.close();
     QVERIFY(BrowserProfile::clearDeferredSiteStorage(tmp.path()));
@@ -1457,7 +1457,7 @@ void tst_Privacy::deferredExitWipe()
     QVERIFY(!root.exists(QStringLiteral("Cache")));
     QVERIFY(!root.exists(QStringLiteral("Code Cache")));
     QVERIFY(root.exists(QStringLiteral("KeepMe")));
-    QVERIFY(!root.exists(QStringLiteral("arora-exit-wipe.pending")));
+    QVERIFY(!root.exists(QStringLiteral("arktos-exit-wipe.pending")));
 }
 
 void tst_Privacy::chromiumFlags()
@@ -1635,7 +1635,7 @@ void tst_Privacy::chromiumFlags()
                 .contains(QLatin1String("ParallelDownloading")));
 
     // CRASH01: the GPU-compositor safe mode — off by default, armed by
-    // the websettings toggle, by ARORA_DISABLE_GPU_COMPOSITING (an
+    // the websettings toggle, by ARKTOS_DISABLE_GPU_COMPOSITING (an
     // explicit =0 overrides a stored "on"), and auto-engaged — with
     // the toggle persisted — once browser/gpuCrashCount records an
     // unclean start (a stored 1 already means two consecutive
@@ -1643,7 +1643,7 @@ void tst_Privacy::chromiumFlags()
     // after applyChromiumFlags already read it).
     ProfileSettings().remove(QLatin1String("websettings/disableGpuCompositing"));
     ProfileSettings().remove(QLatin1String("browser/gpuCrashCount"));
-    qunsetenv("ARORA_DISABLE_GPU_COMPOSITING");
+    qunsetenv("ARKTOS_DISABLE_GPU_COMPOSITING");
     qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
     BrowserProfile::applyChromiumFlags();
     QVERIFY(!QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
@@ -1656,17 +1656,17 @@ void tst_Privacy::chromiumFlags()
     QVERIFY(QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
                 .contains(QLatin1String("--disable-gpu-compositing")));
 
-    qputenv("ARORA_DISABLE_GPU_COMPOSITING", "0");
+    qputenv("ARKTOS_DISABLE_GPU_COMPOSITING", "0");
     qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
     BrowserProfile::applyChromiumFlags();
     QVERIFY(!QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
                  .contains(QLatin1String("--disable-gpu-compositing")));
-    qputenv("ARORA_DISABLE_GPU_COMPOSITING", "1");
+    qputenv("ARKTOS_DISABLE_GPU_COMPOSITING", "1");
     qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
     BrowserProfile::applyChromiumFlags();
     QVERIFY(QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
                 .contains(QLatin1String("--disable-gpu-compositing")));
-    qunsetenv("ARORA_DISABLE_GPU_COMPOSITING");
+    qunsetenv("ARKTOS_DISABLE_GPU_COMPOSITING");
     ProfileSettings().remove(QLatin1String("websettings/disableGpuCompositing"));
 
     // No recorded crash leaves it off; a recorded one — which only

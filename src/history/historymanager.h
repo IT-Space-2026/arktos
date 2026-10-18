@@ -189,7 +189,7 @@ private:
     void load();
     QString atomicString(const QString &string);
     void startFrecencyTimer();
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // Re-binds the process-global rust history connection to this
     // profile's history.db — required before EVERY rc_hist_* call:
     // another profile's manager may own the open database.

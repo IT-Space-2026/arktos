@@ -49,7 +49,7 @@ qint64 fetchTimeoutMs()
 {
     bool ok = false;
     const qint64 overrideMs = qEnvironmentVariableIntValue(
-        "ARORA_SOURCE_FETCH_TIMEOUT_MS", &ok);
+        "ARKTOS_SOURCE_FETCH_TIMEOUT_MS", &ok);
     return ok && overrideMs > 0 ? overrideMs : 15000;
 }
 
@@ -78,7 +78,7 @@ bool looksLikeText(const QByteArray &bytes)
 bool timingEnabled()
 {
     static const bool enabled =
-        qEnvironmentVariableIsSet("ARORA_SOURCE_TIMING");
+        qEnvironmentVariableIsSet("ARKTOS_SOURCE_TIMING");
     return enabled;
 }
 

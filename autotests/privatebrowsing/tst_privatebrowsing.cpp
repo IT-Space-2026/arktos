@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, The Arora Authors
+ * Copyright (c) 2026, The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -48,14 +48,14 @@
 #include "historymanager.h"
 #include "opensearchmanager.h"
 #include "profilesettings.h"
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 #include "qtry.h"
 #include "tabwidget.h"
 #include "toolbarsearch.h"
 #include "webpage.h"
 #include "webview.h"
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "sitedecisionstore.h"
 #endif
 
@@ -237,7 +237,7 @@ void tst_PrivateBrowsing::init()
 {
     ProfileSettings settings;
     settings.clear();
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // Per-site decisions outlive the ProfileSettings wipe — start clean.
     SiteDecisionStore::reset();
 #endif

@@ -1,4 +1,4 @@
-# Source this before building Arora with the user-local Qt 6.
+# Source this before building Arktos with the user-local Qt 6.
 #   source .devin/qt-env.sh && qmake && make -j2
 # A plain qmake builds the Rust components by default (RDEF01 — the
 # root .qmake.conf auto-detects cargo); pass CONFIG+=no-rust or

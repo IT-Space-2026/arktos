@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -37,7 +37,7 @@
 #include "browsermainwindow.h"
 #include "updatechecker.h"
 #include "updatedialog.h"
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 #include "qtry.h"
 
 // Minimal canned releases endpoint: records every request head and
@@ -101,7 +101,7 @@ private:
 static QByteArray releaseJson(const QString &tag, const QString &assets)
 {
     return QByteArrayLiteral("{\"tag_name\":\"") + tag.toUtf8()
-        + QByteArrayLiteral("\",\"name\":\"Arora ") + tag.toUtf8()
+        + QByteArrayLiteral("\",\"name\":\"Arktos ") + tag.toUtf8()
         + QByteArrayLiteral(
             "\",\"html_url\":\"http://127.0.0.1/releases/x\",\"assets\":[")
         + assets.toUtf8() + QByteArrayLiteral("]}");
@@ -118,17 +118,17 @@ static QByteArray assetJson(const QString &name, const QString &url)
 static QByteArray allPlatformAssets()
 {
     const QList<QByteArray> assets = {
-        assetJson(QLatin1String("Arora 9.9 Installer.exe"),
+        assetJson(QLatin1String("Arktos 9.9 Installer.exe"),
                   QLatin1String("http://127.0.0.1/win-installer.exe")),
-        assetJson(QLatin1String("arora-9.9-win.zip"),
+        assetJson(QLatin1String("arktos-9.9-win.zip"),
                   QLatin1String("http://127.0.0.1/win.zip")),
-        assetJson(QLatin1String("Arora-9.9.dmg"),
+        assetJson(QLatin1String("Arktos-9.9.dmg"),
                   QLatin1String("http://127.0.0.1/mac.dmg")),
-        assetJson(QLatin1String("arora_9.9_amd64.deb"),
+        assetJson(QLatin1String("arktos_9.9_amd64.deb"),
                   QLatin1String("http://127.0.0.1/linux.deb")),
-        assetJson(QLatin1String("arora-9.9.x86_64.rpm"),
+        assetJson(QLatin1String("arktos-9.9.x86_64.rpm"),
                   QLatin1String("http://127.0.0.1/linux.rpm")),
-        assetJson(QLatin1String("arora-9.9.flatpak"),
+        assetJson(QLatin1String("arktos-9.9.flatpak"),
                   QLatin1String("http://127.0.0.1/linux.flatpak")),
     };
     QByteArray joined;
@@ -235,7 +235,7 @@ void tst_UpdateChecker::assetMatching()
             QLatin1String("windows"), QString(), assets);
     QVERIFY(!win.candidates.isEmpty());
     QCOMPARE(win.candidates.first().name,
-             QLatin1String("Arora 9.9 Installer.exe"));
+             QLatin1String("Arktos 9.9 Installer.exe"));
     for (const UpdateChecker::ReleaseAsset &asset : win.candidates)
         QVERIFY(asset.name.endsWith(QLatin1String(".exe")));
     QVERIFY(!win.ambiguous);
@@ -245,27 +245,27 @@ void tst_UpdateChecker::assetMatching()
         UpdateChecker::platformAssetsFor(
             QLatin1String("macos"), QString(), assets);
     QCOMPARE(mac.candidates.size(), 1);
-    QCOMPARE(mac.candidates.first().name, QLatin1String("Arora-9.9.dmg"));
+    QCOMPARE(mac.candidates.first().name, QLatin1String("Arktos-9.9.dmg"));
 
     // Debian-family → deb first, flatpak fallback; rpm-family → rpm.
     const UpdateChecker::PlatformPick deb =
         UpdateChecker::platformAssetsFor(
             QLatin1String("linux"), QLatin1String("debian"), assets);
     QCOMPARE(deb.candidates.first().name,
-             QLatin1String("arora_9.9_amd64.deb"));
+             QLatin1String("arktos_9.9_amd64.deb"));
     QVERIFY(!deb.ambiguous);
     const UpdateChecker::PlatformPick ubuntu =
         UpdateChecker::platformAssetsFor(
             QLatin1String("linux"),
             QLatin1String("ubuntu debian"), assets);
     QCOMPARE(ubuntu.candidates.first().name,
-             QLatin1String("arora_9.9_amd64.deb"));
+             QLatin1String("arktos_9.9_amd64.deb"));
     const UpdateChecker::PlatformPick rpm =
         UpdateChecker::platformAssetsFor(
             QLatin1String("linux"),
             QLatin1String("fedora"), assets);
     QCOMPARE(rpm.candidates.first().name,
-             QLatin1String("arora-9.9.x86_64.rpm"));
+             QLatin1String("arktos-9.9.x86_64.rpm"));
 
     // Unknown distro: every plausible candidate, flatpak leading —
     // ambiguous so the dialog must let the user pick.
@@ -275,7 +275,7 @@ void tst_UpdateChecker::assetMatching()
     QVERIFY(unknown.ambiguous);
     QCOMPARE(unknown.candidates.size(), 3);
     QCOMPARE(unknown.candidates.first().name,
-             QLatin1String("arora-9.9.flatpak"));
+             QLatin1String("arktos-9.9.flatpak"));
 
     // Release with no host package → empty candidates (dialog falls
     // back to the release page instead of a foreign download).
@@ -305,7 +305,7 @@ void tst_UpdateChecker::upToDate()
     QCOMPARE(result.status, UpdateChecker::Status::UpToDate);
     QCOMPARE(server.requestCount, 1);
     // The request carried the app User-Agent the GitHub API demands.
-    QVERIFY(server.lastRequest.contains("User-Agent: Arora/"));
+    QVERIFY(server.lastRequest.contains("User-Agent: Arktos/"));
 }
 
 void tst_UpdateChecker::updateAvailable()
@@ -417,9 +417,9 @@ void tst_UpdateChecker::untrustedAssetUrls()
     QVERIFY(!UpdateChecker::isTrustedDownloadUrl(
         QUrl(QLatin1String("data:application/x-deb;base64,AA==")), api));
     QVERIFY(!UpdateChecker::isTrustedDownloadUrl(
-        QUrl(QLatin1String("http://evil.example/arora.deb")), api));
+        QUrl(QLatin1String("http://evil.example/arktos.deb")), api));
     QVERIFY(!UpdateChecker::isTrustedDownloadUrl(
-        QUrl(QLatin1String("https://evil.example/arora.deb")), api));
+        QUrl(QLatin1String("https://evil.example/arktos.deb")), api));
     // A github host over cleartext is a downgrade, not an asset.
     QVERIFY(!UpdateChecker::isTrustedDownloadUrl(
         QUrl(QLatin1String("http://github.com/a/x.deb")), api));
@@ -455,8 +455,8 @@ void tst_UpdateChecker::untrustedAssetUrls()
         assetJson(QLatin1String("evil-file.deb"),
                   QLatin1String("file:///etc/passwd")),
         assetJson(QLatin1String("evil-host.deb"),
-                  QLatin1String("https://evil.example/arora.deb")),
-        assetJson(QLatin1String("arora_9.9_amd64.deb"),
+                  QLatin1String("https://evil.example/arktos.deb")),
+        assetJson(QLatin1String("arktos_9.9_amd64.deb"),
                   server.url(QLatin1String("/a.deb")).toString()),
     };
     QByteArray joined;
@@ -482,7 +482,7 @@ void tst_UpdateChecker::untrustedAssetUrls()
     QCOMPARE(result.status, UpdateChecker::Status::UpdateAvailable);
     QCOMPARE(result.assets.size(), 1);
     QCOMPARE(result.assets.first().name,
-             QLatin1String("arora_9.9_amd64.deb"));
+             QLatin1String("arktos_9.9_amd64.deb"));
     QVERIFY(!result.releasePageUrl.isValid()
             || result.releasePageUrl.scheme()
                 != QLatin1String("javascript"));
@@ -653,7 +653,7 @@ void tst_UpdateChecker::dialogLegs()
     // degrades to the release page instead of a wrong download.
     server.body = releaseJson(QLatin1String("v999.0.0"),
         QString::fromUtf8(assetJson(
-            QLatin1String("Arora 9.9 Installer.exe"),
+            QLatin1String("Arktos 9.9 Installer.exe"),
             QLatin1String("http://127.0.0.1/win.exe"))));
     {
         UpdateDialog dialog;

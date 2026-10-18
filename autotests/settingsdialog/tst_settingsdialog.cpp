@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, The Arora Authors
+ * Copyright (c) 2026, The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -51,7 +51,7 @@
 #include "autofillmanager.h"
 #include "adblockdialog.h"
 #include "adblockmanager.h"
-#include "aroraicon.h"
+#include "arktosicon.h"
 #include "browserapplication.h"
 #include "browsermainwindow.h"
 #include "browsertheme.h"
@@ -72,7 +72,7 @@
 #include "securestore.h"
 #include "webpermissionmanager.h"
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "sitedecisionstore.h"
 #include <rustcore.h>
 #endif
@@ -86,7 +86,7 @@
 #include "trancolist.h"
 #include "webview.h"
 #include "profilesettings.h"
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 #include "qtry.h"
 
 class tst_SettingsDialog : public QObject
@@ -335,7 +335,7 @@ void tst_SettingsDialog::initTestCase()
     QCoreApplication::setApplicationName("tst_settingsdialog");
     ProfileSettings settings;
     settings.clear();
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // Site decisions outlive ProfileSettings cleanup — clear them too.
     SiteDecisionStore::reset();
 #endif
@@ -1638,7 +1638,7 @@ void tst_SettingsDialog::iconThemeSelector()
     // Every row carries a painted strip, and distinct sets paint
     // distinct previews.
     QCOMPARE(dialog.iconThemeCombo->count(),
-             AroraIcon::themeIds().count());
+             ArktosIcon::themeIds().count());
     QHash<QString, QImage> strips;
     for (int row = 0; row < dialog.iconThemeCombo->count(); ++row) {
         const QIcon icon = dialog.iconThemeCombo->itemIcon(row);
@@ -1670,21 +1670,21 @@ void tst_SettingsDialog::iconThemeSelector()
 // ICONS12: a profile pinned to the retired "native" id migrates to
 // the default bundled set — the combo shows the Tabler row selected
 // rather than a dead row or a blank pick.  ICONS13: the removed
-// arora-legacy set migrates the same way.
+// arktos-legacy set migrates the same way.
 void tst_SettingsDialog::iconThemeRetiredNative()
 {
     ProfileSettings settings;
     const QVariant saved = settings.value(
         QLatin1String("MainWindow/iconTheme"));
 
-    for (const char *retired : { "native", "arora-legacy" }) {
+    for (const char *retired : { "native", "arktos-legacy" }) {
         settings.setValue(QLatin1String("MainWindow/iconTheme"),
                           QLatin1String(retired));
 
         SettingsDialog dialog;
         QCOMPARE(dialog.iconThemeCombo->currentData().toString(),
                  QLatin1String("tabler"));
-        QCOMPARE(AroraIcon::theme(), QLatin1String("tabler"));
+        QCOMPARE(ArktosIcon::theme(), QLatin1String("tabler"));
     }
 
     if (saved.isValid())
@@ -1932,7 +1932,7 @@ void tst_SettingsDialog::themePicker()
 // the pin.
 void tst_SettingsDialog::uniformSidebarIcons()
 {
-    const QString originalTheme = AroraIcon::theme();
+    const QString originalTheme = ArktosIcon::theme();
     SettingsDialog dialog;
 
     // PREFUI08: the nav font is bumped ~30% relative to the app font
@@ -1981,12 +1981,12 @@ void tst_SettingsDialog::uniformSidebarIcons()
 
     // Re-resolving under each bundled set keeps the pinned extent and
     // uniform row heights.
-    for (const QString &id : AroraIcon::themeIds()) {
-        AroraIcon::setTheme(id);
+    for (const QString &id : ArktosIcon::themeIds()) {
+        ArktosIcon::setTheme(id);
         QCOMPARE(dialog.pagesList->iconSize(), iconExtent);
         checkRows();
     }
-    AroraIcon::setTheme(originalTheme);
+    ArktosIcon::setTheme(originalTheme);
 }
 
 // UIP06: every stacked page lives inside a scroll area so a page
@@ -2124,14 +2124,14 @@ void tst_SettingsDialog::densityAndFooter()
             - dialog.layout()->contentsMargins().left());
 
     // Offscreen page grabs for visual review — set
-    // ARORA_SETTINGS_GRAB_DIR to a directory and each page lands
-    // there as settings-page-<n>.png; ARORA_SETTINGS_GRAB_SIZE=WxH
+    // ARKTOS_SETTINGS_GRAB_DIR to a directory and each page lands
+    // there as settings-page-<n>.png; ARKTOS_SETTINGS_GRAB_SIZE=WxH
     // resizes the dialog before grabbing.
-    const QByteArray grabDir = qgetenv("ARORA_SETTINGS_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_SETTINGS_GRAB_DIR");
     if (!grabDir.isEmpty()) {
         QDir().mkpath(QString::fromLocal8Bit(grabDir));
         const QStringList grabSizeParts = QString::fromLocal8Bit(
-            qgetenv("ARORA_SETTINGS_GRAB_SIZE")).split(QLatin1Char('x'));
+            qgetenv("ARKTOS_SETTINGS_GRAB_SIZE")).split(QLatin1Char('x'));
         if (grabSizeParts.size() == 2) {
             dialog.resize(grabSizeParts[0].toInt(), grabSizeParts[1].toInt());
             qApp->processEvents();
@@ -2477,7 +2477,7 @@ void tst_SettingsDialog::downloadsPage()
         QStandardItemModel *model = qobject_cast<QStandardItemModel *>(
             dialog.downloadEngineCombo->model());
         QVERIFY(model);
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
         QVERIFY(model->item(1)->isEnabled());
         // DLACC06: rust is the default — a fresh profile opens with
         // Accelerated selected and the segment spin armed.
@@ -2671,7 +2671,7 @@ void tst_SettingsDialog::contentBlockerEngine()
         // enabled where the engine ships, disabled with the rebuild
         // hint where it does not.
         QCOMPARE(dialog.adblockEngineCombo->currentIndex(), 1);
-#ifdef ARORA_ADBLOCK_RUST
+#ifdef ARKTOS_ADBLOCK_RUST
         QVERIFY(model->item(1)->isEnabled());
         QVERIFY(dialog.adblockEngineStatus->text().contains(
             QStringLiteral("adblock-rust")));
@@ -4304,7 +4304,7 @@ void tst_SettingsDialog::siteTrustUpdateControls()
     blocklist->setSourcesForTest(DomainBlocklist::defaultSources());
     QFile::remove(TrancoList::listFilePath());
     QFile::remove(DomainBlocklist::listFilePath());
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     rc_tranco_reload();
     rc_blocklist_reload();
 #endif

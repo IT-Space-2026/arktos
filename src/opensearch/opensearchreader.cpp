@@ -23,7 +23,7 @@
 
 #include <qiodevice.h>
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "rustcore.h"
 
 #include <QJsonArray>
@@ -107,7 +107,7 @@ OpenSearchEngine *OpenSearchReader::read(QIODevice *device)
     return read(data);
 }
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 // SEC19: the descriptor bytes are parsed by memory-safe Rust; Qt XML
 // only ever sees the small JSON document the crate produced
 // (rc_opensearch_parse — field names are documented in rustcore.h).
@@ -178,7 +178,7 @@ OpenSearchEngine *OpenSearchReader::read(const QByteArray &data)
             QString type = attributes().value(QLatin1String("type")).toString();
             QString url = attributes().value(QLatin1String("template")).toString();
             QString method = attributes().value(QLatin1String("method")).toString();
-            // SRCH04: Arora extension — a <Url purpose="image"> element
+            // SRCH04: Arktos extension — a <Url purpose="image"> element
             // carries the engine's image-search endpoint.
             QString purpose = attributes().value(QLatin1String("purpose")).toString();
 
@@ -237,7 +237,7 @@ OpenSearchEngine *OpenSearchReader::read(const QByteArray &data)
             }
 
         } else if (name() == QLatin1String("Alias")) {
-            // SENG02: Arora extension — an <Alias> element declares a
+            // SENG02: Arktos extension — an <Alias> element declares a
             // default keyword binding ("nickname") for the engine;
             // the manager binds only slots nobody already claimed.
             const QString keyword = readElementText().trimmed();
@@ -267,5 +267,5 @@ OpenSearchEngine *OpenSearchReader::read(const QByteArray &data)
 
     return engine;
 }
-#endif // ARORA_RUSTCORE
+#endif // ARKTOS_RUSTCORE
 

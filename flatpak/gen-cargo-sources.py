@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate flatpak-builder 'archive' sources for Arora's vendored Rust deps.
+"""Generate flatpak-builder 'archive' sources for Arktos's vendored Rust deps.
 
 Reads src/rustdl/Cargo.lock, src/rustcore/Cargo.lock and
 src/adblock/rust/Cargo.lock and emits

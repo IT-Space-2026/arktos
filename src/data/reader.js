@@ -1,14 +1,14 @@
 // READ01/READ05: Reader Mode driver — injected by ReaderMode through
 // runJavaScript into a dedicated ISOLATED script world (ReaderWorldId,
 // not the page's main world), so page JavaScript can neither see nor
-// redefine __aroraReader/Readability/isProbablyReaderable.  The DOM is
+// redefine __arktosReader/Readability/isProbablyReaderable.  The DOM is
 // shared across worlds, so extraction and overlay construction work on
 // the live document exactly as before.  SEC24 moved the page's
-// QWebChannel into a different isolated world (AroraChannelWorld) —
+// QWebChannel into a different isolated world (ArktosChannelWorld) —
 // the driver needs no channel access at all: its chrome reports through
 // DOM CustomEvents on the shared document, and reader-forward.js —
-// running in AroraChannelWorld where the transport lives — relays them
-// to the "aroraReader" bridge object.  App-side injection is not a page
+// running in ArktosChannelWorld where the transport lives — relays them
+// to the "arktosReader" bridge object.  App-side injection is not a page
 // script, so it is not subject to the page's own script-block rules;
 // ReaderMode lifts JavascriptEnabled for the injection window on
 // JSCTL-blocked pages.
@@ -41,17 +41,17 @@
 // too, but they could already reach the old overlay DOM — nothing
 // gained there, and they cannot make its scripts run.
 //
-// window.__aroraReader still exits the overlay locally on tor pages
+// window.__arktosReader still exits the overlay locally on tor pages
 // (no forwarder is installed there), and the chrome reports preference
-// changes and exits to C++ by dispatching "arora:reader:*" CustomEvents
+// changes and exits to C++ by dispatching "arktos:reader:*" CustomEvents
 // on the shared document — DOM events cross worlds, and
-// reader-forward.js relays them to the "aroraReader" channel object in
-// AroraChannelWorld, where SEC24 put the transport.
+// reader-forward.js relays them to the "arktosReader" channel object in
+// ArktosChannelWorld, where SEC24 put the transport.
 (function () {
-    if (window.__aroraReader)
+    if (window.__arktosReader)
         return;
 
-    var HOST_ID = "arora-reader-host";
+    var HOST_ID = "arktos-reader-host";
     var MIN_FONT = 12;
     var MAX_FONT = 30;
 
@@ -81,7 +81,7 @@
     }
 
     function savePreference(key, value) {
-        report("arora:reader:pref", { key: key, value: value });
+        report("arktos:reader:pref", { key: key, value: value });
     }
 
     // Shared theme palette — the chrome bar consumes the --bar-*
@@ -299,14 +299,14 @@ color: var(--byline); }\
             savePreference("theme", state.theme);
         });
         exitBtn.addEventListener("click", function () {
-            window.__aroraReader.exit();
+            window.__arktosReader.exit();
         });
 
         document.documentElement.appendChild(hostEl);
         return { ok: true };
     }
 
-    window.__aroraReader = {
+    window.__arktosReader = {
         isActive: function () {
             return !!host();
         },
@@ -361,7 +361,7 @@ color: var(--byline); }\
             // bare paragraph or two out of almost anything, so refuse
             // pages the heuristic does not consider article-like
             // before extracting.
-            if (!window.__aroraReader.probe())
+            if (!window.__arktosReader.probe())
                 return { ok: false };
 
             var article;
@@ -403,7 +403,7 @@ color: var(--byline); }\
             if (!el)
                 return false;
             el.remove();
-            report("arora:reader:exit");
+            report("arktos:reader:exit");
             return true;
         },
 

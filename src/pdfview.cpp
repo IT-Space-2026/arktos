@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -56,7 +56,7 @@
 #include <limits>
 #include <utility>
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 #include "rustcore.h"
 #endif
 
@@ -83,7 +83,7 @@ PdfDocumentClient::~PdfDocumentClient()
 
 void PdfDocumentClient::abort()
 {
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     if (m_doc) {
         rc_pdfdoc_close(m_doc);
         m_doc = 0;
@@ -107,9 +107,9 @@ void PdfDocumentClient::abort()
 
 void PdfDocumentClient::open(const QString &pdfPath)
 {
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     const bool inProc =
-        qEnvironmentVariableIntValue("ARORA_PDF_INPROC") == 1
+        qEnvironmentVariableIntValue("ARKTOS_PDF_INPROC") == 1
         || SandboxManager::bwrapPath().isEmpty();
     if (inProc) {
         if (!openInProcess(pdfPath))
@@ -148,7 +148,7 @@ QSizeF PdfDocumentClient::pageSize(int page) const
 
 bool PdfDocumentClient::openInProcess(const QString &pdfPath)
 {
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     QFile in(pdfPath);
     if (!in.open(QIODevice::ReadOnly)) {
         m_failed = true;
@@ -321,7 +321,7 @@ void PdfDocumentClient::handleWorkerOutput()
                 ev.value(QLatin1String("file")).toString();
             m_pending.remove(req);
             // The png lands in the host-side work dir; the sandbox
-            // binds it at /arora-rt/work but the parent reads its own
+            // binds it at /arktos-rt/work but the parent reads its own
             // path.
             const QString path = m_workDir
                 ? m_workDir->path() + QLatin1Char('/') + file
@@ -355,7 +355,7 @@ void PdfDocumentClient::handleWorkerOutput()
 
 qint64 PdfDocumentClient::renderPage(int page, double scale)
 {
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     const qint64 req = m_nextRequest++;
     if (m_doc) {
         RcBuffer png = { nullptr, 0 };
@@ -395,7 +395,7 @@ qint64 PdfDocumentClient::renderPage(int page, double scale)
 qint64 PdfDocumentClient::findText(const QString &needle,
                                    int fromPage, int dir)
 {
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     const qint64 req = m_nextRequest++;
     if (m_doc) {
         const QByteArray n = needle.toUtf8();
@@ -428,7 +428,7 @@ qint64 PdfDocumentClient::findText(const QString &needle,
 QImage PdfDocumentClient::renderPageSync(int page, double scale,
                                          int timeoutMs)
 {
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     if (m_doc) {
         RcBuffer png = { nullptr, 0 };
         if (rc_pdfdoc_render_png(m_doc, page, scale, &png) != RC_OK
@@ -481,7 +481,7 @@ bool PdfDocumentClient::probeWorker(const QStringList &paths,
     const QString program = QCoreApplication::applicationFilePath();
     if (!QFileInfo(program).isExecutable()) {
         if (error)
-            *error = QStringLiteral("no arora binary");
+            *error = QStringLiteral("no arktos binary");
         return false;
     }
 

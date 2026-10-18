@@ -157,7 +157,7 @@
           <item row="0" column="0" colspan="4">
            <widget class="QRadioButton" name="homeStartPageRadio">
             <property name="toolTip">
-             <string>The Home button and homepage startup open the built-in Arora start page.</string>
+             <string>The Home button and homepage startup open the built-in Arktos start page.</string>
             </property>
             <property name="text">
              <string>Start Page</string>
@@ -218,7 +218,7 @@
           <item>
            <widget class="QRadioButton" name="startupLastSessionRadio">
             <property name="toolTip">
-             <string>Restore the windows and tabs that were open when Arora last closed.</string>
+             <string>Restore the windows and tabs that were open when Arktos last closed.</string>
             </property>
             <property name="text">
              <string>Last Session</string>
@@ -238,7 +238,7 @@
           <item>
            <widget class="QRadioButton" name="startupStartPageRadio">
             <property name="toolTip">
-             <string>Open the built-in Arora start page.</string>
+             <string>Open the built-in Arktos start page.</string>
             </property>
             <property name="text">
              <string>Start Page</string>
@@ -381,7 +381,7 @@
           <item>
            <widget class="QCheckBox" name="confirmExitCheck">
             <property name="toolTip">
-             <string>Ask before quitting Arora — from the Arora menu's Quit entry or when the last window closes.</string>
+             <string>Ask before quitting Arktos — from the Arktos menu's Quit entry or when the last window closes.</string>
             </property>
             <property name="text">
              <string>Show Exit Confirmation Dialog</string>
@@ -1660,7 +1660,7 @@
        <item row="5" column="1" colspan="4">
         <widget class="ThemePicker" name="themePicker">
          <property name="toolTip">
-          <string>Color scheme for Arora's own windows, menus and dialogs. &quot;Auto&quot; follows the desktop preference.</string>
+          <string>Color scheme for Arktos's own windows, menus and dialogs. &quot;Auto&quot; follows the desktop preference.</string>
          </property>
          <property name="accessibleName">
           <string>Window theme (Day/Night)</string>
@@ -1680,7 +1680,7 @@
        <item row="7" column="0" colspan="3">
         <widget class="QCheckBox" name="forceDarkMode">
          <property name="toolTip">
-          <string>Pages that ship their own dark theme use it; light-only pages get a heuristic color inversion with a contrast floor so text stays readable. Images and videos are not inverted. Only web content is affected — Arora's own windows keep the desktop palette.</string>
+          <string>Pages that ship their own dark theme use it; light-only pages get a heuristic color inversion with a contrast floor so text stays readable. Images and videos are not inverted. Only web content is affected — Arktos's own windows keep the desktop palette.</string>
          </property>
          <property name="text">
           <string>Render pages in dark mode</string>
@@ -2555,7 +2555,7 @@
              <string>On quit, wipe history, cookies, site storage and caches — everything Clear Private Data covers. Sites you stay logged in to are signed out.</string>
             </property>
             <property name="text">
-             <string>Clear browsing data when Arora exits</string>
+             <string>Clear browsing data when Arktos exits</string>
             </property>
             <property name="checked">
              <bool>false</bool>
@@ -4345,7 +4345,7 @@
           <item>
            <widget class="QCheckBox" name="hardwareAccel">
             <property name="toolTip">
-             <string>Render pages on the GPU. Turned off, Arora adds --disable-gpu to the engine flags — the switch latches at startup, so the change takes effect on the next launch.</string>
+             <string>Render pages on the GPU. Turned off, Arktos adds --disable-gpu to the engine flags — the switch latches at startup, so the change takes effect on the next launch.</string>
             </property>
             <property name="text">
              <string>Use Hardware Acceleration When Available</string>

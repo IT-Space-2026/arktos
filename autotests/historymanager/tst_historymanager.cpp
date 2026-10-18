@@ -18,7 +18,7 @@
  */
 
 #include <QtTest/QtTest>
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 
 #include <browserpaths.h>
 #include <browserprofile.h>
@@ -132,7 +132,7 @@ private slots:
     void setHistory();
     void saveload_data();
     void saveload();
-#ifndef ARORA_RUSTCORE
+#ifndef ARKTOS_RUSTCORE
     void icons();
     void iconsFromPage();
 #else
@@ -306,8 +306,8 @@ void tst_HistoryManager::addHistoryEntry_private()
 
     // Control: a page on a persisted profile is recorded — in the
     // store the page's profile resolves to (MPROF02 keys managers by
-    // persona, so an "arora-<id>" storage name lands in that profile).
-    QWebEngineProfile normalProfile(QStringLiteral("arora-historytest"));
+    // persona, so an "arktos-<id>" storage name lands in that profile).
+    QWebEngineProfile normalProfile(QStringLiteral("arktos-historytest"));
     HistoryManager *resolved = HistoryManager::instanceFor(
         BrowserProfile::profileIdFor(&normalProfile));
     resolved->setHistory(HistoryList());
@@ -535,7 +535,7 @@ void tst_HistoryManager::saveload()
     }
 }
 
-#ifndef ARORA_RUSTCORE
+#ifndef ARKTOS_RUSTCORE
 static QImage iconImage(const QIcon &icon)
 {
     return icon.pixmap(8).toImage().convertToFormat(QImage::Format_ARGB32);
@@ -607,7 +607,7 @@ void tst_HistoryManager::iconsFromPage()
     manager->clearIcons();
     manager->setHistory(HistoryList());
 
-    QWebEngineProfile profile(QStringLiteral("arora-historyicontest"));
+    QWebEngineProfile profile(QStringLiteral("arktos-historyicontest"));
     WebPage page(&profile);
     QSignalSpy iconSpy(&page, &QWebEnginePage::iconChanged);
     page.load(url);
@@ -685,7 +685,7 @@ void tst_HistoryManager::legacyImport()
     }
     QFile::remove(path);
 }
-#endif // ARORA_RUSTCORE
+#endif // ARKTOS_RUSTCORE
 
 void tst_HistoryManager::big()
 {

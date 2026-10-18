@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -332,7 +332,7 @@ public:
     // filter list), so the match is memory-safe over attacker
     // URLs.  strippedUrl() is the pure decision both interceptors
     // redirect through: the cleaned URL, or `url` unchanged when no
-    // rule fired — and when Arora is built without CONFIG+=rustcore,
+    // rule fired — and when Arktos is built without CONFIG+=rustcore,
     // or the privacy/stripTrackingParams toggle (default on) is off.
     static bool stripTrackingParamsEnabled();
     static QUrl strippedUrl(const QUrl &url);
@@ -374,7 +374,7 @@ public:
     // seed ∪ <data dir>/blocklist-domains.txt, exact + parent-suffix
     // match; no remote lookups ever).  A main-frame navigation to a
     // listed host is refused and WebPage shows the
-    // arora-site-block: warning interstitial; "proceed" remembers the
+    // arktos-site-block: warning interstitial; "proceed" remembers the
     // host for the session only (the choice is logged, nothing is
     // persisted — a durable bypass of a listed hostile domain is a
     // foot-gun SAFE01's http exception can afford to be and this list

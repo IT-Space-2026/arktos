@@ -13,7 +13,7 @@
  * DEVT03 — engine-neutral developer-tools dock panel.
  *
  * DEVT13's full tab set (Chrome order), all fed by the BiDi-shaped
- * channel in BidiClient plus the vendor arora.cdp passthrough that
+ * channel in BidiClient plus the vendor arktos.cdp passthrough that
  * carries raw CDP commands onto a page session:
  *   Elements   lazy DOM tree (the old DOM tab, renamed), Chrome's
  *              breadcrumb trail along the bottom, a click-to-inspect
@@ -83,7 +83,7 @@
  *              cookies (storage.getCookies), localStorage and
  *              sessionStorage (script.evaluate), and an IndexedDB
  *              database list (indexedDB.databases()).
- *   Security   built from Arora's own data, no CDP needed — the
+ *   Security   built from Arktos's own data, no CDP needed — the
  *              page scheme, the TlsVerifier second-opinion verdict
  *              (status, TLS version, chain detail), and a mixed-
  *              content count observed from the Network rows.
@@ -170,7 +170,7 @@ public:
     // the cell gridlines draw for the current window — lets the
     // suite pin the ladder without scraping header pixels.
     QVector<double> testWaterfallTicks();
-    // DEVT13: register a pending arora.cdp tag the way sendCdp
+    // DEVT13: register a pending arktos.cdp tag the way sendCdp
     // would, so the suite can drive raw result/error handling.
     quint64 testRegisterCdp(int tag, const QString &a = QString(),
                             const QString &b = QString(), int n = 0);
@@ -264,7 +264,7 @@ private:
     void updateNetworkSummary();
 
     // DEVT13 — the full tab set.
-    // arora.cdp passthrough plumbing: sendCdp returns the bidi id
+    // arktos.cdp passthrough plumbing: sendCdp returns the bidi id
     // and registers CdpReq so the raw result/error routes back to
     // the right handler in onResponse.
     struct CdpReq {

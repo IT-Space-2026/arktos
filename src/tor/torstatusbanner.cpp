@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@
 
 #include "torstatusbanner.h"
 
-#include "arorastyle.h"
+#include "arktosstyle.h"
 #include "tormanager.h"
 
 #include <qboxlayout.h>
@@ -36,14 +36,14 @@ TorStatusBanner::TorStatusBanner(QWidget *parent)
     // Only ever hosted inside the tor window — the same fixed violet
     // family the rest of the chrome uses (TOR07/TOR14), built by the
     // central style source (THEME01).
-    setStyleSheet(AroraStyle::torBannerStyleSheet());
+    setStyleSheet(ArktosStyle::torBannerStyleSheet());
 
     QHBoxLayout *layout = new QHBoxLayout(this);
-    layout->setContentsMargins(AroraStyle::Spacing::Medium,
-                               AroraStyle::Spacing::Small,
-                               AroraStyle::Spacing::Medium,
-                               AroraStyle::Spacing::Small);
-    layout->setSpacing(AroraStyle::Spacing::Medium);
+    layout->setContentsMargins(ArktosStyle::Spacing::Medium,
+                               ArktosStyle::Spacing::Small,
+                               ArktosStyle::Spacing::Medium,
+                               ArktosStyle::Spacing::Small);
+    layout->setSpacing(ArktosStyle::Spacing::Medium);
 
     m_label = new QLabel(this);
     m_label->setObjectName(QLatin1String("torStatusBannerLabel"));

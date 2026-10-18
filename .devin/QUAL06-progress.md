@@ -68,8 +68,8 @@ consistency sweep, bookkeeping accuracy, split final gate, loose ends.
 | .devin/check-engine-audit.sh | PASS (166 files, whitelist holds) |
 | .devin/check-supplychain.sh | PASS (advisories/licenses/bans/sources) |
 | .devin/check-rustcoverage.sh | PASS (adblock 90.50 / rustcore 91.89 / rustdl 89.25, ≥85) |
-| `./arora --quit-after-load` | PASS rc=0 offscreen (about:blank) |
-| `./arora --servo-smoke` | PASS all legs incl. scroll-slice legs that touch the edited code |
+| `./arktos --quit-after-load` | PASS rc=0 offscreen (about:blank) |
+| `./arktos --servo-smoke` | PASS all legs incl. scroll-slice legs that touch the edited code |
 | tst_browsermainwindow | 72/72 PASS — incl. the five legs QUAL04 documented as failing and both legs fixed this run (torStartPage order-flake SIGTRAP'd once without --disable-gpu, passes standalone; documented offscreen-GL flake class) |
 | check-warnings (no-rust cold rebuild) | PASS (attempt-2 rerun: zero warnings in src/ + tools/) |
 | check-static / check-tidy / check-leaks / check-sanitize / check-coverage | DEFERRED — multi-hour instrumented passes; last run dates recorded in QUAL01-04 notes (leaks 0 ours, sanitize clean) |

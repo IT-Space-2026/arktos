@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -29,7 +29,7 @@
 #include "downloadmanager.h"
 #include "qtry.h"
 
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
 #include "rustdownloadengine.h"
 
 #include <adblockmanager.h>
@@ -48,7 +48,7 @@
 #include <qwebengineprofile.h>
 #include <qwebenginecookiestore.h>
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "rustcore.h"
 #include "sitedecisionstore.h"
 #endif
@@ -66,7 +66,7 @@ private slots:
     void availability();
     void selectionSetting();
 
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
     void canHandleGate();
     void managerRouting();
     void engineCompletes();
@@ -94,7 +94,7 @@ private slots:
     void gateSsrfRedirect();
     void gateAdblockBlocks();
     void canHandleTorProxy();
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     void gateUrlStrip();
     void gateDomainBlocklist();
 #endif
@@ -122,7 +122,7 @@ void tst_RustDownload::init()
 {
     QSettings settings;
     settings.clear();
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
     // SAND02: keep the FFI fixture suite on the in-process path —
     // the subprocess backend opts in explicitly inside its own tests
     // so both engines get covered deterministically.
@@ -132,7 +132,7 @@ void tst_RustDownload::init()
     // reload it against the cleared settings so defaults apply.
     PrivacyRequestInterceptor::loadSettings();
 #endif
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // The gate's adblock step consults the decision-store whitelist —
     // a stale row must not leak between tests.
     SiteDecisionStore::clear(SiteDecisionStore::KindAdBlock);
@@ -143,9 +143,9 @@ void tst_RustDownload::cleanup()
 {
     QSettings settings;
     settings.clear();
-    qunsetenv("ARORA_WORKER_BINARY");
-    qunsetenv("ARORA_DL_NO_SANDBOX");
-#ifdef ARORA_RUSTDL
+    qunsetenv("ARKTOS_WORKER_BINARY");
+    qunsetenv("ARKTOS_DL_NO_SANDBOX");
+#ifdef ARKTOS_RUSTDL
     PrivacyRequestInterceptor::loadSettings();
     BrowserApplication::setTorMode(false);
     QNetworkProxy::setApplicationProxy(QNetworkProxy());
@@ -155,7 +155,7 @@ void tst_RustDownload::cleanup()
     const QList<AdBlockSubscription*> subs = manager->subscriptions();
     for (AdBlockSubscription *s : subs)
         manager->removeSubscription(s);
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // Re-arm the vendored urlstrip set in case a test loaded a
     // synthetic one.
     rc_urlstrip_reload();
@@ -165,7 +165,7 @@ void tst_RustDownload::cleanup()
 
 void tst_RustDownload::availability()
 {
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
     QVERIFY(RustDownloadEngine::isAvailable());
 #else
     QVERIFY(true);
@@ -174,7 +174,7 @@ void tst_RustDownload::availability()
 
 void tst_RustDownload::selectionSetting()
 {
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
     QSettings settings;
     settings.beginGroup(QLatin1String("downloadmanager"));
 
@@ -199,7 +199,7 @@ void tst_RustDownload::selectionSetting()
 #endif
 }
 
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
 void tst_RustDownload::canHandleGate()
 {
     // Rust selected by default: http(s) is claimed, every other
@@ -977,7 +977,7 @@ void tst_RustDownload::canHandleTorProxy()
     QNetworkProxy::setApplicationProxy(saved);
 }
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 void tst_RustDownload::gateUrlStrip()
 {
     QSettings settings;
@@ -1022,26 +1022,26 @@ void tst_RustDownload::gateDomainBlocklist()
     QCOMPARE(check(QUrl("https://a.dlphish.invalid/f")).action,
              RustDownloadEngine::GateBlock);
 }
-#endif // ARORA_RUSTCORE
+#endif // ARKTOS_RUSTCORE
 
 // ---- SAND02: the confined --download-worker subprocess --------------
 // These drive the JSONL protocol through the real bwrap wrap — the
-// worker binary is `../../arora` relative to this test binary
-// (ARORA_WORKER_BINARY overrides it), so the suite must run against a
+// worker binary is `../../arktos` relative to this test binary
+// (ARKTOS_WORKER_BINARY overrides it), so the suite must run against a
 // built app.
 
-static QString aroraBinary()
+static QString arktosBinary()
 {
-    const QByteArray env = qgetenv("ARORA_WORKER_BINARY");
+    const QByteArray env = qgetenv("ARKTOS_WORKER_BINARY");
     if (!env.isEmpty())
         return QString::fromLocal8Bit(env);
     return QDir(QCoreApplication::applicationDirPath())
-        .absoluteFilePath(QStringLiteral("../../arora"));
+        .absoluteFilePath(QStringLiteral("../../arktos"));
 }
 
 static bool workerWrapAvailable()
 {
-    return QFileInfo(aroraBinary()).isExecutable()
+    return QFileInfo(arktosBinary()).isExecutable()
         && !SandboxManager::bwrapPath().isEmpty();
 }
 
@@ -1060,7 +1060,7 @@ static QJsonObject workerJob(const QUrl &url, const QString &workDir,
     return job;
 }
 
-// Spawn `arora --download-worker` under the generated bwrap wrap and
+// Spawn `arktos --download-worker` under the generated bwrap wrap and
 // collect its event stream until a terminal event or process death.
 // Gate requests are answered with `gateAction` (0=allow by default —
 // the worker blocks on the reply, so answering is not optional).
@@ -1071,7 +1071,7 @@ static QList<QJsonObject> runWorker(const QJsonObject &job,
                                     int timeoutMs = 45000)
 {
     const QStringList wrap = BwrapGenerator::downloadWorkerCommandLine(
-        aroraBinary(), {QStringLiteral("--download-worker")},
+        arktosBinary(), {QStringLiteral("--download-worker")},
         workDir, destDir);
     QProcess proc;
     proc.setProgram(wrap.first());
@@ -1134,7 +1134,7 @@ static QList<QJsonObject> runWorker(const QJsonObject &job,
 void tst_RustDownload::workerDownloadE2E()
 {
     if (!workerWrapAvailable())
-        QSKIP("arora binary or bwrap missing — worker wrap untestable");
+        QSKIP("arktos binary or bwrap missing — worker wrap untestable");
     const QByteArray body = pattern(512 * 1024);
     FixtureServer server(body, /*ranges=*/true, /*throttle=*/0);
     QVERIFY(server.listen());
@@ -1173,7 +1173,7 @@ void tst_RustDownload::workerDownloadE2E()
 void tst_RustDownload::workerConfinesFilesystem()
 {
     if (!workerWrapAvailable())
-        QSKIP("arora binary or bwrap missing — worker wrap untestable");
+        QSKIP("arktos binary or bwrap missing — worker wrap untestable");
     const QByteArray body = pattern(64 * 1024);
     FixtureServer server(body, /*ranges=*/true, /*throttle=*/0);
     QVERIFY(server.listen());
@@ -1224,7 +1224,7 @@ void tst_RustDownload::workerConfinesFilesystem()
 void tst_RustDownload::workerGateBridgeBlocks()
 {
     if (!workerWrapAvailable())
-        QSKIP("arora binary or bwrap missing — worker wrap untestable");
+        QSKIP("arktos binary or bwrap missing — worker wrap untestable");
     const QByteArray body = pattern(64 * 1024);
     FixtureServer server(body, /*ranges=*/true, /*throttle=*/0);
     QVERIFY(server.listen());
@@ -1255,7 +1255,7 @@ void tst_RustDownload::workerGateBridgeBlocks()
 void tst_RustDownload::workerCancelViaStdin()
 {
     if (!workerWrapAvailable())
-        QSKIP("arora binary or bwrap missing — worker wrap untestable");
+        QSKIP("arktos binary or bwrap missing — worker wrap untestable");
     // Throttled so a cancel mid-flight is observable.
     const QByteArray body = pattern(2 * 1024 * 1024);
     FixtureServer server(body, /*ranges=*/true, /*throttle=*/4096);
@@ -1265,7 +1265,7 @@ void tst_RustDownload::workerCancelViaStdin()
     QVERIFY(work.isValid() && dest.isValid());
 
     const QStringList wrap = BwrapGenerator::downloadWorkerCommandLine(
-        aroraBinary(), {QStringLiteral("--download-worker")},
+        arktosBinary(), {QStringLiteral("--download-worker")},
         work.path(), dest.path());
     QProcess proc;
     proc.setProgram(wrap.first());
@@ -1329,14 +1329,14 @@ void tst_RustDownload::workerCancelViaStdin()
 void tst_RustDownload::engineRunsSandboxed()
 {
     if (!workerWrapAvailable())
-        QSKIP("arora binary or bwrap missing — worker wrap untestable");
+        QSKIP("arktos binary or bwrap missing — worker wrap untestable");
     const QByteArray body = pattern(256 * 1024);
     FixtureServer server(body, /*ranges=*/true, /*throttle=*/0);
     QVERIFY(server.listen());
     QTemporaryDir dest;
     QVERIFY(dest.isValid());
 
-    qputenv("ARORA_WORKER_BINARY", aroraBinary().toUtf8());
+    qputenv("ARKTOS_WORKER_BINARY", arktosBinary().toUtf8());
     QSettings settings;
     settings.setValue(QLatin1String("downloadmanager/sandboxedWorker"),
                       true);
@@ -1390,7 +1390,7 @@ void tst_RustDownload::engineFallsBackInProcess()
     // An executable that is not the worker: bwrap runs it, it exits
     // instantly, no protocol line ever arrives — the engine must
     // fall back to the in-process dl_start and still complete.
-    qputenv("ARORA_WORKER_BINARY", "/bin/false");
+    qputenv("ARKTOS_WORKER_BINARY", "/bin/false");
     QSettings settings;
     settings.setValue(QLatin1String("downloadmanager/sandboxedWorker"),
                       true);
@@ -1411,7 +1411,7 @@ void tst_RustDownload::engineFallsBackInProcess()
     QCOMPARE(f.readAll(), body);
 }
 
-#else // !ARORA_RUSTDL
+#else // !ARKTOS_RUSTDL
 
 void tst_RustDownload::noRustBuild()
 {
@@ -1419,7 +1419,7 @@ void tst_RustDownload::noRustBuild()
     QVERIFY(true);
 }
 
-#endif // ARORA_RUSTDL
+#endif // ARKTOS_RUSTDL
 
 QTEST_MAIN(tst_RustDownload)
 #include "tst_rustdownload.moc"

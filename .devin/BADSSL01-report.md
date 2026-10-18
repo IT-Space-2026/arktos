@@ -7,13 +7,13 @@ baseline was re-visited below in "BADSSL03 fix pass".
 
 - **Date:** 2026-10-09
 - **Engine:** QtWebEngine / Chromium 140.0.7339.225 (Qt 6.12.0, gcc_64)
-- **Method:** `./arora --badssl-smoke` — a headless harness
+- **Method:** `./arktos --badssl-smoke` — a headless harness
   (`QT_QPA_PLATFORM=offscreen`) that loads every case sequentially on
   the real browsing profile, observing the SEC06 certificate-error
   interstitial, the SAFE01 HTTPS-Only warning, load failures, the final
   committed URL, and a post-load DOM probe (title, footer text, image
   widths, body background).  Raw JSON: `/tmp/badssl-baseline.json`.
-  BADSSL03 added `ARORA_CLIENTCERT_FILE`/`ARORA_CLIENTCERT_PASSPHRASE`
+  BADSSL03 added `ARKTOS_CLIENTCERT_FILE`/`ARKTOS_CLIENTCERT_PASSPHRASE`
   support so the `client` case can run with a certificate installed
   (selection auto-armed for the headless run).
 - **Result totals:** 72 cases — 23 loaded, 49 blocked, 0 other.
@@ -41,7 +41,7 @@ baseline was re-visited below in "BADSSL03 fix pass".
 | `sha384`, `sha512`, `1000-sans`, `extended-validation` | good → loaded | cert interstitial | **ok-stale-fixture** — upstream certs expired Apr 2022 / Oct 2021 / Aug 2022 (verified via openssl). Blocking is correct. |
 | `rsa8192` | dubious | cert interstitial | **ok-stale-fixture** — cert expired Mar 2024. |
 | `10000-sans` | good → loaded | ERR_CONNECTION_RESET | **ok-stale-fixture** — certificate message too large; fails in raw openssl too. Endpoint effectively broken. |
-| `longextendedsubdomain` | good → loaded | ERR_CONNECTION_RESET (first pass) | **transient** — re-run loaded cleanly (`ARORA_BADSSL_ONLY=longextendedsubdomain` → loaded). |
+| `longextendedsubdomain` | good → loaded | ERR_CONNECTION_RESET (first pass) | **transient** — re-run loaded cleanly (`ARKTOS_BADSSL_ONLY=longextendedsubdomain` → loaded). |
 | `http` family (6 cases) | bad → blocked | error page, ERR_FAILED → HTTPS-Only warning | **FIXED (BADSSL03)** — all six cases now surface the SAFE01 warning interstitial; see "BADSSL03 fix pass" |
 
 ### `revoked` — engine-gap detail
@@ -66,24 +66,24 @@ BADSSL03 wired both ends:
 
 - `BrowserProfile::addClientCertificateFile()` loads a PEM or
   PKCS#12/PFX file (encrypted PEM keys and .p12 bundles honour
-  `ARORA_CLIENTCERT_PASSPHRASE`) into
+  `ARKTOS_CLIENTCERT_PASSPHRASE`) into
   `QWebEngineProfile::clientCertificateStore()`.
 - `WebPage` now connects `selectClientCertificate`: it picks a
   certificate from the offered list (auto-selecting when
-  `ARORA_CLIENTCERT_AUTOSELECT=1`, used by the harness) or
+  `ARKTOS_CLIENTCERT_AUTOSELECT=1`, used by the harness) or
   `selectNone()` when the store is empty — matching Chromium's
   continue-without-cert behaviour.
-- Verified: `./arora --clientcert-smoke` with the badssl fixture
+- Verified: `./arktos --clientcert-smoke` with the badssl fixture
   (badssl.com-client.pem + passphrase `badssl.com`) → **PASS**, page
-  title `client.badssl.com`; and `ARORA_BADSSL_ONLY=client
-  ARORA_CLIENTCERT_FILE=... ./arora --badssl-smoke` → `client: loaded`,
+  title `client.badssl.com`; and `ARKTOS_BADSSL_ONLY=client
+  ARKTOS_CLIENTCERT_FILE=... ./arktos --badssl-smoke` → `client: loaded`,
   `client-cert-missing` still blocked, `revoked` still the engine gap.
   Cert-less Chrome parity (HTTP 400) is preserved when no cert is
   configured.
 
 ## Full matrix
 
-Legend for *Observed*: `cert-interstitial` = SEC06 arora-cert-error
+Legend for *Observed*: `cert-interstitial` = SEC06 arktos-cert-error
 page; `error-page` = generic failure page (net error noted); `loaded`
 = page committed.
 
@@ -287,21 +287,21 @@ Fix, all in `src/webpage.cpp` + `src/network/privacyrequestinterceptor.*`:
   too (`takeBlockedHttpNav` + the `m_httpWarningPending` suppression
   check).
 - `WebPage::handleLoadingChanged` then consumes the recorded URL and
-  swaps in the nonce-bound `arora-http-warning:` interstitial (Back to
+  swaps in the nonce-bound `arktos-http-warning:` interstitial (Back to
   safety / Proceed once / Always allow for host).
 
-Verified: `ARORA_BADSSL_ONLY=http ./arora --badssl-smoke` → all six
+Verified: `ARKTOS_BADSSL_ONLY=http ./arktos --badssl-smoke` → all six
 http cases (`http`, `http-textarea`, `http-password`, `http-login`,
 `http-dynamic-login`, `http-credit-card`) report
 `blocked:http-warning` (`ok-blocked`); `https-everywhere` still
-`loaded`.  `./arora --httpsonly-smoke` → PASS (upgrade, downgrade
+`loaded`.  `./arktos --httpsonly-smoke` → PASS (upgrade, downgrade
 warning, proceed, redirect-hop warning, https unaffected, loopback
 exempt).
 
 ### Certificate-error coverage (SEC06)
 
 Re-verified during the fix pass: every untrusted-cert case in the
-matrix lands on the SEC06 `arora-cert-error:` interstitial
+matrix lands on the SEC06 `arktos-cert-error:` interstitial
 (`handleCertificateError`), which honours `error.isOverridable()` —
 non-overridable errors (e.g. `CertificateKnownRevoked`-class failures
 upstream) get only "Back to safety".  Main-frame errors route through
@@ -325,7 +325,7 @@ without a page swap, matching Chromium.
 
 | Variable | Purpose |
 |---|---|
-| `ARORA_CLIENTCERT_FILE` | PEM or PKCS#12/PFX file installed into the profile cert store |
-| `ARORA_CLIENTCERT_PASSPHRASE` | Passphrase for encrypted PEM keys / .p12 bundles |
-| `ARORA_CLIENTCERT_URL` | Override the `--clientcert-smoke` target (default `https://client.badssl.com/`) |
-| `ARORA_CLIENTCERT_AUTOSELECT` | `1` → auto-pick a client cert without a UI prompt (headless runs) |
+| `ARKTOS_CLIENTCERT_FILE` | PEM or PKCS#12/PFX file installed into the profile cert store |
+| `ARKTOS_CLIENTCERT_PASSPHRASE` | Passphrase for encrypted PEM keys / .p12 bundles |
+| `ARKTOS_CLIENTCERT_URL` | Override the `--clientcert-smoke` target (default `https://client.badssl.com/`) |
+| `ARKTOS_CLIENTCERT_AUTOSELECT` | `1` → auto-pick a client cert without a UI prompt (headless runs) |

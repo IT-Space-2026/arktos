@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,7 +18,7 @@
  */
 
 #include <QtTest/QtTest>
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 #include "qtry.h"
 
 #include <adblockmanager.h>
@@ -35,7 +35,7 @@
 #include <notesmodel.h>
 #include <securestore.h>
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include <sitedecisionstore.h>
 #endif
 
@@ -101,7 +101,7 @@ void tst_ProfileManagers::personaProfileTagging()
 
     QWebEngineProfile *work = BrowserProfile::profileFor(kAlpha);
     QVERIFY(work);
-    QCOMPARE(work->storageName(), QStringLiteral("arora-alpha"));
+    QCOMPARE(work->storageName(), QStringLiteral("arktos-alpha"));
     QCOMPARE(BrowserProfile::profileIdFor(work), kAlpha);
     // Lazily created once — repeat lookups return the same object.
     QCOMPARE(BrowserProfile::profileFor(kAlpha), work);
@@ -126,7 +126,7 @@ void tst_ProfileManagers::profileIdForFallbacks()
     // The dynamic tag wins over storage-name parsing — this is how a
     // container profile reports its owning persona.
     QWebEngineProfile tagged(QStringLiteral("container-x"));
-    tagged.setProperty("aroraProfileId", kAlpha);
+    tagged.setProperty("arktosProfileId", kAlpha);
     QCOMPARE(BrowserProfile::profileIdFor(&tagged), kAlpha);
 }
 
@@ -374,7 +374,7 @@ void tst_ProfileManagers::secureStoreIsolation()
 
 void tst_ProfileManagers::siteDecisionIsolation()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     const QString host = QStringLiteral("alpha-cookie.example");
     QVERIFY(SiteDecisionStore::set(kAlpha,
                                    SiteDecisionStore::KindCookie,
@@ -408,7 +408,7 @@ void tst_ProfileManagers::siteDecisionIsolation()
         QVERIFY(!betaFile.readAll().contains("alpha-cookie.example"));
     }
 #else
-    QSKIP("site decision store requires ARORA_RUSTCORE");
+    QSKIP("site decision store requires ARKTOS_RUSTCORE");
 #endif
 }
 

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2026, The Arora Authors
+ * Copyright (c) 2026, The Arktos Authors
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -60,8 +60,8 @@ public:
 
     // STALL01: true only for schemes filter lists can legitimately
     // describe — http(s) pages/resources and ws(s) for $websocket
-    // rules.  Everything else (devtools:, chrome:, qrc:, arora-file:,
-    // arora-cert-error:, arora-http-warning:, arora-resource: — the
+    // rules.  Everything else (devtools:, chrome:, qrc:, arktos-file:,
+    // arktos-cert-error:, arktos-http-warning:, arktos-resource: — the
     // stub redirect targets — abp:, data:, about:, file:, blob:,
     // javascript: ...) must pass through interception untouched: a
     // filter that rewrites an internal request can break browser UI,

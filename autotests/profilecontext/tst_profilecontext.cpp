@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,7 +18,7 @@
  */
 
 #include <QtTest/QtTest>
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 
 #include <browserpaths.h>
 #include <profilecontext.h>
@@ -224,7 +224,7 @@ void tst_ProfileContext::migratesSeededPayloads()
     writeFile(root() + QLatin1String("/crashreport.log"), "crash");
     writeFile(root() + QLatin1String("/tor/daemon-state"), "tor");
     writeFile(root() + QLatin1String("/locale/en.qm"), "qm");
-    writeFile(root() + QLatin1String("/arora-profile-wipe.pending"),
+    writeFile(root() + QLatin1String("/arktos-profile-wipe.pending"),
               "wipe");
     writeFile(root() + QLatin1String("/profiles.json"),
               "{\"version\":1,\"profiles\":[]}");
@@ -266,7 +266,7 @@ void tst_ProfileContext::migratesSeededPayloads()
 
     // Globals stayed at the root.
     for (const char *name :
-         {"crashreport.log", "arora-profile-wipe.pending",
+         {"crashreport.log", "arktos-profile-wipe.pending",
           "profiles.json"}) {
         QVERIFY2(QFile::exists(root() + QLatin1Char('/')
                                + QLatin1String(name)),

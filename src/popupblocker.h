@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -66,7 +66,7 @@ public:
 
     // The createWindow gate: blocking applies to http/https pages
     // with a host — internal pages and host-less urls (file:, data:,
-    // about:, qrc:, arora-*) keep their windows since the allow list
+    // about:, qrc:, arktos-*) keep their windows since the allow list
     // could not express them anyway.
     bool shouldBlock(const QUrl &openerUrl) const;
 

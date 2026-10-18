@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,8 +19,8 @@
 
 #include "scriptblockinfobar.h"
 
-#include "aroraicon.h"
-#include "arorastyle.h"
+#include "arktosicon.h"
+#include "arktosstyle.h"
 
 #include <qboxlayout.h>
 #include <qlabel.h>
@@ -34,11 +34,11 @@ ScriptBlockInfoBar::ScriptBlockInfoBar(QWidget *parent)
     setFrameStyle(QFrame::StyledPanel | QFrame::Plain);
 
     QHBoxLayout *layout = new QHBoxLayout(this);
-    layout->setContentsMargins(AroraStyle::Spacing::Medium,
-                               AroraStyle::Spacing::Small,
-                               AroraStyle::Spacing::Medium,
-                               AroraStyle::Spacing::Small);
-    layout->setSpacing(AroraStyle::Spacing::Medium);
+    layout->setContentsMargins(ArktosStyle::Spacing::Medium,
+                               ArktosStyle::Spacing::Small,
+                               ArktosStyle::Spacing::Medium,
+                               ArktosStyle::Spacing::Small);
+    layout->setSpacing(ArktosStyle::Spacing::Medium);
 
     m_label = new QLabel(this);
     // The host is web-derived — keep it literal (SEC10).
@@ -67,7 +67,7 @@ ScriptBlockInfoBar::ScriptBlockInfoBar(QWidget *parent)
     QToolButton *close = new QToolButton(this);
     close->setObjectName(QLatin1String("scriptBlockInfoBarClose"));
     close->setAutoRaise(true);
-    close->setIcon(AroraIcon::getChrome(QLatin1String("window-close")));
+    close->setIcon(ArktosIcon::getChrome(QLatin1String("window-close")));
     close->setAccessibleName(tr("Close"));
     close->setToolTip(tr("Hide this notice"));
     connect(close, &QToolButton::clicked, this, &QFrame::hide);

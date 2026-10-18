@@ -30,20 +30,20 @@ equals(servo, 0)|!isEmpty(noservo)|contains(CONFIG, noservo): \
     CONFIG -= servo
 
 SERVO_EMBED_DIR = $$PWD/../../spikes/servo/servo-embed
-isEmpty(ARORA_SERVO_ARTIFACTS) {
+isEmpty(ARKTOS_SERVO_ARTIFACTS) {
     # .qmake.conf normally computes this first; repeat it so the .pri
     # still resolves correctly when parsed without the project root.
     for(dir, $$files($$SERVO_EMBED_DIR/target/*)) {
         exists($$dir/libservo_embed.so): \
-            ARORA_SERVO_ARTIFACTS += $$dir/libservo_embed.so
+            ARKTOS_SERVO_ARTIFACTS += $$dir/libservo_embed.so
     }
 }
-ARORA_SERVO_ENABLED = false
+ARKTOS_SERVO_ENABLED = false
 contains(CONFIG, servo)|!isEmpty(servo):!equals(servo, 0):isEmpty(noservo): \
-    ARORA_SERVO_ENABLED = true
+    ARKTOS_SERVO_ENABLED = true
 
-equals(ARORA_SERVO_ENABLED, true) {
-    DEFINES += ARORA_SERVO
+equals(ARKTOS_SERVO_ENABLED, true) {
+    DEFINES += ARKTOS_SERVO
     INCLUDEPATH += $$SERVO_EMBED_DIR/include
     DEPENDPATH += $$SERVO_EMBED_DIR/include
     HEADERS += $$PWD/servobackend.h
@@ -55,10 +55,10 @@ equals(ARORA_SERVO_ENABLED, true) {
 # so gate on the consuming .pro being src.pro itself) — a dropped engine
 # can never go unnoticed again.
 equals(_PRO_FILE_, $$clean_path($$PWD/../src.pro)) {
-    equals(ARORA_SERVO_ENABLED, true) {
-        message(Arora engine backends: webengine + servo)
-        isEmpty(ARORA_SERVO_ARTIFACTS): \
-            warning(ARORA_SERVO is compiled in but no libservo_embed.so \
+    equals(ARKTOS_SERVO_ENABLED, true) {
+        message(Arktos engine backends: webengine + servo)
+        isEmpty(ARKTOS_SERVO_ARTIFACTS): \
+            warning(ARKTOS_SERVO is compiled in but no libservo_embed.so \
                     exists under spikes/servo/servo-embed/target/*/ — \
                     the backend stays unregistered until the cdylib is \
                     built (cargo build in spikes/servo/servo-embed))
@@ -68,10 +68,10 @@ equals(_PRO_FILE_, $$clean_path($$PWD/../src.pro)) {
         # too, but configure is where the fix belongs.  (The $$find
         # result must ride through a named variable — a nested call's
         # comma would split isEmpty()'s argument list.)
-        ARORA_SERVO_RELEASE_ARTIFACTS = \
-            $$find(ARORA_SERVO_ARTIFACTS, /target/release/)
-        !isEmpty(ARORA_SERVO_ARTIFACTS): \
-            isEmpty(ARORA_SERVO_RELEASE_ARTIFACTS): \
+        ARKTOS_SERVO_RELEASE_ARTIFACTS = \
+            $$find(ARKTOS_SERVO_ARTIFACTS, /target/release/)
+        !isEmpty(ARKTOS_SERVO_ARTIFACTS): \
+            isEmpty(ARKTOS_SERVO_RELEASE_ARTIFACTS): \
                 warning(servo-embed artifacts exist but none is a \
                         target/release build — the app will run the \
                         unoptimized debug cdylib and pages will load \
@@ -79,12 +79,12 @@ equals(_PRO_FILE_, $$clean_path($$PWD/../src.pro)) {
                         artifact with `cargo build --release` in \
                         spikes/servo/servo-embed)
     } else {
-        !isEmpty(ARORA_SERVO_ARTIFACTS): \
-            message(Arora engine backends: webengine only — servo opted \
+        !isEmpty(ARKTOS_SERVO_ARTIFACTS): \
+            message(Arktos engine backends: webengine only — servo opted \
                     out (servo-embed artifact present; re-enable with \
                     qmake servo=1))
-        isEmpty(ARORA_SERVO_ARTIFACTS): \
-            message(Arora engine backends: webengine only — no \
+        isEmpty(ARKTOS_SERVO_ARTIFACTS): \
+            message(Arktos engine backends: webengine only — no \
                     servo-embed artifact under \
                     spikes/servo/servo-embed/target/)
     }

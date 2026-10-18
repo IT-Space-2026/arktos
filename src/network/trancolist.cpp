@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -33,7 +33,7 @@
 #include <qsavefile.h>
 #include <qsettings.h>
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include <rustcore.h>
 #endif
 
@@ -86,7 +86,7 @@ void TrancoList::setSourcesForTest(const QList<QUrl> &sources)
 
 void TrancoList::updateIfStale()
 {
-#if !defined(ARORA_RUSTCORE)
+#if !defined(ARKTOS_RUSTCORE)
     return;   // no consumer for the file — fetch nothing
 #endif
     // TELEM01: identical consent gate to the remote filter lists —
@@ -103,7 +103,7 @@ void TrancoList::updateIfStale()
 
 void TrancoList::updateNow()
 {
-#if !defined(ARORA_RUSTCORE)
+#if !defined(ARKTOS_RUSTCORE)
     emit updateFinished(false);
     return;
 #else
@@ -183,7 +183,7 @@ void TrancoList::replyFinished()
 
 void TrancoList::maybeCommit()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     if (!m_merged.trimmed().isEmpty()) {
         const QString path = listFilePath();
         QByteArray out;
@@ -191,7 +191,7 @@ void TrancoList::maybeCommit()
         // would break the crate's PK-magic sniff.  Plaintext CSV
         // gets the provenance comment the blocklist file carries.
         if (!m_merged.startsWith("PK\x03\x04")) {
-            out += "# Arora TRUST04 Tranco list update\n# sources: ";
+            out += "# Arktos TRUST04 Tranco list update\n# sources: ";
             for (const QUrl &source : m_sources) {
                 out += source.host().toUtf8();
                 out += ' ';

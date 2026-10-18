@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,7 +28,7 @@
 #include <qpushbutton.h>
 #include <qboxlayout.h>
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 #include <qendian.h>
 
 #include <rustcore.h>
@@ -70,7 +70,7 @@ QImage QrCodeDialog::imageForText(const QString &text, int minPixelSize)
     int size = 0;
     QByteArray modules;
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     {
         // QRC01: the rustcore encoder owns the matrix — qrcodegen-rs
         // is the same code lineage as the vendored C++ encoder, so

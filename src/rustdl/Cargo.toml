@@ -1,8 +1,8 @@
 [package]
-name = "arora-rustdl"
+name = "arktos-rustdl"
 version = "0.1.0"
 edition = "2021"
-description = "Arora accelerated download engine — segmented HTTP(S) fetches behind a C FFI"
+description = "Arktos accelerated download engine — segmented HTTP(S) fetches behind a C FFI"
 license = "GPL-2.0-or-later"
 publish = false
 

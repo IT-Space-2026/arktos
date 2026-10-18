@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -31,7 +31,7 @@
 // Topics so far: "credentials" (the rc_cred_* map changed),
 // "bookmarks" and "history" (the RCORE02 stores), "autofill" (the
 // RCORE05 record set).
-// Compiled only under CONFIG+=rustcore (ARORA_RUSTCORE).
+// Compiled only under CONFIG+=rustcore (ARKTOS_RUSTCORE).
 class RustCoreBridge : public QObject
 {
     Q_OBJECT

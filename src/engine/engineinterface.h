@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -194,18 +194,18 @@ struct Script {
     bool runsOnSubFrames = false;
 };
 
-// SEC24: Arora's private script world.  WebPage binds the page's
+// SEC24: Arktos's private script world.  WebPage binds the page's
 // QWebChannel to this world so page script in the main world never
 // sees qt.webChannelTransport and cannot enumerate or invoke the
-// registered bridge objects (autofill, arora, reader, pip).  Every
-// channel-side consumer — the __aroraChannel bootstrap + whitelisted
-// postMessage forwarder (arora-channel.js), the autofill bundle, and
+// registered bridge objects (autofill, arktos, reader, pip).  Every
+// channel-side consumer — the __arktosChannel bootstrap + whitelisted
+// postMessage forwarder (arktos-channel.js), the autofill bundle, and
 // the reader event relay (reader-forward.js) — runs in this world
 // instead; the reader driver itself stays in its own ReaderWorldId
 // and only speaks DOM CustomEvents, which cross worlds.  The main
 // world reaches only the deliberately page-callable surface
-// (external.AddSearchProvider, aroraPip) through the forwarder.
-inline constexpr quint32 AroraChannelWorld = 0xa0;
+// (external.AddSearchProvider, arktosPip) through the forwarder.
+inline constexpr quint32 ArktosChannelWorld = 0xa0;
 
 // ---- find-in-page ------------------------------------------------------------
 
@@ -507,7 +507,7 @@ signals:
 
 // An engine's browsing context: cookie jar, cache, storage, settings,
 // the request-policy hook and the download handoff.  Backed today by
-// QWebEngineProfile ("arora" named + unnamed OTR + tor OTR + per-
+// QWebEngineProfile ("arktos" named + unnamed OTR + tor OTR + per-
 // container); containers (CONT01) are just Profiles to the app.
 class Profile : public QObject {
     Q_OBJECT

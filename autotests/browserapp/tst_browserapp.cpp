@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, The Arora Authors
+ * Copyright (c) 2026, The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -39,7 +39,7 @@
 #include "networkaccessmanager.h"
 #include "languagemanager.h"
 #include "autofillmanager.h"
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 #include "qtry.h"
 
 class tst_BrowserApp : public QObject
@@ -188,7 +188,7 @@ void tst_BrowserApp::askDesktop()
 }
 
 // CONT08: 'Open in New Tor Window' hands the link url to a fresh
-// `arora --tor` process.  The hand-off must carry it as its own argv
+// `arktos --tor` process.  The hand-off must carry it as its own argv
 // element — a QStringList element is passed verbatim to execvp and no
 // shell ever re-parses it, so shell metacharacters in the url are
 // inert by construction — and refused schemes must not leave this

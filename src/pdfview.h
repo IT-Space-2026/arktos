@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,11 +28,11 @@
 // here deliberately contain no QtWebEngine types:
 //
 //   * PdfDocumentClient owns one rasterization session — normally the
-//     `arora --pdf-worker` subprocess under the bwrap allowlist
+//     `arktos --pdf-worker` subprocess under the bwrap allowlist
 //     (staged PDF read-only, per-view work dir, no network, no $HOME)
 //     speaking the JSONL protocol in pdfworker.h; on hosts without a
 //     confinement backend it degrades to the same rustcore calls
-//     in-process and says so through backendName().  ARORA_PDF_INPROC=1
+//     in-process and says so through backendName().  ARKTOS_PDF_INPROC=1
 //     forces the in-process path for tests.
 //   * PdfCanvas lays out every page vertically (like a continuous
 //     document, the way evince/okular scroll), paints the rendered
@@ -146,7 +146,7 @@ private:
     bool m_ready = false;
     bool m_failed = false;
     qint64 m_nextRequest = 1;
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     quintptr m_doc = 0;
 #endif
 };

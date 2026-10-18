@@ -9,7 +9,7 @@
 
 #include <QtTest/QtTest>
 #include <QtGui/QtGui>
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 
 #include <downloadmanager.h>
 #include <modelmenu.h>

@@ -447,7 +447,7 @@ mod tests {
     fn with_store(f: impl FnOnce()) {
         let _guard = crate::store::test_lock();
         let dir = std::env::temp_dir().join(format!(
-            "arora-sitedec-test-{}-{}",
+            "arktos-sitedec-test-{}-{}",
             std::process::id(),
             generation()
         ));
@@ -573,7 +573,7 @@ mod tests {
     fn data_dir_switch_invalidates_cache() {
         let _guard = crate::store::test_lock();
         let base = std::env::temp_dir().join(format!(
-            "arora-sitedec-switch-{}",
+            "arktos-sitedec-switch-{}",
             std::process::id()
         ));
         let a = base.join("a");

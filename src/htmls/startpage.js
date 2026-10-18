@@ -1,16 +1,16 @@
 // Shared start-page script (startpage.html, startpage-tor.html).
-// The "arora" channel object is only registered for qrc pages
+// The "arktos" channel object is only registered for qrc pages
 // (webpage.cpp); every call is asynchronous — results come
 // back through callbacks.
 //
 // SEC24: the page's QWebChannel lives in an isolated script world —
-// no transport is reachable here — so 'arora' is called through the
-// whitelisted postMessage forwarder arora-channel.js arms in the
-// channel world (its whitelist admits 'arora' only on qrc: pages).
+// no transport is reachable here — so 'arktos' is called through the
+// whitelisted postMessage forwarder arktos-channel.js arms in the
+// channel world (its whitelist admits 'arktos' only on qrc: pages).
 // This file carries its own tiny copy of the request/response client
-// rather than leaning on arora-mainworld.js: the tor profile arms no
+// rather than leaning on arktos-mainworld.js: the tor profile arms no
 // main-world shim at all, and the start page must work there too.
-var aroraBridge = (function () {
+var arktosBridge = (function () {
     var seq = 0;
     var pending = {};     // id -> {resolve, reject}
     var signalSubs = {};  // 'object.signal' -> [handlers]
@@ -21,7 +21,7 @@ var aroraBridge = (function () {
         var data = event.data;
         if (!data)
             return;
-        if (data.aroraBridge == 'result') {
+        if (data.arktosBridge == 'result') {
             var entry = pending[data.id];
             if (!entry)
                 return;
@@ -29,10 +29,10 @@ var aroraBridge = (function () {
             if (data.ok)
                 entry.resolve(data.value);
             else
-                entry.reject(new Error('arora bridge refused'));
+                entry.reject(new Error('arktos bridge refused'));
             return;
         }
-        if (data.aroraBridge == 'signal') {
+        if (data.arktosBridge == 'signal') {
             var handlers = signalSubs[data.object + '.' + data.signal]
                 || [];
             var args = data.args || [];
@@ -48,7 +48,7 @@ var aroraBridge = (function () {
             pending[id] = { resolve: resolve, reject: reject };
             try {
                 window.postMessage({
-                    aroraBridge: 'call',
+                    arktosBridge: 'call',
                     id: id,
                     kind: kind,
                     object: object,
@@ -63,7 +63,7 @@ var aroraBridge = (function () {
             setTimeout(function () {
                 if (pending[id]) {
                     delete pending[id];
-                    reject(new Error('arora bridge unreachable'));
+                    reject(new Error('arktos bridge unreachable'));
                 }
             }, 10000);
         });
@@ -85,29 +85,29 @@ var aroraBridge = (function () {
     };
 }());
 
-var arora = null;
+var arktos = null;
 
 function update()
 {
-    if (!arora)
+    if (!arktos)
         return;
 
-    arora.translate('Welcome to Arora!', function (t) {
+    arktos.translate('Welcome to Arktos!', function (t) {
         document.title = t;
     });
-    arora.translate('Arora Start', function (t) {
+    arktos.translate('Arktos Start', function (t) {
         document.getElementById('headerTitle').innerHTML = t;
     });
-    arora.translate('Search!', function (t) {
+    arktos.translate('Search!', function (t) {
         document.getElementById('searchButton').value = t;
     });
-    document.getElementById('lineEdit').placeholder = arora.currentEngineName;
+    document.getElementById('lineEdit').placeholder = arktos.currentEngineName;
 
     // Try to change the direction of the page:
     //   This string is defined in QApplication
     //   src/gui/kernel/qapplication.cpp#qt_detectRTLLanguage()
     //   it should contain LTR or RTL
-    arora.translate('QT_LAYOUT_DIRECTION', function (newDir) {
+    arktos.translate('QT_LAYOUT_DIRECTION', function (newDir) {
         newDir = newDir.toLowerCase();
         if ((newDir != 'ltr') && (newDir != 'rtl'))
             newDir = 'ltr';
@@ -119,10 +119,10 @@ function formSubmitted()
 {
     var string = document.getElementById('lineEdit').value;
 
-    if (string.length == 0 || !arora)
+    if (string.length == 0 || !arktos)
         return;
 
-    arora.searchUrl(string, function (url) {
+    arktos.searchUrl(string, function (url) {
         if (url)
             window.location.href = url;
     });
@@ -132,23 +132,23 @@ function init()
 {
     document.forms[0].lineEdit.select();
     // Fetch the two properties before publishing the facade — the
-    // page reads arora.currentEngineName synchronously once `arora`
-    // is non-null.  A refused hop leaves arora null and the page in
+    // page reads arktos.currentEngineName synchronously once `arktos`
+    // is non-null.  A refused hop leaves arktos null and the page in
     // its untranslated fallback state, same as a missing channel.
     Promise.all([
-        aroraBridge.get('arora', 'currentEngineName'),
-        aroraBridge.get('arora', 'darkChrome')
+        arktosBridge.get('arktos', 'currentEngineName'),
+        arktosBridge.get('arktos', 'darkChrome')
     ]).then(function (values) {
-        arora = {
+        arktos = {
             currentEngineName: values[0] || '',
             darkChrome: !!values[1],
             translate: function (string, ready) {
-                aroraBridge.call('arora', 'translate', string)
+                arktosBridge.call('arktos', 'translate', string)
                     .then(function (translated) { ready(translated); },
                           function () { ready(string); });
             },
             searchUrl: function (string, ready) {
-                aroraBridge.call('arora', 'searchUrl', string)
+                arktosBridge.call('arktos', 'searchUrl', string)
                     .then(ready, function () { ready(''); });
             },
             // Mirror the QWebChannel object shape callers (and
@@ -156,13 +156,13 @@ function init()
             // a connect() method.
             darkChromeChanged: {
                 connect: function (handler) {
-                    aroraBridge.signal('arora', 'darkChromeChanged',
+                    arktosBridge.signal('arktos', 'darkChromeChanged',
                                        handler);
                 }
             },
             currentEngineNameChanged: {
                 connect: function (handler) {
-                    aroraBridge.signal('arora',
+                    arktosBridge.signal('arktos',
                                        'currentEngineNameChanged',
                                        handler);
                 }
@@ -174,25 +174,25 @@ function init()
         // instead, live via darkChromeChanged.
         var applyScheme = function (dark) {
             document.documentElement.classList
-                .toggle('arora-dark', !!dark);
+                .toggle('arktos-dark', !!dark);
         };
-        applyScheme(arora.darkChrome);
+        applyScheme(arktos.darkChrome);
         // darkChromeChanged carries no value — re-read the property
         // when it fires.
-        arora.darkChromeChanged.connect(function () {
-            aroraBridge.get('arora', 'darkChrome')
+        arktos.darkChromeChanged.connect(function () {
+            arktosBridge.get('arktos', 'darkChrome')
                 .then(function (dark) {
-                    arora.darkChrome = !!dark;
-                    applyScheme(arora.darkChrome);
+                    arktos.darkChrome = !!dark;
+                    applyScheme(arktos.darkChrome);
                 }, function () {});
         });
 
         // The engine can switch under a live start page — re-read the
         // property and refresh the labels when it changes.
-        arora.currentEngineNameChanged.connect(function () {
-            aroraBridge.get('arora', 'currentEngineName')
+        arktos.currentEngineNameChanged.connect(function () {
+            arktosBridge.get('arktos', 'currentEngineName')
                 .then(function (name) {
-                    arora.currentEngineName = name || '';
+                    arktos.currentEngineName = name || '';
                     update();
                 }, function () {});
         });

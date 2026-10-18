@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, The Arora Authors
+ * Copyright (c) 2026, The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -39,10 +39,10 @@
 #include "devtoolswindow.h"
 #include "webpage.h"
 #include "webview.h"
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 #include "qtry.h"
 
-#include "arorastyle.h"
+#include "arktosstyle.h"
 #include "bidiclient.h"
 #include "bidipanel.h"
 #include "engineregistry.h"
@@ -953,7 +953,7 @@ void tst_DevTools::bidiElementsRefresh()
     // session.subscribe / network.setCacheBehavior must leave the
     // selector and the Elements tree alone.
     panel.onResponse(8001, QByteArray(
-        "{\"result\":{\"sessionId\":\"arora-bidi-1\","
+        "{\"result\":{\"sessionId\":\"arktos-bidi-1\","
         "\"capabilities\":{}}}"));
     panel.onResponse(8002, QByteArray("{\"result\":{}}"));
     QCOMPARE(panel.currentContext(), QStringLiteral("ctx1"));
@@ -1153,7 +1153,7 @@ void tst_DevTools::bidiElementsParity()
     root->child(0)->setExpanded(true);
     panel.onEvent(QByteArray(
         "{\"method\":\"log.entryAdded\",\"params\":{\"level\":\"log\""
-        ",\"text\":\"__arora_dom_mutated\"}}"));
+        ",\"text\":\"__arktos_dom_mutated\"}}"));
     QCOMPARE(panel.m_console->topLevelItemCount(), consoleLines);
     QTRY_VERIFY_WITH_TIMEOUT(panel.testDomLiveRefreshCount() >= 1,
                              3000);
@@ -1448,7 +1448,7 @@ void tst_DevTools::bidiElementsUx()
     // <tag attr> spans); the crumbs keep the compact selector form.
     QVERIFY(panel.m_domTree->itemDelegate());
     QVERIFY(panel.m_domTree->itemDelegate()
-                ->property("aroraDomMarkup").toBool());
+                ->property("arktosDomMarkup").toBool());
     panel.m_domTree->setCurrentItem(root->child(1));
     QStringList crumbTexts;
     QLayout *cl = panel.m_crumbBar->layout();
@@ -2055,7 +2055,7 @@ static bool isBarPixel(const QColor &c)
     };
     for (const QString &type : types) {
         const QColor swatch =
-            AroraStyle::networkTypeSwatch(type, qApp->palette());
+            ArktosStyle::networkTypeSwatch(type, qApp->palette());
         if (colorClose(c, swatch) || colorClose(c, swatch.darker(140)))
             return true;
     }
@@ -2176,9 +2176,9 @@ void tst_DevTools::bidiWaterfallLegibility()
     QVERIFY(slow.first >= 0);
     QVERIFY(slow.second >= fallCell.right() - 5);
 
-    // Offscreen grab for visual review — set ARORA_DEVTOOLS_GRAB_DIR
+    // Offscreen grab for visual review — set ARKTOS_DEVTOOLS_GRAB_DIR
     // to a directory; the zoomed waterfall is saved there.
-    const QByteArray grabDir = qgetenv("ARORA_DEVTOOLS_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_DEVTOOLS_GRAB_DIR");
     if (!grabDir.isEmpty())
         panel.m_networkView->grab().save(
             QString::fromLocal8Bit(grabDir)
@@ -2225,7 +2225,7 @@ void tst_DevTools::bidiWaterfallLegibility()
     regrab();
     const QRect pCell = cellInGrab(
         panel.m_networkView, proxy, rowFor("p2"));
-    const QColor swatch = AroraStyle::networkTypeSwatch(
+    const QColor swatch = ArktosStyle::networkTypeSwatch(
         QStringLiteral("image"), qApp->palette());
     const QColor base = qApp->palette().color(QPalette::Base);
     const QColor blended(
@@ -2438,9 +2438,9 @@ void tst_DevTools::bidiNetworkParity()
         }
         return false;
     };
-    const QColor amber = AroraStyle::networkTypeSwatch(
+    const QColor amber = ArktosStyle::networkTypeSwatch(
         QStringLiteral("script"), qApp->palette());
-    const QColor purple = AroraStyle::networkTypeSwatch(
+    const QColor purple = ArktosStyle::networkTypeSwatch(
         QStringLiteral("image"), qApp->palette());
     QVERIFY(cellHas(QStringLiteral("app.js"), amber));
     QVERIFY(cellHas(QStringLiteral("pic.png"), purple));
@@ -2450,7 +2450,7 @@ void tst_DevTools::bidiNetworkParity()
     // The ruler section paints too — grab the header once so a
     // paint-time crash/regression is caught; the ladder math itself
     // is pinned by testWaterfallTicks above.
-    const QByteArray grabDir = qgetenv("ARORA_DEVTOOLS_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_DEVTOOLS_GRAB_DIR");
     if (!grabDir.isEmpty()) {
         panel.m_networkView->horizontalHeader()->grab().save(
             QString::fromLocal8Bit(grabDir)
@@ -2463,7 +2463,7 @@ void tst_DevTools::bidiNetworkParity()
 
 // DEVT13 — the full tab set: Chrome's row order, every new page's
 // widgets present, the DOM/Storage tabs retired into Elements/
-// Application, and the arora.cdp verdicts driving the honest-
+// Application, and the arktos.cdp verdicts driving the honest-
 // disabled states.  CdpKind numbers mirror bidipanel.cpp's enum
 // (it is file-local there).
 // DEVT20: Sources parity — the raw CDP debugger events the bridge
@@ -2812,7 +2812,7 @@ void tst_DevTools::bidiFullTabSet()
     QVERIFY(panel.m_stylesTitle);
     QVERIFY(panel.m_domStats && panel.m_domFindResults);
     QVERIFY(panel.m_domTree->itemDelegate()
-                ->property("aroraDomMarkup").toBool());
+                ->property("arktosDomMarkup").toBool());
 
     // Sources: resource tree, read-only view, breakpoint row + list.
     QVERIFY(panel.m_sourcesTree);

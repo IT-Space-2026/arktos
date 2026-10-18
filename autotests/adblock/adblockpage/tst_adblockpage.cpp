@@ -41,7 +41,7 @@
 #include "adblockrule.h"
 #include "webenginebackend.h"
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "sitedecisionstore.h"
 #endif
 
@@ -113,7 +113,7 @@ void tst_AdBlockPage::cleanupTestCase()
 // This will be called before each test function is executed.
 void tst_AdBlockPage::init()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // A whitelisted site gets no cosmetic filtering — clear stale rows.
     SiteDecisionStore::clear(SiteDecisionStore::KindAdBlock);
 #endif
@@ -234,7 +234,7 @@ void tst_AdBlockPage::cosmeticScript_data()
     QTest::newRow("generic-css")
         << QStringList{"##.ad"}
         << QString("http://site.test/")
-        << QStringList{"arora-adblock", ":is(.ad)",
+        << QStringList{"arktos-adblock", ":is(.ad)",
                        "display: none !important"}
         << QStringList{"PROCS"};
 
@@ -501,7 +501,7 @@ void tst_AdBlockPage::cosmeticScriptManagerDisabled()
 
 // Covers scheduleRulesOnPage + replacePageScript in both directions —
 // arming the named user script when the payload is non-empty and
-// removing it when no rule applies — plus the ARORA_DEBUG_COSMETIC
+// removing it when no rule applies — plus the ARKTOS_DEBUG_COSMETIC
 // dump path.
 void tst_AdBlockPage::scheduleRules()
 {
@@ -514,25 +514,25 @@ void tst_AdBlockPage::scheduleRules()
     QVERIFY(page);
 
     const QString dumpPath = QDir::temp().filePath(
-        QStringLiteral("arora-cosmetic-dump.js"));
-    qputenv("ARORA_DEBUG_COSMETIC", dumpPath.toUtf8());
+        QStringLiteral("arktos-cosmetic-dump.js"));
+    qputenv("ARKTOS_DEBUG_COSMETIC", dumpPath.toUtf8());
 
     AdBlockPage blocker;
     blocker.scheduleRulesOnPage(page, QUrl("http://ok.com/"));
 
     bool armed = false;
     for (const Engine::Script &script : page->scripts())
-        armed |= (script.name == QLatin1String("arora:adblock-cosmetic"));
+        armed |= (script.name == QLatin1String("arktos:adblock-cosmetic"));
     QVERIFY(armed);
     QVERIFY(QFile::exists(dumpPath));
 
-    qunsetenv("ARORA_DEBUG_COSMETIC");
+    qunsetenv("ARKTOS_DEBUG_COSMETIC");
 
     // No matching rule -> empty payload -> the named script comes off.
     blocker.scheduleRulesOnPage(page, QUrl("http://other.test/"));
     armed = false;
     for (const Engine::Script &script : page->scripts())
-        armed |= (script.name == QLatin1String("arora:adblock-cosmetic"));
+        armed |= (script.name == QLatin1String("arktos:adblock-cosmetic"));
     QVERIFY(!armed);
 
     blocker.scheduleRulesOnPage(nullptr, QUrl("http://ok.com/"));

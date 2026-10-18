@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@
 #include "sidebarpanel.h"
 #include "profilesettings.h"
 
-#include "arorastyle.h"
+#include "arktosstyle.h"
 #include "autosaver.h"
 #include "browserapplication.h"
 #include "bookmarksmanager.h"
@@ -36,7 +36,7 @@
 #include "settings.h"
 #include "tabbar.h"
 #include "webview.h"
-#include "utils/aroraicon.h"
+#include "utils/arktosicon.h"
 #include "utils/edittreeview.h"
 #include "utils/flowlayout.h"
 #include "utils/treesortfilterproxymodel.h"
@@ -163,7 +163,7 @@ public:
             index.data(DownloadModel::CompletedRole).toBool();
         const bool selected = opt.state & QStyle::State_Selected;
         const QColor textColor = selected
-            ? AroraStyle::selectionTextColor(opt.palette)
+            ? ArktosStyle::selectionTextColor(opt.palette)
             : completed
                 ? opt.palette.color(QPalette::Text)
                 : opt.palette.color(QPalette::Disabled, QPalette::Text);
@@ -177,7 +177,7 @@ public:
             const int sizeWidth = metrics.horizontalAdvance(sizeText);
             nameRect.setRight(rect.right() - sizeWidth - 8);
             painter->setPen(selected
-                ? AroraStyle::selectionTextColor(opt.palette)
+                ? ArktosStyle::selectionTextColor(opt.palette)
                 : opt.palette.color(QPalette::PlaceholderText));
             painter->drawText(rect, Qt::AlignVCenter | Qt::AlignRight,
                               sizeText);
@@ -410,25 +410,25 @@ SidebarPanel::SidebarPanel(QWidget *parent)
         rail->setAutoFillBackground(true);
         QPalette railPalette = rail->palette();
         railPalette.setColor(QPalette::Window,
-                             AroraStyle::torChromeColor());
+                             ArktosStyle::torChromeColor());
         railPalette.setColor(QPalette::Button,
-                             AroraStyle::torChromeColor());
+                             ArktosStyle::torChromeColor());
         railPalette.setColor(QPalette::WindowText,
-                             AroraStyle::torTextColor());
+                             ArktosStyle::torTextColor());
         railPalette.setColor(QPalette::ButtonText,
-                             AroraStyle::torTextColor());
+                             ArktosStyle::torTextColor());
         railPalette.setColor(QPalette::Disabled, QPalette::WindowText,
-                             AroraStyle::torDimTextColor());
+                             ArktosStyle::torDimTextColor());
         railPalette.setColor(QPalette::Disabled, QPalette::ButtonText,
-                             AroraStyle::torDimTextColor());
+                             ArktosStyle::torDimTextColor());
         // The rail's hand-painted selected/hover cells read the
         // Highlight role — give them the raised violet, and pin the
         // on-card glyph tone so selectionTextColor resolves the
         // light chrome text.
         railPalette.setColor(QPalette::Highlight,
-                             AroraStyle::torChromeRaisedColor());
+                             ArktosStyle::torChromeRaisedColor());
         railPalette.setColor(QPalette::HighlightedText,
-                             AroraStyle::torTextColor());
+                             ArktosStyle::torTextColor());
         rail->setPalette(railPalette);
     }
 
@@ -618,7 +618,7 @@ void SidebarPanel::applyPanelVisibility()
                     ++position;
             }
             const int at = m_tabs->insertTab(position, page,
-                AroraIcon::getChrome(QLatin1String(panel.iconName),
+                ArktosIcon::getChrome(QLatin1String(panel.iconName),
                                      m_tabs->tabBar()->palette()),
                 panel.title);
             m_tabs->setTabToolTip(at, panel.title);
@@ -664,7 +664,7 @@ void SidebarPanel::refreshRailIcons()
             : QByteArray();
         for (const Panel &panel : all) {
             if (panel.id == id) {
-                m_tabs->setTabIcon(i, AroraIcon::getChrome(
+                m_tabs->setTabIcon(i, ArktosIcon::getChrome(
                     QLatin1String(panel.iconName), rail->palette()));
                 break;
             }
@@ -759,9 +759,9 @@ QWidget *SidebarPanel::buildBookmarksPage()
     m_bookmarksPage = new QWidget(m_tabs);
     QVBoxLayout *bookmarksLayout = new QVBoxLayout(m_bookmarksPage);
     bookmarksLayout->setContentsMargins(
-        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small,
-        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small);
-    bookmarksLayout->setSpacing(AroraStyle::Spacing::Small);
+        ArktosStyle::Spacing::Small, ArktosStyle::Spacing::Small,
+        ArktosStyle::Spacing::Small, ArktosStyle::Spacing::Small);
+    bookmarksLayout->setSpacing(ArktosStyle::Spacing::Small);
     SearchLineEdit *bookmarksSearch = new SearchLineEdit(m_bookmarksPage);
     bookmarksLayout->addWidget(bookmarksSearch);
     m_bookmarksView = new EditTreeView(m_bookmarksPage);
@@ -844,9 +844,9 @@ QWidget *SidebarPanel::buildHistoryPage()
     QWidget *historyPage = new QWidget(m_tabs);
     QVBoxLayout *historyLayout = new QVBoxLayout(historyPage);
     historyLayout->setContentsMargins(
-        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small,
-        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small);
-    historyLayout->setSpacing(AroraStyle::Spacing::Small);
+        ArktosStyle::Spacing::Small, ArktosStyle::Spacing::Small,
+        ArktosStyle::Spacing::Small, ArktosStyle::Spacing::Small);
+    historyLayout->setSpacing(ArktosStyle::Spacing::Small);
 
     // HIST03: the reference's header controls — a period combo
     // narrowing the day groups plus the shared clear-history
@@ -854,7 +854,7 @@ QWidget *SidebarPanel::buildHistoryPage()
     // panel's compact treatment (Ignored policy, autoRaise glyph)
     // so the dock's ~160px floor stays reachable.
     QHBoxLayout *historyHeader = new QHBoxLayout;
-    historyHeader->setSpacing(AroraStyle::Spacing::Small);
+    historyHeader->setSpacing(ArktosStyle::Spacing::Small);
     SearchLineEdit *historySearch = new SearchLineEdit(historyPage);
     historySearch->setSizePolicy(QSizePolicy::Ignored,
                                  QSizePolicy::Fixed);
@@ -882,7 +882,7 @@ QWidget *SidebarPanel::buildHistoryPage()
     clearButton->setToolTip(tr("Clear history..."));
     clearButton->setAutoRaise(true);
     clearButton->setIcon(
-        AroraIcon::getChrome(QLatin1String("edit-clear")));
+        ArktosIcon::getChrome(QLatin1String("edit-clear")));
     connect(clearButton, &QToolButton::clicked,
             this, [historyPage]() {
         HistoryManager::instance()->confirmClear(historyPage);
@@ -979,9 +979,9 @@ QWidget *SidebarPanel::buildDownloadsPage()
     m_downloadsPage = new QWidget(m_tabs);
     QVBoxLayout *downloadsLayout = new QVBoxLayout(m_downloadsPage);
     downloadsLayout->setContentsMargins(
-        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small,
-        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small);
-    downloadsLayout->setSpacing(AroraStyle::Spacing::Small);
+        ArktosStyle::Spacing::Small, ArktosStyle::Spacing::Small,
+        ArktosStyle::Spacing::Small, ArktosStyle::Spacing::Small);
+    downloadsLayout->setSpacing(ArktosStyle::Spacing::Small);
 
     QHBoxLayout *downloadsHeader = new QHBoxLayout;
     QLabel *downloadsTitle = new QLabel(tr("Downloads"), m_downloadsPage);
@@ -1006,7 +1006,7 @@ QWidget *SidebarPanel::buildDownloadsPage()
     clearButton->setAccessibleName(tr("Clear download list"));
     clearButton->setToolTip(tr("Clear download list"));
     clearButton->setAutoRaise(true);
-    clearButton->setIcon(AroraIcon::getChrome(QLatin1String("edit-clear")));
+    clearButton->setIcon(ArktosIcon::getChrome(QLatin1String("edit-clear")));
     // Same lightweight confirm the History menu's Clear uses — a
     // one-click whole-list wipe is destructive to the record.
     connect(clearButton, &QToolButton::clicked, this, [this]() {
@@ -1045,7 +1045,7 @@ QWidget *SidebarPanel::buildDownloadsPage()
     // ICONS09: house close glyph — palette-tinted chrome like every
     // other in-panel button instead of a style-pixmap outlier.
     closeButton->setIcon(
-        AroraIcon::getChrome(QLatin1String("window-close")));
+        ArktosIcon::getChrome(QLatin1String("window-close")));
     connect(closeButton, &QToolButton::clicked,
             this, &SidebarPanel::closeRequested);
     downloadsHeader->addWidget(closeButton);
@@ -1135,8 +1135,8 @@ QWidget *SidebarPanel::buildDownloadsPage()
     m_downloadDetail->setFrameShape(QFrame::StyledPanel);
     QVBoxLayout *detailLayout = new QVBoxLayout(m_downloadDetail);
     detailLayout->setContentsMargins(
-        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small,
-        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small);
+        ArktosStyle::Spacing::Small, ArktosStyle::Spacing::Small,
+        ArktosStyle::Spacing::Small, ArktosStyle::Spacing::Small);
     // The card keeps its full height — the scrolling list above
     // absorbs vertical deficits, the hosted rows never clip.
     m_downloadDetail->setSizePolicy(QSizePolicy::Expanding,
@@ -1166,7 +1166,7 @@ QWidget *SidebarPanel::buildDownloadsPage()
     // hosted card's own enablement (can't pause a finished download,
     // can't retry a running one, can't remove an in-flight row), so
     // the row and the card never disagree.  Glyphs come through
-    // AroraIcon::getChrome — the same palette-tinted monochrome chrome
+    // ArktosIcon::getChrome — the same palette-tinted monochrome chrome
     // as the header X — staying legible on dark and tor palettes.
     // A FlowLayout keeps the dock's 160px floor reachable — the
     // buttons reflow onto a second row instead of forcing a ~180px
@@ -1191,26 +1191,26 @@ QWidget *SidebarPanel::buildDownloadsPage()
     m_downloadRetryButton = actionButton("sidebarDownloadRetry",
                                          tr("Restart download"));
     m_downloadRetryButton->setIcon(
-        AroraIcon::getChrome(QLatin1String("view-refresh")));
+        ArktosIcon::getChrome(QLatin1String("view-refresh")));
     connect(m_downloadRetryButton, &QToolButton::clicked,
             this, &SidebarPanel::retrySelectedDownload);
     m_downloadRemoveButton = actionButton("sidebarDownloadRemove",
                                           tr("Remove from list"));
     m_downloadRemoveButton->setIcon(
-        AroraIcon::getChrome(QLatin1String("edit-clear")));
+        ArktosIcon::getChrome(QLatin1String("edit-clear")));
     connect(m_downloadRemoveButton, &QToolButton::clicked,
             this, &SidebarPanel::removeSelectedDownload);
     m_downloadFolderButton = actionButton("sidebarDownloadFolder",
                                           tr("Show in File Manager"));
     m_downloadFolderButton->setIcon(
-        AroraIcon::getChrome(QLatin1String("document-open")));
+        ArktosIcon::getChrome(QLatin1String("document-open")));
     connect(m_downloadFolderButton, &QToolButton::clicked,
             this, &SidebarPanel::revealSelectedDownload);
     m_downloadDetailsButton = actionButton("sidebarDownloadDetails",
                                            tr("Show download details"));
     m_downloadDetailsButton->setCheckable(true);
     m_downloadDetailsButton->setIcon(
-        AroraIcon::getChrome(QLatin1String("go-down")));
+        ArktosIcon::getChrome(QLatin1String("go-down")));
     connect(m_downloadDetailsButton, &QToolButton::toggled,
             this, &SidebarPanel::setSelectedDownloadExpanded);
     downloadsLayout->addLayout(actionsRow);
@@ -1302,9 +1302,9 @@ QWidget *SidebarPanel::buildNotesPage()
     QWidget *notesPage = new QWidget(m_tabs);
     QVBoxLayout *notesLayout = new QVBoxLayout(notesPage);
     notesLayout->setContentsMargins(
-        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small,
-        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small);
-    notesLayout->setSpacing(AroraStyle::Spacing::Small);
+        ArktosStyle::Spacing::Small, ArktosStyle::Spacing::Small,
+        ArktosStyle::Spacing::Small, ArktosStyle::Spacing::Small);
+    notesLayout->setSpacing(ArktosStyle::Spacing::Small);
 
     // NOTE02: the window's browsing profile owns the store — the
     // shared normal-profile model in a regular window, a session-only
@@ -1319,7 +1319,7 @@ QWidget *SidebarPanel::buildNotesPage()
     // Header row — the add/delete buttons sit beside the spot
     // NOTE03's search field will take.
     QHBoxLayout *notesHeader = new QHBoxLayout;
-    notesHeader->setSpacing(AroraStyle::Spacing::Small);
+    notesHeader->setSpacing(ArktosStyle::Spacing::Small);
     QLabel *notesTitle = new QLabel(tr("Notes"), notesPage);
     QFont titleFont = notesTitle->font();
     titleFont.setBold(true);
@@ -1333,7 +1333,7 @@ QWidget *SidebarPanel::buildNotesPage()
         QToolButton *button = new QToolButton(notesPage);
         button->setObjectName(QLatin1String(objectName));
         button->setAutoRaise(true);
-        button->setIcon(AroraIcon::getChrome(QLatin1String(iconName)));
+        button->setIcon(ArktosIcon::getChrome(QLatin1String(iconName)));
         button->setToolTip(label);
         button->setAccessibleName(label);
         notesHeader->addWidget(button);
@@ -1401,13 +1401,13 @@ QWidget *SidebarPanel::buildNotesPage()
     QWidget *editorPage = new QWidget(m_notesStack);
     QVBoxLayout *editorLayout = new QVBoxLayout(editorPage);
     editorLayout->setContentsMargins(0, 0, 0, 0);
-    editorLayout->setSpacing(AroraStyle::Spacing::Small);
+    editorLayout->setSpacing(ArktosStyle::Spacing::Small);
     QHBoxLayout *editorHeader = new QHBoxLayout;
-    editorHeader->setSpacing(AroraStyle::Spacing::Small);
+    editorHeader->setSpacing(ArktosStyle::Spacing::Small);
     QToolButton *backButton = new QToolButton(editorPage);
     backButton->setObjectName(QLatin1String("sidebarNotesBack"));
     backButton->setAutoRaise(true);
-    backButton->setIcon(AroraIcon::getChrome(QLatin1String("go-previous")));
+    backButton->setIcon(ArktosIcon::getChrome(QLatin1String("go-previous")));
     backButton->setToolTip(tr("Back to notes"));
     backButton->setAccessibleName(tr("Back to notes"));
     connect(backButton, &QToolButton::clicked,
@@ -1990,7 +1990,7 @@ void SidebarPanel::updateDownloadActions()
     m_downloadPauseButton->setEnabled(item && item->canPause()
                                       && item->downloading());
     m_downloadPauseButton->setIcon(paused
-        ? AroraIcon::getChrome(QLatin1String("system-run"))
+        ? ArktosIcon::getChrome(QLatin1String("system-run"))
         : downloadPauseIcon(m_downloadsPage));
     const QString pauseLabel = paused ? tr("Resume download")
                                       : tr("Pause download");
@@ -2012,7 +2012,7 @@ void SidebarPanel::updateDownloadActions()
     const bool expanded = item && item->isExpanded();
     m_downloadDetailsButton->setEnabled(item != nullptr);
     m_downloadDetailsButton->setChecked(expanded);
-    m_downloadDetailsButton->setIcon(AroraIcon::getChrome(
+    m_downloadDetailsButton->setIcon(ArktosIcon::getChrome(
         expanded ? QLatin1String("go-up") : QLatin1String("go-down")));
     const QString detailsLabel = expanded ? tr("Hide download details")
                                           : tr("Show download details");
@@ -2114,9 +2114,9 @@ QWidget *SidebarPanel::buildWorkspacesPage()
     QWidget *page = new QWidget(m_tabs);
     QVBoxLayout *layout = new QVBoxLayout(page);
     layout->setContentsMargins(
-        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small,
-        AroraStyle::Spacing::Small, AroraStyle::Spacing::Small);
-    layout->setSpacing(AroraStyle::Spacing::Small);
+        ArktosStyle::Spacing::Small, ArktosStyle::Spacing::Small,
+        ArktosStyle::Spacing::Small, ArktosStyle::Spacing::Small);
+    layout->setSpacing(ArktosStyle::Spacing::Small);
 
     QLabel *title = new QLabel(tr("Workspaces"), page);
     title->setObjectName(QLatin1String("sidebarWorkspacesTitle"));

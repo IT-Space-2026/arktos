@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, The Arora Authors
+ * Copyright (c) 2026, The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -62,7 +62,7 @@
 #include "toolbarsearch.h"
 #include "webpermissionmanager.h"
 #include "profilesettings.h"
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 #include "qtry.h"
 
 // Exposes the protected event handlers for direct dispatch.
@@ -655,7 +655,7 @@ void tst_LocationBar::omniboxSuggestions()
     // A hermetic engine: its suggest endpoint is a local file so the
     // enabled-path check never leaves the box.
     const QString fixturePath = QDir::temp().filePath(
-        QLatin1String("arora-omnibox-suggest.json"));
+        QLatin1String("arktos-omnibox-suggest.json"));
     {
         QFile fixture(fixturePath);
         QVERIFY(fixture.open(QIODevice::WriteOnly));
@@ -793,9 +793,9 @@ void tst_LocationBar::omniboxScopedCompletions()
     HistoryManager *historyManager = BrowserApplication::historyManager();
     historyManager->clear();
     historyManager->addHistoryEntry(
-        QLatin1String("http://scoped-history.example/arora"));
+        QLatin1String("http://scoped-history.example/arktos"));
     historyManager->updateHistoryEntry(
-        QUrl(QLatin1String("http://scoped-history.example/arora")),
+        QUrl(QLatin1String("http://scoped-history.example/arktos")),
         QLatin1String("Scoped History Page"));
     historyManager->addHistoryEntry(
         QLatin1String("http://unrelated.example/"));
@@ -840,7 +840,7 @@ void tst_LocationBar::omniboxScopedCompletions()
     QCOMPARE(model.rowCount(), 1);
     QCOMPARE(model.data(model.index(0, 0),
                         HistoryModel::UrlStringRole).toString(),
-             QLatin1String("http://scoped-history.example/arora"));
+             QLatin1String("http://scoped-history.example/arktos"));
 
     // Stale suggestion rows must not leak into a scoped view.
     model.setSearchText(QLatin1String("scoped"));
@@ -919,7 +919,7 @@ void tst_LocationBar::omniboxScopedCompletions()
 
     bookmarks->removeBookmark(bookmark);
     historyManager->removeHistoryEntry(
-        QUrl(QLatin1String("http://scoped-history.example/arora")));
+        QUrl(QLatin1String("http://scoped-history.example/arktos")));
     historyManager->removeHistoryEntry(
         QUrl(QLatin1String("http://unrelated.example/")));
     ScopeShortcuts::reset();
@@ -975,7 +975,7 @@ void tst_LocationBar::domainEmphasis_data()
     QTest::newRow("no-authority") << QString("qrc:/startpage.html")
                                   << QString();
     QTest::newRow("internal-empty-authority")
-        << QString("arora-file:///tmp/") << QString();
+        << QString("arktos-file:///tmp/") << QString();
     QTest::newRow("plain-text") << QString("just words")
                                 << QString();
 }

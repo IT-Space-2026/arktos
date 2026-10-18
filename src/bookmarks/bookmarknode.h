@@ -66,7 +66,7 @@
 #include <qlist.h>
 #include <qstringlist.h>
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 #include <stdint.h>
 #include <qbytearray.h>
 #endif
@@ -98,7 +98,7 @@ public:
     QString desc;
     bool expanded;
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // rustcore store handle (RCORE02); 0 means "not backed by the
     // Rust tree" — freshly created or imported nodes get a handle
     // when add() uploads them.  children() materializes lazily from
@@ -126,7 +126,7 @@ public:
 #endif
 
 private:
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     void materializeChildren();
     void rustUpload(uint64_t parent, int64_t row);
     void pushNodeFields() const;

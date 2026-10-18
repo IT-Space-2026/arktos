@@ -6,15 +6,15 @@
 // / pip.js pattern), so the namespace installs itself once per
 // document and stays available for the follow-up calls.
 //
-//   __aroraCtxImage.canvasData(x, y) -> { ok:true, dataUrl }
+//   __arktosCtxImage.canvasData(x, y) -> { ok:true, dataUrl }
 //                                     | { ok:false, reason }
-//   __aroraCtxImage.imageUrl(x, y)   -> { ok:true, url } | { ok:false }
-//   __aroraCtxImage.posterUrl(x, y)  -> { ok:true, url } | { ok:false }
+//   __arktosCtxImage.imageUrl(x, y)   -> { ok:true, url } | { ok:false }
+//   __arktosCtxImage.posterUrl(x, y)  -> { ok:true, url } | { ok:false }
 //
 // (x,y) are CSS pixels in the viewport — the caller converts the
 // request's view-pixel position by the page zoom factor.
 (function () {
-    if (window.__aroraCtxImage)
+    if (window.__arktosCtxImage)
         return;
     var ctl = {};
 
@@ -75,5 +75,5 @@
                    : { ok: false, reason: 'noposter' };
     };
 
-    window.__aroraCtxImage = ctl;
+    window.__arktosCtxImage = ctl;
 }())

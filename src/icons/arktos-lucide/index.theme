@@ -1,8 +1,8 @@
 [Icon Theme]
-Name=Arora Lucide
+Name=Arktos Lucide
 Comment=Bundled Lucide icons (ISC; partly derived from Feather, MIT)
 Directories=icons
-Inherits=arora-tabler
+Inherits=arktos-tabler
 
 [icons]
 Size=16

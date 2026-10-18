@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -40,11 +40,11 @@
 #include "scriptcontrolmanager.h"
 #include "webpage.h"
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "sitedecisionstore.h"
 #endif
 #include "webview.h"
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 #include "qtry.h"
 
 // Minimal HTTP/1.0 responder — same pattern as tst_sitepanel.  The
@@ -218,7 +218,7 @@ void tst_ScriptControl::persistence()
     // A persistent rule lands in the durable store.
     scripts->setRuleForHost(QLatin1String("persist.example"),
                           ScriptControlManager::Allow, true);
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     {
         QString stored;
         QVERIFY(SiteDecisionStore::get(SiteDecisionStore::KindJavaScript,
@@ -239,7 +239,7 @@ void tst_ScriptControl::persistence()
     // manager see only the persistent entry.
     scripts->setRuleForHost(QLatin1String("session.example"),
                           ScriptControlManager::Block, false);
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     {
         QString stored;
         QVERIFY(SiteDecisionStore::get(SiteDecisionStore::KindJavaScript,

@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,7 +20,7 @@
 #include "sitepanel.h"
 
 #include "adblockmanager.h"
-#include "arorastyle.h"
+#include "arktosstyle.h"
 #include "adblockrequestinterceptor.h"
 #include "browserapplication.h"
 #include "browserprofile.h"
@@ -50,7 +50,7 @@
 #include <qwebenginepage.h>
 #include <qwebengineprofile.h>
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "rustcorebridge.h"
 #include <rustcore.h>
 #endif
@@ -84,11 +84,11 @@ SitePanel::SitePanel(QWidget *parent)
     setMinimumWidth(280);
 
     QVBoxLayout *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(AroraStyle::Spacing::Medium,
-                               AroraStyle::Spacing::Medium,
-                               AroraStyle::Spacing::Medium,
-                               AroraStyle::Spacing::Medium);
-    layout->setSpacing(AroraStyle::Spacing::Medium);
+    layout->setContentsMargins(ArktosStyle::Spacing::Medium,
+                               ArktosStyle::Spacing::Medium,
+                               ArktosStyle::Spacing::Medium,
+                               ArktosStyle::Spacing::Medium);
+    layout->setSpacing(ArktosStyle::Spacing::Medium);
 
     m_hostLabel = plainLabel(QString(), this);
     m_hostLabel->setObjectName(QLatin1String("sitePanelHost"));
@@ -284,7 +284,7 @@ SitePanel::SitePanel(QWidget *parent)
     m_permissionsBox->setObjectName(QLatin1String("sitePermissions"));
     m_permissionsLayout = new QVBoxLayout(m_permissionsBox);
     m_permissionsLayout->setContentsMargins(0, 0, 0, 0);
-    m_permissionsLayout->setSpacing(AroraStyle::Spacing::Small);
+    m_permissionsLayout->setSpacing(ArktosStyle::Spacing::Small);
     layout->addWidget(m_permissionsBox);
 
     QFrame *line3 = new QFrame(this);
@@ -406,13 +406,13 @@ void SitePanel::refresh()
     const bool hasSite = !site.isEmpty();
 
     m_hostLabel->setText(hasSite ? site : tr("This page"));
-    if (scheme == QLatin1String("arora-cert-error"))
+    if (scheme == QLatin1String("arktos-cert-error"))
         m_securityLabel->setText(
             tr("Certificate error — the connection could not be verified"));
-    else if (scheme == QLatin1String("arora-http-warning"))
+    else if (scheme == QLatin1String("arktos-http-warning"))
         m_securityLabel->setText(
             tr("Blocked by HTTPS-Only mode — the site is not secure"));
-    else if (scheme == QLatin1String("arora-site-block"))
+    else if (scheme == QLatin1String("arktos-site-block"))
         m_securityLabel->setText(
             tr("Blocked — the domain is on the phishing/malware list"));
     else if (scheme == QLatin1String("https"))
@@ -437,8 +437,8 @@ void SitePanel::refresh()
         const QString version =
             TlsVerifier::instance()->tlsVersion(site, tlsPort);
         m_tlsLabel->setText(version.isEmpty()
-            ? tr("TLS verified by Arora")
-            : tr("TLS verified by Arora (%1)")
+            ? tr("TLS verified by Arktos")
+            : tr("TLS verified by Arktos (%1)")
                   .arg(version == QLatin1String("TLSv1_3")
                            ? QStringLiteral("TLS 1.3")
                        : version == QLatin1String("TLSv1_2")
@@ -804,7 +804,7 @@ void SitePanel::rebuildPermissionRows()
     m_permissionsBox->updateGeometry();
 }
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 // The shared FFI fetch behind the Trust section and the shield
 // badge: the composite verdict document for a host, or an empty
 // object when the lookup cannot evaluate (empty host, FFI hiccup).
@@ -845,7 +845,7 @@ QList<SitePanel::TrustLine> SitePanel::trustSignals(const QString &host,
                                                   bool isHttps)
 {
     QList<TrustLine> lines;
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     const QJsonObject verdict = siteTrustVerdict(host, isHttps);
     if (verdict.isEmpty())
         return lines;
@@ -900,7 +900,7 @@ QStringList SitePanel::trustSignalLines(const QString &host, bool isHttps)
 // document, no second FFI signature.
 QString SitePanel::trustLevel(const QString &host, bool isHttps)
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     return siteTrustVerdict(host, isHttps)
         .value(QLatin1String("level")).toString();
 #else

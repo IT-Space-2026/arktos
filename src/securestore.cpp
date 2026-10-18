@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -45,7 +45,7 @@
 // delegates the rest over FFI.  Without the flag the original
 // OpenSSL-EVP + bundled-argon2id implementation below is used —
 // the tree needs no Rust toolchain.
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 #include "rustcore.h"
 #include "rustcorebridge.h"
 
@@ -181,7 +181,7 @@ bool resealConsumers(const QString &profileId,
     return true;
 }
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 
 // ---- FFI-backed custody (rustcore crate) ---------------------------
 //
@@ -303,7 +303,7 @@ void wipeKeys(QByteArray &a, QByteArray &b)
     secureZero(b);
 }
 
-#else // !ARORA_RUSTCORE — the original OpenSSL-EVP implementation
+#else // !ARKTOS_RUSTCORE — the original OpenSSL-EVP implementation
 
 // Argon2id parameters for the master-passphrase KDF — RFC 9106's
 // memory-constrained recommendation (64 MiB / t=3 / p=4).  Stored in
@@ -313,6 +313,8 @@ const quint32 kKdfPasses = 3;
 const quint32 kKdfLanes = 4;
 const int kKdfSaltSize = 16;
 const char kKdfMagic[] = "ARKDF1";
+// BRAND01: frozen at the pre-rebrand spelling — the verifier bytes are
+// sealed into every existing vault, so renaming unseals nothing.
 const char kVerifierMessage[] = "ARORA-KDF-VERIFY";
 
 // EVP_CTRL_GCM_GET_TAG / EVP_CTRL_GCM_SET_TAG values are stable ABI
@@ -525,7 +527,7 @@ QByteArray deriveKey(const QString &passphrase, const KdfParams &params)
 {
     QByteArray utf8 = passphrase.toUtf8();
     QByteArray key(kKeySize, Qt::Uninitialized);
-    const int rc = arora_argon2id(key.data(), size_t(key.size()),
+    const int rc = arktos_argon2id(key.data(), size_t(key.size()),
         utf8.constData(), size_t(utf8.size()),
         params.salt.constData(), size_t(params.salt.size()),
         params.passes, params.memoryKiB, params.lanes);
@@ -672,11 +674,11 @@ QByteArray openWithKey(const QByteArray &blob, const QByteArray &key,
     return plain;
 }
 
-#endif // ARORA_RUSTCORE
+#endif // ARKTOS_RUSTCORE
 
 } // namespace
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 
 bool SecureStore::isAvailable()
 {
@@ -949,7 +951,7 @@ bool SecureStore::changePassphrase(const QString &profileId,
     return resealed;
 }
 
-#else // !ARORA_RUSTCORE
+#else // !ARKTOS_RUSTCORE
 
 bool SecureStore::isAvailable()
 {
@@ -1284,7 +1286,7 @@ bool SecureStore::changePassphrase(const QString &profileId,
     return resealed;
 }
 
-#endif // ARORA_RUSTCORE
+#endif // ARKTOS_RUSTCORE
 
 // ---- backend-neutral API --------------------------------------------
 
@@ -1385,7 +1387,7 @@ void SecureStore::resetForTests()
     s_interactiveUnlock = true;
     s_unlockPromptActive = false;
     const QString id = BrowserPaths::activeProfileId();
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     ensureRustCore(id);
     rc_kdf_file_delete();
     rc_key_file_delete();

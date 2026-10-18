@@ -104,7 +104,7 @@ partitioning model) and removed-XSSAuditor expectations.
 
 | Vector | Disposition | Evidence / repro note |
 |--------|-------------|------------------------|
-| CSPDirective | **app-side explained — XSLEAK03 verified** (deliberate feature, not a defect) | PING01 fails `ResourceTypeCspReport` requests by default; a test whose verdict rides report delivery to the collector stalls forever. XSLEAK03 attribution run: `arora --ping-smoke` PASS — armed phase saw the CSP violation fire (`img-src 'none'` refusal logged) but `/csp` never reached the collector alongside `/beacon` and `/aping`; the disarmed control delivered all three. So the mechanism is confirmed: enforcement intact, report upload dropped, verdict stalls. XSLEAK04 should still re-run this vector with `privacy/blockPings=false` to capture the real verdict |
+| CSPDirective | **app-side explained — XSLEAK03 verified** (deliberate feature, not a defect) | PING01 fails `ResourceTypeCspReport` requests by default; a test whose verdict rides report delivery to the collector stalls forever. XSLEAK03 attribution run: `arktos --ping-smoke` PASS — armed phase saw the CSP violation fire (`img-src 'none'` refusal logged) but `/csp` never reached the collector alongside `/beacon` and `/aping`; the disarmed control delivered all three. So the mechanism is confirmed: enforcement intact, report upload dropped, verdict stalls. XSLEAK04 should still re-run this vector with `privacy/blockPings=false` to capture the real verdict |
 | COOP | **app-side explained — XSLEAK03 verified** (popup dead-end), else test-stale | `window.open` with a feature string arrives as `WebBrowserWindow`/`WebDialog` → the default-on popup blocker returns a `PopupProbePage` whose every navigation is refused — an orchestrated window never loads → timeout. XSLEAK03 attribution: `tst_webpage` `popupBlocking`/`popupClickBlocking`/`popupTargetCapture`/`popupStateReset` all PASS, confirming the dead-end behavior is live and default-on. The live-vector confirmation with `websettings/blockPopupWindows=false` remains with XSLEAK04 — COOP has no embedder hooks either way |
 | PerfAPI-X-Frame | **test-stale / environmental** | XFO detection via Resource Timing rides iframes (not popup-gated) — no app mechanism explains a stall; likely orchestration/network flake under the remote run. Engine-side surface (Resource Timing + XFO internals) either way |
 
@@ -138,7 +138,7 @@ this report after each. **Outcome column added by XSLEAK03.**
 
 1. **Attribute the two app-explained timeouts** — *done.*  No live
    xsinator run (reserved for XSLEAK04); attribution is local:
-   `arora --ping-smoke` PASS shows `/csp` (CSP report-uri upload)
+   `arktos --ping-smoke` PASS shows `/csp` (CSP report-uri upload)
    dropped while the violation still fires — the CSPDirective stall
    mechanism is confirmed.  `tst_webpage` popup tests PASS show the
    default-on dead-end `PopupProbePage` for feature-string
@@ -179,7 +179,7 @@ this report after each. **Outcome column added by XSLEAK03.**
    behavior.
 6. **Scheme-handler leak audit — verified clean, recorded** — *done.*
    `FileAccessHandler` denies remote initiators (SEC02),
-   `arora-resource:` serves fixed inert stubs, `abp:` prompts before
+   `arktos-resource:` serves fixed inert stubs, `abp:` prompts before
    acting and fails the job afterwards, interstitials are
    nonce-gated.  No scheme-handler XS-Leak surface identified.
 7. **Baseline caveat for XSLEAK04** — *done.*  See the XSLEAK04 note

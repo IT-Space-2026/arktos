@@ -1,10 +1,10 @@
 TEMPLATE = app
-TARGET = tst_arorastyle
+TARGET = tst_arktosstyle
 DEPENDPATH += .
 INCLUDEPATH += . ../
 
 include(../autotests.pri)
 
 # Input
-SOURCES += tst_arorastyle.cpp
+SOURCES += tst_arktosstyle.cpp
 HEADERS +=

@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@
 
 #include "servobackend.h"
 
-#ifdef ARORA_SERVO
+#ifdef ARKTOS_SERVO
 
 #include "browserpaths.h"
 #include "engineregistry.h"
@@ -248,13 +248,13 @@ bool resolve()
     // Optional ENG32 addition — compositor-direct scroll.  Missing
     // on older artifacts: sendScrollStep falls back to se_wheel and
     // scroll keeps its DOM-dispatch cost, exactly as before.
-    // ENG34 diagnostic: ARORA_SERVO_SCROLL_PATH=wheel suppresses the
+    // ENG34 diagnostic: ARKTOS_SERVO_SCROLL_PATH=wheel suppresses the
     // resolve so the smoke bench can A/B both paths on one artifact
     // (the repaint-cost measurement needs same-build numbers), and
     // doubles as a live kill-switch — the compositor path skips DOM
     // wheel dispatch, so a page whose wheel-intercepting widget
     // regresses gets the DOM-correct path back without a rebuild.
-    api().scroll = qgetenv("ARORA_SERVO_SCROLL_PATH") == "wheel"
+    api().scroll = qgetenv("ARKTOS_SERVO_SCROLL_PATH") == "wheel"
         ? nullptr
         : reinterpret_cast<decltype(api().scroll)>(
               library().resolve("se_scroll"));
@@ -1410,7 +1410,7 @@ ServoBackend *ServoBackend::instance()
 
 QString ServoBackend::artifactPath()
 {
-    const QByteArray env = qgetenv("ARORA_SERVO_EMBED_LIB");
+    const QByteArray env = qgetenv("ARKTOS_SERVO_EMBED_LIB");
     QStringList candidates;
     if (!env.isEmpty())
         candidates << QString::fromLocal8Bit(env);
@@ -1561,7 +1561,7 @@ QString ServoBackend::pageUnavailableReason() const
         return QString();
     if (!ServoView::instanceInUse())
         return tr("the engine could not be started — "
-                  "restart Arora to try again");
+                  "restart Arktos to try again");
     return tr("already in use — Servo supports one tab at a time");
 }
 
@@ -1607,4 +1607,4 @@ struct ServoProbeRegistration {
 
 } // namespace
 
-#endif // ARORA_SERVO
+#endif // ARKTOS_SERVO

@@ -41,10 +41,10 @@ payload-named link and link-as-container).
 ### F2 — The engine's own storage is outside the sealed set — follow-up VSEC02
 
 `BrowserProfile::profileFor(id)` creates a named
-`QWebEngineProfile("arora-<id>")` and never calls
+`QWebEngineProfile("arktos-<id>")` and never calls
 `setPersistentStoragePath()`/`setCachePath()`, so cookies, LocalStorage,
 IndexedDB, service workers, the HTTP disk cache and visited-link state
-persist under `QtWebEngine/arora[-<id>]/` at the data root — outside
+persist under `QtWebEngine/arktos[-<id>]/` at the data root — outside
 `profiles/<id>/` and therefore outside anything `rv_seal` packs. A
 "locked" profile still leaves every Chromium-side record on disk in
 cleartext; sealing is an app-side-store guarantee, not a browsing-data

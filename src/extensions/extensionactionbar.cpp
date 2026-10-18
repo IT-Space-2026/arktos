@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,8 +19,8 @@
 
 #include "extensionactionbar.h"
 
-#include "aroraicon.h"
-#include "arorastyle.h"
+#include "arktosicon.h"
+#include "arktosstyle.h"
 #include "browserapplication.h"
 #include "extensionmanager.h"
 
@@ -118,7 +118,7 @@ QIcon extensionIcon(const ExtensionManager::ExtensionInfo &info, int edge)
     if (icon.isNull())
         // A chrome stand-in, not identity art — tinted house style
         // so it does not render a raw theme glyph beside chrome peers.
-        icon = AroraIcon::getChrome(QLatin1String("application-x-addon"));
+        icon = ArktosIcon::getChrome(QLatin1String("application-x-addon"));
 
     // The cache is a per-session convenience, not a registry — bound
     // it so a pathological load/unload loop cannot grow it forever.
@@ -136,7 +136,7 @@ ExtensionActionBar::ExtensionActionBar(QWidget *parent)
 {
     setObjectName(QLatin1String("extensionActionBar"));
     m_layout->setContentsMargins(0, 0, 0, 0);
-    m_layout->setSpacing(AroraStyle::Spacing::Small);
+    m_layout->setSpacing(ArktosStyle::Spacing::Small);
     m_iconSize = QSize(18, 18);
 
     ExtensionManager *extensions = ExtensionManager::instance();
@@ -278,7 +278,7 @@ void ExtensionActionBar::openPopup(const QString &id, const QUrl &popupUrl,
         label->setWordWrap(true);
         label->setMaximumWidth(340);
         label->setTextFormat(Qt::PlainText);
-        label->setText(tr("%1 can't run in Arora: %2.")
+        label->setText(tr("%1 can't run in Arktos: %2.")
                            .arg(info.name.isEmpty() ? info.id
                                                     : info.name,
                                 info.healthReason));
@@ -313,7 +313,7 @@ void ExtensionActionBar::openPopup(const QString &id, const QUrl &popupUrl,
 
     QWebEngineView *view = new QWebEngineView(popup);
     // A plain page on the extension's own profile — deliberately not
-    // the app's WebPage subclass, so no arora QWebChannel objects or
+    // the app's WebPage subclass, so no arktos QWebChannel objects or
     // app page policy leak into extension chrome (SEC24 split).
     QWebEnginePage *page = new QWebEnginePage(profile, view);
     view->setPage(page);

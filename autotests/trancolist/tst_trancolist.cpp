@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, The Arora Authors
+ * Copyright (c) 2026, The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -34,10 +34,10 @@
 
 #include "adblockmanager.h"
 #include "trancolist.h"
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 #include "qtry.h"
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include <rustcore.h>
 #endif
 
@@ -160,14 +160,14 @@ void tst_TrancoList::cleanupTestCase()
     restore(QLatin1String("privacy/trancoListUpdated"), m_savedUpdated);
     // The fixture override the updater wrote goes with the suite.
     QFile::remove(TrancoList::listFilePath());
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     rc_tranco_reload();
 #endif
 }
 
 void tst_TrancoList::init()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // Every probe test starts from a known fixture table — never the
     // vendored seed or a stale download.
     const QByteArray fixture =
@@ -183,7 +183,7 @@ void tst_TrancoList::init()
 
 void tst_TrancoList::rankProbes()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     QCOMPARE(rc_tranco_rank("ranked-fixture.test"), 11u);
     // Unlisted subdomain walks up to the listed ancestor — the
     // registrable-domain probe.
@@ -204,7 +204,7 @@ void tst_TrancoList::rankProbes()
 
 void tst_TrancoList::builtinSeedRanks()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     QCOMPARE(rc_tranco_reload(), RC_OK);
     // The vendored top-100k seed ranks with no download at all.
     QCOMPARE(rc_tranco_rank("google.com"), 1u);
@@ -216,7 +216,7 @@ void tst_TrancoList::builtinSeedRanks()
 
 void tst_TrancoList::updateConsentGate()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // Declined consent -> updateIfStale never fetches.
     AdBlockManager::setRemoteListsConsent(AdBlockManager::RemoteListsDeclined);
     QSettings().remove(QLatin1String("privacy/trancoListUpdated"));
@@ -237,7 +237,7 @@ void tst_TrancoList::updateConsentGate()
 
 void tst_TrancoList::updateRoundTrip()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // Granted consent + a stale stamp -> updateIfStale fetches the
     // fixture zip, writes the override file verbatim and reloads the
     // core.  The fixture also tries to re-rank a seed domain — the
@@ -287,7 +287,7 @@ void tst_TrancoList::updateRoundTrip()
 
 void tst_TrancoList::updateFailureKeepsSeed()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // A fetched body that yields no usable entries reports failure —
     // the vendored seed keeps ranking either way.
     AdBlockManager::setRemoteListsConsent(AdBlockManager::RemoteListsGranted);
@@ -313,7 +313,7 @@ void tst_TrancoList::updateFailureKeepsSeed()
 
 void tst_TrancoList::noRustBuildInert()
 {
-#if !defined(ARORA_RUSTCORE)
+#if !defined(ARKTOS_RUSTCORE)
     // Without the crate there is no consumer — the updater is inert
     // and never fetches.
     FixtureListServer server;

@@ -1669,7 +1669,7 @@ mod tests {
             "chrome://extensions",
             "data:text/html,<b>",
             "about:blank",
-            "arora-file://x",
+            "arktos-file://x",
             "javascript:alert(1)",
         ] {
             let v = evaluate_json(&manifest(url, RT_MAIN_FRAME));

@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -144,7 +144,7 @@ private:
 
 // One hidden hosted view for one extension.  Owns the view, page,
 // channel and bridge; arms the per-extension injection on the
-// profile; polls the page's __aroraHost.state until the handshake +
+// profile; polls the page's __arktosHost.state until the handshake +
 // script boot settle (Ready) or something breaks (Failed).  A hosted
 // JS crash can only take the render process — the host notices via
 // renderProcessTerminated and reports through lastError(), never
@@ -187,7 +187,7 @@ public:
     // The generated wrapper document is the extension's guaranteed-
     // present manifest.json under a marker fragment — the resource
     // resolves to the real manifest bytes (bindings intact), while
-    // #arora-hosted tells the per-extension injection it is hosting
+    // #arktos-hosted tells the per-extension injection it is hosting
     // (and not, say, a health probe reading the same file).
     static QUrl hostUrl(const QString &extensionId);
     static QString injectionName(const QString &extensionId);

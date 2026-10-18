@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -40,13 +40,13 @@
 
 #include "adblockmanager.h"
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "sitedecisionstore.h"
 #include <rustcore.h>
 #endif
 #include "adblockrule.h"
 #include "adblocksubscription.h"
-#include "aroraicon.h"
+#include "arktosicon.h"
 #include "browserapplication.h"
 #include "cookiejar.h"
 #include "fingerprintprotector.h"
@@ -60,7 +60,7 @@
 #include "webpage.h"
 #include "webpermissionmanager.h"
 #include "webview.h"
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 #include "qtry.h"
 
 // Minimal HTTP/1.0 responder — same pattern as tst_webpermissions.
@@ -215,7 +215,7 @@ void tst_SitePanel::siteWhitelistToggle()
 {
     AdBlockManager *manager = AdBlockManager::instance();
     QVERIFY(!manager->isSiteWhitelisted(QLatin1String("example.com")));
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     const int rowsBefore =
         SiteDecisionStore::entries(SiteDecisionStore::KindAdBlock).count();
 #endif
@@ -225,7 +225,7 @@ void tst_SitePanel::siteWhitelistToggle()
 
     // Toggling twice must not stack duplicate rules.
     manager->setSiteWhitelisted(QLatin1String("example.com"), true);
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // The whitelist is a keyed row in the decision store — a second
     // toggle rewrites the same row, so duplication is impossible.
     {
@@ -537,7 +537,7 @@ void tst_SitePanel::panelForSite()
     // under the header.
     QWidget *trust = panel.findChild<QWidget*>(QLatin1String("siteTrust"));
     QVERIFY(trust);
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     QVERIFY(!trust->isHidden());
     const QList<QLabel*> trustLabels = trust->findChildren<QLabel*>();
     QVERIFY(trustLabels.count() >= 2); // header + >=1 signal line
@@ -600,7 +600,7 @@ void tst_SitePanel::panelForSite()
 // the other tests in this binary.
 void tst_SitePanel::trustSignalLines()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     const QByteArray tranco = "4,known-fixture.test\n1,paypal.com\n";
     QCOMPARE(rc_tranco_load(
                  reinterpret_cast<const uint8_t *>(tranco.constData()),
@@ -656,7 +656,7 @@ void tst_SitePanel::trustSignalLines()
 // green/unknown leave the lock alone while amber and red repaint it.
 void tst_SitePanel::trustBadgeLevels()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     SiteShieldButton::clearTrustCache();
     const QByteArray tranco = "4,known-fixture.test\n1,paypal.com\n";
     QCOMPARE(rc_tranco_load(
@@ -696,7 +696,7 @@ void tst_SitePanel::trustBadgeLevels()
     QVERIFY(SiteShieldButton::trustLevelFor(QString(), true).isEmpty());
 
     // Icon treatment: only "amber" and "red" repaint the shield.
-    const QIcon shield = AroraIcon::get(QLatin1String("security-high"));
+    const QIcon shield = ArktosIcon::get(QLatin1String("security-high"));
     const QSize px(20, 20);
     const QImage plain = shield.pixmap(px).toImage();
     QCOMPARE(SiteShieldButton::tintedBadge(
@@ -722,7 +722,7 @@ void tst_SitePanel::trustBadgeLevels()
 // the same host does (the https bit is part of the key).
 void tst_SitePanel::trustBadgeCache()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     SiteShieldButton::clearTrustCache();
     const int before = SiteShieldButton::trustLookupCount();
 
@@ -763,7 +763,7 @@ void tst_SitePanel::trustBadgeCache()
 // load ambers the shield, a non-web scheme drops the badge entirely.
 void tst_SitePanel::trustBadgeNavigation()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     SiteShieldButton::clearTrustCache();
 #endif
 
@@ -778,7 +778,7 @@ void tst_SitePanel::trustBadgeNavigation()
     view.load(server.url());
     QTRY_COMPARE(loadSpy.count(), 1);
     QVERIFY(!shield.icon().isNull());
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // 127.0.0.1 is unranked and the page is plaintext http — amber.
     QCOMPARE(shield.trustBadge(), QLatin1String("amber"));
 #else
@@ -798,7 +798,7 @@ void tst_SitePanel::trustBadgeNavigation()
 // of the badge cache key, so the next call is a miss).
 void tst_SitePanel::trustGating()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     QSettings settings;
     settings.remove(QLatin1String("trust/enabled"));
     settings.remove(QLatin1String("trust/lookalike"));
@@ -901,7 +901,7 @@ void tst_SitePanel::trustGating()
 // level maps to a distinct color.
 void tst_SitePanel::trustSectionHeader()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     LocalHttpServer server;
     QVERIFY(server.start());
 
@@ -991,10 +991,10 @@ void tst_SitePanel::padlockStateMatrix()
              int(S::PlainUnlocked));
     QCOMPARE(int(SitePadlockButton::stateFor(QUrl(QLatin1String("file:///etc/passwd")))),
              int(S::PlainUnlocked));
-    QCOMPARE(int(SitePadlockButton::stateFor(QUrl(QLatin1String("arora-file:///tmp/")))),
+    QCOMPARE(int(SitePadlockButton::stateFor(QUrl(QLatin1String("arktos-file:///tmp/")))),
              int(S::PlainUnlocked));
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     const QByteArray tranco =
         "4,known-fixture.test\n1,localhost\n2,paypal.com\n";
     QCOMPARE(rc_tranco_load(
@@ -1141,7 +1141,7 @@ void tst_SitePanel::padlockStateMatrix()
 // per-tab by construction.
 void tst_SitePanel::padlockFollowsPage()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     SiteShieldButton::clearTrustCache();
 #endif
 
@@ -1203,7 +1203,7 @@ void tst_SitePanel::padlockPopup()
     QWidget *trust =
         popup->findChild<QWidget*>(QLatin1String("padlockPopupTrust"));
     QVERIFY(trust);
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // Unlisted loopback host — the informative line shows.
     QVERIFY(trust->isVisibleTo(popup));
     const QList<QLabel *> lines = trust->findChildren<QLabel*>();
@@ -1239,7 +1239,7 @@ void tst_SitePanel::padlockTorStates()
 {
     typedef SitePadlockButton::State S;
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     const QByteArray tranco = "4,tor-known-fixture.test\n";
     QCOMPARE(rc_tranco_load(
                  reinterpret_cast<const uint8_t *>(tranco.constData()),

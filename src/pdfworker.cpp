@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -32,7 +32,7 @@
 #include <mutex>
 #include <string>
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 #include "rustcore.h"
 #endif
 
@@ -55,7 +55,7 @@ void emitLine(const QJsonObject &obj)
     std::fflush(stdout);
 }
 
-// Only the ARORA_RUSTCORE path reports errors; in the no-rust build
+// Only the ARKTOS_RUSTCORE path reports errors; in the no-rust build
 // this helper is intentionally idle.
 [[maybe_unused]] void emitError(qint64 req, int code, const QString &message)
 {
@@ -72,18 +72,18 @@ void emitLine(const QJsonObject &obj)
 
 int pdfWorkerMain()
 {
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // The job description arrives on the first stdin line.
     std::string jobLine;
     if (!std::getline(std::cin, jobLine)) {
-        std::fprintf(stderr, "arora: pdf worker got no job\n");
+        std::fprintf(stderr, "arktos: pdf worker got no job\n");
         return 2;
     }
     const QJsonObject job = QJsonDocument::fromJson(
         QByteArray::fromStdString(jobLine)).object();
     if (job.value(QLatin1String("cmd")).toString()
         != QLatin1String("job")) {
-        std::fprintf(stderr, "arora: pdf worker got bad job\n");
+        std::fprintf(stderr, "arktos: pdf worker got bad job\n");
         return 2;
     }
 
@@ -226,7 +226,7 @@ int pdfWorkerMain()
     rc_pdfdoc_close(doc);
     return 0;
 #else
-    std::fprintf(stderr, "arora: pdf worker needs the rust core\n");
+    std::fprintf(stderr, "arktos: pdf worker needs the rust core\n");
     return 2;
 #endif
 }

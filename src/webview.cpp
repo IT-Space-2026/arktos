@@ -944,7 +944,7 @@ void WebView::addSearchEngine(const QPoint &viewPos)
     qreal zoom = enginePage()->zoomFactor();
     if (zoom <= 0)
         zoom = 1.0;
-    const QString call = QStringLiteral("__aroraCtxSearch.formInfo(%1,%2);")
+    const QString call = QStringLiteral("__arktosCtxSearch.formInfo(%1,%2);")
         .arg(viewPos.x() / zoom)
         .arg(viewPos.y() / zoom);
     QPointer<WebView> self(this);
@@ -1565,7 +1565,7 @@ void WebView::dragEnterEvent(QDragEnterEvent *event)
     // TABS13: a real tab drag never becomes a page navigation —
     // outside a tab bar it means tear-off, and the refused drop is
     // what the source bar's exec() reads.
-    if (event->mimeData()->hasFormat(aroraTabMimeType())) {
+    if (event->mimeData()->hasFormat(arktosTabMimeType())) {
         event->ignore();
         return;
     }
@@ -1575,7 +1575,7 @@ void WebView::dragEnterEvent(QDragEnterEvent *event)
 void WebView::dragMoveEvent(QDragMoveEvent *event)
 {
     event->ignore();
-    if (event->mimeData()->hasFormat(aroraTabMimeType()))
+    if (event->mimeData()->hasFormat(arktosTabMimeType()))
         return;
     if (event->source() != this) {
         if (!event->mimeData()->urls().isEmpty()) {
@@ -1595,7 +1595,7 @@ void WebView::dropEvent(QDropEvent *event)
 {
     // TABS13: a real tab drag must not load onto the page under the
     // cursor — the source bar treats the refused drop as a tear-off.
-    if (event->mimeData()->hasFormat(aroraTabMimeType())) {
+    if (event->mimeData()->hasFormat(arktosTabMimeType())) {
         event->ignore();
         return;
     }
@@ -1750,7 +1750,7 @@ void WebView::grabContextImage(const QPoint &viewPos, bool canvas,
     qreal zoom = enginePage()->zoomFactor();
     if (zoom <= 0)
         zoom = 1.0;
-    const QString call = QStringLiteral("__aroraCtxImage.%1(%2,%3);")
+    const QString call = QStringLiteral("__arktosCtxImage.%1(%2,%3);")
         .arg(QLatin1String(canvas ? "canvasData" : "imageUrl"))
         .arg(viewPos.x() / zoom)
         .arg(viewPos.y() / zoom);
@@ -1780,7 +1780,7 @@ void WebView::openContextPosterInTarget(const QPoint &viewPos,
     qreal zoom = enginePage()->zoomFactor();
     if (zoom <= 0)
         zoom = 1.0;
-    const QString call = QStringLiteral("__aroraCtxImage.posterUrl(%1,%2);")
+    const QString call = QStringLiteral("__arktosCtxImage.posterUrl(%1,%2);")
         .arg(viewPos.x() / zoom)
         .arg(viewPos.y() / zoom);
     QPointer<WebView> self(this);

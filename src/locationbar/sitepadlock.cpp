@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -354,14 +354,14 @@ void SitePadlockButton::rebuildPopup()
         && (https || scheme == QLatin1String("http"));
 
     m_popupHost->setText(host.isEmpty() ? tr("This page") : host);
-    if (scheme == QLatin1String("arora-cert-error"))
+    if (scheme == QLatin1String("arktos-cert-error"))
         m_popupSecurity->setText(
             tr("Certificate error — the connection could not be "
                "verified"));
-    else if (scheme == QLatin1String("arora-http-warning"))
+    else if (scheme == QLatin1String("arktos-http-warning"))
         m_popupSecurity->setText(
             tr("Blocked by HTTPS-Only mode — the site is not secure"));
-    else if (scheme == QLatin1String("arora-site-block"))
+    else if (scheme == QLatin1String("arktos-site-block"))
         m_popupSecurity->setText(
             tr("Blocked — the domain is on the phishing/malware list"));
     else if (https)
@@ -397,8 +397,8 @@ void SitePadlockButton::rebuildPopup()
         const QString version =
             TlsVerifier::instance()->tlsVersion(host, tlsPort);
         m_popupTls->setText(version.isEmpty()
-            ? tr("TLS verified by Arora")
-            : tr("TLS verified by Arora (%1)")
+            ? tr("TLS verified by Arktos")
+            : tr("TLS verified by Arktos (%1)")
                   .arg(version == QLatin1String("TLSv1_3")
                            ? QStringLiteral("TLS 1.3")
                        : version == QLatin1String("TLSv1_2")

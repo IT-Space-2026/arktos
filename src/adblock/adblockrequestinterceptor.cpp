@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2026, The Arora Authors
+ * Copyright (c) 2026, The Arktos Authors
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -129,11 +129,11 @@ void AdBlockRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
     // old ContentAccessDenied QNetworkReply produced.
     //
     // STALL01: only web requests reach the filter lists.  Internal
-    // schemes — devtools:, chrome:, qrc:, arora-file:/-cert-error:/
+    // schemes — devtools:, chrome:, qrc:, arktos-file:/-cert-error:/
     // -http-warning:/-resource:, abp: — and other non-web schemes
     // pass through untouched.  Without this guard a uBO
     // $script,redirect=noopjs rule rewritten past its from=/to=
-    // constraint also fired on the arora-resource: stub it redirected
+    // constraint also fired on the arktos-resource: stub it redirected
     // to, and every redirected request re-entered the matcher.
     if (!isWebRequestScheme(info.requestUrl().scheme()))
         return;
@@ -176,7 +176,7 @@ void AdBlockRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
     case AdBlockDecision::Block:
         noteBlockedRequest(info.firstPartyUrl());
         info.block(true);
-        if (qEnvironmentVariableIsSet("ARORA_DEBUG_BLOCK"))
+        if (qEnvironmentVariableIsSet("ARKTOS_DEBUG_BLOCK"))
             qDebug() << "ADBLOCK-BLOCK" << info.requestUrl()
                      << "firstParty" << info.firstPartyUrl()
                      << "rtype" << int(info.resourceType());

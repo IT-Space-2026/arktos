@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -88,7 +88,7 @@ QStringList TorManager::binarySearchPaths()
 
 QString TorManager::resolveBinary()
 {
-    const QByteArray env = qgetenv("ARORA_TOR_BINARY");
+    const QByteArray env = qgetenv("ARKTOS_TOR_BINARY");
     if (!env.isEmpty()) {
         const QString path = QFile::decodeName(env);
         return QFileInfo(path).isExecutable() ? path : QString();
@@ -644,7 +644,7 @@ void TorManager::start()
     const QString binary = m_binaryPath.isEmpty()
         ? resolveBinary() : m_binaryPath;
     if (binary.isEmpty() || !QFileInfo(binary).isExecutable()) {
-        fail(QLatin1String("no tor binary found — set ARORA_TOR_BINARY, "
+        fail(QLatin1String("no tor binary found — set ARKTOS_TOR_BINARY, "
                            "install tor, or run BuildProcess/fetch-tor.sh "
                            "(searched: ")
              + binarySearchPaths().join(QLatin1String(", "))

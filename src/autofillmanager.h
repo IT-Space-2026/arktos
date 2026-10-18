@@ -39,12 +39,12 @@ class QDataStream;
 class AutoSaver;
 namespace Engine { class Page; }
 
-// Per-page bridge exposed to JavaScript as "aroraAutofill" through the
+// Per-page bridge exposed to JavaScript as "arktosAutofill" through the
 // page's QWebChannel (registered in WebPage::init).  The injected
 // autofill.js reports submitted forms through submitForm(); the bridge
 // tags each report with the url the page had when the hook was
 // installed so a page cannot forge form data for a different origin.
-// SEC24: the channel lives in AroraChannelWorld — page script cannot
+// SEC24: the channel lives in ArktosChannelWorld — page script cannot
 // reach this object at all.  The SEC08 per-load token stays as the
 // second wall: it lives only inside the injected script's closure in
 // that world, so a report without it is still dropped.

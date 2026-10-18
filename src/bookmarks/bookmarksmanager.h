@@ -82,7 +82,7 @@ public:
         return &m_commands;
     }
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // BKIMP01: the dialog-free import/export cores — public so
     // autotests and smokes can drive them; the slots below wrap them
     // in QFileDialog + summary prompts.
@@ -111,7 +111,7 @@ private slots:
 
 private:
     void load();
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // Re-binds the process-global rust tree to this profile when the
     // last rc_bm_load targeted another manager's file (m_stale).  All
     // node-touching entry points funnel here first.

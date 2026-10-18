@@ -23,7 +23,7 @@
 
 #include "adblockmanager.h"
 #include "adblockpage.h"
-#include "arorastyle.h"
+#include "arktosstyle.h"
 #include "autofillmanager.h"
 #include "browserapplication.h"
 #include "browserprofile.h"
@@ -142,12 +142,12 @@ void JavaScriptExternalObject::AddSearchProvider(const QString &url)
     }, Qt::QueuedConnection);
 }
 
-JavaScriptAroraObject::JavaScriptAroraObject(QObject *parent)
+JavaScriptArktosObject::JavaScriptArktosObject(QObject *parent)
     : QObject(parent)
 {
     static const char *translations[] = {
-        QT_TR_NOOP("Welcome to Arora!"),
-        QT_TR_NOOP("Arora Start"),
+        QT_TR_NOOP("Welcome to Arktos!"),
+        QT_TR_NOOP("Arktos Start"),
         QT_TR_NOOP("Search!")
     };
     Q_UNUSED(translations);
@@ -156,15 +156,15 @@ JavaScriptAroraObject::JavaScriptAroraObject(QObject *parent)
     // switches search engines.
     connect(ToolbarSearch::openSearchManager(),
             &OpenSearchManager::currentEngineChanged,
-            this, &JavaScriptAroraObject::currentEngineNameChanged);
+            this, &JavaScriptArktosObject::currentEngineNameChanged);
     // THEME01: same for darkChrome — a mid-session Theme flip fires
     // the notifier, which the qrc start page listens to.
     connect(BrowserTheme::themeNotifier(),
             &BrowserTheme::BrowserThemeNotifier::chromeSchemeChanged,
-            this, &JavaScriptAroraObject::darkChromeChanged);
+            this, &JavaScriptArktosObject::darkChromeChanged);
 }
 
-QString JavaScriptAroraObject::translate(const QString &string)
+QString JavaScriptArktosObject::translate(const QString &string)
 {
     QString translatedString = tr(string.toUtf8().constData());
 
@@ -177,7 +177,7 @@ QString JavaScriptAroraObject::translate(const QString &string)
         return qApp->tr(string.toUtf8().constData());
 }
 
-OpenSearchEngine *JavaScriptAroraObject::contextEngine() const
+OpenSearchEngine *JavaScriptArktosObject::contextEngine() const
 {
     const WebPage *page = qobject_cast<const WebPage*>(parent());
     const bool privateContext = page && page->profile()
@@ -186,18 +186,18 @@ OpenSearchEngine *JavaScriptAroraObject::contextEngine() const
         ->engineForContext(privateContext);
 }
 
-QString JavaScriptAroraObject::currentEngineName() const
+QString JavaScriptArktosObject::currentEngineName() const
 {
     OpenSearchEngine *engine = contextEngine();
     return engine ? engine->name() : QString();
 }
 
-bool JavaScriptAroraObject::darkChrome() const
+bool JavaScriptArktosObject::darkChrome() const
 {
     return qApp && BrowserTheme::isDarkPalette(qApp->palette());
 }
 
-QString JavaScriptAroraObject::searchUrl(const QString &string) const
+QString JavaScriptArktosObject::searchUrl(const QString &string) const
 {
     OpenSearchEngine *engine = contextEngine();
     return engine ? engine->searchUrl(string).toString() : QString();
@@ -207,7 +207,7 @@ WebPage::WebPage(QObject *parent)
     : QWebEnginePage(parent)
     , m_openTargetBlankLinksIn(TabWidget::NewWindow)
     , m_javaScriptExternalObject(new JavaScriptExternalObject(this))
-    , m_javaScriptAroraObject(new JavaScriptAroraObject(this))
+    , m_javaScriptArktosObject(new JavaScriptArktosObject(this))
     , m_autoFillBridge(new AutoFillBridge(this))
     , m_webChannel(new QWebChannel(this))
     , m_certErrorPending(false)
@@ -220,7 +220,7 @@ WebPage::WebPage(QWebEngineProfile *profile, QObject *parent)
     : QWebEnginePage(profile, parent)
     , m_openTargetBlankLinksIn(TabWidget::NewWindow)
     , m_javaScriptExternalObject(new JavaScriptExternalObject(this))
-    , m_javaScriptAroraObject(new JavaScriptAroraObject(this))
+    , m_javaScriptArktosObject(new JavaScriptArktosObject(this))
     , m_autoFillBridge(new AutoFillBridge(this))
     , m_webChannel(new QWebChannel(this))
     , m_certErrorPending(false)
@@ -235,48 +235,48 @@ void WebPage::init()
     // go through Chromium's network stack and the profile's cookie store.
     //
     // The old per-frame addToJavaScriptWindowObject() binding is replaced by
-    // a QWebChannel.  SEC24: the channel is bound to AroraChannelWorld —
+    // a QWebChannel.  SEC24: the channel is bound to ArktosChannelWorld —
     // an isolated script world page code never enters — so the main
     // world has no qt.webChannelTransport at all and page script cannot
     // enumerate channel.objects or invoke the registered bridges.
-    // What the page CAN reach is only what arora-channel.js's forwarder
+    // What the page CAN reach is only what arktos-channel.js's forwarder
     // re-exposes through a whitelisted postMessage hop:
     //
     //  * external.AddSearchProvider — the window.external web-compat
     //    API, page-callable by design; it validates the descriptor url
     //    and asks for consent before any fetch happens.
-    //  * aroraPip — the page-callable backend of the
+    //  * arktosPip — the page-callable backend of the
     //    requestPictureInPicture shim (gesture-gated).
-    //  * "arora" — translate/searchUrl/properties, forwarded only on
+    //  * "arktos" — translate/searchUrl/properties, forwarded only on
     //    qrc: pages where it is the object's sole legitimate consumer.
     //
     // Everything else stays internal to the channel world:
-    //  * aroraAutofill.submitForm is called only by the autofill bundle
+    //  * arktosAutofill.submitForm is called only by the autofill bundle
     //    which now runs in the channel world too; the per-load token
     //    it passes stays there as a second wall (SEC08).
-    //  * aroraReader is reached by reader.js, which the driver now
+    //  * arktosReader is reached by reader.js, which the driver now
     //    evaluates in the channel world.
     // TOR02: the web-facing bridge objects stay unregistered in tor
     // mode — autofill capture and search-provider install are surface
     // a tor session does not need and must not offer.  The bare
     // channel itself is armed there too (TOR09): the tor start page is
-    // a qrc page that needs the "arora" object, which only ever
+    // a qrc page that needs the "arktos" object, which only ever
     // registers on qrc commits — web content still sees an empty
     // object table.
     if (!BrowserApplication::isTorMode()) {
         m_webChannel->registerObject(QLatin1String("external"), m_javaScriptExternalObject);
-        m_webChannel->registerObject(QLatin1String("aroraAutofill"), m_autoFillBridge);
+        m_webChannel->registerObject(QLatin1String("arktosAutofill"), m_autoFillBridge);
     }
-    setWebChannel(m_webChannel, Engine::AroraChannelWorld);
+    setWebChannel(m_webChannel, Engine::ArktosChannelWorld);
 
     // CHAN01/SEC24: arm the channel bootstrap at DocumentCreation in
     // the channel world.  qt.webChannelTransport is one object per
     // frame per world with a single onmessage slot — the bootstrap
-    // demultiplexes that slot across clients and hands Arora's
-    // features one shared lazy client through window.__aroraChannel.
+    // demultiplexes that slot across clients and hands Arktos's
+    // features one shared lazy client through window.__arktosChannel.
     // It also owns the whitelisted postMessage forwarder that is now
     // the ONLY path main-world script has to any channel object, so
-    // it runs in tor mode too (the tor start page's 'arora' calls
+    // it runs in tor mode too (the tor start page's 'arktos' calls
     // depend on it); living in the isolated world, the bootstrap adds
     // nothing to the page-visible script surface.
     {
@@ -286,15 +286,15 @@ void WebPage::init()
         if (channelClientFile.open(QIODevice::ReadOnly))
             bootstrapSource += QString::fromUtf8(
                 channelClientFile.readAll());
-        QFile bootstrapFile(QLatin1String(":arora-channel.js"));
+        QFile bootstrapFile(QLatin1String(":arktos-channel.js"));
         if (bootstrapFile.open(QIODevice::ReadOnly))
             bootstrapSource += QString::fromUtf8(bootstrapFile.readAll());
         if (!bootstrapSource.isEmpty()) {
             QWebEngineScript bootstrap;
-            bootstrap.setName(QLatin1String("arora:channel"));
+            bootstrap.setName(QLatin1String("arktos:channel"));
             bootstrap.setInjectionPoint(
                 QWebEngineScript::DocumentCreation);
-            bootstrap.setWorldId(Engine::AroraChannelWorld);
+            bootstrap.setWorldId(Engine::ArktosChannelWorld);
             bootstrap.setRunsOnSubFrames(false);
             bootstrap.setSourceCode(bootstrapSource);
             scripts().insert(bootstrap);
@@ -303,15 +303,15 @@ void WebPage::init()
 
     if (!BrowserApplication::isTorMode()) {
         // SEC24: the main-world half of the bridge — the whitelisted
-        // surface only.  __aroraMainCall/__aroraMainGet/
-        // __aroraMainSignal serialize calls into the postMessage hop
+        // surface only.  __arktosMainCall/__arktosMainGet/
+        // __arktosMainSignal serialize calls into the postMessage hop
         // the channel-world forwarder answers, and window.external
         // gets its AddSearchProvider back (Chromium's own stub calls
         // into embedder plumbing Qt does not implement).
-        QFile mainWorldFile(QLatin1String(":arora-mainworld.js"));
+        QFile mainWorldFile(QLatin1String(":arktos-mainworld.js"));
         if (mainWorldFile.open(QIODevice::ReadOnly)) {
             QWebEngineScript shim;
-            shim.setName(QLatin1String("arora:mainworld"));
+            shim.setName(QLatin1String("arktos:mainworld"));
             shim.setInjectionPoint(QWebEngineScript::DocumentCreation);
             shim.setWorldId(QWebEngineScript::MainWorld);
             shim.setRunsOnSubFrames(false);
@@ -327,7 +327,7 @@ void WebPage::init()
         QFile shimFile(QLatin1String(":pip-shim.js"));
         if (shimFile.open(QIODevice::ReadOnly)) {
             QWebEngineScript shim;
-            shim.setName(QLatin1String("arora:pip-shim"));
+            shim.setName(QLatin1String("arktos:pip-shim"));
             shim.setInjectionPoint(QWebEngineScript::DocumentCreation);
             shim.setWorldId(QWebEngineScript::MainWorld);
             shim.setRunsOnSubFrames(false);
@@ -336,7 +336,7 @@ void WebPage::init()
         }
     }
 
-    // The "arora" object serves only internal qrc pages (the start
+    // The "arktos" object serves only internal qrc pages (the start
     // page, normal and tor-branded).  It is registered when the main
     // frame commits to a qrc url — before the page's channel
     // handshake — and removed again when the frame navigates away, so
@@ -344,10 +344,10 @@ void WebPage::init()
     connect(this, &QWebEnginePage::urlChanged, this,
             [this](const QUrl &url) {
         if (url.scheme() == QLatin1String("qrc"))
-            m_webChannel->registerObject(QLatin1String("arora"),
-                                         m_javaScriptAroraObject);
+            m_webChannel->registerObject(QLatin1String("arktos"),
+                                         m_javaScriptArktosObject);
         else
-            m_webChannel->deregisterObject(m_javaScriptAroraObject);
+            m_webChannel->deregisterObject(m_javaScriptArktosObject);
     });
 
     // SEC16: commits that did not pass through acceptNavigationRequest
@@ -389,7 +389,7 @@ void WebPage::init()
     // loadFinished signal for the frame — pages that gate on an
     // iframe's .load() (including failed loads) hang.  The built-in
     // page commits first and handleLoadingChanged() still replaces the
-    // main-frame failure with Arora's notfound.html, so the custom
+    // main-frame failure with Arktos's notfound.html, so the custom
     // error page is preserved either way.
     settings()->setAttribute(QWebEngineSettings::ErrorPageEnabled, true);
 
@@ -447,9 +447,9 @@ void WebPage::init()
             // pages — keep them out of history.  PDF01: sanitized
             // temp-dir copies are viewer staging, not destinations.
             const QString scheme = url().scheme();
-            if (ok && scheme != QLatin1String("arora-cert-error")
-                && scheme != QLatin1String("arora-http-warning")
-                && scheme != QLatin1String("arora-site-block")
+            if (ok && scheme != QLatin1String("arktos-cert-error")
+                && scheme != QLatin1String("arktos-http-warning")
+                && scheme != QLatin1String("arktos-site-block")
                 && !PdfSupport::isManagedPath(url().toLocalFile()))
                 history->addHistoryEntry(url().toString());
         });
@@ -550,7 +550,7 @@ void WebPage::setUserAgent(const QString &userAgent)
     // Apply to every profile the app browses on: the named browsing
     // profile and the off-the-record private profile when it exists.
     // (QWebEngineProfile::defaultProfile() is itself off-the-record in
-    // Qt6 and Arora never browses on it — setting the UA there had no
+    // Qt6 and Arktos never browses on it — setting the UA there had no
     // effect.)  An empty override restores the vanilla UA, not Qt's
     // QtWebEngine-badged default.
     const QString effectiveAgent =
@@ -594,8 +594,8 @@ static bool isBrowserHandledScheme(const QString &scheme)
     static const QSet<QString> schemes = {
         QStringLiteral("about"),
         QStringLiteral("abp"),
-        QStringLiteral("arora-file"),
-        QStringLiteral("arora-resource"),
+        QStringLiteral("arktos-file"),
+        QStringLiteral("arktos-resource"),
         QStringLiteral("blob"),
         QStringLiteral("chrome"),
         QStringLiteral("chrome-extension"),
@@ -699,7 +699,7 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
     // the rendered page knows the nonce, so web content cannot forge a
     // "proceed" for a certificate it did not trigger; forged or stale
     // links are dropped silently.
-    if (scheme == QLatin1String("arora-cert-error")) {
+    if (scheme == QLatin1String("arktos-cert-error")) {
         if (!isMainFrame)
             return false;
         const QString nonce = QUrlQuery(url)
@@ -716,7 +716,7 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
     // pages: only the rendered warning knows the nonce, so web
     // content cannot forge an "always allow" for a host it did not
     // trigger a warning for.
-    if (scheme == QLatin1String("arora-http-warning")) {
+    if (scheme == QLatin1String("arktos-http-warning")) {
         if (!isMainFrame)
             return false;
         const QString nonce = QUrlQuery(url)
@@ -732,7 +732,7 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
     // links — the same nonce-bound scheme trick: only the rendered
     // warning knows the nonce, so web content cannot forge a
     // "proceed" for a host it did not trigger a block for.
-    if (scheme == QLatin1String("arora-site-block")) {
+    if (scheme == QLatin1String("arktos-site-block")) {
         if (!isMainFrame)
             return false;
         const QString nonce = QUrlQuery(url)
@@ -813,8 +813,8 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
         return false;
 
     // file:// is built into Chromium and cannot take a custom scheme
-    // handler; directories are rerouted to arora-file:// so the
-    // FileAccessHandler can render Arora's own directory listing.
+    // handler; directories are rerouted to arktos-file:// so the
+    // FileAccessHandler can render Arktos's own directory listing.
     if (scheme == QLatin1String("file") && isMainFrame
         && QFileInfo(url.toLocalFile()).isDir()) {
         const QUrl dirUrl = FileAccessHandler::urlForLocalPath(url.toLocalFile());
@@ -1379,7 +1379,7 @@ void WebPage::showErrorPage(const QUrl &errorUrl, const QString &errorString,
         return;
     QString title = tr("Error loading page: %1").arg(QString::fromUtf8(errorUrl.toEncoded()));
     QString html = QLatin1String(notFoundErrorFile.readAll());
-    QPixmap pixmap = QIcon(QLatin1String(":/arora.svg")).pixmap(QSize(64, 64));
+    QPixmap pixmap = QIcon(QLatin1String(":/arktos.svg")).pixmap(QSize(64, 64));
     QBuffer imageBuffer;
     imageBuffer.open(QBuffer::ReadWrite);
     if (pixmap.save(&imageBuffer, "PNG")) {
@@ -1389,7 +1389,7 @@ void WebPage::showErrorPage(const QUrl &errorUrl, const QString &errorString,
     html = html.arg(title,
                     errorString,
                     tr("When connecting to: %1.").arg(QString::fromUtf8(errorUrl.toEncoded())),
-                    tr("Check the address for errors such as <b>ww</b>.arora-browser.org instead of <b>www</b>.arora-browser.org"),
+                    tr("Check the address for errors such as <b>ww</b>.arktos-browser.com instead of <b>www</b>.arktos-browser.com"),
                     tr("If the address is correct, try checking the network connection."),
                     tr("If your computer or network is protected by a firewall or proxy, make sure that the browser is permitted to access the network."));
     if (httpsUpgradeFailed) {
@@ -1418,7 +1418,7 @@ void WebPage::showErrorPage(const QUrl &errorUrl, const QString &errorString,
     // feeds the manager), but a page that loaded and then errored —
     // e.g. a navigation interrupted mid-way — may have gotten in.
     // VSEC01: gate on the PROFILE, not the resolved persona — the
-    // off-the-record profiles have no aroraProfileId tag, so
+    // off-the-record profiles have no arktosProfileId tag, so
     // profileIdFor() resolves them to "default" and an unguarded
     // removeHistoryEntry would let a private error page scrub the
     // persistent store it never wrote to.
@@ -1575,7 +1575,7 @@ void WebPage::showTorWarmupPending(const QUrl &url)
     QPixmap pixmap = QIcon(QLatin1String(":/tor-onion.svg"))
             .pixmap(QSize(64, 64));
     if (pixmap.isNull())
-        pixmap = QIcon(QLatin1String(":/arora.svg")).pixmap(QSize(64, 64));
+        pixmap = QIcon(QLatin1String(":/arktos.svg")).pixmap(QSize(64, 64));
     QBuffer imageBuffer;
     imageBuffer.open(QBuffer::ReadWrite);
     if (pixmap.save(&imageBuffer, "PNG")) {
@@ -1781,7 +1781,7 @@ void WebPage::handleCertificateError(QWebEngineCertificateError error)
     // failed navigation is sandboxed and its custom-scheme links never
     // reach acceptNavigationRequest (about:blank#blocked).
     SchemeAccessHandler::installInterstitialHandlers(profile());
-    load(QUrl(QLatin1String("arora-cert-error:interstitial?n=")
+    load(QUrl(QLatin1String("arktos-cert-error:interstitial?n=")
               + m_certErrorNonce));
     emit certificateErrorInterstitial(error.url());
 }
@@ -1795,7 +1795,7 @@ QString WebPage::certificateErrorHtml(const QWebEngineCertificateError &error)
     QString title = tr("Certificate error: %1")
             .arg(QString::fromUtf8(errorUrl.toEncoded()));
     QString html = QLatin1String(certErrorFile.readAll());
-    QPixmap pixmap = QIcon(QLatin1String(":/arora.svg")).pixmap(QSize(64, 64));
+    QPixmap pixmap = QIcon(QLatin1String(":/arktos.svg")).pixmap(QSize(64, 64));
     QBuffer imageBuffer;
     imageBuffer.open(QBuffer::ReadWrite);
     if (pixmap.save(&imageBuffer, "PNG")) {
@@ -1829,16 +1829,16 @@ QString WebPage::certificateErrorHtml(const QWebEngineCertificateError &error)
                 .arg(QString::fromLatin1(cert.digest(QCryptographicHash::Sha256).toHex()).toHtmlEscaped());
     }
 
-    QString buttons = tr("<a id=\"back\" href=\"arora-cert-error:back?n=%1\">Back to safety</a>")
+    QString buttons = tr("<a id=\"back\" href=\"arktos-cert-error:back?n=%1\">Back to safety</a>")
             .arg(m_certErrorNonce);
     if (error.isOverridable()) {
-        buttons += tr("<a id=\"proceed\" href=\"arora-cert-error:proceed?n=%1\">Proceed anyway (unsafe)</a>")
+        buttons += tr("<a id=\"proceed\" href=\"arktos-cert-error:proceed?n=%1\">Proceed anyway (unsafe)</a>")
                 .arg(m_certErrorNonce);
     }
 
     html = html.arg(title,
                     tr("This site's certificate is not trusted"),
-                    tr("Arora cannot verify the identity of %1. The certificate presented by the server "
+                    tr("Arktos cannot verify the identity of %1. The certificate presented by the server "
                        "is invalid — continuing could expose the connection to an attacker.")
                         .arg(QString::fromUtf8(errorUrl.host().toUtf8()).toHtmlEscaped()),
                     QLatin1String("<li>") + errorInfo + QLatin1String("</li>"),
@@ -1916,7 +1916,7 @@ void WebPage::handleClientCertificateSelection(
     }
 
     // Test hook: --clientcert-smoke cannot drive the picker headless.
-    if (qEnvironmentVariableIsSet("ARORA_CLIENTCERT_AUTOSELECT")) {
+    if (qEnvironmentVariableIsSet("ARKTOS_CLIENTCERT_AUTOSELECT")) {
         m_clientCertChoices.insert(authority, certs.first());
         selection.select(certs.first());
         return;
@@ -1954,7 +1954,7 @@ void WebPage::handleClientCertificateSelection(
 
 // SAFE01: HTTPS-Only strict mode — the http: target a navigation was
 // stopped for becomes a nonce-bound interstitial on the private
-// arora-http-warning: scheme (same machinery as the certificate-error
+// arktos-http-warning: scheme (same machinery as the certificate-error
 // page; setHtml() cannot work — a data: document's custom-scheme
 // links are sandboxed to about:blank#blocked).  Called both from the
 // acceptNavigationRequest veto and from handleLoadingChanged when the
@@ -1971,7 +1971,7 @@ void WebPage::showHttpWarning(const QUrl &target)
             httpWarningHtml(target));
     SchemeAccessHandler::installInterstitialHandlers(profile());
     const QUrl interstitial(
-        QLatin1String("arora-http-warning:interstitial?n=")
+        QLatin1String("arktos-http-warning:interstitial?n=")
         + m_httpWarningNonce);
     QPointer<WebPage> page(this);
     QTimer::singleShot(0, this, [page, interstitial]() {
@@ -1987,7 +1987,7 @@ QString WebPage::httpWarningHtml(const QUrl &target)
     if (!warningFile.open(QIODevice::ReadOnly))
         return QString();
     QString html = QLatin1String(warningFile.readAll());
-    QPixmap pixmap = QIcon(QLatin1String(":/arora.svg")).pixmap(QSize(64, 64));
+    QPixmap pixmap = QIcon(QLatin1String(":/arktos.svg")).pixmap(QSize(64, 64));
     QBuffer imageBuffer;
     imageBuffer.open(QBuffer::ReadWrite);
     if (pixmap.save(&imageBuffer, "PNG")) {
@@ -2001,21 +2001,21 @@ QString WebPage::httpWarningHtml(const QUrl &target)
     const QString shownUrl =
         QString::fromUtf8(target.toEncoded()).toHtmlEscaped();
 
-    QString buttons = tr("<a id=\"back\" href=\"arora-http-warning:back?n=%1\">Back to safety</a>")
+    QString buttons = tr("<a id=\"back\" href=\"arktos-http-warning:back?n=%1\">Back to safety</a>")
             .arg(m_httpWarningNonce);
-    buttons += tr("<a id=\"proceed\" href=\"arora-http-warning:proceed?n=%1\">Proceed anyway (unsafe)</a>")
+    buttons += tr("<a id=\"proceed\" href=\"arktos-http-warning:proceed?n=%1\">Proceed anyway (unsafe)</a>")
             .arg(m_httpWarningNonce);
     // "Always" persists a host exception — off-the-record profiles
     // never write settings, so they only get the session-scoped path.
     if (!profile()->isOffTheRecord()) {
-        buttons += tr("<a id=\"always\" href=\"arora-http-warning:always?n=%1\">Always allow HTTP on this site</a>")
+        buttons += tr("<a id=\"always\" href=\"arktos-http-warning:always?n=%1\">Always allow HTTP on this site</a>")
                 .arg(m_httpWarningNonce);
     }
 
     html = html.arg(
         tr("Insecure connection: %1").arg(shownUrl),
         tr("This site does not support HTTPS"),
-        tr("Arora stopped %1 from loading because it can only be "
+        tr("Arktos stopped %1 from loading because it can only be "
            "reached over an unencrypted HTTP connection.  Anyone on "
            "the network path can read or change everything sent to or "
            "received from this site — including passwords and "
@@ -2072,7 +2072,7 @@ void WebPage::resolveHttpWarningLink(const QUrl &command)
 }
 
 // SEC18: the refused navigation's target becomes a nonce-bound
-// interstitial on the private arora-site-block: scheme — same
+// interstitial on the private arktos-site-block: scheme — same
 // machinery as the certificate-error and HTTPS-Only pages.  Called
 // both from the acceptNavigationRequest veto and from
 // handleLoadingChanged when the interceptor refused a hop, so the
@@ -2088,7 +2088,7 @@ void WebPage::showDomainBlockWarning(const QUrl &target)
             domainBlockWarningHtml(target));
     SchemeAccessHandler::installInterstitialHandlers(profile());
     const QUrl interstitial(
-        QLatin1String("arora-site-block:interstitial?n=")
+        QLatin1String("arktos-site-block:interstitial?n=")
         + m_domainBlockNonce);
     QPointer<WebPage> page(this);
     QTimer::singleShot(0, this, [page, interstitial]() {
@@ -2123,15 +2123,15 @@ QString WebPage::domainBlockWarningHtml(const QUrl &target)
     // There is deliberately no "always" link — a persisted bypass of
     // a listed phishing/malware domain is a foot-gun SAFE01's plain
     // http exception can afford to be and this list cannot.
-    QString buttons = tr("<a id=\"back\" href=\"arora-site-block:back?n=%1\">Back to safety</a>")
+    QString buttons = tr("<a id=\"back\" href=\"arktos-site-block:back?n=%1\">Back to safety</a>")
             .arg(m_domainBlockNonce);
-    buttons += tr("<a id=\"proceed\" href=\"arora-site-block:proceed?n=%1\">Proceed anyway (unsafe)</a>")
+    buttons += tr("<a id=\"proceed\" href=\"arktos-site-block:proceed?n=%1\">Proceed anyway (unsafe)</a>")
             .arg(m_domainBlockNonce);
 
     html = html.arg(
         tr("Dangerous site blocked: %1").arg(shownUrl),
         tr("This site is on the local phishing/malware blocklist"),
-        tr("Arora stopped %1 from loading because the domain is "
+        tr("Arktos stopped %1 from loading because the domain is "
            "listed as serving phishing or malware.  Visiting it can "
            "steal credentials or infect this computer.")
             .arg(shownHost),
@@ -2239,9 +2239,9 @@ void WebPage::showRateLimitNoticeIfNeeded()
     };
     const QString script = QStringLiteral(
         "(function(){"
-        "if(document.getElementById('arora-rate-limit'))return;"
+        "if(document.getElementById('arktos-rate-limit'))return;"
         "var bar=document.createElement('div');"
-        "bar.id='arora-rate-limit';"
+        "bar.id='arktos-rate-limit';"
         "bar.setAttribute('style','all:initial;display:block;position:relative;"
             "z-index:2147483647;background:%3;color:%4;"
             "border-bottom:2px solid %5;"
@@ -2256,14 +2256,14 @@ void WebPage::showRateLimitNoticeIfNeeded()
         "parent.insertBefore(bar,parent.firstChild);"
         "})();")
         .arg(jsQuote(tr("Google rate-limited this connection.")),
-             jsQuote(tr("This is Google's bot check, not an Arora error — "
+             jsQuote(tr("This is Google's bot check, not an Arktos error — "
                         "it temporarily flagged search traffic from this "
                         "profile. Complete the prompt below or try again "
                         "later; or switch the default search engine under "
                         "Tools > Options > Search.")),
-             AroraStyle::warningBannerColor().name(),
-             AroraStyle::warningBannerTextColor().name(),
-             AroraStyle::warningBannerBorderColor().name());
+             ArktosStyle::warningBannerColor().name(),
+             ArktosStyle::warningBannerTextColor().name(),
+             ArktosStyle::warningBannerBorderColor().name());
     runJavaScript(script);
 }
 
@@ -2338,13 +2338,13 @@ void WebPage::setInjectedScriptsEnabled(bool enabled)
         return;
     m_injectedScriptsEnabled = enabled;
     if (!enabled) {
-        // The "arora:" name prefix namespaces only the two scripts this
-        // path arms — audit-harness capture scripts use "arora-*" and
+        // The "arktos:" name prefix namespaces only the two scripts this
+        // path arms — audit-harness capture scripts use "arktos-*" and
         // are deliberately not matched.
         QWebEngineScriptCollection &collection = scripts();
         const QList<QWebEngineScript> installed = collection.toList();
         for (const QWebEngineScript &script : installed) {
-            if (script.name().startsWith(QLatin1String("arora:")))
+            if (script.name().startsWith(QLatin1String("arktos:")))
                 collection.remove(script);
         }
         return;

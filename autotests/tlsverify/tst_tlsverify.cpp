@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -35,17 +35,17 @@
 #include "browserapplication.h"
 #include "tlsverifier.h"
 #include "tlsfixture.h"
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 #include "qtry.h"
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include <rustcore.h>
 #endif
 
 using TlsFixtureData::certDir;
 using TlsFixtureData::certFile;
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 // Synchronous FFI probe — the verdict JSON parsed into an object.
 static QJsonObject ffiCheck(const char *host, quint16 port, quint32 flags)
 {
@@ -84,7 +84,7 @@ void tst_TlsVerify::initTestCase()
     QCoreApplication::setApplicationName(QLatin1String("tst_tlsverify"));
     QStandardPaths::setTestModeEnabled(true);
     m_savedProxy = QNetworkProxy::applicationProxy();
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     const QByteArray ca = certFile(QLatin1String("ca.der"));
     QVERIFY2(!ca.isEmpty(),
              "fixture CA missing — run data/testcerts/gen_testcerts.py");
@@ -97,7 +97,7 @@ void tst_TlsVerify::initTestCase()
 
 void tst_TlsVerify::cleanupTestCase()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     rc_tls_clear_roots();
 #endif
 }
@@ -110,7 +110,7 @@ void tst_TlsVerify::cleanup()
 
 void tst_TlsVerify::ffiVerdictMatrix()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     struct Row {
         const char *base;
         const char *status;
@@ -161,7 +161,7 @@ void tst_TlsVerify::ffiVerdictMatrix()
 
 void tst_TlsVerify::ffiRefusesPrivateHosts()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // Without RC_TLS_F_ALLOW_LOCAL every private/loopback name is a
     // refusal — a probe must never become an intranet scanner.
     for (const char *host :
@@ -182,7 +182,7 @@ void tst_TlsVerify::ffiRefusesPrivateHosts()
 
 void tst_TlsVerify::ffiNetworkFailureIsUnverified()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // A refused connection never evaluated a chain — the verdict is
     // "unverified", not "warning".
     quint16 port;
@@ -250,7 +250,7 @@ void tst_TlsVerify::probeUrlGates()
 
 void tst_TlsVerify::asyncProbeVerified()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     TlsFixture server;
     QVERIFY(server.start(QLatin1String("valid")));
     TlsVerifier *verifier = TlsVerifier::instance();
@@ -277,7 +277,7 @@ void tst_TlsVerify::asyncProbeVerified()
 
 void tst_TlsVerify::asyncProbeWarning()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // An evaluated-and-failed chain surfaces as Warning with the
     // class the panel prints — this is the "TLS WARNING: <class>"
     // chip path.
@@ -297,7 +297,7 @@ void tst_TlsVerify::asyncProbeWarning()
 
 void tst_TlsVerify::asyncProbeUnverified()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // Probe failure → Unverified, NEVER Warning: a network hiccup is
     // not a bad chain.
     quint16 port;

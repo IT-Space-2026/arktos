@@ -42,7 +42,7 @@
 #include "networkaccessmanager.h"
 #include "trancolist.h"
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "sitedecisionstore.h"
 #endif
 
@@ -120,7 +120,7 @@ void AdBlockManager::setEnabled(bool enabled)
 
 bool AdBlockManager::rustEngineAvailable()
 {
-#if defined(ARORA_ADBLOCK_RUST)
+#if defined(ARKTOS_ADBLOCK_RUST)
     return true;
 #else
     return false;
@@ -249,7 +249,7 @@ void AdBlockManager::maybePromptForListConsent(QWidget *parent)
         return;
     const QMessageBox::StandardButton choice = QMessageBox::question(parent,
         tr("Download Ad-Blocking Filter Lists?"),
-        tr("Arora is configured to block ads and trackers using the "
+        tr("Arktos is configured to block ads and trackers using the "
            "community filter lists EasyList, EasyPrivacy, and uBlock "
            "filters. Enabling them downloads the lists once from "
            "easylist.to and ublockorigin.github.io and refreshes them "
@@ -300,7 +300,7 @@ void AdBlockManager::installOnProfile(QWebEngineProfile *profile,
     // the scheme itself is registered in main() before QApplication.
     profile->installUrlSchemeHandler(AdBlockSchemeAccessHandler::schemeName(),
                                      new AdBlockSchemeAccessHandler(this));
-    // arora-resource:// serves the bundled $redirect= stub resources.
+    // arktos-resource:// serves the bundled $redirect= stub resources.
     profile->installUrlSchemeHandler(AdBlockResourceHandler::schemeName(),
                                      new AdBlockResourceHandler(this));
 }
@@ -559,7 +559,7 @@ void AdBlockManager::load()
         m_subscriptions.append(adBlockSubscription);
     }
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // SITED01: retire site-whitelist rules from the custom-rules file
     // into the Rust store — they are per-site decisions, not list
     // content.  Only an already-loaded custom subscription is
@@ -636,7 +636,7 @@ bool AdBlockManager::isSiteWhitelisted(const QString &host)
     const QString key = siteWhitelistKey(host);
     if (key.isEmpty())
         return false;
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // subscriptions() forces load() — the one-shot custom-rules
     // migration — before the store is consulted.
     subscriptions();
@@ -658,7 +658,7 @@ void AdBlockManager::setSiteWhitelisted(const QString &host, bool whitelisted)
     const QString key = siteWhitelistKey(host);
     if (key.isEmpty())
         return;
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     subscriptions();
     if (whitelisted)
         SiteDecisionStore::set(SiteDecisionStore::KindAdBlock,

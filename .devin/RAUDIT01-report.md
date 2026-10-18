@@ -55,7 +55,7 @@ rust-vs-C++ twins named in the task.
   fidelity differences only, documented here.
 - `parsers.rs` vs the Qt OpenSearch/XBEL readers: no independent twins
   remain — the Qt readers delegate to `rc_opensearch_parse` /
-  `rc_xbel_check` under `ARORA_RUSTCORE`, so the only drift surface is
+  `rc_xbel_check` under `ARKTOS_RUSTCORE`, so the only drift surface is
   the intentional no-rust fallback.
 
 ### (c) Performance

@@ -1,10 +1,10 @@
-# arora-rustcore — the shared Rust core
+# arktos-rustcore — the shared Rust core
 
-Arora's engine-neutral application components live here behind a C ABI
+Arktos's engine-neutral application components live here behind a C ABI
 (the Mozilla application-services pattern): the Qt shell consumes them
 identically regardless of web engine, and the same sources build for
 Linux/macOS/Windows/BSD — only the artifact name changes
-(`libarora_rustcore.a/.so/.dylib/.dll`).
+(`libarktos_rustcore.a/.so/.dylib/.dll`).
 
 ## Build
 
@@ -14,8 +14,8 @@ Linux/macOS/Windows/BSD — only the artifact name changes
 The crate is the DEFAULT code path: the project-root `.qmake.conf`
 adds `CONFIG+=rustcore` whenever a cargo toolchain resolves (PATH,
 then `~/.cargo/bin`).  The `rustcore` scope defines
-`ARORA_RUSTCORE`, adds `include/` to the
-include path, links `target/release/libarora_rustcore.a`, and wires a
+`ARKTOS_RUSTCORE`, adds `include/` to the
+include path, links `target/release/libarktos_rustcore.a`, and wires a
 Makefile rule so `make` rebuilds the crate when `src/*.rs` changes.
 Opt out with `qmake CONFIG-=rustcore` (this crate) or
 `CONFIG+=no-rust` (all crates); with no toolchain the flag is simply

@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -40,7 +40,7 @@
 #include <unistd.h>
 #endif
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 #include <rustcore.h>
 #endif
 
@@ -91,7 +91,7 @@ void shutdownSealRoutine()
     ProfileVault::instance()->sealUnlockedProfilesAtShutdown();
 }
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 bool dirHasContents(const QString &path)
 {
     QDir dir(path);
@@ -177,7 +177,7 @@ bool secureEraseTree(const QString &path, QString *error)
     return secureEraseFile(path, error);
 }
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 bool secureEraseTreeContents(const QString &path, QString *error)
 {
     QDir dir(path);
@@ -210,7 +210,7 @@ bool writeMarker(const QString &path, const QByteArray &contents,
     return true;
 }
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 
 QByteArray encoded(const QString &path)
 {
@@ -243,7 +243,7 @@ ProfileVault *ProfileVault::instance()
 
 bool ProfileVault::isAvailable()
 {
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     return true;
 #else
     return false;
@@ -343,7 +343,7 @@ QStringList ProfileVault::dirtyProfiles() const
     return out;
 }
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 
 ProfileVault::Error ProfileVault::mapStatus(int status,
                                             const QString &fallback) const
@@ -518,7 +518,7 @@ ProfileVault::Error ProfileVault::seal(const QString &profileId,
 {
     const QString id = normalizedId(profileId);
     m_lastError.clear();
-#ifndef ARORA_RUSTCORE
+#ifndef ARKTOS_RUSTCORE
     Q_UNUSED(password);
     Q_UNUSED(algo);
     return fail(Unavailable,
@@ -670,7 +670,7 @@ ProfileVault::Error ProfileVault::unseal(const QString &profileId,
 {
     const QString id = normalizedId(profileId);
     m_lastError.clear();
-#ifndef ARORA_RUSTCORE
+#ifndef ARKTOS_RUSTCORE
     Q_UNUSED(password);
     Q_UNUSED(allowOverwrite);
     return fail(Unavailable,
@@ -860,7 +860,7 @@ ProfileVault::Error ProfileVault::verify(const QString &profileId,
 {
     const QString id = normalizedId(profileId);
     m_lastError.clear();
-#ifndef ARORA_RUSTCORE
+#ifndef ARKTOS_RUSTCORE
     Q_UNUSED(password);
     return fail(Unavailable,
                 QStringLiteral("profile vault needs a rustcore build"));
@@ -885,7 +885,7 @@ ProfileVault::Error ProfileVault::changePassword(
 {
     const QString id = normalizedId(profileId);
     m_lastError.clear();
-#ifndef ARORA_RUSTCORE
+#ifndef ARKTOS_RUSTCORE
     Q_UNUSED(oldPassword);
     Q_UNUSED(newPassword);
     return fail(Unavailable,
@@ -916,7 +916,7 @@ QVariantMap ProfileVault::inspect(const QString &profileId)
     out.insert(QLatin1String("profile"), id);
     out.insert(QLatin1String("state"), int(state(id)));
     out.insert(QLatin1String("vault_dir"), vaultDirFor(id));
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     const QString blob =
         vaultPath(vaultDirFor(id), QLatin1String("vault.arv"));
     if (QFile::exists(blob)) {

@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@
 
 #include <QtTest/QtTest>
 #include "profilesettings.h"
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 
 #include <argon2id.h>
 #include <browserpaths.h>
@@ -117,7 +117,7 @@ void tst_SecureStore::argon2idVector()
     QByteArray password(32, '\x01');
     QByteArray salt(16, '\x02');
     QByteArray out(32, Qt::Uninitialized);
-    QCOMPARE(arora_argon2id(out.data(), size_t(out.size()),
+    QCOMPARE(arktos_argon2id(out.data(), size_t(out.size()),
                             password.constData(), size_t(password.size()),
                             salt.constData(), size_t(salt.size()),
                             3, 32, 4), 0);
@@ -156,7 +156,7 @@ void tst_SecureStore::argon2idMatchesSystemLib()
         QByteArray salt(c.slen, 's');
         QByteArray mine(32, Qt::Uninitialized);
         QByteArray theirs(32, Qt::Uninitialized);
-        QCOMPARE(arora_argon2id(mine.data(), 32,
+        QCOMPARE(arktos_argon2id(mine.data(), 32,
                                 password.constData(), size_t(c.plen),
                                 salt.constData(), size_t(c.slen),
                                 c.t, c.m, c.p), 0);
@@ -235,7 +235,7 @@ void tst_SecureStore::noKeyMaterialInKdfFile()
 
     const QByteArray pass = QLatin1String("passphrase1").toUtf8();
     QByteArray derived(32, Qt::Uninitialized);
-    QCOMPARE(arora_argon2id(derived.data(), 32,
+    QCOMPARE(arktos_argon2id(derived.data(), 32,
                             pass.constData(), size_t(pass.size()),
                             salt.constData(), size_t(salt.size()),
                             3, 65536, 4), 0);

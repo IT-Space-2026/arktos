@@ -11,7 +11,7 @@ License : GPL-3.0 (bitwarden-LICENSE*.txt in this dir; see
 Source  : https://github.com/bitwarden/clients/releases/download/
           browser-v2026.9.3/dist-chrome-2026.9.3.zip
 Manifest: manifest_version 3, default_locale en, no "key", no
-          "update_url" — updates ship with Arora releases, the
+          "update_url" — updates ship with Arktos releases, the
           extension cannot self-update.
 Permissions declared: activeTab, alarms, clipboardRead,
   clipboardWrite, contextMenus, idle, offscreen, scripting,
@@ -20,7 +20,7 @@ Permissions declared: activeTab, alarms, clipboardRead,
 Host permissions    : https://*/*, http://*/*
 Optional permissions: nativeMessaging, privacy
   (nativeMessaging = desktop-app bridge — declared optional and NOT
-  granted by Arora; out of scope.)
+  granted by Arktos; out of scope.)
 
 Integrity
 ---------

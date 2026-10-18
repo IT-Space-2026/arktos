@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,7 +28,7 @@
 // 1:1.
 
 #include <QtTest>
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 
 #include "navigationpolicy.h"
 #include "privacyrequestinterceptor.h"
@@ -429,7 +429,7 @@ void tst_NavigationPolicy::cookieGateMatrix()
 // redirect verdict carries for the shield badge.
 void tst_NavigationPolicy::urlCleaning()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // A google /url redirector unwraps to its real destination on a
     // main-frame navigation — and reports the dropped tracker units.
     auto v = NavigationPolicy::evaluate(makeRequest(

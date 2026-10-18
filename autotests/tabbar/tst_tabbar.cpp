@@ -34,7 +34,7 @@
 #include <browserapplication.h>
 #include <engineinterface.h>
 #include "profilesettings.h"
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 #include "qtry.h"
 
 class tst_TabBar : public QObject
@@ -461,9 +461,9 @@ void tst_TabBar::verticalTabRows()
                  "would stay inside a ~16px column")
                  .arg(maxX - minX + 1)));
 
-    // Offscreen grab for visual review — set ARORA_TABBAR_GRAB_DIR
+    // Offscreen grab for visual review — set ARKTOS_TABBAR_GRAB_DIR
     // to a directory to save it.
-    const QByteArray grabDir = qgetenv("ARORA_TABBAR_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_TABBAR_GRAB_DIR");
     if (!grabDir.isEmpty())
         image.save(QString::fromLocal8Bit(grabDir)
                    + QLatin1String("/vertical-rows.png"));
@@ -821,7 +821,7 @@ void tst_TabBar::verticalTabButtons()
 
 // COV05 — the tab-strip chrome lives on the TabWidget's own TabBar, so
 // everything below drives real TabWidgets (BrowserApplication comes
-// from qtest_arora.h's QTEST_MAIN).
+// from qtest_arktos.h's QTEST_MAIN).
 
 // contextMenuRequested() is a private slot that builds a stack-local
 // QMenu and exec()s it.  This helper fires the slot, then — inside
@@ -1397,7 +1397,7 @@ void tst_TabBar::chipsPaint()
         const QByteArray prefix = qgetenv("TABSHOT_PREFIX");
         if (!prefix.isEmpty())
             strip.toImage().save(QString::fromLatin1(
-                "/tmp/arora-tabs-%1-%2.png")
+                "/tmp/arktos-tabs-%1-%2.png")
                 .arg(QString::fromLatin1(prefix),
                      shapeNames.at(shapeIndex)));
         QCOMPARE(bar->tabRect(containerIndex).height(),
@@ -2130,8 +2130,8 @@ void tst_TabBar::newTabButton()
     QVERIFY(lastClose);
     QVERIFY(!lastClose->isVisible());
 
-    // Offscreen grabs for visual review — set ARORA_TABBAR_GRAB_DIR.
-    const QByteArray grabDir = qgetenv("ARORA_TABBAR_GRAB_DIR");
+    // Offscreen grabs for visual review — set ARKTOS_TABBAR_GRAB_DIR.
+    const QByteArray grabDir = qgetenv("ARKTOS_TABBAR_GRAB_DIR");
     if (!grabDir.isEmpty()) {
         const QString base = QString::fromLocal8Bit(grabDir);
         bar.setShape(QTabBar::RoundedNorth);
@@ -2295,8 +2295,8 @@ void tst_TabBar::firefoxTabMetrics()
             > bar.width() || bar.tabRect(0).x() < 0);
 
     // Offscreen grabs for visual review — 1 tab at the metric,
-    // many in equal-width squeeze.  ARORA_TABBAR_GRAB_DIR to save.
-    const QByteArray grabDir = qgetenv("ARORA_TABBAR_GRAB_DIR");
+    // many in equal-width squeeze.  ARKTOS_TABBAR_GRAB_DIR to save.
+    const QByteArray grabDir = qgetenv("ARKTOS_TABBAR_GRAB_DIR");
     if (!grabDir.isEmpty()) {
         const QString base = QString::fromLocal8Bit(grabDir);
         SubTabBar lone;
@@ -2355,7 +2355,7 @@ void tst_TabBar::noTabUnderlines()
         bar.setExpanding(false);
         bar.show();
         for (int i = 0; i < 4; ++i)
-            bar.addTab(QStringLiteral("Welcome to Arora! %1").arg(i));
+            bar.addTab(QStringLiteral("Welcome to Arktos! %1").arg(i));
         const bool vertical =
             shape == QTabBar::RoundedWest || shape == QTabBar::RoundedEast;
         bar.resize(vertical ? QSize(220, 400)
@@ -2401,8 +2401,8 @@ void tst_TabBar::noTabUnderlines()
         QVERIFY2(run < 30, qPrintable(QStringLiteral(
             "shape %1 hovered tab edge run %2px").arg(shape).arg(run)));
 
-        // Offscreen grab for visual review — ARORA_TABBAR_GRAB_DIR.
-        const QByteArray grabDir = qgetenv("ARORA_TABBAR_GRAB_DIR");
+        // Offscreen grab for visual review — ARKTOS_TABBAR_GRAB_DIR.
+        const QByteArray grabDir = qgetenv("ARKTOS_TABBAR_GRAB_DIR");
         if (!grabDir.isEmpty())
             image.save(QString::fromLocal8Bit(grabDir)
                 + QStringLiteral("/underline-%1.png").arg(int(shape)));

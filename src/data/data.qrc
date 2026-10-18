@@ -1,8 +1,8 @@
 <!DOCTYPE RCC><RCC version="1.0">
 <qresource>
-    <file>128x128/arora.png</file>
+    <file>128x128/arktos.png</file>
     <file>128x128/run.png</file>
-    <file>arora.svg</file>
+    <file>arktos.svg</file>
     <file>defaultbookmarks.xbel</file>
     <file>fetchLinks.js</file>
     <file>contextimage.js</file>
@@ -12,8 +12,8 @@
     <file>Readability-readerable.js</file>
     <file>reader.js</file>
     <file>reader-forward.js</file>
-    <file>arora-channel.js</file>
-    <file>arora-mainworld.js</file>
+    <file>arktos-channel.js</file>
+    <file>arktos-mainworld.js</file>
     <file>fingerprint.js</file>
     <file>pip.js</file>
     <file>pip-shim.js</file>

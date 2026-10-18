@@ -1,7 +1,7 @@
 // Armed once per page by WebPage::init() as a QWebEngineScript at
-// DocumentCreation (name "arora:channel"; the C++ side prepends
+// DocumentCreation (name "arktos:channel"; the C++ side prepends
 // qwebchannel.js so QWebChannel is defined here).  SEC24: it runs in
-// AroraChannelWorld — the isolated script world the page's
+// ArktosChannelWorld — the isolated script world the page's
 // QWebChannel is bound to — so qt.webChannelTransport and this whole
 // file are invisible to page script in the main world.
 //
@@ -29,12 +29,12 @@
 // logs "Unhandled signal", which upstream already does for
 // unconnected signals.
 //
-// Arora-internal consumers (autofill.js, reader.js) never construct
-// a QWebChannel of their own: they call __aroraChannel(ready), which
+// Arktos-internal consumers (autofill.js, reader.js) never construct
+// a QWebChannel of their own: they call __arktosChannel(ready), which
 // lazily opens the single shared client — pages that never submit a
 // password form never pay a handshake.
 (function () {
-    if (window.__aroraChannel)
+    if (window.__arktosChannel)
         return;
 
     var transport = window.qt && qt.webChannelTransport;
@@ -95,7 +95,7 @@
         }
     }
 
-    window.__aroraChannel = function (ready) {
+    window.__arktosChannel = function (ready) {
         if (channel) {
             ready(channel);
             return;
@@ -124,39 +124,39 @@
 // SEC24: the main-world forwarder — the ONLY path page-side script
 // has to the channel now that the transport lives in this isolated
 // world.  window.postMessage crosses worlds on the shared DOMWindow,
-// so arora-mainworld.js (and the start pages' inline client) post
+// so arktos-mainworld.js (and the start pages' inline client) post
 // requests here; this side checks an explicit whitelist before any
 // call is relayed to a channel object.  Anything not listed —
-// aroraAutofill, aroraReader, and the whole objects table — stays
+// arktosAutofill, arktosReader, and the whole objects table — stays
 // unreachable from the main world no matter what the page forges.
 //
 // The locked surface, deliberately page-callable:
 //   external.AddSearchProvider   window.external web-compat
-//   aroraPip.requestPopOut       requestPictureInPicture shim backend
-//   aroraPip.exitPopOut          document.exitPictureInPicture backend
-//   aroraPip.popOutResolved/     pip-shim's async result signals
+//   arktosPip.requestPopOut       requestPictureInPicture shim backend
+//   arktosPip.exitPopOut          document.exitPictureInPicture backend
+//   arktosPip.popOutResolved/     pip-shim's async result signals
 //         popOutClosed
 // On qrc: pages only (the start pages — the object's sole legitimate
 // consumer, and only registered there anyway):
-//   arora.translate / arora.searchUrl        (methods)
-//   arora.currentEngineName / arora.darkChrome (property reads)
-//   arora.currentEngineNameChanged / arora.darkChromeChanged (signals)
+//   arktos.translate / arktos.searchUrl        (methods)
+//   arktos.currentEngineName / arktos.darkChrome (property reads)
+//   arktos.currentEngineNameChanged / arktos.darkChromeChanged (signals)
 // ------------------------------------------------------------------
 (function () {
     var METHODS = {
         'external': { 'AddSearchProvider': true },
-        'aroraPip': { 'requestPopOut': true, 'exitPopOut': true }
+        'arktosPip': { 'requestPopOut': true, 'exitPopOut': true }
     };
     var PROPERTIES = {};
     var SIGNALS = {
-        'aroraPip': { 'popOutResolved': true, 'popOutClosed': true }
+        'arktosPip': { 'popOutResolved': true, 'popOutClosed': true }
     };
     if (location.protocol == 'qrc:') {
-        METHODS['arora'] = { 'translate': true, 'searchUrl': true };
-        PROPERTIES['arora'] = {
+        METHODS['arktos'] = { 'translate': true, 'searchUrl': true };
+        PROPERTIES['arktos'] = {
             'currentEngineName': true, 'darkChrome': true
         };
-        SIGNALS['arora'] = {
+        SIGNALS['arktos'] = {
             'currentEngineNameChanged': true, 'darkChromeChanged': true
         };
     }
@@ -171,13 +171,13 @@
         if (event.source !== window)
             return;
         var request = event.data;
-        if (!request || request.aroraBridge != 'call')
+        if (!request || request.arktosBridge != 'call')
             return;
 
         var respond = function (ok, value) {
             try {
                 window.postMessage({
-                    aroraBridge: 'result',
+                    arktosBridge: 'result',
                     id: request.id,
                     ok: !!ok,
                     value: value === undefined ? null : value
@@ -197,7 +197,7 @@
             return;
         }
 
-        __aroraChannel(function (channel) {
+        __arktosChannel(function (channel) {
             var target = channel && channel.objects
                 && channel.objects[object];
             if (!target) {
@@ -222,7 +222,7 @@
                             Array.prototype.slice.call(arguments);
                         try {
                             window.postMessage({
-                                aroraBridge: 'signal',
+                                arktosBridge: 'signal',
                                 object: object,
                                 signal: member,
                                 args: args

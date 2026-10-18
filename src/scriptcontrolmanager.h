@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -57,7 +57,7 @@ class QUrl;
 //   websettings/enableJavascript=0 -> scripts blocked
 //   otherwise                      -> scripts run
 //
-// Internal schemes (qrc:, arora-*, about:, chrome:, devtools:, ...) are
+// Internal schemes (qrc:, arktos-*, about:, chrome:, devtools:, ...) are
 // always allowed — they carry application pages that need JavaScript
 // even at Safest.  The decision is applied through the per-page
 // QWebEngineSettings::JavascriptEnabled attribute (per-page settings

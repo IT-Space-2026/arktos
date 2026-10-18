@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,7 +22,7 @@
 
 // ENG05 — the Servo backend for the Engine interface.
 //
-// Compiled only under `qmake servo=1` (ARORA_SERVO) and useful only
+// Compiled only under `qmake servo=1` (ARKTOS_SERVO) and useful only
 // when the servo-embed cdylib resolves at runtime — the artifact is a
 // ~1.1GB out-of-tree build (spikes/servo/servo-embed, pinned libservo
 // v0.7.0 family per the ENG03 verdict) that cannot be rebuilt inside

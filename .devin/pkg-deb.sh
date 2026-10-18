@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
 # pkg-deb.sh — PKG01 .deb packaging driver.
 #
-# Produces dist/arora_<ver>_<arch>.deb from the qmake build. The package
+# Produces dist/arktos_<ver>_<arch>.deb from the qmake build. The package
 # carries the same self-contained payload as BuildProcess/bundle-linux.sh
 # (Qt 6.12 runtime + QtWebEngineProcess + plugins/resources, all under
-# /usr/lib/arora) because the tree builds against a user-local Qt that is
+# /usr/lib/arktos) because the tree builds against a user-local Qt that is
 # newer than any distro series — the deb therefore bundles Qt rather than
-# depending on libqt6* packages. The optional Rust pieces (arora-rustdl,
-# arora-rustcore) are STATICALLY linked into the binary via their .a
+# depending on libqt6* packages. The optional Rust pieces (arktos-rustdl,
+# arktos-rustcore) are STATICALLY linked into the binary via their .a
 # archives (see src/rustdl/rustdl.pri, src/rustcore/rustcore.pri), so
 # there are no rust .so artifacts to ship. Servo (libservo_embed) does
 # not exist in this tree yet — the ENG03 spike gates it.
 #
 # Subcommands (also the targets debian/rules delegates to):
 #   build    — qmake (rust-crate CONFIG auto-detected from built .a
-#              artifacts, override via ARORA_QMAKE_CONFIG) + make -C src
-#   stage D  — populate FHS package tree under D (usr/bin, usr/lib/arora,
-#              usr/share/{arora,applications,icons,pixmaps,man,doc})
+#              artifacts, override via ARKTOS_QMAKE_CONFIG) + make -C src
+#   stage D  — populate FHS package tree under D (usr/bin, usr/lib/arktos,
+#              usr/share/{arktos,applications,icons,pixmaps,man,doc})
 #   pack D   — shlibdeps -> substvars, gencontrol, md5sums, dpkg-deb
 #   verify F — extract the .deb, ldd it with the dev Qt masked, and run
 #              --quit-after-load from the installed layout headless
@@ -26,17 +26,17 @@
 # dpkg-buildpackage -b -us -uc -rfakeroot -d works too via debian/rules
 # (artifacts then land in the parent dir as usual).
 #
-# Env: QTDIR, ARORA_PKG_JOBS (default 2), ARORA_QMAKE_CONFIG,
-#      ARORA_PKG_KEEP=1 keeps the verify scratch dir.
+# Env: QTDIR, ARKTOS_PKG_JOBS (default 2), ARKTOS_QMAKE_CONFIG,
+#      ARKTOS_PKG_KEEP=1 keeps the verify scratch dir.
 
 set -euo pipefail
 
 SRCROOT="$(cd "$(dirname "$0")/.." && pwd)"
 QTDIR="${QTDIR:-$HOME/Qt/6.12.0/gcc_64}"
-JOBS="${ARORA_PKG_JOBS:-2}"
-PKG=arora
+JOBS="${ARKTOS_PKG_JOBS:-2}"
+PKG=arktos
 DIST="$SRCROOT/dist"
-LIBDIR=usr/lib/arora   # bundle payload home inside the package
+LIBDIR=usr/lib/arktos   # bundle payload home inside the package
 
 fail() { echo "pkg-deb: FAIL: $*" >&2; exit 1; }
 note() { echo "pkg-deb: $*"; }
@@ -46,13 +46,13 @@ note() { echo "pkg-deb: $*"; }
 cmd_build() {
     # Enable a rust crate only when its release archive already exists —
     # mirrors what the in-tree build was configured with; use
-    # ARORA_QMAKE_CONFIG to force a different set.
+    # ARKTOS_QMAKE_CONFIG to force a different set.
     local cfg=""
-    [ -f "$SRCROOT/src/rustdl/target/release/libarora_rustdl.a" ] \
+    [ -f "$SRCROOT/src/rustdl/target/release/libarktos_rustdl.a" ] \
         && cfg="$cfg CONFIG+=rustdl"
-    [ -f "$SRCROOT/src/rustcore/target/release/libarora_rustcore.a" ] \
+    [ -f "$SRCROOT/src/rustcore/target/release/libarktos_rustcore.a" ] \
         && cfg="$cfg CONFIG+=rustcore"
-    cfg="${ARORA_QMAKE_CONFIG:-$cfg}"
+    cfg="${ARKTOS_QMAKE_CONFIG:-$cfg}"
 
     local need_qmake=0 tok
     [ -f "$SRCROOT/src/Makefile" ] || need_qmake=1
@@ -64,39 +64,39 @@ cmd_build() {
         (cd "$SRCROOT/src" && "$QTDIR/bin/qmake" src.pro $cfg)
     fi
     (cd "$SRCROOT/src" && make -j"$JOBS")
-    [ -x "$SRCROOT/arora" ] || fail "build produced no arora binary"
+    [ -x "$SRCROOT/arktos" ] || fail "build produced no arktos binary"
 }
 
 cmd_stage() {
     local D="$1" B
-    [ -x "$SRCROOT/arora" ] || cmd_build
+    [ -x "$SRCROOT/arktos" ] || cmd_build
     rm -rf "$D"
-    B="$(mktemp -d /tmp/arora-deb.XXXXXX)/bundle"
-    ARORA_BUNDLE_JOBS="$JOBS" QTDIR="$QTDIR" \
+    B="$(mktemp -d /tmp/arktos-deb.XXXXXX)/bundle"
+    ARKTOS_BUNDLE_JOBS="$JOBS" QTDIR="$QTDIR" \
         "$SRCROOT/BuildProcess/bundle-linux.sh" "$B" >/dev/null
-    [ -x "$B/bin/arora" ] || fail "bundle produced no binary"
+    [ -x "$B/bin/arktos" ] || fail "bundle produced no binary"
 
-    # /usr/lib/arora keeps the bundle's relative layout verbatim
+    # /usr/lib/arktos keeps the bundle's relative layout verbatim
     # (bin/../{lib,libexec,plugins,resources,translations} all resolve).
     install -d "$D/$LIBDIR" "$D/usr/bin"
     cp -a "$B/bin" "$B/lib" "$B/libexec" "$B/plugins" "$B/resources" \
           "$B/translations" "$D/$LIBDIR/"
-    # Arora has no QtSql usage — the optional SQL driver plugins would
+    # Arktos has no QtSql usage — the optional SQL driver plugins would
     # only pull undeclarable deps (libmysqlclient/libpq/oci/...).
     rm -rf "$D/$LIBDIR/plugins/sqldrivers"
 
-    # App data is FHS /usr/share/arora; the binary's bundle-first lookup
-    # (<bindir>/../share/arora) reaches it through this symlink.
-    install -d "$D/usr/share/arora" "$D/$LIBDIR/share"
-    cp -a "$B/share/arora/." "$D/usr/share/arora/"
-    ln -s ../../../share/arora "$D/$LIBDIR/share/arora"
+    # App data is FHS /usr/share/arktos; the binary's bundle-first lookup
+    # (<bindir>/../share/arktos) reaches it through this symlink.
+    install -d "$D/usr/share/arktos" "$D/$LIBDIR/share"
+    cp -a "$B/share/arktos/." "$D/usr/share/arktos/"
+    ln -s ../../../share/arktos "$D/$LIBDIR/share/arktos"
 
     # Bundled tor expert bundle -> $LIBDIR/lib/tor (+ lib/data geoip),
     # matching TorManager's <bindir>/../lib/tor and binaryDir/../data
-    # searches.  ARORA_SKIP_TOR_BUNDLE=1 opts out (offline builds).
-    if [ -z "${ARORA_SKIP_TOR_BUNDLE:-}" ]; then
-        T="$(mktemp -d /tmp/arora-tor.XXXXXX)"
-        ARORA_TOR_PREFIX="$T" sh "$SRCROOT/BuildProcess/fetch-tor.sh" >/dev/null \
+    # searches.  ARKTOS_SKIP_TOR_BUNDLE=1 opts out (offline builds).
+    if [ -z "${ARKTOS_SKIP_TOR_BUNDLE:-}" ]; then
+        T="$(mktemp -d /tmp/arktos-tor.XXXXXX)"
+        ARKTOS_TOR_PREFIX="$T" sh "$SRCROOT/BuildProcess/fetch-tor.sh" >/dev/null \
             || fail "tor expert bundle fetch failed"
         install -d "$D/$LIBDIR/lib"
         cp -a "$T/tor" "$D/$LIBDIR/lib/tor"
@@ -118,15 +118,15 @@ cmd_stage() {
     gzip -9 -c "$SRCROOT/debian/changelog" \
         > "$D/usr/share/doc/$PKG/changelog.gz"
 
-    # /usr/bin/arora — fixed-path launcher for the installed layout.
-    cat > "$D/usr/bin/arora" <<'EOF'
+    # /usr/bin/arktos — fixed-path launcher for the installed layout.
+    cat > "$D/usr/bin/arktos" <<'EOF'
 #!/bin/sh
-# Arora launcher — the package ships its Qt/WebEngine runtime privately.
-ARORA_HOME=/usr/lib/arora
-export LD_LIBRARY_PATH="$ARORA_HOME/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-exec "$ARORA_HOME/bin/arora" "$@"
+# Arktos launcher — the package ships its Qt/WebEngine runtime privately.
+ARKTOS_HOME=/usr/lib/arktos
+export LD_LIBRARY_PATH="$ARKTOS_HOME/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+exec "$ARKTOS_HOME/bin/arktos" "$@"
 EOF
-    chmod 0755 "$D/usr/bin/arora"
+    chmod 0755 "$D/usr/bin/arktos"
 
     rm -rf "$(dirname "$B")"
     note "staged $D ($(du -sh "$D" | cut -f1))"
@@ -214,14 +214,14 @@ cmd_pack() {
         | sort | xargs md5sum) > "$D/DEBIAN/md5sums"
     dpkg-gencontrol -p"$PKG" -P"$D"
     dpkg-deb --root-owner-group --build "$D" "$OUT"
-    note "built $(ls -t "$OUT"/arora_*_*.deb | head -1)"
+    note "built $(ls -t "$OUT"/arktos_*_*.deb | head -1)"
 }
 
 cmd_verify() {
     local deb="$1" R missing
     [ -f "$deb" ] || fail "no .deb at $deb"
-    R="$(mktemp -d /tmp/arora-debverify.XXXXXX)"
-    [ -n "${ARORA_PKG_KEEP:-}" ] || trap "rm -rf '$R'" EXIT
+    R="$(mktemp -d /tmp/arktos-debverify.XXXXXX)"
+    [ -n "${ARKTOS_PKG_KEEP:-}" ] || trap "rm -rf '$R'" EXIT
 
     # -- control sanity -------------------------------------------------
     dpkg-deb -f "$deb" Package Version Architecture >/dev/null
@@ -252,15 +252,15 @@ cmd_verify() {
     dpkg --admindir="$db" -s "$PKG" 2>/dev/null \
         | grep -q "Status: install ok installed" \
         || fail "package did not reach installed state"
-    [ -x "$root/usr/bin/arora" ] || fail "no usr/bin/arora installed"
+    [ -x "$root/usr/bin/arktos" ] || fail "no usr/bin/arktos installed"
     [ -f "$root/$LIBDIR/bin/qt.conf" ] || fail "no qt.conf installed"
-    [ -f "$root/usr/share/applications/arora.desktop" ] \
+    [ -f "$root/usr/share/applications/arktos.desktop" ] \
         || fail "no desktop file installed"
-    [ -f "$root/usr/share/icons/hicolor/128x128/apps/arora.png" ] \
+    [ -f "$root/usr/share/icons/hicolor/128x128/apps/arktos.png" ] \
         || fail "no hicolor icon installed"
-    [ -f "$root/usr/share/icons/hicolor/scalable/apps/arora.svg" ] \
+    [ -f "$root/usr/share/icons/hicolor/scalable/apps/arktos.svg" ] \
         || fail "no scalable icon installed"
-    [ -f "$root/usr/share/pixmaps/arora.xpm" ] \
+    [ -f "$root/usr/share/pixmaps/arktos.xpm" ] \
         || fail "no pixmap icon installed"
     [ -f "$root/usr/share/doc/$PKG/copyright" ] \
         || fail "no copyright installed"
@@ -275,7 +275,7 @@ cmd_verify() {
     lddout=$(bwrap --dev-bind / / --tmpfs "$QTDIR" -- \
         env -i PATH=/usr/bin:/bin \
         LD_LIBRARY_PATH="$root/$LIBDIR/lib" \
-        ldd "$root/$LIBDIR/bin/arora" \
+        ldd "$root/$LIBDIR/bin/arktos" \
             "$root/$LIBDIR/libexec/QtWebEngineProcess" 2>&1)
     missing=$(printf '%s\n' "$lddout" | grep -cE 'not found' || true)
     if [ "$missing" -ne 0 ]; then
@@ -284,17 +284,17 @@ cmd_verify() {
     fi
 
     # -- launch from the installed layout, headless ----------------------
-    # dpkg -i into / needs root, so the wrapper's /usr/lib/arora prefix is
+    # dpkg -i into / needs root, so the wrapper's /usr/lib/arktos prefix is
     # rebased into the scratch root — same payload, same layout.
     mkdir -p "$R/home"
-    sed "s|/usr/lib/arora|$root/usr/lib/arora|g" \
-        "$root/usr/bin/arora" > "$R/arora-rebased"
-    chmod 0755 "$R/arora-rebased"
+    sed "s|/usr/lib/arktos|$root/usr/lib/arktos|g" \
+        "$root/usr/bin/arktos" > "$R/arktos-rebased"
+    chmod 0755 "$R/arktos-rebased"
     bwrap --dev-bind / / --tmpfs "$QTDIR" -- \
         env -i HOME="$R/home" PATH=/usr/bin:/bin \
         QT_QPA_PLATFORM=offscreen \
         QTWEBENGINE_CHROMIUM_FLAGS=--disable-gpu \
-        "$R/arora-rebased" --quit-after-load \
+        "$R/arktos-rebased" --quit-after-load \
         >"$R/launch.log" 2>&1 || {
             cat "$R/launch.log" >&2
             fail "installed binary did not launch (log above)"
@@ -305,7 +305,7 @@ cmd_verify() {
 }
 
 cmd_clean() {
-    rm -rf "$SRCROOT/debian/arora" "$SRCROOT/debian/files" \
+    rm -rf "$SRCROOT/debian/arktos" "$SRCROOT/debian/files" \
            "$SRCROOT"/debian/substvars "$SRCROOT"/debian/*.substvars
 }
 
@@ -317,9 +317,9 @@ case "${1:-all}" in
     clean)   cmd_clean ;;
     all)
         cmd_build
-        cmd_stage debian/arora
-        cmd_pack debian/arora
-        cmd_verify "$(ls -t "$DIST"/arora_*_*.deb | head -1)"
+        cmd_stage debian/arktos
+        cmd_pack debian/arktos
+        cmd_verify "$(ls -t "$DIST"/arktos_*_*.deb | head -1)"
         ;;
     *) echo "usage: $0 [build|stage DIR|pack DIR [OUT]|verify DEB|clean|all]" >&2
        exit 2 ;;

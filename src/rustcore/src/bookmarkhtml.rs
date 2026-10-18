@@ -12,7 +12,7 @@
 //!   * javascript: passes only behind the caller's
 //!     "import_bookmarklets" flag — the single consent point for
 //!     scriptable bookmarks;
-//!   * every other scheme (data:, vbscript:, file:, the arora-*
+//!   * every other scheme (data:, vbscript:, file:, the arktos-*
 //!     internals, ...) refuses — the store never accepts a url that
 //!     WebView::loadUrl would execute or expose.
 //!
@@ -886,7 +886,7 @@ mod tests {
 <DT><A HREF=\"data:text/html,<script>x</script>\">data</A>
 <DT><A HREF=\"vbscript:x\">vbs</A>
 <DT><A HREF=\"file:///etc/passwd\">file</A>
-<DT><A HREF=\"arora-file:///\">internal</A>
+<DT><A HREF=\"arktos-file:///\">internal</A>
 <DT><A HREF=\"about:blank\">about</A>
 <DT><A HREF=\"https://ok.example/\">ok</A>
 <DT><A HREF=\"ftp://f.example/\">ftp</A>
@@ -904,7 +904,7 @@ mod tests {
         assert_eq!(schemes["data"], 1);
         assert_eq!(schemes["vbscript"], 1);
         assert_eq!(schemes["file"], 1);
-        assert_eq!(schemes["arora-file"], 1);
+        assert_eq!(schemes["arktos-file"], 1);
         assert_eq!(schemes["about"], 1);
         // Nothing refused reached the store.
         assert_eq!(bm.find_url("javascript:alert(1)"), None);
@@ -1037,7 +1037,7 @@ mod tests {
     #[test]
     fn export_file_perms_and_atomic() {
         let dir = std::env::temp_dir().join(format!(
-            "arora-bmhtml-{}-{}",
+            "arktos-bmhtml-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

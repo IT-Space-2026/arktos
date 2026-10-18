@@ -26,7 +26,7 @@
 #include <QNetworkCookie>
 #include <cookiejar.h>
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "sitedecisionstore.h"
 #include "profilesettings.h"
 #endif
@@ -115,7 +115,7 @@ void tst_CookieJar::init()
     // AutoSaver in ~CookieJar; start each test from a clean slate.
     ProfileSettings settings;
     settings.clear();
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // Per-site cookie rules live in the decision store now.
     SiteDecisionStore::clear(SiteDecisionStore::KindCookie);
 #endif

@@ -39,10 +39,10 @@ FORMS += \
 # CONFIG-=adblock_rust`, or `CONFIG+=no-rust` for all crates) or no
 # toolchain exists.
 adblock_rust:!no-rust {
-    CARGO = $$ARORA_CARGO
+    CARGO = $$ARKTOS_CARGO
     isEmpty(CARGO): CARGO = cargo
-    win32: ADBLOCK_RUST_LIB = $$PWD/rust/target/release/arora_adblock_ffi.lib
-    else:  ADBLOCK_RUST_LIB = $$PWD/rust/target/release/libarora_adblock_ffi.a
+    win32: ADBLOCK_RUST_LIB = $$PWD/rust/target/release/arktos_adblock_ffi.lib
+    else:  ADBLOCK_RUST_LIB = $$PWD/rust/target/release/libarktos_adblock_ffi.a
 
     cargo_adblock_rust.target = $$ADBLOCK_RUST_LIB
     unix: cargo_adblock_rust.commands = cd $$PWD/rust && \
@@ -55,7 +55,7 @@ adblock_rust:!no-rust {
     QMAKE_EXTRA_TARGETS += cargo_adblock_rust
     PRE_TARGETDEPS += $$ADBLOCK_RUST_LIB
 
-    DEFINES += ARORA_ADBLOCK_RUST
+    DEFINES += ARKTOS_ADBLOCK_RUST
     HEADERS += $$PWD/adblockrustengine.h
     SOURCES += $$PWD/adblockrustengine.cpp
     LIBS += $$ADBLOCK_RUST_LIB

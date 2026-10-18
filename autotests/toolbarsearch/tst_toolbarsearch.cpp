@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, The Arora Authors
+ * Copyright (c) 2026, The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -38,7 +38,7 @@
 #include "browserapplication.h"
 #include "tabwidget.h"
 #include "profilesettings.h"
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 #include "qtry.h"
 
 // SearchBar is abstract (findNext/findPrevious are pure) — a minimal
@@ -393,7 +393,7 @@ void tst_ToolbarSearch::suggestionsOptIn()
     // A hermetic engine: its suggest endpoint is a local file so the
     // enabled-path check never leaves the box.
     const QString fixturePath = QDir::temp().filePath(
-        QLatin1String("arora-suggest-test.json"));
+        QLatin1String("arktos-suggest-test.json"));
     {
         QFile fixture(fixturePath);
         QVERIFY(fixture.open(QIODevice::WriteOnly));

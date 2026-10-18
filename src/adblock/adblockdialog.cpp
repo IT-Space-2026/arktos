@@ -32,7 +32,7 @@
 #include "adblockpresetsdialog.h"
 #include "adblockrule.h"
 #include "adblocksubscription.h"
-#include "aroraicon.h"
+#include "arktosicon.h"
 #include "safetext.h"
 #include "searchlineedit.h"
 
@@ -108,7 +108,7 @@ AdBlockDialog::AdBlockDialog(QWidget *parent)
     connect(menu, &QMenu::aboutToShow,
             this, &AdBlockDialog::aboutToShowActionMenu);
     actionToolButton->setMenu(menu);
-    actionToolButton->setIcon(AroraIcon::getChrome(QLatin1String("system-run")));
+    actionToolButton->setIcon(ArktosIcon::getChrome(QLatin1String("system-run")));
     actionToolButton->setPopupMode(QToolButton::InstantPopup);
 
     m_customCommitTimer = new QTimer(this);

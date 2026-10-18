@@ -672,7 +672,7 @@ requirements. The sweep is therefore `g++ -fanalyzer` (GCC 13.3.0) and
 
 Hardening note for future runs: `make check-static` rebuilds pass 2
 from scratch on every invocation (clang emits no reusable artifacts);
-`ARORA_STATIC_BUILD=<dir>` resumes a pass-1 build after an
+`ARKTOS_STATIC_BUILD=<dir>` resumes a pass-1 build after an
 interruption, which matters here because a single `-fanalyzer` TU
 peaks near 900 MB RSS and the task loop caps the tree at 2048 MB —
 hence the `-j1` default for pass 1.

@@ -17,8 +17,8 @@
  * Boston, MA  02110-1301  USA
  */
 
-#ifndef QTEST_ARORA_H
-#define QTEST_ARORA_H
+#ifndef QTEST_ARKTOS_H
+#define QTEST_ARKTOS_H
 
 #include <qtest.h>
 
@@ -104,11 +104,11 @@ int main(int argc, char *argv[]) \
     Q_INIT_RESOURCE(htmls); \
     Q_INIT_RESOURCE(data); \
     /* EXT06: the BrowserApplication ctor brings up the real named \
-       "arora" profile before any test leg can run — services wired \
+       "arktos" profile before any test leg can run — services wired \
        in prepareProfile() (extensions, cookies, history) then write \
        into the user's live profile.  runTests.sh already sandboxes \
        HOME for `make check`, but a test binary run standalone \
-       leaked its installs into ~/.local/share/Arora (the \
+       leaked its installs into ~/.local/share/Arktos (the \
        tst-upd/tst-old/tst-noext extensions came from exactly this). \
        QStandardPaths test mode moves every app data/config location \
        under a qttest/ subdir, and must be enabled before the app \
@@ -116,9 +116,9 @@ int main(int argc, char *argv[]) \
     QStandardPaths::setTestModeEnabled(true); \
     BrowserApplication app(argc, argv); \
     /* SRCH09/SRCH11: the BrowserApplication ctor resets the \
-       application name to "Arora", so a test that never calls \
+       application name to "Arktos", so a test that never calls \
        setApplicationName() wrote its QSettings into the user's real \
-       ~/.config/Arora/Arora.conf — tst_tabwidget's opt-out leg \
+       ~/.config/Arktos/Arktos.conf — tst_tabwidget's opt-out leg \
        leaked urlloading/searchEngineFallback=false into the live \
        config every `make check` (the recurring "search bar doesn't \
        work" report).  Rename to the test binary's basename so every \
@@ -135,7 +135,7 @@ int main(int argc, char *argv[]) \
        while Chromium still has live render objects can put the \
        crash handler into a "Received signal 11" re-fault loop that \
        never exits (tst_browsermainwindow burned whole \
-       ARORA_TEST_TIMEOUT windows emitting multi-GB logs before the \
+       ARKTOS_TEST_TIMEOUT windows emitting multi-GB logs before the \
        guard killed it).  The test verdict is fully reported by the \
        time qExec returns, and destructors here only release \
        engine-side resources — flush and exit without running them. */ \

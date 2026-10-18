@@ -26,14 +26,14 @@ p, li { white-space: pre-wrap; }
 &lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2010 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2026-2027 Janos Szenfner&lt;/p&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;a href=&quot;https://github.com/janos-szenfner/arora&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;https://github.com/janos-szenfner/arora&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;a href=&quot;https://github.com/janos-szenfner/arktos&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;https://github.com/janos-szenfner/arktos&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
         <translation>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
 &lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
 p, li { white-space: pre-wrap; }
 &lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Autorská práva vyhrazena © 2007-2010 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Autorská práva vyhrazena © 2026-2027 Janos Szenfner&lt;/p&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;a href=&quot;https://github.com/janos-szenfner/arora&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;https://github.com/janos-szenfner/arora&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;a href=&quot;https://github.com/janos-szenfner/arktos&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;https://github.com/janos-szenfner/arktos&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
     </message>
     <message>
         <source>Authors</source>
@@ -60,7 +60,7 @@ p, li { white-space: pre-wrap; }
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Autorská práva vyhrazena © 2007-2009 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
     </message>
     <message>
-        <source>&lt;a href=&quot;http://arora-browser.org&quot;&gt;http://arora-browser.org&lt;/a&gt;</source>
+        <source>&lt;a href=&quot;http://arktos-browser.com&quot;&gt;http://arktos-browser.com&lt;/a&gt;</source>
         <translation></translation>
     </message>
     <message>
@@ -214,10 +214,10 @@ p, li { white-space: pre-wrap; }
         <translation>Stáhnout seznamy filtrů blokování reklam?</translation>
     </message>
     <message>
-        <source>Arora is configured to block ads and trackers using the community filter lists EasyList, EasyPrivacy, and uBlock filters. Enabling them downloads the lists once from easylist.to and ublockorigin.github.io and refreshes them about once a week.
+        <source>Arktos is configured to block ads and trackers using the community filter lists EasyList, EasyPrivacy, and uBlock filters. Enabling them downloads the lists once from easylist.to and ublockorigin.github.io and refreshes them about once a week.
 
 Until you choose, no list downloads are made and the blocker simply has no remote rules. You can change this later under Tools &gt; Ad Block.</source>
-        <translation>Arora je nastavena k blokování reklam a sledovacích prvků pomocí komunitních seznamů filtrů EasyList, EasyPrivacy a uBlock filters. Jejich povolením se seznamy jednou stáhnou z easylist.to a ublockorigin.github.io a obnovují se přibližně jednou týdně.
+        <translation>Arktos je nastavena k blokování reklam a sledovacích prvků pomocí komunitních seznamů filtrů EasyList, EasyPrivacy a uBlock filters. Jejich povolením se seznamy jednou stáhnou z easylist.to a ublockorigin.github.io a obnovují se přibližně jednou týdně.
 
 Dokud se nerozhodnete, žádné seznamy se nestahují a blokovač prostě nemá žádná vzdálená pravidla. Tuto volbu můžete později změnit v Nástroje &gt; AdBlock.</translation>
     </message>
@@ -339,8 +339,8 @@ Dokud se nerozhodnete, žádné seznamy se nestahují a blokovač prostě nemá 
         <translation>Předvolené seznamy filtrů</translation>
     </message>
     <message>
-        <source>Tick a list to subscribe to it; Arora downloads it once and refreshes it about once a week. Unticking disables the subscription. Lists already subscribed to (including the defaults) show as ticked.</source>
-        <translation>Zaškrtnutím seznamu jej začnete odebírat; Arora jej jednou stáhne a obnovuje přibližně jednou týdně. Zrušením zaškrtnutí odběr vypnete. Již odebírané seznamy (včetně výchozích) se zobrazují jako zaškrtnuté.</translation>
+        <source>Tick a list to subscribe to it; Arktos downloads it once and refreshes it about once a week. Unticking disables the subscription. Lists already subscribed to (including the defaults) show as ticked.</source>
+        <translation>Zaškrtnutím seznamu jej začnete odebírat; Arktos jej jednou stáhne a obnovuje přibližně jednou týdně. Zrušením zaškrtnutí odběr vypnete. Již odebírané seznamy (včetně výchozích) se zobrazují jako zaškrtnuté.</translation>
     </message>
 </context>
 <context>
@@ -451,7 +451,7 @@ Dokud se nerozhodnete, žádné seznamy se nestahují a blokovač prostě nemá 
     </message>
 </context>
 <context>
-    <name>AroraIcon</name>
+    <name>ArktosIcon</name>
     <message>
         <source>Native</source>
         <translation>Nativní</translation>
@@ -825,7 +825,7 @@ Přesto je importovat?</translation>
         <translation type="vanished">je vyžadován nástroj htmlToXBel</translation>
     </message>
     <message>
-        <source>htmlToXBel tool, which is shipped with Arora and is needed to import HTML bookmarks, is not installed or not available in the search paths.</source>
+        <source>htmlToXBel tool, which is shipped with Arktos and is needed to import HTML bookmarks, is not installed or not available in the search paths.</source>
         <translation type="vanished">Nástroj htmlToXBel, který je dodáván s Arorou a je nutný k importu HTML záložek, není nainstalován nebo není dostupný v hledaných cestách.</translation>
     </message>
     <message>
@@ -913,16 +913,16 @@ Přesto ukončit?</translation>
         <translation>Obnovení selhalo</translation>
     </message>
     <message>
-        <source>The saved session will not be restored because Arora crashed while trying to restore this session.</source>
-        <translation type="obsolete">Uložená relace nebude obnovena, protože Arora spadla při pokusu o její obnovení.</translation>
+        <source>The saved session will not be restored because Arktos crashed while trying to restore this session.</source>
+        <translation type="obsolete">Uložená relace nebude obnovena, protože Arktos spadla při pokusu o její obnovení.</translation>
     </message>
     <message>
         <source> (Change: %1 %2)</source>
         <translation type="obsolete">(Revize: %1 %2)</translation>
     </message>
     <message>
-        <source>Arora crashed while trying to restore this session.  Should I try again?</source>
-        <translation>Arora spadla při pokusu o obnovu této relace. Zkusit znovu?</translation>
+        <source>Arktos crashed while trying to restore this session.  Should I try again?</source>
+        <translation>Arktos spadla při pokusu o obnovu této relace. Zkusit znovu?</translation>
     </message>
 </context>
 <context>
@@ -1159,8 +1159,8 @@ Přesto ukončit?</translation>
         <translation>O &amp;Qt</translation>
     </message>
     <message>
-        <source>About &amp;Arora</source>
-        <translation type="obsolete">O &amp;Arora</translation>
+        <source>About &amp;Arktos</source>
+        <translation type="obsolete">O &amp;Arktos</translation>
     </message>
     <message>
         <source>Navigation</source>
@@ -1211,13 +1211,13 @@ Přesto ukončit?</translation>
         <translation type="obsolete">Skrýt panel záložek</translation>
     </message>
     <message>
-        <source>Arora</source>
-        <translation type="obsolete">Arora</translation>
+        <source>Arktos</source>
+        <translation type="obsolete">Arktos</translation>
     </message>
     <message>
-        <source>%1 - Arora</source>
+        <source>%1 - Arktos</source>
         <comment>Page title and Browser name</comment>
-        <translation>%1 - Arora</translation>
+        <translation>%1 - Arktos</translation>
     </message>
     <message>
         <source>About</source>
@@ -2648,13 +2648,13 @@ Přesto ukončit?</translation>
     </message>
 </context>
 <context>
-    <name>JavaScriptAroraObject</name>
+    <name>JavaScriptArktosObject</name>
     <message>
-        <source>Welcome to Arora!</source>
+        <source>Welcome to Arktos!</source>
         <translation>Vítejte v Aroře!</translation>
     </message>
     <message>
-        <source>Arora Start</source>
+        <source>Arktos Start</source>
         <translation></translation>
     </message>
     <message>
@@ -2666,7 +2666,7 @@ Přesto ukončit?</translation>
         <translation>Výsledky vyhledávání poskytovány</translation>
     </message>
     <message>
-        <source>About Arora</source>
+        <source>About Arktos</source>
         <translation>O Aroře</translation>
     </message>
 </context>
@@ -2686,7 +2686,7 @@ Přesto ukončit?</translation>
     </message>
     <message>
         <source>&lt;p&gt;You can run with a different language than&lt;br&gt;the operating system default.&lt;/p&gt;&lt;p&gt;Please choose the language which should be used&lt;/p&gt;</source>
-        <translation>&lt;p&gt;Arora může používat jiný jazyk, než&lt;br&gt;je výchozí jazyk operačního systému.&lt;/p&gt;&lt;p&gt;Prosím vyberte, který jazyk má být použit&lt;/p&gt;</translation>
+        <translation>&lt;p&gt;Arktos může používat jiný jazyk, než&lt;br&gt;je výchozí jazyk operačního systému.&lt;/p&gt;&lt;p&gt;Prosím vyberte, který jazyk má být použit&lt;/p&gt;</translation>
     </message>
     <message>
         <source>No translation files are installed at %1.</source>
@@ -4223,7 +4223,7 @@ zakódování jako QR kód.</translation>
         <translation>Motiv:</translation>
     </message>
     <message>
-        <source>Color scheme for Arora&apos;s own windows, menus and dialogs. &quot;System default&quot; follows the desktop preference.</source>
+        <source>Color scheme for Arktos&apos;s own windows, menus and dialogs. &quot;System default&quot; follows the desktop preference.</source>
         <translation>Barevné schéma pro vlastní okna, nabídky a dialogy Arory. &quot;Výchozí systému&quot; se řídí předvolbou pracovního prostředí.</translation>
     </message>
     <message>
@@ -4247,7 +4247,7 @@ zakódování jako QR kód.</translation>
         <translation>Platí pro ovládací prvky aplikace; tmavý režim obsahu stránek je samostatné nastavení &quot;Vykreslovat stránky v tmavém režimu&quot; níže.</translation>
     </message>
     <message>
-        <source>Pages that ship their own dark theme use it; light-only pages get a heuristic color inversion with a contrast floor so text stays readable. Images and videos are not inverted. Only web content is affected — Arora&apos;s own windows keep the desktop palette.</source>
+        <source>Pages that ship their own dark theme use it; light-only pages get a heuristic color inversion with a contrast floor so text stays readable. Images and videos are not inverted. Only web content is affected — Arktos&apos;s own windows keep the desktop palette.</source>
         <translation>Stránky s vlastním tmavým motivem jej použijí; stránky pouze světlé dostanou heuristickou inverzi barev s minimálním kontrastem, aby text zůstal čitelný. Obrázky a videa se neinvertují. Týká se pouze webového obsahu — vlastní okna Arory zachovají paletu pracovního prostředí.</translation>
     </message>
     <message>
@@ -4535,7 +4535,7 @@ zakódování jako QR kód.</translation>
         <translation>Při ukončení vymazat historii, cookies, úložiště stránek a mezipaměti — vše, co pokrývá Smazat soukromá data. Stránky, na kterých zůstáváte přihlášeni, vás odhlásí.</translation>
     </message>
     <message>
-        <source>Clear browsing data when Arora exits</source>
+        <source>Clear browsing data when Arktos exits</source>
         <translation>Při ukončení Arory vymazat data prohlížení</translation>
     </message>
     <message>
@@ -4747,8 +4747,8 @@ zakódování jako QR kód.</translation>
         <translation>Každé stahování odebrat po jeho dokončení</translation>
     </message>
     <message>
-        <source>Render pages on the GPU. Turned off, Arora adds --disable-gpu to the engine flags — the switch latches at startup, so the change takes effect on the next launch.</source>
-        <translation>Vykreslovat stránky na GPU. Při vypnutí přidá Arora do příznaků enginu --disable-gpu — přepínač se zachytává při spuštění, takže se změna projeví při příštím startu.</translation>
+        <source>Render pages on the GPU. Turned off, Arktos adds --disable-gpu to the engine flags — the switch latches at startup, so the change takes effect on the next launch.</source>
+        <translation>Vykreslovat stránky na GPU. Při vypnutí přidá Arktos do příznaků enginu --disable-gpu — přepínač se zachytává při spuštění, takže se změna projeví při příštím startu.</translation>
     </message>
     <message>
         <source>Use Hardware Acceleration When Available</source>
@@ -5662,11 +5662,11 @@ klíč je odvozen v paměti a nikdy se nezapisuje na disk.</translation>
         <translation>Místní obsah</translation>
     </message>
     <message>
-        <source>TLS verified by Arora</source>
+        <source>TLS verified by Arktos</source>
         <translation>TLS ověřeno Arorou</translation>
     </message>
     <message>
-        <source>TLS verified by Arora (%1)</source>
+        <source>TLS verified by Arktos (%1)</source>
         <translation>TLS ověřeno Arorou (%1)</translation>
     </message>
     <message>
@@ -6241,8 +6241,8 @@ Opravdu chcete zavřít tuto stránku?
         <translation>Pokud je váš počítač nebo vaše síť chráněna firewallem nebo proxy, ujistěte se, že je prohlížeči povolen přístup k síti.</translation>
     </message>
     <message>
-        <source>Check the address for errors such as &lt;b&gt;ww&lt;/b&gt;.arora-browser.org instead of &lt;b&gt;www&lt;/b&gt;.arora-browser.org</source>
-        <translation>Zkontrolujte adresu kvůli chybách jako &lt;b&gt;ww&lt;/b&gt;.arora-browser.org namísto &lt;b&gt;www&lt;/b&gt;.arora-browser.org</translation>
+        <source>Check the address for errors such as &lt;b&gt;ww&lt;/b&gt;.arktos-browser.com instead of &lt;b&gt;www&lt;/b&gt;.arktos-browser.com</source>
+        <translation>Zkontrolujte adresu kvůli chybách jako &lt;b&gt;ww&lt;/b&gt;.arktos-browser.com namísto &lt;b&gt;www&lt;/b&gt;.arktos-browser.com</translation>
     </message>
     <message>
         <source>Add Search Engine</source>
@@ -6333,20 +6333,20 @@ Kdokoli v síti by mohl data přečíst nebo změnit — včetně hesel.</transl
         <translation>&lt;li&gt;Otisk SHA-256: %1&lt;/li&gt;</translation>
     </message>
     <message>
-        <source>&lt;a id=&quot;back&quot; href=&quot;arora-cert-error:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
-        <translation>&lt;a id=&quot;back&quot; href=&quot;arora-cert-error:back?n=%1&quot;&gt;Zpět do bezpečí&lt;/a&gt;</translation>
+        <source>&lt;a id=&quot;back&quot; href=&quot;arktos-cert-error:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
+        <translation>&lt;a id=&quot;back&quot; href=&quot;arktos-cert-error:back?n=%1&quot;&gt;Zpět do bezpečí&lt;/a&gt;</translation>
     </message>
     <message>
-        <source>&lt;a id=&quot;proceed&quot; href=&quot;arora-cert-error:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
-        <translation>&lt;a id=&quot;proceed&quot; href=&quot;arora-cert-error:proceed?n=%1&quot;&gt;Přesto pokračovat (nebezpečné)&lt;/a&gt;</translation>
+        <source>&lt;a id=&quot;proceed&quot; href=&quot;arktos-cert-error:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
+        <translation>&lt;a id=&quot;proceed&quot; href=&quot;arktos-cert-error:proceed?n=%1&quot;&gt;Přesto pokračovat (nebezpečné)&lt;/a&gt;</translation>
     </message>
     <message>
         <source>This site&apos;s certificate is not trusted</source>
         <translation>Certifikát této stránky není důvěryhodný</translation>
     </message>
     <message>
-        <source>Arora cannot verify the identity of %1. The certificate presented by the server is invalid — continuing could expose the connection to an attacker.</source>
-        <translation>Arora nemůže ověřit identitu %1. Certifikát předložený serverem je neplatný — pokračování by mohlo připojení vydat útočníkovi.</translation>
+        <source>Arktos cannot verify the identity of %1. The certificate presented by the server is invalid — continuing could expose the connection to an attacker.</source>
+        <translation>Arktos nemůže ověřit identitu %1. Certifikát předložený serverem je neplatný — pokračování by mohlo připojení vydat útočníkovi.</translation>
     </message>
     <message>
         <source>%1 (issued by %2, expires %3)</source>
@@ -6361,16 +6361,16 @@ Kdokoli v síti by mohl data přečíst nebo změnit — včetně hesel.</transl
         <translation>Stránka %1 vás žádá o identifikaci certifikátem.  Vyberte jeden k odeslání, nebo zrušte pro pokračování bez identifikace.</translation>
     </message>
     <message>
-        <source>&lt;a id=&quot;back&quot; href=&quot;arora-http-warning:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
-        <translation>&lt;a id=&quot;back&quot; href=&quot;arora-http-warning:back?n=%1&quot;&gt;Zpět do bezpečí&lt;/a&gt;</translation>
+        <source>&lt;a id=&quot;back&quot; href=&quot;arktos-http-warning:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
+        <translation>&lt;a id=&quot;back&quot; href=&quot;arktos-http-warning:back?n=%1&quot;&gt;Zpět do bezpečí&lt;/a&gt;</translation>
     </message>
     <message>
-        <source>&lt;a id=&quot;proceed&quot; href=&quot;arora-http-warning:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
-        <translation>&lt;a id=&quot;proceed&quot; href=&quot;arora-http-warning:proceed?n=%1&quot;&gt;Přesto pokračovat (nebezpečné)&lt;/a&gt;</translation>
+        <source>&lt;a id=&quot;proceed&quot; href=&quot;arktos-http-warning:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
+        <translation>&lt;a id=&quot;proceed&quot; href=&quot;arktos-http-warning:proceed?n=%1&quot;&gt;Přesto pokračovat (nebezpečné)&lt;/a&gt;</translation>
     </message>
     <message>
-        <source>&lt;a id=&quot;always&quot; href=&quot;arora-http-warning:always?n=%1&quot;&gt;Always allow HTTP on this site&lt;/a&gt;</source>
-        <translation>&lt;a id=&quot;always&quot; href=&quot;arora-http-warning:always?n=%1&quot;&gt;Vždy povolit HTTP na této stránce&lt;/a&gt;</translation>
+        <source>&lt;a id=&quot;always&quot; href=&quot;arktos-http-warning:always?n=%1&quot;&gt;Always allow HTTP on this site&lt;/a&gt;</source>
+        <translation>&lt;a id=&quot;always&quot; href=&quot;arktos-http-warning:always?n=%1&quot;&gt;Vždy povolit HTTP na této stránce&lt;/a&gt;</translation>
     </message>
     <message>
         <source>Insecure connection: %1</source>
@@ -6381,8 +6381,8 @@ Kdokoli v síti by mohl data přečíst nebo změnit — včetně hesel.</transl
         <translation>Tato stránka nepodporuje HTTPS</translation>
     </message>
     <message>
-        <source>Arora stopped %1 from loading because it can only be reached over an unencrypted HTTP connection.  Anyone on the network path can read or change everything sent to or received from this site — including passwords and cookies.</source>
-        <translation>Arora zastavila načítání %1, protože je dosažitelná pouze přes nešifrované HTTP připojení.  Kdokoli v cestě sítě může číst či měnit vše odeslané či přijaté z této stránky — včetně hesel a cookies.</translation>
+        <source>Arktos stopped %1 from loading because it can only be reached over an unencrypted HTTP connection.  Anyone on the network path can read or change everything sent to or received from this site — including passwords and cookies.</source>
+        <translation>Arktos zastavila načítání %1, protože je dosažitelná pouze přes nešifrované HTTP připojení.  Kdokoli v cestě sítě může číst či měnit vše odeslané či přijaté z této stránky — včetně hesel a cookies.</translation>
     </message>
     <message>
         <source>Requested address: %1</source>
@@ -6393,12 +6393,12 @@ Kdokoli v síti by mohl data přečíst nebo změnit — včetně hesel.</transl
         <translation>Stránka prostě nemusí nabízet zabezpečenou verzi, nebo připojení mohlo být útočníkem v síti degradováno zpět na HTTP.</translation>
     </message>
     <message>
-        <source>&lt;a id=&quot;back&quot; href=&quot;arora-site-block:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
-        <translation>&lt;a id=&quot;back&quot; href=&quot;arora-site-block:back?n=%1&quot;&gt;Zpět do bezpečí&lt;/a&gt;</translation>
+        <source>&lt;a id=&quot;back&quot; href=&quot;arktos-site-block:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
+        <translation>&lt;a id=&quot;back&quot; href=&quot;arktos-site-block:back?n=%1&quot;&gt;Zpět do bezpečí&lt;/a&gt;</translation>
     </message>
     <message>
-        <source>&lt;a id=&quot;proceed&quot; href=&quot;arora-site-block:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
-        <translation>&lt;a id=&quot;proceed&quot; href=&quot;arora-site-block:proceed?n=%1&quot;&gt;Přesto pokračovat (nebezpečné)&lt;/a&gt;</translation>
+        <source>&lt;a id=&quot;proceed&quot; href=&quot;arktos-site-block:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
+        <translation>&lt;a id=&quot;proceed&quot; href=&quot;arktos-site-block:proceed?n=%1&quot;&gt;Přesto pokračovat (nebezpečné)&lt;/a&gt;</translation>
     </message>
     <message>
         <source>Dangerous site blocked: %1</source>
@@ -6409,8 +6409,8 @@ Kdokoli v síti by mohl data přečíst nebo změnit — včetně hesel.</transl
         <translation>Tato stránka je na místním seznamu blokovaného phishingu/malwaru</translation>
     </message>
     <message>
-        <source>Arora stopped %1 from loading because the domain is listed as serving phishing or malware.  Visiting it can steal credentials or infect this computer.</source>
-        <translation>Arora zastavila načítání %1, protože doména je uvedena jako šířící phishing nebo malware.  Její návštěva může ukrást přihlašovací údaje nebo nakazit tento počítač.</translation>
+        <source>Arktos stopped %1 from loading because the domain is listed as serving phishing or malware.  Visiting it can steal credentials or infect this computer.</source>
+        <translation>Arktos zastavila načítání %1, protože doména je uvedena jako šířící phishing nebo malware.  Její návštěva může ukrást přihlašovací údaje nebo nakazit tento počítač.</translation>
     </message>
     <message>
         <source>The list is a local copy — no lookup left this computer.  Proceeding is remembered only for this session.</source>
@@ -6421,7 +6421,7 @@ Kdokoli v síti by mohl data přečíst nebo změnit — včetně hesel.</transl
         <translation>Google toto připojení omezil rate-limitem.</translation>
     </message>
     <message>
-        <source>This is Google&apos;s bot check, not an Arora error — it temporarily flagged search traffic from this profile. Complete the prompt below or try again later; or switch the default search engine under Tools &gt; Options &gt; Search.</source>
+        <source>This is Google&apos;s bot check, not an Arktos error — it temporarily flagged search traffic from this profile. Complete the prompt below or try again later; or switch the default search engine under Tools &gt; Options &gt; Search.</source>
         <translation>Toto je Googleova kontrola botů, ne chyba Arory — dočasně označila vyhledávací provoz z tohoto profilu. Dokončete výzvu níže nebo to zkuste později; případně přepněte výchozí vyhledávač v Nástroje &gt; Předvolby &gt; Vyhledávání.</translation>
     </message>
     <message>
@@ -6708,8 +6708,8 @@ Povolit to?</translation>
 <context>
     <name>main</name>
     <message>
-        <source>Arora — a lightweight cross-platform web browser.</source>
-        <translation>Arora — lehký multiplatformní webový prohlížeč.</translation>
+        <source>Arktos — a lightweight cross-platform web browser.</source>
+        <translation>Arktos — lehký multiplatformní webový prohlížeč.</translation>
     </message>
     <message>
         <source>Url to open on startup.</source>
@@ -6720,8 +6720,8 @@ Povolit to?</translation>
         <translation>Otevřít okno Tor: samostatný proces, který směruje veškerý provoz přes SOCKS5 posluchač spravovaného démona tor na vyhrazeném off-the-record profilu.</translation>
     </message>
     <message>
-        <source>Run without the filesystem sandbox (equivalent to ARORA_NO_SANDBOX=1).</source>
-        <translation>Spustit bez souborového sandboxu (ekvivalent ARORA_NO_SANDBOX=1).</translation>
+        <source>Run without the filesystem sandbox (equivalent to ARKTOS_NO_SANDBOX=1).</source>
+        <translation>Spustit bez souborového sandboxu (ekvivalent ARKTOS_NO_SANDBOX=1).</translation>
     </message>
     <message>
         <source>Print the sandbox backend, state and active policy, then exit.</source>

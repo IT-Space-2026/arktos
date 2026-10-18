@@ -1,6 +1,6 @@
-arora
-Arora.app
-arora.exe
+arktos
+Arktos.app
+arktos.exe
 Makefile*
 .DS_Store
 .ui
@@ -51,7 +51,7 @@ fuzz/seedgen/seedgen
 dist/
 
 # PKG01 dpkg staging artifacts
-debian/arora/
+debian/arktos/
 rpm/buildroot/
 debian/files
 debian/substvars

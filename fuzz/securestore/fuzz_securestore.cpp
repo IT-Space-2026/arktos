@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -35,8 +35,8 @@ extern "C" int LLVMFuzzerInitialize(int *argc, char ***argv)
     // QCoreApplication so QStandardPaths::AppDataLocation resolves;
     // test mode keeps the key file inside the run dir, not $HOME.
     static QCoreApplication app(*argc, *argv);
-    QCoreApplication::setOrganizationName(QLatin1String("Arora"));
-    QCoreApplication::setApplicationName(QLatin1String("Arora-fuzz"));
+    QCoreApplication::setOrganizationName(QLatin1String("Arktos"));
+    QCoreApplication::setApplicationName(QLatin1String("Arktos-fuzz"));
     QStandardPaths::setTestModeEnabled(true);
     return 0;
 }

@@ -11,7 +11,7 @@
 #include "browserapplication.h"
 #include "browserprofile.h"
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 #include <rustcore.h>
 #endif
 
@@ -24,7 +24,7 @@
 #include <thread>
 
 struct BidiClient::Impl {
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // Written by the connect worker before it posts connectFinished,
     // so the handle is never lost even if that queued call is dropped
     // during destruction.
@@ -35,7 +35,7 @@ struct BidiClient::Impl {
     std::atomic<int> inFlight{0};
 };
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 // Fires on a rustcore reader thread — hop to the GUI thread before
 // touching Qt state.  A queued call to a destroyed receiver is dropped
 // by QObject's destructor, so no lifetime guard beyond that is needed.
@@ -66,7 +66,7 @@ BidiClient::~BidiClient()
     // posting to a destroyed QObject is unsafe.
     while (m_impl->inFlight.load() > 0)
         QThread::msleep(2);
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     RcBidiClient *handle = m_impl->handle.load();
     if (handle) {
         // Joins the crate's threads — after this no callback is live.
@@ -97,7 +97,7 @@ void BidiClient::connectToEngine()
 {
     if (m_state == Connecting || m_state == Connected)
         return;
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     if (!backendArmed()) {
         setState(Unavailable,
                  BrowserApplication::isTorMode()
@@ -116,7 +116,7 @@ void BidiClient::connectToEngine()
 
 void BidiClient::attemptConnect()
 {
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     const quint16 port = BrowserProfile::bidiDebugPort();
     const QByteArray origin = BrowserProfile::bidiDebugOrigin().toUtf8();
     m_impl->inFlight.fetch_add(1);
@@ -150,7 +150,7 @@ void BidiClient::attemptConnect()
 void BidiClient::connectFinished(quintptr handle, const QString &error)
 {
     Q_UNUSED(handle);
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     if (m_state != Connecting)
         return;
     if (!m_impl->handle.load()) {
@@ -184,7 +184,7 @@ void BidiClient::connectFinished(quintptr handle, const QString &error)
 quint64 BidiClient::sendCommand(const QString &method,
                                 const QByteArray &paramsJson)
 {
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     RcBidiClient *handle = m_impl->handle.load();
     if (!handle)
         return 0;

@@ -49,7 +49,7 @@ QByteArray FileAccessHandler::scheme() const
 
 QByteArray FileAccessHandler::schemeName()
 {
-    return QByteArrayLiteral("arora-file");
+    return QByteArrayLiteral("arktos-file");
 }
 
 QUrl FileAccessHandler::urlForLocalPath(const QString &path)
@@ -74,7 +74,7 @@ void FileAccessHandler::requestStarted(QWebEngineUrlRequestJob *job)
     const QString initiatorScheme = job->initiator().scheme();
     if (!initiatorScheme.isEmpty()
         && initiatorScheme != QLatin1String("file")
-        && initiatorScheme != QLatin1String("arora-file")
+        && initiatorScheme != QLatin1String("arktos-file")
         && initiatorScheme != QLatin1String("qrc")) {
         job->fail(QWebEngineUrlRequestJob::RequestDenied);
         return;

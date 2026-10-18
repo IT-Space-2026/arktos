@@ -1,8 +1,8 @@
 [Icon Theme]
-Name=Arora Breeze
+Name=Arktos Breeze
 Comment=Bundled KDE Breeze icons (LGPL-3+)
 Directories=icons
-Inherits=arora-tabler
+Inherits=arktos-tabler
 
 [icons]
 Size=16

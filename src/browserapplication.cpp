@@ -66,7 +66,7 @@
 #include "acceptlanguagedialog.h"
 #include "adblockmanager.h"
 #include "adblocknetwork.h"
-#include "arorastyle.h"
+#include "arktosstyle.h"
 #include "autosaver.h"
 #include "autofillmanager.h"
 #include "bookmarksmanager.h"
@@ -102,7 +102,7 @@
 
 #include <qjsonarray.h>
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 #include "rustcore.h"
 #include "rustcorebridge.h"
 
@@ -183,7 +183,7 @@ void BrowserApplication::prepareProfile(QWebEngineProfile *profile)
             AcceptLanguageDialog::httpString(
                 AcceptLanguageDialog::normalizedAcceptLanguages())));
     }
-    // MPROF02: managers are per-persona — a named "arora-<id>" or
+    // MPROF02: managers are per-persona — a named "arktos-<id>" or
     // container profile resolves its owning registry profile, tor
     // and off-the-record profiles resolve to the default persona's
     // (mode-level) store set.
@@ -239,10 +239,10 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
     , m_torProxyWarmSeq(0)
     , m_torProxyProbe(nullptr)
 {
-    QCoreApplication::setOrganizationName(QLatin1String("Arora"));
-    QCoreApplication::setOrganizationDomain(QLatin1String("arora-browser.org"));
-    QCoreApplication::setApplicationName(QLatin1String("Arora"));
-    QCoreApplication::setApplicationVersion(QLatin1String("0.12"
+    QCoreApplication::setOrganizationName(QLatin1String("Arktos"));
+    QCoreApplication::setOrganizationDomain(QLatin1String("arktos-browser.com"));
+    QCoreApplication::setApplicationName(QLatin1String("Arktos"));
+    QCoreApplication::setApplicationVersion(QLatin1String("1.0"
 #ifdef GITVERSION
     " (Git: " GITCHANGENUMBER " " GITVERSION ")"
 #endif
@@ -276,13 +276,13 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
         const QString url = argumentUrl();
         if (!url.isEmpty())
             sendMessage(url.toUtf8());
-        // If we could connect to another Arora then exit
-        QString message = QString(QLatin1String("aroramessage://getwinid"));
+        // If we could connect to another Arktos then exit
+        QString message = QString(QLatin1String("arktosmessage://getwinid"));
         if (sendMessage(message.toUtf8(), 500))
             return;
 
 #ifdef BROWSERAPPLICATION_DEBUG
-        qDebug() << "BrowserApplication::" << __FUNCTION__ << "I am the only arora";
+        qDebug() << "BrowserApplication::" << __FUNCTION__ << "I am the only arktos";
 #endif
 
         // not sure what else to do...
@@ -306,7 +306,7 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
     // typography from one source.  Install after applyColorScheme() so
     // the proxy wraps the post-scheme style; the hook re-wraps and
     // re-resolves on every later flip.
-    AroraStyle::install();
+    ArktosStyle::install();
 
 #if defined(Q_OS_MACOS)
     QApplication::setQuitOnLastWindowClosed(false);
@@ -325,7 +325,7 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
             QNetworkProxy::Socks5Proxy, QStringLiteral("127.0.0.1"), 1));
 
         m_torDataDir.reset(new QTemporaryDir(
-            QDir::temp().filePath(QLatin1String("arora-tor-XXXXXX"))));
+            QDir::temp().filePath(QLatin1String("arktos-tor-XXXXXX"))));
         m_torManager = new TorManager(this);
         if (m_torDataDir->isValid())
             m_torManager->setDataDirectory(m_torDataDir->path());
@@ -420,7 +420,7 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
 
     // setting this in the postLaunch actually takes a lot more time
     // because the event has to be propagated to everyone.
-    setWindowIcon(QIcon(QLatin1String(":128x128/arora.png")));
+    setWindowIcon(QIcon(QLatin1String(":128x128/arktos.png")));
 
 #ifndef AUTOTESTS
     QTimer::singleShot(0, this, &BrowserApplication::postLaunch);
@@ -526,7 +526,7 @@ void BrowserApplication::messageReceived(QLocalSocket *socket)
         return;
 
     // Got a normal url
-    if (!message.startsWith(QLatin1String("aroramessage://"))) {
+    if (!message.startsWith(QLatin1String("arktosmessage://"))) {
         // SEC02/SEC09: a forwarded url must never become script
         // execution — the single-instance socket is reachable by
         // anything running as this user.  The javascript: check moved
@@ -549,7 +549,7 @@ void BrowserApplication::messageReceived(QLocalSocket *socket)
         return;
     }
 
-    if (message.startsWith(QLatin1String("aroramessage://getwinid"))) {
+    if (message.startsWith(QLatin1String("arktosmessage://getwinid"))) {
 #ifdef Q_OS_WIN
         QString winid = QString(QLatin1String("%1")).arg((qlonglong)mainWindow()->winId());
 #else
@@ -566,13 +566,13 @@ void BrowserApplication::messageReceived(QLocalSocket *socket)
 #ifdef BROWSERAPPLICATION_DEBUG
         qDebug() << "BrowserApplication::" << __FUNCTION__ << "sending win id" << winid << mainWindow()->winId();
 #endif
-        QString message = QLatin1String("aroramessage://winid/") + winid;
+        QString message = QLatin1String("arktosmessage://winid/") + winid;
         socket->write(message.toUtf8());
         socket->waitForBytesWritten(2000);
         return;
     }
 
-    if (message.startsWith(QLatin1String("aroramessage://winid"))) {
+    if (message.startsWith(QLatin1String("arktosmessage://winid"))) {
         QString winid = message.mid(21);
 #ifdef BROWSERAPPLICATION_DEBUG
         qDebug() << "BrowserApplication::" << __FUNCTION__ << "got win id:" << winid;
@@ -615,7 +615,7 @@ void BrowserApplication::quitBrowser()
             ? tr("There are %1 windows and %2 tabs open\n"
                  "Do you want to quit anyway?")
                   .arg(m_mainWindows.count()).arg(tabCount)
-            : tr("Do you want to quit Arora?");
+            : tr("Do you want to quit Arktos?");
         int ret = QMessageBox::warning(widget, QString(), question,
                            QMessageBox::Yes | QMessageBox::No,
                            QMessageBox::No);
@@ -675,7 +675,7 @@ void BrowserApplication::postLaunch()
         } else if (!url.isEmpty()) {
             // SEC09: argv urls are untrusted input, same as a
             // forwarded second-instance message — an external program
-            // invoking `arora javascript:...` must not get script
+            // invoking `arktos javascript:...` must not get script
             // execution in the new window.
             switch (startupMode()) {
             case LastSessionStartup: {
@@ -967,7 +967,7 @@ void BrowserApplication::saveSession()
 
     settings.beginGroup(QLatin1String("sessions"));
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // RCORE03: the rustcore session store owns the schema and the
     // file — a JSON manifest per window (opaque shell blob, structured
     // tab records with container binding + engine tag + opaque
@@ -1084,7 +1084,7 @@ bool BrowserApplication::ensureSessionWindow()
 
 bool BrowserApplication::canRestoreSession() const
 {
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // Session manifests anchor to the primary persona's rust store —
     // see saveSession().
     rustCoreEnsureDataDirFor(QStringLiteral("default"));
@@ -1127,12 +1127,12 @@ bool BrowserApplication::restoreLastSession()
         settings.beginGroup(QLatin1String("MainWindow"));
         if (settings.value(QLatin1String("restoring"), false).toBool()) {
             QMessageBox::StandardButton result = QMessageBox::question(nullptr, tr("Restore failed"),
-                tr("Arora crashed while trying to restore this session.  Should I try again?"), QMessageBox::Yes | QMessageBox::No);
+                tr("Arktos crashed while trying to restore this session.  Should I try again?"), QMessageBox::Yes | QMessageBox::No);
             if (result == QMessageBox::No)
                 return false;
         }
     }
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // RCORE03: the canonical store is the rustcore session file — the
     // crate validated the whole blob before it reached us, so RC_OK
     // means the window set is complete and safe to arm the guard on.
@@ -1473,8 +1473,8 @@ QWebEngineProfile *BrowserApplication::webEngineProfileFor(const QString &profil
 {
     // MPROF03: window-bound spelling of webEngineProfile() — the
     // caller's persona resolves through BrowserProfile::profileFor so
-    // a "work"-bound window browses on "arora-work" instead of the
-    // default "arora" profile.  Mode profiles still win outright:
+    // a "work"-bound window browses on "arktos-work" instead of the
+    // default "arktos" profile.  Mode profiles still win outright:
     // tor takes the dedicated tor profile and private browsing the
     // shared OTR overlay (memory-only — one unnamed profile safely
     // serves every persona; the app-side stores gate on
@@ -1491,7 +1491,7 @@ QWebEngineProfile *BrowserApplication::webEngineProfileFor(const QString &profil
 QWebEngineProfile *BrowserApplication::webEngineProfile()
 {
     // MIG11: the lazy profile singletons live in BrowserProfile so
-    // compiled modules share the same named "arora"/OTR profiles.
+    // compiled modules share the same named "arktos"/OTR profiles.
     // prepareProfile() attaches the app-level services the first time a
     // profile is handed out — this is where the off-the-record profile
     // picks up its cookie jar, scheme handlers, download manager and
@@ -1554,18 +1554,18 @@ QIcon BrowserApplication::icon(const QUrl &url)
 QString BrowserApplication::installedDataDirectory()
 {
 #if defined(Q_OS_UNIX)
-    // PACK01: prefer the relocatable-bundle layout (<bindir>/../share/arora)
+    // PACK01: prefer the relocatable-bundle layout (<bindir>/../share/arktos)
     // over the compile-time PKGDATADIR so an unpacked bundle finds its
     // shipped translations and useragents.xml wherever it is extracted.
     // On macOS <bindir> is Contents/MacOS, so this resolves to
-    // Contents/share/arora — and Contents/Resources is the conventional
+    // Contents/share/arktos — and Contents/Resources is the conventional
     // macOS data location, checked first.
     const QString appDir = qApp->applicationDirPath();
     for (const QLatin1String rel : {
 #ifdef Q_OS_MACOS
-             QLatin1String("/../Resources/share/arora"),
+             QLatin1String("/../Resources/share/arktos"),
 #endif
-             QLatin1String("/../share/arora")}) {
+             QLatin1String("/../share/arktos")}) {
         const QString bundled = QDir(appDir + rel).absolutePath();
         if (QFileInfo::exists(bundled))
             return bundled;

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# mergewatch.sh — merge watchdog for the arora lanes.
+# mergewatch.sh — merge watchdog for the arktos lanes.
 #
 # Polls the work lanes (rust-work, ui-work) every INTERVAL seconds.
 # When a lane has commits master lacks, it spawns ONE `devin` run

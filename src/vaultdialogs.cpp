@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -218,7 +218,7 @@ VaultDirtyOfferDialog::VaultDirtyOfferDialog(const QString &profileName,
 
     QVBoxLayout *layout = new QVBoxLayout(this);
     QLabel *text = new QLabel(
-        tr("Arora didn't shut down cleanly while profile \"%1\" was "
+        tr("Arktos didn't shut down cleanly while profile \"%1\" was "
            "unlocked.  Your data was left unencrypted — re-seal now?")
             .arg(profileName));
     text->setWordWrap(true);

@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,13 +20,13 @@
 #include "containermanager.h"
 #include "profilesettings.h"
 
-#include "arorastyle.h"
+#include "arktosstyle.h"
 #include "browserapplication.h"
 #include "browserpaths.h"
 #include "browserprofile.h"
 #include "twoleveldomains_p.h"
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "sitedecisionstore.h"
 #endif
 
@@ -194,7 +194,7 @@ bool ContainerManager::deleteContainer(const QString &id)
         else
             ++it;
     }
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // SITED01: the rules live in the Rust store now — the registry
     // group removal no longer carries them away.  MPROF02: the store
     // is this profile's sitedecisions.json.
@@ -257,7 +257,7 @@ QWebEngineProfile *ContainerManager::profileFor(const QString &id)
     // A unique storage name keeps every derived default path —
     // persistentStoragePath and cachePath are overridden but
     // dictionaries and download state all key off the name — isolated
-    // per container and unable to collide with "arora".  Both paths
+    // per container and unable to collide with "arktos".  Both paths
     // ride the builder: the post-construction setPersistentStoragePath
     // re-creates PrefService/ExtensionPrefs behind the already-built
     // ExtensionRegistrar's back, and the next enableExtension()
@@ -274,7 +274,7 @@ QWebEngineProfile *ContainerManager::profileFor(const QString &id)
     // App-side stores for pages on this container resolve to the
     // OWNING persona's profile — the container isolates web state,
     // not history/bookmarks/etc (MPROF02).
-    profile->setProperty("aroraProfileId", m_profileId);
+    profile->setProperty("arktosProfileId", m_profileId);
     // Parity with normalProfile(): honor a deferred site-data wipe
     // sentinel left by a previous session before the storage services
     // open these trees (HARD01 — only safe before any WebContents).
@@ -395,10 +395,10 @@ void ContainerManager::releaseProfileFor(const QString &id)
 }
 
 // The container accent palette — the fixed identity family lives in
-// AroraStyle with the rest of the chrome colors.
+// ArktosStyle with the rest of the chrome colors.
 QList<QColor> ContainerManager::defaultColors()
 {
-    return AroraStyle::containerIdentityColors();
+    return ArktosStyle::containerIdentityColors();
 }
 
 QIcon ContainerManager::colorIcon(const QColor &color)
@@ -542,7 +542,7 @@ QString ContainerManager::containerIdForHost(const QString &host) const
 
 void ContainerManager::saveSiteRules(const QString &id) const
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // The hash mirror is authoritative — persist it whole into this
     // profile's site-decision store (MPROF02).
     Q_UNUSED(id);
@@ -584,7 +584,7 @@ void ContainerManager::loadRegistry()
         container.id = id;
         container.name = settings.value(QLatin1String("name")).toString();
         container.color = settings.value(QLatin1String("color")).value<QColor>();
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
         // SITED01: one-shot import — replay the legacy per-container
         // "sites" list into the Rust store, then retire the key.  The
         // name/color registry itself stays in QSettings.
@@ -613,7 +613,7 @@ void ContainerManager::loadRegistry()
         settings.endGroup();
         m_containers.append(container);
     }
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // Hydrate the hash mirror from the Rust store — dead ids (a rule
     // outliving its container) are kept but filtered at query time by
     // isContainerId, same as a stale legacy entry was.
@@ -657,8 +657,8 @@ QString ContainerManager::storageNameFor(const QString &id) const
 {
     // The owning profile rides the storage name so two personas can
     // each register a container with the same id without colliding in
-    // Qt's derived dirs (MPROF02); the "arora-container-" prefix keeps
+    // Qt's derived dirs (MPROF02); the "arktos-container-" prefix keeps
     // BrowserProfile::profileIdFor from mistaking it for a persona.
-    return QLatin1String("arora-container-") + m_profileId
+    return QLatin1String("arktos-container-") + m_profileId
         + QLatin1Char('-') + id;
 }

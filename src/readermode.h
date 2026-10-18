@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -47,7 +47,7 @@ class QWidget;
 //
 // READ05 hardened the JS pipeline without changing the UX: the driver
 // runs in a dedicated non-zero script world so page JavaScript cannot
-// see or redefine __aroraReader/Readability; extraction hands the raw
+// see or redefine __arktosReader/Readability; extraction hands the raw
 // article HTML to C++, which sanitizes it (ReaderSanitizer) before it
 // re-enters any document; and the overlay renders the article inside
 // a sandboxed iframe (no scripts) under a trusted chrome bar.
@@ -55,8 +55,8 @@ class QWidget;
 // The reader overlay still sits on top of the live document, so
 // exiting restores the page exactly (scroll, form state, JS world) —
 // there is no reload.  The in-overlay chrome (font size, light/dark,
-// exit) reports back through "arora:reader:*" CustomEvents that
-// reader-forward.js relays to the "aroraReader" QWebChannel object
+// exit) reports back through "arktos:reader:*" CustomEvents that
+// reader-forward.js relays to the "arktosReader" QWebChannel object
 // when the page has a channel; tor pages (no channel) still get the
 // overlay, the settings just don't persist and C++ is only told about
 // JS-side exits via the next probe.  The Rust overlay preserves the
@@ -132,7 +132,7 @@ private:
     QString scriptBundle() const;
     bool eventFilter(QObject *watched, QEvent *event) override;
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // The Rust path: collect the page's serialized DOM (toHtml with
     // the same JS-lift workaround as runDriver), extract in the core,
     // render the returned fragment into the overlay view.
@@ -157,7 +157,7 @@ private:
     int m_probeRetries;
 };
 
-// Channel object registered as "aroraReader" on the page's existing
+// Channel object registered as "arktosReader" on the page's existing
 // QWebChannel (WebPage::init).  Any page can reach it (SEC08), so it
 // exposes nothing but cosmetic state: an exit notification and two
 // clamped preference writes.

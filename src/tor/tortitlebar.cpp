@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@
 
 #include "tortitlebar.h"
 
-#include "arorastyle.h"
+#include "arktosstyle.h"
 
 #include <qapplication.h>
 #include <qboxlayout.h>
@@ -119,7 +119,7 @@ QIcon titleGlyphIcon(TitleGlyph glyph, const QWidget *widget)
 
     QPainter painter(&pixmap);
     painter.setRenderHint(QPainter::Antialiasing);
-    QPen pen(AroraStyle::torTextColor());
+    QPen pen(ArktosStyle::torTextColor());
     pen.setWidthF(1.3);
     painter.setPen(pen);
     painter.setBrush(Qt::NoBrush);
@@ -135,7 +135,7 @@ QIcon titleGlyphIcon(TitleGlyph glyph, const QWidget *widget)
         painter.drawLine(QPointF(6.0, 3.5), QPointF(12.5, 3.5));
         painter.drawLine(QPointF(12.5, 3.5), QPointF(12.5, 10.0));
         painter.fillRect(QRectF(3.5, 6.0, 7.5, 7.5),
-                         AroraStyle::torChromeColor());
+                         ArktosStyle::torChromeColor());
         painter.drawRect(QRectF(3.5, 6.0, 7.5, 7.5));
         break;
     case GlyphClose:
@@ -174,15 +174,15 @@ TorTitleBar::TorTitleBar(QWidget *window)
     m_titleLabel->setMaximumWidth(420);
 
     QHBoxLayout *layout = new QHBoxLayout(this);
-    layout->setContentsMargins(AroraStyle::Spacing::Medium, 0,
-                               AroraStyle::Spacing::Medium, 0);
-    layout->setSpacing(AroraStyle::Spacing::Medium);
+    layout->setContentsMargins(ArktosStyle::Spacing::Medium, 0,
+                               ArktosStyle::Spacing::Medium, 0);
+    layout->setSpacing(ArktosStyle::Spacing::Medium);
     layout->addWidget(badge);
     layout->addWidget(m_titleLabel);
 
     // The violet headline/badge styling lives in the central style
     // source (THEME01) — palette-quoted tor family only.
-    setStyleSheet(AroraStyle::torTitleBarStyleSheet());
+    setStyleSheet(ArktosStyle::torTitleBarStyleSheet());
 
     // The right corner carries the window controls — painted glyphs in
     // the same violet hover family as the rest of the tor chrome.
@@ -220,13 +220,13 @@ TorTitleBar::TorTitleBar(QWidget *window)
 
     QHBoxLayout *controlsLayout = new QHBoxLayout(m_controls);
     controlsLayout->setContentsMargins(0, 0,
-                                       AroraStyle::Spacing::Medium, 0);
-    controlsLayout->setSpacing(AroraStyle::Spacing::Small);
+                                       ArktosStyle::Spacing::Medium, 0);
+    controlsLayout->setSpacing(ArktosStyle::Spacing::Small);
     controlsLayout->addWidget(m_minimizeButton);
     controlsLayout->addWidget(m_maximizeButton);
     controlsLayout->addWidget(m_closeButton);
     m_controls->setStyleSheet(
-        AroraStyle::torTitleControlsStyleSheet());
+        ArktosStyle::torTitleControlsStyleSheet());
 
     if (m_menuBar) {
         m_menuBar->setCornerWidget(this, Qt::TopLeftCorner);
@@ -239,7 +239,7 @@ TorTitleBar::TorTitleBar(QWidget *window)
     // grab zone.  Scoped by objectName so nothing else picks the rule
     // up.
     m_window->setObjectName(QLatin1String("torMainWindow"));
-    m_window->setStyleSheet(AroraStyle::torWindowStyleSheet());
+    m_window->setStyleSheet(ArktosStyle::torWindowStyleSheet());
     m_window->setMouseTracking(true);
     m_window->installEventFilter(this);
     syncFrameMargins();

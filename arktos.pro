@@ -1,5 +1,5 @@
 lessThan(QT_MAJOR_VERSION, 6) {
-    error("Arora requires Qt 6 or greater")
+    error("Arktos requires Qt 6 or greater")
 }
 
 TEMPLATE = subdirs
@@ -11,7 +11,7 @@ CONFIG += ordered
 # cargo toolchain resolves.  Opt out with CONFIG-=<flag> per crate or
 # CONFIG+=no-rust for all three.  When no toolchain exists the Qt
 # fallback paths build instead; warn loudly so that is never silent.
-isEmpty(ARORA_CARGO):!no-rust {
+isEmpty(ARKTOS_CARGO):!no-rust {
     warning("no Rust toolchain found (looked for cargo on PATH and ~/.cargo/bin/cargo)")
     warning("-> building without the Rust components; install rustup (https://rustup.rs)")
     warning("   or pass CONFIG+=no-rust to silence this warning")
@@ -57,7 +57,7 @@ check-supplychain.commands = ./.devin/check-supplychain.sh
 QMAKE_EXTRA_TARGETS += check-supplychain
 
 # `make check-rustcoverage` is the COV06 Rust coverage gate — per-crate
-# `cargo llvm-cov` line coverage must meet ARORA_RUST_COVERAGE_MIN
+# `cargo llvm-cov` line coverage must meet ARKTOS_RUST_COVERAGE_MIN
 # (default 85).  Machines without cargo/cargo-llvm-cov skip cleanly,
 # same as a no-rust build; the per-crate table lands in
 # .devin/COVERAGE.md.
@@ -77,8 +77,8 @@ check-bundle.target = check-bundle
 check-bundle.commands = ./.devin/check-bundle.sh
 QMAKE_EXTRA_TARGETS += check-bundle
 
-# `make pkg-deb` builds the Debian package (dist/arora_*_*.deb) — the
-# bundled-runtime payload laid out under /usr/bin + /usr/lib/arora.
+# `make pkg-deb` builds the Debian package (dist/arktos_*_*.deb) — the
+# bundled-runtime payload laid out under /usr/bin + /usr/lib/arktos.
 # `make check-deb` rebuilds it and runs the verify pass (ldd clean with
 # the dev Qt masked, offscreen launch from the installed layout).
 pkg-deb.target = pkg-deb
@@ -90,15 +90,15 @@ check-deb.commands = ./.devin/pkg-deb.sh
 QMAKE_EXTRA_TARGETS += check-deb
 
 # `make pkg-flatpak` builds + installs + verifies the flatpak
-# (dist/io.arora.Arora_*.flatpak) — builds against the KDE 6.11
+# (dist/com.arktos_browser.Arktos_*.flatpak) — builds against the KDE 6.11
 # runtime/SDK with the qtwebengine baseapp via org.flatpak.Builder.
 pkg-flatpak.target = pkg-flatpak
 pkg-flatpak.commands = ./.devin/pkg-flatpak.sh
 QMAKE_EXTRA_TARGETS += pkg-flatpak
 
-# `make pkg-rpm` builds the RPM via rpm/arora.spec (driver:
+# `make pkg-rpm` builds the RPM via rpm/arktos.spec (driver:
 # ./.devin/pkg-rpm.sh) — same bundled-runtime payload as the deb, laid
-# out on the FHS under /usr/bin + /usr/lib/arora. Needs rpmbuild for
+# out on the FHS under /usr/bin + /usr/lib/arktos. Needs rpmbuild for
 # the pack step (openSUSE container path otherwise — see the driver);
 # the spec + staged payload are verified either way.
 pkg-rpm.target = pkg-rpm
@@ -145,9 +145,9 @@ QMAKE_EXTRA_TARGETS += check-static
 
 # `make check-leaks` runs the MEM01 memory-leak sweep — LeakSanitizer
 # over an instrumented copy of the tree, then valgrind memcheck over
-# the in-tree build.  Gates on zero leaks allocated in Arora code;
+# the in-tree build.  Gates on zero leaks allocated in Arktos code;
 # writes .devin/LEAKS.md.  Needs an in-tree build for the valgrind
-# phase (or ARORA_LEAKS_VALGRIND=0 to skip it).
+# phase (or ARKTOS_LEAKS_VALGRIND=0 to skip it).
 check-leaks.target = check-leaks
 check-leaks.commands = ./.devin/check-leaks.sh
 QMAKE_EXTRA_TARGETS += check-leaks

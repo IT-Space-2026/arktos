@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, The Arora Authors
+ * Copyright (c) 2026, The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,10 +21,10 @@
 // loop on a loopback fixture samples the tab's renderer RSS (what the
 // status-bar MemIndicator reports — /proc/<pid>/status via
 // Engine::Page::residentMemoryKb) plus the renderer's RssAnon and the
-// Arora process RSS once per cycle on: normal tab, private (OTR) tab,
+// Arktos process RSS once per cycle on: normal tab, private (OTR) tab,
 // a background tab, a second (tear-off-style) window, a non-WebEngine
 // host tab (the fake backend stands in for Servo — this build has no
-// ARORA_SERVO — still exercising the EngineTab chrome path; an
+// ARKTOS_SERVO — still exercising the EngineTab chrome path; an
 // in-process engine has no renderer pid so its renderer series reads
 // -1 and only the app-RSS slope is gated), a real tor-mode window
 // (MEM07 — a faketor daemon whose SOCKS listener relays loopback
@@ -38,19 +38,19 @@
 // a few cycles and then plateau.  The assertion is on the POST-
 // WARMUP slope of the app series (a monotonic renderer climb is the
 // MEM05 finding — upstream retention — and is reported, not gated,
-// unless ARORA_MEM_LEAK_GATE=1 arms the 1.5 MB/cycle bound for
+// unless ARKTOS_MEM_LEAK_GATE=1 arms the 1.5 MB/cycle bound for
 // MEM06's fix verification).
-// Env knobs: ARORA_MEM_CYCLES (default 20) and ARORA_MEM_SETTLE_MS
-// (default 350) tune the loop; ARORA_MEM_SAMEURL=1 repeats article/0
+// Env knobs: ARKTOS_MEM_CYCLES (default 20) and ARKTOS_MEM_SETTLE_MS
+// (default 350) tune the loop; ARKTOS_MEM_SAMEURL=1 repeats article/0
 // (per-navigation vs per-unique-document discrimination);
-// ARORA_MEM_REPORT=<file> also writes a
+// ARKTOS_MEM_REPORT=<file> also writes a
 // "surface cycle rendererKb anonKb appKb" table for the slope
-// report.  ARORA_MEM_GC=1 (MEM06 leg b) forces a full v8/blink GC
+// report.  ARKTOS_MEM_GC=1 (MEM06 leg b) forces a full v8/blink GC
 // after every back nav — run the engine with
 // --js-flags=--expose-gc so gc() resolves; if the climb collapses
 // when the renderer is told to collect, the retained bytes were
 // reachable-but-uncollected garbage (soft retention a real memory-
-// pressure signal would reclaim), not a leak.  ARORA_MEM_FREEZE=1
+// pressure signal would reclaim), not a leak.  ARKTOS_MEM_FREEZE=1
 // (MEM06 leg c) instead drives the shipped
 // TabWidget::purgeInactiveTabs() sweep after every back nav — it
 // freeze-pulses each eligible BACKGROUND page (Active->Frozen->
@@ -77,7 +77,7 @@
 #include "webpage.h"
 #include "webview.h"
 #include "fakeengine.h"
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 #include "qtry.h"
 
 // Loopback fixture serving a telex-style index + heavyweight article
@@ -330,8 +330,8 @@ void tst_MemCycle::runCycles(WebView *view, TabWidget *tabs,
                              const QString &name,
                              QList<CycleSample> *samples)
 {
-    const int settleMs = qEnvironmentVariableIntValue("ARORA_MEM_SETTLE_MS") > 0
-        ? qEnvironmentVariableIntValue("ARORA_MEM_SETTLE_MS") : 350;
+    const int settleMs = qEnvironmentVariableIntValue("ARKTOS_MEM_SETTLE_MS") > 0
+        ? qEnvironmentVariableIntValue("ARKTOS_MEM_SETTLE_MS") : 350;
 
     QSignalSpy finishSpy(view->enginePage(), &Engine::Page::loadFinished);
     view->loadUrl(m_fixture.index());
@@ -347,14 +347,14 @@ void tst_MemCycle::runCycles(WebView *view, TabWidget *tabs,
         15000);
     QTest::qWait(settleMs);
 
-    // ARORA_MEM_SAMEURL=1 repeats article/0 every forward leg — a
+    // ARKTOS_MEM_SAMEURL=1 repeats article/0 every forward leg — a
     // per-unique-document retention (bf-stack) still climbs because
     // each nav appends a NEW history entry holding its own document;
     // a flat same-url slope would instead point at per-request or
     // per-url-keyed state.
-    const bool sameUrl = qEnvironmentVariableIsSet("ARORA_MEM_SAMEURL");
-    const bool gcPurge = qEnvironmentVariableIsSet("ARORA_MEM_GC");
-    const bool freezePurge = qEnvironmentVariableIsSet("ARORA_MEM_FREEZE");
+    const bool sameUrl = qEnvironmentVariableIsSet("ARKTOS_MEM_SAMEURL");
+    const bool gcPurge = qEnvironmentVariableIsSet("ARKTOS_MEM_GC");
+    const bool freezePurge = qEnvironmentVariableIsSet("ARKTOS_MEM_FREEZE");
     Engine::Page *enginePage = view->enginePage();
     cycleLoop(name, &finishSpy,
               [this, view, sameUrl](int i) {
@@ -371,7 +371,7 @@ void tst_MemCycle::runCycles(WebView *view, TabWidget *tabs,
                   if (gcPurge)
                       forceRendererGc(view->page());
                   // MEM06's shipped sweep — it freeze-pulses only
-                  // eligible BACKGROUND tabs, so under ARORA_MEM_
+                  // eligible BACKGROUND tabs, so under ARKTOS_MEM_
                   // FREEZE the background leg is the one that
                   // flattens (a cycled current tab is correctly
                   // left alone).  The 600 ms pulse + a settle margin
@@ -388,8 +388,8 @@ void tst_MemCycle::runCycles(WebView *view, TabWidget *tabs,
     // index releases every article document the bf-stack kept; the
     // post-clear sample is the verdict evidence.
     const int clearSettleMs =
-        qEnvironmentVariableIntValue("ARORA_MEM_CLEAR_WAIT_MS") > 0
-            ? qEnvironmentVariableIntValue("ARORA_MEM_CLEAR_WAIT_MS")
+        qEnvironmentVariableIntValue("ARKTOS_MEM_CLEAR_WAIT_MS") > 0
+            ? qEnvironmentVariableIntValue("ARKTOS_MEM_CLEAR_WAIT_MS")
             : 3000;
     const qint64 beforeClearKb = view->enginePage()->residentMemoryKb();
     view->page()->history()->clear();
@@ -406,8 +406,8 @@ void tst_MemCycle::runCycles(WebView *view, TabWidget *tabs,
 void tst_MemCycle::runCycles(EngineTab *tab, const QString &name,
                              QList<CycleSample> *samples)
 {
-    const int settleMs = qEnvironmentVariableIntValue("ARORA_MEM_SETTLE_MS") > 0
-        ? qEnvironmentVariableIntValue("ARORA_MEM_SETTLE_MS") : 350;
+    const int settleMs = qEnvironmentVariableIntValue("ARKTOS_MEM_SETTLE_MS") > 0
+        ? qEnvironmentVariableIntValue("ARKTOS_MEM_SETTLE_MS") : 350;
 
     QSignalSpy finishSpy(tab, &EngineTab::loadFinished);
     tab->load(m_fixture.index());
@@ -438,10 +438,10 @@ void tst_MemCycle::cycleLoop(
         QList<CycleSample> *samples,
         const std::function<void()> &postBack)
 {
-    const int cycles = qEnvironmentVariableIntValue("ARORA_MEM_CYCLES") > 0
-        ? qEnvironmentVariableIntValue("ARORA_MEM_CYCLES") : 20;
-    const int settleMs = qEnvironmentVariableIntValue("ARORA_MEM_SETTLE_MS") > 0
-        ? qEnvironmentVariableIntValue("ARORA_MEM_SETTLE_MS") : 350;
+    const int cycles = qEnvironmentVariableIntValue("ARKTOS_MEM_CYCLES") > 0
+        ? qEnvironmentVariableIntValue("ARKTOS_MEM_CYCLES") : 20;
+    const int settleMs = qEnvironmentVariableIntValue("ARKTOS_MEM_SETTLE_MS") > 0
+        ? qEnvironmentVariableIntValue("ARKTOS_MEM_SETTLE_MS") : 350;
 
     for (int i = 0; i < cycles; ++i) {
         int expected = finishSpy->count();
@@ -467,7 +467,7 @@ void tst_MemCycle::cycleLoop(
                           << "appKb" << s.appKb;
     }
 
-    const QString report = qEnvironmentVariable("ARORA_MEM_REPORT");
+    const QString report = qEnvironmentVariable("ARKTOS_MEM_REPORT");
     if (!report.isEmpty()) {
         QFile file(report);
         if (file.open(QIODevice::WriteOnly | QIODevice::Append)) {
@@ -490,9 +490,9 @@ void tst_MemCycle::cycleLoop(
 // app-process slope stays flat because none of the growth lives in
 // our objects.  The renderer bound is therefore NOT asserted by
 // default: the number is the finding, and MEM06 owns flattening it
-// (run with ARORA_MEM_LEAK_GATE=1 for the pre/post-fix comparison).
+// (run with ARKTOS_MEM_LEAK_GATE=1 for the pre/post-fix comparison).
 // What IS asserted every run: the fixture stays deterministic and
-// the ARORA-side series — app RSS — does not climb, so a leak in our
+// the ARKTOS-side series — app RSS — does not climb, so a leak in our
 // own objects still fails the suite.
 void tst_MemCycle::checkSeries(const char *surface,
                                const QList<CycleSample> &samples)
@@ -547,7 +547,7 @@ void tst_MemCycle::checkSeries(const char *surface,
     // gate is opt-in while MEM05's finding stands — see the header
     // comment — the app gate is unconditional.
     if (rendererReadable
-            && qEnvironmentVariableIsSet("ARORA_MEM_LEAK_GATE"))
+            && qEnvironmentVariableIsSet("ARKTOS_MEM_LEAK_GATE"))
         QVERIFY2(rendererSlope < 1536.0,
                  qPrintable(QStringLiteral(
                      "%1: renderer RSS climbs %2 kB/cycle post-warmup "
@@ -632,7 +632,7 @@ void tst_MemCycle::secondWindowCycle()
 void tst_MemCycle::engineTabCycle()
 {
     WindowListGuard guard;
-    // The non-WebEngine host path: this build has no ARORA_SERVO, so
+    // The non-WebEngine host path: this build has no ARKTOS_SERVO, so
     // the shared fake backend stands in — its page is created through
     // the same EngineTab chrome plumbing a Servo tab rides.  Stage it
     // the way ServoPage reports memory: no renderer pid, the shared
@@ -663,15 +663,15 @@ void tst_MemCycle::engineTabCycle()
 // DocumentReady injections, no HistoryManager writes.  If this leg
 // still climbs ~5.4 MB/cycle the retention is Chromium-baseline
 // session-history behaviour; if it stays flat the growing site lives
-// in Arora's per-page wiring and the suspect list narrows to what the
+// in Arktos's per-page wiring and the suspect list narrows to what the
 // bare leg lacks.
 void tst_MemCycle::bareEngineCycle()
 {
     QWebEngineView view;
     view.resize(800, 600);
     QWebEnginePage *page = view.page();
-    const int settleMs = qEnvironmentVariableIntValue("ARORA_MEM_SETTLE_MS") > 0
-        ? qEnvironmentVariableIntValue("ARORA_MEM_SETTLE_MS") : 350;
+    const int settleMs = qEnvironmentVariableIntValue("ARKTOS_MEM_SETTLE_MS") > 0
+        ? qEnvironmentVariableIntValue("ARKTOS_MEM_SETTLE_MS") : 350;
 
     QSignalSpy finishSpy(page, &QWebEnginePage::loadFinished);
     view.load(m_fixture.index());
@@ -681,8 +681,8 @@ void tst_MemCycle::bareEngineCycle()
         15000);
     QTest::qWait(settleMs);
 
-    const bool sameUrl = qEnvironmentVariableIsSet("ARORA_MEM_SAMEURL");
-    const bool gcPurge = qEnvironmentVariableIsSet("ARORA_MEM_GC");
+    const bool sameUrl = qEnvironmentVariableIsSet("ARKTOS_MEM_SAMEURL");
+    const bool gcPurge = qEnvironmentVariableIsSet("ARKTOS_MEM_GC");
     QList<CycleSample> samples;
     cycleLoop(QStringLiteral("bare-engine"), &finishSpy,
               [this, &view, sameUrl](int i) {
@@ -712,7 +712,7 @@ void tst_MemCycle::bareEngineCycle()
 // up — a mid-run setApplicationProxy/tor-mode flip happens after the
 // latch and the loads silently go direct (measured: zero CONNECTs
 // ever reached the SOCKS listener).  So this leg re-execs the test
-// binary as a child process with the ARORA_MEMCYCLE_TOR_CHILD marker,
+// binary as a child process with the ARKTOS_MEMCYCLE_TOR_CHILD marker,
 // where main() reproduces the production --tor ctor sequence before
 // the app object exists, and runs only torTabCycleChild().
 void tst_MemCycle::torTabCycle()
@@ -729,9 +729,9 @@ void tst_MemCycle::torTabCycle()
     // in this run's output.
     child.setProcessChannelMode(QProcess::ForwardedChannels);
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-    env.insert(QStringLiteral("ARORA_MEMCYCLE_TOR_CHILD"),
+    env.insert(QStringLiteral("ARKTOS_MEMCYCLE_TOR_CHILD"),
                QStringLiteral("1"));
-    env.insert(QStringLiteral("ARORA_TOR_BINARY"), fake);
+    env.insert(QStringLiteral("ARKTOS_TOR_BINARY"), fake);
     env.insert(QStringLiteral("FAKETOR_SOCKS_RELAY"),
                QStringLiteral("1"));
     child.setProcessEnvironment(env);
@@ -744,7 +744,7 @@ void tst_MemCycle::torTabCycle()
 }
 
 // MEM07: the tor surface — child leg.  Runs inside a genuinely
-// tor-mode process: the ctor's daemon is faketor (ARORA_TOR_BINARY)
+// tor-mode process: the ctor's daemon is faketor (ARKTOS_TOR_BINARY)
 // whose relay-mode SOCKS listener (FAKETOR_SOCKS_RELAY) pipes loopback
 // CONNECTs, so the cycled tab rides the real stack — OTR torProfile,
 // TorRequestInterceptor, the nav/circuit gate, violet chrome — and
@@ -752,8 +752,8 @@ void tst_MemCycle::torTabCycle()
 // assertion below).
 void tst_MemCycle::torTabCycleChild()
 {
-    if (!qEnvironmentVariableIsSet("ARORA_MEMCYCLE_TOR_CHILD"))
-        QSKIP("runs only inside the ARORA_MEMCYCLE_TOR_CHILD process");
+    if (!qEnvironmentVariableIsSet("ARKTOS_MEMCYCLE_TOR_CHILD"))
+        QSKIP("runs only inside the ARKTOS_MEMCYCLE_TOR_CHILD process");
     QVERIFY(BrowserApplication::isTorMode());
     QVERIFY(BrowserApplication::isPrivate());
 
@@ -822,8 +822,8 @@ void tst_MemCycle::torTabCycleChild()
              "the leg measured the direct path");
 }
 
-// MEM07: custom main — the qtest_arora.h QTEST_MAIN body, plus the
-// tor-child seam: with ARORA_MEMCYCLE_TOR_CHILD set the fail-closed
+// MEM07: custom main — the qtest_arktos.h QTEST_MAIN body, plus the
+// tor-child seam: with ARKTOS_MEMCYCLE_TOR_CHILD set the fail-closed
 // proxy + tor mode must exist BEFORE the BrowserApplication ctor
 // builds the browsing profile (mirroring the production argv scan
 // that is compiled out under AUTOTESTS).
@@ -832,7 +832,7 @@ int main(int argc, char *argv[])
     Q_INIT_RESOURCE(htmls);
     Q_INIT_RESOURCE(data);
     QStandardPaths::setTestModeEnabled(true);
-    if (qEnvironmentVariableIsSet("ARORA_MEMCYCLE_TOR_CHILD")) {
+    if (qEnvironmentVariableIsSet("ARKTOS_MEMCYCLE_TOR_CHILD")) {
         BrowserApplication::setTorMode(true);
         QNetworkProxy::setApplicationProxy(QNetworkProxy(
             QNetworkProxy::Socks5Proxy, QStringLiteral("127.0.0.1"), 1));

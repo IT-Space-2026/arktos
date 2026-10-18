@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -70,7 +70,7 @@ ProfileWipeConfirmDialog::ProfileWipeConfirmDialog(QWidget *parent)
     QVBoxLayout *layout = new QVBoxLayout(this);
     layout->addWidget(new QLabel(
         tr("This is the last step.  To permanently erase the profile "
-           "and restart Arora, type %1 below:")
+           "and restart Arktos, type %1 below:")
             .arg(confirmPhrase())));
 
     phraseEdit = new QLineEdit;
@@ -80,7 +80,7 @@ ProfileWipeConfirmDialog::ProfileWipeConfirmDialog(QWidget *parent)
     QHBoxLayout *buttonLayout = new QHBoxLayout;
     buttonLayout->addStretch(1);
     QPushButton *cancelButton = new QPushButton(tr("&Cancel"));
-    wipeButton = new QPushButton(tr("Delete and Restart Arora"));
+    wipeButton = new QPushButton(tr("Delete and Restart Arktos"));
     wipeButton->setEnabled(false);
     wipeButton->setStyleSheet(QLatin1String(
         "QPushButton { color: #ffffff; background: #c62828;"
@@ -243,7 +243,7 @@ QAction *ProfileMenuActions::deleteProfileAction()
 QString ProfileMenuActions::wipeMarkerPath()
 {
     return BrowserPaths::globalDataFilePath(
-        QLatin1String("arora-profile-wipe.pending"));
+        QLatin1String("arktos-profile-wipe.pending"));
 }
 
 bool ProfileMenuActions::wipePending()
@@ -310,9 +310,17 @@ void ProfileMenuActions::waitForProcessExit(qint64 pid, int timeoutMs)
 
 bool ProfileMenuActions::applyPendingProfileWipe()
 {
-    const QString markerPath = wipeMarkerPath();
-    if (!QFile::exists(markerPath))
-        return false;
+    // BRAND01: a marker dropped by the pre-rebrand binary rides the
+    // identity migration into the new root under its arora-* name —
+    // honor both spellings.
+    QString markerPath = wipeMarkerPath();
+    if (!QFile::exists(markerPath)) {
+        const QString legacy = BrowserPaths::globalDataFilePath(
+            QLatin1String("arora-profile-wipe.pending"));
+        if (!QFile::exists(legacy))
+            return false;
+        markerPath = legacy;
+    }
 
     // The marker's pid waits out the process that armed the wipe.
     // A stale marker's pid is long dead (the wait returns at once);
@@ -343,7 +351,7 @@ bool ProfileMenuActions::applyPendingProfileWipe()
     const QString cacheRoot = QStandardPaths::writableLocation(
         QStandardPaths::CacheLocation);
 
-    // Never removeRecursively a root that does not look like Arora's
+    // Never removeRecursively a root that does not look like Arktos's
     // own store — an empty/misresolved QStandardPaths answer would
     // otherwise aim the wipe at a shared location.
     const auto ownTree = [](const QString &path) {
@@ -384,7 +392,7 @@ bool ProfileMenuActions::applyPendingProfileWipe()
     // Redundant with the data-root removal unless the guard refused —
     // either way the marker must not outlive the wipe.
     QFile::remove(markerPath);
-    qInfo() << "arora: profile wipe applied — booting a fresh profile";
+    qInfo() << "arktos: profile wipe applied — booting a fresh profile";
     return ok;
 }
 
@@ -392,7 +400,7 @@ bool ProfileMenuActions::requestProfileWipe(QWidget *parent)
 {
     // Gate 1 — itemize exactly what dies.
     QMessageBox confirmBox(QMessageBox::Warning, tr("Delete Profile"),
-        tr("<p>This will permanently delete the Arora profile:</p>"
+        tr("<p>This will permanently delete the Arktos profile:</p>"
            "<ul>"
            "<li>All settings and preferences</li>"
            "<li>Browsing, download and search history</li>"
@@ -404,7 +412,7 @@ bool ProfileMenuActions::requestProfileWipe(QWidget *parent)
            "<li>Extension data</li>"
            "<li>The profile name and avatar</li>"
            "</ul>"
-           "<p>Arora then restarts with a fresh profile.  "
+           "<p>Arktos then restarts with a fresh profile.  "
            "Downloaded files are not touched.</p>"),
         QMessageBox::NoButton, parent);
     QPushButton *continueButton =
@@ -438,7 +446,7 @@ bool ProfileMenuActions::requestProfileWipe(QWidget *parent)
     // Test seam (autotests + smokes): the marker is the observable
     // contract of this leg — the respawn and the exit run only in the
     // real binary.
-    if (qEnvironmentVariableIsSet("ARORA_WIPE_NO_QUIT"))
+    if (qEnvironmentVariableIsSet("ARKTOS_WIPE_NO_QUIT"))
         return true;
 
     // Respawn before dying: the fresh process sees the marker, waits

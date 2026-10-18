@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -51,7 +51,7 @@ class QTimer;
 //   <id>.vault/cache-hold/    excluded dir held aside while locked
 //   <id>.vault/profiles-hold/ same, for the nested profiles/ dir
 //   <id>.vault/engine-hold/   VSEC02: the pre-change engine store
-//                             (root QtWebEngine/arora[-<id>]) parked
+//                             (root QtWebEngine/arktos[-<id>]) parked
 //                             here by the boot sweep when the profile
 //                             was already sealed; restored into
 //                             profiles/<id>/QtWebEngine on unseal,
@@ -83,7 +83,7 @@ class QTimer;
 // use (BrowserProfile::normalProfile/profileFor), so cookies,
 // localStorage/IndexedDB, service workers and visited-link state
 // land inside the packed tree; the pre-change root-level
-// QtWebEngine/arora[-<id>]/ dirs are migrated into it by
+// QtWebEngine/arktos[-<id>]/ dirs are migrated into it by
 // BrowserPaths::ensureEngineStorageLayout (symlink refusal,
 // collision abort), or parked under engine-hold/ when the profile
 // was already sealed — unseal() restores them whole.  The engine
@@ -332,7 +332,7 @@ private:
     void dropPassword(const QString &id);
     bool eventFilter(QObject *watched, QEvent *event) override;
     void installIdleTracking();
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     Error mapStatus(int status, const QString &fallback) const;
     static void progressTrampoline(uint64_t done, uint64_t total,
                                    void *userdata);

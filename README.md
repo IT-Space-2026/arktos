@@ -1013,7 +1013,5 @@ fitness for any purpose, and no liability accepted for data loss,
 security failures or any other damage. Use it for testing, hacking and
 learning; treat it as a research browser, not a promise.
 
-Original Arora: Benjamin C. Meyer (icefox) and contributors, 2007–2011.
-Arktos: Copyright © 2026-2027 Janos Szenfner —
-https://github.com/janos-szenfner/arktos. Qt 6 port + continued
-development: see AUTHORS and git history.
+Copyright © 2026-2027 Janos Szenfner —
+https://github.com/janos-szenfner/arktos

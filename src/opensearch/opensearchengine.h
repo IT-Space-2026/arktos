@@ -60,7 +60,7 @@ public:
     Q_PROPERTY(bool providesImageSearch READ providesImageSearch)
     Q_PROPERTY(QString imageUrl READ imageUrl WRITE setImageUrl)
     // SENG02: descriptor-declared default keyword bindings
-    // (<Alias> elements — an Arora extension like purpose="image");
+    // (<Alias> elements — an Arktos extension like purpose="image");
     // the manager binds only slots nobody claimed, so a user binding
     // always wins.
     Q_PROPERTY(QStringList defaultKeywords READ defaultKeywords WRITE setDefaultKeywords)
@@ -170,7 +170,7 @@ private:
     OpenSearchEngineDelegate *m_delegate;
 };
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 // OSE01: the rc_opensearch_parse field map <-> engine marshaling the
 // reader's Rust path and the manager's registry hydration share
 // (rustcore builds only — the field names are documented in

@@ -46,7 +46,7 @@ exists(../.git/HEAD) {
 # Only main.cpp (listed in src.pro) is compiled plus the live lists
 # below. The original file lists are kept as the porting checklist —
 # each MIG task moves its files into the live lists.
-# Ownership map: .devin/Arora-Task.md.
+# Ownership map: .devin/Arktos-Task.md.
 #
 # MIG14 moved in: aboutdialog, browsermainwindow, tabbar, tabwidget,
 # useragent.pri — plus browserapplication, which the chrome needs for
@@ -87,7 +87,7 @@ HEADERS += \
     $$PWD/acceptlanguagedialog.h \
     $$PWD/addressdialog.h \
     $$PWD/argon2id.h \
-    $$PWD/arorastyle.h \
+    $$PWD/arktosstyle.h \
     $$PWD/autofilldialog.h \
     $$PWD/autofillmanager.h \
     $$PWD/autosaver.h \
@@ -164,7 +164,7 @@ HEADERS += \
     $$PWD/webpermissionmanager.h \
     $$PWD/webview.h \
     $$PWD/webviewsearch.h \
-    $$PWD/utils/aroraicon.h \
+    $$PWD/utils/arktosicon.h \
     $$PWD/utils/crashreporter.h \
     $$PWD/utils/edittableview.h \
     $$PWD/utils/edittreeview.h \
@@ -183,7 +183,7 @@ SOURCES += \
     $$PWD/acceptlanguagedialog.cpp \
     $$PWD/addressdialog.cpp \
     $$PWD/argon2id.c \
-    $$PWD/arorastyle.cpp \
+    $$PWD/arktosstyle.cpp \
     $$PWD/autofilldialog.cpp \
     $$PWD/autofillmanager.cpp \
     $$PWD/autosaver.cpp \
@@ -257,7 +257,7 @@ SOURCES += \
     $$PWD/webpermissionmanager.cpp \
     $$PWD/webview.cpp \
     $$PWD/webviewsearch.cpp \
-    $$PWD/utils/aroraicon.cpp \
+    $$PWD/utils/arktosicon.cpp \
     $$PWD/utils/crashreporter.cpp \
     $$PWD/utils/edittableview.cpp \
     $$PWD/utils/edittreeview.cpp \
@@ -295,6 +295,6 @@ mac {
 }
 
 unix {
-    PKGDATADIR = $$DATADIR/arora
+    PKGDATADIR = $$DATADIR/arktos
     DEFINES += DATADIR=\\\"$$DATADIR\\\" PKGDATADIR=\\\"$$PKGDATADIR\\\"
 }

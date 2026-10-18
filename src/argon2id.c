@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -457,7 +457,7 @@ static void fill_segment(argon2_ctx *ctx, uint32_t pass, uint32_t lane,
     secure_wipe(address_block, sizeof(address_block));
 }
 
-int arora_argon2id(void *out, size_t outlen,
+int arktos_argon2id(void *out, size_t outlen,
                    const void *password, size_t passwordLen,
                    const void *salt, size_t saltLen,
                    uint32_t timeCost, uint32_t memoryKiB,

@@ -1,4 +1,4 @@
-//! arora-rustcore — Arora's shared, engine-neutral Rust core behind a
+//! arktos-rustcore — Arktos's shared, engine-neutral Rust core behind a
 //! C ABI (the Mozilla application-services pattern).
 //!
 //! Conventions every component here follows:

@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -67,13 +67,13 @@ UpdateChecker::~UpdateChecker()
 QUrl UpdateChecker::defaultApiUrl()
 {
     return QUrl(QLatin1String(
-        "https://api.github.com/repos/janos-szenfner/arora/releases/latest"));
+        "https://api.github.com/repos/janos-szenfner/arktos/releases/latest"));
 }
 
 QUrl UpdateChecker::releasesPageUrl()
 {
     return QUrl(QLatin1String(
-        "https://github.com/janos-szenfner/arora/releases"));
+        "https://github.com/janos-szenfner/arktos/releases"));
 }
 
 void UpdateChecker::setApiUrl(const QUrl &url)
@@ -111,7 +111,7 @@ void UpdateChecker::check()
     QNetworkRequest request(m_apiUrl);
     // GitHub's API 403s requests without a User-Agent.
     request.setHeader(QNetworkRequest::UserAgentHeader,
-        QString::fromLatin1("Arora/%1").arg(
+        QString::fromLatin1("Arktos/%1").arg(
             QCoreApplication::applicationVersion()));
     request.setRawHeader("Accept", "application/vnd.github+json");
     request.setTransferTimeout(15000);

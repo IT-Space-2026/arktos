@@ -22,12 +22,12 @@
 #include <memory>
 
 #include "profilesettings.h"
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "browserpaths.h"
 #include "rustcore.h"
 #endif
@@ -57,7 +57,7 @@ private slots:
     void renameEngine();
     void convertKeywordSearchToUrl();
     void convertKeywordSearchToUrl_data();
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // OSE01: the legacy descriptor dir + ProfileSettings keys move into
     // searchengines.json exactly once — keep last: it rebuilds the
     // store from scratch.
@@ -660,7 +660,7 @@ void tst_OpenSearchManager::convertKeywordSearchToUrl()
     QCOMPARE(manager.convertKeywordSearchToUrl(string).isValid(), valid);
 }
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 // OSE01: the legacy layout — the searchengines/ descriptor directory
 // plus the openSearch ProfileSettings keys — migrates into
 // searchengines.json exactly once, then the legacy paths retire.
@@ -744,7 +744,7 @@ void tst_OpenSearchManager::legacyMigration()
     // The retired dir is test residue — drop it.
     QDir(migratedDir).removeRecursively();
 }
-#endif // ARORA_RUSTCORE
+#endif // ARKTOS_RUSTCORE
 
 QTEST_MAIN(tst_OpenSearchManager)
 

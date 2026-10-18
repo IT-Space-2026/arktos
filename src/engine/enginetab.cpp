@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,7 +22,7 @@
 #include "engineinterface.h"
 #include "pdfview.h"
 
-#ifdef ARORA_SERVO
+#ifdef ARKTOS_SERVO
 #include "servobackend.h"
 #endif
 
@@ -62,7 +62,7 @@ EngineTab::EngineTab(Engine::Backend *backend, Engine::Profile *profile,
 // — recreate the page pair in place when it fires.
 void EngineTab::wireViewRecovery(QWidget *view)
 {
-#ifdef ARORA_SERVO
+#ifdef ARKTOS_SERVO
     if (auto *servoView = qobject_cast<ServoView *>(view)) {
         // Queued: restartRequested fires from the retry button's
         // clicked() emission — restartEngine deletes that button's
@@ -137,7 +137,7 @@ bool EngineTab::restartEngine()
         }
         m_notice->setText(
             tr("The %1 engine could not be restarted. Reload this "
-               "tab in Chromium to keep browsing, or restart Arora "
+               "tab in Chromium to keep browsing, or restart Arktos "
                "to try %1 again.").arg(m_backend->displayName()));
         m_layout->setCurrentWidget(m_notice);
         emit pageRecreated();

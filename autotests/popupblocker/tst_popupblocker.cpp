@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -30,9 +30,9 @@
 #include "popupblockerbutton.h"
 #include "webpage.h"
 #include "webview.h"
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "sitedecisionstore.h"
 #endif
 
@@ -155,7 +155,7 @@ void tst_PopupBlocker::persistence()
     PopupBlocker *blocker = PopupBlocker::instance();
     blocker->allowHost(QLatin1String("persistent.example"));
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     QString stored;
     QVERIFY(SiteDecisionStore::get(SiteDecisionStore::KindPopup,
                                    QLatin1String("persistent.example"),
@@ -174,7 +174,7 @@ void tst_PopupBlocker::persistence()
              QStringList() << QLatin1String("persistent.example"));
 
     blocker->removeAllowedHost(QLatin1String("persistent.example"));
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     QVERIFY(!SiteDecisionStore::get(SiteDecisionStore::KindPopup,
                                     QLatin1String("persistent.example"),
                                     &stored));

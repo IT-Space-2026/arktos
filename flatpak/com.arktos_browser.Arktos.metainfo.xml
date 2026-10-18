@@ -1,26 +1,26 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>io.arora.Arora</id>
+  <id>com.arktos_browser.Arktos</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-2.0-or-later</project_license>
-  <name>Arora</name>
+  <name>Arktos</name>
   <summary>Experimental Qt 6 / QtWebEngine web browser</summary>
-  <developer id="io.arora">
-    <name>Arora Qt 6 port contributors</name>
+  <developer id="com.arktos_browser">
+    <name>Janos Szenfner</name>
   </developer>
   <description>
     <p>
-      Arora is a Qt 6 / QtWebEngine (Chromium) web browser — a maintained
+      Arktos is a Qt 6 / QtWebEngine (Chromium) web browser — a maintained
       continuation of the 2009 Qt/WebKit Arora rebuilt around privacy
       hardening, per-site containers, optional Tor windows and a
       Vivaldi-style UI with an icon-rail sidebar, two-level container tab
       strip, reader mode, rich download cards and a command palette.
     </p>
     <p>
-      Arora is experimental software and is provided as is.
+      Arktos is experimental software and is provided as is.
     </p>
   </description>
-  <launchable type="desktop-id">io.arora.Arora.desktop</launchable>
+  <launchable type="desktop-id">com.arktos_browser.Arktos.desktop</launchable>
   <categories>
     <category>Network</category>
     <category>WebBrowser</category>
@@ -31,10 +31,10 @@
     <keyword>Browser</keyword>
     <keyword>Web</keyword>
   </keywords>
-  <url type="homepage">https://github.com/janos-szenfner/arora</url>
-  <url type="bugtracker">https://github.com/janos-szenfner/arora/issues</url>
+  <url type="homepage">https://github.com/janos-szenfner/arktos</url>
+  <url type="bugtracker">https://github.com/janos-szenfner/arktos/issues</url>
   <provides>
-    <binary>arora</binary>
+    <binary>arktos</binary>
     <mediatype>text/html</mediatype>
     <mediatype>application/xhtml+xml</mediatype>
   </provides>
@@ -44,6 +44,7 @@
   </supports>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="1.0" date="2026-10-17" type="development"/>
     <release version="0.12" date="2026-10-16" type="development"/>
     <release version="0.2" date="2026-10-14" type="development"/>
   </releases>

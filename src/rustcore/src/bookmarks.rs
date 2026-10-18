@@ -8,7 +8,7 @@
 //! call, which is exactly Qt's lazy model contract.
 //!
 //! On-disk format stays XBEL 1.0 so files flow both ways with every
-//! previous Arora build and foreign tools.  The reader is a quick-xml
+//! previous Arktos build and foreign tools.  The reader is a quick-xml
 //! transliteration of XbelReader's grammar (folder folded=, bookmark
 //! href=, title/desc elements, unknown-element skipping, 256-deep and
 //! 64 MB bounds, &nbsp; pre-expansion).  The writer emits the same
@@ -363,7 +363,7 @@ impl Bookmarks {
                 // BKIMP01: same insert gate — a single deliberate url
                 // edit is the human equivalent of the import flag, so
                 // javascript: passes here; every other non-allowlist
-                // scheme (data:, file:, arora-*) still refuses.
+                // scheme (data:, file:, arktos-*) still refuses.
                 crate::bookmarkhtml::check_bookmark_url(value, true)?;
                 n.url = value.into();
             }
@@ -816,7 +816,7 @@ mod tests {
     #[test]
     fn file_round_trip() {
         let dir = std::env::temp_dir().join(format!(
-            "arora-bm-{}-{}",
+            "arktos-bm-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

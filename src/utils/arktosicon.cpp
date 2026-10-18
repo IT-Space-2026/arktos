@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,10 +17,10 @@
  * Boston, MA  02110-1301  USA
  */
 
-#include "aroraicon.h"
+#include "arktosicon.h"
 #include "profilesettings.h"
 
-#include "arorastyle.h"
+#include "arktosstyle.h"
 #include "browsertheme.h"
 
 #include <qapplication.h>
@@ -58,7 +58,7 @@ protected:
     bool eventFilter(QObject *watched, QEvent *event) override
     {
         if (event->type() == QEvent::ApplicationPaletteChange)
-            AroraIcon::setTheme(s_currentId);
+            ArktosIcon::setTheme(s_currentId);
         return QObject::eventFilter(watched, event);
     }
 };
@@ -75,7 +75,7 @@ void init()
     QIcon::setThemeSearchPaths(paths);
     // ICONS13: Tabler ships the full chrome surface — it is the last
     // resort before hicolor for a name the active bundled set misses.
-    QIcon::setFallbackThemeName(QLatin1String("arora-tabler"));
+    QIcon::setFallbackThemeName(QLatin1String("arktos-tabler"));
 
     if (qApp) {
         // A forced light->dark flip (UIP01) and a desktop scheme
@@ -83,11 +83,11 @@ void init()
         // sets swap to/from their -dark variants.
         qApp->installEventFilter(new PaletteWatcher(qApp));
         QObject::connect(qApp->styleHints(), &QStyleHints::colorSchemeChanged, qApp, [](Qt::ColorScheme) {
-            AroraIcon::setTheme(s_currentId);
+            ArktosIcon::setTheme(s_currentId);
         });
     }
 
-    AroraIcon::applyFromSettings();
+    ArktosIcon::applyFromSettings();
 }
 
 // ICONS06: repaint `source` as a flat `color` glyph — every pixel
@@ -166,7 +166,7 @@ public:
     {
         // Always Normal art from the theme — a set's own Disabled
         // rendering would double-dim under our disabled tint.
-        QPixmap base = AroraIcon::get(m_name).pixmap(size * scale,
+        QPixmap base = ArktosIcon::get(m_name).pixmap(size * scale,
                                                    QIcon::Normal, state);
         if (base.isNull())
             return base;
@@ -186,7 +186,7 @@ public:
         // glyph and label onto different colors.
         if (mode == QIcon::Selected)
             return tintedPixmap(base,
-                                AroraStyle::selectionTextColor(palette));
+                                ArktosStyle::selectionTextColor(palette));
         return tintedPixmap(base, palette.color(QPalette::Normal,
                                                 QPalette::ButtonText));
     }
@@ -199,17 +199,17 @@ private:
 
 } // namespace
 
-QIcon AroraIcon::get(const QString &name)
+QIcon ArktosIcon::get(const QString &name)
 {
     init();
     return QIcon::fromTheme(name);
 }
 
-QIcon AroraIcon::getOnDark(const QString &name)
+QIcon ArktosIcon::getOnDark(const QString &name)
 {
     init();
     const QString base = s_resourcePrefix + QLatin1Char('/')
-        + QLatin1String("arora-") + s_currentId;
+        + QLatin1String("arktos-") + s_currentId;
     // File-backed, so it does not follow setThemeName — the tor
     // window is a separate process whose icon theme never changes
     // after startup anyway.
@@ -223,7 +223,7 @@ QIcon AroraIcon::getOnDark(const QString &name)
     return get(name);
 }
 
-QIcon AroraIcon::tinted(const QIcon &icon, const QColor &color,
+QIcon ArktosIcon::tinted(const QIcon &icon, const QColor &color,
                         const QColor &disabledColor)
 {
     QIcon out;
@@ -242,25 +242,25 @@ QIcon AroraIcon::tinted(const QIcon &icon, const QColor &color,
     return out;
 }
 
-QIcon AroraIcon::getTinted(const QString &name, const QColor &color,
+QIcon ArktosIcon::getTinted(const QString &name, const QColor &color,
                            const QColor &disabledColor)
 {
     return tinted(getOnDark(name), color, disabledColor);
 }
 
-QIcon AroraIcon::getChrome(const QString &name)
+QIcon ArktosIcon::getChrome(const QString &name)
 {
     init();
     return QIcon(new ChromeIconEngine(name));
 }
 
-QIcon AroraIcon::getChrome(const QString &name, const QPalette &palette)
+QIcon ArktosIcon::getChrome(const QString &name, const QPalette &palette)
 {
     init();
     return QIcon(new ChromeIconEngine(name, palette));
 }
 
-QStringList AroraIcon::themeIds()
+QStringList ArktosIcon::themeIds()
 {
     return { QLatin1String("adwaita"),
              QLatin1String("breeze"),
@@ -268,7 +268,7 @@ QStringList AroraIcon::themeIds()
              QLatin1String("lucide") };
 }
 
-QString AroraIcon::themeDisplayName(const QString &id)
+QString ArktosIcon::themeDisplayName(const QString &id)
 {
     if (id == QLatin1String("adwaita"))
         return QLatin1String("Adwaita");
@@ -281,7 +281,7 @@ QString AroraIcon::themeDisplayName(const QString &id)
     return id;
 }
 
-QString AroraIcon::theme()
+QString ArktosIcon::theme()
 {
     const QString id = ProfileSettings()
         .value(QLatin1String("MainWindow/iconTheme"), s_defaultId)
@@ -289,11 +289,11 @@ QString AroraIcon::theme()
     return themeIds().contains(id) ? id : s_defaultId;
 }
 
-QString AroraIcon::effectiveThemeName(const QString &id)
+QString ArktosIcon::effectiveThemeName(const QString &id)
 {
     init();
     const bool dark = qApp && BrowserTheme::isDarkPalette(qApp->palette());
-    QString name = QLatin1String("arora-") + id;
+    QString name = QLatin1String("arktos-") + id;
     if (dark
         && QFile::exists(s_resourcePrefix + QLatin1Char('/')
                          + name + QLatin1String("-dark/index.theme"))) {
@@ -302,27 +302,27 @@ QString AroraIcon::effectiveThemeName(const QString &id)
     return name;
 }
 
-void AroraIcon::setTheme(const QString &id)
+void ArktosIcon::setTheme(const QString &id)
 {
     init();
     s_currentId = themeIds().contains(id) ? id : s_defaultId;
     QIcon::setThemeName(effectiveThemeName(s_currentId));
 }
 
-void AroraIcon::applyFromSettings()
+void ArktosIcon::applyFromSettings()
 {
     setTheme(theme());
 }
 
-QStringList AroraIcon::names()
+QStringList ArktosIcon::names()
 {
     init();
     QStringList out;
     // The union across every bundled set — ICONS10: tabler ships the
     // full chrome surface, so reading only one set's directory would
     // under-report what callers can ask for.
-    for (const char *set : { "arora-adwaita", "arora-breeze",
-                            "arora-tabler", "arora-lucide" }) {
+    for (const char *set : { "arktos-adwaita", "arktos-breeze",
+                            "arktos-tabler", "arktos-lucide" }) {
         QStringList entries = QDir(s_resourcePrefix + QLatin1Char('/')
             + QLatin1String(set) + QLatin1String("/icons"))
             .entryList(QStringList(QLatin1String("*.svg")),
@@ -337,7 +337,7 @@ QStringList AroraIcon::names()
     return out;
 }
 
-QIcon AroraIcon::iconForTheme(const QString &id, const QString &name)
+QIcon ArktosIcon::iconForTheme(const QString &id, const QString &name)
 {
     init();
     // effectiveThemeName picks the -dark recolor under a dark

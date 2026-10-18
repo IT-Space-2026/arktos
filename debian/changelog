@@ -1,15 +1,25 @@
-arora (0.12) unstable; urgency=medium
+arktos (1.0) unstable; urgency=medium
+
+  * Rebrand to Arktos: the project formerly developed as Arora ships
+    its first release as Arktos 1.0 (arktos-browser.com). Binary,
+    install paths (/usr/lib/arktos, /usr/share/arktos), desktop file,
+    icons and user data roots renamed; existing Arora config/data is
+    migrated on first run.
+
+ -- Arktos Developers <devin@cognition.ai>  Sat, 17 Oct 2026 21:30:00 +0200
+
+arktos (0.12) unstable; urgency=medium
 
   * Unify package version with the application's reported version
     (QCoreApplication::setApplicationVersion "0.12") so the update
     checker compares like with like.
 
- -- Arora Developers <devin@cognition.ai>  Fri, 16 Oct 2026 20:00:00 +0200
+ -- Arktos Developers <devin@cognition.ai>  Fri, 16 Oct 2026 20:00:00 +0200
 
-arora (0.2) unstable; urgency=medium
+arktos (0.2) unstable; urgency=medium
 
   * Initial Debian packaging of the Qt 6 port: bundled Qt/WebEngine
-    runtime under /usr/lib/arora, statically-linked rustdl, FHS
+    runtime under /usr/lib/arktos, statically-linked rustdl, FHS
     /usr/bin + /usr/share layout.
 
- -- Arora Developers <devin@cognition.ai>  Wed, 14 Oct 2026 19:27:16 +0200
+ -- Arktos Developers <devin@cognition.ai>  Wed, 14 Oct 2026 19:27:16 +0200

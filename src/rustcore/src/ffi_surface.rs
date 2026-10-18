@@ -1106,7 +1106,7 @@ fn omnibox_palette_qr_entry_points() {
 
     // QR encoder happy + bounds.
     let mut out = out_buf();
-    let text = cs("https://arora.example/");
+    let text = cs("https://arktos.example/");
     assert_eq!(
         unsafe { crate::rc_qr_encode(text.as_ptr(), 0, &mut out) },
         RcStatus::Ok

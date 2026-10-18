@@ -64,7 +64,7 @@
 #include "profilesettings.h"
 
 #include "addbookmarkdialog.h"
-#include "aroraicon.h"
+#include "arktosicon.h"
 #include "bookmarknode.h"
 #include "bookmarksmanager.h"
 #include "bookmarksmodel.h"
@@ -98,7 +98,7 @@
 #include "webview.h"
 #include "webviewsearch.h"
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 #include <rustcore.h>
 #endif
 
@@ -213,7 +213,7 @@ TabWidget::TabWidget(QWidget *parent)
     m_closeTabAction->setShortcuts(QKeySequence::Close);
     // ICONS10: tab-close, not window-close — File > Close Tab and
     // Close Window shared the same glyph.
-    m_closeTabAction->setIcon(AroraIcon::getChrome(QLatin1String("tab-close")));
+    m_closeTabAction->setIcon(ArktosIcon::getChrome(QLatin1String("tab-close")));
 #if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
     m_closeTabAction->setIconVisibleInMenu(false);
 #endif
@@ -222,7 +222,7 @@ TabWidget::TabWidget(QWidget *parent)
     m_bookmarkTabsAction = new QAction(this);
     connect(m_bookmarkTabsAction, &QAction::triggered, this, &TabWidget::bookmarkTabs);
 
-    m_newTabAction->setIcon(AroraIcon::getChrome(QLatin1String("tab-new")));
+    m_newTabAction->setIcon(ArktosIcon::getChrome(QLatin1String("tab-new")));
 #if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
     m_newTabAction->setIconVisibleInMenu(false);
 #endif
@@ -233,8 +233,8 @@ TabWidget::TabWidget(QWidget *parent)
     m_previousTabAction = new QAction(this);
     connect(m_previousTabAction, &QAction::triggered, this, &TabWidget::previousTab);
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
-    m_previousTabAction->setIcon(AroraIcon::getChrome(QLatin1String("go-previous")));
-    m_nextTabAction->setIcon(AroraIcon::getChrome(QLatin1String("go-next")));
+    m_previousTabAction->setIcon(ArktosIcon::getChrome(QLatin1String("go-previous")));
+    m_nextTabAction->setIcon(ArktosIcon::getChrome(QLatin1String("go-next")));
 #endif
 
     m_recentlyClosedTabsMenu = new QMenu(this);
@@ -887,7 +887,7 @@ WebView *TabWidget::makeNewTabInContainer(const QString &containerId, bool makeC
 {
     // webview — bound to the container's profile (CONT02).  The
     // default container and private browsing both resolve to
-    // BrowserApplication::webEngineProfileFor(profileId()) (the normal "arora"
+    // BrowserApplication::webEngineProfileFor(profileId()) (the normal "arktos"
     // profile, or the off-the-record profile while private browsing
     // is on) — containers are persistent state and can never take
     // over a private tab, and ContainerManager::profileFor() refuses
@@ -915,7 +915,7 @@ void TabWidget::ensureLineEditCompleter()
     if (m_lineEditCompleter)
         return;
     HistoryCompletionModel *completionModel = new HistoryCompletionModel(this);
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // OMNI01: the rustcore store serves the ranked completion rows
     // — a thin model in front of rc_history_suggest().  The no-rust
     // build keeps the in-memory filter model.  (Touch the manager
@@ -1174,17 +1174,17 @@ QString TabWidget::tabEngineId(int index) const
     return QString();
 }
 
-// ENG18: foreign backends carry no QWebChannel, so the "arora" page
+// ENG18: foreign backends carry no QWebChannel, so the "arktos" page
 // object that the internal qrc pages bind against (startpage.js'
 // init()) never materializes — a start page on a Servo tab renders
 // the bare skeleton: empty title and header, a dead search box.
 // After a qrc: commit on an engine tab, inject the equivalent
 // page-side shim: translate() answers from the same translation
-// domains webpage.cpp's JavaScriptAroraObject serves, searchUrl()
+// domains webpage.cpp's JavaScriptArktosObject serves, searchUrl()
 // reuses the live context engine's template and darkChrome tracks
 // the real palette — the page gains every feature the transport
-// cannot carry.  A page that already defined arora is left alone.
-static QString engineTabAroraScript()
+// cannot carry.  A page that already defined arktos is left alone.
+static QString engineTabArktosScript()
 {
     const auto jsString = [](const QString &text) {
         QJsonArray array;
@@ -1194,17 +1194,17 @@ static QString engineTabAroraScript()
         return QString::fromUtf8(json.mid(1, json.size() - 2));
     };
     static const char *keys[] = {
-        "Welcome to Arora!",
-        "Arora Start",
+        "Welcome to Arktos!",
+        "Arktos Start",
         "Search!",
         "Search results provided by",
-        "About Arora",
+        "About Arktos",
         "QT_LAYOUT_DIRECTION"
     };
     QStringList entries;
     for (const char *key : keys) {
         QString translated = QCoreApplication::translate(
-            "JavaScriptAroraObject", key);
+            "JavaScriptArktosObject", key);
         if (translated == QLatin1String(key))
             translated = qApp->tr(key);
         entries.append(jsString(QLatin1String(key)) + QLatin1Char(':')
@@ -1221,16 +1221,16 @@ static QString engineTabAroraScript()
             ? "true" : "false");
     return QStringLiteral(
         "(function(){"
-        "if(window.arora)return;"
+        "if(window.arktos)return;"
         "var T={%1};"
-        "window.arora={"
+        "window.arktos={"
         "currentEngineName:%2,"
         "darkChrome:%3,"
         "darkChromeChanged:{connect:function(){}},"
         "translate:function(s,cb){cb(Object.prototype.hasOwnProperty.call(T,s)?T[s]:s);},"
         "searchUrl:function(q,cb){cb(%4.split('{searchTerms}').join(encodeURIComponent(q)));}"
         "};"
-        "document.documentElement.classList.toggle('arora-dark',%3);"
+        "document.documentElement.classList.toggle('arktos-dark',%3);"
         "if(typeof update==='function')update();"
         "})();")
         .arg(entries.join(QLatin1Char(',')), jsString(engineName),
@@ -1344,12 +1344,12 @@ EngineTab *TabWidget::addEngineTab(Engine::Backend *backend, bool makeCurrent)
         if (at == currentIndex())
             emit showStatusBarMessage(ok ? tr("Finished loading")
                                          : tr("Failed to load"));
-        // ENG18: arm the page-side "arora" shim — internal qrc pages
+        // ENG18: arm the page-side "arktos" shim — internal qrc pages
         // get translated chrome text and a working search box even
         // though a foreign backend has no QWebChannel to serve them.
         if (ok && tab->page()
             && tab->url().scheme() == QLatin1String("qrc"))
-            tab->page()->runJavaScript(engineTabAroraScript());
+            tab->page()->runJavaScript(engineTabArktosScript());
     });
 
     // webview actions — same wiring makeNewTabOnProfile applies to a
@@ -2621,7 +2621,7 @@ void TabWidget::sleepTab(int index)
 // retention — collectable heap the engine only releases when a
 // memory-pressure signal arrives, and desktop Linux sends none.
 // Freezing a hidden page routes exactly that pressure notification
-// through its renderer (memcycle's ARORA_MEM_FREEZE leg drops the
+// through its renderer (memcycle's ARKTOS_MEM_FREEZE leg drops the
 // background slope from ~8.2 MB/cycle to ~0.06 MB/cycle), so the
 // sweep pulses each eligible background page Frozen for ~600 ms
 // then restores Active.  Unlike Memory Saver's discard the page
@@ -3256,7 +3256,7 @@ bool TabWidget::moveTabTo(int index, TabWidget *target, int targetIndex)
     // bare QWidget that moves whole.  A backend that cannot transfer
     // (the servo spike's host) must mark its page so the drop refuses
     // instead of tearing a foreign view off its window.
-    if (page->property("aroraNoTabTransfer").toBool())
+    if (page->property("arktosNoTabTransfer").toBool())
         return false;
     // Privacy boundary: private browsing is per-tab (PTAB01) — the
     // OTR bit lives on the page's profile and moves with the widget,
@@ -4026,7 +4026,7 @@ static bool searchInAddressFieldEnabled()
         .toBool();
 }
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 // OMNI01: rc_classify_input() owns the url-or-search decision; this
 // resolves its verdict against the Qt-owned engine table and the
 // private-context routing.  An empty QUrl means FFI or JSON trouble —
@@ -4111,7 +4111,7 @@ QUrl TabWidget::guessUrlFromStringRust(const QString &string, bool privateContex
     return manager->searchUrlForEngine(
         manager->engineForContext(privateContext), trimmed);
 }
-#endif // ARORA_RUSTCORE
+#endif // ARKTOS_RUSTCORE
 
 QUrl TabWidget::guessUrlFromString(const QString &string)
 {
@@ -4120,7 +4120,7 @@ QUrl TabWidget::guessUrlFromString(const QString &string)
 
 QUrl TabWidget::guessUrlFromString(const QString &string, bool privateContext)
 {
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     const QUrl resolved = guessUrlFromStringRust(string, privateContext);
     if (!resolved.isEmpty())
         return resolved;
@@ -4936,7 +4936,7 @@ bool TabWidget::restoreSessionSnapshot(const TabSessionSnapshot &snap)
     return true;
 }
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 // RCORE03: the rustcore session store consumes this JSON manifest —
 // {"current":i,"tabs":[{url,container,group,engine,state}],
 //  "groups":[{id,name,color,collapsed}]}.  "state" is the opaque
@@ -5011,7 +5011,7 @@ bool TabWidget::restoreSessionState(const QJsonObject &state)
     }
     return restoreSessionSnapshot(snap);
 }
-#endif // ARORA_RUSTCORE
+#endif // ARKTOS_RUSTCORE
 
 void TabWidget::createTab(const QByteArray &historyState, TabWidget::OpenUrlIn tab,
                           const QString &containerId)

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, The Arora Authors
+ * Copyright (c) 2026, The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -36,7 +36,7 @@
 #include "webpermissionmanager.h"
 #include "webpage.h"
 #include "webview.h"
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 #include "qtry.h"
 
 // Minimal HTTP/1.0 responder serving one html page (same pattern as
@@ -470,7 +470,7 @@ void tst_WebPermissions::revokeReinstatesPrompt()
     // does).  The stored grant is gone — a request that would have
     // silently re-applied it must now reach the consent prompt.
     //
-    // Arora pins every profile to AskEveryTime, so the engine-side
+    // Arktos pins every profile to AskEveryTime, so the engine-side
     // cache cannot resurrect the removed grant — but the check still
     // uses a fresh off-the-record profile: a different permission
     // context, which must consult the shared persistent store and find

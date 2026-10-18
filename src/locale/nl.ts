@@ -10,14 +10,14 @@ p, li { white-space: pre-wrap; }
 &lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2010 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2026-2027 Janos Szenfner&lt;/p&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;a href=&quot;https://github.com/janos-szenfner/arora&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;https://github.com/janos-szenfner/arora&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;a href=&quot;https://github.com/janos-szenfner/arktos&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;https://github.com/janos-szenfner/arktos&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
         <translation>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
 &lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
 p, li { white-space: pre-wrap; }
 &lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2010 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2026-2027 Janos Szenfner&lt;/p&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;a href=&quot;https://github.com/janos-szenfner/arora&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;https://github.com/janos-szenfner/arora&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;a href=&quot;https://github.com/janos-szenfner/arktos&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;https://github.com/janos-szenfner/arktos&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
     </message>
     <message>
         <source>Authors</source>
@@ -36,8 +36,8 @@ p, li { white-space: pre-wrap; }
         <translation>Lichte browser gebaseerd op WebEngine</translation>
     </message>
     <message>
-        <source>&lt;a href=&quot;http://arora-browser.org&quot;&gt;http://arora-browser.org&lt;/a&gt;</source>
-        <translation>&lt;a href=&quot;http://arora-browser.org&quot;&gt;http://arora-browser.org&lt;/a&gt;</translation>
+        <source>&lt;a href=&quot;http://arktos-browser.com&quot;&gt;http://arktos-browser.com&lt;/a&gt;</source>
+        <translation>&lt;a href=&quot;http://arktos-browser.com&quot;&gt;http://arktos-browser.com&lt;/a&gt;</translation>
     </message>
     <message>
         <source>Close</source>
@@ -210,10 +210,10 @@ p, li { white-space: pre-wrap; }
         <translation>Filterlijsten voor advertentieblokkering downloaden?</translation>
     </message>
     <message>
-        <source>Arora is configured to block ads and trackers using the community filter lists EasyList, EasyPrivacy, and uBlock filters. Enabling them downloads the lists once from easylist.to and ublockorigin.github.io and refreshes them about once a week.
+        <source>Arktos is configured to block ads and trackers using the community filter lists EasyList, EasyPrivacy, and uBlock filters. Enabling them downloads the lists once from easylist.to and ublockorigin.github.io and refreshes them about once a week.
 
 Until you choose, no list downloads are made and the blocker simply has no remote rules. You can change this later under Tools &gt; Ad Block.</source>
-        <translation>Arora is ingesteld om advertenties en trackers te blokkeren met de community-filterlijsten EasyList, EasyPrivacy en uBlock-filters. Als u ze inschakelt, worden de lijsten eenmalig gedownload van easylist.to en ublockorigin.github.io en ongeveer eens per week ververst.
+        <translation>Arktos is ingesteld om advertenties en trackers te blokkeren met de community-filterlijsten EasyList, EasyPrivacy en uBlock-filters. Als u ze inschakelt, worden de lijsten eenmalig gedownload van easylist.to en ublockorigin.github.io en ongeveer eens per week ververst.
 
 Tot u kiest, worden er geen lijsten gedownload en heeft de blokkering simpelweg geen externe regels. U kunt dit later wijzigen via Hulpmiddelen &gt; Advertentieblokkering.</translation>
     </message>
@@ -335,8 +335,8 @@ Tot u kiest, worden er geen lijsten gedownload en heeft de blokkering simpelweg 
         <translation>Voorinstellingen voor filterlijsten</translation>
     </message>
     <message>
-        <source>Tick a list to subscribe to it; Arora downloads it once and refreshes it about once a week. Unticking disables the subscription. Lists already subscribed to (including the defaults) show as ticked.</source>
-        <translation>Vink een lijst aan om erop te abonneren; Arora downloadt hem eenmalig en ververst hem ongeveer eens per week. Uitvinken schakelt het abonnement uit. Lijsten waarop al geabonneerd is (inclusief de standaardlijsten) worden aangevinkt getoond.</translation>
+        <source>Tick a list to subscribe to it; Arktos downloads it once and refreshes it about once a week. Unticking disables the subscription. Lists already subscribed to (including the defaults) show as ticked.</source>
+        <translation>Vink een lijst aan om erop te abonneren; Arktos downloadt hem eenmalig en ververst hem ongeveer eens per week. Uitvinken schakelt het abonnement uit. Lijsten waarop al geabonneerd is (inclusief de standaardlijsten) worden aangevinkt getoond.</translation>
     </message>
 </context>
 <context>
@@ -447,7 +447,7 @@ Tot u kiest, worden er geen lijsten gedownload en heeft de blokkering simpelweg 
     </message>
 </context>
 <context>
-    <name>AroraIcon</name>
+    <name>ArktosIcon</name>
     <message>
         <source>Native</source>
         <translation>Systeemeigen</translation>
@@ -800,8 +800,8 @@ Toch importeren?</translation>
         <translation type="vanished">htmlToXBel is nodig</translation>
     </message>
     <message>
-        <source>htmlToXBel tool, which is shipped with Arora and is needed to import HTML bookmarks, is not installed or not available in the search paths.</source>
-        <translation type="vanished">htmlToXBel, wat wordt geleverd met Arora, is nodig om HTML-bladwijzers te importeren. Het is echter niet geïnstalleerd.</translation>
+        <source>htmlToXBel tool, which is shipped with Arktos and is needed to import HTML bookmarks, is not installed or not available in the search paths.</source>
+        <translation type="vanished">htmlToXBel, wat wordt geleverd met Arktos, is nodig om HTML-bladwijzers te importeren. Het is echter niet geïnstalleerd.</translation>
     </message>
     <message>
         <source>Loading Bookmark</source>
@@ -880,8 +880,8 @@ Wilt u toch afsluiten?</translation>
         <translation>Herstellen mislukt</translation>
     </message>
     <message>
-        <source>Arora crashed while trying to restore this session.  Should I try again?</source>
-        <translation>Arora crashte bij het herstellen van deze sessie. Opnieuw proberen?</translation>
+        <source>Arktos crashed while trying to restore this session.  Should I try again?</source>
+        <translation>Arktos crashte bij het herstellen van deze sessie. Opnieuw proberen?</translation>
     </message>
 </context>
 <context>
@@ -1113,9 +1113,9 @@ Wilt u toch afsluiten?</translation>
         <translation>Werkbalk verbergen</translation>
     </message>
     <message>
-        <source>%1 - Arora</source>
+        <source>%1 - Arktos</source>
         <comment>Page title and Browser name</comment>
-        <translation>%1 - Arora</translation>
+        <translation>%1 - Arktos</translation>
     </message>
     <message>
         <source>Open Web Resource</source>
@@ -2430,14 +2430,14 @@ Wilt u toch afsluiten?</translation>
     </message>
 </context>
 <context>
-    <name>JavaScriptAroraObject</name>
+    <name>JavaScriptArktosObject</name>
     <message>
-        <source>Welcome to Arora!</source>
-        <translation>Welkom bij Arora!</translation>
+        <source>Welcome to Arktos!</source>
+        <translation>Welkom bij Arktos!</translation>
     </message>
     <message>
-        <source>Arora Start</source>
-        <translation>Arora Start</translation>
+        <source>Arktos Start</source>
+        <translation>Arktos Start</translation>
     </message>
     <message>
         <source>Search!</source>
@@ -2448,8 +2448,8 @@ Wilt u toch afsluiten?</translation>
         <translation>Zoekresultaten van</translation>
     </message>
     <message>
-        <source>About Arora</source>
-        <translation>Over Arora</translation>
+        <source>About Arktos</source>
+        <translation>Over Arktos</translation>
     </message>
 </context>
 <context>
@@ -3275,8 +3275,8 @@ QR-code te coderen.</translation>
         <translation>Bij het afsluiten geschiedenis, cookies, siteopslag en caches wissen — alles wat Privégegevens wissen omvat. Sites waarop u ingelogd blijft, worden uitgelogd.</translation>
     </message>
     <message>
-        <source>Clear browsing data when Arora exits</source>
-        <translation>Surfgegevens wissen wanneer Arora afsluit</translation>
+        <source>Clear browsing data when Arktos exits</source>
+        <translation>Surfgegevens wissen wanneer Arktos afsluit</translation>
     </message>
     <message>
         <source>PDF Documents</source>
@@ -3979,8 +3979,8 @@ QR-code te coderen.</translation>
         <translation>Thema:</translation>
     </message>
     <message>
-        <source>Color scheme for Arora&apos;s own windows, menus and dialogs. &quot;System default&quot; follows the desktop preference.</source>
-        <translation>Kleurenschema voor Arora&apos;s eigen vensters, menu&apos;s en dialogen. &quot;Systeemstandaard&quot; volgt de desktopvoorkeur.</translation>
+        <source>Color scheme for Arktos&apos;s own windows, menus and dialogs. &quot;System default&quot; follows the desktop preference.</source>
+        <translation>Kleurenschema voor Arktos&apos;s eigen vensters, menu&apos;s en dialogen. &quot;Systeemstandaard&quot; volgt de desktopvoorkeur.</translation>
     </message>
     <message>
         <source>Theme</source>
@@ -4003,8 +4003,8 @@ QR-code te coderen.</translation>
         <translation>Geldt voor de applicatie-chrome; de donkere modus voor pagina-inhoud is de aparte instelling &quot;Pagina&apos;s in donkere modus renderen&quot; hieronder.</translation>
     </message>
     <message>
-        <source>Pages that ship their own dark theme use it; light-only pages get a heuristic color inversion with a contrast floor so text stays readable. Images and videos are not inverted. Only web content is affected — Arora&apos;s own windows keep the desktop palette.</source>
-        <translation>Pagina&apos;s die een eigen donker thema meeleveren gebruiken dat; pagina&apos;s met alleen een licht thema krijgen een heuristische kleurinversie met een contrastvloer zodat tekst leesbaar blijft. Afbeeldingen en video&apos;s worden niet geïnverteerd. Alleen webinhoud wordt beïnvloed — Arora&apos;s eigen vensters houden het desktoppalet.</translation>
+        <source>Pages that ship their own dark theme use it; light-only pages get a heuristic color inversion with a contrast floor so text stays readable. Images and videos are not inverted. Only web content is affected — Arktos&apos;s own windows keep the desktop palette.</source>
+        <translation>Pagina&apos;s die een eigen donker thema meeleveren gebruiken dat; pagina&apos;s met alleen een licht thema krijgen een heuristische kleurinversie met een contrastvloer zodat tekst leesbaar blijft. Afbeeldingen en video&apos;s worden niet geïnverteerd. Alleen webinhoud wordt beïnvloed — Arktos&apos;s eigen vensters houden het desktoppalet.</translation>
     </message>
     <message>
         <source>Render pages in dark mode</source>
@@ -4207,8 +4207,8 @@ QR-code te coderen.</translation>
         <translation>Elke download verwijderen zodra die voltooid is</translation>
     </message>
     <message>
-        <source>Render pages on the GPU. Turned off, Arora adds --disable-gpu to the engine flags — the switch latches at startup, so the change takes effect on the next launch.</source>
-        <translation>Pagina&apos;s op de GPU renderen. Uitgeschakeld voegt Arora --disable-gpu toe aan de enginevlaggen — de schakelaar wordt bij het opstarten vastgelegd, dus de wijziging geldt bij de volgende start.</translation>
+        <source>Render pages on the GPU. Turned off, Arktos adds --disable-gpu to the engine flags — the switch latches at startup, so the change takes effect on the next launch.</source>
+        <translation>Pagina&apos;s op de GPU renderen. Uitgeschakeld voegt Arktos --disable-gpu toe aan de enginevlaggen — de schakelaar wordt bij het opstarten vastgelegd, dus de wijziging geldt bij de volgende start.</translation>
     </message>
     <message>
         <source>Use Hardware Acceleration When Available</source>
@@ -5294,12 +5294,12 @@ sleutel wordt in het geheugen afgeleid en nooit naar schijf geschreven.</transla
         <translation>Lokale inhoud</translation>
     </message>
     <message>
-        <source>TLS verified by Arora</source>
-        <translation>TLS geverifieerd door Arora</translation>
+        <source>TLS verified by Arktos</source>
+        <translation>TLS geverifieerd door Arktos</translation>
     </message>
     <message>
-        <source>TLS verified by Arora (%1)</source>
-        <translation>TLS geverifieerd door Arora (%1)</translation>
+        <source>TLS verified by Arktos (%1)</source>
+        <translation>TLS geverifieerd door Arktos (%1)</translation>
     </message>
     <message>
         <source>The certificate chain was re-verified independently of the web engine.</source>
@@ -5889,8 +5889,8 @@ Iedereen op het netwerk kan de gegevens lezen of wijzigen — inclusief wachtwoo
         <translation>Bij het verbinden met: %1.</translation>
     </message>
     <message>
-        <source>Check the address for errors such as &lt;b&gt;ww&lt;/b&gt;.arora-browser.org instead of &lt;b&gt;www&lt;/b&gt;.arora-browser.org</source>
-        <translation>Het adres controleren op fouten als &lt;b&gt;ww&lt;/b&gt;.arora-browser.org in plaats van &lt;b&gt;www&lt;/b&gt;.arora-browser.org</translation>
+        <source>Check the address for errors such as &lt;b&gt;ww&lt;/b&gt;.arktos-browser.com instead of &lt;b&gt;www&lt;/b&gt;.arktos-browser.com</source>
+        <translation>Het adres controleren op fouten als &lt;b&gt;ww&lt;/b&gt;.arktos-browser.com in plaats van &lt;b&gt;www&lt;/b&gt;.arktos-browser.com</translation>
     </message>
     <message>
         <source>If your computer or network is protected by a firewall or proxy, make sure that the browser is permitted to access the network.</source>
@@ -5933,20 +5933,20 @@ Iedereen op het netwerk kan de gegevens lezen of wijzigen — inclusief wachtwoo
         <translation>&lt;li&gt;SHA-256-vingerafdruk: %1&lt;/li&gt;</translation>
     </message>
     <message>
-        <source>&lt;a id=&quot;back&quot; href=&quot;arora-cert-error:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
-        <translation>&lt;a id=&quot;back&quot; href=&quot;arora-cert-error:back?n=%1&quot;&gt;Terug naar veiligheid&lt;/a&gt;</translation>
+        <source>&lt;a id=&quot;back&quot; href=&quot;arktos-cert-error:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
+        <translation>&lt;a id=&quot;back&quot; href=&quot;arktos-cert-error:back?n=%1&quot;&gt;Terug naar veiligheid&lt;/a&gt;</translation>
     </message>
     <message>
-        <source>&lt;a id=&quot;proceed&quot; href=&quot;arora-cert-error:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
-        <translation>&lt;a id=&quot;proceed&quot; href=&quot;arora-cert-error:proceed?n=%1&quot;&gt;Toch doorgaan (onveilig)&lt;/a&gt;</translation>
+        <source>&lt;a id=&quot;proceed&quot; href=&quot;arktos-cert-error:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
+        <translation>&lt;a id=&quot;proceed&quot; href=&quot;arktos-cert-error:proceed?n=%1&quot;&gt;Toch doorgaan (onveilig)&lt;/a&gt;</translation>
     </message>
     <message>
         <source>This site&apos;s certificate is not trusted</source>
         <translation>Het certificaat van deze site wordt niet vertrouwd</translation>
     </message>
     <message>
-        <source>Arora cannot verify the identity of %1. The certificate presented by the server is invalid — continuing could expose the connection to an attacker.</source>
-        <translation>Arora kan de identiteit van %1 niet verifiëren. Het door de server aangeboden certificaat is ongeldig — doorgaan kan de verbinding aan een aanvaller blootstellen.</translation>
+        <source>Arktos cannot verify the identity of %1. The certificate presented by the server is invalid — continuing could expose the connection to an attacker.</source>
+        <translation>Arktos kan de identiteit van %1 niet verifiëren. Het door de server aangeboden certificaat is ongeldig — doorgaan kan de verbinding aan een aanvaller blootstellen.</translation>
     </message>
     <message>
         <source>%1 (issued by %2, expires %3)</source>
@@ -5961,16 +5961,16 @@ Iedereen op het netwerk kan de gegevens lezen of wijzigen — inclusief wachtwoo
         <translation>De site op %1 vraagt u zich te identificeren met een certificaat.  Kies er een om te verzenden, of annuleer om door te gaan zonder u te identificeren.</translation>
     </message>
     <message>
-        <source>&lt;a id=&quot;back&quot; href=&quot;arora-http-warning:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
-        <translation>&lt;a id=&quot;back&quot; href=&quot;arora-http-warning:back?n=%1&quot;&gt;Terug naar veiligheid&lt;/a&gt;</translation>
+        <source>&lt;a id=&quot;back&quot; href=&quot;arktos-http-warning:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
+        <translation>&lt;a id=&quot;back&quot; href=&quot;arktos-http-warning:back?n=%1&quot;&gt;Terug naar veiligheid&lt;/a&gt;</translation>
     </message>
     <message>
-        <source>&lt;a id=&quot;proceed&quot; href=&quot;arora-http-warning:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
-        <translation>&lt;a id=&quot;proceed&quot; href=&quot;arora-http-warning:proceed?n=%1&quot;&gt;Toch doorgaan (onveilig)&lt;/a&gt;</translation>
+        <source>&lt;a id=&quot;proceed&quot; href=&quot;arktos-http-warning:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
+        <translation>&lt;a id=&quot;proceed&quot; href=&quot;arktos-http-warning:proceed?n=%1&quot;&gt;Toch doorgaan (onveilig)&lt;/a&gt;</translation>
     </message>
     <message>
-        <source>&lt;a id=&quot;always&quot; href=&quot;arora-http-warning:always?n=%1&quot;&gt;Always allow HTTP on this site&lt;/a&gt;</source>
-        <translation>&lt;a id=&quot;always&quot; href=&quot;arora-http-warning:always?n=%1&quot;&gt;HTTP op deze site altijd toestaan&lt;/a&gt;</translation>
+        <source>&lt;a id=&quot;always&quot; href=&quot;arktos-http-warning:always?n=%1&quot;&gt;Always allow HTTP on this site&lt;/a&gt;</source>
+        <translation>&lt;a id=&quot;always&quot; href=&quot;arktos-http-warning:always?n=%1&quot;&gt;HTTP op deze site altijd toestaan&lt;/a&gt;</translation>
     </message>
     <message>
         <source>Insecure connection: %1</source>
@@ -5981,8 +5981,8 @@ Iedereen op het netwerk kan de gegevens lezen of wijzigen — inclusief wachtwoo
         <translation>Deze site ondersteunt geen HTTPS</translation>
     </message>
     <message>
-        <source>Arora stopped %1 from loading because it can only be reached over an unencrypted HTTP connection.  Anyone on the network path can read or change everything sent to or received from this site — including passwords and cookies.</source>
-        <translation>Arora heeft het laden van %1 gestopt omdat het alleen via een onversleutelde HTTP-verbinding bereikbaar is.  Iedereen op het netwerkpad kan alles lezen of wijzigen dat naar of van deze site wordt verzonden — inclusief wachtwoorden en cookies.</translation>
+        <source>Arktos stopped %1 from loading because it can only be reached over an unencrypted HTTP connection.  Anyone on the network path can read or change everything sent to or received from this site — including passwords and cookies.</source>
+        <translation>Arktos heeft het laden van %1 gestopt omdat het alleen via een onversleutelde HTTP-verbinding bereikbaar is.  Iedereen op het netwerkpad kan alles lezen of wijzigen dat naar of van deze site wordt verzonden — inclusief wachtwoorden en cookies.</translation>
     </message>
     <message>
         <source>Requested address: %1</source>
@@ -5993,12 +5993,12 @@ Iedereen op het netwerk kan de gegevens lezen of wijzigen — inclusief wachtwoo
         <translation>De site biedt mogelijk simpelweg geen beveiligde versie, of de verbinding is door een netwerkaanvaller teruggezet naar HTTP.</translation>
     </message>
     <message>
-        <source>&lt;a id=&quot;back&quot; href=&quot;arora-site-block:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
-        <translation>&lt;a id=&quot;back&quot; href=&quot;arora-site-block:back?n=%1&quot;&gt;Terug naar veiligheid&lt;/a&gt;</translation>
+        <source>&lt;a id=&quot;back&quot; href=&quot;arktos-site-block:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
+        <translation>&lt;a id=&quot;back&quot; href=&quot;arktos-site-block:back?n=%1&quot;&gt;Terug naar veiligheid&lt;/a&gt;</translation>
     </message>
     <message>
-        <source>&lt;a id=&quot;proceed&quot; href=&quot;arora-site-block:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
-        <translation>&lt;a id=&quot;proceed&quot; href=&quot;arora-site-block:proceed?n=%1&quot;&gt;Toch doorgaan (onveilig)&lt;/a&gt;</translation>
+        <source>&lt;a id=&quot;proceed&quot; href=&quot;arktos-site-block:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
+        <translation>&lt;a id=&quot;proceed&quot; href=&quot;arktos-site-block:proceed?n=%1&quot;&gt;Toch doorgaan (onveilig)&lt;/a&gt;</translation>
     </message>
     <message>
         <source>Dangerous site blocked: %1</source>
@@ -6009,8 +6009,8 @@ Iedereen op het netwerk kan de gegevens lezen of wijzigen — inclusief wachtwoo
         <translation>Deze site staat op de lokale phishing-/malwareblokkeerlijst</translation>
     </message>
     <message>
-        <source>Arora stopped %1 from loading because the domain is listed as serving phishing or malware.  Visiting it can steal credentials or infect this computer.</source>
-        <translation>Arora heeft het laden van %1 gestopt omdat het domein vermeld staat als verspreider van phishing of malware.  Het bezoeken ervan kan inloggegevens stelen of deze computer infecteren.</translation>
+        <source>Arktos stopped %1 from loading because the domain is listed as serving phishing or malware.  Visiting it can steal credentials or infect this computer.</source>
+        <translation>Arktos heeft het laden van %1 gestopt omdat het domein vermeld staat als verspreider van phishing of malware.  Het bezoeken ervan kan inloggegevens stelen of deze computer infecteren.</translation>
     </message>
     <message>
         <source>The list is a local copy — no lookup left this computer.  Proceeding is remembered only for this session.</source>
@@ -6021,8 +6021,8 @@ Iedereen op het netwerk kan de gegevens lezen of wijzigen — inclusief wachtwoo
         <translation>Google heeft deze verbinding aan een limiet onderworpen.</translation>
     </message>
     <message>
-        <source>This is Google&apos;s bot check, not an Arora error — it temporarily flagged search traffic from this profile. Complete the prompt below or try again later; or switch the default search engine under Tools &gt; Options &gt; Search.</source>
-        <translation>Dit is Google&apos;s botcontrole, geen Arora-fout — het heeft zoekverkeer van dit profiel tijdelijk gemarkeerd. Voltooi de prompt hieronder of probeer het later opnieuw; of wijzig de standaardzoekmachine via Hulpmiddelen &gt; Opties &gt; Zoeken.</translation>
+        <source>This is Google&apos;s bot check, not an Arktos error — it temporarily flagged search traffic from this profile. Complete the prompt below or try again later; or switch the default search engine under Tools &gt; Options &gt; Search.</source>
+        <translation>Dit is Google&apos;s botcontrole, geen Arktos-fout — het heeft zoekverkeer van dit profiel tijdelijk gemarkeerd. Voltooi de prompt hieronder of probeer het later opnieuw; of wijzig de standaardzoekmachine via Hulpmiddelen &gt; Opties &gt; Zoeken.</translation>
     </message>
     <message>
         <source>If the address is correct, try checking the network connection.</source>
@@ -6304,8 +6304,8 @@ Toestaan?</translation>
 <context>
     <name>main</name>
     <message>
-        <source>Arora — a lightweight cross-platform web browser.</source>
-        <translation>Arora — een lichte cross-platform webbrowser.</translation>
+        <source>Arktos — a lightweight cross-platform web browser.</source>
+        <translation>Arktos — een lichte cross-platform webbrowser.</translation>
     </message>
     <message>
         <source>Url to open on startup.</source>
@@ -6316,8 +6316,8 @@ Toestaan?</translation>
         <translation>Een Tor-venster openen: een apart proces dat al het verkeer via de SOCKS5-listener van een beheerde tor-daemon op een speciaal off-the-record-profiel leidt.</translation>
     </message>
     <message>
-        <source>Run without the filesystem sandbox (equivalent to ARORA_NO_SANDBOX=1).</source>
-        <translation>Draaien zonder de bestandssysteemsandbox (equivalent aan ARORA_NO_SANDBOX=1).</translation>
+        <source>Run without the filesystem sandbox (equivalent to ARKTOS_NO_SANDBOX=1).</source>
+        <translation>Draaien zonder de bestandssysteemsandbox (equivalent aan ARKTOS_NO_SANDBOX=1).</translation>
     </message>
     <message>
         <source>Print the sandbox backend, state and active policy, then exit.</source>

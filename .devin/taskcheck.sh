@@ -9,7 +9,7 @@
 set -u
 files=("$@")
 if [ ${#files[@]} -eq 0 ]; then
-    files=(".devin/Arora-Task.md" ".devin/Arora-Task-UI.md" ".devin/Arora-Task-Rust.md" ".devin/Arora-Task-Lang.md" ".devin/TASKS.md")
+    files=(".devin/Arktos-Task.md" ".devin/Arktos-Task-UI.md" ".devin/Arktos-Task-Rust.md" ".devin/Arktos-Task-Lang.md" ".devin/TASKS.md")
 fi
 rc=0
 for f in "${files[@]}"; do

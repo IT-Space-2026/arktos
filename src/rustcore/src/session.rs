@@ -60,7 +60,7 @@ use serde_json::{json, Map, Value};
 use crate::error::{fail, Fail, RcResult, RcStatus};
 use crate::store;
 
-/// On-disk magic — "Arora RuSt Session".
+/// On-disk magic — "Arktos RuSt Session".
 pub const MAGIC: &[u8; 4] = b"ARSS";
 /// Manifest schema version — the JSON side.  Adding the optional
 /// per-window "profile" persona id stayed backwards compatible, so it

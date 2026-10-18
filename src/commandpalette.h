@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -66,7 +66,7 @@ public:
 
     // Subsequence score: >= 0 matches (higher is better), -1 no match.
     // Public so tests can pin the ranking rules directly.  Under
-    // ARORA_RUSTCORE fuzzyScore dispatches to rc_pal_score (CPAL01);
+    // ARKTOS_RUSTCORE fuzzyScore dispatches to rc_pal_score (CPAL01);
     // fuzzyScoreCpp is the Qt reference implementation kept for
     // no-rust builds, FFI-failure fallback and the parity test.
     static int fuzzyScore(const QString &query, const QString &candidate);

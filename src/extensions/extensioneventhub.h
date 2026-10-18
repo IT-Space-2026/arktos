@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -43,7 +43,7 @@ struct ContextMenuInfo;
 //
 //   chrome.tabs          onCreated/onUpdated/onActivated/onRemoved
 //                        (+ onHighlighted/onMoved/onDetached/
-//                        onAttached — the signals Arora actually
+//                        onAttached — the signals Arktos actually
 //                        has), built on the session-stable ids the
 //                        shim backend already mints for tabs.query
 //   chrome.webNavigation onBeforeNavigate (WebPage::aboutToLoadUrl)

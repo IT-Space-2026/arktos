@@ -1,10 +1,10 @@
 // PIP01: page-side Picture-in-Picture shim, armed per page by
 // WebPage::init() as a QWebEngineScript at DocumentCreation (main
-// world, name "arora:pip-shim").  It must live here — a prototype
+// world, name "arktos:pip-shim").  It must live here — a prototype
 // patch only sticks in the world that installs it — so SEC24 it
-// talks to the channel through arora-mainworld.js's helpers, whose
+// talks to the channel through arktos-mainworld.js's helpers, whose
 // requests the channel-world forwarder relays to the whitelisted
-// "aroraPip" object.
+// "arktosPip" object.
 //
 // Qt WebEngine surfaces no PiP negotiation: QWebEnginePermission's
 // PermissionType has no PiP entry and Chromium's PiP window manager
@@ -20,11 +20,11 @@
 // without PiP produces — the manual pop-out paths don't need the
 // bridge at all.
 (function () {
-    if (!window.HTMLVideoElement || window.__aroraPipShim)
+    if (!window.HTMLVideoElement || window.__arktosPipShim)
         return;
-    window.__aroraPipShim = true;
+    window.__arktosPipShim = true;
 
-    var TAG = 'data-arora-pip';
+    var TAG = 'data-arktos-pip';
     var pending = {};        // nonce -> {resolve, reject, video}
     var exitResolvers = [];  // document.exitPictureInPicture() waits
     var seq = 0;
@@ -51,7 +51,7 @@
     }
 
     // cb(true) once both result signals are wired — a refused
-    // subscription means the aroraPip object is not reachable
+    // subscription means the arktosPip object is not reachable
     // (unregistered: tor, or the forwarder is not armed), so the
     // shim degrades to NotSupportedError.
     function withBridge(cb) {
@@ -59,11 +59,11 @@
             cb(true);
             return;
         }
-        if (!window.__aroraMainCall || !window.__aroraMainSignal) {
+        if (!window.__arktosMainCall || !window.__arktosMainSignal) {
             cb(false);
             return;
         }
-        var resolved = window.__aroraMainSignal('aroraPip',
+        var resolved = window.__arktosMainSignal('arktosPip',
             'popOutResolved', function (nonce, ok, reason) {
                 var p = pending[nonce];
                 if (!p)
@@ -80,7 +80,7 @@
                         'NotSupportedError'));
                 }
             });
-        var closed = window.__aroraMainSignal('aroraPip',
+        var closed = window.__arktosMainSignal('arktosPip',
             'popOutClosed', function (nonce) {
                 // restore() in pip.js already dispatched
                 // leavepictureinpicture and cleared the tag; this
@@ -148,7 +148,7 @@
                         'NotSupportedError'));
                     return;
                 }
-                window.__aroraMainCall('aroraPip', 'requestPopOut',
+                window.__arktosMainCall('arktosPip', 'requestPopOut',
                                        nonce);
             });
         });
@@ -177,7 +177,7 @@
                         'NotSupportedError'));
                     return;
                 }
-                window.__aroraMainCall('aroraPip', 'exitPopOut',
+                window.__arktosMainCall('arktosPip', 'exitPopOut',
                                        video.getAttribute(TAG));
             });
         });

@@ -15,7 +15,7 @@ object leaks) are confirmed still clean below.
 * Phase 1 — LSan. Throwaway copy of the tree built with
   `qmake -spec linux-clang CONFIG+=sanitize` (sanitize.pri:
   ASan+UBSan) — see `.devin/check-leaks.sh` phase 1, run with
-  `ARORA_LEAKS_VALGRIND=0 ARORA_LEAKS_KEEP=1`. The autotest suite and
+  `ARKTOS_LEAKS_VALGRIND=0 ARKTOS_LEAKS_KEEP=1`. The autotest suite and
   every `--*-smoke` flag ran under `ASAN_OPTIONS=detect_leaks=1`
   (quarantine capped 64 MiB), `LSAN_OPTIONS=exitcode=0`, offscreen,
   isolated HOME. Binaries ran strictly sequentially — one process at a
@@ -44,7 +44,7 @@ Per-log (ours / upstream):
 
 First-real-frame module of every reported block (skipping the ASan
 allocator-interceptor frames, which resolve inside the instrumented
-binary — that artifact accounts for the residual "arora"/"tst_*"
+binary — that artifact accounts for the residual "arktos"/"tst_*"
 module hits in earlier runs, not our allocations):
 
 | module | blocks | share |
@@ -62,7 +62,7 @@ module hits in earlier runs, not our allocations):
    Representative:
 
         Direct leak of 128 byte(s) in 1 object(s) allocated from:
-            #0 operator new(unsigned long) (arora+0x40da51)   <- ASan interceptor
+            #0 operator new(unsigned long) (arktos+0x40da51)   <- ASan interceptor
             #1 libQt6WebEngineCore.so.6+0x54f2bc1
             #2 libQt6WebEngineCore.so.6+0x54e5d63
             #3 libQt6WebEngineCore.so.6+0x54dfde8
@@ -78,7 +78,7 @@ module hits in earlier runs, not our allocations):
    Called from inside WebEngineCore's device enumeration:
 
         Indirect leak of 376 byte(s) allocated from:
-            #0 malloc (arora+0x3cf433)                        <- ASan interceptor
+            #0 malloc (arktos+0x3cf433)                        <- ASan interceptor
             #1 libudev.so.1+0x20333
             #2 udev_monitor_new_from_netlink (libudev.so.1+0xb84c)
             #3 libQt6WebEngineCore.so.6+0x70f41f0
@@ -90,7 +90,7 @@ module hits in earlier runs, not our allocations):
    config caches parsed via libexpat's `XML_ParseBuffer`:
 
         Direct leak of 256 byte(s) allocated from:
-            #0 malloc (arora+0x3cf433)                        <- ASan interceptor
+            #0 malloc (arktos+0x3cf433)                        <- ASan interceptor
             #1 libfontconfig.so.1+0x227fc
             #4 libexpat.so.1+0xe518
             #9 XML_ParseBuffer (libexpat.so.1+0x9963)
@@ -151,9 +151,9 @@ its job reduces to re-verifying the gate stays green on a future
 HEAD and committing any suppression drift. Reproduce with:
 
     source .devin/qt-env.sh
-    ARORA_LEAKS_VALGRIND=0 ARORA_LEAKS_KEEP=1 ./.devin/check-leaks.sh
+    ARKTOS_LEAKS_VALGRIND=0 ARKTOS_LEAKS_KEEP=1 ./.devin/check-leaks.sh
 
-(phase 2 stays bounded manually as above; `ARORA_LEAKS_LSAN_LOGS=dir`
+(phase 2 stays bounded manually as above; `ARKTOS_LEAKS_LSAN_LOGS=dir`
 reuses an existing corpus without rerunning the suite.)
 
 ## MEM03 outcome (fix pass, 2026-10-07)

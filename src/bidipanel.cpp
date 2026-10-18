@@ -8,7 +8,7 @@
 
 #include "bidipanel.h"
 
-#include "arorastyle.h"
+#include "arktosstyle.h"
 #include "bidiclient.h"
 #include "engineinterface.h"
 #include "enginetab.h"
@@ -16,7 +16,7 @@
 #include "tabwidget.h"
 #include "webview.h"
 #include "network/tlsverifier.h"
-#include "utils/aroraicon.h"
+#include "utils/arktosicon.h"
 #include "utils/flowlayout.h"
 
 #include <qabstractitemmodel.h>
@@ -88,7 +88,7 @@ static const quint64 TagDomStylesPick = 11;
 static const int kMaxAttachRetries = 6;
 
 /*
- * DEVT13 — arora.cdp passthrough kinds.
+ * DEVT13 — arktos.cdp passthrough kinds.
  *
  * Everything past the BiDi surface rides the vendor extension: raw
  * CDP commands on a page session (or the browser session), answers
@@ -159,14 +159,14 @@ static const int kDomainProbeCount =
 // objects and bare arrays still parse (the canned test payloads
 // drive the legacy shape).
 static const char kDomHelper[] =
-    "window.__arora_dom_label = function(c) {"
+    "window.__arktos_dom_label = function(c) {"
     "  var s = c.tagName.toLowerCase();"
     "  if (c.id) s += '#' + c.id;"
     "  var cn = (typeof c.className === 'string') ? c.className.trim() : '';"
     "  if (cn) s += '.' + cn.split(/\\s+/).join('.');"
     "  return s;"
     "};"
-    "window.__arora_dom_markup = function(e) {"
+    "window.__arktos_dom_markup = function(e) {"
     "  var s = '<' + e.tagName.toLowerCase();"
     "  var n = e.attributes ? e.attributes.length : 0;"
     "  for (var i = 0; i < n && i < 8; i++) {"
@@ -177,7 +177,7 @@ static const char kDomHelper[] =
     "  if (n > 8) s += ' \\u2026';"
     "  return s + '>';"
     "};"
-    "window.__arora_dom_children = function(path) {"
+    "window.__arktos_dom_children = function(path) {"
     "  var e = document.documentElement;"
     "  if (path) { var parts = path.split('/');"
     "    for (var i = 0; i < parts.length; i++) {"
@@ -190,36 +190,36 @@ static const char kDomHelper[] =
     "  var out = [], n = 0;"
     "  for (var c = e.firstElementChild; c && n < 200; c = c.nextElementSibling) {"
     "    var cc = 0; for (var k = c.firstElementChild; k; k = k.nextElementSibling) cc++;"
-    "    out.push({label: window.__arora_dom_label(c),"
-    "              markup: window.__arora_dom_markup(c),"
+    "    out.push({label: window.__arktos_dom_label(c),"
+    "              markup: window.__arktos_dom_markup(c),"
     "              children: cc}); n++;"
     "  }"
-    "  return JSON.stringify({label: window.__arora_dom_label(e),"
-    "      markup: window.__arora_dom_markup(e), children: out});"
+    "  return JSON.stringify({label: window.__arktos_dom_label(e),"
+    "      markup: window.__arktos_dom_markup(e), children: out});"
     "};"
     // DEVT19: a MutationObserver keeps the Elements tree live — the
     // bridge relays no CDP DOM.* events, so the page reports batches
     // on the same console.log channel the inspect pick uses (the
     // panel intercepts the marker before the console sees it).
     // Throttled so a mutation storm becomes one refresh.
-    "if (!window.__arora_dom_obs) {"
+    "if (!window.__arktos_dom_obs) {"
     "  var __mt = null;"
-    "  window.__arora_dom_obs = new MutationObserver(function(ms) {"
+    "  window.__arktos_dom_obs = new MutationObserver(function(ms) {"
     "    for (var i = 0; i < ms.length; i++) {"
     "      var m = ms[i], own = false, j;"
-    "      if (m.target && m.target.id === '__arora_overlay') continue;"
+    "      if (m.target && m.target.id === '__arktos_overlay') continue;"
     "      for (j = 0; j < m.addedNodes.length; j++)"
-    "        if (m.addedNodes[j].id === '__arora_overlay') own = true;"
+    "        if (m.addedNodes[j].id === '__arktos_overlay') own = true;"
     "      for (j = 0; j < m.removedNodes.length; j++)"
-    "        if (m.removedNodes[j].id === '__arora_overlay') own = true;"
+    "        if (m.removedNodes[j].id === '__arktos_overlay') own = true;"
     "      if (own) continue;"
     "      if (__mt) clearTimeout(__mt);"
     "      __mt = setTimeout(function() { __mt = null;"
-    "        console.log('__arora_dom_mutated'); }, 250);"
+    "        console.log('__arktos_dom_mutated'); }, 250);"
     "      break;"
     "    }"
     "  });"
-    "  window.__arora_dom_obs.observe("
+    "  window.__arktos_dom_obs.observe("
     "    document.documentElement || document,"
     "    {subtree: true, childList: true, attributes: true,"
     "     characterData: true});"
@@ -266,13 +266,13 @@ static const char kDomStylesPick[] =
 // by string or selector".  A parseable query runs querySelectorAll;
 // anything else is a case-insensitive text/tag/id/class match over
 // every element.  Answers index paths in the tree's own coordinate
-// space (the same walk __arora_dom_children uses), capped at 200.
+// space (the same walk __arktos_dom_children uses), capped at 200.
 // DEVT22: hits carry {path, label, markup} so the results list can
 // show Chrome's <tag attr> lines; bare path strings still parse.
 static const char kDomSearch[] =
-    "window.__arora_dom_search = function(q) {"
+    "window.__arktos_dom_search = function(q) {"
     "  var out = [], i;"
-    "  var lb = window.__arora_dom_label, mk = window.__arora_dom_markup;"
+    "  var lb = window.__arktos_dom_label, mk = window.__arktos_dom_markup;"
     "  if (!lb) lb = function(e) { return e.tagName.toLowerCase(); };"
     "  if (!mk) mk = function(e) { return '<' + lb(e) + '>'; };"
     "  var path = function(e) {"
@@ -316,12 +316,12 @@ static const char kDomSearch[] =
 // one channel page->panel the bridge already relays).  The entry
 // is intercepted before it reaches the console list.
 static const char kInspectOn[] =
-    "(function(){var st=window.__arora_inspect;"
-    "if(!st){st={};window.__arora_inspect=st;"
+    "(function(){var st=window.__arktos_inspect;"
+    "if(!st){st={};window.__arktos_inspect=st;"
     "var ov=document.createElement('div');"
     // DEVT19: the DOM mutation observer skips changes to our own
     // inspect chrome by this id.
-    "ov.id='__arora_overlay';"
+    "ov.id='__arktos_overlay';"
     "ov.style.cssText='position:fixed;z-index:2147483647;"
     "pointer-events:none;border:2px solid #1a73e8;"
     "background:rgba(26,115,232,.2);display:none';"
@@ -337,7 +337,7 @@ static const char kInspectOn[] =
     "if(!p)break;var i=0;"
     "for(var c=p.firstElementChild;c;c=c.nextElementSibling){"
     "if(c===e)break;i++;}parts.unshift(i);e=p;}"
-    "console.log('__arora_inspect_pick:'+parts.join('/'));"
+    "console.log('__arktos_inspect_pick:'+parts.join('/'));"
     "st.off();st.ov.style.display='none';};"
     "st.on=function(){document.addEventListener('mousemove',st.move,true);"
     "document.addEventListener('click',st.click,true);};"
@@ -345,7 +345,7 @@ static const char kInspectOn[] =
     "true);document.removeEventListener('click',st.click,true);};}"
     "st.on();st.ov.style.display='none';return 'inspect-on';})()";
 static const char kInspectOff[] =
-    "(function(){var s=window.__arora_inspect;"
+    "(function(){var s=window.__arktos_inspect;"
     "if(s){s.off();s.ov.style.display='none';}return 'inspect-off';})()";
 
 /*
@@ -623,10 +623,10 @@ static QColor consoleWash(int level, const QPalette &pal)
 {
     switch (level) {
     case LevelError:
-        return AroraStyle::blend(pal.color(QPalette::Base),
+        return ArktosStyle::blend(pal.color(QPalette::Base),
                                  failColor(), 0.16);
     case LevelWarning:
-        return AroraStyle::blend(pal.color(QPalette::Base),
+        return ArktosStyle::blend(pal.color(QPalette::Base),
                                  QColor(0xf9, 0xab, 0x00), 0.14);
     }
     return QColor();
@@ -698,7 +698,7 @@ static QIcon recordDotIcon(bool recording, const QPalette &palette)
     painter.setRenderHint(QPainter::Antialiasing);
     painter.setPen(Qt::NoPen);
     painter.setBrush(recording
-        ? AroraStyle::recordDotColor()
+        ? ArktosStyle::recordDotColor()
         : palette.color(QPalette::Disabled, QPalette::ButtonText));
     painter.drawEllipse(QRectF(3.0, 3.0, 10.0, 10.0));
     return QIcon(dot);
@@ -792,7 +792,7 @@ public:
     {
         // Test seam — the class is file-local, so the suite reads
         // this marker instead of naming the type.
-        setProperty("aroraDomMarkup", true);
+        setProperty("arktosDomMarkup", true);
     }
 
     void paint(QPainter *painter, const QStyleOptionViewItem &option,
@@ -814,15 +814,15 @@ public:
         const bool selected = opt.state & QStyle::State_Selected;
         const QPalette &pal = opt.palette;
         const QColor tagColor =
-            selected ? AroraStyle::selectionTextColor(pal)
-                     : AroraStyle::accentFillColor(pal);
+            selected ? ArktosStyle::selectionTextColor(pal)
+                     : ArktosStyle::accentFillColor(pal);
         const QColor nameColor =
-            selected ? AroraStyle::selectionTextColor(pal)
-                     : AroraStyle::blend(pal.color(QPalette::Text),
+            selected ? ArktosStyle::selectionTextColor(pal)
+                     : ArktosStyle::blend(pal.color(QPalette::Text),
                                          pal.color(QPalette::Link),
                                          0.55);
         const QColor valueColor =
-            selected ? AroraStyle::selectionTextColor(pal)
+            selected ? ArktosStyle::selectionTextColor(pal)
                      : pal.color(QPalette::Link);
 
         // Split "<tag a="v" b="w" …>" into {text, color} spans.
@@ -1009,7 +1009,7 @@ protected:
         // Chrome's pastel set, blended halfway toward the field's
         // Base so dark palettes darken the fills instead of glowing.
         const auto ringColor = [&pal](const QColor &chrome) {
-            return AroraStyle::blend(pal.color(QPalette::Base),
+            return ArktosStyle::blend(pal.color(QPalette::Base),
                                      chrome, 0.55);
         };
         const struct { QRect r; QColor c; const char *name;
@@ -1023,7 +1023,7 @@ protected:
         };
         for (const auto &ring : rings) {
             p.fillRect(ring.r, ring.c);
-            const QColor ink = AroraStyle::contrastTextColor(ring.c);
+            const QColor ink = ArktosStyle::contrastTextColor(ring.c);
             p.setPen(ink);
             // caption in the ring's top-left corner
             p.drawText(ring.r.adjusted(3, 1, 0, 0),
@@ -1060,7 +1060,7 @@ protected:
         }
         p.fillRect(contentR,
                    ringColor(QColor(0x8b, 0xb3, 0xd9)));
-        p.setPen(AroraStyle::contrastTextColor(
+        p.setPen(ArktosStyle::contrastTextColor(
             ringColor(QColor(0x8b, 0xb3, 0xd9))));
         p.drawText(contentR, Qt::AlignCenter,
                    QStringLiteral("%1 × %2")
@@ -1606,7 +1606,7 @@ public:
 
         // DEVT11: the ruler's faint column-wide gridlines — the same
         // tick ladder the header paints, behind the bar.
-        const QColor grid = AroraStyle::blend(
+        const QColor grid = ArktosStyle::blend(
             option.palette.color(QPalette::Base),
             option.palette.color(QPalette::Text), 0.14);
         painter->setPen(grid);
@@ -1642,7 +1642,7 @@ public:
                 // never named one) fall back to the neutral swatch.
                 QColor bar = failed
                     ? failColor()
-                    : AroraStyle::networkTypeSwatch(
+                    : ArktosStyle::networkTypeSwatch(
                         index.data(BidiNetworkModel::TypeRole)
                             .toString(),
                         option.palette);
@@ -1856,7 +1856,7 @@ BidiPanel::BidiPanel(QWidget *parent)
         QLatin1String("bidiElementsSearchToggle"));
     domSearchToggle->setAutoRaise(true);
     domSearchToggle->setIcon(
-        AroraIcon::getChrome(QLatin1String("edit-find")));
+        ArktosIcon::getChrome(QLatin1String("edit-find")));
     domSearchToggle->setToolTip(
         tr("Find an element by string or selector (Ctrl+F)"));
     elb->addWidget(domSearchToggle);
@@ -2359,7 +2359,7 @@ BidiPanel::BidiPanel(QWidget *parent)
         QLatin1String("bidiNetworkSearchResponses"));
     m_responseSearch->setAutoRaise(true);
     m_responseSearch->setIcon(
-        AroraIcon::getChrome(QLatin1String("edit-find")));
+        ArktosIcon::getChrome(QLatin1String("edit-find")));
     m_responseSearch->setEnabled(false);
     m_responseSearch->setToolTip(
         tr("Search response bodies — unavailable: the debug channel "
@@ -2720,7 +2720,7 @@ BidiPanel::BidiPanel(QWidget *parent)
     });
 
     // DEVT13 — Security: no CDP needed.  The scheme + the page's
-    // (host,port) verdict from TlsVerifier — Arora's own second-
+    // (host,port) verdict from TlsVerifier — Arktos's own second-
     // opinion TLS chain check — plus a mixed-content count observed
     // from the Network rows.
     QWidget *secPage = new QWidget;
@@ -3760,7 +3760,7 @@ void BidiPanel::fetchDomChildren(QTreeWidgetItem *item)
     ensureDomHelper(ctx);
     // path is digits+slashes only — safe to quote inline.
     const QString expr = QStringLiteral(
-        "window.__arora_dom_children(\"%1\")").arg(path);
+        "window.__arktos_dom_children(\"%1\")").arg(path);
     const quint64 id = m_client->sendCommand(
         QStringLiteral("script.evaluate"),
         QJsonDocument(QJsonObject{
@@ -3860,12 +3860,12 @@ void BidiPanel::runDomSearch()
     const QString ctx = currentContext();
     if (ctx.isEmpty() || m_client->state() != BidiClient::Connected)
         return;
-    ensureDomHelper(ctx); // __arora_dom_label/markup feed the hits
+    ensureDomHelper(ctx); // __arktos_dom_label/markup feed the hits
     const QByteArray quoted = QJsonDocument(QJsonArray{query})
                                   .toJson(QJsonDocument::Compact);
     sendEval(ctx,
              QString::fromLatin1(kDomSearch)
-                 + QStringLiteral(";window.__arora_dom_search(%1)")
+                 + QStringLiteral(";window.__arktos_dom_search(%1)")
                        .arg(QString::fromUtf8(
                            quoted.mid(1, quoted.size() - 2))),
              TagDomSearch);
@@ -3982,7 +3982,7 @@ void BidiPanel::onResponse(quint64 id, const QByteArray &json)
 {
     const QJsonDocument doc = QJsonDocument::fromJson(json);
     const QJsonObject root = doc.object();
-    // DEVT13: arora.cdp answers carry the raw CDP result/error —
+    // DEVT13: arktos.cdp answers carry the raw CDP result/error —
     // they route ahead of the eval envelope handling.
     if (m_cdpReqs.contains(id)) {
         onCdpResponse(id, root);
@@ -4353,7 +4353,7 @@ void BidiPanel::onEvent(const QByteArray &json)
         // console.log — it's control traffic, not a page message,
         // so it's intercepted before the console sees it.
         static const QString kPick =
-            QStringLiteral("__arora_inspect_pick:");
+            QStringLiteral("__arktos_inspect_pick:");
         if (m_inspectToggle->isChecked()
             && text.startsWith(kPick)) {
             setInspecting(false);
@@ -4364,7 +4364,7 @@ void BidiPanel::onEvent(const QByteArray &json)
         // DEVT19: the page-side MutationObserver reports on the
         // same channel — control traffic again, so it re-arms the
         // live-refresh debounce without reaching the console list.
-        if (text == QLatin1String("__arora_dom_mutated")) {
+        if (text == QLatin1String("__arktos_dom_mutated")) {
             m_domLiveTimer->start();
             return;
         }
@@ -4620,7 +4620,7 @@ void BidiPanel::onEvent(const QByteArray &json)
     }
 }
 
-// ===== DEVT13 — the arora.cdp passthrough and the full tab set =====
+// ===== DEVT13 — the arktos.cdp passthrough and the full tab set =====
 
 quint64 BidiPanel::sendCdp(const QString &context,
                            const QString &method,
@@ -4633,7 +4633,7 @@ quint64 BidiPanel::sendCdp(const QString &context,
     if (!context.isEmpty())
         wrapper[QStringLiteral("context")] = context;
     const quint64 id = m_client->sendCommand(
-        QStringLiteral("arora.cdp"),
+        QStringLiteral("arktos.cdp"),
         QJsonDocument(wrapper).toJson(QJsonDocument::Compact));
     if (id)
         m_cdpReqs.insert(id, CdpReq{tag, a, b, n});
@@ -5524,7 +5524,7 @@ void BidiPanel::requestStylesFor(QTreeWidgetItem *item)
         // (serial mismatch) is dropped in onCdpResponse.
         sendCdp(ctx, QStringLiteral("Runtime.releaseObjectGroup"),
                 QJsonObject{{QStringLiteral("objectGroup"),
-                             QStringLiteral("arora-elements")}},
+                             QStringLiteral("arktos-elements")}},
                 CdpGeneric);
         sendCdp(ctx, QStringLiteral("Runtime.evaluate"),
                 QJsonObject{
@@ -5533,7 +5533,7 @@ void BidiPanel::requestStylesFor(QTreeWidgetItem *item)
                          + QStringLiteral("(\"%1\")").arg(path)},
                     {QStringLiteral("returnByValue"), false},
                     {QStringLiteral("objectGroup"),
-                     QStringLiteral("arora-elements")}},
+                     QStringLiteral("arktos-elements")}},
                 CdpEvalNode, QString(), QString(), serial);
     } else {
         // Honest subset when the CSS domain is absent: attributes,

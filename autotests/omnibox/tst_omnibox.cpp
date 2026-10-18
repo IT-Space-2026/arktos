@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,7 +18,7 @@
  */
 
 #include <QtTest/QtTest>
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 
 #include <history.h>
 #include <historycompleter.h>
@@ -30,7 +30,7 @@
 
 #include <qsettings.h>
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 #include <qjsonarray.h>
 #include <qjsondocument.h>
 #include <qjsonobject.h>
@@ -77,7 +77,7 @@ public:
     {
         return guessUrlFromStringCpp(input, false);
     }
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     static QUrl rust(const QString &input)
     {
         return guessUrlFromStringRust(input, false);
@@ -156,7 +156,7 @@ void tst_Omnibox::classifyCorpus()
 {
     QFETCH(QString, input);
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     for (bool fallback : {true, false}) {
         QSettings().setValue(
             QStringLiteral("urlloading/searchInAddressField"), fallback);
@@ -221,7 +221,7 @@ void tst_Omnibox::classifyExpectations()
     const QUrl resolved = SubTabWidget::reference(input);
     QCOMPARE(resolved.toString(QUrl::StripTrailingSlash),
              QUrl(expected).toString(QUrl::StripTrailingSlash));
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     QCOMPARE(SubTabWidget::rust(input)
                  .toString(QUrl::StripTrailingSlash),
              QUrl(expected).toString(QUrl::StripTrailingSlash));
@@ -230,7 +230,7 @@ void tst_Omnibox::classifyExpectations()
 
 void tst_Omnibox::frecencyScore_data()
 {
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     QTest::addColumn<qint64>("ageDays");
     QTest::addColumn<qint64>("expected");
 
@@ -247,7 +247,7 @@ void tst_Omnibox::frecencyScore_data()
 
 void tst_Omnibox::frecencyScore()
 {
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     QFETCH(qint64, ageDays);
     QFETCH(qint64, expected);
 
@@ -313,7 +313,7 @@ void tst_Omnibox::suggestMatchesLegacyPipeline()
                             .data(HistoryModel::UrlStringRole)
                             .toString();
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
         QStringList actual;
         const QByteArray t = term.toUtf8();
         char *json = rc_history_suggest(t.constData(), 500);

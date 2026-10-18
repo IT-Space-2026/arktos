@@ -1,6 +1,6 @@
-# io.arora.Arora — flatpak manifest (PKG02).
+# com.arktos_browser.Arktos — flatpak manifest (PKG02).
 #
-# Builds Arora inside the KDE 6.11 runtime/SDK (Qt 6.11 — the newest Qt 6
+# Builds Arktos inside the KDE 6.11 runtime/SDK (Qt 6.11 — the newest Qt 6
 # series flathub ships; the dev tree compiles warning-free against the
 # same Qt6 API surface on 6.12). QtWebEngine is not part of org.kde.Platform,
 # so it comes from the qtwebengine baseapp (matching branch 6.11), which is
@@ -39,7 +39,7 @@
 # Verify: ./.devin/pkg-flatpak.sh verify    (install + offscreen launch
 #         + bundled-tor smoke, see the script for the exact commands)
 
-app-id: io.arora.Arora
+app-id: com.arktos_browser.Arktos
 runtime: org.kde.Platform
 runtime-version: '6.11'
 sdk: org.kde.Sdk
@@ -47,9 +47,9 @@ base: io.qt.qtwebengine.BaseApp
 base-version: '6.11'
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
-command: arora
-rename-desktop-file: arora.desktop
-rename-icon: arora
+command: arktos
+rename-desktop-file: arktos.desktop
+rename-icon: arktos
 
 finish-args:
   - --share=ipc
@@ -74,7 +74,7 @@ build-options:
     # qmake resolves QT+=webenginewidgets through /app/mkspecs/modules —
     # the qtwebengine baseapp installs its module .pri files there.
     QMAKEPATH: /app
-    CARGO_HOME: /run/build/arora/cargo-home
+    CARGO_HOME: /run/build/arktos/cargo-home
     CARGO_NET_OFFLINE: 'true'
 
 modules:
@@ -101,13 +101,13 @@ modules:
         # would flatten (and collide) everything.
         strip-components: 0
 
-  - name: arora
+  - name: arktos
     buildsystem: simple
     build-commands:
       - cd src && qmake src.pro PREFIX=/app CONFIG+=rustdl CONFIG+=rustcore
       - make -C src -j${FLATPAK_BUILDER_N_JOBS}
       - make -C src install
-      - install -Dm644 flatpak/io.arora.Arora.metainfo.xml /app/share/metainfo/io.arora.Arora.metainfo.xml
+      - install -Dm644 flatpak/com.arktos_browser.Arktos.metainfo.xml /app/share/metainfo/com.arktos_browser.Arktos.metainfo.xml
     sources:
       - type: dir
         path: .

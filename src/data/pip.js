@@ -3,17 +3,17 @@
 // like fetchLinks.js — so the namespace installs itself once per
 // document and stays available for the follow-up calls.
 //
-//   __aroraPipCtl.tag(nonce, spec)   -> video info or {ok:false}
-//   __aroraPipCtl.detach(nonce)      -> pause + hide + placeholder
-//   __aroraPipCtl.restore(nonce, st) -> undo detach, apply play state
+//   __arktosPipCtl.tag(nonce, spec)   -> video info or {ok:false}
+//   __arktosPipCtl.detach(nonce)      -> pause + hide + placeholder
+//   __arktosPipCtl.restore(nonce, st) -> undo detach, apply play state
 //
 // spec = { tag | x, y | mediaUrl } — the context-menu path passes the
 // click point (CSS px) and the request's media url; either can miss,
 // falling back to the largest visible video.
 (function () {
-    if (window.__aroraPipCtl)
+    if (window.__arktosPipCtl)
         return;
-    var TAG = 'data-arora-pip';
+    var TAG = 'data-arktos-pip';
     var ctl = {};
 
     function videos() {
@@ -101,11 +101,11 @@
         var v = byTag(nonce);
         if (!v)
             return { ok: false, reason: 'gone' };
-        if (v.__aroraPipDetached)
+        if (v.__arktosPipDetached)
             return { ok: true };
         var r = v.getBoundingClientRect();
         var ph = document.createElement('div');
-        ph.className = 'arora-pip-placeholder';
+        ph.className = 'arktos-pip-placeholder';
         ph.setAttribute(TAG, nonce);
         ph.textContent = 'This video is playing in Picture-in-Picture';
         ph.style.cssText =
@@ -114,12 +114,12 @@
             + 'font:13px sans-serif;min-width:160px;min-height:90px;'
             + 'width:' + Math.max(r.width, 160) + 'px;'
             + 'height:' + Math.max(r.height, 90) + 'px;';
-        v.__aroraPipPrevDisplay = v.style.display;
+        v.__arktosPipPrevDisplay = v.style.display;
         if (v.parentNode)
             v.parentNode.insertBefore(ph, v);
         v.style.setProperty('display', 'none', 'important');
         v.pause();
-        v.__aroraPipDetached = true;
+        v.__arktosPipDetached = true;
         // Spec event — lets page PiP buttons flip their state on the
         // manual (context-menu/menu) path too, not just the shim's.
         try {
@@ -133,13 +133,13 @@
         if (!v)
             return { ok: false, reason: 'gone' };
         var ph = document.querySelector(
-            '.arora-pip-placeholder[' + TAG + '="' + nonce + '"]');
+            '.arktos-pip-placeholder[' + TAG + '="' + nonce + '"]');
         if (ph && ph.parentNode)
             ph.parentNode.removeChild(ph);
         v.style.removeProperty('display');
-        if (v.__aroraPipPrevDisplay)
-            v.style.display = v.__aroraPipPrevDisplay;
-        v.__aroraPipDetached = false;
+        if (v.__arktosPipPrevDisplay)
+            v.style.display = v.__arktosPipPrevDisplay;
+        v.__arktosPipDetached = false;
         v.removeAttribute(TAG);
         if (state) {
             try { v.currentTime = state.time; } catch (e) {}
@@ -152,5 +152,5 @@
         return { ok: true };
     };
 
-    window.__aroraPipCtl = ctl;
+    window.__arktosPipCtl = ctl;
 }())

@@ -65,8 +65,8 @@
 
 #include "acceptlanguagedialog.h"
 #include "adblockmanager.h"
-#include "aroraicon.h"
-#include "arorastyle.h"
+#include "arktosicon.h"
+#include "arktosstyle.h"
 #include "addressdialog.h"
 #include "autofilldialog.h"
 #include "autofillmanager.h"
@@ -214,14 +214,14 @@ SettingsDialog::SettingsDialog(QWidget *parent)
          i < pagesList->count()
          && i < int(sizeof(pageIcons) / sizeof(pageIcons[0])); ++i) {
         if (QListWidgetItem *item = pagesList->item(i))
-            item->setIcon(AroraIcon::getChrome(QLatin1String(pageIcons[i])));
+            item->setIcon(ArktosIcon::getChrome(QLatin1String(pageIcons[i])));
     }
     // ICONS02: with no explicit iconSize the view paints each icon at
     // whatever nominal size the resolved asset carries — themes ship
     // mixed 16/22/32 assets, so rows render unevenly and the label
     // baselines drift.  Pin the extent at the widget level (never in
     // the theme files) so every current and future set is uniform;
-    // it's widget state, so a runtime AroraIcon::setTheme re-resolve
+    // it's widget state, so a runtime ArktosIcon::setTheme re-resolve
     // can't regrow it.
     // PREFUI08: at the stock font beside 16px glyphs the nav read
     // cramped — bump the list font ~30% relative to the app font
@@ -251,7 +251,7 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     // text.
     pagesList->setFixedWidth(pagesList->sizeHintForColumn(0)
                              + 2 * pagesList->frameWidth()
-                             + AroraStyle::Spacing::Medium);
+                             + ArktosStyle::Spacing::Medium);
 
     // UIP06: the stack's sizeHint is the tallest page, which can
     // exceed the screen and push the button box out of reach.
@@ -280,27 +280,27 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     // identical on every page and pages pack tighter (most no longer
     // need their scroll area at a sane window size).
     layout()->setContentsMargins(
-        AroraStyle::Spacing::Medium, AroraStyle::Spacing::Medium,
-        AroraStyle::Spacing::Medium, AroraStyle::Spacing::Medium);
+        ArktosStyle::Spacing::Medium, ArktosStyle::Spacing::Medium,
+        ArktosStyle::Spacing::Medium, ArktosStyle::Spacing::Medium);
     for (int i = 0; i < tabWidget->count(); ++i) {
         QWidget *surface = tabWidget->widget(i);
         if (QScrollArea *area = qobject_cast<QScrollArea *>(surface))
             surface = area->widget();
         if (surface && surface->layout()) {
             surface->layout()->setContentsMargins(
-                AroraStyle::Spacing::Medium, AroraStyle::Spacing::Medium,
-                AroraStyle::Spacing::Medium, AroraStyle::Spacing::Medium);
+                ArktosStyle::Spacing::Medium, ArktosStyle::Spacing::Medium,
+                ArktosStyle::Spacing::Medium, ArktosStyle::Spacing::Medium);
             // THEM03: one Medium step between sections — uic leaves
             // the style's ad-hoc default otherwise.
-            surface->layout()->setSpacing(AroraStyle::Spacing::Medium);
+            surface->layout()->setSpacing(ArktosStyle::Spacing::Medium);
         }
     }
     const QList<QGroupBox *> groups = findChildren<QGroupBox *>();
     for (QGroupBox *box : groups) {
         if (QLayout *boxLayout = box->layout())
             boxLayout->setContentsMargins(
-                AroraStyle::Spacing::Medium, AroraStyle::Spacing::Small,
-                AroraStyle::Spacing::Medium, AroraStyle::Spacing::Medium);
+                ArktosStyle::Spacing::Medium, ArktosStyle::Spacing::Small,
+                ArktosStyle::Spacing::Medium, ArktosStyle::Spacing::Medium);
     }
 
     connect(exceptionsButton, &QPushButton::clicked, this, &SettingsDialog::showExceptions);
@@ -321,7 +321,7 @@ SettingsDialog::SettingsDialog(QWidget *parent)
             this, ProfileStore::activeProfileId());
     });
 
-    // ICONS01: one entry per AroraIcon::themeIds() — itemData carries
+    // ICONS01: one entry per ArktosIcon::themeIds() — itemData carries
     // the id.
     // ICONS03: each option previews a strip of the set's own chrome
     // glyphs painted side-by-side into one pixmap — a single
@@ -339,9 +339,9 @@ SettingsDialog::SettingsDialog(QWidget *parent)
                               chromeIconExtent);
     iconThemeCombo->setIconSize(previewExtent);
     const qreal previewDpr = iconThemeCombo->devicePixelRatioF();
-    for (const QString &id : AroraIcon::themeIds()) {
+    for (const QString &id : ArktosIcon::themeIds()) {
         const int row = iconThemeCombo->count();
-        iconThemeCombo->addItem(AroraIcon::themeDisplayName(id), id);
+        iconThemeCombo->addItem(ArktosIcon::themeDisplayName(id), id);
         QPixmap strip(previewExtent * previewDpr);
         strip.setDevicePixelRatio(previewDpr);
         strip.fill(Qt::transparent);
@@ -349,7 +349,7 @@ SettingsDialog::SettingsDialog(QWidget *parent)
         int painted = 0;
         for (const char *name : previewNames) {
             const QIcon glyph =
-                AroraIcon::iconForTheme(id, QLatin1String(name));
+                ArktosIcon::iconForTheme(id, QLatin1String(name));
             if (glyph.isNull())
                 continue;
             glyph.paint(&painter,
@@ -364,7 +364,7 @@ SettingsDialog::SettingsDialog(QWidget *parent)
             // A set that resolves none of the preview names keeps the
             // old single-glyph behavior rather than painting blank.
             iconThemeCombo->setItemIcon(
-                row, AroraIcon::iconForTheme(
+                row, ArktosIcon::iconForTheme(
                          id, QLatin1String("view-refresh")));
         }
     }
@@ -395,7 +395,7 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     // loadFromSettings.
     for (const SidebarPanel::Panel &panel : SidebarPanel::orderedPanels()) {
         QListWidgetItem *item = new QListWidgetItem(
-            AroraIcon::getChrome(QLatin1String(panel.iconName)), panel.title,
+            ArktosIcon::getChrome(QLatin1String(panel.iconName)), panel.title,
             sidebarPanelsList);
         item->setData(Qt::UserRole, panel.id);
         item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
@@ -429,7 +429,7 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     // round-trips instead of being silently rewritten to built-in.
     downloadEngineCombo->setItemData(0, QLatin1String("builtin"));
     downloadEngineCombo->setItemData(1, QLatin1String("rust"));
-#ifndef ARORA_RUSTDL
+#ifndef ARKTOS_RUSTDL
     if (QStandardItemModel *engineModel =
             qobject_cast<QStandardItemModel *>(downloadEngineCombo->model())) {
         if (QStandardItem *accelerated = engineModel->item(1)) {
@@ -591,7 +591,7 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     // round-trips instead of being silently rewritten to Built-in.
     adblockEngineCombo->setItemData(0, QLatin1String("cpp"));
     adblockEngineCombo->setItemData(1, QLatin1String("rust"));
-#ifndef ARORA_ADBLOCK_RUST
+#ifndef ARKTOS_ADBLOCK_RUST
     if (QStandardItemModel *engineModel =
             qobject_cast<QStandardItemModel *>(adblockEngineCombo->model())) {
         if (QStandardItem *rust = engineModel->item(1)) {
@@ -931,14 +931,14 @@ void SettingsDialog::retranslate()
             tr("This build of Qt WebEngine was compiled without "
                "extension support."));
     }
-#ifndef ARORA_RUSTDL
+#ifndef ARKTOS_RUSTDL
     if (QStandardItemModel *engineModel =
             qobject_cast<QStandardItemModel *>(downloadEngineCombo->model())) {
         if (QStandardItem *accelerated = engineModel->item(1))
             accelerated->setText(tr("Accelerated (Rust) — not in this build"));
     }
 #endif
-#ifndef ARORA_ADBLOCK_RUST
+#ifndef ARKTOS_ADBLOCK_RUST
     if (QStandardItemModel *engineModel =
             qobject_cast<QStandardItemModel *>(adblockEngineCombo->model())) {
         if (QStandardItem *rust = engineModel->item(1)) {
@@ -1187,7 +1187,7 @@ void SettingsDialog::loadFromSettings()
                 item->data(Qt::UserRole).toByteArray())
                 ? Qt::Checked : Qt::Unchecked);
     }
-    const QString iconTheme = AroraIcon::theme();
+    const QString iconTheme = ArktosIcon::theme();
     const int iconThemeIndex = iconThemeCombo->findData(iconTheme);
     iconThemeCombo->setCurrentIndex(iconThemeIndex < 0 ? 0 : iconThemeIndex);
     const int engineIndex =
@@ -1331,7 +1331,7 @@ void SettingsDialog::loadFromSettings()
     // value falls back to built-in.  DLACC06: rust is the default on
     // builds shipping the crate — without it a fresh profile must not
     // land on the disabled Accelerated row.
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
     const QLatin1String defaultEngine("rust");
 #else
     const QLatin1String defaultEngine("builtin");
@@ -1772,7 +1772,7 @@ void SettingsDialog::saveToSettings()
                       sidebarLazyLoadCheck->isChecked());
     // Applies to existing icons live — QIcon theme lookups re-resolve
     // on setThemeName, no widget rewiring needed.
-    AroraIcon::setTheme(iconTheme);
+    ArktosIcon::setTheme(iconTheme);
 
     // THEME01: chrome color scheme — persisted under browser/ and
     // applied live.  applyColorScheme() re-reads the key through
@@ -3177,7 +3177,7 @@ void SettingsDialog::extensionSelectionChanged()
             lines << tr("Source: %1").arg(info.path);
         // EXT06: document where installed extensions live on disk so
         // stale ones can be cleaned out by hand (Remove uninstalls
-        // through the profile while Arora is running).
+        // through the profile while Arktos is running).
         if (info.installed && !info.builtin) {
             const QString installPath =
                 ExtensionManager::instance()->installPath();
@@ -3187,7 +3187,7 @@ void SettingsDialog::extensionSelectionChanged()
         if (info.actionPopupUrl.isValid())
             lines << (info.hosted
                 ? tr("Declares a toolbar action — its popup gets the "
-                     "hosted shim when opened; Arora has no toolbar "
+                     "hosted shim when opened; Arktos has no toolbar "
                      "button for it yet.")
                 : tr("Declares a toolbar action — Qt WebEngine has no "
                      "extension toolbar, so its popup will not appear."));

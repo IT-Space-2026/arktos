@@ -7,7 +7,7 @@
 cd "$(dirname "$0")" || exit 1
 
 # Isolate HOME so tests can't read or pollute the user's real
-# ~/.config/Arora (QSettings) or ~/.local/share/Arora (WebEngine
+# ~/.config/Arktos (QSettings) or ~/.local/share/Arktos (WebEngine
 # profiles, container storage).  Without this the suite's result
 # depends on whatever settings the live browser last synced — e.g. a
 # real `urlloading/searchEngineFallback=false` broke tst_TabWidget's
@@ -15,9 +15,9 @@ cd "$(dirname "$0")" || exit 1
 # tst_ContainerManager — and test-side writes land in the real
 # profile.  The XDG vars are overridden explicitly in case the caller
 # exports them (they would otherwise bypass the HOME redirect).
-ARORA_TEST_HOME=$(mktemp -d "${TMPDIR:-/tmp}/arora-testhome.XXXXXX")
-trap 'rm -rf "$ARORA_TEST_HOME"' EXIT
-HOME="$ARORA_TEST_HOME"
+ARKTOS_TEST_HOME=$(mktemp -d "${TMPDIR:-/tmp}/arktos-testhome.XXXXXX")
+trap 'rm -rf "$ARKTOS_TEST_HOME"' EXIT
+HOME="$ARKTOS_TEST_HOME"
 XDG_CONFIG_HOME="$HOME/.config"
 XDG_DATA_HOME="$HOME/.local/share"
 XDG_CACHE_HOME="$HOME/.cache"
@@ -46,8 +46,8 @@ listed() {
 # tst_browsermainwindow has a known post-Totals WebEngine teardown
 # SIGSEGV loop that never exits on its own (documented pre-existing;
 # its leg results are already printed by then, so the kill loses no
-# signal).  Generous default; override with ARORA_TEST_TIMEOUT.
-TEST_TIMEOUT=${ARORA_TEST_TIMEOUT:-900}
+# signal).  Generous default; override with ARKTOS_TEST_TIMEOUT.
+TEST_TIMEOUT=${ARKTOS_TEST_TIMEOUT:-900}
 
 status=0
 for pro in */*.pro */*/*.pro; do

@@ -74,7 +74,7 @@ class DownloadManager;
 class QEvent;
 class QShowEvent;
 class QWebEnginePage;
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
 class RustDownloadEngine;
 #endif
 
@@ -95,7 +95,7 @@ signals:
 
 public:
     DownloadItem(Engine::DownloadRequest *download = nullptr, bool requestFileName = false, QWidget *parent = nullptr);
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
     // Card backed by the rustdl accelerated engine instead of a
     // Chromium request (DLACC06).  The engine object is re-parented
     // to the item.
@@ -208,7 +208,7 @@ private:
     bool isFinished() const;
 
     QPointer<Engine::DownloadRequest> m_download;
-#ifdef ARORA_RUSTDL
+#ifdef ARKTOS_RUSTDL
     QPointer<RustDownloadEngine> m_engine;
 #endif
     // DOWN02: the owning manager, captured at construction — the item
@@ -328,7 +328,7 @@ public:
     // handler (Settings > downloadmanager/externalPath).  The url
     // becomes a raw argv argument to another program, so only real
     // remote-download schemes are passed — file:, data:, blob:,
-    // javascript: and the arora-* schemes are refused and fall back to
+    // javascript: and the arktos-* schemes are refused and fall back to
     // the internal download path.  Static so autotests can drive it
     // without a live download.
     static bool externalDownload(const QUrl &url);

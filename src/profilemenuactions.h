@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -104,7 +104,7 @@ public:
     // confirm → marker → detached respawn → autosave quiesce + exit.
     // Returns false when cancelled or when the marker cannot be
     // written.  Under a real run it never returns on success — the
-    // ARORA_WIPE_NO_QUIT=1 test seam stops it after the marker write.
+    // ARKTOS_WIPE_NO_QUIT=1 test seam stops it after the marker write.
     static bool requestProfileWipe(QWidget *parent);
 
     // Blocks until the pid exits or the timeout elapses — used at

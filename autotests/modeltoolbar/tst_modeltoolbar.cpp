@@ -19,7 +19,7 @@
 
 #include <QtTest/QtTest>
 #include <modeltoolbar.h>
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 
 #include "browserapplication.h"
 #include "modelmenu.h"

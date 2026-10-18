@@ -32,7 +32,7 @@ class ClearPrivateData : public QDialog
 public:
     // CLR01: the category bits the plan operates on — identical
     // values to rustcore's RC_CLEAR_* (static_assert'd in the .cpp
-    // under ARORA_RUSTCORE).  The dialog's seven checkboxes are
+    // under ARKTOS_RUSTCORE).  The dialog's seven checkboxes are
     // History..Icons; Session/FullWipe belong to the on-exit wipe.
     enum ClearCategory {
         ClearHistory = 0x01,
@@ -51,7 +51,7 @@ public:
 
     // The "which stores get wiped" decision, returned as the ordered
     // operation list the executor walks.  plan() decides through
-    // rustcore's rc_clearplan under ARORA_RUSTCORE; planQt() is the
+    // rustcore's rc_clearplan under ARKTOS_RUSTCORE; planQt() is the
     // no-rust implementation, the FFI-failure fallback and the
     // parity-test seam — both emit the identical op vocabulary
     // documented in rustcore.h.  `otr` scopes the plan to the live

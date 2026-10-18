@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, The Arora Authors
+ * Copyright (c) 2026, The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,7 +21,7 @@
 // in-process QSslServer with a self-signed certificate triggers
 // QWebEnginePage::certificateError; WebPage defers the error and
 // renders the interstitial whose action links resolve the deferred
-// decision via the arora-cert-error: scheme.
+// decision via the arktos-cert-error: scheme.
 //
 // Verified Qt 6.11.3/6.12.0 semantics this suite encodes:
 //  * acceptCertificate() resumes the parked request and marks the
@@ -32,7 +32,7 @@
 //    prompts again.  "Proceed" therefore means "this session only".
 //
 // Timing note: the interstitial commits a loadFinished(true) of its
-// own when the arora-cert-error: page is served.  Every test waits for
+// own when the arktos-cert-error: page is served.  Every test waits for
 // that commit before evaluating page DOM or clicking action links.
 
 #include <QtTest/QtTest>
@@ -51,7 +51,7 @@
 #include "sitepadlock.h"
 #include "webpage.h"
 #include "webview.h"
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 #include "qtry.h"
 
 // Self-signed throwaway fixture (openssl req -x509, CN=localhost,
@@ -341,8 +341,8 @@ void tst_CertError::interstitialShowsDetails()
     // ... and both action links for an overridable error.
     QVERIFY(html.contains(QLatin1String("id=\"back\"")));
     QVERIFY(html.contains(QLatin1String("id=\"proceed\"")));
-    QVERIFY(html.contains(QLatin1String("arora-cert-error:proceed?n=")));
-    QVERIFY(html.contains(QLatin1String("arora-cert-error:back?n=")));
+    QVERIFY(html.contains(QLatin1String("arktos-cert-error:proceed?n=")));
+    QVERIFY(html.contains(QLatin1String("arktos-cert-error:back?n=")));
 }
 
 void tst_CertError::proceedLoadsPage()
@@ -452,7 +452,7 @@ void tst_CertError::forgedProceedLinkIgnored()
     // same path the genuine link uses.
     evalSync(page, QLatin1String(
         "var a = document.createElement('a');"
-        "a.id = 'forge'; a.href = 'arora-cert-error:proceed?n=forged';"
+        "a.id = 'forge'; a.href = 'arktos-cert-error:proceed?n=forged';"
         "a.textContent = 'forge'; document.body.appendChild(a); true"));
     QVERIFY(clickElement(&view, QLatin1String("forge")));
     QTest::qWait(1000);
@@ -591,7 +591,7 @@ int main(int argc, char *argv[])
 {
     Q_INIT_RESOURCE(htmls);
     Q_INIT_RESOURCE(data);
-    // arora-cert-error: must be registered before BrowserApplication's
+    // arktos-cert-error: must be registered before BrowserApplication's
     // constructor brings up the browsing profile (same order as
     // main.cpp) — unregistered schemes go down Chromium's
     // external-protocol path and never reach acceptNavigationRequest.

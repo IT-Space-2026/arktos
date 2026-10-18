@@ -62,7 +62,7 @@
 
 #include "bookmarknode.h"
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 #include <qjsondocument.h>
 #include <qjsonobject.h>
 
@@ -82,7 +82,7 @@ BookmarkNode::~BookmarkNode()
 {
     if (m_parent)
         m_parent->remove(this);
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // Whatever subtree this node owns in the store — detached by the
     // remove() above or still attached at tree teardown — goes with
     // it; a fresh rc_bm_load hands out new handles anyway.
@@ -97,7 +97,7 @@ BookmarkNode::~BookmarkNode()
     m_type = BookmarkNode::Root;
 }
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 void BookmarkNode::dropRustHandles()
 {
     m_handle = 0;
@@ -138,7 +138,7 @@ void BookmarkNode::setType(Type type)
 
 QList<BookmarkNode*> BookmarkNode::children() const
 {
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     if (m_handle && !m_childrenLoaded)
         const_cast<BookmarkNode *>(this)->materializeChildren();
 #endif
@@ -157,7 +157,7 @@ void BookmarkNode::add(BookmarkNode *child, int offset)
     if (m_type == BookmarkNode::Bookmark)
         return;
     Q_ASSERT(child->m_type != Root);
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // The insert row is interpreted against the full child list, so a
     // handle-backed parent pulls its children from the store first.
     if (m_handle)
@@ -172,7 +172,7 @@ void BookmarkNode::add(BookmarkNode *child, int offset)
     if (offset < 0 || offset > m_children.size())
         offset = m_children.size();
     m_children.insert(offset, child);
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     if (m_handle && child->m_type != Root) {
         if (child->m_handle) {
             // Re-link a detached subtree (undo, drag-move) and resync
@@ -192,7 +192,7 @@ void BookmarkNode::remove(BookmarkNode *child)
         return;
     child->m_parent = nullptr;
     m_children.removeAll(child);
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // detach() keeps the subtree addressable — the undo stack
     // re-links it via add() -> rc_bm_attach().
     if (child->m_handle)
@@ -200,7 +200,7 @@ void BookmarkNode::remove(BookmarkNode *child)
 #endif
 }
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 
 void BookmarkNode::materializeChildren()
 {
@@ -273,5 +273,5 @@ void BookmarkNode::rustUpload(uint64_t parent, int64_t row)
         child->rustUpload(m_handle, -1);
 }
 
-#endif // ARORA_RUSTCORE
+#endif // ARKTOS_RUSTCORE
 

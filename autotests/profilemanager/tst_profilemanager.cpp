@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,7 +23,7 @@
 // The store ctor takes an explicit profiles.json path so every leg
 // runs against a hermetic tree under QTemporaryDir.
 
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 
 #include "browserapplication.h"
 #include "browsermainwindow.h"

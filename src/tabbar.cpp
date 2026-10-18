@@ -63,8 +63,8 @@
 #include "tabbar.h"
 #include "profilesettings.h"
 
-#include "aroraicon.h"
-#include "arorastyle.h"
+#include "arktosicon.h"
+#include "arktosstyle.h"
 #include "browserapplication.h"
 #include "containermanager.h"
 #include "energysaver.h"
@@ -125,7 +125,7 @@ static QMouseEvent shiftedMouseEvent(const QMouseEvent *event,
 
 // TABS13: the live in-process tab drag — the bar the drag left and
 // the page widget being moved.  The mime token is only trusted when
-// it names this pair, so stale or foreign application/x-arora-tab
+// it names this pair, so stale or foreign application/x-arktos-tab
 // data can never reach a tab.
 static QPointer<TabBar> s_tabDragSource;
 static QPointer<QWidget> s_tabDragPage;
@@ -152,15 +152,15 @@ void TabBar::endTabDragSession()
 // The mime payload is "<source bar>:<page widget>" — it only yields a
 // pair when it matches the live session, which foreign data can never
 // name.
-bool TabBar::decodeAroraTabDrag(const QMimeData *mimeData,
+bool TabBar::decodeArktosTabDrag(const QMimeData *mimeData,
                                 TabBar *&source, QWidget *&page)
 {
     source = nullptr;
     page = nullptr;
-    if (!mimeData || !mimeData->hasFormat(aroraTabMimeType()))
+    if (!mimeData || !mimeData->hasFormat(arktosTabMimeType()))
         return false;
     const QList<QByteArray> parts =
-        mimeData->data(aroraTabMimeType()).split(':');
+        mimeData->data(arktosTabMimeType()).split(':');
     if (parts.size() != 2)
         return false;
     bool okBar = false, okPage = false;
@@ -325,13 +325,13 @@ TabBar::TabBar(QWidget *parent)
     // chrome's flat text color the way ICONS06 does, and give the
     // hover/pressed states the violet bar's own shades.
     if (BrowserApplication::isTorMode()) {
-        m_newTabButton->setIcon(AroraIcon::getTinted(
-            QLatin1String("tab-new"), AroraStyle::torTextColor(),
-            AroraStyle::torDimTextColor()));
+        m_newTabButton->setIcon(ArktosIcon::getTinted(
+            QLatin1String("tab-new"), ArktosStyle::torTextColor(),
+            ArktosStyle::torDimTextColor()));
         m_newTabButton->setStyleSheet(
-            AroraStyle::torToolButtonStyleSheet());
+            ArktosStyle::torToolButtonStyleSheet());
     } else {
-        m_newTabButton->setIcon(AroraIcon::getChrome(QLatin1String("tab-new")));
+        m_newTabButton->setIcon(ArktosIcon::getChrome(QLatin1String("tab-new")));
     }
     connect(m_newTabButton, &QAbstractButton::clicked,
             this, &TabBar::newTab);
@@ -414,10 +414,10 @@ void TabBar::installCloseButton(int index)
     QToolButton *button = new QToolButton(this);
     button->setAutoRaise(true);
     button->setToolButtonStyle(Qt::ToolButtonIconOnly);
-    // Resolves through AroraIcon: the active icon theme first, the
+    // Resolves through ArktosIcon: the active icon theme first, the
     // bundled sets' dark variants when the palette is dark, and the
     // bundled Tabler set as the last-resort fallback.
-    button->setIcon(AroraIcon::getChrome(QLatin1String("window-close")));
+    button->setIcon(ArktosIcon::getChrome(QLatin1String("window-close")));
     button->setIconSize(QSize(12, 12));
     // TABS07: an uncapped QToolButton hints ~19px tall, and QTabBar
     // stretches the strip to max(text, widget) + padding — the button
@@ -1230,7 +1230,7 @@ void TabBar::mouseMoveEvent(QMouseEvent *event)
             QPointer<QWidget> page = (tabWidget && index >= 0)
                 ? tabWidget->widget(index) : nullptr;
             if (page) {
-                mimeData->setData(aroraTabMimeType(),
+                mimeData->setData(arktosTabMimeType(),
                     QByteArray::number(quintptr(this)) + ':'
                         + QByteArray::number(quintptr(page.data())));
                 beginTabDragSession(this, page);
@@ -1368,10 +1368,10 @@ void TabBar::dropEvent(QDropEvent *event)
     // legacy url payload — the page itself moves (or reorders back on
     // its own strip), never loads onto the tab under the cursor.
     // Only a payload matching the live drag session gets here; stale
-    // or foreign x-arora-tab data falls through to the url path.
+    // or foreign x-arktos-tab data falls through to the url path.
     TabBar *sourceBar = nullptr;
     QWidget *page = nullptr;
-    if (decodeAroraTabDrag(mimeData, sourceBar, page)) {
+    if (decodeArktosTabDrag(mimeData, sourceBar, page)) {
         TabWidget *source = sourceBar
             ? qobject_cast<TabWidget*>(sourceBar->parentWidget())
             : nullptr;
@@ -2337,7 +2337,7 @@ void TabBar::paintEvent(QPaintEvent *event)
             // WCAG pick — a lightness threshold misjudges saturated
             // mid-tone accents (the turquoise container color reads
             // light enough for white text but only gives ~2:1).
-            const QColor textColor = AroraStyle::contrastTextColor(accent);
+            const QColor textColor = ArktosStyle::contrastTextColor(accent);
             const QRect rect = tabRect(index);
 
             if (tabWidget->isTabGroupChip(index)) {
@@ -2502,7 +2502,7 @@ void TabBar::paintEvent(QPaintEvent *event)
         painter.setPen(Qt::NoPen);
         painter.setBrush(accent);
         painter.drawEllipse(badgeRect);
-        painter.setPen(AroraStyle::contrastTextColor(accent));
+        painter.setPen(ArktosStyle::contrastTextColor(accent));
         painter.drawText(badgeRect, Qt::AlignCenter,
                          QLatin1String("+"));
         painter.restore();

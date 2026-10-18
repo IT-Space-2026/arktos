@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,20 +27,20 @@ class SandboxPolicy;
 
 // SAND01 Linux backend: translates a SandboxPolicy into the bubblewrap
 // command line that re-executes the browser, and into the self-contained
-// `arora-sandbox` launcher script installed next to the binary.  Both
+// `arktos-sandbox` launcher script installed next to the binary.  Both
 // functions are pure — they map inputs to output text without touching
 // the filesystem — so they are fully unit-testable on any platform.
 namespace BwrapGenerator {
 
 // Complete argv for execvp(): bwrap flags first, then `-- program
 // args...`.  Environment variables are inherited (bwrap keeps them by
-// default); ARORA_SANDBOXED is set inside so wrapped children never
+// default); ARKTOS_SANDBOXED is set inside so wrapped children never
 // try to wrap themselves again.
 QStringList commandLine(const SandboxPolicy &policy,
                         const QString &program,
                         const QStringList &programArgs);
 
-// The launcher script installed as `arora-sandbox` next to the binary.
+// The launcher script installed as `arktos-sandbox` next to the binary.
 // It is host-agnostic: the denylist is baked in as $HOME-relative
 // entries and each path's kind (dir -> tmpfs mask, file -> /dev/null
 // bind, missing -> skipped) is resolved when the script runs, matching
@@ -55,7 +55,7 @@ QString launcherScript();
 // read-only, `workDir` (part files + the scoped cookie export) and
 // `destDir` read/write, and $HOME simply absent.  Inputs that live
 // under $HOME (the program itself, the Qt prefix, LD_LIBRARY_PATH
-// entries) are rebound below the private /arora-rt tmpfs — bwrap
+// entries) are rebound below the private /arktos-rt tmpfs — bwrap
 // creates parent dirs for bind targets, so an own-path bind of
 // ~/Qt/... would materialise a readable ~ skeleton.  The network
 // namespace stays shared — a downloader that cannot resolve or
@@ -75,10 +75,10 @@ QStringList downloadWorkerCommandLine(const QString &program,
 // The parent therefore always addresses the sandbox-side paths
 // below in the job JSON, never the host paths.  As with the
 // download worker, $HOME is absent: the program, the Qt prefix and
-// every LD_LIBRARY_PATH entry rebind under the private /arora-rt
+// every LD_LIBRARY_PATH entry rebind under the private /arktos-rt
 // tmpfs, and the two document mounts live under it too.
-QString pdfWorkDirPath();       // "/arora-rt/work"
-QString pdfDocumentPath();      // "/arora-rt/doc.pdf"
+QString pdfWorkDirPath();       // "/arktos-rt/work"
+QString pdfDocumentPath();      // "/arktos-rt/doc.pdf"
 QStringList pdfWorkerCommandLine(const QString &program,
                                  const QStringList &programArgs,
                                  const QString &workDir,

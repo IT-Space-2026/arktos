@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -182,14 +182,14 @@ int downloadWorkerMain()
     // The job description arrives on the first stdin line.
     std::string jobLine;
     if (!std::getline(std::cin, jobLine)) {
-        std::fprintf(stderr, "arora: download worker got no job\n");
+        std::fprintf(stderr, "arktos: download worker got no job\n");
         return 2;
     }
     const QJsonObject job = QJsonDocument::fromJson(
         QByteArray::fromStdString(jobLine)).object();
     if (job.value(QLatin1String("cmd")).toString()
         != QLatin1String("job")) {
-        std::fprintf(stderr, "arora: download worker got bad job\n");
+        std::fprintf(stderr, "arktos: download worker got bad job\n");
         return 2;
     }
 

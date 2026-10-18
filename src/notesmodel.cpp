@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -88,14 +88,23 @@ NotesModel *NotesModel::instanceFor(const QString &profileId)
     if (!QFile::exists(storageFile)) {
         // MPROF02 migration: the pre-per-persona store lived at
         // <data>/notes/<storageName>.json — adopt it if present.
-        QString legacyName = id == QLatin1String("default")
-            ? QLatin1String("arora") : QLatin1String("arora-") + id;
-        const QString legacy =
-            BrowserPaths::dataFilePath(QLatin1String("notes"))
-            + QLatin1Char('/') + legacyName + QLatin1String(".json");
-        if (QFile::exists(legacy)) {
-            QDir().mkpath(QFileInfo(storageFile).absolutePath());
-            QFile::rename(legacy, storageFile);
+        // BRAND01: a pre-rebrand tree carries the arora-<name>
+        // spelling, so check both identities' file names.
+        const QStringList legacyNames = {
+            id == QLatin1String("default")
+                ? QLatin1String("arktos") : QLatin1String("arktos-") + id,
+            id == QLatin1String("default")
+                ? QLatin1String("arora") : QLatin1String("arora-") + id,
+        };
+        for (const QString &legacyName : legacyNames) {
+            const QString legacy =
+                BrowserPaths::dataFilePath(QLatin1String("notes"))
+                + QLatin1Char('/') + legacyName + QLatin1String(".json");
+            if (QFile::exists(legacy)) {
+                QDir().mkpath(QFileInfo(storageFile).absolutePath());
+                QFile::rename(legacy, storageFile);
+                break;
+            }
         }
     }
     model = new NotesModel(storageFile, qApp);

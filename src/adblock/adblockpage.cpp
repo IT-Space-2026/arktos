@@ -1,6 +1,6 @@
 /**
  * Copyright (c) 2009, Benjamin C. Meyer <ben@meyerhome.net>
- * Copyright (c) 2026, The Arora Authors
+ * Copyright (c) 2026, The Arktos Authors
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,7 +33,7 @@
 #include "adblocksubscription.h"
 #include "adblockrule.h"
 
-#if defined(ARORA_ADBLOCK_RUST)
+#if defined(ARKTOS_ADBLOCK_RUST)
 #include "adblocknetwork.h"
 #endif
 
@@ -45,7 +45,7 @@
 #include <qjsonobject.h>
 #include <qurl.h>
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "sitedecisionstore.h"
 #endif
 
@@ -362,7 +362,7 @@ static bool isRootHideSelector(const QString &css)
     return roots.contains(sel);
 }
 
-// Shared injector: appends (or refreshes) the page's arora-adblock
+// Shared injector: appends (or refreshes) the page's arktos-adblock
 // <style> element carrying the given css rule set.
 static QString adblockStyleScript(const QStringList &selectors)
 {
@@ -376,14 +376,14 @@ static QString adblockStyleScript(const QStringList &selectors)
     const QByteArray jsonCss = QJsonDocument(QJsonArray() << css)
         .toJson(QJsonDocument::Compact);
     return QLatin1String(
-        "(function(){var s=document.getElementById('arora-adblock');"
-        "if(!s){s=document.createElement('style');s.id='arora-adblock';"
+        "(function(){var s=document.getElementById('arktos-adblock');"
+        "if(!s){s=document.createElement('style');s.id='arktos-adblock';"
         "document.documentElement.appendChild(s);}"
         "s.textContent=%1[0];})()")
         .arg(QString::fromUtf8(jsonCss));
 }
 
-#if defined(ARORA_ADBLOCK_RUST)
+#if defined(ARKTOS_ADBLOCK_RUST)
 // Builds the renderer script for an adblock-rust cosmetic payload (the
 // JSON produced by url_cosmetic_resources): hide selectors go through
 // the same forgiving :is() stylesheet injection as the native path —
@@ -437,7 +437,7 @@ QString AdBlockPage::cosmeticScriptForUrl(const QUrl &url) const
     if (!manager->isEnabled())
         return QString();
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // SITED01: a whitelisted site gets no cosmetic filtering, same as
     // the $document exception the store row replaced.
     if (SiteDecisionStore::lookup(SiteDecisionStore::KindAdBlock,
@@ -445,7 +445,7 @@ QString AdBlockPage::cosmeticScriptForUrl(const QUrl &url) const
         return QString();
 #endif
 
-#if defined(ARORA_ADBLOCK_RUST)
+#if defined(ARKTOS_ADBLOCK_RUST)
     // The Rust engine is authoritative when loaded; an empty object
     // means no engine (fall back to the native cosmetic path).
     // Hostless documents (about:blank and friends) cannot be
@@ -619,13 +619,13 @@ void AdBlockPage::scheduleRulesOnPage(Engine::Page *page,
     if (!page)
         return;
     const QString source = cosmeticScriptForUrl(url);
-    if (qEnvironmentVariableIsSet("ARORA_DEBUG_COSMETIC")) {
-        QFile dump(qEnvironmentVariable("ARORA_DEBUG_COSMETIC"));
+    if (qEnvironmentVariableIsSet("ARKTOS_DEBUG_COSMETIC")) {
+        QFile dump(qEnvironmentVariable("ARKTOS_DEBUG_COSMETIC"));
         if (dump.open(QIODevice::WriteOnly | QIODevice::Truncate))
             dump.write(source.toUtf8());
         qWarning() << "adblock cosmetic script for" << url
                    << "bytes:" << source.size();
     }
-    replacePageScript(page, QLatin1String("arora:adblock-cosmetic"),
+    replacePageScript(page, QLatin1String("arktos:adblock-cosmetic"),
                       source);
 }

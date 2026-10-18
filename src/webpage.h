@@ -58,7 +58,7 @@ public slots:
     void AddSearchProvider(const QString &url);
 };
 
-class JavaScriptAroraObject : public QObject
+class JavaScriptArktosObject : public QObject
 {
     Q_OBJECT
 
@@ -74,7 +74,7 @@ class JavaScriptAroraObject : public QObject
     Q_PROPERTY(bool darkChrome READ darkChrome NOTIFY darkChromeChanged)
 
 public:
-    JavaScriptAroraObject(QObject *parent = nullptr);
+    JavaScriptArktosObject(QObject *parent = nullptr);
 
     QString currentEngineName() const;
     bool darkChrome() const;
@@ -285,7 +285,7 @@ protected:
     TabWidget::OpenUrlIn m_openTargetBlankLinksIn;
     QUrl m_requestedUrl;
     JavaScriptExternalObject *m_javaScriptExternalObject;
-    JavaScriptAroraObject *m_javaScriptAroraObject;
+    JavaScriptArktosObject *m_javaScriptArktosObject;
     AutoFillBridge *m_autoFillBridge;
     QWebChannel *m_webChannel;
     QWebEngineCertificateError m_pendingCertError;

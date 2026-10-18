@@ -1,8 +1,8 @@
 [Icon Theme]
-Name=Arora Tabler Dark
+Name=Arktos Tabler Dark
 Comment=Dark-scheme recolor of the bundled Tabler outline icons
 Directories=icons
-Inherits=arora-tabler
+Inherits=arktos-tabler
 
 [icons]
 Size=16

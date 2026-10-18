@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -54,14 +54,14 @@
 #include "clearprivatedata.h"
 #include "containermanager.h"
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "sitedecisionstore.h"
 #endif
 #include "cookiejar.h"
 #include "historymanager.h"
 #include "opensearchmanager.h"
 #include "privacyrequestinterceptor.h"
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 #include "qtry.h"
 #include "tabbar.h"
 #include "tabwidget.h"
@@ -365,7 +365,7 @@ void tst_ContainerManager::init()
         // single-row (inline chips) strip — pin that mode; the
         // two-level tests opt back in explicitly.
         settings.setValue(QLatin1String("tabs/containerDisplay"), 0);
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
         // Container site rules moved into the decision store.
         SiteDecisionStore::reset();
 #endif
@@ -447,7 +447,7 @@ void tst_ContainerManager::profileForBasics()
     QCOMPARE(manager->profileIfCreated(id), profile);
 
     QVERIFY(!profile->isOffTheRecord());
-    QVERIFY(profile->storageName().startsWith(QLatin1String("arora-container-")));
+    QVERIFY(profile->storageName().startsWith(QLatin1String("arktos-container-")));
     QVERIFY(profile->persistentStoragePath().contains(
         QLatin1String("/containers/") + id));
     QVERIFY(QDir(profile->persistentStoragePath()).exists());
@@ -475,9 +475,9 @@ void tst_ContainerManager::preparedServices()
     QWebEngineProfile *profile = ContainerManager::instance()->profileFor(id);
     QVERIFY(profile);
 
-    // installAll ran — the arora-file directory-listing scheme has a
+    // installAll ran — the arktos-file directory-listing scheme has a
     // handler on this profile.
-    QVERIFY(profile->urlSchemeHandler("arora-file") != nullptr);
+    QVERIFY(profile->urlSchemeHandler("arktos-file") != nullptr);
     // applySettings pinned the permissions policy to the broker.
     QCOMPARE(profile->persistentPermissionsPolicy(),
              QWebEngineProfile::PersistentPermissionsPolicy::AskEveryTime);

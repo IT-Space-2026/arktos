@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, The Arora Authors
+ * Copyright (c) 2026, The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,13 +26,13 @@
 #include <qrcodedialog.h>
 #include <qrcodegen.hpp>
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 #include <qendian.h>
 
 #include <rustcore.h>
 #endif
 
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 #include "qtry.h"
 
 class tst_QrCode : public QObject
@@ -51,7 +51,7 @@ private slots:
 };
 
 // Ground truth produced by the independent Python port of Nayuki's
-// qrcodegen for "https://arora.example/clean?id=42" at ECC level M —
+// qrcodegen for "https://arktos.example/clean?id=42" at ECC level M —
 // a 29x29 module matrix.  If the vendored C++ encoder ever regresses
 // (masking, Reed-Solomon ECC, bit layout), this fails.
 static const char *const kReferenceMatrix[] = {
@@ -87,7 +87,7 @@ static const char *const kReferenceMatrix[] = {
 };
 
 static const char *const kReferenceText =
-    "https://arora.example/clean?id=42";
+    "https://arktos.example/clean?id=42";
 
 void tst_QrCode::encodeMatchesReferenceMatrix()
 {
@@ -107,7 +107,7 @@ void tst_QrCode::encodeMatchesReferenceMatrix()
 // payload, near-capacity and over-capacity inputs at every ECC level.
 void tst_QrCode::rustMatchesCppCorpus()
 {
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     const QStringList corpus = {
         QString(),
         QStringLiteral("x"),
@@ -115,7 +115,7 @@ void tst_QrCode::rustMatchesCppCorpus()
         QStringLiteral("01234567890123456789012345"),
         QStringLiteral("HELLO WORLD $%*+-./:"),
         QStringLiteral("WIFI:T:WPA;S:HomeNet;P:s3cret;;"),
-        QStringLiteral("https://arora.example/x?a=1&b=two%20words#frag"),
+        QStringLiteral("https://arktos.example/x?a=1&b=two%20words#frag"),
         QString::fromUtf8("Grüße, 世界, 𝕏"),
         QString(2900, QLatin1Char('a')),
         QString(4000, QLatin1Char('z')),

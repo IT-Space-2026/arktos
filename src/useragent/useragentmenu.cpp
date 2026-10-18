@@ -10,7 +10,7 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 3. Neither the name of the Arora nor the names of its contributors
+ * 3. Neither the name of the Arktos nor the names of its contributors
  *    may be used to endorse or promote products derived from this software
  *    without specific prior written permission.
  *
@@ -43,7 +43,7 @@
 #include <qsettings.h>
 #include <qxmlstream.h>
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include <rustcore.h>
 #endif
 
@@ -105,7 +105,7 @@ void UserAgentMenu::addActionsFromFile(const QString &fileName)
         return;
 
     QString currentUserAgentString = WebPage::userAgent();
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // UAG01: the document is an installable data file — third-party-
     // shaped input, so the parse runs in memory-safe rustcore and the
     // Qt XML reader never sees it (the SEC19 discipline).  The JSON

@@ -2,13 +2,13 @@
 # START01 regression harness — the qrc start page must always finish
 # loading and get a working channel.
 #
-# Runs `arora --startpage-smoke` under an isolated HOME: fifty
+# Runs `arktos --startpage-smoke` under an isolated HOME: fifty
 # consecutive qrc:/startpage.html loads in one process with the
 # adblock matcher armed by the custom subscription with the widened
 # uBO rules that produced the original hang (*$script,redirect-rule
 # =noopjs plus rules naming the page's own qrc subresources).  Each
 # load must emit loadFinished within the smoke's per-load deadline
-# AND resolve channel.objects.arora — proven by the page's own
+# AND resolve channel.objects.arktos — proven by the page's own
 # update() filling the title/search button plus an explicit
 # searchUrl() round-trip — so both reported suspects (interceptor
 # stall, urlChanged/registration ordering) are covered.
@@ -20,8 +20,8 @@ set -u
 cd "$(dirname "$0")/.."
 . ./.devin/qt-env.sh
 
-ARORA=./arora
-[ -x "$ARORA" ] || { echo "FAIL: ./arora not built" >&2; exit 2; }
+ARORA=./arktos
+[ -x "$ARORA" ] || { echo "FAIL: ./arktos not built" >&2; exit 2; }
 
 RUNS=${1:-1}
 

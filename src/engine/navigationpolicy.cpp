@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
 #include <qmutex.h>
 #include <qtenvironmentvariables.h>
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 
 // ============================================================
 // Rust-backed implementation — every decision is delegated to the
@@ -577,7 +577,7 @@ QUrl NavigationPolicy::strippedUrl(const QUrl &url)
 
 } // namespace Engine
 
-#else // !ARORA_RUSTCORE — legacy Qt fallback, kept 1:1 with the pre-refactor code
+#else // !ARKTOS_RUSTCORE — legacy Qt fallback, kept 1:1 with the pre-refactor code
 
 #include <qdatetime.h>
 #include <qhostaddress.h>
@@ -1550,7 +1550,7 @@ bool NavigationPolicy::cookieFilter(const CookieGateInput &input)
 
 } // namespace Engine
 
-#endif // ARORA_RUSTCORE
+#endif // ARKTOS_RUSTCORE
 
 // ============================================================
 // PERF01 — per-request verdict memoization (shared, both builds).
@@ -1596,7 +1596,7 @@ bool NavigationPolicy::cookieFilter(const CookieGateInput &input)
 //     and re-populates — a hostile page cannot grow it without
 //     limit.
 //
-// ARORA_POLICY_CACHE_OFF=1 disables memoization (diagnostic escape
+// ARKTOS_POLICY_CACHE_OFF=1 disables memoization (diagnostic escape
 // hatch — the per-request path is then the pre-PERF01 pipeline,
 // still timed for the stats counters).
 
@@ -1649,7 +1649,7 @@ QByteArray verdictKey(const PolicyRequest &req)
 
 quint64 evalGeneration()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     return rc_policy_eval_generation();
 #else
     return s_evalGeneration.loadRelaxed();
@@ -1670,7 +1670,7 @@ PolicyVerdict evaluateTimed(const PolicyRequest &request)
 PolicyVerdict NavigationPolicy::evaluate(const PolicyRequest &request)
 {
     static const bool cacheEnabled =
-        !qEnvironmentVariableIsSet("ARORA_POLICY_CACHE_OFF");
+        !qEnvironmentVariableIsSet("ARKTOS_POLICY_CACHE_OFF");
     // 0 == QWebEngineUrlRequestInfo::ResourceTypeMainFrame /
     // Engine::ResourceType::MainFrame — never memoized (see above).
     if (!cacheEnabled || request.resourceType == 0) {

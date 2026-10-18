@@ -89,7 +89,7 @@
 
 #include <qdebug.h>
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 #include "rustcorebridge.h"
 
 #include <rustcore.h>
@@ -126,7 +126,7 @@ static void rustSyncExpanded(const BookmarkNode *node)
             rustSyncExpanded(child);
     }
 }
-#endif // ARORA_RUSTCORE
+#endif // ARKTOS_RUSTCORE
 
 #define BOOKMARKBAR QT_TRANSLATE_NOOP("BookmarksManager", "Bookmarks Bar")
 #define BOOKMARKMENU QT_TRANSLATE_NOOP("BookmarksManager", "Bookmarks Menu")
@@ -149,7 +149,7 @@ BookmarksManager::BookmarksManager(QObject *parent,
             m_saveTimer, &AutoSaver::changeOccurred);
     connect(this, &BookmarksManager::entryChanged,
             m_saveTimer, &AutoSaver::changeOccurred);
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     if (QCoreApplication::instance()) {
         // Rust-side writers announce themselves through the queued
         // callback->signal bridge; the topic marks the store dirty so
@@ -168,7 +168,7 @@ BookmarksManager *BookmarksManager::instance()
     return instanceFor(BrowserPaths::activeProfileId());
 }
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 // The profile whose file the process-global rust tree currently
 // holds, and the manager that bound it.  A second profile's manager
 // marks the previous owner stale instead of touching its nodes —
@@ -193,7 +193,7 @@ BookmarksManager::~BookmarksManager()
     m_saveTimer->saveIfNeccessary();
 }
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 void BookmarksManager::ensureBound()
 {
     if (!m_stale)
@@ -218,7 +218,7 @@ void BookmarksManager::ensureBound()
 
 void BookmarksManager::changeExpanded()
 {
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     ensureBound();
 #endif
     m_saveTimer->changeOccurred();
@@ -235,7 +235,7 @@ void BookmarksManager::load()
     QString bookmarkFile = BrowserPaths::profileDataFilePath(
         m_profileId, QLatin1String("bookmarks.xbel"));
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // The Rust store owns parsing and the canonical tree; the C++
     // nodes below are a lazily materialized view over its handles.
     //
@@ -300,7 +300,7 @@ void BookmarksManager::load()
             if ((node->title == tr("Toolbar Bookmarks")
                  || node->title == QLatin1String(BOOKMARKBAR)) && !m_toolbar) {
                 node->title = tr(BOOKMARKBAR);
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
                 rustSyncTitle(node);
 #endif
 
@@ -311,7 +311,7 @@ void BookmarksManager::load()
             if ((node->title == tr("Menu")
                  || node->title == QLatin1String(BOOKMARKMENU)) && !m_menu) {
                 node->title = tr(BOOKMARKMENU);
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
                 rustSyncTitle(node);
 #endif
                 m_menu = node;
@@ -325,7 +325,7 @@ void BookmarksManager::load()
     if (!m_toolbar) {
         m_toolbar = new BookmarkNode(BookmarkNode::Folder, m_bookmarkRootNode.get());
         m_toolbar->title = tr(BOOKMARKBAR);
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
         rustSyncTitle(m_toolbar);
 #endif
     } else {
@@ -335,7 +335,7 @@ void BookmarksManager::load()
     if (!m_menu) {
         m_menu = new BookmarkNode(BookmarkNode::Folder, m_bookmarkRootNode.get());
         m_menu->title = tr(BOOKMARKMENU);
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
         rustSyncTitle(m_menu);
 #endif
     } else {
@@ -350,7 +350,7 @@ void BookmarksManager::save() const
 {
     if (!m_loaded)
         return;
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // Stale means another profile's tree replaced ours — our pending
     // edits were already flushed to our file at the unbind, and
     // serializing now would write THEIR tree into our file.
@@ -363,7 +363,7 @@ void BookmarksManager::save() const
     // Save root folder titles in English (i.e. not localized)
     m_menu->title = QLatin1String(BOOKMARKMENU);
     m_toolbar->title = QLatin1String(BOOKMARKBAR);
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     rustSyncTitle(m_menu);
     rustSyncTitle(m_toolbar);
     rustSyncExpanded(m_bookmarkRootNode.get());
@@ -383,13 +383,13 @@ void BookmarksManager::retranslate() const
 {
     if (m_menu) {
         m_menu->title = tr(BOOKMARKMENU);
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
         rustSyncTitle(m_menu);
 #endif
     }
     if (m_toolbar) {
         m_toolbar->title = tr(BOOKMARKBAR);
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
         rustSyncTitle(m_toolbar);
 #endif
     }
@@ -399,7 +399,7 @@ void BookmarksManager::addBookmark(BookmarkNode *parent, BookmarkNode *node, int
 {
     if (!m_loaded)
         load();
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     ensureBound();
 #endif
     Q_ASSERT(parent);
@@ -411,7 +411,7 @@ void BookmarksManager::removeBookmark(BookmarkNode *node)
 {
     if (!m_loaded)
         load();
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     ensureBound();
 #endif
 
@@ -426,7 +426,7 @@ void BookmarksManager::setTitle(BookmarkNode *node, const QString &newTitle)
 {
     if (!m_loaded)
         load();
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     ensureBound();
 #endif
 
@@ -439,7 +439,7 @@ void BookmarksManager::setUrl(BookmarkNode *node, const QString &newUrl)
 {
     if (!m_loaded)
         load();
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     ensureBound();
 #endif
 
@@ -452,7 +452,7 @@ BookmarkNode *BookmarksManager::bookmarks()
 {
     if (!m_loaded)
         load();
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     ensureBound();
 #endif
     return m_bookmarkRootNode.get();
@@ -462,7 +462,7 @@ BookmarkNode *BookmarksManager::menu()
 {
     if (!m_loaded)
         load();
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     ensureBound();
 #endif
 
@@ -474,7 +474,7 @@ BookmarkNode *BookmarksManager::toolbar()
 {
     if (!m_loaded)
         load();
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     ensureBound();
 #endif
 
@@ -521,7 +521,7 @@ void BookmarksManager::importBookmarks()
             return;
         }
         const QByteArray html = file.readAll();
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
         // BKIMP01: parse + insert in rustcore — bounded scan, merge/
         // dedup, and the url-scheme gate at the store boundary.
         importHtmlDocument(html);
@@ -562,7 +562,7 @@ void BookmarksManager::importBookmarks()
 
 void BookmarksManager::exportBookmarks()
 {
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     QStringList supportedFormats;
     supportedFormats << tr("XBEL bookmarks").append(QLatin1String("(*.xbel *.xml)"));
     supportedFormats << tr("HTML Netscape bookmarks").append(QLatin1String("(*.html)"));
@@ -618,7 +618,7 @@ void BookmarksManager::exportBookmarks()
 #endif
 }
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 // BKIMP01: the rust-side import driver.  A dry run first counts what
 // the document would insert (and what the url-scheme gate would
 // refuse) without touching the store, so the bookmarklet question is
@@ -732,7 +732,7 @@ bool BookmarksManager::exportBookmarksTo(const QString &fileName)
         return rc_bm_export_html(fileName.toUtf8().constData()) == RC_OK;
     return rc_bm_save(fileName.toUtf8().constData()) == RC_OK;
 }
-#endif // ARORA_RUSTCORE
+#endif // ARKTOS_RUSTCORE
 
 RemoveBookmarksCommand::RemoveBookmarksCommand(BookmarksManager *m_bookmarkManagaer, BookmarkNode *parent, int row)
     : QUndoCommand(BookmarksManager::tr("Remove Bookmark"))
@@ -794,12 +794,12 @@ void ChangeBookmarkCommand::undo()
 {
     if (m_title) {
         m_node->title = m_oldValue;
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
         rustSyncTitle(m_node);
 #endif
     } else {
         m_node->url = m_oldValue;
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
         rustSyncUrl(m_node);
 #endif
     }
@@ -810,12 +810,12 @@ void ChangeBookmarkCommand::redo()
 {
     if (m_title) {
         m_node->title = m_newValue;
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
         rustSyncTitle(m_node);
 #endif
     } else {
         m_node->url = m_newValue;
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
         rustSyncUrl(m_node);
 #endif
     }

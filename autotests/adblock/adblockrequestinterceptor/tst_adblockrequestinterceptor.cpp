@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, The Arora Authors
+ * Copyright (c) 2026, The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -48,7 +48,7 @@
 #include "browserapplication.h"
 #include "qtry.h"
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "sitedecisionstore.h"
 #endif
 
@@ -110,7 +110,7 @@ private slots:
                 "BAEKAAEALAAAAAABAAEAAAICTAEAOw==");
         } else if (target.contains(".js")) {
             mimeType = "application/javascript";
-            body = "window.aroraJsLoaded = (window.aroraJsLoaded || 0) + 1;\n";
+            body = "window.arktosJsLoaded = (window.arktosJsLoaded || 0) + 1;\n";
         } else if (target.contains(".html") || target == "/") {
             mimeType = "text/html";
             body = indexHtml;
@@ -262,7 +262,7 @@ void tst_AdBlockRequestInterceptor::initTestCase()
 
     m_profile = new QWebEngineProfile(this);
     // Installs the interceptor bound to the manager's matcher plus the
-    // abp: and arora-resource:// handlers on this throwaway profile.
+    // abp: and arktos-resource:// handlers on this throwaway profile.
     AdBlockManager::instance()->installOnProfile(m_profile);
 }
 
@@ -270,7 +270,7 @@ void tst_AdBlockRequestInterceptor::init()
 {
     m_server->requests.clear();
     m_server->indexHtml.clear();
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // The site whitelist moved into the decision store — clear it so
     // a stale row cannot silently allow every request.
     SiteDecisionStore::clear(SiteDecisionStore::KindAdBlock);
@@ -319,7 +319,7 @@ void tst_AdBlockRequestInterceptor::blockExceptionAndAllow()
     QCOMPARE(widths.toString(), QLatin1String("1,0,1"));
 }
 
-// $redirect=swap: the request is rewritten to a bundled arora-resource
+// $redirect=swap: the request is rewritten to a bundled arktos-resource
 // stub — it succeeds in the page without ever touching the network.
 void tst_AdBlockRequestInterceptor::redirectToStub()
 {
@@ -443,8 +443,8 @@ void tst_AdBlockRequestInterceptor::blockedCountTracking()
 }
 
 // STALL01: only real web schemes may reach the matcher — internal
-// and non-web schemes (arora-resource:, abp:, devtools:, qrc:,
-// arora-file:, arora-cert-error:, chrome:, data:, file:, ...) bypass
+// and non-web schemes (arktos-resource:, abp:, devtools:, qrc:,
+// arktos-file:, arktos-cert-error:, chrome:, data:, file:, ...) bypass
 // interception untouched so a stub redirect target can never re-enter
 // the rule engine, and filter lists cannot swallow browser internals.
 void tst_AdBlockRequestInterceptor::webSchemeGate()
@@ -454,9 +454,9 @@ void tst_AdBlockRequestInterceptor::webSchemeGate()
     QVERIFY(I::isWebRequestScheme(QLatin1String("https")));
     QVERIFY(I::isWebRequestScheme(QLatin1String("ws")));
     QVERIFY(I::isWebRequestScheme(QLatin1String("wss")));
-    QVERIFY(!I::isWebRequestScheme(QLatin1String("arora-resource")));
-    QVERIFY(!I::isWebRequestScheme(QLatin1String("arora-file")));
-    QVERIFY(!I::isWebRequestScheme(QLatin1String("arora-cert-error")));
+    QVERIFY(!I::isWebRequestScheme(QLatin1String("arktos-resource")));
+    QVERIFY(!I::isWebRequestScheme(QLatin1String("arktos-file")));
+    QVERIFY(!I::isWebRequestScheme(QLatin1String("arktos-cert-error")));
     QVERIFY(!I::isWebRequestScheme(QLatin1String("abp")));
     QVERIFY(!I::isWebRequestScheme(QLatin1String("devtools")));
     QVERIFY(!I::isWebRequestScheme(QLatin1String("chrome")));
@@ -469,7 +469,7 @@ void tst_AdBlockRequestInterceptor::webSchemeGate()
 }
 
 // STALL01: a global *$script redirect points every script at
-// arora-resource:/noop.js — a URL that itself matches *$script.
+// arktos-resource:/noop.js — a URL that itself matches *$script.
 // Without the internal-scheme gate the stub request re-enters the
 // matcher and re-redirects, churning until the load starves; with it,
 // the stub is served and the load terminates.
@@ -498,7 +498,7 @@ int main(int argc, char *argv[])
 {
     Q_INIT_RESOURCE(htmls);
     Q_INIT_RESOURCE(data);
-    // arora-resource:// must be registered before BrowserApplication's
+    // arktos-resource:// must be registered before BrowserApplication's
     // constructor brings up the browsing profile (same order as
     // main.cpp).
     SchemeAccessHandler::registerUrlSchemes();

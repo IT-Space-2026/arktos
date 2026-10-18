@@ -2,7 +2,7 @@
 
 ## Symptom
 
-`arora` repeatedly dies while browsing. Kernel journal shows a fixed
+`arktos` repeatedly dies while browsing. Kernel journal shows a fixed
 signature, identical on every occurrence (10+ hits on 2026-10-10,
 including bursts during the user's live Wayland session and during
 test runs):
@@ -76,7 +76,7 @@ broad (it strips WebGL entirely).
   headless — that is the source of the recurring journal bursts during
   `make check`-adjacent runs.
 - Under Xvfb/llvmpipe (GLX available) the browser runs clean —
-  `xvfb-run ./arora --quit-after-load https://example.com/` rc=0.
+  `xvfb-run ./arktos --quit-after-load https://example.com/` rc=0.
 - The user's live Wayland crashes carry the SAME fixed offset
   `0x76e6481`, so they are the same CHECK site — an upstream Qt
   6.12.0/Chromium defect in the GPU display-compositor path on this
@@ -92,7 +92,7 @@ flag on Xvfb). Three arming paths in
 
 1. `websettings/disableGpuCompositing` — a new Preferences checkbox
    ("Disable GPU compositing (crash workaround)"), restart-latched.
-2. `ARORA_DISABLE_GPU_COMPOSITING=1` env override (`=0` overrides even
+2. `ARKTOS_DISABLE_GPU_COMPOSITING=1` env override (`=0` overrides even
    a stored "on", for one-shot verification runs).
 3. Crash-loop safe mode: `BrowserProfile::markSessionStart()` /
    `markSessionCleanExit()` keep a `browser/sessionActive` sentinel +
@@ -115,7 +115,7 @@ unaffected stacks see no behavior change.
 - E2E (scratch HOME): kill -9 -> `sessionActive=true`; second kill -9
   -> `gpuCrashCount=1`; next start -> `disableGpuCompositing=true`
   persisted; clean SIGTERM exit -> sentinel/count cleared, pref kept.
-- WebGL probe under `ARORA_DISABLE_GPU_COMPOSITING=1` on Xvfb:
+- WebGL probe under `ARKTOS_DISABLE_GPU_COMPOSITING=1` on Xvfb:
   `webgl2` context creation succeeds.
 - No `Chrome_InProcGp int3` journal entries from any post-change run.
 - `make check` — see WORKLOG line for result.

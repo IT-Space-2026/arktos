@@ -12,14 +12,14 @@
 #
 # Env knobs:
 #   FUZZ_SECONDS      per-target budget   (default 60; arg 1 wins)
-#   ARORA_FUZZ_BUILD  build dir           (default /tmp/arora-fuzz-build)
+#   ARKTOS_FUZZ_BUILD  build dir           (default /tmp/arktos-fuzz-build)
 #   JOBS              make parallelism    (default 2)
 
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/.devin/qt-env.sh"
 
-BUILD=${ARORA_FUZZ_BUILD:-/tmp/arora-fuzz-build}
+BUILD=${ARKTOS_FUZZ_BUILD:-/tmp/arktos-fuzz-build}
 JOBS=${JOBS:-2}
 BUDGET=${1:-${FUZZ_SECONDS:-60}}
 

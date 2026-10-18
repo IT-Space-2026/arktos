@@ -32,13 +32,13 @@
 #include "adblocksubscription.h"
 #include "startupprofile.h"
 
-#if defined(ARORA_ADBLOCK_RUST)
+#if defined(ARKTOS_ADBLOCK_RUST)
 #include "adblockrustengine.h"
 
 #include <qjsonobject.h>
 #endif
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "sitedecisionstore.h"
 
 // SITED01: the site whitelist lives in the Rust store — a stored host
@@ -68,7 +68,7 @@ AdBlockNetwork::AdBlockNetwork(QObject *parent)
 {
 }
 
-#if defined(ARORA_ADBLOCK_RUST)
+#if defined(ARKTOS_ADBLOCK_RUST)
 AdBlockNetwork::~AdBlockNetwork() = default;
 #endif
 
@@ -87,7 +87,7 @@ AdBlockDecision AdBlockNetwork::match(const QUrl &url,
     if (!m_enabled)
         return decision;
 
-#if defined(ARORA_ADBLOCK_RUST)
+#if defined(ARKTOS_ADBLOCK_RUST)
     if (m_rustEngine) {
         // Page-level unbreak is evaluated first, same as the native
         // paths: the adblock crate leaves document-scope exceptions to
@@ -131,7 +131,7 @@ AdBlockDecision AdBlockNetwork::match(const QUrl &url,
             // A $removeparam rewrite arrives as Redirect + the
             // already-stripped URL.  When the native matcher also
             // strips params on this request, prefer its decision so
-            // the query surgery flows through Arora's own removeParams
+            // the query surgery flows through Arktos's own removeParams
             // path — identical outcome, canonical representation.  A
             // rust-only rewrite still stands.
             return native.removeParams.isEmpty() ? decision : native;
@@ -142,7 +142,7 @@ AdBlockDecision AdBlockNetwork::match(const QUrl &url,
     return matchNativeUnlocked(url, firstPartyUrl, resourceType);
 }
 
-#if defined(ARORA_ADBLOCK_RUST)
+#if defined(ARKTOS_ADBLOCK_RUST)
 // Requires m_lock held (read) and m_enabled already checked.
 // Document-level unbreak scan shared with the native match paths:
 // returns 1 when a $document exception unbreaks the whole page, 2 when
@@ -150,7 +150,7 @@ AdBlockDecision AdBlockNetwork::match(const QUrl &url,
 int AdBlockNetwork::documentUnbreakUnlocked(
         const QString &documentString, const QString &documentHost) const
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     if (siteWhitelistedDocument(documentHost))
         return 1;
 #endif
@@ -186,7 +186,7 @@ AdBlockDecision AdBlockNetwork::matchLinear(const QUrl &url,
     return matchLinearUnlocked(url, firstPartyUrl, resourceType);
 }
 
-#if defined(ARORA_ADBLOCK_RUST)
+#if defined(ARKTOS_ADBLOCK_RUST)
 AdBlockDecision AdBlockNetwork::matchNative(const QUrl &url,
                                             const QUrl &firstPartyUrl,
                                             int resourceType) const
@@ -299,7 +299,7 @@ AdBlockDecision AdBlockNetwork::matchNativeUnlocked(
     // Document-level exceptions (uBO/ABP unbreak options): a $document
     // exception turns blocking off for the whole page, $genericblock
     // suppresses rules that are not domain-restricted.
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     if (siteWhitelistedDocument(documentHost))
         return decision;
 #endif
@@ -424,7 +424,7 @@ AdBlockDecision AdBlockNetwork::matchLinearUnlocked(
     // Document-level exceptions (uBO/ABP unbreak options): a $document
     // exception turns blocking off for the whole page, $genericblock
     // suppresses rules that are not domain-restricted.
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     if (siteWhitelistedDocument(documentHost))
         return decision;
 #endif
@@ -529,7 +529,7 @@ AdBlockDecision AdBlockNetwork::matchLinearUnlocked(
 
 bool AdBlockNetwork::rustEngineActive() const
 {
-#if defined(ARORA_ADBLOCK_RUST)
+#if defined(ARKTOS_ADBLOCK_RUST)
     QReadLocker locker(&m_lock);
     return m_rustEngine != nullptr;
 #else
@@ -555,7 +555,7 @@ void AdBlockNetwork::rebuildRules()
 
     QList<SubscriptionRules> snapshot;
     snapshot.reserve(subscriptions.count());
-#if defined(ARORA_ADBLOCK_RUST)
+#if defined(ARKTOS_ADBLOCK_RUST)
     // ADB06: the Rust engine is runtime-selected now (AdBlock/engine);
     // it is only built when the user picked it — lazily on first
     // selection — and dropped when they switch back.  Serializing the
@@ -586,7 +586,7 @@ void AdBlockNetwork::rebuildRules()
         buildIndex(rules.removeParamExceptions, false,
                    &rules.removeParamExceptionIndex);
         snapshot.append(rules);
-#if defined(ARORA_ADBLOCK_RUST)
+#if defined(ARKTOS_ADBLOCK_RUST)
         // The Rust engine parses the raw filter text itself; only
         // rules we can stand behind (enabled, no unimplementable
         // options) are fed to it.  $badfilter lines pass through —
@@ -602,7 +602,7 @@ void AdBlockNetwork::rebuildRules()
 #endif
     }
 
-#if defined(ARORA_ADBLOCK_RUST)
+#if defined(ARKTOS_ADBLOCK_RUST)
     // Engine construction parses the whole corpus — do it before
     // taking the write lock so IO-thread readers are not stalled.
     AdBlockRustEngine *rustEngine =
@@ -612,7 +612,7 @@ void AdBlockNetwork::rebuildRules()
     QWriteLocker locker(&m_lock);
     m_subscriptions = snapshot;
     m_enabled = enabled;
-#if defined(ARORA_ADBLOCK_RUST)
+#if defined(ARKTOS_ADBLOCK_RUST)
     m_rustEngine.reset(rustEngine);
 #endif
 }

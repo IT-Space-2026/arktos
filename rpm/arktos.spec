@@ -1,13 +1,13 @@
 #
-# arora.spec — RPM build for openSUSE (PKG03)
+# arktos.spec — RPM build for openSUSE (PKG03)
 #
 # Artifact policy is identical to the Debian package (PKG01,
 # .devin/pkg-deb.sh): the rpm ships the self-contained payload produced
 # by BuildProcess/bundle-linux.sh mapped onto the FHS — a private
-# Qt + QtWebEngine runtime under /usr/lib/arora behind a /usr/bin/arora
+# Qt + QtWebEngine runtime under /usr/lib/arktos behind a /usr/bin/arktos
 # launcher — because this tree builds against a newer Qt than the
-# distro series ships. The optional Rust crates (arora-rustdl,
-# arora-rustcore) link STATICALLY into the binary via their .a archives
+# distro series ships. The optional Rust crates (arktos-rustdl,
+# arktos-rustcore) link STATICALLY into the binary via their .a archives
 # (src/rustdl/rustdl.pri, src/rustcore/rustcore.pri), so there are no
 # rust .so artifacts to ship; libservo_embed does not exist in this
 # tree yet (ENG03 gates it).
@@ -27,7 +27,7 @@
 # the dev-loop ~/Qt/6.12.0/gcc_64 or any `aqt install` tree. The
 # %{qtdir} macro picks up $QTDIR, then ~/Qt/6.12.0/gcc_64; override on
 # the rpmbuild line:
-#   rpmbuild -bb --define 'qtdir /path/to/Qt/6.x.y/gcc_64' rpm/arora.spec
+#   rpmbuild -bb --define 'qtdir /path/to/Qt/6.x.y/gcc_64' rpm/arktos.spec
 # or just run ./.devin/pkg-rpm.sh (build + stage + verify + rpmbuild
 # when present). On a host without rpm tooling, `pkg-rpm.sh container`
 # prints the openSUSE container command.
@@ -40,14 +40,14 @@
 
 %{!?qtdir:%global qtdir %(echo "${QTDIR:-$HOME/Qt/6.12.0/gcc_64}")}
 
-Name:           arora
-Version:        0.12
+Name:           arktos
+Version:        1.0
 # openSUSE convention: Release 0, the build service increments it.
 Release:        0
 Summary:        Experimental Qt 6 / QtWebEngine web browser
 License:        GPL-2.0-or-later
 Group:          Productivity/Networking/Web/Browsers
-URL:            https://github.com/janos-szenfner/arora
+URL:            https://github.com/janos-szenfner/arktos
 Source0:        %{name}-%{version}.tar.gz
 AutoReqProv:    no
 
@@ -71,7 +71,7 @@ BuildRequires:  file
 BuildRequires:  update-desktop-files
 %endif
 
-# tor daemon + geoip are bundled under %{_libdir}/arora/lib/tor —
+# tor daemon + geoip are bundled under %{_libdir}/arktos/lib/tor —
 # no external tor dependency needed.
 
 # --- NEEDED-minus-bundled SONAME surface of the staged payload -------
@@ -155,32 +155,32 @@ Requires:       libxkbcommon-x11.so.0()(64bit)
 Requires:       libxkbfile.so.1()(64bit)
 
 %description
-Arora is a Qt 6 / QtWebEngine (Chromium) web browser — a maintained
+Arktos is a Qt 6 / QtWebEngine (Chromium) web browser — a maintained
 continuation of the 2009 Qt/WebKit Arora. The shell has been rebuilt
 around privacy hardening, per-site containers, optional Tor windows
 and a Vivaldi-style UI: icon-rail sidebar, two-level container tab
 strip, reader mode, rich download cards and a command palette.
 
 This package bundles the Qt 6.12 runtime and QtWebEngine process
-under /usr/lib/arora (the upstream build targets a newer Qt than the
+under /usr/lib/arktos (the upstream build targets a newer Qt than the
 distro series ships), and statically links the optional Rust
-components (arora-rustdl download engine, arora-rustcore when built)
+components (arktos-rustdl download engine, arktos-rustcore when built)
 into the binary — there are no separate rust .so artifacts to ship.
-Arora is experimental software provided as is.
+Arktos is experimental software provided as is.
 
 %prep
 %setup -q
 
 %build
 export QTDIR="%{qtdir}"
-export ARORA_PKG_JOBS="%{?_smp_build_ncpus}"
+export ARKTOS_PKG_JOBS="%{?_smp_build_ncpus}"
 ./.devin/pkg-rpm.sh build
 
 %install
 export QTDIR="%{qtdir}"
 ./.devin/pkg-rpm.sh stage "%{buildroot}"
 %if 0%{?suse_version}
-%suse_update_desktop_file arora
+%suse_update_desktop_file arktos
 %endif
 
 %clean
@@ -188,26 +188,31 @@ rm -rf "%{buildroot}"
 
 %files
 %defattr(-,root,root)
-/usr/bin/arora
-/usr/lib/arora/
-/usr/share/arora/
-/usr/share/applications/arora.desktop
-/usr/share/icons/hicolor/16x16/apps/arora.png
-/usr/share/icons/hicolor/32x32/apps/arora.png
-/usr/share/icons/hicolor/128x128/apps/arora.png
-/usr/share/icons/hicolor/512x512/apps/arora.png
-/usr/share/icons/hicolor/scalable/apps/arora.svg
-/usr/share/pixmaps/arora.xpm
-%{_mandir}/man1/arora.1*
-%dir /usr/share/doc/arora
-%doc /usr/share/doc/arora/copyright
-%doc /usr/share/doc/arora/changelog.gz
-%doc /usr/share/doc/arora/THIRD-PARTY-NOTICES
-%license /usr/share/doc/arora/LICENSE.GPL2
-%license /usr/share/doc/arora/LICENSE.GPL3
+/usr/bin/arktos
+/usr/lib/arktos/
+/usr/share/arktos/
+/usr/share/applications/arktos.desktop
+/usr/share/icons/hicolor/16x16/apps/arktos.png
+/usr/share/icons/hicolor/32x32/apps/arktos.png
+/usr/share/icons/hicolor/128x128/apps/arktos.png
+/usr/share/icons/hicolor/512x512/apps/arktos.png
+/usr/share/icons/hicolor/scalable/apps/arktos.svg
+/usr/share/pixmaps/arktos.xpm
+%{_mandir}/man1/arktos.1*
+%dir /usr/share/doc/arktos
+%doc /usr/share/doc/arktos/copyright
+%doc /usr/share/doc/arktos/changelog.gz
+%doc /usr/share/doc/arktos/THIRD-PARTY-NOTICES
+%license /usr/share/doc/arktos/LICENSE.GPL2
+%license /usr/share/doc/arktos/LICENSE.GPL3
 
 %changelog
-* Wed Oct 14 2026 Arora Developers <devin@cognition.ai>
+* Sat Oct 17 2026 Arktos Developers <devin@cognition.ai>
+- Rebrand to Arktos 1.0 (arktos-browser.com): binary, install paths,
+  desktop file, icons and user data roots renamed; existing Arora
+  config/data is migrated on first run.
+
+* Wed Oct 14 2026 Arktos Developers <devin@cognition.ai>
 - Initial RPM packaging of the Qt 6 port: bundled Qt/WebEngine
-  runtime under /usr/lib/arora, statically-linked rust crates, FHS
+  runtime under /usr/lib/arktos, statically-linked rust crates, FHS
   /usr/bin + /usr/share layout — same payload policy as the .deb.

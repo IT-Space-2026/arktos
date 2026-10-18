@@ -33,7 +33,7 @@
 #include "adblocksubscription.h"
 #include "adblockrule.h"
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "sitedecisionstore.h"
 #endif
 
@@ -91,7 +91,7 @@ void tst_AdBlockNetwork::cleanupTestCase()
 // This will be called before each test function is executed.
 void tst_AdBlockNetwork::init()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // The site whitelist lives in the decision store — start each
     // test with a clean one so a leftover row can never silently
     // unbreak every page.
@@ -365,7 +365,7 @@ void tst_AdBlockNetwork::differential()
     const QList<QPair<QUrl, QUrl> > urls = corpusUrls();
     const int resourceTypes[] = { -1, 0, 2, 3, 4, 13, 254 };
     int checks = 0;
-#if defined(ARORA_ADBLOCK_RUST)
+#if defined(ARKTOS_ADBLOCK_RUST)
     // Under the Rust engine match() is rust-primary with a native
     // residual on allows plus shared document-unbreak handling (see
     // AdBlockNetwork::match) — the composite must decide identically
@@ -432,7 +432,7 @@ void tst_AdBlockNetwork::indexScales()
     // real list's shape so the generic bucket is honestly sized.
     const int ruleCount = 60000;
     const QString listPath = QDir::temp().filePath(
-        QLatin1String("arora-perf02-easylist.txt"));
+        QLatin1String("arktos-perf02-easylist.txt"));
     QFile listFile(listPath);
     QVERIFY(listFile.open(QIODevice::WriteOnly | QIODevice::Truncate));
     QTextStream out(&listFile);

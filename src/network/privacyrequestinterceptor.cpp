@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -30,7 +30,7 @@
 #include <qwebengineprofile.h>
 #include <qwebengineurlrequestinfo.h>
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include <rustcore.h>
 #include "sitedecisionstore.h"
 #endif
@@ -270,7 +270,7 @@ void PrivacyRequestInterceptor::loadSettings()
         .toBool();
     snap.domainBlocklist =
         settings.value(QLatin1String("domainBlocklist"), true).toBool();
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // SITED01: one-shot import — replay the legacy exception list into
     // the Rust store and retire the key after the writes land.
     const QStringList legacyExceptions =
@@ -538,7 +538,7 @@ void PrivacyRequestInterceptor::allowHttpForHost(const QString &host,
         NavigationPolicy::allowHttpForHost(lowered, persistent);
     if (!persistent || !persistNeeded)
         return;
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     SiteDecisionStore::set(SiteDecisionStore::KindHttpAllow,
                            lowered, QLatin1String("allow"));
 #else
@@ -558,7 +558,7 @@ void PrivacyRequestInterceptor::clearHttpAllowance(const QString &host)
 {
     const QString lowered = host.toLower();
     NavigationPolicy::clearHttpAllowance(lowered);
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     SiteDecisionStore::remove(SiteDecisionStore::KindHttpAllow, lowered);
 #else
     ProfileSettings settings;
@@ -595,7 +595,7 @@ void PrivacyRequestInterceptor::allowUrlCleanExempt(const QString &host,
         NavigationPolicy::allowUrlCleanExempt(lowered, persistent);
     if (!persistent || !persistNeeded)
         return;
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     SiteDecisionStore::set(SiteDecisionStore::KindUrlClean,
                            lowered, QLatin1String("exempt"));
 #else
@@ -615,7 +615,7 @@ void PrivacyRequestInterceptor::clearUrlCleanExempt(const QString &host)
 {
     const QString lowered = host.toLower();
     NavigationPolicy::clearUrlCleanExempt(lowered);
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     SiteDecisionStore::remove(SiteDecisionStore::KindUrlClean, lowered);
 #else
     QSettings settings;
@@ -706,7 +706,7 @@ void PrivacyRequestInterceptor::resetRequestsSeen()
 void PrivacyRequestInterceptor::applyUserAgentSpoof(
         QWebEngineUrlRequestInfo &info)
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     const QString host = info.requestUrl().host().toLower();
     if (host.isEmpty())
         return;

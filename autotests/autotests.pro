@@ -4,8 +4,8 @@ SUBDIRS  = \
     accessibility \
     adblock \
     addbookmarkdialog \
-    aroraicon \
-    arorastyle \
+    arktosicon \
+    arktosstyle \
     autofill \
     autosaver \
     bookmarknode \

@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,14 +21,14 @@
 // action runs exactly one confirm, executes its single-category
 // clear plan and reports on the status bar; unrelated stores must
 // survive.  'Delete Profile' is gated twice (itemize confirm +
-// type-to-confirm), arms arora-profile-wipe.pending, and the wipe
+// type-to-confirm), arms arktos-profile-wipe.pending, and the wipe
 // itself runs at the next boot — before any profile exists.  The
 // cross-process contract (marker -> exit -> fresh boot with wiped
-// stores) is exercised by --profile-wipe-smoke; the ARORA_WIPE_NO_QUIT
+// stores) is exercised by --profile-wipe-smoke; the ARKTOS_WIPE_NO_QUIT
 // seam lets the in-process legs stop after the marker write.
 
 #include <QtTest/QtTest>
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 
 #include <browserpaths.h>
 #include <browserprofile.h>
@@ -141,7 +141,7 @@ void tst_ProfileMenu::initTestCase()
 {
     // The seam: requestProfileWipe stops after the marker write — the
     // respawn + exit only run in the real binary.
-    qputenv("ARORA_WIPE_NO_QUIT", QByteArray("1"));
+    qputenv("ARKTOS_WIPE_NO_QUIT", QByteArray("1"));
 }
 
 void tst_ProfileMenu::cleanup()

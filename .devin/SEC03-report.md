@@ -17,7 +17,7 @@ this task changed. Date: 2026-10-06. Tree: Qt 6.11.3 / QtWebEngine port.
 | `adblock_subscription_*` | app data dir | filter lists | plaintext |
 | `userscripts/` | app data dir | user-supplied JS (user-installed) | plaintext, user-provided |
 | NAM disk cache | `~/.cache/Arora/` | app-side fetches: OpenSearch icons, adblock lists, **suggestion responses (typed query text)** | plaintext — Chromium equivalent is also unencrypted; noted, no credentials |
-| WebEngine profile "arora" | `QtWebEngine/arora/` | Cookies, Local Storage, IndexedDB, Service Worker, Cache Storage, Favicons | Chromium-managed: cookie **values** are OSCrypt-encrypted; on Linux without a keyring OSCrypt uses its built-in fallback key → obfuscation only, same guarantee class as our key file. DOM storage/session files are plaintext per upstream Chromium design. |
+| WebEngine profile "arktos" | `QtWebEngine/arktos/` | Cookies, Local Storage, IndexedDB, Service Worker, Cache Storage, Favicons | Chromium-managed: cookie **values** are OSCrypt-encrypted; on Linux without a keyring OSCrypt uses its built-in fallback key → obfuscation only, same guarantee class as our key file. DOM storage/session files are plaintext per upstream Chromium design. |
 | OTR profile | in-memory | private browsing state | nothing persisted |
 
 ## Changes made

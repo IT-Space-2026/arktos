@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,9 +22,9 @@
 // and the metrics proxy (frameless toolbars, semibold group-box
 // titles), plus the tor stylesheet builders the violet window quotes.
 
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 
-#include <arorastyle.h>
+#include <arktosstyle.h>
 #include <browsermainwindow.h>
 #include <browsertheme.h>
 #include <containermanager.h>
@@ -46,7 +46,7 @@
 #include <qtoolbutton.h>
 #include <qboxlayout.h>
 
-class tst_Arorastyle : public QObject
+class tst_Arktosstyle : public QObject
 {
     Q_OBJECT
 
@@ -82,41 +82,41 @@ static bool nearColor(const QColor &a, const QColor &b,
         && qAbs(a.blue() - b.blue()) <= tolerance;
 }
 
-void tst_Arorastyle::initTestCase()
+void tst_Arktosstyle::initTestCase()
 {
     // Pin the scheme inputs so the flip leg restores deterministically
     // — a stray user pick would keep the palette dark.
-    qputenv("ARORA_COLOR_SCHEME", "light");
+    qputenv("ARKTOS_COLOR_SCHEME", "light");
     QSettings().remove(QLatin1String("browser/colorScheme"));
     BrowserTheme::applyColorScheme();
 }
 
-void tst_Arorastyle::cleanupTestCase()
+void tst_Arktosstyle::cleanupTestCase()
 {
-    qunsetenv("ARORA_COLOR_SCHEME");
+    qunsetenv("ARKTOS_COLOR_SCHEME");
     BrowserTheme::applyColorScheme();
 }
 
-void tst_Arorastyle::spacingScale()
+void tst_Arktosstyle::spacingScale()
 {
-    QCOMPARE(AroraStyle::Spacing::Small, 4);
-    QCOMPARE(AroraStyle::Spacing::Medium, 8);
-    QCOMPARE(AroraStyle::Spacing::Large, 12);
+    QCOMPARE(ArktosStyle::Spacing::Small, 4);
+    QCOMPARE(ArktosStyle::Spacing::Medium, 8);
+    QCOMPARE(ArktosStyle::Spacing::Large, 12);
 }
 
-void tst_Arorastyle::paletteDerivedColors()
+void tst_Arktosstyle::paletteDerivedColors()
 {
     // Blend endpoints and the mix itself.
-    QCOMPARE(AroraStyle::blend(Qt::black, Qt::white, 0.0),
+    QCOMPARE(ArktosStyle::blend(Qt::black, Qt::white, 0.0),
              QColor(Qt::black));
-    QCOMPARE(AroraStyle::blend(Qt::black, Qt::white, 1.0),
+    QCOMPARE(ArktosStyle::blend(Qt::black, Qt::white, 1.0),
              QColor(Qt::white));
 
     // The separator must differ from the surface on both scheme ends
     // — light text on dark Window lifts it, dark text on light Window
     // sinks it — and stay subtle (nowhere near the text color).
     const QColor lightSep =
-        AroraStyle::separatorColor(QApplication::palette());
+        ArktosStyle::separatorColor(QApplication::palette());
     QVERIFY(lightSep.isValid());
     QVERIFY(lightSep
             != QApplication::palette().color(QPalette::Window));
@@ -125,7 +125,7 @@ void tst_Arorastyle::paletteDerivedColors()
                        .color(QPalette::Window).lightness()) < 60);
 
     const QPalette dark = BrowserTheme::darkPalette();
-    const QColor darkSep = AroraStyle::separatorColor(dark);
+    const QColor darkSep = ArktosStyle::separatorColor(dark);
     QVERIFY(darkSep.isValid());
     QVERIFY(darkSep != dark.color(QPalette::Window));
     QVERIFY(darkSep.lightness()
@@ -133,17 +133,17 @@ void tst_Arorastyle::paletteDerivedColors()
     QVERIFY(lightSep != darkSep);
 }
 
-void tst_Arorastyle::chromeSheetResolvesPalette()
+void tst_Arktosstyle::chromeSheetResolvesPalette()
 {
-    const QString sheet = AroraStyle::chromeStyleSheet();
+    const QString sheet = ArktosStyle::chromeStyleSheet();
     QVERIFY(sheet.contains(QLatin1String("QToolBar")));
     QVERIFY(sheet.contains(QLatin1String("QStatusBar")));
     QVERIFY(sheet.contains(QLatin1String("border: none")));
-    QVERIFY(sheet.contains(AroraStyle::separatorColor(
+    QVERIFY(sheet.contains(ArktosStyle::separatorColor(
         QApplication::palette()).name()));
 }
 
-void tst_Arorastyle::flatChromeInstalled()
+void tst_Arktosstyle::flatChromeInstalled()
 {
     // BrowserApplication's constructor ran install() — the app style
     // is the polish proxy and the chrome sheet is live.  The frame
@@ -152,20 +152,20 @@ void tst_Arorastyle::flatChromeInstalled()
     QToolBar bar;
     QCOMPARE(QApplication::style()->pixelMetric(
                  QStyle::PM_ToolBarFrameWidth, nullptr, &bar),
-             AroraStyle::Spacing::Small);
+             ArktosStyle::Spacing::Small);
     QVERIFY(qApp->styleSheet().contains(
         QLatin1String("QToolBar { border: none; padding: 4px; }")));
     QVERIFY(qApp->styleSheet().contains(
         QLatin1String("QStatusBar::item { border: none; }")));
     // baseStyleName() unwraps the proxy — a creatable factory name.
-    const QString baseName = AroraStyle::baseStyleName();
+    const QString baseName = ArktosStyle::baseStyleName();
     QVERIFY(!baseName.isEmpty());
     QStyle *base = QStyleFactory::create(baseName);
     QVERIFY(base);
     delete base;
 }
 
-void tst_Arorastyle::groupBoxTitleWeight()
+void tst_Arktosstyle::groupBoxTitleWeight()
 {
     // The proxy draws QGroupBox titles at DemiBold; a twin box on the
     // bare base style must render its title differently — count ink
@@ -214,7 +214,7 @@ void tst_Arorastyle::groupBoxTitleWeight()
 // THEM03 §a: a titled group box is a flat section — a palette
 // hairline under the semibold header, no framed panel edge around
 // the sides and bottom.
-void tst_Arorastyle::flatGroupSection()
+void tst_Arktosstyle::flatGroupSection()
 {
     QGroupBox box(QLatin1String("Section Header"));
     box.resize(360, 140);
@@ -223,7 +223,7 @@ void tst_Arorastyle::flatGroupSection()
     const QImage image = box.grab().toImage();
     const QPalette palette = box.palette();
     const QColor window = palette.color(QPalette::Window);
-    const QColor sep = AroraStyle::separatorColor(palette);
+    const QColor sep = ArktosStyle::separatorColor(palette);
 
     // No side or bottom frame — the edge pixels stay on Window.
     QVERIFY(nearColor(image.pixelColor(0, image.height() / 2),
@@ -277,14 +277,14 @@ void tst_Arorastyle::flatGroupSection()
 // THEM03: the chrome sheet carries the dialog/panel/menu polish —
 // flat menus on the spacing scale, flat sidebar surfaces, and the
 // frameless Preferences nav rail — all palette-resolved.
-void tst_Arorastyle::dialogAndMenuSheet()
+void tst_Arktosstyle::dialogAndMenuSheet()
 {
-    const QString sheet = AroraStyle::chromeStyleSheet();
+    const QString sheet = ArktosStyle::chromeStyleSheet();
     const QPalette palette = QApplication::palette();
-    const QString sep = AroraStyle::separatorColor(palette).name();
+    const QString sep = ArktosStyle::separatorColor(palette).name();
     const QString highlight =
         palette.color(QPalette::Highlight).name();
-    const QString hover = AroraStyle::hoverColor(palette).name();
+    const QString hover = ArktosStyle::hoverColor(palette).name();
 
     QVERIFY(sheet.contains(
         QStringLiteral("QMenu { border: 1px solid %1").arg(sep)));
@@ -296,7 +296,7 @@ void tst_Arorastyle::dialogAndMenuSheet()
     // contrast pick where the platform pairs below AA.
     QVERIFY(sheet.contains(
         QStringLiteral("color: %1").arg(
-            AroraStyle::selectionTextColor(palette).name())));
+            ArktosStyle::selectionTextColor(palette).name())));
     QVERIFY(sheet.contains(QLatin1String("margin: 4px 4px")));
     QVERIFY(sheet.contains(
         QLatin1String("QComboBox QAbstractItemView")));
@@ -315,7 +315,7 @@ void tst_Arorastyle::dialogAndMenuSheet()
 
 // THEM03 §c: menus get a flat palette hairline edge — the left
 // border column is the separator color top to bottom.
-void tst_Arorastyle::flatMenuChrome()
+void tst_Arktosstyle::flatMenuChrome()
 {
     QMenu menu;
     menu.addAction(QLatin1String("Alpha action"));
@@ -326,14 +326,14 @@ void tst_Arorastyle::flatMenuChrome()
     QVERIFY(menu.isVisible());
     const QImage image = menu.grab().toImage();
     const QColor sep =
-        AroraStyle::separatorColor(menu.palette());
+        ArktosStyle::separatorColor(menu.palette());
     QVERIFY(nearColor(image.pixelColor(0, image.height() / 2), sep));
     QVERIFY(nearColor(
         image.pixelColor(0, image.height() - 2), sep));
     menu.hide();
 }
 
-void tst_Arorastyle::polishSurvivesSchemeFlip()
+void tst_Arktosstyle::polishSurvivesSchemeFlip()
 {
     // A forced dark flip can replace the app style underneath the
     // proxy; the chromeSchemeChanged hook must re-wrap and re-resolve
@@ -345,9 +345,9 @@ void tst_Arorastyle::polishSurvivesSchemeFlip()
     QToolBar bar;
     QCOMPARE(QApplication::style()->pixelMetric(
                  QStyle::PM_ToolBarFrameWidth, nullptr, &bar),
-             AroraStyle::Spacing::Small);
+             ArktosStyle::Spacing::Small);
     QVERIFY(qApp->styleSheet().contains(
-        AroraStyle::separatorColor(QApplication::palette()).name()));
+        ArktosStyle::separatorColor(QApplication::palette()).name()));
     if (BrowserTheme::isDarkPalette(QApplication::palette()))
         QVERIFY(qApp->styleSheet() != before);
 
@@ -355,37 +355,37 @@ void tst_Arorastyle::polishSurvivesSchemeFlip()
     QApplication::processEvents();
     QCOMPARE(QApplication::style()->pixelMetric(
                  QStyle::PM_ToolBarFrameWidth, nullptr, &bar),
-             AroraStyle::Spacing::Small);
+             ArktosStyle::Spacing::Small);
     QVERIFY(qApp->styleSheet().contains(
         QLatin1String("QToolBar { border: none; padding: 4px; }")));
 }
 
-void tst_Arorastyle::torSheetsShareOneSource()
+void tst_Arktosstyle::torSheetsShareOneSource()
 {
-    const QString chrome = AroraStyle::torChromeColor().name();
+    const QString chrome = ArktosStyle::torChromeColor().name();
     QCOMPARE(chrome, QLatin1String("#4a3372"));
     const QStringList sheets = {
-        AroraStyle::torBarStyleSheet(),
-        AroraStyle::torMenuBarStyleSheet(),
-        AroraStyle::torStatusBarStyleSheet(),
-        AroraStyle::torTabBarStyleSheet(),
-        AroraStyle::torTabWidgetStyleSheet(),
-        AroraStyle::torWindowStyleSheet(),
+        ArktosStyle::torBarStyleSheet(),
+        ArktosStyle::torMenuBarStyleSheet(),
+        ArktosStyle::torStatusBarStyleSheet(),
+        ArktosStyle::torTabBarStyleSheet(),
+        ArktosStyle::torTabWidgetStyleSheet(),
+        ArktosStyle::torWindowStyleSheet(),
     };
     for (const QString &sheet : sheets)
         QVERIFY2(sheet.contains(chrome), qPrintable(sheet));
 
     // The selected tor tab borrows the field colors from the live
     // palette so it tracks the location bar in both schemes.
-    QVERIFY(AroraStyle::torTabBarStyleSheet().contains(
+    QVERIFY(ArktosStyle::torTabBarStyleSheet().contains(
         QApplication::palette().color(QPalette::Base).name()));
     // Hover/pressed/text steps come from the same family.
-    QVERIFY(AroraStyle::torBarStyleSheet().contains(
-        AroraStyle::torChromeHoverColor().name()));
-    QVERIFY(AroraStyle::torStatusBarStyleSheet().contains(
-        AroraStyle::torDimTextColor().name()));
-    QVERIFY(AroraStyle::torToolButtonStyleSheet().contains(
-        AroraStyle::torChromePressedColor().name()));
+    QVERIFY(ArktosStyle::torBarStyleSheet().contains(
+        ArktosStyle::torChromeHoverColor().name()));
+    QVERIFY(ArktosStyle::torStatusBarStyleSheet().contains(
+        ArktosStyle::torDimTextColor().name()));
+    QVERIFY(ArktosStyle::torToolButtonStyleSheet().contains(
+        ArktosStyle::torChromePressedColor().name()));
 }
 
 // THEM02: the proxy paints chrome tabs as flat/rounded cards — a
@@ -393,7 +393,7 @@ void tst_Arorastyle::torSheetsShareOneSource()
 // hover and press step up a washed card, and the active tab lifts to
 // the field color and merges into the page edge.  A vertical strip's
 // rows paint the same card fully rounded instead.
-void tst_Arorastyle::tabCardShape()
+void tst_Arktosstyle::tabCardShape()
 {
     QTabBar bar;
     bar.setShape(QTabBar::RoundedNorth);
@@ -435,7 +435,7 @@ void tst_Arorastyle::tabCardShape()
     QCOMPARE(resting.pixelColor(restRect.center()).alpha(), 0);
     QVERIFY(nearColor(
         resting.pixelColor(restRect.right(), restRect.top() + 8),
-        AroraStyle::separatorColor(pal)));
+        ArktosStyle::separatorColor(pal)));
 
     // Hover and press — a washed card, press the deeper step.
     const QImage hovered = render(
@@ -443,14 +443,14 @@ void tst_Arorastyle::tabCardShape()
         QStyle::State_Enabled | QStyle::State_MouseOver, restRect);
     QCOMPARE(hovered.pixelColor(restRect.topLeft()).alpha(), 0);
     QVERIFY(nearColor(hovered.pixelColor(restRect.center()),
-                      AroraStyle::hoverColor(pal)));
+                      ArktosStyle::hoverColor(pal)));
     const QImage pressed = render(
         QStyle::CE_TabBarTabShape,
         QStyle::State_Enabled | QStyle::State_MouseOver
             | QStyle::State_Sunken,
         restRect);
     QVERIFY(nearColor(pressed.pixelColor(restRect.center()),
-                      AroraStyle::pressedColor(pal)));
+                      ArktosStyle::pressedColor(pal)));
 
     // Active — lifted to the field color, rounded at the outer
     // corners, and the fill reaches past the rect's bottom edge so
@@ -460,7 +460,7 @@ void tst_Arorastyle::tabCardShape()
         QStyle::State_Enabled | QStyle::State_Selected, activeRect);
     QCOMPARE(active.pixelColor(activeRect.topLeft()).alpha(), 0);
     QCOMPARE(active.pixelColor(activeRect.topRight()).alpha(), 0);
-    const QColor lifted = AroraStyle::tabActiveColor(pal);
+    const QColor lifted = ArktosStyle::tabActiveColor(pal);
     QVERIFY(nearColor(active.pixelColor(activeRect.center().x(),
                                         activeRect.top() + 2),
                       lifted));
@@ -496,7 +496,7 @@ void tst_Arorastyle::tabCardShape()
     QCOMPARE(rowImage.pixelColor(row.bottomRight()).alpha(), 0);
     QVERIFY(nearColor(rowImage.pixelColor(row.center().x(),
                                           row.top() + 2),
-                      AroraStyle::tabActiveColor(rail.palette())));
+                      ArktosStyle::tabActiveColor(rail.palette())));
 
     // Resting titles dim — the inactive card recedes one step
     // further than its flat fill.  The selected tab's ink keeps
@@ -524,7 +524,7 @@ void tst_Arorastyle::tabCardShape()
 // THEM02 §c: the strip's per-tab controls share one flat rounded
 // hover — an auto-raise tool button inside a tab bar paints the
 // wash instead of the base style's bevelled frame.
-void tst_Arorastyle::tabControlHover()
+void tst_Arktosstyle::tabControlHover()
 {
     QTabBar bar;
     QToolButton button(&bar);
@@ -554,12 +554,12 @@ void tst_Arorastyle::tabControlHover()
                                 | QStyle::State_MouseOver);
     QVERIFY(hover.pixelColor(0, 0).alpha() < 32);
     QVERIFY(nearColor(hover.pixelColor(8, 8),
-                      AroraStyle::hoverColor(button.palette())));
+                      ArktosStyle::hoverColor(button.palette())));
     const QImage pressed = render(
         QStyle::State_Enabled | QStyle::State_MouseOver
             | QStyle::State_Sunken);
     QVERIFY(nearColor(pressed.pixelColor(8, 8),
-                      AroraStyle::pressedColor(button.palette())));
+                      ArktosStyle::pressedColor(button.palette())));
 
     // Outside the strip the auto-raise panel is untouched — a
     // toolbar child still renders the base style's frame (opaque).
@@ -582,7 +582,7 @@ void tst_Arorastyle::tabControlHover()
 // THEM02: the same card on real strips, both orientations — the
 // active tab reads lifted, resting tabs flat with hairlines, and
 // the corners actually come off the squared look.
-void tst_Arorastyle::roundedTabChrome()
+void tst_Arktosstyle::roundedTabChrome()
 {
     TabBar bar;
     bar.setShape(QTabBar::RoundedNorth);
@@ -608,7 +608,7 @@ void tst_Arorastyle::roundedTabChrome()
     QVERIFY(nearColor(image.pixelColor(active.topRight()), strip));
     QVERIFY(nearColor(
         image.pixelColor(active.center().x(), active.top() + 2),
-        AroraStyle::tabActiveColor(pal)));
+        ArktosStyle::tabActiveColor(pal)));
     // Resting interior is flat strip color; the boundary to the
     // next resting tab is a hairline, while the gap to the active
     // tab needs none — its card edge separates already.
@@ -617,14 +617,14 @@ void tst_Arorastyle::roundedTabChrome()
         strip));
     QVERIFY(nearColor(
         image.pixelColor(resting.right(), resting.center().y()),
-        AroraStyle::separatorColor(pal)));
+        ArktosStyle::separatorColor(pal)));
     const QRect first = bar.tabRect(0);
     // No resting hairline toward the active tab — its edge column
     // carries only the card outline's antialiased fringe, and the
     // pixel inside tab 0 stays on the strip color.
     QVERIFY(!nearColor(
         image.pixelColor(first.right(), first.center().y()),
-        AroraStyle::separatorColor(pal)));
+        ArktosStyle::separatorColor(pal)));
     QVERIFY(nearColor(
         image.pixelColor(first.right() - 1, first.center().y()),
         strip));
@@ -650,7 +650,7 @@ void tst_Arorastyle::roundedTabChrome()
                       rpal.color(QPalette::Window)));
     QVERIFY(nearColor(
         railImage.pixelColor(row.center().x(), row.top() + 2),
-        AroraStyle::tabActiveColor(rpal)));
+        ArktosStyle::tabActiveColor(rpal)));
     // TABS10: resting rail rows carry no bottom hairline — a line
     // under each resting row read as a per-tab underline (user
     // report), so neighbors sit bare against each other and the row
@@ -664,11 +664,11 @@ void tst_Arorastyle::roundedTabChrome()
                              rowBefore.bottom()),
         rpal.color(QPalette::Window)));
 
-    // Offscreen grabs for visual review — ARORA_CHROME_GRAB_DIR or
-    // ARORA_TABBAR_GRAB_DIR both work here.
-    const QByteArray grabDir = qgetenv("ARORA_TABBAR_GRAB_DIR").isEmpty()
-        ? qgetenv("ARORA_CHROME_GRAB_DIR")
-        : qgetenv("ARORA_TABBAR_GRAB_DIR");
+    // Offscreen grabs for visual review — ARKTOS_CHROME_GRAB_DIR or
+    // ARKTOS_TABBAR_GRAB_DIR both work here.
+    const QByteArray grabDir = qgetenv("ARKTOS_TABBAR_GRAB_DIR").isEmpty()
+        ? qgetenv("ARKTOS_CHROME_GRAB_DIR")
+        : qgetenv("ARKTOS_TABBAR_GRAB_DIR");
     if (!grabDir.isEmpty()) {
         const QString base = QString::fromLocal8Bit(grabDir);
         QDir().mkpath(base);
@@ -681,115 +681,115 @@ void tst_Arorastyle::roundedTabChrome()
 // callers quote them by name: the container accents, the
 // no-container grey, the warning banner's amber, the location bar's
 // cues, the mac toolbar greys, and the forced dark variant.
-void tst_Arorastyle::fixedFamilies()
+void tst_Arktosstyle::fixedFamilies()
 {
-    QCOMPARE(AroraStyle::containerIdentityColors(),
+    QCOMPARE(ArktosStyle::containerIdentityColors(),
              ContainerManager::defaultColors());
-    QCOMPARE(AroraStyle::containerIdentityColors().count(), 8);
-    QCOMPARE(AroraStyle::noContainerColor(),
+    QCOMPARE(ArktosStyle::containerIdentityColors().count(), 8);
+    QCOMPARE(ArktosStyle::noContainerColor(),
              QColor(0x8a, 0x8a, 0x8a));
 
     // The injected warning banner keeps its amber set.
-    QCOMPARE(AroraStyle::warningBannerColor().name(),
+    QCOMPARE(ArktosStyle::warningBannerColor().name(),
              QLatin1String("#fff4ce"));
-    QCOMPARE(AroraStyle::warningBannerTextColor().name(),
+    QCOMPARE(ArktosStyle::warningBannerTextColor().name(),
              QLatin1String("#3b3105"));
-    QCOMPARE(AroraStyle::warningBannerBorderColor().name(),
+    QCOMPARE(ArktosStyle::warningBannerBorderColor().name(),
              QLatin1String("#e0c45f"));
 
     // The location bar's cues — the https tint, and the loading
     // accent: the fixed blue over a light field, the app Base's
     // deeper step where light text sits on the field.
-    QCOMPARE(AroraStyle::secureFieldColor(), QColor(248, 248, 210));
-    QCOMPARE(AroraStyle::loadingProgressColor(QApplication::palette()),
+    QCOMPARE(ArktosStyle::secureFieldColor(), QColor(248, 248, 210));
+    QCOMPARE(ArktosStyle::loadingProgressColor(QApplication::palette()),
              QColor(116, 192, 250));
     QPalette violetField;
-    violetField.setColor(QPalette::Text, AroraStyle::torTextColor());
-    QCOMPARE(AroraStyle::loadingProgressColor(violetField),
+    violetField.setColor(QPalette::Text, ArktosStyle::torTextColor());
+    QCOMPARE(ArktosStyle::loadingProgressColor(violetField),
              QApplication::palette().color(QPalette::Base)
                  .darker(200));
 
     // The mac greys patch the two palettes the unified toolbar wears.
     QPalette frame;
-    AroraStyle::macToolbarFramePalette(frame);
+    ArktosStyle::macToolbarFramePalette(frame);
     QVERIFY(frame.color(QPalette::Active, QPalette::Light)
             != frame.color(QPalette::Inactive, QPalette::Light));
     QPalette bar;
-    AroraStyle::macToolbarSurfacePalette(bar);
+    ArktosStyle::macToolbarSurfacePalette(bar);
     QVERIFY(bar.color(QPalette::Active, QPalette::Window)
             != bar.color(QPalette::Inactive, QPalette::Window));
 
     // The forced dark variant delegates — one definition, two names.
     QCOMPARE(BrowserTheme::darkPalette().color(QPalette::Window),
-             AroraStyle::darkPalette().color(QPalette::Window));
+             ArktosStyle::darkPalette().color(QPalette::Window));
 }
 
 // THEM04 §b — the contrast audit.  4.5:1 is WCAG AA for body text;
 // accent links keep the 3:1 floor used for large text and UI
 // affordances.
-void tst_Arorastyle::contrastAudit()
+void tst_Arktosstyle::contrastAudit()
 {
     // The pick is correct at the extremes and lands on the readable
     // side of mid-tone accents — the old lightness() > 140 threshold
     // chose white on the turquoise container accent (~2.2:1).
-    QCOMPARE(AroraStyle::contrastTextColor(Qt::white),
+    QCOMPARE(ArktosStyle::contrastTextColor(Qt::white),
              QColor(Qt::black));
-    QCOMPARE(AroraStyle::contrastTextColor(Qt::black),
+    QCOMPARE(ArktosStyle::contrastTextColor(Qt::black),
              QColor(Qt::white));
-    QCOMPARE(AroraStyle::contrastTextColor(
-                 AroraStyle::containerIdentityColors().at(1)),
+    QCOMPARE(ArktosStyle::contrastTextColor(
+                 ArktosStyle::containerIdentityColors().at(1)),
              QColor(Qt::black));
-    QCOMPARE(AroraStyle::contrastTextColor(AroraStyle::torChromeColor()),
+    QCOMPARE(ArktosStyle::contrastTextColor(ArktosStyle::torChromeColor()),
              QColor(Qt::white));
 
     // Every container accent carries its label at AA or better.
-    for (const QColor &accent : AroraStyle::containerIdentityColors()) {
-        const QColor text = AroraStyle::contrastTextColor(accent);
-        QVERIFY2(AroraStyle::contrastRatio(text, accent) >= 4.5,
+    for (const QColor &accent : ArktosStyle::containerIdentityColors()) {
+        const QColor text = ArktosStyle::contrastTextColor(accent);
+        QVERIFY2(ArktosStyle::contrastRatio(text, accent) >= 4.5,
                  qPrintable(accent.name()));
     }
 
     // The tor chrome family — light text on the violet surface and
     // on every step the sheets layer over it.
-    const QColor chrome = AroraStyle::torChromeColor();
-    QVERIFY(AroraStyle::contrastRatio(AroraStyle::torTextColor(),
+    const QColor chrome = ArktosStyle::torChromeColor();
+    QVERIFY(ArktosStyle::contrastRatio(ArktosStyle::torTextColor(),
                                     chrome) >= 4.5);
-    QVERIFY(AroraStyle::contrastRatio(AroraStyle::torDimTextColor(),
+    QVERIFY(ArktosStyle::contrastRatio(ArktosStyle::torDimTextColor(),
                                     chrome) >= 4.5);
-    const QList<QColor> steps = { AroraStyle::torChromeHoverColor(),
-                                  AroraStyle::torChromePressedColor(),
-                                  AroraStyle::torChromeRaisedColor() };
+    const QList<QColor> steps = { ArktosStyle::torChromeHoverColor(),
+                                  ArktosStyle::torChromePressedColor(),
+                                  ArktosStyle::torChromeRaisedColor() };
     for (const QColor &step : steps) {
-        QVERIFY2(AroraStyle::contrastRatio(AroraStyle::torTextColor(),
+        QVERIFY2(ArktosStyle::contrastRatio(ArktosStyle::torTextColor(),
                                          step) >= 4.5,
                  qPrintable(step.name()));
     }
     // THEM07: the glyph-scale accent must stay legible on the surface
     // — a pen stroke can't borrow the raised step's fill-scale margin.
-    QVERIFY(AroraStyle::contrastRatio(AroraStyle::torChromeAccentColor(),
+    QVERIFY(ArktosStyle::contrastRatio(ArktosStyle::torChromeAccentColor(),
                                     chrome) >= 3.0);
 
     // The injected warning banner — dark ink on amber.
-    QVERIFY(AroraStyle::contrastRatio(AroraStyle::warningBannerTextColor(),
-                                    AroraStyle::warningBannerColor())
+    QVERIFY(ArktosStyle::contrastRatio(ArktosStyle::warningBannerTextColor(),
+                                    ArktosStyle::warningBannerColor())
             >= 4.5);
 
     // The forced dark variant — every text role on its surface.
-    const QPalette dark = AroraStyle::darkPalette();
-    QVERIFY(AroraStyle::contrastRatio(dark.color(QPalette::Text),
+    const QPalette dark = ArktosStyle::darkPalette();
+    QVERIFY(ArktosStyle::contrastRatio(dark.color(QPalette::Text),
                                     dark.color(QPalette::Base)) >= 4.5);
-    QVERIFY(AroraStyle::contrastRatio(dark.color(QPalette::WindowText),
+    QVERIFY(ArktosStyle::contrastRatio(dark.color(QPalette::WindowText),
                                     dark.color(QPalette::Window)) >= 4.5);
-    QVERIFY(AroraStyle::contrastRatio(dark.color(QPalette::ButtonText),
+    QVERIFY(ArktosStyle::contrastRatio(dark.color(QPalette::ButtonText),
                                     dark.color(QPalette::Button)) >= 4.5);
-    QVERIFY(AroraStyle::contrastRatio(
+    QVERIFY(ArktosStyle::contrastRatio(
                 dark.color(QPalette::HighlightedText),
                 dark.color(QPalette::Highlight)) >= 4.5);
-    QCOMPARE(AroraStyle::selectionTextColor(dark),
+    QCOMPARE(ArktosStyle::selectionTextColor(dark),
              dark.color(QPalette::HighlightedText));
-    QVERIFY(AroraStyle::contrastRatio(dark.color(QPalette::Link),
+    QVERIFY(ArktosStyle::contrastRatio(dark.color(QPalette::Link),
                                     dark.color(QPalette::Base)) >= 3.0);
-    QVERIFY(AroraStyle::contrastRatio(dark.color(QPalette::PlaceholderText),
+    QVERIFY(ArktosStyle::contrastRatio(dark.color(QPalette::PlaceholderText),
                                     dark.color(QPalette::Base)) >= 4.5);
 
     // The live (normal) palette gets the same audit.  The platform
@@ -798,25 +798,25 @@ void tst_Arorastyle::contrastAudit()
     // which upgrades the stock sub-AA pairing (Fusion's light
     // Highlight sits at ~3.7) to a guaranteed AA pick.
     const QPalette live = QApplication::palette();
-    QVERIFY(AroraStyle::contrastRatio(live.color(QPalette::Text),
+    QVERIFY(ArktosStyle::contrastRatio(live.color(QPalette::Text),
                                     live.color(QPalette::Base)) >= 4.5);
-    QVERIFY(AroraStyle::contrastRatio(live.color(QPalette::WindowText),
+    QVERIFY(ArktosStyle::contrastRatio(live.color(QPalette::WindowText),
                                     live.color(QPalette::Window)) >= 4.5);
-    QVERIFY(AroraStyle::contrastRatio(
+    QVERIFY(ArktosStyle::contrastRatio(
                 live.color(QPalette::HighlightedText),
                 live.color(QPalette::Highlight)) >= 3.0);
-    QVERIFY(AroraStyle::contrastRatio(
-                AroraStyle::selectionTextColor(live),
+    QVERIFY(ArktosStyle::contrastRatio(
+                ArktosStyle::selectionTextColor(live),
                 live.color(QPalette::Highlight)) >= 4.5);
 }
 
-void tst_Arorastyle::chromeGrab()
+void tst_Arktosstyle::chromeGrab()
 {
-    // Offscreen grab for visual review — set ARORA_CHROME_GRAB_DIR to
+    // Offscreen grab for visual review — set ARKTOS_CHROME_GRAB_DIR to
     // a directory and the main window lands there as mainwindow.png.
-    const QByteArray grabDir = qgetenv("ARORA_CHROME_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_CHROME_GRAB_DIR");
     if (grabDir.isEmpty())
-        QSKIP("ARORA_CHROME_GRAB_DIR not set");
+        QSKIP("ARKTOS_CHROME_GRAB_DIR not set");
 
     BrowserMainWindow *window = new BrowserMainWindow;
     window->resize(1000, 640);
@@ -866,5 +866,5 @@ void tst_Arorastyle::chromeGrab()
     ContainerManager::instance()->deleteContainer(box.id);
 }
 
-QTEST_MAIN(tst_Arorastyle)
-#include "tst_arorastyle.moc"
+QTEST_MAIN(tst_Arktosstyle)
+#include "tst_arktosstyle.moc"

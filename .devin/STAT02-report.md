@@ -760,8 +760,8 @@ src/webview.cpp:824:46: warning: Called C++ object pointer is null [core.CallAnd
   cap on this 15.6GB host (kernel log `CONSTRAINT_MEMCG`).  The object
   was built with analyzer off so pass 1 could link; `main.cpp` is still
   covered by the clang `--analyze` pass.  Same fallback precedent as
-  AUDIT01 (`arora-maino.service`).
-- Heavy sweep ran detached as systemd unit `arora-stat02` —
+  AUDIT01 (`arktos-maino.service`).
+- Heavy sweep ran detached as systemd unit `arktos-stat02` —
   `gcc -fanalyzer` peaks up to ~4.7GB/TU (bidipanel.cpp), far above the
   task loop's 2048MB devin-tree RSS cap, so it cannot run inside the
   agent's process tree.  Relaunch/resume: `.devin/AUDIT02-resume.sh`.

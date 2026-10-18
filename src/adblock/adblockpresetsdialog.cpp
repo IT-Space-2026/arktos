@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -39,7 +39,7 @@ AdBlockPresetsDialog::AdBlockPresetsDialog(QWidget *parent)
     QVBoxLayout *layout = new QVBoxLayout(this);
 
     QLabel *intro = new QLabel(
-        tr("Tick a list to subscribe to it; Arora downloads it once and "
+        tr("Tick a list to subscribe to it; Arktos downloads it once and "
            "refreshes it about once a week. Unticking disables the "
            "subscription. Lists already subscribed to (including the "
            "defaults) show as ticked."), this);

@@ -184,7 +184,7 @@ public:
     QToolButton *newTabButton() const;
 
     // TABS13: the live in-process tab-drag session — the (bar, page)
-    // pair behind an application/x-arora-tab payload, plus whether a
+    // pair behind an application/x-arktos-tab payload, plus whether a
     // drop already consumed it.  Static because a drag's endpoints
     // are two different bars; the mime token is validated against
     // this pair so a stale or foreign payload can never move a tab.
@@ -330,7 +330,7 @@ private:
     // and the payload decode — it only yields a bar+page that match
     // the live drag session.
     int insertIndexForDrop(const QPoint &stripPos) const;
-    static bool decodeAroraTabDrag(const QMimeData *mimeData,
+    static bool decodeArktosTabDrag(const QMimeData *mimeData,
                                    TabBar *&source, QWidget *&page);
     friend class TabWidget;
 

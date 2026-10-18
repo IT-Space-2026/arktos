@@ -102,9 +102,9 @@ class QToolButton;
 // live in-process drag session in TabBar so stale or foreign data can
 // never move a tab.  Shared by the strip, the page view and the
 // location bar so every drop surface recognizes it.
-inline QLatin1String aroraTabMimeType()
+inline QLatin1String arktosTabMimeType()
 {
-    return QLatin1String("application/x-arora-tab");
+    return QLatin1String("application/x-arktos-tab");
 }
 
 /*!
@@ -320,7 +320,7 @@ public:
 
     QByteArray saveState() const;
     bool restoreState(const QByteArray &state);
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // RCORE03: the session record set the rustcore session store
     // consumes — the same fields saveState() streams into the blob,
     // structured so the core owns the schema (per-tab url, container
@@ -355,7 +355,7 @@ protected:
     // only falls back to the in-tree heuristic on FFI trouble;
     // no-rust builds always take the reference path.
     static QUrl guessUrlFromStringCpp(const QString &url, bool privateContext);
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     static QUrl guessUrlFromStringRust(const QString &url, bool privateContext);
 #endif
 
@@ -401,7 +401,7 @@ public slots:
     void freeBackgroundTabsMemory();
     // TABS13: move the tab at index into target's strip at
     // targetIndex (-1 appends) — the tear-off and cross-window-merge
-    // back end of the bar's arora-tab drags.  The page widget itself
+    // back end of the bar's arktos-tab drags.  The page widget itself
     // moves, so history, scroll position and in-flight loads ride
     // along untouched; every record keyed on it (pin flag, rename
     // override, group binding, sleep/pending-restore state,

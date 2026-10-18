@@ -24,29 +24,29 @@
 # present so re-runs keep the triage.
 #
 # Env:
-#   ARORA_STATIC_BUILD=DIR  reuse an existing analysis tree instead
+#   ARKTOS_STATIC_BUILD=DIR  reuse an existing analysis tree instead
 #                           of copying the sources to a fresh mktemp
 #                           dir — lets a killed run resume (gcc log is
 #                           appended, objects already built are kept).
 #                           Implies KEEP.
-#   ARORA_STATIC_GCC_JOBS=N   parallel jobs for the -fanalyzer build
+#   ARKTOS_STATIC_GCC_JOBS=N   parallel jobs for the -fanalyzer build
 #                             (default: 1 — a single -fanalyzer TU
 #                             peaks near 900MB, so >1 concurrent job
 #                             risks the task-loop's 2048MB tree RSS
 #                             cap; -j2 is fine on unconstrained runs)
-#   ARORA_STATIC_CLANG_JOBS=N parallel jobs for clang --analyze
+#   ARKTOS_STATIC_CLANG_JOBS=N parallel jobs for clang --analyze
 #                             (default: 3 — ~400MB peak per TU)
-#   ARORA_STATIC_TARGETS="goals"  pass-1 make goals instead of the
+#   ARKTOS_STATIC_TARGETS="goals"  pass-1 make goals instead of the
 #                             whole tree (e.g. "sub-src sub-tools" —
 #                             autotest dirs recompile every src object
 #                             ~44x, which dominates pass-1 cost)
-#   ARORA_STATIC_DIRS="dirs"  pass-2 Makefile search roots relative to
+#   ARKTOS_STATIC_DIRS="dirs"  pass-2 Makefile search roots relative to
 #                             the build tree (e.g. "src tools") —
 #                             analyses then cover only those dirs' TUs
-#   ARORA_STATIC_KEEP=1       keep a fresh analysis build tree
-#   ARORA_STATIC_REPORT=FILE  report output (default STAT01-report.md)
-#   ARORA_STATIC_TRIAGE=FILE  triage doc appended verbatim
-#   ARORA_STATIC_TITLE=NAME   sweep name in the report header —
+#   ARKTOS_STATIC_KEEP=1       keep a fresh analysis build tree
+#   ARKTOS_STATIC_REPORT=FILE  report output (default STAT01-report.md)
+#   ARKTOS_STATIC_TRIAGE=FILE  triage doc appended verbatim
+#   ARKTOS_STATIC_TITLE=NAME   sweep name in the report header —
 #                             the three together let a re-sweep
 #                             (STAT02...) reuse the script without
 #                             clobbering the previous report/triage
@@ -57,16 +57,16 @@
 set -u
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-REPORT_MD=${ARORA_STATIC_REPORT:-$ROOT/.devin/STAT01-report.md}
-TRIAGE_MD=${ARORA_STATIC_TRIAGE:-$ROOT/.devin/STAT01-triage.md}
-REPORT_TITLE=${ARORA_STATIC_TITLE:-STAT01}
+REPORT_MD=${ARKTOS_STATIC_REPORT:-$ROOT/.devin/STAT01-report.md}
+TRIAGE_MD=${ARKTOS_STATIC_TRIAGE:-$ROOT/.devin/STAT01-triage.md}
+REPORT_TITLE=${ARKTOS_STATIC_TITLE:-STAT01}
 
-GCC_JOBS=${ARORA_STATIC_GCC_JOBS:-1}
-CLANG_JOBS=${ARORA_STATIC_CLANG_JOBS:-3}
-KEEP=${ARORA_STATIC_KEEP:-0}
-RESUME=${ARORA_STATIC_BUILD:-}
-TARGETS=${ARORA_STATIC_TARGETS:-}
-DIRS=${ARORA_STATIC_DIRS:-}
+GCC_JOBS=${ARKTOS_STATIC_GCC_JOBS:-1}
+CLANG_JOBS=${ARKTOS_STATIC_CLANG_JOBS:-3}
+KEEP=${ARKTOS_STATIC_KEEP:-0}
+RESUME=${ARKTOS_STATIC_BUILD:-}
+TARGETS=${ARKTOS_STATIC_TARGETS:-}
+DIRS=${ARKTOS_STATIC_DIRS:-}
 
 die() { echo "check-static: $*" >&2; exit 1; }
 
@@ -76,11 +76,11 @@ command -v git >/dev/null 2>&1 || die "git not found"
 
 if [ -n "$RESUME" ]; then
     BUILD=$RESUME
-    [ -d "$BUILD" ] || die "ARORA_STATIC_BUILD=$BUILD does not exist"
+    [ -d "$BUILD" ] || die "ARKTOS_STATIC_BUILD=$BUILD does not exist"
     KEEP=1
     echo "check-static: resuming build tree $BUILD"
 else
-    BUILD=$(mktemp -d /tmp/arora-stat.XXXXXX)
+    BUILD=$(mktemp -d /tmp/arktos-stat.XXXXXX)
     echo "check-static: build tree $BUILD"
 
     cd "$ROOT" || die "cannot cd to $ROOT"
@@ -92,7 +92,7 @@ else
     . "$ROOT/.devin/qt-env.sh"
 
     QMAKE=$(command -v qmake6 || command -v qmake) || die "qmake not found"
-    "$QMAKE" "CONFIG+=analyzer" arora.pro || die "qmake failed"
+    "$QMAKE" "CONFIG+=analyzer" arktos.pro || die "qmake failed"
 fi
 
 cd "$BUILD" || die "cannot cd to $BUILD"

@@ -165,7 +165,7 @@ public:
     static bool isPrivate();
     static void setPrivate(bool isPrivate);
 
-    // TOR02: `arora --tor` runs the whole process on a dedicated
+    // TOR02: `arktos --tor` runs the whole process on a dedicated
     // off-the-record profile behind a managed tor daemon.  The
     // application proxy is process-global — that is why Tor is a
     // separate process rather than a window mode in this one.
@@ -231,7 +231,7 @@ public:
         m_torManager = manager;
     }
 #endif
-    // Spawns an independent `arora --tor` process.  An optional start
+    // Spawns an independent `arktos --tor` process.  An optional start
     // url (CONT07's 'Open in New Tor Window') rides as its own argv
     // element — never a shell string — and is re-gated as untrusted
     // input on the receiving side (torStartup).

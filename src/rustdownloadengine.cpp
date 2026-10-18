@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -648,7 +648,7 @@ void RustDownloadEngine::finish(QWebEngineDownloadRequest::DownloadState state,
 }
 
 // ---- SAND02 subprocess backend --------------------------------------------
-// `arora --download-worker` runs the crate inside a restrictive bwrap
+// `arktos --download-worker` runs the crate inside a restrictive bwrap
 // wrap (allowlist mounts — $HOME is absent entirely) and speaks the
 // JSONL protocol documented in downloadworker.h.  The parent keeps
 // owning the policy gate: the worker marshals each dl_set_gate call
@@ -661,7 +661,7 @@ bool RustDownloadEngine::sandboxedWorkerEnabled()
 #if defined(Q_OS_LINUX)
     // Escape hatches mirror SAND01's: an env kill-switch for
     // developers and a settings key for users; both default on.
-    if (!qgetenv("ARORA_DL_NO_SANDBOX").isEmpty())
+    if (!qgetenv("ARKTOS_DL_NO_SANDBOX").isEmpty())
         return false;
     ProfileSettings settings;
     settings.beginGroup(QLatin1String("downloadmanager"));
@@ -679,8 +679,8 @@ bool RustDownloadEngine::sandboxedWorkerEnabled()
 
 QString RustDownloadEngine::workerProgram()
 {
-    // Tests and dev builds can point at a specific arora binary.
-    const QByteArray env = qgetenv("ARORA_WORKER_BINARY");
+    // Tests and dev builds can point at a specific arktos binary.
+    const QByteArray env = qgetenv("ARKTOS_WORKER_BINARY");
     if (!env.isEmpty()) {
         const QString path = QString::fromLocal8Bit(env);
         return QFileInfo(path).isExecutable() ? path : QString();
@@ -702,7 +702,7 @@ QString RustDownloadEngine::newWorkDir() const
     // worker never sees a profile-side path.  0700 so a shared
     // destination doesn't expose the cookie export to other users.
     const QString dir = m_dir
-        + QLatin1String("/.arora-dl-")
+        + QLatin1String("/.arktos-dl-")
         + QUuid::createUuid().toString(QUuid::WithoutBraces);
     if (!QDir().mkpath(dir))
         return QString();
@@ -850,7 +850,7 @@ void RustDownloadEngine::onWorkerFinished(int exitCode,
     const QByteArray err =
         m_process ? m_process->readAllStandardError() : QByteArray();
     if (!err.trimmed().isEmpty())
-        qWarning("Arora: download worker exited %d — stderr: %s",
+        qWarning("Arktos: download worker exited %d — stderr: %s",
                  exitCode, err.trimmed().constData());
 
     const bool hadEvents = m_workerSawEvent;
@@ -875,7 +875,7 @@ void RustDownloadEngine::onWorkerFinished(int exitCode,
         // download never began, so the in-process path can take it
         // over cleanly.  Costs confinement, never the download.
         m_workerFellBack = true;
-        qWarning("Arora: sandboxed download worker unavailable — "
+        qWarning("Arktos: sandboxed download worker unavailable — "
                  "running the accelerated engine in-process");
         accept();
         return;

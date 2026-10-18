@@ -78,7 +78,7 @@
 #include <qwebenginecookiestore.h>
 #include <qwebengineprofile.h>
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "sitedecisionstore.h"
 #endif
 
@@ -199,7 +199,7 @@ void CookieJar::loadSettings()
     m_sessionLength = settings.value(QLatin1String("sessionLength"), -1).toInt();
 
     settings.beginGroup(QLatin1String("exceptions"));
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // SITED01: one-shot import — replay the three legacy exception
     // lists into the Rust store ("block"/"allow"/"session" values),
     // then retire the group after the writes land.
@@ -296,7 +296,7 @@ void CookieJar::save()
     settings.setValue(QLatin1String("blockThirdPartyCookies"), m_blockThirdPartyCookies);
     settings.setValue(QLatin1String("sessionLength"), m_sessionLength);
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // The three lists mirror into one kind — merged with the same
     // precedence the filter resolves (block > allow > session).
     QHash<QString, QString> rows;

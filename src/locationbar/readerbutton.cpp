@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@
 
 #include "readerbutton.h"
 
-#include "arorastyle.h"
+#include "arktosstyle.h"
 #include "browsertheme.h"
 #include "readermode.h"
 #include "webview.h"
@@ -91,14 +91,14 @@ public:
         painter.scale(k, k);
         const QColor fg = mode == QIcon::Disabled
             ? m_palette.color(QPalette::Disabled, QPalette::ButtonText)
-            : (m_active ? AroraStyle::onAccentColor(m_palette)
+            : (m_active ? ArktosStyle::onAccentColor(m_palette)
                         : m_palette.color(m_suggested
                                               ? QPalette::Accent
                                               : QPalette::ButtonText));
         const QRectF page(2.5, 1.5, 11, 13);
         if (m_active) {
             painter.setPen(Qt::NoPen);
-            painter.setBrush(AroraStyle::accentFillColor(m_palette));
+            painter.setBrush(ArktosStyle::accentFillColor(m_palette));
             painter.drawRoundedRect(page, 1.5, 1.5);
         }
         painter.setPen(QPen(fg, m_suggested ? 1.4 : 1.1));

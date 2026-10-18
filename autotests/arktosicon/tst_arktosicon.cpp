@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,7 +17,7 @@
  * Boston, MA  02110-1301  USA
  */
 
-// ICONS01: AroraIcon — the bundled themes embedded under :/icons are
+// ICONS01: ArktosIcon — the bundled themes embedded under :/icons are
 // resolved through real freedesktop-theme machinery.  The interesting
 // failure modes are a missing glyph (invisible toolbar button), a
 // theme switch that does not reach already-created QIcons, and the
@@ -26,11 +26,11 @@
 #include <QtTest/QtTest>
 #include <QtGui/QtGui>
 
-#include "aroraicon.h"
-#include "arorastyle.h"
+#include "arktosicon.h"
+#include "arktosstyle.h"
 #include "browsertheme.h"
 
-class tst_AroraIcon : public QObject
+class tst_ArktosIcon : public QObject
 {
     Q_OBJECT
 
@@ -78,21 +78,21 @@ static int opaquePixels(const QImage &image)
     return count;
 }
 
-void tst_AroraIcon::initTestCase()
+void tst_ArktosIcon::initTestCase()
 {
-    QCoreApplication::setApplicationName("tst_aroraicon");
+    QCoreApplication::setApplicationName("tst_arktosicon");
     QSettings settings;
     settings.clear();
 }
 
-void tst_AroraIcon::cleanupTestCase()
+void tst_ArktosIcon::cleanupTestCase()
 {
-    AroraIcon::setTheme(AroraIcon::theme());
+    ArktosIcon::setTheme(ArktosIcon::theme());
 }
 
-void tst_AroraIcon::themeIds()
+void tst_ArktosIcon::themeIds()
 {
-    const QStringList ids = AroraIcon::themeIds();
+    const QStringList ids = ArktosIcon::themeIds();
     // ICONS12: "native" is retired — only bundled sets are
     // selectable.  ICONS13: so is the bundled "legacy" set.
     QCOMPARE(ids.count(), 4);
@@ -100,14 +100,14 @@ void tst_AroraIcon::themeIds()
     QVERIFY(!ids.contains(QLatin1String("native")));
     QVERIFY(!ids.contains(QLatin1String("legacy")));
     for (const QString &id : ids)
-        QVERIFY(!AroraIcon::themeDisplayName(id).isEmpty());
+        QVERIFY(!ArktosIcon::themeDisplayName(id).isEmpty());
 }
 
 // The names the chrome actually asks for must exist in the bundle —
 // a missing name renders as a blank button.
-void tst_AroraIcon::namesList()
+void tst_ArktosIcon::namesList()
 {
-    const QStringList names = AroraIcon::names();
+    const QStringList names = ArktosIcon::names();
     QVERIFY2(names.count() >= 30,
              qPrintable(QString::number(names.count())));
     const QStringList required = {
@@ -138,7 +138,7 @@ void tst_AroraIcon::namesList()
         QVERIFY2(names.contains(name), qPrintable(name));
 }
 
-void tst_AroraIcon::bundledCoverage_data()
+void tst_ArktosIcon::bundledCoverage_data()
 {
     QTest::addColumn<QString>("id");
     QTest::newRow("adwaita") << QStringLiteral("adwaita");
@@ -147,12 +147,12 @@ void tst_AroraIcon::bundledCoverage_data()
     QTest::newRow("lucide") << QStringLiteral("lucide");
 }
 
-void tst_AroraIcon::bundledCoverage()
+void tst_ArktosIcon::bundledCoverage()
 {
     QFETCH(QString, id);
-    AroraIcon::setTheme(id);
-    for (const QString &name : AroraIcon::names()) {
-        const QIcon icon = AroraIcon::get(name);
+    ArktosIcon::setTheme(id);
+    for (const QString &name : ArktosIcon::names()) {
+        const QIcon icon = ArktosIcon::get(name);
         const QImage image = icon.pixmap(QSize(24, 24)).toImage();
         QVERIFY2(!image.isNull(), qPrintable(id + '/' + name));
         QVERIFY2(opaquePixels(image) > 0, qPrintable(id + '/' + name));
@@ -161,16 +161,16 @@ void tst_AroraIcon::bundledCoverage()
 
 // ICONS10: the default pick is the bundled Tabler set, and every
 // chrome name the code can ask for ships inside it — ICONS13 made
-// tabler the fallback root every other set inherits (arora-legacy's
+// tabler the fallback root every other set inherits (arktos-legacy's
 // 2009 art is gone), so a mixed-style fall-through is the regression
 // the audit exists to prevent.  The -dark variant must cover the
 // same surface.
-void tst_AroraIcon::defaultCoverage()
+void tst_ArktosIcon::defaultCoverage()
 {
-    QCOMPARE(AroraIcon::theme(), QLatin1String("tabler"));
-    const QDir light(QLatin1String(":/icons/arora-tabler/icons"));
-    const QDir dark(QLatin1String(":/icons/arora-tabler-dark/icons"));
-    for (const QString &name : AroraIcon::names()) {
+    QCOMPARE(ArktosIcon::theme(), QLatin1String("tabler"));
+    const QDir light(QLatin1String(":/icons/arktos-tabler/icons"));
+    const QDir dark(QLatin1String(":/icons/arktos-tabler-dark/icons"));
+    for (const QString &name : ArktosIcon::names()) {
         const QString file = name + QLatin1String(".svg");
         QVERIFY2(light.exists(file), qPrintable(name));
         QVERIFY2(dark.exists(file), qPrintable(name));
@@ -179,12 +179,12 @@ void tst_AroraIcon::defaultCoverage()
 
 // The same QIcon must pick up a theme switch — that is what makes
 // the Settings combo apply without touching each widget.
-void tst_AroraIcon::liveSwitch()
+void tst_ArktosIcon::liveSwitch()
 {
-    AroraIcon::setTheme(QLatin1String("adwaita"));
-    const QIcon icon = AroraIcon::get(QLatin1String("go-previous"));
+    ArktosIcon::setTheme(QLatin1String("adwaita"));
+    const QIcon icon = ArktosIcon::get(QLatin1String("go-previous"));
     const QImage before = icon.pixmap(QSize(24, 24)).toImage();
-    AroraIcon::setTheme(QLatin1String("tabler"));
+    ArktosIcon::setTheme(QLatin1String("tabler"));
     const QImage after = icon.pixmap(QSize(24, 24)).toImage();
     QVERIFY(before != after);
 }
@@ -192,21 +192,21 @@ void tst_AroraIcon::liveSwitch()
 // A dark application palette selects the -dark recolor variant —
 // Qt does not recolor currentColor against the palette, so without
 // this the monochrome sets would be near-invisible on dark chrome.
-void tst_AroraIcon::darkVariant()
+void tst_ArktosIcon::darkVariant()
 {
     const QPalette saved = qApp->palette();
 
     qApp->setPalette(BrowserTheme::darkPalette());
-    QCOMPARE(AroraIcon::effectiveThemeName(QLatin1String("tabler")),
-             QLatin1String("arora-tabler-dark"));
-    QCOMPARE(AroraIcon::effectiveThemeName(QLatin1String("adwaita")),
-             QLatin1String("arora-adwaita-dark"));
+    QCOMPARE(ArktosIcon::effectiveThemeName(QLatin1String("tabler")),
+             QLatin1String("arktos-tabler-dark"));
+    QCOMPARE(ArktosIcon::effectiveThemeName(QLatin1String("adwaita")),
+             QLatin1String("arktos-adwaita-dark"));
     // ICONS11: lucide ships the same -dark recolor variant.
-    QCOMPARE(AroraIcon::effectiveThemeName(QLatin1String("lucide")),
-             QLatin1String("arora-lucide-dark"));
+    QCOMPARE(ArktosIcon::effectiveThemeName(QLatin1String("lucide")),
+             QLatin1String("arktos-lucide-dark"));
 
-    AroraIcon::setTheme(QLatin1String("tabler"));
-    const QImage darkImage = AroraIcon::get(QLatin1String("go-previous"))
+    ArktosIcon::setTheme(QLatin1String("tabler"));
+    const QImage darkImage = ArktosIcon::get(QLatin1String("go-previous"))
         .pixmap(QSize(24, 24)).toImage();
     // The dark variant's stroke is light: the average opaque pixel
     // should sit well above a mid-gray luminance.
@@ -225,16 +225,16 @@ void tst_AroraIcon::darkVariant()
     QVERIFY(luminance / opaque > 140);
 
     qApp->setPalette(saved);
-    QCOMPARE(AroraIcon::effectiveThemeName(QLatin1String("tabler")),
-             QLatin1String("arora-tabler"));
+    QCOMPARE(ArktosIcon::effectiveThemeName(QLatin1String("tabler")),
+             QLatin1String("arktos-tabler"));
 }
 
 // ICONS12: the retired "native" id — and any other unknown pick —
 // migrates to the default bundled set instead of erroring, so a
 // profile pinned to it keeps working.  ICONS13: the removed
-// arora-legacy set migrates the same way.  Under a dark palette the
+// arktos-legacy set migrates the same way.  Under a dark palette the
 // migrated pick still engages the -dark recolor.
-void tst_AroraIcon::retiredIdMigrates()
+void tst_ArktosIcon::retiredIdMigrates()
 {
     QSettings settings;
     const QVariant saved = settings.value(
@@ -243,37 +243,37 @@ void tst_AroraIcon::retiredIdMigrates()
     // The persisted read migrates.
     settings.setValue(QLatin1String("MainWindow/iconTheme"),
                       QLatin1String("native"));
-    QCOMPARE(AroraIcon::theme(), QLatin1String("tabler"));
+    QCOMPARE(ArktosIcon::theme(), QLatin1String("tabler"));
     settings.setValue(QLatin1String("MainWindow/iconTheme"),
                       QLatin1String("no-such-set"));
-    QCOMPARE(AroraIcon::theme(), QLatin1String("tabler"));
+    QCOMPARE(ArktosIcon::theme(), QLatin1String("tabler"));
     // ICONS13: a profile pinned to the removed legacy set (stored
     // either bare or with the theme-name prefix) reads back as the
     // default bundled set.
     settings.setValue(QLatin1String("MainWindow/iconTheme"),
                       QLatin1String("legacy"));
-    QCOMPARE(AroraIcon::theme(), QLatin1String("tabler"));
+    QCOMPARE(ArktosIcon::theme(), QLatin1String("tabler"));
     settings.setValue(QLatin1String("MainWindow/iconTheme"),
-                      QLatin1String("arora-legacy"));
-    QCOMPARE(AroraIcon::theme(), QLatin1String("tabler"));
-    AroraIcon::setTheme(QLatin1String("arora-legacy"));
+                      QLatin1String("arktos-legacy"));
+    QCOMPARE(ArktosIcon::theme(), QLatin1String("tabler"));
+    ArktosIcon::setTheme(QLatin1String("arktos-legacy"));
     QCOMPARE(QIcon::themeName(),
-             AroraIcon::effectiveThemeName(QLatin1String("tabler")));
+             ArktosIcon::effectiveThemeName(QLatin1String("tabler")));
 
     // An explicit setTheme on the retired id lands on the default
     // set — no dangling "native" resolution.
-    AroraIcon::setTheme(QLatin1String("native"));
+    ArktosIcon::setTheme(QLatin1String("native"));
     QCOMPARE(QIcon::themeName(),
-             AroraIcon::effectiveThemeName(QLatin1String("tabler")));
+             ArktosIcon::effectiveThemeName(QLatin1String("tabler")));
 
     // The migrated pick still follows the palette to the -dark
     // variant — the dark-chrome legibility the old native probe
     // path used to approximate.
     const QPalette savedPalette = qApp->palette();
     qApp->setPalette(BrowserTheme::darkPalette());
-    AroraIcon::setTheme(QLatin1String("native"));
-    QCOMPARE(QIcon::themeName(), QLatin1String("arora-tabler-dark"));
-    const QImage image = AroraIcon::get(QLatin1String("go-previous"))
+    ArktosIcon::setTheme(QLatin1String("native"));
+    QCOMPARE(QIcon::themeName(), QLatin1String("arktos-tabler-dark"));
+    const QImage image = ArktosIcon::get(QLatin1String("go-previous"))
         .pixmap(QSize(24, 24)).toImage();
     qlonglong luminance = 0;
     int opaque = 0;
@@ -294,30 +294,30 @@ void tst_AroraIcon::retiredIdMigrates()
         settings.setValue(QLatin1String("MainWindow/iconTheme"), saved);
     else
         settings.remove(QLatin1String("MainWindow/iconTheme"));
-    AroraIcon::setTheme(AroraIcon::theme());
+    ArktosIcon::setTheme(ArktosIcon::theme());
 }
 
 // ICONS13: with no resolvable theme at all the chain must still
-// reach the bundled fallback (arora-tabler, the full-coverage set
-// that replaced arora-legacy) rather than painting blank.
-void tst_AroraIcon::bundledFallback()
+// reach the bundled fallback (arktos-tabler, the full-coverage set
+// that replaced arktos-legacy) rather than painting blank.
+void tst_ArktosIcon::bundledFallback()
 {
-    QIcon::setThemeName(QLatin1String("arora-does-not-exist"));
-    QVERIFY(!AroraIcon::get(QLatin1String("tab-new")).pixmap(QSize(16, 16))
+    QIcon::setThemeName(QLatin1String("arktos-does-not-exist"));
+    QVERIFY(!ArktosIcon::get(QLatin1String("tab-new")).pixmap(QSize(16, 16))
                  .isNull());
-    QVERIFY(!AroraIcon::get(QLatin1String("window-close")).pixmap(QSize(16, 16))
+    QVERIFY(!ArktosIcon::get(QLatin1String("window-close")).pixmap(QSize(16, 16))
                  .isNull());
-    QVERIFY(!AroraIcon::get(QLatin1String("go-previous")).pixmap(QSize(16, 16))
+    QVERIFY(!ArktosIcon::get(QLatin1String("go-previous")).pixmap(QSize(16, 16))
                  .isNull());
     // The retired theme name itself resolves to nothing — it is gone
     // from the bundle, not shadowed.
-    QVERIFY(QDir(QLatin1String(":/icons/arora-legacy"))
+    QVERIFY(QDir(QLatin1String(":/icons/arktos-legacy"))
                 .entryList().isEmpty());
 }
 
 // Per-option preview icons for the Settings combo: each bundled set
 // resolves the same name to its own artwork.
-void tst_AroraIcon::iconForTheme()
+void tst_ArktosIcon::iconForTheme()
 {
     QHash<QString, QImage> previews;
     const QStringList sets = { QLatin1String("adwaita"),
@@ -325,7 +325,7 @@ void tst_AroraIcon::iconForTheme()
                                QLatin1String("tabler"),
                                QLatin1String("lucide") };
     for (const QString &id : sets) {
-        const QIcon icon = AroraIcon::iconForTheme(
+        const QIcon icon = ArktosIcon::iconForTheme(
             id, QLatin1String("view-refresh"));
         QVERIFY2(!icon.isNull(), qPrintable(id));
         previews[id] = icon.pixmap(QSize(24, 24)).toImage();
@@ -337,10 +337,10 @@ void tst_AroraIcon::iconForTheme()
     // draw it at identical geometry/color, so the distinctness probe
     // uses a name where upstream art differs (zoom-original:
     // zoom-reset vs scan-search).
-    const QImage lucideGlyph = AroraIcon::iconForTheme(
+    const QImage lucideGlyph = ArktosIcon::iconForTheme(
         QLatin1String("lucide"), QLatin1String("zoom-original"))
         .pixmap(QSize(24, 24)).toImage();
-    const QImage tablerGlyph = AroraIcon::iconForTheme(
+    const QImage tablerGlyph = ArktosIcon::iconForTheme(
         QLatin1String("tabler"), QLatin1String("zoom-original"))
         .pixmap(QSize(24, 24)).toImage();
     QVERIFY(lucideGlyph != tablerGlyph);
@@ -351,7 +351,7 @@ void tst_AroraIcon::iconForTheme()
 // Disabled takes the palette's own disabled tone, and the tint is
 // resolved per pixmap() request so a live palette flip restyles an
 // already-constructed icon while a theme swap still moves the shape.
-void tst_AroraIcon::chromeIcon()
+void tst_ArktosIcon::chromeIcon()
 {
     const QPalette saved = qApp->palette();
     const QColor tint = saved.color(QPalette::Normal,
@@ -360,12 +360,12 @@ void tst_AroraIcon::chromeIcon()
                                             QPalette::ButtonText);
 
     const QIcon icon =
-        AroraIcon::getChrome(QLatin1String("go-previous"));
+        ArktosIcon::getChrome(QLatin1String("go-previous"));
 
     // Pin the persisted pick first — bundledFallback deliberately
     // leaves QIcon::themeName on a nonexistent theme, and the
     // round-trip compare below needs a deterministic base shape.
-    AroraIcon::setTheme(AroraIcon::theme());
+    ArktosIcon::setTheme(ArktosIcon::theme());
 
     // A palette flip only posts ApplicationPaletteChange — the
     // PaletteWatcher's setTheme (and any -dark art swap it picks)
@@ -393,7 +393,7 @@ void tst_AroraIcon::chromeIcon()
     const QImage selected =
         icon.pixmap(QSize(24, 24), QIcon::Selected).toImage();
     QCOMPARE(offTintPixels(selected,
-                           AroraStyle::selectionTextColor(saved)),
+                           ArktosStyle::selectionTextColor(saved)),
              0);
 
     // The same QIcon re-tints across a palette flip — nothing
@@ -410,16 +410,16 @@ void tst_AroraIcon::chromeIcon()
     QCOMPARE(icon.pixmap(QSize(24, 24)).toImage(), image);
 
     // Theme swap still changes the shape under the fixed tint.
-    AroraIcon::setTheme(QLatin1String("adwaita"));
+    ArktosIcon::setTheme(QLatin1String("adwaita"));
     const QImage adwaita = icon.pixmap(QSize(24, 24)).toImage();
     QCOMPARE(offTintPixels(adwaita, tint), 0);
-    AroraIcon::setTheme(QLatin1String("tabler"));
+    ArktosIcon::setTheme(QLatin1String("tabler"));
     const QImage tabler = icon.pixmap(QSize(24, 24)).toImage();
     QCOMPARE(offTintPixels(tabler, tint), 0);
     QVERIFY(adwaita != tabler);
 
-    AroraIcon::setTheme(AroraIcon::theme());
+    ArktosIcon::setTheme(ArktosIcon::theme());
 }
 
-QTEST_MAIN(tst_AroraIcon)
-#include "tst_aroraicon.moc"
+QTEST_MAIN(tst_ArktosIcon)
+#include "tst_arktosicon.moc"

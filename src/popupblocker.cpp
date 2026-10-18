@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,14 +24,14 @@
 #include <qsettings.h>
 #include <qurl.h>
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include "sitedecisionstore.h"
 #endif
 
 PopupBlocker::PopupBlocker(QObject *parent)
     : QObject(parent)
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // SITED01: one-shot import of the legacy "popupExceptions" list —
     // replayed into the Rust store and retired after the writes land.
     ProfileSettings legacy;
@@ -195,7 +195,7 @@ void PopupBlocker::clearSessionHosts()
 
 void PopupBlocker::save() const
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     // The in-memory list is authoritative — mirror it whole.
     QHash<QString, QString> rows;
     for (const QString &host : m_allowed)

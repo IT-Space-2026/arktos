@@ -573,7 +573,7 @@ impl Core {
     fn dispatch(&self, bidi_id: u64, method: &str, params: Value) -> Result<(), Fail> {
         match method {
             "session.new" => {
-                self.answer(bidi_id, json!({ "sessionId": "arora-bidi-1", "capabilities": {} }));
+                self.answer(bidi_id, json!({ "sessionId": "arktos-bidi-1", "capabilities": {} }));
                 Ok(())
             }
             "session.subscribe" => {
@@ -764,7 +764,7 @@ impl Core {
                 self.answer(bidi_id, json!({}));
                 Ok(())
             }
-            // DEVT13 — vendor extension "arora.cdp": a raw CDP
+            // DEVT13 — vendor extension "arktos.cdp": a raw CDP
             // passthrough so the panel can probe + use domains the
             // BiDi surface does not model (Page.getResourceTree for
             // Sources, Performance.getMetrics, domain availability
@@ -775,7 +775,7 @@ impl Core {
             // the BiDi result; a CDP error surfaces as the error
             // envelope so "wasn't found" reads as a real answer, not
             // silence.
-            "arora.cdp" => {
+            "arktos.cdp" => {
                 let context = params
                     .get("context")
                     .and_then(|c| c.as_str())
@@ -787,7 +787,7 @@ impl Core {
                     .unwrap_or("")
                     .to_string();
                 if cdp_method.is_empty() {
-                    self.answer_err(bidi_id, "arora.cdp: missing method");
+                    self.answer_err(bidi_id, "arktos.cdp: missing method");
                     return Ok(());
                 }
                 if context.is_empty() {
@@ -897,17 +897,17 @@ impl Core {
                     },
                 )
             }
-            // DEVT13: the session-scoped half of the arora.cdp
+            // DEVT13: the session-scoped half of the arktos.cdp
             // passthrough — forward the wrapped method verbatim on
             // this page's session and answer with the raw CDP result.
-            "arora.cdp" => {
+            "arktos.cdp" => {
                 let cdp_method = params
                     .get("method")
                     .and_then(|m| m.as_str())
                     .unwrap_or("")
                     .to_string();
                 if cdp_method.is_empty() {
-                    self.answer_err(bidi_id, "arora.cdp: missing method");
+                    self.answer_err(bidi_id, "arktos.cdp: missing method");
                     return Ok(());
                 }
                 let inner = params.get("params").cloned().unwrap_or(json!({}));
@@ -1927,7 +1927,7 @@ mod tests {
 
         let _id = client.command("session.new", "{}");
         let resp = collect(&got, "response", 3000).expect("session.new response");
-        assert!(resp.contains("arora-bidi-1"), "got {resp}");
+        assert!(resp.contains("arktos-bidi-1"), "got {resp}");
 
         let _ = client.command("session.subscribe", r#"{"events":["network","log","browsingContext"]}"#);
         collect(&got, "response", 3000).unwrap();
@@ -2180,7 +2180,7 @@ mod tests {
         // session.new answers locally; nothing goes on the wire.
         core.dispatch(1, "session.new", json!({})).unwrap();
         let r = response_for(&got, 1).expect("session.new response");
-        assert!(r.contains("arora-bidi-1"), "{r}");
+        assert!(r.contains("arktos-bidi-1"), "{r}");
 
         // Unknown method -> InvalidArgument, no wire traffic.
         assert!(core.dispatch(2, "bogus.method", json!({})).is_err());
@@ -2483,7 +2483,7 @@ mod tests {
         assert!(response_for(&got, 16).is_some());
     }
 
-    // DEVT13: the arora.cdp passthrough — browser-level when no
+    // DEVT13: the arktos.cdp passthrough — browser-level when no
     // context is named, session-scoped (with lazy attach) when one
     // is.  Results and CDP errors both pass back untranslated.
     #[test]
@@ -2493,7 +2493,7 @@ mod tests {
         // Browser-level: no context -> no sessionId on the wire.
         core.dispatch(
             1,
-            "arora.cdp",
+            "arktos.cdp",
             json!({"method": "Browser.getVersion", "params": {}}),
         )
         .unwrap();
@@ -2505,7 +2505,7 @@ mod tests {
         assert!(r.contains("fake/1"), "{r}");
 
         // Missing method is a local error, not a wire frame.
-        core.dispatch(2, "arora.cdp", json!({"params": {}})).unwrap();
+        core.dispatch(2, "arktos.cdp", json!({"params": {}})).unwrap();
         let r = response_for(&got, 2).expect("missing-method response");
         assert!(r.contains("missing method"), "{r}");
 
@@ -2513,7 +2513,7 @@ mod tests {
         // command rides that session verbatim.
         core.dispatch(
             3,
-            "arora.cdp",
+            "arktos.cdp",
             json!({"context": "CTX", "method": "Page.getResourceTree",
                    "params": {}}),
         )
@@ -2535,7 +2535,7 @@ mod tests {
         // panel's domain probes read it) — forwarded verbatim.
         core.dispatch(
             4,
-            "arora.cdp",
+            "arktos.cdp",
             json!({"context": "CTX", "method": "Debugger.enable"}),
         )
         .unwrap();

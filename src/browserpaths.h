@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -85,6 +85,21 @@ bool isProfileId(const QString &id);
 // BrowserApplication::dataFilePath(); MIG15 should delegate to this.
 QString dataFilePath(const QString &fileName);
 
+// BRAND01: first-boot move of the pre-rebrand identity's stores.
+// The app shipped as "Arora" (org + app name), so QSettings and the
+// QStandardPaths roots resolved under Arora paths — a pre-rebrand
+// data dir must never be orphaned.  When the old leaf exists and the
+// new one does not, the tree is RENAMED in place (same filesystem →
+// atomic; a copy could only split state): settings, profiles, vaults
+// and engine stores all ride along, and the cache leaf + QSettings
+// file move the same way.  An old leaf that is a symlink is skipped
+// loudly rather than followed (same discipline as the layout
+// migrations), and when both roots exist the new tree wins and the
+// old is left untouched — never merged, never deleted.  Idempotent:
+// no old root means a no-op; it runs before every other boot step in
+// main() so nothing is ever created under the old identity again.
+bool migrateLegacyIdentity(QString *error = nullptr);
+
 // Idempotent first-boot migration to the profiles/<id>/ layout:
 // creates profiles/default/, renames the pre-MPROF01 profile-owned
 // payloads into it (resumable — a missing source means already moved
@@ -110,7 +125,7 @@ QString engineStorageDir(const QString &profileId);
 QString engineCacheDir(const QString &profileId);
 
 // VSEC02 one-time relocation of the pre-change layout: moves
-// <data root>/QtWebEngine/arora[-<id>]/ into each persona's
+// <data root>/QtWebEngine/arktos[-<id>]/ into each persona's
 // engineStorageDir() — except when a sealed vault blob owns the
 // plaintext right now (state Locked or SealInterrupted), where the
 // tree parks in <id>.vault/engine-hold/ instead and unseal()
@@ -118,9 +133,11 @@ QString engineCacheDir(const QString &profileId);
 // symlinks discipline as ensureDataLayout: the QtWebEngine dir, the
 // payload entry and the destination chain are lstat-checked and a
 // planted link or a both-sides collision fails the pass LOUDLY —
-// nothing moves.  "arora-container-*" entries are container residue,
+// nothing moves.  "arktos-container-*" entries are container residue,
 // not personas, and stay put.  The legacy <cache root>/QtWebEngine/
-// arora* dirs are disposable — removed, not migrated.
+// arktos*/arora* dirs are disposable — removed, not migrated.
+// Entries carrying the pre-rebrand "arora[-<id>]" storage names are
+// matched too — a migrated identity tree can still hold them.
 // Marker-free and idempotent: it runs every boot (main() after
 // ensureDataLayout) and lazily inside the profile factories, so it
 // must be called before any named QWebEngineProfile is constructed —

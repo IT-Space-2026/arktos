@@ -67,10 +67,10 @@ LanguageManager *LanguageManager::instance()
         // Same locale search path BrowserApplication used to wire up.
         manager->addLocaleDirectory(BrowserPaths::globalDataFilePath(QLatin1String("locale")));
         manager->addLocaleDirectory(qApp->applicationDirPath() + QLatin1String("/src/.qm/locale"));
-        // PACK01: relocatable-bundle layout (<bindir>/../share/arora/locale).
+        // PACK01: relocatable-bundle layout (<bindir>/../share/arktos/locale).
         manager->addLocaleDirectory(qApp->applicationDirPath()
-                                    + QLatin1String("/../share/arora/locale"));
-        // Windows deploy layout: payload beside arora.exe (appDir/locale).
+                                    + QLatin1String("/../share/arktos/locale"));
+        // Windows deploy layout: payload beside arktos.exe (appDir/locale).
         manager->addLocaleDirectory(qApp->applicationDirPath()
                                     + QLatin1String("/locale"));
 #ifdef PKGDATADIR

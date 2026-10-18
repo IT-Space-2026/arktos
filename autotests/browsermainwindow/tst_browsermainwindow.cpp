@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, The Arora Authors
+ * Copyright (c) 2026, The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -69,8 +69,8 @@
 #include "browserapplication.h"
 #include "bookmarknode.h"
 #include "browsertheme.h"
-#include "aroraicon.h"
-#include "arorastyle.h"
+#include "arktosicon.h"
+#include "arktosstyle.h"
 #include "containermanager.h"
 #include "bookmarksdialog.h"
 #include "bookmarksmanager.h"
@@ -116,7 +116,7 @@
 #include "extensionactionbar.h"
 #include "extensionmanager.h"
 #include "profilesettings.h"
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 #include "qtry.h"
 
 // Exposes the protected event handlers for direct dispatch.
@@ -266,7 +266,7 @@ void tst_BrowserMainWindow::initTestCase()
     // here — the bwrap worker spawns "<self> --pdf-worker", and self
     // is a qtest binary: that would rerun the whole suite as a child
     // (and recurse through this leg).
-    qputenv("ARORA_PDF_INPROC", "1");
+    qputenv("ARKTOS_PDF_INPROC", "1");
     qRegisterMetaType<QWebEnginePage *>("QWebEnginePage*");
     qRegisterMetaType<QAction *>("QAction*");
 }
@@ -571,7 +571,7 @@ void tst_BrowserMainWindow::toolsMenuDedup()
     // Field mode goes back to selecting the box text.
     ProfileSettings().setValue(QLatin1String("MainWindow/showSearchBox"), true);
     window->applySearchBoxVisibility();
-    window->toolbarSearch()->setText(QLatin1String("arora"));
+    window->toolbarSearch()->setText(QLatin1String("arktos"));
     webSearch->trigger();
     QVERIFY(window->toolbarSearch()->hasSelectedText());
     ProfileSettings().remove(QLatin1String("MainWindow/showSearchBox"));
@@ -701,7 +701,7 @@ void tst_BrowserMainWindow::menuIcons()
         iconSettings.value(QLatin1String("MainWindow/iconTheme"));
     iconSettings.setValue(QLatin1String("MainWindow/iconTheme"),
                           QLatin1String("tabler"));
-    AroraIcon::applyFromSettings();
+    ArktosIcon::applyFromSettings();
 
     SubWindow *window = new SubWindow;
     window->show();
@@ -872,7 +872,7 @@ void tst_BrowserMainWindow::menuIcons()
                               savedIconTheme);
     else
         iconSettings.remove(QLatin1String("MainWindow/iconTheme"));
-    AroraIcon::applyFromSettings();
+    ArktosIcon::applyFromSettings();
 #endif
 }
 
@@ -880,7 +880,7 @@ void tst_BrowserMainWindow::menuIcons()
 // glyph renders 100% in the palette's ButtonText (flat monochrome,
 // whichever theme served the base art), and the documented identity
 // exceptions keep their own colors: the Qt mark on About Qt, the
-// Arora mark on About <app>, and the container flyout's color chips.
+// Arktos mark on About <app>, and the container flyout's color chips.
 void tst_BrowserMainWindow::chromeIconsTinted()
 {
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
@@ -913,7 +913,7 @@ void tst_BrowserMainWindow::chromeIconsTinted()
 
     const QStringList brandRows = {
         QLatin1String("About Qt"),
-        // "About <app>" — the window icon, i.e. the Arora mark.
+        // "About <app>" — the window icon, i.e. the Arktos mark.
         QCoreApplication::applicationName().isEmpty()
             ? QLatin1String("About")
             : QStringLiteral("About %1")
@@ -1059,7 +1059,7 @@ void tst_BrowserMainWindow::chromeIconsTinted()
 #endif
 }
 
-// MENU06: Vivaldi-style application menu — an Arora logo + name
+// MENU06: Vivaldi-style application menu — an Arktos logo + name
 // button leads the navigation bar and drops down every real
 // top-level menu (shared QMenu objects in menubar order, so dynamic
 // menus stay live).  The menubar hides by default and View > Show
@@ -1078,11 +1078,11 @@ void tst_BrowserMainWindow::appMenuButton()
         QLatin1String("appMenuButton"));
     QVERIFY(button);
     QVERIFY(button->autoRaise());
-    // MENU13: icon-only; the text property stays "Arora" for screen
+    // MENU13: icon-only; the text property stays "Arktos" for screen
     // readers.
     QCOMPARE(button->toolButtonStyle(), Qt::ToolButtonIconOnly);
     QCOMPARE(button->popupMode(), QToolButton::InstantPopup);
-    QCOMPARE(button->text(), QLatin1String("Arora"));
+    QCOMPARE(button->text(), QLatin1String("Arktos"));
     QVERIFY(!button->icon().isNull());
     // MENU16: the MENU09 host + fixed 36px extent that rendered the
     // logo oversized are gone; the button is a direct bar child now.
@@ -1156,7 +1156,7 @@ void tst_BrowserMainWindow::appMenuButton()
     QCOMPARE(navBar->widgetForAction(navBar->actions().first()),
              button);
 
-    // MENU16: the trailing 'Arora' wordmark is gone — no brand label
+    // MENU16: the trailing 'Arktos' wordmark is gone — no brand label
     // child anywhere, and every bar action is a real movable item
     // carrying a navBarItemId (the unlisted fixed-tail slot no
     // longer exists).
@@ -1260,10 +1260,10 @@ void tst_BrowserMainWindow::appMenuButton()
         QVERIFY(window->menuBar()->font().pointSizeF()
                 < menuFont.pointSizeF());
 
-    // Offscreen grabs for visual review — set ARORA_MENU_GRAB_DIR to
+    // Offscreen grabs for visual review — set ARKTOS_MENU_GRAB_DIR to
     // a directory and the open dropdown + File submenu land there;
     // the tor leg below adds app-menu-tor.png.
-    const QByteArray menuGrabDir = qgetenv("ARORA_MENU_GRAB_DIR");
+    const QByteArray menuGrabDir = qgetenv("ARKTOS_MENU_GRAB_DIR");
     if (!menuGrabDir.isEmpty()) {
         QDir().mkpath(QString::fromLocal8Bit(menuGrabDir));
         appMenu->popup(button->mapToGlobal(
@@ -1670,7 +1670,7 @@ void tst_BrowserMainWindow::devToolsSubmenu()
     QVERIFY(chromium->isEnabled());
     QVERIFY(!toolsMenu->actions().constLast()->isSeparator());
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     QCOMPARE(entries.size(), 2);
     QVERIFY(bidi);
     QVERIFY(bidi->isEnabled());
@@ -2135,7 +2135,7 @@ void tst_BrowserMainWindow::searchBoxVisibility()
     QVERIFY(!window->toolbarSearch()->isButtonMode());
     QVERIFY(!window->toolbarSearch()->isHidden());
     QVERIFY(!window->toolbarSearch()->isReadOnly());
-    window->toolbarSearch()->setText(QLatin1String("arora"));
+    window->toolbarSearch()->setText(QLatin1String("arktos"));
     QVERIFY(QMetaObject::invokeMethod(window, "webSearch"));
     QVERIFY(window->toolbarSearch()->hasSelectedText());
     closeWindow(window);
@@ -2377,9 +2377,9 @@ void tst_BrowserMainWindow::torChromeTheme()
         window, QPoint(inactiveRect.center().x(),
                        inactiveRect.bottom() - 3)));
 
-    // Offscreen grab for visual review — set ARORA_TOR_GRAB_DIR to a
+    // Offscreen grab for visual review — set ARKTOS_TOR_GRAB_DIR to a
     // directory and the tor window lands there as tor-window.png.
-    const QByteArray grabDir = qgetenv("ARORA_TOR_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_TOR_GRAB_DIR");
     if (!grabDir.isEmpty()) {
         QDir().mkpath(QString::fromLocal8Bit(grabDir));
         window->grab().save(QString::fromLocal8Bit(grabDir)
@@ -2474,7 +2474,7 @@ void tst_BrowserMainWindow::torStatusBarTheme()
         settings.value(QLatin1String("MainWindow/iconTheme"));
     settings.setValue(QLatin1String("MainWindow/iconTheme"),
                       QLatin1String("adwaita"));
-    AroraIcon::applyFromSettings();
+    ArktosIcon::applyFromSettings();
     BrowserTheme::previewColorScheme(Qt::ColorScheme::Light);
 
     // Normal-window baseline: no tor sheet, platform palette.
@@ -2553,9 +2553,9 @@ void tst_BrowserMainWindow::torStatusBarTheme()
     BrowserTheme::applyColorScheme();
     QApplication::processEvents();
 
-    // Offscreen grab for visual review — set ARORA_TOR_GRAB_DIR to a
+    // Offscreen grab for visual review — set ARKTOS_TOR_GRAB_DIR to a
     // directory and the tor status bar lands there.
-    const QByteArray grabDir = qgetenv("ARORA_TOR_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_TOR_GRAB_DIR");
     if (!grabDir.isEmpty()) {
         QDir().mkpath(QString::fromLocal8Bit(grabDir));
         bar->grab().save(QString::fromLocal8Bit(grabDir)
@@ -2570,7 +2570,7 @@ void tst_BrowserMainWindow::torStatusBarTheme()
                           savedTheme);
     else
         settings.remove(QLatin1String("MainWindow/iconTheme"));
-    AroraIcon::applyFromSettings();
+    ArktosIcon::applyFromSettings();
 
     QVERIFY(sheet.contains(QLatin1String("4a3372")));
     QVERIFY(textLightness > 150);
@@ -2633,7 +2633,7 @@ void tst_BrowserMainWindow::torNavIconsDarkChrome()
         settings.value(QLatin1String("MainWindow/iconTheme"));
     settings.setValue(QLatin1String("MainWindow/iconTheme"),
                       QLatin1String("adwaita"));
-    AroraIcon::applyFromSettings();
+    ArktosIcon::applyFromSettings();
     BrowserTheme::previewColorScheme(Qt::ColorScheme::Light);
 
     SubWindow *plain = new SubWindow;
@@ -2735,9 +2735,9 @@ void tst_BrowserMainWindow::torNavIconsDarkChrome()
                         out.menuReload = luminance(action->icon());
             }
             // Offscreen grab for visual review — set
-            // ARORA_TOR_GRAB_DIR and the tor nav bars land there as
+            // ARKTOS_TOR_GRAB_DIR and the tor nav bars land there as
             // tor-nav-icons-<theme>.png.
-            const QByteArray grabDir = qgetenv("ARORA_TOR_GRAB_DIR");
+            const QByteArray grabDir = qgetenv("ARKTOS_TOR_GRAB_DIR");
             if (grabName && !grabDir.isEmpty()) {
                 QDir().mkpath(QString::fromLocal8Bit(grabDir));
                 navBar->grab().save(
@@ -2759,14 +2759,14 @@ void tst_BrowserMainWindow::torNavIconsDarkChrome()
     // retired — every selectable set is bundled now).
     settings.setValue(QLatin1String("MainWindow/iconTheme"),
                       QLatin1String("breeze"));
-    AroraIcon::applyFromSettings();
+    ArktosIcon::applyFromSettings();
     const TorNavLum breezeTheme = measureTorBar("breeze");
 
     BrowserTheme::applyColorScheme();
     if (savedTheme.isValid())
         settings.setValue(QLatin1String("MainWindow/iconTheme"),
                           savedTheme);
-    AroraIcon::applyFromSettings();
+    ArktosIcon::applyFromSettings();
 
     // Light-palette normal window: dark glyphs.  Tor window: light
     // glyphs — readable on the violet bar under any theme.
@@ -2834,7 +2834,7 @@ void tst_BrowserMainWindow::torChromeGlyphsLegible()
         settings.value(QLatin1String("MainWindow/iconTheme"));
     settings.setValue(QLatin1String("MainWindow/iconTheme"),
                       QLatin1String("adwaita"));
-    AroraIcon::applyFromSettings();
+    ArktosIcon::applyFromSettings();
     BrowserTheme::previewColorScheme(Qt::ColorScheme::Light);
 
     // Normal-window baseline: the rail keeps the app palette's dark
@@ -2858,7 +2858,7 @@ void tst_BrowserMainWindow::torChromeGlyphsLegible()
     // An article-shaped file — Readability's probe wants a title plus
     // several dense paragraphs before it reports a verdict.
     const QString articlePath =
-        QDir::temp().filePath(QLatin1String("arora-trust20-article.html"));
+        QDir::temp().filePath(QLatin1String("arktos-trust20-article.html"));
     {
         QFile article(articlePath);
         QVERIFY(article.open(QIODevice::WriteOnly));
@@ -3000,9 +3000,9 @@ void tst_BrowserMainWindow::torChromeGlyphsLegible()
     const bool readerBackLight = readerInkOk();
     const QList<qlonglong> railBackLight = railLums();
 
-    // Offscreen grab for visual review — ARORA_TOR_GRAB_DIR picks up
+    // Offscreen grab for visual review — ARKTOS_TOR_GRAB_DIR picks up
     // the rail + reader states.
-    const QByteArray grabDir = qgetenv("ARORA_TOR_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_TOR_GRAB_DIR");
     if (!grabDir.isEmpty()) {
         QDir().mkpath(QString::fromLocal8Bit(grabDir));
         rail->grab().save(QString::fromLocal8Bit(grabDir)
@@ -3019,7 +3019,7 @@ void tst_BrowserMainWindow::torChromeGlyphsLegible()
                           savedTheme);
     else
         settings.remove(QLatin1String("MainWindow/iconTheme"));
-    AroraIcon::applyFromSettings();
+    ArktosIcon::applyFromSettings();
     QFile::remove(articlePath);
 
     // Normal window unchanged: dark glyphs on a light strip.
@@ -3095,7 +3095,7 @@ void tst_BrowserMainWindow::torReaderAccent()
     };
 
     const QString articlePath =
-        QDir::temp().filePath(QLatin1String("arora-them06-article.html"));
+        QDir::temp().filePath(QLatin1String("arktos-them06-article.html"));
     {
         QFile article(articlePath);
         QVERIFY(article.open(QIODevice::WriteOnly));
@@ -3175,16 +3175,16 @@ void tst_BrowserMainWindow::torReaderAccent()
     BrowserApplication::setTorMode(false);
     QFile::remove(articlePath);
 
-    const QColor torAccent = AroraStyle::torChromeAccentColor();
+    const QColor torAccent = ArktosStyle::torChromeAccentColor();
     // THEM07's regression pin: glyph-scale marks on the violet bar
     // must hold >=3:1 against the surface — the raised color (~1.6:1)
     // is what painted the muddy raised box in the screenshot.
-    QVERIFY2(AroraStyle::contrastRatio(torAccent,
-                                     AroraStyle::torChromeColor())
+    QVERIFY2(ArktosStyle::contrastRatio(torAccent,
+                                     ArktosStyle::torChromeColor())
                  >= 3.0,
              qPrintable(QStringLiteral("tor accent %1 too dark on %2")
                         .arg(torAccent.name())
-                        .arg(AroraStyle::torChromeColor().name())));
+                        .arg(ArktosStyle::torChromeColor().name())));
     QVERIFY2(inkMatch(plainSuggested, plainAccent),
              qPrintable(QStringLiteral("plain suggested %1 vs accent %2")
                         .arg(plainSuggested.name())
@@ -3234,14 +3234,14 @@ void tst_BrowserMainWindow::darkChromeIcons()
     };
 
     // Pin the default bundled set explicitly — under the forced dark
-    // palette it must resolve arora-tabler-dark (ICONS12: the
+    // palette it must resolve arktos-tabler-dark (ICONS12: the
     // "native" id the bug report hit is retired).
     ProfileSettings settings;
     const QVariant savedTheme =
         settings.value(QLatin1String("MainWindow/iconTheme"));
     settings.setValue(QLatin1String("MainWindow/iconTheme"),
                       QLatin1String("tabler"));
-    AroraIcon::applyFromSettings();
+    ArktosIcon::applyFromSettings();
 
     SubWindow *window = new SubWindow;
     window->resize(1000, 600);
@@ -3278,9 +3278,9 @@ void tst_BrowserMainWindow::darkChromeIcons()
     const qlonglong darkZoomOut = luminance(zoomOut->icon());
     const qlonglong darkSidebar = luminance(sidebarAction->icon());
 
-    // Offscreen grabs for visual review — set ARORA_DARK_GRAB_DIR to
+    // Offscreen grabs for visual review — set ARKTOS_DARK_GRAB_DIR to
     // a directory and the dark nav bar + full window land there.
-    const QByteArray grabDir = qgetenv("ARORA_DARK_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_DARK_GRAB_DIR");
     if (!grabDir.isEmpty()) {
         QDir().mkpath(QString::fromLocal8Bit(grabDir));
         navBar->grab().save(QString::fromLocal8Bit(grabDir)
@@ -3301,7 +3301,7 @@ void tst_BrowserMainWindow::darkChromeIcons()
     if (savedTheme.isValid())
         settings.setValue(QLatin1String("MainWindow/iconTheme"),
                           savedTheme);
-    AroraIcon::applyFromSettings();
+    ArktosIcon::applyFromSettings();
 
     QVERIFY(darkBack > 140);
     QVERIFY(darkForward > 140);
@@ -3378,7 +3378,7 @@ void tst_BrowserMainWindow::darkThemeReaderGlyph()
     // A file:// article — the real Readability verdict flips the
     // button visible, no server needed.
     const QString articlePath = QDir::temp().filePath(
-        QLatin1String("arora-trust21-article.html"));
+        QLatin1String("arktos-trust21-article.html"));
     {
         QFile article(articlePath);
         QVERIFY(article.open(QIODevice::WriteOnly));
@@ -3468,7 +3468,7 @@ void tst_BrowserMainWindow::darkThemeReaderGlyph()
     reader->click();
     QTRY_VERIFY_WITH_TIMEOUT(!mode->isActive(), 20000);
 
-    const QByteArray grabDir = qgetenv("ARORA_DARK_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_DARK_GRAB_DIR");
     if (!grabDir.isEmpty()) {
         QDir().mkpath(QString::fromLocal8Bit(grabDir));
         navBar->grab().save(QString::fromLocal8Bit(grabDir)
@@ -3658,10 +3658,10 @@ void tst_BrowserMainWindow::torCircuitDropdown()
         stateTexts = dropPanel->contentLines();
     }
 
-    // Offscreen grabs for visual review — set ARORA_TOR_GRAB_DIR to a
+    // Offscreen grabs for visual review — set ARKTOS_TOR_GRAB_DIR to a
     // directory and the nav bar, flag glyphs and a fabricated circuit
     // panel land there.
-    const QByteArray grabDir = qgetenv("ARORA_TOR_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_TOR_GRAB_DIR");
     if (!grabDir.isEmpty()) {
         const QString dir = QString::fromLocal8Bit(grabDir);
         QDir().mkpath(dir);
@@ -3751,9 +3751,9 @@ void tst_BrowserMainWindow::torCircuitPopupFirstShow()
 }
 
 // TOR09: the tor window's bundled start page — a violet-branded qrc
-// variant on the same arora-channel contract.  about:home resolves to
+// variant on the same arktos-channel contract.  about:home resolves to
 // it, the window's first tab and every fresh/private tab load it, and
-// the channel arms only "arora" on qrc commits — the privileged
+// the channel arms only "arktos" on qrc commits — the privileged
 // bridges stay unregistered in tor.
 void tst_BrowserMainWindow::torStartPage()
 {
@@ -3795,11 +3795,11 @@ void tst_BrowserMainWindow::torStartPage()
         && !channel->registeredObjects().contains(
             QLatin1String("external"))
         && !channel->registeredObjects().contains(
-            QLatin1String("aroraAutofill"))
+            QLatin1String("arktosAutofill"))
         && !channel->registeredObjects().contains(
-            QLatin1String("aroraPip"))
+            QLatin1String("arktosPip"))
         && !channel->registeredObjects().contains(
-            QLatin1String("aroraReader"));
+            QLatin1String("arktosReader"));
 
     // A second fresh tab and a private tab take the same start page.
     window->tabWidget()->newTab();
@@ -3826,15 +3826,15 @@ void tst_BrowserMainWindow::torStartPage()
         cmdTitle = cmdTab->title();
     }
 
-    // The qrc commit registers "arora" on the channel and the page's
+    // The qrc commit registers "arktos" on the channel and the page's
     // own translate() run fills the header text — the DOM probe below
     // is the proof the whole handshake completed in tor mode.
-    // runJavaScript runs in ApplicationWorld, so the page-global arora
+    // runJavaScript runs in ApplicationWorld, so the page-global arktos
     // var (MainWorld) is out of reach, but the DOM is shared:
-    // headerTitle only fills once the channel's arora.translate()
+    // headerTitle only fills once the channel's arktos.translate()
     // callback has resolved.  The probe races the still-committing
     // load, so it re-issues until the post-load document answers.
-    bool aroraRegistered = false;
+    bool arktosRegistered = false;
     QString dom;
     if (firstTab && channel) {
         const QString probe = QStringLiteral(
@@ -3856,13 +3856,13 @@ void tst_BrowserMainWindow::torStartPage()
             for (int waited = 0; !jsDone && waited < 5000; waited += 50)
                 QTest::qWait(50);
         }
-        aroraRegistered = channel->registeredObjects().contains(
-            QLatin1String("arora"));
+        arktosRegistered = channel->registeredObjects().contains(
+            QLatin1String("arktos"));
     }
 
-    // Offscreen grab for visual review — set ARORA_TOR_GRAB_DIR to a
+    // Offscreen grab for visual review — set ARKTOS_TOR_GRAB_DIR to a
     // directory and the rendered tor start page lands there.
-    const QByteArray grabDir = qgetenv("ARORA_TOR_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_TOR_GRAB_DIR");
     if (!grabDir.isEmpty() && firstTab) {
         const QString dir = QString::fromLocal8Bit(grabDir);
         QDir().mkpath(dir);
@@ -3882,10 +3882,10 @@ void tst_BrowserMainWindow::torStartPage()
     QCOMPARE(torTabUrl, torStart);
     QCOMPARE(privTabUrl, torStart);
     QCOMPARE(cmdTabUrl, torStart);
-    QCOMPARE(cmdTitle, QStringLiteral("Welcome to Arora!"));
+    QCOMPARE(cmdTitle, QStringLiteral("Welcome to Arktos!"));
     QVERIFY(channel);
     QVERIFY(bareChannel);
-    QVERIFY(aroraRegistered);
+    QVERIFY(arktosRegistered);
     QCOMPARE(dom, QStringLiteral("T|S|H"));
 }
 
@@ -3954,7 +3954,7 @@ void tst_BrowserMainWindow::torTitleBar()
     const QMargins ring = window->contentsMargins();
 
     // The drawn title stays live on windowTitle changes.
-    window->setWindowTitle(QLatin1String("Relay page - Arora (Tor)"));
+    window->setWindowTitle(QLatin1String("Relay page - Arktos (Tor)"));
     const QString syncedTitle =
         titleText ? titleText->text() : QString();
 
@@ -3995,9 +3995,9 @@ void tst_BrowserMainWindow::torTitleBar()
         restoredRing = window->contentsMargins();
     }
 
-    // Offscreen grab for visual review — set ARORA_TOR_GRAB_DIR
+    // Offscreen grab for visual review — set ARKTOS_TOR_GRAB_DIR
     // (captured in the restored-normal state before the minimize leg).
-    const QByteArray grabDir = qgetenv("ARORA_TOR_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_TOR_GRAB_DIR");
     if (!grabDir.isEmpty()) {
         QDir().mkpath(QString::fromLocal8Bit(grabDir));
         window->grab().save(QString::fromLocal8Bit(grabDir)
@@ -4059,7 +4059,7 @@ void tst_BrowserMainWindow::torTitleBar()
     QVERIFY(maximize);
     QVERIFY(close);
     QCOMPARE(shownTitle, realTitle);
-    QCOMPARE(syncedTitle, QStringLiteral("Relay page - Arora (Tor)"));
+    QCOMPARE(syncedTitle, QStringLiteral("Relay page - Arktos (Tor)"));
     QVERIFY(ring.left() >= TorTitleBar::FrameMargin);
     QVERIFY(isViolet(ringColor));
     QVERIFY(isViolet(barColor));
@@ -4099,10 +4099,10 @@ void tst_BrowserMainWindow::torTitleBarTitle()
     QVERIFY(menuBar);
 
     const QString shortTitle =
-        QLatin1String("Welcome to Arora! - Arora (Tor)");
+        QLatin1String("Welcome to Arktos! - Arktos (Tor)");
     const QString longTitle = QLatin1String(
         "A very long page title that keeps going and going until it "
-        "would never fit on any reasonable window - Arora (Tor)");
+        "would never fit on any reasonable window - Arktos (Tor)");
 
     // A normal-length title keeps its full text and the corner claims
     // its full hint — the menu items are what move right.
@@ -4253,7 +4253,7 @@ void tst_BrowserMainWindow::servoStartPage()
     // DOM probe: the logo div sits directly under the search field,
     // its stylesheet resolves the bundled logo asset, the search box
     // exists, and headerTitle only fills once the channel's
-    // arora.translate() callback has resolved — the same handshake
+    // arktos.translate() callback has resolved — the same handshake
     // proof torStartPage uses.  The probe runs on whichever WebView
     // renders the branded page (firstTab when the pick degraded,
     // servoTab under a live backend).
@@ -4287,9 +4287,9 @@ void tst_BrowserMainWindow::servoStartPage()
         }
     }
 
-    // Offscreen grab for visual review — set ARORA_SERVO_GRAB_DIR to
+    // Offscreen grab for visual review — set ARKTOS_SERVO_GRAB_DIR to
     // a directory and the rendered servo start page lands there.
-    const QByteArray grabDir = qgetenv("ARORA_SERVO_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_SERVO_GRAB_DIR");
     if (!grabDir.isEmpty() && domTab) {
         const QString dir = QString::fromLocal8Bit(grabDir);
         QDir().mkpath(dir);
@@ -4319,7 +4319,7 @@ void tst_BrowserMainWindow::servoStartPage()
 }
 
 // PTAB02: private tabs get their own branded start page — a deep
-// navy variant of the tor page carrying the Arora logo, the search
+// navy variant of the tor page carrying the Arktos logo, the search
 // box and an original sunglasses glyph.  The pick is context-keyed:
 // precedence tor > private > servo > standard, so a private tab
 // shows something branded even on the servo engine pick (which
@@ -4390,7 +4390,7 @@ void tst_BrowserMainWindow::privateStartPage()
 
     // DOM probe on the private tab: the sunglasses mark sits under
     // the search field, the search box exists, and headerTitle only
-    // fills once the channel's arora.translate() callback has
+    // fills once the channel's arktos.translate() callback has
     // resolved — the same handshake proof torStartPage uses.
     QString dom;
     if (privTab) {
@@ -4414,14 +4414,14 @@ void tst_BrowserMainWindow::privateStartPage()
                 QTest::qWait(50);
         }
     }
-    const bool aroraRegistered = privChannel
+    const bool arktosRegistered = privChannel
         && privChannel->registeredObjects().contains(
-            QLatin1String("arora"));
+            QLatin1String("arktos"));
 
-    // Offscreen grab for visual review — set ARORA_PRIVATE_GRAB_DIR
+    // Offscreen grab for visual review — set ARKTOS_PRIVATE_GRAB_DIR
     // to a directory and the rendered private start page lands
     // there.
-    const QByteArray grabDir = qgetenv("ARORA_PRIVATE_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_PRIVATE_GRAB_DIR");
     if (!grabDir.isEmpty() && privTab) {
         window->tabWidget()->setCurrentWidget(privTab);
         const QString dir = QString::fromLocal8Bit(grabDir);
@@ -4456,7 +4456,7 @@ void tst_BrowserMainWindow::privateStartPage()
     QCOMPARE(privTabUrl, privateStart);
     QCOMPARE(childTabUrl, privateStart);
     QVERIFY(privChannel);
-    QVERIFY(aroraRegistered);
+    QVERIFY(arktosRegistered);
     QCOMPARE(dom, QStringLiteral("P|S|H"));
 }
 
@@ -4674,7 +4674,7 @@ void tst_BrowserMainWindow::readerModeButton()
 //              showing a header over an empty column.
 //   /danger  — sanitizer regression: real text renders while script,
 //              on*-attributes and javascript: URLs stay stripped.
-//   /tamper  — READ05: the page main-world-redefines __aroraReader,
+//   /tamper  — READ05: the page main-world-redefines __arktosReader,
 //              Readability and isProbablyReaderable to fake a refusal
 //              and a "PWNED" article.  Extraction runs in an isolated
 //              world, so the real article still renders.
@@ -4743,12 +4743,12 @@ static QHash<QByteArray, QByteArray> readerFixturePages()
         "<img src=\"about:blank\" onerror=\"window.__pwned=3\">"
         "</article></body></html>";
     // READ05: main-world forgeries of everything the driver used to
-    // define — a refusal __aroraReader, a fake Readability that emits
+    // define — a refusal __arktosReader, a fake Readability that emits
     // a PWNED article, a readerable helper that lies.  None of it may
     // matter: the pipeline runs in a world the page cannot see.
     pages["/tamper"] = "<html><head><title>Tamper Article</title>"
         "<script>"
-        "window.__aroraReader={probe:function(){return false},"
+        "window.__arktosReader={probe:function(){return false},"
         "enter:function(){return {ok:false}}};"
         "window.isProbablyReaderable=function(){return false};"
         "window.Readability=function(){return{parse:function(){"
@@ -4866,12 +4866,12 @@ void tst_BrowserMainWindow::readerModeContent()
     QCOMPARE(reader->isActive(), expectActive);
     QCOMPARE(!messageSpy.isEmpty(), expectMessage);
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // RDR01: the article lives in the overlay widget's own
     // QWebEngineView — read .content off its page.
     const auto readerContent = [&]() -> QString {
         QWebEngineView *readerView = view->findChild<QWebEngineView *>(
-            QLatin1String("aroraReaderView"));
+            QLatin1String("arktosReaderView"));
         if (!readerView || !readerView->page())
             return QString();
         auto state = std::make_shared<QPair<QVariant, bool>>(
@@ -4894,7 +4894,7 @@ void tst_BrowserMainWindow::readerModeContent()
     const auto readerContent = [&]() -> QString {
         return evalJs(QStringLiteral(
             "(function(){"
-            "var h=document.getElementById('arora-reader-host');"
+            "var h=document.getElementById('arktos-reader-host');"
             "var f=h&&h.shadowRoot"
             "?h.shadowRoot.querySelector('iframe.frame'):null;"
             "var d=f?f.contentDocument:null;"
@@ -4924,20 +4924,20 @@ void tst_BrowserMainWindow::readerModeContent()
         // simply never mattered.  This also proves the leg is not
         // vacuous: the fake probe really answers false there.
         QCOMPARE(evalJs(QStringLiteral(
-            "window.__aroraReader.probe()")).toBool(), false);
+            "window.__arktosReader.probe()")).toBool(), false);
         QCOMPARE(evalJs(QStringLiteral(
             "new Readability(document).parse().title"))
             .toString(), QLatin1String("PWNED"));
     }
 
     if (path == QByteArray("/hostile") && expectActive) {
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
         // The fixture's payloads fire on the served page itself — the
         // observable flag for a leak is the READER VIEW's own window:
         // anything the sanitizer missed would have run there when the
         // article document rendered.
         QWebEngineView *readerView = view->findChild<QWebEngineView *>(
-            QLatin1String("aroraReaderView"));
+            QLatin1String("arktosReaderView"));
         QVERIFY(readerView);
         auto pwned = std::make_shared<QPair<QVariant, bool>>(
             QVariant(), false);
@@ -4958,7 +4958,7 @@ void tst_BrowserMainWindow::readerModeContent()
         // FRAME's window, where the extracted markup renders.
         QCOMPARE(evalJs(QStringLiteral(
             "(function(){"
-            "var h=document.getElementById('arora-reader-host');"
+            "var h=document.getElementById('arktos-reader-host');"
             "var f=h.shadowRoot.querySelector('iframe.frame');"
             "return String(f.contentWindow.__pwned);"
             "})()")), QLatin1String("undefined"));
@@ -4969,7 +4969,7 @@ void tst_BrowserMainWindow::readerModeContent()
         // no-allow-scripts keeps it inert.
         QCOMPARE(evalJs(QStringLiteral(
             "(function(){"
-            "var h=document.getElementById('arora-reader-host');"
+            "var h=document.getElementById('arktos-reader-host');"
             "var f=h.shadowRoot.querySelector('iframe.frame');"
             "var d=f.contentDocument;"
             "d.body.innerHTML='<img src=x onerror=\"window.__pwned=42\">'"
@@ -5199,9 +5199,9 @@ void tst_BrowserMainWindow::homePageModes()
         return QUrl::fromLocalFile(path);
     };
     const QUrl homeFixture = writeFixture(
-        QLatin1String("arora-pref04-home.html"));
+        QLatin1String("arktos-pref04-home.html"));
     const QUrl secondFixture = writeFixture(
-        QLatin1String("arora-pref04-second.html"));
+        QLatin1String("arktos-pref04-second.html"));
     QVERIFY(homeFixture.isValid() && secondFixture.isValid());
 
     SubWindow *window = new SubWindow;
@@ -5589,9 +5589,9 @@ void tst_BrowserMainWindow::sidebarPanel()
     QCOMPARE(panel->tabs()->tabText(1), QLatin1String("History"));
 
     // Offscreen panel grab for visual review — set
-    // ARORA_SIDEBAR_GRAB_DIR to a directory and the panel lands there
-    // as sidebar-panel.png (same convention as ARORA_SETTINGS_GRAB_DIR).
-    const QByteArray sidebarGrabDir = qgetenv("ARORA_SIDEBAR_GRAB_DIR");
+    // ARKTOS_SIDEBAR_GRAB_DIR to a directory and the panel lands there
+    // as sidebar-panel.png (same convention as ARKTOS_SETTINGS_GRAB_DIR).
+    const QByteArray sidebarGrabDir = qgetenv("ARKTOS_SIDEBAR_GRAB_DIR");
     if (!sidebarGrabDir.isEmpty()) {
         QDir().mkpath(QString::fromLocal8Bit(sidebarGrabDir));
         qApp->processEvents();
@@ -6422,9 +6422,9 @@ void tst_BrowserMainWindow::sidebarHistoryControls()
     QCOMPARE(model->rowCount(model->index(0, 0)), 1);
 
     // Offscreen grab of the History page (combo + clear button +
-    // grouped tree) for visual review — same ARORA_SIDEBAR_GRAB_DIR
+    // grouped tree) for visual review — same ARKTOS_SIDEBAR_GRAB_DIR
     // convention as sidebarPanel, lands as sidebar-history.png.
-    const QByteArray sidebarGrabDir = qgetenv("ARORA_SIDEBAR_GRAB_DIR");
+    const QByteArray sidebarGrabDir = qgetenv("ARKTOS_SIDEBAR_GRAB_DIR");
     if (!sidebarGrabDir.isEmpty()) {
         QDir().mkpath(QString::fromLocal8Bit(sidebarGrabDir));
         panel->tabs()->setCurrentWidget(view->parentWidget());
@@ -7234,9 +7234,9 @@ void tst_BrowserMainWindow::downloadsSidebarClearList()
     QTRY_VERIFY_WITH_TIMEOUT(activeItem->downloading(), 30000);
     QVERIFY(clearButton->isEnabled());
 
-    // Offscreen grab for visual review — ARORA_SIDEBAR_GRAB_DIR gets
+    // Offscreen grab for visual review — ARKTOS_SIDEBAR_GRAB_DIR gets
     // downloads-clear.png: populated list + enabled header button.
-    const QByteArray grabDir = qgetenv("ARORA_SIDEBAR_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_SIDEBAR_GRAB_DIR");
     if (!grabDir.isEmpty()) {
         QDir().mkpath(QString::fromLocal8Bit(grabDir));
         qApp->processEvents();
@@ -7428,9 +7428,9 @@ void tst_BrowserMainWindow::tabStripCompactHeight()
     QVERIFY(qAbs(close->geometry().center().y()
                  - bar->tabRect(0).center().y()) <= 2);
 
-    if (qEnvironmentVariableIsSet("ARORA_STRIP_GRAB_DIR")) {
+    if (qEnvironmentVariableIsSet("ARKTOS_STRIP_GRAB_DIR")) {
         const QString dir =
-            qEnvironmentVariable("ARORA_STRIP_GRAB_DIR");
+            qEnvironmentVariable("ARKTOS_STRIP_GRAB_DIR");
         bar->grab().save(dir + QLatin1String("/strip.png"));
     }
 
@@ -7470,9 +7470,9 @@ void tst_BrowserMainWindow::tabStripCompactHeight()
                      "ghost fill below the selected row: pixel %1 vs "
                      "strip tail %2").arg(below, 0, 16).arg(tail, 0, 16)));
     }
-    if (qEnvironmentVariableIsSet("ARORA_STRIP_GRAB_DIR")) {
+    if (qEnvironmentVariableIsSet("ARKTOS_STRIP_GRAB_DIR")) {
         const QString dir =
-            qEnvironmentVariable("ARORA_STRIP_GRAB_DIR");
+            qEnvironmentVariable("ARKTOS_STRIP_GRAB_DIR");
         bar->grab().save(dir + QLatin1String("/strip-vertical.png"));
     }
     settings.remove(QLatin1String("tabs/tabBarPosition"));
@@ -7944,10 +7944,10 @@ void tst_BrowserMainWindow::extensionActionButtons()
             .startsWith(QLatin1String("chrome-extension")));
     }
 
-    // Optional visual review: ARORA_EXT_GRAB_DIR=<dir> grabs the
+    // Optional visual review: ARKTOS_EXT_GRAB_DIR=<dir> grabs the
     // window (button strip visible right of the url bar) and the
     // open action popup.
-    const QByteArray grabDir = qgetenv("ARORA_EXT_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_EXT_GRAB_DIR");
     if (!grabDir.isEmpty()) {
         QTRY_VERIFY_WITH_TIMEOUT(
             popupView->page()->isLoading() == false, 15000);
@@ -8093,9 +8093,9 @@ void tst_BrowserMainWindow::navShieldPadlock()
     window->tabWidget()->setCurrentIndex(1);
     QCOMPARE(shield->panel()->webView(), second);
 
-    // Offscreen grabs for visual review — set ARORA_TRUST_GRAB_DIR to a
+    // Offscreen grabs for visual review — set ARKTOS_TRUST_GRAB_DIR to a
     // directory; normal + tor + private nav rows land there.
-    const QByteArray grabDir = qgetenv("ARORA_TRUST_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_TRUST_GRAB_DIR");
     if (!grabDir.isEmpty()) {
         QDir().mkpath(QString::fromLocal8Bit(grabDir));
         navBar->grab().save(QString::fromLocal8Bit(grabDir)
@@ -8179,7 +8179,7 @@ void tst_BrowserMainWindow::navBarEditMode()
     QStringList labels;
     QList<bool> visibleFlags;
     QList<QAction *> menuActions;
-    const QByteArray grabDir = qgetenv("ARORA_NAVBAR_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_NAVBAR_GRAB_DIR");
     const auto inspectPopup = [&labels, &visibleFlags,
                                &menuActions,
                                &grabDir](const char *grabName) {
@@ -8709,7 +8709,7 @@ void tst_BrowserMainWindow::siteShieldButton()
     QVERIFY(fieldRect.left() - shieldRect.right() <= 20);
 
     // Offscreen grab for visual review — [reader][shield][field].
-    const QByteArray grabDir = qgetenv("ARORA_NAVBAR_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_NAVBAR_GRAB_DIR");
     if (!grabDir.isEmpty()) {
         QDir().mkpath(QString::fromLocal8Bit(grabDir));
         navBar->grab().save(QString::fromLocal8Bit(grabDir)

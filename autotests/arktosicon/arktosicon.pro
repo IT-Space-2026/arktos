@@ -1,10 +1,10 @@
 TEMPLATE = app
-TARGET = tst_aroraicon
+TARGET = tst_arktosicon
 DEPENDPATH += .
 INCLUDEPATH += . ../
 
 include(../autotests.pri)
 
 # Input
-SOURCES += tst_aroraicon.cpp
+SOURCES += tst_arktosicon.cpp
 HEADERS +=

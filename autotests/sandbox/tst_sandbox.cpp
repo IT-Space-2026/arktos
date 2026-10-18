@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -66,10 +66,10 @@ void tst_Sandbox::denylistContents()
     QVERIFY(denied.contains(QLatin1String(".gnupg")));
     QVERIFY(denied.contains(QLatin1String(".mozilla")));
     QVERIFY(denied.contains(QLatin1String(".config/google-chrome")));
-    // Arora's own config/data dirs must never be denied — that would
+    // Arktos's own config/data dirs must never be denied — that would
     // hide the profile the browser writes.
     for (const QString &entry : denied) {
-        QVERIFY2(!entry.contains(QLatin1String("Arora"),
+        QVERIFY2(!entry.contains(QLatin1String("Arktos"),
                                  Qt::CaseInsensitive),
                  qPrintable(entry));
     }
@@ -124,14 +124,14 @@ void tst_Sandbox::bwrapArgv()
                          << QStringLiteral("/usr");
 
     const QStringList argv = BwrapGenerator::commandLine(
-        policy, QStringLiteral("/usr/bin/arora"),
+        policy, QStringLiteral("/usr/bin/arktos"),
         {QStringLiteral("--quit-after-load")});
 
     QVERIFY(argv.contains(QStringLiteral("--die-with-parent")));
     // The marker env var keeps the wrapped child from re-wrapping.
     const int setenv = argv.indexOf(QStringLiteral("--setenv"));
     QVERIFY(setenv != -1);
-    QCOMPARE(argv.at(setenv + 1), QStringLiteral("ARORA_SANDBOXED"));
+    QCOMPARE(argv.at(setenv + 1), QStringLiteral("ARKTOS_SANDBOXED"));
     QCOMPARE(argv.at(setenv + 2), QStringLiteral("bwrap"));
     // Permissive base: the whole tree is dev-bound.
     const int devbind = argv.indexOf(QStringLiteral("--dev-bind"));
@@ -158,14 +158,14 @@ void tst_Sandbox::bwrapArgvOrdering()
     policy.homeDir = QStringLiteral("/home/tester");
     policy.deniedDirs << QStringLiteral("/home/tester/.ssh");
     const QStringList argv = BwrapGenerator::commandLine(
-        policy, QStringLiteral("/opt/arora/bin/arora"),
+        policy, QStringLiteral("/opt/arktos/bin/arktos"),
         {QStringLiteral("https://example.com")});
 
     // `--` separates bwrap's options from the wrapped command, and the
     // program + its args are the tail.
     const int sep = argv.indexOf(QStringLiteral("--"));
     QVERIFY(sep != -1);
-    QCOMPARE(argv.at(sep + 1), QStringLiteral("/opt/arora/bin/arora"));
+    QCOMPARE(argv.at(sep + 1), QStringLiteral("/opt/arktos/bin/arktos"));
     QCOMPARE(argv.at(sep + 2), QStringLiteral("https://example.com"));
     QCOMPARE(argv.size(), sep + 3);
     // The sandbox marker must land before the separator.
@@ -177,12 +177,12 @@ void tst_Sandbox::bwrapLauncherScript()
 {
     const QString script = BwrapGenerator::launcherScript();
     QVERIFY(script.startsWith(QLatin1String("#!/bin/sh\n")));
-    QVERIFY(script.contains(QStringLiteral("ARORA_SANDBOXED")));
+    QVERIFY(script.contains(QStringLiteral("ARKTOS_SANDBOXED")));
     QVERIFY(script.contains(QStringLiteral("--tmpfs")));
     QVERIFY(script.contains(QStringLiteral("--dev-bind / /"))
             || script.contains(QStringLiteral("--dev-bind")));
-    QVERIFY(script.contains(QStringLiteral("ARORA_NO_SANDBOX")));
-    QVERIFY(script.contains(QStringLiteral("ARORA_BWRAP")));
+    QVERIFY(script.contains(QStringLiteral("ARKTOS_NO_SANDBOX")));
+    QVERIFY(script.contains(QStringLiteral("ARKTOS_BWRAP")));
     // Every denylist entry is baked in, $HOME-relative.
     for (const QString &entry : SandboxPolicy::homeRelativeDeniedPaths())
         QVERIFY2(script.contains(entry), qPrintable(entry));
@@ -200,10 +200,10 @@ void tst_Sandbox::bwrapLauncherScript()
 
 void tst_Sandbox::bwrapLauncherMatchesCommittedFile()
 {
-    // The installed arora-sandbox script must be byte-identical to the
+    // The installed arktos-sandbox script must be byte-identical to the
     // generator output — regenerate it with --write-sandbox-launcher
     // instead of editing by hand.
-    QFile committed(QStringLiteral("../../src/sandbox/arora-sandbox"));
+    QFile committed(QStringLiteral("../../src/sandbox/arktos-sandbox"));
     QVERIFY(committed.open(QIODevice::ReadOnly));
     QCOMPARE(QString::fromUtf8(committed.readAll()),
              BwrapGenerator::launcherScript());
@@ -313,9 +313,9 @@ void tst_Sandbox::managerStatus()
 void tst_Sandbox::bwrapDownloadWorkerArgv()
 {
     const QStringList argv = BwrapGenerator::downloadWorkerCommandLine(
-        QStringLiteral("/opt/arora/arora"),
+        QStringLiteral("/opt/arktos/arktos"),
         {QStringLiteral("--download-worker")},
-        QStringLiteral("/home/t/.local/share/Arora/downloads-parts/w-abc"),
+        QStringLiteral("/home/t/.local/share/Arktos/downloads-parts/w-abc"),
         QStringLiteral("/home/t/Downloads"));
 
     QCOMPARE(argv.first(), QStringLiteral("bwrap"));
@@ -327,7 +327,7 @@ void tst_Sandbox::bwrapDownloadWorkerArgv()
     const int binds = argv.count(QLatin1String("--bind"));
     QVERIFY(binds >= 2);
     const int wi = argv.indexOf(QStringLiteral(
-        "/home/t/.local/share/Arora/downloads-parts/w-abc"));
+        "/home/t/.local/share/Arktos/downloads-parts/w-abc"));
     QVERIFY(wi > 0 && argv.at(wi - 1) == QLatin1String("--bind"));
     const int di = argv.indexOf(QStringLiteral("/home/t/Downloads"));
     QVERIFY(di > 0 && argv.at(di - 1) == QLatin1String("--bind"));
@@ -337,10 +337,10 @@ void tst_Sandbox::bwrapDownloadWorkerArgv()
     // `--` verbatim.
     const int dd = argv.indexOf(QStringLiteral("--"));
     QVERIFY(dd > 0);
-    QCOMPARE(argv.at(dd + 1), QStringLiteral("/opt/arora/arora"));
+    QCOMPARE(argv.at(dd + 1), QStringLiteral("/opt/arktos/arktos"));
     QCOMPARE(argv.at(dd + 2), QStringLiteral("--download-worker"));
     // The wrap marker children see.
-    const int marker = argv.indexOf(QStringLiteral("ARORA_SANDBOXED"));
+    const int marker = argv.indexOf(QStringLiteral("ARKTOS_SANDBOXED"));
     QVERIFY(marker > 0
             && argv.at(marker + 1) == QLatin1String("bwrap-dl"));
     // Networking must NOT be unshared — a downloader needs it.
@@ -356,17 +356,17 @@ void tst_Sandbox::bwrapDownloadWorkerRemapsHome()
     // bound at its own path — bwrap creates every bind target's
     // parent dirs, which would leave a readable ~ skeleton inside
     // the namespace.  Home-resident inputs are remapped under the
-    // private /arora-rt tmpfs and the exec target follows.
+    // private /arktos-rt tmpfs and the exec target follows.
     const QString homeProg =
-        QDir::homePath() + QStringLiteral("/build/arora");
+        QDir::homePath() + QStringLiteral("/build/arktos");
     const QStringList mapped =
         BwrapGenerator::downloadWorkerCommandLine(
             homeProg, {QStringLiteral("--download-worker")},
-            QStringLiteral("/tmp/arora-w"), QStringLiteral("/tmp/arora-d"));
+            QStringLiteral("/tmp/arktos-w"), QStringLiteral("/tmp/arktos-d"));
 
     const int dd = mapped.indexOf(QStringLiteral("--"));
     QVERIFY(dd > 0);
-    QVERIFY(mapped.at(dd + 1).startsWith(QStringLiteral("/arora-rt/")));
+    QVERIFY(mapped.at(dd + 1).startsWith(QStringLiteral("/arktos-rt/")));
     QCOMPARE(mapped.at(dd + 2), QStringLiteral("--download-worker"));
 
     // The real binary path appears only as a bind SOURCE.
@@ -406,14 +406,14 @@ void tst_Sandbox::bwrapDownloadWorkerRemapsHome()
 void tst_Sandbox::seatbeltDownloadWorkerProfile()
 {
     const QString profile = SeatbeltGenerator::downloadWorkerProfile(
-        QStringLiteral("/Library/Caches/Arora/w-abc"),
+        QStringLiteral("/Library/Caches/Arktos/w-abc"),
         QStringLiteral("/Users/t/Downloads"));
     QVERIFY(profile.contains(QLatin1String("(version 1)")));
     QVERIFY(profile.contains(QLatin1String("(deny default)")));
     QVERIFY(profile.contains(QLatin1String("(allow network-outbound)")));
     QVERIFY(profile.contains(QLatin1String(
         "(allow file-read* file-write* (subpath "
-        "\"/Library/Caches/Arora/w-abc\"))")));
+        "\"/Library/Caches/Arktos/w-abc\"))")));
     QVERIFY(profile.contains(QLatin1String(
         "(allow file-read* file-write* (subpath "
         "\"/Users/t/Downloads\"))")));
@@ -468,12 +468,12 @@ void tst_Sandbox::appContainerDownloadWorkerManifest()
 void tst_Sandbox::openBsdDownloadWorkerPlan()
 {
     const OpenBsdPlan plan = OpenBsdGenerator::downloadWorkerPlan(
-        QStringLiteral("/home/t/.local/share/Arora/w-abc"),
+        QStringLiteral("/home/t/.local/share/Arktos/w-abc"),
         QStringLiteral("/home/t/Downloads"));
     // Allowlist only — no broad "/" grant.
     QVERIFY(!plan.unveilRules.contains(QStringLiteral("/|rwc")));
     QVERIFY(plan.unveilRules.contains(
-        QStringLiteral("/home/t/.local/share/Arora/w-abc|rwc")));
+        QStringLiteral("/home/t/.local/share/Arktos/w-abc|rwc")));
     QVERIFY(plan.unveilRules.contains(
         QStringLiteral("/home/t/Downloads|rwc")));
     // A worker that never forks drops the whole exec/proc family —

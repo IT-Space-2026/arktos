@@ -52,6 +52,8 @@ pub const KDF_MIN_MEMORY_KIB: u32 = 8192;
 pub const KDF_MAX_MEMORY_KIB: u32 = 4 * 1024 * 1024;
 pub const KDF_MAX_PASSES: u32 = 16;
 pub const KDF_MAX_LANES: u32 = 16;
+// BRAND01: frozen at the pre-rebrand spelling — the verifier bytes are
+// sealed into every existing vault, so renaming unseals nothing.
 pub const VERIFIER_MESSAGE: &[u8] = b"ARORA-KDF-VERIFY";
 
 pub const KEY_FILE: &str = "securestore.key";

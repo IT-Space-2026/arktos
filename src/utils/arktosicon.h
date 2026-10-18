@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,10 +16,10 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor,
  * Boston, MA  02110-1301  USA
  */
-#ifndef ARORAICON_H
-#define ARORAICON_H
+#ifndef ARKTOSICON_H
+#define ARKTOSICON_H
 
-#include "arorastyle.h"
+#include "arktosstyle.h"
 
 #include <qcolor.h>
 #include <qicon.h>
@@ -35,8 +35,8 @@
 //
 // Resolution order:
 //   active theme -> inherited themes (the sparse sets inherit
-//   arora-tabler; the -dark variants inherit arora-tabler-dark) ->
-//   arora-tabler via QIcon::setFallbackThemeName -> hicolor (the
+//   arktos-tabler; the -dark variants inherit arktos-tabler-dark) ->
+//   arktos-tabler via QIcon::setFallbackThemeName -> hicolor (the
 //   desktop's own search paths — kept as the last resort so a name
 //   no bundled set ships still has a chance to resolve rather than
 //   painting a blank hole).
@@ -47,10 +47,10 @@
 // sets fixed.  Every selectable set is now bundled art; a stored
 // "native" id migrates to the default set like any unknown id.
 //
-// ICONS13: the bundled arora-legacy set (the original 2009 artwork)
+// ICONS13: the bundled arktos-legacy set (the original 2009 artwork)
 // is retired entirely — the Tabler set covers its whole name list,
-// so the sparse sets now inherit arora-tabler{,-dark} and Tabler is
-// the fallback theme.  A stored "arora-legacy"/"legacy" pick is an
+// so the sparse sets now inherit arktos-tabler{,-dark} and Tabler is
+// the fallback theme.  A stored "arktos-legacy"/"legacy" pick is an
 // unknown id and migrates to the default set like any other.
 //
 // Monochrome bundled sets also ship an "-dark" sibling theme that is
@@ -72,7 +72,7 @@
 // palette's ButtonText at paint time — getChrome().  Everything that
 // is identity rather than chrome keeps its own colors and does NOT
 // go through getChrome; the exceptions list, deliberately:
-//   - the Arora mark (app-menu button, window icon, About, error
+//   - the Arktos mark (app-menu button, window icon, About, error
 //     pages) — brand;
 //   - the Qt logo on Help > About Qt — Qt's brand;
 //   - container color chips — the color IS the container's identity;
@@ -86,7 +86,7 @@
 //     and follows getChrome like every other menu row).
 // If a new icon is chrome, use getChrome; if it is identity, leave
 // it raw — do not "unify" brand art into monochrome.
-namespace AroraIcon {
+namespace ArktosIcon {
 
 // Themed icon for a freedesktop-style name (go-previous,
 // view-refresh, process-stop, ...).  Live-updates on theme change.
@@ -106,18 +106,18 @@ QIcon getOnDark(const QString &name);
 // Disabled mode is seeded with `disabledColor` rather than left to
 // Qt's generated ghosting, which is what washed the idle
 // back/forward arrows out on the violet bar.  The default pair is
-// the tor chrome's glyph colors from AroraStyle (the light text and
+// the tor chrome's glyph colors from ArktosStyle (the light text and
 // the tab strip's dimmed tone) — the single tor color source.
 QIcon tinted(const QIcon &icon,
-             const QColor &color = AroraStyle::torTextColor(),
-             const QColor &disabledColor = AroraStyle::torDimTextColor());
+             const QColor &color = ArktosStyle::torTextColor(),
+             const QColor &disabledColor = ArktosStyle::torDimTextColor());
 QIcon getTinted(const QString &name,
-                const QColor &color = AroraStyle::torTextColor(),
-                const QColor &disabledColor = AroraStyle::torDimTextColor());
+                const QColor &color = ArktosStyle::torTextColor(),
+                const QColor &disabledColor = ArktosStyle::torDimTextColor());
 
 // ICONS09: the house icon for chrome surfaces — the themed shape
 // re-tinted to the palette's ButtonText (the Highlight card's own
-// foreground via AroraStyle::selectionTextColor when the pixmap is
+// foreground via ArktosStyle::selectionTextColor when the pixmap is
 // requested Selected, Disabled to the disabled tone),
 // resolved lazily so an
 // icon-theme swap or a live light<->dark flip restyles icons that
@@ -155,8 +155,8 @@ void setTheme(const QString &id);
 // changes that may flip a bundled set to its "-dark" variant.
 void applyFromSettings();
 
-// The icon theme name an id resolves to right now — "arora-<id>" or
-// "arora-<id>-dark" when a dark palette is active and the set ships
+// The icon theme name an id resolves to right now — "arktos-<id>" or
+// "arktos-<id>-dark" when a dark palette is active and the set ships
 // the recolor.  Exposed for tests/smokes.
 QString effectiveThemeName(const QString &id);
 
@@ -169,6 +169,6 @@ QStringList names();
 // the Settings combo uses it for per-option previews.
 QIcon iconForTheme(const QString &id, const QString &name);
 
-} // namespace AroraIcon
+} // namespace ArktosIcon
 
-#endif // ARORAICON_H
+#endif // ARKTOSICON_H

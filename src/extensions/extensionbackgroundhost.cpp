@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -57,7 +57,7 @@
 // ------------------------------------------------------------------
 // ChromeBridge — the 'chromeBridge' object registered on each hosted
 // page's QWebChannel (MainWorld — the shim and the extension's real
-// background scripts share that world; AroraChannelWorld isolation is
+// background scripts share that world; ArktosChannelWorld isolation is
 // for untrusted web content, not an extension talking to its own
 // host).  EXT14 ships the handshake + error reporting only; EXT15's
 // gapfill API surface dispatches through invoke().
@@ -92,7 +92,7 @@ QJsonObject ChromeBridge::handshake(const QJsonObject &hello)
 {
     QJsonObject reply;
     reply.insert(QStringLiteral("ok"), true);
-    reply.insert(QStringLiteral("host"), QStringLiteral("arora"));
+    reply.insert(QStringLiteral("host"), QStringLiteral("arktos"));
     reply.insert(QStringLiteral("shim"), 2);
     reply.insert(QStringLiteral("id"), m_extensionId);
     reply.insert(QStringLiteral("name"), m_extensionName);
@@ -133,7 +133,7 @@ QJsonObject ChromeBridge::invoke(const QString &ns,
                                  const QString &method,
                                  const QJsonObject &args)
 {
-    if (qEnvironmentVariableIsSet("ARORA_EXTHOST_DEBUG"))
+    if (qEnvironmentVariableIsSet("ARKTOS_EXTHOST_DEBUG"))
         qInfo() << "chromeBridge.invoke" << m_extensionId
                 << ns << method << args;
     if (ns == QLatin1String("relay"))
@@ -357,7 +357,7 @@ QString injectionSource(const QString &extensionId,
         + QLatin1String("if(window.top!==window||location.href!==")
         + jsLiteral(ExtensionBackgroundHost::hostUrl(extensionId)
                         .toString())
-        + QLatin1String(")return;window.__ARORA_HOST_CONFIG=")
+        + QLatin1String(")return;window.__ARKTOS_HOST_CONFIG=")
         + QString::fromUtf8(
             QJsonDocument(config).toJson(QJsonDocument::Compact))
         + QLatin1Char(';');
@@ -399,8 +399,8 @@ QString pageInjectionSource(const QString &extensionId,
         + QLatin1String("||l.href===")
         + jsLiteral(ExtensionBackgroundHost::hostUrl(extensionId)
                         .toString())
-        + QLatin1String("||l.hash==='#arora-healthprobe'"
-                        ")return;window.__ARORA_HOST_CONFIG=")
+        + QLatin1String("||l.hash==='#arktos-healthprobe'"
+                        ")return;window.__ARKTOS_HOST_CONFIG=")
         + QString::fromUtf8(
             QJsonDocument(config).toJson(QJsonDocument::Compact))
         + QLatin1Char(';');
@@ -465,19 +465,19 @@ QString extensionCodeSource(const QString &extensionPath,
 QUrl ExtensionBackgroundHost::hostUrl(const QString &extensionId)
 {
     return QUrl(QStringLiteral(
-        "chrome-extension://%1/manifest.json#arora-hosted")
+        "chrome-extension://%1/manifest.json#arktos-hosted")
         .arg(extensionId));
 }
 
 QString ExtensionBackgroundHost::injectionName(const QString &extensionId)
 {
-    return QStringLiteral("arora-exthost-") + extensionId;
+    return QStringLiteral("arktos-exthost-") + extensionId;
 }
 
 QString ExtensionBackgroundHost::pageInjectionName(
     const QString &extensionId)
 {
-    return QStringLiteral("arora-extpage-") + extensionId;
+    return QStringLiteral("arktos-extpage-") + extensionId;
 }
 
 ExtensionBackgroundHost::ExtensionBackgroundHost(
@@ -590,8 +590,8 @@ ExtensionBackgroundHost::ExtensionBackgroundHost(
                 + QLatin1String(")return;")
                 + extensionCode
                 + QLatin1String(
-                    "if(window.__aroraHost)"
-                        "window.__aroraHost.scriptsLoaded=true;"
+                    "if(window.__arktosHost)"
+                        "window.__arktosHost.scriptsLoaded=true;"
                     "})();"));
             profile->scripts()->insert(code);
         }
@@ -676,9 +676,9 @@ void ExtensionBackgroundHost::poll()
         return;
     m_page->runJavaScript(
         QStringLiteral(
-            "window.__aroraHost?JSON.stringify({s:__aroraHost.state,"
-            "b:__aroraHost.bridgeUp,l:__aroraHost.scriptsLoaded,"
-            "e:__aroraHost.errors.slice(-1)}):null"),
+            "window.__arktosHost?JSON.stringify({s:__arktosHost.state,"
+            "b:__arktosHost.bridgeUp,l:__arktosHost.scriptsLoaded,"
+            "e:__arktosHost.errors.slice(-1)}):null"),
         [this](const QVariant &value) {
             if (m_state != State::Starting || !value.isValid()
                     || value.isNull())
@@ -708,7 +708,7 @@ void ExtensionBackgroundHost::nudge()
     // context stays answerable; a trivial eval per interval keeps
     // deferred work draining instead of starving to a full freeze.
     m_page->runJavaScript(
-        QStringLiteral("window.__aroraWake&&__aroraWake()"));
+        QStringLiteral("window.__arktosWake&&__arktosWake()"));
 }
 
 // ------------------------------------------------------------------
@@ -1003,8 +1003,8 @@ void ExtensionBackgroundRuntime::watchView(QWebEngineView *view)
 {
     if (!view)
         return;
-    if (!view->property("aroraExtPageWatch").toBool()) {
-        view->setProperty("aroraExtPageWatch", true);
+    if (!view->property("arktosExtPageWatch").toBool()) {
+        view->setProperty("arktosExtPageWatch", true);
         // Context = the view: the hook dies with it.  Both guards are
         // QPointer — a navigation landing during application teardown
         // must not touch a gone runtime or view.
@@ -1145,7 +1145,7 @@ void ExtensionBackgroundRuntime::unregisterRelayContext(
         for (const PortEnd &end : std::as_const(ends)) {
             if (end.bridge) {
                 emit end.bridge->hostEvent(
-                    QStringLiteral("__arora.portDisconnect"),
+                    QStringLiteral("__arktos.portDisconnect"),
                     QJsonObject{{QStringLiteral("portId"),
                                  end.localPortId}});
             }
@@ -1165,7 +1165,7 @@ int ExtensionBackgroundRuntime::relaySend(ChromeBridge *from,
             continue;
         if (ctx.bridge->extensionId() != from->extensionId())
             continue;   // never cross extension boundaries
-        emit ctx.bridge->hostEvent(QStringLiteral("__arora.relay"),
+        emit ctx.bridge->hostEvent(QStringLiteral("__arktos.relay"),
                                    QJsonObject{
                                        {QStringLiteral("mid"), mid},
                                        {QStringLiteral("msg"), envelope}});
@@ -1224,7 +1224,7 @@ bool ExtensionBackgroundRuntime::relayRespond(ChromeBridge *responder,
     if (QTimer *t = m_relayPendingTimers.take(mid))
         t->deleteLater();
     emit origin->hostEvent(
-        QStringLiteral("__arora.relayResponse"),
+        QStringLiteral("__arktos.relayResponse"),
         QJsonObject{{QStringLiteral("mid"), mid},
                     {QStringLiteral("response"),
                      defined ? response : QJsonValue(QJsonValue::Null)}});
@@ -1267,7 +1267,7 @@ int ExtensionBackgroundRuntime::relayPortConnect(
         if (ctx.bridge->extensionId() != from->extensionId())
             continue;
         emit ctx.bridge->hostEvent(
-            QStringLiteral("__arora.portConnect"),
+            QStringLiteral("__arktos.portConnect"),
             QJsonObject{{QStringLiteral("chan"), chan},
                         {QStringLiteral("name"), name},
                         {QStringLiteral("sender"), sender}});
@@ -1311,7 +1311,7 @@ int ExtensionBackgroundRuntime::relayPortMessage(
         if (end.bridge == from && end.localPortId == portId)
             continue;   // the sending end itself
         emit end.bridge->hostEvent(
-            QStringLiteral("__arora.portMessage"),
+            QStringLiteral("__arktos.portMessage"),
             QJsonObject{{QStringLiteral("portId"), end.localPortId},
                         {QStringLiteral("msg"), msg}});
         ++delivered;
@@ -1346,7 +1346,7 @@ void ExtensionBackgroundRuntime::relayPortDisconnect(
     for (const PortEnd &end : std::as_const(ends)) {
         if (end.bridge) {
             emit end.bridge->hostEvent(
-                QStringLiteral("__arora.portDisconnect"),
+                QStringLiteral("__arktos.portDisconnect"),
                 QJsonObject{{QStringLiteral("portId"),
                              end.localPortId}});
         }
@@ -1363,7 +1363,7 @@ void ExtensionBackgroundRuntime::relayPortDisconnect(
 //     url-bearing fields (tab.url/title/favIconUrl, changeInfo.url…)
 //     are scrubbed unless the extension holds 'tabs' or a host
 //     permission covering the tab's URL.
-// Host-internal pushes (__arora.*, alarms) keep their ungated path.
+// Host-internal pushes (__arktos.*, alarms) keep their ungated path.
 // -------------------------------------------------------------------
 
 namespace {

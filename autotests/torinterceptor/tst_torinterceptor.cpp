@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -50,10 +50,10 @@
 #include "schemeaccesshandler.h"
 #include "scriptcontrolmanager.h"
 #include "torrequestinterceptor.h"
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 #include "qtry.h"
 
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
 #include <rustcore.h>
 #endif
 
@@ -355,7 +355,7 @@ void tst_TorInterceptor::scriptBlockedAtSafer()
 // absent in no-rust builds where shouldBlockDomain always passes.
 void tst_TorInterceptor::domainBlockBeatsUpgrade()
 {
-#if defined(ARORA_RUSTCORE)
+#if defined(ARKTOS_RUSTCORE)
     const QByteArray fixture = "# tst_torinterceptor\n"
         "torcov-blocked.test\n";
     QCOMPARE(rc_blocklist_load(
@@ -374,9 +374,9 @@ void tst_TorInterceptor::domainBlockBeatsUpgrade()
 void tst_TorInterceptor::nonWebSchemePasses()
 {
     QTemporaryFile file(QDir::tempPath()
-        + QLatin1String("/arora-torcov-XXXXXX.txt"));
+        + QLatin1String("/arktos-torcov-XXXXXX.txt"));
     QVERIFY(file.open());
-    file.write("arora tor interceptor fixture\n");
+    file.write("arktos tor interceptor fixture\n");
     file.flush();
 
     QWebEnginePage page(m_profile);
@@ -399,7 +399,7 @@ int main(int argc, char *argv[])
     qputenv("QTWEBENGINE_CHROMIUM_FLAGS",
             qgetenv("QTWEBENGINE_CHROMIUM_FLAGS")
             + " --host-resolver-rules=MAP cov10-upgrade.test 127.0.0.1");
-    // arora-* schemes must be registered before the browsing profile
+    // arktos-* schemes must be registered before the browsing profile
     // spins up (same order as main.cpp).
     SchemeAccessHandler::registerUrlSchemes();
     BrowserApplication app(argc, argv);

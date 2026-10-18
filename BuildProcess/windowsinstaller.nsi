@@ -1,4 +1,4 @@
-; Arora Windows installer — Qt6 port.
+; Arktos Windows installer — Qt6 port.
 ;
 ; The script no longer enumerates Qt DLLs: CI (and local builds) stage a
 ; complete runtime with windeployqt into deploy\ and this installer just
@@ -7,18 +7,18 @@
 ; windeployqt resolved (Qt6*.dll, QtWebEngineProcess, plugins/,
 ; resources/, translations/) ships verbatim.
 ;
-;   makensis /DDEPLOYDIR=deploy /DPRODUCT_VERSION=0.12 BuildProcess\windowsinstaller.nsi
+;   makensis /DDEPLOYDIR=deploy /DPRODUCT_VERSION=1.0 BuildProcess\windowsinstaller.nsi
 
 SetCompressor /SOLID /FINAL lzma
 
-!define PRODUCT_NAME "Arora"
+!define PRODUCT_NAME "Arktos"
 !ifndef PRODUCT_VERSION
-  !define PRODUCT_VERSION "0.12"
+  !define PRODUCT_VERSION "1.0"
 !endif
 !ifndef DEPLOYDIR
   !define DEPLOYDIR "deploy"
 !endif
-!define PRODUCT_DIR_REGKEY "Software\Microsoft\Windows\CurrentVersion\App Paths\arora.exe"
+!define PRODUCT_DIR_REGKEY "Software\Microsoft\Windows\CurrentVersion\App Paths\arktos.exe"
 !define PRODUCT_UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}"
 
 ; Dual-mode install: MultiUser adds an "all users vs just me" page —
@@ -30,7 +30,7 @@ SetCompressor /SOLID /FINAL lzma
 !define MULTIUSER_EXECUTIONLEVEL Highest
 !define MULTIUSER_MUI
 !define MULTIUSER_INSTALLMODE_COMMANDLINE
-!define MULTIUSER_INSTALLMODE_INSTDIR "Arora"
+!define MULTIUSER_INSTALLMODE_INSTDIR "Arktos"
 !define MULTIUSER_USE_PROGRAMFILES64
 
 !include "MUI.nsh"
@@ -52,7 +52,7 @@ SetCompressor /SOLID /FINAL lzma
 !insertmacro MULTIUSER_PAGE_INSTALLMODE
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
-!define MUI_FINISHPAGE_RUN "$INSTDIR\arora.exe"
+!define MUI_FINISHPAGE_RUN "$INSTDIR\arktos.exe"
 !insertmacro MUI_PAGE_FINISH
 
 !insertmacro MUI_UNPAGE_CONFIRM
@@ -90,7 +90,7 @@ Section "Main Components"
   ;   makensis /DVCREDIST="%VCToolsRedistDir%x64\Microsoft.VC*.CRT"
   ; (%VCToolsRedistDir% is set by the MSVC dev environment); if the
   ; define is absent the installer just skips the DLLs rather than
-  ; failing — arora.exe will then need a system-installed redist.
+  ; failing — arktos.exe will then need a system-installed redist.
   !ifdef VCREDIST
     SetOutPath "$INSTDIR"
     File /nonfatal "${VCREDIST}\vcruntime140.dll"
@@ -105,25 +105,25 @@ Section "Main Components"
 SectionEnd
 
 Section Icons
-  CreateShortCut "$SMPROGRAMS\Arora.lnk" "$INSTDIR\arora.exe"
-  CreateShortCut "$DESKTOP\Arora.lnk" "$INSTDIR\arora.exe"
+  CreateShortCut "$SMPROGRAMS\Arktos.lnk" "$INSTDIR\arktos.exe"
+  CreateShortCut "$DESKTOP\Arktos.lnk" "$INSTDIR\arktos.exe"
 SectionEnd
 
 Section Uninstaller
   WriteUninstaller "$INSTDIR\uninst.exe"
-  WriteRegStr SHCTX "${PRODUCT_DIR_REGKEY}" "" "$INSTDIR\arora.exe"
+  WriteRegStr SHCTX "${PRODUCT_DIR_REGKEY}" "" "$INSTDIR\arktos.exe"
   WriteRegStr SHCTX "${PRODUCT_UNINST_KEY}" "DisplayName" "$(^Name)"
   WriteRegStr SHCTX "${PRODUCT_UNINST_KEY}" "UninstallString" "$INSTDIR\uninst.exe"
-  WriteRegStr SHCTX "${PRODUCT_UNINST_KEY}" "DisplayIcon" "$INSTDIR\arora.exe"
+  WriteRegStr SHCTX "${PRODUCT_UNINST_KEY}" "DisplayIcon" "$INSTDIR\arktos.exe"
   WriteRegStr SHCTX "${PRODUCT_UNINST_KEY}" "DisplayVersion" "${PRODUCT_VERSION}"
 SectionEnd
 
 Section Uninstall
-  Delete "$SMPROGRAMS\Arora.lnk"
-  Delete "$DESKTOP\Arora.lnk"
+  Delete "$SMPROGRAMS\Arktos.lnk"
+  Delete "$DESKTOP\Arktos.lnk"
   RMDir /r "$INSTDIR"
   DeleteRegKey SHCTX "${PRODUCT_UNINST_KEY}"
   DeleteRegKey SHCTX "${PRODUCT_DIR_REGKEY}"
 SectionEnd
 
-BrandingText "arora-browser.org"
+BrandingText "arktos-browser.com"

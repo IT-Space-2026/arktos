@@ -1,6 +1,6 @@
 {
     "version": 1,
-    "name": "arora-builtin",
+    "name": "arktos-builtin",
     "params": [
         "utm_*",
         "gclid", "gbraid", "wbraid", "dclid", "gclsrc",

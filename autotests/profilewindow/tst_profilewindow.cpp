@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,7 +18,7 @@
  */
 
 #include <QtTest/QtTest>
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 #include "qtry.h"
 
 #include <browserapplication.h>
@@ -155,12 +155,12 @@ BrowserMainWindow *tst_ProfileWindow::windowForProfile(const QString &id) const
 void tst_ProfileWindow::personaProfileFactory()
 {
     // The canonical persona factory: lazily created, tagged, named
-    // "arora-<id>" — "default" aliases the existing "arora" profile
+    // "arktos-<id>" — "default" aliases the existing "arktos" profile
     // so pre-MPROF01 disk data keeps resolving.
     QCOMPARE(BrowserProfile::profileFor(kDefault),
              BrowserProfile::normalProfile());
     QWebEngineProfile *alpha = BrowserProfile::profileFor(kAlpha);
-    QCOMPARE(alpha->storageName(), QStringLiteral("arora-alpha"));
+    QCOMPARE(alpha->storageName(), QStringLiteral("arktos-alpha"));
     QCOMPARE(BrowserProfile::profileIdFor(alpha), kAlpha);
     QCOMPARE(BrowserProfile::profileFor(kAlpha), alpha);
     // A non-slug id can never name a profile — default, honestly.
@@ -181,7 +181,7 @@ void tst_ProfileWindow::windowBindsNamedProfile()
     QWebEngineProfile *pageProfile = tab->webPage()->profile();
     QCOMPARE(pageProfile, BrowserProfile::profileFor(kAlpha));
     QCOMPARE(BrowserProfile::profileIdFor(pageProfile), kAlpha);
-    QCOMPARE(pageProfile->storageName(), QStringLiteral("arora-alpha"));
+    QCOMPARE(pageProfile->storageName(), QStringLiteral("arktos-alpha"));
 
     // The window's tab strip reports the same binding.
     QCOMPARE(window->tabWidget()->profileId(), kAlpha);

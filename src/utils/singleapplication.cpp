@@ -166,7 +166,7 @@ QString SingleApplication::serverAddress() const
     QString dirPath =
         QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
     if (dirPath.isEmpty())
-        dirPath = QDir::tempPath() + QLatin1String("/arora-")
+        dirPath = QDir::tempPath() + QLatin1String("/arktos-")
             + QString::number(getuid());
     if (!QDir().mkpath(dirPath)) {
         qWarning() << "SingleApplication: cannot create socket dir:"

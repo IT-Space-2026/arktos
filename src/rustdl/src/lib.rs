@@ -1,4 +1,4 @@
-//! arora-rustdl — Arora's accelerated download engine behind a C ABI
+//! arktos-rustdl — Arktos's accelerated download engine behind a C ABI
 //! (DLACC03/DLACC06).  Same conventions as rustcore:
 //!   * All entry points are panic-safe (catch_unwind) and treat every
 //!     pointer as untrusted — bad input degrades to a status code.

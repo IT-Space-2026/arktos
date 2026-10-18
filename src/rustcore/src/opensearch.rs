@@ -1178,7 +1178,7 @@ mod tests {
     fn with_store(f: impl FnOnce()) {
         let _guard = crate::store::test_lock();
         let dir = std::env::temp_dir().join(format!(
-            "arora-ose-test-{}-{}",
+            "arktos-ose-test-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1487,7 +1487,7 @@ mod tests {
     fn data_dir_switch_invalidates() {
         let _guard = crate::store::test_lock();
         let base = std::env::temp_dir()
-            .join(format!("arora-ose-switch-{}", std::process::id()));
+            .join(format!("arktos-ose-switch-{}", std::process::id()));
         let a = base.join("a");
         let b = base.join("b");
         std::fs::create_dir_all(&a).unwrap();
@@ -1533,7 +1533,7 @@ mod tests {
     #[test]
     fn expand_matches_qt() {
         let lang = "en-US";
-        let src = "Arora";
+        let src = "Arktos";
         let p: Vec<(String, String)> = Vec::new();
         let cases = [
             ("https://duckduckgo.com/?q={searchTerms}", "get", "hello world",
@@ -1549,10 +1549,10 @@ mod tests {
             ("http://e.com/s", "post", "a b", "http://e.com/s"),
             ("http://e.com/{searchTerms}/p", "get", "slash/me",
              "http://e.com/slash%2Fme/p"),
-            ("http://e.com/?s={arora:source}&q={searchTerms}", "get", "q",
-             "http://e.com/?s=Arora&q=q"),
+            ("http://e.com/?s={arktos:source}&q={searchTerms}", "get", "q",
+             "http://e.com/?s=Arktos&q=q"),
             ("http://e.com/?s={source?}&n={count}&i={startIndex}&p={startPage}&ie={inputEncoding}&oe={outputEncoding}", "get", "x",
-             "http://e.com/?s=Arora&n=20&i=0&p=0&ie=UTF-8&oe=UTF-8"),
+             "http://e.com/?s=Arktos&n=20&i=0&p=0&ie=UTF-8&oe=UTF-8"),
             ("http://e.com/?q=", "get", "x", "http://e.com/?q="),
         ];
         for (templ, method, term, expected) in cases {

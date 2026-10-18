@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -31,21 +31,21 @@
 // tested here.
 //
 // Escape hatches (documented dev-only): the --no-sandbox flag, the
-// ARORA_NO_SANDBOX env var, and the sandbox/enabled=false QSettings
+// ARKTOS_NO_SANDBOX env var, and the sandbox/enabled=false QSettings
 // key.  When no backend exists on the host the manager warns once and
 // continues — running unsandboxed is never a hard failure.
 class SandboxManager
 {
 public:
     // True when this process is already inside the sandbox — the bwrap
-    // argv sets ARORA_SANDBOXED so children of a wrapped browser
+    // argv sets ARKTOS_SANDBOXED so children of a wrapped browser
     // (tor respawn, single-instance forward) never re-wrap.
     static bool isSandboxed();
 
     // "bwrap" | "seatbelt" | "appcontainer" | "unveil" | "none".
     static QString backendName();
 
-    // Resolved bwrap executable path (ARORA_BWRAP override honored),
+    // Resolved bwrap executable path (ARKTOS_BWRAP override honored),
     // "" when absent.  Linux only in practice — the other platforms
     // resolve to their own backends.  SAND02's download-worker wrap
     // resolves through here so the override works for it too.
@@ -56,10 +56,10 @@ public:
     static QString statusReport();
 
     // Call at the very top of main(), before any Qt object exists.
-    // On a browsing launch this re-execs arora inside the sandbox and
+    // On a browsing launch this re-execs arktos inside the sandbox and
     // never returns; dev/utility runs (any --flag except --tor) pass
     // through unwrapped so test harnesses keep deterministic
-    // environments.  ARORA_SANDBOX_FORCE=1 wraps flagged runs too —
+    // environments.  ARKTOS_SANDBOX_FORCE=1 wraps flagged runs too —
     // used by --sandbox-smoke's fallback check.
     static void maybeReexec(int argc, char **argv);
 };

@@ -39,7 +39,7 @@
 #include "streamingutils.h"
 #include "webenginebackend.h"
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 #include "rustcorebridge.h"
 
 #include <rustcore.h>
@@ -70,7 +70,7 @@
 // nor synchronous DOM access.  Both sides now live in the render
 // process: autofill.js is armed per navigation as a page user script
 // that runs at DocumentReady, fills stored values, and reports submits
-// through the "aroraAutofill" QWebChannel object.  Known deltas vs the
+// through the "arktosAutofill" QWebChannel object.  Known deltas vs the
 // WebKit implementation: forms submitted before the channel handshake
 // completes (a few ms after DOMContentLoaded) can be missed, submits
 // inside iframes are not captured (the old code only looked at the
@@ -268,7 +268,7 @@ QString AutoFillManager::autoFillDataFile() const
         m_profileId, QLatin1String("autofill.dat"));
 }
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
 // RCORE05: the canonical store is rustcore's autofill-store.dat — a
 // sealed ARSEC1 blob under the same custody key as credentials.dat,
 // so one unlock opens both and every passphrase/lock transition
@@ -437,13 +437,13 @@ static void retireLegacyFile(const QString &fileName)
     if (!QFile::rename(fileName, retired))
         qWarning() << "AutoFillManager: cannot retire" << fileName;
 }
-#endif // ARORA_RUSTCORE
+#endif // ARKTOS_RUSTCORE
 
 void AutoFillManager::saveFormData() const
 {
     QString fileName = autoFillDataFile();
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     // Persist into the Rust store.  There is deliberately no
     // plaintext fallback here: the old degrade wrote the legacy file
     // only when no crypto backend existed at all, while a failed
@@ -536,14 +536,14 @@ void AutoFillManager::saveFormData() const
     if (!file.commit())
         qWarning() << "Unable to commit" << fileName;
     QFile::setPermissions(fileName, QFile::ReadUser | QFile::WriteUser);
-#endif // ARORA_RUSTCORE
+#endif // ARKTOS_RUSTCORE
 }
 
 void AutoFillManager::loadFormData()
 {
     QString fileName = autoFillDataFile();
 
-#ifdef ARORA_RUSTCORE
+#ifdef ARKTOS_RUSTCORE
     rustCoreEnsureDataDirFor(m_profileId);
     if (rc_passphrase_enabled() && !rc_is_unlocked())
         SecureStore::ensureUnlocked(m_profileId, nullptr);
@@ -659,7 +659,7 @@ void AutoFillManager::loadFormData()
     // a corrupt count prefix in the unauthenticated legacy file.
     QDataStream stream(raw);
     decodePayload(stream);
-#endif // ARORA_RUSTCORE
+#endif // ARKTOS_RUSTCORE
 }
 
 // Builds the injected bundle for a document at url and re-arms the
@@ -715,12 +715,12 @@ static void replacePageScript(Engine::Page *page, const QString &name,
     page->removeScript(name);
     if (source.isEmpty())
         return;
-    // SEC24: the bundle runs in AroraChannelWorld — the isolated
+    // SEC24: the bundle runs in ArktosChannelWorld — the isolated
     // world the page's QWebChannel is bound to — where the
-    // __aroraChannel bootstrap lives and page script cannot follow.
+    // __arktosChannel bootstrap lives and page script cannot follow.
     page->insertScript(Engine::Script{
         name, source, Engine::InjectionPoint::DocumentReady,
-        Engine::AroraChannelWorld, false });
+        Engine::ArktosChannelWorld, false });
 }
 
 // form.submit() bypasses the 'submit' DOM event, so scripted
@@ -728,18 +728,18 @@ static void replacePageScript(Engine::Page *page, const QString &name,
 // — and a prototype patch only sticks in the world that installs it.
 // autofill.js lives in the isolated channel world (SEC24), so the
 // wrapper is armed as a separate main-world script that relays each
-// call as an 'arora:formsubmit' event; the isolated-side listener
+// call as an 'arktos:formsubmit' event; the isolated-side listener
 // serializes the real form.  Page script can forge that event, but
 // the forged trigger only re-serializes DOM the attacker already
 // owns — the token never leaves the channel world.
 static const char s_submitShimSource[] =
     "(function () {"
-    "    if (window.__aroraAutofillSubmitShim) return;"
-    "    window.__aroraAutofillSubmitShim = true;"
+    "    if (window.__arktosAutofillSubmitShim) return;"
+    "    window.__arktosAutofillSubmitShim = true;"
     "    var nativeSubmit = HTMLFormElement.prototype.submit;"
     "    HTMLFormElement.prototype.submit = function () {"
     "        try {"
-    "            this.dispatchEvent(new Event('arora:formsubmit',"
+    "            this.dispatchEvent(new Event('arktos:formsubmit',"
     "                {bubbles: true}));"
     "        } catch (e) {}"
     "        return nativeSubmit.call(this);"
@@ -752,18 +752,18 @@ void AutoFillManager::scheduleOnPage(Engine::Page *page,
     if (!page)
         return;
     const QString source = scriptForPage(page, url);
-    replacePageScript(page, QLatin1String("arora:autofill"), source);
+    replacePageScript(page, QLatin1String("arktos:autofill"), source);
 
     const bool capture = !source.isEmpty()
         && captureEnabledForPage(page);
     if (capture) {
         page->insertScript(Engine::Script{
-            QLatin1String("arora:autofill-submit"),
+            QLatin1String("arktos:autofill-submit"),
             QString::fromLatin1(s_submitShimSource),
             Engine::InjectionPoint::DocumentReady, 0 /* main world */,
             false });
     } else {
-        page->removeScript(QLatin1String("arora:autofill-submit"));
+        page->removeScript(QLatin1String("arktos:autofill-submit"));
     }
 }
 

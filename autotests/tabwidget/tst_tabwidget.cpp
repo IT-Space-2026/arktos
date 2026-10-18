@@ -20,7 +20,7 @@
 #include <QtTest/QtTest>
 #include <QtGui/QtGui>
 #include "profilesettings.h"
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 
 #include <browserapplication.h>
 #include <browsermainwindow.h>
@@ -1081,7 +1081,7 @@ void tst_TabWidget::tabHoverPreviews()
 void tst_TabWidget::tabThumbnailStaleness()
 {
     const QString fixturePath = QDir::temp().filePath(
-        QLatin1String("arora-tprev02-fixture.html"));
+        QLatin1String("arktos-tprev02-fixture.html"));
     {
         QFile fixture(fixturePath);
         QVERIFY(fixture.open(QIODevice::WriteOnly));
@@ -1849,9 +1849,9 @@ void tst_TabWidget::pinnedTabs()
     widget.setTabTitleOverride(0, QString());
     QApplication::processEvents();
 
-    if (qEnvironmentVariableIsSet("ARORA_STRIP_GRAB_DIR")) {
+    if (qEnvironmentVariableIsSet("ARKTOS_STRIP_GRAB_DIR")) {
         const QString dir =
-            qEnvironmentVariable("ARORA_STRIP_GRAB_DIR");
+            qEnvironmentVariable("ARKTOS_STRIP_GRAB_DIR");
         bar->grab().save(dir + QLatin1String("/strip-pinned.png"));
     }
 
@@ -1990,9 +1990,9 @@ void tst_TabWidget::pinnedTabs()
                  "no title text painted inside the pinned row");
         QVERIFY2(titleInk(vbar, 1) > 20,
                  "no title text painted inside a plain row");
-        if (qEnvironmentVariableIsSet("ARORA_STRIP_GRAB_DIR")) {
+        if (qEnvironmentVariableIsSet("ARKTOS_STRIP_GRAB_DIR")) {
             const QString dir =
-                qEnvironmentVariable("ARORA_STRIP_GRAB_DIR");
+                qEnvironmentVariable("ARKTOS_STRIP_GRAB_DIR");
             vbar->grab().save(
                 dir + QLatin1String("/strip-pinned-vertical.png"));
         }
@@ -2051,9 +2051,9 @@ void tst_TabWidget::iconOnlyTabStrip()
     QApplication::processEvents();
     QVERIFY(bar->tabRect(widget.count() - 1).width() <= tile + 8);
 
-    if (qEnvironmentVariableIsSet("ARORA_STRIP_GRAB_DIR")) {
+    if (qEnvironmentVariableIsSet("ARKTOS_STRIP_GRAB_DIR")) {
         const QString dir =
-            qEnvironmentVariable("ARORA_STRIP_GRAB_DIR");
+            qEnvironmentVariable("ARKTOS_STRIP_GRAB_DIR");
         bar->grab().save(dir + QLatin1String("/strip-icononly.png"));
     }
 
@@ -2065,9 +2065,9 @@ void tst_TabWidget::iconOnlyTabStrip()
     QVERIFY(!bar->iconOnlyTabs());
     QVERIFY(bar->tabRect(2).width() > tile + 8);
 
-    if (qEnvironmentVariableIsSet("ARORA_STRIP_GRAB_DIR")) {
+    if (qEnvironmentVariableIsSet("ARKTOS_STRIP_GRAB_DIR")) {
         const QString dir =
-            qEnvironmentVariable("ARORA_STRIP_GRAB_DIR");
+            qEnvironmentVariable("ARKTOS_STRIP_GRAB_DIR");
         bar->grab().save(dir + QLatin1String("/strip-titled.png"));
     }
 
@@ -2773,10 +2773,10 @@ void tst_TabWidget::newTabStartPage()
     QTRY_COMPARE_WITH_TIMEOUT(view->url(),
         QUrl(QLatin1String("qrc:/startpage.html")), 15000);
     // document.title is written by the page's own update() through
-    // the 'arora' channel — its arrival proves the handshake ran,
+    // the 'arktos' channel — its arrival proves the handshake ran,
     // not just that the qrc bytes committed.
     QTRY_COMPARE_WITH_TIMEOUT(view->title(),
-        QStringLiteral("Welcome to Arora!"), 15000);
+        QStringLiteral("Welcome to Arktos!"), 15000);
 
     // A custom homepage redirects the same command.
     settings.setValue(QLatin1String("MainWindow/home"),
@@ -3261,11 +3261,11 @@ void tst_TabWidget::tabTransfer()
     // Refusals: a marked no-transfer page (a future engine backend's
     // host widget) stays put.
     QWidget *marked = source.widget(0);
-    marked->setProperty("aroraNoTabTransfer", true);
+    marked->setProperty("arktosNoTabTransfer", true);
     QVERIFY(!source.moveTabTo(0, &target));
     QCOMPARE(source.count(), 1);
     QCOMPARE(target.count(), 4);
-    marked->setProperty("aroraNoTabTransfer", QVariant());
+    marked->setProperty("arktosNoTabTransfer", QVariant());
 
     // OTR boundary: a private page keeps its off-the-record profile
     // through the move; a persistent page is refused while the
@@ -3291,7 +3291,7 @@ void tst_TabWidget::tabTransfer()
     QVERIFY(!source.moveTabTo(-1, &target));
     QVERIFY(!source.moveTabTo(9, &target));
 
-    // The full drop path: a live drag session + arora-tab mime over
+    // The full drop path: a live drag session + arktos-tab mime over
     // the target bar inserts at the drop slot instead of loading the
     // url into the hovered tab.
     source.newTab();
@@ -3308,7 +3308,7 @@ void tst_TabWidget::tabTransfer()
     QMimeData mime;
     mime.setUrls(QList<QUrl>() << QUrl(QStringLiteral("https://a.example/")));
     mime.setText(QStringLiteral("https://a.example/"));
-    mime.setData(QLatin1String(aroraTabMimeType()),
+    mime.setData(QLatin1String(arktosTabMimeType()),
                  QByteArray::number(quintptr(sourceBar)) + ':'
                  + QByteArray::number(quintptr(dragged)));
     // A drop on the tab-2 midpoint inserts there.
@@ -3340,7 +3340,7 @@ void tst_TabWidget::tabTransfer()
         QOverload<const QUrl &, TabWidget::OpenUrlIn>::of(&TabBar::loadUrl));
     QMimeData foreign;
     foreign.setUrls(QList<QUrl>() << QUrl(QStringLiteral("https://b.example/")));
-    foreign.setData(QLatin1String(aroraTabMimeType()),
+    foreign.setData(QLatin1String(arktosTabMimeType()),
                     QByteArrayLiteral("1234:5678"));
     QDropEvent staleDrop(QPointF(dropPos), Qt::MoveAction, &foreign,
                          Qt::LeftButton, Qt::NoModifier);
@@ -3426,8 +3426,8 @@ void tst_TabWidget::newTabButton()
     QCOMPARE(widget.count(), count + 1);
 
     // Offscreen grabs of the real chrome for visual review — set
-    // ARORA_TABWIDGET_GRAB_DIR.
-    const QByteArray grabDir = qgetenv("ARORA_TABWIDGET_GRAB_DIR");
+    // ARKTOS_TABWIDGET_GRAB_DIR.
+    const QByteArray grabDir = qgetenv("ARKTOS_TABWIDGET_GRAB_DIR");
     if (!grabDir.isEmpty()) {
         const QString base = QString::fromLocal8Bit(grabDir);
         bar->grab().save(base + QLatin1String("/plus-rail.png"));
@@ -3625,7 +3625,7 @@ void tst_TabWidget::verticalTabRowTextBounds()
         verifyRail(bar, QStringLiteral("violet %1").arg(position),
                    violet);
 
-        const QByteArray grabDir = qgetenv("ARORA_TABWIDGET_GRAB_DIR");
+        const QByteArray grabDir = qgetenv("ARKTOS_TABWIDGET_GRAB_DIR");
         if (!grabDir.isEmpty()) {
             const QString base = QString::fromLocal8Bit(grabDir)
                 + (position == 2 ? QLatin1String("/rows-left")
@@ -3650,7 +3650,7 @@ void tst_TabWidget::verticalTabRowTextBounds()
         TabBar *bar = buildRail(widget);
         QImage dark;
         verifyRail(bar, QStringLiteral("dark"), dark);
-        const QByteArray grabDir = qgetenv("ARORA_TABWIDGET_GRAB_DIR");
+        const QByteArray grabDir = qgetenv("ARKTOS_TABWIDGET_GRAB_DIR");
         if (!grabDir.isEmpty())
             dark.save(QString::fromLocal8Bit(grabDir)
                       + QLatin1String("/rows-dark.png"));
@@ -3810,9 +3810,9 @@ void tst_TabWidget::verticalRailRowOverlap()
         QApplication::processEvents();
         QCOMPARE(widget.count(), count + 1);
 
-        if (qEnvironmentVariableIsSet("ARORA_TABWIDGET_GRAB_DIR")) {
+        if (qEnvironmentVariableIsSet("ARKTOS_TABWIDGET_GRAB_DIR")) {
             const QString dir =
-                qEnvironmentVariable("ARORA_TABWIDGET_GRAB_DIR");
+                qEnvironmentVariable("ARKTOS_TABWIDGET_GRAB_DIR");
             bar->grab().save(dir + (position == 2
                 ? QLatin1String("/rail-overlap-left.png")
                 : QLatin1String("/rail-overlap-right.png")));
@@ -3969,7 +3969,7 @@ void tst_TabWidget::tabButtonBandAnchor()
     QApplication::processEvents();
     verifyAnchors(QStringLiteral("automatic again"));
 
-    const QByteArray grabDir = qgetenv("ARORA_TABWIDGET_GRAB_DIR");
+    const QByteArray grabDir = qgetenv("ARKTOS_TABWIDGET_GRAB_DIR");
     if (!grabDir.isEmpty())
         bar->grab().save(QString::fromLocal8Bit(grabDir)
                          + QLatin1String("/band-anchor.png"));

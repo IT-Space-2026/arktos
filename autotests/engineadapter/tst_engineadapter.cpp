@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -33,7 +33,7 @@
 #include <webenginebackend.h>
 #include <webview.h>
 
-#include "qtest_arora.h"
+#include "qtest_arktos.h"
 #include "fakeengine.h"
 
 // The reference fake backend lives in autotests/fakeengine.h — shared
@@ -176,11 +176,11 @@ void tst_EngineAdapter::fakePageZoomFindScript()
     // Per-page script collection + download + view: the neutral
     // surface reaches the fake 1:1.
     page.insertScript(Engine::Script{
-        QStringLiteral("arora:test"), QStringLiteral("1"),
+        QStringLiteral("arktos:test"), QStringLiteral("1"),
         Engine::InjectionPoint::DocumentReady, 0, false });
     QCOMPARE(page.scripts().count(), 1);
-    QCOMPARE(page.scripts().first().name, QStringLiteral("arora:test"));
-    page.removeScript(QStringLiteral("arora:test"));
+    QCOMPARE(page.scripts().first().name, QStringLiteral("arktos:test"));
+    page.removeScript(QStringLiteral("arktos:test"));
     QVERIFY(page.scripts().isEmpty());
     page.download(QUrl(QStringLiteral("https://example.org/f.zip")));
     QCOMPARE(page.lastDownload,
@@ -494,15 +494,15 @@ void tst_EngineAdapter::webEnginePageForwarding()
     // named entry lands and leaves rather than a bare count.
     const int before = enginePage->scripts().count();
     enginePage->insertScript(Engine::Script{
-        QStringLiteral("arora:eng04-test"), QStringLiteral("void 0"),
+        QStringLiteral("arktos:eng04-test"), QStringLiteral("void 0"),
         Engine::InjectionPoint::DocumentReady, 0, false });
     QCOMPARE(enginePage->scripts().count(), before + 1);
     QCOMPARE(view.page()->scripts().toList().count(), before + 1);
     bool found = false;
     for (const Engine::Script &script : enginePage->scripts())
-        found |= script.name == QStringLiteral("arora:eng04-test");
+        found |= script.name == QStringLiteral("arktos:eng04-test");
     QVERIFY(found);
-    enginePage->removeScript(QStringLiteral("arora:eng04-test"));
+    enginePage->removeScript(QStringLiteral("arktos:eng04-test"));
     QCOMPARE(enginePage->scripts().count(), before);
 }
 

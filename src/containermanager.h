@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -38,7 +38,7 @@ class QWidget;
     localStorage/IndexedDB, service workers, the http cache and
     permissions are all partitioned by the engine itself.  The default
     container — the unlabeled browsing context — keeps using the
-    shared "arora" profile and is identified by an empty id.
+    shared "arktos" profile and is identified by an empty id.
 
     The registry (id/name/color) is a QSettings "containers" group so
     it survives restarts; profiles themselves are materialized lazily
@@ -47,7 +47,7 @@ class QWidget;
     cookie jar, scheme handlers, settings, download manager, adblock +
     privacy interceptor, extensions).
 
-    Scope notes (see .devin/Arora-Task.md CONT01-05): tab assignment
+    Scope notes (see .devin/Arktos-Task.md CONT01-05): tab assignment
     and the management UI land in CONT02/CONT03; this is the core —
     registry, lazy profiles and the isolation plumbing.
 */
@@ -80,7 +80,7 @@ public:
     QString profileId() const { return m_profileId; }
 
     // The default (unlabeled) container's id.  Everything that is not
-    // a registered container — including the normal "arora" profile —
+    // a registered container — including the normal "arktos" profile —
     // maps to it.
     static QString defaultContainerId();
 

@@ -1,4 +1,4 @@
-# Arora SEC18 domain blocklist — vendored seed.
+# Arktos SEC18 domain blocklist — vendored seed.
 #
 # Local anti-phishing/malware list: matched as exact-host + suffix
 # (a listed "dom.ain" blocks "dom.ain" and "*.dom.ain").  This seed

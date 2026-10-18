@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,6 +27,7 @@
 #include <qmutex.h>
 #include <qsavefile.h>
 #include <qset.h>
+#include <qsettings.h>
 #include <qstandardpaths.h>
 
 namespace BrowserPaths {
@@ -44,7 +45,7 @@ namespace BrowserPaths {
 // repopulate themselves per profile, which the task notes record as
 // the accepted trade-off.
 // Truly global entries — tor/ (daemon state + staged binary), locale/
-// drops, crashreport.log, arora-profile-wipe.pending, profiles.json,
+// drops, crashreport.log, arktos-profile-wipe.pending, profiles.json,
 // this marker — deliberately absent: they stay at the data root and
 // their call sites use globalDataFilePath().  QtWebEngine/ joined
 // the sealed side in VSEC02 — ensureEngineStorageLayout() owns its
@@ -197,6 +198,160 @@ QString profileDataDir(const QString &profileId)
     return directory;
 }
 
+// BRAND01: the pre-rebrand identity.  Org + app were "Arora"; an
+// even older era persisted under the binary name "arora", so both
+// leaf spellings are candidates under the org dir.
+static const char kLegacyOrg[] = "Arora";
+static const char *const kLegacyAppNames[] = {"Arora", "arora"};
+static const char kIdentityMigrationFailedReport[]
+    = "migration-brand.failed";
+
+// A standard-path location resolved under a DIFFERENT identity:
+// QStandardPaths consults the org/app names at call time, so the
+// lookup is swap → query → restore.
+static QString locationForIdentity(QStandardPaths::StandardLocation loc,
+                                   const QString &org,
+                                   const QString &app)
+{
+    const QString orgSaved = QCoreApplication::organizationName();
+    const QString appSaved = QCoreApplication::applicationName();
+    QCoreApplication::setOrganizationName(org);
+    QCoreApplication::setApplicationName(app);
+    const QString path = QStandardPaths::writableLocation(loc);
+    QCoreApplication::setOrganizationName(orgSaved);
+    QCoreApplication::setApplicationName(appSaved);
+    return path;
+}
+
+// Move ONE pre-rebrand leaf to its new-identity location.  Returns
+// false through *error on a real move failure; both-roots-exist and
+// a symlinked old leaf are loud SKIPS, not failures — the old tree
+// stays in place and is never orphaned.  The failure report lands
+// under reportDir (the new identity's data org dir) rather than
+// inside either moving tree.
+static bool migrateIdentityLeaf(const QString &oldLeaf,
+                                const QString &newLeaf,
+                                const QString &what,
+                                const QString &reportDir,
+                                QString *error)
+{
+    const QFileInfo oldInfo(oldLeaf);
+    if (!oldInfo.exists())
+        return true;
+    if (oldInfo.isSymLink()) {
+        qWarning() << "BrowserPaths:" << what
+                   << "old identity entry is a symlink, not migrating:"
+                   << oldLeaf;
+        return true;
+    }
+    if (QFile::exists(newLeaf)) {
+        qWarning() << "BrowserPaths:" << what
+                   << "both old and new identity entries exist;"
+                      " leaving the old one in place:" << oldLeaf;
+        return true;
+    }
+    const QString newParent = QFileInfo(newLeaf).absolutePath();
+    // Same lstat discipline as the layout migrations: the org-level
+    // component the rename writes through may not be a planted link
+    // (the XDG dirs above it legitimately can be).
+    if (QFileInfo(newParent).isSymLink()) {
+        reportMigrationFailure(
+            reportDir, QStringLiteral(
+                "refusing to migrate %1 into a symlinked %2")
+                .arg(oldLeaf, newParent),
+            error, kIdentityMigrationFailedReport);
+        return false;
+    }
+    if (!QDir().mkpath(newParent)) {
+        reportMigrationFailure(
+            reportDir, QStringLiteral("cannot create %1").arg(newParent),
+            error, kIdentityMigrationFailedReport);
+        return false;
+    }
+    if (!QFile::rename(oldLeaf, newLeaf)) {
+        reportMigrationFailure(
+            reportDir, QStringLiteral("rename %1 -> %2 failed")
+                .arg(oldLeaf, newLeaf),
+            error, kIdentityMigrationFailedReport);
+        return false;
+    }
+    return true;
+}
+
+bool migrateLegacyIdentity(QString *error)
+{
+    static QMutex mutex;
+    QMutexLocker locker(&mutex);
+
+    const QString legacyOrg = QLatin1String(kLegacyOrg);
+    const QString newData =
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    if (newData.isEmpty()) {
+        if (error)
+            *error = QStringLiteral("data root unavailable");
+        return false;
+    }
+    const QString reportDir = QFileInfo(newData).absolutePath();
+    bool ok = true;
+    QString firstError;
+    const auto accumulate = [&](const QString &fail) {
+        if (fail.isEmpty())
+            return;
+        ok = false;
+        if (firstError.isEmpty())
+            firstError = fail;
+    };
+
+    // Data + cache stores: <location>/<org>/<app>.  The leaf moves;
+    // sibling app dirs under the old org (test binaries, other eras)
+    // stay put.
+    const QStandardPaths::StandardLocation locations[] = {
+        QStandardPaths::AppDataLocation,
+        QStandardPaths::CacheLocation,
+    };
+    for (const QStandardPaths::StandardLocation loc : locations) {
+        const QString newLeaf = QStandardPaths::writableLocation(loc);
+        if (newLeaf.isEmpty())
+            continue;
+        for (const char *name : kLegacyAppNames) {
+            const QString oldLeaf = locationForIdentity(
+                loc, legacyOrg, QLatin1String(name));
+            if (oldLeaf.isEmpty() || oldLeaf == newLeaf)
+                continue;
+            QString fail;
+            migrateIdentityLeaf(oldLeaf, newLeaf,
+                                QLatin1String("identity migration:"),
+                                reportDir, &fail);
+            accumulate(fail);
+        }
+    }
+
+    // QSettings: the app conf rides the org-dir path — move just OUR
+    // file, not sibling confs written under other app names.
+    const QString newConf = QSettings().fileName();
+    if (!newConf.isEmpty()) {
+        for (const char *name : kLegacyAppNames) {
+            const QString oldConf =
+                QSettings(legacyOrg, QLatin1String(name)).fileName();
+            if (oldConf.isEmpty() || oldConf == newConf)
+                continue;
+            QString fail;
+            migrateIdentityLeaf(oldConf, newConf,
+                                QLatin1String("settings migration:"),
+                                reportDir, &fail);
+            accumulate(fail);
+        }
+    }
+
+    // A clean pass retires a stale report from an earlier failed boot.
+    if (ok)
+        QFile::remove(reportDir + QLatin1Char('/')
+                      + QLatin1String(kIdentityMigrationFailedReport));
+    if (error)
+        *error = firstError;
+    return ok;
+}
+
 bool ensureDataLayout(QString *error)
 {
     static QMutex mutex;
@@ -251,7 +406,7 @@ bool ensureDataLayout(QString *error)
     for (const QString &name : names) {
         const QString src = root + QLatin1Char('/') + name;
         // VSEC01: a symlinked payload is never legitimate — nothing in
-        // Arora creates links at these names.  QFile::exists() follows
+        // Arktos creates links at these names.  QFile::exists() follows
         // the link and QFile::rename() would carry the LINK intact
         // into profiles/default, where every later open() resolves to
         // the attacker's target.  Fail the pass loudly instead:
@@ -392,14 +547,25 @@ bool ensureEngineStorageLayout(QString *error)
     for (const QFileInfo &entry : entries) {
         const QString name = entry.fileName();
         QString id;
-        if (name == QLatin1String("arora")) {
+        if (name == QLatin1String("arktos")
+            || name == QLatin1String("arora")) {
             id = QStringLiteral("default");
-        } else if (name.startsWith(QLatin1String("arora-"))
-                   && !name.startsWith(
-                       QLatin1String("arora-container-"))) {
-            const QString slug = name.mid(6);
-            if (isProfileId(slug))
-                id = slug;
+        } else {
+            // A migrated pre-rebrand tree can still carry "arora-*"
+            // storage names — the prefixes differ in length, so the
+            // slug offset does too.
+            int prefix = 0;
+            if (name.startsWith(QLatin1String("arktos-"))
+                && !name.startsWith(QLatin1String("arktos-container-")))
+                prefix = 7;
+            else if (name.startsWith(QLatin1String("arora-"))
+                     && !name.startsWith(QLatin1String("arora-container-")))
+                prefix = 6;
+            if (prefix) {
+                const QString slug = name.mid(prefix);
+                if (isProfileId(slug))
+                    id = slug;
+            }
         }
         if (id.isEmpty())
             continue;
@@ -496,7 +662,7 @@ bool ensureEngineStorageLayout(QString *error)
         }
     }
 
-    // The legacy cache dirs (<cache root>/QtWebEngine/arora*) are
+    // The legacy cache dirs (<cache root>/QtWebEngine/arktos*) are
     // disposable — a cache is rebuilt, never migrated; cross-filesystem
     // moves add nothing but failure modes.  A planted link is removed
     // as a link (QFile::remove never follows) rather than descended.
@@ -510,7 +676,9 @@ bool ensureEngineStorageLayout(QString *error)
                 | QDir::Hidden | QDir::System);
         for (const QFileInfo &entry : cacheEntries) {
             const QString name = entry.fileName();
-            if (name != QLatin1String("arora")
+            if (name != QLatin1String("arktos")
+                && name != QLatin1String("arora")
+                && !name.startsWith(QLatin1String("arktos-"))
                 && !name.startsWith(QLatin1String("arora-")))
                 continue;
             const QString path = entry.absoluteFilePath();

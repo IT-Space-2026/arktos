@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Arora Authors
+ * Copyright 2026 The Arktos Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,7 +20,7 @@
 #ifndef PDFWORKER_H
 #define PDFWORKER_H
 
-// PDF02: entry point for `arora --pdf-worker` — the confined
+// PDF02: entry point for `arktos --pdf-worker` — the confined
 // subprocess that rasterizes PDF pages for the shell-owned document
 // view.  The process never creates a QApplication, never touches
 // QtWebEngine and never opens a profile: it speaks a single-purpose
