@@ -425,6 +425,13 @@ public:
     // real tab).
     QJsonArray contextsJson(const QString &extensionId) const;
 
+    // ER05 test seam — a simulated browser relaunch inside one
+    // process: clears the per-session runtime.onStartup dedupe so
+    // the next host Ready re-evaluates the version record exactly
+    // like a restart (the record itself lives in ProfileSettings
+    // and persists, as on disk).
+    void restartLifecycleSession();
+
 signals:
     void hostChanged(const QString &extensionId);
 
@@ -459,6 +466,14 @@ private:
     QJsonObject shapedPayload(const QString &extensionId,
                               const QString &name,
                               const QJsonObject &payload) const;
+
+    // ER05 — the runtime.onInstalled/onStartup dispatch a host
+    // Ready runs.  See the cpp for the version-record semantics.
+    void dispatchRuntimeLifecycle(const QString &extensionId);
+    // Ids whose onStartup disposition this app session already
+    // decided — a mid-session respawn or re-enable never re-fires
+    // it; the set clears only on restartLifecycleSession().
+    QSet<QString> m_lifecycleSeen;
 
     // Relay: live shimmed contexts and in-flight deliveries
     // (mid -> the sending bridge; entries expire on a timer so a

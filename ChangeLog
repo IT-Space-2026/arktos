@@ -3515,3 +3515,16 @@ Extensions (webNavigation): chrome.webNavigation.onDOMContentLoaded
     target (aboutToLoadUrl) rather than the still-displayed document,
     and the browser's internal error page no longer produces
     webNavigation events for a failed navigation — Chrome parity.
+Extensions (runtime lifecycle): chrome.runtime.onInstalled and
+    chrome.runtime.onStartup now dispatch into hosted extension
+    contexts — a fresh install fires {reason:"install"} once and
+    never sees onStartup in its own session, an extension whose
+    manifest version changed fires {reason:"update",
+    previousVersion}, a browser-version change fires
+    {reason:"browser_update"}, and a profile that already carried
+    the extension gets onStartup on its next runtime session.
+    The {extension version, browser version} record lives in the
+    profile's settings under extensions/runtime/<id> and is
+    removed on uninstall so a reinstall is a clean install again.
+    chrome.windows.onCreated now also delivers Chrome's single
+    Window-object argument instead of a bare window id (ER05).

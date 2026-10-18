@@ -83,6 +83,7 @@ private slots:
     void extensionShimBackend();
     void extensionMessageRelay();
     void extensionEventSurfaces();
+    void extensionRuntimeLifecycle();
     void extensionPopupContext();
     void extensionPageAgent();
     void extensionTabMessaging();
@@ -2443,7 +2444,325 @@ void tst_ExtensionManager::extensionEventSurfaces()
     QDir(dirB).removeRecursively();
 }
 
-// EXT17: the sibling-page context.  A fixture extension declaring an
+// ER05 — the runtime lifecycle events + the window-level mirror.
+// A fixture extension records runtime.onInstalled/onStartup and
+// windows.onCreated/onRemoved/onFocusChanged; the leg drives the
+// whole reason matrix: fresh install answers {reason:'install'}
+// once and NO onStartup; a relaunch (disable + the runtime's
+// restartLifecycleSession seam + re-enable) answers onStartup with
+// no second onInstalled; a version bump answers
+// {reason:'update',previousVersion}; an app-version change answers
+// {reason:'browser_update'}; and a scripted window open/close lands
+// the windows.* events.
+void tst_ExtensionManager::extensionRuntimeLifecycle()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString swRecord =
+        "self.__extEvents=[];\n"
+        "self.__extRec=function(n){return function(){\n"
+        " self.__extEvents.push({n:n,a:Array.prototype.slice.call(\n"
+        "  arguments).map(function(v){\n"
+        "   try{return JSON.parse(JSON.stringify(v));}catch(e){\n"
+        "    return String(v);}})});};};\n"
+        "chrome.runtime.onInstalled.addListener(\n"
+        " self.__extRec('runtime.onInstalled'));\n"
+        "chrome.runtime.onStartup.addListener(\n"
+        " self.__extRec('runtime.onStartup'));\n"
+        "['onCreated','onRemoved','onFocusChanged'].forEach(\n"
+        " function(e){chrome.windows[e].addListener(\n"
+        "  self.__extRec('windows.'+e));});\n";
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extlc-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    const auto writeFixture = [&dir, &swRecord](
+            const QString &version) {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        if (!f.open(QIODevice::WriteOnly))
+            return false;
+        f.write("{\"manifest_version\":3,\"name\":\"tst-lifecycle\","
+                "\"version\":\"" + version.toUtf8()
+                + "\",\"permissions\":[\"storage\"],"
+                  "\"background\":{\"service_worker\":\"sw.js\"}}");
+        f.close();
+        QFile w(dir + QLatin1String("/sw.js"));
+        if (!w.open(QIODevice::WriteOnly))
+            return false;
+        w.write(swRecord.toUtf8());
+        w.close();
+        return true;
+    };
+    QVERIFY(writeFixture(QStringLiteral("1.0")));
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    ExtensionEventHub *hub = ExtensionEventHub::instance();
+
+    auto loaded = std::make_shared<QString>();
+    const auto watch = [loaded](
+            const ExtensionManager::ExtensionInfo &info) {
+        if (info.name.startsWith(QLatin1String("tst-lifecycle"))
+                && info.error.isEmpty())
+            *loaded = info.id;
+    };
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, watch);
+    QObject::connect(manager, &ExtensionManager::extensionInstalled,
+                     this, watch);
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QElapsedTimer loadTimer;
+    loadTimer.start();
+    while (loaded->isEmpty() && loadTimer.elapsed() < 30000)
+        QTest::qWait(50);
+    const QString id = *loaded;
+    QVERIFY2(!id.isEmpty(), "lifecycle fixture loaded");
+    manager->setExtensionEnabled(id, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(id)
+            && runtime->host(id)->state()
+               == ExtensionBackgroundHost::State::Ready,
+        45000);
+
+    auto eval = [](QWebEnginePage *page, const QString &source) {
+        auto result = std::make_shared<QVariant>();
+        page->runJavaScript(source,
+                            [result](const QVariant &v) { *result = v; });
+        QElapsedTimer timer;
+        timer.start();
+        while (!result->isValid() && timer.elapsed() < 10000)
+            QTest::qWait(50);
+        return *result;
+    };
+    auto count = [&eval](QWebEnginePage *page, const QString &name) {
+        return eval(page, QStringLiteral(
+            "(self.__extEvents||[]).filter(function(e){return e.n===\"")
+            + name + QLatin1String("\";}).length")).toInt();
+    };
+    const auto hostPage = [runtime, &id]() {
+        ExtensionBackgroundHost *h = runtime->host(id);
+        return h ? h->page() : nullptr;
+    };
+    const auto respawn = [this, manager, runtime, &id]() {
+        manager->setExtensionEnabled(id, false);
+        QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 20000);
+        manager->setExtensionEnabled(id, true);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            runtime->host(id)
+                && runtime->host(id)->state()
+                   == ExtensionBackgroundHost::State::Ready,
+            45000);
+    };
+
+    // --- fresh install: onInstalled{install} once, no onStartup ----
+    QTRY_VERIFY_WITH_TIMEOUT(
+        count(hostPage(), QStringLiteral("runtime.onInstalled")) == 1,
+        20000);
+    QCOMPARE(eval(hostPage(), QStringLiteral(
+        "(self.__extEvents||[]).some(function(e){"
+        " return e.n==='runtime.onInstalled'&&e.a[0]"
+        "   &&e.a[0].reason==='install'"
+        "   &&e.a[0].previousVersion===undefined;})")).toBool(),
+        true);
+    // Chrome does not fire onStartup on the installing session.
+    QTest::qWait(1500);
+    QCOMPARE(count(hostPage(), QStringLiteral("runtime.onStartup")),
+             0);
+
+    // --- windows.* on open/focus/close -----------------------------
+    hub->setTracking(true);
+    hub->syncNow();   // silent baseline — the fixture's first host
+                      // already exists; window tracking reseeds.
+    BrowserMainWindow *window = new BrowserMainWindow;
+    hub->syncNow();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        count(hostPage(), QStringLiteral("windows.onCreated")) >= 1,
+        20000);
+    // The onCreated arg is Chrome's Window object — an id-carrying
+    // object, never an undefined arg list.
+    QCOMPARE(eval(hostPage(), QStringLiteral(
+        "(self.__extEvents||[]).some(function(e){"
+        " return e.n==='windows.onCreated'&&e.a.length===1"
+        "   &&e.a[0]&&typeof e.a[0].id==='number';})")).toBool(),
+        true);
+    window->show();
+    window->activateWindow();
+    hub->syncNow();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        count(hostPage(), QStringLiteral("windows.onFocusChanged"))
+            >= 1,
+        20000);
+    window->close();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    hub->syncNow();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        count(hostPage(), QStringLiteral("windows.onRemoved")) >= 1,
+        20000);
+
+    // --- relaunch: onStartup fires, onInstalled does not -----------
+    respawn();
+    // The respawn was still THIS session — the dedupe held.
+    QTest::qWait(500);
+    QCOMPARE(count(hostPage(), QStringLiteral("runtime.onStartup")),
+             0);
+    runtime->restartLifecycleSession();
+    respawn();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        count(hostPage(), QStringLiteral("runtime.onStartup")) == 1,
+        20000);
+    QTest::qWait(500);
+    QCOMPARE(count(hostPage(), QStringLiteral("runtime.onInstalled")),
+             0);
+
+    // --- version bump: {reason:'update',previousVersion} -----------
+    manager->setExtensionEnabled(id, false);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 20000);
+    QVERIFY(writeFixture(QStringLiteral("1.1")));
+    manager->setExtensionEnabled(id, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(id)
+            && runtime->host(id)->state()
+               == ExtensionBackgroundHost::State::Ready,
+        45000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(hostPage(), QStringLiteral(
+            "(self.__extEvents||[]).some(function(e){"
+            " return e.n==='runtime.onInstalled'&&e.a[0]"
+            "   &&e.a[0].reason==='update'"
+            "   &&e.a[0].previousVersion==='1.0';})")).toBool(),
+        20000);
+    // The update was mid-session — no onStartup for it.
+    QTest::qWait(500);
+    QCOMPARE(count(hostPage(), QStringLiteral("runtime.onStartup")),
+             0);
+
+    // --- app version bump: {reason:'browser_update'} ---------------
+    const QString realVersion =
+        QCoreApplication::applicationVersion();
+    QCoreApplication::setApplicationVersion(
+        QStringLiteral("0.0-erlifecycle"));
+    respawn();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(hostPage(), QStringLiteral(
+            "(self.__extEvents||[]).some(function(e){"
+            " return e.n==='runtime.onInstalled'&&e.a[0]"
+            "   &&e.a[0].reason==='browser_update';})")).toBool(),
+        20000);
+    QCoreApplication::setApplicationVersion(realVersion);
+    // Let the record settle on the real version — restoring the app
+    // version IS a browser-version change against the persisted
+    // record, so this respawn fires a last browser_update and writes
+    // {1.1, realVersion}.  The unload/reload below then sees a
+    // matching record and fires nothing.
+    respawn();
+
+    // --- session unload keeps the record — it is not an uninstall --
+    // (Chrome parity for a dev-mode load: a same-session reload is
+    // not a fresh install, so neither lifecycle event refires.)
+    manager->removeExtension(id);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 20000);
+    hub->setTracking(false);
+
+    loaded->clear();
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QElapsedTimer reloadTimer;
+    reloadTimer.start();
+    while (loaded->isEmpty() && reloadTimer.elapsed() < 30000)
+        QTest::qWait(50);
+    const QString idReload = *loaded;
+    QVERIFY2(!idReload.isEmpty(), "fixture reloaded after unload");
+    manager->setExtensionEnabled(idReload, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(idReload)
+            && runtime->host(idReload)->state()
+               == ExtensionBackgroundHost::State::Ready,
+        45000);
+    QTest::qWait(1500);
+    QCOMPARE(count(runtime->host(idReload)->page(),
+                   QStringLiteral("runtime.onInstalled")), 0);
+    QCOMPARE(count(runtime->host(idReload)->page(),
+                   QStringLiteral("runtime.onStartup")), 0);
+    manager->setExtensionEnabled(idReload, false);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(idReload), 20000);
+    manager->removeExtension(idReload);
+
+    // --- an installed extension: uninstall drops the record, a
+    // reinstall is a fresh install again ----------------------------
+    const QString dirB = QDir::temp().filePath(
+        QStringLiteral("tst-extlcB-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirB));
+    {
+        QFile f(dirB + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-lifecycle-b\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"],"
+                "\"background\":{\"service_worker\":\"sw.js\"}}");
+        f.close();
+        QFile w(dirB + QLatin1String("/sw.js"));
+        QVERIFY(w.open(QIODevice::WriteOnly));
+        w.write(swRecord.toUtf8());
+        w.close();
+    }
+    loaded->clear();
+    manager->grantConsent(dirB);
+    manager->installExtension(dirB);
+    QElapsedTimer installTimer;
+    installTimer.start();
+    while (loaded->isEmpty() && installTimer.elapsed() < 30000)
+        QTest::qWait(50);
+    const QString idB = *loaded;
+    QVERIFY2(!idB.isEmpty(), "installed fixture landed");
+    manager->setExtensionEnabled(idB, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(idB)
+            && runtime->host(idB)->state()
+               == ExtensionBackgroundHost::State::Ready,
+        45000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        count(runtime->host(idB)->page(),
+              QStringLiteral("runtime.onInstalled")) == 1,
+        20000);
+
+    manager->removeExtension(idB);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(idB), 20000);
+    // The record died with the uninstall — this reinstall is a
+    // fresh install, not a relaunch.
+    loaded->clear();
+    manager->grantConsent(dirB);
+    manager->installExtension(dirB);
+    installTimer.restart();
+    while (loaded->isEmpty() && installTimer.elapsed() < 30000)
+        QTest::qWait(50);
+    const QString idB2 = *loaded;
+    QVERIFY2(!idB2.isEmpty(), "fixture reinstalled");
+    manager->setExtensionEnabled(idB2, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(idB2)
+            && runtime->host(idB2)->state()
+               == ExtensionBackgroundHost::State::Ready,
+        45000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(runtime->host(idB2)->page(), QStringLiteral(
+            "(self.__extEvents||[]).some(function(e){"
+            " return e.n==='runtime.onInstalled'&&e.a[0]"
+            "   &&e.a[0].reason==='install';})")).toBool(),
+        20000);
+    QTest::qWait(1000);
+    QCOMPARE(count(runtime->host(idB2)->page(),
+                   QStringLiteral("runtime.onStartup")), 0);
+
+    manager->setExtensionEnabled(idB2, false);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(idB2), 20000);
+    manager->removeExtension(idB2);
+    QDir(dir).removeRecursively();
+    QDir(dirB).removeRecursively();
+}
 // action popup gets its popup document loaded in a second
 // QWebEngineView wired through attachExtensionPage — the page
 // injection must land the shim there, the popup's chrome.runtime.

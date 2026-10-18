@@ -1193,8 +1193,14 @@
         // registered but onConnect never fired — Angular's bootstrap
         // awaited the session IPC forever).  Dual-register so a real
         // external connect still reaches the listener.
+        // ER05: the lifecycle events take the same treatment — a
+        // native onInstalled/onStartup object may exist in the
+        // schema while no embedder delegate ever dispatches it, so
+        // the hosted runtime's push is the only source that can fire
+        // them; listeners must land on the shim event.
         var connEvents = ['onConnect', 'onConnectExternal',
-                          'onMessageExternal'];
+                          'onMessageExternal', 'onInstalled',
+                          'onStartup'];
         for (var ce = 0; ce < connEvents.length; ++ce) {
             (function (cname) {
                 var evName = 'runtime.' + cname;
@@ -1988,6 +1994,63 @@
             return p;
         };
         installNs('windows', winNs);
+        // ER05: a native chrome.windows binding keeps its inert
+        // event objects — the schema ships them but no embedder
+        // delegate dispatches them, so a listener registered on the
+        // native object alone would never fire.  Dual-register each
+        // hub-pushed event the same way the runtime lifecycle events
+        // are handled above: listeners land on the shim event the
+        // EXT16 fan-out fires, and on any native object as well.
+        if (chrome.windows && typeof chrome.windows === 'object') {
+            var winDual = ['onCreated', 'onRemoved',
+                           'onFocusChanged'];
+            for (var wd = 0; wd < winDual.length; ++wd) {
+                (function (cname) {
+                    var evName = 'windows.' + cname;
+                    var shimEv = shim.events[evName]
+                                 || makeEvent(evName);
+                    var realEv;
+                    try {
+                        realEv = chrome.windows[cname];
+                    } catch (e) {
+                        realEv = null;
+                    }
+                    var installed = shimEv;
+                    if (realEv && realEv !== shimEv
+                            && typeof realEv.addListener
+                                   === 'function') {
+                        installed = {
+                            addListener: function (fn) {
+                                shimEv.addListener(fn);
+                                try {
+                                    realEv.addListener(fn);
+                                } catch (e) {}
+                            },
+                            removeListener: function (fn) {
+                                shimEv.removeListener(fn);
+                                try {
+                                    realEv.removeListener(fn);
+                                } catch (e) {}
+                            },
+                            hasListener: function (fn) {
+                                return shimEv.hasListener(fn)
+                                    || (typeof realEv.hasListener
+                                            === 'function'
+                                        && realEv.hasListener(fn));
+                            },
+                            hasListeners: function () {
+                                return shimEv.hasListeners()
+                                    || (typeof realEv.hasListeners
+                                            === 'function'
+                                        && realEv.hasListeners());
+                            }
+                        };
+                    }
+                    safeSet(chrome.windows, cname, installed,
+                            'chrome.windows.' + cname);
+                })(winDual[wd]);
+            }
+        }
     }
 
     // --- chrome.webNavigation ------------------------------------------------

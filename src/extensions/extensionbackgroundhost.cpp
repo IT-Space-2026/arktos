@@ -25,6 +25,7 @@
 #include "extensionmanager.h"
 #include "extensionpagebridge.h"
 #include "extensionshimbackend.h"
+#include "profilesettings.h"
 #include "webview.h"
 
 #include <qapplication.h>
@@ -1170,7 +1171,15 @@ void ExtensionBackgroundRuntime::syncNow()
             want.profile, id, want.name, want.path,
             manifest.backgroundScripts, this);
         connect(host, &ExtensionBackgroundHost::stateChanged, this,
-                [this, id]() { emit hostChanged(id); });
+                [this, id]() {
+            emit hostChanged(id);
+            // ER05 — a host reaching Ready is the extension's
+            // "loaded" moment: the lifecycle dispatch reads the
+            // version record and fires onInstalled/onStartup.
+            ExtensionBackgroundHost *h = m_hosts.value(id);
+            if (h && h->state() == ExtensionBackgroundHost::State::Ready)
+                dispatchRuntimeLifecycle(id);
+        });
         m_hosts.insert(id, host);
         emit hostChanged(id);
     }
@@ -1181,6 +1190,92 @@ void ExtensionBackgroundRuntime::syncNow()
     // each heartbeat.
     watchExtensionViews();
 #endif // QT_CONFIG(webengine_extensions)
+}
+
+// -------------------------------------------------------------------
+// ER05 — runtime.onInstalled / runtime.onStartup.  Chrome fires
+// onInstalled when an extension first installs, when its version
+// changes, and when the browser itself updates; onStartup when a
+// profile carrying the extension starts up — never for a fresh
+// install's own session and never for a mid-session respawn.  The
+// version record in ProfileSettings — extensions/runtime/<id> =
+// {extension version, browser version}, rewritten whenever a boot
+// observes a difference — is the comparison base; uninstall clears
+// it (ExtensionManager) so a reinstall is a fresh install again.
+//
+// Emission rides the shared backend's pushEvent — every shim
+// context of this extension (the hosted background plus any sibling
+// pages, matching Chrome's per-context dispatch) receives it
+// through its bridge's hostEvent.  There is no relay-registration
+// wait: Ready itself implies the page-side hostEvent connect is
+// already wired, and runtime.* events are ungated like the alarms
+// pushes.
+// -------------------------------------------------------------------
+
+void ExtensionBackgroundRuntime::dispatchRuntimeLifecycle(
+        const QString &extensionId)
+{
+    ExtensionBackgroundHost *host = m_hosts.value(extensionId);
+    if (!host || host->state() != ExtensionBackgroundHost::State::Ready
+            || !host->bridge() || !host->bridge()->backend())
+        return;
+    ExtensionShimBackend *backend = host->bridge()->backend();
+
+    const QString profileId = BrowserProfile::profileIdFor(
+        host->page() ? host->page()->profile() : nullptr);
+    ProfileSettings settings(profileId);
+    const QString key = QStringLiteral("extensions/runtime/")
+        + extensionId;
+    const QStringList record = settings.value(key).toStringList();
+    const QString prevVersion = record.value(0);
+    const QString prevBrowser = record.value(1);
+    const QString extVersion = backend->manifestJson()
+        .value(QStringLiteral("version")).toString();
+    const QString appVersion =
+        QCoreApplication::applicationVersion();
+
+    QString reason;
+    if (record.isEmpty())
+        reason = QStringLiteral("install");
+    else if (prevVersion != extVersion)
+        reason = QStringLiteral("update");
+    else if (prevBrowser != appVersion)
+        reason = QStringLiteral("browser_update");
+
+    if (!reason.isEmpty()) {
+        QJsonObject details{
+            {QStringLiteral("reason"), reason}};
+        if (reason == QLatin1String("update"))
+            details.insert(QStringLiteral("previousVersion"),
+                           prevVersion);
+        emit backend->pushEvent(
+            QStringLiteral("runtime.onInstalled"),
+            QJsonObject{{QStringLiteral("__args"),
+                         QJsonArray{details}}});
+        settings.setValue(key,
+                          QStringList{extVersion, appVersion});
+    }
+    // onStartup answers a profile startup with the extension already
+    // installed — the record predating this dispatch is what marks
+    // it (a fresh install wrote none before Ready and never sees the
+    // event on its own session).  The per-session set keeps respawns
+    // and mid-session re-enables from re-firing; an enable of an
+    // extension that was enabled last session does report startup
+    // here — a recorded approximation of Chrome's strict profile-
+    // startup-only rule, harmless in practice since the listener
+    // re-runs the same session init a real startup would.
+    if (!record.isEmpty() && !m_lifecycleSeen.contains(extensionId)) {
+        emit backend->pushEvent(
+            QStringLiteral("runtime.onStartup"),
+            QJsonObject{{QStringLiteral("__args"), QJsonArray()}});
+    }
+    m_lifecycleSeen.insert(extensionId);
+    host->nudge();
+}
+
+void ExtensionBackgroundRuntime::restartLifecycleSession()
+{
+    m_lifecycleSeen.clear();
 }
 
 // -------------------------------------------------------------------

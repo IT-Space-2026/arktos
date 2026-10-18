@@ -681,9 +681,15 @@ void ExtensionEventHub::syncNow()
             m_windowIds.insert(window,
                                ExtensionShimBackend::windowIdFor(window));
             if (m_firstScanDone) {
+                // Named-object payload — the shim's ARG_KEYS maps
+                // 'window' to the single event arg and the fan-out
+                // scrubs url fields under that same key.
                 runtime->broadcastEvent(
                     QStringLiteral("windows.onCreated"),
-                    windowJson(window, window->isActiveWindow()));
+                    QJsonObject{{QStringLiteral("window"),
+                                 windowJson(
+                                     window,
+                                     window->isActiveWindow())}});
             }
         }
     }

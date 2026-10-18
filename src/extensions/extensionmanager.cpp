@@ -394,6 +394,12 @@ void ExtensionManager::installOnProfile(QWebEngineProfile *profile)
         ProfileSettings(BrowserProfile::profileIdFor(profile))
             .remove(enabledSettingsKey(
                 profile->storageName(), plain.id));
+        // ER05: the hosted runtime's onInstalled/onStartup version
+        // record dies with the extension — a reinstall is a fresh
+        // install again.
+        ProfileSettings(BrowserProfile::profileIdFor(profile))
+            .remove(QStringLiteral("extensions/runtime/")
+                    + plain.id);
         m_tamperedIds.remove(plain.id);
         // EXT12: its health verdict too.
         m_healthVerdicts.remove(plain.id);
