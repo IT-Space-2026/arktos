@@ -206,6 +206,8 @@ This file is the task queue for the Devin CLI task loop
 | ICONS10 | App/logo button in nav bar ~15% bigger with correct aspect ratio — details below | done | 0 | shared navAccentSize = bar iconSize x1.84 (33px at 18px) for appMenu logo + profile avatar (PROF01 face-match kept); letterbox engine keeps aspect at any cell shape; bar row now face+margins driven (38px); new pixel-probe leg pins fill+aspect; tst_browsermainwindow 77/77, make check rc=0 (check-warnings PASS, 86 programs 0 failed) offscreen |
 | TABGRP03 | Vivaldi-style tab grouping UX — group header/workspace affordances like screenshot 4 — details below | done | 0 | labeled group-header segment on run leaders (name or "N tabs" fallback; horizontal leaders widen by the reserve, vertical rows use the reserved top band; rename live via tabGroupsChanged) + sidebar Workspaces section listing groups/members incl. hidden titles — verified: new groupHeaderSegments + groupWorkspaceSignals legs, tst_tabbar 31/31, tst_tabwidget 36/36, tst_browsermainwindow 77/77, make check rc=0 (89 programs 0 failed) offscreen --disable-gpu |
 | TRUST25 | Servo tabs: shield disabled + padlock invisible — engine chrome unbound — details below | done | 0 | shield/panel/padlock gained EngineTab bindings (url/load/pageRecreated signals, host+scheme trust cache reused, engine-validated TLS stand-in); WebEngine-only rows honest-disabled; engine bars get a LeftSide padlock — verified: new engineTabTrustChrome leg (fake backend = servo contract), tst_browsermainwindow 78/78, make check pending — will amend |
+| WKB04 | WebKit-lane research: inspector/devtools embed — WebKitWebInspector surface + protocol delta vs our BiDi/CDP panel — details below | pending | 0 | cross-lane item feeding the webkit spine's WK19 devTools flag; doc-only, commit to ui-work |
+| WKB06 | WebKit-lane spike fixtures — static test pages the spine's WK03/WK04 will drive — details below | pending | 0 | cross-lane item feeding the webkit spine; HTML fixtures only, commit to ui-work |
 
 
 ## Task details
@@ -1393,3 +1395,38 @@ the verdict for the servo tab's URL (fixture pages exist for servo
 loads; check the servo autotest/smoke infra), both revert correctly
 when switching back to a webengine tab; new legs in
 tst_BrowserMainWindow; make check PASS.
+
+### WKB04
+
+Inspector/devtools research doc → `.devin/WEBKIT-DEVTOOLS.md`. Feeds
+the webkit spine's WK19 capability decision. Research, no code:
+(a) `WebKitWebInspector` embed surface — can it attach to a WPE view,
+does it need its own toplevel, how does the `inspector://` scheme
+resolve; (b) protocol delta — WPE's inspector speaks the WebKit
+protocol; map that against what our existing devtools window (the
+BiDi/CDP client panel — see src/bidipanel/bidiclient) consumes:
+pluggable transport, or a second implementation; (c) WPE WebDriver
+(WebKitWebDriver) as an alternative surface — what it gives for
+free; (d) a plain recommendation for the `devTools` capability flag
+on the WebKit backend: false-first vs inspector-embed path.
+Verify: doc committed; the capability recommendation is stated
+plainly.
+
+### WKB06
+
+Spike fixture set → `spikes/webkit/fixtures/` committed. Static
+self-contained pages the webkit spine's WK03/WK04 spike tasks will
+drive:
+- `blank.html` — minimal, stable paint
+- `paint-proof.html` — deterministic rendered content (colored
+  blocks + text) whose pixels are assertable in a QImage screenshot
+- `input-click.html` — a link that navigates on click + a button
+  that records event coordinates
+- `eval-proof.html` — exposes a known value via JS for the typed
+  eval leg
+- `nav-target.html` — click destination with marker title/URL
+
+Each file self-contained (no external resources) with a comment
+header naming the WK task that consumes it.
+Verify: files committed; each is valid self-contained HTML (checked
+by parsing — e.g. xmllint or python html.parser — not by eyeballing).
