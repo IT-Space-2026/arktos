@@ -1279,6 +1279,12 @@ DownloadManager *DownloadManager::instance()
     return instanceFor(BrowserPaths::activeProfileId());
 }
 
+static QHash<QString, QPointer<DownloadManager>> &downloadManagers()
+{
+    static QHash<QString, QPointer<DownloadManager>> managers;
+    return managers;
+}
+
 DownloadManager *DownloadManager::instanceFor(const QString &profileId)
 {
     // Lazily created controllers.  Not parented on qApp: a QWidget
@@ -1286,11 +1292,19 @@ DownloadManager *DownloadManager::instanceFor(const QString &profileId)
     // lookup cheap without a leak-on-purpose flag.
     const QString id = BrowserPaths::isProfileId(profileId)
         ? profileId : BrowserPaths::activeProfileId();
-    static QHash<QString, QPointer<DownloadManager>> managers;
-    QPointer<DownloadManager> &manager = managers[id];
+    QPointer<DownloadManager> &manager = downloadManagers()[id];
     if (!manager)
         manager = new DownloadManager(id);
     return manager;
+}
+
+void DownloadManager::releaseFor(const QString &profileId)
+{
+    // Strict id check — no ambient-persona aliasing; releasing the
+    // wrong persona's store is worse than leaking it.
+    if (!BrowserPaths::isProfileId(profileId))
+        return;
+    delete downloadManagers().take(profileId);
 }
 
 DownloadManager::DownloadManager(QWidget *parent)

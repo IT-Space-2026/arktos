@@ -135,6 +135,12 @@ public:
     // shares its cookie store, while the jar's own policy + exception
     // lists persist under profiles/<id>/.
     static CookieJar *instanceFor(const QString &profileId);
+    // MEM10: destroys the jars bound to a deleted persona — its named
+    // profile's jar plus every materialized container profile's.
+    // Called by BrowserProfile::releasePersona; releaseForProfile is
+    // the per-object spelling (jars key on the profile, not the id).
+    static void releaseFor(const QString &profileId);
+    static void releaseForProfile(QWebEngineProfile *profile);
 
     QWebEngineProfile *profile() const;
     // The registry profile this jar's app-side state (accept policy,

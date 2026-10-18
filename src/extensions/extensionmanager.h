@@ -224,6 +224,9 @@ public:
     // active-profile alias; repeat calls for one id return the same
     // qApp-parented object.
     static ExtensionManager *instanceFor(const QString &profileId);
+    // MEM10: destroys the persona's instance if one was created —
+    // called by BrowserProfile::releasePersona on profile delete.
+    static void releaseFor(const QString &profileId);
     QString profileId() const { return m_profileId; }
 
     // False when Qt was built without webengine_extensions — every

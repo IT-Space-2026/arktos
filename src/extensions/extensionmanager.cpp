@@ -278,15 +278,29 @@ ExtensionManager *ExtensionManager::instance()
     return instanceFor(BrowserPaths::activeProfileId());
 }
 
+static QHash<QString, QPointer<ExtensionManager>> &extensionManagers()
+{
+    static QHash<QString, QPointer<ExtensionManager>> managers;
+    return managers;
+}
+
 ExtensionManager *ExtensionManager::instanceFor(const QString &profileId)
 {
     const QString id = BrowserPaths::isProfileId(profileId)
         ? profileId : BrowserPaths::activeProfileId();
-    static QHash<QString, QPointer<ExtensionManager>> managers;
-    QPointer<ExtensionManager> &manager = managers[id];
+    QPointer<ExtensionManager> &manager = extensionManagers()[id];
     if (!manager)
         manager = new ExtensionManager(id, qApp);
     return manager;
+}
+
+void ExtensionManager::releaseFor(const QString &profileId)
+{
+    // Strict id check — no ambient-persona aliasing; releasing the
+    // wrong persona's store is worse than leaking it.
+    if (!BrowserPaths::isProfileId(profileId))
+        return;
+    delete extensionManagers().take(profileId);
 }
 
 bool ExtensionManager::isSupported()

@@ -65,6 +65,9 @@ public:
     // MPROF02: the persistent store for a registry persona —
     // qApp-parented, one instance per id.
     static NotesModel *instanceFor(const QString &profileId);
+    // MEM10: destroys the persona's instance if one was created —
+    // called by BrowserProfile::releasePersona on profile delete.
+    static void releaseFor(const QString &profileId);
 
     // NOTE02 migration seam: folds the pre-multi-note scratch pad
     // (the sidebar/notes QSettings key) into this store as the first

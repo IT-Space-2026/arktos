@@ -131,6 +131,11 @@ public:
     // registry id, qApp-owned (MPROF05's profile delete tears them
     // down).  Every instance's files live under profiles/<id>/.
     static HistoryManager *instanceFor(const QString &profileId);
+    // MEM10: destroys the persona's instance if one was created —
+    // called by BrowserProfile::releasePersona on profile delete.
+    // A non-slug id releases nothing (never aliases the ambient
+    // persona the way instanceFor does).
+    static void releaseFor(const QString &profileId);
     QString profileId() const { return m_profileId; }
 
     bool historyContains(const QString &url) const;

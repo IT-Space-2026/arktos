@@ -159,15 +159,29 @@ HistoryManager *HistoryManager::instance()
     return instanceFor(BrowserPaths::activeProfileId());
 }
 
+static QHash<QString, QPointer<HistoryManager>> &historyManagers()
+{
+    static QHash<QString, QPointer<HistoryManager>> managers;
+    return managers;
+}
+
 HistoryManager *HistoryManager::instanceFor(const QString &profileId)
 {
     const QString id = BrowserPaths::isProfileId(profileId)
             ? profileId : BrowserPaths::activeProfileId();
-    static QHash<QString, QPointer<HistoryManager>> managers;
-    QPointer<HistoryManager> &manager = managers[id];
+    QPointer<HistoryManager> &manager = historyManagers()[id];
     if (!manager)
         manager = new HistoryManager(qApp, id);
     return manager;
+}
+
+void HistoryManager::releaseFor(const QString &profileId)
+{
+    // Strict id check — no ambient-persona aliasing; releasing the
+    // wrong persona's store is worse than leaking it.
+    if (!BrowserPaths::isProfileId(profileId))
+        return;
+    delete historyManagers().take(profileId);
 }
 
 #ifdef ARKTOS_RUSTCORE

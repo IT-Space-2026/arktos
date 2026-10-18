@@ -164,8 +164,16 @@ void BrowserApplication::prepareProfile(QWebEngineProfile *profile)
     if (!profile || s_preparedProfiles.contains(profile))
         return;
     s_preparedProfiles.insert(profile);
+    // MEM10: a destroyed profile must not poison the set — a
+    // re-materialized persona landing on the recycled address would
+    // otherwise skip prepareProfile() entirely.
+    QObject::connect(profile, &QObject::destroyed, profile, [profile]() {
+        s_preparedProfiles.remove(profile);
+    });
     CookieJar::instance(profile);
-    SchemeAccessHandler::installAll(profile, qApp);
+    // Handlers parented to the profile die with it — a qApp parent
+    // would keep a deleted persona's handler set alive forever.
+    SchemeAccessHandler::installAll(profile, profile);
     BrowserProfile::applySettings(profile);
     if (BrowserApplication::isTorMode()) {
         // TOR02 hardening, applied on top of the user preferences:

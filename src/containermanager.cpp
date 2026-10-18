@@ -67,15 +67,47 @@ ContainerManager *ContainerManager::instance()
     return instanceFor(BrowserPaths::activeProfileId());
 }
 
+static QHash<QString, QPointer<ContainerManager>> &containerManagers()
+{
+    static QHash<QString, QPointer<ContainerManager>> managers;
+    return managers;
+}
+
 ContainerManager *ContainerManager::instanceFor(const QString &profileId)
 {
     const QString id = BrowserPaths::isProfileId(profileId)
             ? profileId : BrowserPaths::activeProfileId();
-    static QHash<QString, QPointer<ContainerManager>> managers;
-    QPointer<ContainerManager> &manager = managers[id];
+    QPointer<ContainerManager> &manager = containerManagers()[id];
     if (!manager)
         manager = new ContainerManager(qApp, id);
     return manager;
+}
+
+ContainerManager *ContainerManager::instanceIfCreated(
+    const QString &profileId)
+{
+    const QString id = BrowserPaths::isProfileId(profileId)
+            ? profileId : BrowserPaths::activeProfileId();
+    return containerManagers().value(id);
+}
+
+void ContainerManager::releaseFor(const QString &profileId)
+{
+    // Strict id check — no ambient-persona aliasing; releasing the
+    // wrong persona's store is worse than leaking it.
+    if (!BrowserPaths::isProfileId(profileId))
+        return;
+    ContainerManager *manager = containerManagers().take(profileId);
+    if (!manager)
+        return;
+    // ~ContainerManager deliberately leaves container profiles to Qt
+    // at app teardown — a mid-process persona release instead destroys
+    // them here under releaseProfileFor()'s no-live-pages contract.
+    const QList<QWebEngineProfile *> profiles = manager->m_profiles.values();
+    for (QWebEngineProfile *profile : profiles)
+        delete profile;
+    manager->m_profiles.clear();
+    delete manager;
 }
 
 QString ContainerManager::defaultContainerId()

@@ -67,6 +67,7 @@
 
 #include "autosaver.h"
 #include "browserprofile.h"
+#include "containermanager.h"
 #include "navigationpolicy.h"
 
 #include <qcoreapplication.h>
@@ -131,20 +132,55 @@ CookieJar::CookieJar(QObject *parent)
 {
 }
 
+static QHash<QWebEngineProfile *, CookieJar *> &cookieJars()
+{
+    static QHash<QWebEngineProfile *, CookieJar *> jars;
+    return jars;
+}
+
 CookieJar *CookieJar::instance(QWebEngineProfile *profile)
 {
     if (!profile)
         profile = BrowserProfile::normalProfile();
-    static QHash<QWebEngineProfile*, CookieJar*> jars;
-    CookieJar *&jar = jars[profile];
-    if (!jar)
+    CookieJar *&jar = cookieJars()[profile];
+    if (!jar) {
         jar = new CookieJar(profile, qApp);
+        // A destroyed profile must not leave a jar keyed on its dead
+        // address — a recycled profile object would inherit the stale
+        // jar (MEM10, same contract as the OTR notes map).  ~CookieJar
+        // only touches the QPointer-guarded store, so running it from
+        // the destroyed signal is safe.
+        QObject::connect(profile, &QObject::destroyed, qApp, [profile]() {
+            delete cookieJars().take(profile);
+        });
+    }
     return jar;
 }
 
 CookieJar *CookieJar::instanceFor(const QString &profileId)
 {
     return instance(BrowserProfile::profileFor(profileId));
+}
+
+void CookieJar::releaseForProfile(QWebEngineProfile *profile)
+{
+    delete cookieJars().take(profile);
+}
+
+void CookieJar::releaseFor(const QString &profileId)
+{
+    // Jars key on the profile OBJECT: the persona's named profile plus
+    // every container profile its ContainerManager materialized.
+    // Runs before either profile dies — ~CookieJar still touches the
+    // profile's cookie store through the QPointer guard.
+    releaseForProfile(BrowserProfile::personaProfileIfCreated(profileId));
+    if (ContainerManager *manager =
+            ContainerManager::instanceIfCreated(profileId)) {
+        const QList<QWebEngineProfile *> containers =
+            manager->createdProfiles();
+        for (QWebEngineProfile *profile : containers)
+            releaseForProfile(profile);
+    }
 }
 
 CookieJar::~CookieJar()

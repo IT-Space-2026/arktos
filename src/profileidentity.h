@@ -61,6 +61,9 @@ public:
     // ambient (focused window's) persona for context-less callers.
     static ProfileIdentity *instance();
     static ProfileIdentity *instanceFor(const QString &profileId);
+    // MEM10: destroys the persona's instance if one was created —
+    // called by BrowserProfile::releasePersona on profile delete.
+    static void releaseFor(const QString &profileId);
 
     // The persona this identity is bound to.
     QString profileId() const;
