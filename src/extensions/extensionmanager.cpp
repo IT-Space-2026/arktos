@@ -350,8 +350,23 @@ void ExtensionManager::installOnProfile(QWebEngineProfile *profile)
             emit changed();
         };
     };
+    // EXT20: the engine does not persist isEnabled across restarts —
+    // installed extensions enumerate disabled on a cold profile (the
+    // popup then renders chrome.runtime-less and dead-white).  The
+    // enabled/disabled choice is ours: setExtensionEnabled() records
+    // it under extensions/enabled/<storage>/<id>, and each engine
+    // loadFinished re-applies the stored flag until it lands.
     connect(extensions, &QWebEngineExtensionManager::loadFinished,
-            this, relay(&ExtensionManager::extensionLoaded));
+            this, [this, profile, extensions, relay](
+                const QWebEngineExtensionInfo &info) {
+        const QVariant wanted = ProfileSettings(
+            BrowserProfile::profileIdFor(profile)).value(
+                enabledSettingsKey(profile->storageName(), info.id()));
+        if (wanted.isValid() && info.isLoaded()
+                && info.isEnabled() != wanted.toBool())
+            extensions->setExtensionEnabled(info, wanted.toBool());
+        relay(&ExtensionManager::extensionLoaded)(info);
+    });
     connect(extensions, &QWebEngineExtensionManager::installFinished,
             this, [this, profile](const QWebEngineExtensionInfo &info) {
         const ExtensionInfo plain = infoFrom(info);
@@ -368,9 +383,13 @@ void ExtensionManager::installOnProfile(QWebEngineProfile *profile)
     connect(extensions, &QWebEngineExtensionManager::uninstallFinished,
             this, [this, profile](const QWebEngineExtensionInfo &info) {
         const ExtensionInfo plain = infoFrom(info);
-        // SEC25: the pin and any tamper flag die with the extension.
+        // SEC25: the pin and any tamper flag die with the extension;
+        // the EXT20 enable record goes with them.
         ProfileSettings(BrowserProfile::profileIdFor(profile))
             .remove(integritySettingsKey(
+                profile->storageName(), plain.id));
+        ProfileSettings(BrowserProfile::profileIdFor(profile))
+            .remove(enabledSettingsKey(
                 profile->storageName(), plain.id));
         m_tamperedIds.remove(plain.id);
         // EXT12: its health verdict too.
@@ -408,9 +427,36 @@ void ExtensionManager::installOnProfile(QWebEngineProfile *profile)
     // later lifecycle pulse re-scans through the changed() coalescer.
     const QPointer<QWebEngineProfile> scanGuard(profile);
     QTimer::singleShot(5000, this, [this, scanGuard]() {
-        if (scanGuard)
-            enqueuePendingProbes();
+        if (!scanGuard)
+            return;
+        // EXT20 second pass — installed extensions enumerated before
+        // the loadFinished wiring still need their flag re-applied.
+        reapplyEnabledFlags(scanGuard);
+        enqueuePendingProbes();
     });
+#endif
+}
+
+void ExtensionManager::reapplyEnabledFlags(QWebEngineProfile *profile)
+{
+#if QT_CONFIG(webengine_extensions)
+    if (!profile || profile->isOffTheRecord())
+        return;
+    QWebEngineExtensionManager *extensions = profile->extensionManager();
+    if (!extensions)
+        return;
+    ProfileSettings settings(BrowserProfile::profileIdFor(profile));
+    const QList<QWebEngineExtensionInfo> loaded =
+        extensions->extensions();
+    for (const QWebEngineExtensionInfo &info : loaded) {
+        const QVariant wanted = settings.value(
+            enabledSettingsKey(profile->storageName(), info.id()));
+        if (wanted.isValid() && info.isLoaded()
+                && info.isEnabled() != wanted.toBool())
+            extensions->setExtensionEnabled(info, wanted.toBool());
+    }
+#else
+    Q_UNUSED(profile);
 #endif
 }
 
@@ -570,6 +616,18 @@ void ExtensionManager::setExtensionEnabled(const QString &id, bool enabled)
     if (QWebEngineExtensionManager *extensions = managerFor(m_profiles)) {
         const QWebEngineExtensionInfo info = findById(extensions, id);
         if (!info.id().isEmpty()) {
+            // EXT20: persist the choice ourselves — the engine's
+            // user_prefs only remembers disable_reasons for entries
+            // it wrote, so an installed extension comes back
+            // disabled after a restart without this flag.
+            for (const QPointer<QWebEngineProfile> &profile :
+                 m_profiles) {
+                if (!profile || profile->isOffTheRecord())
+                    continue;
+                ProfileSettings(BrowserProfile::profileIdFor(profile))
+                    .setValue(enabledSettingsKey(
+                        profile->storageName(), id), enabled);
+            }
             extensions->setExtensionEnabled(info, enabled);
             // Qt exposes no enabledChanged signal — poll briefly until
             // the engine reports the new state (or the extension
@@ -715,6 +773,7 @@ void ExtensionManager::installBundledExtensions(QWebEngineProfile *profile)
         PendingBundle pending;
         pending.engine = extensions;
         pending.profileId = BrowserProfile::profileIdFor(profile);
+        pending.storageName = profile->storageName();
         pending.settingsKey = settingsKey;
         pending.fileName = name;
         pending.stem = stem;
@@ -766,8 +825,14 @@ void ExtensionManager::finishBundledInstall(const ExtensionInfo &info)
         if (pending.enable) {
             const QWebEngineExtensionInfo ext =
                 findById(pending.engine, info.id);
-            if (!ext.id().isEmpty())
+            if (!ext.id().isEmpty()) {
                 pending.engine->setExtensionEnabled(ext, true);
+                // EXT20: record the bundled enable so it survives
+                // restarts — the engine does not persist it.
+                ProfileSettings(pending.profileId).setValue(
+                    enabledSettingsKey(pending.storageName, info.id),
+                    true);
+            }
         }
         return;
     }
@@ -1084,6 +1149,15 @@ QString ExtensionManager::integritySettingsKey(const QString &storageName,
                                                const QString &id)
 {
     return QLatin1String("extensions/integrity/")
+        + (storageName.isEmpty()
+           ? QStringLiteral("default") : storageName)
+        + QLatin1Char('/') + id;
+}
+
+QString ExtensionManager::enabledSettingsKey(const QString &storageName,
+                                             const QString &id)
+{
+    return QLatin1String("extensions/enabled/")
         + (storageName.isEmpty()
            ? QStringLiteral("default") : storageName)
         + QLatin1Char('/') + id;

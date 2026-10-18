@@ -433,6 +433,9 @@ private:
                                const ExtensionInfo &info);
     static QString integritySettingsKey(const QString &storageName,
                                         const QString &id);
+    static QString enabledSettingsKey(const QString &storageName,
+                                      const QString &id);
+    void reapplyEnabledFlags(QWebEngineProfile *profile);
     void reloadUserScripts(QWebEngineProfile *profile);
     void scheduleAutoUpdateCheck();
     void maybeAutoUpdateCheck();
@@ -462,6 +465,7 @@ private:
     struct PendingBundle {
         QPointer<QWebEngineExtensionManager> engine;
         QString profileId;      // persona whose settings hold the marker
+        QString storageName;    // engine profile storage name
         QString settingsKey;    // "extensions/bundled/<storageName>"
         QString fileName;       // basename — the consumed marker
         QString stem;           // name stem for loose correlation

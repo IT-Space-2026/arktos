@@ -82,6 +82,9 @@ private slots:
     void extensionMessageRelay();
     void extensionEventSurfaces();
     void extensionPopupContext();
+    void actionPopupSelfWires();
+    void realExtensionPopup();
+    void enabledStatePersists();
 
 private:
     // Minimal PK zip writer (store-only) — enough for the update
@@ -2374,6 +2377,293 @@ void tst_ExtensionManager::extensionPopupContext()
     QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 20000);
     manager->removeExtension(id);
     QDir(dir).removeRecursively();
+}
+
+// SEC-EXT white-popup regression probe: replicate
+// ExtensionActionBar::openPopup's EXACT construction — a view inside
+// a popup frame, a plain page on the AMBIENT webEngineProfile() (not
+// host->page()->profile()), view->load() with no explicit attach.
+// The runtime's view watch must wire the bridge itself; a profile
+// mismatch or a missed watch is the blank-popup failure mode.
+void tst_ExtensionManager::actionPopupSelfWires()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extselfwire-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-selfwire\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"],"
+                "\"action\":{\"default_popup\":\"popup.html\"},"
+                "\"background\":{\"service_worker\":\"sw.js\"}}");
+        f.close();
+        QFile w(dir + QLatin1String("/sw.js"));
+        QVERIFY(w.open(QIODevice::WriteOnly));
+        w.write(
+            "chrome.runtime.onInstalled.addListener(function(){});\n");
+        w.close();
+        QFile h(dir + QLatin1String("/popup.html"));
+        QVERIFY(h.open(QIODevice::WriteOnly));
+        h.write("<!doctype html><html><body><div id=\"r\">x</div>"
+                "<script src=\"popup.js\"></script></body></html>");
+        h.close();
+        QFile j(dir + QLatin1String("/popup.js"));
+        QVERIFY(j.open(QIODevice::WriteOnly));
+        j.write("self.__popupBootRan=!!(chrome&&chrome.runtime);\n");
+        j.close();
+    }
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    auto loaded = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-selfwire")
+                && info.error.isEmpty())
+            *loaded = info.id;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QElapsedTimer timer;
+    timer.start();
+    while (loaded->isEmpty() && timer.elapsed() < 30000)
+        QTest::qWait(50);
+    const QString id = *loaded;
+    QVERIFY2(!id.isEmpty(), "fixture loaded");
+    manager->setExtensionEnabled(id, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(id)
+            && runtime->host(id)->state()
+               == ExtensionBackgroundHost::State::Ready,
+        45000);
+    ExtensionBackgroundHost *host = runtime->host(id);
+    QVERIFY(host && host->page());
+
+    // The ambient profile openPopup uses MUST be the host's own —
+    // otherwise the extension's documents don't even resolve there.
+    QCOMPARE(BrowserApplication::instance()->webEngineProfile(),
+             host->page()->profile());
+
+    auto eval = [](QWebEnginePage *page, const QString &source) {
+        auto result = std::make_shared<QVariant>();
+        page->runJavaScript(source,
+                            [result](const QVariant &v) {
+                                *result = v; });
+        QElapsedTimer t;
+        t.start();
+        while (!result->isValid() && t.elapsed() < 15000)
+            QTest::qWait(50);
+        return *result;
+    };
+
+    // openPopup verbatim: view inside a popup frame, plain page on
+    // the ambient profile, load, no explicit attach.
+    auto *frame = new QFrame(nullptr, Qt::Popup);
+    auto *view = new QWebEngineView(frame);
+    QWebEnginePage *page = new QWebEnginePage(
+        BrowserApplication::instance()->webEngineProfile(), view);
+    view->setPage(page);
+    view->load(QUrl(QStringLiteral("chrome-extension://") + id
+                    + QStringLiteral("/popup.html")));
+    frame->show();
+
+    // The watch attaches the page bridge once the document commits.
+    QTRY_VERIFY_WITH_TIMEOUT(runtime->hasExtensionPage(page), 15000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(page, QStringLiteral(
+            "!!(window.__arktosHost&&__arktosHost.bridgeUp"
+            "&&window.__arktosShim)")).toBool(),
+        30000);
+    QCOMPARE(eval(page, QStringLiteral(
+                 "self.__popupBootRan===true")).toBool(),
+             true);
+
+    frame->close();
+    view->deleteLater();
+    frame->deleteLater();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    manager->setExtensionEnabled(id, false);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 20000);
+    manager->removeExtension(id);
+    QDir(dir).removeRecursively();
+}
+
+// Diagnostic leg for a REAL installed extension — pointed at an
+// unpacked dir via ARKTOS_EXTTEST_DIR (e.g. the profile's Bitwarden).
+// Loads it, waits for the hosted background, opens its action popup
+// the way ExtensionActionBar does, and dumps the page's shim/bridge
+// state + console-visible boot outcome.
+void tst_ExtensionManager::realExtensionPopup()
+{
+    const QString dir =
+        qEnvironmentVariable("ARKTOS_EXTTEST_DIR");
+    if (dir.isEmpty())
+        QSKIP("set ARKTOS_EXTTEST_DIR to an unpacked extension dir");
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    auto loaded = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.error.isEmpty())
+            *loaded = info.id;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QElapsedTimer timer;
+    timer.start();
+    while (loaded->isEmpty() && timer.elapsed() < 60000)
+        QTest::qWait(100);
+    const QString id = *loaded;
+    QVERIFY2(!id.isEmpty(), "real extension loaded");
+
+    manager->setExtensionEnabled(id, true);
+    ExtensionBackgroundHost *host = nullptr;
+    QElapsedTimer hostTimer;
+    hostTimer.start();
+    while (hostTimer.elapsed() < 60000) {
+        host = runtime->host(id);
+        if (host && host->state()
+                == ExtensionBackgroundHost::State::Ready)
+            break;
+        QTest::qWait(200);
+    }
+    QVERIFY2(host, "hosted background exists");
+    if (host->state() != ExtensionBackgroundHost::State::Ready)
+        qWarning() << "HOST STATE:" << int(host->state())
+                   << "errors:" << runtime->contextsJson(id);
+
+    // openPopup verbatim — ambient profile, plain page, no attach.
+    auto *frame = new QFrame(nullptr, Qt::Popup);
+    auto *view = new QWebEngineView(frame);
+    QWebEnginePage *page = new QWebEnginePage(
+        BrowserApplication::instance()->webEngineProfile(), view);
+    view->setPage(page);
+    QSignalSpy loadSpy(page, &QWebEnginePage::loadFinished);
+    // Resolve the action popup URL like the action bar does.
+    QString popupPath = QStringLiteral("popup/index.html");
+    for (const ExtensionManager::ExtensionInfo &info
+         : manager->extensions()) {
+        if (info.id == id && info.actionPopupUrl.isValid()) {
+            popupPath = info.actionPopupUrl.path();
+            break;
+        }
+    }
+    view->load(QUrl(QStringLiteral("chrome-extension://") + id
+                    + popupPath));
+    qWarning() << "MARKER: load issued";
+    frame->resize(360, 500);
+    frame->show();
+    qWarning() << "MARKER: frame shown, waiting for loadFinished";
+    connect(page, &QWebEnginePage::renderProcessTerminated,
+            this, [](QWebEnginePage::RenderProcessTerminationStatus s,
+                     int code) {
+                qWarning() << "MARKER: renderProcessTerminated"
+                           << int(s) << code;
+            });
+
+    QTRY_VERIFY_WITH_TIMEOUT(loadSpy.count() >= 1, 30000);
+    qWarning() << "MARKER: loadFinished ok=" << loadSpy.last().at(0);
+    QTest::qWait(6000);   // shim poll + sweep interval
+
+    auto eval = [](QWebEnginePage *p, const QString &source) {
+        auto result = std::make_shared<QVariant>();
+        p->runJavaScript(source,
+                         [result](const QVariant &v) {
+                             *result = v; });
+        QElapsedTimer t;
+        t.start();
+        while (!result->isValid() && t.elapsed() < 15000)
+            QTest::qWait(50);
+        return *result;
+    };
+    qWarning() << "POPUP STATE:"
+               << eval(page, QStringLiteral(
+                      "JSON.stringify({url:location.href,"
+                      "title:document.title,"
+                      "ready:document.readyState,"
+                      "bodyLen:document.body"
+                      "?document.body.innerHTML.length:-1,"
+                      "bodyTxt:document.body?document.body.innerText"
+                      ".slice(0,120):'',"
+                      "chrome:typeof chrome,"
+                      "runtime:typeof chrome!=='undefined'"
+                      "&&!!chrome.runtime,"
+                      "hostCfg:!!window.__ARKTOS_HOST_CONFIG,"
+                      "host:window.__arktosHost?{state:__arktosHost"
+                      ".state,up:__arktosHost.bridgeUp,"
+                      "err:__arktosHost.errors.slice(-4)}:null})"))
+                      .toString();
+    qWarning() << "PAGE PROFILE MATCH:"
+               << (page->profile() == host->page()->profile());
+    qWarning() << "BRIDGE ATTACHED:" << runtime->hasExtensionPage(page);
+    qWarning() << "HOST STATE INT:" << int(host->state());
+
+    frame->close();
+    view->deleteLater();
+    frame->deleteLater();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    manager->setExtensionEnabled(id, false);
+    manager->removeExtension(id);
+}
+
+// EXT20: the engine forgets isEnabled across restarts — installed
+// extensions enumerate disabled on a cold profile and the action
+// popup then renders without chrome.runtime (dead-white).  Arktos
+// persists the choice under extensions/enabled/<storage>/<id> and
+// re-applies it on engine load, so the flag must follow the toggle
+// and uninstall must clear it.
+void tst_ExtensionManager::enabledStatePersists()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString root = QDir::temp().filePath(
+        QStringLiteral("tst-extena-%1")
+            .arg(QCoreApplication::applicationPid()));
+    const QString dir = writeExtension(root, QStringLiteral("tst-ena"),
+                                       QStringLiteral("1.0.0"));
+    QVERIFY(!dir.isEmpty());
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    QWebEngineProfile *profile = BrowserApplication::webEngineProfile();
+
+    for (const ExtensionManager::ExtensionInfo &info
+         : manager->extensions()) {
+        if (!info.builtin && info.name == QLatin1String("tst-ena"))
+            manager->removeExtension(info.id);
+    }
+    QTest::qWait(300);
+
+    const QString id = installFixture(dir);
+    QVERIFY2(!id.isEmpty(), "fixture extension must install");
+
+    const QString storage = profile->storageName().isEmpty()
+        ? QStringLiteral("default") : profile->storageName();
+    const QString key = QStringLiteral("extensions/enabled/")
+        + storage + QLatin1Char('/') + id;
+
+    manager->setExtensionEnabled(id, true);
+    QCOMPARE(ProfileSettings().value(key).toBool(), true);
+    manager->setExtensionEnabled(id, false);
+    QCOMPARE(ProfileSettings().value(key).toBool(), false);
+
+    manager->removeExtension(id);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !ProfileSettings().contains(key), 10000);
+
+    QDir(root).removeRecursively();
 }
 
 QTEST_MAIN(tst_ExtensionManager)
