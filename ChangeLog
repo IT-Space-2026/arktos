@@ -3663,3 +3663,18 @@ WebKit profile storage (WK11): the webkit backend's profiles now own
     now bind-mounts the WPE prefix under /arktos-rt and plants a
     --symlink at the real path — workers exec again without exposing
     $HOME content.
+WebKit clear + cookie policy (WK12): the webkit backend's
+    Profile::clear(StorageAreas) now drives
+    webkit_website_data_manager_clear on the profile's session —
+    cache, cookies, DOM storage and service-worker registrations map
+    onto their WebKitWebsiteDataTypes stores, AllAreas performs a
+    full wipe, and VisitedLinksArea honestly reports as a no-op
+    (WebKit keeps visited-link state in-process, outside the
+    WebsiteDataManager). The app's cookie policy rides on the
+    session's WebKitCookieManager at materialization: the persona's
+    persisted accept policy maps onto WebKit's three-state model
+    (AcceptNever / AcceptAlways / first-party-only), and named
+    sessions persist cookies to <dataDir>/cookies.sqlite unless the
+    keep policy is KeepUntilExit, which stays memory-only. Reading
+    the policy never mints a persona directory, so off-the-record
+    profiles still write nothing.

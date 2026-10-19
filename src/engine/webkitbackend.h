@@ -94,6 +94,30 @@
 // keeps the engine-default shared session; offTheRecord always gets
 // webkit_network_session_new_ephemeral — a session whose data
 // manager owns no directories and writes nothing.
+//
+// WK12 fills the storage-wipe + cookie-policy half of the profile
+// contract.  clear(StorageAreas) maps onto
+// webkit_website_data_manager_clear on the profile's session:
+// HttpCacheArea -> MEMORY+DISK_CACHE, CookiesArea -> COOKIES,
+// DomStorageArea -> SESSION+LOCAL_STORAGE+INDEXEDDB+DOM_CACHE,
+// ServiceWorkerArea -> SERVICE_WORKER_REGISTRATIONS, AllAreas -> the
+// full WEBKIT_WEBSITE_DATA_ALL set.  VisitedLinksArea has no WebKit
+// store (visited-link state is in-process only) — an honest no-op,
+// never silently widened.  Cookie policy is applied once at session
+// materialization, resolved from the persona's persisted cookies/*
+// settings (the same keys CookieJar::loadSettings reads):
+// AcceptNever -> ACCEPT_NEVER, AcceptAlways -> ACCEPT_ALWAYS unless
+// the blockThirdPartyCookies toggle is set, otherwise (incl. the
+// default AcceptOnlyFromSitesNavigatedTo) -> ACCEPT_NO_THIRD_PARTY.
+// KeepUntilExit keeps WebKit's memory-only default (no
+// set_persistent_storage); the other keep policies point a named
+// session's cookie manager at <dataDir>/cookies.sqlite — without
+// that call a WebKit session never persists cookies at all.  The
+// honest gaps: KeepUntilTimeLimit's 90-day cap is a CookieJar-side
+// rewrite WebKitCookieManager cannot express (it persists like
+// KeepUntilExpire), and the per-host exception lists stay behind
+// the per-attempt cookieFilter contract capabilities() already
+// reports false.
 
 #include "engineinterface.h"
 
@@ -370,7 +394,28 @@ public:
     // session — the "writes nothing" guarantee WK11 asserts.
     bool sessionIsEphemeral() const;
 
+    // WK12 diagnostics/test surface (the WK11 sessionDataDir()
+    // role).  cookieAcceptPolicy() reports the
+    // WebKitCookieAcceptPolicy ordinal the session was configured
+    // with (-1 until the session exists or when unlinked);
+    // cookieStoragePath() is the file set_persistent_storage was
+    // pointed at — empty for OTR, the shared default session and
+    // KeepUntilExit personas, whose cookies then live in memory
+    // only.  fetchCookies() is an async read-back of the session's
+    // WebKitCookieManager store as "name=value" strings — the
+    // clear() leg's cookie-manager read-back; on an ephemeral
+    // session it answers the memory store.
+    int cookieAcceptPolicy() const { return m_cookieAcceptPolicy; }
+    QString cookieStoragePath() const { return m_cookieStoragePath; }
+    void fetchCookies(
+        const std::function<void(const QStringList &)> &callback);
+
 private:
+    // WK12: one-shot cookie-policy apply at session materialization —
+    // reads the persona's persisted cookies/* keys and drives the
+    // session's WebKitCookieManager.
+    void applyCookiePolicy();
+
     Engine::ProfileOptions m_options;
     QString m_userAgent;
     Engine::RequestPolicy *m_policy = nullptr;
@@ -380,6 +425,9 @@ private:
     WebKitNetworkSession *m_networkSession = nullptr;
     QString m_sessionDataDir;
     QString m_sessionCacheDir;
+    int m_cookieAcceptPolicy = -1;
+    QString m_cookieStoragePath;
+    bool m_cookiePolicyApplied = false;
 };
 
 class WebkitBackend : public Engine::Backend

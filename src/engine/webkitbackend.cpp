@@ -42,9 +42,11 @@
 
 #include "browserpaths.h"
 #include "engineregistry.h"
+#include "profilesettings.h"
 
 #include <qapplication.h>
 #include <qevent.h>
+#include <qfile.h>
 #include <qfileinfo.h>
 #include <qpainter.h>
 #include <qpixmap.h>
@@ -265,6 +267,51 @@ Engine::HistoryEntry entryFromBfItem(WebKitBackForwardListItem *item,
     entry.title = QString::fromUtf8(title ? title : "");
     entry.index = index;
     return entry;
+}
+
+// WK12 — clear() is fire-and-forget in the interface (WebEngine's
+// clear* calls are async under the hood too), but a failed wipe must
+// be loud in the log rather than silently keeping state.
+void clearFinished(GObject *object, GAsyncResult *result, gpointer)
+{
+    GError *error = nullptr;
+    if (!webkit_website_data_manager_clear_finish(
+            WEBKIT_WEBSITE_DATA_MANAGER(object), result, &error))
+        qWarning("webkit: website-data clear failed: %s",
+                 error ? error->message : "?");
+    g_clear_error(&error);
+}
+
+// WK12 — the fetchCookies heap block keeping the callback alive
+// across the async get_all_cookies hop (the EvalCall shape).  The
+// result fires even on error — a parked caller must never hang.
+struct FetchCookiesCall {
+    std::function<void(const QStringList &)> callback;
+};
+
+void cookiesReady(GObject *object, GAsyncResult *result, gpointer data)
+{
+    FetchCookiesCall *call = static_cast<FetchCookiesCall *>(data);
+    GError *error = nullptr;
+    GList *cookies = webkit_cookie_manager_get_all_cookies_finish(
+        WEBKIT_COOKIE_MANAGER(object), result, &error);
+    if (error) {
+        qWarning("webkit: cookie read-back failed: %s", error->message);
+        g_clear_error(&error);
+    }
+    QStringList out;
+    for (GList *l = cookies; l; l = l->next) {
+        SoupCookie *cookie = static_cast<SoupCookie *>(l->data);
+        const char *name = soup_cookie_get_name(cookie);
+        const char *value = soup_cookie_get_value(cookie);
+        out.append(QString::fromUtf8(name ? name : "")
+                   + QLatin1Char('=')
+                   + QString::fromUtf8(value ? value : ""));
+    }
+    g_list_free_full(cookies, (GDestroyNotify)soup_cookie_free);
+    if (call->callback)
+        call->callback(out);
+    delete call;
 }
 
 } // namespace
@@ -1200,8 +1247,93 @@ WebKitNetworkSession *WebkitProfile::networkSession()
             }
         }
     }
+    // WK12: the persona's cookie policy rides on the session's cookie
+    // manager — applied once on materialization.
+    if (m_networkSession && !m_cookiePolicyApplied) {
+        m_cookiePolicyApplied = true;
+        applyCookiePolicy();
+    }
 #endif
     return m_networkSession;
+}
+
+void WebkitProfile::applyCookiePolicy()
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    if (!m_networkSession)
+        return;
+    WebKitCookieManager *manager =
+        webkit_network_session_get_cookie_manager(m_networkSession);
+    if (!manager)
+        return;
+
+    // The persona whose policy this session answers to: a persona
+    // storageName resolves its own id; path-rooted containers and
+    // foreign names ride the ambient persona (the owning-window
+    // contract — container cookies share the owner persona's rules
+    // on the WebEngine side too); an OTR profile applies the ambient
+    // persona's policy in memory only.
+    QString personaId = webkitPersonaId(m_options.storageName);
+    if (personaId.isEmpty())
+        personaId = BrowserPaths::activeProfileId();
+
+    // The persisted values are CookieJar's QMetaEnum keys — the same
+    // strings cookiejar.cpp's loadSettings reads, with its defaults.
+    QByteArray accept = "AcceptOnlyFromSitesNavigatedTo";
+    QByteArray keep = "KeepUntilExpire";
+    bool blockThirdParty = true;
+    // ProfileSettings(profileId) mkpaths profiles/<id>/ on
+    // construction (ProfilePaths::dirFor) — only touch it when the
+    // persona already has a store, so merely reading the cookie
+    // policy can never mint a persona dir (an OTR profile creates
+    // nothing).
+    if (QFileInfo::exists(BrowserPaths::dataRoot()
+            + QLatin1String("/profiles/") + personaId)) {
+        ProfileSettings settings(personaId);
+        settings.beginGroup(QStringLiteral("cookies"));
+        accept = settings.value(
+            QLatin1String("acceptCookies"),
+            QLatin1String("AcceptOnlyFromSitesNavigatedTo")).toByteArray();
+        keep = settings.value(
+            QLatin1String("keepCookiesUntil"),
+            QLatin1String("KeepUntilExpire")).toByteArray();
+        blockThirdParty = settings.value(
+            QLatin1String("blockThirdPartyCookies"), true).toBool();
+    }
+
+    // AcceptPolicy -> WebKitCookieAcceptPolicy.  WebKit's three-state
+    // model carries all three app policies: NEVER for AcceptNever,
+    // ALWAYS for AcceptAlways — dropped to NO_THIRD_PARTY when the
+    // PRIV01 blockThirdPartyCookies toggle is on — and
+    // NO_THIRD_PARTY (first-party only) for the default
+    // AcceptOnlyFromSitesNavigatedTo.
+    WebKitCookieAcceptPolicy policy =
+        WEBKIT_COOKIE_POLICY_ACCEPT_NO_THIRD_PARTY;
+    if (accept == "AcceptNever")
+        policy = WEBKIT_COOKIE_POLICY_ACCEPT_NEVER;
+    else if (accept == "AcceptAlways" && !blockThirdParty)
+        policy = WEBKIT_COOKIE_POLICY_ACCEPT_ALWAYS;
+    m_cookieAcceptPolicy = int(policy);
+    webkit_cookie_manager_set_accept_policy(manager, policy);
+
+    // KeepPolicy -> set_persistent_storage.  WebKit holds cookies in
+    // memory only until given a file — KeepUntilExit maps to exactly
+    // that (never called, the session store dies with the session);
+    // the other keep policies get cookies.sqlite under the named
+    // session's data root.  Honest gap: KeepUntilTimeLimit's 90-day
+    // expiry cap is a CookieJar-side cookieAdded rewrite with no
+    // WebKitCookieManager surface — it persists to natural expiry
+    // like KeepUntilExpire.  The shared default session keeps its
+    // own storage — we never point it at a per-persona file.
+    if (!m_sessionDataDir.isEmpty() && keep != "KeepUntilExit") {
+        m_cookieStoragePath =
+            m_sessionDataDir + QLatin1String("/cookies.sqlite");
+        webkit_cookie_manager_set_persistent_storage(
+            manager,
+            QFile::encodeName(m_cookieStoragePath).constData(),
+            WEBKIT_COOKIE_PERSISTENT_STORAGE_SQLITE);
+    }
+#endif
 }
 
 bool WebkitProfile::sessionIsEphemeral() const
@@ -1262,9 +1394,78 @@ QList<Engine::Script> WebkitProfile::scripts() const
 
 void WebkitProfile::clear(Engine::StorageAreas areas)
 {
-    // WK12 maps this onto WebKitWebsiteDataManager::clear on the
-    // profile's session (WK11-rooted or ephemeral).
+#ifdef ARKTOS_WEBKIT_LINKED
+    // WK12 — StorageAreas -> WebKitWebsiteDataTypes.  The engine-
+    // neutral names map onto the stores WebKit actually persists;
+    // VisitedLinksArea has no WebsiteDataManager store at all
+    // (visited-link state lives in the web process's memory) and is
+    // an honest no-op rather than a silently widened wipe.
+    int types = 0;
+    if (areas & Engine::HttpCacheArea)
+        types |= WEBKIT_WEBSITE_DATA_MEMORY_CACHE
+               | WEBKIT_WEBSITE_DATA_DISK_CACHE;
+    if (areas & Engine::CookiesArea)
+        types |= WEBKIT_WEBSITE_DATA_COOKIES;
+    if (areas & Engine::DomStorageArea)
+        types |= WEBKIT_WEBSITE_DATA_SESSION_STORAGE
+               | WEBKIT_WEBSITE_DATA_LOCAL_STORAGE
+               | WEBKIT_WEBSITE_DATA_INDEXEDDB_DATABASES
+               | WEBKIT_WEBSITE_DATA_DOM_CACHE;
+    if (areas & Engine::ServiceWorkerArea)
+        types |= WEBKIT_WEBSITE_DATA_SERVICE_WORKER_REGISTRATIONS;
+    if (areas == Engine::AllAreas) {
+        // The interface's All is a full wipe — take every WebKit
+        // data class, including the ones the flag map has no
+        // neutral name for (offline app cache, HSTS cache, ITP
+        // state, device-id hash salt).
+        types = WEBKIT_WEBSITE_DATA_ALL;
+    }
+    if (!types)
+        return;
+    // Materialize the session to reach the manager that owns the
+    // store — a persistent profile's data may already be on disk
+    // from earlier loads (or an earlier process), so a pre-page
+    // clear() still has work to do.  On an ephemeral session the
+    // clear hits the memory stores — still the right wipe.
+    WebKitNetworkSession *session = networkSession();
+    WebKitWebsiteDataManager *manager =
+        session ? webkit_network_session_get_website_data_manager(
+                      session)
+                : nullptr;
+    if (!manager)
+        return;
+    webkit_website_data_manager_clear(
+        manager, WebKitWebsiteDataTypes(types), 0, nullptr,
+        clearFinished, nullptr);
+#else
     Q_UNUSED(areas);
+#endif
+}
+
+void WebkitProfile::fetchCookies(
+        const std::function<void(const QStringList &)> &callback)
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    // No session materialization here — a store that was never
+    // created answers empty (unlike clear(), a read-back has no
+    // on-disk work to reach).
+    WebKitCookieManager *manager =
+        m_networkSession
+            ? webkit_network_session_get_cookie_manager(
+                  m_networkSession)
+            : nullptr;
+    if (manager) {
+        FetchCookiesCall *call = new FetchCookiesCall;
+        call->callback = callback;
+        webkit_cookie_manager_get_all_cookies(
+            manager, nullptr, cookiesReady, call);
+        return;
+    }
+#else
+    Q_UNUSED(callback);
+#endif
+    if (callback)
+        callback(QStringList());
 }
 
 void WebkitProfile::setProfileAttribute(const QString &name,

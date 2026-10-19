@@ -39,6 +39,7 @@
 #include <engineregistry.h>
 #include <enginetab.h>
 #include <lineedit.h>
+#include <profilesettings.h>
 #include <tabbar.h>
 #include <tabwidget.h>
 #include <toolbarsearch.h>
@@ -153,6 +154,7 @@ private slots:
     void webkitLoadSignals();
     void webkitHistory();
     void webkitProfileStorage();
+    void webkitClearAndCookiePolicy();
 
 private:
     FakeEngineBackend *m_fake = nullptr;
@@ -1869,6 +1871,263 @@ void tst_EngineSwitch::webkitProfileStorage()
     QVERIFY(!QFileInfo::exists(
         BrowserPaths::dataRoot()
         + QLatin1String("/profiles/wk11otr")));
+#else
+    QSKIP("webkit backend not linked in this build");
+#endif
+}
+
+// WK12 — clear(StorageAreas) -> webkit_website_data_manager_clear on
+// the profile's session (cookie-manager read-back proves the wipe,
+// a second page proves DOM storage dropped) and the cookie
+// accept-policy -> WebKitCookieManager mapping: the persona's
+// persisted cookies/* settings drive set_accept_policy at session
+// materialization, and set_persistent_storage gives a named session
+// a cookies.sqlite unless the keep policy is KeepUntilExit.
+void tst_EngineSwitch::webkitClearAndCookiePolicy()
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    Engine::Backend *webkit =
+        EngineRegistry::backendForId(QStringLiteral("webkit"));
+    QVERIFY(webkit);
+    QVERIFY2(webkit->pageUnavailableReason().isEmpty(),
+             qPrintable(webkit->pageUnavailableReason()));
+
+    // Cookies + DOM storage need a real origin — a one-page local
+    // HTTP fixture (the WK11 shape).
+    const QByteArray pageBody =
+        "<html><head><title>Wk12Clear</title></head>"
+        "<body>wk12</body></html>";
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    connect(&server, &QTcpServer::newConnection, &server,
+            [&server, pageBody]() {
+        while (QTcpSocket *socket = server.nextPendingConnection()) {
+            socket->setParent(&server);
+            connect(socket, &QTcpSocket::readyRead, socket,
+                    [socket, pageBody]() {
+                if (!socket->readAll().contains("\r\n\r\n"))
+                    return;
+                socket->write("HTTP/1.1 200 OK\r\nContent-Type: text/html"
+                              "\r\nContent-Length: "
+                              + QByteArray::number(pageBody.size())
+                              + "\r\nConnection: close\r\n\r\n" + pageBody);
+                socket->disconnect();
+                socket->disconnectFromHost();
+            });
+        }
+    });
+    const QUrl url(QStringLiteral("http://127.0.0.1:%1/")
+                       .arg(server.serverPort()));
+
+    auto loadSync = [](Engine::Page *p, const QUrl &u) {
+        QSignalSpy spy(p, &Engine::Page::loadFinished);
+        p->load(u);
+        return spy.wait(60000) && spy.first().first().toBool();
+    };
+    struct EvalOut { QVariant value; bool done = false; };
+    auto evalSync = [](Engine::Page *p, const QString &src) -> EvalOut {
+        EvalOut out;
+        p->runJavaScript(src, [&](const QVariant &v) {
+            out.value = v;
+            out.done = true;
+        });
+        QElapsedTimer timer;
+        timer.start();
+        while (!out.done && timer.elapsed() < 30000)
+            QTest::qWait(20);
+        return out;
+    };
+    // The cookie-manager read-back — WebKitCookieManager's
+    // get_all_cookies through the WK12 diagnostic surface.
+    auto cookiesSync = [](WebkitProfile *profile) -> QStringList {
+        QStringList out;
+        bool done = false;
+        profile->fetchCookies(
+            [&](const QStringList &cookies) {
+                out = cookies;
+                done = true;
+            });
+        QElapsedTimer timer;
+        timer.start();
+        while (!done && timer.elapsed() < 10000)
+            QTest::qWait(20);
+        return out;
+    };
+
+    // --- Leg 1: persistent persona — clear(CookiesArea) empties the
+    // store, clear(AllAreas) drops DOM storage.  AcceptAlways with
+    // no third-party block maps to ACCEPT_ALWAYS (WPE ordinal 0) and
+    // KeepUntilExpire gets the cookies.sqlite storage file.
+    {
+        ProfileSettings settingsA(QStringLiteral("wk12a"));
+        settingsA.setValue(QStringLiteral("cookies/acceptCookies"),
+                           QStringLiteral("AcceptAlways"));
+        settingsA.setValue(
+            QStringLiteral("cookies/blockThirdPartyCookies"), false);
+        settingsA.setValue(QStringLiteral("cookies/keepCookiesUntil"),
+                           QStringLiteral("KeepUntilExpire"));
+        // The backend reads through a second store — flush this one
+        // so the write is visible by session materialization.
+        settingsA.sync();
+        Engine::ProfileOptions optA;
+        optA.storageName = QStringLiteral("arktos-wk12a");
+        auto *profileA = qobject_cast<WebkitProfile *>(
+            webkit->createProfile(optA, this));
+        QVERIFY(profileA);
+        Engine::Page *pageA = webkit->createPage(profileA, this);
+        QVERIFY2(pageA, "createPage refused profile A");
+
+        // WPE ordinals: ACCEPT_ALWAYS=0 / ACCEPT_NEVER=1 /
+        // ACCEPT_NO_THIRD_PARTY=2.
+        QCOMPARE(profileA->cookieAcceptPolicy(), 0);
+        QVERIFY(profileA->cookieStoragePath().startsWith(
+            profileA->sessionDataDir()));
+        QVERIFY(profileA->cookieStoragePath().endsWith(
+            QStringLiteral("/cookies.sqlite")));
+
+        QVERIFY2(loadSync(pageA, url), "profile A fixture load failed");
+        EvalOut write = evalSync(pageA, QStringLiteral(
+            "(function(){localStorage.setItem('wk12','alpha');"
+            "document.cookie='wk12=alpha;path=/';"
+            "return 'done';})()"));
+        QVERIFY2(write.done, "storage write eval timed out");
+        QCOMPARE(write.value.toString(), QStringLiteral("done"));
+
+        QTRY_VERIFY2_WITH_TIMEOUT(
+                cookiesSync(profileA).contains(
+                    QStringLiteral("wk12=alpha")),
+                "cookie never reached the session store", 30000);
+        QCOMPARE(evalSync(pageA, QStringLiteral(
+            "(function(){return localStorage.getItem('wk12')||'';})()"))
+                .value.toString(),
+            QStringLiteral("alpha"));
+
+        // clear(CookiesArea): the manager reads back empty while DOM
+        // storage is untouched.
+        profileA->clear(Engine::CookiesArea);
+        QTRY_VERIFY2_WITH_TIMEOUT(
+                cookiesSync(profileA).isEmpty(),
+                "clear(CookiesArea) left cookies behind", 30000);
+        QCOMPARE(evalSync(pageA, QStringLiteral(
+            "(function(){return localStorage.getItem('wk12')||'';})()"))
+                .value.toString(),
+            QStringLiteral("alpha"));
+
+        // clear(AllAreas): cookies wiped AND a second page on the
+        // same session reads an empty localStorage (the live page's
+        // in-memory copy is not the store).
+        evalSync(pageA, QStringLiteral(
+            "(function(){document.cookie='wk12=beta;path=/';"
+            "return 'done';})()"));
+        QTRY_VERIFY2_WITH_TIMEOUT(
+                cookiesSync(profileA).contains(
+                    QStringLiteral("wk12=beta")),
+                "second cookie write never reached the store", 30000);
+        profileA->clear(Engine::AllAreas);
+        QTRY_VERIFY2_WITH_TIMEOUT(
+                cookiesSync(profileA).isEmpty(),
+                "clear(AllAreas) left cookies behind", 30000);
+        Engine::Page *pageA2 = webkit->createPage(profileA, this);
+        QVERIFY2(pageA2, "createPage refused the second page");
+        QVERIFY2(loadSync(pageA2, url), "second page load failed");
+        QTRY_COMPARE_EQ_WITH_TIMEOUT(
+                evalSync(pageA2, QStringLiteral(
+                    "(function(){return localStorage.getItem('wk12')"
+                    "||'';})()")).value.toString(),
+                QString(), 30000);
+        QVERIFY2(!evalSync(pageA2, QStringLiteral(
+            "(function(){return document.cookie;})()"))
+                .value.toString().contains(QStringLiteral("wk12=beta")),
+                "cleared cookie still served to a fresh page");
+    }
+
+    // --- Leg 2: accept-policy mapping — AcceptNever -> ACCEPT_NEVER
+    // refuses the fixture's cookie outright.
+    {
+        ProfileSettings settingsB(QStringLiteral("wk12b"));
+        settingsB.setValue(QStringLiteral("cookies/acceptCookies"),
+                           QStringLiteral("AcceptNever"));
+        settingsB.sync();
+        Engine::ProfileOptions optB;
+        optB.storageName = QStringLiteral("arktos-wk12b");
+        auto *profileB = qobject_cast<WebkitProfile *>(
+            webkit->createProfile(optB, this));
+        QVERIFY(profileB);
+        Engine::Page *pageB = webkit->createPage(profileB, this);
+        QVERIFY2(pageB, "createPage refused profile B");
+        QCOMPARE(profileB->cookieAcceptPolicy(), 1);
+
+        QVERIFY2(loadSync(pageB, url), "profile B fixture load failed");
+        evalSync(pageB, QStringLiteral(
+            "(function(){document.cookie='wk12=denied;path=/';"
+            "return 'done';})()"));
+        // The (rejected) write gets a beat to settle — the manager
+        // must still read back empty.
+        QTest::qWait(1500);
+        QVERIFY2(cookiesSync(profileB).isEmpty(),
+                 "AcceptNever stored a cookie anyway");
+    }
+
+    // --- Leg 3: the KeepUntilExit honesty — memory-only cookies for
+    // the session (no persistent-storage file) while the default
+    // accept policy maps to NO_THIRD_PARTY.
+    {
+        ProfileSettings settingsC(QStringLiteral("wk12c"));
+        settingsC.setValue(QStringLiteral("cookies/keepCookiesUntil"),
+                           QStringLiteral("KeepUntilExit"));
+        settingsC.sync();
+        Engine::ProfileOptions optC;
+        optC.storageName = QStringLiteral("arktos-wk12c");
+        auto *profileC = qobject_cast<WebkitProfile *>(
+            webkit->createProfile(optC, this));
+        QVERIFY(profileC);
+        Engine::Page *pageC = webkit->createPage(profileC, this);
+        QVERIFY2(pageC, "createPage refused profile C");
+        QCOMPARE(profileC->cookieAcceptPolicy(), 2);
+        QVERIFY(profileC->cookieStoragePath().isEmpty());
+        QVERIFY2(loadSync(pageC, url), "profile C fixture load failed");
+        evalSync(pageC, QStringLiteral(
+            "(function(){document.cookie='wk12=session;path=/';"
+            "return 'done';})()"));
+        QTRY_VERIFY2_WITH_TIMEOUT(
+                cookiesSync(profileC).contains(
+                    QStringLiteral("wk12=session")),
+                "session cookie never reached the memory store", 30000);
+    }
+
+    // --- Leg 4: the PRIV01 toggle — AcceptAlways +
+    // blockThirdPartyCookies maps to NO_THIRD_PARTY, not ALWAYS.
+    {
+        ProfileSettings settingsD(QStringLiteral("wk12d"));
+        settingsD.setValue(QStringLiteral("cookies/acceptCookies"),
+                           QStringLiteral("AcceptAlways"));
+        settingsD.setValue(
+            QStringLiteral("cookies/blockThirdPartyCookies"), true);
+        settingsD.sync();
+        Engine::ProfileOptions optD;
+        optD.storageName = QStringLiteral("arktos-wk12d");
+        auto *profileD = qobject_cast<WebkitProfile *>(
+            webkit->createProfile(optD, this));
+        QVERIFY(profileD);
+        Engine::Page *pageD = webkit->createPage(profileD, this);
+        QVERIFY2(pageD, "createPage refused profile D");
+        QCOMPARE(profileD->cookieAcceptPolicy(), 2);
+    }
+
+    // --- Leg 5: OTR — the ephemeral session applies the ambient
+    // persona's accept policy but never gets a storage file.
+    {
+        Engine::ProfileOptions optOtr;
+        optOtr.offTheRecord = true;
+        auto *profileOtr = qobject_cast<WebkitProfile *>(
+            webkit->createProfile(optOtr, this));
+        QVERIFY(profileOtr);
+        Engine::Page *pageOtr = webkit->createPage(profileOtr, this);
+        QVERIFY2(pageOtr, "createPage refused the OTR profile");
+        QVERIFY(profileOtr->sessionIsEphemeral());
+        QVERIFY(profileOtr->cookieStoragePath().isEmpty());
+        QCOMPARE(profileOtr->cookieAcceptPolicy(), 2);
+    }
 #else
     QSKIP("webkit backend not linked in this build");
 #endif
