@@ -1245,12 +1245,14 @@ EngineTab *TabWidget::addEngineTab(Engine::Backend *backend, bool makeCurrent)
 
     Engine::Profile *profile =
         backend->createProfile(Engine::ProfileOptions(), nullptr);
-    // ENG35: profiles on policy-hooked backends (Servo's load gate)
-    // get the adblock binding the way prepareProfile installs the
-    // interceptor on Chromium profiles — the profile owns it, the
-    // backend resolves it per load.  WebEngine profiles keep their
-    // interceptor path (setRequestPolicy would replace it).
-    if (profile && backend->id() == QLatin1String("servo"))
+    // ENG35/WK17: profiles on policy-hooked backends (Servo's load
+    // gate, WebKit's decide-policy consult) get the adblock binding
+    // the way prepareProfile installs the interceptor on Chromium
+    // profiles — the profile owns it, the backend resolves it per
+    // load.  WebEngine profiles keep their interceptor path
+    // (setRequestPolicy would replace it).
+    if (profile && (backend->id() == QLatin1String("servo")
+                    || backend->id() == QLatin1String("webkit")))
         AdBlockManager::instance()->installOnProfile(profile);
     EngineTab *tab = new EngineTab(backend, profile, this);
     // The profile is the tab's context — give it the tab as owner so

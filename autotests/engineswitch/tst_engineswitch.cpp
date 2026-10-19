@@ -30,6 +30,8 @@
 
 #include "qtest_arktos.h"
 
+#include <adblockmanager.h>
+#include <adblockresourcehandler.h>
 #include <browserapplication.h>
 #include <browsermainwindow.h>
 #include <browserpaths.h>
@@ -40,21 +42,25 @@
 #include <enginetab.h>
 #include <lineedit.h>
 #include <profilesettings.h>
+#include <schemeaccesshandler.h>
 #include <tabbar.h>
 #include <tabwidget.h>
 #include <toolbarsearch.h>
 #include <webview.h>
 
+#include <qabstractbutton.h>
 #include <qdir.h>
 #include <qfile.h>
 #include <qlabel.h>
 #include <qmenu.h>
+#include <qmessagebox.h>
 #include <qset.h>
 #include <qsplitter.h>
 #include <qstackedwidget.h>
 #include <qtcpserver.h>
 #include <qtcpsocket.h>
 #include <qtemporarydir.h>
+#include <qtimer.h>
 #include <qwebenginepage.h>
 
 #ifdef ARKTOS_WEBKIT
@@ -113,6 +119,41 @@ static int barStackCount(TabWidget *widget)
     return stack ? stack->count() : -1;
 }
 
+// Clicks the requested button on any modal QMessageBox that pops while
+// this object is alive — the abp:subscribe flow prompts through
+// QMessageBox::question/exec, which runs a real modal dialog even
+// under the offscreen QPA (the schemehandlers lane's helper,
+// repeated file-locally).
+class ModalAnswer : public QObject
+{
+public:
+    ModalAnswer(QMessageBox::StandardButton button, QObject *parent = nullptr)
+        : QObject(parent)
+        , m_button(button)
+    {
+        QTimer *timer = new QTimer(this);
+        connect(timer, &QTimer::timeout, this, [this]() {
+            QMessageBox *box = qobject_cast<QMessageBox *>(
+                QApplication::activeModalWidget());
+            if (!box)
+                return;
+            QAbstractButton *button = box->button(m_button);
+            if (button)
+                button->click();
+            else
+                box->reject();
+            ++m_answered;
+        });
+        timer->start(50);
+    }
+
+    int answered() const { return m_answered; }
+
+private:
+    QMessageBox::StandardButton m_button;
+    int m_answered = 0;
+};
+
 // --- test ---------------------------------------------------------------
 
 class tst_EngineSwitch : public QObject
@@ -159,6 +200,7 @@ private slots:
     void webkitZoomFindLifecycle();
     void webkitJsEval();
     void webkitScriptWorlds();
+    void webkitPolicySchemes();
 
 private:
     FakeEngineBackend *m_fake = nullptr;
@@ -2883,6 +2925,219 @@ void tst_EngineSwitch::webkitScriptWorlds()
     QCOMPARE(evalW(QStringLiteral("typeof window.__wk16live"), main)
                  .toString(),
              QStringLiteral("undefined"));
+#else
+    QSKIP("webkit backend not linked in this build");
+#endif
+}
+
+// WK17 — decide-policy -> RequestPolicy + the custom-scheme serving
+// set: a fixture policy consulted as a main-frame navigation vetoes a
+// marker URL that never reaches the wire; a file:// directory nav
+// reroutes onto arktos-file: and the scheme serves the real listing;
+// the interstitial nonce registry and the compiled stub table serve
+// backend-0's payloads; abp:subscribe reaches the persona's
+// AdBlockManager prompt.
+void tst_EngineSwitch::webkitPolicySchemes()
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    Engine::Backend *webkit =
+        EngineRegistry::backendForId(QStringLiteral("webkit"));
+    QVERIFY(webkit);
+    QVERIFY2(webkit->pageUnavailableReason().isEmpty(),
+             qPrintable(webkit->pageUnavailableReason()));
+    // The veto consult is the WK17 contract — the capability must be
+    // on for this backend.
+    QVERIFY(webkit->capabilities().requestInterception);
+
+    // Fixture policy: records every consultation and vetoes the
+    // marker URL — the "blocked nav never loads" leg's driver.
+    class FixturePolicy : public Engine::RequestPolicy
+    {
+    public:
+        Engine::RequestDecision decide(
+            const Engine::NavigationRequest &request) override
+        {
+            urls << request.url;
+            if (request.isMainFrame)
+                ++mainFrameConsults;
+            Engine::RequestDecision out;
+            if (request.url == denied)
+                out.action = Engine::RequestAction::Block;
+            return out;
+        }
+        QList<QUrl> urls;
+        int mainFrameConsults = 0;
+        QUrl denied;
+    };
+
+    Engine::ProfileOptions options;
+    options.offTheRecord = true;   // ephemeral session — no disk state
+    Engine::Profile *profile = webkit->createProfile(options, this);
+    QVERIFY(profile);
+    FixturePolicy policy;
+    profile->setRequestPolicy(&policy);
+
+    EngineTab tab(webkit, profile);
+    tab.resize(800, 600);
+    tab.show();
+    QVERIFY(tab.page());
+    auto *page = qobject_cast<WebkitPage *>(tab.page());
+    QVERIFY(page);
+
+    // The loopback fixture records requested paths — a vetoed
+    // navigation must never produce one for its URL (favicon fetches
+    // from the allowed page are noise the path set filters out).
+    QSet<QString> wirePaths;
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    auto pending =
+        QSharedPointer<QHash<QTcpSocket *, QByteArray>>::create();
+    connect(&server, &QTcpServer::newConnection, &server,
+            [&server, &wirePaths, pending]() {
+        while (QTcpSocket *socket = server.nextPendingConnection()) {
+            socket->setParent(&server);
+            connect(socket, &QTcpSocket::readyRead, socket,
+                    [socket, &wirePaths, pending]() {
+                QByteArray &request = (*pending)[socket];
+                request += socket->readAll();
+                if (!request.contains("\r\n\r\n"))
+                    return;
+                const int firstLineEnd = request.indexOf('\n');
+                if (firstLineEnd > 0) {
+                    const QByteArray line =
+                        request.left(firstLineEnd).trimmed();
+                    const QList<QByteArray> parts = line.split(' ');
+                    if (parts.size() >= 2)
+                        wirePaths.insert(
+                            QString::fromUtf8(parts.at(1)));
+                }
+                const QByteArray body =
+                    "<html><head><title>Wk17Fixture</title></head>"
+                    "<body>wk17 policy fixture</body></html>";
+                socket->write("HTTP/1.1 200 OK\r\nContent-Type: text/html"
+                              "\r\nContent-Length: "
+                              + QByteArray::number(body.size())
+                              + "\r\nConnection: close\r\n\r\n" + body);
+                socket->disconnect();
+                socket->disconnectFromHost();
+                pending->remove(socket);
+            });
+        }
+    });
+    const QUrl fixtureUrl(QStringLiteral("http://127.0.0.1:%1/wk17")
+                              .arg(server.serverPort()));
+    policy.denied = QUrl(QStringLiteral("http://127.0.0.1:%1/denied")
+                             .arg(server.serverPort()));
+
+    QList<bool> loadResults;   // every loadFinished emission
+    connect(page, &Engine::Page::loadFinished, page,
+            [&](bool ok) { loadResults << ok; });
+    // Waits for a NEW loadFinished(true) past the marker — an ignored
+    // policy decision can still emit loadFinished(false) first.
+    auto waitLoadOk = [&](int timeout = 60000) {
+        const int base = loadResults.size();
+        for (int waited = 0; waited < timeout; waited += 100) {
+            for (int i = base; i < loadResults.size(); ++i)
+                if (loadResults.at(i))
+                    return true;
+            QTest::qWait(100);
+        }
+        return false;
+    };
+
+    // — allow leg: the fixture page loads with the policy consulted
+    //   as a main-frame navigation.
+    tab.load(fixtureUrl);
+    QVERIFY2(waitLoadOk(), "fixture load never finished");
+    QVERIFY(policy.urls.contains(fixtureUrl));
+    QVERIFY(policy.mainFrameConsults > 0);
+
+    // — deny leg: the marker load is vetoed and never reaches the
+    //   wire.  An ignored decision may or may not surface a failed
+    //   loadFinished — the wire path set is the contract (favicon
+    //   fetches of the fixture page are fine; "/denied" is not).
+    const int resultsBefore = loadResults.size();
+    page->load(policy.denied);
+    QTest::qWait(2500);   // settle any stray load/fetch attempt
+    QVERIFY2(!wirePaths.contains(QStringLiteral("/denied")),
+             "a vetoed navigation reached the wire");
+    QVERIFY(policy.urls.contains(policy.denied));
+    QVERIFY(page->url() != policy.denied);
+    for (int i = resultsBefore; i < loadResults.size(); ++i)
+        QVERIFY2(!loadResults.at(i),
+                 "a vetoed navigation reported loadFinished(true)");
+
+    // — file:// directory -> arktos-file: reroute + the real listing.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    {
+        QFile marker(dir.filePath(QStringLiteral("wk17-marker.txt")));
+        QVERIFY(marker.open(QIODevice::WriteOnly));
+        marker.write("x");
+        marker.close();
+    }
+    page->load(QUrl::fromLocalFile(dir.path()));
+    QVERIFY2(waitLoadOk(), "directory listing load never finished");
+    QCOMPARE(page->url().scheme(), QStringLiteral("arktos-file"));
+    auto pageHtml = [&]() {
+        std::shared_ptr<QString> html(new QString);
+        std::shared_ptr<bool> done(new bool(false));
+        page->toHtml([html, done](const QString &h) {
+            *html = h;
+            *done = true;
+        });
+        for (int waited = 0; !*done && waited < 15000; waited += 50)
+            QTest::qWait(50);
+        return *html;
+    };
+    QVERIFY(pageHtml().contains(QStringLiteral("wk17-marker.txt")));
+
+    // — interstitial registry: publish + serve (the same nonce store
+    //   the cert-error/https-warning/site-block paths feed).
+    SchemeAccessHandler::publishInterstitialPage(
+        QStringLiteral("wk17nonce"),
+        QStringLiteral("<html><body>WK17-INTERSTITIAL</body></html>"));
+    page->load(QUrl(QStringLiteral(
+        "arktos-cert-error:interstitial?n=wk17nonce")));
+    QVERIFY2(waitLoadOk(), "interstitial load never finished");
+    QVERIFY(pageHtml().contains(QStringLiteral("WK17-INTERSTITIAL")));
+
+    // — the compiled stub table serves (backend-0's $redirect
+    //   payloads route through the same resourceFor).
+    page->load(AdBlockResourceHandler::urlForResource("noop.html"));
+    QVERIFY2(waitLoadOk(), "arktos-resource stub never finished");
+
+    // — abp:subscribe reaches the persona manager's prompt
+    //   (ModalAnswer declines); nothing is served.  Scoped so its
+    //   answerer cannot steal the external-scheme dialog below.
+    {
+        AdBlockManager *manager = AdBlockManager::instance();
+        const int subsBefore = manager->subscriptions().count();
+        ModalAnswer answer(QMessageBox::No, this);
+        const QUrl abpUrl(QLatin1String("abp:subscribe?location=")
+            + QString::fromUtf8(QUrl::fromLocalFile(
+                QLatin1String("/nonexistent-wk17-list.txt")).toEncoded())
+            + QLatin1String("&title=Wk17List"));
+        page->load(abpUrl);
+        QTRY_VERIFY2_WITH_TIMEOUT(answer.answered() >= 1,
+                                  "abp: prompt never reached the app",
+                                  15000);
+        QTest::qWait(300);   // the prompt path + request failure settle
+        QCOMPARE(manager->subscriptions().count(), subsBefore);
+    }
+
+    // — external scheme: refused in engine, the SEC02 consent prompt
+    //   runs queued (ModalAnswer cancels); the page never moves.
+    {
+        ModalAnswer cancel(QMessageBox::Cancel, this);
+        const QUrl external(
+            QStringLiteral("mailto:wk17@example.invalid"));
+        page->load(external);
+        QTRY_VERIFY2_WITH_TIMEOUT(cancel.answered() >= 1,
+                                  "external-scheme consent never ran",
+                                  15000);
+        QVERIFY(page->url() != external);
+    }
 #else
     QSKIP("webkit backend not linked in this build");
 #endif

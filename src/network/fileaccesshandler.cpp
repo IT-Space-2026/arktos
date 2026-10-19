@@ -60,6 +60,18 @@ QUrl FileAccessHandler::urlForLocalPath(const QString &path)
     return url;
 }
 
+bool FileAccessHandler::initiatorAllowed(const QString &scheme)
+{
+    // SEC02: this handler enumerates the local filesystem, so only the
+    // browser itself (empty initiator) and other local pages may use
+    // it — a remote http/https initiator could otherwise read directory
+    // listings through an iframe or a poked navigation.
+    return scheme.isEmpty()
+        || scheme == QLatin1String("file")
+        || scheme == QLatin1String("arktos-file")
+        || scheme == QLatin1String("qrc");
+}
+
 void FileAccessHandler::requestStarted(QWebEngineUrlRequestJob *job)
 {
     if (job->requestMethod() != "GET") {
@@ -67,15 +79,7 @@ void FileAccessHandler::requestStarted(QWebEngineUrlRequestJob *job)
         return;
     }
 
-    // SEC02: this handler enumerates the local filesystem, so only the
-    // browser itself (empty initiator) and other local pages may use
-    // it — a remote http/https initiator could otherwise read directory
-    // listings through an iframe or a poked navigation.
-    const QString initiatorScheme = job->initiator().scheme();
-    if (!initiatorScheme.isEmpty()
-        && initiatorScheme != QLatin1String("file")
-        && initiatorScheme != QLatin1String("arktos-file")
-        && initiatorScheme != QLatin1String("qrc")) {
+    if (!initiatorAllowed(job->initiator().scheme())) {
         job->fail(QWebEngineUrlRequestJob::RequestDenied);
         return;
     }
@@ -120,27 +124,19 @@ static QString cssLinkClass(const QIcon &icon, int size = 32)
     return data.arg(size+4).arg(QLatin1String(imageBuffer.buffer().toBase64()));
 }
 
-void FileAccessHandler::replyToJob(QPointer<QWebEngineUrlRequestJob> job)
+FileAccessHandler::ListingError FileAccessHandler::directoryListing(
+        const QString &path, int iconSizePx, QByteArray *htmlOut)
 {
-    if (!job)
-        return;
-
-    QDir dir(job->requestUrl().path());
-    if (!dir.exists()) {
-        job->fail(QWebEngineUrlRequestJob::UrlNotFound);
-        return;
-    }
-    if (!dir.isReadable()) {
-        job->fail(QWebEngineUrlRequestJob::RequestDenied);
-        return;
-    }
+    QDir dir(path);
+    if (!dir.exists())
+        return ListingError::NotFound;
+    if (!dir.isReadable())
+        return ListingError::Unreadable;
 
     // Format a html page for the directory contents
     QFile dirlistFile(QLatin1String(":/dirlist.html"));
-    if (!dirlistFile.open(QIODevice::ReadOnly)) {
-        job->fail(QWebEngineUrlRequestJob::RequestFailed);
-        return;
-    }
+    if (!dirlistFile.open(QIODevice::ReadOnly))
+        return ListingError::Internal;
     QString html = QString::fromUtf8(dirlistFile.readAll());
     html = html.arg(dir.absolutePath().toHtmlEscaped(), tr("Contents of %1").arg(dir.absolutePath().toHtmlEscaped()));
 
@@ -150,7 +146,7 @@ void FileAccessHandler::replyToJob(QPointer<QWebEngineUrlRequestJob> job)
 
     QFileIconProvider iconProvider;
     QHash<QString, bool> existingClasses;
-    int iconSize = QWebEngineProfile::defaultProfile()->settings()->fontSize(QWebEngineSettings::DefaultFontSize);
+    int iconSize = iconSizePx;
     QFileInfoList list = dir.entryInfoList(QDir::AllEntries | QDir::Hidden, QDir::Name | QDir::DirsFirst);
     QString dirlist, classes;
 
@@ -198,10 +194,36 @@ void FileAccessHandler::replyToJob(QPointer<QWebEngineUrlRequestJob> job)
     // THEME01: follow the chrome palette — the listing is generated
     // chrome, not web content.
     BrowserTheme::decorateInternalPage(html);
+    *htmlOut = html.toUtf8();
+    return ListingError::None;
+}
+
+void FileAccessHandler::replyToJob(QPointer<QWebEngineUrlRequestJob> job)
+{
+    if (!job)
+        return;
+
+    const int iconSize = QWebEngineProfile::defaultProfile()->settings()
+        ->fontSize(QWebEngineSettings::DefaultFontSize);
+    QByteArray html;
+    const ListingError error =
+        directoryListing(job->requestUrl().path(), iconSize, &html);
+    if (error == ListingError::NotFound) {
+        job->fail(QWebEngineUrlRequestJob::UrlNotFound);
+        return;
+    }
+    if (error == ListingError::Unreadable) {
+        job->fail(QWebEngineUrlRequestJob::RequestDenied);
+        return;
+    }
+    if (error != ListingError::None) {
+        job->fail(QWebEngineUrlRequestJob::RequestFailed);
+        return;
+    }
 
     // The job takes ownership of the buffer.
     QBuffer *buffer = new QBuffer(job);
-    buffer->setData(html.toUtf8());
+    buffer->setData(html);
     buffer->open(QIODevice::ReadOnly);
     job->reply("text/html", buffer);
 }

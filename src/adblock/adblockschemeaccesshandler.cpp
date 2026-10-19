@@ -55,16 +55,19 @@ void AdBlockSchemeAccessHandler::registerUrlScheme()
     QWebEngineUrlScheme::registerScheme(scheme);
 }
 
-void AdBlockSchemeAccessHandler::requestStarted(QWebEngineUrlRequestJob *job)
+bool AdBlockSchemeAccessHandler::isSubscribeRequest(const QUrl &requestUrl)
 {
     // Both abp:subscribe?... (path form) and abp://subscribe?...
-    // (host form) appear in the wild — reject only genuinely foreign
-    // abp: urls.
-    const QUrl requestUrl = job->requestUrl();
-    const bool subscribe = requestUrl.path() == QLatin1String("subscribe")
+    // (host form) appear in the wild.
+    return requestUrl.path() == QLatin1String("subscribe")
         || requestUrl.host() == QLatin1String("subscribe")
         || requestUrl.path() == QLatin1String("//subscribe");
-    if (job->requestMethod() != "GET" || !subscribe) {
+}
+
+void AdBlockSchemeAccessHandler::requestStarted(QWebEngineUrlRequestJob *job)
+{
+    if (job->requestMethod() != "GET"
+        || !isSubscribeRequest(job->requestUrl())) {
         job->fail(QWebEngineUrlRequestJob::UrlInvalid);
         return;
     }

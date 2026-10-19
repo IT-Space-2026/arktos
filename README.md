@@ -285,8 +285,14 @@ browsing profile:
   is translated into wpe-platform events, zoom and find-in-page are
   live, and tab suspend/discard maps onto the honest primitives
   (process terminate + reload — this WPE build exports no
-  suspend/resume) — while custom schemes, adblock interception,
-  extensions and devtools are still ahead, keeping it experimental.
+  suspend/resume). Custom schemes serve on WPE the same way they do
+  on Chromium — arktos-file: directory listings, abp: subscription
+  prompts, the adblock stub resources and the nonce-backed
+  interstitials — and profile RequestPolicy vetoes navigation and
+  new-window actions (main-frame adblock filtering through the same
+  policy object; subresource interception is the content-blocker
+  work still ahead, as are extensions and devtools — keeping it
+  experimental).
 - **Reader mode** (Ctrl+Alt+R) and **Picture-in-Picture** on videos.
 - **Command palette** — Ctrl+Shift+P fuzzy search over browser
   commands.

@@ -223,6 +223,37 @@
 // inertly and never resolve, so the channel-object surface stays
 // gated until a WK transport shim bridges this handler to the
 // QWebChannel wire protocol (deliberately not faked here).
+//
+// WK17 turns decide-policy from observation into the veto contract
+// and lands the custom-scheme serving set.  Navigation and
+// new-window policy decisions marshal the action into
+// Engine::NavigationRequest and consult the owning profile's
+// RequestPolicy — main-frame and sub-frame allow/deny, a Block
+// verdict ignore()s the decision, a Redirect verdict re-issues the
+// load at the verdict's URL (the navigation decision object cannot
+// rewrite its request, and a NEW_WINDOW redirect degrades to the
+// refusal — honest, like the spike's named referer-mutation gap).
+// Response decisions stay observe-only: the subresource lane is
+// WK18's content-blocker answer.  External schemes get WebPage's
+// SEC02 consent prompt verbatim — the navigation is refused, the
+// queued dialog asks, and consent hands the URL to the desktop
+// (iframe navs to external schemes are dropped silently).  A
+// main-frame file: navigation at a directory reroutes onto the
+// arktos-file: listing, matching WebPage's chrome behavior.
+//
+// webkit_web_context_register_uri_scheme installs the serving set
+// once on the shared web context: arktos-file: (the FileAccessHandler
+// listing + SEC02 initiator rules — a Referer-scheme check plus the
+// recorded main-frame nav target standing in for WebKit's missing
+// initiator origin), abp: (the subscribe prompt routed to the
+// requesting page's persona AdBlockManager — never served),
+// arktos-resource: (the compiled $redirect stub table) and the three
+// nonce-backed interstitial carriers (arktos-cert-error:,
+// arktos-http-warning:, arktos-site-block:) — every one reusing the
+// same engine-agnostic serving halves backend-0's handlers expose.
+// Security-manager flags mirror the QWebEngineUrlScheme
+// registrations (arktos-file local; stubs secure+cors-enabled;
+// interstitials secure).
 
 #include "engineinterface.h"
 
@@ -446,6 +477,17 @@ public:
     void setChannelMessageListener(
             const std::function<QVariant(const QVariant &)> &listener);
 
+    // WK17 test/diagnostic surface: the profile this page was created
+    // with.  The uri-scheme handlers resolve the persona's
+    // AdBlockManager through it (the abp: subscribe prompt must reach
+    // the requesting page's persona, not the ambient one).
+    Engine::Profile *profile() const { return m_profile; }
+    // WK17: the URL of the most recently approved main-frame
+    // navigation — the uri-scheme handlers match it to authenticate a
+    // no-Referer request as the document nav decide-policy approved
+    // (the arktos-file: SEC02 initiator check).
+    QUrl lastNavTarget() const { return m_lastNavTarget; }
+
 private:
     // GLib signal entry points — reached through the static
     // trampolines in the .cpp (all on the GUI thread: on the glib
@@ -459,10 +501,15 @@ private:
     void onTitleNotify();
     void onProgressNotify();
     void onPageIconsNotify();
-    // decide-policy is observe-only until WK17 turns it into the
-    // RequestPolicy veto — returning false keeps WebKit's default
-    // use-decision while we record the navigation type (the only
-    // place WebKit reports WHY a navigation happened).
+    // decide-policy IS WK17's RequestPolicy consult: navigation and
+    // new-window actions marshal into NavigationRequest, the owning
+    // profile's policy answers Allow/Block/Redirect, and the return
+    // value tells the "decide-policy" signal handler whether WebKit's
+    // default use-decision was overridden (a policy refusal IGNOREs,
+    // a redirect re-issues the load at the verdict's URL — the
+    // navigation decision object cannot rewrite its request).
+    // Response decisions stay observe-only — the subresource lane is
+    // WK18's content-blocker answer.
     bool onDecidePolicy(WebKitPolicyDecision *decision, int type);
     // WK14 — WebKitFindController signal sinks: the terminal verdict
     // (found/failed) plus the final count correction, and the
@@ -564,6 +611,10 @@ private:
     WPEView *m_wpeView = nullptr;   // owned by m_webView — never freed here
     WPEToplevel *m_toplevel = nullptr;
     QUrl m_url;
+    // WK17: URL of the last main-frame navigation decision this page
+    // approved — the uri-scheme handlers' "is this the document nav"
+    // authentication (see lastNavTarget()).
+    QUrl m_lastNavTarget;
     QString m_title;
     // WK10: uri of an in-flight back/forward navigation — the history
     // machinery emits a spurious CANCELLED load-failed mid-hop, which

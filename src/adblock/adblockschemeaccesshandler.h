@@ -48,6 +48,13 @@ public:
     // SchemeAccessHandler::registerUrlSchemes().
     static void registerUrlScheme();
 
+    // WK17: engine-agnostic subscribe check — the abp: URL shape rule
+    // both backends apply before routing to a persona manager's
+    // promptSubscribe.  abp: never serves a body; the adapter fails
+    // the request (aborted after a handled subscribe, invalid for a
+    // foreign abp: url).
+    static bool isSubscribeRequest(const QUrl &url);
+
     virtual void requestStarted(QWebEngineUrlRequestJob *job) override;
 
 private:

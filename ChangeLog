@@ -3743,3 +3743,34 @@ WebKit script injection, worlds, and host channel (WK16): the
     channel-object surface still key on qt.webChannelTransport —
     they stay gated until a real transport shim bridges this handler
     to the QWebChannel wire protocol rather than faking success.
+WebKit navigation veto and custom schemes (WK17): the webkit
+    backend's decide-policy signal now consults the page's profile
+    RequestPolicy for navigation and new-window actions — a Block
+    verdict refuses the decision outright (the request never reaches
+    the wire), a Redirect verdict re-issues the load at the verdict's
+    URL (WebKit navigation decisions cannot rewrite their request,
+    and a new-window redirect degrades to the refusal rather than
+    faking a rewrite), and allowed decisions are recorded
+    affirmatively instead of falling through to WebKit's default.
+    External schemes ride the same consult — mailto:/tel:/magnet:
+    navigations are refused in engine and a queued SEC02 consent
+    prompt hands them to the desktop only on explicit approval
+    (subframe attempts are dropped silently), sharing WebPage's
+    isBrowserHandledScheme allowlist. A main-frame file: navigation
+    at a directory
+    reroutes onto the arktos-file: listing, matching the Chromium
+    lane's behavior. The custom-scheme serving set registers once on
+    the shared web context via webkit_web_context_register_uri_scheme:
+    arktos-file: serves the same directory listings backend-0's
+    FileAccessHandler produces (with the SEC02 remote-initiator rules
+    enforced off the Referer header and the recorded navigation
+    target), abp:subscribe routes to the requesting page's persona
+    AdBlockManager prompt, arktos-resource: serves the compiled
+    $redirect stub table, and the arktos-cert-error:/arktos-
+    http-warning:/arktos-site-block: carriers serve the same
+    nonce-backed interstitial registry. The serving halves of
+    FileAccessHandler and AdBlockSchemeAccessHandler were factored
+    into engine-agnostic statics so both backends share them rather
+    than carrying divergent copies, and engine-swap tabs on the
+    webkit backend now get the same adblock policy binding Servo
+    profiles already receive.

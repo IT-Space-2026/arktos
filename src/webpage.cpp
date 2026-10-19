@@ -589,13 +589,22 @@ void WebPage::setUserAgent(const QString &userAgent)
 // friends — can only be serviced by handing the url to the desktop,
 // which launches an external program.  That is a shell-out and needs
 // explicit consent; a web page must never trigger it silently (SEC02).
-static bool isBrowserHandledScheme(const QString &scheme)
+// WK17: a WebPage static so the WPE backend's decide-policy path
+// runs the identical allowlist instead of a drifting copy.
+bool WebPage::isBrowserHandledScheme(const QString &scheme)
 {
     static const QSet<QString> schemes = {
         QStringLiteral("about"),
         QStringLiteral("abp"),
+        // The nonce-backed interstitial carriers are browser-served
+        // too — backend-0 never reaches this check for them (their
+        // action resolution returns earlier) but the WPE decide-policy
+        // path runs the same list first.
+        QStringLiteral("arktos-cert-error"),
         QStringLiteral("arktos-file"),
+        QStringLiteral("arktos-http-warning"),
         QStringLiteral("arktos-resource"),
+        QStringLiteral("arktos-site-block"),
         QStringLiteral("blob"),
         QStringLiteral("chrome"),
         QStringLiteral("chrome-extension"),

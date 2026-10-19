@@ -135,6 +135,12 @@ public:
     static QString userAgent();
     static void setUserAgent(const QString &userAgent);
 
+    // SEC02: the scheme allowlist behind confirmAndOpenExternalUrl —
+    // schemes the engine/app itself serves; anything else is a
+    // desktop hand-off needing consent.  WK17: shared with the WPE
+    // backend's decide-policy path so both engines run the same list.
+    static bool isBrowserHandledScheme(const QString &scheme);
+
     // UA02: Google's "/sorry/" bot-check interstitial — detected after
     // the navigation commits so the page can carry a readable notice.
     static bool isRateLimitInterstitialUrl(const QUrl &url);

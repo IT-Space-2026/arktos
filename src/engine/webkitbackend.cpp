@@ -19,6 +19,14 @@
 
 #include "webkitbackend.h"
 
+// WK17: adblockmanager.h, browserapplication.h and webpage.h use
+// Qt's keyword macros (signals:/slots:), which the undef block below
+// puts out of scope for the WPE headers — include them here, above
+// the undefs.
+#include "adblockmanager.h"
+#include "browserapplication.h"
+#include "webpage.h"
+
 // glib/WPE headers declare a struct member named `signals` — Qt's
 // keyword macros must be out of the way for the include (the harness
 // used no_keywords; here the undef is scoped to this TU so the rest
@@ -41,23 +49,44 @@
 #include <dlfcn.h>
 #endif
 
+#include "adblockresourcehandler.h"
+#include "adblockschemeaccesshandler.h"
 #include "browserpaths.h"
 #include "engineregistry.h"
+#include "fileaccesshandler.h"
 #include "profilesettings.h"
+#include "schemeaccesshandler.h"
 
 #include <qapplication.h>
+#include <qdesktopservices.h>
 #include <qevent.h>
 #include <qfile.h>
 #include <qfileinfo.h>
 #include <qjsondocument.h>
+#include <qmessagebox.h>
 #include <qpainter.h>
 #include <qpixmap.h>
+#include <qpointer.h>
+#include <qurlquery.h>
 
 #include <cstring>
 
 // ---- shared WebKit-side helpers (linked builds only) ---------------
 
 #ifdef ARKTOS_WEBKIT_LINKED
+
+// WK17 — the custom-scheme serving set (register_uri_scheme) and the
+// web_view -> page map the scheme handlers resolve personas and
+// initiators through; defined at file scope further down where the
+// shared serving adapters and the persona helpers live.
+static void installUriSchemeHandlers(WebKitWebContext *context);
+static QHash<WebKitWebView *, WebkitPage *> &schemePageMap();
+// SEC02 external-scheme consent (the WebPage analog) — the
+// decide-policy consult refuses external-scheme navigations and
+// calls this queued prompt.
+static void confirmAndOpenExternalUrl(WebkitPage *page,
+                                      const QUrl &url);
+
 namespace {
 
 // The default WebKitWebContext carries the process-global config —
@@ -81,6 +110,10 @@ WebKitWebContext *sharedWebContext()
                     ctx, path.toUtf8().constData(), TRUE);
             }
         }
+        // WK17 — the custom-scheme serving set registers here, once,
+        // at web-context creation — the WPE analog of the
+        // pre-application QWebEngineUrlScheme registrations.
+        installUriSchemeHandlers(ctx);
         return ctx;
     }();
     return context;
@@ -1223,6 +1256,10 @@ WebkitPage::WebkitPage(Engine::Profile *profile, QObject *parent)
     // materializes in worlds a handler was registered into, which is
     // also what keeps the main world bare of it (the SEC24 shape).
     registerChannelHandler();
+    // WK17: the uri-scheme handlers resolve their originating page
+    // through this map (the abp: persona lookup, the arktos-file:
+    // initiator fallback).
+    schemePageMap().insert(m_webView, this);
     // WebKit scopes the UserContentManager per view — the profile's
     // script collection lands on this page's own UCM, applied here
     // and kept in sync by WebkitProfile while the page lives.
@@ -1242,6 +1279,7 @@ WebkitPage::WebkitPage(Engine::Profile *profile, QObject *parent)
 WebkitPage::~WebkitPage()
 {
 #ifdef ARKTOS_WEBKIT_LINKED
+    schemePageMap().remove(m_webView);
     if (m_webProfile)
         m_webProfile->detachPage(this);
     if (m_view)
@@ -2378,22 +2416,124 @@ void WebkitPage::onPageIconsNotify()
 bool WebkitPage::onDecidePolicy(WebKitPolicyDecision *decision, int type)
 {
 #ifdef ARKTOS_WEBKIT_LINKED
-    if ((type == int(WEBKIT_POLICY_DECISION_TYPE_NAVIGATION_ACTION)
-            || type == int(WEBKIT_POLICY_DECISION_TYPE_NEW_WINDOW_ACTION))
-            && WEBKIT_IS_NAVIGATION_POLICY_DECISION(decision)) {
-        WebKitNavigationAction *action =
-            webkit_navigation_policy_decision_get_navigation_action(
-                WEBKIT_NAVIGATION_POLICY_DECISION(decision));
-        if (action)
-            m_lastNavigationType = engineNavigationType(
-                webkit_navigation_action_get_navigation_type(action),
-                webkit_navigation_action_is_redirect(action));
+    const bool navigationDecision =
+        (type == int(WEBKIT_POLICY_DECISION_TYPE_NAVIGATION_ACTION)
+         || type == int(WEBKIT_POLICY_DECISION_TYPE_NEW_WINDOW_ACTION))
+        && WEBKIT_IS_NAVIGATION_POLICY_DECISION(decision);
+    if (!navigationDecision)
+        return false;
+    WebKitNavigationAction *action =
+        webkit_navigation_policy_decision_get_navigation_action(
+            WEBKIT_NAVIGATION_POLICY_DECISION(decision));
+    if (!action)
+        return false;
+    m_lastNavigationType = engineNavigationType(
+        webkit_navigation_action_get_navigation_type(action),
+        webkit_navigation_action_is_redirect(action));
+
+    // WK17 — the navigation-layer RequestPolicy consult.  Response
+    // decisions stay observe-only (the early return above): the
+    // subresource lane is WK18's content-blocker answer.
+    WebKitURIRequest *uriRequest =
+        webkit_navigation_action_get_request(action);
+    const char *uri = uriRequest
+        ? webkit_uri_request_get_uri(uriRequest) : nullptr;
+    const QUrl url = QUrl::fromEncoded(uri ? uri : "");
+    // A new-window action's frame name is the TARGET (e.g. "_blank"),
+    // not a subframe marker — the action itself is main-frame.
+    const bool mainFrame =
+        type == int(WEBKIT_POLICY_DECISION_TYPE_NEW_WINDOW_ACTION)
+        || !webkit_navigation_action_get_frame_name(action);
+
+    Engine::RequestPolicy *policy =
+        m_webProfile ? m_webProfile->requestPolicy() : nullptr;
+    if (policy) {
+        Engine::NavigationRequest request;
+        request.url = url;
+        request.resourceType = mainFrame
+            ? Engine::ResourceType::MainFrame
+            : Engine::ResourceType::SubFrame;
+        request.navigationType = m_lastNavigationType;
+        request.firstPartyUrl = m_url;
+        request.isMainFrame = mainFrame;
+        // initiatorOrigin stays empty — WebKit exposes no initiator
+        // on a navigation action; purpose likewise (no fetch-metadata
+        // surface).
+        const Engine::RequestDecision verdict =
+            policy->decide(request);
+        if (verdict.action == Engine::RequestAction::Block) {
+            webkit_policy_decision_ignore(decision);
+            return true;
+        }
+        if (verdict.action == Engine::RequestAction::Redirect) {
+            // A navigation decision cannot rewrite its request —
+            // refuse and re-issue the load at the verdict's URL (an
+            // arktos-resource: stub or a rewritten location both
+            // serve through the scheme registry).  A NEW_WINDOW
+            // redirect has no view to retarget — it degrades to the
+            // refusal.  The referer override has no expression either:
+            // WebKitURIRequest headers are not mutable on a
+            // navigation decision — the spike's named gap, so nothing
+            // is faked.
+            webkit_policy_decision_ignore(decision);
+            if (type == int(WEBKIT_POLICY_DECISION_TYPE_NAVIGATION_ACTION)
+                    && !verdict.redirectUrl.isEmpty()) {
+                const QByteArray target =
+                    verdict.redirectUrl.toString().toUtf8();
+                webkit_web_view_load_uri(m_webView, target.constData());
+            }
+            return true;
+        }
     }
+
+    // External schemes — a mailto:/tel:/magnet: navigation can only
+    // be serviced by handing the URL to the desktop, so the
+    // navigation is always refused and the SEC02 consent prompt runs
+    // queued (main-frame only — an iframe must not raise dialogs on
+    // the user's behalf).  The allowlist is WebPage's own
+    // isBrowserHandledScheme so both engines run the same list.
+    if (!url.scheme().isEmpty()
+            && !WebPage::isBrowserHandledScheme(url.scheme())) {
+        webkit_policy_decision_ignore(decision);
+        if (mainFrame)
+            confirmAndOpenExternalUrl(this, url);
+        return true;
+    }
+
+    // The directory-listing reroute — chrome-level on every engine:
+    // file:// is built-in and takes no scheme handler, so a
+    // main-frame file: navigation at a directory is served the
+    // arktos-file: listing instead (WebPage::acceptNavigationRequest
+    // parity).
+    if (type == int(WEBKIT_POLICY_DECISION_TYPE_NAVIGATION_ACTION)
+            && mainFrame
+            && url.scheme() == QLatin1String("file")
+            && QFileInfo(url.toLocalFile()).isDir()) {
+        webkit_policy_decision_ignore(decision);
+        const QByteArray target = FileAccessHandler::urlForLocalPath(
+            url.toLocalFile()).toString().toUtf8();
+        webkit_web_view_load_uri(m_webView, target.constData());
+        return true;
+    }
+
+    // Approved main-frame navigations record their target — the
+    // uri-scheme handlers match it to authenticate a no-Referer
+    // request as the document nav (the arktos-file: SEC02 path).
+    if (policy) {
+        // Policy consulted and allowed — record the affirmative
+        // decision rather than leaving WebKit's default.
+        webkit_policy_decision_use(decision);
+        if (mainFrame)
+            m_lastNavTarget = url;
+        return true;
+    }
+    if (mainFrame)
+        m_lastNavTarget = url;
 #else
     Q_UNUSED(decision);
     Q_UNUSED(type);
 #endif
-    return false;   // observe-only until WK17 — WebKit decides "use"
+    return false;   // no policy installed — WebKit's default "use"
 }
 
 // ---- WK14 — WebKitFindController sinks -------------------------------
@@ -2488,6 +2628,274 @@ static QString webkitPersonaId(const QString &storageName)
             return id;
     }
     return QString();
+}
+
+// ---- WK17 — custom-scheme serving ----------------------------------
+//
+// webkit_web_context_register_uri_scheme is the WPE half of the
+// custom-scheme contract — every URISchemeRequest callback lands on
+// the global-default main context the Qt GUI thread already pumps, so
+// the serving adapters may do GUI work inline (QFileIconProvider
+// pixmaps, the abp: subscribe prompt) where backend-0's handlers had
+// to queue off the IO thread.  The serving LOGIC is the shared
+// engine-agnostic half of the same adapters backend-0 uses —
+// FileAccessHandler's listing builder + SEC02 allowlist, the
+// interstitial nonce registry, the abp: subscribe shape, the
+// compiled stub table — so a second engine refuses and serves
+// identically rather than carrying a divergent copy.
+
+// web_view -> owning WebkitPage: scheme requests resolve the
+// originating page for the persona lookup (abp:) and the initiator
+// fallback (arktos-file: SEC02).  Pages register at construction and
+// remove at destruction; a request whose view vanished still gets
+// answered (ambient persona / no initiator).
+static QHash<WebKitWebView *, WebkitPage *> &schemePageMap()
+{
+    static QHash<WebKitWebView *, WebkitPage *> map;
+    return map;
+}
+
+static void finishSchemeBytes(WebKitURISchemeRequest *request,
+                              const QByteArray &body,
+                              const QByteArray &mime)
+{
+    GInputStream *stream = g_memory_input_stream_new_from_data(
+        g_memdup2(body.constData(), gsize(body.size())),
+        gsize(body.size()), g_free);
+    webkit_uri_scheme_request_finish(
+        request, stream, gint64(body.size()),
+        mime.isEmpty() ? "application/octet-stream" : mime.constData());
+    g_object_unref(stream);
+}
+
+static void failSchemeRequest(WebKitURISchemeRequest *request, int code,
+                              const char *message)
+{
+    GError *error = g_error_new_literal(WEBKIT_NETWORK_ERROR, code,
+                                        message);
+    webkit_uri_scheme_request_finish_error(request, error);
+    g_error_free(error);
+}
+
+// arktos-file: — the FileAccessHandler contract: GET only, SEC02
+// initiator rules, directory listings only.  WebKit's scheme request
+// carries no initiator origin — the Referer header is the closest
+// provenance (a remote page reaching for the listing — iframe,
+// subresource, or a poked navigation — always leaves one).  With no
+// Referer the request is only legitimate as the main-frame
+// navigation decide-policy just approved on the same view; anything
+// else is refused.
+static void cbSchemeArktosFile(WebKitURISchemeRequest *request, gpointer)
+{
+    const char *method =
+        webkit_uri_scheme_request_get_http_method(request);
+    if (!method || QByteArray(method) != "GET") {
+        failSchemeRequest(request, WEBKIT_NETWORK_ERROR_FAILED,
+                          "invalid method");
+        return;
+    }
+    const QUrl url(QString::fromUtf8(
+        webkit_uri_scheme_request_get_uri(request)));
+    QString initiatorScheme;
+    if (SoupMessageHeaders *headers =
+            webkit_uri_scheme_request_get_http_headers(request)) {
+        const char *referer =
+            soup_message_headers_get_one(headers, "Referer");
+        if (referer)
+            initiatorScheme = QUrl(QString::fromUtf8(referer)).scheme();
+    }
+    bool allowed = !initiatorScheme.isEmpty()
+        && FileAccessHandler::initiatorAllowed(initiatorScheme);
+    if (!allowed && initiatorScheme.isEmpty()) {
+        WebkitPage *page = schemePageMap().value(
+            webkit_uri_scheme_request_get_web_view(request));
+        allowed = page && page->lastNavTarget() == url;
+    }
+    if (!allowed) {
+        failSchemeRequest(request, WEBKIT_NETWORK_ERROR_FAILED,
+                          "initiator denied");
+        return;
+    }
+    int iconSize = qApp->font().pixelSize();
+    if (iconSize <= 0)
+        iconSize = 16;
+    QByteArray html;
+    const FileAccessHandler::ListingError error =
+        FileAccessHandler::directoryListing(url.path(), iconSize,
+                                            &html);
+    if (error == FileAccessHandler::ListingError::None) {
+        finishSchemeBytes(request, html, "text/html");
+        return;
+    }
+    failSchemeRequest(
+        request,
+        error == FileAccessHandler::ListingError::NotFound
+            ? WEBKIT_NETWORK_ERROR_FILE_DOES_NOT_EXIST
+            : WEBKIT_NETWORK_ERROR_FAILED,
+        "directory listing failed");
+}
+
+// arktos-resource: — the compiled $redirect stub table
+// (AdBlockResourceHandler::resourceFor is already engine-agnostic).
+static void cbSchemeArktosResource(WebKitURISchemeRequest *request,
+                                   gpointer)
+{
+    const char *method =
+        webkit_uri_scheme_request_get_http_method(request);
+    const QUrl url(QString::fromUtf8(
+        webkit_uri_scheme_request_get_uri(request)));
+    QString path = url.path();
+    if (path.startsWith(QLatin1Char('/')))
+        path = path.mid(1);
+    QByteArray mime, body;
+    if (!method || QByteArray(method) != "GET"
+        || !AdBlockResourceHandler::resourceFor(path.toUtf8(), &mime,
+                                              &body)) {
+        failSchemeRequest(request, WEBKIT_NETWORK_ERROR_FAILED,
+                          "unknown stub resource");
+        return;
+    }
+    finishSchemeBytes(request, body, mime);
+}
+
+// abp: — the subscribe endpoint: the URL only carries parameters; the
+// persona's own AdBlockManager answers the prompt (the MPROF rule —
+// an ambient instance() would attribute the subscription to the
+// wrong profile).  Nothing is ever served.
+static void cbSchemeAbp(WebKitURISchemeRequest *request, gpointer)
+{
+    const char *method =
+        webkit_uri_scheme_request_get_http_method(request);
+    const QUrl url(QString::fromUtf8(
+        webkit_uri_scheme_request_get_uri(request)));
+    if (!method || QByteArray(method) != "GET"
+        || !AdBlockSchemeAccessHandler::isSubscribeRequest(url)) {
+        failSchemeRequest(request, WEBKIT_NETWORK_ERROR_FAILED,
+                          "invalid abp: request");
+        return;
+    }
+    AdBlockManager *manager = nullptr;
+    if (WebkitPage *page = schemePageMap().value(
+            webkit_uri_scheme_request_get_web_view(request))) {
+        QString personaId;
+        if (page->profile())
+            personaId =
+                webkitPersonaId(page->profile()->storageName());
+        if (personaId.isEmpty())
+            personaId = BrowserPaths::activeProfileId();
+        manager = AdBlockManager::instanceFor(personaId);
+    }
+    if (manager)
+        manager->promptSubscribe(url);
+    failSchemeRequest(request, WEBKIT_NETWORK_ERROR_CANCELLED,
+                      "abp: requests are never served");
+}
+
+// arktos-cert-error: / arktos-http-warning: / arktos-site-block: —
+// the nonce registry IS already the engine-agnostic store
+// (SchemeAccessHandler statics); only the serving transport differs.
+static void cbSchemeInterstitial(WebKitURISchemeRequest *request,
+                                 gpointer)
+{
+    const QUrl url(QString::fromUtf8(
+        webkit_uri_scheme_request_get_uri(request)));
+    QString html;
+    if (url.path() == QLatin1String("interstitial")) {
+        QMutexLocker lock(&SchemeAccessHandler::interstitialMutex());
+        html = SchemeAccessHandler::interstitialPages().value(
+            QUrlQuery(url).queryItemValue(QLatin1String("n")));
+    }
+    if (html.isEmpty()) {
+        failSchemeRequest(request, WEBKIT_NETWORK_ERROR_FAILED,
+                          "no interstitial for nonce");
+        return;
+    }
+    finishSchemeBytes(request, html.toUtf8(), "text/html");
+}
+
+// External schemes (mailto:, tel:, magnet:, ftp: and friends) can
+// only be serviced by handing the URL to the desktop — a shell-out
+// that needs explicit consent; a web page must never trigger it
+// silently (SEC02).  Mirrors WebPage::confirmAndOpenExternalUrl —
+// one prompt at a time, queued so a modal exec() never nests inside
+// the decide-policy handler.
+static bool s_webkitExternalPromptActive = false;
+static void confirmAndOpenExternalUrl(WebkitPage *page,
+                                      const QUrl &url)
+{
+    if (s_webkitExternalPromptActive)
+        return;
+    s_webkitExternalPromptActive = true;
+    const QString source = page->url().toString();
+    QPointer<QWidget> parent = page->view();
+    QMetaObject::invokeMethod(qApp, [parent, url, source]() {
+        // The percent-encoded form keeps control characters and
+        // embedded newlines from spoofing the dialog text.
+        QString shown = QString::fromUtf8(url.toEncoded());
+        if (shown.size() > 256)
+            shown = shown.left(256) + QLatin1String("…");
+        QMessageBox box(QMessageBox::Question,
+            WebPage::tr("Open External Application"),
+            WebPage::tr("The page at %1 wants to open an external "
+                        "application to handle this link:\n\n%2\n\n"
+                        "Allow it?").arg(source, shown),
+            QMessageBox::Open | QMessageBox::Cancel, parent);
+        // URLs are page-controlled; render the prompt literally.
+        box.setTextFormat(Qt::PlainText);
+        box.setDefaultButton(QMessageBox::Cancel);
+        const QMessageBox::StandardButton choice =
+            static_cast<QMessageBox::StandardButton>(box.exec());
+        s_webkitExternalPromptActive = false;
+        if (choice != QMessageBox::Open)
+            return;
+        // askDesktopToOpenUrl records the url so a scheme handler
+        // that loops back into the browser is detected and dropped.
+        if (BrowserApplication *application =
+                BrowserApplication::instance())
+            application->askDesktopToOpenUrl(url);
+        else
+            QDesktopServices::openUrl(url);
+    }, Qt::QueuedConnection);
+}
+
+static void installUriSchemeHandlers(WebKitWebContext *context)
+{
+    webkit_web_context_register_uri_scheme(
+        context, "arktos-file", cbSchemeArktosFile, nullptr, nullptr);
+    webkit_web_context_register_uri_scheme(
+        context, "abp", cbSchemeAbp, nullptr, nullptr);
+    webkit_web_context_register_uri_scheme(
+        context, "arktos-resource", cbSchemeArktosResource,
+        nullptr, nullptr);
+    webkit_web_context_register_uri_scheme(
+        context, "arktos-cert-error", cbSchemeInterstitial,
+        nullptr, nullptr);
+    webkit_web_context_register_uri_scheme(
+        context, "arktos-http-warning", cbSchemeInterstitial,
+        nullptr, nullptr);
+    webkit_web_context_register_uri_scheme(
+        context, "arktos-site-block", cbSchemeInterstitial,
+        nullptr, nullptr);
+
+    // Security flags mirroring backend-0's QWebEngineUrlScheme
+    // registrations: arktos-file is Local (its file:// entry links
+    // must resolve); the stub resources are Secure+CorsEnabled so an
+    // https page accepts a $redirect serving; the interstitial
+    // carriers are Secure like backend-0.
+    WebKitSecurityManager *security =
+        webkit_web_context_get_security_manager(context);
+    webkit_security_manager_register_uri_scheme_as_local(
+        security, "arktos-file");
+    webkit_security_manager_register_uri_scheme_as_secure(
+        security, "arktos-resource");
+    webkit_security_manager_register_uri_scheme_as_cors_enabled(
+        security, "arktos-resource");
+    webkit_security_manager_register_uri_scheme_as_secure(
+        security, "arktos-cert-error");
+    webkit_security_manager_register_uri_scheme_as_secure(
+        security, "arktos-http-warning");
+    webkit_security_manager_register_uri_scheme_as_secure(
+        security, "arktos-site-block");
 }
 #endif // ARKTOS_WEBKIT_LINKED
 
