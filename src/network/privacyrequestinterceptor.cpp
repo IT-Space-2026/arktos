@@ -21,6 +21,7 @@
 #include "profilesettings.h"
 
 #include "adblockrequestinterceptor.h"
+#include "extensionrequestwatcher.h"
 #include "navigationpolicy.h"
 #include "scriptcontrolmanager.h"
 
@@ -211,6 +212,10 @@ PrivacyRequestInterceptor::PrivacyRequestInterceptor(AdBlockNetwork *network,
     : QWebEngineUrlRequestInterceptor(profile)
     , m_adBlock(new AdBlockRequestInterceptor(network, this))
     , m_scope(downgradeScope(profile))
+    // ER11: extension request observation is a normal-profile feed —
+    // off-the-record browsing hosts no extensions, so its traffic
+    // must never reach an extension context.
+    , m_reportToExtensions(profile && !profile->isOffTheRecord())
 {
 }
 
@@ -231,11 +236,20 @@ void PrivacyRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
         buildRequest(info, m_scope, /*torMode=*/false,
                      RefererEngineDefault);
     const PolicyVerdict verdict = NavigationPolicy::evaluate(req);
+    // ER11: announce the request to observe-only webRequest listeners
+    // BEFORE the verdict applies — Chrome's onBeforeRequest fires for
+    // requests other features later drop — and pair a policy block
+    // with onErrorOccurred.
+    if (m_reportToExtensions)
+        ExtensionRequestWatcher::observeRequest(info);
     if (applyVerdict(verdict, info)) {
         // "allow" — per-site UA spoof, then the adblock matcher as
         // the delegated tail stage.
         applyUserAgentSpoof(info);
         m_adBlock->interceptRequest(info);
+    } else if (m_reportToExtensions
+               && verdict.action == PolicyVerdict::Action::Block) {
+        ExtensionRequestWatcher::observeBlocked(info);
     }
 }
 

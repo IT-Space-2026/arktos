@@ -3008,6 +3008,18 @@ Extension enabled state survives restarts (EXT20):
 Extensions whose core function can never run now say so (EXT21):
     EXT19/EXT20 got Bitwarden's popup to render, but rendering the intro carousel is not a working extension: Bitwarden's manifest requires chrome.scripting and chrome.webRequest — the APIs it would use to inject its content script and fill a login form — and Qt WebEngine does not serve either. The health classifier used to grade that signature "Limited", implying degradation where there is in fact no path to the extension doing its job. Manifests now classify their required permissions against a fatal core-API set (scripting, the request-filtering APIs) in both parsers — the Rust rc_ext_manifest_check and the Qt fallback — and any required-but-unservable hit grades the extension NotSupported even when its background worker is alive and answering. The extension row reads "Not supported", the details explain "it requires chrome.* APIs Qt WebEngine does not provide (scripting, webRequest) — this extension cannot work in this browser", and clicking its toolbar button shows that reason instead of a popup that could never fill anything. Optional grants don't condemn: an extension that merely offers to use scripting keeps its Limited or Healthy grade.
 
+The extension-runtime work order is now a measurement, not a guess (ER00):
+    A new env-gated autotest leg (tst_extensionmanager bitwardenGapBaseline) measures what a real extension actually asks of the hosted chrome.* runtime at boot: pointed at an unpacked bundle via ARKTOS_EXTTEST_DIR, it fixture-copies the bundle (the installed Bitwarden stays read-only), installs the copy onto the sandboxed test profile, enables it, waits out the hosted background boot, opens the action popup the way the toolbar does, and records every typed shim gap the bundle emits — the backend's forwarded list plus each context's probe (gaps, notes, touched API counts, audit misses, page errors). The report prints to the test log and lands verbatim wherever ARKTOS_EXTTEST_OUT points; .devin/EXT-RUNTIME-BASELINE.md commits the first measurement: Bitwarden 2026.9.3 boots clean under the hosted runtime (background ready, popup bridged, popup-to-background port traffic live) and emits zero typed gaps at boot, so the remaining surface sits on the interaction path — unlock, fill — which the lane measures next.
+
+Content scripts can now reach their extension's background (ER01):
+    Web pages get a real chrome.runtime bridge for hosted extensions: a profile-wide page agent runs in a shared isolated script world (one world for all extensions — Qt caps world ids at 256 — with each extension namespaced under __arktosExtAgents so no global chrome binding ever leaks into a page's own world), and each extension's declared manifest content_scripts are injected into that same realm with a scoped chrome object delivered by closure — runtime.id/getURL/getManifest/lastError/sendMessage/onMessage/connect/onConnect, extension.getURL, i18n.getMessage, and the storage areas with onChanged, all permission-gated. Calls travel page -> postMessage -> the restricted channel-world forwarder (which whitelists only arktosExt.invoke and arktosExt.extEvent) -> the new ExtensionPageBridge object on each WebPage's channel -> C++ -> the hosted background, with replies marshaled back along the same path; connect() rides a long-lived port transport through the same relay. Security runs before touching anything: the bridge re-checks host-permission/content-script coverage on every call using the page's committed URL (never a caller-supplied one), rejects foreign extension ids and un-prefixed message/channel keys with typed invalid-mid/invalid-chan errors, answers no-host-access on uncovered pages and no-storage-permission without the storage grant, and stamps sender metadata (id/url/origin/tab) for the receiving context. Matching follows Chrome semantics including <all_urls>, wildcards, excludes, run_at and all_frames; manifest js/css paths are sanitized (no empties, absolutes, colons or ..), and a content script's world:"MAIN" declaration is approximated by the shared isolated realm — more isolation, same scoped chrome binding — with the deviation recorded rather than silently dropped. Two engine facts the task discovered are encoded rather than worked around: page-level scripts never inject on data:/about: documents, so no forwarder can exist there and coverage matchers reject those schemes outright, and Chromium's built-in empty window.chrome stays in the main world while Arktos's registry never does.
+
+Extension contexts can now message content scripts — chrome.tabs.sendMessage (ER02):
+    The background-to-page direction of extension messaging is live: chrome.tabs.sendMessage from any hosted context resolves the numeric tab id through the live-tab registry, re-verifies the extension's host coverage against the tab's committed URL before anything is pushed (an uncovered page never sees the extension's traffic — the delivery channel reposts to every world on the document), and marshals the call into the page agent, which fires the extension's runtime.onMessage listeners in its scoped content-script realm with a Chrome-shaped sender (extension id, calling document URL, chrome-extension origin, no .tab field). Replies travel back as typed deliveries — a listener's synchronous return value or its sendResponse answer resolves the caller's callback or promise, a page with no listener answers Chrome's "Could not establish connection. Receiving end does not exist.", listeners that never respond answer "The message port closed before a response was received.", and stale page or host contexts expire their pending deliveries instead of pinning them. Failure modes are typed, never silent: unknown tab ids answer not-found, message ids outside the extension's own namespace answer invalid-argument, subframe addressing (options.frameId) answers unsupported because the page's channel forwarder is main-frame only, and a page without a live agent answers no-receiver. Host-to-page pushes carry an extension scope tag so a sibling extension's agent on the same document never sees traffic that is not its own. Verified end-to-end by the extensionTabMessaging autotest leg: a fixture extension's hosted background round-trips a message into a real browser tab and asserts the sender shape the content script observed.
+
+chrome.tabs.onActivated now matches Chrome's argument shape (ER03):
+    Hosted extension listeners for chrome.tabs.onActivated used to receive two bare arguments (tabId, windowId) where Chrome delivers one activeInfo object — any extension reading activeInfo.tabId saw undefined. The event now carries the spec-shaped {tabId, windowId} object, and the extensionEventSurfaces autotest leg now proves the tab-event sequence arrives in order, not just present: a fixture extension logging chrome.tabs.onCreated/onUpdated/onActivated/onRemoved sees them dispatched into its hosted background in causal order during scripted tab operations (a new tab's create before its activate and remove; a navigation's loading update before its complete one), with every tab payload sharing the shape chrome.tabs.query reports and URL/title fields still scrubbed for extensions that hold neither the tabs permission nor a matching host permission.
+
 Servo wheel scrolling uses the compositor fast path with smooth easing (ENG33):
     Wheel scrolling on a Servo tab still felt slow and "chubby" after frame pacing landed (ENG31): every delivered delta still round-tripped through Servo's script thread for DOM wheel dispatch before the scroll was allowed to run, each notch landed as a single hard jump, and rapid notches never accelerated. Wheel input now rides a new compositor-direct export in the servo-embed shim — se_scroll feeds the delta straight into the painter's scroll tree, where it lands as a webrender APZ scroll-offset transaction on the next update (no script round-trip, no re-layout, damage-limited repaint) — and an explicit event-loop wake in the shim keeps a queued scroll from stalling on an idle page, which libservo's queue-only notify_scroll_event would otherwise allow. On top of the faster path, each notch eases out across about 4–6 frames as proportional slices of the remaining distance (the shape of native smooth-scroll animations, capped well below a teleport), and repeated notches inside a short window ramp the multiplier to 3.5x like the system-scroll acceleration Chrome and Firefox apply — a flick covers real ground instead of crawling at one notch-distance per frame. Trade-off, documented in the shim and accepted for this experimental backend: DOM wheel listeners do not fire and preventDefault cannot veto on the fast path, so wheel-intercepting widgets degrade to a normal scroll; hosts on older artifacts keep the DOM-correct se_wheel route automatically. The --servo-smoke scroll bench gained largest-step and settle instrumentation plus slice/accel/pixel-delta legs; on the llvmpipe release build a lone notch now lands over ~5 paints instead of one jump and a rapid 6-notch flick covers roughly 2.3x the flat distance. The honest ceiling is unchanged: every frame is still a full-surface llvmpipe raster, so peak scroll rate stays bounded by paint cost.
 - The compositor scroll path gained a live kill-switch (ENG34): setting
@@ -3589,3 +3601,368 @@ Multiple Servo tabs can be open at once (ENG36): switching a second
     working and the engine keeps running — and the per-tab crash
     recovery ("Try Servo Again") still rebuilds a fresh view on the
     same engine.
+Extensions (webNavigation): chrome.webNavigation.onDOMContentLoaded
+    now fires — a DocumentCreation-point probe script in the isolated
+    extension channel world reports the milestone through the page
+    bridge, gated on a genuine in-flight load so forged calls are
+    inert. Originless documents (data:, about:) get the event at load
+    completion so committed/domContentLoaded/completed ordering still
+    holds. onCommitted/onErrorOccurred now report the navigation
+    target (aboutToLoadUrl) rather than the still-displayed document,
+    and the browser's internal error page no longer produces
+    webNavigation events for a failed navigation — Chrome parity.
+Extensions (runtime lifecycle): chrome.runtime.onInstalled and
+    chrome.runtime.onStartup now dispatch into hosted extension
+    contexts — a fresh install fires {reason:"install"} once and
+    never sees onStartup in its own session, an extension whose
+    manifest version changed fires {reason:"update",
+    previousVersion}, a browser-version change fires
+    {reason:"browser_update"}, and a profile that already carried
+    the extension gets onStartup on its next runtime session.
+    The {extension version, browser version} record lives in the
+    profile's settings under extensions/runtime/<id> and is
+    removed on uninstall so a reinstall is a clean install again.
+    chrome.windows.onCreated now also delivers Chrome's single
+    Window-object argument instead of a bare window id (ER05).
+Extensions (runtime decision gate): the hosted runtime's
+    content-script handshake now carries real extension code end to
+    end (ER06) — measured with the installed Bitwarden bundle on an
+    isolated profile: its declared document_start content scripts
+    ran inside the page agent's isolated realm, announced themselves
+    to the real background (triggerAutofillScriptInjection) with a
+    correct sender.tab, held the autofill-injected-script-port
+    connection the background's onConnect accepted, and the
+    background responded by dispatching chrome.scripting.executeScript
+    (answered as the typed 'unsupported' gap until scripting lands).
+    A background-initiated tabs.sendMessage reached the real content
+    script and its forward-back reply returned to real onMessage
+    listeners — the handshake crossed the world-emulation boundary in
+    both directions with no isolated-world identity requirement, so
+    the gate verdict is PASS and the remaining work is mechanical
+    namespace coverage, not isolation surgery. Evidence:
+    .devin/EXT-RUNTIME-SPIKE.md.
+Extensions (scripting): chrome.scripting.executeScript now really
+    injects (ER07) — the hosted background's call resolves the tab
+    through the live-tab registry, re-proves the 'scripting'
+    permission and host-permission coverage of the committed URL
+    BEFORE any source reaches the page, then evals the payload per
+    frame through QWebEngineFrame::runJavaScript — allFrames and
+    frameIds address real subframes (depth-first ids, main frame = 0).
+    func is serialized across the channel and re-evaluated inside the
+    same compat preamble declared content scripts get — chrome/browser
+    bind to that frame's scoped agent object; args marshal as JSON;
+    files[] reads and merges bundle-relative sources with the loader's
+    path hygiene; world: 'MAIN' runs unprivileged in the page's own
+    world while the default 'ISOLATED' runs in the shared agent realm.
+    Returned Promises are awaited (runJavaScript never waits for
+    thenables — results park on a per-exec registry the host polls),
+    and a throwing func answers a per-frame {frameId, error} entry
+    instead of rejecting the call, Chrome's contract. Everything that
+    cannot work is typed, never silent: no-permission, no-host-access,
+    not-found (tab or frame), bad-path/no-such-file for bundle misses,
+    unsupported for documentIds (a Chrome-internal handle we never
+    mint). Every rejection lands in the extension's shimGaps ledger —
+    the extensionScripting autotest leg proves the round trip, the
+    subframe addressing, the promise await, the world placement, and
+    every denial path on real browser tabs.
+Extensions (scripting): chrome.scripting.insertCSS/removeCSS now
+    really style the page (ER08) — Bitwarden's overlay css path.
+    Both calls share executeScript's gates: the 'scripting'
+    permission and host-permission coverage of the tab's committed
+    URL are re-proven BEFORE any css reaches a page, then the payload
+    fans out per frame (allFrames/frameIds over the same depth-first
+    tree) in the content-script realm, where a per-frame ledger keys
+    one <style> element per css source unit — insert upserts (Chrome
+    dedupes a repeated key rather than stacking sheets), remove drops
+    exactly the matching keys, and a never-inserted key is Chrome's
+    silent no-op. files[] reads bundle css with the loader's path
+    hygiene; the ledger dies with the document like Chrome's injected
+    sheets. origin ('AUTHOR'/'USER') scopes the removal key the way
+    Chrome scopes it; the cascade-level approximation — a DOM sheet
+    can only sit at author level — is recorded in the code, not
+    hidden. The calls resolve void like Chrome and a frame-level
+    failure rejects; every denial is a typed error in the shimGaps
+    ledger. The extensionScriptCss autotest leg proves the
+    measurable insert -> remove restore, the files form, origin
+    scoping, subframe targeting, the executeScript multi-file order,
+    and every typed denial on real browser tabs.
+Extensions (scripting): dynamic content-script registration is
+    served on both API shapes (ER09) — the MV3
+    chrome.scripting.registerContentScripts/unregisterContentScripts/
+    getRegisteredContentScripts/updateContentScripts set and the
+    Firefox-shape chrome.contentScripts.register/unregister/getScripts
+    (the surface the bundled webextension-polyfill resolves
+    browser.contentScripts.* to). One runtime registry normalizes both
+    option shapes; a registered spec arms as a profile script in the
+    shared content-script realm and fires on the next matching
+    navigation under the same gate a declared content_scripts entry
+    carries. Registration re-proves every matches[] pattern against
+    the extension's declared host coverage BEFORE anything is armed —
+    an uncovered pattern is a typed no-host-access, never a silent
+    grant — the MV3 surface additionally requires the 'scripting'
+    permission. Registered js/css read real bundle files (traversal,
+    missing and oversized paths refused typed); Firefox-only options
+    that can't be honored (globs, cookieStoreId) refuse with a typed
+    unsupported rather than registering a lie. Registrations persist
+    across restarts in profile settings exactly like Chrome's
+    persistAcrossSessions default, session-only ones die with the
+    extension, and uninstall drops the whole set. The
+    extensionContentScriptRegistration autotest leg proves the real
+    register -> navigate -> inject -> unregister chain, persistence
+    across a host respawn, every typed denial, and the consent split
+    between the two surfaces.
+Extensions (offscreen): chrome.offscreen.createDocument/hasDocument/
+    closeDocument are served by the hosted runtime (ER10) — the
+    surface Bitwarden's unlock path needs for Argon2/WASM,
+    localStorage and clipboard work. createDocument spawns one hidden
+    second-class host page per extension at the declared
+    bundle-relative URL: navigation-locked to that document, no
+    toolbar wiring, carrying the full extension shim, its own
+    QWebChannel bridge and a relay registration — so chrome.* calls
+    and runtime messaging inside the document work exactly like the
+    popup's do, and runtime.getContexts reports it as
+    OFFSCREEN_DOCUMENT. The call resolves only when the document's
+    shim has registered (the earliest sendMessage can reach it), the
+    'offscreen' permission gates the whole namespace, and duplicate
+    creates fail with Chrome's verbatim single-document message while
+    foreign URLs, unknown or missing reasons, and double-closes all
+    land as typed errors in the gap ledger. closeDocument releases
+    the page safely — teardown defers so a close issued from inside
+    the document still gets its reply. The extensionOffscreen
+    autotest leg drives the full lifecycle including in-document
+    storage round-trips and every denial.
+Extensions (webRequest): chrome.webRequest's observe-only events are
+    served by the hosted runtime (ER11) — onBeforeRequest,
+    onBeforeSendHeaders, onSendHeaders, onHeadersReceived,
+    onCompleted and onErrorOccurred fire with Chrome-shaped details
+    for every request the profile interceptor sees, scoped so a
+    request reaches an extension only when a registered listener's
+    urls/types/tabId filter matches AND the extension's
+    host_permissions cover the request URL (re-proved per event, in
+    C++, never delegated to page-side code). Request/response
+    headers reach only listeners that asked via extraInfoSpec;
+    response headers are the real commit headers for main-frame
+    navigations, subresource completion rides a page-side
+    resource-timing probe that can only pair requests the
+    interceptor actually announced, and off-the-record plus Tor
+    traffic is never reported. Blocking stays honestly out: a
+    'blocking' or 'requestBody' extraInfoSpec registers the listener
+    observe-only (Chrome's MV3 degrade) but answers a typed
+    unsupported error that lands in the extension's health ledger,
+    and events with no observation source (onBeforeRedirect,
+    onResponseStarted, onAuthRequired) refuse at subscribe the same
+    way. The extensionWebRequest autotest leg proves a real page
+    load plus scripted fetch end to end — headers, requestId
+    pairing, filter scoping, a refused-connection net:: error, and
+    every typed denial.
+Extensions (notifications): chrome.notifications.create/update/clear/
+    getAll are served by the hosted runtime (ER12) over a per-extension
+    record registry and the freedesktop org.freedesktop.Notifications
+    service on the session D-Bus — the same platform surface the
+    download manager already uses for FileManager1. create() answers
+    the notification id (Chrome's both overloads: caller-chosen id or
+    generated), update() merges over the stored options and re-presents
+    through the daemon's replaces_id, clear() drops the record and the
+    banner, and getAll() returns the live object map. The
+    'notifications' manifest permission gates the namespace —
+    permission-less callers get the typed no-permission refusal other
+    gated namespaces answer. Daemon signals route back into the
+    extension's listeners: the conventional 'default' action is the
+    body click (onClicked), 'btn-N' actions are Chrome's two-capped
+    buttons (onButtonClicked), and NotificationClosed maps its
+    freedesktop reason onto Chrome's byUser flag (onClosed); a
+    programmatic clear reports byUser=false. When no notification
+    service is reachable the record still exists — Chrome's
+    notification object outlives its banner — but nothing pretends it
+    was shown: no onShown, and a one-time health-visible note says the
+    banner never left the process. Options are validated to Chrome's
+    contract (bad type, missing title, more than two buttons are typed
+    invalid-argument), iconUrl/imageUrl resolve strictly inside the
+    extension's bundle, and extension teardown dismisses its
+    notifications like Chrome's unload. The extensionNotifications
+    autotest leg drives the full cycle through a hosted extension —
+    create/onShown/getAll/update/missing-id/click/button/close/clear
+    plus the no-permission denial — over the ARKTOS_EXTNOTIFY_STUB
+    headless presenter, and the real Bitwarden legs run with it armed.
+Extensions (idle): chrome.idle.queryState/setDetectionInterval/
+    onStateChanged are served by the hosted runtime (ER13) over a
+    browser-global input watcher — an application-wide Qt event
+    filter counts key, pointer, wheel, touch and tablet events as
+    user activity and a single-shot timer marks the active-to-idle
+    boundary at the configured detection interval. Chrome parity is
+    kept where it's honest: the interval and every queryState
+    threshold clamp at Chrome's 15-second floor, the interval is
+    global (the last setDetectionInterval wins for all extensions),
+    and queryState answers against its own threshold rather than
+    the declared state — a long threshold still reports 'active'
+    while the watcher is already 'idle'. The 'idle' manifest
+    permission gates the namespace, transitions reach only
+    subscribing extensions that declare it, and the honest limits
+    are recorded once per context on the health row instead of
+    being hidden: activity is measured inside Arktos windows only
+    (input in other applications does not reset the clock) and the
+    'locked' state is never reported. chrome.idle.getAutoLockDelay
+    answers the typed ChromeOS-only unsupported, a missing
+    permission the typed no-permission, and every denial is
+    ledgered — never a silent no-op. The watcher is lazy: nothing
+    filters input or runs a timer until the first namespaced call
+    or onStateChanged listener arrives, so an extension-free
+    session carries zero cost. The extensionIdle autotest leg
+    drives a real key event through the application filter and
+    watches the active→idle→active transitions cross into a hosted
+    extension, and the real Bitwarden background's own
+    setDetectionInterval + onStateChanged subscription round-trips
+    with zero typed gaps.
+Extensions (commands): chrome.commands is served by the hosted
+    runtime (ER14) — a manifest "commands" declaration's
+    suggested_key (the platform key, then the default) binds one
+    window-scoped shortcut per browsing window, and pressing it
+    dispatches commands.onCommand(command, tab) into the extension
+    with the focused window's active tab, like Chrome.  The
+    reserved _execute_action performs the action click: the
+    declared or chrome.action.setPopup-overridden popup opens as
+    the real action bubble, a popup-less or cleared action fires
+    action.onClicked(tab), and a disabled action fires nothing.
+    chrome.commands.getAll answers the real bound-state rows —
+    every declared command with the currently bound shortcut or an
+    empty one, matching Chrome's unassigned rows.  Honest limits
+    are recorded on the extension's health row instead of being
+    swallowed: an unbindable suggestion stays unbound, "global"
+    binds window-scoped only (there is no OS-global shortcut
+    channel), an ambiguous chord dispatches nothing, the reserved
+    MV2 command names are never bound under MV3, and a shortcut
+    remapping UI does not exist yet.  Private/tor windows never
+    get extension shortcuts, and disable/unload drops the bindings
+    in the same pass.
+Extensions (introspection): chrome.management.getSelf,
+    chrome.extension.getViews/getBackgroundPage and a minimal
+    chrome.sidebarAction are served by the hosted runtime (ER15).
+    getSelf answers the real ExtensionInfo record — the extension's
+    own id, localized name/description, version, enabled state and
+    install provenance — and needs no "management" permission, like
+    Chrome; the remaining management members answer a typed
+    no-permission or unsupported error depending on what the
+    manifest declared. getViews enumerates the runtime's context
+    registry (background, popup, extension pages — offscreen
+    documents excluded, type/tabId/windowId filters honored): the
+    caller's own document contributes its real Window while a
+    sibling context gets a typed capability handle carrying the
+    true URL and a working location.reload — a cross-document
+    Window cannot cross the channel, and getBackgroundPage keeps
+    answering the documented MV3 null outside the background
+    context rather than faking one. chrome.sidebarAction exists
+    only when the manifest declares sidebar_action — feature
+    detection stays honest — records panel/title/icon bookkeeping,
+    and answers a typed unsupported for open/close/toggle because
+    Arktos has no sidebar surface.
+Extensions (security): the hosted runtime now enforces the manifest
+    boundary on every path that touches a page or a privileged
+    namespace (ER16). Permission gates read only the manifest's
+    required `permissions` — `optional_permissions` can no longer
+    unlock a call while `chrome.permissions.request` is unserved —
+    and `storage`, `alarms`, `contextMenus`/`menus`, `sidePanel`,
+    `sidebarAction`, `notifications`, `idle` and non-getSelf
+    `management` members answer a typed `no-permission` when
+    undeclared. `scripting` injection re-proves host coverage per
+    frame before any script runs (about:blank inherits the
+    embedder's origin, blob: names its owning origin): explicitly
+    targeted uncovered frames reject the call, and an allFrames
+    sweep reports per-frame `no-host-access` results rather than
+    executing there. `tabs.create`/`tabs.update`/`windows.create`
+    validate the URL before touching a window — bundle-relative
+    paths resolve onto the extension's own origin, while foreign
+    extension, javascript: and other untrusted targets are
+    refused. Event payloads now scrub url/pageUrl/frameUrl/title/
+    favIconUrl for extensions holding neither `tabs` nor matching
+    host access, so a contextMenus-only extension still receives
+    onClicked without learning where the click happened.
+
+Extensions (end-to-end): the hosted runtime now carries the real
+    Bitwarden bundle all the way — install, master-password unlock
+    and autofill of a live login form — proven by a harness-driven
+    leg that asserts the fixture credential lands in the page's
+    input fields (ER17, evidence in .devin/EXT-RUNTIME-E2E.md).
+    Reaching it surfaced three real defects the runtime now fixes:
+    the message relay treated any non-undefined listener return as
+    the response, so an RxJS-tap listener that returns its
+    Subscriber latched the channel and swallowed the genuine async
+    sendResponse — only `true` or a settling Promise holds it now,
+    matching Chrome; `chrome.storage.onChanged` never fired because
+    the engine's own storage delegate never emits it, so the shim
+    now fires the writer's copy synchronously and posts the change
+    record for a writer-excluded fan-out to sibling contexts (and
+    to the page-agent push) over the real storage areas; and
+    `tabs.query` read `windowId: -2` literally instead of resolving
+    WINDOW_ID_CURRENT. `chrome.webNavigation.getFrame`/
+    `getAllFrames` answer the registered main frame from the event
+    hub instead of a typed unsupported, reporting Chrome's own 'no
+    frame' shape for anything deeper.
+
+Extensions (residual sweep): every typed gap the real Bitwarden
+    bundle still emits through the hosted runtime is now a declared,
+    audited set (ER18). The one real behavioral miss the sweep found
+    — `chrome.tabs.create` answering `no-window` on a windowless
+    session — is fixed: the call now opens a browser window the way
+    Chrome does, while an explicit `windowId` that resolves nowhere
+    keeps the typed `no-window` refusal instead of silently minting
+    one. Everything else is either served or listed in the
+    machine-readable intentional set (.devin/EXT-RUNTIME-GAPS.md) —
+    dead namespaces with no Arktos surface, unserved members of
+    served namespaces, and correct domain refusals — and the
+    Bitwarden test legs now fail on any typed gap outside that set,
+    so an unplanned regression cannot slip in quietly.
+
+Extensions (health): the EXT21 fatal check now subtracts what the
+    hosted runtime verifiably serves (ER19).  A runtimeServes() list
+    sits beside the fatal core-API table; with the hosted runtime
+    armed, a required permission it covers — scripting, observe-only
+    webRequest — leaves fatalMissing entirely, and other served
+    permissions (tabs, windows, webNavigation, offscreen,
+    notifications, idle, context menus, sidePanel) move out of the
+    flat "will not work" tier into "partially supported".  Everything
+    the runtime does not serve keeps the raw engine verdict —
+    declarativeNetRequest*, blocking webRequest, cookies,
+    nativeMessaging, privacy and friends stay missing — and
+    webRequestAuthProvider joins the unsupported list because the
+    observe-only webRequest surface cannot answer an auth challenge.
+    For a hosted extension the engine's service-worker probe also
+    measures the wrong worker, so a Ready hosted background now
+    counts as the live background (a Failed host is the real
+    "never became ready").  Bitwarden — proven install→unlock→fill
+    end to end — regrades from "Not supported" to "Limited", its
+    reason honestly naming the declares that remain unserved.
+    ARKTOS_EXTHOST_OFF=1 restores the raw verdict: a
+    scripting-requiring extension still grades Not supported.
+
+Extension chrome.* runtime hosted by Arktos itself (EXT22):
+    The surfaces Qt WebEngine's embedder compiles in but never
+    serves — scripting, the tab/window/webNavigation event streams,
+    commands, notifications, offscreen documents, observe-only
+    webRequest, idle, dynamic content-script registration, and the
+    management/extension introspection members — are now implemented
+    by Arktos' own hosted runtime (the ER00–ER19 lane): each enabled
+    extension with a background gets a hidden host page at its real
+    chrome-extension:// origin running the genuine bundle under a
+    generated chrome.* shim whose privileged calls dispatch into
+    C++, and content scripts plus extension pages reach it through a
+    scoped per-extension page agent. The manifest boundary is
+    enforced before any page is touched — required permissions only,
+    per-frame host coverage, url scrubbing on event payloads — and
+    everything the runtime cannot serve answers a typed error on the
+    extension's health row instead of a silent no-op. The proof is
+    the bundled Bitwarden: install, real WASM master-password
+    unlock, and autofill of a live login form all verified end to
+    end by the autotest harness, with its residual typed gaps frozen
+    into a declared, audited set (.devin/EXT-RUNTIME-GAPS.md) the
+    test legs now enforce. The UI names the tier honestly: Settings
+    → Extensions reads "Hosted runtime" (with limited/degraded
+    qualifiers when the health grade or the shim-gap ledger says
+    so), the action-bar tooltip carries the same note, and the
+    README's extension section states the Qt-provides/Arktos-hosts
+    split plainly. Extension contexts also no longer inherit the
+    web-content JavaScript toggle: hosted background pages, offscreen
+    documents, action popups and the health probe all run with
+    scripts even when "Enable JavaScript" is off for pages — Chrome
+    never applied that preference to extension chrome, and without
+    the exemption a JS-off session parked every hosted extension at
+    "starting" forever.

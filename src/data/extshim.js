@@ -26,8 +26,12 @@
  *                         the store the still-running real service
  *                         worker shares); a per-extension bridge
  *                         store backs contexts without bindings
- *   chrome.extension    — getURL/getViews/getBackgroundPage mapped to
- *                         the hosted context
+ *   chrome.extension    — getURL; ER15 getViews composes from the
+ *                         runtime's pushed context registry (own
+ *                         Window + capability handles for siblings);
+ *                         getBackgroundPage answers window in the
+ *                         background context and the documented MV3
+ *                         null elsewhere
  *   chrome.i18n         — getMessage wrapped unconditionally: the
  *                         native binding answers '' for every key;
  *                         misses fall to the _locales/<lang>/
@@ -43,12 +47,28 @@
  *                         are shim events EXT16 pushes into
  *   chrome.webNavigation— event objects (delivery is EXT16)
  *   chrome.permissions  — contains/getAll answered from the manifest
- *   chrome.notifications— event objects; create() is a typed
- *                         'unsupported' (no notification surface)
- *   chrome.commands     — onCommand event; getAll from the manifest
+ *   chrome.notifications— ER12: create/update/clear/getAll over the
+ *                         host's record registry + freedesktop
+ *                         presentation; onClicked/onButtonClicked/
+ *                         onClosed/onShown dispatch back from the
+ *                         daemon through hostEvent
+ *   chrome.idle         — ER13: queryState/setDetectionInterval/
+ *                         onStateChanged over the host's in-app
+ *                         input watcher (in-app activity only;
+ *                         'locked' never reported)
+ *   chrome.commands     — ER14: onCommand dispatched by the C++
+ *                         shortcut registry; getAll answers the
+ *                         real bound-state rows
  *   chrome.contextMenus — create/update/remove* registry host-side;
  *                         onClicked event (rendering is EXT16)
  *   chrome.sidePanel    — options recorded host-side; no panel UI
+ *   chrome.management   — ER15: getSelf answers the real ExtensionInfo
+ *                         shape (id/name/version/enabled/installType)
+ *                         host-side; other members typed no-permission/
+ *                         unsupported
+ *   chrome.sidebarAction— ER15: Firefox-shape sugar when the manifest
+ *                         declares sidebar_action — panel/title/icon
+ *                         bookkeeping; open/close typed unsupported
  *   other absent ns     — unsupportedNs(): calls answer typed errors,
  *                         on* event registration is recorded
  *
@@ -69,6 +89,10 @@
         notes: [],      // benign diagnostics (recorded registrations,
                         // accepted-but-unsourced state)
         touched: {},    // api -> count (the live delta measurement)
+        contexts: [],   // ER15 — registered sibling contexts, pushed
+                        // by the runtime ('__arktos.contexts') so
+                        // chrome.extension.getViews answers
+                        // synchronously
         events: {},     // name -> event objects the host pushes into
         seenMids: {},   // relay/native message dedupe (bounded TTL)
         recentDeliveries: {}, // content-hash dedupe for relay+native
@@ -78,12 +102,11 @@
     function note(text) {
         if (shim.notes.length < LOG_CAP)
             shim.notes.push(String(text));
-        if (host.bridgeUp && host.bridge) {
-            try {
-                host.bridge.invoke('shim', 'note',
-                    { message: String(text) }, function () {});
-            } catch (e) {}
-        }
+        // Through call() so a diagnostic recorded before the
+        // handshake lands rides the bridge queue — health must see
+        // boot-time gaps, not just post-bridge ones.
+        call('shim', 'note', { message: String(text) })
+            .catch(function () {});
     }
 
     function recordGap(api, error) {
@@ -93,13 +116,9 @@
                 return;
         if (shim.gaps.length < LOG_CAP)
             shim.gaps.push(text);
-        if (host.bridgeUp && host.bridge) {
-            try {
-                host.bridge.invoke('shim', 'gap',
-                    { api: String(api), error: String(error) },
-                    function () {});
-            } catch (e) {}
-        }
+        call('shim', 'gap',
+             { api: String(api), error: String(error) })
+            .catch(function () {});
     }
 
     function touch(api) {
@@ -131,6 +150,25 @@
         }
         if (name === '__arktos.relayResponse') {
             onRelayResponse(payload);
+            return;
+        }
+        if (name === '__arktos.deliverResponse') {
+            onDeliverResponse(payload);
+            return;
+        }
+        if (name === '__arktos.execResult') {
+            onExecResult(payload);
+            return;
+        }
+        if (name === '__arktos.offscreenDone') {
+            onOffscreenDone(payload);
+            return;
+        }
+        if (name === '__arktos.contexts') {
+            // ER15: the runtime's registered-context snapshot —
+            // getViews composes its return array from this.
+            if (payload && payload.contexts)
+                shim.contexts = payload.contexts;
             return;
         }
         if (name === '__arktos.portConnect') {
@@ -196,7 +234,10 @@
         'tabs.onCreated': ['tab'],
         'tabs.onUpdated': ['tabId', 'changeInfo', 'tab'],
         'tabs.onMoved': ['tabId', 'moveInfo'],
-        'tabs.onActivated': ['tabId', 'windowId'],
+        // tabs.onActivated has NO entry on purpose: its single
+        // argument IS the {tabId, windowId} activeInfo object, so a
+        // named-object payload fires as one arg — key mapping would
+        // wrongly spread it into two scalars.
         'tabs.onHighlighted': ['highlightInfo'],
         'tabs.onDetached': ['tabId', 'detachInfo'],
         'tabs.onAttached': ['tabId', 'attachInfo'],
@@ -234,23 +275,105 @@
     }
 
     // chrome.extension.getViews/getBackgroundPage answers that are
-    // honest in every context kind — a sibling page cannot return
-    // the background's real Window object, so it reports its own
-    // type and answers null with a recorded gap rather than handing
-    // back the wrong window.
+    // honest in every context kind.  ER15: getViews composes its
+    // array from the runtime's pushed context registry — the
+    // calling document contributes its real Window; a sibling
+    // context gets a capability handle (its true documentUrl, a
+    // real location.reload() routed through the bridge, focus
+    // honestly unmeasured) — never a fake Window.  getBackgroundPage
+    // still answers null for non-background contexts because a
+    // Window cannot cross documents.
     function thisViewType() {
         return host.kind === 'background'
             ? 'BACKGROUND'
             : (contextKind() === 'popup' ? 'POPUP' : 'TAB');
     }
+    function viewHandle(ctx) {
+        return {
+            // Explicitly NOT a Window — extension code that needs
+            // the real DOM can only reach it in its own document.
+            __arktosViewHandle: true,
+            contextId: ctx.contextId,
+            contextType: ctx.contextType,
+            tabId: ctx.tabId,
+            windowId: ctx.windowId,
+            location: {
+                href: String(ctx.documentUrl || ''),
+                reload: function () {
+                    call('extension', 'reloadView',
+                         { contextId: ctx.contextId })
+                        .catch(function (e) {
+                            recordGap(
+                                'chrome.extension.getViews.reload',
+                                String(e && e.code || e));
+                        });
+                }
+            },
+            document: {
+                hasFocus: function () {
+                    if (!shim.__focusNoteDone) {
+                        shim.__focusNoteDone = 1;
+                        note('chrome.extension.getViews: another '
+                             + 'document\'s focus is unmeasured — '
+                             + 'handle hasFocus() answers false');
+                    }
+                    return false;
+                }
+            }
+        };
+    }
     function extensionGetViews(fetchProperties) {
         touch('chrome.extension.getViews');
-        var type = fetchProperties && fetchProperties.type;
-        if (!type || type === thisViewType())
-            return [window];
-        note('chrome.extension.getViews(' + type + '): only the '
-             + thisViewType() + ' context is enumerable here');
-        return [];
+        var type = fetchProperties && fetchProperties.type
+            ? String(fetchProperties.type).toUpperCase() : null;
+        var tabId = fetchProperties ? fetchProperties.tabId
+                                    : undefined;
+        var windowId = fetchProperties ? fetchProperties.windowId
+                                       : undefined;
+        var ctxs = shim.contexts;
+        if (!ctxs || !ctxs.length) {
+            // The registry snapshot has not arrived yet — answer
+            // for the one context we can prove: our own document.
+            if (!type || type === thisViewType())
+                return [window];
+            note('chrome.extension.getViews(' + type + '): only the '
+                 + thisViewType() + ' context is enumerable here');
+            return [];
+        }
+        var views = [];
+        var sawSelf = false;
+        for (var i = 0; i < ctxs.length; ++i) {
+            var c = ctxs[i];
+            if (!c)
+                continue;
+            // Offscreen documents are not views in Chrome's sense —
+            // they carry no visible window the API enumerates.
+            if (c.contextType === 'OFFSCREEN_DOCUMENT')
+                continue;
+            if (type && String(c.contextType) !== type)
+                continue;
+            if (tabId !== undefined && tabId !== null
+                    && Number(c.tabId) !== Number(tabId))
+                continue;
+            if (windowId !== undefined && windowId !== null
+                    && Number(c.windowId) !== Number(windowId))
+                continue;
+            if (!sawSelf
+                    && (c.contextId === shim.contextId
+                        || String(c.documentUrl)
+                           === String(location.href))) {
+                views.push(window);
+                sawSelf = true;
+                continue;
+            }
+            views.push(viewHandle(c));
+        }
+        // The snapshot may predate this context's registration —
+        // never drop the caller's own window when it fits the
+        // filter.
+        if (!sawSelf && (!type || type === thisViewType()))
+            views.unshift(window);
+        return views;
     }
     function extensionGetBackgroundPage(cb) {
         touch('chrome.extension.getBackgroundPage');
@@ -291,7 +414,18 @@
         // kind+url feed chrome.runtime.getContexts.
         call('relay', 'register',
              { kind: contextKind(), url: String(location.href) })
-            .then(function (id) { shim.contextId = id; })
+            .then(function (id) {
+                shim.contextId = id;
+                // The registration lands a '__arktos.contexts' push
+                // as well; fetching here covers the case where the
+                // push raced the contextId assignment.
+                call('runtime', 'getContexts', {})
+                    .then(function (v) {
+                        if (v && v.length)
+                            shim.contexts = v;
+                    })
+                    .catch(function () {});
+            })
             .catch(function () {});
     }
 
@@ -349,11 +483,16 @@
     host.onBridgeUp = function () {
         wireHostEvent();
         flushBridgeQueue();
+        // ER15: manifest-gated installs (sidebarAction) had to wait
+        // for this — manifest() is only the real manifest once the
+        // handshake reply has landed.
+        installSidebarAction();
     };
     (function waitBridge() {
         if (host.bridgeUp && host.bridge) {
             wireHostEvent();
             flushBridgeQueue();
+            installSidebarAction();
             return;
         }
         if (host.state === 'ready'
@@ -502,6 +641,30 @@
         }
     }
 
+    // Member-level identity assert for members Qt binds NATIVELY but
+    // we must serve ourselves (ER15 management.getSelf — the native
+    // answer lacks the fields our records keep).  A plain assignment
+    // silently no-ops on a non-writable native member — sloppy mode
+    // never throws — so verify after the write and fall back to
+    // defineProperty.  Still-locked after both -> recorded gap.
+    function forceMember(obj, key, val, api) {
+        if (obj[key] === val)
+            return;
+        safeSet(obj, key, val, api);
+        if (obj[key] !== val) {
+            try {
+                Object.defineProperty(obj, key, {
+                    configurable: true,
+                    writable: true,
+                    enumerable: true,
+                    value: val
+                });
+            } catch (e) {}
+        }
+        if (obj[key] !== val)
+            recordGap(api, 'native-member-locked');
+    }
+
     // Namespaces installed through installNs are tracked so the
     // post-bootstrap repair pass can re-assert them — Chromium
     // lazily REDEFINES api bindings after DocumentCreation (the
@@ -542,6 +705,8 @@
     var bridgeLocalRef = null, bridgeSessionRef = null;
     var wrappedOnMessageRef = null, shimSendMessageRef = null;
     var shimConnectRef = null;
+    var offscreenNsRef = null;   // ER10 — member-identity re-assert
+    var mgmtNsRef = null;        // ER15 — member-identity re-assert
     var rtImpls = {}, rtEventNames = null;
     // Connection events are re-asserted by IDENTITY, not presence —
     // a late native binding swap would otherwise strand the
@@ -587,13 +752,59 @@
             for (var tk in tabsNsRef) {
                 if (tk === '__arktosShim')
                     continue;
-                if (chrome.tabs[tk] === undefined)
+                // sendMessage is an identity override like
+                // runtime.connect: the native binding can only reach
+                // the dead service worker, the hosted route is the
+                // live one — fill it even over a native member.
+                if (chrome.tabs[tk] === undefined
+                        || tk === 'sendMessage')
                     safeSet(chrome.tabs, tk, tabsNsRef[tk],
                             'chrome.tabs.' + tk);
             }
         }
         if (!ok && !chrome.tabs)
             recordGap('chrome.tabs', 'namespace-locked');
+    }
+
+    // Assert chrome.management is OURS — same shape as assertTabs:
+    // Qt binds a native namespace whose getSelf answers Chromium's
+    // records (no manifestVersion, not our enabled state), and the
+    // mid-boot binding swap rewrites 'management' by assignment.  A
+    // getter+no-op-setter descriptor shrugs that off; a locked
+    // native object degrades to per-member force asserts, and total
+    // refusal lands as a recorded gap.
+    function assertManagement() {
+        if (!mgmtNsRef)
+            return;
+        try {
+            if (chrome.management === mgmtNsRef)
+                return;
+        } catch (e) {
+            return;
+        }
+        var ok = false;
+        try {
+            Object.defineProperty(chrome, 'management', {
+                configurable: true,
+                enumerable: true,
+                get: function () { return mgmtNsRef; },
+                set: function () {}
+            });
+            ok = (chrome.management === mgmtNsRef);
+        } catch (e) {}
+        if (!ok) {
+            try {
+                chrome.management = mgmtNsRef;
+                ok = (chrome.management === mgmtNsRef);
+            } catch (e2) {}
+        }
+        if (!ok && chrome.management
+                && typeof chrome.management === 'object')
+            for (var mk in mgmtNsRef)
+                forceMember(chrome.management, mk, mgmtNsRef[mk],
+                            'chrome.management.' + mk);
+        if (!ok && !chrome.management)
+            recordGap('chrome.management', 'namespace-locked');
     }
 
     function repairInstalls() {
@@ -656,6 +867,46 @@
                             'chrome.runtime.' + ra);
             }
         }
+        // ER15: extension.getViews/getBackgroundPage are identity
+        // overrides for the same reason — a native binding cannot
+        // see the hosted background.
+        var ext4 = chrome.extension;
+        if (ext4 && typeof ext4 === 'object') {
+            if (ext4.getViews !== extensionGetViews)
+                forceMember(ext4, 'getViews', extensionGetViews,
+                            'chrome.extension.getViews');
+            if (ext4.getBackgroundPage !== extensionGetBackgroundPage)
+                forceMember(ext4, 'getBackgroundPage',
+                            extensionGetBackgroundPage,
+                            'chrome.extension.getBackgroundPage');
+        }
+        // ER15: management's members are identity overrides too —
+        // Qt injects a native chrome.management whose getSelf
+        // answers Chromium's records, not ours (no manifestVersion,
+        // no our-side enabled state).
+        try {
+            assertManagement();
+        } catch (e) {}
+        // ER10: offscreen's members are identity overrides (the
+        // native binding may exist and MUST be replaced — its
+        // document would carry no bridge/relay), so re-assert by
+        // identity the same way runtime.connect is.
+        if (offscreenNsRef) {
+            try {
+                if (!chrome.offscreen
+                        || typeof chrome.offscreen !== 'object') {
+                    installNs('offscreen', offscreenNsRef);
+                } else {
+                    for (var om in offscreenNsRef) {
+                        if (chrome.offscreen[om]
+                                !== offscreenNsRef[om])
+                            safeSet(chrome.offscreen, om,
+                                    offscreenNsRef[om],
+                                    'chrome.offscreen.' + om);
+                    }
+                }
+            } catch (e) {}
+        }
     }
 
     // --- messaging -----------------------------------------------------
@@ -668,7 +919,103 @@
     // peers is inherent to the dual-context design and matches the
     // extension's own broadcast expectations.
     var msgPending = {};   // mid -> {finish, peers, replies}
+    var deliverWait = {};  // mid -> {cb, resolve, reject, done} —
+                           // ER02 tabs.sendMessage host->page waits
+    var execWait = {};     // execId -> {cb, resolve, reject, done,
+                           // fail} — ER07 scripting.executeScript
+                           // waits on '__arktos.execResult'
+    var docWait = {};      // docId -> {cb, resolve, reject, done,
+                           // fail} — ER10 offscreen.createDocument
+                           // waits on '__arktos.offscreenDone'
     var relayPeers = 0;
+
+    // ER02: the page agent's 'respond' lands here — resolve the
+    // matching tabs.sendMessage with Chrome's own error vocabulary:
+    // an answered delivery passes its value through; an empty answer
+    // distinguishes "receiving end does not exist" (no listeners)
+    // from "port closed" (listeners present, none responded).
+    function onDeliverResponse(payload) {
+        if (!payload || !payload.mid)
+            return;
+        var entry = deliverWait[payload.mid];
+        if (!entry || entry.done)
+            return;
+        var v = (payload.response === null
+                 || payload.response === undefined)
+            ? undefined : payload.response;
+        if (v !== undefined) {
+            entry.done = true;
+            delete deliverWait[payload.mid];
+            answerCb(entry.cb, v);
+            entry.resolve(v);
+            return;
+        }
+        // entry.fail owns the done flag — marking it here would
+        // turn the call below into a silent no-op and strand the
+        // callback AND the safety timer on a done entry.
+        entry.fail(payload.hadListeners
+            ? 'The message port closed before a response was received.'
+            : 'Could not establish connection. '
+              + 'Receiving end does not exist.');
+    }
+
+    // ER07: the per-frame results of a scripting.executeScript land
+    // here.  Chrome resolves the call once injection has started —
+    // even when the script threw — so the payload is always the
+    // results array (a throwing frame carries `error` on its entry,
+    // the documented InjectionResult shape); only injection-level
+    // failures rejected the call earlier via call()'s typed error.
+    function onExecResult(payload) {
+        if (!payload || !payload.execId)
+            return;
+        var entry = execWait[payload.execId];
+        if (!entry || entry.done)
+            return;
+        var results = payload.results || [];
+        if (entry.css) {
+            // ER08 — insertCSS/removeCSS resolve void like Chrome,
+            // but a frame-level failure (dead document, no insertion
+            // host) is a real injection failure and rejects the call.
+            for (var i = 0; i < results.length; ++i) {
+                if (results[i] && results[i].error) {
+                    entry.fail(String(results[i].error));
+                    return;
+                }
+            }
+            entry.done = true;
+            delete execWait[payload.execId];
+            answerCb(entry.cb, undefined);
+            entry.resolve(undefined);
+            return;
+        }
+        entry.done = true;
+        delete execWait[payload.execId];
+        answerCb(entry.cb, results);
+        entry.resolve(results);
+    }
+
+    // ER10: offscreen.createDocument resolves when the spawned
+    // document's shim registered its relay context — the earliest
+    // moment sendMessage really reaches it.  A typed failure lands
+    // as {ok:false,error}; 'single-document' maps onto Chrome's
+    // verbatim message (Bitwarden's withDocument compares
+    // e.message === "Only a single offscreen document may be
+    // created." — the exact string is part of the contract).
+    function onOffscreenDone(payload) {
+        if (!payload || !payload.docId)
+            return;
+        var entry = docWait[payload.docId];
+        if (!entry || entry.done)
+            return;
+        if (payload.ok) {
+            entry.done = true;
+            delete docWait[payload.docId];
+            answerCb(entry.cb);
+            entry.resolve();
+            return;
+        }
+        entry.fail(payload.error || 'offscreen-failed');
+    }
 
     function contentKey(msg) {
         try { return String(JSON.stringify(msg)).slice(0, 512); }
@@ -744,23 +1091,36 @@
                 .catch(function () {});
         }
         var wantAsync = false;
+        // ER01: page-originated messages carry a full C++-built
+        // MessageSender ({id, url: frameUrl, origin: page origin,
+        // tab, frameId}) — forward it verbatim so internal-only
+        // gates still see the honest external shape; a shim-context
+        // sender keeps its extension origin (senderIsInternal-style
+        // gates like Bitwarden's accept it).
+        var sender = (env && env.sender)
+            || { id: env && env.extId || cfg.id,
+                 url: env && env.senderUrl || undefined,
+                 origin: 'chrome-extension://'
+                         + (env && env.extId || cfg.id) };
         for (var i = 0; i < listeners.length; ++i) {
             try {
                 var r = listeners[i].call(
-                    null, msg,
-                    // A real MessageSender — sender.origin must equal
-                    // the extension origin or senderIsInternal-style
-                    // gates (Bitwarden's session/message handlers)
-                    // drop the delivery.
-                    { id: env && env.extId || cfg.id,
-                      url: env && env.senderUrl || undefined,
-                      origin: 'chrome-extension://'
-                              + (env && env.extId || cfg.id) },
-                    respond);
+                    null, msg, sender, respond);
                 if (r === true)
                     wantAsync = true;
-                else if (r !== undefined && !responded)
-                    respond(r);
+                else if (r && typeof r.then === 'function') {
+                    // MV3: a returned Promise settles into the
+                    // response — hold the channel open for it like
+                    // Chrome does.  Any OTHER return value is not a
+                    // response: Bitwarden's allMessages$ tap returns
+                    // its RxJS Subscriber, and answering with it
+                    // latched the channel before the real async
+                    // sendResponse (i.e. dropped
+                    // getUrlAutofillTargetingRules' answer).
+                    wantAsync = true;
+                    r.then(function (v) { respond(v); },
+                           function () { respond(undefined); });
+                }
             } catch (e) {
                 record('relay onMessage listener: ' + e);
             }
@@ -1147,8 +1507,14 @@
         // registered but onConnect never fired — Angular's bootstrap
         // awaited the session IPC forever).  Dual-register so a real
         // external connect still reaches the listener.
+        // ER05: the lifecycle events take the same treatment — a
+        // native onInstalled/onStartup object may exist in the
+        // schema while no embedder delegate ever dispatches it, so
+        // the hosted runtime's push is the only source that can fire
+        // them; listeners must land on the shim event.
         var connEvents = ['onConnect', 'onConnectExternal',
-                          'onMessageExternal'];
+                          'onMessageExternal', 'onInstalled',
+                          'onStartup'];
         for (var ce = 0; ce < connEvents.length; ++ce) {
             (function (cname) {
                 var evName = 'runtime.' + cname;
@@ -1317,8 +1683,10 @@
                 return 'chrome-extension://' + cfg.id + '/'
                        + String(p || '');
             },
-            // Window objects cannot cross the bridge — a context
-            // answers its OWN window for its own type; EXT17 page
+            // Window objects cannot cross the bridge — getViews
+            // hands back the caller's own Window for its own
+            // context plus honest capability handles for sibling
+            // contexts (true url, working reload()); EXT17 page
             // contexts answer null for the background page rather
             // than the wrong object.
             getViews: extensionGetViews,
@@ -1342,25 +1710,48 @@
     // fork the extension's state).  The bridge store backs contexts
     // where the bindings are absent and is exercised directly via
     // __arktosShim.storageArea().
+    // ER17 — the onChanged fan-out.  The engine's storage delegate
+    // never emits storage.onChanged in ANY context (verified: a
+    // listener on the real area hears nothing after its own set),
+    // so the shim fires it itself: the writer's own
+    // storage.onChanged + storage.<area>.onChanged run
+    // synchronously in the mutation's resolution tick — the same
+    // delivery Chrome gives the writing context — then the
+    // computed record posts to the backend's storage.changed op,
+    // which fans it out to the extension's OTHER shim contexts
+    // (the op excludes the poster, so nothing double-delivers).
+    // Between the two halves every context of the extension sees
+    // the event Chrome promises Bitwarden's state framework.
+    function storageChangedPost(areaName, changes) {
+        var any = false;
+        for (var k in changes) {
+            any = true;
+            break;
+        }
+        if (!any)
+            return;
+        var args = [changes, areaName];
+        var ev = shim.events['storage.onChanged'];
+        if (ev)
+            ev.__fire(args);
+        ev = shim.events['storage.' + areaName + '.onChanged'];
+        if (ev)
+            ev.__fire(args);
+        call('storage', 'changed',
+             { area: areaName, changes: changes })
+            .catch(function () {});
+    }
+
     function bridgeStorageArea(areaName) {
         var areaEvent = makeEvent('storage.' + areaName + '.onChanged');
         function afterMutate(result) {
             var changes = result && result.changes || {};
-            var k;
             var any = false;
-            for (k in changes)
+            for (var k in changes)
                 any = true;
             if (!any)
                 return;
-            areaEvent.__fire([changes, areaName]);
-            if (shim.events['storage.onChanged'])
-                shim.events['storage.onChanged']
-                    .__fire([changes, areaName]);
-            if (chrome.storage && chrome.storage.onChanged
-                    && chrome.storage.onChanged.__fire
-                    && chrome.storage.onChanged
-                           !== shim.events['storage.onChanged'])
-                chrome.storage.onChanged.__fire([changes, areaName]);
+            storageChangedPost(areaName, changes);
         }
         return {
             get: function (keys, cb) {
@@ -1421,6 +1812,190 @@
     }
     shim.storageArea = bridgeStorageArea;   // test seam
 
+    // A KEPT real area still needs us for onChanged: wrap its
+    // mutators in place so each write snapshots the touched keys,
+    // performs the real mutation, then posts the change record for
+    // the fan-out above; its dead native onChanged is replaced by
+    // the shim event the fan-out fires.  The area object keeps its
+    // identity — get/getKeys/getBytesInUse/setAccessLevel/
+    // QUOTA_BYTES stay the real members.
+    //
+    // Native areas bind members as getter-only accessors — a plain
+    // assignment throws a TypeError that would flood shimGaps even
+    // though defineProperty succeeds.  defineMember therefore leads
+    // with defineProperty and only records a gap when the member
+    // really cannot be replaced.
+    function defineMember(obj, key, val, api) {
+        if (obj[key] === val)
+            return;
+        try {
+            Object.defineProperty(obj, key, {
+                configurable: true,
+                writable: true,
+                enumerable: true,
+                value: val
+            });
+        } catch (e) {}
+        if (obj[key] === val)
+            return;
+        safeSet(obj, key, val, api);
+        if (obj[key] !== val)
+            recordGap(api, 'native-member-locked');
+    }
+    var wrappedAreas = {};   // areaName -> {area, srcSet, wrappedSet…}
+    function adoptRealArea(areaName) {
+        var area;
+        try {
+            area = chrome.storage && chrome.storage[areaName];
+        } catch (e) { return; }
+        if (!area || typeof area !== 'object'
+                || typeof area.get !== 'function'
+                || typeof area.set !== 'function')
+            return;
+        var rec = wrappedAreas[areaName];
+        if (!rec || rec.area !== area
+                || (area.set !== rec.wrappedSet
+                    && area.set !== rec.srcSet)) {
+            // Fresh object or a mid-boot native redefinition — wrap
+            // against whatever the members are now.
+            var src = { get: area.get, set: area.set,
+                        remove: area.remove, clear: area.clear };
+            rec = { area: area, srcSet: src.set };
+            function runOp(fn, argv) {
+                return new Promise(function (resolve, reject) {
+                    var done = false;
+                    var args = argv.slice();
+                    args.push(function () {
+                        if (done)
+                            return;
+                        done = true;
+                        var e;
+                        try {
+                            e = chrome.runtime
+                                && chrome.runtime.lastError;
+                        } catch (x) { e = null; }
+                        if (e && (e.message || typeof e === 'string'))
+                            reject(new Error(e.message || e));
+                        else
+                            resolve();
+                    });
+                    try {
+                        var r = fn.apply(area, args);
+                        if (r && typeof r.then === 'function')
+                            r.then(function () {
+                                if (!done) { done = true; resolve(); }
+                            }, function (e) {
+                                if (!done) { done = true; reject(e); }
+                            });
+                    } catch (e) {
+                        if (!done) {
+                            done = true;
+                            reject(e);
+                        }
+                    }
+                });
+            }
+            function readOld(keys) {
+                return new Promise(function (resolve) {
+                    var done = false;
+                    var finish = function (v) {
+                        if (!done) {
+                            done = true;
+                            resolve(v || {});
+                        }
+                    };
+                    try {
+                        var r = src.get.call(area, keys, finish);
+                        if (r && typeof r.then === 'function')
+                            r.then(finish, function () { finish({}); });
+                    } catch (e) { finish({}); }
+                });
+            }
+            var has = function (o, k) {
+                return o && Object.prototype.hasOwnProperty
+                        .call(o, k);
+            };
+            rec.wrappedSet = function (items, cb) {
+                var p = readOld(items ? Object.keys(items) : [])
+                    .then(function (old) {
+                        return runOp(src.set, [items || {}])
+                            .then(function () {
+                                var changes = {};
+                                for (var k in items) {
+                                    var change = {};
+                                    if (has(old, k))
+                                        change.oldValue = old[k];
+                                    change.newValue = items[k];
+                                    changes[k] = change;
+                                }
+                                storageChangedPost(areaName,
+                                                   changes);
+                            });
+                    });
+                if (cb)
+                    p.then(function () { cb(); },
+                           function (e) {
+                               answerCb(cb, undefined,
+                                        e && e.message || String(e));
+                           });
+                return p.then(function () {});
+            };
+            rec.wrappedRemove = function (keys, cb) {
+                var list = typeof keys === 'string'
+                    ? [keys] : (keys || []).slice();
+                var p = readOld(list).then(function (old) {
+                    return runOp(src.remove, [list])
+                        .then(function () {
+                            var changes = {};
+                            for (var i = 0; i < list.length; ++i) {
+                                var k = list[i];
+                                if (has(old, k))
+                                    changes[k] =
+                                        { oldValue: old[k] };
+                            }
+                            storageChangedPost(areaName, changes);
+                        });
+                });
+                if (cb)
+                    p.then(function () { cb(); },
+                           function (e) {
+                               answerCb(cb, undefined,
+                                        e && e.message || String(e));
+                           });
+                return p.then(function () {});
+            };
+            rec.wrappedClear = function (cb) {
+                var p = readOld(null).then(function (old) {
+                    return runOp(src.clear, []).then(function () {
+                        var changes = {};
+                        for (var k in old)
+                            changes[k] = { oldValue: old[k] };
+                        storageChangedPost(areaName, changes);
+                    });
+                });
+                if (cb)
+                    p.then(function () { cb(); },
+                           function (e) {
+                               answerCb(cb, undefined,
+                                        e && e.message || String(e));
+                           });
+                return p.then(function () {});
+            };
+            wrappedAreas[areaName] = rec;
+        }
+        var areaEvent =
+            shim.events['storage.' + areaName + '.onChanged']
+            || makeEvent('storage.' + areaName + '.onChanged');
+        defineMember(area, 'set', rec.wrappedSet,
+                     'chrome.storage.' + areaName + '.set');
+        defineMember(area, 'remove', rec.wrappedRemove,
+                     'chrome.storage.' + areaName + '.remove');
+        defineMember(area, 'clear', rec.wrappedClear,
+                     'chrome.storage.' + areaName + '.clear');
+        defineMember(area, 'onChanged', areaEvent,
+                     'chrome.storage.' + areaName + '.onChanged');
+    }
+
     if (typeof chrome !== 'undefined') {
         if (!chrome.storage)
             safeSet(chrome, 'storage', {}, 'chrome.storage');
@@ -1433,12 +2008,16 @@
                 note('chrome.storage.local: bridge-backed store '
                      + '(per-extension namespaced, persisted '
                      + 'host-side)');
+        } else {
+            adoptRealArea('local');
         }
         if (!chrome.storage.session
                 || typeof chrome.storage.session.get !== 'function') {
             bridgeSessionRef = bridgeStorageArea('session');
             safeSet(chrome.storage, 'session', bridgeSessionRef,
                     'chrome.storage.session');
+        } else {
+            adoptRealArea('session');
         }
         if (!chrome.storage.managed) {
             safeSet(chrome.storage, 'managed', {
@@ -1449,10 +2028,23 @@
                 onChanged: makeEvent('storage.managed.onChanged')
             }, 'chrome.storage.managed');
         }
-        if (!chrome.storage.onChanged)
+        var topChanged = null;
+        try { topChanged = chrome.storage.onChanged; } catch (e) {}
+        if (!topChanged) {
             safeSet(chrome.storage, 'onChanged',
                     makeEvent('storage.onChanged'),
                     'chrome.storage.onChanged');
+        } else if (typeof topChanged.__fire !== 'function') {
+            // Native object — dead on this engine, so nothing it
+            // holds can ever fire; swap it for the event our
+            // fan-out reaches.
+            note('chrome.storage.onChanged: native event replaced '
+                 + '— the engine never fires it');
+            defineMember(chrome.storage, 'onChanged',
+                         shim.events['storage.onChanged']
+                         || makeEvent('storage.onChanged'),
+                         'chrome.storage.onChanged');
+        }
         }
     }
 
@@ -1789,16 +2381,57 @@
                 cb = opts;
                 opts = undefined;
             }
-            if (realTabs.sendMessage) {
-                touch('chrome.tabs.sendMessage');
-                try {
-                    var r = realTabs.sendMessage.call(realTabs, tabId,
-                                                      msg, opts, cb);
-                    return r && r.then
-                        ? r : Promise.resolve(undefined);
-                } catch (e) {}
-            }
-            return failCall('tabs.sendMessage', 'unsupported', cb);
+            // ER02: the hosted route — the page agent is the only
+            // live receiving end (the native binding can only reach
+            // the dead service worker), so there is no native
+            // attempt: the bridge resolves the tab, gates the
+            // extension's host coverage BEFORE any push, emits
+            // '__arktos.deliver', and the reply returns as
+            // '__arktos.deliverResponse' -> onDeliverResponse.
+            touch('chrome.tabs.sendMessage');
+            var mid = cfg.id + '#' + (++shim.seq) + '#' + Date.now();
+            return new Promise(function (resolve, reject) {
+                var entry = { cb: cb, resolve: resolve,
+                              reject: reject, done: false };
+                entry.fail = function (message) {
+                    if (entry.done)
+                        return;
+                    entry.done = true;
+                    delete deliverWait[mid];
+                    if (cb) {
+                        // Callback form: lastError inside the call,
+                        // and the (dual-convention) promise resolves
+                        // rather than reject — Chrome hands back no
+                        // promise at all in the callback shape, so an
+                        // unhandled rejection must not appear.
+                        answerCb(cb, undefined, message);
+                        resolve(undefined);
+                        return;
+                    }
+                    var e = new Error(message);
+                    e.api = 'chrome.tabs.sendMessage';
+                    reject(e);
+                };
+                deliverWait[mid] = entry;
+                // Safety net: an accepted delivery whose answer never
+                // lands (channel died mid-flight) still resolves.
+                setTimeout(function () {
+                    entry.fail('The message port closed before a '
+                               + 'response was received.');
+                }, 15000);
+                call('tabs', 'sendMessage',
+                     { id: tabId, mid: mid, msg: msg,
+                       opts: opts || {} })
+                    .then(function () {
+                        // Delivery accepted — the answer arrives on
+                        // the deliverResponse push.
+                    })
+                    .catch(function (e) {
+                        entry.fail(e && e.message
+                            ? e.message
+                            : 'chrome.tabs.sendMessage failed');
+                    });
+            });
         };
         var tabsProxy = new Proxy(tabsNs, {
             get: function (t, prop) {
@@ -1901,6 +2534,63 @@
             return p;
         };
         installNs('windows', winNs);
+        // ER05: a native chrome.windows binding keeps its inert
+        // event objects — the schema ships them but no embedder
+        // delegate dispatches them, so a listener registered on the
+        // native object alone would never fire.  Dual-register each
+        // hub-pushed event the same way the runtime lifecycle events
+        // are handled above: listeners land on the shim event the
+        // EXT16 fan-out fires, and on any native object as well.
+        if (chrome.windows && typeof chrome.windows === 'object') {
+            var winDual = ['onCreated', 'onRemoved',
+                           'onFocusChanged'];
+            for (var wd = 0; wd < winDual.length; ++wd) {
+                (function (cname) {
+                    var evName = 'windows.' + cname;
+                    var shimEv = shim.events[evName]
+                                 || makeEvent(evName);
+                    var realEv;
+                    try {
+                        realEv = chrome.windows[cname];
+                    } catch (e) {
+                        realEv = null;
+                    }
+                    var installed = shimEv;
+                    if (realEv && realEv !== shimEv
+                            && typeof realEv.addListener
+                                   === 'function') {
+                        installed = {
+                            addListener: function (fn) {
+                                shimEv.addListener(fn);
+                                try {
+                                    realEv.addListener(fn);
+                                } catch (e) {}
+                            },
+                            removeListener: function (fn) {
+                                shimEv.removeListener(fn);
+                                try {
+                                    realEv.removeListener(fn);
+                                } catch (e) {}
+                            },
+                            hasListener: function (fn) {
+                                return shimEv.hasListener(fn)
+                                    || (typeof realEv.hasListener
+                                            === 'function'
+                                        && realEv.hasListener(fn));
+                            },
+                            hasListeners: function () {
+                                return shimEv.hasListeners()
+                                    || (typeof realEv.hasListeners
+                                            === 'function'
+                                        && realEv.hasListeners());
+                            }
+                        };
+                    }
+                    safeSet(chrome.windows, cname, installed,
+                            'chrome.windows.' + cname);
+                })(winDual[wd]);
+            }
+        }
     }
 
     // --- chrome.webNavigation ------------------------------------------------
@@ -1919,15 +2609,648 @@
             onReferenceFragmentUpdated:
                 makeEvent('webNavigation.onReferenceFragmentUpdated'),
             onTabReplaced: makeEvent('webNavigation.onTabReplaced'),
+            // Frame lookup: the bridge answers the registered main
+            // frame — deeper frames come back as Chrome's own 'no
+            // frame' typed error, not a fabricated entry.
             getFrame: function (details, cb) {
-                return failCall('webNavigation.getFrame',
-                                'unsupported', cb);
+                var p = call('webNavigation', 'getFrame',
+                             details || {});
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p;
             },
             getAllFrames: function (details, cb) {
-                return failCall('webNavigation.getAllFrames',
-                                'unsupported', cb);
+                var p = call('webNavigation', 'getAllFrames',
+                             details || {});
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p;
             }
         });
+    }
+
+    // --- chrome.webRequest ----------------------------------------------------
+    // ER11 — observe-only webRequest.  Each event keeps its
+    // (listener, filter, extraInfoSpec) triples locally and registers
+    // one record per addListener with the C++ watcher through
+    // webRequest.subscribe; deliveries arrive as 'webRequest.<event>'
+    // hostEvents already unioned per extension, so __fire re-checks
+    // each listener's own filter.  'blocking'/'requestBody'
+    // extraInfoSpec can never be honored — the watcher still
+    // registers the listener observe-only (Chrome's MV3 answer) but
+    // answers typed 'unsupported', which typedError records into
+    // gaps -> health.  Events no observation source exists for
+    // (onBeforeRedirect/onResponseStarted/onAuthRequired) answer the
+    // same typed error at subscribe — never a silent no-fire.
+    var wrSeq = 0;
+    function wrUrlMatches(patterns, urlString) {
+        // Chrome match-pattern check against a concrete URL — the
+        // local half of the watcher's grammar (the C++ side already
+        // applies it per extension; this re-checks per listener).
+        if (!Array.isArray(patterns) || !patterns.length)
+            return true;
+        var u;
+        try { u = new URL(urlString); } catch (e) { return false; }
+        var scheme = u.protocol.replace(/:$/, '');
+        for (var i = 0; i < patterns.length; ++i) {
+            var p = patterns[i];
+            if (p === '<all_urls>') {
+                if (scheme === 'http' || scheme === 'https'
+                        || scheme === 'file' || scheme === 'ftp')
+                    return true;
+                continue;
+            }
+            var sep = p.indexOf('://');
+            if (sep < 0)
+                continue;
+            var ps = p.slice(0, sep);
+            var rest = p.slice(sep + 3);
+            var slash = rest.indexOf('/');
+            var ph = slash < 0 ? rest : rest.slice(0, slash);
+            var pp = slash < 0 ? '/*' : rest.slice(slash);
+            // 'host:port' — Chrome lets patterns pin a port.
+            var pport = '';
+            var colon = ph.lastIndexOf(':');
+            if (colon >= 0) {
+                pport = ph.slice(colon + 1);
+                ph = ph.slice(0, colon);
+            }
+            if (ps === '*') {
+                if (scheme !== 'http' && scheme !== 'https')
+                    continue;
+            } else if (ps !== scheme) {
+                continue;
+            }
+            if (pport && pport !== '*') {
+                var defPort = scheme === 'https' ? 443
+                    : scheme === 'http' ? 80 : -1;
+                var uport = u.port ? parseInt(u.port, 10) : defPort;
+                if (uport !== parseInt(pport, 10))
+                    continue;
+            }
+            if (ph === '*') {
+                // any host
+            } else if (ph.indexOf('*.') === 0) {
+                var base = ph.slice(2);
+                if (u.hostname !== base
+                        && !u.hostname.endsWith('.' + base))
+                    continue;
+            } else if (ph !== u.hostname) {
+                continue;
+            }
+            var re;
+            try {
+                re = new RegExp('^'
+                    + pp.replace(/[.+^${}()|[\]\\]/g, '\\$&')
+                        .replace(/\*/g, '.*')
+                        .replace(/\?/g, '.')
+                    + '$');
+            } catch (e) { continue; }
+            if (re.test(u.pathname + (u.search || '')))
+                return true;
+        }
+        return false;
+    }
+    function makeWebRequestEvent(name) {
+        var eventName = name.slice('webRequest.'.length);
+        var listeners = [];   // {fn, filter, spec, regId}
+        var ev = {
+            addListener: function (fn, filter, extraInfoSpec) {
+                if (typeof fn !== 'function')
+                    return;
+                filter = filter || {};
+                var spec = Array.isArray(extraInfoSpec)
+                    ? extraInfoSpec : [];
+                var entry = {
+                    fn: fn, filter: filter, spec: spec,
+                    regId: cfg.id + '#wr' + (++wrSeq) + '#'
+                           + Date.now()
+                };
+                listeners.push(entry);
+                call('webRequest', 'subscribe', {
+                    regId: entry.regId,
+                    event: eventName,
+                    filter: {
+                        urls: Array.isArray(filter.urls)
+                            ? filter.urls : [],
+                        types: Array.isArray(filter.types)
+                            ? filter.types : null,
+                        tabId: filter.tabId,
+                        windowId: filter.windowId
+                    },
+                    extraInfoSpec: spec
+                }).then(function (r) {
+                    if (r && r.note)
+                        note('chrome.' + name + ': ' + r.note);
+                }).catch(function () {
+                    // The typed failure (unsupported spec, unservable
+                    // event, missing permission) already recorded
+                    // its gap inside call().
+                });
+            },
+            removeListener: function (fn) {
+                for (var i = 0; i < listeners.length; ++i) {
+                    if (listeners[i].fn === fn) {
+                        var regId = listeners[i].regId;
+                        listeners.splice(i, 1);
+                        call('webRequest', 'unsubscribe',
+                             { regId: regId })
+                            .catch(function () {});
+                        return;
+                    }
+                }
+            },
+            hasListener: function (fn) {
+                for (var i = 0; i < listeners.length; ++i)
+                    if (listeners[i].fn === fn)
+                        return true;
+                return false;
+            },
+            hasListeners: function () { return listeners.length > 0; }
+        };
+        ev.__fire = function (args) {
+            var details = args && args[0] ? args[0] : {};
+            for (var i = 0; i < listeners.length; ++i) {
+                var l = listeners[i];
+                var f = l.filter;
+                if (f.tabId !== undefined
+                        && f.tabId !== details.tabId)
+                    continue;
+                if (f.windowId !== undefined
+                        && f.windowId !== details.windowId)
+                    continue;
+                if (Array.isArray(f.types) && f.types.length
+                        && f.types.indexOf(details.type) < 0)
+                    continue;
+                if (!wrUrlMatches(f.urls, details.url))
+                    continue;
+                try {
+                    l.fn(details);
+                } catch (e) {
+                    record('shim event ' + name + ' listener: ' + e);
+                }
+            }
+        };
+        shim.events[name] = ev;
+        return ev;
+    }
+    if (typeof chrome !== 'undefined') {
+        installNs('webRequest', {
+            __arktosShim: true,
+            onBeforeRequest:
+                makeWebRequestEvent('webRequest.onBeforeRequest'),
+            onBeforeSendHeaders:
+                makeWebRequestEvent('webRequest.onBeforeSendHeaders'),
+            onSendHeaders:
+                makeWebRequestEvent('webRequest.onSendHeaders'),
+            onHeadersReceived:
+                makeWebRequestEvent('webRequest.onHeadersReceived'),
+            onAuthRequired:
+                makeWebRequestEvent('webRequest.onAuthRequired'),
+            onResponseStarted:
+                makeWebRequestEvent('webRequest.onResponseStarted'),
+            onBeforeRedirect:
+                makeWebRequestEvent('webRequest.onBeforeRedirect'),
+            onCompleted:
+                makeWebRequestEvent('webRequest.onCompleted'),
+            onErrorOccurred:
+                makeWebRequestEvent('webRequest.onErrorOccurred'),
+            // Chrome's call flushes the in-memory blocking-filter
+            // cache — observe-only has nothing to flush, so a plain
+            // resolve is the honest answer (never a stub).
+            handlerBehaviorChanged: function (cb) {
+                touch('chrome.webRequest.handlerBehaviorChanged');
+                return okCall(undefined, cb);
+            },
+            MAX_HANDLER_BEHAVIOR_CHANGED_CALLS_PER_10_MINUTES: 20
+        });
+    }
+
+    // --- chrome.scripting -----------------------------------------------------
+    // ER07 — the product API.  executeScript is bridge-backed: the
+    // host resolves the tab, re-proves 'scripting' + host coverage
+    // BEFORE any source reaches the page, then evals the payload per
+    // frame (ISOLATED -> the shared agent world with this extension's
+    // scoped chrome binding, MAIN -> the page's own world).  The func
+    // a caller hands us crosses the channel as serialized source —
+    // functions cannot marshal — exactly like Chrome's own
+    // serialize-then-inject.  The results ride back on
+    // '__arktos.execResult'.  ER08 — insertCSS/removeCSS ride the
+    // same execId machinery (a per-frame css payload, the same
+    // '__arktos.execResult' answer) but resolve void like Chrome.
+    // ER09 — registerContentScripts/unregisterContentScripts/
+    // getRegisteredContentScripts/updateContentScripts are
+    // synchronous registry ops: the C++ side normalizes the spec,
+    // re-proves every matches[] pattern against the extension's host
+    // coverage BEFORE arming it, then joins the spec to the
+    // page-agent injection set (profile script in the shared agent
+    // world, same gate shape as a declared content script).
+    function cssOp(method, injection, cb) {
+        touch('chrome.scripting.' + method);
+        injection = injection || {};
+        var target = injection.target || {};
+        var execId = cfg.id + '#css' + (++shim.seq) + '#'
+                     + Date.now();
+        return new Promise(function (resolve, reject) {
+            var entry = { cb: cb, resolve: resolve,
+                          reject: reject, done: false, css: true };
+            entry.fail = function (message) {
+                if (entry.done)
+                    return;
+                entry.done = true;
+                delete execWait[execId];
+                if (cb) {
+                    answerCb(cb, undefined, message);
+                    resolve(undefined);
+                    return;
+                }
+                var e = new Error(message);
+                e.api = 'chrome.scripting.' + method;
+                reject(e);
+            };
+            execWait[execId] = entry;
+            // The same safety net executeScript carries — a delivery
+            // whose answer never lands resolves typed rather than
+            // hanging forever.
+            setTimeout(function () {
+                entry.fail('chrome.scripting.' + method
+                           + ': exec-timeout');
+            }, 15000);
+            call('scripting', method, {
+                execId: execId,
+                target: {
+                    tabId: target.tabId,
+                    frameIds: target.frameIds,
+                    allFrames: target.allFrames,
+                    documentIds: target.documentIds
+                },
+                css: injection.css,
+                files: Array.isArray(injection.files)
+                    ? injection.files : null,
+                origin: injection.origin || 'AUTHOR'
+            }).then(function () {
+                // Accepted — the result lands on
+                // '__arktos.execResult'.
+            }).catch(function (e) {
+                entry.fail(e && e.message
+                    ? e.message
+                    : 'chrome.scripting.' + method + ' failed');
+            });
+        });
+    }
+    if (typeof chrome !== 'undefined') {
+        installNs('scripting', {
+            __arktosShim: true,
+            ExecutionWorld: { ISOLATED: 'ISOLATED', MAIN: 'MAIN' },
+            executeScript: function (injection, cb) {
+                touch('chrome.scripting.executeScript');
+                injection = injection || {};
+                var target = injection.target || {};
+                var execId = cfg.id + '#exec' + (++shim.seq) + '#'
+                             + Date.now();
+                return new Promise(function (resolve, reject) {
+                    var entry = { cb: cb, resolve: resolve,
+                                  reject: reject, done: false };
+                    // The call-level failure path — a typed error
+                    // from invoke (bad target, no host coverage) or
+                    // the safety net below.  Callback form answers
+                    // lastError + undefined like Chrome does.
+                    entry.fail = function (message) {
+                        if (entry.done)
+                            return;
+                        entry.done = true;
+                        delete execWait[execId];
+                        if (cb) {
+                            answerCb(cb, undefined, message);
+                            resolve(undefined);
+                            return;
+                        }
+                        var e = new Error(message);
+                        e.api = 'chrome.scripting.executeScript';
+                        reject(e);
+                    };
+                    execWait[execId] = entry;
+                    // A delivery whose answer never lands (frame
+                    // gone, channel dead) resolves typed rather
+                    // than hanging forever — same net sendMessage
+                    // carries.
+                    setTimeout(function () {
+                        entry.fail('chrome.scripting.executeScript: '
+                                   + 'exec-timeout');
+                    }, 15000);
+                    var funcSource = null;
+                    if (injection.func !== undefined
+                            && injection.func !== null)
+                        funcSource = String(injection.func);
+                    call('scripting', 'executeScript', {
+                        execId: execId,
+                        target: {
+                            tabId: target.tabId,
+                            frameIds: target.frameIds,
+                            allFrames: target.allFrames,
+                            documentIds: target.documentIds
+                        },
+                        func: funcSource,
+                        args: Array.isArray(injection.args)
+                            ? injection.args : [],
+                        files: Array.isArray(injection.files)
+                            ? injection.files : null,
+                        world: injection.world || 'ISOLATED',
+                        injectImmediately:
+                            !!injection.injectImmediately
+                    }).then(function () {
+                        // Accepted — the results land on
+                        // '__arktos.execResult'.
+                    }).catch(function (e) {
+                        entry.fail(e && e.message
+                            ? e.message
+                            : 'chrome.scripting.executeScript '
+                              + 'failed');
+                    });
+                });
+            },
+            insertCSS: function (injection, cb) {
+                return cssOp('insertCSS', injection, cb);
+            },
+            removeCSS: function (injection, cb) {
+                return cssOp('removeCSS', injection, cb);
+            },
+            registerContentScripts: function (scripts, cb) {
+                touch('chrome.scripting.registerContentScripts');
+                var p = call('scripting', 'registerContentScripts', {
+                    scripts: Array.isArray(scripts) ? scripts : null
+                }).then(function (v) {
+                    if (v && v.notes)
+                        v.notes.forEach(function (n) { note(n); });
+                });
+                if (cb)
+                    p.then(function () { answerCb(cb); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p.then(function () {});
+            },
+            unregisterContentScripts: function (filter, cb) {
+                touch('chrome.scripting.unregisterContentScripts');
+                var p = call('scripting', 'unregisterContentScripts', {
+                    filter: { ids: filter && filter.ids || null }
+                }).then(function () {});
+                if (cb)
+                    p.then(function () { answerCb(cb); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p;
+            },
+            getRegisteredContentScripts: function (filter, cb) {
+                touch('chrome.scripting.getRegisteredContentScripts');
+                var p = call('scripting',
+                             'getRegisteredContentScripts', {
+                    filter: { ids: filter && filter.ids || null }
+                });
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v || []); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p;
+            },
+            updateContentScripts: function (scripts, cb) {
+                touch('chrome.scripting.updateContentScripts');
+                var p = call('scripting', 'updateContentScripts', {
+                    scripts: Array.isArray(scripts) ? scripts : null
+                }).then(function (v) {
+                    if (v && v.notes)
+                        v.notes.forEach(function (n) { note(n); });
+                });
+                if (cb)
+                    p.then(function () { answerCb(cb); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p.then(function () {});
+            }
+        });
+    }
+
+    // --- chrome.contentScripts ------------------------------------------------
+    // ER09 — the Firefox-shape dynamic registration surface.  The
+    // bundled webextension-polyfill Bitwarden ships resolves
+    // browser.contentScripts.* to chrome.contentScripts.* in a
+    // Chromium-shaped context, so this namespace must exist even
+    // though Chromium itself never offers it.  register() resolves a
+    // RegisteredContentScript-style handle — a plain object carrying
+    // unregister(), since the registry lives host-side.  No API
+    // permission exists for this surface; the per-match host-coverage
+    // check host-side is the whole gate (the MV2 model).
+    if (typeof chrome !== 'undefined') {
+        var csHandle = function (id) {
+            return {
+                id: id,
+                unregister: function (cb) {
+                    var p = call('contentScripts', 'unregister',
+                                 { id: id }).then(function () {});
+                    if (cb)
+                        p.then(function () { answerCb(cb); },
+                               function (e) {
+                                   answerCb(cb, undefined, e.message);
+                               });
+                    return p;
+                }
+            };
+        };
+        installNs('contentScripts', {
+            __arktosShim: true,
+            register: function (contentScriptOptions, cb) {
+                touch('chrome.contentScripts.register');
+                var p = call('contentScripts', 'register', {
+                    options: contentScriptOptions || {}
+                }).then(function (v) {
+                    if (v && v.notes)
+                        v.notes.forEach(function (n) { note(n); });
+                    return csHandle(v && v.id);
+                });
+                if (cb)
+                    p.then(function (h) { answerCb(cb, h); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p;
+            },
+            unregister: function (handle, cb) {
+                touch('chrome.contentScripts.unregister');
+                var id = (typeof handle === 'string') ? handle
+                    : (handle && handle.id);
+                var p = call('contentScripts', 'unregister',
+                             { id: id }).then(function () {});
+                if (cb)
+                    p.then(function () { answerCb(cb); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p;
+            },
+            getScripts: function (cb) {
+                touch('chrome.contentScripts.getScripts');
+                var p = call('contentScripts', 'getScripts', {})
+                    .then(function (list) {
+                        return (list || []).map(function (s) {
+                            var h = csHandle(s && s.id);
+                            for (var k in s)
+                                if (k !== 'id')
+                                    h[k] = s[k];
+                            return h;
+                        });
+                    });
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p;
+            }
+        });
+    }
+
+    // --- chrome.offscreen -------------------------------------------------
+    // ER10 — one second-class host page per extension (Chrome's
+    // single-document rule): the host spawns a hidden navigation-
+    // locked page at the declared bundle-relative url, carrying this
+    // same shim, its own chromeBridge and a relay registration of
+    // kind 'offscreen' — chrome.* and runtime messaging work inside
+    // it exactly like the popup's do.  The engine ships a NATIVE
+    // binding here (ER06 measured hasDocument answering false), but a
+    // natively-spawned document never gets our channel — a dead
+    // context for the messaging/localStorage/clipboard use the API
+    // exists for — so the members are identity overrides like
+    // runtime.connect: every call routes through the bridge.
+    // createDocument resolves when the spawned document's shim
+    // registers its relay context (the messaging-ready signal) and
+    // fails typed on a load/boot error.  Reasons and justification
+    // are recorded host-side (offscreenInfo) — 'getContexts' reports
+    // the context OFFSCREEN_DOCUMENT.
+    function offscreenError(api, code) {
+        var message = (code === 'single-document')
+            ? 'Only a single offscreen document may be created.'
+            : api + ': ' + code;
+        recordGap(api, code);
+        var e = new Error(message);
+        e.code = code;
+        e.api = api;
+        return e;
+    }
+    if (typeof chrome !== 'undefined') {
+        var offNs = {
+            __arktosShim: true,
+            Reason: {
+                TESTING: 'TESTING',
+                AUDIO_PLAYBACK: 'AUDIO_PLAYBACK',
+                IFRAME_SCRIPTING: 'IFRAME_SCRIPTING',
+                DOM_SCRAPING: 'DOM_SCRAPING',
+                BLOBS: 'BLOBS',
+                DOM_PARSER: 'DOM_PARSER',
+                USER_MEDIA: 'USER_MEDIA',
+                DISPLAY_MEDIA: 'DISPLAY_MEDIA',
+                WEB_RTC: 'WEB_RTC',
+                CLIPBOARD: 'CLIPBOARD',
+                LOCAL_STORAGE: 'LOCAL_STORAGE',
+                WORKERS: 'WORKERS',
+                BATTERY_STATUS: 'BATTERY_STATUS',
+                MATCH_MEDIA: 'MATCH_MEDIA',
+                GEOLOCATION: 'GEOLOCATION',
+                COLLECTION: 'COLLECTION'
+            },
+            hasDocument: function (cb) {
+                touch('chrome.offscreen.hasDocument');
+                var p = call('offscreen', 'hasDocument', {});
+                var q = p.then(function (v) { return !!v; });
+                if (cb)
+                    q.then(function (v) { answerCb(cb, v); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return q;
+            },
+            closeDocument: function (cb) {
+                touch('chrome.offscreen.closeDocument');
+                var p = call('offscreen', 'closeDocument', {})
+                    .then(function () {});
+                if (cb)
+                    p.then(function () { answerCb(cb); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p;
+            },
+            createDocument: function (parameters, cb) {
+                touch('chrome.offscreen.createDocument');
+                parameters = parameters || {};
+                var docId = cfg.id + '#doc' + (++shim.seq) + '#'
+                            + Date.now();
+                return new Promise(function (resolve, reject) {
+                    var entry = { cb: cb, resolve: resolve,
+                                  reject: reject, done: false };
+                    entry.fail = function (code) {
+                        if (entry.done)
+                            return;
+                        entry.done = true;
+                        delete docWait[docId];
+                        var e = offscreenError(
+                            'chrome.offscreen.createDocument', code);
+                        answerCb(cb, undefined, e.message);
+                        reject(e);
+                    };
+                    docWait[docId] = entry;
+                    // Same safety net the other deferred answers
+                    // carry — a delivery that never lands resolves
+                    // typed rather than hanging the caller.
+                    setTimeout(function () {
+                        entry.fail('boot-timeout');
+                    }, 30000);
+                    call('offscreen', 'createDocument', {
+                        docId: docId,
+                        url: parameters.url,
+                        reasons: parameters.reasons || null,
+                        justification:
+                            parameters.justification || null
+                    }).then(function () {
+                        // accepted — the answer lands on
+                        // '__arktos.offscreenDone'.
+                    }).catch(function (e) {
+                        entry.fail((e && e.code)
+                            ? String(e.code)
+                            : 'offscreen-failed');
+                    });
+                });
+            }
+        };
+        offscreenNsRef = offNs;
+        try {
+            if (chrome.offscreen
+                    && typeof chrome.offscreen.createDocument
+                           === 'function'
+                    && chrome.offscreen.createDocument
+                           !== offNs.createDocument)
+                note('chrome.offscreen: native binding overridden — '
+                     + 'an engine-spawned document would carry no '
+                     + 'chromeBridge or relay context');
+        } catch (e) {}
+        installNs('offscreen', offNs);
+        // installNs's member-fill keeps existing members — the
+        // native trio exists, so force the identity overrides.
+        if (chrome.offscreen && typeof chrome.offscreen === 'object') {
+            for (var om in offNs) {
+                if (chrome.offscreen[om] !== offNs[om])
+                    safeSet(chrome.offscreen, om, offNs[om],
+                            'chrome.offscreen.' + om);
+            }
+        }
     }
 
     // --- chrome.permissions ---------------------------------------------------
@@ -1993,7 +3316,11 @@
                 }
                 var p = call('notifications', 'create',
                              { id: id || '', options: options || {} });
-                var q = p.then(function (v) { return v.id || ''; });
+                var q = p.then(function (v) {
+                    if (v && v.note)
+                        note('chrome.notifications.create: ' + v.note);
+                    return (v && v.id) || '';
+                });
                 if (cb)
                     q.then(function (v) { answerCb(cb, v); },
                            function (e) { answerCb(cb, '', e.message); });
@@ -2027,26 +3354,75 @@
         });
     }
 
+    // --- chrome.idle ------------------------------------------------------------
+    // ER13 — served by ExtensionIdleWatcher on the host: an
+    // application-wide Qt input filter feeding a detection-interval
+    // timer; transitions fan back in as idle.onStateChanged.  The
+    // honest bounds ride a note, once per context: in-app input only
+    // (input in other apps never resets the clock) and 'locked' is
+    // never reported.  Chrome's 15s interval floor applies host-side.
+    if (typeof chrome !== 'undefined') {
+        var idleNoted = false;
+        installNs('idle', {
+            onStateChanged: makeEvent('idle.onStateChanged', {
+                onAdd: function () {
+                    // Registering a listener arms the watcher —
+                    // subscribe goes through the same 'idle'
+                    // permission gate the methods do.
+                    call('idle', 'subscribe', {})
+                        .catch(function () {});
+                    if (!idleNoted) {
+                        idleNoted = true;
+                        note('chrome.idle: input is measured inside '
+                             + 'Arktos windows only; OS-level idle '
+                             + 'and the locked state are never '
+                             + 'reported');
+                    }
+                }
+            }),
+            queryState: function (interval, cb) {
+                var p = call('idle', 'queryState',
+                             { interval: interval });
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message); });
+                return p;
+            },
+            setDetectionInterval: function (interval, cb) {
+                var p = call('idle', 'setDetectionInterval',
+                             { interval: interval });
+                if (cb)
+                    p.then(function () { cb(); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message); });
+                return p.then(function () {});
+            },
+            // ChromeOS-only in Chrome — typed unsupported everywhere
+            // else, never a fake number.
+            getAutoLockDelay: function (cb) {
+                return failCall('idle.getAutoLockDelay',
+                                'unsupported', cb);
+            }
+        });
+    }
+
     // --- chrome.commands ---------------------------------------------------------
     if (typeof chrome !== 'undefined') {
         installNs('commands', {
             onCommand: makeEvent('commands.onCommand'),
             getAll: function (cb) {
                 touch('chrome.commands.getAll');
-                var m = manifest();
-                var out = [];
-                var cmds = m.commands || {};
-                for (var name in cmds) {
-                    var c = cmds[name] || {};
-                    var key = c.suggested_key || {};
-                    out.push({
-                        name: name,
-                        description: c.description || '',
-                        shortcut: key['default'] || key['linux']
-                                  || ''
-                    });
-                }
-                return okCall(out, cb);
+                // ER14: the C++ registry knows which suggested_key
+                // actually bound — an absent/unbindable suggestion
+                // reports '' like Chrome's unassigned rows, not the
+                // manifest text.
+                var p = call('commands', 'getAll', {});
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message); });
+                return p;
             }
         });
     }
@@ -2132,6 +3508,161 @@
         });
     }
 
+    // --- chrome.management -------------------------------------------------
+    // ER15: getSelf is the one member Chrome serves without the
+    // 'management' permission — the backend answers the real
+    // id/name/version/enabled from the manifest + manager records.
+    // The other members ride the bridge so the backend can answer
+    // Chrome's own failure vocabulary: no-permission when the
+    // manifest never declared 'management', unsupported when it did
+    // and we still cannot serve it.  fillNs() below stubs anything
+    // this list missed with the same typed shape.
+    if (typeof chrome !== 'undefined') {
+        var mgmtNs = {
+            getSelf: function (cb) {
+                var p = call('management', 'getSelf', {});
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v); },
+                           function (e) {
+                               answerCb(cb, undefined,
+                                        e && e.message || String(e));
+                           });
+                return p;
+            }
+        };
+        var mgmtRest = ['get', 'getAll', 'setEnabled', 'uninstall',
+            'uninstallSelf', 'launchApp', 'generateAppForLink',
+            'getPermissionWarningsById',
+            'getPermissionWarningsByManifest'];
+        for (var mm = 0; mm < mgmtRest.length; ++mm) {
+            (function (m) {
+                mgmtNs[m] = function () {
+                    var a = arguments;
+                    var cb = (a.length && typeof a[a.length - 1]
+                              === 'function')
+                        ? a[a.length - 1] : null;
+                    var p = call('management', m, {});
+                    if (cb)
+                        p.then(function (v) { answerCb(cb, v); },
+                               function (e) {
+                                   answerCb(cb, undefined,
+                                            e && e.message
+                                            || String(e));
+                               });
+                    return p;
+                };
+            })(mgmtRest[mm]);
+        }
+        installNs('management', mgmtNs);
+        mgmtNsRef = mgmtNs;
+        // Identity assert now, not only in repairInstalls: Qt
+        // injects a native chrome.management whose getSelf answers
+        // Chromium's records (no manifestVersion), and installNs
+        // only fills missing members.
+        assertManagement();
+    }
+
+    // --- chrome.sidebarAction ---------------------------------------------
+    // ER15: the Firefox-shape sugar, installed only when the manifest
+    // declares sidebar_action — an extension that never declared a
+    // sidebar must keep seeing `chrome.sidebarAction` undefined so
+    // its feature-detect stays honest (Bitwarden checks exactly
+    // this).  Panel/title/icon are recorded host-side like
+    // sidePanel's options; open/close/toggle answer typed
+    // 'unsupported' — there is no sidebar surface to open.
+    // The gate reads the handshake manifest, so the install DEFERS
+    // to onBridgeUp — at DocumentCreation bridgeReply has not landed
+    // and manifest() is still {}.
+    function installSidebarAction() {
+        if (typeof chrome === 'undefined'
+                || !manifest().sidebar_action)
+            return;
+        var haveSidebar = null;
+        try { haveSidebar = chrome.sidebarAction; } catch (e) {}
+        if (haveSidebar)
+            return;
+        installNs('sidebarAction', {
+            setPanel: function (details, cb) {
+                var p = call('sidebarAction', 'setPanel',
+                             { panel: details && details.panel });
+                if (cb)
+                    p.then(function () { cb(); },
+                           function (e) {
+                               answerCb(cb, undefined,
+                                        e && e.message || String(e));
+                               });
+                return p;
+            },
+            getPanel: function (details, cb) {
+                var p = call('sidebarAction', 'getPanel', {});
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v); },
+                           function (e) {
+                               answerCb(cb, undefined,
+                                        e && e.message || String(e));
+                               });
+                return p;
+            },
+            setTitle: function (details, cb) {
+                var p = call('sidebarAction', 'setTitle',
+                             { title: details && details.title });
+                if (cb)
+                    p.then(function () { cb(); },
+                           function (e) {
+                               answerCb(cb, undefined,
+                                        e && e.message || String(e));
+                               });
+                return p;
+            },
+            getTitle: function (details, cb) {
+                var p = call('sidebarAction', 'getTitle', {});
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v); },
+                           function (e) {
+                               answerCb(cb, undefined,
+                                        e && e.message || String(e));
+                               });
+                return p;
+            },
+            setIcon: function (details, cb) {
+                var p = call('sidebarAction', 'setIcon',
+                             { icon: details && (details.path
+                                                 || details.imageData) });
+                if (cb)
+                    p.then(function () { cb(); }, function () { cb(); });
+                return p;
+            },
+            isOpen: function (details, cb) {
+                var p = call('sidebarAction', 'isOpen', {});
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v); },
+                           function () { cb(false); });
+                return p;
+            },
+            open: function (cb) {
+                return sidePanelOpen('open', cb);
+            },
+            close: function (cb) {
+                return sidePanelOpen('close', cb);
+            },
+            toggle: function (cb) {
+                return sidePanelOpen('toggle', cb);
+            },
+            onUpdated: makeEvent('sidebarAction.onUpdated')
+        });
+        function sidePanelOpen(op, cb) {
+            var p = call('sidebarAction', op, {});
+            if (cb)
+                p.then(function () { cb(); },
+                       function (e) {
+                           answerCb(cb, undefined,
+                                    e && e.message || String(e));
+                       });
+            return p;
+        }
+    }
+    installSidebarAction();
+
     // --- native-but-partial namespace repair ------------------------------
     // Qt ships SUBSET bindings: a namespace can exist natively while
     // individual members are absent — Bitwarden's boot crashed on
@@ -2180,8 +3711,12 @@
 
     if (typeof chrome !== 'undefined') {
         // storage areas: a real local/session/sync/managed area can
-        // lack its own onChanged event object.
+        // lack its own onChanged event object — or a redefined
+        // native area can have silently unwound the ER17 wraps.
         if (chrome.storage && typeof chrome.storage === 'object') {
+            adoptRealArea('local');
+            adoptRealArea('session');
+            adoptRealArea('sync');
             var stAreas = ['local', 'session', 'managed', 'sync'];
             for (var sa = 0; sa < stAreas.length; ++sa) {
                 var area = chrome.storage[stAreas[sa]];
@@ -2211,19 +3746,17 @@
                 } catch (e) { recordGap('chrome.extension.getURL',
                                         String(e)); }
             }
-            if (typeof ext.getViews !== 'function') {
-                try {
-                    ext.getViews = extensionGetViews;
-                } catch (e) { recordGap('chrome.extension.getViews',
-                                        String(e)); }
-            }
-            if (typeof ext.getBackgroundPage !== 'function') {
-                try {
-                    ext.getBackgroundPage = extensionGetBackgroundPage;
-                } catch (e) { recordGap(
-                        'chrome.extension.getBackgroundPage',
-                        String(e)); }
-            }
+            // ER15: getViews/getBackgroundPage are identity
+            // overrides like runtime.connect — a native binding can
+            // only enumerate Chromium-registered extension views,
+            // which the hosted background page is not.  Ours compose
+            // from the runtime's context registry (own Window +
+            // sibling handles) and answer the honest MV3 null.
+            forceMember(ext, 'getViews', extensionGetViews,
+                        'chrome.extension.getViews');
+            forceMember(ext, 'getBackgroundPage',
+                        extensionGetBackgroundPage,
+                        'chrome.extension.getBackgroundPage');
             fillNs('extension', ['onRequest', 'onRequestExternal'],
                    ['isAllowedIncognitoAccess',
                     'isAllowedFileSchemeAccess']);
@@ -2232,8 +3765,6 @@
                 catch (e) {}
             }
         }
-        fillNs('idle', ['onStateChanged'],
-               ['queryState', 'setDetectionInterval']);
         // When chrome.tabs resisted the proxy install (locked
         // native accessor) the block above already filled every
         // tabsNs member; this covers the rest of the surface with
@@ -2274,13 +3805,6 @@
                 'getBadgeText', 'setBadgeBackgroundColor',
                 'getBadgeBackgroundColor', 'setPopup', 'getPopup',
                 'enable', 'disable']);
-        fillNs('webRequest',
-               ['onBeforeRequest', 'onBeforeSendHeaders',
-                'onSendHeaders', 'onHeadersReceived',
-                'onAuthRequired', 'onResponseStarted',
-                'onBeforeRedirect', 'onCompleted',
-                'onErrorOccurred'],
-               ['handlerBehaviorChanged']);
         fillNs('declarativeNetRequest',
                ['onRuleMatchedDebug'],
                ['updateDynamicRules', 'updateSessionRules',
@@ -2385,8 +3909,8 @@
         'windows', 'cookies', 'bookmarks', 'identity', 'gcm',
         'nativeMessaging', 'privacy', 'topSites', 'history',
         'scripting', 'offscreen', 'omnibox', 'devtools',
-        'fontSettings', 'tabGroups', 'userScripts', 'webRequest',
-        'declarativeNetRequest', 'declarativeContent', 'idle',
+        'fontSettings', 'tabGroups', 'userScripts',
+        'declarativeNetRequest', 'declarativeContent',
         'browsingData', 'management', 'sessions', 'downloads',
         'power', 'system', 'tts', 'enterprise', 'debugger',
         'processes', 'readingList', 'search', 'favicon', 'tabCapture',
@@ -2546,6 +4070,9 @@
         'chrome.bookmarks.getTree',
         'chrome.history.search', 'chrome.history.onVisited.addListener',
         'chrome.scripting.executeScript',
+        'chrome.scripting.registerContentScripts',
+        'chrome.scripting.unregisterContentScripts',
+        'chrome.contentScripts.register',
         'chrome.offscreen.createDocument',
         'chrome.management.getSelf',
         'chrome.browsingData.remove',

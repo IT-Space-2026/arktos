@@ -23,6 +23,7 @@
 #include <qobject.h>
 
 #include <qhash.h>
+#include <qjsonobject.h>
 #include <qlist.h>
 #include <qpointer.h>
 #include <qset.h>
@@ -192,6 +193,9 @@ public:
         // lives to inject into pages or filter traffic; without the
         // API it can only open its own popup.  The extension cannot
         // do its job — classifyHealth reports it NotSupported.
+        // ER19: with the hosted runtime armed, permissions the
+        // runtime serves are subtracted (runtimeServes()) — the
+        // regrade is earned by a proven surface, not declared.
         QStringList fatalMissing;
         QStringList dangerous;        // EXT05 deny-by-default consent set —
                                       // by rc_ext_manifest_check under
@@ -200,6 +204,14 @@ public:
         QString packageNote;          // honesty note for packaged installs
                                       // ("unsigned", "structure-only sig")
         QString updateUrl;            // update_url — self-hosted update manifest
+        // ER14: the manifest "commands" map, verbatim — the hosted
+        // runtime's command registry binds its suggested_key entries
+        // to per-window QShortcuts.  actionPopup is action's
+        // declared default_popup — the reserved _execute_action
+        // command opens it when set and fires action.onClicked when
+        // not.
+        QJsonObject commands;
+        QString actionPopup;
     };
 
     // Result of one extension's update check (EXT03).  Chrome Web
@@ -349,6 +361,17 @@ public:
     // Registered APIs whose Qt delegates are only partially plumbed;
     // functionality may work but is not guaranteed.
     static QStringList unverifiedPermissions();
+    // ER19: chrome.* permission names whose API surface the hosted
+    // runtime (the EXT14 host pages + the ER-series shim dispatch in
+    // extensionshimbackend.cpp) serves itself — Qt's embedder
+    // delegates stay unregistered, but the extension's calls reach
+    // real Arktos-backed implementations.  inspectManifest() moves
+    // these out of 'unsupported' into 'unverified' and out of
+    // 'fatalMissing' entirely when the runtime is armed — the honest
+    // tier is "partially supported", not "will not work".  With
+    // ARKTOS_EXTHOST_OFF nothing is served and the raw engine verdict
+    // stands.
+    static QStringList runtimeServes();
     // EXT05 deny-by-default consent set — permissions and host
     // patterns that require an explicit per-item consent checkbox in
     // the review dialog (install is refused otherwise).  Mirrors

@@ -136,6 +136,11 @@
 //   arktosPip.exitPopOut          document.exitPictureInPicture backend
 //   arktosPip.popOutResolved/     pip-shim's async result signals
 //         popOutClosed
+//   arktosExt.invoke              ER01 page agent — extension messages
+//                                 into the hosted runtime (host-
+//                                 permission-scoped per call in C++)
+//   arktosExt.extEvent            the agent's push channel (host->page
+//                                 deliveries, port traffic, replies)
 // On qrc: pages only (the start pages — the object's sole legitimate
 // consumer, and only registered there anyway):
 //   arktos.translate / arktos.searchUrl        (methods)
@@ -145,11 +150,13 @@
 (function () {
     var METHODS = {
         'external': { 'AddSearchProvider': true },
-        'arktosPip': { 'requestPopOut': true, 'exitPopOut': true }
+        'arktosPip': { 'requestPopOut': true, 'exitPopOut': true },
+        'arktosExt': { 'invoke': true }
     };
     var PROPERTIES = {};
     var SIGNALS = {
-        'arktosPip': { 'popOutResolved': true, 'popOutClosed': true }
+        'arktosPip': { 'popOutResolved': true, 'popOutClosed': true },
+        'arktosExt': { 'extEvent': true }
     };
     if (location.protocol == 'qrc:') {
         METHODS['arktos'] = { 'translate': true, 'searchUrl': true };

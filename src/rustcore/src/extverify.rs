@@ -713,6 +713,7 @@ const UNSUPPORTED_PERMISSIONS: &[&str] = &[
     "vpnProvider",
     "wallpaper",
     "webAuthenticationProxy",
+    "webRequestAuthProvider",
     "windows",
 ];
 
@@ -877,6 +878,20 @@ pub fn manifest_check(data: &[u8]) -> RcResult<Vec<u8>> {
         "has_action": root.contains_key("action")
             || root.contains_key("browser_action")
             || root.contains_key("page_action"),
+        // ER14: the hosted runtime's chrome.commands surface needs
+        // the declared command map (it binds the suggested keys
+        // itself) and the action's declared popup for the reserved
+        // _execute_action dispatch — the popup path decides
+        // open-popup vs action.onClicked.
+        "action_popup": string(
+            root.get("action")
+                .and_then(|a| a.get("default_popup"))
+                .unwrap_or(&Value::Null)),
+        "commands": root
+            .get("commands")
+            .filter(|v| v.is_object())
+            .cloned()
+            .unwrap_or_else(|| json!({})),
         "content_script_count": root
             .get("content_scripts")
             .and_then(Value::as_array)
@@ -1151,6 +1166,26 @@ mod tests {
         assert_eq!(v["valid"], true);
         assert_eq!(v["manifest_version"], 3);
         assert_eq!(v["has_background"], true);
+        // ER14: no commands/action in this manifest — the verdict
+        // carries the empty-map / empty-string defaults the Qt side
+        // reads without a key check.
+        assert_eq!(v["commands"], json!({}));
+        assert_eq!(v["action_popup"], "");
+        let with_commands = fields(
+            &manifest_check(
+                br#"{"manifest_version":3,"name":"C",
+                    "action":{"default_popup":"pop.html"},
+                    "commands":{"run":{"suggested_key":
+                        {"default":"Ctrl+Shift+Y"}}}}"#,
+            )
+            .unwrap(),
+        );
+        assert_eq!(with_commands["action_popup"], "pop.html");
+        assert_eq!(
+            with_commands["commands"]["run"]["suggested_key"]
+                ["default"],
+            "Ctrl+Shift+Y"
+        );
         // EXT14: the hosted runtime consumes the script list in
         // manifest order — MV2-style "scripts" first, then the MV3
         // service_worker.

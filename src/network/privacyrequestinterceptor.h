@@ -405,6 +405,11 @@ public:
 private:
     AdBlockRequestInterceptor *m_adBlock;
     QString m_scope;   // SAFE07: downgradeScope() of the owning profile
+    // ER11: observe-only chrome.webRequest feed — reports each request
+    // (and each policy block) to ExtensionRequestWatcher so hosted
+    // extensions can listen.  Off-the-record profiles host no
+    // extensions and stay silent.
+    bool m_reportToExtensions;
 };
 
 #endif // PRIVACYREQUESTINTERCEPTOR_H

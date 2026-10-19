@@ -54,6 +54,7 @@
 #include <qwebengineprofile.h>
 #include <qwebenginescript.h>
 #include <qwebenginescriptcollection.h>
+#include <qwebenginesettings.h>
 
 #include <qwebengineextensionmanager.h>
 
@@ -144,6 +145,27 @@ static bool isFetchableUpdateUrl(const QUrl &url)
         || host == QLatin1String("::1")
         || host == QLatin1String("[::1]");
 }
+
+// ER19 — the regrade EXT21's fatal table was built waiting for.  The
+// hosted runtime now serves real implementations of the namespaces
+// runtimeServes() lists, so a declared permission it covers stops
+// condemning the extension: it leaves fatalMissing entirely and
+// moves out of 'unsupported' into 'unverified' — the honest wording
+// is "partially supported", never "will not work" and never silent.
+// When the runtime is off (ARKTOS_EXTHOST_OFF) nothing is served
+// and the raw engine verdict stands — a scripting-requiring
+// extension stays NotSupported.
+static void regradeManifestForRuntime(ExtensionManager::Manifest *manifest)
+{
+    if (qEnvironmentVariableIsSet("ARKTOS_EXTHOST_OFF"))
+        return;
+    for (const QString &permission : ExtensionManager::runtimeServes()) {
+        manifest->fatalMissing.removeAll(permission);
+        if (manifest->unsupported.removeAll(permission) > 0
+                && !manifest->unverified.contains(permission))
+            manifest->unverified.append(permission);
+    }
+}
 }
 
 #if defined(ARKTOS_RUSTCORE)
@@ -167,6 +189,11 @@ static void fillManifestFromCheck(ExtensionManager::Manifest *manifest,
     manifest->contentScriptCount =
         check.value(QLatin1String("content_script_count")).toInt();
     manifest->updateUrl = check.value(QLatin1String("update_url")).toString();
+    // ER14: chrome.commands declarations + the action's popup for
+    // the _execute_action dispatch decision.
+    manifest->commands = check.value(QLatin1String("commands")).toObject();
+    manifest->actionPopup =
+        check.value(QLatin1String("action_popup")).toString();
 
     const auto stringList = [&check](const char *key) {
         QStringList list;
@@ -186,6 +213,10 @@ static void fillManifestFromCheck(ExtensionManager::Manifest *manifest,
     manifest->fatalMissing = stringList("fatal");
     manifest->dangerous = stringList("dangerous");
     manifest->error = stringList("errors").join(QLatin1String(" "));
+    // ER19: the hosted runtime subtracts what it serves from the
+    // engine-level verdict — applied here so the packaged-install
+    // path (inspectPackageManifest) grades identically.
+    regradeManifestForRuntime(manifest);
 }
 
 // Packaged install path: the whole archive is verified in Rust —
@@ -394,6 +425,19 @@ void ExtensionManager::installOnProfile(QWebEngineProfile *profile)
         ProfileSettings(BrowserProfile::profileIdFor(profile))
             .remove(enabledSettingsKey(
                 profile->storageName(), plain.id));
+        // ER05: the hosted runtime's onInstalled/onStartup version
+        // record dies with the extension — a reinstall is a fresh
+        // install again.
+        ProfileSettings(BrowserProfile::profileIdFor(profile))
+            .remove(QStringLiteral("extensions/runtime/")
+                    + plain.id);
+        // ER09: persisted dynamic content-script registrations die
+        // with the extension too — Chrome drops them on uninstall.
+        ProfileSettings(BrowserProfile::profileIdFor(profile))
+            .remove(QStringLiteral("extensions/regscripts/")
+                    + plain.id);
+        ExtensionBackgroundRuntime::instance()
+            ->dropRegisteredScripts(plain.id);
         m_tamperedIds.remove(plain.id);
         // EXT12: its health verdict too.
         m_healthVerdicts.remove(plain.id);
@@ -416,6 +460,14 @@ void ExtensionManager::installOnProfile(QWebEngineProfile *profile)
             ExtensionBackgroundRuntime::instance();
         connect(this, &ExtensionManager::changed,
                 runtime, &ExtensionBackgroundRuntime::syncNow);
+        // ER20: the hosted tier flips asynchronously — re-scan on
+        // every host transition so the settings row and action strip
+        // pick up "Hosted runtime" the moment the bridge is live,
+        // not on the next unrelated change pulse.  hostChanged only
+        // fires on real state transitions, so the changed→syncNow
+        // round trip terminates.
+        connect(runtime, &ExtensionBackgroundRuntime::hostChanged,
+                this, &ExtensionManager::changed);
     }
     if (!qEnvironmentVariableIsSet("ARKTOS_EXTHOST_OFF"))
         ExtensionBackgroundRuntime::instance()->attachProfile(profile);
@@ -475,6 +527,8 @@ QList<ExtensionManager::ExtensionInfo> ExtensionManager::extensions() const
     QWebEngineExtensionManager *extensions = managerFor(m_profiles);
     if (!extensions)
         return list;
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
     const QList<QWebEngineExtensionInfo> loaded = extensions->extensions();
     for (const QWebEngineExtensionInfo &info : loaded) {
         ExtensionInfo plain = infoFrom(info);
@@ -493,18 +547,28 @@ QList<ExtensionManager::ExtensionInfo> ExtensionManager::extensions() const
                 hasBackground = manifest.hasBackground;
             }
         }
+        ProbeVerdict verdict =
+            m_healthVerdicts.value(plain.id, ProbeVerdict::Pending);
+        // ER19: for a hosted extension the engine's service-worker
+        // probe measures the wrong worker — the hosted page IS the
+        // background context now.  A Ready host proves it answered;
+        // a Failed host is the real "never became ready".  A host
+        // still Starting leaves the probe verdict authoritative.
+        if (ExtensionBackgroundHost *host = runtime->host(plain.id)) {
+            if (host->state() == ExtensionBackgroundHost::State::Ready)
+                verdict = ProbeVerdict::Responsive;
+            else if (host->state()
+                     == ExtensionBackgroundHost::State::Failed)
+                verdict = ProbeVerdict::Dead;
+        }
         plain.health = classifyHealth(hasBackground, plain.missingApis,
-                fatalMissingApis,
-                m_healthVerdicts.value(plain.id, ProbeVerdict::Pending),
-                &plain.healthReason);
+                fatalMissingApis, verdict, &plain.healthReason);
         list.append(plain);
     }
     // EXT14: fold in the hosted-runtime tier — a Ready host is the
     // "Hosted" surface; Starting/Failed report through hostState and
     // hostError so the UI and smokes can tell a live background from
     // a dead one without poking the engine.
-    ExtensionBackgroundRuntime *runtime =
-        ExtensionBackgroundRuntime::instance();
     for (ExtensionInfo &info : list) {
         ExtensionBackgroundHost *host = runtime->host(info.id);
         if (!host)
@@ -935,6 +999,12 @@ ExtensionManager::Manifest ExtensionManager::inspectManifest(const QString &path
     manifest.hasAction = root.contains(QLatin1String("action"))
         || root.contains(QLatin1String("browser_action"))
         || root.contains(QLatin1String("page_action"));
+    // ER14: chrome.commands declarations + the action's popup for
+    // the _execute_action dispatch decision.
+    manifest.commands = root.value(QLatin1String("commands")).toObject();
+    manifest.actionPopup =
+        root.value(QLatin1String("action")).toObject()
+            .value(QLatin1String("default_popup")).toString();
     manifest.contentScriptCount =
         root.value(QLatin1String("content_scripts")).toArray().size();
 
@@ -971,7 +1041,9 @@ ExtensionManager::Manifest ExtensionManager::inspectManifest(const QString &path
     // extension's declared purpose cannot run — NotSupported, not
     // merely Limited.  Optional grants don't count: a nice-to-have
     // scripting grant must not condemn an extension that works
-    // without it.
+    // without it.  ER19: this is the raw engine-level fatal set —
+    // regradeManifestForRuntime() subtracts what the hosted runtime
+    // serves from fatalMissing before the verdict returns.
     static const QStringList fatal = {
         QStringLiteral("scripting"),
         QStringLiteral("declarativeNetRequest"),
@@ -995,6 +1067,9 @@ ExtensionManager::Manifest ExtensionManager::inspectManifest(const QString &path
         manifest.error = tr("Qt WebEngine supports Manifest V3 extensions only "
                             "(this package declares version %1).")
             .arg(manifest.manifestVersion);
+    // ER19: same regrade the Rust path applies inside
+    // fillManifestFromCheck — keep both branches in lockstep.
+    regradeManifestForRuntime(&manifest);
 #endif // ARKTOS_RUSTCORE
     return manifest;
 }
@@ -1060,6 +1135,10 @@ QStringList ExtensionManager::unsupportedPermissions()
         QStringLiteral("vpnProvider"),
         QStringLiteral("wallpaper"),
         QStringLiteral("webAuthenticationProxy"),
+        // ER19: MV3's webRequest.onAuthRequired grant — the runtime's
+        // webRequest surface is observe-only and cannot answer an
+        // auth challenge, so the permission is genuinely unserved.
+        QStringLiteral("webRequestAuthProvider"),
         QStringLiteral("windows"),
     };
     return unsupported;
@@ -1081,6 +1160,36 @@ QStringList ExtensionManager::unverifiedPermissions()
         QStringLiteral("webRequest"),
     };
     return unverified;
+}
+
+QStringList ExtensionManager::runtimeServes()
+{
+    // ER19: permission names whose chrome.* surface the hosted
+    // runtime serves for real (ExtensionShimBackend's namespace
+    // dispatch + the ChromeBridge-level handlers) — per-frame
+    // scripting, the tabs/windows/webNavigation event streams and
+    // queries, observe-only webRequest, offscreen documents,
+    // notifications, idle, context menus, sidePanel bookkeeping.
+    // The fatal-table members it covers — scripting, webRequest —
+    // stop condemning an extension; the rest move out of the flat
+    // "will not work" tier into "partially supported".  Surfaces the
+    // runtime does NOT serve (declarativeNetRequest*, blocking
+    // webRequest, cookies, nativeMessaging, privacy, downloads, ...)
+    // stay absent on purpose — they keep the raw engine verdict.
+    static const QStringList served = {
+        QStringLiteral("contextMenus"),
+        QStringLiteral("idle"),
+        QStringLiteral("menus"),
+        QStringLiteral("notifications"),
+        QStringLiteral("offscreen"),
+        QStringLiteral("scripting"),
+        QStringLiteral("sidePanel"),
+        QStringLiteral("tabs"),
+        QStringLiteral("webNavigation"),
+        QStringLiteral("webRequest"),
+        QStringLiteral("windows"),
+    };
+    return served;
 }
 
 QStringList ExtensionManager::dangerousPermissions()
@@ -1538,6 +1647,12 @@ void ExtensionManager::startNextHealthProbe()
     // app's WebPage subclass, same as the EXT08 popup host: no arktos
     // channel objects or page policy leak into extension chrome.
     QWebEnginePage *page = new QWebEnginePage(profile);
+    // ER20: the probe evals inside an extension context — exempt from
+    // the web-content JavascriptEnabled preference, same as the
+    // hosted pages, or a JS-off session would grade live extensions
+    // dead.
+    page->settings()->setAttribute(QWebEngineSettings::JavascriptEnabled,
+                                   true);
     m_healthPage = page;
     connect(page, &QWebEnginePage::loadFinished,
             this, [this](bool ok) {

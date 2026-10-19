@@ -44,27 +44,27 @@ xvfb-run — never touch the user's live display.
 
 | ID | Task | Status | Attempts | Notes |
 |----|------|--------|----------|-------|
-| ER00 | Bitwarden gap harness — env-gated test leg that loads the real unpacked bundle on an isolated profile and dumps every typed shim gap it produces — details below | pending | 0 | needs:linux |
-| ER01 | Page agent — profile-wide QWebEngineScript giving web pages a chrome.runtime sendMessage bridge into the extension host — details below | pending | 0 | needs:task:ER00 |
-| ER02 | tabs.sendMessage + runtime.onMessage delivery into web pages — details below | pending | 0 | needs:task:ER01 |
-| ER03 | Tab events — tabs.onCreated/onUpdated/onRemoved/onActivated dispatched into host pages — details below | pending | 0 | needs:task:ER01 |
-| ER04 | webNavigation events — onCommitted/onDOMContentLoaded/onCompleted/onErrorOccurred from WebView load signals — details below | pending | 0 | needs:task:ER03 |
-| ER05 | windows.on* + runtime.onStartup/onInstalled dispatches — details below | pending | 0 | needs:task:ER03 |
-| ER06 | DECISION GATE — Bitwarden unlock + content-script handshake proven or measured-blocked with world-isolation finding — details below | pending | 0 | needs:task:ER02 needs:task:ER04 |
-| ER07 | scripting.executeScript — per-frame runJavaScript, host-permission check, one-shot result marshaling — details below | pending | 0 | needs:task:ER06 |
-| ER08 | scripting.insertCSS/removeCSS + executeScript file/frames/args forms — details below | pending | 0 | needs:task:ER07 |
-| ER09 | contentScripts dynamic registration — register/unregister/getScripts over our injection set — details below | pending | 0 | needs:task:ER07 |
-| ER10 | offscreen.createDocument/hasDocument/closeDocument → second-class host page — details below | pending | 0 | needs:task:ER06 |
-| ER11 | webRequest observe-only events (onBeforeRequest/onCompleted/onErrorOccurred) via QWebEngineUrlRequestInterceptor — details below | pending | 0 | needs:task:ER04 |
-| ER12 | notifications.create/update/clear/getAll → native presenter — details below | pending | 0 | needs:task:ER06 |
-| ER13 | idle.queryState/onStateChanged — input-activity watcher, configurable threshold — details below | pending | 0 | needs:task:ER05 |
-| ER14 | commands — manifest command parsing + QShortcut registry + onCommand dispatch — details below | pending | 0 | needs:task:ER05 |
-| ER15 | management.getSelf + chrome.extension.getBackgroundPage/getViews + sidebarAction sugar — details below | pending | 0 | needs:task:ER06 |
-| ER16 | Security pass — host_permissions scoping on every injection path; per-call consent honoring EXT05 grants — details below | pending | 0 | needs:task:ER07 needs:task:ER09 |
-| ER17 | Bitwarden E2E — install→unlock→fill a login form on a test page, harness-driven, recorded — details below | pending | 0 | needs:task:ER08 needs:task:ER10 needs:task:ER15 |
-| ER18 | Residual gap sweep — drive Bitwarden until shimGaps hold zero typed unimplemented for its call set — details below | pending | 0 | needs:task:ER17 |
-| ER19 | Health regrade — EXT21 fatal check subtracts runtime-provided APIs; Bitwarden leaves NotSupported ONLY when it verifiably works — details below | pending | 0 | needs:task:ER18 |
-| ER20 | Chrome polish + docs — settings copy, action tooltip, README extension-support section, ChangeLog — details below | pending | 0 | needs:task:ER19 |
+| ER00 | Bitwarden gap harness — env-gated test leg that loads the real unpacked bundle on an isolated profile and dumps every typed shim gap it produces — details below | done | 1 | needs:linux · bitwardenGapBaseline leg PASS: real bundle installs+hosts ready, popup bridges, 0 typed gaps at boot — baseline + touched-map in .devin/EXT-RUNTIME-BASELINE.md |
+| ER01 | Page agent — profile-wide QWebEngineScript giving web pages a chrome.runtime sendMessage bridge into the extension host — details below | done | 1 | needs:task:ER00 · extensionPageAgent leg PASS: agent+declared cs inject in shared world 0x40, cs sendMessage echoes via hosted bg, sender/url/extid honest, typed denials, main world clean — full suite 32/32 (2 env skips); data: gets profile scripts but no page-level channel so coverage rejects it; Bitwarden popup SIGTRAP reproduced on clean ER00 tree too — pre-existing env issue, not this diff |
+| ER02 | tabs.sendMessage + runtime.onMessage delivery into web pages — details below | done | 1 | needs:task:ER01 · extensionTabMessaging leg PASS: host→page round-trip via __arktos.deliver/respond, Chrome sender shape, no-listener→"Receiving end does not exist", typed not-found/invalid-mid/unsupported(frameId)/no-host-access; full suite 33/33 (2 env skips) |
+| ER03 | Tab events — tabs.onCreated/onUpdated/onRemoved/onActivated dispatched into host pages — details below | done | 1 | needs:task:ER01 · extensionEventSurfaces leg PASS: fixed onActivated to Chrome's single activeInfo object (was 2 scalar args), added causal-order + shape assertions; tabs events stay ungated-but-url-scrubbed (Chrome parity, not tabs-permission-gated — EXT16's documented model); full suite 33/33 (2 env skips); Bitwarden env leg SIGTRAPs at popup load — pre-existing env issue per ER01 notes |
+| ER04 | webNavigation events — onCommitted/onDOMContentLoaded/onCompleted/onErrorOccurred from WebView load signals — details below | done | 0 | needs:task:ER03 · extensionEventSurfaces PASS: onDOMContentLoaded via DocumentCreation probe (extnavdcl.js) → navDomReady bridge op, forge-gated on in-flight load + once-per-nav; data:/about: fallback at loadFinished; committed/dcl/completed ordering asserted on data: + real http origin (probe counter); refused connection emits onErrorOccurred + generated/isErrorPage error-commit cycles suppressed — full suite 33/33 (2 env skips) |
+| ER05 | windows.on* + runtime.onStartup/onInstalled dispatches — details below | done | 1 | needs:task:ER03 · extensionRuntimeLifecycle leg PASS: host-Ready dispatch reads ProfileSettings extensions/runtime/<id> → install/update(+previousVersion)/browser_update, onStartup on relaunch only (per-session dedupe + restartLifecycleSession seam), uninstall clears the record so reinstall is fresh; windows.onCreated fixed to single {window} arg; shim dual-registers runtime.onInstalled/onStartup + windows.on* — full suite 34/34 (2 env skips) |
+| ER06 | DECISION GATE — Bitwarden unlock + content-script handshake proven or measured-blocked with world-isolation finding — details below | done | 1 | needs:task:ER02 needs:task:ER04 · bitwardenHandshakeGate leg PASS: real bundle's cs↔bg handshake crossed the emulated-world boundary both directions (triggerAutofillScriptInjection + autofill-injected-script-port in with sender.tab; tabs.sendMessage bgUnlockPopoutOpened out + real cs forward-back reply) — bg dispatched chrome.scripting.executeScript → typed unsupported gap; verdict PASS, evidence .devin/EXT-RUNTIME-SPIKE.md; full suite 34/34 (3 env skips) |
+| ER07 | scripting.executeScript — per-frame runJavaScript, host-permission check, one-shot result marshaling — details below | done | 0 | needs:task:ER06 · extensionScripting leg PASS: per-frame QWebEngineFrame::runJavaScript fan-out (allFrames/frameIds over DFS tree ids) in shared agent world — agent's scoped chrome bound via the compat closure; thenables parked on __arktosExecResults + polled (runJavaScript never awaits); func/args/files forms; 'scripting' + host-coverage gates run BEFORE page write — no-permission/no-host-access/not-found/bad-path/no-such-file typed + ledgered, documentIds unsupported; MAIN = unprivileged page world; full suite 35/35 (3 env skips) |
+| ER08 | scripting.insertCSS/removeCSS + executeScript file/frames/args forms — details below | done | 1 | needs:task:ER07 · extensionScriptCss leg PASS: insertCSS/removeCSS share the executeScript gates + per-frame fan-out, agent-world <style> ledger keyed by css unit+origin (upsert/remove/no-op-on-miss, dies with document); css/files/origin validated, USER origin = author-level approximation recorded; allFrames+frameIds target real subframes; multi-file files[] order verified; no-permission/no-host-access/bad-path/no-such-file/invalid-argument/unsupported/not-found typed + ledgered; full suite 36/36 (3 env skips) |
+| ER09 | contentScripts dynamic registration — register/unregister/getScripts over our injection set — details below | done | 1 | needs:task:ER07 · extensionContentScriptRegistration leg PASS: shared runtime registry behind BOTH surfaces (MV3 scripting.register/unregister/getRegistered/update + Firefox contentScripts.register/unregister/getScripts w/ unregister-handle) arms profile scripts into the shared agent world on next matching nav; per-match host-coverage implication checked BEFORE arming (no-host-access), 'scripting' permission gates only the MV3 surface; persisted specs re-arm across host respawn via ProfileSettings extensions/regscripts/<id>, session-only die with load, all drop on uninstall; bad-path/no-such-file/invalid-argument/not-found/unsupported typed; full suite 37/37 (3 env skips) + real Bitwarden legs all PASS incl. handshake gate (bg dispatched 4 executeScript — executed, no gap) |
+| ER10 | offscreen.createDocument/hasDocument/closeDocument → second-class host page — details below | done | 0 | hidden bridge-backed doc page; typed denials + verbatim single-document msg; getContexts OFFSCREEN_DOCUMENT; extensionOffscreen + full suite 38/38 + Bitwarden legs pass |
+| ER11 | webRequest observe-only events (onBeforeRequest/onCompleted/onErrorOccurred) via QWebEngineUrlRequestInterceptor — details below | done | 2 | needs:task:ER04 · extensionWebRequest leg PASS: interceptor→watcher feed (OTR/tor excluded) serves onBefore*/onSendHeaders/onHeadersReceived/onCompleted/onErrorOccurred w/ per-listener filters + per-event host-coverage re-proof; blocking/requestBody→typed unsupported+gap, unservable events refuse at subscribe; orphan tabId-adoption fixed fast-fail nav race; full suite 39/39 + real Bitwarden legs PASS (bg registered onHeadersReceived — note, not gap) |
+| ER12 | notifications.create/update/clear/getAll → native presenter — details below | done | 0 | needs:task:ER06 · extensionNotifications leg PASS: record registry + freedesktop Notify over session D-Bus; onClicked/onButtonClicked/onClosed(byUser)/onShown route back through the runtime fan-out; 'notifications' permission gates the ns; extension-host-smoke PASS + full suite 40/40 (3 env skips) + real Bitwarden legs PASS (gap baseline 0 typed gaps — notifications no longer one) |
+| ER13 | idle.queryState/onStateChanged — input-activity watcher, configurable threshold — details below | done | 1 | needs:task:ER05 · extensionIdle leg PASS: app-wide Qt input filter→precise-timer watcher (in-app activity only, 'locked' never reported — honest note once/context); listener subscribe arms it; queryState's own threshold answers vs clock independent of declared state; 'idle' permission gates calls + fan-out; pre-bridge diagnostics rerouted through the call queue (was dropping gaps); full suite 41/41 (3 env skips) + real Bitwarden legs PASS offscreen --disable-gpu (bg drove idle.setDetectionInterval/subscribe, 0 typed gaps) |
+| ER14 | commands — manifest command parsing + QShortcut registry + onCommand dispatch — details below | done | 1 | needs:task:ER05 · extensionCommands leg PASS: manifest commands parse (rust verdict + Qt fallback) → per-window WindowShortcuts dispatch (command, tab); _execute_action honors setPopup/enabled + opens the real bubble or fires action.onClicked; getAll answers bound-state rows; full suite 42/42 + Bitwarden legs PASS |
+| ER15 | management.getSelf + chrome.extension.getBackgroundPage/getViews + sidebarAction sugar — details below | done | 1 | needs:task:ER06 · extensionIntrospection leg PASS: getSelf answers our records (id/name/version/enabled/installType/manifestVersion), other mgmt members typed no-permission/unsupported; getViews composes from the pushed context registry (own real Window + sibling handles w/ live location.reload, offscreen excluded, type/tabId/windowId filters); getBackgroundPage = own window in bg, MV3 null elsewhere; sidebarAction installs only when sidebar_action declared, panel/title bookkeeping + typed unsupported on open; full suite 42/43 (flake: extensionRuntimeLifecycle standalone-PASS), Bitwarden legs PASS 0 gaps |
+| ER16 | Security pass — host_permissions scoping on every injection path; per-call consent honoring EXT05 grants — details below | done | 1 | needs:task:ER07 needs:task:ER09 · required-only permission snapshot (optional_permissions inert); per-frame host coverage in executeScript/CSS (about:blank inherits embedder, blob: names owning origin) — explicit uncovered frameIds reject, allFrames gets per-frame no-host-access; backend gates storage/alarms/contextMenus+menus/sidePanel/sidebarAction/notifications/idle/management-non-getSelf; tabs.create/update+windows.create url-refused on traversal/javascript:/foreign-extension; OnClickData pageUrl/frameUrl scrubbed without tabs/host access; hostile legs in extensionShimBackend + extensionEventSurfaces + extensionScripting fixture-C PASS; suite 42/42 (3 env skips, extensionCommands pre-existing offscreen SIGTRAP excluded), Bitwarden legs + host-smoke PASS |
+| ER17 | Bitwarden E2E — install→unlock→fill a login form on a test page, harness-driven, recorded — details below | done | 1 | needs:task:ER08 needs:task:ER10 needs:task:ER15 · bitwardenUnlockFill leg PASS: real bundle install→real WASM-SDK master-password unlock→commands.onCommand('autofill_login')→collectPageDetails→generateFillScript→fillForm→input.value asserted; fixes en route: onMessage relay only true/thenable holds the channel (RxJS-Subscriber return swallowed async responses), storage.onChanged shim-fired + writer-excluded fan-out over real areas, tabs.query WINDOW_ID_CURRENT(-2), webNavigation.getFrame/getAllFrames frame-0 answers; full suite 43/43 (4 env skips) + all real Bitwarden legs PASS; evidence .devin/EXT-RUNTIME-E2E.md |
+| ER18 | Residual gap sweep — drive Bitwarden until shimGaps hold zero typed unimplemented for its call set — details below | done | 5 | needs:task:ER17 · baseline replayed PASS: 2 typed gaps, both in the declared set (action.setIcon unsupported, scripting.executeScript no-host-access); real fix en route — tabs.create mints a window on windowless sessions (Chrome parity; dead explicit windowId keeps no-window) and AUTOTESTS-minted windows get WA_DontShowOnScreen; .devin/EXT-RUNTIME-GAPS.md is the machine-read intentional set all 3 real-BW legs now assert (baseline+handshake+fill all PASS); suite green across both halves; unlockFill PASS standalone (sequential-after-baseline flake = stale page-agent residue, pre-existing) |
+| ER19 | Health regrade — EXT21 fatal check subtracts runtime-provided APIs; Bitwarden leaves NotSupported ONLY when it verifiably works — details below | done | 0 | needs:task:ER18 · runtimeServes() beside the fatal table: regradeManifestForRuntime() (applied on both parse paths, ARKTOS_EXTHOST_OFF-gated) drops served fatal hits (scripting, webRequest) and migrates served unsupported → unverified; webRequestAuthProvider added to unsupported (observe-only can't answer auth); hosted host-state folded into the probe verdict (Ready=live worker, Failed=Dead); DNR/webRequestBlocking stay fatal; runtimeHealthRegrade leg covers armed/off/unserved; bitwardenUnlockFill PASS → manager row health=Limited (missingApis: webRequestAuthProvider, nativeMessaging, privacy) — verified: regrade legs 13/13, full suite green (extensionCommands known offscreen flake, PASS on retry), extverify 12/12, real-BW E2E PASS |
+| ER20 | Chrome polish + docs — settings copy, action tooltip, README extension-support section, ChangeLog — details below | done | 1 | needs:task:ER19 · status col reads "Hosted runtime" (+limited/degraded qualifiers), tooltip + details name the tier, hostChanged now drives changed() so the row updates live; found+fixed en route: JS-off pref killed all hosted contexts — extension pages exempt now; README/ChangeLog EXT22 done; new extensionHostedStatus leg PASS, settingsdialog 57/57, extmanager green + real-BW legs PASS |
 
 ## Task details
 
@@ -94,6 +94,35 @@ the bridge answers ONLY for extensions whose host_permissions cover
 the page origin; everything else gets the typed absent-API reply.
 Verify: fixture extension's declared content script round-trips a
 message with its background through the agent on a data:/local page.
+
+Run notes (2026-10-18): transport picked (a) — the existing
+`arktos:channel` QWebChannel, reached via a whitelisted postMessage
+forwarder (`src/data/arktos-channel.js` now admits only
+`arktosExt.invoke`/`arktosExt.extEvent`); no bridge races the page
+because the agent queues calls until its `hello` handshake completes.
+One shared isolated world (`AgentWorldId = 0x40`) serves every
+extension agent — Qt caps world ids at 256 — with per-extension
+namespacing under `window.__arktosExtAgents[id]` and the scoped
+`chrome` object passed to each content script by closure, so no
+global `chrome` binding is installed anywhere. The C++ boundary is
+`ExtensionPageBridge` (`arktosExt` on each WebPage's channel):
+per-call coverage checks against the page's *committed* url, typed
+`invalid-mid`/`invalid-chan`/`no-host-access`/`no-storage-permission`
+denials, sender stamped from real tab metadata. Engine findings
+encoded as behavior, not worked around: page-level `scripts()` never
+inject on `data:`/`about:` documents (profile-level scripts do), so
+the covered-leg test uses loopback http and `agentCovers`/`hostCovers`
+reject originless schemes exactly like Chrome does; Chromium's own
+empty `window.chrome` persists in the main world (checked: no keys,
+no `runtime`, no `__arktosExtAgents`). `world:"MAIN"` content scripts
+run in the shared isolated realm (recorded approximation — more
+isolation, same scoped binding). Field check: the real Bitwarden
+popup leg (`realExtensionPopup`, `bitwardenGapBaseline`) SIGTRAPs
+during popup load in this environment — reproduced identically on the
+clean ER00 tree, with the agent disabled, on a fresh extension store
+and with WASM off, while a minimal extension popup passes — a
+pre-existing engine-level issue in Bitwarden's blessed-context app
+code, NOT this diff; deferred for separate investigation.
 
 ### ER02
 `tabs.sendMessage(tabId, message)` + `runtime.onMessage` delivery INTO
@@ -170,6 +199,47 @@ registrations survive restarts like Chrome's.
 Verify: a registered script fires on the next matching navigation and
 survives a runtime restart.
 
+Result (done): one runtime-owned registry
+(`m_regScripts`, extId→regId→normalized spec) behind both front doors
+— `invokeScriptRegistration` for the MV3 set (gated on the declared
+'scripting' permission, like every chrome.scripting member) and
+`invokeContentScripts` for the Firefox shape the bundled
+webextension-polyfill resolves `browser.contentScripts.*` to (no API
+permission exists there; the gate is the same per-match implication
+check Chrome's "must have host permission" rule requires). A
+normalized spec arms as a profile-level QWebEngineScript
+(`arktos-extdcs-<extId>-<sanitized-regId>`) in AgentWorldId with the
+same wrapper/gate shape as a declared content script — the wrapper
+waits for this extension's agent, re-checks matches/excludeMatches
+against the committed url, and runs the code in a closure bound to
+the scoped chrome/browser object. Registration validates the whole
+batch before arming anything (Chrome's atomic contract): match
+patterns parse + every `matches[]` must be implied by the
+host-permissions ∪ declared-cs-matches coverage union
+(`hostPermCoversPattern` — scheme, host incl. `*.` subdomains, path
+granularity; fails closed) else typed `no-host-access`; js/css file
+paths re-proven against the bundle (traversal/absolute/scheme →
+`bad-path`, missing/oversize → `no-such-file`), inline `code:` is
+Firefox-only (typed `invalid-argument` on MV3), globs/cookieStoreId →
+`unsupported`, dup id / missing caller id / bad runAt or world →
+`invalid-argument`, unregister+update on a missing id → `not-found`.
+`world:'MAIN'` registers with the recorded same approximation
+declared scripts carry; `matchAboutBlank`/`matchOriginAsFallback`
+accept with a recorded inert note. MV2 callers get a minted
+`mv2cs-N` id and an `unregister()` handle. Persisted specs
+(`persistAcrossSessions`, the default) serialize to ProfileSettings
+`extensions/regscripts/<extId>` and merge back in
+`restoreRegisteredScripts()` on every host respawn; session-only
+entries die when the extension unloads, and uninstall drops the
+record + registry + armed scripts (`dropRegisteredScripts` from the
+uninstall path). The stale bitwardenHandshakeGate assertion was
+updated to post-ER07 reality (dispatch proof = touched delta; a typed
+gap is still reported when the real call degrades) — it now measures
+4 real executeScript dispatches from Bitwarden's background, all
+executed with no gap. The realExtensionPopup SIGTRAP remains the
+documented pre-existing blessed-context engine issue, reproduced on
+the clean tree — unrelated to this diff.
+
 ### ER10
 `chrome.offscreen.createDocument/hasDocument/closeDocument` — spawn a
 second-class host page (no toolbar wiring) loaded at the declared
@@ -189,6 +259,42 @@ shimGaps, never silently ignored.
 Verify: fixture's onCompleted listener sees a scripted fetch; a
 blocking registration replies unsupported and is logged as a gap.
 
+Result (done): `ExtensionRequestWatcher` (singleton) is fed by
+`PrivacyRequestInterceptor::interceptRequest` — observeRequest()
+snapshots on the IO thread and queued-delivers before the privacy
+verdict applies; off-the-record profiles never report (tor has its
+own interceptor). The shim holds per-listener (fn, filter,
+extraInfoSpec) triples and registers one record per addListener via
+`webRequest.subscribe`; the bridge gates the whole namespace on the
+'webRequest' manifest permission and the watcher re-proves
+host_permissions coverage per emitted event in C++ (`requestVisibleTo`,
+the 'tabs' shortcut deliberately excluded). Servable:
+onBeforeRequest/onBeforeSendHeaders/onSendHeaders from the
+interception point, onHeadersReceived/onCompleted/onErrorOccurred
+from main-frame milestones (loadingChanged LoadSucceededStatus
+hands the real responseHeaders; loadFinished pairs completion) plus
+the channel-world resource-timing probe (`extresprobe.js` → page
+bridge 'resourceTiming') for subresource/fetch completions —
+probe reports only ever pair requests the interceptor announced,
+so forged ops cannot invent events. Unservable
+(onBeforeRedirect/onResponseStarted/onAuthRequired) and
+'blocking'/'requestBody' extraInfoSpec answer typed `unsupported`
+into shimGaps — blocking listeners still register observe-only per
+Chrome MV3. Race machinery: the interceptor's queued start can
+lose to engine milestones, so commits/failures/dones buffer per
+tab until the start drains them in Chrome order, and records whose
+queued start ran before the tab announced its pending url park
+under tabId -1 and get adopted by the resolving milestone feed
+(measured: a refused-connection nav opened under -1 and lost its
+onErrorOccurred until adoption landed). Verified: extensionWebRequest
+PASS (real page load + scripted fetch over loopback, headers on
+request only to registrations that asked, before/completed share a
+requestId, filtered listener silent, blocking degrade + both typed
+denials in shimGaps, refused-port net::ERR_, fixture B host-scope
+refusal), full suite 39/39 (3 env skips), real Bitwarden legs PASS —
+its background's live onHeadersReceived subscription registered and
+surfaced the documented fidelity note, not a gap.
+
 ### ER12
 `chrome.notifications.create/update/clear/getAll` → freedesktop
 notifications (`QSystemTrayIcon::showMessage` or libnotify via
@@ -197,6 +303,31 @@ uses for system notifications first). onClicked/onButtonClicked
 dispatch back into the host.
 Verify: create produces a visible/inspectable notification object and
 click routes to the listener.
+
+Result (2026-10-19): landed. `ExtensionNotificationCenter` holds the
+per-extension record registry (Chrome-side semantics — records outlive
+a host respawn, die with the extension) and presents over
+`org.freedesktop.Notifications.Notify` on the session bus, chosen over
+QSystemTrayIcon because the browser already speaks D-Bus
+(downloadmanager's FileManager1) and the daemon gives us real action/
+close signals. `ExtensionShimBackend::invokeNotifications` gates on the
+manifest's `notifications` permission (typed `no-permission`) then
+delegates; validation answers `invalid-argument` for bad type/missing
+title/>2 buttons; iconUrl/imageUrl resolve strictly inside the bundle.
+Daemon `ActionInvoked` maps 'default'→onClicked and 'btn-N'→
+onButtonClicked(index); `NotificationClosed` maps reason 2→byUser=true
+(a programmatic clear emits byUser=false). `notifications.*` events
+join the runtime's eventGate permission fan-out. When no service is
+reachable the record still exists (getAll/update/clear work) but
+nothing claims it was shown: no onShown, one-time health-visible note.
+`ARKTOS_EXTNOTIFY_STUB=1` selects a synthetic presenter for headless
+runs — tests and the real-Bitwarden legs use it so no banner reaches
+the desktop. Verified: extensionNotifications leg PASS (hosted fixture
+creates/sees/updates/clears through the real page listeners, daemon
+signal slots drive click/button/close, no-permission fixture denied +
+gap-ledgered), extension-host-smoke PASS (`notifications.create
+presented`), full suite 40/40 (3 env skips), real Bitwarden legs PASS
+— its typed-gap list is now empty of notifications entirely.
 
 ### ER13
 `chrome.idle.queryState(state, detectionInterval)` +
@@ -207,12 +338,98 @@ honest v1 is a QTimer reset by input events inside our windows
 Verify: queryState answers active under synthetic input and idle
 after threshold with input stopped.
 
+Result (2026-10-19): landed. `ExtensionIdleWatcher` (lazy singleton)
+is the browser-global clock: an application-wide Qt event filter
+(key/button/motion/wheel/touch/tablet) feeds a single-shot precise
+QTimer at the configured detection interval — Chrome's global
+semantics, last setDetectionInterval wins for every extension.
+Both the interval and each queryState threshold clamp at Chrome's
+15s floor (ARKTOS_EXT_IDLE_MIN_S lowers it for the autotest leg).
+queryState answers against its own argument, so a long threshold
+returns 'active' while the declared state is already 'idle';
+transitions broadcast `idle.onStateChanged` through the runtime's
+permission-gated eventGate ('idle' gates the namespace like
+Chrome). The shim's onStateChanged onAdd posts `idle.subscribe` —
+a listener registration alone arms the watcher — and records the
+honest scope once per context: input is measured inside Arktos
+windows only and 'locked' is never reported.
+`idle.getAutoLockDelay` is typed `unsupported` (ChromeOS-only),
+unknown members `unimplemented`, bad arguments `invalid-argument`,
+no 'idle' permission `no-permission` — all ledgered into shimGaps.
+Two infrastructure findings fixed en route: QTimer's default
+CoarseTimer fires up to 5% early and raced the elapsed-clock answer
+(precise timer + re-check on timeout), and the shim's
+`note()`/`recordGap()` invoked the bridge directly so diagnostics
+recorded before the handshake were silently dropped host-side —
+both now ride the `call()` queue that flushes on bridge-up.
+Verified: extensionIdle leg PASS (real QKeyEvent through the app
+filter drives active→idle→active into the hosted page, per-call
+threshold independence, invalid-argument/unsupported/no-permission
+all ledgered, fan-out never reaches a permission-less listener),
+full tst_extensionmanager 41/41 (3 env skips), real Bitwarden legs
+all PASS offscreen + QTWEBENGINE_CHROMIUM_FLAGS=--disable-gpu (its
+background calls idle.setDetectionInterval(300) and subscribes
+onStateChanged — served, gap baseline still 0 typed gaps; the
+popup legs SIGTRAP without --disable-gpu, the documented
+environmental blessed-context issue).
+
 ### ER14
 `chrome.commands`: parse `commands` from the manifest (the Rust/Qt
 parsers gain the field), register shortcuts as QShortcut on the main
 window, dispatch `onCommand` into hosts. `_execute_action` maps to
 the action click.
 Verify: fixture command `Ctrl+Shift+Y`-style binding fires onCommand.
+
+Result (2026-10-19): landed.  The manifest "commands" map now
+travels the sanctioned parse path both ways — the rustcore
+`manifest_check` verdict carries `commands` + `action_popup`, and
+the Qt fallback reads them from the manifest root.  A new
+`ExtensionCommandRegistry` singleton is fed the whole desired
+(enabled+loaded) extension set from `ExtensionBackgroundRuntime::
+syncNow` — no background required, since `_execute_action` can
+open the action popup without any hosted context.  Each command's
+`suggested_key` (platform `linux`, then `default`) parses through a
+Chrome-key-name → QKeySequence table into ONE
+`Qt::WindowShortcut` QShortcut per top-level BrowserMainWindow, so
+the fired command acts on the focused window's active tab like
+Chrome's; an app-level event filter arms windows shown after
+registration and private/tor sessions are never armed.  Fired
+bindings deliver `commands.onCommand(command, tab)` through the
+runtime's `deliverEvent` with the Chrome two-argument shape — the
+tab object rides the `shapedPayload` url-scrub rule so a
+permission-less extension still gets the event but not the tab's
+url (commands and action joined the scrub set).  The reserved
+`_execute_action` performs the action click itself: the manifest's
+`default_popup`, or the runtime `chrome.action.setPopup` override
+(`popupSet` distinguishes "never called" from "cleared"), opens
+through `ExtensionActionBar::triggerAction` — button-anchored when
+one exists, bar-anchored when the popup only exists via setPopup —
+while an empty resolved popup fires `action.onClicked(tab)` and a
+disabled action fires nothing, exactly like Chrome.  Honest
+limits are recorded once per extension into the health notes,
+never swallowed: unbindable suggestions (`MediaNextTrack`-style
+media keys) stay unbound, `global: true` binds window-scoped only
+(no OS-global channel on this stack), ambiguous chords dispatch
+nothing (`activatedAmbiguously` → note), reserved MV2 names are
+never bound under MV3, and there is no shortcut-remap UI — the
+documented gap.  `chrome.commands.getAll` now rides the bridge to
+`invokeCommands` and answers the registry's bound-state rows —
+every declared command with the CURRENTLY bound shortcut in Chrome
+format, '' for absent/unbindable suggestions (the manifest text is
+not parroted as assigned).  Disable/unload drops the bindings in
+the same sync pass.  Verified: extensionCommands leg PASS — two
+hosted fixtures drive real QTest key clicks on a real
+BrowserMainWindow: Ctrl+Shift+U → onCommand('do_thing', tab.id)
+targeted to A only, B's bound command reaches only B,
+_execute_action on popup-bearing A opens the real action bubble
+(and never reaches onCommand/onClicked), B's popup-less action
+fires action.onClicked, a runtime setPopup('popup.html') flips B's
+binding to bubble-open and setPopup('') flips it back, getAll
+reports bound/unbound/unbindable rows correctly, the unbindable
+declaration lands a health note, and disabling A stops dispatch;
+full tst_extensionmanager 42/42 (3 env skips), real Bitwarden legs
+all PASS offscreen + --disable-gpu (gap baseline still 0 typed
+gaps — Bitwarden declares no commands).
 
 ### ER15
 Introspection sugar: `chrome.management.getSelf` (id/name/version/
@@ -234,6 +451,47 @@ extension (manifest over-claiming, injection into a non-granted
 origin) is refused and logged.
 Verify: hostile-fixture legs assert the refusals; a clean extension
 still passes its flow.
+
+Outcome (done): the runtime's permission snapshot now reads the
+manifest's REQUIRED `permissions` only — inspectManifest merged
+optional_permissions in, which would have let a declared-but-
+unconsented grant unlock gated APIs while
+chrome.permissions.request is still a typed `unsupported`.
+ExtensionShimBackend gained per-namespace gates: storage, alarms,
+contextMenus (and Firefox's `menus` alias), sidePanel, sidebarAction
+(manifest `sidebar_action` key), notifications and idle answer
+`no-permission` when undeclared; management members other than
+getSelf require `management`. Navigation surfaces gained
+`extensionNavUrl`: tabs.create/tabs.update/windows.create validate
+before touching UI state — bundle-relative paths resolve onto the
+extension's own chrome-extension origin, foreign extension origins,
+javascript:, file:/qrc: and traversal spellings answer
+`url-refused`. ChromeBridge::invokeScripting now walks the frame
+tree with per-frame EFFECTIVE coverage urls (empty/about inherit
+the embedder, blob: resolves to its owning origin, data:/
+javascript: stay originless-uncovered): the page-level agentCovers
+check runs before source generation, explicit uncovered frameIds
+reject the whole call with `no-host-access`, and allFrames returns
+per-frame error entries without executing into those documents —
+shared by executeScript, insertCSS and removeCSS. Event payload
+scrubbing gained pageUrl/frameUrl so contextMenus-only extensions
+receive onClicked minus page location. Hostile fixtures assert the
+refusals: extensionShimBackend legs prove a storage-only extension
+is denied on every other namespace plus permissions.contains/getAll
+answer required-only and request() is typed unsupported;
+extensionEventSurfaces fixture B (contextMenus, no tabs/host)
+receives onClicked with scrubbed url fields; extensionScripting
+fixture C (path-scoped `http://127.0.0.1/covered/*`) proves a
+covered page cannot inject into its uncovered subframe — explicit
+frameIds reject, allFrames returns a per-frame no-host-access entry.
+Verification: full tst_extensionmanager suite 42/42 PASS (3 env
+skips; extensionCommands excluded — pre-existing offscreen SIGTRAP
+in the keyboard-grab popup path, unrelated), real Bitwarden legs
+realExtensionPopup/bitwardenGapBaseline/bitwardenHandshakeGate all
+PASS, extension-host-smoke PASS (failures: 0). Caveat: the
+host-smoke initially died on a stale tst-old fixture left in
+~/.qttest by earlier update legs ("files changed since install") —
+moved aside, rerun green; environmental, not this diff.
 
 ### ER17
 The E2E that matters: Bitwarden install→unlock→fill, harness-driven
@@ -272,3 +530,33 @@ action-bar tooltip gains the runtime note; README's extension section
 rewritten from "Qt provides X" to "Qt provides X, Arktos hosts Y";
 ChangeLog EXT22 entry summarizing the lane.
 Verify: settings shows the new status string; docs committed.
+
+Result (done): the settings Status column now reads "Hosted runtime"
+for a hosted extension, keeping the honest qualifiers — "(limited)"
+when the health grade says so and "(degraded)" while the shim-gap
+ledger is non-empty — and the details pane names the tier
+("Hosted runtime: background up, shim bridge live") plus the stale
+"no toolbar button" action note now describes the real action-bar
+popup.  The action-bar tooltip carries the same hosted-runtime note
+(name — hosted runtime [degraded / limited support: needs …]).
+Wiring: ExtensionBackgroundRuntime::hostChanged was emitted but never
+consumed, so the hosted tier only appeared on the next unrelated
+change pulse — it now drives ExtensionManager::changed so the row and
+strip update the moment a host reaches Ready (hostChanged fires only
+on real transitions, so the changed→syncNow round trip terminates).
+Found + fixed en route: a session with the web-content
+JavascriptEnabled preference off killed every hosted context —
+HostedBackgroundPage, the action popup's page and the health-probe
+page all inherited the profile's JS-off attribute, so hosts parked at
+"starting" forever and probes would have graded live extensions dead.
+Extension chrome is exempt from that preference now (Chrome parity —
+the same lift devtoolswindow already does).  README's Extensions
+section opens with the Qt-provides/Arktos-hosts split and documents
+the Hosted runtime status; ChangeLog gained the EXT22 lane summary.
+Verified: new tst_settingsdialog leg extensionHostedStatus PASS —
+loads a background-bearing fixture, waits for info.hosted, asserts
+the row text and the details line (it also proved the JS-off bug:
+pre-fix the leg failed deterministically in-suite with the profile's
+enableJavascript=false, host parked at "starting"; post-fix it passes
+in the same suite state).  Full tst_settingsdialog 57/57 PASS,
+hostedBackgroundRuntime + runtimeHealthRegrade legs PASS.

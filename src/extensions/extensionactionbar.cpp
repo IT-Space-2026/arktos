@@ -38,6 +38,7 @@
 
 #include <qwebenginepage.h>
 #include <qwebengineprofile.h>
+#include <qwebenginesettings.h>
 #include <qwebengineview.h>
 
 namespace {
@@ -213,10 +214,22 @@ void ExtensionActionBar::rebuild()
                           .arg(info.name);
         else if (info.health
                  == ExtensionManager::ExtensionHealth::Limited)
-            toolTip = tr("%1 — limited support: needs %2")
-                          .arg(info.name,
-                               info.missingApis.join(
-                                   QLatin1String(", ")));
+            toolTip = info.hosted
+                ? tr("%1 — hosted runtime, limited support: needs %2")
+                      .arg(info.name,
+                           info.missingApis.join(QLatin1String(", ")))
+                : tr("%1 — limited support: needs %2")
+                      .arg(info.name,
+                           info.missingApis.join(
+                               QLatin1String(", ")));
+        // ER20: the hosted-runtime note — a bare name would not say
+        // who serves the extension; the EXT17 shim-gap degrade rides
+        // along so the tooltip can't hide a partial runtime either.
+        else if (info.hosted)
+            toolTip = info.shimGaps.isEmpty()
+                ? tr("%1 — hosted runtime").arg(info.name)
+                : tr("%1 — hosted runtime (degraded)")
+                      .arg(info.name);
         button->setToolTip(toolTip);
         button->setAccessibleName(info.name);
         const QString id = info.id;
@@ -232,6 +245,26 @@ void ExtensionActionBar::rebuild()
     setVisible(!actions.isEmpty());
 }
 
+bool ExtensionActionBar::triggerAction(const QString &id,
+                                       const QString &popupPath)
+{
+    if (popupPath.isEmpty())
+        return false;
+    // Anchored on the action button when the extension has one — a
+    // popup that exists only via chrome.action.setPopup has no
+    // button, so the bar itself anchors the bubble then.
+    QWidget *anchor = findChild<QToolButton *>(
+        QLatin1String("extensionActionButton_") + id);
+    if (!anchor)
+        anchor = this;
+    QString path = popupPath;
+    while (path.startsWith(QLatin1Char('/')))
+        path = path.mid(1);
+    openPopup(id, QUrl(QStringLiteral("chrome-extension://") + id
+                       + QLatin1Char('/') + path), anchor);
+    return true;
+}
+
 bool ExtensionActionBar::eventFilter(QObject *watched, QEvent *event)
 {
     if (watched == m_popup && event->type() == QEvent::KeyPress) {
@@ -245,7 +278,7 @@ bool ExtensionActionBar::eventFilter(QObject *watched, QEvent *event)
 }
 
 void ExtensionActionBar::openPopup(const QString &id, const QUrl &popupUrl,
-                                   QToolButton *anchor)
+                                   QWidget *anchor)
 {
     // Chrome toggles: re-clicking the serving button closes the popup.
     if (m_popup && m_popupExtensionId == id) {
@@ -316,6 +349,11 @@ void ExtensionActionBar::openPopup(const QString &id, const QUrl &popupUrl,
     // the app's WebPage subclass, so no arktos QWebChannel objects or
     // app page policy leak into extension chrome (SEC24 split).
     QWebEnginePage *page = new QWebEnginePage(profile, view);
+    // ER20: extension chrome is exempt from the profile's
+    // JavascriptEnabled web-content preference — the popup must run
+    // even when the user has scripts off (Chrome parity).
+    page->settings()->setAttribute(QWebEngineSettings::JavascriptEnabled,
+                                   true);
     view->setPage(page);
     layout->addWidget(view);
     popup->resize(360, 500);
@@ -328,7 +366,7 @@ void ExtensionActionBar::openPopup(const QString &id, const QUrl &popupUrl,
     // while an eval is still in flight — QPointer both, or the
     // resize/move lands on freed widgets.
     const QPointer<QFrame> popupGuard(popup);
-    const QPointer<QToolButton> anchorGuard(anchor);
+    const QPointer<QWidget> anchorGuard(anchor);
     const QPointer<QWebEnginePage> pageGuard(page);
     connect(view, &QWebEngineView::loadFinished, popup,
             [popupGuard, pageGuard, anchorGuard]() {

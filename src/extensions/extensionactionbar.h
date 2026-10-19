@@ -61,6 +61,17 @@ public:
     // Number of action buttons currently hosted — exposed for tests.
     int actionCount() const;
 
+    // ER14: chrome.commands' reserved _execute_action — performs
+    // the same open a real button click does on the resolved popup
+    // (the manifest's default_popup, or the chrome.action.setPopup
+    // override the caller already applied).  Anchored on the
+    // extension's action button when one exists; a popup that only
+    // exists via setPopup has no button, so the bar itself anchors
+    // the bubble then.  Returns false on an empty popupPath — the
+    // caller degrades to action.onClicked like Chrome does.
+    bool triggerAction(const QString &extensionId,
+                       const QString &popupPath);
+
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 
@@ -69,7 +80,7 @@ private slots:
 
 private:
     void openPopup(const QString &id, const QUrl &popupUrl,
-                   QToolButton *anchor);
+                   QWidget *anchor);
 
     QHBoxLayout *m_layout;
     QSize m_iconSize;

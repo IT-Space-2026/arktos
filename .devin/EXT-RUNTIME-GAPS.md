@@ -1,0 +1,180 @@
+# Extension-runtime residual gaps — the declared intentional set
+
+ER18's contract: every typed `unimplemented`/`unsupported` (or domain
+refusal) the real Bitwarden bundle emits through the hosted runtime
+must either be implemented or listed here. The fenced `gaps` block
+below is machine-read by `tst_extensionmanager` — anything the bundle
+emits that is NOT covered is an unplanned regression and fails the
+leg. Format: `chrome.<api>: <code>` exact, or `chrome.<ns>.*: <code>`
+matching every member of the namespace (or a dotted sub-path such as
+`chrome.storage.managed.*`).
+
+## What the categories mean
+
+- **Dead namespace** — Qt WebEngine never registers the binding and
+  Arktos has no surface for it (no OS credential store, no native
+  messaging host, no cookie jar we expose, no ChromeOS services).
+  The shim's typed-error proxy answers every member `unsupported` —
+  the honest reply, never a fake value.
+- **Served namespace, unserved member** — the namespace works but the
+  member needs infrastructure that does not exist (store update
+  channel, runtime grant UI, icon pipeline, subframe addressing,
+  FileSystemEntry handles). Each answers a typed error.
+- **Domain refusal** — the call is implemented; the reply code is the
+  correct answer for the state it ran in (dead tab id, uncovered
+  origin, vault-locked window factory, duplicate menu id, managed
+  storage write). These are listed so an emission is *attributed*,
+  not hidden — if one fires where it shouldn't, that is still a bug.
+- **Notes, not gaps** — `chrome.runtime.connectNative`,
+  `chrome.offscreen`/`storage.onChanged` native-binding replacements,
+  `chrome.extension.getBackgroundPage` (MV3 null), `chrome.privacy`,
+  `chrome.idle` scope approximations are `shim.note` diagnostics; they
+  are intentionally absent from the block.
+
+## The declared set
+
+```gaps
+# --- dead namespaces: no Arktos surface exists ---------------------
+chrome.accessibilityFeatures.*: unsupported
+chrome.audio.*: unsupported
+chrome.autofill.*: unsupported
+chrome.bookmarks.*: unsupported
+chrome.browsingData.*: unsupported
+chrome.certificateProvider.*: unsupported
+chrome.chromeOs.*: unsupported
+chrome.contentSettings.*: unsupported
+chrome.cookies.*: unsupported
+chrome.debugger.*: unsupported
+chrome.declarativeContent.*: unsupported
+chrome.declarativeNetRequest.*: unsupported
+chrome.desktopCapture.*: unsupported
+chrome.devtools.*: unsupported
+chrome.displaySource.*: unsupported
+chrome.dns.*: unsupported
+chrome.documentScan.*: unsupported
+chrome.downloads.*: unsupported
+chrome.enterprise.*: unsupported
+chrome.favicon.*: unsupported
+chrome.fileBrowserHandler.*: unsupported
+chrome.fileSystemProvider.*: unsupported
+chrome.fontSettings.*: unsupported
+chrome.gcm.*: unsupported
+chrome.history.*: unsupported
+chrome.identity.*: unsupported
+chrome.input.*: unsupported
+chrome.loginState.*: unsupported
+chrome.mediaPerception.*: unsupported
+chrome.nativeMessaging.*: unsupported
+chrome.omnibox.*: unsupported
+chrome.platformKeys.*: unsupported
+chrome.power.*: unsupported
+chrome.printerProvider.*: unsupported
+chrome.printing.*: unsupported
+chrome.privacy.*: unsupported
+chrome.processes.*: unsupported
+chrome.readingList.*: unsupported
+chrome.search.*: unsupported
+chrome.sessions.*: unsupported
+chrome.signedInDevices.*: unsupported
+chrome.system.*: unsupported
+chrome.systemIndicator.*: unsupported
+chrome.tabCapture.*: unsupported
+chrome.tabGroups.*: unsupported
+chrome.topSites.*: unsupported
+chrome.tts.*: unsupported
+chrome.userScripts.*: unsupported
+chrome.vpnProvider.*: unsupported
+chrome.wallpaper.*: unsupported
+# --- served namespaces, deliberately unserved members --------------
+# tabs/windows members beyond the implemented set are typed stubs;
+# sendMessage frameId!=0 is unsupported (page agent lives in the main
+# frame only).
+chrome.tabs.*: unsupported
+chrome.windows.*: unsupported
+chrome.action.setIcon: unsupported
+chrome.browserAction.setIcon: unsupported
+chrome.extension.isAllowedFileSchemeAccess: unsupported
+chrome.extension.isAllowedIncognitoAccess: unsupported
+chrome.idle.getAutoLockDelay: unsupported
+chrome.notifications.*: unsupported
+chrome.permissions.remove: unsupported
+chrome.permissions.request: unsupported
+chrome.runtime.getPackageDirectoryEntry: unsupported
+chrome.runtime.reload: unsupported
+chrome.runtime.requestUpdateCheck: unsupported
+chrome.runtime.restartAfterDelay: unsupported
+chrome.runtime.sendNativeMessage: unsupported
+chrome.sidePanel.open: unsupported
+chrome.sidebarAction.close: unsupported
+chrome.sidebarAction.open: unsupported
+chrome.sidebarAction.toggle: unsupported
+# management gates every member but getSelf on the declared
+# 'management' permission — no-permission undeclared (Bitwarden does
+# not declare it), unsupported when declared and still unserved.
+chrome.management.*: no-permission
+chrome.management.*: unsupported
+# webRequest is observe-only: blocking/requestBody extraInfoSpec and
+# unservable events (onBeforeRedirect, onResponseStarted,
+# onAuthRequired) are typed unsupported at subscribe time.
+chrome.webRequest.*: unsupported
+# scripting: documentIds targets are never minted; registration
+# constraints (globs, cookieStoreId) refuse the same way.
+chrome.scripting.*: unsupported
+# --- domain refusals — correct replies, kept visible ---------------
+chrome.contextMenus.create: duplicate-id
+chrome.contextMenus.remove: not-found
+chrome.contextMenus.update: not-found
+chrome.idle.queryState: invalid-argument
+chrome.idle.setDetectionInterval: invalid-argument
+chrome.notifications.clear: not-found
+chrome.notifications.update: not-found
+chrome.offscreen.closeDocument: not-hosted
+chrome.offscreen.createDocument: invalid-argument
+chrome.offscreen.createDocument: single-document
+chrome.runtime.openOptionsPage: no-options-page
+chrome.runtime.sendMessage: native-failed
+chrome.scripting.*: bad-path
+chrome.scripting.*: invalid-argument
+chrome.scripting.*: no-frame
+chrome.scripting.*: no-host-access
+chrome.scripting.*: no-permission
+chrome.scripting.*: no-such-file
+chrome.scripting.*: not-found
+chrome.storage.managed.*: read-only
+chrome.storage.*: invalid-area
+chrome.tabs.create: no-tab
+chrome.tabs.create: no-window
+chrome.tabs.create: url-refused
+chrome.tabs.get: not-found
+chrome.tabs.sendMessage: no-host-access
+chrome.tabs.sendMessage: no-receiver
+chrome.tabs.sendMessage: not-found
+chrome.tabs.update: not-found
+chrome.webNavigation.getAllFrames: no-tab
+chrome.webNavigation.getFrame: no-frame
+chrome.webNavigation.getFrame: no-tab
+chrome.webRequest.subscribe: invalid-argument
+chrome.webRequest.subscribe: no-webRequest-permission
+chrome.windows.create: no-window
+chrome.windows.create: url-refused
+chrome.windows.get: not-found
+chrome.windows.getCurrent: no-window
+chrome.windows.getLastFocused: no-window
+chrome.windows.remove: not-found
+chrome.windows.update: not-found
+```
+
+## Out of scope by design
+
+- **chrome.runtime.connectNative** — returns a dead port with a
+  `no-native-messaging` note, not a gap entry; there is no native
+  messaging host to bridge to.
+- **chrome.extension.getBackgroundPage / getViews Window objects** —
+  MV3 semantics answer null/context-counts; a Window cannot cross
+  the channel, and faking one is worse than the honest null.
+- **chrome.idle 'locked' state and OS-wide idle** — measured inside
+  Arktos windows only; the shim notes the approximation once per
+  context rather than emitting a gap on every query.
+- **chrome.webRequest blocking** — Qt WebEngine's interceptor is
+  observe-only at our layer; blocking subscriptions fail typed at
+  `subscribe`, covered by the wildcard above.

@@ -42,9 +42,12 @@ class QWebEngineProfile;
 //   storage.*    — per-extension JSON store under
 //                  <data>/extstorage/<id>/ (local persists, session
 //                  is in-memory); the page keeps real chrome.storage
-//                  when present, this backs contexts without bindings
+//                  when present, this backs contexts without bindings;
+//                  the 'storage' manifest permission gates the
+//                  namespace (ER16)
 //   alarms.*     — QTimer-backed alarms so onAlarm really fires (the
-//                  hosted page's binding is present-but-inert)
+//                  hosted page's binding is present-but-inert);
+//                  'alarms' permission gates the namespace (ER16)
 //   tabs.*       — query/get/create/update over a live
 //                  BrowserMainWindow/TabWidget snapshot; ids are
 //                  session-stable via the registry below
@@ -52,9 +55,27 @@ class QWebEngineProfile;
 //                  state registry EXT08's button strip reads
 //   i18n.*       — _locales/<lang>/messages.json lookup
 //   permissions.*— manifest-declared contains/getAll fallback
-//   contextMenus.*— per-extension item registry (EXT16 renders)
-//   sidePanel.*  — options recorded (Arktos has no side-panel surface)
-//   notifications.* — typed 'unsupported' (no notification presenter)
+//   contextMenus.*— per-extension item registry (EXT16 renders);
+//                  'contextMenus' (or Firefox's 'menus') permission
+//                  gates it (ER16)
+//   sidePanel.*  — options recorded (Arktos has no side-panel
+//                  surface); 'sidePanel' permission gates it (ER16)
+//   notifications.* — record registry + freedesktop presentation via
+//                  ExtensionNotificationCenter (ER12); 'notifications'
+//                  manifest permission gates the namespace
+//   idle.*       — queryState/setDetectionInterval/onStateChanged
+//                  over ExtensionIdleWatcher's in-app input clock
+//                  (ER13); 'idle' manifest permission gates it
+//   management.* — getSelf answers the real id/name/version/enabled
+//                  from the manifest + manager records (ER15);
+//                  ungated like Chrome.  Everything else is typed
+//                  no-permission/unsupported.
+//   extension.*  — reloadView, the one cross-context capability the
+//                  shim's getViews handles carry (ER15)
+//   sidebarAction.* — panel/title/icon bookkeeping in the same
+//                  recorded-options model sidePanel uses (ER15);
+//                  open/close/toggle answer typed unsupported;
+//                  the manifest's sidebar_action key gates it (ER16)
 //   runtime.*    — context bookkeeping (getViews counts)
 //   shim.*       — diagnostics channel: 'note' -> notes(), 'gap' ->
 //                  gapReported() -> the host's health surface
@@ -75,6 +96,16 @@ public:
     QStringList notes() const { return m_notes; }
     QStringList gaps() const { return m_gaps; }
 
+    QString extensionId() const { return m_extensionId; }
+    QString extensionName() const { return m_extensionName; }
+    QString extensionPath() const { return m_extensionPath; }
+
+    // Records a fidelity note into the health surface — the same
+    // list the shim's shim.note calls feed; async features
+    // (ExtensionNotificationCenter's presentation failures) report
+    // through it.
+    void recordNote(const QString &message);
+
     // The extension's raw manifest.json (cached) — the handshake
     // ships it to the page so synchronous lookups never block.
     QJsonObject manifestJson() const;
@@ -88,6 +119,10 @@ public:
         QString badgeColor;      // css color string as the ext set it
         QString badgeTextColor;
         QString popup;
+        // ER14: distinguishes "no setPopup call" (manifest default
+        // applies) from "setPopup('')" (popup removed — the action
+        // click fires onClicked, Chrome parity).
+        bool popupSet = false;
         bool enabled = true;
     };
     static ActionState actionState(const QString &extensionId);
@@ -96,6 +131,10 @@ public:
     // consistent across query+get and (EXT16) event payloads.
     static int tabIdFor(const QObject *view);
     static int windowIdFor(const QObject *window);
+    // ER02: tabId -> the live WebView, resolved over the same
+    // window/tab set chrome.tabs.query enumerates (top-level
+    // windows, OTR/tor excluded).  nullptr when no tab carries it.
+    static class WebView *viewForTabId(int tabId);
 
     // The chrome.tabs object shape — shared by invokeTabs,
     // EXT16 event payloads and contextMenus.onClicked's tab arg.
@@ -114,6 +153,20 @@ public:
     // invokeI18n (bridge fetch) and the injected __ARKTOS_HOST_CONFIG
     // so getMessage resolves synchronously before page scripts run.
     static QJsonObject i18nMessages(const QString &extensionPath);
+
+    // ER16: the manifest's REQUIRED permissions — the gate source
+    // for every permission-scoped namespace.  optional_permissions
+    // are inert here: chrome.permissions.request answers typed
+    // unsupported, so an optional grant must never unlock a call.
+    QStringList manifestPermissions() const;
+    // ER16: a url an extension may put a real tab on — Chrome
+    // refuses file:/chrome:/qrc:/foreign-extension documents from
+    // tabs.create/update and windows.create outright; the SEC09
+    // untrusted-input gate is only the javascript: floor.  Relative
+    // spellings resolve against the extension's own
+    // chrome-extension origin (options-page pop-outs rely on it).
+    // Answers the url to load; an invalid result means refused.
+    QUrl extensionNavUrl(const QString &text) const;
 
     // EXT16: the page context menu reads this shared registry — an
     // ordered item list per extension plus the display name its
@@ -153,6 +206,8 @@ private:
     // url/title leave the host only when the extension holds 'tabs'
     // or a host permission covering the tab's url.
     QJsonObject shapedTab(const QJsonObject &tab) const;
+    QJsonObject invokeWebNavigation(const QString &method,
+                                    const QJsonObject &args);
     QJsonObject invokeWindows(const QString &method,
                               const QJsonObject &args);
     QJsonObject invokeAction(const QString &method,
@@ -166,6 +221,16 @@ private:
     QJsonObject invokeSidePanel(const QString &method,
                                 const QJsonObject &args);
     QJsonObject invokeNotifications(const QString &method,
+                                    const QJsonObject &args);
+    QJsonObject invokeCommands(const QString &method,
+                               const QJsonObject &args);
+    QJsonObject invokeIdle(const QString &method,
+                           const QJsonObject &args);
+    QJsonObject invokeManagement(const QString &method,
+                                 const QJsonObject &args);
+    QJsonObject invokeExtension(const QString &method,
+                                const QJsonObject &args);
+    QJsonObject invokeSidebarAction(const QString &method,
                                     const QJsonObject &args);
     QJsonObject invokeRuntime(const QString &method,
                               const QJsonObject &args);
@@ -185,7 +250,6 @@ private:
     QJsonObject changesForRemove(const QJsonObject &store,
                                  const QStringList &keys) const;
 
-    QString extensionPath() const { return m_extensionPath; }
     void fireAlarm(const QString &name);
 
     QString m_extensionId;
@@ -208,6 +272,10 @@ private:
 
     QJsonObject m_sidePanelOptions;
     QJsonObject m_sidePanelBehavior;
+    // ER15: chrome.sidebarAction bookkeeping — {panel,title,icon},
+    // the same recorded-but-unrendered model m_sidePanelOptions
+    // carries (Arktos has no sidebar surface).
+    QJsonObject m_sidebarAction;
 
     QStringList m_notes;
     QStringList m_gaps;

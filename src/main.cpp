@@ -12910,8 +12910,9 @@ int main(int argc, char **argv)
                 "\"name\":\"arktos-host-smoke-ext\","
                 "\"version\":\"0.1\","
                 "\"description\":\"EXT14 hosted-runtime fixture\","
-                "\"permissions\":[\"storage\",\"tabs\","
-                "\"webNavigation\",\"contextMenus\"],"
+                "\"permissions\":[\"storage\",\"tabs\",\"alarms\","
+                "\"webNavigation\",\"contextMenus\","
+                "\"notifications\"],"
                 "\"action\":{\"default_popup\":\"popup.html\","
                 "\"default_title\":\"Smoke\"},"
                 "\"background\":{\"service_worker\":\"sw.js\"}}");
@@ -12964,7 +12965,8 @@ int main(int argc, char **argv)
                 "['onCreated','onUpdated','onActivated','onRemoved']"
                 ".forEach(function(e){chrome.tabs[e].addListener("
                 " self.__extRec('tabs.'+e));});\n"
-                "['onBeforeNavigate','onCommitted','onCompleted',"
+                "['onBeforeNavigate','onCommitted',"
+                "'onDOMContentLoaded','onCompleted',"
                 "'onErrorOccurred'].forEach(function(e){\n"
                 " chrome.webNavigation[e].addListener("
                 " self.__extRec('webNavigation.'+e));});\n"
@@ -13002,6 +13004,7 @@ int main(int argc, char **argv)
         auto phase = std::make_shared<int>(0);
         auto hostTicks = std::make_shared<int>(0);
         auto probeTicks = std::make_shared<int>(0);
+        auto expectedGap = std::make_shared<QString>();
         auto gateClicks = std::make_shared<int>(0);
         auto gateReloaded = std::make_shared<bool>(false);
         auto smokeDrove = std::make_shared<bool>(false);
@@ -13271,8 +13274,12 @@ int main(int argc, char **argv)
                     const QString notif =
                         o.value(QLatin1String("notif")).toString();
                     if (!realExt) {
-                    check(notif == QLatin1String("unsupported"),
-                          "notifications.create is a typed error");
+                    // ER12: the fixture declares 'notifications' —
+                    // create resolves even without a desktop daemon
+                    // (the record exists; the note says nothing was
+                    // shown).
+                    check(notif == QLatin1String("resolved"),
+                          "notifications.create presented");
                     } else {
                     // A real extension may carry the native
                     // notifications binding — worked-or-typed-error
@@ -13283,13 +13290,21 @@ int main(int argc, char **argv)
                     qInfo() << "extension-host-smoke: notifications"
                                " outcome:" << notif;
                     }
-                    // The typed error reports asynchronously over
-                    // invoke('shim','gap') — poll for it (skip when
-                    // the native binding answered instead).
-                    if (notif == QLatin1String("unsupported")) {
+                    // A typed error reports asynchronously over
+                    // invoke('shim','gap') — poll for it.  Typed
+                    // codes are single kebab tokens; a resolved
+                    // create or a raw native-binding throw skips the
+                    // leg and goes straight to the EXT16 events.
+                    const bool typedFail =
+                        !notif.isEmpty()
+                        && notif != QLatin1String("resolved")
+                        && !notif.contains(QLatin1Char(' '))
+                        && !notif.contains(QLatin1Char(':'));
+                    if (typedFail) {
+                        *expectedGap = QStringLiteral(
+                            "chrome.notifications.create: ") + notif;
                         *phase = 4;
                     } else {
-                        // Straight to the EXT16 event legs.
                         *phase = 5;
                         *probeTicks = 0;
                     }
@@ -13299,8 +13314,12 @@ int main(int argc, char **argv)
             } else if (*phase == 4) {   // gap surfaced to health
                 if (!host)
                     return;
-                if (host->shimGaps().contains(QStringLiteral(
-                        "chrome.notifications.create: unsupported"))) {
+                const QString wantGap =
+                    expectedGap->isEmpty()
+                        ? QStringLiteral(
+                            "chrome.notifications.create: no-permission")
+                        : *expectedGap;
+                if (host->shimGaps().contains(wantGap)) {
                     hostPoll->stop();
                     check(true, "typed error surfaced as a shim gap");
                     *phase = 5;
@@ -13333,7 +13352,8 @@ int main(int argc, char **argv)
                             "chrome.tabs[e].addListener("
                             " self.__extRec('tabs.'+e));});"
                             "['onBeforeNavigate','onCommitted',"
-                            "'onCompleted','onErrorOccurred'].forEach("
+                            "'onDOMContentLoaded','onCompleted',"
+                            "'onErrorOccurred'].forEach("
                             "function(e){chrome.webNavigation[e]"
                             ".addListener(self.__extRec("
                             "'webNavigation.'+e));});"
@@ -13417,7 +13437,10 @@ int main(int argc, char **argv)
                         && saw("tabs.onActivated") && saw("tabs.onRemoved")
                         && (!needNav
                             || (saw("webNavigation.onCommitted")
-                                && (saw("webNavigation.onCompleted")
+                                && ((saw("webNavigation."
+                                         "onDOMContentLoaded")
+                                     && saw("webNavigation."
+                                            "onCompleted"))
                                     || saw("webNavigation."
                                            "onErrorOccurred"))))
                         && (!needMenu
@@ -13434,7 +13457,8 @@ int main(int argc, char **argv)
                                 "onRemoved delivered in-page");
                     if (needNav)
                         check(true, "webNavigation onCommitted + "
-                                    "terminal delivered in-page");
+                                    "onDOMContentLoaded + terminal "
+                                    "delivered in-page");
                     if (needMenu)
                         check(true, "contextMenus.onClicked delivered "
                                     "in-page");

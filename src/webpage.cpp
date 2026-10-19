@@ -29,6 +29,7 @@
 #include "browserprofile.h"
 #include "browsertheme.h"
 #include "containermanager.h"
+#include "extensionpagebridge.h"
 #include "fileaccesshandler.h"
 #include "historymanager.h"
 #include "opensearchengine.h"
@@ -249,6 +250,11 @@ void WebPage::init()
     //    requestPictureInPicture shim (gesture-gated).
     //  * "arktos" — translate/searchUrl/properties, forwarded only on
     //    qrc: pages where it is the object's sole legitimate consumer.
+    //  * arktosExt — ER01's extension page agent: the hosted
+    //    extension runtime's content-script half.  It answers ONLY
+    //    ops for extensions whose host_permissions/content-script
+    //    matches cover this page's url (checked per call), which is
+    //    why the forwarder may whitelist it at all.
     //
     // Everything else stays internal to the channel world:
     //  * arktosAutofill.submitForm is called only by the autofill bundle
@@ -266,6 +272,14 @@ void WebPage::init()
     if (!BrowserApplication::isTorMode()) {
         m_webChannel->registerObject(QLatin1String("external"), m_javaScriptExternalObject);
         m_webChannel->registerObject(QLatin1String("arktosAutofill"), m_autoFillBridge);
+        // ER01 — the extension page agent's transport end.  It is
+        // page-callable ONLY through the whitelisted forwarder and
+        // answers only inside the host-permission scoping
+        // ExtensionPageBridge enforces per call — matching Chrome's
+        // "no content script here -> no chrome.* here" boundary.
+        m_webChannel->registerObject(
+            QLatin1String("arktosExt"),
+            new ExtensionPageBridge(this));
     }
     setWebChannel(m_webChannel, Engine::ArktosChannelWorld);
 

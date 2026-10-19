@@ -136,6 +136,7 @@ private slots:
     void permissionsPage();
     void securityLevelHint();
     void extensionPage();
+    void extensionHostedStatus();
     void credentialsPage();
     void containerSiteRows();
     void extensionVersionColumn();
@@ -3196,6 +3197,101 @@ void tst_SettingsDialog::extensionPage()
     // Disarm the modal janitors — the async update check has
     // settled, and armed rejects would eat the next test's dialogs.
     ++s_janitorGeneration;
+}
+
+// ER20: an extension the hosted runtime serves names the tier in
+// the Status column — "Hosted runtime", not bare "Enabled" — and the
+// details pane carries the hosted-runtime line.  The row must pick
+// the tier up live: the host reaches Ready asynchronously, after the
+// dialog may already be open.
+void tst_SettingsDialog::extensionHostedStatus()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine extensions unavailable in this build");
+    if (qEnvironmentVariableIsSet("ARKTOS_EXTHOST_OFF"))
+        QSKIP("hosted runtime disabled in this environment");
+
+    ExtensionManager *manager = ExtensionManager::instance();
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    {
+        QFile file(dir.path() + QLatin1String("/manifest.json"));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(R"({
+            "manifest_version": 3,
+            "name": "HostedRow",
+            "version": "1.0.0",
+            "permissions": ["storage"],
+            "background": {"service_worker": "sw.js"}
+        })");
+        file.close();
+        QFile worker(dir.path() + QLatin1String("/sw.js"));
+        QVERIFY(worker.open(QIODevice::WriteOnly));
+        worker.write("chrome.runtime.onMessage.addListener("
+                     "function(m,s,r){ return false; });\n");
+        worker.close();
+    }
+    auto loaded = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("HostedRow")
+                && info.error.isEmpty())
+            *loaded = info.id;
+    });
+    manager->grantConsent(dir.path());
+    manager->loadExtension(dir.path());
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded->isEmpty(), 30000);
+    const QString extId = *loaded;
+
+    // Enabling spawns the host; Ready folds info.hosted into the row.
+    manager->setExtensionEnabled(extId, true);
+    bool hosted = false;
+    ExtensionManager::ExtensionInfo last;
+    QElapsedTimer deadline;
+    deadline.start();
+    while (!hosted && deadline.elapsed() < 45000) {
+        QTest::qWait(50);
+        for (const ExtensionManager::ExtensionInfo &info
+             : manager->extensions()) {
+            if (info.id != extId)
+                continue;
+            hosted = info.hosted;
+            last = info;
+        }
+    }
+    if (!hosted)
+        qInfo() << "hosted never flipped:"
+                << "loaded" << last.loaded
+                << "enabled" << last.enabled
+                << "health" << int(last.health)
+                << "hostState" << last.hostState
+                << "hostError" << last.hostError
+                << "error" << last.error;
+    QVERIFY(hosted);
+
+    // Open the dialog before asserting — refreshExtensions must
+    // already have rendered the hosted tier.
+    SettingsDialog dialog;
+    dialog.tabWidget->setCurrentIndex(int(SettingsDialog::ExtensionsPage));
+
+    QTreeWidgetItem *row = nullptr;
+    for (int i = 0; i < dialog.extensionsTree->topLevelItemCount(); ++i) {
+        QTreeWidgetItem *item = dialog.extensionsTree->topLevelItem(i);
+        if (item->data(0, Qt::UserRole).toString() == extId)
+            row = item;
+    }
+    QVERIFY(row);
+    QCOMPARE(row->text(2), QStringLiteral("Hosted runtime"));
+
+    dialog.extensionsTree->setCurrentItem(row);
+    QVERIFY(dialog.extensionDetailsLabel->text()
+            .contains(QLatin1String("Hosted runtime")));
+
+    // Leave a clean list for later legs — disabling tears the host
+    // down through the same changed pulse.
+    manager->setExtensionEnabled(extId, false);
 }
 
 // SEC13: the saved-credentials group reflects SecureStore state —
