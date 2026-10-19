@@ -85,15 +85,18 @@ WebKitWebContext *sharedWebContext()
     return context;
 }
 
-// JSCValue -> QVariant.  Scalar types map directly; undefined and
-// null both become an invalid QVariant; objects/arrays hand back
-// their JSON text form (the documented marshaling limit — WK15 keeps
-// the type matrix + error mapping).
+// JSCValue -> QVariant (WK15 marshaling matrix).  Scalars map
+// directly; JS null becomes a valid-but-null variant (the
+// QMetaType::Nullptr spelling QJsonValue::toVariant uses — valid()
+// distinguishes it) while JS undefined maps to the invalid QVariant;
+// objects/arrays hand back their JSON text form — the documented
+// marshaling limit vs WebEngine's full QVariantMap/List decode.
 QVariant jscValueToVariant(JSCValue *value)
 {
-    if (!value || jsc_value_is_undefined(value)
-            || jsc_value_is_null(value))
+    if (!value || jsc_value_is_undefined(value))
         return QVariant();
+    if (jsc_value_is_null(value))
+        return QVariant::fromMetaType(QMetaType::fromType<std::nullptr_t>());
     if (jsc_value_is_boolean(value))
         return QVariant(bool(jsc_value_to_boolean(value)));
     if (jsc_value_is_number(value))
@@ -1587,9 +1590,14 @@ void WebkitPage::runJavaScriptLifted(
 void WebkitPage::toHtml(
         const std::function<void(const QString &)> &resultCallback)
 {
-    // WK15: document.documentElement.outerHTML eval.
-    if (resultCallback)
-        resultCallback(QString());
+    // WK15: serialized markup is the document element's outerHTML —
+    // the same eval channel WebEngine's toHtml rides under the hood.
+    // A document-less page answers null -> invalid -> empty string.
+    runJavaScript(QStringLiteral("document.documentElement.outerHTML"),
+                  [resultCallback](const QVariant &v) {
+        if (resultCallback)
+            resultCallback(v.toString());
+    });
 }
 
 QAction *WebkitPage::action(Engine::StandardAction action)

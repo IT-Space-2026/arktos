@@ -157,6 +157,7 @@ private slots:
     void webkitClearAndCookiePolicy();
     void webkitInput();
     void webkitZoomFindLifecycle();
+    void webkitJsEval();
 
 private:
     FakeEngineBackend *m_fake = nullptr;
@@ -2508,6 +2509,147 @@ void tst_EngineSwitch::webkitZoomFindLifecycle()
             evalSync(QStringLiteral("window.__wk14||'gone'"))
                 .value.toString(),
             QStringLiteral("gone"), 30000);
+#else
+    QSKIP("webkit backend not linked in this build");
+#endif
+}
+
+// WK15 — the typed-result contract behind runJavaScript.  Scalar
+// JSCValues marshal to their QVariant counterpart, JS null is a
+// valid-but-null variant (QMetaType::Nullptr, like QJsonValue::Null),
+// undefined is the invalid variant, objects/arrays arrive as their
+// JSON text (the documented limit), and a thrown exception or syntax
+// error surfaces as an invalid result through the callback — the
+// same shape QtWebEngine reports, never a crash or a dropped call.
+// toHtml is the outerHTML eval over the same channel.
+void tst_EngineSwitch::webkitJsEval()
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    Engine::Backend *webkit =
+        EngineRegistry::backendForId(QStringLiteral("webkit"));
+    QVERIFY(webkit);
+    QVERIFY2(webkit->pageUnavailableReason().isEmpty(),
+             qPrintable(webkit->pageUnavailableReason()));
+
+    const QString fixturePath = QDir::temp().filePath(
+        QStringLiteral("arktos-wk15-fixture.html"));
+    {
+        QFile fixture(fixturePath);
+        QVERIFY(fixture.open(QIODevice::WriteOnly));
+        fixture.write("<html><head><title>Wk15</title></head>"
+                      "<body><p id='wk15mark'>eval me</p></body></html>");
+    }
+
+    Engine::ProfileOptions options;
+    options.offTheRecord = true;
+    Engine::Profile *profile = webkit->createProfile(options, this);
+    QVERIFY(profile);
+
+    EngineTab tab(webkit, profile);
+    tab.resize(800, 600);
+    tab.show();
+    QVERIFY(tab.page());
+    auto *page = qobject_cast<WebkitPage *>(tab.page());
+    QVERIFY(page);
+
+    struct EvalOut { QVariant value; bool done = false; };
+    auto evalSync = [&page](const QString &src) -> EvalOut {
+        EvalOut out;
+        page->runJavaScript(src, [&](const QVariant &v) {
+            out.value = v;
+            out.done = true;
+        });
+        QElapsedTimer timer;
+        timer.start();
+        while (!out.done && timer.elapsed() < 30000)
+            QTest::qWait(20);
+        return out;
+    };
+
+    {
+        QSignalSpy spy(page, &Engine::Page::loadFinished);
+        page->load(QUrl::fromLocalFile(fixturePath));
+        QVERIFY2(spy.wait(60000) && spy.first().first().toBool(),
+                 "fixture load failed");
+    }
+
+    // Scalars round-trip with their types intact.
+    EvalOut out = evalSync(QStringLiteral("40+2"));
+    QVERIFY(out.done);
+    QVERIFY(out.value.isValid());
+    QCOMPARE(out.value.typeId(), QMetaType::Double);
+    QCOMPARE(out.value.toInt(), 42);
+
+    out = evalSync(QStringLiteral("'ark'+'tos'"));
+    QVERIFY(out.value.isValid());
+    QCOMPARE(out.value.typeId(), QMetaType::QString);
+    QCOMPARE(out.value.toString(), QStringLiteral("arktos"));
+
+    out = evalSync(QStringLiteral("1<2"));
+    QVERIFY(out.value.isValid());
+    QCOMPARE(out.value.typeId(), QMetaType::Bool);
+    QCOMPARE(out.value.toBool(), true);
+    out = evalSync(QStringLiteral("1>2"));
+    QCOMPARE(out.value.toBool(), false);
+
+    // The completion value of a statement list is its last
+    // expression — the eval semantics WebKit and WebEngine share.
+    out = evalSync(QStringLiteral("var a=6; a*7"));
+    QVERIFY(out.value.isValid());
+    QCOMPARE(out.value.toInt(), 42);
+
+    // null vs undefined: both falsy, but null is a marshaled VALUE
+    // (valid, QMetaType::Nullptr) while undefined is the invalid
+    // variant — the distinction the interface's callers rely on.
+    out = evalSync(QStringLiteral("null"));
+    QVERIFY(out.value.isValid());
+    QVERIFY(out.value.isNull());
+    QCOMPARE(out.value.typeId(), QMetaType::Nullptr);
+    out = evalSync(QStringLiteral("undefined"));
+    QVERIFY(!out.value.isValid());
+
+    // Objects/arrays arrive as JSON text — the documented marshaling
+    // limit (WebEngine decodes to Map/List; this backend hands back
+    // the serialized form instead of faking structure).
+    out = evalSync(QStringLiteral("({n:7,s:'x'})"));
+    QVERIFY(out.value.isValid());
+    QCOMPARE(out.value.typeId(), QMetaType::QString);
+    const QJsonDocument objectDoc =
+        QJsonDocument::fromJson(out.value.toString().toUtf8());
+    QVERIFY(objectDoc.isObject());
+    QCOMPARE(objectDoc.object().value(QLatin1String("n")).toInt(), 7);
+    QCOMPARE(objectDoc.object().value(QLatin1String("s")).toString(),
+             QStringLiteral("x"));
+
+    out = evalSync(QStringLiteral("[1,2,3]"));
+    QVERIFY(out.value.isValid());
+    const QJsonDocument arrayDoc =
+        QJsonDocument::fromJson(out.value.toString().toUtf8());
+    QVERIFY(arrayDoc.isArray());
+    QCOMPARE(arrayDoc.array().size(), 3);
+
+    // Error propagation: a thrown exception and a parse error both
+    // answer the callback with the invalid variant — error surfaced,
+    // never a crash and never a silently dropped call.
+    out = evalSync(QStringLiteral("throw new Error('wk15-boom')"));
+    QVERIFY(out.done);
+    QVERIFY(!out.value.isValid());
+    out = evalSync(QStringLiteral("1 +"));
+    QVERIFY(out.done);
+    QVERIFY(!out.value.isValid());
+
+    // toHtml is the outerHTML eval — serialized markup reaches the
+    // QString callback, fixture content included.
+    QString markup;
+    bool htmlDone = false;
+    page->toHtml([&](const QString &html) {
+        markup = html;
+        htmlDone = true;
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(htmlDone, 30000);
+    QVERIFY2(markup.contains(QStringLiteral("<html")),
+             qPrintable(markup.left(200)));
+    QVERIFY(markup.contains(QStringLiteral("wk15mark")));
 #else
     QSKIP("webkit backend not linked in this build");
 #endif

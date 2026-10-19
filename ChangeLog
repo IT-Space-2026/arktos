@@ -3702,3 +3702,16 @@ WebKit zoom, find, and lifecycle (WK14): the webkit backend's page
     compositing" via unmap + unfocus on the current 2.54 stack, which
     has no suspend/resume export. Navigating a discarded tab revives
     it automatically.
+WebKit typed script results (WK15): the webkit backend's runJavaScript
+    marshaling now distinguishes JavaScript null from undefined the
+    way QtWebEngine does — null arrives as a valid null QVariant
+    (QMetaType::Nullptr, the QJsonValue::Null spelling) while
+    undefined stays the invalid variant; numbers, strings and
+    booleans keep their types, and objects/arrays arrive as their
+    serialized JSON text (the documented limit of this channel — the
+    backend hands back real JSON instead of faking a QVariantMap
+    decode). A thrown exception or a syntax error answers the result
+    callback with the invalid variant rather than crashing or
+    silently dropping the call. View Source / reader markup now works
+    too: toHtml evaluates document.documentElement.outerHTML over the
+    same channel.
