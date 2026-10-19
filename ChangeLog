@@ -3628,3 +3628,17 @@ WebKit load-signal contract (WK09): the webkit backend's Engine::Page
     honest loadFinished(false) instead of a fake success pair.
     Navigation type is recorded off an observe-only decide-policy
     hook — WK17's request-policy veto builds on it.
+WebKit session history (WK10): the webkit backend's Page history
+    contract now maps the real WebKitBackForwardList — historyItems,
+    backItems/forwardItems, canGoBack/canGoForward and back()/forward()
+    all proxy the per-view list (both slices arrive reversed relative
+    to stack order and are walked tail-to-head), and
+    goToHistoryEntry jumps to any stack index through
+    get_nth_item + go_to_back_forward_list_item. Back/forward
+    navigations produce the full started→finished(true) load cycle:
+    WebKit 2.54 emits a spurious CANCELLED load-failed mid-hop (the
+    history machinery discards its own provisional request), which is
+    now suppressed only for the armed bf target — a user stop() and
+    genuine errors still report failure. The bf entry points stamp
+    NavigationType::BackOrForward themselves because decide-policy
+    never fires for back-forward hops.

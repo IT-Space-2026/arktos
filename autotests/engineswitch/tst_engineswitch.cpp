@@ -149,6 +149,7 @@ private slots:
     void webkitBackendSurface();
     void webkitViewRenders();
     void webkitLoadSignals();
+    void webkitHistory();
 
 private:
     FakeEngineBackend *m_fake = nullptr;
@@ -1470,6 +1471,189 @@ void tst_EngineSwitch::webkitLoadSignals()
     QVERIFY2(!finishedOk.first(), "stopped load reported success");
     QVERIFY(!page->isLoading());
     QCOMPARE(order.last(), QStringLiteral("finished"));
+#else
+    QSKIP("webkit backend not linked in this build");
+#endif
+}
+
+// WK10 — the real WebKitBackForwardList behind the Page history
+// contract: a three-page session exposes the oldest-first linear
+// stack with the current index, back/forward slices honor the
+// maxItems cap, back()/forward() and goToHistoryEntry() drive real
+// bf navigations, and a fresh load after going back truncates the
+// forward list.  The fixture is a local HTTP server answering
+// Cache-Control: no-store — a cacheable page is bf-restored from
+// WebKit's page cache without a navigation decision, and the
+// BackOrForward type assert below needs decide-policy to fire.
+// Titles are asserted with a pump because WebKit commits them a
+// tick late.
+void tst_EngineSwitch::webkitHistory()
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    Engine::Backend *webkit =
+        EngineRegistry::backendForId(QStringLiteral("webkit"));
+    QVERIFY(webkit);
+    QVERIFY2(webkit->pageUnavailableReason().isEmpty(),
+             qPrintable(webkit->pageUnavailableReason()));
+
+    Engine::ProfileOptions options;
+    options.offTheRecord = true;   // ephemeral session — no disk state
+    Engine::Profile *profile = webkit->createProfile(options, this);
+    QVERIFY(profile);
+
+    EngineTab tab(webkit, profile);
+    tab.resize(800, 600);
+    tab.show();
+    QVERIFY(tab.page());
+    auto *page = qobject_cast<WebkitPage *>(tab.page());
+    QVERIFY(page);
+
+    // Fixture: /a /b /c /d, each a titled page that must never be
+    // page-cache eligible.
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    auto pending =
+        QSharedPointer<QHash<QTcpSocket *, QByteArray>>::create();
+    connect(&server, &QTcpServer::newConnection, &server,
+            [&server, pending]() {
+        while (QTcpSocket *socket = server.nextPendingConnection()) {
+            socket->setParent(&server);
+            connect(socket, &QTcpSocket::readyRead, socket,
+                    [socket, pending]() {
+                QByteArray &request = (*pending)[socket];
+                request += socket->readAll();
+                if (!request.contains("\r\n\r\n"))
+                    return;
+                const QByteArray path =
+                    request.split(' ').value(1, "/");
+                const QByteArray tag = path.mid(1).toUpper();
+                const QByteArray body =
+                    "<html><head><title>Wk10" + tag
+                    + "</title></head><body>Wk10" + tag
+                    + "</body></html>";
+                socket->write("HTTP/1.1 200 OK\r\nContent-Type: text/html"
+                              "\r\nCache-Control: no-store"
+                              "\r\nContent-Length: "
+                              + QByteArray::number(body.size())
+                              + "\r\nConnection: close\r\n\r\n" + body);
+                socket->disconnect();
+                socket->disconnectFromHost();
+                pending->remove(socket);
+            });
+        }
+    });
+    const QUrl urlA(QStringLiteral("http://127.0.0.1:%1/a")
+                        .arg(server.serverPort()));
+    const QUrl urlB(QStringLiteral("http://127.0.0.1:%1/b")
+                        .arg(server.serverPort()));
+    const QUrl urlC(QStringLiteral("http://127.0.0.1:%1/c")
+                        .arg(server.serverPort()));
+    const QUrl urlD(QStringLiteral("http://127.0.0.1:%1/d")
+                        .arg(server.serverPort()));
+
+    auto loadAndWait = [&page](const QUrl &u) -> bool {
+        QSignalSpy spy(page, &Engine::Page::loadFinished);
+        page->load(u);
+        return spy.wait(60000) && spy.first().first().toBool();
+    };
+    // bf hops are real loads — wait for their own loadFinished
+    // before issuing the next one (a fresh load mid-flight cancels
+    // the in-flight navigation and its loadFinished(false) would
+    // trip the spy).
+    auto bfNav = [&page](const std::function<void()> &go,
+                         const QUrl &u) -> bool {
+        QSignalSpy spy(page, &Engine::Page::loadFinished);
+        go();
+        return spy.wait(60000) && spy.first().first().toBool()
+            && page->url() == u;
+    };
+
+    QVERIFY2(loadAndWait(urlA), "fixture A load failed");
+    QCOMPARE(page->historyCount(), 1);
+    QCOMPARE(page->currentHistoryIndex(), 0);
+    QVERIFY(!page->canGoBack());
+    QVERIFY(!page->canGoForward());
+    QCOMPARE(page->historyItems().count(), 1);
+    QCOMPARE(page->historyItems().first().url, urlA);
+
+    QVERIFY2(loadAndWait(urlB), "fixture B load failed");
+    QVERIFY2(loadAndWait(urlC), "fixture C load failed");
+    QTRY_VERIFY2_WITH_TIMEOUT(
+        page->historyCount() == 3 && page->currentHistoryIndex() == 2,
+        "three-load stack never formed", 30000);
+    QVERIFY(page->canGoBack());
+    QVERIFY(!page->canGoForward());
+
+    // Stack shape: oldest first, index = stack position.
+    const QList<Engine::HistoryEntry> items = page->historyItems();
+    QCOMPARE(items.count(), 3);
+    QCOMPARE(items.at(0).url, urlA);
+    QCOMPARE(items.at(1).url, urlB);
+    QCOMPARE(items.at(2).url, urlC);
+    QCOMPARE(items.at(0).index, 0);
+    QCOMPARE(items.at(1).index, 1);
+    QCOMPARE(items.at(2).index, 2);
+
+    const QList<Engine::HistoryEntry> back = page->backItems(10);
+    QCOMPARE(back.count(), 2);
+    QCOMPARE(back.at(0).url, urlA);
+    QCOMPARE(back.at(1).url, urlB);      // nearest current is last
+    QCOMPARE(page->backItems(1).count(), 1);
+    QCOMPARE(page->backItems(1).first().url, urlB);
+    QVERIFY(page->forwardItems(10).isEmpty());
+
+    // Item titles land once the documents have committed them.
+    QTRY_VERIFY2_WITH_TIMEOUT(
+        page->historyItems().at(0).title == QStringLiteral("Wk10A")
+        && page->historyItems().at(1).title == QStringLiteral("Wk10B")
+        && page->historyItems().at(2).title == QStringLiteral("Wk10C"),
+        "back-forward item titles never settled", 30000);
+
+    // back() is a real navigation — the bf entry point stamps the
+    // BackOrForward type (WebKit emits no decide-policy for bf hops)
+    // and the forward slice gains C.  The index assert pumps: the
+    // uri commits a tick before the BF list's current item moves.
+    QVERIFY2(bfNav([&page] { page->back(); }, urlB),
+             "back() to B failed");
+    QCOMPARE(page->lastNavigationType(),
+             Engine::NavigationType::BackOrForward);
+    QTRY_COMPARE_EQ(page->currentHistoryIndex(), 1);
+    QCOMPARE(page->historyCount(), 3);
+    QVERIFY(page->canGoBack());
+    QVERIFY(page->canGoForward());
+    QCOMPARE(page->backItems(10).count(), 1);
+    QCOMPARE(page->backItems(10).first().url, urlA);
+    QCOMPARE(page->forwardItems(10).count(), 1);
+    QCOMPARE(page->forwardItems(10).first().url, urlC);
+
+    // goToHistoryEntry reaches any stack index — jump back two.
+    QVERIFY2(bfNav([&page] {
+                 page->goToHistoryEntry(page->historyItems().first());
+             }, urlA),
+             "goToHistoryEntry to A failed");
+    QTRY_COMPARE_EQ(page->currentHistoryIndex(), 0);
+    QVERIFY(!page->canGoBack());
+    QVERIFY(page->canGoForward());
+    QCOMPARE(page->forwardItems(10).count(), 2);
+    QCOMPARE(page->forwardItems(10).at(0).url, urlB);
+    QCOMPARE(page->forwardItems(10).at(1).url, urlC);
+
+    // forward() walks the slice back toward C.
+    QVERIFY2(bfNav([&page] { page->forward(); }, urlB),
+             "forward() to B failed");
+    QTRY_COMPARE_EQ(page->currentHistoryIndex(), 1);
+
+    // A fresh load after going back truncates the forward list —
+    // WebKit prunes it when the new navigation commits.
+    QVERIFY2(bfNav([&page] { page->back(); }, urlA),
+             "back() to A failed");
+    QVERIFY2(loadAndWait(urlD), "fixture D load failed");
+    QTRY_VERIFY2_WITH_TIMEOUT(
+        page->historyCount() == 2 && page->currentHistoryIndex() == 1,
+        "forward list never pruned", 30000);
+    QVERIFY(page->forwardItems(10).isEmpty());
+    QCOMPARE(page->historyItems().at(1).url, urlD);
+    QVERIFY(!page->canGoForward());
 #else
     QSKIP("webkit backend not linked in this build");
 #endif

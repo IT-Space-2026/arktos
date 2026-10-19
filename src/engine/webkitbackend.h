@@ -67,6 +67,15 @@
 // reset to 0 never lands after loadFinished, and an observe-only
 // decide-policy hook maps WebKitNavigationType (WK17's RequestPolicy
 // veto reuses the same hook).
+//
+// WK10 maps the Page history contract onto the real
+// WebKitBackForwardList: historyItems()/backItems()/forwardItems()
+// enumerate the list in oldest-first stack order (WebKit's back
+// slice arrives closest-first and is walked tail-to-head),
+// currentHistoryIndex() is the back-item count, back()/forward() and
+// canGoBack()/canGoForward() proxy the view calls, and
+// goToHistoryEntry() re-addresses the stack index through
+// get_nth_item + go_to_back_forward_list_item.
 
 #include "engineinterface.h"
 
@@ -213,7 +222,10 @@ public:
     // WK09: the navigation type WebKit reported for the most recent
     // navigation decision (decide-policy is the only place the enum
     // surfaces).  Other for embedder-initiated load() — WebKit has
-    // no Typed.  Autotest-visible state like WebkitView::frameCount.
+    // no Typed.  WK10: back()/forward()/goToHistoryEntry() stamp
+    // BackOrForward themselves — decide-policy never fires for
+    // back-forward navigations on 2.54.  Autotest-visible state
+    // like WebkitView::frameCount.
     Engine::NavigationType lastNavigationType() const
     {
         return m_lastNavigationType;
@@ -226,7 +238,7 @@ private:
     // the Qt loop pumps the global-default GMainContext).
     void onBufferRendered(WPEBuffer *buffer);
     void onLoadChanged(int event);
-    void onLoadFailed();
+    void onLoadFailed(const QString &failingUri, bool cancelled);
     void onWebProcessTerminated();
     void onUriNotify();
     void onTitleNotify();
@@ -272,6 +284,10 @@ private:
     WPEToplevel *m_toplevel = nullptr;
     QUrl m_url;
     QString m_title;
+    // WK10: uri of an in-flight back/forward navigation — the history
+    // machinery emits a spurious CANCELLED load-failed mid-hop, which
+    // onLoadFailed suppresses for exactly this uri (2.54-verified).
+    QString m_pendingBfNavUri;
     QImage m_iconImage;   // WK09 iconChanged dedup — content-compared
     Engine::NavigationType m_lastNavigationType =
         Engine::NavigationType::Other;

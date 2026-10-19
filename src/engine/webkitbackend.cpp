@@ -207,6 +207,65 @@ QImage bestPageIcon(WebKitImageList *list)
     return best;
 }
 
+// ---- WK10 — the real WebKitBackForwardList --------------------------
+//
+// WebKit keeps a per-view back-forward list with a current item and
+// two slices.  Runtime-verified ordering on 2.54 (the GLib wrapper
+// prepends while building, so both slices arrive reversed relative
+// to stack order): get_back_list is closest-to-current FIRST and
+// get_forward_list is furthest-from-current FIRST.  The Page
+// contract wants a linear stack ordered oldest→newest, so BOTH
+// slices walk tail-to-head around the current item.
+// The returned GLists are borrowed-item copies — g_list_free the
+// nodes, never unref the items; the list itself is owned by the
+// WebKitWebView.
+struct BackForwardShape {
+    int backCount = 0;
+    int forwardCount = 0;
+    bool hasCurrent = false;
+};
+
+BackForwardShape backForwardShape(WebKitWebView *view)
+{
+    BackForwardShape shape;
+    WebKitBackForwardList *list =
+        view ? webkit_web_view_get_back_forward_list(view) : nullptr;
+    if (!list)
+        return shape;
+    shape.hasCurrent =
+        webkit_back_forward_list_get_current_item(list) != nullptr;
+    GList *back = webkit_back_forward_list_get_back_list(list);
+    GList *forward = webkit_back_forward_list_get_forward_list(list);
+    shape.backCount = int(g_list_length(back));
+    shape.forwardCount = int(g_list_length(forward));
+    g_list_free(back);
+    g_list_free(forward);
+    return shape;
+}
+
+// The item's committed (post-redirect) uri — original_uri keeps the
+// pre-redirect target.
+QString bfItemUri(WebKitBackForwardListItem *item)
+{
+    if (!item)
+        return QString();
+    const char *uri = webkit_back_forward_list_item_get_uri(item);
+    return QString::fromUtf8(uri ? uri : "");
+}
+
+// uri + the stored title + the stack index the caller's loop
+// assigned.
+Engine::HistoryEntry entryFromBfItem(WebKitBackForwardListItem *item,
+                                   int index)
+{
+    Engine::HistoryEntry entry;
+    entry.url = QUrl(bfItemUri(item));
+    const char *title = webkit_back_forward_list_item_get_title(item);
+    entry.title = QString::fromUtf8(title ? title : "");
+    entry.index = index;
+    return entry;
+}
+
 } // namespace
 #endif // ARKTOS_WEBKIT_LINKED
 
@@ -418,6 +477,7 @@ void WebkitPage::load(const QUrl &url)
 #ifdef ARKTOS_WEBKIT_LINKED
     if (!m_webView)
         return;
+    m_pendingBfNavUri.clear();   // supersedes any in-flight bf hop
     const QByteArray uri = url.toString().toUtf8();
     webkit_web_view_load_uri(m_webView, uri.constData());
 #else
@@ -428,6 +488,7 @@ void WebkitPage::load(const QUrl &url)
 void WebkitPage::stop()
 {
 #ifdef ARKTOS_WEBKIT_LINKED
+    m_pendingBfNavUri.clear();   // a user stop reports its cancel
     if (m_webView)
         webkit_web_view_stop_loading(m_webView);
 #endif
@@ -448,52 +509,145 @@ QUrl WebkitPage::url() const
 
 bool WebkitPage::canGoBack() const
 {
-    return false;   // WK10: WebKitBackForwardList mapping
+#ifdef ARKTOS_WEBKIT_LINKED
+    if (m_webView)
+        return webkit_web_view_can_go_back(m_webView);
+#endif
+    return false;
 }
 
 bool WebkitPage::canGoForward() const
 {
+#ifdef ARKTOS_WEBKIT_LINKED
+    if (m_webView)
+        return webkit_web_view_can_go_forward(m_webView);
+#endif
     return false;
 }
 
 void WebkitPage::back()
 {
+#ifdef ARKTOS_WEBKIT_LINKED
+    if (m_webView && webkit_web_view_can_go_back(m_webView)) {
+        // decide-policy does not fire for back-forward navigations
+        // (verified on 2.54 — the history-item path never consults
+        // the embedder policy client), so the embedder-initiated bf
+        // navigation stamps its own type.  WK17 note: this also
+        // means bf hops cannot be vetoed through decide-policy.
+        m_lastNavigationType = Engine::NavigationType::BackOrForward;
+        // The history machinery cancels its own provisional request
+        // between COMMITTED and FINISHED — onLoadFailed suppresses
+        // that artifact for the uri we are about to land on.
+        WebKitBackForwardList *list =
+            webkit_web_view_get_back_forward_list(m_webView);
+        m_pendingBfNavUri =
+            bfItemUri(webkit_back_forward_list_get_back_item(list));
+        webkit_web_view_go_back(m_webView);
+    }
+#endif
 }
 
 void WebkitPage::forward()
 {
+#ifdef ARKTOS_WEBKIT_LINKED
+    if (m_webView && webkit_web_view_can_go_forward(m_webView)) {
+        m_lastNavigationType = Engine::NavigationType::BackOrForward;
+        WebKitBackForwardList *list =
+            webkit_web_view_get_back_forward_list(m_webView);
+        m_pendingBfNavUri =
+            bfItemUri(webkit_back_forward_list_get_forward_item(list));
+        webkit_web_view_go_forward(m_webView);
+    }
+#endif
 }
 
 int WebkitPage::historyCount() const
 {
+#ifdef ARKTOS_WEBKIT_LINKED
+    const BackForwardShape shape = backForwardShape(m_webView);
+    if (shape.hasCurrent)
+        return shape.backCount + 1 + shape.forwardCount;
+#endif
     return 0;
 }
 
 int WebkitPage::currentHistoryIndex() const
 {
+#ifdef ARKTOS_WEBKIT_LINKED
+    const BackForwardShape shape = backForwardShape(m_webView);
+    if (shape.hasCurrent)
+        return shape.backCount;   // back items precede current
+#endif
     return -1;
 }
 
 QList<Engine::HistoryEntry> WebkitPage::historyItems() const
 {
-    return {};
+    QList<Engine::HistoryEntry> out;
+#ifdef ARKTOS_WEBKIT_LINKED
+    WebKitBackForwardList *list =
+        m_webView ? webkit_web_view_get_back_forward_list(m_webView)
+                  : nullptr;
+    WebKitBackForwardListItem *current =
+        list ? webkit_back_forward_list_get_current_item(list)
+             : nullptr;
+    if (!current)
+        return out;
+    GList *back = webkit_back_forward_list_get_back_list(list);
+    GList *forward = webkit_back_forward_list_get_forward_list(list);
+    for (GList *l = g_list_last(back); l; l = l->prev)
+        out.append(entryFromBfItem(
+            WEBKIT_BACK_FORWARD_LIST_ITEM(l->data), out.count()));
+    out.append(entryFromBfItem(current, out.count()));
+    for (GList *l = g_list_last(forward); l; l = l->prev)
+        out.append(entryFromBfItem(
+            WEBKIT_BACK_FORWARD_LIST_ITEM(l->data), out.count()));
+    g_list_free(back);
+    g_list_free(forward);
+#endif
+    return out;
 }
 
 QList<Engine::HistoryEntry> WebkitPage::backItems(int maxItems) const
 {
-    Q_UNUSED(maxItems);
-    return {};
+    const int current = currentHistoryIndex();
+    if (current < 0)
+        return {};
+    return historyItems().mid(qMax(0, current - maxItems),
+                              qMin(maxItems, current));
 }
 
 QList<Engine::HistoryEntry> WebkitPage::forwardItems(int maxItems) const
 {
-    Q_UNUSED(maxItems);
-    return {};
+    const int current = currentHistoryIndex();
+    if (current < 0)
+        return {};
+    return historyItems().mid(current + 1, maxItems);
 }
 
 void WebkitPage::goToHistoryEntry(const Engine::HistoryEntry &entry)
 {
+#ifdef ARKTOS_WEBKIT_LINKED
+    if (!m_webView || entry.index < 0)
+        return;
+    WebKitBackForwardList *list =
+        webkit_web_view_get_back_forward_list(m_webView);
+    if (!list)
+        return;
+    // entry.index is a stack position our own lists produced;
+    // WebKit's nth item addressing is relative to the current item.
+    const int relative =
+        entry.index - backForwardShape(m_webView).backCount;
+    WebKitBackForwardListItem *item =
+        webkit_back_forward_list_get_nth_item(list, relative);
+    if (item) {
+        m_lastNavigationType = Engine::NavigationType::BackOrForward;
+        m_pendingBfNavUri = bfItemUri(item);
+        webkit_web_view_go_to_back_forward_list_item(m_webView, item);
+    }
+#else
     Q_UNUSED(entry);
+#endif
 }
 
 void WebkitPage::setZoomFactor(qreal factor)
@@ -658,9 +812,12 @@ void WebkitPage::cbLoadChanged(WebKitWebView *, int event,
 int WebkitPage::cbLoadFailed(WebKitWebView *, int, void *uri,
                              void *error, WebkitPage *page)
 {
-    Q_UNUSED(uri);
-    Q_UNUSED(error);
-    page->onLoadFailed();
+    const GError *gerror = static_cast<const GError *>(error);
+    const bool cancelled = gerror
+        && gerror->domain == WEBKIT_NETWORK_ERROR
+        && gerror->code == WEBKIT_NETWORK_ERROR_CANCELLED;
+    page->onLoadFailed(QString::fromUtf8(
+        uri ? static_cast<const char *>(uri) : ""), cancelled);
     // TRUE claims the failure: WebKit's default handler would load a
     // built-in error page, and that nested load would emit a fresh
     // loadStarted/loadFinished(true) pair that masks the failed
@@ -763,6 +920,7 @@ void WebkitPage::onLoadChanged(int event)
         // A load-failed already answered this load — a stray FINISHED
         // for the dead navigation must not report success (the
         // error-page load itself is suppressed in cbLoadFailed).
+        m_pendingBfNavUri.clear();
         if (!m_loading)
             return;
         m_loading = false;
@@ -777,8 +935,25 @@ void WebkitPage::onLoadChanged(int event)
 #endif
 }
 
-void WebkitPage::onLoadFailed()
+void WebkitPage::onLoadFailed(const QString &failingUri,
+                              bool cancelled)
 {
+    // WK10: a back/forward navigation's own provisional request is
+    // cancelled by the history machinery between COMMITTED and
+    // FINISHED — an artifact, not a failure: the navigation still
+    // lands its FINISHED.  Suppress exactly that cancel (failing uri
+    // == the bf target we armed) and keep m_loading so FINISHED
+    // emits the real verdict.  A cancelled load of a DIFFERENT uri
+    // (an in-flight load a bf hop displaced) still reports false —
+    // but keeps the flag armed, the bf artifact is still coming.
+    // stop()/load() disarm the flag so their cancels stay honest.
+    if (cancelled) {
+        if (!m_pendingBfNavUri.isEmpty()
+                && failingUri == m_pendingBfNavUri)
+            return;
+    } else {
+        m_pendingBfNavUri.clear();   // genuine failure — nav is dead
+    }
     if (!m_loading)
         return;
     m_loading = false;
@@ -787,6 +962,7 @@ void WebkitPage::onLoadFailed()
 
 void WebkitPage::onWebProcessTerminated()
 {
+    m_pendingBfNavUri.clear();
     if (m_loading) {
         m_loading = false;
         Q_EMIT loadFinished(false);
