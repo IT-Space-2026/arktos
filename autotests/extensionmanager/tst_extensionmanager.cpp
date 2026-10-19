@@ -1236,7 +1236,8 @@ void tst_ExtensionManager::hostedBackgroundRuntime()
         QVERIFY(manifestFile.open(QIODevice::WriteOnly));
         manifestFile.write(
             "{\"manifest_version\":3,\"name\":\"tst-hosted\","
-            "\"version\":\"1.0\",\"permissions\":[\"storage\"],"
+            "\"version\":\"1.0\",\"permissions\":[\"storage\","
+            "\"alarms\"],"
             "\"background\":{\"service_worker\":\"sw.js\"}}");
         manifestFile.close();
         QFile worker(dir + QLatin1String("/sw.js"));
@@ -1458,7 +1459,8 @@ void tst_ExtensionManager::extensionShimBackend()
         manifestFile.write(
             "{\"manifest_version\":3,\"name\":\"tst-shim\","
             "\"version\":\"2.0\",\"default_locale\":\"en\","
-            "\"permissions\":[\"storage\",\"alarms\",\"notifications\"],"
+            "\"permissions\":[\"storage\",\"alarms\",\"notifications\","
+            "\"contextMenus\"],"
             "\"host_permissions\":[\"https://*.example.com/*\"]}");
         manifestFile.close();
         QFile msgs(dir
@@ -1768,6 +1770,168 @@ void tst_ExtensionManager::extensionShimBackend()
                             QStringLiteral("create"), QJsonObject());
         QCOMPARE(reply.value(QLatin1String("error")).toString(),
                  QStringLiteral("no-permission"));
+
+        // ER16 — the bridge object answers ANY code in the context,
+        // so the call-level gates carry the namespace absence the
+        // JS install list only mirrors.  'storage'-only fixture:
+        QCOMPARE(bare.invoke(
+                     QStringLiteral("contextMenus"),
+                     QStringLiteral("create"),
+                     QJsonObject{{QStringLiteral("props"),
+                                  QJsonObject{{QStringLiteral("id"),
+                                               QStringLiteral("x")}}}})
+                     .value(QLatin1String("error")).toString(),
+                 QStringLiteral("no-permission"));
+        QCOMPARE(bare.invoke(
+                     QStringLiteral("alarms"),
+                     QStringLiteral("create"),
+                     QJsonObject{{QStringLiteral("name"),
+                                  QStringLiteral("a")}})
+                     .value(QLatin1String("error")).toString(),
+                 QStringLiteral("no-permission"));
+        QCOMPARE(bare.invoke(
+                     QStringLiteral("idle"),
+                     QStringLiteral("queryState"),
+                     QJsonObject{{QStringLiteral("interval"), 60}})
+                     .value(QLatin1String("error")).toString(),
+                 QStringLiteral("no-permission"));
+        QCOMPARE(bare.invoke(
+                     QStringLiteral("sidePanel"),
+                     QStringLiteral("setOptions"),
+                     QJsonObject{{QStringLiteral("options"),
+                                  QJsonObject()}})
+                     .value(QLatin1String("error")).toString(),
+                 QStringLiteral("no-permission"));
+        QCOMPARE(bare.invoke(
+                     QStringLiteral("sidebarAction"),
+                     QStringLiteral("setTitle"),
+                     QJsonObject{{QStringLiteral("title"),
+                                  QStringLiteral("x")}})
+                     .value(QLatin1String("error")).toString(),
+                 QStringLiteral("no-permission"));
+        // management: every member but getSelf needs the grant.
+        QCOMPARE(bare.invoke(
+                     QStringLiteral("management"),
+                     QStringLiteral("setEnabled"),
+                     QJsonObject{{QStringLiteral("id"),
+                                  QStringLiteral("x")}})
+                     .value(QLatin1String("error")).toString(),
+                 QStringLiteral("no-permission"));
+        QVERIFY(bare.invoke(QStringLiteral("management"),
+                            QStringLiteral("getSelf"), QJsonObject())
+                    .value(QLatin1String("ok")).toBool());
+        // What IS granted still answers.
+        QVERIFY(bare.invoke(
+                    QStringLiteral("storage"),
+                    QStringLiteral("local.set"),
+                    QJsonObject{{QStringLiteral("items"),
+                                 QJsonObject{{QStringLiteral("k"), 1}}}})
+                    .value(QLatin1String("ok")).toBool());
+
+        // ER16 — navigation scoping: url classes Chrome never
+        // accepts from an extension die before a tab/window exists.
+        QCOMPARE(bare.invoke(
+                     QStringLiteral("tabs"),
+                     QStringLiteral("create"),
+                     QJsonObject{{QStringLiteral("props"),
+                                  QJsonObject{{QStringLiteral("url"),
+                                  QStringLiteral(
+                                      "javascript:alert(1)")}}}})
+                     .value(QLatin1String("error")).toString(),
+                 QStringLiteral("url-refused"));
+        QCOMPARE(bare.invoke(
+                     QStringLiteral("tabs"),
+                     QStringLiteral("create"),
+                     QJsonObject{{QStringLiteral("props"),
+                                  QJsonObject{{QStringLiteral("url"),
+                                  QStringLiteral(
+                                      "file:///etc/passwd")}}}})
+                     .value(QLatin1String("error")).toString(),
+                 QStringLiteral("url-refused"));
+        QCOMPARE(bare.invoke(
+                     QStringLiteral("tabs"),
+                     QStringLiteral("create"),
+                     QJsonObject{{QStringLiteral("props"),
+                                  QJsonObject{{QStringLiteral("url"),
+                                  QStringLiteral(
+                                      "chrome-extension://"
+                                      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                                      "aa/x.html")}}}})
+                     .value(QLatin1String("error")).toString(),
+                 QStringLiteral("url-refused"));
+        QCOMPARE(bare.invoke(
+                     QStringLiteral("tabs"),
+                     QStringLiteral("create"),
+                     QJsonObject{{QStringLiteral("props"),
+                                  QJsonObject{{QStringLiteral("url"),
+                                  QStringLiteral(
+                                      "../escape.html")}}}})
+                     .value(QLatin1String("error")).toString(),
+                 QStringLiteral("url-refused"));
+        QCOMPARE(bare.invoke(
+                     QStringLiteral("windows"),
+                     QStringLiteral("create"),
+                     QJsonObject{{QStringLiteral("props"),
+                                  QJsonObject{{QStringLiteral("url"),
+                                  QStringLiteral(
+                                      "javascript:alert(1)")}}}})
+                     .value(QLatin1String("error")).toString(),
+                 QStringLiteral("url-refused"));
+        QDir(dir2).removeRecursively();
+    }
+
+    // ER16 — manifest over-claiming: optional_permissions are inert
+    // (request() is typed unsupported), so declaring them must not
+    // unlock a gated call nor inflate contains()/getAll().
+    {
+        const QString dir3 = dir + QLatin1String("-overclaim");
+        QVERIFY(QDir().mkpath(dir3));
+        QFile mf3(dir3 + QLatin1String("/manifest.json"));
+        QVERIFY(mf3.open(QIODevice::WriteOnly));
+        mf3.write("{\"manifest_version\":3,\"name\":\"tst-oc\","
+                  "\"version\":\"1.0\",\"optional_permissions\":"
+                  "[\"storage\",\"tabs\",\"alarms\"]}");
+        mf3.close();
+        ExtensionShimBackend oc(
+            QStringLiteral("tstmockextensionid0003"),
+            QStringLiteral("tst-oc"), dir3);
+        QCOMPARE(oc.invoke(
+                     QStringLiteral("storage"),
+                     QStringLiteral("local.set"),
+                     QJsonObject{{QStringLiteral("items"),
+                                  QJsonObject{{QStringLiteral("k"),
+                                               1}}}})
+                     .value(QLatin1String("error")).toString(),
+                 QStringLiteral("no-permission"));
+        QCOMPARE(oc.invoke(
+                     QStringLiteral("alarms"),
+                     QStringLiteral("create"),
+                     QJsonObject{{QStringLiteral("name"),
+                                  QStringLiteral("a")}})
+                     .value(QLatin1String("error")).toString(),
+                 QStringLiteral("no-permission"));
+        QCOMPARE(oc.invoke(
+                     QStringLiteral("permissions"),
+                     QStringLiteral("contains"),
+                     QJsonObject{{QStringLiteral("permissions"),
+                                  QJsonArray{QStringLiteral(
+                                      "storage")}}})
+                     .value(QLatin1String("result")).toBool(), false);
+        QVERIFY(oc.invoke(
+                    QStringLiteral("permissions"),
+                    QStringLiteral("getAll"), QJsonObject())
+                    .value(QLatin1String("result")).toObject()
+                    .value(QLatin1String("permissions")).toArray()
+                    .isEmpty());
+        QCOMPARE(oc.invoke(
+                     QStringLiteral("permissions"),
+                     QStringLiteral("request"),
+                     QJsonObject{{QStringLiteral("permissions"),
+                                  QJsonArray{QStringLiteral(
+                                      "storage")}}})
+                     .value(QLatin1String("error")).toString(),
+                 QStringLiteral("unsupported"));
+        QDir(dir3).removeRecursively();
     }
 
     reply = backend.invoke(QStringLiteral("bogus_ns"),
@@ -2046,8 +2210,13 @@ void tst_ExtensionManager::extensionEventSurfaces()
     {
         QFile f(dirB + QLatin1String("/manifest.json"));
         QVERIFY(f.open(QIODevice::WriteOnly));
+        // ER16: B also carries 'contextMenus' — it must RECEIVE the
+        // click event (the namespace gate passes) but the OnClickData
+        // pageUrl/tab url scrub still applies: no 'tabs' grant and no
+        // host permission means url-bearing fields leave stripped.
         f.write("{\"manifest_version\":3,\"name\":\"tst-events-b\","
-                "\"version\":\"1.0\",\"permissions\":[\"storage\"],"
+                "\"version\":\"1.0\",\"permissions\":[\"storage\","
+                "\"contextMenus\"],"
                 "\"background\":{\"service_worker\":\"sw.js\"}}");
         f.close();
         QFile w(dirB + QLatin1String("/sw.js"));
@@ -2521,6 +2690,40 @@ void tst_ExtensionManager::extensionEventSurfaces()
         "(self.__extEvents||[]).some(function(e){"
         " return e.n==='contextMenus.onClicked'&&e.a[0]"
         "   &&e.a[0].menuItemId==='mi';})")).toBool(), true);
+    // A's 'tabs' grant keeps the OnClickData pageUrl + tab url.
+    QCOMPARE(eval(runtime->host(idA)->page(), QStringLiteral(
+        "(self.__extEvents||[]).some(function(e){"
+        " return e.n==='contextMenus.onClicked'&&e.a[0]"
+        "   &&e.a[0].pageUrl!==undefined&&e.a[1]"
+        "   &&e.a[1].url!==undefined;})")).toBool(), true);
+
+    // --- ER16: B holds 'contextMenus' but neither 'tabs' nor a host
+    // grant — the click reaches it with every url-bearing field
+    // scrubbed (OnClickData.pageUrl, the tab arg's url).
+    QVERIFY(backendB->invoke(
+        QStringLiteral("contextMenus"), QStringLiteral("create"),
+        QJsonObject{{QStringLiteral("props"),
+                     QJsonObject{{QStringLiteral("id"),
+                                  QStringLiteral("miB")},
+                                 {QStringLiteral("title"),
+                                  QStringLiteral("B Item")},
+                                 {QStringLiteral("contexts"),
+                                  QJsonArray{QStringLiteral(
+                                      "page")}}}}})
+        .value(QLatin1String("ok")).toBool());
+    ExtensionEventHub::deliverMenuClicked(idB, QStringLiteral("miB"),
+                                          cinfo, view);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(runtime->host(idB)->page(), QStringLiteral(
+            "(self.__extEvents||[]).some(function(e){"
+            " return e.n==='contextMenus.onClicked'&&e.a[0]"
+            "   &&e.a[0].menuItemId==='miB';})")).toBool(),
+        20000);
+    QCOMPARE(eval(runtime->host(idB)->page(), QStringLiteral(
+        "(self.__extEvents||[]).some(function(e){"
+        " return e.n==='contextMenus.onClicked'&&e.a[0]"
+        "   &&e.a[0].pageUrl===undefined&&e.a[1]"
+        "   &&e.a[1].url===undefined;})")).toBool(), true);
 
     // --- fan-out gate, direct-drive -----------------------------------
     ChromeBridge *bridgeA = runtime->host(idA)->bridge();
@@ -4980,6 +5183,28 @@ void tst_ExtensionManager::extensionScripting()
             "chrome.runtime.onInstalled.addListener(function(){});\n");
         w.close();
     }
+    // The ER16 per-frame fixture: 'scripting' granted, host coverage
+    // pinned to /covered/* — a page under it frames /other/frame, an
+    // uncovered target living inside an injectable tab.
+    const QString dirC = QDir::temp().filePath(
+        QStringLiteral("tst-extscript-c-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirC));
+    {
+        QFile f(dirC + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-script-c\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\","
+                "\"scripting\"],\"host_permissions\":"
+                "[\"http://127.0.0.1/covered/*\"],"
+                "\"background\":{\"service_worker\":\"sw.js\"}}");
+        f.close();
+        QFile w(dirC + QLatin1String("/sw.js"));
+        QVERIFY(w.open(QIODevice::WriteOnly));
+        w.write(
+            "chrome.runtime.onInstalled.addListener(function(){});\n");
+        w.close();
+    }
 
     ExtensionManager *manager = ExtensionManager::instance();
     ExtensionBackgroundRuntime *runtime =
@@ -5027,6 +5252,28 @@ void tst_ExtensionManager::extensionScripting()
     ExtensionBackgroundHost *hostB = runtime->host(idB);
     QVERIFY(hostB && hostB->bridge());
 
+    auto loadedC = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loadedC](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-script-c")
+                && info.error.isEmpty())
+            *loadedC = info.id;
+    });
+    manager->grantConsent(dirC);
+    manager->loadExtension(dirC);
+    QTRY_VERIFY_WITH_TIMEOUT(!loadedC->isEmpty(), 30000);
+    const QString idC = *loadedC;
+    manager->setExtensionEnabled(idC, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(idC)
+            && runtime->host(idC)->state()
+                   == ExtensionBackgroundHost::State::Ready,
+        45000);
+    ExtensionBackgroundHost *hostC = runtime->host(idC);
+    QVERIFY(hostC && hostC->bridge());
+    ChromeBridge *bridgeC = hostC->bridge();
+
     auto eval = [](QWebEnginePage *page, const QString &source,
                    quint32 worldId = 0) {
         auto result = std::make_shared<QVariant>();
@@ -5056,14 +5303,24 @@ void tst_ExtensionManager::extensionScripting()
                          socket, [socket]() {
             const QByteArray req = socket->readAll();
             const QByteArray body =
-                req.contains("GET /frame")
-                    ? QByteArray("<html><head><title>frame-doc"
-                                 "</title></head><body>f</body>"
-                                 "</html>")
-                    : QByteArray("<html><head><title>exec-target"
-                                 "</title></head><body>exec"
-                                 "<iframe src=\"/frame\"></iframe>"
-                                 "</body></html>");
+                req.contains("GET /covered/page")
+                    ? QByteArray("<html><head><title>covered-top"
+                                 "</title></head><body>top"
+                                 "<iframe src=\"/other/frame\">"
+                                 "</iframe></body></html>")
+                    : req.contains("GET /other/frame")
+                        ? QByteArray("<html><head><title>other-doc"
+                                     "</title></head><body>o</body>"
+                                     "</html>")
+                        : req.contains("GET /frame")
+                            ? QByteArray("<html><head><title>"
+                                         "frame-doc</title></head>"
+                                         "<body>f</body></html>")
+                            : QByteArray("<html><head><title>"
+                                         "exec-target</title></head>"
+                                         "<body>exec"
+                                         "<iframe src=\"/frame\">"
+                                         "</iframe></body></html>");
             socket->write(
                 "HTTP/1.1 200\r\nContent-Type: text/html\r\n"
                 "Content-Length: "
@@ -5312,6 +5569,141 @@ void tst_ExtensionManager::extensionScripting()
     QVERIFY(ex8.value(QLatin1String("err")).toString()
                 .contains(QStringLiteral("no-host-access")));
 
+    // --- ER16: per-frame coverage -------------------------------------
+    // Fixture C holds 'scripting' but host coverage only for
+    // /covered/* — /covered/page's subframe (/other/frame) is an
+    // uncovered document living inside a covered tab.  The page-level
+    // gate alone would inject into it; every addressed frame must
+    // re-prove the grant.
+    WebView *view4 = tw->makeNewTab(false);
+    QVERIFY(view4 && view4->page());
+    QSignalSpy loadSpy4(view4->page(), &QWebEnginePage::loadFinished);
+    view4->load(QUrl(base + QStringLiteral("/covered/page")));
+    QTRY_VERIFY_WITH_TIMEOUT(loadSpy4.count() >= 1, 30000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(view4->page(), QStringLiteral("window.length")).toInt()
+            >= 1,
+        15000);
+    const int tabId4 = ExtensionShimBackend::tabIdFor(view4);
+    QVERIFY(tabId4 > 0);
+
+    // Explicit frameIds naming the uncovered frame reject the WHOLE
+    // call — Chrome's frameIds contract — before a byte of source
+    // exists.  Driven through the shim so the typed failure also
+    // lands on the gap ledger.
+    eval(hostC->page(), QStringLiteral(
+        "self.__exC=undefined;"
+        "chrome.scripting.executeScript("
+        "{target:{tabId:%1,frameIds:[1]},"
+        "func:function(){window.__exMarkC=1;return 1;}},"
+        "function(r){self.__exC={r:(r===undefined)?'undef':'def',"
+        "err:(window.__arktosShim&&__arktosShim.lastError"
+        "   &&__arktosShim.lastError.message)||null};});0")
+        .arg(tabId4));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(hostC->page(),
+             QStringLiteral("self.__exC!==undefined")).toBool(),
+        20000);
+    const QJsonObject exC = QJsonDocument::fromJson(
+        eval(hostC->page(),
+             QStringLiteral("JSON.stringify(self.__exC)"))
+            .toString().toUtf8()).object();
+    QCOMPARE(exC.value(QLatin1String("r")).toString(),
+             QStringLiteral("undef"));
+    QVERIFY(exC.value(QLatin1String("err")).toString()
+                .contains(QStringLiteral("no-host-access")));
+
+    // Same refusal direct-driven.
+    QCOMPARE(bridgeC->invoke(
+                 QStringLiteral("scripting"),
+                 QStringLiteral("executeScript"),
+                 QJsonObject{{QStringLiteral("execId"),
+                              idC + QStringLiteral("#fc1")},
+                             {QStringLiteral("target"),
+                              QJsonObject{{QStringLiteral("tabId"),
+                                           tabId4},
+                                          {QStringLiteral("frameIds"),
+                                           QJsonArray{1}}}},
+                             {QStringLiteral("func"),
+                              QStringLiteral("function(){}")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-host-access"));
+
+    // allFrames sweeps the uncovered frame in as a per-frame denial
+    // entry — the func runs only on the covered document.
+    QSignalSpy execSpy(bridgeC, &ChromeBridge::hostEvent);
+    QVERIFY(bridgeC->invoke(
+        QStringLiteral("scripting"), QStringLiteral("executeScript"),
+        QJsonObject{{QStringLiteral("execId"),
+                     idC + QStringLiteral("#fc-all")},
+                    {QStringLiteral("target"),
+                     QJsonObject{{QStringLiteral("tabId"), tabId4},
+                                 {QStringLiteral("allFrames"), true}}},
+                    {QStringLiteral("func"),
+                     QStringLiteral(
+                         "function(){window.__exMarkC=1;"
+                         "return location.pathname;}")}})
+        .value(QLatin1String("ok")).toBool());
+    QJsonArray allResults;
+    QTRY_VERIFY_WITH_TIMEOUT(
+        [&]() {
+            for (const QList<QVariant> &row : execSpy) {
+                if (row.at(0).toString()
+                        != QLatin1String("__arktos.execResult"))
+                    continue;
+                const QJsonObject payload = row.at(1).toJsonObject();
+                if (payload.value(QLatin1String("execId")).toString()
+                        != idC + QStringLiteral("#fc-all"))
+                    continue;
+                allResults = payload.value(QLatin1String("results"))
+                                 .toArray();
+                return true;
+            }
+            return false;
+        }(), 15000);
+    QCOMPARE(allResults.size(), 2);
+    QCOMPARE(allResults.at(0).toObject()
+                 .value(QLatin1String("frameId")).toInt(), 0);
+    QCOMPARE(allResults.at(0).toObject()
+                 .value(QLatin1String("result")).toString(),
+             QStringLiteral("/covered/page"));
+    QCOMPARE(allResults.at(1).toObject()
+                 .value(QLatin1String("frameId")).toInt(), 1);
+    QCOMPARE(allResults.at(1).toObject()
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-host-access"));
+
+    // Nothing was generated into the denied frame — the func's marker
+    // exists only on the covered top document's agent world.
+    auto frameMark = [](QWebEngineFrame frame) {
+        auto result = std::make_shared<QVariant>();
+        frame.runJavaScript(
+            QStringLiteral("window.__exMarkC===1"),
+            ExtensionBackgroundRuntime::AgentWorldId,
+            [result](const QVariant &v) { *result = v; });
+        QElapsedTimer t;
+        t.start();
+        while (!result->isValid() && t.elapsed() < 10000)
+            QTest::qWait(50);
+        return result->toBool();
+    };
+    const QWebEngineFrame topFrame = view4->page()->mainFrame();
+    QVERIFY(topFrame.isValid());
+    QVERIFY(frameMark(topFrame));
+    const QList<QWebEngineFrame> kids = topFrame.children();
+    QVERIFY(!kids.isEmpty());
+    QVERIFY(!frameMark(kids.at(0)));
+
+    // The typed refusal lands on C's gap ledger too.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        [&]() {
+            for (const QString &g : hostC->shimGaps()) {
+                if (g.contains(QStringLiteral("no-host-access")))
+                    return true;
+            }
+            return false;
+        }(), 15000);
+
     // --- the C++ gates, direct-driven -------------------------------
     // 'scripting' permission absent -> refused before anything else.
     QCOMPARE(hostB->bridge()->invoke(
@@ -5445,12 +5837,16 @@ void tst_ExtensionManager::extensionScripting()
     QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     manager->setExtensionEnabled(id, false);
     manager->setExtensionEnabled(idB, false);
+    manager->setExtensionEnabled(idC, false);
     QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 20000);
     QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(idB), 20000);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(idC), 20000);
     manager->removeExtension(id);
     manager->removeExtension(idB);
+    manager->removeExtension(idC);
     QDir(dir).removeRecursively();
     QDir(dirB).removeRecursively();
+    QDir(dirC).removeRecursively();
 }
 
 // ER08 — chrome.scripting.insertCSS/removeCSS + the executeScript
@@ -7724,9 +8120,13 @@ void tst_ExtensionManager::extensionOffscreen()
     const QString root = QDir::temp().filePath(
         QStringLiteral("tst-extoff-%1")
             .arg(QCoreApplication::applicationPid()));
+    // ER16: 'storage' joins the grant list — the offscreen probe
+    // below round-trips chrome.storage through the document's own
+    // bridge, which now enforces the manifest permission.
     const QString dir = writeExtension(
         root, QStringLiteral("tst-off"), QStringLiteral("1.0.0"),
-        QString(), {QStringLiteral("offscreen")});
+        QString(), {QStringLiteral("offscreen"),
+                    QStringLiteral("storage")});
     QVERIFY(!dir.isEmpty());
     {
         QFile html(dir + QLatin1String("/off.html"));

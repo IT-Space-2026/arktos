@@ -3759,3 +3759,24 @@ Extensions (introspection): chrome.management.getSelf,
     detection stays honest — records panel/title/icon bookkeeping,
     and answers a typed unsupported for open/close/toggle because
     Arktos has no sidebar surface.
+Extensions (security): the hosted runtime now enforces the manifest
+    boundary on every path that touches a page or a privileged
+    namespace (ER16). Permission gates read only the manifest's
+    required `permissions` — `optional_permissions` can no longer
+    unlock a call while `chrome.permissions.request` is unserved —
+    and `storage`, `alarms`, `contextMenus`/`menus`, `sidePanel`,
+    `sidebarAction`, `notifications`, `idle` and non-getSelf
+    `management` members answer a typed `no-permission` when
+    undeclared. `scripting` injection re-proves host coverage per
+    frame before any script runs (about:blank inherits the
+    embedder's origin, blob: names its owning origin): explicitly
+    targeted uncovered frames reject the call, and an allFrames
+    sweep reports per-frame `no-host-access` results rather than
+    executing there. `tabs.create`/`tabs.update`/`windows.create`
+    validate the URL before touching a window — bundle-relative
+    paths resolve onto the extension's own origin, while foreign
+    extension, javascript: and other untrusted targets are
+    refused. Event payloads now scrub url/pageUrl/frameUrl/title/
+    favIconUrl for extensions holding neither `tabs` nor matching
+    host access, so a contextMenus-only extension still receives
+    onClicked without learning where the click happened.

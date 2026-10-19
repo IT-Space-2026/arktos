@@ -587,6 +587,27 @@ documented MV3 `null` outside the background context.
 answers a typed `unsupported` for open/close/toggle — Arktos has
 no sidebar surface.
 
+The hosted runtime enforces the manifest boundary itself. Gates
+consult the manifest's *required* `permissions` only —
+`optional_permissions` stays inert because `chrome.permissions`
+consent is not served — so an over-claiming manifest never unlocks
+a call. `storage`, `alarms`, `contextMenus`/`menus`, `sidePanel`,
+`sidebarAction`, `notifications` and `idle` answer a typed
+`no-permission` when undeclared; `scripting` injection re-proves
+host coverage per frame before any `runJavaScript` (an
+`about:blank` frame inherits its embedder's origin, a `blob:` URL
+names its owning origin), explicit uncovered `frameIds` reject the
+call, and an `allFrames` sweep returns per-frame `no-host-access`
+entries instead of executing. `tabs.create`/`tabs.update`/
+`windows.create` validate the URL before touching a window —
+bundle-relative paths resolve onto the extension's own origin,
+foreign `chrome-extension://` and `javascript:`/`file:`-style
+targets are refused. Event payloads scrub `url`/`pageUrl`/
+`frameUrl`/`title`/`favIconUrl` for extensions holding neither
+`tabs` nor matching host access, so a `contextMenus`-only
+extension still gets its `onClicked` without learning where the
+click happened.
+
 Enabled extensions that declare a background script additionally get
 a hosted background context: a hidden page on the extension's own
 profile at its real `chrome-extension://` origin runs a generated

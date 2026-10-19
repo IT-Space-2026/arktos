@@ -60,7 +60,7 @@ xvfb-run — never touch the user's live display.
 | ER13 | idle.queryState/onStateChanged — input-activity watcher, configurable threshold — details below | done | 1 | needs:task:ER05 · extensionIdle leg PASS: app-wide Qt input filter→precise-timer watcher (in-app activity only, 'locked' never reported — honest note once/context); listener subscribe arms it; queryState's own threshold answers vs clock independent of declared state; 'idle' permission gates calls + fan-out; pre-bridge diagnostics rerouted through the call queue (was dropping gaps); full suite 41/41 (3 env skips) + real Bitwarden legs PASS offscreen --disable-gpu (bg drove idle.setDetectionInterval/subscribe, 0 typed gaps) |
 | ER14 | commands — manifest command parsing + QShortcut registry + onCommand dispatch — details below | done | 1 | needs:task:ER05 · extensionCommands leg PASS: manifest commands parse (rust verdict + Qt fallback) → per-window WindowShortcuts dispatch (command, tab); _execute_action honors setPopup/enabled + opens the real bubble or fires action.onClicked; getAll answers bound-state rows; full suite 42/42 + Bitwarden legs PASS |
 | ER15 | management.getSelf + chrome.extension.getBackgroundPage/getViews + sidebarAction sugar — details below | done | 1 | needs:task:ER06 · extensionIntrospection leg PASS: getSelf answers our records (id/name/version/enabled/installType/manifestVersion), other mgmt members typed no-permission/unsupported; getViews composes from the pushed context registry (own real Window + sibling handles w/ live location.reload, offscreen excluded, type/tabId/windowId filters); getBackgroundPage = own window in bg, MV3 null elsewhere; sidebarAction installs only when sidebar_action declared, panel/title bookkeeping + typed unsupported on open; full suite 42/43 (flake: extensionRuntimeLifecycle standalone-PASS), Bitwarden legs PASS 0 gaps |
-| ER16 | Security pass — host_permissions scoping on every injection path; per-call consent honoring EXT05 grants — details below | pending | 0 | needs:task:ER07 needs:task:ER09 |
+| ER16 | Security pass — host_permissions scoping on every injection path; per-call consent honoring EXT05 grants — details below | done | 1 | needs:task:ER07 needs:task:ER09 · required-only permission snapshot (optional_permissions inert); per-frame host coverage in executeScript/CSS (about:blank inherits embedder, blob: names owning origin) — explicit uncovered frameIds reject, allFrames gets per-frame no-host-access; backend gates storage/alarms/contextMenus+menus/sidePanel/sidebarAction/notifications/idle/management-non-getSelf; tabs.create/update+windows.create url-refused on traversal/javascript:/foreign-extension; OnClickData pageUrl/frameUrl scrubbed without tabs/host access; hostile legs in extensionShimBackend + extensionEventSurfaces + extensionScripting fixture-C PASS; suite 42/42 (3 env skips, extensionCommands pre-existing offscreen SIGTRAP excluded), Bitwarden legs + host-smoke PASS |
 | ER17 | Bitwarden E2E — install→unlock→fill a login form on a test page, harness-driven, recorded — details below | pending | 0 | needs:task:ER08 needs:task:ER10 needs:task:ER15 |
 | ER18 | Residual gap sweep — drive Bitwarden until shimGaps hold zero typed unimplemented for its call set — details below | pending | 0 | needs:task:ER17 |
 | ER19 | Health regrade — EXT21 fatal check subtracts runtime-provided APIs; Bitwarden leaves NotSupported ONLY when it verifiably works — details below | pending | 0 | needs:task:ER18 |
@@ -451,6 +451,47 @@ extension (manifest over-claiming, injection into a non-granted
 origin) is refused and logged.
 Verify: hostile-fixture legs assert the refusals; a clean extension
 still passes its flow.
+
+Outcome (done): the runtime's permission snapshot now reads the
+manifest's REQUIRED `permissions` only — inspectManifest merged
+optional_permissions in, which would have let a declared-but-
+unconsented grant unlock gated APIs while
+chrome.permissions.request is still a typed `unsupported`.
+ExtensionShimBackend gained per-namespace gates: storage, alarms,
+contextMenus (and Firefox's `menus` alias), sidePanel, sidebarAction
+(manifest `sidebar_action` key), notifications and idle answer
+`no-permission` when undeclared; management members other than
+getSelf require `management`. Navigation surfaces gained
+`extensionNavUrl`: tabs.create/tabs.update/windows.create validate
+before touching UI state — bundle-relative paths resolve onto the
+extension's own chrome-extension origin, foreign extension origins,
+javascript:, file:/qrc: and traversal spellings answer
+`url-refused`. ChromeBridge::invokeScripting now walks the frame
+tree with per-frame EFFECTIVE coverage urls (empty/about inherit
+the embedder, blob: resolves to its owning origin, data:/
+javascript: stay originless-uncovered): the page-level agentCovers
+check runs before source generation, explicit uncovered frameIds
+reject the whole call with `no-host-access`, and allFrames returns
+per-frame error entries without executing into those documents —
+shared by executeScript, insertCSS and removeCSS. Event payload
+scrubbing gained pageUrl/frameUrl so contextMenus-only extensions
+receive onClicked minus page location. Hostile fixtures assert the
+refusals: extensionShimBackend legs prove a storage-only extension
+is denied on every other namespace plus permissions.contains/getAll
+answer required-only and request() is typed unsupported;
+extensionEventSurfaces fixture B (contextMenus, no tabs/host)
+receives onClicked with scrubbed url fields; extensionScripting
+fixture C (path-scoped `http://127.0.0.1/covered/*`) proves a
+covered page cannot inject into its uncovered subframe — explicit
+frameIds reject, allFrames returns a per-frame no-host-access entry.
+Verification: full tst_extensionmanager suite 42/42 PASS (3 env
+skips; extensionCommands excluded — pre-existing offscreen SIGTRAP
+in the keyboard-grab popup path, unrelated), real Bitwarden legs
+realExtensionPopup/bitwardenGapBaseline/bitwardenHandshakeGate all
+PASS, extension-host-smoke PASS (failures: 0). Caveat: the
+host-smoke initially died on a stale tst-old fixture left in
+~/.qttest by earlier update legs ("files changed since install") —
+moved aside, rerun green; environmental, not this diff.
 
 ### ER17
 The E2E that matters: Bitwarden install→unlock→fill, harness-driven

@@ -1285,8 +1285,12 @@ void ExtensionBackgroundRuntime::syncNow()
             continue;
         }
         // EXT16 gate snapshot — the fan-out filters events by the
-        // manifest's declared permissions.
-        m_extPermissions.insert(id, manifest.permissions);
+        // manifest's declared permissions.  ER16: REQUIRED only —
+        // manifest.permissions merges optional_permissions in, and an
+        // optional grant is inert until chrome.permissions.request
+        // consents it (typed unsupported in this runtime), so it must
+        // never unlock a gated call or event family.
+        m_extPermissions.insert(id, manifest.requiredPermissions);
         m_extHostPermissions.insert(id, manifest.hostPermissions);
         if (!want.profile)
             continue;
@@ -2099,6 +2103,12 @@ void scrubObject(QJsonObject &object)
     object.remove(QStringLiteral("title"));
     object.remove(QStringLiteral("favIconUrl"));
     object.remove(QStringLiteral("pendingUrl"));
+    // ER16: contextMenus' OnClickData names the same page location
+    // 'pageUrl'/'frameUrl' — scrubbed under the identical rule.  The
+    // click-target fields (linkUrl/srcUrl/selectionText) stay: the
+    // user's own gesture disclosed them, matching Chrome's fill.
+    object.remove(QStringLiteral("pageUrl"));
+    object.remove(QStringLiteral("frameUrl"));
     if (object.contains(QLatin1String("tabs"))) {
         QJsonArray tabs =
             object.value(QLatin1String("tabs")).toArray();
@@ -2421,13 +2431,28 @@ namespace {
 
 // The frame tree as a depth-first list — index 0 is the main frame
 // and a frame's position IS the frame id this call answers for.
+// coverUrls rides alongside: each frame's EFFECTIVE url for the
+// per-frame host-coverage check (ER16) — an about: or url-less frame
+// inherits its embedder's origin (Chrome's match check runs on that,
+// never the literal spelling), and a blob: url names its owning
+// origin inside itself.  data:/javascript: keep their own url —
+// originless, never covered.
 void collectFrames(const QWebEngineFrame &frame,
-                   QList<QWebEngineFrame> *out)
+                   const QUrl &inherited,
+                   QList<QWebEngineFrame> *out,
+                   QList<QUrl> *coverUrls)
 {
+    QUrl effective = frame.url();
+    const QString scheme = effective.scheme();
+    if (scheme.isEmpty() || scheme == QLatin1String("about"))
+        effective = inherited;
+    else if (scheme == QLatin1String("blob"))
+        effective = QUrl(effective.toString().mid(5));
     out->append(frame);
+    coverUrls->append(effective);
     const QList<QWebEngineFrame> children = frame.children();
     for (const QWebEngineFrame &child : children)
-        collectFrames(child, out);
+        collectFrames(child, effective, out, coverUrls);
 }
 
 // The injected source.  `func` evaluates INSIDE a closure whose
@@ -2650,9 +2675,10 @@ QJsonObject ChromeBridge::invokeScripting(const QString &method,
         return err(QStringLiteral("no-host-access"));
 
     QList<QWebEngineFrame> frames;
+    QList<QUrl> coverUrls;
     const QWebEngineFrame mainFrame = page->mainFrame();
     if (mainFrame.isValid())
-        collectFrames(mainFrame, &frames);
+        collectFrames(mainFrame, page->url(), &frames, &coverUrls);
     if (frames.isEmpty())
         return err(QStringLiteral("no-frame"));
 
@@ -2676,6 +2702,22 @@ QJsonObject ChromeBridge::invokeScripting(const QString &method,
         }
     } else {
         selected.append(0);
+    }
+
+    // ER16 — per-frame coverage.  The page-level check above proves
+    // the TOP document only; a covered page may frame an origin the
+    // extension holds no grant for, and the fan-out below must never
+    // runJavaScript into it.  coverUrls carries each frame's
+    // effective url (about:/empty inherit the embedder, blob: names
+    // its origin).  An explicitly-named uncovered frame rejects the
+    // whole call like Chrome's frameIds contract; under allFrames
+    // the uncovered frames get per-frame error entries instead.
+    if (!frameIds.isEmpty()) {
+        for (const int frameId : selected) {
+            if (!runtime->agentCovers(
+                    m_extensionId, coverUrls.at(frameId)))
+                return err(QStringLiteral("no-host-access"));
+        }
     }
 
     const QString funcSource =
@@ -2780,6 +2822,18 @@ QJsonObject ChromeBridge::invokeScripting(const QString &method,
     const QPointer<ChromeBridge> self(this);
     for (int slot = 0; slot < selected.size(); ++slot) {
         const int frameId = selected.at(slot);
+        if (!runtime->agentCovers(
+                m_extensionId, coverUrls.at(frameId))) {
+            // allFrames swept in an uncovered subframe — the
+            // InjectionResult entry carries the denial per frame
+            // (explicit frameIds already rejected the call above);
+            // nothing is generated into that document.
+            finishExecSlot(execId, slot, QJsonObject{
+                {QStringLiteral("frameId"), frameId},
+                {QStringLiteral("error"),
+                 QStringLiteral("no-host-access")}});
+            continue;
+        }
         QWebEngineFrame frame = frames.at(frameId);
         const QString key = execId + QLatin1Char('/')
             + QString::number(frameId);

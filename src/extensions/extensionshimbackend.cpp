@@ -362,6 +362,12 @@ QJsonObject ExtensionShimBackend::changesForRemove(
 QJsonObject ExtensionShimBackend::invokeStorage(const QString &method,
                                                 const QJsonObject &args)
 {
+    // ER16: Chrome exposes chrome.storage only to extensions
+    // declaring 'storage' — the bridge object answers a direct call
+    // from any code in the context, so the namespace's absence is
+    // enforced here, not in the shim's install list.
+    if (!manifestPermissions().contains(QLatin1String("storage")))
+        return errReply(QStringLiteral("no-permission"));
     const int dot = method.indexOf(QLatin1Char('.'));
     const QString area = method.left(dot);
     const QString op = method.mid(dot + 1);
@@ -500,6 +506,9 @@ QJsonObject ExtensionShimBackend::alarmJson(
 QJsonObject ExtensionShimBackend::invokeAlarms(const QString &method,
                                                const QJsonObject &args)
 {
+    // ER16: 'alarms' permission gates the namespace like Chrome.
+    if (!manifestPermissions().contains(QLatin1String("alarms")))
+        return errReply(QStringLiteral("no-permission"));
     if (method == QLatin1String("create")) {
         const QString name =
             args.value(QStringLiteral("name")).toString();
@@ -739,6 +748,16 @@ QJsonObject ExtensionShimBackend::invokeTabs(const QString &method,
     if (method == QLatin1String("create")) {
         const QJsonObject props =
             args.value(QStringLiteral("props")).toObject();
+        // ER16: scheme-scoped navigation gate — an extension may put
+        // a real tab only on url classes Chrome accepts from it
+        // (web schemes, data:, about:blank, or its OWN extension
+        // documents; relative spellings resolve there too).  Checked
+        // before any window/tab is touched.
+        const QString urlText =
+            props.value(QStringLiteral("url")).toString();
+        const QUrl url = extensionNavUrl(urlText);
+        if (!urlText.isEmpty() && !url.isValid())
+            return errReply(QStringLiteral("url-refused"));
         BrowserMainWindow *window = currentWindow();
         if (props.contains(QStringLiteral("windowId"))) {
             const int wanted = int(
@@ -752,13 +771,6 @@ QJsonObject ExtensionShimBackend::invokeTabs(const QString &method,
         }
         if (!window || !window->tabWidget())
             return errReply(QStringLiteral("no-window"));
-        const QUrl url(props.value(QStringLiteral("url")).toString());
-        // The untrusted-input gate — an extension may only ask for
-        // navigable urls (SEC09: data: passes as typed-equivalent;
-        // javascript: never does).
-        if (!url.isEmpty()
-                && !WebView::isUrlAllowedOnUntrustedInput(url))
-            return errReply(QStringLiteral("url-refused"));
         const bool active = !props.contains(QStringLiteral("active"))
             || props.value(QStringLiteral("active")).toBool();
         WebView *view = window->tabWidget()->makeNewTab(active);
@@ -805,10 +817,11 @@ QJsonObject ExtensionShimBackend::invokeTabs(const QString &method,
         if (!target)
             return errReply(QStringLiteral("not-found"));
         if (props.contains(QStringLiteral("url"))) {
-            const QUrl url(
-                props.value(QStringLiteral("url")).toString());
-            if (!url.isEmpty()
-                    && !WebView::isUrlAllowedOnUntrustedInput(url))
+            // ER16: same navigation gate create() applies.
+            const QString urlText =
+                props.value(QStringLiteral("url")).toString();
+            const QUrl url = extensionNavUrl(urlText);
+            if (!urlText.isEmpty() && !url.isValid())
                 return errReply(QStringLiteral("url-refused"));
             if (!url.isEmpty())
                 target->loadUrl(url);
@@ -920,11 +933,13 @@ QJsonObject ExtensionShimBackend::invokeWindows(const QString &method,
         } else if (urlVal.isString()) {
             urls.append(urlVal.toString());
         }
+        QList<QUrl> navUrls;
         for (const QString &u : urls) {
-            const QUrl url(u);
-            if (!url.isEmpty()
-                    && !WebView::isUrlAllowedOnUntrustedInput(url))
+            // ER16: same navigation gate chrome.tabs applies.
+            const QUrl url = extensionNavUrl(u);
+            if (!u.isEmpty() && !url.isValid())
                 return errReply(QStringLiteral("url-refused"));
+            navUrls.append(url);
         }
         BrowserApplication *app = BrowserApplication::instance();
         if (!app)
@@ -935,8 +950,7 @@ QJsonObject ExtensionShimBackend::invokeWindows(const QString &method,
         TabWidget *tw = window->tabWidget();
         WebView *first = tw->count() ? tw->webView(0) : nullptr;
         bool usedFirst = false;
-        for (const QString &u : urls) {
-            const QUrl url(u);
+        for (const QUrl &url : navUrls) {
             WebView *view = (!usedFirst && first) ? first
                 : tw->makeNewTab(false);
             if (!view)
@@ -1101,6 +1115,57 @@ QJsonObject ExtensionShimBackend::manifestJson() const
     return m_manifest;
 }
 
+QStringList ExtensionShimBackend::manifestPermissions() const
+{
+    // manifestJson()'s "permissions" key is the REQUIRED set already
+    // — optional_permissions live under their own key and stay inert
+    // (invokePermissions answers request() typed unsupported), so an
+    // optional declaration must never unlock a gated call.
+    QStringList perms;
+    for (const QJsonValue &v : manifestJson()
+             .value(QStringLiteral("permissions")).toArray())
+        perms.append(v.toString());
+    return perms;
+}
+
+QUrl ExtensionShimBackend::extensionNavUrl(const QString &text) const
+{
+    const QUrl url(text);
+    if (url.isEmpty())
+        return url;
+    const QString scheme = url.scheme();
+    if (scheme.isEmpty()) {
+        // Relative spelling — Chrome resolves it against the
+        // extension's own origin; apply the same bundle-path hygiene
+        // openOptionsPage does before the rewrite ('//host/x' dies
+        // here rather than escaping as a network-path reference).
+        const QString rel = url.toString();
+        if (rel.startsWith(QLatin1Char('/'))
+                || rel.contains(QLatin1Char(':'))
+                || rel.split(QLatin1Char('/')).contains(
+                    QStringLiteral("..")))
+            return QUrl();
+        return QUrl(QStringLiteral("chrome-extension://")
+                    + m_extensionId + QLatin1Char('/') + rel);
+    }
+    if (!WebView::isUrlAllowedOnUntrustedInput(url))
+        return QUrl();
+    if (scheme == QLatin1String("chrome-extension"))
+        // An extension may open its own documents — never another
+        // extension's.
+        return url.host() == m_extensionId ? url : QUrl();
+    if (scheme == QLatin1String("about"))
+        return url.path().isEmpty()
+                || url.path() == QLatin1String("blank")
+            ? url : QUrl();
+    if (scheme == QLatin1String("http")
+            || scheme == QLatin1String("https")
+            || scheme == QLatin1String("ftp")
+            || scheme == QLatin1String("data"))
+        return url;
+    return QUrl();
+}
+
 QJsonObject ExtensionShimBackend::i18nMessages(
         const QString &extensionPath)
 {
@@ -1171,13 +1236,11 @@ QJsonObject ExtensionShimBackend::invokePermissions(
         const QString &method, const QJsonObject &args)
 {
     const QJsonObject manifest = manifestJson();
-    QStringList perms;
-    for (const QJsonValue &v : manifest.value(
-             QStringLiteral("permissions")).toArray())
-        perms.append(v.toString());
-    for (const QJsonValue &v : manifest.value(
-             QStringLiteral("optional_permissions")).toArray())
-        perms.append(v.toString());
+    // ER16: the GRANTED set is what Chrome reports — required
+    // permissions only.  optional_permissions are never granted
+    // (request() below is typed unsupported), so listing them would
+    // over-claim the extension's own grants.
+    const QStringList perms = manifestPermissions();
     QStringList origins;
     for (const QJsonValue &v : manifest.value(
              QStringLiteral("host_permissions")).toArray())
@@ -1263,6 +1326,13 @@ void ExtensionShimBackend::setContextMenuChecked(
 QJsonObject ExtensionShimBackend::invokeContextMenus(
         const QString &method, const QJsonObject &args)
 {
+    // ER16: 'contextMenus' (or Firefox's 'menus') gates the
+    // namespace — without it an ungated create() would render
+    // extension-controlled entries into the user's context menu.
+    const QStringList perms = manifestPermissions();
+    if (!perms.contains(QLatin1String("contextMenus"))
+            && !perms.contains(QLatin1String("menus")))
+        return errReply(QStringLiteral("no-permission"));
     // Re-claim the slot — a stale owner's destructor may already
     // have cleared it (respawn ordering or test backends sharing an
     // id); whoever writes owns the entries.
@@ -1325,6 +1395,9 @@ QJsonObject ExtensionShimBackend::invokeContextMenus(
 QJsonObject ExtensionShimBackend::invokeSidePanel(
         const QString &method, const QJsonObject &args)
 {
+    // ER16: 'sidePanel' gates the namespace like Chrome.
+    if (!manifestPermissions().contains(QLatin1String("sidePanel")))
+        return errReply(QStringLiteral("no-permission"));
     if (method == QLatin1String("setOptions")) {
         m_sidePanelOptions =
             args.value(QStringLiteral("options")).toObject();
@@ -1362,11 +1435,8 @@ void ExtensionShimBackend::recordNote(const QString &message)
 QJsonObject ExtensionShimBackend::invokeNotifications(
         const QString &method, const QJsonObject &args)
 {
-    QStringList perms;
-    for (const QJsonValue &v : manifestJson()
-             .value(QStringLiteral("permissions")).toArray())
-        perms.append(v.toString());
-    if (!perms.contains(QLatin1String("notifications")))
+    if (!manifestPermissions().contains(
+            QLatin1String("notifications")))
         return errReply(QStringLiteral("no-permission"));
 
     ExtensionNotificationCenter *center =
@@ -1420,11 +1490,7 @@ QJsonObject ExtensionShimBackend::invokeCommands(
 QJsonObject ExtensionShimBackend::invokeIdle(
         const QString &method, const QJsonObject &args)
 {
-    QStringList perms;
-    for (const QJsonValue &v : manifestJson()
-             .value(QStringLiteral("permissions")).toArray())
-        perms.append(v.toString());
-    if (!perms.contains(QLatin1String("idle")))
+    if (!manifestPermissions().contains(QLatin1String("idle")))
         return errReply(QStringLiteral("no-permission"));
 
     ExtensionIdleWatcher *watcher = ExtensionIdleWatcher::instance();
@@ -1467,13 +1533,10 @@ QJsonObject ExtensionShimBackend::invokeManagement(
 {
     Q_UNUSED(args);
     if (method != QLatin1String("getSelf")) {
-        QStringList perms;
-        for (const QJsonValue &v : manifestJson()
-                 .value(QStringLiteral("permissions")).toArray())
-            perms.append(v.toString());
-        return errReply(perms.contains(QLatin1String("management"))
-                            ? QStringLiteral("unsupported")
-                            : QStringLiteral("no-permission"));
+        return errReply(
+            manifestPermissions().contains(QLatin1String("management"))
+                ? QStringLiteral("unsupported")
+                : QStringLiteral("no-permission"));
     }
 
     const QJsonObject manifest = manifestJson();
@@ -1645,6 +1708,11 @@ QJsonObject ExtensionShimBackend::invokeExtension(
 QJsonObject ExtensionShimBackend::invokeSidebarAction(
         const QString &method, const QJsonObject &args)
 {
+    // ER16: Firefox installs browser.sidebarAction only when the
+    // manifest declares sidebar_action — the shim mirrors that at
+    // install time; this is the call-level boundary behind it.
+    if (!manifestJson().contains(QStringLiteral("sidebar_action")))
+        return errReply(QStringLiteral("no-permission"));
     if (method == QLatin1String("setPanel")) {
         m_sidebarAction.insert(
             QStringLiteral("panel"),

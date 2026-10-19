@@ -12819,7 +12819,7 @@ int main(int argc, char **argv)
                 "\"name\":\"arktos-host-smoke-ext\","
                 "\"version\":\"0.1\","
                 "\"description\":\"EXT14 hosted-runtime fixture\","
-                "\"permissions\":[\"storage\",\"tabs\","
+                "\"permissions\":[\"storage\",\"tabs\",\"alarms\","
                 "\"webNavigation\",\"contextMenus\","
                 "\"notifications\"],"
                 "\"action\":{\"default_popup\":\"popup.html\","
