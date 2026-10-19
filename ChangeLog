@@ -3515,3 +3515,17 @@ WebKit backend groundwork (WK02): the WPE WebKit spike harness at
     self-containment fix: WebKit's baked-in libexec path now points at
     the prefix's own symlink and the bwrap sandbox is told about the
     prefix dirs, so subprocesses spawn sandboxed without extra env.
+WebKit backend groundwork (WK03): the spike harness now proves the
+    full raster path end to end — the WebKitWebView's internal WPEView
+    emits "buffer-rendered" per presented frame, the handler imports it
+    via wpe_buffer_import_to_pixels (borrowed buffer-owned GBytes of
+    premultiplied ARGB8888) into a QImage, and a QWidget paints it in
+    paintEvent; resizeEvent re-sizes the WPE toplevel and the next
+    buffer arrives at the new dims. run-render.sh loads the bundled
+    render-fixture page and saves verified PNGs (non-background pixel
+    count, distinct-color and dominant-share checks, per-witness-color
+    presence — a painted blank page fails) plus a post-resize shot, and
+    an advisory leg renders https://example.com over real HTTPS through
+    the bwrap sandbox. Evidence lives at spikes/webkit/wpe-harness/
+    wk03-*.png; the backend contract is documented in the harness
+    header comment.

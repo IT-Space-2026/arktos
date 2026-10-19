@@ -75,6 +75,26 @@
  *     glibc/prefix — whitelist it via
  *     webkit_web_context_add_path_to_sandbox (done in createViewStack)
  *     or set WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1.
+ *
+ * RENDER-PATH VERDICT (WK03, measured 2026-10-19 — see run-render.sh):
+ *   - Frame delivery: the WebKitWebView's internal WPEView emits the
+ *     GObject signal "buffer-rendered" (WPEView*, WPEBuffer*, ud) each
+ *     time the web process presents a buffer. On the glib loop model it
+ *     fires on the Qt GUI thread. The embedder only OBSERVES — the
+ *     rendered/released bookkeeping stays WebKit-side (it is the
+ *     wpe_view_render_buffer caller); wpe_buffer_import_to_pixels +
+ *     deep copy inside the handler is the safe consume.
+ *   - wpe_buffer_import_to_pixels returns a BORROWED GBytes owned by
+ *     the buffer (never unref it — copy if keeping), ARGB8888
+ *     premultiplied (BGRA bytes little-endian) — QImage::
+ *     Format_ARGB32_Premultiplied matches. Stride:
+ *     wpe_buffer_shm_get_stride for WPEBufferSHM, else tight w*4,
+ *     always size-checked against the GBytes length.
+ *   - Buffer type observed headless with CPU raster
+ *     (WEBKIT_SKIA_ENABLE_CPU_RENDERING=1, exported by run-render.sh):
+ *     WPEBufferDMABuf — import_to_pixels still maps it fine.
+ *   - Resize: QWidget::resizeEvent -> wpe_toplevel_resize propagates to
+ *     the view and the NEXT produced buffer carries the new dims.
  */
 
 #include <QApplication>
@@ -83,9 +103,17 @@
 #include <QTimer>
 #include <QUrl>
 #include <QDebug>
+#include <QWidget>
+#include <QImage>
+#include <QPainter>
+#include <QPaintEvent>
+#include <QResizeEvent>
+#include <QHash>
+#include <QList>
 
 #include <atomic>
 #include <cstring>
+#include <functional>
 #include <future>
 #include <thread>
 #include <unistd.h>
@@ -94,6 +122,7 @@
 #include <glib-object.h>
 #include <wpe/webkit.h>
 #include <wpe/headless/wpe-headless.h>
+#include <wpe/wpe-platform.h>
 
 namespace {
 
@@ -257,6 +286,261 @@ bool finished(const ViewStack &s)
     return s.loadFinished || s.loadFailed || s.processDead;
 }
 
+// ------------------------- WK03: render path -------------------------
+
+/* A QWidget whose paintEvent blits the newest imported WPEBuffer frame.
+ * All WPE calls here run on the Qt GUI thread — the "buffer-rendered"
+ * signal is emitted while pumping the global-default GMainContext,
+ * which on the glib loop model (WK02 verdict, backend contract) IS the
+ * GUI thread. */
+class RasterWidget : public QWidget
+{
+public:
+    ViewStack *stack = nullptr;
+    QImage     frame;
+    QSize      frameSize;
+    int        frameCount  = 0;
+    int        importFails = 0;
+
+    void attach(ViewStack *s) { stack = s; }
+
+    void adoptFrame(WPEBuffer *buffer, const void *data, int stride)
+    {
+        const int w = wpe_buffer_get_width(buffer);
+        const int h = wpe_buffer_get_height(buffer);
+        QImage img(w, h, QImage::Format_ARGB32_Premultiplied);
+        const quint8 *src = static_cast<const quint8 *>(data);
+        for (int y = 0; y < h; ++y)
+            memcpy(img.scanLine(y), src + size_t(stride) * y, size_t(w) * 4);
+        frame = img;
+        frameSize = QSize(w, h);
+        ++frameCount;
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        // Sentinel background: pixels still magenta in a saved shot are
+        // places the imported frame never covered (hole / no frame).
+        QPainter p(this);
+        p.fillRect(rect(), QColor(0xff, 0x00, 0xff));
+        if (!frame.isNull())
+            p.drawImage(0, 0, frame);
+    }
+    void resizeEvent(QResizeEvent *e) override
+    {
+        QWidget::resizeEvent(e);
+        // WK03 resize contract: re-size the toplevel; the headless
+        // toplevel propagates to its views and the next produced buffer
+        // carries the new dims.
+        if (stack && stack->toplevel)
+            wpe_toplevel_resize(stack->toplevel,
+                                e->size().width(), e->size().height());
+    }
+};
+
+/* WPEView::buffer-rendered handler. WebKit (the wpe_view_render_buffer
+ * caller) owns the rendered/released bookkeeping; the embedder only
+ * imports + copies inside the handler. */
+void onBufferRendered(WPEView *, WPEBuffer *buffer, RasterWidget *w)
+{
+    if (!buffer)
+        return;
+    GError *err = nullptr;
+    // The returned GBytes is OWNED BY THE BUFFER (borrowed, not a copy,
+    // never unref it) — valid while the buffer lives; we deep-copy into
+    // a QImage inside the handler and keep nothing.
+    GBytes *pixels = wpe_buffer_import_to_pixels(buffer, &err);
+    if (!pixels) {
+        ++w->importFails;
+        qWarning("[wpe] wpe_buffer_import_to_pixels failed (%s): %s",
+                 G_OBJECT_TYPE_NAME(buffer), err ? err->message : "?");
+        g_clear_error(&err);
+        return;
+    }
+    const int bw = wpe_buffer_get_width(buffer);
+    const int bh = wpe_buffer_get_height(buffer);
+    int stride = bw * 4;
+    if (WPE_IS_BUFFER_SHM(buffer))
+        stride = int(wpe_buffer_shm_get_stride(WPE_BUFFER_SHM(buffer)));
+    gsize len = 0;
+    const void *data = g_bytes_get_data(pixels, &len);
+    if (stride <= 0 || bw <= 0 || bh <= 0
+        || qint64(len) < qint64(stride) * (bh - 1) + bw * 4) {
+        ++w->importFails;
+        qWarning("[wpe] imported pixels undersized: %zu for %dx%d stride=%d",
+                 size_t(len), bw, bh, stride);
+    } else {
+        if (w->frameCount == 0)
+            qInfo("[wpe] first buffer: %s %dx%d stride=%d bytes=%zu",
+                  G_OBJECT_TYPE_NAME(buffer), bw, bh, stride, size_t(len));
+        w->adoptFrame(buffer, data, stride);
+    }
+}
+
+void onBufferReleased(WPEView *, WPEBuffer *buffer, RasterWidget *)
+{
+    qInfo("[wpe] buffer-released %p", (void *)buffer);
+}
+
+/* A saved shot "counts" only if it looks like a real rendered page:
+ * enough pixels that are NOT the sentinel background, several distinct
+ * colors, no >98% dominant fill (rejects a solid painted blank page),
+ * and every witness color present in quantity. */
+bool analyzeShot(const QImage &img, const QVector<QRgb> &witness,
+                 QString *report)
+{
+    QHash<QRgb, qint64> hist;
+    hist.reserve(4096);
+    for (int y = 0; y < img.height(); ++y) {
+        const QRgb *row =
+            reinterpret_cast<const QRgb *>(img.constScanLine(y));
+        for (int x = 0; x < img.width(); ++x)
+            ++hist[row[x] | 0xff000000u];
+    }
+    const qint64 total = qint64(img.width()) * img.height();
+    qint64 dominant = 0;
+    QRgb dom = 0;
+    for (auto it = hist.cbegin(); it != hist.cend(); ++it) {
+        if (it.value() > dominant) {
+            dominant = it.value();
+            dom = it.key();
+        }
+    }
+    const qint64 sentinel = hist.value(0xffff00ffu);
+    const qint64 nonBg = total - sentinel;
+    QStringList miss;
+    for (QRgb wc : witness) {
+        if (wc > 0x00ffffffu)
+            continue; // "--witness=none" sentinel — no color check
+        const qint64 n = hist.value(0xff000000u | (wc & 0x00ffffffu));
+        if (n < 64)
+            miss << QStringLiteral("#%1:%2")
+                        .arg(wc & 0xffffff, 6, 16, QChar('0')).arg(n);
+    }
+    const double share = total ? double(dominant) / double(total) : 1.0;
+    *report = QStringLiteral("%1x%2 non-bg=%3/%4 distinct=%5 "
+                             "dominant=#%6(%7%) witness-miss=%8")
+                  .arg(img.width()).arg(img.height())
+                  .arg(nonBg).arg(total).arg(hist.size())
+                  .arg(dom & 0xffffff, 6, 16, QChar('0'))
+                  .arg(share * 100.0, 0, 'f', 1)
+                  .arg(miss.isEmpty() ? QStringLiteral("none")
+                                      : miss.join(QStringLiteral(",")));
+    return nonBg > 2000 && hist.size() >= 6 && share < 0.98
+           && miss.isEmpty();
+}
+
+bool pumpUntil(QApplication &app, const ViewStack &s, int timeoutMs,
+               const std::function<bool()> &pred)
+{
+    QElapsedTimer t;
+    t.start();
+    while (!pred() && !s.processDead && t.elapsed() < timeoutMs)
+        app.processEvents(QEventLoop::WaitForMoreEvents, 40);
+    return pred();
+}
+
+// WK03 entry: real QWidget consumer + screenshot proof + resize leg.
+int runRender(QApplication &app, const QString &uri,
+              const QString &shotPath, const QString &resizeShotPath,
+              const QSize &resizeTo, const QVector<QRgb> &witness,
+              int timeoutMs)
+{
+    ViewStack s;
+    QString why;
+    if (!createViewStack(&s, &why)) {
+        qWarning("FAIL view stack: %s", qPrintable(why));
+        return 2;
+    }
+
+    RasterWidget w;
+    w.resize(800, 600);
+    w.attach(&s);
+    w.show();
+
+    g_signal_connect(s.view, "buffer-rendered",
+                     G_CALLBACK(onBufferRendered), &w);
+    g_signal_connect(s.view, "buffer-released",
+                     G_CALLBACK(onBufferReleased), &w);
+
+    qInfo("[wpe] issuing load: %s", qPrintable(uri));
+    webkit_web_view_load_uri(s.webView, uri.toUtf8().constData());
+
+    bool ok = pumpUntil(app, s, timeoutMs, [&] {
+        return (s.loadFinished || s.loadFailed) && w.frameCount >= 1;
+    }) && s.loadFinished && w.frameCount >= 1;
+    // Let a follow-up frame land so the shot isn't a partial paint.
+    pumpUntil(app, s, 1500, [&] { return w.frameCount >= 2; });
+    app.processEvents(); // flush pending paints
+
+    if (!ok) {
+        qWarning("[wpe] no rendered frame (finished=%d failed=%d dead=%d "
+                 "frames=%d import-fails=%d)",
+                 int(s.loadFinished), int(s.loadFailed), int(s.processDead),
+                 w.frameCount, w.importFails);
+        destroyViewStack(&s);
+        return 1;
+    }
+    qInfo("[wpe] frame #%d %dx%d imported (import-fails=%d)",
+          w.frameCount, w.frameSize.width(), w.frameSize.height(),
+          w.importFails);
+
+    int rc = 0;
+    const QImage shot = w.grab().toImage();
+    if (!shot.save(shotPath)) {
+        qWarning("FAIL shot save: %s", qPrintable(shotPath));
+        rc = 1;
+    } else {
+        QString rep;
+        const bool pass = analyzeShot(shot, witness, &rep);
+        qInfo("[shot] %s -> %s", qPrintable(shotPath), qPrintable(rep));
+        if (!pass) {
+            qWarning("FAIL shot analysis: %s", qPrintable(rep));
+            rc = 1;
+        }
+    }
+
+    if (!resizeShotPath.isEmpty() && resizeTo.isValid()) {
+        const int before = w.frameCount;
+        w.resize(resizeTo);
+        const bool resized = pumpUntil(app, s, 20000, [&] {
+            return w.frameCount > before && w.frameSize == resizeTo;
+        });
+        if (!resized) {
+            qWarning("FAIL resize: no %dx%d buffer within deadline "
+                     "(frames=%d last=%dx%d)", resizeTo.width(),
+                     resizeTo.height(), w.frameCount,
+                     w.frameSize.width(), w.frameSize.height());
+            rc = 1;
+        } else {
+            qInfo("[wpe] resize delivered %dx%d buffer (frame #%d)",
+                  w.frameSize.width(), w.frameSize.height(), w.frameCount);
+            app.processEvents();
+            const QImage rshot = w.grab().toImage();
+            if (!rshot.save(resizeShotPath)) {
+                qWarning("FAIL resize shot save: %s",
+                         qPrintable(resizeShotPath));
+                rc = 1;
+            } else {
+                QString rep;
+                const bool pass = analyzeShot(rshot, witness, &rep);
+                qInfo("[shot] %s -> %s",
+                      qPrintable(resizeShotPath), qPrintable(rep));
+                if (!pass) {
+                    qWarning("FAIL resize shot analysis: %s",
+                             qPrintable(rep));
+                    rc = 1;
+                }
+            }
+        }
+    }
+
+    destroyViewStack(&s);
+    return rc;
+}
+
 // Models 1+2: view on the Qt GUI thread. |pumpTimer| is null for the
 // glib model (Qt's dispatcher does the work) and a 60 Hz drainer for
 // the timer model.
@@ -417,6 +701,9 @@ int main(int argc, char *argv[])
     // they don't depend on it.
     QString loopMode = QStringLiteral("glib");
     QString uri;
+    QString shotPath, resizeShotPath;
+    QSize resizeTo(640, 480);
+    QVector<QRgb> witness;
     int timeoutMs = 30000;
     for (int i = 1; i < argc; ++i) {
         const QString a = QString::fromLocal8Bit(argv[i]);
@@ -424,6 +711,34 @@ int main(int argc, char *argv[])
             loopMode = a.mid(7);
         else if (a.startsWith(QStringLiteral("--timeout=")))
             timeoutMs = a.mid(10).toInt() * 1000;
+        else if (a.startsWith(QStringLiteral("--shot=")))
+            shotPath = a.mid(7);
+        else if (a.startsWith(QStringLiteral("--resize-shot=")))
+            resizeShotPath = a.mid(14);
+        else if (a.startsWith(QStringLiteral("--resize="))) {
+            const QStringList xy = a.mid(9).split(QLatin1Char('x'));
+            if (xy.size() == 2)
+                resizeTo = QSize(xy[0].toInt(), xy[1].toInt());
+        }
+        else if (a.startsWith(QStringLiteral("--witness="))) {
+            // comma-separated #rrggbb colors that must each appear
+            // >=64x; "--witness=none" disables witness checks entirely
+            // (arbitrary URIs) while keeping the density/distinct/
+            // dominant-share gates.
+            const QString v = a.mid(10);
+            if (v == QLatin1String("none")) {
+                witness.clear();
+                witness << QRgb(0x1ffffff); // out-of-range sentinel:
+            }                             // analyzeShot skips it; marks
+                                          // "explicitly none"
+            else {
+                for (const QString &c : v.split(QLatin1Char(','))) {
+                    const QString t = c.trimmed();
+                    if (!t.isEmpty())
+                        witness << QRgb(t.toUInt(nullptr, 16));
+                }
+            }
+        }
         else if (!a.startsWith(QLatin1Char('-')))
             uri = a;
     }
@@ -432,10 +747,12 @@ int main(int argc, char *argv[])
 
     QApplication app(argc, argv);
     if (uri.isEmpty()) {
-        // fixture.html sits next to the sources; in-tree qmake puts the
-        // binary there too.
+        // Fixtures sit next to the sources; in-tree qmake puts the
+        // binary there too. Render mode wants the color-witness fixture.
         const QString fixture =
-            QCoreApplication::applicationDirPath() + QStringLiteral("/fixture.html");
+            QCoreApplication::applicationDirPath()
+            + (shotPath.isEmpty() ? QStringLiteral("/fixture.html")
+                                  : QStringLiteral("/render-fixture.html"));
         uri = QUrl::fromLocalFile(fixture).toString();
     }
     QAbstractEventDispatcher *ed = QAbstractEventDispatcher::instance();
@@ -455,13 +772,21 @@ int main(int argc, char *argv[])
                  "IS the attempt-1 failure this spike is probing)");
 
     int rc;
-    if (loopMode == QLatin1String("thread"))
+    if (!shotPath.isEmpty()) {
+        // WK03 render-path proof — always the glib model (WK02 verdict).
+        if (witness.isEmpty())
+            witness = { 0xeef4ff, 0x123a6f, 0x22aa77 }; // render fixture
+        rc = runRender(app, uri, shotPath, resizeShotPath, resizeTo,
+                       witness, timeoutMs);
+    } else if (loopMode == QLatin1String("thread"))
         rc = runOnWorkerThread(app, uri, timeoutMs);
     else if (loopMode == QLatin1String("timer"))
         rc = runOnGuiThread(app, uri, timeoutMs, true);
     else
         rc = runOnGuiThread(app, uri, timeoutMs, false);
 
-    qInfo("%s loop=%s", rc == 0 ? "PASS" : "FAIL", qPrintable(loopMode));
+    qInfo("%s %s", rc == 0 ? "PASS" : "FAIL",
+          !shotPath.isEmpty() ? "render"
+                              : qPrintable("loop=" + loopMode));
     return rc;
 }
