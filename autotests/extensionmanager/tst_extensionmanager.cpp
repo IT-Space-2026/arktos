@@ -81,6 +81,7 @@ private slots:
     void hostedHostChurn();
     void extensionShimBackend();
     void extensionMessageRelay();
+    void extensionChromeNavLock();
     void extensionEventSurfaces();
     void extensionPopupContext();
 
@@ -1862,6 +1863,48 @@ void tst_ExtensionManager::extensionMessageRelay()
                  &popup, chan, QStringLiteral("pA"),
                  QJsonValue(QStringLiteral("back"))), 1);
 
+    // SEC26: a still-pending mid must not re-send — a duplicate would
+    // overwrite the pending entry and orphan the first send's timer.
+    const QString m5 = QStringLiteral("relayext0000000001#5#t");
+    QCOMPARE(runtime->relaySend(&bg, m5, QJsonObject()), 1);
+    QCOMPARE(popupEvents.size(), 5);
+    QCOMPARE(runtime->relaySend(&bg, m5, QJsonObject()), 0);
+    QCOMPARE(popupEvents.size(), 5);   // no second fan-out
+
+    // SEC26: portConnect dedups an already-registered end — a page
+    // re-firing connect must not grow the chan's end list.
+    QCOMPARE(runtime->relayPortConnect(
+                 &bg, chan, QStringLiteral("p1b"),
+                 QString(), QString()), 1);
+    QCOMPARE(runtime->relayPortConnect(
+                 &bg, chan, QStringLiteral("p1b"),
+                 QString(), QString()), 0);
+
+    // SEC26: sender.url is host-verified — the bridge's context page
+    // answers it, never the caller-supplied senderUrl.  A bridge with
+    // no page keeps the arg (tests and diagnostics only).
+    auto *contextView = new QWebEngineView;
+    auto *contextPage = new QWebEnginePage(contextView);
+    contextView->setPage(contextPage);
+    contextPage->load(QUrl(QStringLiteral("about:blank")));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        contextPage->url() == QUrl(QStringLiteral("about:blank")),
+        10000);
+    bg.setContextPage(contextPage);
+    const QString chan2 = QStringLiteral("relayext0000000001#p2");
+    QCOMPARE(runtime->relayPortConnect(
+                 &bg, chan2, QStringLiteral("p2"),
+                 QString(),
+                 QStringLiteral("https://forged.example/evil")), 1);
+    QCOMPARE(popupEvents.last().at(0).toString(),
+             QStringLiteral("__arktos.portConnect"));
+    QCOMPARE(popupEvents.last().at(1).toJsonObject()
+             .value(QLatin1String("sender")).toObject()
+             .value(QLatin1String("url")).toString(),
+             QStringLiteral("about:blank"));
+    contextView->deleteLater();
+    bg.setContextPage(nullptr);
+
     // Teardown unregisters; a further send finds no peers.
     runtime->unregisterRelayContext(&popup);
     QCOMPARE(runtime->relaySend(
@@ -1870,6 +1913,58 @@ void tst_ExtensionManager::extensionMessageRelay()
     runtime->unregisterRelayContext(&other);
 
     QDir(dir).removeRecursively();
+}
+
+// SEC26: the extension-chrome navigation lock — the action popup
+// and the health probe carry the ER20 JavascriptEnabled lift, so
+// their main frame may only ever hold the extension's own origin
+// (or about:blank); foreign web content and other extensions'
+// documents are refused, and subframes stay inside the origin too.
+void tst_ExtensionManager::extensionChromeNavLock()
+{
+    const QString id = QStringLiteral("chromeext00000000000000001");
+    using NP = ExtensionChromePage;
+    // Main frame: own origin + about:blank pass.
+    QVERIFY(NP::navigationAllowed(
+        QUrl(QStringLiteral("chrome-extension://") + id
+             + QStringLiteral("/popup.html")),
+        id, true));
+    QVERIFY(NP::navigationAllowed(
+        QUrl(QStringLiteral("chrome-extension://") + id
+             + QStringLiteral("/manifest.json#arktos-healthprobe")),
+        id, true));
+    QVERIFY(NP::navigationAllowed(
+        QUrl(QStringLiteral("about:blank")), id, true));
+    // Main frame: foreign web content and a DIFFERENT extension's
+    // document are refused.
+    QVERIFY(!NP::navigationAllowed(
+        QUrl(QStringLiteral("https://forged.example/evil")),
+        id, true));
+    QVERIFY(!NP::navigationAllowed(
+        QUrl(QStringLiteral("file:///etc/passwd")), id, true));
+    QVERIFY(!NP::navigationAllowed(
+        QUrl(QStringLiteral(
+            "chrome-extension://otherext000000000000002/x.html")),
+        id, true));
+    QVERIFY(!NP::navigationAllowed(
+        QUrl(QStringLiteral("javascript:alert(1)")), id, true));
+    QVERIFY(!NP::navigationAllowed(
+        QUrl(QStringLiteral("data:text/html,<b>x</b>")), id, true));
+    // Subframes: only the extension's own origin — no about:blank
+    // exemption and no foreign content.
+    QVERIFY(NP::navigationAllowed(
+        QUrl(QStringLiteral("chrome-extension://") + id
+             + QStringLiteral("/frame.html")),
+        id, false));
+    QVERIFY(!NP::navigationAllowed(
+        QUrl(QStringLiteral("https://tracker.example/px")),
+        id, false));
+    QVERIFY(!NP::navigationAllowed(
+        QUrl(QStringLiteral("about:blank")), id, false));
+    QVERIFY(!NP::navigationAllowed(
+        QUrl(QStringLiteral(
+            "chrome-extension://otherext000000000000002/f.html")),
+        id, false));
 }
 
 // EXT16: the event surfaces.  Two hosted extensions — one declaring

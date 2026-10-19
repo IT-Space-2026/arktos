@@ -32,10 +32,10 @@
 #include <qstring.h>
 #include <qstringlist.h>
 #include <qurl.h>
+#include <qwebenginepage.h>
 
 class QTimer;
 class QWebChannel;
-class QWebEnginePage;
 class QWebEngineProfile;
 class QWebEngineView;
 
@@ -119,6 +119,7 @@ public:
     // The background host's own page is never a tab.  (Out-of-line —
     // QPointer needs the complete type.)
     void setContextPage(QWebEnginePage *page);
+    QWebEnginePage *contextPage() const { return m_contextPage; }
 
 signals:
     void errorReported(const QString &message);
@@ -139,6 +140,51 @@ private:
     // a popup bridge must answer typed errors, not dangle.
     QPointer<ExtensionShimBackend> m_backend;
     QPointer<QWebEnginePage> m_contextPage;
+};
+
+// SEC26: extension chrome that is not the hosted background (the
+// action popup, the health-probe page) gets the QUAL03 navigation
+// lock the host page already had: the main frame may only ever hold
+// documents on the extension's own chrome-extension://<id> origin
+// (or about:blank), and subframes stay inside that origin.  These
+// pages carry the ER20 JavascriptEnabled lift and may carry a
+// chromeBridge channel — a navigation to foreign web content would
+// run its scripts under the lifted preference.
+class ExtensionChromePage : public QWebEnginePage
+{
+    Q_OBJECT
+public:
+    explicit ExtensionChromePage(QWebEngineProfile *profile,
+                                 const QString &extensionId,
+                                 QObject *parent = nullptr)
+        : QWebEnginePage(profile, parent)
+        , m_extensionId(extensionId)
+    {
+    }
+
+    static bool navigationAllowed(const QUrl &url,
+                                  const QString &extensionId,
+                                  bool isMainFrame)
+    {
+        const bool ownOrigin =
+            url.scheme() == QLatin1String("chrome-extension")
+            && url.host() == extensionId;
+        if (!isMainFrame)
+            return ownOrigin;
+        return ownOrigin
+            || url == QUrl(QStringLiteral("about:blank"));
+    }
+
+protected:
+    bool acceptNavigationRequest(const QUrl &url,
+                                 NavigationType /*type*/,
+                                 bool isMainFrame) override
+    {
+        return navigationAllowed(url, m_extensionId, isMainFrame);
+    }
+
+private:
+    QString m_extensionId;
 };
 
 // One hidden hosted view for one extension.  Owns the view, page,

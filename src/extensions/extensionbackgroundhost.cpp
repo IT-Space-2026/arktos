@@ -1148,11 +1148,24 @@ void ExtensionBackgroundRuntime::unregisterRelayContext(
     }
 }
 
+// SEC26: relay bookkeeping bounds — the page supplies mids/chans, so
+// the maps cannot grow without limit on a looping sender.  A mid that
+// is still in flight must not be re-sent either: overwriting the
+// pending entry would orphan the first send's timer (its expiry then
+// removes the NEWER pending early) and let a second fan-out race the
+// first response.
+constexpr int kMaxRelayPending = 512;
+constexpr int kMaxPortEndsPerChan = 64;
+constexpr int kMaxPortChans = 1024;
+
 int ExtensionBackgroundRuntime::relaySend(ChromeBridge *from,
                                           const QString &mid,
                                           const QJsonObject &envelope)
 {
     if (!from || !ownsRelayKey(from, mid))
+        return 0;
+    if (m_relayPending.contains(mid)
+            || m_relayPending.size() >= kMaxRelayPending)
         return 0;
     int peers = 0;
     for (const RelayContext &ctx : m_relayContexts) {
@@ -1244,15 +1257,32 @@ int ExtensionBackgroundRuntime::relayPortConnect(
     if (!from || chan.isEmpty() || portId.isEmpty()
             || !ownsRelayKey(from, chan))
         return 0;
-    m_portEnds[chan].append(PortEnd{from, portId});
+    QList<PortEnd> &ends = m_portEnds[chan];
+    for (const PortEnd &end : std::as_const(ends)) {
+        if (end.bridge == from && end.localPortId == portId)
+            return 0;   // this end is already registered
+    }
+    if (ends.size() >= kMaxPortEndsPerChan
+            || (ends.isEmpty() && m_portEnds.size() >= kMaxPortChans)) {
+        if (ends.isEmpty())
+            m_portEnds.remove(chan);
+        return 0;
+    }
+    ends.append(PortEnd{from, portId});
     // A complete MessageSender — extension handlers gate on
     // sender.origin == chrome.runtime.getURL('') (Bitwarden's
     // senderIsInternal drops the session port otherwise).  The id is
-    // always trusted from the bridge; url/origin describe the
-    // connecting document.
+    // always trusted from the bridge; the url must describe the real
+    // connecting document — SEC26: the bridge's context page answers
+    // it, not the caller's asserted senderUrl (that arg only fills
+    // in for a bridge with no page, e.g. tests).
+    QString url = senderUrl;
+    if (from->contextPage()
+            && !from->contextPage()->url().isEmpty())
+        url = from->contextPage()->url().toString();
     const QJsonObject sender{
         {QStringLiteral("id"), from->extensionId()},
-        {QStringLiteral("url"), senderUrl},
+        {QStringLiteral("url"), url},
         {QStringLiteral("origin"), QStringLiteral("chrome-extension://")
                                      + from->extensionId()}};
     int peers = 0;
@@ -1283,11 +1313,18 @@ void ExtensionBackgroundRuntime::relayPortAccept(
     if (!accepter || chan.isEmpty() || portId.isEmpty()
             || !ownsRelayKey(accepter, chan))
         return;
-    for (const PortEnd &end : m_portEnds.value(chan)) {
+    QList<PortEnd> &ends = m_portEnds[chan];
+    for (const PortEnd &end : std::as_const(ends)) {
         if (end.bridge == accepter && end.localPortId == portId)
             return;   // already registered
     }
-    m_portEnds[chan].append(PortEnd{accepter, portId});
+    if (ends.size() >= kMaxPortEndsPerChan
+            || (ends.isEmpty() && m_portEnds.size() >= kMaxPortChans)) {
+        if (ends.isEmpty())
+            m_portEnds.remove(chan);
+        return;
+    }
+    ends.append(PortEnd{accepter, portId});
 }
 
 int ExtensionBackgroundRuntime::relayPortMessage(

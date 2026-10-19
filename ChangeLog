@@ -3860,3 +3860,12 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   WebPage's single implementation, stale engine-architecture docs
   and single-instance Servo comments were corrected, and generated
   task-loop logs/locks are no longer tracked in .devin.
+- Security re-audit (SEC26): the hosted extension runtime, WebKit
+  injection paths, Servo shim ABI and IPC gates were re-audited and
+  three real gaps were closed. Extension popup and health-probe pages
+  are now navigation-locked to their own chrome-extension origin so
+  the forced JavaScript exemption cannot leak onto foreign pages;
+  message-relay sender URLs are verified against the actual host page
+  instead of trusting the caller; and relay bookkeeping is bounded
+  with duplicate message-ID rejection to stop response races and
+  memory growth. The full audit report lives at .devin/SEC26-audit.md.
