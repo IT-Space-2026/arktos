@@ -3616,3 +3616,15 @@ WebKit page hosting (WK08): the webkit backend now hosts real tabs.
     into the binary so the sandbox whitelist works in unsourced
     environments. A webkit=1 build without the WPE packages still
     compiles inert and registers nothing.
+WebKit load-signal contract (WK09): the webkit backend's Engine::Page
+    signal surface is now complete. Tab favicons work —
+    notify::page-icons resolves the WebKitImageList off the favicon
+    database (enabled per data manager; ephemeral sessions keep it
+    in-memory) into a content-deduped QIcon. Redirect/commit hops
+    refresh urlChanged, stop() and reload() drive real load
+    transitions, and a cancelled load's progress-reset can no longer
+    emit after loadFinished. A claimed load-failed suppresses
+    WebKit's built-in error page so a failed navigation reports one
+    honest loadFinished(false) instead of a fake success pair.
+    Navigation type is recorded off an observe-only decide-policy
+    hook — WK17's request-policy veto builds on it.

@@ -46,6 +46,7 @@
 #include <qevent.h>
 #include <qfileinfo.h>
 #include <qpainter.h>
+#include <qpixmap.h>
 
 #include <cstring>
 
@@ -132,6 +133,78 @@ void evalReady(GObject *object, GAsyncResult *result, gpointer data)
     if (call->callback)
         call->callback(out);
     delete call;
+}
+
+// WK09 — WebKitNavigationType -> Engine::NavigationType.  WebKit's
+// set is coarser than Chromium's: embedder-initiated load() arrives
+// as OTHER (there is no Typed), FORM_RESUBMITTED folds into
+// FormSubmitted, and server-side redirects produce no navigation
+// action at all — is_redirect is what distinguishes those hops, so
+// it wins over the enum.  decide-policy is the only place the enum
+// surfaces; WK17 reuses this mapping for NavigationRequest.
+Engine::NavigationType engineNavigationType(WebKitNavigationType type,
+                                            bool isRedirect)
+{
+    if (isRedirect)
+        return Engine::NavigationType::Redirect;
+    switch (type) {
+    case WEBKIT_NAVIGATION_TYPE_LINK_CLICKED:
+        return Engine::NavigationType::LinkClicked;
+    case WEBKIT_NAVIGATION_TYPE_FORM_SUBMITTED:
+    case WEBKIT_NAVIGATION_TYPE_FORM_RESUBMITTED:
+        return Engine::NavigationType::FormSubmitted;
+    case WEBKIT_NAVIGATION_TYPE_BACK_FORWARD:
+        return Engine::NavigationType::BackOrForward;
+    case WEBKIT_NAVIGATION_TYPE_RELOAD:
+        return Engine::NavigationType::Reload;
+    default:
+        return Engine::NavigationType::Other;
+    }
+}
+
+// WK09 — WebKitImage (the 2.54 GLib image class) -> QImage.  The
+// bytes are 32-bit premultiplied-alpha in the platform's preferred
+// byte order — BGRA8888 on little-endian, byte-identical to
+// Format_ARGB32_Premultiplied (the same contract the WK03 buffer
+// import already relies on).  The returned GBytes is borrowed from
+// the image, so rows are deep-copied like adoptFrame.
+QImage imageFromWebKitImage(WebKitImage *image)
+{
+    if (!image)
+        return QImage();
+    const int w = webkit_image_get_width(image);
+    const int h = webkit_image_get_height(image);
+    const int stride = int(webkit_image_get_stride(image));
+    GBytes *bytes = webkit_image_as_bytes(image);
+    gsize len = 0;
+    const void *data = bytes ? g_bytes_get_data(bytes, &len) : nullptr;
+    if (!data || w <= 0 || h <= 0 || stride < w * 4
+            || qint64(len) < qint64(stride) * (h - 1) + w * 4)
+        return QImage();
+    QImage out(w, h, QImage::Format_ARGB32_Premultiplied);
+    for (int y = 0; y < h; ++y)
+        memcpy(out.scanLine(y),
+               static_cast<const quint8 *>(data) + size_t(stride) * y,
+               size_t(w) * 4);
+    return out;
+}
+
+// Largest icon out of the list — favicon candidates arrive ordered
+// but area-picking is cheap and correct for the tab strip.
+QImage bestPageIcon(WebKitImageList *list)
+{
+    if (!list)
+        return QImage();
+    const gsize count = webkit_image_list_get_length(list);
+    QImage best;
+    for (gsize i = 0; i < count; ++i) {
+        const QImage img =
+            imageFromWebKitImage(webkit_image_list_get(list, i));
+        if (qint64(img.width()) * img.height()
+                > qint64(best.width()) * best.height())
+            best = img;
+    }
+    return best;
 }
 
 } // namespace
@@ -229,6 +302,13 @@ WebkitPage::WebkitPage(Engine::Profile *profile, QObject *parent)
     if (!session)
         session = webkit_network_session_get_default();
 
+    // WK09: favicon tracking is opt-in per data manager (disabled by
+    // default) — without it page-icons never updates and iconChanged
+    // could never fire.  Ephemeral managers open the database
+    // in-memory, so OTR still writes nothing.
+    webkit_website_data_manager_set_favicons_enabled(
+        webkit_network_session_get_website_data_manager(session), TRUE);
+
     // WPE 2.54: WebKitWebView owns its WPEView; the display/context/
     // session are construct-only properties.
     m_webView = WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW,
@@ -268,6 +348,15 @@ WebkitPage::WebkitPage(Engine::Profile *profile, QObject *parent)
                      G_CALLBACK(cbNotifyTitle), this);
     g_signal_connect(m_webView, "notify::estimated-load-progress",
                      G_CALLBACK(cbNotifyProgress), this);
+    // WK09: the 2.54 property is "page-icons" (boxed WebKitImageList);
+    // "favicon" is the GTK-shaped name the spike notes used — both
+    // details connect harmlessly and whichever the build has fires.
+    g_signal_connect(m_webView, "notify::page-icons",
+                     G_CALLBACK(cbNotifyPageIcons), this);
+    g_signal_connect(m_webView, "notify::favicon",
+                     G_CALLBACK(cbNotifyPageIcons), this);
+    g_signal_connect(m_webView, "decide-policy",
+                     G_CALLBACK(cbDecidePolicy), this);
     g_signal_connect(m_wpeView, "buffer-rendered",
                      G_CALLBACK(cbBufferRendered), this);
 #else
@@ -451,6 +540,8 @@ void WebkitPage::runJavaScript(
             nullptr, nullptr, nullptr, evalReady, call);
         return;
     }
+#else
+    Q_UNUSED(source);
 #endif
     if (resultCallback)
         resultCallback(QVariant());
@@ -570,7 +661,11 @@ int WebkitPage::cbLoadFailed(WebKitWebView *, int, void *uri,
     Q_UNUSED(uri);
     Q_UNUSED(error);
     page->onLoadFailed();
-    return FALSE;   // let WebKit's default handler run too
+    // TRUE claims the failure: WebKit's default handler would load a
+    // built-in error page, and that nested load would emit a fresh
+    // loadStarted/loadFinished(true) pair that masks the failed
+    // navigation behind a fake success.
+    return TRUE;
 }
 
 void WebkitPage::cbWebProcessTerminated(WebKitWebView *, int,
@@ -595,6 +690,19 @@ void WebkitPage::cbNotifyProgress(WebKitWebView *, void *,
                                   WebkitPage *page)
 {
     page->onProgressNotify();
+}
+
+void WebkitPage::cbNotifyPageIcons(WebKitWebView *, void *,
+                                   WebkitPage *page)
+{
+    page->onPageIconsNotify();
+}
+
+int WebkitPage::cbDecidePolicy(WebKitWebView *,
+                               WebKitPolicyDecision *decision,
+                               int type, WebkitPage *page)
+{
+    return page->onDecidePolicy(decision, type) ? TRUE : FALSE;
 }
 
 #endif // ARKTOS_WEBKIT_LINKED
@@ -645,10 +753,16 @@ void WebkitPage::onLoadChanged(int event)
         m_loading = true;
         m_progressSeen = false;
         Q_EMIT loadStarted();
+    } else if (event == int(WEBKIT_LOAD_REDIRECTED)
+               || event == int(WEBKIT_LOAD_COMMITTED)) {
+        // WK09: a redirect hop or the commit point both move the
+        // page's uri — notify::uri carries the same update, this just
+        // lands it at the event instead of a property pump later.
+        onUriNotify();
     } else if (event == int(WEBKIT_LOAD_FINISHED)) {
-        // A load-failed already answered this load — the FINISHED
-        // that follows belongs to WebKit's error page, not to a
-        // successful navigation.
+        // A load-failed already answered this load — a stray FINISHED
+        // for the dead navigation must not report success (the
+        // error-page load itself is suppressed in cbLoadFailed).
         if (!m_loading)
             return;
         m_loading = false;
@@ -658,7 +772,6 @@ void WebkitPage::onLoadChanged(int event)
         }
         Q_EMIT loadFinished(true);
     }
-    // REDIRECTED/COMMITTED carry no separate surface yet — WK09.
 #else
     Q_UNUSED(event);
 #endif
@@ -711,7 +824,11 @@ void WebkitPage::onTitleNotify()
 void WebkitPage::onProgressNotify()
 {
 #ifdef ARKTOS_WEBKIT_LINKED
-    if (!m_webView)
+    // WebKit resets estimated-load-progress to 0 when a load dies —
+    // emitting that reset after loadFinished would put a stale 0 on
+    // the progress bar and break the started→progress→finished
+    // contract.  The FINISHED fallback already delivers the 100.
+    if (!m_webView || !m_loading)
         return;
     const double fraction =
         webkit_web_view_get_estimated_load_progress(m_webView);
@@ -720,6 +837,48 @@ void WebkitPage::onProgressNotify()
     if (percent >= 100)
         m_progressSeen = true;   // FINISHED won't re-emit the 100
 #endif
+}
+
+void WebkitPage::onPageIconsNotify()
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    if (!m_webView)
+        return;
+    // get_page_icons hands back a borrowed WebKitImageList — WebKit
+    // already re-queried the favicon database before notifying, so
+    // reading it inline is the whole job.
+    const QImage icon = bestPageIcon(webkit_web_view_get_page_icons(m_webView));
+    if (icon.isNull())
+        return;
+    // Content-dedup: page-icons re-notifies while the candidate set
+    // settles mid-load; the tab strip only needs iconChanged when the
+    // picked icon actually differs.
+    if (!m_iconImage.isNull() && m_iconImage == icon)
+        return;
+    m_iconImage = icon;
+    Q_EMIT iconChanged(QIcon(QPixmap::fromImage(icon)));
+#endif
+}
+
+bool WebkitPage::onDecidePolicy(WebKitPolicyDecision *decision, int type)
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    if ((type == int(WEBKIT_POLICY_DECISION_TYPE_NAVIGATION_ACTION)
+            || type == int(WEBKIT_POLICY_DECISION_TYPE_NEW_WINDOW_ACTION))
+            && WEBKIT_IS_NAVIGATION_POLICY_DECISION(decision)) {
+        WebKitNavigationAction *action =
+            webkit_navigation_policy_decision_get_navigation_action(
+                WEBKIT_NAVIGATION_POLICY_DECISION(decision));
+        if (action)
+            m_lastNavigationType = engineNavigationType(
+                webkit_navigation_action_get_navigation_type(action),
+                webkit_navigation_action_is_redirect(action));
+    }
+#else
+    Q_UNUSED(decision);
+    Q_UNUSED(type);
+#endif
+    return false;   // observe-only until WK17 — WebKit decides "use"
 }
 
 // ---- WebkitProfile --------------------------------------------------

@@ -148,6 +148,7 @@ private slots:
     void engineTabReload();
     void webkitBackendSurface();
     void webkitViewRenders();
+    void webkitLoadSignals();
 
 private:
     FakeEngineBackend *m_fake = nullptr;
@@ -1279,6 +1280,196 @@ void tst_EngineSwitch::webkitViewRenders()
              qPrintable(QStringLiteral("fixture colors never painted — "
                                        "%1 distinct colors")
                             .arg(distinctColors)), 30000);
+#else
+    QSKIP("webkit backend not linked in this build");
+#endif
+}
+
+// WK09 — the Page load-signal contract on the webkit backend:
+// started→progress→finished ordering, url/title/icon arrival,
+// NavigationType off decide-policy, and stop()/reload() driving real
+// load transitions.  WebKit only loads icons whose URL is http(s),
+// so the fixture is a local HTTP server rather than a file:// page.
+void tst_EngineSwitch::webkitLoadSignals()
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    Engine::Backend *webkit =
+        EngineRegistry::backendForId(QStringLiteral("webkit"));
+    QVERIFY(webkit);
+    QVERIFY2(webkit->pageUnavailableReason().isEmpty(),
+             qPrintable(webkit->pageUnavailableReason()));
+
+    // Fixture: a page that names a PNG favicon, and the icon itself.
+    QByteArray faviconPng;
+    {
+        QImage icon(16, 16, QImage::Format_ARGB32);
+        icon.fill(QColor(0x1a, 0x7f, 0x37));
+        QBuffer buffer(&faviconPng);
+        QVERIFY(buffer.open(QIODevice::WriteOnly));
+        QVERIFY(icon.save(&buffer, "PNG"));
+    }
+    const QByteArray pageBody =
+        "<html><head><title>Wk09Signals</title>"
+        "<link rel=\"icon\" type=\"image/png\" href=\"/favicon.png\">"
+        "</head><body>wk09 signal fixture</body></html>";
+
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    auto pending =
+        QSharedPointer<QHash<QTcpSocket *, QByteArray>>::create();
+    connect(&server, &QTcpServer::newConnection, &server,
+            [&server, pageBody, faviconPng, pending]() {
+        while (QTcpSocket *socket = server.nextPendingConnection()) {
+            socket->setParent(&server);
+            connect(socket, &QTcpSocket::readyRead, socket,
+                    [socket, pageBody, faviconPng, pending]() {
+                QByteArray &request = (*pending)[socket];
+                request += socket->readAll();
+                if (!request.contains("\r\n\r\n"))
+                    return;
+                QByteArray body = pageBody;
+                QByteArray mime = "text/html";
+                if (request.startsWith("GET /favicon.png")) {
+                    body = faviconPng;
+                    mime = "image/png";
+                }
+                socket->write("HTTP/1.1 200 OK\r\nContent-Type: " + mime
+                              + "\r\nContent-Length: "
+                              + QByteArray::number(body.size())
+                              + "\r\nConnection: close\r\n\r\n" + body);
+                socket->disconnect();   // one request per connection
+                socket->disconnectFromHost();
+                pending->remove(socket);
+            });
+        }
+    });
+    const QUrl url(QStringLiteral("http://127.0.0.1:%1/")
+                       .arg(server.serverPort()));
+
+    Engine::ProfileOptions options;
+    options.offTheRecord = true;   // ephemeral session — no disk state
+    Engine::Profile *profile = webkit->createProfile(options, this);
+    QVERIFY(profile);
+
+    EngineTab tab(webkit, profile);
+    tab.resize(800, 600);
+    tab.show();
+    QVERIFY(tab.page());
+    auto *page = qobject_cast<WebkitPage *>(tab.page());
+    QVERIFY(page);
+
+    QStringList order;   // signal arrival order, tags only
+    QList<int> progressValues;
+    QList<QUrl> urls;
+    QStringList titles;
+    QList<QIcon> icons;
+    QList<bool> finishedOk;
+    connect(page, &Engine::Page::loadStarted,
+            page, [&]() { order << QStringLiteral("started"); });
+    connect(page, &Engine::Page::loadProgress,
+            page, [&](int p) {
+        order << QStringLiteral("progress");
+        progressValues << p;
+    });
+    connect(page, &Engine::Page::loadFinished,
+            page, [&](bool ok) {
+        order << QStringLiteral("finished");
+        finishedOk << ok;
+    });
+    connect(page, &Engine::Page::urlChanged,
+            page, [&](const QUrl &u) {
+        order << QStringLiteral("url");
+        urls << u;
+    });
+    connect(page, &Engine::Page::titleChanged,
+            page, [&](const QString &t) {
+        order << QStringLiteral("title");
+        titles << t;
+    });
+    connect(page, &Engine::Page::iconChanged,
+            page, [&](const QIcon &i) {
+        order << QStringLiteral("icon");
+        icons << i;
+    });
+
+    tab.load(url);
+    QTRY_VERIFY2_WITH_TIMEOUT(!finishedOk.isEmpty(),
+                              "loadFinished never arrived", 60000);
+    QVERIFY2(finishedOk.first(), "fixture load reported failure");
+
+    // Order contract: exactly one started→finished pair per load,
+    // progress strictly inside it.  uri/title/icon notifies are
+    // property-driven and can land anywhere in the window (WebKit
+    // moves uri at request time and the title can resolve a tick
+    // after FINISHED) — only the load triple is ordered.
+    QCOMPARE(order.count(QStringLiteral("started")), 1);
+    QCOMPARE(order.count(QStringLiteral("finished")), 1);
+    QVERIFY(order.contains(QStringLiteral("progress")));
+    const int startedAt = order.indexOf(QStringLiteral("started"));
+    const int finishedAt = order.indexOf(QStringLiteral("finished"));
+    QVERIFY2(startedAt >= 0 && startedAt < finishedAt,
+             qPrintable(order.join(QLatin1Char(','))));
+    for (int i = startedAt + 1; i < finishedAt; ++i)
+        QVERIFY2(order.at(i) != QStringLiteral("started"),
+                 qPrintable(order.join(QLatin1Char(','))));
+    QVERIFY(!progressValues.isEmpty());
+    QCOMPARE(progressValues.last(), 100);
+
+    QVERIFY(urls.contains(url));
+    // Title and icon notifies resolve a tick after FINISHED.
+    QTRY_VERIFY2_WITH_TIMEOUT(
+            titles.contains(QStringLiteral("Wk09Signals")),
+            "titleChanged never arrived", 30000);
+
+    // The icon fetch is async past loadFinished — the property lands
+    // once the favicon database answer comes back.
+    QTRY_VERIFY2_WITH_TIMEOUT(!icons.isEmpty() && !icons.last().isNull(),
+                              "iconChanged never arrived", 30000);
+    const QImage iconImage = icons.last().pixmap(64, 64).toImage()
+        .convertToFormat(QImage::Format_ARGB32);
+    const QColor pixel = QColor::fromRgba(iconImage.pixel(8, 8));
+    QVERIFY2(pixel.green() > 100 && pixel.red() < 60,
+             qPrintable(QStringLiteral("favicon color %1")
+                            .arg(pixel.name())));
+
+    // decide-policy maps embedder-initiated load() to Other (WebKit
+    // has no Typed).
+    QCOMPARE(page->lastNavigationType(), Engine::NavigationType::Other);
+
+    // reload() drives a real second cycle.
+    order.clear();
+    finishedOk.clear();
+    page->reload();
+    QTRY_VERIFY2_WITH_TIMEOUT(!finishedOk.isEmpty(),
+                              "reload never finished", 60000);
+    QVERIFY2(finishedOk.first(), "reload reported failure");
+    QCOMPARE(order.count(QStringLiteral("started")), 1);
+    QCOMPARE(order.count(QStringLiteral("finished")), 1);
+    QVERIFY2(order.indexOf(QStringLiteral("started"))
+                 < order.indexOf(QStringLiteral("finished")),
+             qPrintable(order.join(QLatin1Char(','))));
+    QCOMPARE(page->lastNavigationType(), Engine::NavigationType::Reload);
+
+    // stop() mid-load answers loadFinished(false) — a server that
+    // accepts and never answers keeps the load in flight.
+    QTcpServer staller;
+    QVERIFY(staller.listen(QHostAddress::LocalHost));
+    connect(&staller, &QTcpServer::newConnection, &staller,
+            [&staller]() {
+        staller.nextPendingConnection()->setParent(&staller);
+    });
+    order.clear();
+    finishedOk.clear();
+    page->load(QUrl(QStringLiteral("http://127.0.0.1:%1/hang")
+                        .arg(staller.serverPort())));
+    QTRY_VERIFY2_WITH_TIMEOUT(order.contains(QStringLiteral("started")),
+                              "stalled load never started", 30000);
+    page->stop();
+    QTRY_VERIFY2_WITH_TIMEOUT(!finishedOk.isEmpty(),
+                              "stop() produced no loadFinished", 30000);
+    QVERIFY2(!finishedOk.first(), "stopped load reported success");
+    QVERIFY(!page->isLoading());
+    QCOMPARE(order.last(), QStringLiteral("finished"));
 #else
     QSKIP("webkit backend not linked in this build");
 #endif

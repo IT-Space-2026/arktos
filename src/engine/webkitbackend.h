@@ -57,6 +57,16 @@
 // — ephemeral for OTR, the default session otherwise (per-profile
 // storage trees are WK11).  EngineTab hosts the pair with zero
 // changes: createPage + createView is all it calls.
+//
+// WK09 completes the load-signal contract: notify::page-icons feeds
+// iconChanged off the favicon database (opt-in per data manager —
+// the page ctor enables it; ephemeral sessions keep it in-memory),
+// load-failed claims the failure so WebKit's own error page can't
+// emit a fake-success load pair behind loadFinished(false),
+// progress notifies are gated on the live load so the cancel-time
+// reset to 0 never lands after loadFinished, and an observe-only
+// decide-policy hook maps WebKitNavigationType (WK17's RequestPolicy
+// veto reuses the same hook).
 
 #include "engineinterface.h"
 
@@ -80,6 +90,7 @@ typedef struct _WPEBuffer WPEBuffer;
 typedef struct _WebKitWebView WebKitWebView;
 typedef struct _WebKitWebContext WebKitWebContext;
 typedef struct _WebKitNetworkSession WebKitNetworkSession;
+typedef struct _WebKitPolicyDecision WebKitPolicyDecision;
 
 class WebkitPage;
 
@@ -199,6 +210,15 @@ public:
     // nominal size and is resized to the widget's real dims.
     void attachView(WebkitView *view);
 
+    // WK09: the navigation type WebKit reported for the most recent
+    // navigation decision (decide-policy is the only place the enum
+    // surfaces).  Other for embedder-initiated load() — WebKit has
+    // no Typed.  Autotest-visible state like WebkitView::frameCount.
+    Engine::NavigationType lastNavigationType() const
+    {
+        return m_lastNavigationType;
+    }
+
 private:
     // GLib signal entry points — reached through the static
     // trampolines in the .cpp (all on the GUI thread: on the glib
@@ -211,6 +231,12 @@ private:
     void onUriNotify();
     void onTitleNotify();
     void onProgressNotify();
+    void onPageIconsNotify();
+    // decide-policy is observe-only until WK17 turns it into the
+    // RequestPolicy veto — returning false keeps WebKit's default
+    // use-decision while we record the navigation type (the only
+    // place WebKit reports WHY a navigation happened).
+    bool onDecidePolicy(WebKitPolicyDecision *decision, int type);
     void resizeEngine(int width, int height);
     void focusEngine(bool in);
 
@@ -233,6 +259,11 @@ private:
                               WebkitPage *page);
     static void cbNotifyProgress(WebKitWebView *view, void *pspec,
                                  WebkitPage *page);
+    static void cbNotifyPageIcons(WebKitWebView *view, void *pspec,
+                                  WebkitPage *page);
+    static int cbDecidePolicy(WebKitWebView *view,
+                              WebKitPolicyDecision *decision,
+                              int type, WebkitPage *page);
 
     Engine::Profile *m_profile;
     QPointer<WebkitView> m_view;
@@ -241,6 +272,9 @@ private:
     WPEToplevel *m_toplevel = nullptr;
     QUrl m_url;
     QString m_title;
+    QImage m_iconImage;   // WK09 iconChanged dedup — content-compared
+    Engine::NavigationType m_lastNavigationType =
+        Engine::NavigationType::Other;
     qreal m_zoom = 1.0;
     bool m_loading = false;
     bool m_progressSeen = false;
