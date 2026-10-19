@@ -3483,3 +3483,14 @@ Multiple Servo tabs can be open at once (ENG36): switching a second
     working and the engine keeps running — and the per-tab crash
     recovery ("Try Servo Again") still rebuilds a fresh view on the
     same engine.
+The Servo smoke diagnostic's scroll benchmarks no longer flake when
+    the machine is under load (ENG37): each scroll check used to
+    require the page to finish scrolling inside a fixed wall-clock
+    window, so any CPU contention starved the frame path and failed
+    the run even though scrolling was correct. The checks now poll
+    until the target scroll position arrives or a generous deadline
+    expires — a slow frame is still a correct frame — and when a
+    check passes late or times out while the load average exceeds
+    the CPU count, the log line carries a "CONTENTION: loadavg=X"
+    marker so an overloaded machine is distinguishable from a real
+    scroll regression at a glance.

@@ -133,6 +133,7 @@
 #include <QtCore/QStandardPaths>
 #include <QtCore/QTemporaryDir>
 #include <QtCore/QTextStream>
+#include <QtCore/QThread>
 #include <QtCore/QTimer>
 #include <QtCore/QUrl>
 #include <QtCore/QUrlQuery>
@@ -4267,6 +4268,282 @@ public:
     Engine::RequestPolicy *m_inner;
 };
 
+#ifdef ARKTOS_SERVO
+namespace {
+// ENG37: scroll smoke legs poll to convergence under a generous
+// deadline instead of asserting inside fixed wall-clock windows —
+// under CPU contention (runaway process, sibling-lane build) the
+// frame/sync path starves and stale reads used to flake the bench.
+// These are file-scope helpers taking an explicit context, not [&]
+// lambdas: a nested lambda-capture chain in this very large
+// function miscompiled at -O2 (a captured closure slot was
+// clobbered mid-run and the bench SIGSEGV'd entering the probe), so
+// every cross-helper call is an ordinary function call.
+struct ServoSmokeScroll {
+    ServoView *view;
+    EngineTab *tab;
+    const QPointer<ServoView> *guard;
+    int *seq;
+    bool trace;
+};
+
+constexpr qint64 kServoScrollDeadlineMs = 30000;
+constexpr qint64 kServoScrollFastWindowMs = 3000;
+constexpr qint64 kServoScrollSettleDeadlineMs = 30000;
+constexpr qint64 kServoScrollSendsQuietMs = 800;
+
+void servoSmokePump(const std::function<bool()> &done,
+                    qint64 timeoutMs)
+{
+    QElapsedTimer timer;
+    timer.start();
+    while (!done() && timer.elapsed() < timeoutMs)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+}
+
+QString servoSmokeContentionTag()
+{
+    QFile loadavg(QStringLiteral("/proc/loadavg"));
+    double avg = -1.0;
+    if (loadavg.open(QIODevice::ReadOnly)) {
+        avg = loadavg.readAll().split(' ').value(0).toDouble();
+        loadavg.close();
+    }
+    const int cpus = QThread::idealThreadCount();
+    return (avg > 0.0 && cpus > 0 && avg > double(cpus))
+        ? QStringLiteral(" CONTENTION: loadavg=%1").arg(avg)
+        : QString();
+}
+
+qreal servoSmokeProbeScrollY(const ServoSmokeScroll &ctx)
+{
+    if (ctx.guard->isNull())
+        return -1.0;
+    // A seq-nonce prefixes each probe so a stale title from the
+    // previous eval can never satisfy the wait.
+    const QString prefix = QStringLiteral("SY%1:").arg(++*ctx.seq);
+    ctx.view->evaluateJavaScript(QStringLiteral(
+        "document.title='%1'+(window.scrollY||"
+        "document.documentElement.scrollTop||0)").arg(prefix));
+    // 8s, not 3: under a starved box the eval -> script thread ->
+    // title-change round trip legitimately outlives a 3s window,
+    // and a timed-out probe reads as -1 which the settle loop must
+    // not mistake for "scrollY did not move".
+    const EngineTab *tab = ctx.tab;
+    servoSmokePump([tab, &prefix]() {
+        return tab->title().startsWith(prefix); }, 8000);
+    const QString title = ctx.tab->title();
+    return title.startsWith(prefix)
+        ? title.mid(prefix.size()).toDouble() : -1.0;
+}
+
+// Poll the page's scrollY until it holds still across a quiet
+// streak, bounded by the deadline — bounded by wall-clock, not an
+// iteration count, so contention stretches each iteration without
+// reading as a premature settle.  The returned value is the last
+// good reading; the caller's converge leg decides whether it is a
+// pass.
+qreal servoSmokeSettleScrollY(const ServoSmokeScroll &ctx, qreal last)
+{
+    int probeFails = 0;
+    QElapsedTimer quietStreak;
+    bool quietArmed = false;
+    QElapsedTimer deadline;
+    deadline.start();
+    while (deadline.elapsed() < kServoScrollSettleDeadlineMs) {
+        if (ctx.guard->isNull()) {
+            qInfo("servo-smoke: DIAG view gone at settle %lldms",
+                  qlonglong(deadline.elapsed()));
+            return last;
+        }
+        // Quiet required, not just equal — a frame slower than the
+        // probe window must not read as "settled".  While a slice
+        // remainder is still queued the 100ms wheel watchdog keeps
+        // emitting sends, so wheelEventsSent stalls ONLY once the
+        // input side is fully drained; scrollY must also hold
+        // across the same window before the read counts.
+        const int sentBefore = ctx.view->wheelEventsSent();
+        servoSmokePump([]() { return false; }, 350);
+        const qreal current = servoSmokeProbeScrollY(ctx);
+        if (current < 0) {
+            // A timed-out probe is not a scroll position — keep
+            // polling so a starved script thread stalls the
+            // measurement instead of corrupting it into a 0px
+            // delta.  The settle deadline is the only bound.
+            ++probeFails;
+            continue;
+        }
+        if (probeFails)
+            qInfo("servo-smoke: DIAG %d probe timeouts before "
+                  "settle recovered", probeFails);
+        probeFails = 0;
+        if (ctx.trace)
+            qInfo("servo-smoke: TRACE settle %lldms last=%.0f "
+                  "current=%.0f sends %d->%d frames=%d",
+                  qlonglong(deadline.elapsed()), double(last),
+                  double(current), sentBefore,
+                  ctx.view->wheelEventsSent(), ctx.view->frameCount());
+        // Quiet must PERSIST on the wall clock, not just repeat —
+        // se_scroll lands deltas in the compositor scroll tree and
+        // DOM scrollY only catches up when SetScrollStates
+        // round-trips constellation -> script.  On a starved box
+        // that sync legitimately lags whole probe windows: two
+        // frozen reads a few hundred ms apart are not proof the
+        // scroll finished propagating.  Requiring ~2s of unbroken
+        // quiet (sends stalled AND scrollY unchanged) lets a
+        // late-arriving sync disturb the streak and keep the
+        // settle alive.
+        if (current == last
+                && ctx.view->wheelEventsSent() == sentBefore) {
+            if (!quietArmed) {
+                quietStreak.start();
+                quietArmed = true;
+            } else if (quietStreak.elapsed() >= 2000) {
+                return current;
+            }
+        } else {
+            quietArmed = false;
+        }
+        last = current;
+    }
+    // Deadline without a quiet streak — the scroll may still be
+    // propagating; the caller's converge leg decides whether the
+    // last read is a pass.
+    qInfo("servo-smoke: settle deadline expired (%lldms, last=%.0f)%s",
+          qlonglong(deadline.elapsed()), double(last),
+          qPrintable(servoSmokeContentionTag()));
+    return last;
+}
+
+// Poll the page's scrollY until `target` holds or the deadline
+// expires — the ENG37 leg primitive.  Probe readback failures keep
+// the poll alive (they only consume budget); the returned value is
+// the last good reading, so a timed-out leg still asserts on the
+// best known position.
+qreal servoSmokeConvergeScrollY(const ServoSmokeScroll &ctx,
+        const QString &name,
+        const std::function<bool(qreal)> &target)
+{
+    QElapsedTimer timer;
+    timer.start();
+    qreal value = -1.0;
+    for (;;) {
+        const qreal probe = servoSmokeProbeScrollY(ctx);
+        if (probe >= 0.0) {
+            value = probe;
+            if (target(probe)) {
+                if (timer.elapsed() > kServoScrollFastWindowMs)
+                    qInfo("servo-smoke: %s converged late "
+                          "(%lldms)%s", qPrintable(name),
+                          qlonglong(timer.elapsed()),
+                          qPrintable(servoSmokeContentionTag()));
+                return probe;
+            }
+        }
+        if (ctx.guard->isNull())
+            return value;
+        if (timer.elapsed() >= kServoScrollDeadlineMs) {
+            qInfo("servo-smoke: %s TIMEOUT after %lldms "
+                  "(last=%.0f)%s", qPrintable(name),
+                  qlonglong(timer.elapsed()), double(value),
+                  qPrintable(servoSmokeContentionTag()));
+            return value;
+        }
+        servoSmokePump([]() { return false; }, 150);
+    }
+}
+
+// Converge on the bound, then settle for the resting value the
+// report/log quotes — the settle only runs when the target truly
+// arrived, so a failing leg never pays it.
+qreal servoSmokeConvergeThenSettle(const ServoSmokeScroll &ctx,
+        const QString &name,
+        const std::function<bool(qreal)> &target)
+{
+    const qreal value = servoSmokeConvergeScrollY(ctx, name, target);
+    return (value >= 0.0 && target(value))
+        ? servoSmokeSettleScrollY(ctx, value) : value;
+}
+
+// Poll wheelEventsSent until delivery provably drains — while a
+// slice remainder is queued the 100ms watchdog keeps emitting
+// sends, so a sustained stall means the input side is empty — or
+// the deadline expires.  Returns the sends since `baseline` at
+// drain/timeout.
+int servoSmokeConvergeSends(const ServoSmokeScroll &ctx,
+        const QString &name, int baseline)
+{
+    QElapsedTimer timer;
+    timer.start();
+    QElapsedTimer quiet;
+    quiet.start();
+    int lastSent = ctx.view->wheelEventsSent();
+    for (;;) {
+        servoSmokePump([]() { return false; }, 200);
+        if (ctx.guard->isNull())
+            return lastSent - baseline;
+        const int now = ctx.view->wheelEventsSent();
+        if (now != lastSent) {
+            lastSent = now;
+            quiet.restart();
+        } else if (quiet.elapsed() >= kServoScrollSendsQuietMs) {
+            if (timer.elapsed() > kServoScrollFastWindowMs)
+                qInfo("servo-smoke: %s converged late (%lldms)%s",
+                      qPrintable(name), qlonglong(timer.elapsed()),
+                      qPrintable(servoSmokeContentionTag()));
+            return now - baseline;
+        }
+        if (timer.elapsed() >= kServoScrollDeadlineMs) {
+            qInfo("servo-smoke: %s TIMEOUT after %lldms "
+                  "(%d sends)%s", qPrintable(name),
+                  qlonglong(timer.elapsed()), now,
+                  qPrintable(servoSmokeContentionTag()));
+            return now - baseline;
+        }
+    }
+}
+
+void servoSmokeSendWheel(const ServoSmokeScroll &ctx,
+        int dy, bool pixelDelta)
+{
+    if (ctx.guard->isNull())
+        return;
+    const QPointF center = QPointF(ctx.view->rect().center());
+    const QPointF global =
+        ctx.view->mapToGlobal(center.toPoint());
+    QWheelEvent ev(center, global,
+                   pixelDelta ? QPoint(0, dy) : QPoint(),
+                   pixelDelta ? QPoint() : QPoint(0, dy),
+                   Qt::NoButton, Qt::NoModifier,
+                   Qt::NoScrollPhase, false);
+    QApplication::sendEvent(ctx.view, &ev);
+}
+
+// Same deadline discipline as the legs — a loaded box just takes
+// longer per burst; an un-scrollable page still gives up on the
+// cap.
+qreal servoSmokeScrollToTop(const ServoSmokeScroll &ctx)
+{
+    QElapsedTimer topDeadline;
+    topDeadline.start();
+    qreal y = servoSmokeSettleScrollY(
+            ctx, servoSmokeProbeScrollY(ctx));
+    for (int i = 0; i < 30 && y > 100.0
+            && topDeadline.elapsed() < 90000; ++i) {
+        for (int j = 0; j < 6; ++j) {
+            servoSmokeSendWheel(ctx, 120, false);
+            servoSmokePump([]() { return false; }, 20);
+        }
+        y = servoSmokeSettleScrollY(ctx, y);
+    }
+    if (y > 100.0)
+        qInfo("servo-smoke: DIAG scrollToTop stopped at %.0f%s",
+              double(y), qPrintable(servoSmokeContentionTag()));
+    return y;
+}
+} // namespace
+#endif // ARKTOS_SERVO
+
 static int servoLifecycleSmoke()
 {
     Engine::Backend *servo =
@@ -4623,135 +4900,30 @@ static int servoLifecycleSmoke()
             }
 
             int probeSeq = 0;
-            const auto probeScrollY = [&]() -> qreal {
-                if (servoViewGuard.isNull())
-                    return -1.0;
-                // A seq-nonce prefixes each probe so a stale title
-                // from the previous eval can never satisfy the wait.
-                const QString prefix =
-                    QStringLiteral("SY%1:").arg(++probeSeq);
-                servoView->evaluateJavaScript(QStringLiteral(
-                    "document.title='%1'+(window.scrollY||"
-                    "document.documentElement.scrollTop||0)")
-                        .arg(prefix));
-                // 8s, not 3: under a starved box the eval → script
-                // thread → title-change round trip legitimately
-                // outlives a 3s window, and a timed-out probe reads
-                // as -1 which the settle loop must not mistake for
-                // "scrollY did not move".
-                pumpUntil([&]() {
-                    return engineTab->title().startsWith(prefix);
-                }, 8000);
-                const QString title = engineTab->title();
-                return title.startsWith(prefix)
-                    ? title.mid(prefix.size()).toDouble() : -1.0;
-            };
             const bool traceSettle =
                 !qgetenv("ARKTOS_SERVO_SMOKE_TRACE").isEmpty();
-            const auto settleScrollY = [&](qreal last) -> qreal {
-                int probeFails = 0;
-                QElapsedTimer quietStreak;
-                bool quietArmed = false;
-                for (int i = 0; i < 80; ++i) {
-                    if (servoViewGuard.isNull()) {
-                        qInfo("servo-smoke: DIAG view gone at "
-                              "settle iter %d", i);
-                        return last;
-                    }
-                    // ENG32: quiet required, not just equal — a
-                    // frame slower than the probe window must not
-                    // read as "settled".  While a slice remainder
-                    // is still queued the 100ms wheel watchdog
-                    // keeps emitting sends, so wheelEventsSent
-                    // stalls ONLY once the input side is fully
-                    // drained; scrollY must also hold across the
-                    // same window before the read counts.
-                    const int sentBefore = servoView->wheelEventsSent();
-                    pumpUntil([]() { return false; }, 350);
-                    const qreal current = probeScrollY();
-                    if (current < 0) {
-                        // A timed-out probe is not a scroll
-                        // position — retry, bounded, so a starved
-                        // script thread stalls the measurement
-                        // instead of corrupting it into a 0px
-                        // delta.  Three consecutive failures means
-                        // the channel is down for real.
-                        if (++probeFails >= 3) {
-                            qInfo("servo-smoke: DIAG %d consecutive "
-                                  "probe timeouts at settle iter %d",
-                                  probeFails, i);
-                            return last;
-                        }
-                        continue;
-                    }
-                    probeFails = 0;
-                    if (traceSettle)
-                        qInfo("servo-smoke: TRACE settle i=%d "
-                              "last=%.0f current=%.0f sends %d->%d "
-                              "frames=%d",
-                              i, double(last), double(current),
-                              sentBefore,
-                              servoView->wheelEventsSent(),
-                              servoView->frameCount());
-                    // Quiet must PERSIST on the wall clock, not just
-                    // repeat — se_scroll lands deltas in the
-                    // compositor scroll tree and DOM scrollY only
-                    // catches up when SetScrollStates round-trips
-                    // constellation -> script.  On a starved box
-                    // that sync legitimately lags whole probe
-                    // windows: two frozen reads a few hundred ms
-                    // apart are not proof the scroll finished
-                    // propagating.  Requiring ~2s of unbroken quiet
-                    // (sends stalled AND scrollY unchanged) lets a
-                    // late-arriving sync disturb the streak and
-                    // keep the settle alive.
-                    if (current == last
-                            && servoView->wheelEventsSent()
-                                   == sentBefore) {
-                        if (!quietArmed) {
-                            quietStreak.start();
-                            quietArmed = true;
-                        } else if (quietStreak.elapsed() >= 2000) {
-                            return current;
-                        }
-                    } else {
-                        quietArmed = false;
-                    }
-                    last = current;
-                }
-                return last;
-            };
-            const QPointF center = QPointF(servoView->rect().center());
-            const QPointF global =
-                servoView->mapToGlobal(center.toPoint());
-            const auto sendWheel = [&](int dy, bool pixelDelta) {
-                if (servoViewGuard.isNull())
-                    return;
-                QWheelEvent ev(center, global,
-                               pixelDelta ? QPoint(0, dy) : QPoint(),
-                               pixelDelta ? QPoint() : QPoint(0, dy),
-                               Qt::NoButton, Qt::NoModifier,
-                               Qt::NoScrollPhase, false);
-                QApplication::sendEvent(servoView, &ev);
-            };
-            // ENG32: the accel-ramped bench alone can exhaust the
-            // fixture's effective scroll range (Servo lays it out at
-            // ~2.3k px tall regardless of nominal row height), so legs
-            // that must measure DOWNWARD movement first reset to the
-            // top with up-wheel bursts — the same input path under
-            // test, so the reset also exercises reversal-cancel.
-            const auto scrollToTop = [&]() -> qreal {
-                qreal y = settleScrollY(probeScrollY());
-                for (int i = 0; i < 30 && y > 100.0; ++i) {
-                    for (int j = 0; j < 6; ++j) {
-                        sendWheel(120, false);
-                        pumpUntil([]() { return false; }, 20);
-                    }
-                    y = settleScrollY(y);
-                }
-                return y;
-            };
-            const qreal yTop = settleScrollY(probeScrollY());
+            // ENG37: deadline-based convergence.  The scroll legs used
+            // to assert inside fixed settle/pump windows, so ANY CPU
+            // contention (a runaway process, a sibling lane build)
+            // starved the frame/sync path and read stale scrollY as a
+            // leg failure — every loaded-box run paid an A/B
+            // stash-test to prove the red was environmental.  Now
+            // each leg polls until its TARGET arrives or a generous
+            // deadline expires: pass on eventual convergence, fail
+            // only on a true timeout (a slow llvmpipe frame is still
+            // a correct frame — the moved-assertion itself does not
+            // weaken).  A target met inside roughly the old window
+            // passes silently, so unloaded runs gain no latency; a
+            // late pass or timeout on a loaded box logs
+            // "CONTENTION: loadavg=X" so flakes self-diagnose.  The
+            // helpers live at file scope (ServoSmokeScroll) — a
+            // nested [&]-capture chain here collapsed under -O2.
+            const ServoSmokeScroll scrollCtx{
+                servoView, engineTab, &servoViewGuard,
+                &probeSeq, traceSettle};
+            const qreal yTop = servoSmokeConvergeScrollY(
+                    scrollCtx, QStringLiteral("scroll-starts-top"),
+                    [](qreal v) { return v >= 0.0; });
             report(QStringLiteral("scroll-starts-top"),
                    yTop >= 0 && yTop <= 1.0);
             // The bench itself: 10 down-notches, timed.  The logged
@@ -4764,10 +4936,17 @@ static int servoLifecycleSmoke()
             bench.start();
             const int framesBefore = servoView->frameCount();
             for (int i = 0; i < 10; ++i) {
-                sendWheel(-120, false);
+                servoSmokeSendWheel(scrollCtx, -120, false);
                 pumpUntil([]() { return false; }, 30);
             }
-            const qreal yDown = settleScrollY(probeScrollY());
+            // ENG37: converge on the pace leg's own bound — 10
+            // notches must land >=100px each — instead of a fixed
+            // settle.  scrollY crossing the bound is the PASS; the
+            // follow-up settle only refines the resting value the
+            // bench line logs.
+            qreal yDown = servoSmokeConvergeThenSettle(
+                    scrollCtx, QStringLiteral("scroll-bench"),
+                    [yTop](qreal v) { return v >= yTop + 1000.0; });
             const qint64 benchMs = bench.elapsed();
             const int benchPaints = servoView->frameCount() - framesBefore;
             const int benchSends = servoView->wheelEventsSent();
@@ -4833,11 +5012,14 @@ static int servoLifecycleSmoke()
             const qreal notchBasePx =
                 qMax(1, QApplication::styleHints()->wheelScrollLines())
                 * 53.0;
-            scrollToTop();
+            servoSmokeScrollToTop(scrollCtx);
             servoView->resetScrollStats();
-            sendWheel(-120, false);
-            pumpUntil([]() { return false; }, 900);
-            const int sliceSends = servoView->wheelEventsSent();
+            servoSmokeSendWheel(scrollCtx, -120, false);
+            // ENG37: wait for the delivery to provably drain (sends
+            // stall only once the remainder is empty) instead of a
+            // fixed 900ms — a starved painter just takes longer.
+            const int sliceSends = servoSmokeConvergeSends(
+                    scrollCtx, QStringLiteral("scroll-notch-sliced"), 0);
             qInfo("servo-smoke: single notch -> %d scroll sends, "
                   "largest step %.0fpx of %.0fpx base",
                   sliceSends,
@@ -4848,11 +5030,15 @@ static int servoLifecycleSmoke()
             report(QStringLiteral("scroll-step-bounded"),
                    servoView->largestWheelStepPx() > 0.0
                        && servoView->largestWheelStepPx() < notchBasePx);
-            const qreal yPixelStart = scrollToTop();
+            const qreal yPixelStart = servoSmokeScrollToTop(scrollCtx);
             // pixelDelta (trackpads, hi-res wheels) — raw passthrough,
             // never sliced.
-            sendWheel(-300, true);
-            const qreal yPixel = settleScrollY(yPixelStart);
+            servoSmokeSendWheel(scrollCtx, -300, true);
+            const qreal yPixel = servoSmokeConvergeThenSettle(
+                    scrollCtx, QStringLiteral("scroll-pixel-delta"),
+                    [yPixelStart](qreal v) {
+                        return v > yPixelStart + 50.0;
+                    });
             qInfo("servo-smoke: pixel-delta -300 -> %.0fpx",
                   double(yPixel - yPixelStart));
             report(QStringLiteral("scroll-pixel-delta"),
@@ -4867,10 +5053,10 @@ static int servoLifecycleSmoke()
             // take.
             const int sentBeforeBurst = servoView->wheelEventsSent();
             for (int i = 0; i < 20; ++i)
-                sendWheel(-120, false);
-            pumpUntil([]() { return false; }, 1500);
-            const int burstSent =
-                servoView->wheelEventsSent() - sentBeforeBurst;
+                servoSmokeSendWheel(scrollCtx, -120, false);
+            const int burstSent = servoSmokeConvergeSends(
+                    scrollCtx, QStringLiteral("scroll-burst"),
+                    sentBeforeBurst);
             qInfo("servo-smoke: scroll-burst 20 notches -> %d "
                   "scroll sends", burstSent);
             report(QStringLiteral("scroll-burst-coalesced"),
@@ -4880,12 +5066,17 @@ static int servoLifecycleSmoke()
             // reaches ~2.25x the flat sum by the sixth) — a pause or
             // reversal before this leg restarts at 1x, so the
             // discriminating bound sits between flat and ramped.
-            const qreal yAccelStart = scrollToTop();
+            const qreal yAccelStart = servoSmokeScrollToTop(scrollCtx);
             for (int i = 0; i < 6; ++i) {
-                sendWheel(-120, false);
+                servoSmokeSendWheel(scrollCtx, -120, false);
                 pumpUntil([]() { return false; }, 30);
             }
-            const qreal yAccel = settleScrollY(yAccelStart);
+            const qreal yAccel = servoSmokeConvergeThenSettle(
+                    scrollCtx, QStringLiteral("scroll-accel"),
+                    [yAccelStart, notchBasePx](qreal v) {
+                        return v - yAccelStart
+                               > 6.0 * notchBasePx * 1.3;
+                    });
             const qreal accelPx = yAccel - yAccelStart;
             qInfo("servo-smoke: accel-ramp 6 notches -> %.0fpx "
                   "(flat base %.0fpx)",
@@ -4899,28 +5090,44 @@ static int servoLifecycleSmoke()
             // ~40k+ px — 50 iters of 6 accel-ramped notches reach it.
             qreal yBottom = yPixel;
             int plateau = 0;
-            for (int i = 0; i < 50 && plateau < 2; ++i) {
+            QElapsedTimer driveDeadline;
+            driveDeadline.start();
+            for (int i = 0; i < 50 && plateau < 2
+                    && driveDeadline.elapsed() < 120000; ++i) {
                 for (int j = 0; j < 6; ++j) {
-                    sendWheel(-120, false);
+                    servoSmokeSendWheel(scrollCtx, -120, false);
                     pumpUntil([]() { return false; }, 20);
                 }
-                const qreal cur = settleScrollY(yBottom);
+                const qreal cur = servoSmokeSettleScrollY(
+                        scrollCtx, yBottom);
                 plateau = (cur <= yBottom) ? plateau + 1 : 0;
                 yBottom = qMax(yBottom, cur);
             }
+            if (driveDeadline.elapsed() >= 120000)
+                qInfo("servo-smoke: DIAG drive-to-bottom deadline at "
+                      "%.0fpx%s", double(yBottom),
+                      qPrintable(servoSmokeContentionTag()));
             for (int i = 0; i < 5; ++i)
-                sendWheel(-120, false);
-            const qreal yClamp = settleScrollY(yBottom);
+                servoSmokeSendWheel(scrollCtx, -120, false);
+            const qreal yClamp = servoSmokeConvergeThenSettle(
+                    scrollCtx, QStringLiteral("scroll-overscroll"),
+                    [yBottom](qreal v) {
+                        return qAbs(v - yBottom) < 2.0;
+                    });
             report(QStringLiteral("scroll-overscroll-clamped"),
                    qAbs(yClamp - yBottom) < 2.0
                        && yBottom > yTop + 500.0);
             // Up-notches must reduce scrollY — the sign convention
             // survives the scaling.
             for (int i = 0; i < 6; ++i) {
-                sendWheel(120, false);
+                servoSmokeSendWheel(scrollCtx, 120, false);
                 pumpUntil([]() { return false; }, 30);
             }
-            const qreal yUp = settleScrollY(yClamp);
+            const qreal yUp = servoSmokeConvergeThenSettle(
+                    scrollCtx, QStringLiteral("scroll-direction"),
+                    [yBottom](qreal v) {
+                        return v < yBottom - 200.0;
+                    });
             report(QStringLiteral("scroll-direction-kept"),
                    yUp >= 0 && yUp < yBottom - 200.0);
 
