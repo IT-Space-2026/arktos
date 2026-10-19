@@ -43,6 +43,7 @@
 #include "extensioneventhub.h"
 #include "extensionmanager.h"
 #include "extensionpagebridge.h"
+#include "extensionrequestwatcher.h"
 #include "extensionreviewdialog.h"
 #include "extensionshimbackend.h"
 #include "engineinterface.h"
@@ -83,6 +84,7 @@ private slots:
     void extensionShimBackend();
     void extensionMessageRelay();
     void extensionEventSurfaces();
+    void extensionWebRequest();
     void extensionRuntimeLifecycle();
     void extensionPopupContext();
     void extensionPageAgent();
@@ -2447,6 +2449,339 @@ void tst_ExtensionManager::extensionEventSurfaces()
     manager->removeExtension(idB);
     QDir(dirA).removeRecursively();
     QDir(dirB).removeRecursively();
+}
+
+// ER11 — observe-only chrome.webRequest.  Fixture A declares
+// 'webRequest' + loopback host coverage and subscribes to every
+// servable event (with requestHeaders/responseHeaders asks), a
+// listener whose url filter never matches, a 'blocking' listener
+// (typed unsupported, observe-only degrade) and the unservable
+// onAuthRequired.  A real page load + scripted fetch over a
+// loopback server exercises the interceptor ledger and the
+// resource-timing completion probe; a refused-port navigation
+// exercises onErrorOccurred.  Fixture B holds 'webRequest' but no
+// covering host permission — nothing may reach it.  Fixture C
+// lacks the permission — registration itself is the typed denial.
+void tst_ExtensionManager::extensionWebRequest()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    const QString base = QStringLiteral("http://127.0.0.1:%1")
+        .arg(server.serverPort());
+    const QByteArray pageBody =
+        "<html><head><script>addEventListener('DOMContentLoaded',"
+        "function(){fetch('/data.json').then(function(r){"
+        "return r.text();}).then(function(t){document.title="
+        "'fetched:'+t;});});</script></head><body>wr</body></html>";
+    const QByteArray jsonBody = "{\"ok\":true}";
+    QObject::connect(&server, &QTcpServer::newConnection, this,
+                     [&]() {
+        QTcpSocket *socket = server.nextPendingConnection();
+        QObject::connect(socket, &QTcpSocket::readyRead, socket,
+                         [socket, pageBody, jsonBody]() {
+            const QByteArray request = socket->readAll();
+            const QByteArray body =
+                request.startsWith("GET /data.json")
+                    ? jsonBody : pageBody;
+            socket->write("HTTP/1.1 200\r\nContent-Length: "
+                + QByteArray::number(body.size())
+                + "\r\nConnection: close\r\n\r\n" + body);
+            socket->disconnectFromHost();
+        });
+    });
+
+    const QString recorder = QStringLiteral(
+        "self.__wr=[];\n"
+        "self.__wrRec=function(n){return function(d){\n"
+        " self.__wr.push({n:n,url:d.url,type:d.type,tabId:d.tabId,\n"
+        "  requestId:d.requestId,method:d.method,\n"
+        "  reqHeaders:!!d.requestHeaders,\n"
+        "  respHeaders:!!d.responseHeaders,\n"
+        "  error:d.error||null});};};\n");
+    const QString swA = recorder + QStringLiteral(
+        "var urlsAll={urls:['<all_urls>']};\n"
+        "var urlsLoop={urls:['http://127.0.0.1:*/*'],\n"
+        " types:['main_frame','xmlhttprequest']};\n"
+        "chrome.webRequest.onBeforeRequest.addListener(\n"
+        " self.__wrRec('onBeforeRequest'),urlsAll);\n"
+        "chrome.webRequest.onBeforeSendHeaders.addListener(\n"
+        " self.__wrRec('onBeforeSendHeaders'),urlsAll,\n"
+        " ['requestHeaders']);\n"
+        "chrome.webRequest.onCompleted.addListener(\n"
+        " self.__wrRec('onCompleted'),urlsLoop,['responseHeaders']);\n"
+        "chrome.webRequest.onErrorOccurred.addListener(\n"
+        " self.__wrRec('onErrorOccurred'),urlsAll);\n"
+        "chrome.webRequest.onCompleted.addListener(\n"
+        " self.__wrRec('onCompletedFiltered'),\n"
+        " {urls:['http://unrelated.example/*']});\n"
+        "chrome.webRequest.onBeforeRequest.addListener(\n"
+        " self.__wrRec('onBeforeRequestBlocking'),urlsAll,\n"
+        " ['blocking']);\n"
+        "chrome.webRequest.onAuthRequired.addListener(\n"
+        " self.__wrRec('onAuthRequired'),urlsAll);\n"
+        "chrome.webRequest.handlerBehaviorChanged();\n");
+    const QString swB = recorder + QStringLiteral(
+        "chrome.webRequest.onBeforeRequest.addListener(\n"
+        " self.__wrRec('onBeforeRequest'),{urls:['<all_urls>']});\n"
+        "chrome.webRequest.onCompleted.addListener(\n"
+        " self.__wrRec('onCompleted'),{urls:['<all_urls>']});\n");
+    const QString swC = recorder + QStringLiteral(
+        "chrome.webRequest.onBeforeRequest.addListener(\n"
+        " self.__wrRec('onBeforeRequest'),{urls:['<all_urls>']});\n");
+
+    struct Fixture {
+        QString name;
+        QString dir;
+        QString permissions;
+        QString hostPermissions;
+        QString sw;
+    };
+    const QList<Fixture> fixtures = {
+        {QStringLiteral("tst-webreq-a"), QString(),
+         QStringLiteral("\"storage\",\"webRequest\""),
+         QStringLiteral("\"http://127.0.0.1:*/*\""), swA},
+        {QStringLiteral("tst-webreq-b"), QString(),
+         QStringLiteral("\"webRequest\""),
+         QStringLiteral("\"https://allowed.example/*\""), swB},
+        {QStringLiteral("tst-webreq-c"), QString(),
+         QStringLiteral("\"storage\""),
+         QStringLiteral("\"http://127.0.0.1:*/*\""), swC},
+    };
+    const QString root = QDir::temp().filePath(
+        QStringLiteral("tst-extwr-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(root));
+    QList<Fixture> written;
+    for (Fixture f : fixtures) {
+        f.dir = root + QLatin1Char('/') + f.name;
+        QVERIFY(QDir().mkpath(f.dir));
+        QFile manifestFile(f.dir + QLatin1String("/manifest.json"));
+        QVERIFY(manifestFile.open(QIODevice::WriteOnly));
+        manifestFile.write("{\"manifest_version\":3,\"name\":\""
+            + f.name.toUtf8() + "\",\"version\":\"1.0\",\"permissions\":["
+            + f.permissions.toUtf8() + "],\"host_permissions\":["
+            + f.hostPermissions.toUtf8()
+            + "],\"background\":{\"service_worker\":\"sw.js\"}}");
+        manifestFile.close();
+        QFile worker(f.dir + QLatin1String("/sw.js"));
+        QVERIFY(worker.open(QIODevice::WriteOnly));
+        worker.write(f.sw.toUtf8());
+        worker.close();
+        written.append(f);
+    }
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    ExtensionEventHub *hub = ExtensionEventHub::instance();
+
+    const auto loadReady = [this, manager, runtime](
+            const QString &dir, const QString &name) -> QString {
+        auto loaded = std::make_shared<QString>();
+        QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                         this, [loaded, name](
+                             const ExtensionManager::ExtensionInfo
+                                 &info) {
+            if (info.name == name && info.error.isEmpty())
+                *loaded = info.id;
+        });
+        manager->grantConsent(dir);
+        manager->loadExtension(dir);
+        QElapsedTimer timer;
+        timer.start();
+        while (loaded->isEmpty() && timer.elapsed() < 30000)
+            QTest::qWait(50);
+        const QString id = *loaded;
+        if (id.isEmpty())
+            return id;
+        manager->setExtensionEnabled(id, true);
+        timer.restart();
+        while (timer.elapsed() < 45000) {
+            ExtensionBackgroundHost *host = runtime->host(id);
+            if (host && host->state()
+                    == ExtensionBackgroundHost::State::Ready)
+                break;
+            QTest::qWait(50);
+        }
+        return id;
+    };
+    const QString idA = loadReady(written.at(0).dir, written.at(0).name);
+    const QString idB = loadReady(written.at(1).dir, written.at(1).name);
+    const QString idC = loadReady(written.at(2).dir, written.at(2).name);
+    QVERIFY2(!idA.isEmpty() && !idB.isEmpty() && !idC.isEmpty(),
+             "fixtures loaded + hosted");
+
+    auto eval = [](QWebEnginePage *page, const QString &source) {
+        auto result = std::make_shared<QVariant>();
+        page->runJavaScript(source,
+                            [result](const QVariant &v) { *result = v; });
+        QElapsedTimer timer;
+        timer.start();
+        while (!result->isValid() && timer.elapsed() < 10000)
+            QTest::qWait(50);
+        return *result;
+    };
+
+    // The subscribe calls ride the bridge — wait for the watcher's
+    // registry before driving traffic (A keeps 6 registrations:
+    // the four servable events, the filtered + blocking listeners —
+    // onAuthRequired rejects without registering).
+    QTRY_VERIFY_WITH_TIMEOUT(
+        ExtensionRequestWatcher::instance()->registrationCount(idA)
+            == 6
+            && ExtensionRequestWatcher::instance()
+                       ->registrationCount(idB) == 2,
+        30000);
+
+    hub->setTracking(true);
+    hub->syncNow();
+    BrowserMainWindow *window = new BrowserMainWindow;
+    TabWidget *tw = window->tabWidget();
+    QVERIFY(tw && tw->count() >= 1);
+    hub->syncNow();
+    WebView *view = tw->currentWebView();
+    QVERIFY(view);
+
+    view->load(QUrl(base + QStringLiteral("/page")));
+    const auto saw = [&eval](QWebEnginePage *page,
+                             const QString &predicate) {
+        return eval(page, QStringLiteral(
+            "(self.__wr||[]).some(%1)").arg(predicate)).toBool();
+    };
+
+    // onBeforeRequest for the navigation, onCompleted for both the
+    // main-frame document and the scripted fetch (the latter via the
+    // resource-timing probe — allow the flush interval headroom).
+    const auto dumpEvents = [&eval](QWebEnginePage *page) {
+        return eval(page, QStringLiteral(
+            "JSON.stringify(self.__wr||[])")).toString();
+    };
+    QElapsedTimer waitBefore;
+    waitBefore.start();
+    while (waitBefore.elapsed() < 30000
+           && !saw(runtime->host(idA)->page(), QStringLiteral(
+               "function(e){return e.n==='onBeforeRequest'"
+               "&&e.url==='%1/page'&&e.type==='main_frame'"
+               "&&e.method==='GET'&&e.tabId>=0&&e.requestId;}")
+                   .arg(base)))
+        QTest::qWait(100);
+    QVERIFY2(saw(runtime->host(idA)->page(), QStringLiteral(
+            "function(e){return e.n==='onBeforeRequest'"
+            "&&e.url==='%1/page'&&e.type==='main_frame'"
+            "&&e.method==='GET'&&e.tabId>=0&&e.requestId;}")
+                .arg(base)),
+             qPrintable(QStringLiteral(
+                 "onBeforeRequest for the navigation — events: %1")
+                 .arg(dumpEvents(runtime->host(idA)->page()))));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        saw(runtime->host(idA)->page(), QStringLiteral(
+            "function(e){return e.n==='onCompleted'"
+            "&&e.url==='%1/data.json'&&e.type==='xmlhttprequest';}")
+                .arg(base)), 30000);
+
+    // Details shape: the main-frame onCompleted carries the real
+    // responseHeaders (asked via extraInfoSpec); the send-headers
+    // event carried requestHeaders; before/completed pair on one
+    // requestId.
+    const QJsonObject shape = QJsonDocument::fromJson(
+        eval(runtime->host(idA)->page(), QStringLiteral(
+            "(function(){var e=self.__wr||[];"
+            "function any(p){return e.some(p);}"
+            "function rid(u){for(var i=0;i<e.length;++i)"
+            " if(e[i].n==='onBeforeRequest'&&e[i].url===u)"
+            "  return e[i].requestId;return null;}"
+            "function crid(u){for(var i=0;i<e.length;++i)"
+            " if(e[i].n==='onCompleted'&&e[i].url===u)"
+            "  return e[i].requestId;return null;}"
+            "return JSON.stringify({"
+            "ev:e.map(function(x){return x.n+'|'+x.type+'|'+x.url"
+            "+(x.respHeaders?'|R':'')+(x.reqHeaders?'|Q':'')+'|'"
+            "+x.error;}).join(';'),"
+            "resp:any(function(x){return x.n==='onCompleted'"
+            " &&x.url==='%1/page'&&x.type==='main_frame'"
+            " &&x.respHeaders;}),"
+            "req:any(function(x){return x.n==='onBeforeSendHeaders'"
+            " &&x.url==='%1/page'&&x.reqHeaders;}),"
+            "pair:rid('%1/page')&&rid('%1/page')===crid('%1/page'),"
+            "blockingSaw:any(function(x){"
+            " return x.n==='onBeforeRequestBlocking'"
+            " &&x.url==='%1/page';}),"
+            "filteredOut:!any(function(x){"
+            " return x.n==='onCompletedFiltered';})"
+            "});})()").arg(base)).toString().toUtf8()).object();
+    QVERIFY2(shape.value(QLatin1String("resp")).toBool(),
+             qPrintable(QStringLiteral(
+                 "onCompleted main-frame responseHeaders served — "
+                 "events: %1")
+                 .arg(shape.value(QLatin1String("ev")).toString())));
+    QVERIFY2(shape.value(QLatin1String("req")).toBool(),
+             "onBeforeSendHeaders requestHeaders served");
+    QVERIFY2(shape.value(QLatin1String("pair")).toBool(),
+             "before/completed share one requestId");
+    QVERIFY2(shape.value(QLatin1String("blockingSaw")).toBool(),
+             "blocking listener still observes (MV3 degrade)");
+    QVERIFY2(shape.value(QLatin1String("filteredOut")).toBool(),
+             "non-matching urls filter stays silent");
+
+    // The typed degrades: 'blocking' and onAuthRequired each answer
+    // 'unsupported' — observable in the host's gap list, never
+    // silently dropped.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(idA)->shimGaps().contains(
+            QStringLiteral("chrome.webRequest.subscribe: unsupported")),
+        20000);
+    // C never got the permission — its subscribe is the typed
+    // denial, also health-visible.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(idC)->shimGaps().contains(QStringLiteral(
+            "chrome.webRequest.subscribe: no-webRequest-permission")),
+        20000);
+
+    // onErrorOccurred — a refused connection must report a net::
+    // error, never silence.
+    quint16 deadPort = 0;
+    {
+        QTcpServer dead;
+        QVERIFY(dead.listen(QHostAddress::LocalHost));
+        deadPort = dead.serverPort();
+    }
+    const QString deadUrl = QStringLiteral("http://127.0.0.1:%1/")
+        .arg(deadPort);
+    view->load(QUrl(deadUrl));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        saw(runtime->host(idA)->page(), QStringLiteral(
+            "function(e){return e.n==='onErrorOccurred'"
+            "&&e.url==='%1'&&e.error"
+            "&&e.error.indexOf('net::ERR_')===0;}")
+                .arg(deadUrl)), 30000);
+
+    // Host-permission scoping — B's listeners registered fine but no
+    // loopback URL is covered by https://allowed.example/*, so
+    // nothing reached it.
+    QCOMPARE(eval(runtime->host(idB)->page(), QStringLiteral(
+        "(self.__wr||[]).some(function(e){"
+        " return String(e.url||'').indexOf('127.0.0.1')>=0;})"))
+            .toBool(), false);
+
+    // Cleanup.
+    window->close();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    manager->setExtensionEnabled(idA, false);
+    manager->setExtensionEnabled(idB, false);
+    manager->setExtensionEnabled(idC, false);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !runtime->host(idA) && !runtime->host(idB)
+            && !runtime->host(idC), 20000);
+    hub->setTracking(false);
+    manager->removeExtension(idA);
+    manager->removeExtension(idB);
+    manager->removeExtension(idC);
+    QCOMPARE(ExtensionRequestWatcher::instance()
+                 ->registrationCount(idA), 0);
+    QDir(root).removeRecursively();
 }
 
 // ER05 — the runtime lifecycle events + the window-level mirror.

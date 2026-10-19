@@ -55,7 +55,7 @@ xvfb-run — never touch the user's live display.
 | ER08 | scripting.insertCSS/removeCSS + executeScript file/frames/args forms — details below | done | 1 | needs:task:ER07 · extensionScriptCss leg PASS: insertCSS/removeCSS share the executeScript gates + per-frame fan-out, agent-world <style> ledger keyed by css unit+origin (upsert/remove/no-op-on-miss, dies with document); css/files/origin validated, USER origin = author-level approximation recorded; allFrames+frameIds target real subframes; multi-file files[] order verified; no-permission/no-host-access/bad-path/no-such-file/invalid-argument/unsupported/not-found typed + ledgered; full suite 36/36 (3 env skips) |
 | ER09 | contentScripts dynamic registration — register/unregister/getScripts over our injection set — details below | done | 1 | needs:task:ER07 · extensionContentScriptRegistration leg PASS: shared runtime registry behind BOTH surfaces (MV3 scripting.register/unregister/getRegistered/update + Firefox contentScripts.register/unregister/getScripts w/ unregister-handle) arms profile scripts into the shared agent world on next matching nav; per-match host-coverage implication checked BEFORE arming (no-host-access), 'scripting' permission gates only the MV3 surface; persisted specs re-arm across host respawn via ProfileSettings extensions/regscripts/<id>, session-only die with load, all drop on uninstall; bad-path/no-such-file/invalid-argument/not-found/unsupported typed; full suite 37/37 (3 env skips) + real Bitwarden legs all PASS incl. handshake gate (bg dispatched 4 executeScript — executed, no gap) |
 | ER10 | offscreen.createDocument/hasDocument/closeDocument → second-class host page — details below | done | 0 | hidden bridge-backed doc page; typed denials + verbatim single-document msg; getContexts OFFSCREEN_DOCUMENT; extensionOffscreen + full suite 38/38 + Bitwarden legs pass |
-| ER11 | webRequest observe-only events (onBeforeRequest/onCompleted/onErrorOccurred) via QWebEngineUrlRequestInterceptor — details below | pending | 0 | needs:task:ER04 |
+| ER11 | webRequest observe-only events (onBeforeRequest/onCompleted/onErrorOccurred) via QWebEngineUrlRequestInterceptor — details below | done | 2 | needs:task:ER04 · extensionWebRequest leg PASS: interceptor→watcher feed (OTR/tor excluded) serves onBefore*/onSendHeaders/onHeadersReceived/onCompleted/onErrorOccurred w/ per-listener filters + per-event host-coverage re-proof; blocking/requestBody→typed unsupported+gap, unservable events refuse at subscribe; orphan tabId-adoption fixed fast-fail nav race; full suite 39/39 + real Bitwarden legs PASS (bg registered onHeadersReceived — note, not gap) |
 | ER12 | notifications.create/update/clear/getAll → native presenter — details below | pending | 0 | needs:task:ER06 |
 | ER13 | idle.queryState/onStateChanged — input-activity watcher, configurable threshold — details below | pending | 0 | needs:task:ER05 |
 | ER14 | commands — manifest command parsing + QShortcut registry + onCommand dispatch — details below | pending | 0 | needs:task:ER05 |
@@ -258,6 +258,42 @@ typed `unsupported` (the interceptor cannot mutate) — recorded in
 shimGaps, never silently ignored.
 Verify: fixture's onCompleted listener sees a scripted fetch; a
 blocking registration replies unsupported and is logged as a gap.
+
+Result (done): `ExtensionRequestWatcher` (singleton) is fed by
+`PrivacyRequestInterceptor::interceptRequest` — observeRequest()
+snapshots on the IO thread and queued-delivers before the privacy
+verdict applies; off-the-record profiles never report (tor has its
+own interceptor). The shim holds per-listener (fn, filter,
+extraInfoSpec) triples and registers one record per addListener via
+`webRequest.subscribe`; the bridge gates the whole namespace on the
+'webRequest' manifest permission and the watcher re-proves
+host_permissions coverage per emitted event in C++ (`requestVisibleTo`,
+the 'tabs' shortcut deliberately excluded). Servable:
+onBeforeRequest/onBeforeSendHeaders/onSendHeaders from the
+interception point, onHeadersReceived/onCompleted/onErrorOccurred
+from main-frame milestones (loadingChanged LoadSucceededStatus
+hands the real responseHeaders; loadFinished pairs completion) plus
+the channel-world resource-timing probe (`extresprobe.js` → page
+bridge 'resourceTiming') for subresource/fetch completions —
+probe reports only ever pair requests the interceptor announced,
+so forged ops cannot invent events. Unservable
+(onBeforeRedirect/onResponseStarted/onAuthRequired) and
+'blocking'/'requestBody' extraInfoSpec answer typed `unsupported`
+into shimGaps — blocking listeners still register observe-only per
+Chrome MV3. Race machinery: the interceptor's queued start can
+lose to engine milestones, so commits/failures/dones buffer per
+tab until the start drains them in Chrome order, and records whose
+queued start ran before the tab announced its pending url park
+under tabId -1 and get adopted by the resolving milestone feed
+(measured: a refused-connection nav opened under -1 and lost its
+onErrorOccurred until adoption landed). Verified: extensionWebRequest
+PASS (real page load + scripted fetch over loopback, headers on
+request only to registrations that asked, before/completed share a
+requestId, filtered listener silent, blocking degrade + both typed
+denials in shimGaps, refused-port net::ERR_, fixture B host-scope
+refusal), full suite 39/39 (3 env skips), real Bitwarden legs PASS —
+its background's live onHeadersReceived subscription registered and
+surfaced the documented fidelity note, not a gap.
 
 ### ER12
 `chrome.notifications.create/update/clear/getAll` → freedesktop

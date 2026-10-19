@@ -3635,3 +3635,27 @@ Extensions (offscreen): chrome.offscreen.createDocument/hasDocument/
     the document still gets its reply. The extensionOffscreen
     autotest leg drives the full lifecycle including in-document
     storage round-trips and every denial.
+Extensions (webRequest): chrome.webRequest's observe-only events are
+    served by the hosted runtime (ER11) — onBeforeRequest,
+    onBeforeSendHeaders, onSendHeaders, onHeadersReceived,
+    onCompleted and onErrorOccurred fire with Chrome-shaped details
+    for every request the profile interceptor sees, scoped so a
+    request reaches an extension only when a registered listener's
+    urls/types/tabId filter matches AND the extension's
+    host_permissions cover the request URL (re-proved per event, in
+    C++, never delegated to page-side code). Request/response
+    headers reach only listeners that asked via extraInfoSpec;
+    response headers are the real commit headers for main-frame
+    navigations, subresource completion rides a page-side
+    resource-timing probe that can only pair requests the
+    interceptor actually announced, and off-the-record plus Tor
+    traffic is never reported. Blocking stays honestly out: a
+    'blocking' or 'requestBody' extraInfoSpec registers the listener
+    observe-only (Chrome's MV3 degrade) but answers a typed
+    unsupported error that lands in the extension's health ledger,
+    and events with no observation source (onBeforeRedirect,
+    onResponseStarted, onAuthRequired) refuse at subscribe the same
+    way. The extensionWebRequest autotest leg proves a real page
+    load plus scripted fetch end to end — headers, requestId
+    pairing, filter scoping, a refused-connection net:: error, and
+    every typed denial.

@@ -553,7 +553,14 @@ Argon2/WASM and clipboard work: the call spawns a hidden
 navigation-locked page at the declared extension URL carrying the
 same shim, bridge and message relay as the popup, so code inside
 the document is a full extension context (`runtime.getContexts`
-lists it as `OFFSCREEN_DOCUMENT`).
+lists it as `OFFSCREEN_DOCUMENT`). `chrome.webRequest` is served
+observe-only: `onBeforeRequest`/`onBeforeSendHeaders`/`onSendHeaders`/
+`onHeadersReceived`/`onCompleted`/`onErrorOccurred` fire with
+Chrome-shaped details and honor each listener's `urls`/`types`/
+`tabId` filters, but a request only reaches an extension whose
+`host_permissions` cover its URL, private/Tor traffic is never
+reported, and `blocking` registrations answer a typed error rather
+than pretending to intercept.
 
 Enabled extensions that declare a background script additionally get
 a hosted background context: a hidden page on the extension's own

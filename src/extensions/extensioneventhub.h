@@ -26,6 +26,7 @@
 #include <qpointer.h>
 #include <qset.h>
 #include <qstring.h>
+#include <qurl.h>
 
 class BrowserMainWindow;
 class QMenu;
@@ -146,6 +147,20 @@ public:
     // to extensions.
     static bool trackable(const WebView *view);
 
+    // ER11 — the webRequest watcher's plumbing.  viewForRequest
+    // attributes an intercepted request to a tracked tab: main-frame
+    // navigations match the pending/committed url, subresources the
+    // first-party (document) url.  Untracked origins answer nullptr
+    // — the watcher reports Chrome's tabId -1 for them.
+    WebView *viewForRequest(const QUrl &url, bool isMainFrame,
+                            const QUrl &firstParty) const;
+    bool tracked(const WebView *view) const;
+    // Installs the subresource-completion probe (data/extresprobe.js)
+    // on every tracked page that lacks it — driven by the watcher
+    // when the first webRequest subscription lands.  The script
+    // persists per page; injection is property-guarded.
+    void armRequestProbes();
+
 private:
     explicit ExtensionEventHub(QObject *parent = nullptr);
 
@@ -158,6 +173,9 @@ private:
 
     void wireWindow(BrowserMainWindow *window);
     void wireView(WebView *view);
+    // ER11: the resource-timing probe script — installed lazily once
+    // a webRequest subscription exists (see armRequestProbes).
+    void injectRequestProbe(WebView *view);
     void onTabActivated(TabWidget *tabs, int index);
     // destroyed() handlers receive the TYPED pointer captured at wire
     // time — during the signal the object is already sliced to

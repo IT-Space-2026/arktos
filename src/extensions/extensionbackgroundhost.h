@@ -165,6 +165,11 @@ private:
     // registers its relay context (the messaging-ready signal).
     QJsonObject invokeOffscreen(const QString &method,
                                 const QJsonObject &args);
+    // ER11: chrome.webRequest.subscribe/unsubscribe — the observe-
+    // only listener registry lives in ExtensionRequestWatcher; the
+    // bridge is the listener's lifetime context.
+    QJsonObject invokeWebRequest(const QString &method,
+                                 const QJsonObject &args);
     void finishExecFrame(const QString &execId, int slot,
                          int frameId, const QVariant &value,
                          QWebEngineFrame frame, quint32 worldId,
@@ -393,6 +398,13 @@ public:
     // chrome.tabs replies in ExtensionShimBackend apply the same
     // scrub rule the event fan-out does.
     bool seesUrls(const QString &extensionId, const QString &url) const;
+
+    // ER11: whether a request to `url` may reach this extension's
+    // webRequest events — Chrome scopes them by host_permissions
+    // (the 'webRequest' permission gates the namespace itself; a
+    // listener's urls filter grants no coverage of its own).
+    bool requestVisibleTo(const QString &extensionId,
+                          const QUrl &url) const;
 
     // ------------------------------------------------------------------
     // ER09 — dynamic content-script registration.  Chrome's

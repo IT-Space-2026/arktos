@@ -22,6 +22,7 @@
 #include "browsermainwindow.h"
 #include "extensionbackgroundhost.h"
 #include "extensioneventhub.h"
+#include "extensionrequestwatcher.h"
 #include "extensionshimbackend.h"
 #include "tabwidget.h"
 #include "webview.h"
@@ -157,6 +158,28 @@ QJsonObject ExtensionPageBridge::invoke(const QString &op,
         if (!view || !ExtensionEventHub::instance()
                          ->onDomContentLoaded(view))
             return pageBridgeErr(QStringLiteral("not-loading"));
+        QJsonObject reply;
+        reply.insert(QStringLiteral("ok"), true);
+        return reply;
+    }
+
+    // ER11 — the channel-world resource-timing probe's settled-
+    // subresource report.  Browser-scoped like navDomReady: the
+    // watcher pairs entries against requests the profile
+    // interceptor actually announced, so a forged op cannot invent
+    // completions — only pre-announce a real in-flight url's pair,
+    // which the owning page could observe anyway.
+    if (op == QLatin1String("resourceTiming")) {
+        if (!m_page)
+            return pageBridgeErr(QStringLiteral("no-page"));
+        WebView *view = nullptr;
+        if (QWebEngineView *engineView = QWebEngineView::forPage(m_page))
+            view = qobject_cast<WebView *>(engineView);
+        if (!view || !ExtensionEventHub::instance()->tracked(view))
+            return pageBridgeErr(QStringLiteral("untracked"));
+        ExtensionRequestWatcher::instance()->resourceSettled(
+            view, args.value(QLatin1String("entries")).toArray(),
+            args.value(QLatin1String("origin")).toDouble());
         QJsonObject reply;
         reply.insert(QStringLiteral("ok"), true);
         return reply;

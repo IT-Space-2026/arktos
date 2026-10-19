@@ -2173,6 +2173,203 @@
         });
     }
 
+    // --- chrome.webRequest ----------------------------------------------------
+    // ER11 — observe-only webRequest.  Each event keeps its
+    // (listener, filter, extraInfoSpec) triples locally and registers
+    // one record per addListener with the C++ watcher through
+    // webRequest.subscribe; deliveries arrive as 'webRequest.<event>'
+    // hostEvents already unioned per extension, so __fire re-checks
+    // each listener's own filter.  'blocking'/'requestBody'
+    // extraInfoSpec can never be honored — the watcher still
+    // registers the listener observe-only (Chrome's MV3 answer) but
+    // answers typed 'unsupported', which typedError records into
+    // gaps -> health.  Events no observation source exists for
+    // (onBeforeRedirect/onResponseStarted/onAuthRequired) answer the
+    // same typed error at subscribe — never a silent no-fire.
+    var wrSeq = 0;
+    function wrUrlMatches(patterns, urlString) {
+        // Chrome match-pattern check against a concrete URL — the
+        // local half of the watcher's grammar (the C++ side already
+        // applies it per extension; this re-checks per listener).
+        if (!Array.isArray(patterns) || !patterns.length)
+            return true;
+        var u;
+        try { u = new URL(urlString); } catch (e) { return false; }
+        var scheme = u.protocol.replace(/:$/, '');
+        for (var i = 0; i < patterns.length; ++i) {
+            var p = patterns[i];
+            if (p === '<all_urls>') {
+                if (scheme === 'http' || scheme === 'https'
+                        || scheme === 'file' || scheme === 'ftp')
+                    return true;
+                continue;
+            }
+            var sep = p.indexOf('://');
+            if (sep < 0)
+                continue;
+            var ps = p.slice(0, sep);
+            var rest = p.slice(sep + 3);
+            var slash = rest.indexOf('/');
+            var ph = slash < 0 ? rest : rest.slice(0, slash);
+            var pp = slash < 0 ? '/*' : rest.slice(slash);
+            // 'host:port' — Chrome lets patterns pin a port.
+            var pport = '';
+            var colon = ph.lastIndexOf(':');
+            if (colon >= 0) {
+                pport = ph.slice(colon + 1);
+                ph = ph.slice(0, colon);
+            }
+            if (ps === '*') {
+                if (scheme !== 'http' && scheme !== 'https')
+                    continue;
+            } else if (ps !== scheme) {
+                continue;
+            }
+            if (pport && pport !== '*') {
+                var defPort = scheme === 'https' ? 443
+                    : scheme === 'http' ? 80 : -1;
+                var uport = u.port ? parseInt(u.port, 10) : defPort;
+                if (uport !== parseInt(pport, 10))
+                    continue;
+            }
+            if (ph === '*') {
+                // any host
+            } else if (ph.indexOf('*.') === 0) {
+                var base = ph.slice(2);
+                if (u.hostname !== base
+                        && !u.hostname.endsWith('.' + base))
+                    continue;
+            } else if (ph !== u.hostname) {
+                continue;
+            }
+            var re;
+            try {
+                re = new RegExp('^'
+                    + pp.replace(/[.+^${}()|[\]\\]/g, '\\$&')
+                        .replace(/\*/g, '.*')
+                        .replace(/\?/g, '.')
+                    + '$');
+            } catch (e) { continue; }
+            if (re.test(u.pathname + (u.search || '')))
+                return true;
+        }
+        return false;
+    }
+    function makeWebRequestEvent(name) {
+        var eventName = name.slice('webRequest.'.length);
+        var listeners = [];   // {fn, filter, spec, regId}
+        var ev = {
+            addListener: function (fn, filter, extraInfoSpec) {
+                if (typeof fn !== 'function')
+                    return;
+                filter = filter || {};
+                var spec = Array.isArray(extraInfoSpec)
+                    ? extraInfoSpec : [];
+                var entry = {
+                    fn: fn, filter: filter, spec: spec,
+                    regId: cfg.id + '#wr' + (++wrSeq) + '#'
+                           + Date.now()
+                };
+                listeners.push(entry);
+                call('webRequest', 'subscribe', {
+                    regId: entry.regId,
+                    event: eventName,
+                    filter: {
+                        urls: Array.isArray(filter.urls)
+                            ? filter.urls : [],
+                        types: Array.isArray(filter.types)
+                            ? filter.types : null,
+                        tabId: filter.tabId,
+                        windowId: filter.windowId
+                    },
+                    extraInfoSpec: spec
+                }).then(function (r) {
+                    if (r && r.note)
+                        note('chrome.' + name + ': ' + r.note);
+                }).catch(function () {
+                    // The typed failure (unsupported spec, unservable
+                    // event, missing permission) already recorded
+                    // its gap inside call().
+                });
+            },
+            removeListener: function (fn) {
+                for (var i = 0; i < listeners.length; ++i) {
+                    if (listeners[i].fn === fn) {
+                        var regId = listeners[i].regId;
+                        listeners.splice(i, 1);
+                        call('webRequest', 'unsubscribe',
+                             { regId: regId })
+                            .catch(function () {});
+                        return;
+                    }
+                }
+            },
+            hasListener: function (fn) {
+                for (var i = 0; i < listeners.length; ++i)
+                    if (listeners[i].fn === fn)
+                        return true;
+                return false;
+            },
+            hasListeners: function () { return listeners.length > 0; }
+        };
+        ev.__fire = function (args) {
+            var details = args && args[0] ? args[0] : {};
+            for (var i = 0; i < listeners.length; ++i) {
+                var l = listeners[i];
+                var f = l.filter;
+                if (f.tabId !== undefined
+                        && f.tabId !== details.tabId)
+                    continue;
+                if (f.windowId !== undefined
+                        && f.windowId !== details.windowId)
+                    continue;
+                if (Array.isArray(f.types) && f.types.length
+                        && f.types.indexOf(details.type) < 0)
+                    continue;
+                if (!wrUrlMatches(f.urls, details.url))
+                    continue;
+                try {
+                    l.fn(details);
+                } catch (e) {
+                    record('shim event ' + name + ' listener: ' + e);
+                }
+            }
+        };
+        shim.events[name] = ev;
+        return ev;
+    }
+    if (typeof chrome !== 'undefined') {
+        installNs('webRequest', {
+            __arktosShim: true,
+            onBeforeRequest:
+                makeWebRequestEvent('webRequest.onBeforeRequest'),
+            onBeforeSendHeaders:
+                makeWebRequestEvent('webRequest.onBeforeSendHeaders'),
+            onSendHeaders:
+                makeWebRequestEvent('webRequest.onSendHeaders'),
+            onHeadersReceived:
+                makeWebRequestEvent('webRequest.onHeadersReceived'),
+            onAuthRequired:
+                makeWebRequestEvent('webRequest.onAuthRequired'),
+            onResponseStarted:
+                makeWebRequestEvent('webRequest.onResponseStarted'),
+            onBeforeRedirect:
+                makeWebRequestEvent('webRequest.onBeforeRedirect'),
+            onCompleted:
+                makeWebRequestEvent('webRequest.onCompleted'),
+            onErrorOccurred:
+                makeWebRequestEvent('webRequest.onErrorOccurred'),
+            // Chrome's call flushes the in-memory blocking-filter
+            // cache — observe-only has nothing to flush, so a plain
+            // resolve is the honest answer (never a stub).
+            handlerBehaviorChanged: function (cb) {
+                touch('chrome.webRequest.handlerBehaviorChanged');
+                return okCall(undefined, cb);
+            },
+            MAX_HANDLER_BEHAVIOR_CHANGED_CALLS_PER_10_MINUTES: 20
+        });
+    }
+
     // --- chrome.scripting -----------------------------------------------------
     // ER07 — the product API.  executeScript is bridge-backed: the
     // host resolves the tab, re-proves 'scripting' + host coverage
@@ -2938,13 +3135,6 @@
                 'getBadgeText', 'setBadgeBackgroundColor',
                 'getBadgeBackgroundColor', 'setPopup', 'getPopup',
                 'enable', 'disable']);
-        fillNs('webRequest',
-               ['onBeforeRequest', 'onBeforeSendHeaders',
-                'onSendHeaders', 'onHeadersReceived',
-                'onAuthRequired', 'onResponseStarted',
-                'onBeforeRedirect', 'onCompleted',
-                'onErrorOccurred'],
-               ['handlerBehaviorChanged']);
         fillNs('declarativeNetRequest',
                ['onRuleMatchedDebug'],
                ['updateDynamicRules', 'updateSessionRules',
@@ -3049,7 +3239,7 @@
         'windows', 'cookies', 'bookmarks', 'identity', 'gcm',
         'nativeMessaging', 'privacy', 'topSites', 'history',
         'scripting', 'offscreen', 'omnibox', 'devtools',
-        'fontSettings', 'tabGroups', 'userScripts', 'webRequest',
+        'fontSettings', 'tabGroups', 'userScripts',
         'declarativeNetRequest', 'declarativeContent', 'idle',
         'browsingData', 'management', 'sessions', 'downloads',
         'power', 'system', 'tts', 'enterprise', 'debugger',

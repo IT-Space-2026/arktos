@@ -24,6 +24,7 @@
 #include "browserprofile.h"
 #include "engine/engineinterface.h"
 #include "extensionbackgroundhost.h"
+#include "extensionrequestwatcher.h"
 #include "extensionshimbackend.h"
 #include "tabwidget.h"
 #include "webpage.h"
@@ -358,6 +359,10 @@ void ExtensionEventHub::wireView(WebView *view)
                           ":extnavdcl.js";
         }
     }
+    // ER11: lazily arm the subresource-completion probe on pages
+    // wired while a webRequest subscription already exists.
+    if (ExtensionRequestWatcher::instance()->hasSubscribers())
+        injectRequestProbe(view);
     connect(page, &QWebEnginePage::loadStarted, this,
             [this, view]() {
         auto it = m_tabs.find(view);
@@ -433,6 +438,11 @@ void ExtensionEventHub::wireView(WebView *view)
             emitNavEvent(view,
                          QStringLiteral("webNavigation.onCompleted"),
                          view->url());
+            // ER11: pair the committed main-frame request with its
+            // webRequest.onCompleted — the watcher's ledger matches
+            // by (tab, url).
+            ExtensionRequestWatcher::instance()->mainFrameCompleted(
+                view, view->url());
         } else if (!internal) {
             QJsonObject extra{
                 {QStringLiteral("error"),
@@ -450,6 +460,15 @@ void ExtensionEventHub::wireView(WebView *view)
                          it->pendingUrl.isEmpty()
                              ? view->url() : QUrl(it->pendingUrl),
                          extra);
+            // ER11: the same milestone backs webRequest.onErrorOccurred
+            // — a failure loadingChanged's isErrorPage gate declined
+            // still reaches the watcher here; a load already settled
+            // there is absorbed by its retired set.
+            ExtensionRequestWatcher::instance()->mainFrameFailed(
+                view,
+                it->pendingUrl.isEmpty()
+                    ? view->url() : QUrl(it->pendingUrl),
+                it->lastErrorCode, it->lastError);
         }
         emitTabUpdated(view,
                        QJsonObject{
@@ -469,11 +488,30 @@ void ExtensionEventHub::wireView(WebView *view)
             return;
         if (info.isErrorPage())
             it->errorPageLoad = true;
+        // ER11: a real (non-error-page) main-frame commit hands the
+        // watcher the response headers for onHeadersReceived — the
+        // engine only fills responseHeaders once the response has
+        // actually landed (LoadSucceededStatus); LoadStartedStatus
+        // still precedes the wire.  A failure answers
+        // webRequest.onErrorOccurred.
+        if (!info.isErrorPage()
+                && (info.status()
+                        == QWebEngineLoadingInfo::LoadSucceededStatus
+                    || (info.status()
+                            == QWebEngineLoadingInfo::LoadStartedStatus
+                        && !info.responseHeaders().isEmpty()))) {
+            ExtensionRequestWatcher::instance()->mainFrameCommitted(
+                view, info.url(), info.responseHeaders());
+        }
         if (info.status() == QWebEngineLoadingInfo::LoadFailedStatus) {
             it->loadFailed = true;
             it->lastError = info.errorString();
             it->lastErrorCode = info.errorCode();
             it->lastErrorDomain = int(info.errorDomain());
+            if (!info.isErrorPage())
+                ExtensionRequestWatcher::instance()->mainFrameFailed(
+                    view, info.url(), info.errorCode(),
+                    info.errorString());
         }
     });
     connect(page, &QWebEnginePage::urlChanged, this,
@@ -514,6 +552,75 @@ void ExtensionEventHub::wireView(WebView *view)
     });
     connect(view, &QObject::destroyed, this,
             [this, view]() { onViewDestroyed(view); });
+}
+
+// ER11 — request -> tab attribution for the webRequest watcher.
+// A main-frame navigation matches the tab announcing it as pending
+// (aboutToLoadUrl) or committed (lastUrl/url()); any other request
+// matches the tab whose document is its first party.  Nothing else
+// in the process can attribute — the interceptor runs on the IO
+// thread with no frame handle — so untracked origins honestly keep
+// Chrome's tabId -1.
+WebView *ExtensionEventHub::viewForRequest(const QUrl &url,
+                                           bool isMainFrame,
+                                           const QUrl &firstParty) const
+{
+    const QString urlString = url.toString();
+    const QString partyString = firstParty.toString();
+    for (auto it = m_tabs.constBegin(); it != m_tabs.constEnd(); ++it) {
+        WebView *view = it.key();
+        if (!view)
+            continue;
+        if (isMainFrame) {
+            if (it->pendingUrl == urlString
+                    || it->lastUrl == urlString
+                    || view->url() == url)
+                return view;
+        } else if (!partyString.isEmpty()
+                   && (view->url() == firstParty
+                       || it->lastUrl == partyString)) {
+            return view;
+        }
+    }
+    return nullptr;
+}
+
+bool ExtensionEventHub::tracked(const WebView *view) const
+{
+    return m_tabs.contains(const_cast<WebView *>(view));
+}
+
+void ExtensionEventHub::armRequestProbes()
+{
+    for (auto it = m_tabs.constBegin(); it != m_tabs.constEnd(); ++it)
+        if (WebView *view = it.key())
+            injectRequestProbe(view);
+}
+
+void ExtensionEventHub::injectRequestProbe(WebView *view)
+{
+    if (!view || view->property("arktosResProbe").toBool())
+        return;
+    QWebEnginePage *page = view->page();
+    if (!page)
+        return;
+    view->setProperty("arktosResProbe", true);
+    // Same lane as extnavdcl.js: DocumentCreation in the channel
+    // world, main frame only — subframes' own fetches still surface
+    // via the main document's resource entries.
+    QFile probeFile(QLatin1String(":extresprobe.js"));
+    if (!probeFile.open(QIODevice::ReadOnly)) {
+        qWarning() << "ExtensionEventHub: cannot open"
+                      ":extresprobe.js";
+        return;
+    }
+    QWebEngineScript probe;
+    probe.setName(QLatin1String("arktos:extres-probe"));
+    probe.setInjectionPoint(QWebEngineScript::DocumentCreation);
+    probe.setWorldId(Engine::ArktosChannelWorld);
+    probe.setRunsOnSubFrames(false);
+    probe.setSourceCode(QString::fromUtf8(probeFile.readAll()));
+    page->scripts().insert(probe);
 }
 
 void ExtensionEventHub::onTabActivated(TabWidget *tabs, int index)

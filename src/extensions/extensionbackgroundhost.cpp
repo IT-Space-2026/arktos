@@ -24,6 +24,7 @@
 #include "extensioneventhub.h"
 #include "extensionmanager.h"
 #include "extensionpagebridge.h"
+#include "extensionrequestwatcher.h"
 #include "extensionshimbackend.h"
 #include "profilesettings.h"
 #include "webview.h"
@@ -171,6 +172,11 @@ QJsonObject ChromeBridge::invoke(const QString &ns,
     // the async createDocument resolves onto THIS bridge's hostEvent.
     if (ns == QLatin1String("offscreen"))
         return invokeOffscreen(method, args);
+    // ER11: observe-only chrome.webRequest — listener registration
+    // lives at this level because the registering bridge is the
+    // lifetime context Chrome binds the listener to.
+    if (ns == QLatin1String("webRequest"))
+        return invokeWebRequest(method, args);
     if (!m_backend) {
         QJsonObject o;
         o.insert(QStringLiteral("ok"), false);
@@ -1140,6 +1146,10 @@ void ExtensionBackgroundRuntime::teardown(const QString &id)
     // closes an extension's pages on unload, and its bridge's backend
     // just died anyway.
     dropOffscreenDocument(id);
+    // ER11: unload sweeps every webRequest listener the extension
+    // registered — Chrome binds listeners to the extension, not to
+    // a surviving context.
+    ExtensionRequestWatcher::instance()->dropExtension(id);
     ExtensionBackgroundHost *host = m_hosts.take(id);
     if (host) {
         unregisterRelayContext(host->bridge());
@@ -1893,6 +1903,10 @@ QString eventGate(const QString &name)
         return QStringLiteral("webNavigation");
     if (ns == QLatin1String("contextMenus"))
         return QStringLiteral("contextMenus");
+    // ER11: same Chrome parity — no 'webRequest' permission, no
+    // event surface.
+    if (ns == QLatin1String("webRequest"))
+        return QStringLiteral("webRequest");
     return QString();
 }
 
@@ -1914,9 +1928,17 @@ bool hostCovers(const QString &pattern, const QUrl &url)
     const QString pscheme = pattern.left(sep);
     const QString rest = pattern.mid(sep + 3);
     const int slash = rest.indexOf(QLatin1Char('/'));
-    const QString phost = slash < 0 ? rest : rest.left(slash);
+    QString phost = slash < 0 ? rest : rest.left(slash);
     const QString ppath =
         slash < 0 ? QStringLiteral("/*") : rest.mid(slash);
+    // Chrome lets a pattern pin a port ('127.0.0.1:*') — split it
+    // off before the host compare.
+    QString pport;
+    const int colon = phost.lastIndexOf(QLatin1Char(':'));
+    if (colon >= 0) {
+        pport = phost.mid(colon + 1);
+        phost = phost.left(colon);
+    }
     if (pscheme == QLatin1String("*")) {
         // '*://' covers http + https only (Chrome semantics).
         if (scheme != QLatin1String("http")
@@ -1924,6 +1946,12 @@ bool hostCovers(const QString &pattern, const QUrl &url)
             return false;
     } else if (pscheme != scheme) {
         return false;
+    }
+    if (!pport.isEmpty() && pport != QLatin1String("*")) {
+        const int defPort = scheme == QLatin1String("https") ? 443
+            : scheme == QLatin1String("http") ? 80 : -1;
+        if (url.port(defPort) != pport.toInt())
+            return false;
     }
     const QString host = url.host();
     if (phost == QLatin1String("*")) {
@@ -1983,6 +2011,21 @@ bool ExtensionBackgroundRuntime::seesUrls(const QString &extensionId,
     const QUrl qurl(QString::fromUtf8(url.toUtf8()));
     for (const QString &pattern : m_extHostPermissions.value(extensionId)) {
         if (hostCovers(pattern, qurl))
+            return true;
+    }
+    return false;
+}
+
+// ER11: Chrome scopes webRequest events by host_permissions — a
+// listener's url filter alone grants nothing.  The 'tabs' shortcut
+// deliberately does NOT apply: it covers tab metadata, not request
+// traffic.
+bool ExtensionBackgroundRuntime::requestVisibleTo(
+        const QString &extensionId, const QUrl &url) const
+{
+    for (const QString &pattern :
+             m_extHostPermissions.value(extensionId)) {
+        if (hostCovers(pattern, url))
             return true;
     }
     return false;
@@ -3607,6 +3650,43 @@ QJsonObject ChromeBridge::invokeContentScripts(
             m_extensionId, QStringLiteral("contentScripts"),
             QStringList()));
     }
+    return err(QStringLiteral("unimplemented"));
+}
+
+// ER11 — observe-only chrome.webRequest.  The shim's event objects
+// register one record per addListener ('subscribe') and drop it on
+// removeListener ('unsubscribe'); this bridge is the lifetime
+// context, so a closing popup/background takes its listeners down
+// like Chrome's.  The 'webRequest' manifest permission is the
+// registration gate — matching fanOut's delivery gate.
+QJsonObject ChromeBridge::invokeWebRequest(const QString &method,
+                                           const QJsonObject &args)
+{
+    auto err = [](const QString &code) {
+        QJsonObject o;
+        o.insert(QStringLiteral("ok"), false);
+        o.insert(QStringLiteral("error"), code);
+        return o;
+    };
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    if (!runtime->hasExtensionPermission(
+            m_extensionId, QStringLiteral("webRequest")))
+        return err(QStringLiteral("no-webRequest-permission"));
+    ExtensionRequestWatcher *watcher =
+        ExtensionRequestWatcher::instance();
+    const QString regId = args.value(QLatin1String("regId")).toString();
+    if (!ownsRelayKey(m_extensionId, regId))
+        return err(QStringLiteral("invalid-argument"));
+    if (method == QLatin1String("subscribe")) {
+        return watcher->subscribe(
+            this, m_extensionId, regId,
+            args.value(QLatin1String("event")).toString(),
+            args.value(QLatin1String("filter")).toObject(),
+            args.value(QLatin1String("extraInfoSpec")).toArray());
+    }
+    if (method == QLatin1String("unsubscribe"))
+        return watcher->unsubscribe(m_extensionId, regId);
     return err(QStringLiteral("unimplemented"));
 }
 
