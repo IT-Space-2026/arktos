@@ -128,9 +128,12 @@ Rules for the agent working this file:
 | WK16 | Script injection + worlds + host channel — UserContentManager, world-name mapping, script-message reply — details below | done | 0 | insertScript/removeScript drive the page UCM (start/end + frame-scope + world-name mapping, 0xa0→"arktos-channel"); profile scripts propagate to live pages (per-view UCMs); runJavaScriptLifted evals in the named world (unanchored names transient — documented); "arktosChannel" script-message handler in the channel world, _with_reply dlsym-gated → Promise resolved by listener QVariant, honest no-promise fallback; JS-asset verdict: autofill DOM-fill OK, channel/QWebChannel surfaces stay gated — verified: tst_engineswitch 36/36 incl webkitScriptWorlds (doc-start marker@loading, SEC24 isolation + handler unenumerable in main, ack:WK16 reply round-trip, profile live insert/remove, removeScript+reload), app link clean, inert TU clean — offscreen --disable-gpu |
 | WK17 | Navigation veto + custom schemes — decide-policy → RequestPolicy; register_uri_scheme → arktos-file:/abp: — details below | done | 0 | needs:task:WK11 — decide-policy consults the profile's RequestPolicy for navigation+new-window actions (Block→ignore, Redirect→refuse+re-issue at verdict URL, no rewrites faked); file: dir navs reroute to arktos-file:; register_uri_scheme installs arktos-file/abp/arktos-resource/arktos-cert-error/arktos-http-warning/arktos-site-block on the shared context reusing the handlers' now-shared serving halves (SEC02 via Referer+nav-target match; abp:→persona promptSubscribe; security-manager flags mirror QWebEngineUrlScheme); external schemes refuse + run a queued SEC02 consent prompt→desktop handoff on the shared isBrowserHandledScheme allowlist; swap tabs get the adblock binding like Servo — verified: tst_engineswitch 37/37 incl. new webkitPolicySchemes (veto never wires, file-dir listing serves marker, interstitial+stub serve, abp prompt reached, external-scheme consent refused), tst_schemehandlers 25/25, tst_webpage 73/73, app+test link clean, inert TU syntax clean — offscreen |
 | WK18 | Content-blocker adblock — rule→JSON subset converter + capability honesty — details below | done | 0 | needs:task:WK17 — RequestPolicy::contentBlockerJson() (default empty) feeds WebkitProfile::syncContentBlocker from setRequestPolicy; rules[] compiles in a process-shared WebKitUserContentFilterStore keyed by SHA-256(rules) + installs on every page UCM (ctor-time for new pages, ref-before-unref swap keeps coverage, rulesChanged re-push via installOnProfile recompiles); dropped[] logged with reason codes + meta.emitted/dropped/degraded surfaced for tests; converter: $redirect/$redirect-rule degrade→block (meta.degraded, never dropped), $cookie rescued past the parser's unknown option→block-cookies (@@ exception stays ignore-previous-rules); new declarativeBlocking cap separates the subresource lane from WK17's navigation-veto requestInterception — verified: cargo 14/14, tst_engineswitch 38/38 incl new webkitContentBlocking (tracker URL never reaches the wire, cosmetic element computes display:none, emitted/dropped/degraded printed, re-push recompiles), no-rust + inert TU syntax clean — offscreen |
-| WK19 | Capabilities + surfaces — cert errors, context menu, permissions, downloads, settings/About/"WebKit x.y.z" consistency — details below | pending | 0 | needs:task:WK16 needs:task:WK18 |
+| WK19 | Capabilities + surfaces — cert errors, context menu, permissions, downloads, settings/About/"WebKit x.y.z" consistency — details below | in_progress | 1 | needs:task:WK16 needs:task:WK18 |
 | WK20 | Perf — dmabuf/EGLImage → GL texture path (raster stays fallback) — details below | pending | 0 | needs:task:WK08 |
 | WK21 | Stretch audit — SOCKS5/Tor leak check, WebExtensions probe, WebKitWebInspector embed — details below | pending | 0 | needs:task:WK19 |
+| MEM11 | Post-spine leak re-audit — instrumented ASan/LSan scan over the NEW surfaces (webkit backend, extension runtime, multi-view servo shim) — details below | pending | 0 | needs:task:WK21 — third sweep after MEM02/09/10; ~40 lane commits landed since |
+| DEAD01 | Dead code + duplicate sweep — unreachable-code/unused-symbol scan + copy-paste duplication across the four fast lanes — details below | pending | 0 | needs:task:WK21 — engine backends, extension runtime, and smoke legs grew in parallel |
+| SEC26 | Security re-audit of new attack surface — extension-runtime boundary, webkit injection paths, shim ABI, permission gates — details below | pending | 0 | needs:task:WK21 — hosted chrome.* runtime + 3rd engine widened the surface |
 
 ## Task details
 
@@ -1078,3 +1081,81 @@ only — affects the devTools capability.
 
 Verify: verdict entries appended to .devin/WEBKIT-SPIKE.md;
 capability flags match measured reality.
+
+## Post-spine audit pass (queued 2026-10-19, runs after WK21)
+
+### MEM11
+
+Memory-leak re-audit — the MEM02/09/10 methodology applied to the NEW
+code since those scans: `src/engine/webkitbackend.*` (WPEView/Page
+lifecycle, WKWebsiteDataManager per profile), `src/extensions/*`
+(hosted runtime: ExtensionPageBridge, ExtensionBackgroundHost,
+ExtensionShimBackend, idle watcher, notification center, request
+watcher, event hub), multi-view servo shim (per-view
+RenderingContext/WebView/SeInstance churn, view create/destroy loops),
+plus new autotest fixtures.
+
+- Reuse the MEM09 approach: ASan/UBSan throwaway tree +
+  __lsan_do_leak_check before qtest_arktos.h's _exit; run the focused
+  binaries (tst_extension*, tst_engine*, tst_webkit* if any,
+  profile/vault churn legs) under detect_leaks=1 fresh-HOME each.
+- Churn emphasis: create/destroy cycles — open/close EngineTabs per
+  backend, extension enable/disable cycles, profile create/delete,
+  servo view create/destroy×N (the ENG36 churn path is brand new).
+- Tally ours-vs-upstream like MEM09/10; any `src/` leak gets fixed in
+  this task, upstream noise gets classified, not fixed.
+
+Verify: scan report at .devin/MEM11-scan.md (tally per binary +
+verdicts); zero leaks sited in src/ OR all found leaks fixed and
+re-verified; make check 4 gates PASS on the main tree.
+
+### DEAD01
+
+Dead code + duplicate sweep — four lanes landed ~60 commits in two
+days; find what they left behind.
+
+- Unused symbols/functions: -Wunused* warnings already gated; go
+  deeper with a symbol-reachability pass (nm on objects + call-site
+  grep for exported-looking helpers with zero callers — esp. in
+  extensions/*, engine/*, and the spike/harness dirs).
+- Duplicated logic: copy-paste clones across lanes (e.g. permission
+  gating reimplemented in 3 extension files, URL-gate helpers copied
+  between servobackend/webkitbackend/webenginebackend). Consolidate
+  only where the duplication is mechanical and a shared helper is
+  obvious — flag anything where engines diverge on purpose.
+- Stale comments/dead docs: references to removed single-instance
+  Servo constraints, ENG-era "one tab" notes now wrong post-ENG36,
+  task files claiming pending state for shipped work.
+- .devin/: stale task/prompt/log hygiene (delete generated *.log
+  rotation if the repo tracks any).
+
+Verify: tally in the row notes (dead code removed count, duplications
+consolidated vs flagged-intentional); build + make check 4 gates
+PASS; no behavior change (pure cleanup — any behavior-impacting
+consolidation gets its own careful commit, not folded in).
+
+### SEC26
+
+Security re-audit of the new attack surface — ER16 already gated the
+extension-runtime boundary, but the full new surface spans:
+
+- **Hosted chrome.* runtime**: host-permission scoping on every
+  injection path (post-ER16 state), consent honoring, message
+  validation across the page-agent↔host bridge (size caps, type
+  confusion, spoofed sender IDs), extension-page JS exemption scope
+  (ER20 change — verify it can't leak to normal pages).
+- **WebKit backend**: evaluate_javascript result marshaling
+  (JSCValue→QVariant type confusion), custom-scheme serving
+  (path/response injection), decide-policy veto bypasses (about:,
+  data:, file:, blob:), UserContentManager world isolation, the
+  arktosChannel transport (page→native trust boundary).
+- **Servo shim ABI**: multi-view delegate routing by webview.id —
+  can a view's callback reach a sibling view's SeInstance? pending-
+  load queue shared across views (ENG36 fix — cross-view flush)?
+- **Cross-cutting**: profile-data paths stay home-dir-scoped,
+  per-call permission gates on every new IPC seam, no new
+  credentials/secret handling.
+
+Verify: findings doc .devin/SEC26-audit.md (per-surface verdicts,
+any real finding gets a fix + test in this task); hostile-fixture
+legs where a gate exists; make check 4 gates PASS.
