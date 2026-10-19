@@ -3819,3 +3819,13 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
     indicator tooltip, the switcher menu, the settings combo, About
     and --engine-list. Tor stays Chromium-locked — webkit is never
     offered there pending the leak audit.
+- WebKit frames now take a hardware path when one is available:
+  each rendered buffer is imported as an EGLImage on the WPE
+  display's own EGL connection, sampled as an OpenGL ES texture,
+  and handed to the widget (about four times faster per frame than
+  the CPU pixel copy in this environment). GPU producer/consumer
+  fences are honored when the display advertises them, and the
+  channel order of imported frames is auto-calibrated against the
+  proven raster copy on the first frame. The raster path remains
+  the automatic fallback whenever EGL import is unavailable or is
+  disabled with ARKTOS_WEBKIT_GL=0.

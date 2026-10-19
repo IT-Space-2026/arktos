@@ -129,7 +129,7 @@ Rules for the agent working this file:
 | WK17 | Navigation veto + custom schemes — decide-policy → RequestPolicy; register_uri_scheme → arktos-file:/abp: — details below | done | 0 | needs:task:WK11 — decide-policy consults the profile's RequestPolicy for navigation+new-window actions (Block→ignore, Redirect→refuse+re-issue at verdict URL, no rewrites faked); file: dir navs reroute to arktos-file:; register_uri_scheme installs arktos-file/abp/arktos-resource/arktos-cert-error/arktos-http-warning/arktos-site-block on the shared context reusing the handlers' now-shared serving halves (SEC02 via Referer+nav-target match; abp:→persona promptSubscribe; security-manager flags mirror QWebEngineUrlScheme); external schemes refuse + run a queued SEC02 consent prompt→desktop handoff on the shared isBrowserHandledScheme allowlist; swap tabs get the adblock binding like Servo — verified: tst_engineswitch 37/37 incl. new webkitPolicySchemes (veto never wires, file-dir listing serves marker, interstitial+stub serve, abp prompt reached, external-scheme consent refused), tst_schemehandlers 25/25, tst_webpage 73/73, app+test link clean, inert TU syntax clean — offscreen |
 | WK18 | Content-blocker adblock — rule→JSON subset converter + capability honesty — details below | done | 0 | needs:task:WK17 — RequestPolicy::contentBlockerJson() (default empty) feeds WebkitProfile::syncContentBlocker from setRequestPolicy; rules[] compiles in a process-shared WebKitUserContentFilterStore keyed by SHA-256(rules) + installs on every page UCM (ctor-time for new pages, ref-before-unref swap keeps coverage, rulesChanged re-push via installOnProfile recompiles); dropped[] logged with reason codes + meta.emitted/dropped/degraded surfaced for tests; converter: $redirect/$redirect-rule degrade→block (meta.degraded, never dropped), $cookie rescued past the parser's unknown option→block-cookies (@@ exception stays ignore-previous-rules); new declarativeBlocking cap separates the subresource lane from WK17's navigation-veto requestInterception — verified: cargo 14/14, tst_engineswitch 38/38 incl new webkitContentBlocking (tracker URL never reaches the wire, cosmetic element computes display:none, emitted/dropped/degraded printed, re-push recompiles), no-rust + inert TU syntax clean — offscreen |
 | WK19 | Capabilities + surfaces — cert errors, context menu, permissions, downloads, settings/About/"WebKit x.y.z" consistency — details below | done | 2 | needs:task:WK16 needs:task:WK18 — resumed interrupted run (impl landed uncommitted; finished DownloadManager binding + shared TlsFixture + fixed WK18's stale tst_contentblocker counts); landed: load-failed-with-tls-errors→SEC06 contract verbatim (neutral certificateError→nonce interstitial via shared WebPage::certificateErrorHtml on CertificateErrorInfo; proceed→allow_tls_certificate_for_host session-scoped + noteCertErrorOverride padlock), context-menu→ContextMenuInfo + WebKit item-model popup anchored at last right-press (WPE carries no coords), permission-request→WebPermissionManager's new engine-neutral resolve overload (geo/notif/pointer-lock prompt, media/device-info deny-list, EME/XR deny outright), RESPONSE decide-policy download verdict + download-started→WebkitDownloadRequest (Engine::DownloadRequest; decide-destination is the only honest request point — accept/cancel resolve synchronously inside the emission, pause/resume honest no-ops) + addEngineTab installs DownloadManager on caps.downloads profiles; renderProcessId stays -1 (no WebProcess pid API); "WebKit 2.54.1" identical via displayName in indicator/menu/settings-combo/About(new engines line)/--engine-list; Tor stays Chromium-locked (isTorMode gates swap+indicator); tst_contentblocker resynced to WK18's $redirect-degrades-to-block (emitted 14/dropped 9/degraded 1) — verified: tst_engineswitch 42/42 incl. 4 new legs (cert interstitial end-to-end w/ forged-nonce refusal + proceed-serves, context-menu hit-test marshal + popup, permission broker deny, attachment+download() land bytes), tst_certerror 10/10, tst_webpermissions 22/22, tst_webpage 73/73, tst_schemehandlers 25/25, tst_contentblocker 7/7, --engine-smoke PASS, check-warnings+supplychain+engine-audit+rustcoverage PASS, runTests.sh 96 binaries 0 failed — offscreen --disable-gpu |
-| WK20 | Perf — dmabuf/EGLImage → GL texture path (raster stays fallback) — details below | in_progress | 0 | needs:task:WK08 |
+| WK20 | Perf — dmabuf/EGLImage → GL texture path (raster stays fallback) — details below | done | 1 | needs:task:WK08 — landed WkGlPipe (own surfaceless GLES2 ctx on the WPE EGLDisplay; import_to_egl_image→texture→FBO→readback→QImage, rendering/release fence hooks, raster fallback on any decline, ARKTOS_WEBKIT_GL=0 pins raster, empirical channel-order calibration vs raster ground truth); GL ~2ms/frame vs raster ~7-8ms; verified: tst_engineswitch 44/44 offscreen incl. new webkitGlPath + webkitGlRasterFallback legs, no-GL and no-WPE TUs still compile |
 | WK21 | Stretch audit — SOCKS5/Tor leak check, WebExtensions probe, WebKitWebInspector embed — details below | pending | 0 | needs:task:WK19 |
 | MEM11 | Post-spine leak re-audit — instrumented ASan/LSan scan over the NEW surfaces (webkit backend, extension runtime, multi-view servo shim) — details below | pending | 0 | needs:task:WK21 — third sweep after MEM02/09/10; ~40 lane commits landed since |
 | DEAD01 | Dead code + duplicate sweep — unreachable-code/unused-symbol scan + copy-paste duplication across the four fast lanes — details below | pending | 0 | needs:task:WK21 — engine backends, extension runtime, and smoke legs grew in parallel |
@@ -1066,6 +1066,38 @@ not to benchmark.
 Verify: autotest legs pass on the GL path; a rough frame-time log
 shows the difference; raster fallback still works when import is
 unavailable.
+
+Result (2026-10-19): GL path proven end-to-end in a private
+surfaceless GLES2 context created on the WPE display's own EGLDisplay
+(wpe_display_get_egl_display — Mesa surfaceless; a QOpenGLWidget/
+QRhiWidget cannot bind images on that display and Qt's offscreen
+platform has no GL at all, so the spec's widget wording resolved to
+an internally managed EGL context). Per buffer-rendered emission:
+wpe_buffer_import_to_egl_image → glEGLImageTargetTexture2DOES →
+texture draw into an FBO → glReadPixels → QImage the widget presents
+(compositor leg stays the proven raster blit). The EGLImage is
+buffer-owned ((transfer none)) — never destroyed. Fences honored
+when present: take_rendering_fence → eglCreateSyncKHR
+(EGL_SYNC_NATIVE_FENCE_ANDROID) + eglWaitSyncKHR before sampling;
+EGL_SYNC_FENCE_KHR + eglDupNativeFenceFDANDROID →
+wpe_buffer_set_release_fence after use (headless display reports
+use_explicit_sync=0 so fds are -1 today — paths exercised by code
+review + ext presence verified). Raster stays the fallback on every
+decline: EGL display/context/extension missing, import failure, GL
+error, or ARKTOS_WEBKIT_GL=0. Two hard-won details: (a) uSwap must be
+applied via uniform — the producer's channel order for the SAME XR24
+X-tiled dmabuf measured B,G,R,A in one process and R,G,B,A in
+another, so wkGlCalibrate compares the first GL readback against the
+raster ground truth (opaque-pixel vote, >=4x majority) instead of
+trusting a fourcc table; (b) init's own GL errors must be cleared or
+they poison the first frame's error gate. Rough frame times
+(ARKTOS_WEBKIT_FRAME_TIMING=1, 800x600): GL total ~2ms (import ~0.1,
+draw+fence ~0.2, readback ~1.7) vs raster ~7-8ms. Verified:
+tst_engineswitch 44/44 offscreen incl. new webkitGlPath (witness
+colors through calibrated GL frames) + webkitGlRasterFallback
+(ARKTOS_WEBKIT_GL=0 → 0 GL attempts, raster paints); webkitbackend.cpp
+still compiles without ARKTOS_WEBKIT_GL (pkg-config egl/glesv2 gate)
+and without WPE entirely.
 
 ### WK21
 

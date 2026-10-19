@@ -53,6 +53,7 @@
 
 #include <qabstractbutton.h>
 #include <qdir.h>
+#include <qelapsedtimer.h>
 #include <qfile.h>
 #include <qlabel.h>
 #include <qmenu.h>
@@ -235,6 +236,8 @@ private slots:
     void webkitContextMenu();
     void webkitPermissionRequest();
     void webkitDownload();
+    void webkitGlPath();
+    void webkitGlRasterFallback();
 
 private:
     FakeEngineBackend *m_fake = nullptr;
@@ -3747,6 +3750,161 @@ void tst_EngineSwitch::webkitDownload()
         QCOMPARE(file.readAll(), payloadB);
     }
     QCOMPARE(handoffs, 2);
+#else
+    QSKIP("webkit backend not linked in this build");
+#endif
+}
+
+// WK20 — the GL import path end-to-end: a real frame must arrive
+// through dmabuf -> EGLImage -> GL texture -> FBO readback with the
+// fixture's witness colors intact (that pins the channel swizzle and
+// the top-down orientation of the imported texture, not merely that
+// a path ran).  Hosts without a usable EGL display get an honest
+// skip — the raster fallback covered their frames.
+void tst_EngineSwitch::webkitGlPath()
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    Engine::Backend *webkit =
+        EngineRegistry::backendForId(QStringLiteral("webkit"));
+    QVERIFY(webkit);
+    QVERIFY2(webkit->pageUnavailableReason().isEmpty(),
+             qPrintable(webkit->pageUnavailableReason()));
+
+    Engine::ProfileOptions options;
+    options.offTheRecord = true;
+    Engine::Profile *profile = webkit->createProfile(options, this);
+    QVERIFY(profile);
+
+    EngineTab tab(webkit, profile);
+    tab.resize(800, 600);
+    tab.show();
+    QVERIFY(tab.page());
+    auto *view = qobject_cast<WebkitView *>(tab.page()->view());
+    QVERIFY(view);
+
+    const QString fixturePath = QDir::temp().filePath(
+        QStringLiteral("arktos-wk20-fixture.html"));
+    {
+        QFile fixture(fixturePath);
+        QVERIFY(fixture.open(QIODevice::WriteOnly));
+        fixture.write("<html><head><title>Wk20Gl</title></head>"
+                      "<body style='margin:0;background:#eef4ff'>"
+                      "<div style='width:400px;height:120px;"
+                      "background:#123a6f;color:#22aa77'>"
+                      "gl frame</div>"
+                      "<div style='width:320px;height:160px;margin:40px;"
+                      "background:#22aa77'></div>"
+                      "</body></html>");
+    }
+
+    QSignalSpy finishedSpy(tab.page(), &Engine::Page::loadFinished);
+    tab.load(QUrl::fromLocalFile(fixturePath));
+    QTRY_VERIFY2_WITH_TIMEOUT(finishedSpy.count() >= 1,
+                              "loadFinished never arrived", 60000);
+    QVERIFY2(finishedSpy.first().first().toBool(),
+             "fixture load reported failure");
+    QTRY_VERIFY_WITH_TIMEOUT(view->frameCount() >= 1, 30000);
+
+    // The first GL-imported frame is consumed by channel-order
+    // calibration (presented via the raster copy) — force a new
+    // buffer so a calibrated frame lands through adoptGlFrame.
+    tab.resize(760, 540);
+    QElapsedTimer glWait;
+    glWait.start();
+    while (view->glFrameCount() < 1 && glWait.elapsed() < 30000)
+        QTest::qWait(50);
+
+    if (view->glFrameCount() < 1)
+        QSKIP(qPrintable(QStringLiteral(
+            "GL frame path unavailable here (glImportFails=%1) — "
+            "raster covered the frames").arg(view->glImportFails())));
+
+    // Same witness gate as the raster leg — the GL path must deliver
+    // identical pixels (channel swizzle + top-down orientation right).
+    int distinctColors = 0;
+    auto colorsReady = [&]() -> bool {
+        const QImage shot = view->grab().toImage()
+                .convertToFormat(QImage::Format_ARGB32);
+        if (shot.isNull())
+            return false;
+        QSet<QRgb> colors;
+        for (int y = 0; y < shot.height(); ++y) {
+            const QRgb *row =
+                reinterpret_cast<const QRgb *>(shot.constScanLine(y));
+            for (int x = 0; x < shot.width(); ++x)
+                colors.insert(row[x] | 0xff000000u);
+        }
+        distinctColors = colors.count();
+        return colors.contains(QRgb(0xff123a6f))
+            && colors.contains(QRgb(0xffeef4ff))
+            && colors.contains(QRgb(0xff22aa77))
+            && colors.count() >= 3;
+    };
+    QTRY_VERIFY2_WITH_TIMEOUT(colorsReady(),
+             qPrintable(QStringLiteral("GL frames lack fixture colors — "
+                                       "%1 distinct").arg(distinctColors)),
+             30000);
+    QCOMPARE(view->glImportFails(), 0);
+#else
+    QSKIP("webkit backend not linked in this build");
+#endif
+}
+
+// WK20 — the raster fallback contract: with ARKTOS_WEBKIT_GL=0 the
+// same fixture still paints frames through import_to_pixels and no GL
+// attempt is counted.
+void tst_EngineSwitch::webkitGlRasterFallback()
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    Engine::Backend *webkit =
+        EngineRegistry::backendForId(QStringLiteral("webkit"));
+    QVERIFY(webkit);
+    QVERIFY2(webkit->pageUnavailableReason().isEmpty(),
+             qPrintable(webkit->pageUnavailableReason()));
+
+    qputenv("ARKTOS_WEBKIT_GL", "0");
+
+    Engine::ProfileOptions options;
+    options.offTheRecord = true;
+    Engine::Profile *profile = webkit->createProfile(options, this);
+    QVERIFY(profile);
+
+    EngineTab tab(webkit, profile);
+    tab.resize(800, 600);
+    tab.show();
+    QVERIFY(tab.page());
+    auto *view = qobject_cast<WebkitView *>(tab.page()->view());
+    QVERIFY(view);
+
+    const QString fixturePath = QDir::temp().filePath(
+        QStringLiteral("arktos-wk20-fixture.html"));
+    {
+        QFile fixture(fixturePath);
+        QVERIFY(fixture.open(QIODevice::WriteOnly));
+        fixture.write("<html><head><title>Wk20Raster</title></head>"
+                      "<body style='margin:0;background:#eef4ff'>"
+                      "<div style='width:400px;height:120px;"
+                      "background:#123a6f'>raster</div>"
+                      "</body></html>");
+    }
+
+    QSignalSpy finishedSpy(tab.page(), &Engine::Page::loadFinished);
+    tab.load(QUrl::fromLocalFile(fixturePath));
+    QElapsedTimer wait;
+    wait.start();
+    while (finishedSpy.isEmpty() && wait.elapsed() < 60000)
+        QTest::qWait(50);
+    QVERIFY2(!finishedSpy.isEmpty(), "loadFinished never arrived");
+    QVERIFY2(finishedSpy.first().first().toBool(),
+             "fixture load reported failure");
+    QTRY_VERIFY_WITH_TIMEOUT(view->frameCount() >= 1, 30000);
+    // Snapshot under the pin — a post-restore frame may legitimately
+    // take the GL branch on this view.
+    const int glFrames = view->glFrameCount();
+    const int glFails = view->glImportFails();
+    qunsetenv("ARKTOS_WEBKIT_GL");
+    QCOMPARE(glFrames, 0);
+    QCOMPARE(glFails, 0);
 #else
     QSKIP("webkit backend not linked in this build");
 #endif

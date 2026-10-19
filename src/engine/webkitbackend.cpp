@@ -49,6 +49,17 @@
 #include <wpe/wpe-platform.h>
 #include <dlfcn.h>
 #endif
+// WK20 — the dmabuf/EGLImage import path needs system EGL/GLESv2.
+// Only compiled when pkg-config resolved egl+glesv2 (engine.pri sets
+// ARKTOS_WEBKIT_GL) — without dev headers the backend still builds
+// and simply never leaves the raster path.
+#if defined(ARKTOS_WEBKIT_LINKED) && defined(ARKTOS_WEBKIT_GL)
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+#include <GLES2/gl2.h>
+#include <GLES2/gl2ext.h>
+#include <unistd.h>
+#endif
 
 #include "adblockresourcehandler.h"
 #include "adblockschemeaccesshandler.h"
@@ -255,7 +266,7 @@ Engine::NavigationType engineNavigationType(WebKitNavigationType type,
 // byte order — BGRA8888 on little-endian, byte-identical to
 // Format_ARGB32_Premultiplied (the same contract the WK03 buffer
 // import already relies on).  The returned GBytes is borrowed from
-// the image, so rows are deep-copied like adoptFrame.
+// the image, so rows are deep-copied like wkRasterImage.
 QImage imageFromWebKitImage(WebKitImage *image)
 {
     if (!image)
@@ -275,6 +286,42 @@ QImage imageFromWebKitImage(WebKitImage *image)
                static_cast<const quint8 *>(data) + size_t(stride) * y,
                size_t(w) * 4);
     return out;
+}
+
+// WK03 raster import, factored so WK20's channel-order calibration
+// can hold the image for comparison.  The returned GBytes is OWNED BY
+// THE BUFFER (borrowed, never unrefed); rows are deep-copied honoring
+// the shm stride.
+QImage wkRasterImage(WPEBuffer *buffer)
+{
+    GError *error = nullptr;
+    GBytes *pixels = wpe_buffer_import_to_pixels(buffer, &error);
+    if (!pixels) {
+        qWarning("webkit: wpe_buffer_import_to_pixels failed (%s): %s",
+                 G_OBJECT_TYPE_NAME(buffer),
+                 error ? error->message : "?");
+        g_clear_error(&error);
+        return QImage();
+    }
+    const int bw = wpe_buffer_get_width(buffer);
+    const int bh = wpe_buffer_get_height(buffer);
+    int stride = bw * 4;
+    if (WPE_IS_BUFFER_SHM(buffer))
+        stride = int(wpe_buffer_shm_get_stride(WPE_BUFFER_SHM(buffer)));
+    gsize len = 0;
+    const void *data = g_bytes_get_data(pixels, &len);
+    if (stride <= 0 || bw <= 0 || bh <= 0
+            || qint64(len) < qint64(stride) * (bh - 1) + bw * 4) {
+        qWarning("webkit: imported pixels undersized: %zu for %dx%d "
+                 "stride=%d", size_t(len), bw, bh, stride);
+        return QImage();
+    }
+    QImage img(bw, bh, QImage::Format_ARGB32_Premultiplied);
+    const quint8 *src = static_cast<const quint8 *>(data);
+    for (int y = 0; y < bh; ++y)
+        memcpy(img.scanLine(y), src + size_t(stride) * y,
+               size_t(bw) * 4);
+    return img;
 }
 
 // Largest icon out of the list — favicon candidates arrive ordered
@@ -865,6 +912,488 @@ bool wkScriptMessageReplyAvailable()
 } // namespace
 #endif // ARKTOS_WEBKIT_LINKED
 
+// ---- WK20: dmabuf -> EGLImage -> GL texture import -------------------
+//
+// WK08's raster path (wpe_buffer_import_to_pixels -> QImage -> blit)
+// pays a full CPU copy per frame.  The spec'd upgrade imports the
+// WPEBufferDMABuf as an EGLImage and samples it as a GL texture.  The
+// EGLImage lives on the WPE display's own EGLDisplay
+// (wpe_display_get_egl_display — the headless display's is a Mesa
+// surfaceless display, which initializes even under offscreen test
+// runs), so it cannot be bound by a QOpenGLWidget/QRhiWidget context:
+// those live on the Qt QPA display, a different EGLDisplay, and the
+// offscreen platform provides no GL at all.  The import therefore runs
+// in a private surfaceless GLES2 context created on that same display;
+// the texture is drawn into an FBO at buffer size and read back into
+// the QImage the widget presents (the compositor leg stays the proven
+// raster blit).  Cross-display onscreen compositing — re-importing the
+// raw dmabuf fds into Qt's EGLDisplay — is the remaining step past
+// WK20, which exists to prove the dmabuf -> EGLImage -> texture ->
+// draw -> fence machinery, not to re-plumb the widget surface.
+//
+// Fences: WPE docs scope the fence fds to explicit-sync displays (the
+// headless display reports use_explicit_sync false, so they are
+// normally -1); the code still honors them — the buffer's rendering
+// fence is waited on server-side before sampling, and a release fence
+// is exported back onto the buffer after our GL use completes.
+//
+// wpe_buffer_import_to_egl_image is (transfer none): the buffer owns
+// the EGLImage — never eglDestroyImage it.
+#if defined(ARKTOS_WEBKIT_LINKED) && defined(ARKTOS_WEBKIT_GL)
+namespace {
+
+struct WkGlPipe {
+    enum State { Untried, Ready, Broken };
+    State state = Untried;
+    EGLDisplay dpy = EGL_NO_DISPLAY;
+    EGLContext ctx = EGL_NO_CONTEXT;
+    EGLSurface surface = EGL_NO_SURFACE;
+    GLuint prog = 0;
+    GLuint fbo = 0;
+    GLuint fboTex = 0;
+    int fboW = 0;
+    int fboH = 0;
+    GLint aPos = -1;
+    GLint aTex = -1;
+    GLint uSwap = -1;
+    PFNEGLCREATESYNCKHRPROC eglCreateSync = nullptr;
+    PFNEGLDESTROYSYNCKHRPROC eglDestroySync = nullptr;
+    PFNEGLWAITSYNCKHRPROC eglWaitSync = nullptr;
+    PFNEGLDUPNATIVEFENCEFDANDROIDPROC eglDupFenceFd = nullptr;
+    PFNGLEGLIMAGETARGETTEXTURE2DOESPROC glImageTargetTex = nullptr;
+    // Channel-order calibration: the dmabuf fourcc declares a memory
+    // layout, but what the WebProcess actually wrote can disagree
+    // (measured: the same XR24 X-tiled buffer sampled B,G,R,A in one
+    // process and R,G,B,A in another).  So the first GL-imported frame
+    // is compared against the raster ground truth instead of trusting
+    // a fourcc table — the pixels vote identity vs R/B-swap.
+    bool calibrated = false;
+    bool swapRB = false;
+    int calibMisses = 0;
+    // Frame-time accounting — cumulative per path so the rough
+    // raster-vs-GL log line can show both sides of the difference
+    // (ARKTOS_WEBKIT_FRAME_TIMING=1 prints per frame).
+    qint64 glFrames = 0;
+    qint64 glFails = 0;
+    qint64 rasterFrames = 0;
+    qint64 glImportNs = 0;
+    qint64 glReadbackNs = 0;
+    qint64 glTotalNs = 0;
+    qint64 rasterNs = 0;
+};
+
+WkGlPipe &wkGlPipe()
+{
+    static WkGlPipe pipe;
+    return pipe;
+}
+
+void wkGlCleanup();
+
+GLuint wkGlShader(GLenum type, const char *source)
+{
+    GLuint shader = glCreateShader(type);
+    glShaderSource(shader, 1, &source, nullptr);
+    glCompileShader(shader);
+    GLint ok = GL_FALSE;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
+    if (ok == GL_TRUE)
+        return shader;
+    char log[512];
+    glGetShaderInfoLog(shader, sizeof log, nullptr, log);
+    qWarning("webkit: gl shader compile failed: %s", log);
+    glDeleteShader(shader);
+    return 0;
+}
+
+bool wkGlInit()
+{
+    WkGlPipe &p = wkGlPipe();
+    if (p.state != WkGlPipe::Untried)
+        return p.state == WkGlPipe::Ready;
+    p.state = WkGlPipe::Broken;
+    GError *error = nullptr;
+    p.dpy = static_cast<EGLDisplay>(wpe_display_get_egl_display(
+        WebkitBackend::sharedDisplay(), &error));
+    if (p.dpy == EGL_NO_DISPLAY) {
+        qWarning("webkit: no EGL display for the GL frame path (%s) — "
+                 "raster only", error ? error->message : "unavailable");
+        g_clear_error(&error);
+        return false;
+    }
+    // The display arrives already eglInitialize'd by wpe-platform —
+    // re-initializing an initialized display is a cheap no-op.
+    eglInitialize(p.dpy, nullptr, nullptr);
+    const EGLint ctxAttribs[] = { EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE };
+    p.ctx = eglCreateContext(p.dpy, EGL_NO_CONFIG_KHR, EGL_NO_CONTEXT,
+                             ctxAttribs);
+    // Surfaceless first (EGL_KHR_surfaceless_context); a 1x1 pbuffer
+    // covers drivers that still want a drawable for offscreen work.
+    if (p.ctx == EGL_NO_CONTEXT
+            || !eglMakeCurrent(p.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE,
+                               p.ctx)) {
+        EGLConfig config = nullptr;
+        EGLint n = 0;
+        const EGLint cfgAttribs[] = {
+            EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
+            EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
+            EGL_NONE };
+        if (p.ctx != EGL_NO_CONTEXT
+                && eglChooseConfig(p.dpy, cfgAttribs, &config, 1, &n)
+                && n >= 1) {
+            const EGLint pbAttribs[] = { EGL_WIDTH, 1, EGL_HEIGHT, 1,
+                                         EGL_NONE };
+            p.surface = eglCreatePbufferSurface(p.dpy, config,
+                                                pbAttribs);
+            if (p.surface != EGL_NO_SURFACE)
+                eglMakeCurrent(p.dpy, p.surface, p.surface, p.ctx);
+        }
+        if (p.ctx == EGL_NO_CONTEXT || !eglGetCurrentContext()) {
+            qWarning("webkit: GLES2 context for the GL frame path "
+                     "failed (0x%x) — raster only", eglGetError());
+            if (p.surface != EGL_NO_SURFACE)
+                eglDestroySurface(p.dpy, p.surface);
+            if (p.ctx != EGL_NO_CONTEXT)
+                eglDestroyContext(p.dpy, p.ctx);
+            p.ctx = EGL_NO_CONTEXT;
+            p.surface = EGL_NO_SURFACE;
+            return false;
+        }
+    }
+    p.eglCreateSync = reinterpret_cast<PFNEGLCREATESYNCKHRPROC>(
+        eglGetProcAddress("eglCreateSyncKHR"));
+    p.eglDestroySync = reinterpret_cast<PFNEGLDESTROYSYNCKHRPROC>(
+        eglGetProcAddress("eglDestroySyncKHR"));
+    p.eglWaitSync = reinterpret_cast<PFNEGLWAITSYNCKHRPROC>(
+        eglGetProcAddress("eglWaitSyncKHR"));
+    p.eglDupFenceFd =
+        reinterpret_cast<PFNEGLDUPNATIVEFENCEFDANDROIDPROC>(
+            eglGetProcAddress("eglDupNativeFenceFDANDROID"));
+    p.glImageTargetTex =
+        reinterpret_cast<PFNGLEGLIMAGETARGETTEXTURE2DOESPROC>(
+            eglGetProcAddress("glEGLImageTargetTexture2DOES"));
+    if (!p.glImageTargetTex) {
+        qWarning("webkit: glEGLImageTargetTexture2DOES missing — "
+                 "raster only");
+        return false;
+    }
+    static const char vsSrc[] =
+        "attribute vec2 aPos;\n"
+        "attribute vec2 aTex;\n"
+        "varying vec2 vTex;\n"
+        "void main() { vTex = aTex; gl_Position = vec4(aPos, 0, 1); }\n";
+    // uSwap picks the swizzle; the value is decided empirically by
+    // wkGlCalibrate, never by the fourcc (see WkGlPipe::calibrated).
+    static const char fsSrc[] =
+        "precision mediump float;\n"
+        "varying vec2 vTex;\n"
+        "uniform sampler2D uTex;\n"
+        "uniform float uSwap;\n"
+        "void main() { vec4 t = texture2D(uTex, vTex);"
+        " gl_FragColor = uSwap > 0.5 ? t.bgra : t.rgba; }\n";
+    GLuint vs = wkGlShader(GL_VERTEX_SHADER, vsSrc);
+    GLuint fs = wkGlShader(GL_FRAGMENT_SHADER, fsSrc);
+    if (!vs || !fs)
+        return false;
+    p.prog = glCreateProgram();
+    glAttachShader(p.prog, vs);
+    glAttachShader(p.prog, fs);
+    glLinkProgram(p.prog);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+    GLint ok = GL_FALSE;
+    glGetProgramiv(p.prog, GL_LINK_STATUS, &ok);
+    if (ok != GL_TRUE) {
+        qWarning("webkit: gl program link failed — raster only");
+        return false;
+    }
+    p.aPos = glGetAttribLocation(p.prog, "aPos");
+    p.aTex = glGetAttribLocation(p.prog, "aTex");
+    p.uSwap = glGetUniformLocation(p.prog, "uSwap");
+    // glUniform needs the program bound — and any error left flagged
+    // here would poison the post-bind glGetError gate on the first
+    // frame, so keep init's own error state clean.
+    glUseProgram(p.prog);
+    glUniform1i(glGetUniformLocation(p.prog, "uTex"), 0);
+    glGetError();
+    glGenFramebuffers(1, &p.fbo);
+    eglMakeCurrent(p.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+    static bool cleanupRegistered = false;
+    if (!cleanupRegistered) {
+        cleanupRegistered = true;
+        qAddPostRoutine(wkGlCleanup);
+    }
+    p.state = WkGlPipe::Ready;
+    qInfo("webkit: GL frame path ready (%s) attribs pos=%d tex=%d "
+          "uSwap=%d", glGetString(GL_RENDERER), int(p.aPos), int(p.aTex),
+          int(p.uSwap));
+    return true;
+}
+
+void wkGlEnsureFbo(WkGlPipe *p, int w, int h)
+{
+    if (p->fboW == w && p->fboH == h)
+        return;
+    if (p->fboTex)
+        glDeleteTextures(1, &p->fboTex);
+    glGenTextures(1, &p->fboTex);
+    glBindTexture(GL_TEXTURE_2D, p->fboTex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA,
+                 GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glBindFramebuffer(GL_FRAMEBUFFER, p->fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                          GL_TEXTURE_2D, p->fboTex, 0);
+    p->fboW = w;
+    p->fboH = h;
+}
+
+void wkGlCleanup()
+{
+    WkGlPipe &p = wkGlPipe();
+    if (p.dpy == EGL_NO_DISPLAY)
+        return;
+    if (p.ctx != EGL_NO_CONTEXT) {
+        eglMakeCurrent(p.dpy, p.surface, p.surface, p.ctx);
+        if (p.fboTex)
+            glDeleteTextures(1, &p.fboTex);
+        if (p.fbo)
+            glDeleteFramebuffers(1, &p.fbo);
+        if (p.prog)
+            glDeleteProgram(p.prog);
+        eglMakeCurrent(p.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE,
+                       EGL_NO_CONTEXT);
+        eglDestroyContext(p.dpy, p.ctx);
+        p.ctx = EGL_NO_CONTEXT;
+    }
+    if (p.surface != EGL_NO_SURFACE) {
+        eglDestroySurface(p.dpy, p.surface);
+        p.surface = EGL_NO_SURFACE;
+    }
+    p.dpy = EGL_NO_DISPLAY;   // owned by the WPEDisplay — not ours
+}
+
+// One buffer-rendered frame through the GL path.  Returns true and
+// fills *frame with the readback image on success; false sends the
+// caller down the raster fallback.  All GL work is synchronous inside
+// the signal handler — the buffer (and its borrowed EGLImage) dies
+// with the emission.
+bool wkGlImport(WPEBuffer *buffer, QImage *frame)
+{
+    WkGlPipe &p = wkGlPipe();
+    if (!wkGlInit())
+        return false;
+    QElapsedTimer total;
+    total.start();
+    if (!eglMakeCurrent(p.dpy, p.surface, p.surface, p.ctx)) {
+        p.state = WkGlPipe::Broken;
+        ++p.glFails;
+        return false;
+    }
+
+    GError *error = nullptr;
+    QElapsedTimer importTimer;
+    importTimer.start();
+    EGLImage image = static_cast<EGLImage>(
+        wpe_buffer_import_to_egl_image(buffer, &error));
+    if (image == EGL_NO_IMAGE) {
+        ++p.glFails;
+        if (p.glFails <= 4)
+            qWarning("webkit: wpe_buffer_import_to_egl_image failed "
+                     "(%s): %s", G_OBJECT_TYPE_NAME(buffer),
+                     error ? error->message : "?");
+        g_clear_error(&error);
+        eglMakeCurrent(p.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE,
+                       EGL_NO_CONTEXT);
+        return false;
+    }
+
+    // Rendering fence: the producer's "writes done" signal, present
+    // only on explicit-sync displays.  take() transfers fd ownership
+    // to us; the native-fence sync then adopts it (get() would leave
+    // the buffer's own UnixFileDescriptor aliasing an fd the sync
+    // closes at destroy — a double-close hazard).
+    const int fenceFd = wpe_buffer_take_rendering_fence(buffer);
+    if (fenceFd >= 0) {
+        EGLSync sync = EGL_NO_SYNC_KHR;
+        if (p.eglCreateSync && p.eglWaitSync) {
+            const EGLint attribs[] = {
+                EGL_SYNC_NATIVE_FENCE_FD_ANDROID, fenceFd, EGL_NONE };
+            sync = p.eglCreateSync(p.dpy, EGL_SYNC_NATIVE_FENCE_ANDROID,
+                                   attribs);
+        }
+        if (sync != EGL_NO_SYNC_KHR) {
+            p.eglWaitSync(p.dpy, sync, 0);
+            p.eglDestroySync(p.dpy, sync);
+        } else {
+            close(fenceFd);   // no sync object adopted it — still ours
+        }
+    }
+
+    const int w = wpe_buffer_get_width(buffer);
+    const int h = wpe_buffer_get_height(buffer);
+    if (w <= 0 || h <= 0) {
+        ++p.glFails;
+        eglMakeCurrent(p.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE,
+                       EGL_NO_CONTEXT);
+        return false;
+    }
+    wkGlEnsureFbo(&p, w, h);
+    glBindFramebuffer(GL_FRAMEBUFFER, p.fbo);
+
+    if (qEnvironmentVariableIsSet("ARKTOS_WEBKIT_FRAME_TIMING")
+            && WPE_IS_BUFFER_DMA_BUF(buffer)) {
+        WPEBufferDMABuf *db = WPE_BUFFER_DMA_BUF(buffer);
+        qInfo("webkit: gl buffer %s fourcc=0x%08x modifier=0x%llx "
+              "swapRB=%d", G_OBJECT_TYPE_NAME(buffer),
+              wpe_buffer_dma_buf_get_format(db),
+              (unsigned long long)wpe_buffer_dma_buf_get_modifier(db),
+              int(p.swapRB));
+    }
+
+    GLuint tex = 0;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    p.glImageTargetTex(GL_TEXTURE_2D, image);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    if (glGetError() != GL_NO_ERROR) {
+        ++p.glFails;
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glDeleteTextures(1, &tex);
+        eglMakeCurrent(p.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE,
+                       EGL_NO_CONTEXT);
+        return false;
+    }
+    const qint64 importNs = importTimer.nsecsElapsed();
+
+    glViewport(0, 0, w, h);
+    glUseProgram(p.prog);
+    // uSwap stays 0 until calibration settles the channel order —
+    // uncalibrated frames exist to feed the raster-truth comparison.
+    glUniform1f(p.uSwap, p.swapRB ? 1.f : 0.f);
+    // v = 0 at FBO y = 0: the buffer is top-down, so readback row 0
+    // lands page-top without a mirror pass.
+    static const float quad[] = {
+        -1.f, -1.f, 0.f, 0.f,
+         1.f, -1.f, 1.f, 0.f,
+        -1.f,  1.f, 0.f, 1.f,
+         1.f,  1.f, 1.f, 1.f };
+    glVertexAttribPointer(p.aPos, 2, GL_FLOAT, GL_FALSE, 16, quad);
+    glVertexAttribPointer(p.aTex, 2, GL_FLOAT, GL_FALSE, 16, quad + 2);
+    glEnableVertexAttribArray(p.aPos);
+    glEnableVertexAttribArray(p.aTex);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+    // Release fence: report when our GL use is done so an
+    // explicit-sync display can safely recycle the buffer.
+    if (p.eglCreateSync && p.eglDupFenceFd && p.eglDestroySync) {
+        EGLSync done = p.eglCreateSync(p.dpy, EGL_SYNC_FENCE_KHR,
+                                       nullptr);
+        if (done != EGL_NO_SYNC_KHR) {
+            glFlush();
+            const int releaseFd = p.eglDupFenceFd(p.dpy, done);
+            p.eglDestroySync(p.dpy, done);
+            if (releaseFd >= 0)
+                wpe_buffer_set_release_fence(buffer, releaseFd);
+        }
+    }
+
+    QElapsedTimer readTimer;
+    readTimer.start();
+    QImage img(w, h, QImage::Format_RGBA8888);
+    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, img.bits());
+    const qint64 readNs = readTimer.nsecsElapsed();
+
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glDeleteTextures(1, &tex);
+    eglMakeCurrent(p.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+
+    ++p.glFrames;
+    const qint64 totalNs = total.nsecsElapsed();
+    p.glImportNs += importNs;
+    p.glReadbackNs += readNs;
+    p.glTotalNs += totalNs;
+    if (qEnvironmentVariableIsSet("ARKTOS_WEBKIT_FRAME_TIMING"))
+        qInfo("webkit: gl frame %lld total=%.2fms import=%.2f "
+              "draw+fence=%.2f readback=%.2f | raster avg=%.2fms n=%lld",
+              (long long)p.glFrames, totalNs / 1e6, importNs / 1e6,
+              (totalNs - importNs - readNs) / 1e6, readNs / 1e6,
+              p.rasterFrames
+                  ? p.rasterNs / 1e6 / p.rasterFrames : 0.0,
+              (long long)p.rasterFrames);
+    *frame = img;
+    return true;
+}
+
+// Compare an identity-swizzled GL readback against the raster copy of
+// the same buffer: every sampled pixel votes identity or R/B-swapped,
+// and a >=4x consistent majority settles WkGlPipe::swapRB for the
+// rest of the process.  Opaque pixels only — the raster copy is
+// premultiplied, so translucent pixels would vote garbage.
+// Frames that cannot decide (gray page, mismatched content) stay
+// uncalibrated and retry; persistent total disagreement marks the
+// pipe broken so raster takes over for good.
+void wkGlCalibrate(const QImage &gl, const QImage &raster)
+{
+    WkGlPipe &p = wkGlPipe();
+    const int w = qMin(gl.width(), raster.width());
+    const int h = qMin(gl.height(), raster.height());
+    int identity = 0, swapped = 0;
+    if (w > 0 && h > 0) {
+        const int stride = qMax(1, w * h / 512);
+        int n = 0;
+        for (int y = 0; y < h; ++y) {
+            for (int x = 0; x < w; ++x, ++n) {
+                if (n % stride)
+                    continue;
+                const QRgb g = gl.pixel(x, y) | 0xff000000u;
+                const QRgb r = raster.pixel(x, y) | 0xff000000u;
+                if ((r & 0xff000000u) != 0xff000000u)
+                    continue;
+                if (g == r)
+                    ++identity;
+                else if (g == ((r & 0xff00ff00u)
+                               | ((r & 0xffu) << 16)
+                               | ((r >> 16) & 0xffu)))
+                    ++swapped;
+            }
+        }
+    }
+    const int votes = identity + swapped;
+    if (votes == 0) {
+        if (++p.calibMisses > 8) {
+            p.state = WkGlPipe::Broken;
+            qWarning("webkit: GL readback never matches raster "
+                     "ground truth — raster path stays");
+        }
+        return;
+    }
+    if (identity >= qMax(4, swapped * 4)
+            || swapped >= qMax(4, identity * 4)) {
+        p.swapRB = swapped > identity;
+        p.calibrated = true;
+        qInfo("webkit: GL frame channel order calibrated: %s "
+              "(identity=%d swapped=%d)",
+              p.swapRB ? "BGRA->RGBA" : "RGBA", identity, swapped);
+        return;
+    }
+    if (++p.calibMisses > 8) {
+        // Never converges — identity is Mesa's declared semantic.
+        p.swapRB = false;
+        p.calibrated = true;
+        qWarning("webkit: GL channel-order calibration inconclusive; "
+                 "assuming RGBA (identity=%d swapped=%d)",
+                 identity, swapped);
+    }
+}
+
+} // namespace
+#endif // ARKTOS_WEBKIT_LINKED && ARKTOS_WEBKIT_GL
+
 // ---- WebkitView -----------------------------------------------------
 
 WebkitView::WebkitView(QWidget *parent)
@@ -879,31 +1408,28 @@ WebkitView::WebkitView(QWidget *parent)
     setFocusPolicy(Qt::WheelFocus);
 }
 
-void WebkitView::adoptFrame(WPEBuffer *buffer, const void *data,
-                            int stride)
+void WebkitView::adoptFrameImage(const QImage &img)
 {
-#ifdef ARKTOS_WEBKIT_LINKED
-    const int w = wpe_buffer_get_width(buffer);
-    const int h = wpe_buffer_get_height(buffer);
-    QImage img(w, h, QImage::Format_ARGB32_Premultiplied);
-    const quint8 *src = static_cast<const quint8 *>(data);
-    for (int y = 0; y < h; ++y)
-        memcpy(img.scanLine(y), src + size_t(stride) * y,
-               size_t(w) * 4);
     m_frame = img;
-    m_frameSize = QSize(w, h);
+    m_frameSize = img.size();
     ++m_frameCount;
     update();
-#else
-    Q_UNUSED(buffer);
-    Q_UNUSED(data);
-    Q_UNUSED(stride);
-#endif
 }
 
 void WebkitView::noteImportFailure()
 {
     ++m_importFails;
+}
+
+void WebkitView::adoptGlFrame(const QImage &img)
+{
+    adoptFrameImage(img);
+    ++m_glFrames;
+}
+
+void WebkitView::noteGlImportFailure()
+{
+    ++m_glImportFails;
 }
 
 void WebkitView::paintEvent(QPaintEvent *)
@@ -2358,35 +2884,58 @@ void WebkitPage::onBufferRendered(WPEBuffer *buffer)
 #ifdef ARKTOS_WEBKIT_LINKED
     if (!buffer || !m_view)
         return;
+#if defined(ARKTOS_WEBKIT_GL)
+    // WK20: try the dmabuf -> EGLImage -> GL texture import first.
+    // Any decline (no EGL display, non-importable buffer, GL error)
+    // falls through to the raster copy below — ARKTOS_WEBKIT_GL=0
+    // pins raster for A/B timing runs and EGL-less environments.
+    if (qgetenv("ARKTOS_WEBKIT_GL") != "0") {
+        WkGlPipe &p = wkGlPipe();
+        QImage glFrame;
+        if (wkGlImport(buffer, &glFrame)) {
+            if (!p.calibrated) {
+                // First GL-imported frame doubles as the channel-order
+                // calibration: compare its raw readback against the
+                // raster ground truth, then present the trusted copy.
+                QImage raster = wkRasterImage(buffer);
+                if (!raster.isNull()) {
+                    wkGlCalibrate(glFrame, raster);
+                    m_view->adoptFrameImage(raster);
+                    return;
+                }
+                // No ground truth — adopt GL with the identity
+                // default and stop asking.
+                p.calibrated = true;
+            }
+            if (p.state == WkGlPipe::Ready) {
+                m_view->adoptGlFrame(glFrame);
+                return;
+            }
+            // Calibration never converged — pipe is Broken, fall
+            // through to raster for good.
+        }
+        m_view->noteGlImportFailure();
+    }
+#endif
     // WK03 contract: WebKit (the wpe_view_render_buffer caller) owns
     // the rendered/released bookkeeping — the embedder only imports +
-    // copies inside the handler.  The returned GBytes is OWNED BY THE
-    // BUFFER (borrowed, never unrefed).
-    GError *error = nullptr;
-    GBytes *pixels = wpe_buffer_import_to_pixels(buffer, &error);
-    if (!pixels) {
+    // copies inside the handler (wkRasterImage keeps the GBytes
+    // borrowed, never unrefed).
+    QElapsedTimer rasterTimer;
+    rasterTimer.start();
+    const QImage raster = wkRasterImage(buffer);
+    if (raster.isNull()) {
         m_view->noteImportFailure();
-        qWarning("webkit: wpe_buffer_import_to_pixels failed (%s): %s",
-                 G_OBJECT_TYPE_NAME(buffer),
-                 error ? error->message : "?");
-        g_clear_error(&error);
         return;
     }
-    const int bw = wpe_buffer_get_width(buffer);
-    const int bh = wpe_buffer_get_height(buffer);
-    int stride = bw * 4;
-    if (WPE_IS_BUFFER_SHM(buffer))
-        stride = int(wpe_buffer_shm_get_stride(WPE_BUFFER_SHM(buffer)));
-    gsize len = 0;
-    const void *data = g_bytes_get_data(pixels, &len);
-    if (stride <= 0 || bw <= 0 || bh <= 0
-            || qint64(len) < qint64(stride) * (bh - 1) + bw * 4) {
-        m_view->noteImportFailure();
-        qWarning("webkit: imported pixels undersized: %zu for %dx%d "
-                 "stride=%d", size_t(len), bw, bh, stride);
-        return;
-    }
-    m_view->adoptFrame(buffer, data, stride);
+    m_view->adoptFrameImage(raster);
+#if defined(ARKTOS_WEBKIT_GL)
+    // WK20 frame-time accounting — the raster side of the
+    // ARKTOS_WEBKIT_FRAME_TIMING comparison line.
+    WkGlPipe &p = wkGlPipe();
+    ++p.rasterFrames;
+    p.rasterNs += rasterTimer.nsecsElapsed();
+#endif
 #else
     Q_UNUSED(buffer);
 #endif
@@ -4468,8 +5017,12 @@ void WebkitBackend::applyRuntimeEnvironment()
 #ifdef ARKTOS_WEBKIT_LINKED
     // Headless/no-GPU embed: the web process must raster on CPU or it
     // produces dmabuf/EGL buffers wpe_buffer_import_to_pixels cannot
-    // read back (WK03 render verdict).  An explicit operator setting
-    // wins; WK20's dmabuf/EGLImage→GL path revisits the default.
+    // read back (WK03 render verdict).  WK20 re-measured: this stack
+    // hands out identical XR24 X-tiled dmabufs either way and imports
+    // them as EGLImages fine, but the flag stays — the raster
+    // fallback's import_to_pixels must never meet an unmappable GPU
+    // buffer on a stack whose producer differs.  An explicit operator
+    // setting wins.
     if (!qEnvironmentVariableIsSet("WEBKIT_SKIA_ENABLE_CPU_RENDERING"))
         qputenv("WEBKIT_SKIA_ENABLE_CPU_RENDERING", "1");
     const QString prefix = wpePrefix();

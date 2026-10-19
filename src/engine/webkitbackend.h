@@ -50,10 +50,13 @@
 // the process-shared headless WPEDisplay (the WK02-decided model —
 // Qt's QPAEventDispatcherGlib pumps the global-default GMainContext on
 // the GUI thread, which is where every WPE/WebKit object lives);
-// WebkitView is the QWidget that consumes "buffer-rendered" via
-// wpe_buffer_import_to_pixels and blits the imported frame
-// (the WK03 raster path, productized — the dmabuf/EGLImage upgrade is
-// WK20).  WebkitProfile carries a lazily-created WebKitNetworkSession
+// WebkitView is the QWidget that consumes "buffer-rendered" — WK20
+// tries the dmabuf -> EGLImage -> GL texture import first (private
+// surfaceless GLES2 context on the WPE display's own EGLDisplay,
+// rendering/release fences honored, FBO readback feeds this widget)
+// and falls back to WK08's wpe_buffer_import_to_pixels raster copy
+// whenever the EGL leg is unavailable.  WebkitProfile carries a
+// lazily-created WebKitNetworkSession
 // — ephemeral for OTR, the default session otherwise (per-profile
 // storage trees are WK11).  EngineTab hosts the pair with zero
 // changes: createPage + createView is all it calls.
@@ -361,6 +364,11 @@ public:
     // construction and the dimensions of the newest one.
     int frameCount() const { return m_frameCount; }
     QSize frameSize() const { return m_frameSize; }
+    // WK20 GL-path accounting — frames that came through the
+    // dmabuf/EGLImage pipeline and import attempts it declined (the
+    // autotest legs pin the fallback contract on these).
+    int glFrameCount() const { return m_glFrames; }
+    int glImportFails() const { return m_glImportFails; }
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -379,10 +387,16 @@ protected:
     void keyReleaseEvent(QKeyEvent *event) override;
 
 private:
-    // WK03 adoptFrame: stride-honest deep copy into a
-    // Format_ARGB32_Premultiplied QImage, then update().
-    void adoptFrame(WPEBuffer *buffer, const void *data, int stride);
+    // WK03/WK20 frame adoption: take an already-produced QImage,
+    // store it as the latest frame, and schedule a repaint.
+    // noteImportFailure counts raster import declines.
+    void adoptFrameImage(const QImage &img);
     void noteImportFailure();
+    // WK20 adoptGlFrame: like adoptFrameImage + bumps the GL-frame
+    // counter the autotest legs inspect.  noteGlImportFailure counts
+    // declined GL attempts for the same legs.
+    void adoptGlFrame(const QImage &img);
+    void noteGlImportFailure();
 
     // WK13 input helpers — widget-space position -> WPEView
     // coordinate space (the live view/widget dims ratio via the
@@ -406,6 +420,8 @@ private:
     QSize m_frameSize;
     int m_frameCount = 0;
     int m_importFails = 0;
+    int m_glFrames = 0;
+    int m_glImportFails = 0;
     QPointF m_contextMenuPos;
     // WK13 pointer bookkeeping — the held-buttons half of the
     // delivered WPEModifiers mask (WPE_MODIFIER_POINTER_BUTTON*
