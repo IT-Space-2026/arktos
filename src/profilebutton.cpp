@@ -197,11 +197,6 @@ ProfileButton::ProfileButton(QWidget *parent)
     refreshIdentity();
 }
 
-QMenu *ProfileButton::profileMenu() const
-{
-    return m_menu;
-}
-
 void ProfileButton::changeEvent(QEvent *event)
 {
     if (event->type() == QEvent::LanguageChange)

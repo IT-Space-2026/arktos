@@ -71,7 +71,6 @@
 
 #include <qapplication.h>
 #include <qcryptographichash.h>
-#include <qdesktopservices.h>
 #include <qdir.h>
 #include <qevent.h>
 #include <qfile.h>
@@ -80,7 +79,6 @@
 #include <qjsondocument.h>
 #include <qjsonobject.h>
 #include <qmenu.h>
-#include <qmessagebox.h>
 #include <qpainter.h>
 #include <qpixmap.h>
 #include <qpointer.h>
@@ -102,11 +100,9 @@
 // shared serving adapters and the persona helpers live.
 static void installUriSchemeHandlers(WebKitWebContext *context);
 static QHash<WebKitWebView *, WebkitPage *> &schemePageMap();
-// SEC02 external-scheme consent (the WebPage analog) — the
-// decide-policy consult refuses external-scheme navigations and
-// calls this queued prompt.
-static void confirmAndOpenExternalUrl(WebkitPage *page,
-                                      const QUrl &url);
+// SEC02 external-scheme consent — the decide-policy consult refuses
+// external-scheme navigations and hands the URL to WebPage's shared
+// queued prompt (promptOpenExternalUrl).
 // WK19 — the download channel lives on the WebKitNetworkSession:
 // connect "download-started" once per session (the default session
 // is shared across identity-less profiles — the hook is idempotent).
@@ -1416,11 +1412,6 @@ void WebkitView::adoptFrameImage(const QImage &img)
     update();
 }
 
-void WebkitView::noteImportFailure()
-{
-    ++m_importFails;
-}
-
 void WebkitView::adoptGlFrame(const QImage &img)
 {
     adoptFrameImage(img);
@@ -2406,7 +2397,11 @@ bool WebkitPage::isOffTheRecord() const
 
 void WebkitPage::setPageAttribute(const QString &name, bool on)
 {
-    m_attributes.insert(name, on);
+    // No per-page attribute application on this backend — the
+    // override exists so the interface's free-form keys are ignored
+    // harmlessly instead of misapplied.
+    Q_UNUSED(name);
+    Q_UNUSED(on);
 }
 
 void WebkitPage::setLifecycleState(LifecycleState state)
@@ -2924,10 +2919,8 @@ void WebkitPage::onBufferRendered(WPEBuffer *buffer)
     QElapsedTimer rasterTimer;
     rasterTimer.start();
     const QImage raster = wkRasterImage(buffer);
-    if (raster.isNull()) {
-        m_view->noteImportFailure();
+    if (raster.isNull())
         return;
-    }
     m_view->adoptFrameImage(raster);
 #if defined(ARKTOS_WEBKIT_GL)
     // WK20 frame-time accounting — the raster side of the
@@ -3221,7 +3214,8 @@ bool WebkitPage::onDecidePolicy(WebKitPolicyDecision *decision, int type)
             && !WebPage::isBrowserHandledScheme(url.scheme())) {
         webkit_policy_decision_ignore(decision);
         if (mainFrame)
-            confirmAndOpenExternalUrl(this, url);
+            WebPage::promptOpenExternalUrl(view(), url,
+                                           this->url().toString());
         return true;
     }
 
@@ -4322,51 +4316,6 @@ static void cbSchemeInterstitial(WebKitURISchemeRequest *request,
     finishSchemeBytes(request, html.toUtf8(), "text/html");
 }
 
-// External schemes (mailto:, tel:, magnet:, ftp: and friends) can
-// only be serviced by handing the URL to the desktop — a shell-out
-// that needs explicit consent; a web page must never trigger it
-// silently (SEC02).  Mirrors WebPage::confirmAndOpenExternalUrl —
-// one prompt at a time, queued so a modal exec() never nests inside
-// the decide-policy handler.
-static bool s_webkitExternalPromptActive = false;
-static void confirmAndOpenExternalUrl(WebkitPage *page,
-                                      const QUrl &url)
-{
-    if (s_webkitExternalPromptActive)
-        return;
-    s_webkitExternalPromptActive = true;
-    const QString source = page->url().toString();
-    QPointer<QWidget> parent = page->view();
-    QMetaObject::invokeMethod(qApp, [parent, url, source]() {
-        // The percent-encoded form keeps control characters and
-        // embedded newlines from spoofing the dialog text.
-        QString shown = QString::fromUtf8(url.toEncoded());
-        if (shown.size() > 256)
-            shown = shown.left(256) + QLatin1String("…");
-        QMessageBox box(QMessageBox::Question,
-            WebPage::tr("Open External Application"),
-            WebPage::tr("The page at %1 wants to open an external "
-                        "application to handle this link:\n\n%2\n\n"
-                        "Allow it?").arg(source, shown),
-            QMessageBox::Open | QMessageBox::Cancel, parent);
-        // URLs are page-controlled; render the prompt literally.
-        box.setTextFormat(Qt::PlainText);
-        box.setDefaultButton(QMessageBox::Cancel);
-        const QMessageBox::StandardButton choice =
-            static_cast<QMessageBox::StandardButton>(box.exec());
-        s_webkitExternalPromptActive = false;
-        if (choice != QMessageBox::Open)
-            return;
-        // askDesktopToOpenUrl records the url so a scheme handler
-        // that loops back into the browser is detected and dropped.
-        if (BrowserApplication *application =
-                BrowserApplication::instance())
-            application->askDesktopToOpenUrl(url);
-        else
-            QDesktopServices::openUrl(url);
-    }, Qt::QueuedConnection);
-}
-
 static void installUriSchemeHandlers(WebKitWebContext *context)
 {
     webkit_web_context_register_uri_scheme(
@@ -4612,7 +4561,8 @@ QString WebkitProfile::storageName() const
 
 void WebkitProfile::setUserAgent(const QString &userAgent)
 {
-    m_userAgent = userAgent;
+    // No UA override hook on this backend — accepted and ignored.
+    Q_UNUSED(userAgent);
 }
 
 void WebkitProfile::setRequestPolicy(Engine::RequestPolicy *policy)
@@ -4853,7 +4803,10 @@ void WebkitProfile::applyContentFilter(WebKitUserContentFilter *filter,
 void WebkitProfile::setCookieFilter(
         const std::function<bool(const Engine::CookieAttempt &)> &filter)
 {
-    m_cookieFilter = filter;
+    // WebKitCookieManager offers only a 3-state accept policy — no
+    // per-attempt consult exists, so the filter is accepted and
+    // ignored (capabilities().cookieFilter stays false).
+    Q_UNUSED(filter);
 }
 
 // WK16 — the live-page set the script propagation iterates; the
@@ -4970,7 +4923,10 @@ void WebkitProfile::fetchCookies(
 void WebkitProfile::setProfileAttribute(const QString &name,
                                         const QVariant &value)
 {
-    m_attributes.insert(name, value);
+    // Free-form keys land here when the apply path doesn't know the
+    // backend — ignored rather than misapplied.
+    Q_UNUSED(name);
+    Q_UNUSED(value);
 }
 
 // ---- WebkitBackend --------------------------------------------------

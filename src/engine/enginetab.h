@@ -75,10 +75,10 @@ public:
     // ENG28: recreate the page+view pair in place after the backend's
     // view died (Servo's poisoned SeInstance advertises
     // restartRequested()).  The dead objects are torn down first —
-    // the engine's single-instance slot only frees on destroy — then
-    // a fresh page+view is created and reloaded at the last committed
-    // url.  On failure the tab shows an honest could-not-restart
-    // notice; the swap-to-Chromium path still works.
+    // the destroyed view's SeInstance goes with it — then a fresh
+    // page+view is created and reloaded at the last committed url.
+    // On failure the tab shows an honest could-not-restart notice;
+    // the swap-to-Chromium path still works.
     bool restartEngine();
 
 signals:

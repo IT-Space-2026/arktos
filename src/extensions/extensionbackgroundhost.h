@@ -119,7 +119,6 @@ public:
     // The background host's own page is never a tab.  (Out-of-line —
     // QPointer needs the complete type.)
     void setContextPage(QWebEnginePage *page);
-    QWebEnginePage *contextPage() const;
 
 signals:
     void errorReported(const QString &message);

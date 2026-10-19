@@ -113,9 +113,9 @@ bool EngineTab::restartEngine()
         return false;
     const QUrl lastUrl = m_page ? m_page->url() : QUrl();
 
-    // The dead objects go first — the engine's single-instance slot
-    // only frees when the old view's SeInstance is destroyed, so the
-    // recreate below only works after this teardown.
+    // The dead objects go first — the poisoned SeInstance is
+    // destroyed with the old view before the replacement is built,
+    // so the recreate never piles a second view on the tab.
     if (QWidget *view = m_page ? m_page->view() : nullptr) {
         m_layout->removeWidget(view);
         delete view;

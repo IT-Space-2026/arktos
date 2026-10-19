@@ -389,9 +389,7 @@ protected:
 private:
     // WK03/WK20 frame adoption: take an already-produced QImage,
     // store it as the latest frame, and schedule a repaint.
-    // noteImportFailure counts raster import declines.
     void adoptFrameImage(const QImage &img);
-    void noteImportFailure();
     // WK20 adoptGlFrame: like adoptFrameImage + bumps the GL-frame
     // counter the autotest legs inspect.  noteGlImportFailure counts
     // declined GL attempts for the same legs.
@@ -419,7 +417,6 @@ private:
     QImage m_frame;
     QSize m_frameSize;
     int m_frameCount = 0;
-    int m_importFails = 0;
     int m_glFrames = 0;
     int m_glImportFails = 0;
     QPointF m_contextMenuPos;
@@ -762,7 +759,6 @@ private:
     bool m_frozenUnmapped = false;
     bool m_engineDiscarded = false;
     QHash<QString, Engine::Script> m_scripts;
-    QHash<QString, bool> m_attributes;
     // WK19 — the pending certificate-error decision (WebPage's
     // m_certError* contract): the nonce the published interstitial's
     // links carry, the refused URL, the retained GTlsCertificate the
@@ -998,11 +994,8 @@ private:
                                     void *call);
 
     Engine::ProfileOptions m_options;
-    QString m_userAgent;
     Engine::RequestPolicy *m_policy = nullptr;
-    std::function<bool(const Engine::CookieAttempt &)> m_cookieFilter;
     QHash<QString, Engine::Script> m_scripts;
-    QHash<QString, QVariant> m_attributes;
     WebKitNetworkSession *m_networkSession = nullptr;
     QString m_sessionDataDir;
     QString m_sessionCacheDir;

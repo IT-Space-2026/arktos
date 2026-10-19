@@ -627,14 +627,21 @@ static bool s_externalPromptActive = false;
 
 void WebPage::confirmAndOpenExternalUrl(const QUrl &url)
 {
+    promptOpenExternalUrl(WebEnginePageAdapter::forPage(this)->view(),
+                          url, this->url().toString());
+}
+
+void WebPage::promptOpenExternalUrl(QWidget *parentWidget,
+                                    const QUrl &url,
+                                    const QString &source)
+{
     if (s_externalPromptActive)
         return;
     s_externalPromptActive = true;
-    // Queued: a modal exec() inside acceptNavigationRequest would
-    // re-enter Chromium's navigation machinery while it waits for an
-    // answer.
-    const QString source = this->url().toString();
-    QPointer<QWidget> parent = WebEnginePageAdapter::forPage(this)->view();
+    // Queued: a modal exec() inside the navigation verdict would
+    // re-enter the engine's navigation machinery while it waits for
+    // an answer.
+    QPointer<QWidget> parent = parentWidget;
     QMetaObject::invokeMethod(qApp, [parent, url, source]() {
         // The percent-encoded form keeps control characters and
         // embedded newlines from spoofing the dialog text.

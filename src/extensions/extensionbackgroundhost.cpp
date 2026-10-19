@@ -119,11 +119,6 @@ void ChromeBridge::setContextPage(QWebEnginePage *page)
     m_contextPage = page;
 }
 
-QWebEnginePage *ChromeBridge::contextPage() const
-{
-    return m_contextPage;
-}
-
 void ChromeBridge::reportError(const QString &message)
 {
     emit errorReported(message.left(4096));

@@ -64,7 +64,6 @@ class ProfileButton : public NavBarAccentButton
 public:
     explicit ProfileButton(QWidget *parent = nullptr);
 
-    QMenu *profileMenu() const;
     // Repaints face + header from ProfileIdentity — the identity's
     // signals already drive it; exposed so a late iconSize change
     // can rebake the avatar at the final size.

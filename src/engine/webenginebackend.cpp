@@ -873,10 +873,11 @@ void WebEngineProfileAdapter::clear(Engine::StorageAreas areas)
 void WebEngineProfileAdapter::setProfileAttribute(const QString &name,
                                                   const QVariant &value)
 {
-    // The settings-apply path still writes QWebEngineSettings directly;
-    // this bag keeps backend-neutral keys for when that touchpoint
-    // group migrates onto the interface.
-    m_attributes.insert(name, value);
+    // The settings-apply path writes QWebEngineSettings directly;
+    // free-form keys for backends it doesn't know are ignored rather
+    // than misapplied.
+    Q_UNUSED(name);
+    Q_UNUSED(value);
 }
 
 // ---------------------------------------------------------------------------

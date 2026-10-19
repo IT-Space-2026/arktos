@@ -3849,3 +3849,14 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   extension enable/disable cycles are exercised by two new self-test
   legs and report no leaks in Arktos code; the full report lives at
   .devin/MEM11-scan.md.
+- Dead-code cleanup (DEAD01): a reachability sweep over the engine
+  backends, extension runtime, and UI helpers removed unreachable
+  symbols left by the recent lanes (a pre-multi-view Servo helper, an
+  unused extension-bridge and profile-button getter, a raster
+  failure counter that was never read, and write-only
+  attribute/user-agent/cookie-filter stores in the engine profile
+  adapters whose setters are now explicit no-ops). The WebKit
+  backend's copy of the external-scheme consent prompt now shares
+  WebPage's single implementation, stale engine-architecture docs
+  and single-instance Servo comments were corrected, and generated
+  task-loop logs/locks are no longer tracked in .devin.
