@@ -46,7 +46,10 @@
 #include <tabbar.h>
 #include <tabwidget.h>
 #include <toolbarsearch.h>
+#include <webpage.h>
 #include <webview.h>
+
+#include "tlsfixture.h"
 
 #include <qabstractbutton.h>
 #include <qdir.h>
@@ -61,7 +64,9 @@
 #include <qtcpsocket.h>
 #include <qtemporarydir.h>
 #include <qtimer.h>
+#include <qurlquery.h>
 #include <qwebenginepage.h>
+#include <qsslsocket.h>
 
 #ifdef ARKTOS_WEBKIT
 #include "webkitbackend.h"
@@ -160,6 +165,24 @@ private:
     int m_answered = 0;
 };
 
+// WK19 — the WebKit cert-error leg needs a TLS peer the WPE network
+// process will reject AND that can serve HTTP once an exception is
+// installed: the shared TlsFixture's -www mode (`openssl s_server`
+// holding the shared selfsigned scratch leaf — an in-process
+// QSslServer was tried first, but the GnuTLS handshake inside the
+// WebKit sandbox stalls against it, leaving the navigation to time
+// out without any signal; a real OpenSSL peer answers the rejection
+// in ~100 ms).
+static QUrl tlsFixtureUrl(const TlsFixture &fixture)
+{
+    // 127.0.0.1 like every other WPE fixture — "localhost" is not
+    // guaranteed to resolve inside the WebKit sandbox; the
+    // CN=localhost leaf still fails validation (BAD_IDENTITY +
+    // UNKNOWN_CA), which is exactly what the leg needs.
+    return QUrl(QString::fromLatin1("https://127.0.0.1:%1/")
+                .arg(fixture.port()));
+}
+
 // --- test ---------------------------------------------------------------
 
 class tst_EngineSwitch : public QObject
@@ -208,6 +231,10 @@ private slots:
     void webkitScriptWorlds();
     void webkitPolicySchemes();
     void webkitContentBlocking();
+    void webkitCertErrorInterstitial();
+    void webkitContextMenu();
+    void webkitPermissionRequest();
+    void webkitDownload();
 
 private:
     FakeEngineBackend *m_fake = nullptr;
@@ -3357,6 +3384,371 @@ void tst_EngineSwitch::webkitContentBlocking()
 #else
     QSKIP("needs the linked webkit backend and the adblock_rust "
           "converter in this build");
+#endif
+}
+
+// WK19 — SEC06 on the WPE backend end-to-end: a real TLS rejection
+// (the scratch selfsigned leaf) drives load-failed-with-tls-errors ->
+// the neutral certificateError emission -> the nonce-bound
+// arktos-cert-error: interstitial -> "proceed" installs a
+// session-scoped exception on the network session and the refused
+// page serves.  A forged nonce resolves nothing along the way.
+void tst_EngineSwitch::webkitCertErrorInterstitial()
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    QVERIFY2(QSslSocket::supportsSsl(), "TLS backend required");
+    Engine::Backend *webkit =
+        EngineRegistry::backendForId(QStringLiteral("webkit"));
+    QVERIFY(webkit);
+    QVERIFY2(webkit->pageUnavailableReason().isEmpty(),
+             qPrintable(webkit->pageUnavailableReason()));
+
+    TlsFixture server;
+    QVERIFY(server.start(QStringLiteral("selfsigned"),
+                         /*www=*/true));
+    const QUrl serverUrl = tlsFixtureUrl(server);
+
+    Engine::ProfileOptions options;
+    options.offTheRecord = true;   // nothing may persist — SEC06
+    Engine::Profile *profile = webkit->createProfile(options, this);
+    QVERIFY(profile);
+
+    EngineTab tab(webkit, profile);
+    tab.resize(800, 600);
+    tab.show();
+    auto *page = qobject_cast<WebkitPage *>(tab.page());
+    QVERIFY(page);
+
+    // WPE 2.54 exposes no OS WebProcess pid — the honest contract.
+    QCOMPARE(page->renderProcessId(), qint64(-1));
+
+    QList<Engine::CertificateErrorInfo> certErrors;
+    connect(page, &Engine::Page::certificateError, this,
+            [&certErrors](const Engine::CertificateErrorInfo &e, bool *) {
+                certErrors << e;
+            });
+    QList<bool> loadResults;
+    int secureLoads = 0;   // a finished load OF the https page itself
+    connect(page, &Engine::Page::loadFinished, page,
+            [&](bool ok) {
+                loadResults << ok;
+                if (ok && page->url() == serverUrl)
+                    ++secureLoads;
+            });
+
+    tab.load(serverUrl);
+
+    // The neutral signal fires first, carrying the marshaled info.
+    for (int w = 0; w < 30000 && certErrors.isEmpty(); w += 100)
+        QTest::qWait(100);
+    QVERIFY2(!certErrors.isEmpty(), "certificateError never fired");
+    const Engine::CertificateErrorInfo info = certErrors.first();
+    QCOMPARE(info.url.host(), QStringLiteral("127.0.0.1"));
+    QVERIFY(info.isMainFrame);
+    QVERIFY(info.overridable);
+    QVERIFY2(!info.certificateChain.isEmpty(),
+             "GTlsCertificate chain did not decode into QSslCertificate");
+    QVERIFY(!info.description.isEmpty());
+
+    // The dead navigation reports failure, the pending state is set,
+    // then the interstitial commits its own success — all while the
+    // refused page itself never finished a load.
+    QTRY_VERIFY_WITH_TIMEOUT(loadResults.contains(false), 30000);
+    QVERIFY(page->certErrorPending());
+    QCOMPARE(page->certErrorUrl(), serverUrl);
+    QTRY_VERIFY2_WITH_TIMEOUT(
+        page->url().scheme() == QLatin1String("arktos-cert-error"),
+        "the cert-error interstitial never committed", 30000);
+    QTRY_VERIFY_WITH_TIMEOUT(loadResults.last() == true, 30000);
+    QCOMPARE(secureLoads, 0);
+
+    // A forged proceed nonce resolves nothing.
+    const QString nonce = QUrlQuery(page->url())
+        .queryItemValue(QStringLiteral("n"));
+    QVERIFY(!nonce.isEmpty());
+    tab.load(QUrl(QStringLiteral("arktos-cert-error:proceed?n=forged")));
+    QTest::qWait(1500);
+    QVERIFY(page->certErrorPending());
+    QCOMPARE(secureLoads, 0);
+
+    // The genuine proceed link installs the session exception and the
+    // refused page now serves.
+    tab.load(QUrl(QStringLiteral("arktos-cert-error:proceed?n=") + nonce));
+    QTRY_VERIFY_WITH_TIMEOUT(page->url() == serverUrl, 30000);
+    QTRY_VERIFY_WITH_TIMEOUT(secureLoads >= 1, 30000);
+    QVERIFY(!page->certErrorPending());
+    // The padlock record — a proceeded-past host can never wear green.
+    QVERIFY(WebPage::certificateErrorOverridden(
+        QStringLiteral("127.0.0.1")));
+#else
+    QSKIP("webkit backend not linked in this build");
+#endif
+}
+
+// WK19 — right-click marshals the WebKitHitTestResult into
+// ContextMenuInfo, emits the neutral signal and the view presents the
+// WebKit item model as a Qt popup.
+void tst_EngineSwitch::webkitContextMenu()
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    Engine::Backend *webkit =
+        EngineRegistry::backendForId(QStringLiteral("webkit"));
+    QVERIFY(webkit);
+    QVERIFY2(webkit->pageUnavailableReason().isEmpty(),
+             qPrintable(webkit->pageUnavailableReason()));
+
+    // A link stretched over the whole viewport — the hit-test lands
+    // on it wherever the click falls.
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    connect(&server, &QTcpServer::newConnection, &server, [&server]() {
+        QTcpSocket *socket = server.nextPendingConnection();
+        socket->setParent(&server);
+        connect(socket, &QTcpSocket::readyRead, socket, [socket]() {
+            if (!socket->peek(4096).contains("\r\n\r\n"))
+                return;
+            socket->readAll();
+            const QByteArray body = QByteArrayLiteral(
+                "<html><body><a href=\"http://example.invalid/wk19\" "
+                "style=\"position:fixed;inset:0;display:block\">"
+                "wk19-link</a></body></html>");
+            socket->write("HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n"
+                          "Content-Length: "
+                          + QByteArray::number(body.size())
+                          + "\r\nConnection: close\r\n\r\n" + body);
+            socket->disconnectFromHost();
+        });
+    });
+    const QUrl fixtureUrl(QStringLiteral("http://127.0.0.1:%1/")
+                              .arg(server.serverPort()));
+
+    Engine::ProfileOptions options;
+    options.offTheRecord = true;
+    Engine::Profile *profile = webkit->createProfile(options, this);
+    QVERIFY(profile);
+    EngineTab tab(webkit, profile);
+    tab.resize(800, 600);
+    tab.show();
+    auto *page = qobject_cast<WebkitPage *>(tab.page());
+    auto *view = qobject_cast<WebkitView *>(tab.page()->view());
+    QVERIFY(page && view);
+
+    QSignalSpy loaded(page, &Engine::Page::loadFinished);
+    tab.load(fixtureUrl);
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded.isEmpty()
+            && loaded.last().at(0).toBool(), 60000);
+
+    QSignalSpy menuSpy(page, &Engine::Page::contextMenuRequested);
+    QTest::mouseClick(view, Qt::RightButton, Qt::NoModifier,
+                      QPoint(120, 90));
+    QTRY_VERIFY2_WITH_TIMEOUT(menuSpy.count() >= 1,
+                              "context-menu never arrived", 15000);
+    const Engine::ContextMenuInfo info =
+        menuSpy.first().at(0).value<Engine::ContextMenuInfo>();
+    QCOMPARE(info.linkUrl, QUrl(QStringLiteral("http://example.invalid/wk19")));
+    QVERIFY(!info.linkText.isEmpty());
+    QCOMPARE(info.position, QPoint(120, 90));
+    QCOMPARE(info.pageUrl, fixtureUrl);
+
+    // The WebKit-item popup was presented — dismiss it so it cannot
+    // leak into the next leg.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        QApplication::activePopupWidget() != nullptr, 10000);
+    if (QWidget *popup = QApplication::activePopupWidget())
+        popup->close();
+    pumpDeletes();
+#else
+    QSKIP("webkit backend not linked in this build");
+#endif
+}
+
+// WK19 — a page permission ask routes through WebPermissionManager's
+// serialized prompt; the ModalAnswer denial resolves the WebKit
+// request instead of leaving it hanging.
+void tst_EngineSwitch::webkitPermissionRequest()
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    Engine::Backend *webkit =
+        EngineRegistry::backendForId(QStringLiteral("webkit"));
+    QVERIFY(webkit);
+    QVERIFY2(webkit->pageUnavailableReason().isEmpty(),
+             qPrintable(webkit->pageUnavailableReason()));
+
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    connect(&server, &QTcpServer::newConnection, &server, [&server]() {
+        QTcpSocket *socket = server.nextPendingConnection();
+        socket->setParent(&server);
+        connect(socket, &QTcpSocket::readyRead, socket, [socket]() {
+            if (!socket->peek(4096).contains("\r\n\r\n"))
+                return;
+            socket->readAll();
+            const QByteArray body =
+                QByteArrayLiteral("<html><body>wk19-perm</body></html>");
+            socket->write("HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n"
+                          "Content-Length: "
+                          + QByteArray::number(body.size())
+                          + "\r\nConnection: close\r\n\r\n" + body);
+            socket->disconnectFromHost();
+        });
+    });
+
+    Engine::ProfileOptions options;
+    options.offTheRecord = true;
+    Engine::Profile *profile = webkit->createProfile(options, this);
+    QVERIFY(profile);
+    EngineTab tab(webkit, profile);
+    tab.resize(800, 600);
+    tab.show();
+    auto *page = qobject_cast<WebkitPage *>(tab.page());
+    QVERIFY(page);
+
+    QSignalSpy loaded(page, &Engine::Page::loadFinished);
+    tab.load(QUrl(QStringLiteral("http://127.0.0.1:%1/")
+                      .arg(server.serverPort())));
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded.isEmpty()
+            && loaded.last().at(0).toBool(), 60000);
+
+    ModalAnswer answerer(QMessageBox::No, this);   // auto-deny prompts
+    QString fired;
+    bool jsDone = false;
+    page->runJavaScript(QStringLiteral(
+        "(function(){"
+        " var r='none';"
+        " try { if (navigator.geolocation) {"
+        "   navigator.geolocation.getCurrentPosition("
+        "     function(){}, function(){}); r='geo'; } } catch(e) {}"
+        " try { if (window.Notification && Notification.requestPermission) {"
+        "   Notification.requestPermission(function(){});"
+        "   r = r === 'none' ? 'notif' : r + '+notif'; } } catch(e) {}"
+        " return r; })()"),
+        [&fired, &jsDone](const QVariant &v) {
+            fired = v.toString();
+            jsDone = true;
+        });
+    for (int waited = 0; !jsDone && waited < 15000; waited += 50)
+        QTest::qWait(50);
+    QVERIFY2(jsDone, "permission probe eval never returned");
+
+    // At least one mappable request must reach the broker and get
+    // answered — a request that only ever hangs the page would be a
+    // regression of the SEC05 contract.
+    QTRY_VERIFY2_WITH_TIMEOUT(
+        page->permissionRequestsSeen() >= 1,
+        qPrintable(QStringLiteral("no permission request arrived "
+                                  "(js: %1)").arg(fired)), 20000);
+    QTRY_VERIFY_WITH_TIMEOUT(answerer.answered() >= 1, 20000);
+    QCOMPARE(page->permissionRequestsGranted(), 0);
+#else
+    QSKIP("webkit backend not linked in this build");
+#endif
+}
+
+// WK19 — the download channel end-to-end: a Content-Disposition
+// attachment gets the RESPONSE decide-policy "download" verdict and
+// surfaces as Engine::DownloadRequest through the profile; the same
+// channel serves Page::download().  Accept inside the emission is the
+// synchronous decide-destination answer.
+void tst_EngineSwitch::webkitDownload()
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    Engine::Backend *webkit =
+        EngineRegistry::backendForId(QStringLiteral("webkit"));
+    QVERIFY(webkit);
+    QVERIFY2(webkit->pageUnavailableReason().isEmpty(),
+             qPrintable(webkit->pageUnavailableReason()));
+
+    const QByteArray payloadA("wk19-download-payload");
+    const QByteArray payloadB("wk19-uri-payload");
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    connect(&server, &QTcpServer::newConnection, &server,
+            [&server, payloadA, payloadB]() {
+        QTcpSocket *socket = server.nextPendingConnection();
+        socket->setParent(&server);
+        connect(socket, &QTcpSocket::readyRead, socket,
+                [socket, payloadA, payloadB]() {
+            if (!socket->peek(4096).contains("\r\n\r\n"))
+                return;
+            const QByteArray request = socket->readAll();
+            QByteArray head;
+            QByteArray body;
+            if (request.startsWith("GET /dl ")) {
+                body = payloadA;
+                head = "HTTP/1.0 200 OK\r\n"
+                       "Content-Type: application/octet-stream\r\n"
+                       "Content-Disposition: attachment; "
+                       "filename=\"wk19.bin\"\r\n";
+            } else {
+                body = payloadB;
+                head = "HTTP/1.0 200 OK\r\n"
+                       "Content-Type: application/octet-stream\r\n";
+            }
+            socket->write(head + "Content-Length: "
+                          + QByteArray::number(body.size())
+                          + "\r\nConnection: close\r\n\r\n" + body);
+            socket->disconnectFromHost();
+        });
+    });
+    const QUrl base(QStringLiteral("http://127.0.0.1:%1")
+                        .arg(server.serverPort()));
+
+    Engine::ProfileOptions options;
+    options.offTheRecord = true;
+    Engine::Profile *profile = webkit->createProfile(options, this);
+    QVERIFY(profile);
+    EngineTab tab(webkit, profile);
+    tab.resize(800, 600);
+    tab.show();
+    auto *page = qobject_cast<WebkitPage *>(tab.page());
+    QVERIFY(page);
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    int handoffs = 0;
+    QString acceptedName, acceptedMime;
+    qint64 acceptedTotal = -1;
+    connect(profile, &Engine::Profile::downloadRequested, this,
+            [&](Engine::DownloadRequest *request) {
+                ++handoffs;
+                if (handoffs == 1) {
+                    acceptedName = request->suggestedFileName();
+                    acceptedMime = request->mimeType();
+                    acceptedTotal = request->totalBytes();
+                }
+                request->accept(dir.filePath(
+                    handoffs == 1 ? QStringLiteral("one.bin")
+                                  : QStringLiteral("two.bin")));
+            });
+
+    // Leg 1 — an attachment response becomes a download.
+    tab.load(QUrl(base.toString() + QStringLiteral("/dl")));
+    QTRY_VERIFY2_WITH_TIMEOUT(QFile::exists(dir.filePath(
+                                  QStringLiteral("one.bin"))),
+                              "attachment never landed on disk", 30000);
+    {
+        QFile file(dir.filePath(QStringLiteral("one.bin")));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QCOMPARE(file.readAll(), payloadA);
+    }
+    QCOMPARE(handoffs, 1);
+    QCOMPARE(acceptedName, QStringLiteral("wk19.bin"));
+    QCOMPARE(acceptedMime, QStringLiteral("application/octet-stream"));
+    QCOMPARE(acceptedTotal, qint64(payloadA.size()));
+
+    // Leg 2 — Page::download() drives the same channel.
+    page->download(QUrl(base.toString() + QStringLiteral("/dl2")));
+    QTRY_VERIFY2_WITH_TIMEOUT(QFile::exists(dir.filePath(
+                                  QStringLiteral("two.bin"))),
+                              "download() never landed on disk", 30000);
+    {
+        QFile file(dir.filePath(QStringLiteral("two.bin")));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QCOMPARE(file.readAll(), payloadB);
+    }
+    QCOMPARE(handoffs, 2);
+#else
+    QSKIP("webkit backend not linked in this build");
 #endif
 }
 

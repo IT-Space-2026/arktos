@@ -294,8 +294,15 @@ browsing profile:
   filter-list rules compile through WebKitUserContentFilterStore
   into a per-page content filter ($redirect degrades to a plain
   block, and constructs Safari cannot express surface in a counted
-  drop channel rather than vanishing; extensions and devtools are
-  still ahead — keeping it experimental).
+  drop channel rather than vanishing). The everyday surfaces are
+  wired too — TLS failures raise the same nonce-bound certificate
+  interstitial as Chromium (proceeding installs a session-scoped
+  exception, never persisted), right-click presents WebKit's own
+  context-menu item model, page permission asks route through the
+  shared permission broker, and downloads hand off to the download
+  manager (or the Rust accelerated engine) through the generic
+  DownloadRequest channel; extensions and devtools are still ahead —
+  keeping it experimental.
 - **Reader mode** (Ctrl+Alt+R) and **Picture-in-Picture** on videos.
 - **Command palette** — Ctrl+Shift+P fuzzy search over browser
   commands.

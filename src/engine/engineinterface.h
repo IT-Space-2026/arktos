@@ -526,6 +526,11 @@ signals:
                           bool *accepted /* out-param on the signal is
                               sketch shorthand — the real interface may
                               prefer a decision callback */);
+    // WK19: the engine resolved a context-menu activation — the info
+    // carries the hit-test payload (position in view-widget
+    // coordinates).  The page's own view presents the menu; chrome
+    // observes the signal for parity with WebEngine's request.
+    void contextMenuRequested(const Engine::ContextMenuInfo &info);
 };
 
 // ---- profile --------------------------------------------------------------------------

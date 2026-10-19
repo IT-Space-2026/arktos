@@ -318,28 +318,44 @@ void WebPermissionManager::handleRequest(QWidget *parent,
 {
     if (!request.isValid())
         return;
+    // WK19: the engine-neutral overload carries the real machinery —
+    // the WebEngine carrier unwraps to origin+type plus a resolver
+    // that re-checks isValid before granting (a request can die while
+    // it queues behind a prompt).
+    handleRequest(parent, request.origin(), request.permissionType(),
+        offTheRecord, [request](bool granted) {
+            if (!request.isValid())
+                return;
+            if (granted)
+                request.grant();
+            else
+                request.deny();
+        });
+}
 
-    const QWebEnginePermission::PermissionType type = request.permissionType();
-
+void WebPermissionManager::handleRequest(QWidget *parent,
+        const QUrl &origin,
+        QWebEnginePermission::PermissionType type, bool offTheRecord,
+        const std::function<void(bool)> &resolve)
+{
     // Never prompt for the dangerous surface: capture devices, screen
     // capture, clipboard, font enumeration and anything unmapped.
     if (isDenied(type) || !isPromptable(type)) {
-        request.deny();
+        resolve(false);
         return;
     }
 
     bool granted = false;
-    if (storedDecision(request.origin(), type, &granted, offTheRecord)) {
-        if (granted)
-            request.grant();
-        else
-            request.deny();
+    if (storedDecision(origin, type, &granted, offTheRecord)) {
+        resolve(granted);
         return;
     }
 
     Pending pending;
     pending.parent = parent;
-    pending.permission = request;
+    pending.origin = origin;
+    pending.type = type;
+    pending.resolve = resolve;
     pending.offTheRecord = offTheRecord;
     m_pending.append(pending);
     QMetaObject::invokeMethod(this, "showNextPrompt", Qt::QueuedConnection);
@@ -358,35 +374,27 @@ void WebPermissionManager::showNextPrompt()
     m_inPrompt = true;
     while (!m_pending.isEmpty()) {
         const Pending pending = m_pending.takeFirst();
-        const QWebEnginePermission request = pending.permission;
-        if (!request.isValid())
-            continue;
-
-        const QWebEnginePermission::PermissionType type = request.permissionType();
 
         // The answer may have been stored while this request queued
         // behind an earlier prompt.
         bool granted = false;
-        if (storedDecision(request.origin(), type, &granted,
+        if (storedDecision(pending.origin, pending.type, &granted,
                            pending.offTheRecord)) {
-            if (granted)
-                request.grant();
-            else
-                request.deny();
+            pending.resolve(granted);
             continue;
         }
 
-        emit promptRequested(request.origin(), type);
+        emit promptRequested(pending.origin, pending.type);
 
         // The percent-encoded origin keeps control characters and
         // embedded newlines from spoofing the dialog text (SEC02).
-        QString shownOrigin = QString::fromUtf8(request.origin().toEncoded());
+        QString shownOrigin = QString::fromUtf8(pending.origin.toEncoded());
         if (shownOrigin.size() > 128)
             shownOrigin = shownOrigin.left(128) + QLatin1String("…");
 
         QMessageBox box(QMessageBox::Question, tr("Permission Request"),
             tr("The page at %1 wants to %2.\n\nAllow it?")
-                .arg(shownOrigin, typeDescription(type)),
+                .arg(shownOrigin, typeDescription(pending.type)),
             QMessageBox::NoButton, pending.parent);
         QAbstractButton *denyButton =
             box.addButton(QMessageBox::No);
@@ -402,19 +410,17 @@ void WebPermissionManager::showNextPrompt()
         box.exec();
 
         const bool allow = box.clickedButton() == allowButton;
-        if (allow)
-            request.grant();
-        else
-            request.deny();
+        pending.resolve(allow);
 
         // Always remember for the session — without it a page looping
         // requestPermission() would spam modals.  Persisting is opt-in
         // via the checkbox and never happens for off-the-record pages.
         m_sessionDecisions.insert(
-            sessionKeyFor(request.origin(), type, pending.offTheRecord),
+            sessionKeyFor(pending.origin, pending.type,
+                          pending.offTheRecord),
             allow);
         if (remember->isChecked() && !pending.offTheRecord)
-            setEntry(request.origin(), type, allow);
+            setEntry(pending.origin, pending.type, allow);
     }
     m_inPrompt = false;
 }

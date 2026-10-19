@@ -20,6 +20,7 @@
 #ifndef WEBPAGE_H
 #define WEBPAGE_H
 
+#include "engineinterface.h"
 #include "tabwidget.h"
 
 #include <qlist.h>
@@ -152,6 +153,20 @@ public:
     // verified.  Session-scoped like the whitelist it reads; nothing
     // is persisted.
     static bool certificateErrorOverridden(const QString &host);
+    // WK19: a foreign backend (WPE WebKit) records its session
+    // cert-error overrides here — WebKit's network session holds the
+    // certificate exception itself, this flag only feeds the padlock
+    // red verdict so a foreign tab can't wear green over a chain the
+    // user proceeded past.
+    static void noteCertErrorOverride(const QString &host);
+
+    // WK19: the interstitial markup builder lifted off the
+    // QWebEngineCertificateError carrier so foreign backends fill
+    // Engine::CertificateErrorInfo and render the identical page —
+    // one interstitial contract, one HTML body.
+    static QString certificateErrorHtml(
+            const Engine::CertificateErrorInfo &error,
+            const QString &typeName, const QString &nonce);
 
     // JSCTL: whether the current page's scripts are blocked by the
     // per-site rules/security tier (meaningful for http/https pages).

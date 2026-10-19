@@ -1726,10 +1726,28 @@ static QString certErrorKey(const QWebEngineCertificateError &error)
 // false green on a bypassed certificate.  The fingerprint half of
 // the key cannot be matched post-hoc (Qt never sees the committed
 // chain), so host granularity it is.
+// WK19: hosts a foreign backend granted a session cert-error override
+// — keyed by bare host (the WebKit network session holds the actual
+// certificate exception; this set exists only so certificateError-
+// Overridden's red verdict reaches non-WebEngine tabs).
+static QSet<QString> &foreignCertOverrideHosts()
+{
+    static QSet<QString> hosts;
+    return hosts;
+}
+
+void WebPage::noteCertErrorOverride(const QString &host)
+{
+    if (!host.isEmpty())
+        foreignCertOverrideHosts().insert(host.toLower());
+}
+
 bool WebPage::certificateErrorOverridden(const QString &host)
 {
     if (host.isEmpty())
         return false;
+    if (foreignCertOverrideHosts().contains(host.toLower()))
+        return true;
     const QString prefix = host.toLower() + QLatin1Char('|');
     const QHash<QWebEngineProfile *, QSet<QString> > &whitelist =
         certErrorWhitelists();
@@ -1797,10 +1815,35 @@ void WebPage::handleCertificateError(QWebEngineCertificateError error)
 
 QString WebPage::certificateErrorHtml(const QWebEngineCertificateError &error)
 {
+    // The error type's symbolic name ("CertificateAuthorityInvalid" …)
+    // is more useful than the raw net error code.
+    const QMetaEnum typeEnum = QMetaEnum::fromType<QWebEngineCertificateError::Type>();
+    const char *typeName = typeEnum.valueToKey(static_cast<int>(error.type()));
+
+    Engine::CertificateErrorInfo info;
+    info.url = error.url();
+    info.error = int(error.type());
+    info.description = error.description();
+    info.overridable = error.isOverridable();
+    info.isMainFrame = error.isMainFrame();
+    info.certificateChain = error.certificateChain();
+    return certificateErrorHtml(
+            info, QString::fromLatin1(typeName ? typeName : "unknown"),
+            m_certErrorNonce);
+}
+
+// WK19: shared with the WPE backend — the markup is identical, the
+// carrier is the engine-neutral CertificateErrorInfo.  typeName is
+// the backend's symbolic error name (QWebEngineCertificateError::Type
+// key / GTlsCertificateFlags decode), nonce the published page's id.
+QString WebPage::certificateErrorHtml(
+        const Engine::CertificateErrorInfo &error,
+        const QString &typeName, const QString &nonce)
+{
     QFile certErrorFile(QLatin1String(":/certerror.html"));
     if (!certErrorFile.open(QIODevice::ReadOnly))
         return QString();
-    const QUrl errorUrl = error.url();
+    const QUrl errorUrl = error.url;
     QString title = tr("Certificate error: %1")
             .arg(QString::fromUtf8(errorUrl.toEncoded()));
     QString html = QLatin1String(certErrorFile.readAll());
@@ -1812,19 +1855,16 @@ QString WebPage::certificateErrorHtml(const QWebEngineCertificateError &error)
                      QLatin1String(imageBuffer.buffer().toBase64()));
     }
 
-    // The error type's symbolic name ("CertificateAuthorityInvalid" …)
-    // is more useful than the raw net error code.
-    const QMetaEnum typeEnum = QMetaEnum::fromType<QWebEngineCertificateError::Type>();
-    const char *typeName = typeEnum.valueToKey(static_cast<int>(error.type()));
     QString errorInfo = tr("Error: %1 (%2)")
-            .arg(error.description().toHtmlEscaped(),
-                 QString::fromLatin1(typeName ? typeName : "unknown").toHtmlEscaped());
+            .arg(error.description.toHtmlEscaped(),
+                 typeName.isEmpty() ? QStringLiteral("unknown").toHtmlEscaped()
+                                    : typeName.toHtmlEscaped());
 
     // Certificate chain detail — subject, issuer, validity window and
     // fingerprint so the user can judge what they are connecting to.
     // Everything interpolated here is attacker-influenced; escape it.
     QString certInfo;
-    const QList<QSslCertificate> chain = error.certificateChain();
+    const QList<QSslCertificate> chain = error.certificateChain;
     if (!chain.isEmpty()) {
         const QSslCertificate cert = chain.first();
         certInfo += tr("<li>Subject: %1</li>").arg(cert.subjectDisplayName().toHtmlEscaped());
@@ -1839,10 +1879,10 @@ QString WebPage::certificateErrorHtml(const QWebEngineCertificateError &error)
     }
 
     QString buttons = tr("<a id=\"back\" href=\"arktos-cert-error:back?n=%1\">Back to safety</a>")
-            .arg(m_certErrorNonce);
-    if (error.isOverridable()) {
+            .arg(nonce);
+    if (error.overridable) {
         buttons += tr("<a id=\"proceed\" href=\"arktos-cert-error:proceed?n=%1\">Proceed anyway (unsafe)</a>")
-                .arg(m_certErrorNonce);
+                .arg(nonce);
     }
 
     html = html.arg(title,

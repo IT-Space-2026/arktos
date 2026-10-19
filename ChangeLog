@@ -3792,3 +3792,30 @@ WebKit content-blocker adblock (WK18): the webkit backend gains
     subscription rule changes re-push the document so a refresh
     recompiles and swaps the filter on live pages without an
     unfiltered gap.
+WebKit user-facing surfaces (WK19): the WPE WebKit backend now
+    exercises the same chrome contracts as Chromium end to end.
+    TLS failures claim load-failed-with-tls-errors and run the
+    certificate-error contract verbatim — the neutral
+    certificateError signal first, then the nonce-bound
+    arktos-cert-error: interstitial (the markup builder moved onto
+    the engine-neutral CertificateErrorInfo so both backends render
+    the identical page); "proceed" installs the certificate on the
+    page's network session — session-scoped, never persisted, and
+    the padlock still reports the proceeded host as overridden.
+    Right-click marshals the WebKitHitTestResult into the shared
+    ContextMenuInfo and presents WebKit's own context-menu item
+    model as a Qt popup. Page permission asks map onto the shared
+    permission broker through its new engine-neutral entry point —
+    geolocation/notifications/pointer-lock prompt, capture and
+    device-info requests deny without prompting. Downloads work:
+    response policy decisions route attachments and unrenderable
+    MIMEs onto WebKit's download channel, WebKitDownload surfaces
+    as an Engine::DownloadRequest, and engine-tab profiles now get
+    the DownloadManager installOnProfile binding so the same card
+    UI and Rust accelerated engine consume them (pause/resume stay
+    honest no-ops — the API offers none). The About dialog gained
+    an "Engines:" line listing each registered backend's
+    displayName, so "WebKit 2.54.1" reads identically in the
+    indicator tooltip, the switcher menu, the settings combo, About
+    and --engine-list. Tor stays Chromium-locked — webkit is never
+    offered there pending the leak audit.

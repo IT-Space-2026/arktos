@@ -26,6 +26,7 @@
 #include "adblockmanager.h"
 #include "browserapplication.h"
 #include "webpage.h"
+#include "webpermissionmanager.h"
 
 // glib/WPE headers declare a struct member named `signals` — Qt's
 // keyword macros must be out of the way for the include (the harness
@@ -67,11 +68,16 @@
 #include <qjsonarray.h>
 #include <qjsondocument.h>
 #include <qjsonobject.h>
+#include <qmenu.h>
 #include <qmessagebox.h>
 #include <qpainter.h>
 #include <qpixmap.h>
 #include <qpointer.h>
+#include <qsslcertificate.h>
+#include <qstandardpaths.h>
+#include <qtimer.h>
 #include <qurlquery.h>
+#include <quuid.h>
 
 #include <cstring>
 
@@ -90,6 +96,10 @@ static QHash<WebKitWebView *, WebkitPage *> &schemePageMap();
 // calls this queued prompt.
 static void confirmAndOpenExternalUrl(WebkitPage *page,
                                       const QUrl &url);
+// WK19 — the download channel lives on the WebKitNetworkSession:
+// connect "download-started" once per session (the default session
+// is shared across identity-less profiles — the hook is idempotent).
+static void ensureDownloadHook(WebKitNetworkSession *session);
 
 namespace {
 
@@ -1103,6 +1113,10 @@ void WebkitView::mouseMoveEvent(QMouseEvent *event)
 void WebkitView::mousePressEvent(QMouseEvent *event)
 {
 #ifdef ARKTOS_WEBKIT_LINKED
+    // WK19: the "context-menu" signal carries no coordinates on WPE —
+    // the last right-button press position anchors the popup.
+    if (event->button() == Qt::RightButton)
+        m_contextMenuPos = event->position();
     dispatchPointerButton(int(WPE_EVENT_POINTER_DOWN), event);
 #endif
     event->accept();
@@ -1219,6 +1233,11 @@ WebkitPage::WebkitPage(Engine::Profile *profile, QObject *parent)
     }
     if (!session)
         session = webkit_network_session_get_default();
+    m_session = session;
+    // WK19: the session is the download channel — hook
+    // "download-started" once per session (idempotent for the shared
+    // default) so transfers route to the owning page's profile.
+    ensureDownloadHook(session);
 
     // WK09: favicon tracking is opt-in per data manager (disabled by
     // default) — without it page-icons never updates and iconChanged
@@ -1275,6 +1294,16 @@ WebkitPage::WebkitPage(Engine::Profile *profile, QObject *parent)
                      G_CALLBACK(cbNotifyPageIcons), this);
     g_signal_connect(m_webView, "decide-policy",
                      G_CALLBACK(cbDecidePolicy), this);
+    // WK19: the user-facing surfaces — TLS errors feed the
+    // certificateError/interstitial contract, context-menu marshals
+    // a ContextMenuInfo + the view's popup, permission-request goes
+    // through the SEC05 broker.
+    g_signal_connect(m_webView, "load-failed-with-tls-errors",
+                     G_CALLBACK(cbLoadFailedTls), this);
+    g_signal_connect(m_webView, "context-menu",
+                     G_CALLBACK(cbContextMenu), this);
+    g_signal_connect(m_webView, "permission-request",
+                     G_CALLBACK(cbPermissionRequest), this);
     g_signal_connect(m_wpeView, "buffer-rendered",
                      G_CALLBACK(cbBufferRendered), this);
     // WK14: the find controller is a per-view object owned by the
@@ -1340,6 +1369,9 @@ WebkitPage::~WebkitPage()
         webkit_user_script_unref(script);
     m_userScripts.clear();
     m_profileUserScripts.clear();
+    // WK19: the retained cert-error certificate and context menu.
+    g_clear_object(&m_certErrorCert);
+    g_clear_object(&m_contextMenu);
     g_clear_object(&m_webView);
     g_clear_object(&m_toplevel);
 #endif
@@ -2165,7 +2197,18 @@ QList<Engine::Script> WebkitPage::scripts() const
 
 void WebkitPage::download(const QUrl &url)
 {
+#ifdef ARKTOS_WEBKIT_LINKED
+    if (!m_webView)
+        return;
+    // The view-scoped download (DownloadManager::pageDownload's
+    // entry): it surfaces on the session's "download-started" like a
+    // content-disposition transfer and routes to this page's profile
+    // through schemePageMap.
+    webkit_web_view_download_uri(
+        m_webView, url.toString().toUtf8().constData());
+#else
     Q_UNUSED(url);
+#endif
 }
 
 QWidget *WebkitPage::view() const
@@ -2276,6 +2319,35 @@ int WebkitPage::cbScriptMessageWithReply(
         WebKitScriptMessageReply *reply, WebkitPage *page)
 {
     page->onChannelMessage(value, reply);
+    return TRUE;
+}
+
+int WebkitPage::cbLoadFailedTls(WebKitWebView *, void *uri,
+                                void *certificate, unsigned flags,
+                                WebkitPage *page)
+{
+    page->onTlsError(QString::fromUtf8(
+        uri ? static_cast<const char *>(uri) : ""),
+        G_TLS_CERTIFICATE(certificate), flags);
+    // TRUE claims the failure — the interstitial contract answers it,
+    // never WebKit's built-in error page (the cbLoadFailed shape).
+    return TRUE;
+}
+
+int WebkitPage::cbContextMenu(WebKitWebView *, void *menu,
+                              void *hit, WebkitPage *page)
+{
+    page->onContextMenu(WEBKIT_CONTEXT_MENU(menu),
+                        WEBKIT_HIT_TEST_RESULT(hit));
+    // Claimed either way — the view presents the popup; an ignored
+    // menu is a deliberate refusal, not a missing handler.
+    return TRUE;
+}
+
+int WebkitPage::cbPermissionRequest(WebKitWebView *, void *request,
+                                    WebkitPage *page)
+{
+    page->onPermissionRequest(WEBKIT_PERMISSION_REQUEST(request));
     return TRUE;
 }
 
@@ -2462,6 +2534,35 @@ void WebkitPage::onPageIconsNotify()
 bool WebkitPage::onDecidePolicy(WebKitPolicyDecision *decision, int type)
 {
 #ifdef ARKTOS_WEBKIT_LINKED
+    // WK19 — the response lane's download verdict: WebKit asks the
+    // embedder what to do with a response whose MIME it cannot
+    // render or that arrived as Content-Disposition: attachment.
+    // Answering "download" routes the transfer onto the session's
+    // download channel (download-started → DownloadManager) —
+    // Chromium's attachment auto-download parity.
+    if (type == int(WEBKIT_POLICY_DECISION_TYPE_RESPONSE)
+            && WEBKIT_IS_RESPONSE_POLICY_DECISION(decision)) {
+        WebKitResponsePolicyDecision *response =
+            WEBKIT_RESPONSE_POLICY_DECISION(decision);
+        const bool renderable =
+            webkit_response_policy_decision_is_mime_type_supported(
+                response);
+        WebKitURIResponse *uriResponse =
+            webkit_response_policy_decision_get_response(response);
+        SoupMessageHeaders *headers = uriResponse
+            ? webkit_uri_response_get_http_headers(uriResponse)
+            : nullptr;
+        const char *disposition = headers
+            ? soup_message_headers_get_one(headers, "Content-Disposition")
+            : nullptr;
+        const bool attachment = disposition
+            && g_ascii_strncasecmp(disposition, "attachment", 10) == 0;
+        if (!renderable || attachment) {
+            webkit_policy_decision_download(decision);
+            return true;
+        }
+        return false;
+    }
     const bool navigationDecision =
         (type == int(WEBKIT_POLICY_DECISION_TYPE_NAVIGATION_ACTION)
          || type == int(WEBKIT_POLICY_DECISION_TYPE_NEW_WINDOW_ACTION))
@@ -2490,6 +2591,35 @@ bool WebkitPage::onDecidePolicy(WebKitPolicyDecision *decision, int type)
     const bool mainFrame =
         type == int(WEBKIT_POLICY_DECISION_TYPE_NEW_WINDOW_ACTION)
         || !webkit_navigation_action_get_frame_name(action);
+
+    // WK19 — the cert-error interstitial contract (WebPage's
+    // acceptNavigationRequest spelling): the published page navigates
+    // to arktos-cert-error:interstitial?n=<nonce>, its action links
+    // resolve the pending decision, and anything else on the scheme —
+    // a forged or stale nonce — is dropped.  Main-frame only, before
+    // the RequestPolicy consult so the interstitial's own navigations
+    // can never be vetoed into a loop.
+    if (url.scheme() == QLatin1String("arktos-cert-error")) {
+        if (!mainFrame) {
+            webkit_policy_decision_ignore(decision);
+            return true;
+        }
+        const QString nonce = QUrlQuery(url)
+            .queryItemValue(QLatin1String("n"));
+        if (url.path() == QLatin1String("interstitial")) {
+            if (SchemeAccessHandler::hasInterstitialPage(nonce)) {
+                webkit_policy_decision_use(decision);
+                m_lastNavTarget = url;
+                return true;
+            }
+            webkit_policy_decision_ignore(decision);
+            return true;
+        }
+        webkit_policy_decision_ignore(decision);
+        if (m_certErrorPending && nonce == m_certErrorNonce)
+            resolveCertificateErrorLink(url);
+        return true;
+    }
 
     Engine::RequestPolicy *policy =
         m_webProfile ? m_webProfile->requestPolicy() : nullptr;
@@ -2632,6 +2762,790 @@ void WebkitPage::onFindFailed()
     Engine::FindResult result;
     Q_EMIT findTextFinished(result);
 }
+
+// ---- WK19 — the user-facing surfaces --------------------------------
+//
+// Four surfaces land here: the certificate-error interstitial
+// (WebPage's nonce contract, verbatim), the context menu (WebKit's
+// own WebKitContextMenu item model driven through a Qt popup),
+// WebKitPermissionRequest routed onto the SEC05 WebPermissionManager
+// broker, and WebKitDownload wrapped as Engine::DownloadRequest —
+// plus the capabilities/truth pass each one was verified against.
+
+#ifdef ARKTOS_WEBKIT_LINKED
+
+// GTlsCertificateFlags -> the symbolic name the interstitial's
+// "Error: <description> (<name>)" line prints (the
+// QWebEngineCertificateError::Type QMetaEnum-key role) and the
+// human-readable description.  G_TLS_CERTIFICATE_* is a bitmask —
+// every set flag contributes.
+static QStringList tlsFlagEntries(unsigned flags)
+{
+    QStringList entries;
+    if (flags & G_TLS_CERTIFICATE_UNKNOWN_CA)
+        entries << QStringLiteral("UnknownCa|Certificate authority is unknown");
+    if (flags & G_TLS_CERTIFICATE_BAD_IDENTITY)
+        entries << QStringLiteral("BadIdentity|Certificate does not match the host");
+    if (flags & G_TLS_CERTIFICATE_NOT_ACTIVATED)
+        entries << QStringLiteral("NotActivated|Certificate is not yet valid");
+    if (flags & G_TLS_CERTIFICATE_EXPIRED)
+        entries << QStringLiteral("Expired|Certificate has expired");
+    if (flags & G_TLS_CERTIFICATE_REVOKED)
+        entries << QStringLiteral("Revoked|Certificate has been revoked");
+    if (flags & G_TLS_CERTIFICATE_INSECURE)
+        entries << QStringLiteral("Insecure|Certificate is insecure");
+    if (flags & G_TLS_CERTIFICATE_GENERIC_ERROR)
+        entries << QStringLiteral("GenericError|TLS validation failed");
+    return entries;
+}
+
+static QString tlsFlagsName(unsigned flags)
+{
+    QStringList names;
+    for (const QString &entry : tlsFlagEntries(flags))
+        names << entry.section(QLatin1Char('|'), 0, 0);
+    return names.isEmpty() ? QStringLiteral("Unknown")
+                           : names.join(QLatin1Char('+'));
+}
+
+static QString tlsFlagsDescription(unsigned flags)
+{
+    QStringList phrases;
+    for (const QString &entry : tlsFlagEntries(flags))
+        phrases << entry.section(QLatin1Char('|'), 1, 1);
+    return phrases.isEmpty()
+        ? WebPage::tr("The certificate failed TLS validation")
+        : phrases.join(QLatin1String("; "));
+}
+
+// The proceed path's session-scoped exception — WebKit's own
+// allow_tls_certificate_for_host keeps the (host, certificate) pair
+// for the session's life only (ephemeral sessions, OTR included,
+// drop it with the session — the SEC06 rule the WebEngine whitelist
+// serves).  The padlock-side record marks the host red so a
+// proceeded-past chain never wears a green verdict.
+static void allowCertificateForHost(WebKitNetworkSession *session,
+                                    GTlsCertificate *certificate,
+                                    const QString &host)
+{
+    if (!session || !certificate || host.isEmpty())
+        return;
+    webkit_network_session_allow_tls_certificate_for_host(
+        session, certificate, host.toUtf8().constData());
+    WebPage::noteCertErrorOverride(host);
+}
+
+#endif // ARKTOS_WEBKIT_LINKED
+
+void WebkitPage::onTlsError(const QString &failingUri,
+                            GTlsCertificate *certificate,
+                            unsigned flags)
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    const QUrl url = QUrl::fromEncoded(failingUri.toUtf8());
+
+    // The neutral info WebPage's interstitial builder consumes:
+    // chain DER-decoded into QSslCertificate, the flags bitmask
+    // decoded to the symbolic name + description, overridable gated
+    // on there being a certificate to except at all.
+    Engine::CertificateErrorInfo info;
+    info.url = url;
+    info.error = int(flags);
+    info.isMainFrame = true;
+    info.overridable = certificate != nullptr;
+    info.description = tlsFlagsDescription(flags);
+    for (GTlsCertificate *cert = certificate; cert;
+         cert = g_tls_certificate_get_issuer(cert)) {
+        // The DER lives on the "certificate" GByteArray property —
+        // there is no flat getter on glib's GTlsCertificate API.
+        GByteArray *der = nullptr;
+        g_object_get(cert, "certificate", &der, nullptr);
+        if (der) {
+            if (der->len) {
+                const QByteArray bytes(
+                    reinterpret_cast<const char *>(der->data),
+                    int(der->len));
+                QSslCertificate qcert(bytes, QSsl::Der);
+                if (qcert.isNull())
+                    qcert = QSslCertificate(bytes, QSsl::Pem);
+                if (!qcert.isNull())
+                    info.certificateChain << qcert;
+            }
+            g_byte_array_unref(der);
+        }
+    }
+
+    // The WebPage contract, in order: the neutral signal first (a
+    // listener that accepts installs the exception and reloads),
+    // then the dead navigation's loadFinished(false), then the
+    // nonce-bound interstitial for unanswered failures.
+    bool accepted = false;
+    Q_EMIT certificateError(info, &accepted);
+    if (m_loading) {
+        m_loading = false;
+        Q_EMIT loadFinished(false);
+    }
+    if (accepted && info.overridable) {
+        allowCertificateForHost(m_session, certificate, url.host());
+        const QPointer<WebkitPage> page(this);
+        QTimer::singleShot(0, this, [page, url]() {
+            if (page)
+                page->load(url);
+        });
+        return;
+    }
+    // A second error while a decision pends is refused without
+    // another interstitial (WebPage's contract — the prompt would
+    // otherwise stack).
+    if (m_certErrorPending)
+        return;
+    m_certErrorPending = true;
+    m_certErrorUrl = url;
+    m_certErrorHost = url.host();
+    m_certErrorOverridable = info.overridable;
+    g_clear_object(&m_certErrorCert);
+    if (certificate)
+        m_certErrorCert =
+            G_TLS_CERTIFICATE(g_object_ref(certificate));
+    m_certErrorNonce =
+        QUuid::createUuid().toString(QUuid::WithoutBraces);
+    SchemeAccessHandler::publishInterstitialPage(
+        m_certErrorNonce,
+        WebPage::certificateErrorHtml(
+            info, tlsFlagsName(flags), m_certErrorNonce));
+    // Queued: navigating inside the load-failed-with-tls-errors
+    // signal would re-enter WebKit's navigation machinery.
+    const QUrl interstitial(QStringLiteral(
+        "arktos-cert-error:interstitial?n=") + m_certErrorNonce);
+    const QPointer<WebkitPage> page(this);
+    QTimer::singleShot(0, this, [page, interstitial]() {
+        if (page)
+            page->load(interstitial);
+    });
+#else
+    Q_UNUSED(failingUri);
+    Q_UNUSED(certificate);
+    Q_UNUSED(flags);
+#endif
+}
+
+void WebkitPage::resolveCertificateErrorLink(const QUrl &command)
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    const bool proceed = command.path() == QLatin1String("proceed")
+        && m_certErrorOverridable && m_certErrorCert;
+    m_certErrorPending = false;
+    const QPointer<WebkitPage> page(this);
+    if (proceed) {
+        // Session-scoped only — nothing is persisted to a trust
+        // store; a fresh session (or a different profile) prompts
+        // again, the SEC06 rule.
+        allowCertificateForHost(m_session, m_certErrorCert,
+                                m_certErrorHost);
+        const QUrl url = m_certErrorUrl;
+        QTimer::singleShot(0, this, [page, url]() {
+            if (page)
+                page->load(url);
+        });
+        return;
+    }
+    // "back to safety" (or anything unrecognised): leave the
+    // interstitial — back in history when there is one, otherwise
+    // the start page.  Queued for the same re-entrancy reason as
+    // WebPage's resolveCertificateErrorLink.
+    QTimer::singleShot(0, this, [page]() {
+        if (!page)
+            return;
+        if (page->canGoBack())
+            page->back();
+        else
+            page->load(BrowserApplication::startPageUrl(
+                BrowserApplication::defaultEngineId(),
+                page->isOffTheRecord()));
+    });
+#else
+    Q_UNUSED(command);
+#endif
+}
+
+void WebkitPage::onContextMenu(WebKitContextMenu *menu,
+                               WebKitHitTestResult *hitTestResult)
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    if (!menu || !hitTestResult)
+        return;
+    // Retain the menu for the view's popup — WebKit's ownership is
+    // gesture-scoped and the popup reads it after the signal
+    // returns.
+    g_clear_object(&m_contextMenu);
+    m_contextMenu = WEBKIT_CONTEXT_MENU(g_object_ref(menu));
+
+    Engine::ContextMenuInfo info;
+    info.pageUrl = m_url;
+    if (m_view)
+        info.position = m_view->m_contextMenuPos.toPoint();
+    if (webkit_hit_test_result_context_is_link(hitTestResult)) {
+        const char *uri =
+            webkit_hit_test_result_get_link_uri(hitTestResult);
+        info.linkUrl = QUrl::fromEncoded(uri ? uri : "");
+        const char *label =
+            webkit_hit_test_result_get_link_label(hitTestResult);
+        const char *title =
+            webkit_hit_test_result_get_link_title(hitTestResult);
+        info.linkText = QString::fromUtf8(
+            label && *label ? label : (title ? title : ""));
+    }
+    if (webkit_hit_test_result_context_is_image(hitTestResult)) {
+        info.hasImage = true;
+        const char *uri =
+            webkit_hit_test_result_get_image_uri(hitTestResult);
+        info.mediaUrl = QUrl::fromEncoded(uri ? uri : "");
+    }
+    if (webkit_hit_test_result_context_is_media(hitTestResult)) {
+        info.hasMedia = true;
+        const char *uri =
+            webkit_hit_test_result_get_media_uri(hitTestResult);
+        info.mediaUrl = QUrl::fromEncoded(uri ? uri : "");
+    }
+    info.isContentEditable =
+        webkit_hit_test_result_context_is_editable(hitTestResult);
+    // Honest gaps: the WPE hit-test exposes no selection text, no
+    // canvas marker and no video/audio split — the ContextMenuInfo
+    // fields there is no evidence for stay false/empty rather than
+    // guessing.
+    Q_EMIT contextMenuRequested(info);
+    if (m_view)
+        m_view->showContextMenu(info);
+#else
+    Q_UNUSED(menu);
+    Q_UNUSED(hitTestResult);
+#endif
+}
+
+#ifdef ARKTOS_WEBKIT_LINKED
+// The pointer-lock request type's public header sits behind
+// WebKit's own ENABLE_POINTER_LOCK build flag (webkit.h gates the
+// include on a consumer macro nothing sets) — the symbol itself is
+// exported on 2.54, so declare the type function directly.
+extern "C" GType webkit_pointer_lock_permission_request_get_type(void);
+#endif
+
+void WebkitPage::onPermissionRequest(WebKitPermissionRequest *request)
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    if (!request)
+        return;
+    ++m_permissionSeen;
+    QWebEnginePermission::PermissionType type;
+    if (G_TYPE_CHECK_INSTANCE_TYPE(request,
+            WEBKIT_TYPE_GEOLOCATION_PERMISSION_REQUEST))
+        type = QWebEnginePermission::PermissionType::Geolocation;
+    else if (G_TYPE_CHECK_INSTANCE_TYPE(request,
+            WEBKIT_TYPE_NOTIFICATION_PERMISSION_REQUEST))
+        type = QWebEnginePermission::PermissionType::Notifications;
+    else if (G_TYPE_CHECK_INSTANCE_TYPE(request,
+            webkit_pointer_lock_permission_request_get_type()))
+        type = QWebEnginePermission::PermissionType::MouseLock;
+    else if (G_TYPE_CHECK_INSTANCE_TYPE(request,
+            WEBKIT_TYPE_USER_MEDIA_PERMISSION_REQUEST)
+             || G_TYPE_CHECK_INSTANCE_TYPE(request,
+            WEBKIT_TYPE_DEVICE_INFO_PERMISSION_REQUEST))
+        // Camera/mic enumerate + capture — the SEC05 deny-list's
+        // surface; the broker answers false without prompting.
+        type = QWebEnginePermission::PermissionType::MediaAudioVideoCapture;
+    else {
+        // Media-key-system (EME), website-data-access, XR,
+        // install-missing-plugins and anything new — no SEC05
+        // mapping exists, so the request denies outright rather
+        // than hanging the page.
+        webkit_permission_request_deny(request);
+        return;
+    }
+    g_object_ref(request);
+    QPointer<WebkitPage> page(this);
+    WebPermissionManager::instance()->handleRequest(
+        m_view, m_url, type, isOffTheRecord(),
+        [page, request](bool granted) {
+            // The page may have died while the prompt queued — the
+            // request ref keeps the object valid and allow/deny on a
+            // dead view's request is a no-op.
+            if (page && granted)
+                ++page->m_permissionGranted;
+            if (granted)
+                webkit_permission_request_allow(request);
+            else
+                webkit_permission_request_deny(request);
+            g_object_unref(request);
+        });
+#else
+    Q_UNUSED(request);
+#endif
+}
+
+// ---- WebkitView — the context-menu presentation ---------------------
+
+#ifdef ARKTOS_WEBKIT_LINKED
+
+// WebKitContextMenuAction -> the menu label.  WebKit's own gettext
+// catalog lives behind GTK internals WPE doesn't expose, so the
+// stock actions carry Qt-side translations matching the app's menu
+// voice; a CUSTOM action falls back to its GAction name.
+static QString webkitStockActionLabel(WebKitContextMenuAction action)
+{
+    switch (action) {
+    case WEBKIT_CONTEXT_MENU_ACTION_OPEN_LINK:
+        return WebPage::tr("Open Link");
+    case WEBKIT_CONTEXT_MENU_ACTION_OPEN_LINK_IN_NEW_WINDOW:
+        return WebPage::tr("Open Link in New Window");
+    case WEBKIT_CONTEXT_MENU_ACTION_DOWNLOAD_LINK_TO_DISK:
+        return WebPage::tr("Download Linked File");
+    case WEBKIT_CONTEXT_MENU_ACTION_COPY_LINK_TO_CLIPBOARD:
+        return WebPage::tr("Copy Link");
+    case WEBKIT_CONTEXT_MENU_ACTION_OPEN_IMAGE_IN_NEW_WINDOW:
+        return WebPage::tr("Open Image in New Window");
+    case WEBKIT_CONTEXT_MENU_ACTION_DOWNLOAD_IMAGE_TO_DISK:
+        return WebPage::tr("Save Image");
+    case WEBKIT_CONTEXT_MENU_ACTION_COPY_IMAGE_TO_CLIPBOARD:
+        return WebPage::tr("Copy Image");
+    case WEBKIT_CONTEXT_MENU_ACTION_GO_BACK:
+        return WebPage::tr("Back");
+    case WEBKIT_CONTEXT_MENU_ACTION_GO_FORWARD:
+        return WebPage::tr("Forward");
+    case WEBKIT_CONTEXT_MENU_ACTION_STOP:
+        return WebPage::tr("Stop");
+    case WEBKIT_CONTEXT_MENU_ACTION_RELOAD:
+        return WebPage::tr("Reload");
+    case WEBKIT_CONTEXT_MENU_ACTION_COPY:
+        return WebPage::tr("Copy");
+    case WEBKIT_CONTEXT_MENU_ACTION_CUT:
+        return WebPage::tr("Cut");
+    case WEBKIT_CONTEXT_MENU_ACTION_PASTE:
+        return WebPage::tr("Paste");
+    case WEBKIT_CONTEXT_MENU_ACTION_BOLD:
+        return WebPage::tr("Bold");
+    case WEBKIT_CONTEXT_MENU_ACTION_ITALIC:
+        return WebPage::tr("Italic");
+    case WEBKIT_CONTEXT_MENU_ACTION_UNDERLINE:
+        return WebPage::tr("Underline");
+    case WEBKIT_CONTEXT_MENU_ACTION_INSPECT_ELEMENT:
+        return WebPage::tr("Inspect Element");
+    case WEBKIT_CONTEXT_MENU_ACTION_MEDIA_PLAY:
+        return WebPage::tr("Play");
+    case WEBKIT_CONTEXT_MENU_ACTION_MEDIA_PAUSE:
+        return WebPage::tr("Pause");
+    case WEBKIT_CONTEXT_MENU_ACTION_MEDIA_MUTE:
+        return WebPage::tr("Mute");
+    case WEBKIT_CONTEXT_MENU_ACTION_TOGGLE_MEDIA_CONTROLS:
+        return WebPage::tr("Toggle Media Controls");
+    case WEBKIT_CONTEXT_MENU_ACTION_TOGGLE_MEDIA_LOOP:
+        return WebPage::tr("Toggle Media Loop");
+    case WEBKIT_CONTEXT_MENU_ACTION_ENTER_VIDEO_FULLSCREEN:
+        return WebPage::tr("Enter Video Fullscreen");
+    case WEBKIT_CONTEXT_MENU_ACTION_COPY_VIDEO_LINK_TO_CLIPBOARD:
+        return WebPage::tr("Copy Video Link");
+    case WEBKIT_CONTEXT_MENU_ACTION_COPY_AUDIO_LINK_TO_CLIPBOARD:
+        return WebPage::tr("Copy Audio Link");
+    case WEBKIT_CONTEXT_MENU_ACTION_OPEN_VIDEO_IN_NEW_WINDOW:
+        return WebPage::tr("Open Video in New Window");
+    case WEBKIT_CONTEXT_MENU_ACTION_OPEN_AUDIO_IN_NEW_WINDOW:
+        return WebPage::tr("Open Audio in New Window");
+    case WEBKIT_CONTEXT_MENU_ACTION_DOWNLOAD_VIDEO_TO_DISK:
+        return WebPage::tr("Save Video");
+    case WEBKIT_CONTEXT_MENU_ACTION_DOWNLOAD_AUDIO_TO_DISK:
+        return WebPage::tr("Save Audio");
+    case WEBKIT_CONTEXT_MENU_ACTION_NO_GUESSES_FOUND:
+        return WebPage::tr("No Guesses Found");
+    case WEBKIT_CONTEXT_MENU_ACTION_IGNORE_SPELLING:
+        return WebPage::tr("Ignore Spelling");
+    case WEBKIT_CONTEXT_MENU_ACTION_LEARN_SPELLING:
+        return WebPage::tr("Learn Spelling");
+    case WEBKIT_CONTEXT_MENU_ACTION_IGNORE_GRAMMAR:
+        return WebPage::tr("Ignore Grammar");
+    case WEBKIT_CONTEXT_MENU_ACTION_FONT_MENU:
+        return WebPage::tr("Font");
+    default:
+        break;
+    }
+    return QString();
+}
+
+// WebKit owns the item semantics — the popup only names them and
+// activates their GActions on trigger.  Item labels: the item's
+// title (submenu headers), else the stock-action table, else the
+// GAction name (custom items).
+static void populateWebkitMenu(QMenu *popup, WebKitContextMenu *menu)
+{
+    for (GList *entry = webkit_context_menu_get_items(menu);
+         entry; entry = entry->next) {
+        WebKitContextMenuItem *item =
+            WEBKIT_CONTEXT_MENU_ITEM(entry->data);
+        if (webkit_context_menu_item_is_separator(item)) {
+            popup->addSeparator();
+            continue;
+        }
+        const char *title = webkit_context_menu_item_get_title(item);
+        if (WebKitContextMenu *sub =
+                webkit_context_menu_item_get_submenu(item)) {
+            QMenu *submenu = popup->addMenu(
+                QString::fromUtf8(title ? title : ""));
+            populateWebkitMenu(submenu, sub);
+            continue;
+        }
+        QString label = QString::fromUtf8(title ? title : "");
+        if (label.isEmpty())
+            label = webkitStockActionLabel(
+                webkit_context_menu_item_get_stock_action(item));
+        GAction *action = webkit_context_menu_item_get_gaction(item);
+        if (label.isEmpty() && action)
+            label = QString::fromUtf8(g_action_get_name(action));
+        if (label.isEmpty() || !action)
+            continue;   // no name, no verb — an item we can't present
+        g_object_ref(action);
+        GVariant *target =
+            webkit_context_menu_item_get_gaction_target(item);
+        if (target)
+            g_variant_ref(target);
+        QAction *entryAction = popup->addAction(label, [action, target]() {
+            g_action_activate(action, target);
+        });
+        // The GAction/GVariant refs ride the QAction's lifetime — the
+        // popup may outlive the WebKitContextMenu that produced it.
+        QObject::connect(entryAction, &QObject::destroyed,
+                popup, [action, target]() {
+            if (target)
+                g_variant_unref(target);
+            g_object_unref(action);
+        });
+    }
+}
+
+#endif // ARKTOS_WEBKIT_LINKED
+
+void WebkitView::showContextMenu(const Engine::ContextMenuInfo &info)
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    if (!m_page || !m_page->m_contextMenu)
+        return;
+    // Heap + WA_DeleteOnClose — the handler runs inside the glib
+    // context-menu signal, so exec() (a nested modal loop) is out;
+    // popup() presents and the menu deletes itself on close.
+    QMenu *popup = new QMenu(this);
+    popup->setAttribute(Qt::WA_DeleteOnClose);
+    populateWebkitMenu(popup, m_page->m_contextMenu);
+    if (popup->isEmpty()) {
+        delete popup;
+        return;
+    }
+    popup->popup(mapToGlobal(info.position));
+#else
+    Q_UNUSED(info);
+#endif
+}
+
+// ---- WK19 — WebkitDownloadRequest ------------------------------------
+//
+// The class is in the TU for inert builds too (the file's own
+// compile-but-inert contract) — every body guards on
+// ARKTOS_WEBKIT_LINKED, so an unlinked TU still emits the vtable.
+
+WebkitDownloadRequest::WebkitDownloadRequest(WebKitDownload *download,
+        WebkitPage *page, QObject *parent)
+    : Engine::DownloadRequest(parent)
+    , m_page(page)
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    m_download = WEBKIT_DOWNLOAD(g_object_ref(download));
+    g_signal_connect(m_download, "decide-destination",
+                     G_CALLBACK(cbDecideDestination), this);
+    g_signal_connect(m_download, "received-data",
+                     G_CALLBACK(cbReceivedData), this);
+    g_signal_connect(m_download, "finished",
+                     G_CALLBACK(cbFinished), this);
+    g_signal_connect(m_download, "failed",
+                     G_CALLBACK(cbFailed), this);
+#else
+    Q_UNUSED(download);
+    Q_UNUSED(page);
+#endif
+}
+
+WebkitDownloadRequest::~WebkitDownloadRequest()
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    g_clear_object(&m_download);
+#endif
+}
+
+QUrl WebkitDownloadRequest::url() const
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    WebKitURIRequest *request = m_download
+        ? webkit_download_get_request(m_download) : nullptr;
+    const char *uri = request
+        ? webkit_uri_request_get_uri(request) : nullptr;
+    return QUrl::fromEncoded(uri ? uri : "");
+#else
+    return QUrl();
+#endif
+}
+
+QString WebkitDownloadRequest::suggestedFileName() const
+{
+    return m_suggested;
+}
+
+QString WebkitDownloadRequest::mimeType() const
+{
+    return m_mime;
+}
+
+void WebkitDownloadRequest::accept(const QString &filePath)
+{
+    if (!filePath.isEmpty()) {
+        const QFileInfo info(filePath);
+        m_directory = info.absolutePath();
+        m_fileName = info.fileName();
+    }
+    m_decided = true;
+}
+
+void WebkitDownloadRequest::cancel()
+{
+    m_cancelled = true;
+#ifdef ARKTOS_WEBKIT_LINKED
+    if (m_download)
+        webkit_download_cancel(m_download);
+#endif
+}
+
+void WebkitDownloadRequest::pause()
+{
+    // WebKitDownload has no pause primitive — an honest no-op; the
+    // sidebar shows state instead of a fake toggle.
+}
+
+void WebkitDownloadRequest::resume()
+{
+}
+
+bool WebkitDownloadRequest::isPaused() const
+{
+    return false;
+}
+
+qint64 WebkitDownloadRequest::receivedBytes() const
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    return m_download
+        ? qint64(webkit_download_get_received_data_length(m_download))
+        : 0;
+#else
+    return 0;
+#endif
+}
+
+qint64 WebkitDownloadRequest::totalBytes() const
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    WebKitURIResponse *response = m_download
+        ? webkit_download_get_response(m_download) : nullptr;
+    return response
+        ? qint64(webkit_uri_response_get_content_length(response))
+        : -1;
+#else
+    return -1;
+#endif
+}
+
+Engine::DownloadRequest::State WebkitDownloadRequest::state() const
+{
+    return m_state;
+}
+
+bool WebkitDownloadRequest::isFinished() const
+{
+    return m_state == State::Completed;
+}
+
+QString WebkitDownloadRequest::interruptReasonString() const
+{
+    return m_interrupt;
+}
+
+void WebkitDownloadRequest::setDownloadDirectory(const QString &directory)
+{
+    m_directory = directory;
+}
+
+void WebkitDownloadRequest::setDownloadFileName(const QString &fileName)
+{
+    m_fileName = fileName;
+}
+
+QString WebkitDownloadRequest::downloadDirectory() const
+{
+    return m_directory;
+}
+
+QString WebkitDownloadRequest::downloadFileName() const
+{
+    return m_fileName;
+}
+
+Engine::Page *WebkitDownloadRequest::page() const
+{
+    return m_page;
+}
+
+void WebkitDownloadRequest::setState(State state)
+{
+    if (state == m_state)
+        return;
+    m_state = state;
+    Q_EMIT stateChanged(state);
+}
+
+int WebkitDownloadRequest::onDecideDestination(
+        const char *suggestedFileName)
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    m_suggested = QString::fromUtf8(
+        suggestedFileName ? suggestedFileName : "");
+    WebKitURIResponse *response = m_download
+        ? webkit_download_get_response(m_download) : nullptr;
+    if (response) {
+        const char *mime = webkit_uri_response_get_mime_type(response);
+        if (mime)
+            m_mime = QString::fromUtf8(mime);
+        Q_EMIT totalBytesChanged();
+    }
+
+    // The handoff — every DownloadItem path resolves synchronously
+    // inside the emission (accept/cancel), so by the time it returns
+    // m_decided/m_cancelled carry the answer.
+    Engine::Profile *profile = m_page ? m_page->profile() : nullptr;
+    if (profile)
+        Q_EMIT profile->downloadRequested(this);
+    if (!m_decided || m_cancelled) {
+        // No consumer, a declined prompt, or a rustdl/external
+        // handoff — never let WebKit fall back to a silent
+        // default-directory write: cancel the transfer ourselves and
+        // claim the decision.
+        m_cancelled = true;
+        webkit_download_cancel(m_download);
+        setState(State::Cancelled);
+        return TRUE;
+    }
+    QString name = m_fileName.isEmpty() ? m_suggested : m_fileName;
+    if (name.isEmpty())
+        name = QStringLiteral("download");
+    QString dir = m_directory;
+    if (dir.isEmpty())
+        dir = QStandardPaths::writableLocation(
+            QStandardPaths::DownloadLocation);
+    const QString path = QDir(dir).absoluteFilePath(name);
+    // The destination is a filesystem path, not a file:// URI —
+    // webkit_download_set_destination asserts g_path_is_absolute.
+    webkit_download_set_destination(
+        m_download, QFile::encodeName(path).constData());
+    setState(State::InProgress);
+    return TRUE;
+#else
+    Q_UNUSED(suggestedFileName);
+    return 0;
+#endif
+}
+
+void WebkitDownloadRequest::onReceivedData()
+{
+    Q_EMIT receivedBytesChanged();
+}
+
+void WebkitDownloadRequest::onFinished()
+{
+    setState(State::Completed);
+    deleteLater();
+}
+
+void WebkitDownloadRequest::onFailed(const QString &message,
+                                     bool cancelledByUser)
+{
+    m_interrupt = message;
+    setState(cancelledByUser ? State::Cancelled : State::Interrupted);
+    deleteLater();
+}
+
+int WebkitDownloadRequest::cbDecideDestination(
+        WebKitDownload *, void *suggested,
+        WebkitDownloadRequest *self)
+{
+    return self->onDecideDestination(
+        suggested ? static_cast<const char *>(suggested) : nullptr);
+}
+
+void WebkitDownloadRequest::cbReceivedData(WebKitDownload *,
+                                           quint64,
+                                           WebkitDownloadRequest *self)
+{
+    self->onReceivedData();
+}
+
+void WebkitDownloadRequest::cbFinished(WebKitDownload *,
+                                       WebkitDownloadRequest *self)
+{
+    self->onFinished();
+}
+
+void WebkitDownloadRequest::cbFailed(WebKitDownload *, void *error,
+                                     WebkitDownloadRequest *self)
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    const GError *gerror = static_cast<const GError *>(error);
+    const bool cancelled = gerror
+        && g_error_matches(gerror, WEBKIT_DOWNLOAD_ERROR,
+                           WEBKIT_DOWNLOAD_ERROR_CANCELLED_BY_USER);
+    self->onFailed(QString::fromUtf8(
+        gerror ? gerror->message : ""), cancelled);
+#else
+    Q_UNUSED(error);
+    self->onFailed(QString(), true);
+#endif
+}
+
+#ifdef ARKTOS_WEBKIT_LINKED
+
+// The "download-started" session signal — resolve the owning page
+// (the download's originating web view) and hand the transfer to
+// its profile.  A download no page owns is refused outright — the
+// only producers are web_view_download_uri and the decide-policy
+// download verdict, both page-bound, so an unattributed transfer is
+// an anomaly that must not write to disk silently.
+static void cbDownloadStarted(WebKitNetworkSession *,
+                              WebKitDownload *download, void *)
+{
+    if (!download)
+        return;
+    WebKitWebView *view = webkit_download_get_web_view(download);
+    WebkitPage *page = view ? schemePageMap().value(view) : nullptr;
+    Engine::Profile *profile = page ? page->profile() : nullptr;
+    if (!profile) {
+        webkit_download_cancel(download);
+        return;
+    }
+    new WebkitDownloadRequest(download, page, profile);
+}
+
+void ensureDownloadHook(WebKitNetworkSession *session)
+{
+    static QSet<WebKitNetworkSession *> hooked;
+    if (!session || hooked.contains(session))
+        return;
+    hooked.insert(session);
+    g_signal_connect(session, "download-started",
+                     G_CALLBACK(cbDownloadStarted), nullptr);
+}
+
+#endif // ARKTOS_WEBKIT_LINKED
 
 // ---- WebkitProfile --------------------------------------------------
 
@@ -3639,6 +4553,13 @@ Engine::Capabilities WebkitBackend::capabilities() const
     caps.scriptEvaluation = true;
     caps.perPageSettings = true;
     caps.lifecycleDiscard = true;
+    // WK19: these three were claimed ahead of the wiring — the
+    // surfaces now exist and were verified: context-menu -> the
+    // ContextMenuInfo marshal + WebKit-item popup; TLS errors -> the
+    // SEC06 nonce interstitial + session-scoped certificate
+    // exception; download-started -> Engine::DownloadRequest ->
+    // DownloadManager (decide-destination is the request point —
+    // WPE's only honest one; pause/resume stay honest no-ops).
     caps.contextMenuInfo = true;
     caps.certificateOverride = true;
     caps.downloads = true;

@@ -273,6 +273,34 @@
 // logged, never silently applied.  capabilities() names the lane
 // declarativeBlocking; requestInterception stays on because the
 // WK17 navigation-level consult is a real live gate.
+//
+// WK19 lands the user-facing surfaces the caps table had claimed
+// ahead of wiring.  load-failed-with-tls-errors carries WebPage's
+// SEC06 contract verbatim — the neutral certificateError emission,
+// then the nonce-bound arktos-cert-error: interstitial (the same
+// publish/serve/resolve machinery; the HTML builder is a WebPage
+// static the info struct now feeds), and "proceed" installs the
+// certificate on the page's network session through
+// allow_tls_certificate_for_host — session-scoped, never persisted,
+// with the padlock's red verdict recorded via
+// WebPage::noteCertErrorOverride.  "context-menu" marshals the
+// WebKitHitTestResult into ContextMenuInfo, emits the new neutral
+// contextMenuRequested signal, and the attached view presents
+// WebKit's own item model as a Qt popup that activates the items'
+// GActions.  "permission-request" maps the concrete request types
+// onto SEC05's WebPermissionManager through its new engine-neutral
+// resolver overload (geolocation/notifications/pointer-lock prompt;
+// media/device-info take the deny list; EME/data-access/XR deny
+// outright).  "download-started" wraps WebKitDownload as
+// WebkitDownloadRequest — the profile's downloadRequested emits
+// inside "decide-destination" (the only point the suggested name and
+// response MIME are knowable, and where refusing must cancel rather
+// than return FALSE, which would write to a default directory);
+// RESPONSE policy decisions answer download for attachments and
+// unrenderable MIMEs, and Page::download() drives
+// webkit_web_view_download_uri.  Pause/resume stay honest no-ops —
+// the API exposes none.  renderProcessId stays -1: WPE 2.54 exposes
+// no OS WebProcess pid.
 
 #include "engineinterface.h"
 
@@ -305,6 +333,11 @@ typedef struct _WebKitUserContentFilter WebKitUserContentFilter;
 typedef struct _WebKitUserContentFilterStore WebKitUserContentFilterStore;
 typedef struct _WebKitUserScript WebKitUserScript;
 typedef struct _WebKitScriptMessageReply WebKitScriptMessageReply;
+typedef struct _WebKitContextMenu WebKitContextMenu;
+typedef struct _WebKitHitTestResult WebKitHitTestResult;
+typedef struct _WebKitPermissionRequest WebKitPermissionRequest;
+typedef struct _WebKitDownload WebKitDownload;
+typedef struct _GTlsCertificate GTlsCertificate;
 typedef struct _JSCValue JSCValue;
 
 class WebkitPage;
@@ -362,11 +395,18 @@ private:
     void dispatchPointerButton(int type, QMouseEvent *event);
     bool dispatchKeyEvent(int type, QKeyEvent *event);
 
+    // WK19 — the context-menu half the signal contract can't carry:
+    // WPE's "context-menu" callback arrives without coordinates (the
+    // GTK build reads them off the GdkEvent WPE lacks), so the last
+    // right-button press position doubles as the menu's anchor.
+    void showContextMenu(const Engine::ContextMenuInfo &info);
+
     QPointer<WebkitPage> m_page;
     QImage m_frame;
     QSize m_frameSize;
     int m_frameCount = 0;
     int m_importFails = 0;
+    QPointF m_contextMenuPos;
     // WK13 pointer bookkeeping — the held-buttons half of the
     // delivered WPEModifiers mask (WPE_MODIFIER_POINTER_BUTTON*
     // bits), the last widget-space pointer position (move deltas
@@ -509,6 +549,16 @@ public:
     // (the arktos-file: SEC02 initiator check).
     QUrl lastNavTarget() const { return m_lastNavTarget; }
 
+    // WK19 diagnostics/test surface (the WK11 sessionDataDir role).
+    // permissionRequestsSeen() counts every "permission-request"
+    // signal the page brokered (mapped or denied outright);
+    // certErrorPending() is true between the interstitial's
+    // publication and its action-link resolution.
+    int permissionRequestsSeen() const { return m_permissionSeen; }
+    int permissionRequestsGranted() const { return m_permissionGranted; }
+    bool certErrorPending() const { return m_certErrorPending; }
+    QUrl certErrorUrl() const { return m_certErrorUrl; }
+
 private:
     // GLib signal entry points — reached through the static
     // trampolines in the .cpp (all on the GUI thread: on the glib
@@ -564,6 +614,26 @@ private:
     void registerChannelHandler();
     void onChannelMessage(JSCValue *value,
                           WebKitScriptMessageReply *reply);
+
+    // WK19 — the user-facing surfaces.  onTlsError claims
+    // "load-failed-with-tls-errors": it emits the neutral
+    // certificateError (an accepted answer installs the certificate
+    // exception on the page's network session and reloads), then
+    // publishes WebPage's nonce-bound arktos-cert-error: interstitial
+    // whose action links resolveCertificateErrorLink answers
+    // (proceed -> session cert exception + reload; back -> history
+    // or the start page).  onContextMenu marshals the
+    // WebKitContextMenu + hit-test into ContextMenuInfo, emits
+    // contextMenuRequested and hands the retained menu to the
+    // attached view for presentation.  onPermissionRequest maps the
+    // WebKitPermissionRequest concrete type onto the SEC05 broker —
+    // unmappable/dangerous types deny outright.
+    void onTlsError(const QString &failingUri,
+                    GTlsCertificate *certificate, unsigned flags);
+    void onContextMenu(WebKitContextMenu *menu,
+                       WebKitHitTestResult *hitTestResult);
+    void onPermissionRequest(WebKitPermissionRequest *request);
+    void resolveCertificateErrorLink(const QUrl &command);
 
     // WK13 — the wpe_view_event dispatch points.  The callers
     // (WebkitView's event overrides, friend) hand over view-space
@@ -621,6 +691,16 @@ private:
     static int cbScriptMessageWithReply(
             WebKitUserContentManager *manager, JSCValue *value,
             WebKitScriptMessageReply *reply, WebkitPage *page);
+    // WK19 — the surface sinks.  TLS errors, context-menu and
+    // permission-request are boolean claims like load-failed;
+    // glib types travel as void* (the cb* contract).
+    static int cbLoadFailedTls(WebKitWebView *view, void *uri,
+                               void *certificate, unsigned flags,
+                               WebkitPage *page);
+    static int cbContextMenu(WebKitWebView *view, void *menu,
+                             void *hitTestResult, WebkitPage *page);
+    static int cbPermissionRequest(WebKitWebView *view, void *request,
+                                   WebkitPage *page);
 
     Engine::Profile *m_profile;
     // WK16: the WebkitProfile this page attached to (when it is one)
@@ -631,6 +711,10 @@ private:
     WebKitWebView *m_webView = nullptr;
     WPEView *m_wpeView = nullptr;   // owned by m_webView — never freed here
     WPEToplevel *m_toplevel = nullptr;
+    // WK19: the session the webview was constructed on (borrowed —
+    // the webview owns it for the page's life).  The TLS-error
+    // proceed path installs certificate exceptions on it.
+    WebKitNetworkSession *m_session = nullptr;
     QUrl m_url;
     // WK17: URL of the last main-frame navigation decision this page
     // approved — the uri-scheme handlers' "is this the document nav"
@@ -663,6 +747,24 @@ private:
     bool m_engineDiscarded = false;
     QHash<QString, Engine::Script> m_scripts;
     QHash<QString, bool> m_attributes;
+    // WK19 — the pending certificate-error decision (WebPage's
+    // m_certError* contract): the nonce the published interstitial's
+    // links carry, the refused URL, the retained GTlsCertificate the
+    // proceed path installs on the session, and the flags ->
+    // overridable answer the interstitial's proceed link is gated on.
+    QString m_certErrorNonce;
+    QUrl m_certErrorUrl;
+    QString m_certErrorHost;
+    GTlsCertificate *m_certErrorCert = nullptr;
+    bool m_certErrorPending = false;
+    bool m_certErrorOverridable = false;
+    // WK19 — the WebKitContextMenu retained between "context-menu"
+    // and the view's popup (WebKit keeps it alive for the gesture;
+    // the ref survives the view reading it on the next tick).
+    WebKitContextMenu *m_contextMenu = nullptr;
+    // WK19 — permission-request diagnostics the autotest reads.
+    int m_permissionSeen = 0;
+    int m_permissionGranted = 0;
     // WK16 — the retained WebKitUserScript objects behind the two
     // script scopes (remove_script needs the instance pointer) and
     // the channel endpoint.
@@ -672,6 +774,87 @@ private:
 
     friend class WebkitView;
     friend class WebkitProfile;
+    friend class WebkitDownloadRequest;
+};
+
+// WK19 — the WebKitDownload -> Engine::DownloadRequest adapter.
+// WebKit's decision point is "decide-destination": the suggested
+// filename and the response MIME are only knowable once the response
+// headers land, and the destination MUST be answered inside the
+// signal (returning FALSE falls back to a silent default-directory
+// write — forbidden).  The adapter therefore emits the profile's
+// downloadRequested from inside onDecideDestination: every
+// DownloadItem path (accept, cancel, rustdl handoff) resolves
+// synchronously inside the emission, so the handler's return carries
+// either an answered destination or a self-cancelled transfer.
+// DownloadItem's split-path setters feed set_destination.
+// pause()/resume() are honest no-ops — WebKitDownload has no pause
+// API; the sidebar shows the state, not a fake toggle.
+class WebkitDownloadRequest : public Engine::DownloadRequest
+{
+    Q_OBJECT
+
+public:
+    // Takes a ref on `download` — the profile that created the
+    // owning page parents the wrapper so a profile teardown cannot
+    // leave a dangling transfer callback.
+    WebkitDownloadRequest(WebKitDownload *download, WebkitPage *page,
+                          QObject *parent);
+    ~WebkitDownloadRequest() override;
+
+    QUrl url() const override;
+    QString suggestedFileName() const override;
+    QString mimeType() const override;
+    void accept(const QString &filePath) override;
+    void cancel() override;
+    void pause() override;
+    void resume() override;
+    bool isPaused() const override;
+    qint64 receivedBytes() const override;
+    qint64 totalBytes() const override;
+    State state() const override;
+    bool isFinished() const override;
+    QString interruptReasonString() const override;
+    void setDownloadDirectory(const QString &directory) override;
+    void setDownloadFileName(const QString &fileName) override;
+    QString downloadDirectory() const override;
+    QString downloadFileName() const override;
+    Engine::Page *page() const override;
+
+private:
+    // The glib signal sinks — decide-destination is the handoff
+    // described above; finished/failed retire the wrapper via
+    // deleteLater so a mid-signal cancellation can't pull the
+    // object out from under its own handler.
+    int onDecideDestination(const char *suggestedFileName);
+    void onReceivedData();
+    void onFinished();
+    void onFailed(const QString &message, bool cancelledByUser);
+    void setState(State state);
+    static int cbDecideDestination(WebKitDownload *download,
+                                   void *suggested,
+                                   WebkitDownloadRequest *self);
+    static void cbReceivedData(WebKitDownload *download,
+                               quint64 dataLength,
+                               WebkitDownloadRequest *self);
+    static void cbFinished(WebKitDownload *download,
+                           WebkitDownloadRequest *self);
+    static void cbFailed(WebKitDownload *download, void *error,
+                         WebkitDownloadRequest *self);
+
+    WebKitDownload *m_download = nullptr;   // retained ref
+    QPointer<WebkitPage> m_page;
+    QString m_suggested;
+    QString m_mime;
+    QString m_directory;
+    QString m_fileName;
+    QString m_interrupt;
+    State m_state = State::Requested;
+    // The decision resolved inside (or after) decide-destination:
+    // accept() sets m_decided, cancel() sets m_cancelled — the
+    // post-emission branch picks one.
+    bool m_decided = false;
+    bool m_cancelled = false;
 };
 
 // WK08 — the minimal session object, WK11's storage roots applied.

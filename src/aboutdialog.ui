@@ -112,9 +112,35 @@
     </widget>
    </item>
    <item>
+    <widget class="QLabel" name="engines">
+     <property name="sizePolicy">
+      <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+       <horstretch>0</horstretch>
+       <verstretch>0</verstretch>
+      </sizepolicy>
+     </property>
+     <property name="font">
+      <font>
+       <pointsize>11</pointsize>
+       <weight>50</weight>
+       <bold>false</bold>
+      </font>
+     </property>
+     <property name="text">
+      <string/>
+     </property>
+     <property name="alignment">
+      <set>Qt::AlignCenter</set>
+     </property>
+     <property name="textInteractionFlags">
+      <set>Qt::LinksAccessibleByMouse|Qt::TextSelectableByMouse</set>
+     </property>
+    </widget>
+   </item>
+   <item>
     <widget class="QLabel" name="description">
      <property name="text">
-      <string>Lightweight WebEngine-based web browser</string>
+      <string>Lightweight web browser</string>
      </property>
      <property name="alignment">
       <set>Qt::AlignCenter</set>
