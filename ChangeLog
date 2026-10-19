@@ -3829,3 +3829,14 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   proven raster copy on the first frame. The raster path remains
   the automatic fallback whenever EGL import is unavailable or is
   disabled with ARKTOS_WEBKIT_GL=0.
+- WebKit backend stretch audit (WK21): the SOCKS5/Tor leak check now
+  has measured answers — proxied page, image and WebSocket traffic
+  reaches the SOCKS peer carrying the hostname (remote DNS), with no
+  stray lookups or direct connections observed; but the embedder's
+  explicit DNS-prefetch API resolves locally even under the proxy,
+  so Tor stays locked to Chromium rather than being offered on
+  webkit. The WebExtensions and inspector questions are settled too:
+  WPE 2.54.1 ships the WebKitWebExtension headers and symbols but
+  every entry point is a compiled-out stub, and no inspector API is
+  exported (its UI resource isn't even installed) — both capabilities
+  stay off, now verified rather than merely unprobed.

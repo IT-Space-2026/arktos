@@ -5087,9 +5087,12 @@ Engine::Capabilities WebkitBackend::capabilities() const
     // (.devin/WEBKIT-SPIKE.md "Capabilities recommendations") — only
     // what WK01-WK04 proved or the 2.54 headers pin down.  The named
     // gaps stay off: no per-attempt CookieAttempt functor
-    // (WebKitCookieManager offers only a 3-state accept policy), no
-    // embedder devtools channel (the built-in inspector exists but
-    // exports no attach API), WebKitWebExtension present-but-unprobed.
+    // (WebKitCookieManager offers only a 3-state accept policy).
+    // WK21 measured the two stretch flags to false: devTools — the
+    // build exports no WebKitWebInspector API at all (toggle only)
+    // and the inspector's own gresource isn't installed; extensions —
+    // the WebKitWebExtension entry points are compiled-out stubs
+    // (webkit_web_extension_new is literally `return nullptr`).
     // An unlinked TU reports all-false — nothing is faked.
     Engine::Capabilities caps;
     caps.downloads = false;

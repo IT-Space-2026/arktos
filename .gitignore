@@ -75,3 +75,8 @@ flatpak/.build.log
 # stale pre-rebrand build outputs
 /arora
 /tools/placesimport/arora-placesimport
+
+# WK21 audit spike build + run artifacts
+spikes/webkit/wk21/dns-shim.so
+spikes/webkit/wk21/wk21-probe
+spikes/webkit/wk21/.wk21-run/

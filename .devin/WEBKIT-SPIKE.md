@@ -60,9 +60,9 @@ task demanded it, header+symbol verified otherwise.
 | `ContextMenuInfo` | works | `context-menu` + `context-menu-dismissed` signals, `WebKitContextMenu`/`WebKitContextMenuItem` embedder-owned, `WebKitHitTestResult` (is_link/image/media/editable/selection/scrollbar + link_uri/title/label/image_uri/media_uri) — every field of `ContextMenuInfo` producible (isCanvas = editable+hit-test combo). |
 | Permissions (SEC05 broker) | works | `permission-request` + `query_permission_state` signals; concrete request classes: Geolocation, UserMedia, MediaKeySystem, Notification, DeviceInfo, PointerLock, XR, WebsiteDataAccess. |
 | Authentication / dialogs / file chooser | works | `authenticate` → `WebKitAuthenticationRequest`; `script-dialog` → `WebKitScriptDialog` (alert/confirm/prompt/before-unload); `run_file_chooser` → `WebKitFileChooserRequest`; `show_option_menu` (select popups); `show_notification`; `enter_fullscreen`/`leave_fullscreen`; `submit_form`; `insecure_content_detected`. |
-| Proxy / SOCKS5 | works — verify for Tor | **`WebKitNetworkProxySettings` is PER-SESSION** (`webkit_network_session_set_proxy_settings(mode, settings)` — per-profile proxy, better than QtWebEngine's process-global scheme). Proxy URIs route through libsoup3/GIO (`GProxyResolver` supports `socks5://`/`socks5h://`-family + ignore_hosts). Tor windows are NOT permanently Chromium-locked like Servo — BUT the DNS-leak question (local vs remote resolution under socks5) is exactly what WK21's stretch audit must verify before Tor can leave WebEngine. |
-| Devtools / BiDi | partial | `webkit_web_view_toggle_inspector` + `enable-developer-extras` + INSPECT_ELEMENT context action: the built-in WebKit inspector exists end-user-facing. **No WebKitWebInspector public header exported** → no embedder attach/socket/channel API on this build — the BiDi panel's CDP client has nothing to talk to. Conservative `devTools=false`. |
-| Extensions | unproven→partial | `WebKitWebExtension` + `WebKitWebExtensionMatchPattern` + `web-extension-mode` MV2/MV3 DO exist in 2.54 (install path, manifest v2/v3 probing, permission/request match patterns, icons). Genuinely new API — our extension surface (Bitwarden host etc.) maps how is exactly WK21's stretch probe. |
+| Proxy / SOCKS5 | works — Tor audit says NOT clean | **`WebKitNetworkProxySettings` is PER-SESSION** (`webkit_network_session_set_proxy_settings(mode, settings)` — per-profile proxy, better than QtWebEngine's process-global scheme). WK21 measured (LD_PRELOAD resolver/connect shim + SOCKS5 fixture): proxied http/ws loads send ATYP=DOMAIN CONNECTs — **remote DNS confirmed** — with zero stray local lookups or non-proxy connects; `socks5h://` is REJECTED ("not supported") and unnecessary since socks5 already remote-resolves; WebRTC is compiled out (no host-candidate surface). **Leak found:** `webkit_network_session_prefetch_dns()` resolves locally in WPENetworkProcess even under a proxied session — embedder-gated (pages can't reach it; page dns-prefetch hints stayed inert even with `enable-dns-prefetching` forced on), but a real local-DNS channel → **Tor stays Chromium-locked**. Full report in the WK21 section below. |
+| Devtools / BiDi | absent | `webkit_web_view_toggle_inspector` + `enable-developer-extras` are the only surface — **no `webkit_web_view_get_inspector`, no `webkit_web_inspector_*` symbols, no header** (nm -D verified): neither an embeddable inspector view nor a separate-window handle exists on WPE. WK21 runtime leg: toggling spawns a web process that dies on `inspector.gresource` missing from the package — the built-in UI itself is unshipped. `devTools=false` verified. |
+| Extensions | absent (stubbed) | Headers ship, ~48 `webkit_web_extension_*`/`match_pattern` symbols export, `web-extension-mode` is a real view construct prop — **but every entry point is a compiled-out stub on WPE 2.54.1**: `webkit_web_extension_new` disassembles to `xor eax,eax; ret` (returns NULL, GError never set); `get_manifest_version`/`supports_manifest_version`/`match_pattern_new_*` likewise. No `WebKitWebExtensionContext`/manager exists (upstream GTK load API still an open PR, WebKit/WebKit#52242). MV2/MV3 cannot be instantiated, let alone loaded. `caps.extensions=false` verified. |
 | Scheme handlers (arktos-file/abp/arktos-resource) | works | `webkit_web_context_register_uri_scheme` + `WebKitURISchemeRequest` (uri/method/headers/body/web_view) → `finish` (GInputStream+length+mime) / `finish_with_response` (`WebKitURISchemeResponse`: status, content-type, arbitrary http headers — full response control, better than QWebEngineUrlSchemeHandler's body-only) / `finish_error`. |
 | `Backend` rendering surface | works | **WK03 runtime-proven**: `WPEView::buffer-rendered` signal → `wpe_buffer_import_to_pixels` (borrowed buffer-owned GBytes — never unref, deep-copy inside handler) → ARGB8888-premul ≡ `QImage::Format_ARGB32_Premultiplied` (SHM stride honored) → QWidget paintEvent blit. Buffers arrive as WPEBufferDMABuf under `WEBKIT_SKIA_ENABLE_CPU_RENDERING=1` and still import. Resize: QWidget::resizeEvent→`wpe_toplevel_resize`→next buffer carries new dims (measured 640×480 frame #2). WK20's dmabuf→GL-texture path is the perf upgrade; raster is the proven fallback. |
 | Input | works | **WK04 runtime-proven**: `wpe_event_pointer_move/button_new` → `wpe_view_event` hit-tests and navigates (coords are doubles in view CSS-px space; buttons WPE_BUTTON_PRIMARY=1/MIDDLE=2/SECONDARY=3; press_count down-only; `wpe_view_focus_in` required post-map or input drops). Keyboard: `wpe_event_keyboard_new` — **keyval = XKB/X11 keysym space** (WPE_KEY_Return=0xff0d; printable ASCII in low range; Shift level is the embedder's job — shift+a wants XK_A), **keycode = X/XKB keycode = evdev+8** (WK13 measured: raw evdev maps 8 slots early — 'a'/30 reports KeyU); Qt::Key needs a mapping table — WK13's contract, done. Wheel: `wpe_event_scroll_new` — **WK13 runtime-proven**: non-precise deltas are wheel TICKS scaled by `pixelsPerLineStep(view dims)` (1 tick ≈ 71px@600h), precise deltas are px ×2.5 for mouse/touchpad sources (divide back out for pixel-faithful touchpads); sign is positive=scroll-UP like Qt (WPEWaylandSeat negates wl_pointer.axis), so Qt deltas pass through un-negated. |
@@ -141,8 +141,9 @@ task demanded it, header+symbol verified otherwise.
 
 Unlike Servo, WPE WebKit 2.54 clears every hard gate WK00 was worried
 about: full load-signal set incl. real progress fractions, per-view
-JS toggles, per-profile sessions with per-session proxy (Tor not
-permanently locked — pending the WK21 DNS-leak audit), a real
+JS toggles, per-profile sessions with per-session proxy (Tor stays
+Chromium-locked — WK21's audit found the prefetch_dns local-DNS
+channel), a real
 download surface, cert-error interstitials, history/find/zoom/
 context-menus/permissions/dialogs all present. The runtime-proven
 spine (loop → create → render → input → eval) is already demonstrated
@@ -165,14 +166,17 @@ Named gaps in severity order:
 3. **No renderer PID** — SBAR01 per-tab memory shows '—'.
 4. **No download pause/resume** and no "visited links" clear type —
    honest no-ops in the adapter.
-5. **No programmatic inspector channel** — built-in UI exists;
-   BiDi panel stays disabled (same as Servo verdict, different
-   reason).
+5. **No programmatic inspector channel** — WK21 hardened this: no
+   inspector API is exported AND the inspector's own gresource isn't
+   installed, so even the built-in UI can't run. BiDi panel stays
+   disabled (same as Servo verdict, different reason).
 6. **sideloaded-glibc link recipe** — every binary touching
    libWPEWebKit needs the dynamic-linker+RPATH+preload recipe;
    `webkit=0` builds must stay clean of it.
-7. **Extensions** — `WebKitWebExtension` MV2/MV3 exists but is brand
-   new; unproven against our Bitwarden-host requirements.
+7. **Extensions** — WK21: `WebKitWebExtension` headers+symbols ship
+   but the entry points are compiled-out stubs on WPE 2.54.1;
+   MV2/MV3 is un-instantiable until the GTK-side extension-context
+   API lands.
 
 ### `Capabilities` recommendations for WK07 (conservative — only what
 WK01–WK04 proved or headers pin down)
@@ -196,9 +200,14 @@ WK01–WK04 proved or headers pin down)
 - A `suspend`/`resume` or background-throttle API landing upstream
   (unblocks SLEEP01 Frozen parity).
 - The `WebKitWebInspector`/remote-inspector surface becoming public
-  (unblocks the BiDi panel).
-- `WebKitWebExtension` maturing past MV2/MV3 probe stage (unblocks
-  extension parity — WK21's job to check first).
+  AND `inspector.gresource` shipping in the WPE package (unblocks the
+  BiDi panel — both halves are missing on 2.54.1).
+- `WebKitWebExtension` becoming a real implementation on WPE instead
+  of stub exports (unblocks extension parity — needs upstream's
+  GLib WebExtensionContext work, WebKit/WebKit#52242).
+- A proxy-aware `prefetch_dns` (or a documented prefetch-off contract)
+  plus an extended leak audit (OCSP/CRL, HSTS preload) — that would
+  clear the WK21 bar for a "webkit allowed for Tor" capability.
 - Any upstream per-request header-rewrite hook on the UI-process API
   (would close the interception story's biggest gap without the
   injected bundle).
@@ -254,3 +263,78 @@ Evidence PNGs committed under `spikes/webkit/wpe-harness/wk03-*.png`.
   (dynamic-linker + `--disable-new-dtags` RPATH + `--no-as-needed`
   compat + explicit sid libc/libm objects) — see
   `webkit-env.sh`/`build-probe.sh`/`wpe-harness.pro`.
+
+## WK21 stretch audit — measured 2026-10-19 (WPE WebKit 2.54.1)
+
+Artifacts: `spikes/webkit/wk21/` — `dns-shim.c` (LD_PRELOAD logger:
+getaddrinfo/gethostbyname{,2}{,_r}/getnameinfo/res_query/res_search +
+connect/sendto/sendmsg, pid+comm tagged per call), `fixture.py`
+(SOCKS5 server logging CONNECT atyp/target + marker HTTP server; all
+domain CONNECTs tunnel to the fixture so `http://<name>.test/` loads
+IFF it rode the proxy with remote DNS), `wk21-probe.c` (plain-GLib
+phased probe: headless view stack, ephemeral session + CUSTOM proxy,
+per-leg `[WK21]` lines), `run-wk21.sh` (build + run + evidence dump),
+`ext-fixture/` (MV3 manifest for the extension probe). Run is
+`WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1` so the preload reaches
+WPEWebProcess/WPENetworkProcess — shim coverage proven by control
+lines (probe selfctl + WPENetworkProcess RESOLVEs).
+
+### (a) SOCKS5/Tor leak audit — verdict: NOT clean (one embedder-gated channel)
+
+| Leg | Result |
+|-----|--------|
+| `socks5://` session proxy, `http://wk21main-<r>.test/` load | FINISHED — socks.log shows `CONNECT atyp=3 target=wk21main-<r>.test` (**domain sent to proxy = remote DNS**); zero RESOLVE lines for the host |
+| Subresource on a second fake host (`wk21img-<r>.test`) | same — `atyp=3` CONNECT; no local lookup |
+| `ws://wk21ws-<r>.test/` WebSocket | `atyp=3` CONNECT — websockets ride the proxy path, remote DNS |
+| `socks5h://` URI | **rejected**: "Proxy protocol socks5h is not supported" — moot: plain `socks5://` already remote-resolves |
+| `webkit_network_session_prefetch_dns(session, "wk21pf-<r>.invalid")` | **LEAK**: `getaddrinfo` ran locally in WPENetworkProcess despite the CUSTOM proxy — the call does not consult the proxy |
+| Page `<link rel=dns-prefetch>` hint | inert both at default AND with `enable-dns-prefetching` forced on (default is OFF) — no RESOLVE observed |
+| WebRTC host candidates | no surface at all: `webkit_settings_*_enable_webrtc` symbols export but `RTCPeerConnection` is **undefined** even enabled — this Debian build has WebRTC compiled out |
+| Captive-portal / aux requests | none observed — zero non-loopback CONNECT/SENDTO, zero :53/:5353 sends across the whole run |
+| NO_PROXY control leg | failed as expected — the `.test` names exist only through the fixture proxy |
+
+The one leak is **embedder-gated**: `prefetch_dns` is UI-process API a
+page cannot reach, and nothing in src/ calls it. But the audit bar is
+"clean": a local-DNS channel exists in the shipped engine with no
+proxy-aware guard, and a one-run probe cannot prove the absence of
+other channels (OCSP/CRL fetches by the TLS backend, HSTS preload
+updates, etc. were not exercised). **Verdict: Tor stays
+Chromium-locked** — the "webkit allowed for Tor" capability does not
+exist. Revisit path if ever wanted: prefetch_dns must never be called
+for proxied sessions (our only out), `enable-dns-prefetching` stays
+false, WebKitNetworkProxySettings from QNetworkProxy::applicationProxy
+plumbs trivially — the locking is policy, not plumbing.
+
+### (b) WebExtensions — verdict: API present on paper, compiled out in the binary
+
+Headers ship (`WebKitWebExtension.h`, `WebKitWebExtensionMatchPattern.h`),
+~48 `webkit_web_extension_*`/`match_pattern` symbols export, and
+`web-extension-mode` is a real WebKitWebView construct property (probe:
+a MANIFESTV3-constructed view reads the mode back). **But every entry
+point is a stub**: `webkit_web_extension_new` disassembles to
+`endbr64; xor eax,eax; ret` — returns NULL, GError never set — and
+`get_manifest_version`, `supports_manifest_version`,
+`match_pattern_new_with_string` are the same constant-zero stubs. No
+`WebKitWebExtensionContext`/manager type exists in the API at all
+(the GTK-side load surface is still an open upstream PR). MV2/MV3
+cannot be instantiated — `caps.extensions = false`, verified by
+disassembly + runtime NULL, not just unprobed.
+
+### (c) WebKitWebInspector — verdict: neither embeddable nor functional
+
+No `webkit_web_view_get_inspector`, no `webkit_web_inspector_*`
+exports, no header — the only inspector surface is
+`webkit_web_view_toggle_inspector`. Runtime leg: toggling spawned a
+web process that immediately ERROR'd —
+`inspector.gresource` is not even installed in the WPE package
+(`/usr/share/wpe-webkit-2.0/` doesn't exist on this prefix). There is
+no inspector view to embed and no working separate window.
+`caps.devTools = false`, verified.
+
+### Capability flag outcomes
+
+| Flag | Value | Basis |
+|------|-------|-------|
+| devTools | false (unchanged) | verified: no API + missing gresource |
+| extensions | false (unchanged) | verified: stubbed entry points |
+| "webkit allowed for Tor" | does not exist | SOCKS5 audit not clean (prefetch_dns local-resolution channel) |
