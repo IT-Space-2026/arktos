@@ -232,6 +232,15 @@ equal or better than backend-0's surface.
   intercept-or-replace; WebKit's is a compiled filter store).
 - **Two GLib threads + Qt**: low risk, but the spike must prove the
   dispatcher assumption before building on it.
+- **Multi-view (checked 2026-02-20, user report)**: Servo's one-tab
+  constraint is our servo-embed shim's design — NOT something to
+  copy here. WPE has no single-view limit: one `WebKitWebContext`
+  hosts N `WPEView`s/`WebKitWebView`s natively (multi-view is the
+  normal embedding model, and each view can carry its own
+  WebKitWebsiteDataManager if we want per-tab stores — though our
+  profiles make that unnecessary). The backend MUST keep per-page
+  state per-view and allow `createPage` unconditionally — do NOT
+  port Servo's g_servoSlot single-live-instance gate.
 - **Version floor**: target WPE 2.54+ (stable WPEPlatform); earlier
   releases exist in Debian stable (2.48, legacy API) — set the floor
   deliberately rather than chasing both APIs.
