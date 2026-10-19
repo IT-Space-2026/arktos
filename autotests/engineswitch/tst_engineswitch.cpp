@@ -158,6 +158,7 @@ private slots:
     void webkitInput();
     void webkitZoomFindLifecycle();
     void webkitJsEval();
+    void webkitScriptWorlds();
 
 private:
     FakeEngineBackend *m_fake = nullptr;
@@ -2650,6 +2651,238 @@ void tst_EngineSwitch::webkitJsEval()
     QVERIFY2(markup.contains(QStringLiteral("<html")),
              qPrintable(markup.left(200)));
     QVERIFY(markup.contains(QStringLiteral("wk15mark")));
+#else
+    QSKIP("webkit backend not linked in this build");
+#endif
+}
+
+// WK16 — the script-injection + named-world + host-channel contract.
+// insertScript reaches the page's WebKitUserContentManager with the
+// injection-time and world-name mappings applied; runJavaScriptLifted
+// evaluates in the named world; the "arktosChannel" script-message
+// handler round-trips a message through the installed listener; and
+// the SEC24 isolation shape holds — main-world page script can
+// neither see the channel world's objects nor enumerate the
+// messageHandlers surface.
+void tst_EngineSwitch::webkitScriptWorlds()
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    Engine::Backend *webkit =
+        EngineRegistry::backendForId(QStringLiteral("webkit"));
+    QVERIFY(webkit);
+    QVERIFY2(webkit->pageUnavailableReason().isEmpty(),
+             qPrintable(webkit->pageUnavailableReason()));
+
+    // The world-name map is the contract's public half: world 0 is
+    // the main world, ArktosChannelWorld the stable channel name,
+    // other ids deterministic.
+    QVERIFY(WebkitPage::scriptWorldName(0).isEmpty());
+    QCOMPARE(WebkitPage::scriptWorldName(Engine::ArktosChannelWorld),
+             QByteArrayLiteral("arktos-channel"));
+    QCOMPARE(WebkitPage::scriptWorldName(0x99),
+             QByteArrayLiteral("arktos-world-99"));
+    QVERIFY(!WebkitPage::channelHandlerName().isEmpty());
+    qInfo("webkit script-message _with_reply export: %s",
+          WebkitPage::scriptMessageReplyAvailable() ? "yes" : "no");
+
+    const QString fixturePath = QDir::temp().filePath(
+        QStringLiteral("arktos-wk16-fixture.html"));
+    {
+        QFile fixture(fixturePath);
+        QVERIFY(fixture.open(QIODevice::WriteOnly));
+        fixture.write("<html><head><title>Wk16</title>"
+                      "<script>window.__pageState=document.readyState;"
+                      "</script></head>"
+                      "<body><p id='wk16mark'>inject me</p>"
+                      "</body></html>");
+    }
+
+    Engine::ProfileOptions options;
+    options.offTheRecord = true;
+    Engine::Profile *profile = webkit->createProfile(options, this);
+    QVERIFY(profile);
+    // A profile-scope script installed before the page exists must
+    // land on the page's own UCM — the construction-time half of the
+    // propagation contract.
+    profile->insertScript(Engine::Script{
+        QStringLiteral("wk16:profile-early"),
+        QStringLiteral("window.__wk16prof='early';"),
+        Engine::InjectionPoint::Deferred, 0 /* main world */, false });
+
+    EngineTab tab(webkit, profile);
+    tab.resize(800, 600);
+    tab.show();
+    QVERIFY(tab.page());
+    auto *page = qobject_cast<WebkitPage *>(tab.page());
+    QVERIFY(page);
+
+    // The native endpoint: record the payload and answer it — the
+    // return QVariant resolves the JS-side Promise.
+    QStringList received;
+    page->setChannelMessageListener(
+        [&received](const QVariant &payload) {
+            received << payload.toString();
+            return QStringLiteral("ack:%1")
+                .arg(payload.toString().toUpper());
+        });
+
+    // Channel-world script at DocumentCreation: marks the world,
+    // records the injection-time readyState, and round-trips a
+    // channel message.  Installed BEFORE the load so document-start
+    // injection actually fires.
+    const QString handler =
+        QString::fromLatin1(WebkitPage::channelHandlerName());
+    Engine::Script channelScript;
+    channelScript.name = QStringLiteral("wk16:channel-marker");
+    channelScript.injectionPoint = Engine::InjectionPoint::DocumentCreation;
+    channelScript.worldId = Engine::ArktosChannelWorld;
+    channelScript.runsOnSubFrames = false;
+    channelScript.sourceCode = QStringLiteral(
+        "window.__wk16mark='created';"
+        "window.__wk16state=document.readyState;"
+        "(function(){"
+        "  var h=window.webkit&&window.webkit.messageHandlers"
+        "    &&window.webkit.messageHandlers.%1;"
+        "  if(!h){window.__wk16reply='no-handler';return;}"
+        "  var p=h.postMessage('wk16');"
+        "  if(p&&p.then){p.then(function(r){window.__wk16reply=r;},"
+        "    function(e){window.__wk16reply='rejected:'+e;});}"
+        "  else{window.__wk16reply='no-promise';}"
+        "}())").arg(handler);
+    page->insertScript(channelScript);
+    // A deferred main-world script for the injection-point split.
+    page->insertScript(Engine::Script{
+        QStringLiteral("wk16:main-deferred"),
+        QStringLiteral("window.__wk16main=document.readyState;"),
+        Engine::InjectionPoint::Deferred, 0 /* main world */, false });
+    // A third world — a world name only becomes durable once a user
+    // script anchors it; eval-only names are transient per call.
+    page->insertScript(Engine::Script{
+        QStringLiteral("wk16:third-world"),
+        QStringLiteral("window.__third=7;"),
+        Engine::InjectionPoint::DocumentCreation, 0x99, false });
+    QCOMPARE(page->scripts().size(), 3);
+
+    {
+        QSignalSpy spy(page, &Engine::Page::loadFinished);
+        page->load(QUrl::fromLocalFile(fixturePath));
+        QVERIFY2(spy.wait(60000) && spy.first().first().toBool(),
+                 "fixture load failed");
+    }
+
+    auto evalW = [&page](const QString &src,
+                         quint32 world) -> QVariant {
+        QVariant out;
+        bool done = false;
+        page->runJavaScriptLifted(src, [&](const QVariant &v) {
+            out = v;
+            done = true;
+        }, world);
+        QElapsedTimer timer;
+        timer.start();
+        while (!done && timer.elapsed() < 30000)
+            QTest::qWait(20);
+        return out;
+    };
+    const quint32 channel = Engine::ArktosChannelWorld;
+    const quint32 main = 0;
+
+    // The injected script ran at document creation in the named
+    // world — the marker is only reachable there.
+    QCOMPARE(evalW(QStringLiteral("window.__wk16mark"), channel)
+                 .toString(),
+             QStringLiteral("created"));
+    QCOMPARE(evalW(QStringLiteral("window.__wk16state"), channel)
+                 .toString(),
+             QStringLiteral("loading"));
+    // SEC24: the main world cannot see the channel world's objects.
+    QCOMPARE(evalW(QStringLiteral("typeof window.__wk16mark"), main)
+                 .toString(),
+             QStringLiteral("undefined"));
+    // The deferred main-world script landed at the document-end
+    // boundary in the main world.
+    const QString mainState =
+        evalW(QStringLiteral("window.__wk16main"), main).toString();
+    QVERIFY2(mainState == QStringLiteral("interactive")
+                 || mainState == QStringLiteral("complete"),
+             qPrintable(mainState));
+    // worldId selects a genuinely distinct world — the third world's
+    // counter is durable (anchored by its user script) and never
+    // leaks to main.
+    QCOMPARE(evalW(QStringLiteral("window.__third"), 0x99).toInt(), 7);
+    QCOMPARE(evalW(QStringLiteral("typeof window.__third"), main)
+                 .toString(),
+             QStringLiteral("undefined"));
+    // The profile-scope script armed before page construction ran.
+    QCOMPARE(evalW(QStringLiteral("window.__wk16prof"), main)
+                 .toString(),
+             QStringLiteral("early"));
+
+    // The message round-trip: the listener saw the payload and the
+    // Promise resolved with its return value.
+    QTRY_VERIFY2_WITH_TIMEOUT(received.contains(QStringLiteral("wk16")),
+                              "channel message never reached the "
+                              "listener", 30000);
+    if (WebkitPage::scriptMessageReplyAvailable()) {
+        QTRY_COMPARE_EQ_WITH_TIMEOUT(
+                evalW(QStringLiteral("window.__wk16reply||''"), channel)
+                    .toString(),
+                QStringLiteral("ack:WK16"), 30000);
+    } else {
+        QTRY_VERIFY2_WITH_TIMEOUT(
+                evalW(QStringLiteral("window.__wk16reply||''"), channel)
+                    .toString() == QStringLiteral("no-promise"),
+                "one-way handler still delivered no promise", 30000);
+    }
+    // SEC24: main-world script cannot enumerate the channel surface —
+    // window.webkit.messageHandlers never materializes in a world
+    // with no handler registered.
+    QCOMPARE(evalW(QStringLiteral(
+                 "!!(window.webkit&&window.webkit.messageHandlers"
+                 "&&window.webkit.messageHandlers.%1)").arg(handler),
+                 main).toBool(),
+             false);
+
+    // removeScript retires the injection: reload and the channel
+    // world is bare again.
+    page->removeScript(QStringLiteral("wk16:channel-marker"));
+    QCOMPARE(page->scripts().size(), 2);
+    {
+        QSignalSpy spy(page, &Engine::Page::loadFinished);
+        page->reload();
+        QVERIFY2(spy.wait(60000) && spy.first().first().toBool(),
+                 "reload after removeScript failed");
+    }
+    QCOMPARE(evalW(QStringLiteral("typeof window.__wk16mark"), channel)
+                 .toString(),
+             QStringLiteral("undefined"));
+
+    // Live profile propagation: a profile script inserted after the
+    // page exists reaches it on the next load; removing it takes it
+    // back out.
+    profile->insertScript(Engine::Script{
+        QStringLiteral("wk16:profile-live"),
+        QStringLiteral("window.__wk16live='propagated';"),
+        Engine::InjectionPoint::Deferred, 0 /* main world */, false });
+    {
+        QSignalSpy spy(page, &Engine::Page::loadFinished);
+        page->reload();
+        QVERIFY2(spy.wait(60000) && spy.first().first().toBool(),
+                 "reload after profile insert failed");
+    }
+    QCOMPARE(evalW(QStringLiteral("window.__wk16live"), main)
+                 .toString(),
+             QStringLiteral("propagated"));
+    profile->removeScript(QStringLiteral("wk16:profile-live"));
+    {
+        QSignalSpy spy(page, &Engine::Page::loadFinished);
+        page->reload();
+        QVERIFY2(spy.wait(60000) && spy.first().first().toBool(),
+                 "reload after profile remove failed");
+    }
+    QCOMPARE(evalW(QStringLiteral("typeof window.__wk16live"), main)
+                 .toString(),
+             QStringLiteral("undefined"));
 #else
     QSKIP("webkit backend not linked in this build");
 #endif

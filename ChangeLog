@@ -3715,3 +3715,31 @@ WebKit typed script results (WK15): the webkit backend's runJavaScript
     silently dropping the call. View Source / reader markup now works
     too: toHtml evaluates document.documentElement.outerHTML over the
     same channel.
+WebKit script injection, worlds, and host channel (WK16): the
+    webkit backend's insertScript/removeScript now drive the page's
+    WebKitUserContentManager — DocumentCreation injects at
+    document-start, DocumentReady/Deferred at document-end (the only
+    two boundaries WebKit exposes), runsOnSubFrames maps onto
+    all-frames vs top-frame injection, and worldId maps onto WebKit
+    named script worlds: the private channel world
+    (Engine::ArktosChannelWorld) is the stable "arktos-channel" name,
+    so page script running in the main world can neither see the
+    channel world's objects nor enumerate
+    window.webkit.messageHandlers — the same isolation contract the
+    engine's QWebChannel world provides. runJavaScriptLifted now
+    evaluates inside the selected world rather than always running
+    in the main world, and profile-scope scripts propagate to every
+    page that already exists (WebKit scopes user-content managers
+    per view, so the profile tracks its live pages and pushes
+    changes out to them). A native arktos-channel transport rides
+    WebKit's script-message mechanism: script in the channel world
+    can postMessage to the "arktosChannel" handler, and on WPE
+    builds exporting the _with_reply variant (2.5x API, present on
+    2.54 — dynamically symbol-gated, one-way fallback elsewhere) the
+    call returns a Promise that the native listener's return value
+    resolves. Honest capability verdict for the shared JS assets:
+    autofill.js's DOM-only fill path runs as injected, while
+    arktos-channel.js, autofill capture, and reader's
+    channel-object surface still key on qt.webChannelTransport —
+    they stay gated until a real transport shim bridges this handler
+    to the QWebChannel wire protocol rather than faking success.

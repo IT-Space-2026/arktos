@@ -180,6 +180,49 @@
 // state and survives), and reload respawns it on the current entry.
 // Navigation on a discarded page (load/reload/bf jump) revives it —
 // the load itself performs the respawn.
+//
+// WK16 lands script injection, named worlds and the host channel.
+// insertScript/removeScript now reach the page's
+// WebKitUserContentManager: InjectionPoint maps DocumentCreation ->
+// INJECT_AT_DOCUMENT_START and DocumentReady/Deferred ->
+// INJECT_AT_DOCUMENT_END (WebKit's only two points — a DocumentReady
+// script lands at the same boundary WebKit gives), runsOnSubFrames
+// -> INJECT_ALL_FRAMES/TOP_FRAME, and worldId -> the
+// WebKitScriptWorld name from scriptWorldName() — world 0 is the
+// main world (NULL world_name), Engine::ArktosChannelWorld the
+// stable "arktos-channel" name so the SEC24 private-world contract
+// holds: page script in the main world can neither see the world's
+// objects nor enumerate window.webkit.messageHandlers, which WebKit
+// only creates in worlds that have a handler registered.  WebKit
+// scopes UserContentManagers per view, never per session, so a
+// profile's script collection lands on each page's own UCM —
+// applied at page construction and propagated live by WebkitProfile
+// to pages that already exist (the QWebEngineScriptCollection
+// reach-existing-pages semantics).  runJavaScriptLifted passes the
+// mapped world name to evaluate_javascript — lifted eval now truly
+// runs in the named world, with one durability caveat WebKit
+// imposes: a world name only becomes a persistent execution
+// context once a user script anchors it — eval into an unanchored
+// name gets a fresh transient context each call, so global state
+// set there does not survive between evals.
+//
+// The host channel: every page registers the "arktosChannel" script
+// message handler in the channel world.  The _with_reply variant
+// (2.5x API, present on 2.54) is dlsym-gated like the suspend pair
+// — with it window.webkit.messageHandlers.arktosChannel
+// .postMessage(v) returns a Promise the installed listener's return
+// QVariant resolves; without it the one-way handler still delivers
+// messages but the promise never exists.  The native side of the
+// arktos-channel transport is exactly this: page->native rides the
+// handler, native->page rides evaluate_javascript.  The JS-asset
+// verdict, honestly: autofill.js's DOM-only fill half runs (and
+// captureEnabledForPage already gates the capture half on the
+// WebEngine-only bridge); arktos-channel.js, autofill.js's capture
+// path and reader.js all key on qt.webChannelTransport +
+// QWebChannel, which have no WebKit equivalent — they inject
+// inertly and never resolve, so the channel-object surface stays
+// gated until a WK transport shim bridges this handler to the
+// QWebChannel wire protocol (deliberately not faked here).
 
 #include "engineinterface.h"
 
@@ -187,6 +230,7 @@
 #include <qhash.h>
 #include <qimage.h>
 #include <qpointer.h>
+#include <qset.h>
 #include <qurl.h>
 #include <qvariant.h>
 #include <qwidget.h>
@@ -206,8 +250,13 @@ typedef struct _WebKitWebContext WebKitWebContext;
 typedef struct _WebKitNetworkSession WebKitNetworkSession;
 typedef struct _WebKitPolicyDecision WebKitPolicyDecision;
 typedef struct _WebKitFindController WebKitFindController;
+typedef struct _WebKitUserContentManager WebKitUserContentManager;
+typedef struct _WebKitUserScript WebKitUserScript;
+typedef struct _WebKitScriptMessageReply WebKitScriptMessageReply;
+typedef struct _JSCValue JSCValue;
 
 class WebkitPage;
+class WebkitProfile;
 
 // WK08 — the widget that presents a WebkitPage.  It owns nothing on
 // the engine side (the WPEView belongs to the page's WebKitWebView);
@@ -379,6 +428,24 @@ public:
     bool engineViewMapped() const;
     bool engineProcessDiscarded() const { return m_engineDiscarded; }
 
+    // WK16 diagnostics/test surface (the WK11 sessionDataDir role).
+    // scriptWorldName() is the worldId -> WebKitScriptWorld-name map
+    // insertScript and runJavaScriptLifted share (world 0 -> empty,
+    // the default world).  channelHandlerName() is the
+    // window.webkit.messageHandlers member registered in the channel
+    // world.  scriptMessageReplyAvailable() reports the dlsym gate
+    // for register_script_message_handler_with_reply (present on
+    // 2.54): false means messages still arrive but postMessage
+    // returns no Promise.  setChannelMessageListener installs the
+    // native endpoint — its return QVariant is marshaled back as the
+    // Promise resolution (invalid -> undefined); with no listener a
+    // message is answered with an error rather than a fake ack.
+    static QByteArray scriptWorldName(quint32 worldId);
+    static QByteArray channelHandlerName();
+    static bool scriptMessageReplyAvailable();
+    void setChannelMessageListener(
+            const std::function<QVariant(const QVariant &)> &listener);
+
 private:
     // GLib signal entry points — reached through the static
     // trampolines in the .cpp (all on the GUI thread: on the glib
@@ -410,6 +477,25 @@ private:
     void wakeForNavigation();
     void resizeEngine(int width, int height);
     void focusEngine(bool in);
+
+    // WK16 — the UCM halves of the script contract.  install/
+    // removeUserScript translate the Engine::Script triple into a
+    // retained WebKitUserScript on the page's content manager (one
+    // hash per scope so a page script and a profile script may share
+    // a name, matching the two-collection WebEngine shape);
+    // install/removeProfileScript are WebkitProfile's propagation
+    // entry points.  onChannelMessage answers a script-message
+    // through the installed listener (or an error reply when none
+    // is), reply == nullptr on the one-way fallback registration.
+    void installUserScript(const Engine::Script &script,
+                           QHash<QString, WebKitUserScript *> &installed);
+    void removeUserScript(const QString &name,
+                          QHash<QString, WebKitUserScript *> &installed);
+    void installProfileScript(const Engine::Script &script);
+    void removeProfileScript(const QString &name);
+    void registerChannelHandler();
+    void onChannelMessage(JSCValue *value,
+                          WebKitScriptMessageReply *reply);
 
     // WK13 — the wpe_view_event dispatch points.  The callers
     // (WebkitView's event overrides, friend) hand over view-space
@@ -458,8 +544,21 @@ private:
                               unsigned matchCount, WebkitPage *page);
     static void cbFindFailed(WebKitFindController *controller,
                              WebkitPage *page);
+    // WK16 — the script-message sinks.  The with-reply signal orders
+    // its params (value, reply) and returns gboolean; the one-way
+    // signal carries the value alone.  int keeps the trampoline
+    // glib-free like cbLoadFailed.
+    static void cbScriptMessage(WebKitUserContentManager *manager,
+                                JSCValue *value, WebkitPage *page);
+    static int cbScriptMessageWithReply(
+            WebKitUserContentManager *manager, JSCValue *value,
+            WebKitScriptMessageReply *reply, WebkitPage *page);
 
     Engine::Profile *m_profile;
+    // WK16: the WebkitProfile this page attached to (when it is one)
+    // — QPointer so the dtor's detachPage survives a profile that
+    // died first, which raw m_profile could not.
+    QPointer<WebkitProfile> m_webProfile;
     QPointer<WebkitView> m_view;
     WebKitWebView *m_webView = nullptr;
     WPEView *m_wpeView = nullptr;   // owned by m_webView — never freed here
@@ -492,8 +591,15 @@ private:
     bool m_engineDiscarded = false;
     QHash<QString, Engine::Script> m_scripts;
     QHash<QString, bool> m_attributes;
+    // WK16 — the retained WebKitUserScript objects behind the two
+    // script scopes (remove_script needs the instance pointer) and
+    // the channel endpoint.
+    QHash<QString, WebKitUserScript *> m_userScripts;
+    QHash<QString, WebKitUserScript *> m_profileUserScripts;
+    std::function<QVariant(const QVariant &)> m_channelListener;
 
     friend class WebkitView;
+    friend class WebkitProfile;
 };
 
 // WK08 — the minimal session object, WK11's storage roots applied.
@@ -569,6 +675,14 @@ private:
     // session's WebKitCookieManager.
     void applyCookiePolicy();
 
+    // WK16: WebKit scopes UserContentManagers per view — the
+    // profile's script collection reaches a page through the page's
+    // own UCM, so the profile tracks its live pages (attach/detach
+    // are the page ctor/dtor's calls) to keep an insertScript or
+    // removeScript landing after pages exist in sync.
+    void attachPage(WebkitPage *page);
+    void detachPage(WebkitPage *page);
+
     Engine::ProfileOptions m_options;
     QString m_userAgent;
     Engine::RequestPolicy *m_policy = nullptr;
@@ -581,6 +695,9 @@ private:
     int m_cookieAcceptPolicy = -1;
     QString m_cookieStoragePath;
     bool m_cookiePolicyApplied = false;
+    QSet<WebkitPage *> m_pages;
+
+    friend class WebkitPage;
 };
 
 class WebkitBackend : public Engine::Backend

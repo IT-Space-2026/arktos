@@ -49,6 +49,7 @@
 #include <qevent.h>
 #include <qfile.h>
 #include <qfileinfo.h>
+#include <qjsondocument.h>
 #include <qpainter.h>
 #include <qpixmap.h>
 
@@ -688,6 +689,99 @@ bool wkSuspendResumeAvailable()
     return available;
 }
 
+// ---- WK16 — user scripts, named worlds + the host channel ---------
+
+// The window.webkit.messageHandlers member every page's channel
+// world gets — JS posts via
+// window.webkit.messageHandlers.arktosChannel.postMessage(v).  The
+// two detailed-signal spellings below carry the same name inline
+// (g_signal_connect wants string literals).
+constexpr char kChannelHandlerName[] = "arktosChannel";
+
+// Engine::Script -> a retained WebKitUserScript the caller holds by
+// name for a later remove_script.  World 0 is the main world (NULL
+// world_name); the interface's three injection points fold onto
+// WebKit's two — DocumentCreation is document-start, DocumentReady
+// and Deferred share the document-end boundary.
+WebKitUserScript *userScriptFor(const Engine::Script &script)
+{
+    const QByteArray source = script.sourceCode.toUtf8();
+    const QByteArray world =
+        WebkitPage::scriptWorldName(script.worldId);
+    const WebKitUserContentInjectedFrames frames =
+        script.runsOnSubFrames ? WEBKIT_USER_CONTENT_INJECT_ALL_FRAMES
+                               : WEBKIT_USER_CONTENT_INJECT_TOP_FRAME;
+    const WebKitUserScriptInjectionTime time =
+        script.injectionPoint == Engine::InjectionPoint::DocumentCreation
+            ? WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START
+            : WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_END;
+    // new_for_world asserts worldName non-NULL — the main world has
+    // its own constructor spelling.
+    if (world.isEmpty()) {
+        return webkit_user_script_new(
+            source.constData(), frames, time, nullptr, nullptr);
+    }
+    return webkit_user_script_new_for_world(
+        source.constData(), frames, time, world.constData(),
+        nullptr, nullptr);
+}
+
+// QVariant -> JSCValue, the inverse of jscValueToVariant's matrix:
+// scalars map directly, the invalid variant answers undefined,
+// valid-null answers null, and every structured value crosses as
+// parsed JSON so objects come back as real JS objects rather than
+// JSON text.
+JSCValue *variantToJsc(JSCContext *context, const QVariant &variant)
+{
+    if (!context)
+        return nullptr;
+    if (!variant.isValid())
+        return jsc_value_new_undefined(context);
+    if (variant.isNull())
+        return jsc_value_new_null(context);
+    const int type = variant.typeId();
+    if (type == QMetaType::Bool)
+        return jsc_value_new_boolean(context, variant.toBool());
+    if (type == QMetaType::QString) {
+        const QByteArray text = variant.toString().toUtf8();
+        return jsc_value_new_string(context, text.constData());
+    }
+    if (type == QMetaType::Int || type == QMetaType::UInt
+            || type == QMetaType::LongLong
+            || type == QMetaType::ULongLong
+            || type == QMetaType::Double || type == QMetaType::Float)
+        return jsc_value_new_number(context, variant.toDouble());
+    const QJsonDocument document = QJsonDocument::fromVariant(variant);
+    if (!document.isNull()) {
+        const QByteArray json =
+            document.toJson(QJsonDocument::Compact);
+        return jsc_value_new_from_json(context, json.constData());
+    }
+    return jsc_value_new_undefined(context);
+}
+
+// webkit_user_content_manager_register_script_message_handler_
+// with_reply is the 2.5x-era API — exported on this build's 2.54;
+// dlsym-gated like the suspend pair so an older artifact degrades to
+// the one-way registration instead of failing symbol resolution at
+// load time.
+typedef gboolean (*RegisterScriptMessageWithReplyFn)(
+    WebKitUserContentManager *, const char *, const char *);
+
+RegisterScriptMessageWithReplyFn wkRegisterWithReply()
+{
+    return reinterpret_cast<RegisterScriptMessageWithReplyFn>(
+        dlsym(RTLD_DEFAULT,
+              "webkit_user_content_manager_register_script_message_"
+              "handler_with_reply"));
+}
+
+bool wkScriptMessageReplyAvailable()
+{
+    static const bool available = wkRegisterWithReply() != nullptr;
+    return available;
+}
+
 } // namespace
 #endif // ARKTOS_WEBKIT_LINKED
 
@@ -1124,6 +1218,22 @@ WebkitPage::WebkitPage(Engine::Profile *profile, QObject *parent)
                      G_CALLBACK(cbFindCounted), this);
     g_signal_connect(findController, "failed-to-find-text",
                      G_CALLBACK(cbFindFailed), this);
+    // WK16: the channel handler goes on before any load can arm the
+    // channel-world scripts — window.webkit.messageHandlers only
+    // materializes in worlds a handler was registered into, which is
+    // also what keeps the main world bare of it (the SEC24 shape).
+    registerChannelHandler();
+    // WebKit scopes the UserContentManager per view — the profile's
+    // script collection lands on this page's own UCM, applied here
+    // and kept in sync by WebkitProfile while the page lives.
+    if (auto *webProfile = qobject_cast<WebkitProfile *>(profile)) {
+        m_webProfile = webProfile;
+        const QList<Engine::Script> profileScripts =
+            webProfile->scripts();
+        for (const Engine::Script &script : profileScripts)
+            installProfileScript(script);
+        webProfile->attachPage(this);
+    }
 #else
     Q_UNUSED(profile);
 #endif
@@ -1132,10 +1242,20 @@ WebkitPage::WebkitPage(Engine::Profile *profile, QObject *parent)
 WebkitPage::~WebkitPage()
 {
 #ifdef ARKTOS_WEBKIT_LINKED
+    if (m_webProfile)
+        m_webProfile->detachPage(this);
     if (m_view)
         m_view->m_page = nullptr;
     // The WebKitWebView owns its WPEView; unrefing it tears the view
-    // down and drops every g_signal handler bound to `this`.
+    // down and drops every g_signal handler bound to `this`.  The
+    // retained user-script objects are ours to release.
+    for (WebKitUserScript *script : std::as_const(m_userScripts))
+        webkit_user_script_unref(script);
+    for (WebKitUserScript *script :
+             std::as_const(m_profileUserScripts))
+        webkit_user_script_unref(script);
+    m_userScripts.clear();
+    m_profileUserScripts.clear();
     g_clear_object(&m_webView);
     g_clear_object(&m_toplevel);
 #endif
@@ -1581,10 +1701,31 @@ void WebkitPage::runJavaScriptLifted(
         const std::function<void(const QVariant &)> &resultCallback,
         quint32 worldId)
 {
-    // WK16 maps worldId onto named script worlds; main world only
-    // until then.
+#ifdef ARKTOS_WEBKIT_LINKED
+    if (m_webView) {
+        // WK16: lifted eval runs in the mapped named world — the
+        // reader driver's isolated world and the channel world both
+        // land where page script cannot follow.  This backend wires
+        // no JS gate to lift (setPageAttribute stores attributes but
+        // does not apply WebKitSettings::enable-javascript), so the
+        // world is the whole contract delta vs runJavaScript.
+        EvalCall *call = new EvalCall;
+        call->page = this;
+        call->callback = resultCallback;
+        const QByteArray script = source.toUtf8();
+        const QByteArray world = scriptWorldName(worldId);
+        webkit_web_view_evaluate_javascript(
+            m_webView, script.constData(), script.size(),
+            world.isEmpty() ? nullptr : world.constData(),
+            nullptr, nullptr, evalReady, call);
+        return;
+    }
+#else
+    Q_UNUSED(source);
     Q_UNUSED(worldId);
-    runJavaScript(source, resultCallback);
+#endif
+    if (resultCallback)
+        resultCallback(QVariant());
 }
 
 void WebkitPage::toHtml(
@@ -1762,11 +1903,175 @@ qint64 WebkitPage::renderProcessId() const
 void WebkitPage::insertScript(const Engine::Script &script)
 {
     m_scripts.insert(script.name, script);
+    installUserScript(script, m_userScripts);
 }
 
 void WebkitPage::removeScript(const QString &name)
 {
     m_scripts.remove(name);
+    removeUserScript(name, m_userScripts);
+}
+
+// WK16 — the UCM halves.  A same-name insert replaces the live
+// instance first so the manager never runs the stale copy alongside
+// the new one; the retained pointer is what remove_script needs
+// later.
+void WebkitPage::installUserScript(
+        const Engine::Script &script,
+        QHash<QString, WebKitUserScript *> &installed)
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    if (!m_webView)
+        return;
+    removeUserScript(script.name, installed);
+    WebKitUserScript *userScript = userScriptFor(script);
+    if (!userScript) {
+        qWarning("webkit: user script %s failed to build",
+                 qPrintable(script.name));
+        return;
+    }
+    webkit_user_content_manager_add_script(
+        webkit_web_view_get_user_content_manager(m_webView),
+        userScript);
+    installed.insert(script.name, userScript);
+#else
+    Q_UNUSED(script);
+    Q_UNUSED(installed);
+#endif
+}
+
+void WebkitPage::removeUserScript(
+        const QString &name,
+        QHash<QString, WebKitUserScript *> &installed)
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    WebKitUserScript *userScript = installed.take(name);
+    if (!userScript)
+        return;
+    if (m_webView) {
+        webkit_user_content_manager_remove_script(
+            webkit_web_view_get_user_content_manager(m_webView),
+            userScript);
+    }
+    webkit_user_script_unref(userScript);
+#else
+    Q_UNUSED(name);
+    Q_UNUSED(installed);
+#endif
+}
+
+// WebkitProfile's propagation entry points — same install path, the
+// profile-scope hash so a profile script never aliases a page one.
+void WebkitPage::installProfileScript(const Engine::Script &script)
+{
+    installUserScript(script, m_profileUserScripts);
+}
+
+void WebkitPage::removeProfileScript(const QString &name)
+{
+    removeUserScript(name, m_profileUserScripts);
+}
+
+void WebkitPage::registerChannelHandler()
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    if (!m_webView)
+        return;
+    WebKitUserContentManager *manager =
+        webkit_web_view_get_user_content_manager(m_webView);
+    if (!manager)
+        return;
+    // The docs' ordering rule: connect the detailed signals BEFORE
+    // registering the handler name so no early message is missed.
+    // The handler lives only in the channel world — the main world
+    // never grows a window.webkit.messageHandlers surface at all.
+    g_signal_connect(manager,
+                     "script-message-received::arktosChannel",
+                     G_CALLBACK(cbScriptMessage), this);
+    g_signal_connect(manager,
+                     "script-message-with-reply-received::arktosChannel",
+                     G_CALLBACK(cbScriptMessageWithReply), this);
+    const QByteArray world =
+        scriptWorldName(Engine::ArktosChannelWorld);
+    if (RegisterScriptMessageWithReplyFn registerWithReply =
+            wkRegisterWithReply()) {
+        registerWithReply(manager, kChannelHandlerName,
+                          world.constData());
+    } else {
+        // Honest degradation: the message still arrives on the
+        // one-way signal — postMessage just returns no Promise.
+        webkit_user_content_manager_register_script_message_handler(
+            manager, kChannelHandlerName, world.constData());
+    }
+#endif
+}
+
+void WebkitPage::onChannelMessage(JSCValue *value,
+                                  WebKitScriptMessageReply *reply)
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    const QVariant payload = jscValueToVariant(value);
+    if (!reply) {
+        // One-way registration — deliver and drop; the JS side has
+        // no Promise to answer.
+        if (m_channelListener)
+            m_channelListener(payload);
+        return;
+    }
+    if (!m_channelListener) {
+        // No fake ack — the JS-side Promise rejects with the truth.
+        webkit_script_message_reply_return_error_message(
+            reply, "arktos channel has no listener on this page");
+        return;
+    }
+    const QVariant out = m_channelListener(payload);
+    JSCContext *context = jsc_value_get_context(value);
+    JSCValue *replyValue = variantToJsc(context, out);
+    if (!replyValue)
+        replyValue = jsc_value_new_undefined(context);
+    webkit_script_message_reply_return_value(reply, replyValue);
+    g_object_unref(replyValue);
+#else
+    Q_UNUSED(value);
+    Q_UNUSED(reply);
+#endif
+}
+
+// WK16 diagnostics/test surface — the pure world-name map works
+// unlinked too, the reply gate reports the dlsym verdict.
+QByteArray WebkitPage::scriptWorldName(quint32 worldId)
+{
+    // Engine worldIds are arbitrary 32-bit tags; WebKit isolates by
+    // world NAME.  0 is the default/main world (NULL world_name);
+    // the SEC24 channel world gets a stable readable name; every
+    // other id maps deterministically so two callers sharing an id
+    // share the world — QWebEngineScript's worldId join semantics.
+    if (!worldId)
+        return QByteArray();
+    if (worldId == Engine::ArktosChannelWorld)
+        return QByteArrayLiteral("arktos-channel");
+    return QByteArrayLiteral("arktos-world-")
+        + QByteArray::number(worldId, 16);
+}
+
+QByteArray WebkitPage::channelHandlerName()
+{
+    return QByteArrayLiteral("arktosChannel");
+}
+
+bool WebkitPage::scriptMessageReplyAvailable()
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    return wkScriptMessageReplyAvailable();
+#else
+    return false;
+#endif
+}
+
+void WebkitPage::setChannelMessageListener(
+        const std::function<QVariant(const QVariant &)> &listener)
+{
+    m_channelListener = listener;
 }
 
 QList<Engine::Script> WebkitPage::scripts() const
@@ -1874,6 +2179,20 @@ void WebkitPage::cbFindFailed(WebKitFindController *,
                               WebkitPage *page)
 {
     page->onFindFailed();
+}
+
+void WebkitPage::cbScriptMessage(WebKitUserContentManager *,
+                                 JSCValue *value, WebkitPage *page)
+{
+    page->onChannelMessage(value, nullptr);
+}
+
+int WebkitPage::cbScriptMessageWithReply(
+        WebKitUserContentManager *, JSCValue *value,
+        WebKitScriptMessageReply *reply, WebkitPage *page)
+{
+    page->onChannelMessage(value, reply);
+    return TRUE;
 }
 
 #endif // ARKTOS_WEBKIT_LINKED
@@ -2391,14 +2710,34 @@ void WebkitProfile::setCookieFilter(
     m_cookieFilter = filter;
 }
 
+// WK16 — the live-page set the script propagation iterates; the
+// page ctor attaches after its UCM work, the dtor detaches.
+void WebkitProfile::attachPage(WebkitPage *page)
+{
+    m_pages.insert(page);
+}
+
+void WebkitProfile::detachPage(WebkitPage *page)
+{
+    m_pages.remove(page);
+}
+
 void WebkitProfile::insertScript(const Engine::Script &script)
 {
     m_scripts.insert(script.name, script);
+    // Per-view UCMs mean the collection physically lives on each
+    // page — push the new script to pages that already exist (the
+    // reach-existing-pages semantics WebEngine's profile collection
+    // has).
+    for (WebkitPage *page : std::as_const(m_pages))
+        page->installProfileScript(script);
 }
 
 void WebkitProfile::removeScript(const QString &name)
 {
     m_scripts.remove(name);
+    for (WebkitPage *page : std::as_const(m_pages))
+        page->removeProfileScript(name);
 }
 
 QList<Engine::Script> WebkitProfile::scripts() const
