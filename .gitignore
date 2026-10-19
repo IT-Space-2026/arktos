@@ -31,6 +31,9 @@ spikes/servo/harness/*.o
 spikes/servo/harness/moc_*.cpp
 spikes/servo/harness/servospike
 
+# webkit spike build outputs
+spikes/webkit/probe/webkit-probe
+
 # check-leaks.sh raw gate output — the curated report is .devin/MEM02-report.md
 .devin/LEAKS.md
 

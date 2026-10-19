@@ -3494,3 +3494,10 @@ The Servo smoke diagnostic's scroll benchmarks no longer flake when
     the CPU count, the log line carries a "CONTENTION: loadavg=X"
     marker so an overloaded machine is distinguishable from a real
     scroll regression at a glance.
+WebKit backend groundwork (WK01): the WPE WebKit 2.54.1 developer
+    prefix acquired under ~/wpe is now wired into the tree —
+    .devin/webkit-env.sh is the sourceable environment (PKG_CONFIG_PATH,
+    LD_LIBRARY_PATH/LD_RUN_PATH, the g_sort_array compat preload and the
+    sid-glibc link contract), and spikes/webkit/probe carries a compiled
+    version probe that proves headers, linking and runtime loading all
+    work end to end. Nothing is wired into the qmake build yet.
