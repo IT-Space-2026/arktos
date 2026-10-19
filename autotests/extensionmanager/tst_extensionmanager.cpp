@@ -232,6 +232,77 @@ private:
         return true;
     }
 
+    // ER18 — the residual sweep's contract.  .devin/EXT-RUNTIME-GAPS.md
+    // is the lane's declared intentional set: a ```gaps fenced block
+    // of signatures, `chrome.<api>: <code>` exact, or
+    // `chrome.<ns>.*: <code>` covering every member of a wholly
+    // unserved namespace.  A typed gap the bundle emits that is not
+    // listed there is an unplanned regression.  ARKTOS_EXTGAPS_DOC
+    // overrides the lookup; otherwise the file is found by walking
+    // up from the test binary's directory.
+    static QStringList documentedGaps() {
+        QString path = qEnvironmentVariable("ARKTOS_EXTGAPS_DOC");
+        if (path.isEmpty()) {
+            QDir dir(QCoreApplication::applicationDirPath());
+            for (int i = 0; i < 8; ++i) {
+                const QString cand = dir.absoluteFilePath(
+                    QStringLiteral(".devin/EXT-RUNTIME-GAPS.md"));
+                if (QFile::exists(cand)) {
+                    path = cand;
+                    break;
+                }
+                if (!dir.cdUp())
+                    break;
+            }
+        }
+        QStringList allowed;
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly))
+            return allowed;
+        bool inBlock = false;
+        while (!file.atEnd()) {
+            const QString line =
+                QString::fromUtf8(file.readLine()).trimmed();
+            if (line.startsWith(QLatin1String("```"))) {
+                if (inBlock)
+                    inBlock = false;
+                else
+                    inBlock = (line == QLatin1String("```gaps"));
+                continue;
+            }
+            if (inBlock && !line.isEmpty()
+                    && !line.startsWith(QLatin1Char('#')))
+                allowed.append(line);
+        }
+        return allowed;
+    }
+
+    static bool gapDocumented(const QStringList &allowed,
+                              const QString &gap) {
+        for (const QString &a : allowed) {
+            const int star = a.indexOf(QLatin1String(".*:"));
+            if (star >= 0) {
+                // 'chrome.<ns>.*: <code>' — namespace prefix plus the
+                // trailing ': <code>' must both hold.
+                if (gap.startsWith(a.left(star + 1))
+                        && gap.endsWith(a.mid(star + 2)))
+                    return true;
+            } else if (gap == a) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static QStringList undocumentedGaps(const QStringList &gaps) {
+        const QStringList allowed = documentedGaps();
+        QStringList out;
+        for (const QString &g : gaps)
+            if (!g.isEmpty() && !gapDocumented(allowed, g))
+                out.append(g);
+        return out;
+    }
+
     // Installs the fixture dir and returns the Chromium-assigned id
     // (empty on failure).  installExtension() targets the first
     // profile the manager was attached to.
@@ -7334,7 +7405,11 @@ void tst_ExtensionManager::bitwardenGapBaseline()
     const QString copyRoot = QDir::temp().filePath(
         QStringLiteral("tst-bwgap-%1")
             .arg(QCoreApplication::applicationPid()));
-    const QString dir = copyRoot + QLatin1String("/bundle");
+    // Unique basename — a crashed earlier run's leftover
+    // "bundle_<profile suffix>" install dir makes every later
+    // install fail with 'Failed to create install directory'.
+    const QString dir = copyRoot + QStringLiteral("/bundle-%1")
+            .arg(QCoreApplication::applicationPid());
     QVERIFY2(copyTree(src, dir), "fixture copy of the bundle failed");
     QVERIFY(QFile::exists(dir + QLatin1String("/manifest.json")));
 
@@ -7362,6 +7437,17 @@ void tst_ExtensionManager::bitwardenGapBaseline()
         *installed = QStringLiteral("ERROR:") + m;
         *finished = true;
     });
+    // ER18: the leg starts windowless; the bundle's own tabs.create
+    // call now opens a real window (invokeTabs falls back to
+    // newMainWindow like Chrome).  Snapshot the set so teardown can
+    // close only the windows the extension itself spawned.
+    const QList<QPointer<BrowserMainWindow>> preWindows = [&]() {
+        QList<QPointer<BrowserMainWindow>> out;
+        for (BrowserMainWindow *w : ExtensionEventHub::browsingWindows())
+            out.append(w);
+        return out;
+    }();
+
     manager->grantConsent(dir);
     manager->installExtension(dir);
     QElapsedTimer installTimer;
@@ -7555,12 +7641,32 @@ void tst_ExtensionManager::bitwardenGapBaseline()
             .arg(info.missingApis.join(QLatin1String(", ")));
         break;
     }
+    {
+        int spawned = 0;
+        for (BrowserMainWindow *w : ExtensionEventHub::browsingWindows())
+            if (!preWindows.contains(w))
+                ++spawned;
+        report << QStringLiteral(
+            "windows created by extension calls: %1").arg(spawned);
+    }
     report << QString();
-    report << QStringLiteral(
-        "## Typed shim gaps — the lane work order (%1 unique)")
-        .arg(gaps.size());
+    // ER18 residual sweep — every emitted typed gap must already be
+    // documented in .devin/EXT-RUNTIME-GAPS.md; an unlisted entry is
+    // an unplanned regression and fails the leg.
+    const QStringList allowedGaps = documentedGaps();
+    QStringList unplanned;
     for (const QString &g : gaps)
-        report << QStringLiteral("- ") + g;
+        if (!gapDocumented(allowedGaps, g))
+            unplanned.append(g);
+    report << QStringLiteral(
+        "## Typed shim gaps — the lane work order (%1 unique, %2 "
+        "undocumented)")
+        .arg(gaps.size()).arg(unplanned.size());
+    for (const QString &g : gaps)
+        report << QStringLiteral("- %1%2").arg(
+            g, gapDocumented(allowedGaps, g)
+                   ? QStringLiteral("  [documented]")
+                   : QStringLiteral("  [UNPLANNED]"));
     report << QString();
 
     const auto probeSection =
@@ -7645,11 +7751,28 @@ void tst_ExtensionManager::bitwardenGapBaseline()
     view->deleteLater();
     frame->deleteLater();
     QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    // Close the windows the bundle's own calls spawned (tabs.create
+    // on a windowless session mints a real one) — they outlive the
+    // extension host and would leak into later legs.  deleteLater,
+    // not close(): closeEvent prompts (confirmClosingMultipleTabs
+    // defaults on) and a modal box under offscreen hangs forever.
+    for (BrowserMainWindow *w : ExtensionEventHub::browsingWindows()) {
+        if (!preWindows.contains(w))
+            w->deleteLater();
+    }
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     manager->setExtensionEnabled(id, false);
     QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 20000);
     manager->removeExtension(id);
     QTest::qWait(500);
     QDir(copyRoot).removeRecursively();
+
+    QVERIFY2(unplanned.isEmpty(),
+             qPrintable(QStringLiteral(
+                 "undocumented typed gaps emitted: %1 — implement the "
+                 "surface or list the signature in "
+                 ".devin/EXT-RUNTIME-GAPS.md")
+                 .arg(unplanned.join(QLatin1String(" | ")))));
 }
 
 // ER06 — the lane's DECISION GATE, made executable.  The study's E3
@@ -7700,7 +7823,10 @@ void tst_ExtensionManager::bitwardenHandshakeGate()
     const QString copyRoot = QDir::temp().filePath(
         QStringLiteral("tst-bwgate-%1")
             .arg(QCoreApplication::applicationPid()));
-    const QString dir = copyRoot + QLatin1String("/bundle");
+    // Unique basename — same install-dir collision guard as the
+    // baseline/fill legs.
+    const QString dir = copyRoot + QStringLiteral("/bundle-%1")
+            .arg(QCoreApplication::applicationPid());
     QVERIFY2(copyTree(src, dir), "fixture copy of the bundle failed");
     QVERIFY(QFile::exists(dir + QLatin1String("/manifest.json")));
 
@@ -8030,6 +8156,10 @@ void tst_ExtensionManager::bitwardenHandshakeGate()
         for (const QString &g : host->shimGaps())
             report << QStringLiteral("- ") + g;
     }
+    // ER18 residual sweep — the handshake drive's typed gaps are part
+    // of the bundle's call set; anything outside
+    // .devin/EXT-RUNTIME-GAPS.md's documented set fails below.
+    const QStringList hostGaps = host->shimGaps();
     report << QString();
     report << QStringLiteral(
         "## gate capture (every cs->bg crossing)");
@@ -8099,6 +8229,14 @@ void tst_ExtensionManager::bitwardenHandshakeGate()
     manager->removeExtension(id);
     QTest::qWait(500);
     QDir(copyRoot).removeRecursively();
+
+    const QStringList unplanned = undocumentedGaps(hostGaps);
+    QVERIFY2(unplanned.isEmpty(),
+             qPrintable(QStringLiteral(
+                 "undocumented typed gaps emitted: %1 — implement the "
+                 "surface or list the signature in "
+                 ".devin/EXT-RUNTIME-GAPS.md")
+                 .arg(unplanned.join(QLatin1String(" | ")))));
 }
 
 // ER17: the E2E that matters — install -> unlock -> fill, harness
@@ -9134,10 +9272,14 @@ void tst_ExtensionManager::bitwardenUnlockFill()
     report << QStringLiteral("bg logService.error: %1")
         .arg(eval(host->page(), QStringLiteral(
             "JSON.stringify(self.__er17err||[])")).toString());
+    // ER18: the residual sweep needs the typed-gap list on PASS too —
+    // a successful fill that still emitted an undocumented gap is a
+    // failed sweep, not a quiet one.
+    const QStringList hostGaps = host->shimGaps();
+    report << QStringLiteral("shimGaps: %1")
+        .arg(hostGaps.join(QLatin1String(" | ")));
     if (!filled) {
         // Measured-gap capture: which Bitwarden leg stopped where.
-        report << QStringLiteral("shimGaps: %1")
-            .arg(host->shimGaps().join(QLatin1String(" | ")));
         report << QStringLiteral("gate: %1")
             .arg(eval(host->page(), QStringLiteral(
                 "JSON.stringify(self.__gate||null)")).toString());
@@ -9277,6 +9419,16 @@ void tst_ExtensionManager::bitwardenUnlockFill()
 
     QVERIFY2(filled, "the fixture credential never reached "
                      "input.value — see ER17 report legs");
+
+    // ER18 residual sweep — the deep drive must not surface any typed
+    // gap outside .devin/EXT-RUNTIME-GAPS.md's documented set.
+    const QStringList unplanned = undocumentedGaps(hostGaps);
+    QVERIFY2(unplanned.isEmpty(),
+             qPrintable(QStringLiteral(
+                 "undocumented typed gaps emitted: %1 — implement the "
+                 "surface or list the signature in "
+                 ".devin/EXT-RUNTIME-GAPS.md")
+                 .arg(unplanned.join(QLatin1String(" | ")))));
 }
 
 // ER10: chrome.offscreen — one hidden second-class host page per

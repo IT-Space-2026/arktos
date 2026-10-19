@@ -1380,6 +1380,13 @@ BrowserMainWindow *BrowserApplication::newMainWindow(const QString &profileId)
     connect(browser, &QObject::destroyed, this,
             [this, bound]() { windowDestroyed(bound); });
 #endif
+#ifdef AUTOTESTS
+    // Extension shim paths (tabs.create on a windowless session) mint
+    // real windows in the test process too — offscreen runs cannot
+    // map chrome, but a real platform window + viewport is still
+    // required for page metrics.  Same pattern the autotest legs use.
+    browser->setAttribute(Qt::WA_DontShowOnScreen);
+#endif
     browser->show();
     if (m_mainWindows.count() == 1)
         StartupProfile::mark("first window shown");

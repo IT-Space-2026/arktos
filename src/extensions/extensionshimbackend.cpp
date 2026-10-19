@@ -795,14 +795,31 @@ QJsonObject ExtensionShimBackend::invokeTabs(const QString &method,
             return errReply(QStringLiteral("url-refused"));
         BrowserMainWindow *window = currentWindow();
         if (props.contains(QStringLiteral("windowId"))) {
-            const int wanted = int(
+            int wanted = int(
                 props.value(QStringLiteral("windowId")).toDouble(-2));
+            // WINDOW_ID_CURRENT names the live window, like query.
+            if (wanted == -2)
+                wanted = idFor(window);
+            window = nullptr;
             for (BrowserMainWindow *w : windows) {
                 if (w && idFor(w) == wanted) {
                     window = w;
                     break;
                 }
             }
+            // An explicit windowId that resolves nowhere is a typed
+            // failure — Chrome answers "No window with id", we answer
+            // no-window; it must NOT silently create one.
+            if (!window)
+                return errReply(QStringLiteral("no-window"));
+        }
+        if (!window) {
+            // Chrome parity: with no window to host the tab,
+            // tabs.create opens one — the same fallback
+            // invokeWindows create() already uses.  A refused
+            // creation (vault-locked persona) keeps no-window.
+            BrowserApplication *app = BrowserApplication::instance();
+            window = app ? app->newMainWindow() : nullptr;
         }
         if (!window || !window->tabWidget())
             return errReply(QStringLiteral("no-window"));

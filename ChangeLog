@@ -3801,3 +3801,17 @@ Extensions (end-to-end): the hosted runtime now carries the real
     `getAllFrames` answer the registered main frame from the event
     hub instead of a typed unsupported, reporting Chrome's own 'no
     frame' shape for anything deeper.
+
+Extensions (residual sweep): every typed gap the real Bitwarden
+    bundle still emits through the hosted runtime is now a declared,
+    audited set (ER18). The one real behavioral miss the sweep found
+    — `chrome.tabs.create` answering `no-window` on a windowless
+    session — is fixed: the call now opens a browser window the way
+    Chrome does, while an explicit `windowId` that resolves nowhere
+    keeps the typed `no-window` refusal instead of silently minting
+    one. Everything else is either served or listed in the
+    machine-readable intentional set (.devin/EXT-RUNTIME-GAPS.md) —
+    dead namespaces with no Arktos surface, unserved members of
+    served namespaces, and correct domain refusals — and the
+    Bitwarden test legs now fail on any typed gap outside that set,
+    so an unplanned regression cannot slip in quietly.

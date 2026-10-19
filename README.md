@@ -593,7 +593,11 @@ plus the per-area `storage.<area>.onChanged` — over the real storage
 areas. `chrome.webNavigation.getFrame`/`getAllFrames` answer the
 registered main frame from the tab registry and report Chrome's
 'no frame' shape for anything deeper rather than fabricating one.
-The whole stack is exercised end-to-end: a harness-driven leg
+`chrome.tabs.create` follows Chrome when no window exists to host
+the tab — it opens a browser window first — while an explicit
+`windowId` that resolves nowhere still answers a typed
+`no-window` error. The whole stack is exercised end-to-end: a
+harness-driven leg
 installs the real Bitwarden bundle, runs its WASM master-password
 unlock against Bitwarden's own public test account, dispatches the
 `autofill_login` command, and asserts the fixture credential lands
