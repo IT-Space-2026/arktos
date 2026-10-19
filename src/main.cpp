@@ -4040,13 +4040,25 @@ static int engineSmoke()
         Engine::Profile *profile =
             backend->createProfile(options, &host);
         report(trace.id, QStringLiteral("profile"), profile != nullptr);
-        Engine::Page *page = profile
-            ? backend->createPage(profile, &host) : nullptr;
-        report(trace.id, QStringLiteral("page"), page != nullptr);
-        QWidget *view = page ? backend->createView(page, &host) : nullptr;
-        report(trace.id, QStringLiteral("view"), view != nullptr);
-        if (view)
-            view->resize(800, 600);
+        // WK07: a registered backend that declares it cannot host a
+        // page right now (WebKit before WK08) skips the page/view
+        // legs — the declared reason is the honest report, not a
+        // FAIL on a surface the backend never claimed.
+        const QString unavailable = backend->pageUnavailableReason();
+        Engine::Page *page = nullptr;
+        QWidget *view = nullptr;
+        if (!unavailable.isEmpty()) {
+            qInfo() << "engine-smoke:" << trace.id
+                    << "page/view skipped:" << unavailable;
+        } else {
+            page = profile ? backend->createPage(profile, &host)
+                           : nullptr;
+            report(trace.id, QStringLiteral("page"), page != nullptr);
+            view = page ? backend->createView(page, &host) : nullptr;
+            report(trace.id, QStringLiteral("view"), view != nullptr);
+            if (view)
+                view->resize(800, 600);
+        }
         if (!page)
             continue;
 

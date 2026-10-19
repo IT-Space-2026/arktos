@@ -140,6 +140,7 @@ private slots:
     void engineTabLocationBar();
     void engineTabSingleIcon();
     void engineTabReload();
+    void webkitBackendSurface();
 
 private:
     FakeEngineBackend *m_fake = nullptr;
@@ -1130,6 +1131,71 @@ void tst_EngineSwitch::engineTabReload()
     QCOMPARE(unmappedRoot->isEnabled(),
              widget.webView(1)->enginePage()
                  ->action(Engine::StandardAction::Forward)->isEnabled());
+}
+
+// WK07 — the WPE WebKit backend's registration contract: the
+// static-init probe registers it only when the WPE packages were
+// linked (servo's missing-artifact-hide, same shape), the display
+// name carries the real version triple, and the capability table is
+// the conservative spike-verified set with every named gap off.
+void tst_EngineSwitch::webkitBackendSurface()
+{
+#ifdef ARKTOS_WEBKIT
+    Engine::Backend *webkit =
+        EngineRegistry::backendForId(QStringLiteral("webkit"));
+#ifdef ARKTOS_WEBKIT_LINKED
+    QVERIFY(webkit);
+    QCOMPARE(webkit->id(), QStringLiteral("webkit"));
+
+    // "WebKit x.y.z" — the user's explicit ask, the same shape as
+    // "Servo 0.7.0": parse the triple out of the name rather than
+    // trusting a label.
+    const QStringList parts =
+        webkit->displayName().split(QLatin1Char(' '));
+    QCOMPARE(parts.count(), 2);
+    QCOMPARE(parts.at(0), QStringLiteral("WebKit"));
+    const QStringList triple = parts.at(1).split(QLatin1Char('.'));
+    QCOMPARE(triple.count(), 3);
+    for (const QString &field : triple) {
+        bool ok = false;
+        field.toInt(&ok);
+        QVERIFY2(ok, qPrintable(webkit->displayName()));
+    }
+
+    // .devin/WEBKIT-SPIKE.md's conservative table — on: interception
+    // (decide-policy + content-blocker), injection, eval, per-page
+    // settings, lifecycle discard, context menus, cert override,
+    // downloads; off: the named gaps (no per-attempt CookieAttempt
+    // functor, no embedder devtools channel, unprobed
+    // WebKitWebExtension).
+    const Engine::Capabilities caps = webkit->capabilities();
+    QVERIFY(caps.requestInterception);
+    QVERIFY(caps.scriptInjection);
+    QVERIFY(caps.scriptEvaluation);
+    QVERIFY(!caps.cookieFilter);
+    QVERIFY(caps.perPageSettings);
+    QVERIFY(caps.lifecycleDiscard);
+    QVERIFY(caps.contextMenuInfo);
+    QVERIFY(caps.certificateOverride);
+    QVERIFY(!caps.devTools);
+    QVERIFY(!caps.extensions);
+    QVERIFY(caps.downloads);
+
+    // Registered but not page-capable until WK08 — the switcher must
+    // offer the entry disabled-with-reason and createPage refuse.
+    QVERIFY(!webkit->engineNote().isEmpty());
+    QVERIFY(!webkit->pageUnavailableReason().isEmpty());
+    QVERIFY(!webkit->createPage(nullptr));
+#else
+    // Compile-but-inert (webkit=1 without the WPE packages): the
+    // probe's initialize() refused, so the backend never registered —
+    // the same hidden-not-dead-entry contract as a missing servo
+    // artifact.
+    QVERIFY(!webkit);
+#endif
+#else
+    QSKIP("webkit backend not in this build");
+#endif
 }
 
 QTEST_MAIN(tst_EngineSwitch)

@@ -3574,3 +3574,24 @@ WebKit backend groundwork (WK06): the qmake build now has a `webkit`
     reports the engine unavailable — compile-but-inert, never a
     broken build. The backend class is a deliberate skeleton that
     registers nothing yet; WK07 fills it in.
+WebKit backend registration (WK07): on a webkit-enabled build that
+    links the WPE stack, the backend now self-registers through a
+    static-init EngineRegistry::addProbe — the servo shape, no
+    engineregistry.cpp edit. `--engine-list` prints a third entry
+    with the real runtime version — "WebKit 2.54.1" from
+    webkit_get_*_version() — Preferences' render-engine combo lists
+    it, and the tab switcher offers it disabled-with-reason because
+    page hosting lands in WK08 (createPage/createView refuse via
+    pageUnavailableReason, matching the ENG19 contract). The
+    capability table is the conservative spike-verified set from
+    .devin/WEBKIT-SPIKE.md — request interception, script injection
+    and evaluation, per-page settings, lifecycle discard, context
+    menus, certificate override and downloads on; the named gaps
+    (per-attempt cookie filter, embedder devtools channel,
+    extensions) stay honestly off, and an unlinked TU reports
+    all-false. A forced `webkit=1` build without the WPE packages
+    still compiles the backend TU inert and registers nothing — the
+    same hidden-not-dead contract as a missing servo artifact.
+    --engine-smoke now skips the page/view legs of a registered
+    backend that declares it cannot host pages, reporting the reason
+    instead of FAILing an unclaimed surface.

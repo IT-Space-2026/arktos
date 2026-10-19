@@ -274,7 +274,11 @@ browsing profile:
   devtools server speaks the Firefox remote protocol, not the
   panel's CDP transport). Servo renders in-process, so its
   status-bar memory readout shows the shared whole-app figure
-  marked "(shared)" rather than a per-tab number.
+  marked "(shared)" rather than a per-tab number. An experimental
+  WPE WebKit backend (`qmake webkit=1`, WPE stack via
+  .devin/webkit-env.sh) registers alongside it and reports its real
+  version ("WebKit x.y.z") in the selector surfaces; it cannot host
+  pages yet, so its switcher entry stays disabled with the reason.
 - **Reader mode** (Ctrl+Alt+R) and **Picture-in-Picture** on videos.
 - **Command palette** — Ctrl+Shift+P fuzzy search over browser
   commands.
