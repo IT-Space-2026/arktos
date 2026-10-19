@@ -3678,3 +3678,12 @@ WebKit clear + cookie policy (WK12): the webkit backend's
     keep policy is KeepUntilExit, which stays memory-only. Reading
     the policy never mints a persona directory, so off-the-record
     profiles still write nothing.
+WebKit input bridge (WK13): the webkit backend now routes Qt widget
+    input into WPE WebKit. Pointer move/press/release, wheel scroll,
+    key press/release and resize on a webkit tab's view are translated
+    into wpe-platform events and dispatched through wpe_view_event —
+    so clicking page links, scrolling, and typing into the page all
+    work on the experimental WebKit engine. Scroll honors both Qt
+    delta surfaces (line ticks and precise touchpad pixels), and keys
+    are mapped to DOM-standard key/code values (a→"a"/KeyA,
+    shift+b→"B"/KeyB).

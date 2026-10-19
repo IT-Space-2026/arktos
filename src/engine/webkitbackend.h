@@ -118,9 +118,42 @@
 // KeepUntilExpire), and the per-host exception lists stay behind
 // the per-attempt cookieFilter contract capabilities() already
 // reports false.
+//
+// WK13 lands the input path: WebkitView's QWidget event overrides
+// translate into the wpe-platform event API and WebkitPage dispatches
+// through wpe_view_event (WebKit drives its own frame schedule — no
+// Servo-style coalescing is needed).  Event coordinates are
+// view-space doubles; the view<->widget conversion is the live
+// wpe_view-dims/widget-dims ratio, which is 1:1 today because
+// resizeEngine mirrors the widget's DIP size onto a scale-1
+// toplevel, and stays correct if a HiDPI toplevel scale ever lands.
+// Buttons use the WPE_BUTTON_* small ordinals (WK04 measured: NOT
+// the evdev BTN_* space), press_count is generated locally from
+// Qt's own double-click window (the second down of a dblclick
+// arrives as MouseButtonDblClick), and the delivered modifier mask
+// follows the GDK convention — a releasing button still travels in
+// its own event's mask, cleared only after dispatch.  Wheel maps
+// Qt's two delta surfaces onto the two wpe meanings
+// (WebEventFactoryWPE.cpp): angleDelta/120 -> precise=false wheel
+// TICKS — WPE shares Qt's positive=scroll-up sign (WPEWaylandSeat
+// negates scroll-down-positive wl_pointer.axis), so deltas pass
+// through un-negated; WebKit scales ticks by pixelsPerLineStep;
+// pixelDelta ->
+// precise=true pixels, divided by the 2.5 multiplier WebKit bakes
+// in for mouse/touchpad sources (the GTK scroll-unit factor) so
+// real touchpad pixels stay pixel-faithful.  Keys resolve Qt::Key +
+// KeypadModifier through a static table onto XKB keysyms
+// (WPE_KEY_* == XK_*), with event->text() supplying the shifted
+// level for printables (shift+a -> XK_A) and the standard
+// utf32->keysym rule for non-Latin-1; keycode carries the X/XKB
+// keycode (evdev+8 — measured: raw evdev maps 8 slots early and DOM
+// sees e.g. KeyU for 'a') that KeyboardEvent.code derives from — a
+// static table, because offscreen QPA reports no nativeScanCode and
+// Qt's value is platform-shaped elsewhere anyway.
 
 #include "engineinterface.h"
 
+#include <qelapsedtimer.h>
 #include <qhash.h>
 #include <qimage.h>
 #include <qpointer.h>
@@ -169,6 +202,16 @@ protected:
     void resizeEvent(QResizeEvent *event) override;
     void focusInEvent(QFocusEvent *event) override;
     void focusOutEvent(QFocusEvent *event) override;
+    // WK13 — the input path.
+    void enterEvent(QEnterEvent *event) override;
+    void leaveEvent(QEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
+    void mouseDoubleClickEvent(QMouseEvent *event) override;
+    void wheelEvent(QWheelEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
+    void keyReleaseEvent(QKeyEvent *event) override;
 
 private:
     // WK03 adoptFrame: stride-honest deep copy into a
@@ -176,11 +219,33 @@ private:
     void adoptFrame(WPEBuffer *buffer, const void *data, int stride);
     void noteImportFailure();
 
+    // WK13 input helpers — widget-space position -> WPEView
+    // coordinate space (the live view/widget dims ratio via the
+    // page), press_count generation off Qt's double-click window,
+    // and the keyboard dispatch shared by press/release.
+    QPointF viewPoint(const QPointF &widgetPos) const;
+    int nextPressCount(Qt::MouseButton button, const QPointF &pos);
+    void dispatchPointerMove(int type, const QPointF &widgetPos,
+                             unsigned mods);
+    void dispatchPointerButton(int type, QMouseEvent *event);
+    bool dispatchKeyEvent(int type, QKeyEvent *event);
+
     QPointer<WebkitPage> m_page;
     QImage m_frame;
     QSize m_frameSize;
     int m_frameCount = 0;
     int m_importFails = 0;
+    // WK13 pointer bookkeeping — the held-buttons half of the
+    // delivered WPEModifiers mask (WPE_MODIFIER_POINTER_BUTTON*
+    // bits), the last widget-space pointer position (move deltas
+    // feed DOM movementX/Y), and the click-generation state for
+    // press_count.
+    unsigned m_pointerButtonMask = 0;
+    QPointF m_lastPointerPos;
+    Qt::MouseButton m_pressButton = Qt::NoButton;
+    QPointF m_pressPos;
+    QElapsedTimer m_pressTimer;
+    int m_pressCount = 0;
 
     friend class WebkitPage;
 };
@@ -293,6 +358,23 @@ private:
     bool onDecidePolicy(WebKitPolicyDecision *decision, int type);
     void resizeEngine(int width, int height);
     void focusEngine(bool in);
+
+    // WK13 — the wpe_view_event dispatch points.  The callers
+    // (WebkitView's event overrides, friend) hand over view-space
+    // coordinates and an assembled WPEModifiers mask; these build the
+    // WPEEvent and deliver.  viewPoint() performs the widget->view
+    // coordinate conversion the view needs.
+    QPointF viewPoint(const QPointF &widgetPos) const;
+    void sendPointerEvent(int type, double x, double y,
+                          double deltaX, double deltaY, unsigned mods);
+    void sendButtonEvent(int type, double x, double y,
+                         unsigned button, unsigned pressCount,
+                         unsigned mods);
+    void sendScrollEvent(double x, double y, double deltaX,
+                         double deltaY, bool precise, int source,
+                         unsigned mods);
+    void sendKeyEvent(int type, unsigned keycode, unsigned keyval,
+                      unsigned mods);
 
     // GObject trampolines — static members so the GCallback ABI
     // reaches private state without friend pollution (the servo

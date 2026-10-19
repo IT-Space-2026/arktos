@@ -155,6 +155,7 @@ private slots:
     void webkitHistory();
     void webkitProfileStorage();
     void webkitClearAndCookiePolicy();
+    void webkitInput();
 
 private:
     FakeEngineBackend *m_fake = nullptr;
@@ -2128,6 +2129,206 @@ void tst_EngineSwitch::webkitClearAndCookiePolicy()
         QVERIFY(profileOtr->cookieStoragePath().isEmpty());
         QCOMPARE(profileOtr->cookieAcceptPolicy(), 2);
     }
+#else
+    QSKIP("webkit backend not linked in this build");
+#endif
+}
+
+// WK13 — the input path: real QWidget event delivery -> wpe-platform
+// events -> the web process.  A QTest-synthesized click on the
+// fixture link navigates (move+down+up through the live widget),
+// keydown reaches the page with the right DOM key/code, Return on a
+// focused anchor activates it, both wheel surfaces scroll (angle
+// ticks and precise pixel deltas), and a widget resize re-renders
+// the next buffer at the new dims.
+void tst_EngineSwitch::webkitInput()
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    Engine::Backend *webkit =
+        EngineRegistry::backendForId(QStringLiteral("webkit"));
+    QVERIFY(webkit);
+    QVERIFY2(webkit->pageUnavailableReason().isEmpty(),
+             qPrintable(webkit->pageUnavailableReason()));
+
+    // Fixture: /one carries the click target, a keydown log and a
+    // tall scrollable body; /two anchors back to /one.
+    const QByteArray pageOne =
+        "<html><head><title>Wk13Input</title></head><body>"
+        "<a id=\"next\" href=\"/two\" style=\"display:block;"
+        "width:200px;height:60px\">two</a>"
+        "<div style=\"height:4000px\"></div>"
+        "<script>window.__keys=[];window.__wheels=[];"
+        "addEventListener('keydown',function(e){"
+        "__keys.push(e.key+'|'+e.code);});"
+        "addEventListener('wheel',function(e){"
+        "__wheels.push(e.deltaY+'|'+e.deltaMode);});"
+        "</script></body></html>";
+    const QByteArray pageTwo =
+        "<html><head><title>Wk13Two</title></head><body>"
+        "<a id=\"back\" href=\"/one\">back</a></body></html>";
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    auto pending =
+        QSharedPointer<QHash<QTcpSocket *, QByteArray>>::create();
+    connect(&server, &QTcpServer::newConnection, &server,
+            [&server, pageOne, pageTwo, pending]() {
+        while (QTcpSocket *socket = server.nextPendingConnection()) {
+            socket->setParent(&server);
+            connect(socket, &QTcpSocket::readyRead, socket,
+                    [socket, pageOne, pageTwo, pending]() {
+                QByteArray &request = (*pending)[socket];
+                request += socket->readAll();
+                if (!request.contains("\r\n\r\n"))
+                    return;
+                const QByteArray body =
+                    request.startsWith("GET /two") ? pageTwo : pageOne;
+                socket->write("HTTP/1.1 200 OK\r\nContent-Type: text/html"
+                              "\r\nCache-Control: no-store"
+                              "\r\nContent-Length: "
+                              + QByteArray::number(body.size())
+                              + "\r\nConnection: close\r\n\r\n" + body);
+                socket->disconnect();
+                socket->disconnectFromHost();
+                pending->remove(socket);
+            });
+        }
+    });
+    const QUrl urlOne(QStringLiteral("http://127.0.0.1:%1/one")
+                          .arg(server.serverPort()));
+    const QUrl urlTwo(QStringLiteral("http://127.0.0.1:%1/two")
+                          .arg(server.serverPort()));
+
+    Engine::ProfileOptions options;
+    options.offTheRecord = true;   // ephemeral session — no disk state
+    Engine::Profile *profile = webkit->createProfile(options, this);
+    QVERIFY(profile);
+
+    EngineTab tab(webkit, profile);
+    tab.resize(800, 600);
+    tab.show();
+    QVERIFY(tab.page());
+    auto *page = qobject_cast<WebkitPage *>(tab.page());
+    QVERIFY(page);
+    auto *view = qobject_cast<WebkitView *>(tab.page()->view());
+    QVERIFY(view);
+
+    struct EvalOut { QVariant value; bool done = false; };
+    auto evalSync = [&page](const QString &src) -> EvalOut {
+        EvalOut out;
+        page->runJavaScript(src, [&](const QVariant &v) {
+            out.value = v;
+            out.done = true;
+        });
+        QElapsedTimer timer;
+        timer.start();
+        while (!out.done && timer.elapsed() < 30000)
+            QTest::qWait(20);
+        return out;
+    };
+    auto loadSync = [&page](const QUrl &u) {
+        QSignalSpy spy(page, &Engine::Page::loadFinished);
+        page->load(u);
+        return spy.wait(60000) && spy.first().first().toBool();
+    };
+
+    QVERIFY2(loadSync(urlOne), "fixture /one load failed");
+    view->setFocus();
+
+    // --- keydown log: key events reach the page with the right DOM
+    // key + code — 'a' unshifted and 'B' under Shift.
+    QTest::keyClick(view, Qt::Key_A);
+    QTest::keyClick(view, Qt::Key_B, Qt::ShiftModifier);
+    QTRY_VERIFY2_WITH_TIMEOUT(
+            evalSync(QStringLiteral("window.__keys.join(',')"))
+                .value.toString().contains(
+                    QStringLiteral("a|KeyA"))
+            && evalSync(QStringLiteral("window.__keys.join(',')"))
+                .value.toString().contains(
+                    QStringLiteral("B|KeyB")),
+            "keydown events never reached the page (or arrived with "
+            "the wrong DOM key/code)", 30000);
+
+    // --- wheel: angleDelta ticks scroll down; a precise pixelDelta
+    // event takes the pixel path.
+    QCOMPARE(evalSync(QStringLiteral(
+                 "(function(){return Math.round(window.scrollY);})()"))
+                 .value.toInt(), 0);
+    {
+        const QPointF pos(400, 300);
+        QWheelEvent wheel(pos, view->mapToGlobal(pos.toPoint()),
+                          QPoint(0, 0), QPoint(0, -120),
+                          Qt::NoButton, Qt::NoModifier,
+                          Qt::NoScrollPhase, false);
+        QApplication::sendEvent(view, &wheel);
+    }
+    QTRY_VERIFY2_WITH_TIMEOUT(
+            evalSync(QStringLiteral(
+                "(function(){return Math.round(window.scrollY);})()"))
+                .value.toInt() > 0,
+            "wheel tick never scrolled the page", 30000);
+    const int afterTick = evalSync(QStringLiteral(
+        "(function(){return Math.round(window.scrollY);})()"))
+        .value.toInt();
+    {
+        const QPointF pos(400, 300);
+        // pixelDelta -100 = 100 real pixels of downward scroll —
+        // the precise-delta path (Qt sign convention: negative is
+        // toward the user = scroll down).
+        QWheelEvent wheel(pos, view->mapToGlobal(pos.toPoint()),
+                          QPoint(0, -100), QPoint(0, 0),
+                          Qt::NoButton, Qt::NoModifier,
+                          Qt::NoScrollPhase, false);
+        QApplication::sendEvent(view, &wheel);
+    }
+    QTRY_VERIFY2_WITH_TIMEOUT(
+            evalSync(QStringLiteral(
+                "(function(){return Math.round(window.scrollY);})()"))
+                .value.toInt() > afterTick,
+            "precise pixel-delta scroll never moved", 30000);
+
+    // --- click: move + down + up on the link navigates to /two.
+    // Back to top first — the wheel legs scrolled the link
+    // off-viewport.
+    evalSync(QStringLiteral("window.scrollTo(0,0)"));
+    QTest::qWait(300);
+    const EvalOut rect = evalSync(QStringLiteral(
+        "(function(){var r=document.getElementById('next')"
+        ".getBoundingClientRect();"
+        "return r.x+','+r.y+','+r.width+','+r.height;})()"));
+    QVERIFY2(rect.done, "link rect eval timed out");
+    const QStringList parts = rect.value.toString().split(
+        QLatin1Char(','));
+    QCOMPARE(parts.size(), 4);
+    const QPoint click(
+        int(parts.at(0).toDouble() + parts.at(2).toDouble() / 2.0),
+        int(parts.at(1).toDouble() + parts.at(3).toDouble() / 2.0));
+    {
+        QSignalSpy spy(page, &Engine::Page::loadFinished);
+        QTest::mouseMove(view, click);
+        QTest::mouseClick(view, Qt::LeftButton, Qt::NoModifier, click);
+        QVERIFY2(spy.wait(60000) && spy.first().first().toBool(),
+                 "click navigation never finished");
+    }
+    QCOMPARE(page->url(), urlTwo);
+
+    // --- keyboard activation: focus the back anchor via JS, then a
+    // Return down/up pair navigates home.
+    const EvalOut focused = evalSync(QStringLiteral(
+        "document.getElementById('back').focus();"
+        "document.activeElement && document.activeElement.id"));
+    QCOMPARE(focused.value.toString(), QStringLiteral("back"));
+    {
+        QSignalSpy spy(page, &Engine::Page::loadFinished);
+        QTest::keyClick(view, Qt::Key_Return);
+        QVERIFY2(spy.wait(60000) && spy.first().first().toBool(),
+                 "Return activation never finished");
+    }
+    QCOMPARE(page->url(), urlOne);
+
+    // --- resize: the next produced buffer carries the new dims.
+    tab.resize(640, 480);
+    QTRY_COMPARE_EQ_WITH_TIMEOUT(view->frameSize(),
+                                 QSize(640, 480), 30000);
 #else
     QSKIP("webkit backend not linked in this build");
 #endif

@@ -314,6 +314,338 @@ void cookiesReady(GObject *object, GAsyncResult *result, gpointer data)
     delete call;
 }
 
+// ---- WK13 — Qt -> WPE event translation -----------------------------
+
+// Event timestamps are monotonic ms — the WK04-proven clock.
+guint32 wpeEventTime()
+{
+    return guint32(g_get_monotonic_time() / 1000);
+}
+
+// Qt keyboard modifiers -> the WPEModifiers flag set.  The
+// pointer-button half is tracked by the view and OR-ed in at
+// dispatch time.
+unsigned wpeKeyboardMods(Qt::KeyboardModifiers qt)
+{
+    unsigned mods = 0;
+    if (qt & Qt::ControlModifier)
+        mods |= WPE_MODIFIER_KEYBOARD_CONTROL;
+    if (qt & Qt::ShiftModifier)
+        mods |= WPE_MODIFIER_KEYBOARD_SHIFT;
+    if (qt & Qt::AltModifier)
+        mods |= WPE_MODIFIER_KEYBOARD_ALT;
+    if (qt & Qt::MetaModifier)
+        mods |= WPE_MODIFIER_KEYBOARD_META;
+    return mods;
+}
+
+// Qt::MouseButton -> the WPE_BUTTON_* small ordinal (WK04 measured:
+// NOT the evdev BTN_* space).  Side buttons take the ordinals GTK
+// passes through for extra buttons; 0 = unmappable.
+unsigned wpeButtonOrdinal(Qt::MouseButton button)
+{
+    switch (button) {
+    case Qt::LeftButton:    return WPE_BUTTON_PRIMARY;
+    case Qt::MiddleButton:  return WPE_BUTTON_MIDDLE;
+    case Qt::RightButton:   return WPE_BUTTON_SECONDARY;
+    case Qt::BackButton:    return 8;
+    case Qt::ForwardButton: return 9;
+    case Qt::ExtraButton4:  return 10;
+    case Qt::ExtraButton5:  return 11;
+    default:                return 0;
+    }
+}
+
+// The WPE_MODIFIER_POINTER_BUTTONn bit an ordinal carries into the
+// tracked mask — only ordinals 1..5 have flags.
+unsigned wpeButtonModifier(unsigned ordinal)
+{
+    return ordinal >= 1 && ordinal <= 5
+        ? unsigned(WPE_MODIFIER_POINTER_BUTTON1) << (ordinal - 1)
+        : 0;
+}
+
+// Qt::Key -> XKB keysym (WPE_KEY_* == XK_*) for every key that is
+// not a printable character; Qt::KeypadModifier selects the KP_*
+// family.  Returns 0 when the printable fallback must handle it.
+unsigned wpeKeysymForQtKey(int key, bool keypad)
+{
+    if (keypad) {
+        switch (key) {
+        case Qt::Key_0: case Qt::Key_1: case Qt::Key_2:
+        case Qt::Key_3: case Qt::Key_4: case Qt::Key_5:
+        case Qt::Key_6: case Qt::Key_7: case Qt::Key_8:
+        case Qt::Key_9:
+            return WPE_KEY_KP_0 + (key - Qt::Key_0);
+        case Qt::Key_Enter:    return WPE_KEY_KP_Enter;
+        case Qt::Key_Asterisk: return WPE_KEY_KP_Multiply;
+        case Qt::Key_Plus:     return WPE_KEY_KP_Add;
+        case Qt::Key_Minus:    return WPE_KEY_KP_Subtract;
+        case Qt::Key_Period:
+        case Qt::Key_Comma:    return WPE_KEY_KP_Decimal;
+        case Qt::Key_Slash:    return WPE_KEY_KP_Divide;
+        case Qt::Key_Equal:    return WPE_KEY_KP_Equal;
+        case Qt::Key_Space:    return WPE_KEY_KP_Space;
+        case Qt::Key_Tab:      return WPE_KEY_KP_Tab;
+        case Qt::Key_Home:     return WPE_KEY_KP_Home;
+        case Qt::Key_Left:     return WPE_KEY_KP_Left;
+        case Qt::Key_Up:       return WPE_KEY_KP_Up;
+        case Qt::Key_Right:    return WPE_KEY_KP_Right;
+        case Qt::Key_Down:     return WPE_KEY_KP_Down;
+        case Qt::Key_PageUp:   return WPE_KEY_KP_Page_Up;
+        case Qt::Key_PageDown: return WPE_KEY_KP_Page_Down;
+        case Qt::Key_End:      return WPE_KEY_KP_End;
+        case Qt::Key_Insert:   return WPE_KEY_KP_Insert;
+        case Qt::Key_Delete:   return WPE_KEY_KP_Delete;
+        default:               break;
+        }
+    }
+    switch (key) {
+    case Qt::Key_Escape:    return WPE_KEY_Escape;
+    case Qt::Key_Tab:       return WPE_KEY_Tab;
+    case Qt::Key_Backtab:   return WPE_KEY_ISO_Left_Tab;
+    case Qt::Key_Backspace: return WPE_KEY_BackSpace;
+    case Qt::Key_Return:    return WPE_KEY_Return;
+    case Qt::Key_Enter:     return WPE_KEY_KP_Enter;
+    case Qt::Key_Insert:    return WPE_KEY_Insert;
+    case Qt::Key_Delete:    return WPE_KEY_Delete;
+    case Qt::Key_Pause:     return WPE_KEY_Pause;
+    case Qt::Key_Print:     return WPE_KEY_Print;
+    case Qt::Key_SysReq:    return WPE_KEY_Sys_Req;
+    case Qt::Key_Clear:     return WPE_KEY_Clear;
+    case Qt::Key_Home:      return WPE_KEY_Home;
+    case Qt::Key_End:       return WPE_KEY_End;
+    case Qt::Key_Left:      return WPE_KEY_Left;
+    case Qt::Key_Up:        return WPE_KEY_Up;
+    case Qt::Key_Right:     return WPE_KEY_Right;
+    case Qt::Key_Down:      return WPE_KEY_Down;
+    case Qt::Key_PageUp:    return WPE_KEY_Page_Up;
+    case Qt::Key_PageDown:  return WPE_KEY_Page_Down;
+    case Qt::Key_Shift:     return WPE_KEY_Shift_L;
+    case Qt::Key_Control:   return WPE_KEY_Control_L;
+    case Qt::Key_Meta:      return WPE_KEY_Meta_L;
+    case Qt::Key_Alt:       return WPE_KEY_Alt_L;
+    case Qt::Key_AltGr:     return WPE_KEY_ISO_Level3_Shift;
+    case Qt::Key_CapsLock:  return WPE_KEY_Caps_Lock;
+    case Qt::Key_NumLock:   return WPE_KEY_Num_Lock;
+    case Qt::Key_ScrollLock:return WPE_KEY_Scroll_Lock;
+    case Qt::Key_Super_L:   return WPE_KEY_Super_L;
+    case Qt::Key_Super_R:   return WPE_KEY_Super_R;
+    case Qt::Key_Hyper_L:   return WPE_KEY_Hyper_L;
+    case Qt::Key_Hyper_R:   return WPE_KEY_Hyper_R;
+    case Qt::Key_Menu:      return WPE_KEY_Menu;
+    case Qt::Key_Help:      return WPE_KEY_Help;
+    case Qt::Key_Multi_key: return WPE_KEY_Multi_key;
+    // F1..F35 are contiguous on both sides.
+    case Qt::Key_F1: case Qt::Key_F2: case Qt::Key_F3:
+    case Qt::Key_F4: case Qt::Key_F5: case Qt::Key_F6:
+    case Qt::Key_F7: case Qt::Key_F8: case Qt::Key_F9:
+    case Qt::Key_F10: case Qt::Key_F11: case Qt::Key_F12:
+    case Qt::Key_F13: case Qt::Key_F14: case Qt::Key_F15:
+    case Qt::Key_F16: case Qt::Key_F17: case Qt::Key_F18:
+    case Qt::Key_F19: case Qt::Key_F20: case Qt::Key_F21:
+    case Qt::Key_F22: case Qt::Key_F23: case Qt::Key_F24:
+    case Qt::Key_F25: case Qt::Key_F26: case Qt::Key_F27:
+    case Qt::Key_F28: case Qt::Key_F29: case Qt::Key_F30:
+    case Qt::Key_F31: case Qt::Key_F32: case Qt::Key_F33:
+    case Qt::Key_F34: case Qt::Key_F35:
+        return WPE_KEY_F1 + (key - Qt::Key_F1);
+    // Compose/dead keys — the common European set.
+    case Qt::Key_Dead_Grave:        return WPE_KEY_dead_grave;
+    case Qt::Key_Dead_Acute:        return WPE_KEY_dead_acute;
+    case Qt::Key_Dead_Circumflex:   return WPE_KEY_dead_circumflex;
+    case Qt::Key_Dead_Tilde:        return WPE_KEY_dead_tilde;
+    case Qt::Key_Dead_Macron:       return WPE_KEY_dead_macron;
+    case Qt::Key_Dead_Breve:        return WPE_KEY_dead_breve;
+    case Qt::Key_Dead_Abovedot:     return WPE_KEY_dead_abovedot;
+    case Qt::Key_Dead_Diaeresis:    return WPE_KEY_dead_diaeresis;
+    case Qt::Key_Dead_Abovering:    return WPE_KEY_dead_abovering;
+    case Qt::Key_Dead_Doubleacute:  return WPE_KEY_dead_doubleacute;
+    case Qt::Key_Dead_Caron:        return WPE_KEY_dead_caron;
+    case Qt::Key_Dead_Cedilla:      return WPE_KEY_dead_cedilla;
+    case Qt::Key_Dead_Ogonek:       return WPE_KEY_dead_ogonek;
+    case Qt::Key_Dead_Iota:         return WPE_KEY_dead_iota;
+    // XF86 browser/media keys (the vendor set rides in the same
+    // WPE_KEY_* namespace).
+    case Qt::Key_Back:           return WPE_KEY_Back;
+    case Qt::Key_Forward:        return WPE_KEY_Forward;
+    case Qt::Key_Stop:           return WPE_KEY_Stop;
+    case Qt::Key_Refresh:        return WPE_KEY_Refresh;
+    case Qt::Key_HomePage:       return WPE_KEY_HomePage;
+    case Qt::Key_Favorites:      return WPE_KEY_Favorites;
+    case Qt::Key_Search:         return WPE_KEY_Search;
+    case Qt::Key_VolumeDown:     return WPE_KEY_AudioLowerVolume;
+    case Qt::Key_VolumeUp:       return WPE_KEY_AudioRaiseVolume;
+    case Qt::Key_VolumeMute:     return WPE_KEY_AudioMute;
+    case Qt::Key_MediaPlay:      return WPE_KEY_AudioPlay;
+    case Qt::Key_MediaStop:      return WPE_KEY_AudioStop;
+    case Qt::Key_MediaPrevious:  return WPE_KEY_AudioPrev;
+    case Qt::Key_MediaNext:      return WPE_KEY_AudioNext;
+    default:                     return 0;
+    }
+}
+
+// Unicode code point -> XKB keysym — the xkb_utf32_to_keysym rule:
+// printable Latin-1 is identity, everything beyond carries the
+// 0x01000000 Unicode marker; C0/C1 controls are not keysyms.
+unsigned wpeKeysymForUcs4(char32_t cp)
+{
+    if (cp >= 0x20 && cp <= 0x7e)
+        return cp;
+    if (cp >= 0xa0 && cp <= 0xff)
+        return cp;
+    if (cp > 0xff)
+        return 0x01000000u | cp;
+    return 0;
+}
+
+// Qt::Key -> evdev scancode for DOM KeyboardEvent.code — a static
+// table because offscreen QPA reports nativeScanCode()==0 and the
+// native value is platform-shaped (XKB keycode = evdev+8 on X11)
+// everywhere else anyway.  Left-side codes where a pair exists —
+// right-vs-left is a documented limit (Qt cannot tell them apart).
+unsigned wpeKeycodeForQtKey(int key, bool keypad)
+{
+    if (keypad) {
+        switch (key) {
+        case Qt::Key_7:       return 71;   // KEY_KP7
+        case Qt::Key_8:       return 72;
+        case Qt::Key_9:       return 73;
+        case Qt::Key_Minus:   return 74;   // KEY_KPMINUS
+        case Qt::Key_4:       return 75;
+        case Qt::Key_5:       return 76;
+        case Qt::Key_6:       return 77;
+        case Qt::Key_Plus:    return 78;   // KEY_KPPLUS
+        case Qt::Key_1:       return 79;
+        case Qt::Key_2:       return 80;
+        case Qt::Key_3:       return 81;
+        case Qt::Key_0:       return 82;
+        case Qt::Key_Period:
+        case Qt::Key_Comma:   return 83;   // KEY_KPDOT
+        case Qt::Key_Asterisk:return 55;   // KEY_KPASTERISK
+        case Qt::Key_Slash:   return 98;   // KEY_KPSLASH
+        case Qt::Key_Enter:   return 96;   // KEY_KPENTER
+        case Qt::Key_Equal:   return 117;  // KEY_KPEQUAL
+        default:              break;
+        }
+    }
+    switch (key) {
+    case Qt::Key_Escape:    return 1;
+    case Qt::Key_1:         return 2;
+    case Qt::Key_2:         return 3;
+    case Qt::Key_3:         return 4;
+    case Qt::Key_4:         return 5;
+    case Qt::Key_5:         return 6;
+    case Qt::Key_6:         return 7;
+    case Qt::Key_7:         return 8;
+    case Qt::Key_8:         return 9;
+    case Qt::Key_9:         return 10;
+    case Qt::Key_0:         return 11;
+    case Qt::Key_Minus:     return 12;
+    case Qt::Key_Equal:     return 13;
+    case Qt::Key_Backspace: return 14;
+    case Qt::Key_Tab:
+    case Qt::Key_Backtab:   return 15;
+    case Qt::Key_Q:         return 16;
+    case Qt::Key_W:         return 17;
+    case Qt::Key_E:         return 18;
+    case Qt::Key_R:         return 19;
+    case Qt::Key_T:         return 20;
+    case Qt::Key_Y:         return 21;
+    case Qt::Key_U:         return 22;
+    case Qt::Key_I:         return 23;
+    case Qt::Key_O:         return 24;
+    case Qt::Key_P:         return 25;
+    case Qt::Key_BracketLeft:  return 26;
+    case Qt::Key_BracketRight: return 27;
+    case Qt::Key_Return:    return 28;    // KEY_ENTER
+    case Qt::Key_Control:   return 29;    // KEY_LEFTCTRL
+    case Qt::Key_A:         return 30;
+    case Qt::Key_S:         return 31;
+    case Qt::Key_D:         return 32;
+    case Qt::Key_F:         return 33;
+    case Qt::Key_G:         return 34;
+    case Qt::Key_H:         return 35;
+    case Qt::Key_J:         return 36;
+    case Qt::Key_K:         return 37;
+    case Qt::Key_L:         return 38;
+    case Qt::Key_Semicolon: return 39;
+    case Qt::Key_Apostrophe:return 40;
+    case Qt::Key_QuoteLeft: return 41;    // KEY_GRAVE
+    case Qt::Key_Shift:     return 42;    // KEY_LEFTSHIFT
+    case Qt::Key_Backslash: return 43;
+    case Qt::Key_Z:         return 44;
+    case Qt::Key_X:         return 45;
+    case Qt::Key_C:         return 46;
+    case Qt::Key_V:         return 47;
+    case Qt::Key_B:         return 48;
+    case Qt::Key_N:         return 49;
+    case Qt::Key_M:         return 50;
+    case Qt::Key_Comma:     return 51;
+    case Qt::Key_Period:    return 52;
+    case Qt::Key_Slash:     return 53;
+    case Qt::Key_Alt:       return 56;    // KEY_LEFTALT
+    case Qt::Key_Space:     return 57;
+    case Qt::Key_CapsLock:  return 58;
+    case Qt::Key_F1:        return 59;
+    case Qt::Key_F2:        return 60;
+    case Qt::Key_F3:        return 61;
+    case Qt::Key_F4:        return 62;
+    case Qt::Key_F5:        return 63;
+    case Qt::Key_F6:        return 64;
+    case Qt::Key_F7:        return 65;
+    case Qt::Key_F8:        return 66;
+    case Qt::Key_F9:        return 67;
+    case Qt::Key_F10:       return 68;
+    case Qt::Key_NumLock:   return 69;
+    case Qt::Key_ScrollLock:return 70;
+    case Qt::Key_F11:       return 87;
+    case Qt::Key_F12:       return 88;
+    case Qt::Key_F13:       return 183;
+    case Qt::Key_F14:       return 184;
+    case Qt::Key_F15:       return 185;
+    case Qt::Key_F16:       return 186;
+    case Qt::Key_F17:       return 187;
+    case Qt::Key_F18:       return 188;
+    case Qt::Key_F19:       return 189;
+    case Qt::Key_F20:       return 190;
+    case Qt::Key_F21:       return 191;
+    case Qt::Key_F22:       return 192;
+    case Qt::Key_F23:       return 193;
+    case Qt::Key_F24:       return 194;
+    case Qt::Key_Super_L:
+    case Qt::Key_Meta:      return 125;   // KEY_LEFTMETA
+    case Qt::Key_Super_R:   return 126;   // KEY_RIGHTMETA
+    case Qt::Key_Menu:      return 139;
+    case Qt::Key_Enter:     return 96;    // KP enter sans the flag
+    case Qt::Key_Home:      return 102;
+    case Qt::Key_Up:        return 103;
+    case Qt::Key_PageUp:    return 104;
+    case Qt::Key_Left:      return 105;
+    case Qt::Key_Right:     return 106;
+    case Qt::Key_End:       return 107;
+    case Qt::Key_Down:      return 108;
+    case Qt::Key_PageDown:  return 109;
+    case Qt::Key_Insert:    return 110;
+    case Qt::Key_Delete:    return 111;
+    case Qt::Key_VolumeMute:return 113;
+    case Qt::Key_VolumeDown:return 114;
+    case Qt::Key_VolumeUp:  return 115;
+    case Qt::Key_HomePage:  return 172;
+    case Qt::Key_Back:      return 158;
+    case Qt::Key_Forward:   return 159;
+    case Qt::Key_Stop:      return 166;   // KEY_STOPCD
+    case Qt::Key_Refresh:   return 173;
+    case Qt::Key_Favorites: return 156;   // KEY_BOOKMARKS
+    case Qt::Key_Search:    return 217;
+    case Qt::Key_MediaPlay: return 164;   // KEY_PLAYPAUSE
+    case Qt::Key_MediaStop: return 166;   // KEY_STOPCD
+    case Qt::Key_MediaPrevious: return 165; // KEY_PREVIOUSSONG
+    case Qt::Key_MediaNext: return 163;   // KEY_NEXTSONG
+    default:                return 0;
+    }
+}
+
 } // namespace
 #endif // ARKTOS_WEBKIT_LINKED
 
@@ -390,6 +722,270 @@ void WebkitView::focusOutEvent(QFocusEvent *event)
     QWidget::focusOutEvent(event);
     if (m_page)
         m_page->focusEngine(false);
+}
+
+// ---- WK13 — QWidget events -> wpe-platform events -------------------
+
+QPointF WebkitView::viewPoint(const QPointF &widgetPos) const
+{
+    return m_page ? m_page->viewPoint(widgetPos) : widgetPos;
+}
+
+int WebkitView::nextPressCount(Qt::MouseButton button,
+                               const QPointF &pos)
+{
+    // The second down of a Qt double-click arrives as
+    // MouseButtonDblClick through the same entry point, so one
+    // generation counter covers plain presses and dblclicks.
+    if (button == m_pressButton && m_pressTimer.isValid()
+            && m_pressTimer.elapsed()
+                   <= QApplication::doubleClickInterval()
+            && (pos - m_pressPos).manhattanLength() <= 8)
+        ++m_pressCount;
+    else
+        m_pressCount = 1;
+    m_pressButton = button;
+    m_pressPos = pos;
+    m_pressTimer.start();
+    return m_pressCount;
+}
+
+void WebkitView::dispatchPointerMove(int type,
+                                     const QPointF &widgetPos,
+                                     unsigned mods)
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    if (!m_page)
+        return;
+    const QPointF p = viewPoint(widgetPos);
+    // Enter/leave carry no movement delta; move reports the hop
+    // from the last delivered position (DOM movementX/Y).
+    double dx = 0.0, dy = 0.0;
+    if (type == int(WPE_EVENT_POINTER_MOVE)
+            && !m_lastPointerPos.isNull()) {
+        const QPointF from = viewPoint(m_lastPointerPos);
+        dx = p.x() - from.x();
+        dy = p.y() - from.y();
+    }
+    m_lastPointerPos = widgetPos;
+    m_page->sendPointerEvent(type, p.x(), p.y(), dx, dy, mods);
+#else
+    Q_UNUSED(type);
+    Q_UNUSED(widgetPos);
+    Q_UNUSED(mods);
+#endif
+}
+
+void WebkitView::dispatchPointerButton(int type, QMouseEvent *event)
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    if (!m_page)
+        return;
+    const unsigned ordinal = wpeButtonOrdinal(event->button());
+    if (!ordinal)
+        return;
+    const QPointF p = viewPoint(event->position());
+    m_lastPointerPos = event->position();
+    if (type == int(WPE_EVENT_POINTER_DOWN)) {
+        // The freshly-pressed button travels in its own event's
+        // modifier mask (the GDK convention the WK04 harness
+        // measured); press_count is DOWN-only.
+        m_pointerButtonMask |= wpeButtonModifier(ordinal);
+        m_page->sendButtonEvent(
+            type, p.x(), p.y(), ordinal,
+            unsigned(nextPressCount(event->button(),
+                                    event->position())),
+            wpeKeyboardMods(event->modifiers())
+                | m_pointerButtonMask);
+    } else {
+        // The releasing button still travels in its own event's
+        // mask — clear it only after the dispatch.
+        m_page->sendButtonEvent(
+            type, p.x(), p.y(), ordinal, 0,
+            wpeKeyboardMods(event->modifiers())
+                | m_pointerButtonMask);
+        m_pointerButtonMask &= ~wpeButtonModifier(ordinal);
+    }
+#else
+    Q_UNUSED(type);
+    Q_UNUSED(event);
+#endif
+}
+
+bool WebkitView::dispatchKeyEvent(int type, QKeyEvent *event)
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    if (!m_page)
+        return false;
+    const bool keypad = event->modifiers() & Qt::KeypadModifier;
+    unsigned keyval = keypad
+        ? wpeKeysymForQtKey(event->key(), true)
+        : 0;   // keypad keysyms first — KP_7 text is plain '7'
+    if (!keyval) {
+        // Printable text carries the shift level — shift+a is XK_A,
+        // shift+1 XK_exclam — and non-ASCII text lands through the
+        // Unicode keysym rule.  Control text (ctrl+a = 0x01) has no
+        // keysym and falls through to the key table.
+        const QString text = event->text();
+        if (text.size() == 1 && text.at(0).unicode() >= 0x20
+                && text.at(0).unicode() != 0x7f)
+            keyval = wpeKeysymForUcs4(text.at(0).unicode());
+    }
+    if (!keyval)
+        keyval = wpeKeysymForQtKey(event->key(), keypad);
+    if (!keyval && event->key() >= 'A' && event->key() <= 'Z')
+        keyval = unsigned(event->key()) + 0x20;   // ctrl+letter: XK_a
+    else if (!keyval && event->key() >= 0x21 && event->key() <= 0x7e)
+        keyval = unsigned(event->key());   // ASCII punct/digit shape
+    if (!keyval)
+        return false;   // unmappable — leave it to Qt
+    // XKB level semantics: Shift held reports the uppercase letter
+    // keysym (WebKit derives DOM key from keyval; QTest and some
+    // platforms do not shift the event text).
+    if ((event->modifiers() & Qt::ShiftModifier) != 0
+        && keyval >= 0x61 && keyval <= 0x7a)
+        keyval -= 0x20;
+    unsigned keycode = wpeKeycodeForQtKey(event->key(), keypad);
+    if (keycode)
+        keycode += 8;   // WPE consumes the X/XKB keycode space
+    m_page->sendKeyEvent(type, keycode, keyval,
+                         wpeKeyboardMods(event->modifiers())
+                             | m_pointerButtonMask);
+    return true;
+#else
+    Q_UNUSED(type);
+    Q_UNUSED(event);
+    return false;
+#endif
+}
+
+void WebkitView::enterEvent(QEnterEvent *event)
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    dispatchPointerMove(int(WPE_EVENT_POINTER_ENTER),
+                        event->position(),
+                        wpeKeyboardMods(event->modifiers())
+                            | m_pointerButtonMask);
+#endif
+    QWidget::enterEvent(event);
+}
+
+void WebkitView::leaveEvent(QEvent *event)
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    // Pointer leave at the last known position — the engine only
+    // needs the transition; the exit point is stale by definition.
+    dispatchPointerMove(int(WPE_EVENT_POINTER_LEAVE), m_lastPointerPos,
+                        wpeKeyboardMods(
+                            QGuiApplication::keyboardModifiers())
+                            | m_pointerButtonMask);
+#endif
+    QWidget::leaveEvent(event);
+}
+
+void WebkitView::mouseMoveEvent(QMouseEvent *event)
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    dispatchPointerMove(int(WPE_EVENT_POINTER_MOVE),
+                        event->position(),
+                        wpeKeyboardMods(event->modifiers())
+                            | m_pointerButtonMask);
+#endif
+    event->accept();
+}
+
+void WebkitView::mousePressEvent(QMouseEvent *event)
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    dispatchPointerButton(int(WPE_EVENT_POINTER_DOWN), event);
+#endif
+    event->accept();
+}
+
+void WebkitView::mouseReleaseEvent(QMouseEvent *event)
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    dispatchPointerButton(int(WPE_EVENT_POINTER_UP), event);
+#endif
+    event->accept();
+}
+
+void WebkitView::mouseDoubleClickEvent(QMouseEvent *event)
+{
+    // Qt routes the second press here instead of mousePressEvent —
+    // dispatch it as another DOWN so press_count reaches 2.
+#ifdef ARKTOS_WEBKIT_LINKED
+    dispatchPointerButton(int(WPE_EVENT_POINTER_DOWN), event);
+#endif
+    event->accept();
+}
+
+void WebkitView::wheelEvent(QWheelEvent *event)
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    if (m_page) {
+        const QPointF p = viewPoint(event->position());
+        const unsigned mods =
+            wpeKeyboardMods(event->modifiers()) | m_pointerButtonMask;
+        const QPoint pixel = event->pixelDelta();
+        const QPoint angle = event->angleDelta();
+        if (!pixel.isNull()) {
+            // Precise path: real device pixels -> CSS px, with the
+            // 2.5 multiplier WebKit applies to precise mouse/touchpad
+            // deltas (WebEventFactoryWPE.cpp — the GTK scroll-unit
+            // factor) divided back out so touchpad pixels stay
+            // pixel-faithful.  Same sign convention as Qt: positive
+            // delta_y scrolls UP (WPEWaylandSeat.cpp negates the
+            // scroll-down-positive wl_pointer.axis value).
+            const qreal dpr = devicePixelRatioF();
+            m_page->sendScrollEvent(
+                p.x(), p.y(),
+                double(pixel.x()) / dpr / 2.5,
+                double(pixel.y()) / dpr / 2.5,
+                true, int(WPE_INPUT_SOURCE_TOUCHPAD), mods);
+        } else if (!angle.isNull()) {
+            // Tick path: non-precise deltas are wheel ticks,
+            // 120 angle units per notch — same positive=up sign
+            // convention as Qt, so no negation.
+            m_page->sendScrollEvent(
+                p.x(), p.y(),
+                double(angle.x()) / 120.0,
+                double(angle.y()) / 120.0,
+                false, int(WPE_INPUT_SOURCE_MOUSE), mods);
+        }
+    }
+#endif
+    event->accept();
+}
+
+void WebkitView::keyPressEvent(QKeyEvent *event)
+{
+    // QEvent::ShortcutOverride is routed through keyPressEvent too —
+    // leave those unclaimed so app-level QShortcuts (Ctrl+T &co)
+    // still fire on a webkit tab; a real KeyPress follows when no
+    // shortcut claims the sequence.
+    if (event->type() == QEvent::ShortcutOverride) {
+        event->ignore();
+        return;
+    }
+#ifdef ARKTOS_WEBKIT_LINKED
+    if (dispatchKeyEvent(int(WPE_EVENT_KEYBOARD_KEY_DOWN), event)) {
+        event->accept();
+        return;
+    }
+#endif
+    QWidget::keyPressEvent(event);
+}
+
+void WebkitView::keyReleaseEvent(QKeyEvent *event)
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    if (dispatchKeyEvent(int(WPE_EVENT_KEYBOARD_KEY_UP), event)) {
+        event->accept();
+        return;
+    }
+#endif
+    QWidget::keyReleaseEvent(event);
 }
 
 // ---- WebkitPage -----------------------------------------------------
@@ -524,6 +1120,124 @@ void WebkitPage::focusEngine(bool in)
         wpe_view_focus_out(m_wpeView);
 #else
     Q_UNUSED(in);
+#endif
+}
+
+// ---- WK13 — the wpe_view_event dispatch points -----------------------
+
+QPointF WebkitPage::viewPoint(const QPointF &widgetPos) const
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    if (m_wpeView && m_view && m_view->width() > 0
+            && m_view->height() > 0) {
+        // The event space is the view's logical pixel size — the
+        // toplevel mirrors the widget's DIP size at scale 1, so the
+        // ratio is 1:1 today and folds any future scale drift in.
+        const double sx = double(wpe_view_get_width(m_wpeView))
+                          / double(m_view->width());
+        const double sy = double(wpe_view_get_height(m_wpeView))
+                          / double(m_view->height());
+        return QPointF(widgetPos.x() * sx, widgetPos.y() * sy);
+    }
+#endif
+    return widgetPos;
+}
+
+void WebkitPage::sendPointerEvent(int type, double x, double y,
+                                  double deltaX, double deltaY,
+                                  unsigned mods)
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    if (!m_wpeView)
+        return;
+    wpe_view_focus_in(m_wpeView);   // see sendKeyEvent — WK04
+    WPEEvent *event = wpe_event_pointer_move_new(
+        WPEEventType(type), m_wpeView, WPE_INPUT_SOURCE_MOUSE,
+        wpeEventTime(), WPEModifiers(mods), x, y, deltaX, deltaY);
+    wpe_view_event(m_wpeView, event);
+    wpe_event_unref(event);
+#else
+    Q_UNUSED(type);
+    Q_UNUSED(x);
+    Q_UNUSED(y);
+    Q_UNUSED(deltaX);
+    Q_UNUSED(deltaY);
+    Q_UNUSED(mods);
+#endif
+}
+
+void WebkitPage::sendButtonEvent(int type, double x, double y,
+                                 unsigned button, unsigned pressCount,
+                                 unsigned mods)
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    if (!m_wpeView)
+        return;
+    wpe_view_focus_in(m_wpeView);   // see sendKeyEvent — WK04
+    WPEEvent *event = wpe_event_pointer_button_new(
+        WPEEventType(type), m_wpeView, WPE_INPUT_SOURCE_MOUSE,
+        wpeEventTime(), WPEModifiers(mods), button, x, y, pressCount);
+    if (!event)   // ctor refuses press_count on a non-DOWN type
+        return;
+    wpe_view_event(m_wpeView, event);
+    wpe_event_unref(event);
+#else
+    Q_UNUSED(type);
+    Q_UNUSED(x);
+    Q_UNUSED(y);
+    Q_UNUSED(button);
+    Q_UNUSED(pressCount);
+    Q_UNUSED(mods);
+#endif
+}
+
+void WebkitPage::sendScrollEvent(double x, double y, double deltaX,
+                                 double deltaY, bool precise,
+                                 int source, unsigned mods)
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    if (!m_wpeView)
+        return;
+    wpe_view_focus_in(m_wpeView);   // see sendKeyEvent — WK04
+    WPEEvent *event = wpe_event_scroll_new(
+        m_wpeView, WPEInputSource(source), wpeEventTime(),
+        WPEModifiers(mods), deltaX, deltaY, gboolean(precise), FALSE,
+        x, y);
+    wpe_view_event(m_wpeView, event);
+    wpe_event_unref(event);
+#else
+    Q_UNUSED(x);
+    Q_UNUSED(y);
+    Q_UNUSED(deltaX);
+    Q_UNUSED(deltaY);
+    Q_UNUSED(precise);
+    Q_UNUSED(source);
+    Q_UNUSED(mods);
+#endif
+}
+
+void WebkitPage::sendKeyEvent(int type, unsigned keycode,
+                              unsigned keyval, unsigned mods)
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    if (!m_wpeView)
+        return;
+    // Input is dropped by an unfocused view (WK04) — re-asserting
+    // here is a no-op while focused and covers the focus reset a
+    // committed navigation performs.
+    wpe_view_focus_in(m_wpeView);
+    WPEEvent *event = wpe_event_keyboard_new(
+        WPEEventType(type), m_wpeView, WPE_INPUT_SOURCE_KEYBOARD,
+        wpeEventTime(), WPEModifiers(mods), keycode, keyval);
+    if (!event)
+        return;
+    wpe_view_event(m_wpeView, event);
+    wpe_event_unref(event);
+#else
+    Q_UNUSED(type);
+    Q_UNUSED(keycode);
+    Q_UNUSED(keyval);
+    Q_UNUSED(mods);
 #endif
 }
 
