@@ -101,6 +101,7 @@ private slots:
     void extensionIdle();
     void extensionCommands();
     void extensionOffscreen();
+    void extensionIntrospection();
     void actionPopupSelfWires();
     void realExtensionPopup();
     void bitwardenGapBaseline();
@@ -8020,6 +8021,394 @@ void tst_ExtensionManager::extensionOffscreen()
     QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 20000);
     manager->removeExtension(id);
     QTest::qWait(500);
+    QDir(root).removeRecursively();
+}
+
+// ER15 — introspection sugar.  chrome.management.getSelf answers
+// the real ExtensionInfo shape from the manifest + manager records
+// (ungated like Chrome); the other members ride Chrome's failure
+// vocabulary (no-permission undeclared, unsupported declared-but-
+// unserved).  chrome.extension.getViews composes from the runtime's
+// pushed context registry — the caller's own Window plus honest
+// capability handles for sibling contexts (true documentUrl, a real
+// location.reload(), focus honestly unmeasured); getBackgroundPage
+// returns window in the background and the documented MV3 null
+// elsewhere.  chrome.sidebarAction installs only for a manifest-
+// declared sidebar_action and records panel/title while open()
+// degrades typed.
+void tst_ExtensionManager::extensionIntrospection()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString root = QDir::temp().filePath(
+        QStringLiteral("tst-extintro-%1")
+            .arg(QCoreApplication::applicationPid()));
+    const QString dirA = root + QLatin1String("/tst-intro-a");
+    const QString dirB = root + QLatin1String("/tst-intro-b");
+    for (const QString &dir : {dirA, dirB})
+        QVERIFY(QDir().mkpath(dir));
+    const auto writeFile = [](const QString &path,
+                              const QByteArray &body) {
+        QFile f(path);
+        if (!f.open(QIODevice::WriteOnly))
+            return false;
+        f.write(body);
+        f.close();
+        return true;
+    };
+    // A: sidebar_action + action popup — the introspection fixture.
+    // 'management' is deliberately NOT declared so the gate leg sees
+    // no-permission, Chrome's own failure for an undeclaring caller.
+    QVERIFY(writeFile(dirA + QLatin1String("/manifest.json"),
+        "{\"manifest_version\":3,\"name\":\"tst-intro-a\","
+        "\"version\":\"3.1.4\",\"description\":\"Intro A\","
+        "\"permissions\":[\"storage\"],"
+        "\"action\":{\"default_popup\":\"popup.html\"},"
+        "\"sidebar_action\":{\"default_panel\":\"side.html\","
+        "\"default_title\":\"Side\"},"
+        "\"background\":{\"service_worker\":\"sw.js\"}}"));
+    QVERIFY(writeFile(dirA + QLatin1String("/sw.js"),
+        "chrome.runtime.onInstalled.addListener(function(){});\n"));
+    QVERIFY(writeFile(dirA + QLatin1String("/popup.html"),
+        "<!doctype html><html><body><script src=\"popup.js\">"
+        "</script></body></html>"));
+    QVERIFY(writeFile(dirA + QLatin1String("/popup.js"),
+        "self.__boots=(self.__boots||0)+1;\n"));
+    QVERIFY(writeFile(dirA + QLatin1String("/side.html"),
+        "<!doctype html><title>side</title>"));
+    QVERIFY(writeFile(dirA + QLatin1String("/options.html"),
+        "<!doctype html><title>opt</title>"));
+    // B: 'management' declared, no sidebar key — the opposite half
+    // of each gate.
+    QVERIFY(writeFile(dirB + QLatin1String("/manifest.json"),
+        "{\"manifest_version\":3,\"name\":\"tst-intro-b\","
+        "\"version\":\"9.9\",\"permissions\":[\"storage\","
+        "\"management\"],"
+        "\"background\":{\"service_worker\":\"sw.js\"}}"));
+    QVERIFY(writeFile(dirB + QLatin1String("/sw.js"),
+        "chrome.runtime.onInstalled.addListener(function(){});\n"));
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    const auto loadReady = [this, manager, runtime](
+            const QString &dir, const QString &name) -> QString {
+        auto loaded = std::make_shared<QString>();
+        QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                         this, [loaded, name](
+                             const ExtensionManager::ExtensionInfo
+                                 &info) {
+            if (info.name == name && info.error.isEmpty())
+                *loaded = info.id;
+        });
+        manager->grantConsent(dir);
+        manager->loadExtension(dir);
+        QElapsedTimer timer;
+        timer.start();
+        while (loaded->isEmpty() && timer.elapsed() < 30000)
+            QTest::qWait(50);
+        const QString id = *loaded;
+        if (id.isEmpty())
+            return id;
+        manager->setExtensionEnabled(id, true);
+        timer.restart();
+        while (timer.elapsed() < 45000) {
+            ExtensionBackgroundHost *host = runtime->host(id);
+            if (host && host->state()
+                    == ExtensionBackgroundHost::State::Ready)
+                break;
+            QTest::qWait(50);
+        }
+        return id;
+    };
+    const QString idA = loadReady(dirA, QStringLiteral("tst-intro-a"));
+    const QString idB = loadReady(dirB, QStringLiteral("tst-intro-b"));
+    QVERIFY2(!idA.isEmpty() && !idB.isEmpty(),
+             "fixtures loaded + hosted");
+
+    auto eval = [](QWebEnginePage *page, const QString &source) {
+        auto result = std::make_shared<QVariant>();
+        page->runJavaScript(source,
+                            [result](const QVariant &v) {
+                                *result = v; });
+        QElapsedTimer t;
+        t.start();
+        while (!result->isValid() && t.elapsed() < 15000)
+            QTest::qWait(50);
+        return *result;
+    };
+    auto evalJson = [&eval](QWebEnginePage *page,
+                            const QString &source) {
+        return QJsonDocument::fromJson(
+            eval(page, source).toString().toUtf8()).object();
+    };
+
+    ExtensionBackgroundHost *hostA = runtime->host(idA);
+    ExtensionBackgroundHost *hostB = runtime->host(idB);
+    QVERIFY(hostA && hostB);
+
+    // --- chrome.management.getSelf --------------------------------
+    // Qt binds a native chrome.management whose getSelf answers
+    // Chromium's records; the shim's identity re-assert lands on the
+    // repair ticks.  Wait for OUR binding — a call in the swap
+    // window would latch the native shape (no manifestVersion).
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(hostA->page(), QStringLiteral(
+            "!!(chrome.management&&chrome.management.getSelf"
+            "&&String(chrome.management.getSelf)"
+            ".indexOf('[native code]')<0)")).toBool(),
+        20000);
+    hostA->page()->runJavaScript(QStringLiteral(
+        "chrome.management.getSelf().then(function(v){"
+        "self.__self=v;});'ok'"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(hostA->page(), QStringLiteral(
+            "!!self.__self")).toBool(), 20000);
+    const QJsonObject self = evalJson(hostA->page(), QStringLiteral(
+        "JSON.stringify(self.__self)"));
+    QCOMPARE(self.value(QLatin1String("id")).toString(), idA);
+    QCOMPARE(self.value(QLatin1String("name")).toString(),
+             QStringLiteral("tst-intro-a"));
+    QCOMPARE(self.value(QLatin1String("version")).toString(),
+             QStringLiteral("3.1.4"));
+    QCOMPARE(self.value(QLatin1String("description")).toString(),
+             QStringLiteral("Intro A"));
+    QCOMPARE(self.value(QLatin1String("enabled")).toBool(), true);
+    QCOMPARE(self.value(QLatin1String("type")).toString(),
+             QStringLiteral("extension"));
+    QCOMPARE(self.value(QLatin1String("installType")).toString(),
+             QStringLiteral("development"));
+    QCOMPARE(self.value(QLatin1String("manifestVersion")).toInt(), 3);
+    QCOMPARE(self.value(QLatin1String("mayDisable")).toBool(), true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(hostB->page(), QStringLiteral(
+            "!!(chrome.management&&chrome.management.getSelf"
+            "&&String(chrome.management.getSelf)"
+            ".indexOf('[native code]')<0)")).toBool(),
+        20000);
+    hostB->page()->runJavaScript(QStringLiteral(
+        "chrome.management.getSelf().then(function(v){"
+        "self.__self=v;});'ok'"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(hostB->page(), QStringLiteral(
+            "self.__self&&self.__self.version==='9.9'"
+            "&&self.__self.id==='") + idB + QLatin1String("'"))
+            .toBool(),
+        20000);
+
+    // --- management failure vocabulary ----------------------------
+    // A never declared 'management' -> no-permission; B declared it
+    // and we still cannot enumerate -> unsupported.  Both ledger.
+    hostA->page()->runJavaScript(QStringLiteral(
+        "self.__mErr=undefined;chrome.management.getAll()"
+        ".then(function(){self.__mErr='resolved';},function(e){"
+        "self.__mErr=e.code||e.message;});'ok'"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(hostA->page(), QStringLiteral(
+            "self.__mErr!==undefined")).toBool(), 20000);
+    QCOMPARE(eval(hostA->page(), QStringLiteral("self.__mErr"))
+                 .toString(),
+             QStringLiteral("no-permission"));
+    hostB->page()->runJavaScript(QStringLiteral(
+        "self.__mErr=undefined;chrome.management.getAll()"
+        ".then(function(){self.__mErr='resolved';},function(e){"
+        "self.__mErr=e.code||e.message;});'ok'"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(hostB->page(), QStringLiteral(
+            "self.__mErr!==undefined")).toBool(), 20000);
+    QCOMPARE(eval(hostB->page(), QStringLiteral("self.__mErr"))
+                 .toString(),
+             QStringLiteral("unsupported"));
+
+    // --- extension.getBackgroundPage / getViews -------------------
+    QCOMPARE(eval(hostA->page(), QStringLiteral(
+        "chrome.extension.getBackgroundPage()===window")).toBool(),
+             true);
+    // With only the background registered, getViews sees the one
+    // real window — typed filters find nothing else.
+    QCOMPARE(eval(hostA->page(), QStringLiteral(
+        "chrome.extension.getViews()"
+        ".some(function(v){return v===window;})")).toBool(), true);
+    QCOMPARE(eval(hostA->page(), QStringLiteral(
+        "chrome.extension.getViews({type:'popup'}).length")).toInt(),
+             0);
+    QCOMPARE(eval(hostA->page(), QStringLiteral(
+        "chrome.extension.getViews({type:'background'}).length"
+        "===1&&chrome.extension.getViews({type:'background'})[0]"
+        "===window")).toBool(), true);
+
+    // --- sibling popup context ------------------------------------
+    auto *popupView = new QWebEngineView;
+    QWebEnginePage *popup =
+        new QWebEnginePage(hostA->page()->profile(), popupView);
+    popupView->setPage(popup);
+    QVERIFY(runtime->attachExtensionPage(popup, idA));
+    popup->load(QUrl(QStringLiteral("chrome-extension://") + idA
+                     + QStringLiteral("/popup.html")));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(popup, QStringLiteral(
+            "!!(window.__arktosHost&&__arktosHost.bridgeUp"
+            "&&window.__arktosShim)")).toBool(),
+        30000);
+    // The popup's relay registration pushed the context set — the
+    // host's getViews now lists a real capability handle for it.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(hostA->page(), QStringLiteral(
+            "chrome.extension.getViews({type:'popup'}).length===1"))
+            .toBool(),
+        20000);
+    QCOMPARE(eval(hostA->page(), QStringLiteral(
+        "chrome.extension.getViews({type:'popup'})[0]"
+        ".__arktosViewHandle===true")).toBool(), true);
+    QVERIFY(eval(hostA->page(), QStringLiteral(
+        "chrome.extension.getViews({type:'popup'})[0].location.href"
+        ".indexOf('/popup.html')>=0")).toBool());
+    QCOMPARE(eval(hostA->page(), QStringLiteral(
+        "chrome.extension.getViews().length")).toInt(), 2);
+    // A handle is never the real window — and the popup sees its
+    // own real window for its own type.
+    QVERIFY(eval(hostA->page(), QStringLiteral(
+        "chrome.extension.getViews({type:'popup'})[0]!==window"))
+            .toBool());
+    QCOMPARE(eval(popup, QStringLiteral(
+        "chrome.extension.getViews({type:'popup'}).length===1"
+        "&&chrome.extension.getViews({type:'popup'})[0]===window"))
+            .toBool(), true);
+    QCOMPARE(eval(popup, QStringLiteral(
+        "chrome.extension.getViews({type:'background'})[0]"
+        ".__arktosViewHandle===true")).toBool(), true);
+    // getBackgroundPage stays the documented MV3 null outside the
+    // background context — not a fake Window, not a gap.
+    QCOMPARE(eval(popup, QStringLiteral(
+        "chrome.extension.getBackgroundPage()===null")).toBool(),
+             true);
+    // A detached context has no tab — fetchProperties.tabId filters
+    // it out honestly.
+    QCOMPARE(eval(hostA->page(), QStringLiteral(
+        "chrome.extension.getViews({type:'popup',tabId:999999})"
+        ".length")).toInt(), 0);
+
+    // The handle's one real capability: location.reload() reaches
+    // the context's actual page — a real navigation, after which
+    // popup.js re-ran in a fresh window (the sentinel is gone and
+    // the boot counter is back at 1).
+    QCOMPARE(eval(popup, QStringLiteral("self.__boots")).toInt(), 1);
+    eval(popup, QStringLiteral("self.__sentinel=1;'ok'"));
+    int popupLoads = 0;
+    QObject::connect(popup, &QWebEnginePage::loadStarted,
+                     this, [&popupLoads]() { ++popupLoads; });
+    eval(hostA->page(), QStringLiteral(
+        "chrome.extension.getViews({type:'popup'})[0]"
+        ".location.reload();'ok'"));
+    QTRY_VERIFY_WITH_TIMEOUT(popupLoads > 0, 20000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(popup, QStringLiteral(
+            "self.__sentinel===undefined&&self.__boots===1"))
+            .toBool(),
+        20000);
+
+    // --- a second, non-popup sibling (options page in a detached
+    // view) registers kind 'page' -> the TAB view bucket. ----------
+    auto *optView = new QWebEngineView;
+    QWebEnginePage *optPage =
+        new QWebEnginePage(hostA->page()->profile(), optView);
+    optView->setPage(optPage);
+    QVERIFY(runtime->attachExtensionPage(optPage, idA));
+    optPage->load(QUrl(QStringLiteral("chrome-extension://") + idA
+                       + QStringLiteral("/options.html")));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(optPage, QStringLiteral(
+            "!!(window.__arktosHost&&__arktosHost.bridgeUp"
+            "&&window.__arktosShim)")).toBool(),
+        30000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(hostA->page(), QStringLiteral(
+            "chrome.extension.getViews({type:'tab'}).length===1"))
+            .toBool(),
+        20000);
+    QCOMPARE(eval(hostA->page(), QStringLiteral(
+        "chrome.extension.getViews({type:'tab'})[0]"
+        ".__arktosViewHandle===true")).toBool(), true);
+    QCOMPARE(eval(hostA->page(), QStringLiteral(
+        "chrome.extension.getViews().length")).toInt(), 3);
+    // The registry itself agrees: BACKGROUND + POPUP + TAB, the
+    // detached siblings carrying tabId -1.
+    {
+        QStringList types;
+        for (const QJsonValue &c : runtime->contextsJson(idA))
+            types.append(c.toObject()
+                .value(QLatin1String("contextType")).toString());
+        QVERIFY(types.contains(QLatin1String("BACKGROUND")));
+        QVERIFY(types.contains(QLatin1String("POPUP")));
+        QVERIFY(types.contains(QLatin1String("TAB")));
+    }
+
+    // Closing the popup retracts its view — the pushed registry
+    // drives the count back down, nothing lingers.
+    popupView->deleteLater();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(hostA->page(), QStringLiteral(
+            "chrome.extension.getViews({type:'popup'}).length===0"))
+            .toBool(),
+        20000);
+
+    // --- chrome.sidebarAction --------------------------------------
+    // Declared -> real bookkeeping ns; undeclared (B) -> the property
+    // stays absent so feature-detect answers honestly.
+    QCOMPARE(eval(hostA->page(), QStringLiteral(
+        "typeof chrome.sidebarAction==='object'")).toBool(), true);
+    hostA->page()->runJavaScript(QStringLiteral(
+        "self.__sb={};(async function(){"
+        " await chrome.sidebarAction.setPanel({panel:'side.html'});"
+        " self.__sb.panel=(await chrome.sidebarAction.getPanel({}))"
+        "  .panel;"
+        " await chrome.sidebarAction.setTitle({title:'Side!'});"
+        " self.__sb.title=(await chrome.sidebarAction.getTitle({}))"
+        "  .title;"
+        " self.__sb.open=await chrome.sidebarAction.isOpen({});"
+        " try{await chrome.sidebarAction.open();"
+        "  self.__sb.openResult='resolved';}"
+        " catch(e){self.__sb.openResult=e.code||e.message;}"
+        " self.__sb.done=true;"
+        "})().catch(function(e){self.__sb.fatal=String(e);"
+        "self.__sb.done=true;});'ok'"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(hostA->page(), QStringLiteral("!!self.__sb.done"))
+            .toBool(), 20000);
+    QCOMPARE(eval(hostA->page(), QStringLiteral("self.__sb.panel"))
+                 .toString(), QStringLiteral("side.html"));
+    QCOMPARE(eval(hostA->page(), QStringLiteral("self.__sb.title"))
+                 .toString(), QStringLiteral("Side!"));
+    QCOMPARE(eval(hostA->page(), QStringLiteral("self.__sb.open"))
+                 .toBool(), false);
+    QCOMPARE(eval(hostA->page(), QStringLiteral(
+        "self.__sb.openResult")).toString(),
+             QStringLiteral("unsupported"));
+    QCOMPARE(eval(hostB->page(), QStringLiteral(
+        "typeof chrome.sidebarAction==='undefined'")).toBool(), true);
+
+    // --- the health ledger saw the degradations ---------------------
+    QTRY_VERIFY_WITH_TIMEOUT(
+        hostA->bridge()->backend()->gaps().contains(
+            QStringLiteral("chrome.management.getAll: "
+                           "no-permission"))
+            && hostA->bridge()->backend()->gaps().contains(
+                QStringLiteral("chrome.sidebarAction.open: "
+                               "unsupported")),
+        20000);
+    QVERIFY(hostB->bridge()->backend()->gaps().contains(
+        QStringLiteral("chrome.management.getAll: unsupported")));
+
+    // --- teardown ----------------------------------------------------
+    optView->deleteLater();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    manager->setExtensionEnabled(idA, false);
+    manager->setExtensionEnabled(idB, false);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !runtime->host(idA) && !runtime->host(idB), 20000);
+    manager->removeExtension(idA);
+    manager->removeExtension(idB);
     QDir(root).removeRecursively();
 }
 

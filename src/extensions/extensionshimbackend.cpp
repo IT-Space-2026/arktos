@@ -26,6 +26,7 @@
 #include "extensioncommands.h"
 #include "extensioneventhub.h"
 #include "extensionidlewatcher.h"
+#include "extensionmanager.h"
 #include "extensionnotificationcenter.h"
 #include "tabwidget.h"
 #include "webview.h"
@@ -232,6 +233,12 @@ QJsonObject ExtensionShimBackend::invoke(const QString &ns,
         return invokeCommands(method, args);
     if (ns == QLatin1String("idle"))
         return invokeIdle(method, args);
+    if (ns == QLatin1String("management"))
+        return invokeManagement(method, args);
+    if (ns == QLatin1String("extension"))
+        return invokeExtension(method, args);
+    if (ns == QLatin1String("sidebarAction"))
+        return invokeSidebarAction(method, args);
     if (ns == QLatin1String("runtime"))
         return invokeRuntime(method, args);
     if (ns == QLatin1String("shim"))
@@ -1442,6 +1449,244 @@ QJsonObject ExtensionShimBackend::invokeIdle(
     }
     // getAutoLockDelay exists on ChromeOS only — typed, not silent.
     if (method == QLatin1String("getAutoLockDelay"))
+        return errReply(QStringLiteral("unsupported"));
+    return errReply(QStringLiteral("unimplemented"));
+}
+
+// -------------------------------------------------------------------
+// chrome.management — ER15.  getSelf is ungated like Chrome (the
+// only member that needs no 'management' permission) and answers the
+// real ExtensionInfo shape from the manifest + the manager's own
+// records.  Every other member rides Chrome's failure vocabulary:
+// 'management' undeclared -> no-permission, declared-but-unserved ->
+// unsupported.
+// -------------------------------------------------------------------
+
+QJsonObject ExtensionShimBackend::invokeManagement(
+        const QString &method, const QJsonObject &args)
+{
+    Q_UNUSED(args);
+    if (method != QLatin1String("getSelf")) {
+        QStringList perms;
+        for (const QJsonValue &v : manifestJson()
+                 .value(QStringLiteral("permissions")).toArray())
+            perms.append(v.toString());
+        return errReply(perms.contains(QLatin1String("management"))
+                            ? QStringLiteral("unsupported")
+                            : QStringLiteral("no-permission"));
+    }
+
+    const QJsonObject manifest = manifestJson();
+    const auto localized = [this](const QString &value) {
+        // Manifests localize user-facing strings as __MSG_key__ —
+        // getSelf answers the resolved text like Chrome does.
+        static const QRegularExpression msgRe(
+            QStringLiteral("^__MSG_(.+)__$"));
+        const QRegularExpressionMatch m = msgRe.match(value);
+        if (!m.hasMatch())
+            return value;
+        const QString resolved = i18nMessages(m_extensionPath)
+            .value(m.captured(1)).toString();
+        return resolved.isEmpty() ? value : resolved;
+    };
+
+    // The manager's record is the source of truth for enabled and
+    // install provenance; a hosted backend that the manager lost
+    // track of still answers enabled (it is running).
+    bool enabled = true;
+    QString installType = QStringLiteral("development");
+    if (ExtensionManager *manager = ExtensionManager::instance()) {
+        for (const ExtensionManager::ExtensionInfo &info
+             : manager->extensions()) {
+            if (info.id != m_extensionId)
+                continue;
+            enabled = info.enabled;
+            installType = info.installed
+                ? QStringLiteral("normal")
+                : QStringLiteral("development");
+            break;
+        }
+    }
+
+    QJsonObject info;
+    info.insert(QStringLiteral("id"), m_extensionId);
+    info.insert(QStringLiteral("name"),
+                localized(manifest.value(QStringLiteral("name"))
+                              .toString(m_extensionName)));
+    info.insert(QStringLiteral("shortName"),
+                localized(manifest.value(QStringLiteral("short_name"))
+                              .toString(info.value(
+                                  QStringLiteral("name")).toString())));
+    info.insert(QStringLiteral("description"),
+                localized(manifest.value(
+                    QStringLiteral("description")).toString()));
+    info.insert(QStringLiteral("version"),
+                manifest.value(QStringLiteral("version")).toString());
+    info.insert(QStringLiteral("versionName"),
+                manifest.value(QStringLiteral("version_name"))
+                    .toString());
+    info.insert(QStringLiteral("manifestVersion"),
+                manifest.value(QStringLiteral("manifest_version"))
+                    .toInt());
+    info.insert(QStringLiteral("enabled"), enabled);
+    info.insert(QStringLiteral("mayEnable"), !enabled);
+    info.insert(QStringLiteral("mayDisable"), enabled);
+    info.insert(QStringLiteral("type"), QStringLiteral("extension"));
+    info.insert(QStringLiteral("installType"), installType);
+    info.insert(QStringLiteral("offlineEnabled"),
+                manifest.value(QStringLiteral("offline_enabled"))
+                    .toBool(true));
+    const QString homepage =
+        manifest.value(QStringLiteral("homepage_url")).toString();
+    if (!homepage.isEmpty())
+        info.insert(QStringLiteral("homepageUrl"), homepage);
+    const QString updateUrl =
+        manifest.value(QStringLiteral("update_url")).toString();
+    if (!updateUrl.isEmpty())
+        info.insert(QStringLiteral("updateUrl"), updateUrl);
+    // options page — same validation openOptionsPage applies before
+    // turning the manifest path into a chrome-extension url.
+    QString options = manifest.value(QStringLiteral("options_ui"))
+        .toObject().value(QStringLiteral("page")).toString();
+    if (options.isEmpty())
+        options = manifest.value(QStringLiteral("options_page"))
+            .toString();
+    if (!options.isEmpty() && !options.startsWith(QLatin1Char('/'))
+            && !options.contains(QLatin1Char(':'))
+            && !options.split(QLatin1Char('/')).contains(
+                QStringLiteral("..")))
+        info.insert(QStringLiteral("optionsUrl"),
+                    QStringLiteral("chrome-extension://")
+                        + m_extensionId + QLatin1Char('/') + options);
+    QJsonArray icons;
+    const QJsonObject iconMap =
+        manifest.value(QStringLiteral("icons")).toObject();
+    for (auto it = iconMap.constBegin(); it != iconMap.constEnd();
+         ++it) {
+        const QString path = it.value().toString();
+        if (path.isEmpty() || path.startsWith(QLatin1Char('/'))
+                || path.contains(QLatin1Char(':'))
+                || path.split(QLatin1Char('/')).contains(
+                    QStringLiteral("..")))
+            continue;
+        QJsonObject icon;
+        icon.insert(QStringLiteral("size"), it.key().toInt());
+        icon.insert(QStringLiteral("url"),
+                    QStringLiteral("chrome-extension://")
+                        + m_extensionId + QLatin1Char('/') + path);
+        icons.append(icon);
+    }
+    if (!icons.isEmpty())
+        info.insert(QStringLiteral("icons"), icons);
+    QJsonArray permissions;
+    for (const QJsonValue &v : manifest.value(
+             QStringLiteral("permissions")).toArray())
+        permissions.append(v.toString());
+    info.insert(QStringLiteral("permissions"), permissions);
+    // hostPermissions = host_permissions ∪ declared content-script
+    // matches ∪ MV2-style match patterns inside permissions —
+    // Chrome's management surface reports the union.
+    QJsonArray hostPermissions;
+    const auto addHost = [&hostPermissions](const QString &pattern) {
+        for (const QJsonValue &v : hostPermissions) {
+            if (v.toString() == pattern)
+                return;
+        }
+        hostPermissions.append(pattern);
+    };
+    for (const QJsonValue &v : manifest.value(
+             QStringLiteral("host_permissions")).toArray())
+        addHost(v.toString());
+    for (const QJsonValue &v : manifest.value(
+             QStringLiteral("content_scripts")).toArray()) {
+        for (const QJsonValue &m : v.toObject().value(
+                 QStringLiteral("matches")).toArray())
+            addHost(m.toString());
+    }
+    for (const QJsonValue &v : permissions) {
+        const QString p = v.toString();
+        if (p.contains(QLatin1String("://"))
+                || p == QLatin1String("<all_urls>"))
+            addHost(p);
+    }
+    info.insert(QStringLiteral("hostPermissions"), hostPermissions);
+    return okReply(info);
+}
+
+// -------------------------------------------------------------------
+// chrome.extension — ER15.  The one bridge op the shim cannot answer
+// in-page: a getViews() handle's location.reload() — the real
+// capability Chrome's Window reference would carry, routed to the
+// context's actual page.
+// -------------------------------------------------------------------
+
+QJsonObject ExtensionShimBackend::invokeExtension(
+        const QString &method, const QJsonObject &args)
+{
+    if (method == QLatin1String("reloadView")) {
+        const QString contextId =
+            args.value(QStringLiteral("contextId")).toString();
+        if (contextId.isEmpty())
+            return errReply(QStringLiteral("invalid-argument"));
+        return ExtensionBackgroundRuntime::instance()
+            ->reloadContextPage(m_extensionId, contextId);
+    }
+    return errReply(QStringLiteral("unimplemented"));
+}
+
+// -------------------------------------------------------------------
+// chrome.sidebarAction — ER15.  The Firefox-shape sugar over the
+// sidePanel bookkeeping: panel/title/icon are recorded honestly the
+// same way m_sidePanelOptions is; isOpen answers false (no sidebar
+// surface can be open — that is the truth, not a stub); open/close/
+// toggle degrade typed because there is nothing to open.
+// -------------------------------------------------------------------
+
+QJsonObject ExtensionShimBackend::invokeSidebarAction(
+        const QString &method, const QJsonObject &args)
+{
+    if (method == QLatin1String("setPanel")) {
+        m_sidebarAction.insert(
+            QStringLiteral("panel"),
+            args.value(QStringLiteral("panel")).toString());
+        return okReply();
+    }
+    if (method == QLatin1String("getPanel")) {
+        QJsonObject out;
+        out.insert(QStringLiteral("panel"),
+                   m_sidebarAction.value(
+                       QStringLiteral("panel")).toString());
+        return okReply(out);
+    }
+    if (method == QLatin1String("setTitle")) {
+        m_sidebarAction.insert(
+            QStringLiteral("title"),
+            args.value(QStringLiteral("title")).toString());
+        return okReply();
+    }
+    if (method == QLatin1String("getTitle")) {
+        QJsonObject out;
+        out.insert(QStringLiteral("title"),
+                   m_sidebarAction.value(
+                       QStringLiteral("title")).toString());
+        return okReply(out);
+    }
+    if (method == QLatin1String("setIcon")) {
+        // No icon surface exists — accepted for bookkeeping only,
+        // the note makes the unrendered state visible.
+        m_sidebarAction.insert(
+            QStringLiteral("icon"),
+            args.value(QStringLiteral("icon")));
+        recordNote(QStringLiteral(
+            "sidebarAction.setIcon: recorded; Arktos has no sidebar "
+            "surface to render it"));
+        return okReply();
+    }
+    if (method == QLatin1String("isOpen"))
+        return okReply(false);
+    if (method == QLatin1String("open")
+            || method == QLatin1String("close")
+            || method == QLatin1String("toggle"))
         return errReply(QStringLiteral("unsupported"));
     return errReply(QStringLiteral("unimplemented"));
 }

@@ -26,8 +26,12 @@
  *                         the store the still-running real service
  *                         worker shares); a per-extension bridge
  *                         store backs contexts without bindings
- *   chrome.extension    — getURL/getViews/getBackgroundPage mapped to
- *                         the hosted context
+ *   chrome.extension    — getURL; ER15 getViews composes from the
+ *                         runtime's pushed context registry (own
+ *                         Window + capability handles for siblings);
+ *                         getBackgroundPage answers window in the
+ *                         background context and the documented MV3
+ *                         null elsewhere
  *   chrome.i18n         — getMessage wrapped unconditionally: the
  *                         native binding answers '' for every key;
  *                         misses fall to the _locales/<lang>/
@@ -58,6 +62,13 @@
  *   chrome.contextMenus — create/update/remove* registry host-side;
  *                         onClicked event (rendering is EXT16)
  *   chrome.sidePanel    — options recorded host-side; no panel UI
+ *   chrome.management   — ER15: getSelf answers the real ExtensionInfo
+ *                         shape (id/name/version/enabled/installType)
+ *                         host-side; other members typed no-permission/
+ *                         unsupported
+ *   chrome.sidebarAction— ER15: Firefox-shape sugar when the manifest
+ *                         declares sidebar_action — panel/title/icon
+ *                         bookkeeping; open/close typed unsupported
  *   other absent ns     — unsupportedNs(): calls answer typed errors,
  *                         on* event registration is recorded
  *
@@ -78,6 +89,10 @@
         notes: [],      // benign diagnostics (recorded registrations,
                         // accepted-but-unsourced state)
         touched: {},    // api -> count (the live delta measurement)
+        contexts: [],   // ER15 — registered sibling contexts, pushed
+                        // by the runtime ('__arktos.contexts') so
+                        // chrome.extension.getViews answers
+                        // synchronously
         events: {},     // name -> event objects the host pushes into
         seenMids: {},   // relay/native message dedupe (bounded TTL)
         recentDeliveries: {}, // content-hash dedupe for relay+native
@@ -147,6 +162,13 @@
         }
         if (name === '__arktos.offscreenDone') {
             onOffscreenDone(payload);
+            return;
+        }
+        if (name === '__arktos.contexts') {
+            // ER15: the runtime's registered-context snapshot —
+            // getViews composes its return array from this.
+            if (payload && payload.contexts)
+                shim.contexts = payload.contexts;
             return;
         }
         if (name === '__arktos.portConnect') {
@@ -253,23 +275,105 @@
     }
 
     // chrome.extension.getViews/getBackgroundPage answers that are
-    // honest in every context kind — a sibling page cannot return
-    // the background's real Window object, so it reports its own
-    // type and answers null with a recorded gap rather than handing
-    // back the wrong window.
+    // honest in every context kind.  ER15: getViews composes its
+    // array from the runtime's pushed context registry — the
+    // calling document contributes its real Window; a sibling
+    // context gets a capability handle (its true documentUrl, a
+    // real location.reload() routed through the bridge, focus
+    // honestly unmeasured) — never a fake Window.  getBackgroundPage
+    // still answers null for non-background contexts because a
+    // Window cannot cross documents.
     function thisViewType() {
         return host.kind === 'background'
             ? 'BACKGROUND'
             : (contextKind() === 'popup' ? 'POPUP' : 'TAB');
     }
+    function viewHandle(ctx) {
+        return {
+            // Explicitly NOT a Window — extension code that needs
+            // the real DOM can only reach it in its own document.
+            __arktosViewHandle: true,
+            contextId: ctx.contextId,
+            contextType: ctx.contextType,
+            tabId: ctx.tabId,
+            windowId: ctx.windowId,
+            location: {
+                href: String(ctx.documentUrl || ''),
+                reload: function () {
+                    call('extension', 'reloadView',
+                         { contextId: ctx.contextId })
+                        .catch(function (e) {
+                            recordGap(
+                                'chrome.extension.getViews.reload',
+                                String(e && e.code || e));
+                        });
+                }
+            },
+            document: {
+                hasFocus: function () {
+                    if (!shim.__focusNoteDone) {
+                        shim.__focusNoteDone = 1;
+                        note('chrome.extension.getViews: another '
+                             + 'document\'s focus is unmeasured — '
+                             + 'handle hasFocus() answers false');
+                    }
+                    return false;
+                }
+            }
+        };
+    }
     function extensionGetViews(fetchProperties) {
         touch('chrome.extension.getViews');
-        var type = fetchProperties && fetchProperties.type;
-        if (!type || type === thisViewType())
-            return [window];
-        note('chrome.extension.getViews(' + type + '): only the '
-             + thisViewType() + ' context is enumerable here');
-        return [];
+        var type = fetchProperties && fetchProperties.type
+            ? String(fetchProperties.type).toUpperCase() : null;
+        var tabId = fetchProperties ? fetchProperties.tabId
+                                    : undefined;
+        var windowId = fetchProperties ? fetchProperties.windowId
+                                       : undefined;
+        var ctxs = shim.contexts;
+        if (!ctxs || !ctxs.length) {
+            // The registry snapshot has not arrived yet — answer
+            // for the one context we can prove: our own document.
+            if (!type || type === thisViewType())
+                return [window];
+            note('chrome.extension.getViews(' + type + '): only the '
+                 + thisViewType() + ' context is enumerable here');
+            return [];
+        }
+        var views = [];
+        var sawSelf = false;
+        for (var i = 0; i < ctxs.length; ++i) {
+            var c = ctxs[i];
+            if (!c)
+                continue;
+            // Offscreen documents are not views in Chrome's sense —
+            // they carry no visible window the API enumerates.
+            if (c.contextType === 'OFFSCREEN_DOCUMENT')
+                continue;
+            if (type && String(c.contextType) !== type)
+                continue;
+            if (tabId !== undefined && tabId !== null
+                    && Number(c.tabId) !== Number(tabId))
+                continue;
+            if (windowId !== undefined && windowId !== null
+                    && Number(c.windowId) !== Number(windowId))
+                continue;
+            if (!sawSelf
+                    && (c.contextId === shim.contextId
+                        || String(c.documentUrl)
+                           === String(location.href))) {
+                views.push(window);
+                sawSelf = true;
+                continue;
+            }
+            views.push(viewHandle(c));
+        }
+        // The snapshot may predate this context's registration —
+        // never drop the caller's own window when it fits the
+        // filter.
+        if (!sawSelf && (!type || type === thisViewType()))
+            views.unshift(window);
+        return views;
     }
     function extensionGetBackgroundPage(cb) {
         touch('chrome.extension.getBackgroundPage');
@@ -310,7 +414,18 @@
         // kind+url feed chrome.runtime.getContexts.
         call('relay', 'register',
              { kind: contextKind(), url: String(location.href) })
-            .then(function (id) { shim.contextId = id; })
+            .then(function (id) {
+                shim.contextId = id;
+                // The registration lands a '__arktos.contexts' push
+                // as well; fetching here covers the case where the
+                // push raced the contextId assignment.
+                call('runtime', 'getContexts', {})
+                    .then(function (v) {
+                        if (v && v.length)
+                            shim.contexts = v;
+                    })
+                    .catch(function () {});
+            })
             .catch(function () {});
     }
 
@@ -368,11 +483,16 @@
     host.onBridgeUp = function () {
         wireHostEvent();
         flushBridgeQueue();
+        // ER15: manifest-gated installs (sidebarAction) had to wait
+        // for this — manifest() is only the real manifest once the
+        // handshake reply has landed.
+        installSidebarAction();
     };
     (function waitBridge() {
         if (host.bridgeUp && host.bridge) {
             wireHostEvent();
             flushBridgeQueue();
+            installSidebarAction();
             return;
         }
         if (host.state === 'ready'
@@ -521,6 +641,30 @@
         }
     }
 
+    // Member-level identity assert for members Qt binds NATIVELY but
+    // we must serve ourselves (ER15 management.getSelf — the native
+    // answer lacks the fields our records keep).  A plain assignment
+    // silently no-ops on a non-writable native member — sloppy mode
+    // never throws — so verify after the write and fall back to
+    // defineProperty.  Still-locked after both -> recorded gap.
+    function forceMember(obj, key, val, api) {
+        if (obj[key] === val)
+            return;
+        safeSet(obj, key, val, api);
+        if (obj[key] !== val) {
+            try {
+                Object.defineProperty(obj, key, {
+                    configurable: true,
+                    writable: true,
+                    enumerable: true,
+                    value: val
+                });
+            } catch (e) {}
+        }
+        if (obj[key] !== val)
+            recordGap(api, 'native-member-locked');
+    }
+
     // Namespaces installed through installNs are tracked so the
     // post-bootstrap repair pass can re-assert them — Chromium
     // lazily REDEFINES api bindings after DocumentCreation (the
@@ -562,6 +706,7 @@
     var wrappedOnMessageRef = null, shimSendMessageRef = null;
     var shimConnectRef = null;
     var offscreenNsRef = null;   // ER10 — member-identity re-assert
+    var mgmtNsRef = null;        // ER15 — member-identity re-assert
     var rtImpls = {}, rtEventNames = null;
     // Connection events are re-asserted by IDENTITY, not presence —
     // a late native binding swap would otherwise strand the
@@ -619,6 +764,47 @@
         }
         if (!ok && !chrome.tabs)
             recordGap('chrome.tabs', 'namespace-locked');
+    }
+
+    // Assert chrome.management is OURS — same shape as assertTabs:
+    // Qt binds a native namespace whose getSelf answers Chromium's
+    // records (no manifestVersion, not our enabled state), and the
+    // mid-boot binding swap rewrites 'management' by assignment.  A
+    // getter+no-op-setter descriptor shrugs that off; a locked
+    // native object degrades to per-member force asserts, and total
+    // refusal lands as a recorded gap.
+    function assertManagement() {
+        if (!mgmtNsRef)
+            return;
+        try {
+            if (chrome.management === mgmtNsRef)
+                return;
+        } catch (e) {
+            return;
+        }
+        var ok = false;
+        try {
+            Object.defineProperty(chrome, 'management', {
+                configurable: true,
+                enumerable: true,
+                get: function () { return mgmtNsRef; },
+                set: function () {}
+            });
+            ok = (chrome.management === mgmtNsRef);
+        } catch (e) {}
+        if (!ok) {
+            try {
+                chrome.management = mgmtNsRef;
+                ok = (chrome.management === mgmtNsRef);
+            } catch (e2) {}
+        }
+        if (!ok && chrome.management
+                && typeof chrome.management === 'object')
+            for (var mk in mgmtNsRef)
+                forceMember(chrome.management, mk, mgmtNsRef[mk],
+                            'chrome.management.' + mk);
+        if (!ok && !chrome.management)
+            recordGap('chrome.management', 'namespace-locked');
     }
 
     function repairInstalls() {
@@ -681,6 +867,26 @@
                             'chrome.runtime.' + ra);
             }
         }
+        // ER15: extension.getViews/getBackgroundPage are identity
+        // overrides for the same reason — a native binding cannot
+        // see the hosted background.
+        var ext4 = chrome.extension;
+        if (ext4 && typeof ext4 === 'object') {
+            if (ext4.getViews !== extensionGetViews)
+                forceMember(ext4, 'getViews', extensionGetViews,
+                            'chrome.extension.getViews');
+            if (ext4.getBackgroundPage !== extensionGetBackgroundPage)
+                forceMember(ext4, 'getBackgroundPage',
+                            extensionGetBackgroundPage,
+                            'chrome.extension.getBackgroundPage');
+        }
+        // ER15: management's members are identity overrides too —
+        // Qt injects a native chrome.management whose getSelf
+        // answers Chromium's records, not ours (no manifestVersion,
+        // no our-side enabled state).
+        try {
+            assertManagement();
+        } catch (e) {}
         // ER10: offscreen's members are identity overrides (the
         // native binding may exist and MUST be replaced — its
         // document would carry no bridge/relay), so re-assert by
@@ -1466,8 +1672,10 @@
                 return 'chrome-extension://' + cfg.id + '/'
                        + String(p || '');
             },
-            // Window objects cannot cross the bridge — a context
-            // answers its OWN window for its own type; EXT17 page
+            // Window objects cannot cross the bridge — getViews
+            // hands back the caller's own Window for its own
+            // context plus honest capability handles for sibling
+            // contexts (true url, working reload()); EXT17 page
             // contexts answer null for the background page rather
             // than the wrong object.
             getViews: extensionGetViews,
@@ -3050,6 +3258,161 @@
         });
     }
 
+    // --- chrome.management -------------------------------------------------
+    // ER15: getSelf is the one member Chrome serves without the
+    // 'management' permission — the backend answers the real
+    // id/name/version/enabled from the manifest + manager records.
+    // The other members ride the bridge so the backend can answer
+    // Chrome's own failure vocabulary: no-permission when the
+    // manifest never declared 'management', unsupported when it did
+    // and we still cannot serve it.  fillNs() below stubs anything
+    // this list missed with the same typed shape.
+    if (typeof chrome !== 'undefined') {
+        var mgmtNs = {
+            getSelf: function (cb) {
+                var p = call('management', 'getSelf', {});
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v); },
+                           function (e) {
+                               answerCb(cb, undefined,
+                                        e && e.message || String(e));
+                           });
+                return p;
+            }
+        };
+        var mgmtRest = ['get', 'getAll', 'setEnabled', 'uninstall',
+            'uninstallSelf', 'launchApp', 'generateAppForLink',
+            'getPermissionWarningsById',
+            'getPermissionWarningsByManifest'];
+        for (var mm = 0; mm < mgmtRest.length; ++mm) {
+            (function (m) {
+                mgmtNs[m] = function () {
+                    var a = arguments;
+                    var cb = (a.length && typeof a[a.length - 1]
+                              === 'function')
+                        ? a[a.length - 1] : null;
+                    var p = call('management', m, {});
+                    if (cb)
+                        p.then(function (v) { answerCb(cb, v); },
+                               function (e) {
+                                   answerCb(cb, undefined,
+                                            e && e.message
+                                            || String(e));
+                               });
+                    return p;
+                };
+            })(mgmtRest[mm]);
+        }
+        installNs('management', mgmtNs);
+        mgmtNsRef = mgmtNs;
+        // Identity assert now, not only in repairInstalls: Qt
+        // injects a native chrome.management whose getSelf answers
+        // Chromium's records (no manifestVersion), and installNs
+        // only fills missing members.
+        assertManagement();
+    }
+
+    // --- chrome.sidebarAction ---------------------------------------------
+    // ER15: the Firefox-shape sugar, installed only when the manifest
+    // declares sidebar_action — an extension that never declared a
+    // sidebar must keep seeing `chrome.sidebarAction` undefined so
+    // its feature-detect stays honest (Bitwarden checks exactly
+    // this).  Panel/title/icon are recorded host-side like
+    // sidePanel's options; open/close/toggle answer typed
+    // 'unsupported' — there is no sidebar surface to open.
+    // The gate reads the handshake manifest, so the install DEFERS
+    // to onBridgeUp — at DocumentCreation bridgeReply has not landed
+    // and manifest() is still {}.
+    function installSidebarAction() {
+        if (typeof chrome === 'undefined'
+                || !manifest().sidebar_action)
+            return;
+        var haveSidebar = null;
+        try { haveSidebar = chrome.sidebarAction; } catch (e) {}
+        if (haveSidebar)
+            return;
+        installNs('sidebarAction', {
+            setPanel: function (details, cb) {
+                var p = call('sidebarAction', 'setPanel',
+                             { panel: details && details.panel });
+                if (cb)
+                    p.then(function () { cb(); },
+                           function (e) {
+                               answerCb(cb, undefined,
+                                        e && e.message || String(e));
+                               });
+                return p;
+            },
+            getPanel: function (details, cb) {
+                var p = call('sidebarAction', 'getPanel', {});
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v); },
+                           function (e) {
+                               answerCb(cb, undefined,
+                                        e && e.message || String(e));
+                               });
+                return p;
+            },
+            setTitle: function (details, cb) {
+                var p = call('sidebarAction', 'setTitle',
+                             { title: details && details.title });
+                if (cb)
+                    p.then(function () { cb(); },
+                           function (e) {
+                               answerCb(cb, undefined,
+                                        e && e.message || String(e));
+                               });
+                return p;
+            },
+            getTitle: function (details, cb) {
+                var p = call('sidebarAction', 'getTitle', {});
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v); },
+                           function (e) {
+                               answerCb(cb, undefined,
+                                        e && e.message || String(e));
+                               });
+                return p;
+            },
+            setIcon: function (details, cb) {
+                var p = call('sidebarAction', 'setIcon',
+                             { icon: details && (details.path
+                                                 || details.imageData) });
+                if (cb)
+                    p.then(function () { cb(); }, function () { cb(); });
+                return p;
+            },
+            isOpen: function (details, cb) {
+                var p = call('sidebarAction', 'isOpen', {});
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v); },
+                           function () { cb(false); });
+                return p;
+            },
+            open: function (cb) {
+                return sidePanelOpen('open', cb);
+            },
+            close: function (cb) {
+                return sidePanelOpen('close', cb);
+            },
+            toggle: function (cb) {
+                return sidePanelOpen('toggle', cb);
+            },
+            onUpdated: makeEvent('sidebarAction.onUpdated')
+        });
+        function sidePanelOpen(op, cb) {
+            var p = call('sidebarAction', op, {});
+            if (cb)
+                p.then(function () { cb(); },
+                       function (e) {
+                           answerCb(cb, undefined,
+                                    e && e.message || String(e));
+                       });
+            return p;
+        }
+    }
+    installSidebarAction();
+
     // --- native-but-partial namespace repair ------------------------------
     // Qt ships SUBSET bindings: a namespace can exist natively while
     // individual members are absent — Bitwarden's boot crashed on
@@ -3129,19 +3492,17 @@
                 } catch (e) { recordGap('chrome.extension.getURL',
                                         String(e)); }
             }
-            if (typeof ext.getViews !== 'function') {
-                try {
-                    ext.getViews = extensionGetViews;
-                } catch (e) { recordGap('chrome.extension.getViews',
-                                        String(e)); }
-            }
-            if (typeof ext.getBackgroundPage !== 'function') {
-                try {
-                    ext.getBackgroundPage = extensionGetBackgroundPage;
-                } catch (e) { recordGap(
-                        'chrome.extension.getBackgroundPage',
-                        String(e)); }
-            }
+            // ER15: getViews/getBackgroundPage are identity
+            // overrides like runtime.connect — a native binding can
+            // only enumerate Chromium-registered extension views,
+            // which the hosted background page is not.  Ours compose
+            // from the runtime's context registry (own Window +
+            // sibling handles) and answer the honest MV3 null.
+            forceMember(ext, 'getViews', extensionGetViews,
+                        'chrome.extension.getViews');
+            forceMember(ext, 'getBackgroundPage',
+                        extensionGetBackgroundPage,
+                        'chrome.extension.getBackgroundPage');
             fillNs('extension', ['onRequest', 'onRequestExternal'],
                    ['isAllowedIncognitoAccess',
                     'isAllowedFileSchemeAccess']);

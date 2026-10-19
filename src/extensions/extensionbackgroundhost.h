@@ -529,7 +529,17 @@ public:
     // (contextType from the registered kind — BACKGROUND for the
     // host, POPUP for the action popup, OFFSCREEN_DOCUMENT for an
     // ER10 offscreen page, TAB for a page hosted in a real tab).
+    // ER15: tabId/windowId resolve to the real browser tab when the
+    // context's page lives in one; every registration change pushes
+    // '__arktos.contexts' to the extension's contexts so a shim's
+    // synchronous chrome.extension.getViews cache stays honest.
     QJsonArray contextsJson(const QString &extensionId) const;
+    // ER15 — chrome.extension.getViews handle capability: reload the
+    // document of one registered context (the cross-context
+    // Window.location.reload() a real Window reference would carry).
+    // Scoped to the caller's own extension like every relay op.
+    QJsonObject reloadContextPage(const QString &extensionId,
+                                  const QString &contextId);
 
     // ------------------------------------------------------------------
     // ER10 — chrome.offscreen.createDocument/hasDocument/closeDocument.
@@ -631,10 +641,17 @@ private:
     // dead peer cannot pin the slot forever).
     struct RelayContext {
         QPointer<ChromeBridge> bridge;
+        // ER15: stored at registration — a dead bridge still lets a
+        // contexts push reach the rest of its extension.
+        QString extensionId;
         QString kind;           // "background" | "popup" | "page" | ...
         QString contextId;
         QString url;            // documentUrl the context registered
     };
+    // ER15: push '__arktos.contexts' (the current contextsJson) to
+    // every live context of the extension — the synchronous
+    // getViews cache each shim keeps.
+    void pushContexts(const QString &extensionId);
     QList<RelayContext> m_relayContexts;
     int m_nextContextId = 0;
     // ER01: pending origins are generalized to QObject — a page

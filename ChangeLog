@@ -3738,3 +3738,24 @@ Extensions (commands): chrome.commands is served by the hosted
     remapping UI does not exist yet.  Private/tor windows never
     get extension shortcuts, and disable/unload drops the bindings
     in the same pass.
+Extensions (introspection): chrome.management.getSelf,
+    chrome.extension.getViews/getBackgroundPage and a minimal
+    chrome.sidebarAction are served by the hosted runtime (ER15).
+    getSelf answers the real ExtensionInfo record — the extension's
+    own id, localized name/description, version, enabled state and
+    install provenance — and needs no "management" permission, like
+    Chrome; the remaining management members answer a typed
+    no-permission or unsupported error depending on what the
+    manifest declared. getViews enumerates the runtime's context
+    registry (background, popup, extension pages — offscreen
+    documents excluded, type/tabId/windowId filters honored): the
+    caller's own document contributes its real Window while a
+    sibling context gets a typed capability handle carrying the
+    true URL and a working location.reload — a cross-document
+    Window cannot cross the channel, and getBackgroundPage keeps
+    answering the documented MV3 null outside the background
+    context rather than faking one. chrome.sidebarAction exists
+    only when the manifest declares sidebar_action — feature
+    detection stays honest — records panel/title/icon bookkeeping,
+    and answers a typed unsupported for open/close/toggle because
+    Arktos has no sidebar surface.

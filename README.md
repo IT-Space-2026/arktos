@@ -570,7 +570,22 @@ browser-global watcher that counts input inside Arktos windows as
 activity — Chrome's 15-second floor and global-interval semantics
 are kept, while the approximation (in-app input only, no 'locked'
 state) is recorded on the extension's health row rather than
-hidden.
+hidden. Introspection is served from the runtime's own records:
+`chrome.management.getSelf` answers the real ExtensionInfo shape
+(id, localized name/description, version, enabled state, install
+provenance, manifest version) and is — like Chrome — the one
+member that needs no `management` permission; every other member
+answers `no-permission` or `unsupported` depending on the declared
+permissions. `chrome.extension.getViews` enumerates the hosted
+context registry — the caller's real Window plus a typed
+capability handle per sibling context (a cross-document Window
+cannot cross the channel; the handle carries the true URL and a
+working `location.reload`), and `getBackgroundPage` answers the
+documented MV3 `null` outside the background context.
+`chrome.sidebarAction` exists only for manifests that declare
+`sidebar_action`, records panel/title/icon bookkeeping, and
+answers a typed `unsupported` for open/close/toggle — Arktos has
+no sidebar surface.
 
 Enabled extensions that declare a background script additionally get
 a hosted background context: a hidden page on the extension's own

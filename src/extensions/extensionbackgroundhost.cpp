@@ -20,6 +20,7 @@
 #include "extensionbackgroundhost.h"
 
 #include "browserapplication.h"
+#include "browsermainwindow.h"
 #include "browserprofile.h"
 #include "extensioncommands.h"
 #include "extensioneventhub.h"
@@ -29,6 +30,7 @@
 #include "extensionrequestwatcher.h"
 #include "extensionshimbackend.h"
 #include "profilesettings.h"
+#include "tabwidget.h"
 #include "webview.h"
 
 #include <qapplication.h>
@@ -1566,7 +1568,7 @@ QJsonArray ExtensionBackgroundRuntime::contextsJson(
 {
     QJsonArray out;
     for (const RelayContext &ctx : m_relayContexts) {
-        if (!ctx.bridge || ctx.bridge->extensionId() != extensionId)
+        if (!ctx.bridge || ctx.extensionId != extensionId)
             continue;
         QJsonObject entry;
         QString type = QStringLiteral("TAB");
@@ -1587,11 +1589,83 @@ QJsonArray ExtensionBackgroundRuntime::contextsJson(
                              .toString()
                          : ctx.url);
         entry.insert(QStringLiteral("incognito"), false);
-        entry.insert(QStringLiteral("tabId"), -1);
-        entry.insert(QStringLiteral("windowId"), -1);
+        // ER15: a context whose page lives in a real browser tab
+        // answers that tab's ids like Chrome does; hidden/detached
+        // contexts keep -1.
+        int tabId = -1, windowId = -1;
+        QWebEnginePage *ctxPage = ctx.bridge->contextPage();
+        if (ctxPage) {
+            for (BrowserMainWindow *window
+                 : ExtensionEventHub::browsingWindows()) {
+                if (!window || !window->tabWidget())
+                    continue;
+                TabWidget *tw = window->tabWidget();
+                for (int i = 0; i < tw->count(); ++i) {
+                    WebView *view = tw->webView(i);
+                    if (ExtensionEventHub::trackable(view)
+                            && view->page() == ctxPage) {
+                        tabId = ExtensionShimBackend::tabIdFor(view);
+                        windowId =
+                            ExtensionShimBackend::windowIdFor(window);
+                        break;
+                    }
+                }
+                if (tabId >= 0)
+                    break;
+            }
+        }
+        entry.insert(QStringLiteral("tabId"), tabId);
+        entry.insert(QStringLiteral("windowId"), windowId);
         out.append(entry);
     }
     return out;
+}
+
+void ExtensionBackgroundRuntime::pushContexts(
+        const QString &extensionId)
+{
+    if (extensionId.isEmpty())
+        return;
+    QJsonObject payload;
+    payload.insert(QStringLiteral("contexts"),
+                   contextsJson(extensionId));
+    for (const RelayContext &ctx : m_relayContexts) {
+        if (ctx.extensionId == extensionId && ctx.bridge) {
+            emit ctx.bridge->hostEvent(
+                QStringLiteral("__arktos.contexts"), payload);
+            nudgeBridge(ctx.bridge);
+        }
+    }
+}
+
+QJsonObject ExtensionBackgroundRuntime::reloadContextPage(
+        const QString &extensionId, const QString &contextId)
+{
+    auto ok = [](const QJsonValue &v = QJsonValue()) {
+        QJsonObject o;
+        o.insert(QStringLiteral("ok"), true);
+        if (!v.isUndefined())
+            o.insert(QStringLiteral("result"), v);
+        return o;
+    };
+    auto err = [](const QString &code) {
+        QJsonObject o;
+        o.insert(QStringLiteral("ok"), false);
+        o.insert(QStringLiteral("error"), code);
+        return o;
+    };
+    for (const RelayContext &ctx : m_relayContexts) {
+        if (ctx.extensionId != extensionId
+                || ctx.contextId != contextId)
+            continue;
+        QWebEnginePage *page = ctx.bridge
+            ? ctx.bridge->contextPage() : nullptr;
+        if (!page)
+            return err(QStringLiteral("no-page"));
+        page->triggerAction(QWebEnginePage::Reload);
+        return ok();
+    }
+    return err(QStringLiteral("not-found"));
 }
 
 ExtensionBackgroundHost *ExtensionBackgroundRuntime::host(
@@ -1630,11 +1704,13 @@ QString ExtensionBackgroundRuntime::registerRelayContext(
                 m_relayContexts[i].url = url;
             if (isOffscreen)
                 resolveOffscreenOps(bridge);
+            pushContexts(bridge->extensionId());
             return m_relayContexts.at(i).contextId;
         }
     }
     RelayContext ctx;
     ctx.bridge = bridge;
+    ctx.extensionId = bridge->extensionId();
     ctx.kind = contextKind;
     ctx.url = url;
     ctx.contextId = bridge->extensionId() + QLatin1Char('|')
@@ -1643,17 +1719,29 @@ QString ExtensionBackgroundRuntime::registerRelayContext(
     m_relayContexts.append(ctx);
     if (isOffscreen)
         resolveOffscreenOps(bridge);
+    // ER15: every sibling's synchronous getViews cache learns the
+    // set changed — including the just-registered context itself.
+    pushContexts(bridge->extensionId());
     return ctx.contextId;
 }
 
 void ExtensionBackgroundRuntime::unregisterRelayContext(
         ChromeBridge *bridge)
 {
+    // ER15: removed contexts' extensions get a fresh '__arktos.
+    // contexts' push below — the stored id survives a dead bridge.
+    QStringList changedExts;
     for (int i = m_relayContexts.size() - 1; i >= 0; --i) {
         if (!m_relayContexts.at(i).bridge
-                || m_relayContexts.at(i).bridge == bridge)
+                || m_relayContexts.at(i).bridge == bridge) {
+            const QString extId = m_relayContexts.at(i).extensionId;
+            if (!extId.isEmpty() && !changedExts.contains(extId))
+                changedExts.append(extId);
             m_relayContexts.removeAt(i);
+        }
     }
+    for (const QString &extId : changedExts)
+        pushContexts(extId);
     // Any in-flight messages this bridge sent are unanswerable —
     // drop them (the page-side entry has its own timeout).
     const QStringList mids = m_relayPending.keys();

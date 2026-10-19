@@ -60,6 +60,15 @@ class QWebEngineProfile;
 //   idle.*       — queryState/setDetectionInterval/onStateChanged
 //                  over ExtensionIdleWatcher's in-app input clock
 //                  (ER13); 'idle' manifest permission gates it
+//   management.* — getSelf answers the real id/name/version/enabled
+//                  from the manifest + manager records (ER15);
+//                  ungated like Chrome.  Everything else is typed
+//                  no-permission/unsupported.
+//   extension.*  — reloadView, the one cross-context capability the
+//                  shim's getViews handles carry (ER15)
+//   sidebarAction.* — panel/title/icon bookkeeping in the same
+//                  recorded-options model sidePanel uses (ER15);
+//                  open/close/toggle answer typed unsupported
 //   runtime.*    — context bookkeeping (getViews counts)
 //   shim.*       — diagnostics channel: 'note' -> notes(), 'gap' ->
 //                  gapReported() -> the host's health surface
@@ -194,6 +203,12 @@ private:
                                const QJsonObject &args);
     QJsonObject invokeIdle(const QString &method,
                            const QJsonObject &args);
+    QJsonObject invokeManagement(const QString &method,
+                                 const QJsonObject &args);
+    QJsonObject invokeExtension(const QString &method,
+                                const QJsonObject &args);
+    QJsonObject invokeSidebarAction(const QString &method,
+                                    const QJsonObject &args);
     QJsonObject invokeRuntime(const QString &method,
                               const QJsonObject &args);
     QJsonObject invokeShim(const QString &method,
@@ -234,6 +249,10 @@ private:
 
     QJsonObject m_sidePanelOptions;
     QJsonObject m_sidePanelBehavior;
+    // ER15: chrome.sidebarAction bookkeeping — {panel,title,icon},
+    // the same recorded-but-unrendered model m_sidePanelOptions
+    // carries (Arktos has no sidebar surface).
+    QJsonObject m_sidebarAction;
 
     QStringList m_notes;
     QStringList m_gaps;
