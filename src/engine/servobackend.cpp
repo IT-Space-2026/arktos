@@ -1050,6 +1050,13 @@ void ServoView::wheelEvent(QWheelEvent *event)
 
 void ServoView::sendScrollStep(const QPointF &delta)
 {
+    // ENG37: ARKTOS_SERVO_SCROLL_DROP drops every delivery on the
+    // floor — the --servo-smoke broken-scroll verify.  The input
+    // side still paces, slices and counts sends exactly as a real
+    // delivery, but scrollY can never move, so the movement legs
+    // must fail on deadline expiry (never silently).
+    if (qgetenv("ARKTOS_SERVO_SCROLL_DROP") == "1")
+        return;
     // ENG32: prefer the compositor-direct export — se_scroll lands
     // the delta in the painter's scroll tree on the next update (a
     // webrender APZ scroll-offset transaction — no re-layout, a

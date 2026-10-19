@@ -108,8 +108,29 @@ Rules for the agent working this file:
 | ENG35 | AdBlock + BiDi on the Servo engine — wire request blocking through the WebResourceLoad hook; diagnose servo's devtools surface for BiDi, wire or honestly disable — details below | done | 2 | landed (2 runs — run1 built+verified smoke legs, run2 ran gates/suite+bookkeeping): shim se_set_load_gate + SeLoadInfo consulted inside load_web_resource BEFORE the resolver — non-zero return serves the SeHostReply verbatim (deny=empty 403, request never reaches fetch); Qt ServoView::cbLoadGate maps servo destination→ResourceType and resolves the policy through the OWNING profile (view→m_page→profile→requestPolicy — MPROF lesson), Block→403, Redirect→decision.stubBody/stubMime (servo can only serve, never re-issue; bare $removeparam rewrites degrade to Allow — documented); new AdBlockEnginePolicy = Engine::RequestPolicy spelling of the interceptor decision sharing the same network() snapshot incl. rust engine + noteBlockedRequest tally + isWebRequestScheme guard; installOnProfile(::Engine::Profile*) bound in addEngineTab for servo profiles only (WebEngine keeps its interceptor); capabilities().requestIntervention symbol-gated on se_set_load_gate — older artifacts report false honestly. BiDi verdict (diagnosed): servo v0.7.0 DOES ship a devtools server (devtools_server_enabled pref, TCP 127.0.0.1:7000) but it speaks the Firefox Remote Debugging Protocol (JSON packets, components/devtools/protocol.rs), NOT the CDP-over-WebSocket the BidiPanel client drives — real wiring is a separate project; devTools stays false, Tools-menu devtools rows + panel context combo disable servo tabs with 'devtools unavailable on Servo' (SERVO-SPIKE.md table corrected: interception partial→works, devtools CDP-flavored→Firefox-RDP absent-for-us). Cosmetic CSS hiding out of scope — no style-injection surface in this pin. Verified: --servo-smoke all 7 ENG35 legs PASS (load-gate-symbol, gate-policy-bound, adblock-allow-passes, gate-consults-policy, adblock-deny-tally, bidi-devtools-false, bidi-combo-disabled-reason; scroll-leg FAILs are the llvmpipe ~380ms/frame env flake under main-lane load, no scroll code touched), cargo shim rebuilt + symbol exported, qmake+make -j2 clean, make check 4 gates PASS (warnings no-rust build, supplychain, engine-audit, rustcoverage 90.50/91.68/89.25) + all adblock/webpage/webview suites 0 failed; 4 leg fails = documented env flakes only (darkThemeReaderGlyph, stopReloadState, shieldPopupFirstShow — same trio flagged in MPROF04/PVAULT04 worklogs, pre-date this diff; fileSchemeErrors PASS standalone) |
 | SEC19 | Second rank source (Majestic Million) + third threat feed (Phishing.Database) — details below | done | 1 | landed: Majestic second rank source (own 12-col grammar + majestic-million.csv file, min-rank merge, rc_tranco_file_entries guards each commit, per-source stamps) + Phishing.Database in DomainBlocklist; one Update gesture/consent gate covers all three — verified: cargo 254/254, tst_trancolist 8/8, tst_domainblock 13/13, tst_settingsdialog 56/56, make check 4 gates PASS + suite green except 4 documented env flakes |
 | WKB01 | EasyList→WebKit content-blocker JSON converter — Safari-format rule export from the adblock rule model — details below | done | 2 | resumed interrupted run — rustcore-side module in arktos_adblock_ffi (contentblocker.rs) drives upstream adblock::content_blocking translators per ParsedLine w/ raw_line retained; JSON doc {rules,dropped[{rule,why}],meta counts}; Safari ordering (exceptions after blocks, fp-document guard last); $badfilter honored by filter-id; FFI arktos_adblock_contentblocker_convert + AdBlockRustEngine::contentBlockerJson; also repaired 3 BRAND01 casualties (corrupt testcert DER regenerated, qrcode matrices regenerated for renamed payload, About dialog upstream copyright restored) — verified: cargo test 12/12, tst_contentblocker 7/7 offscreen, supplychain + engine-audit gates PASS (warnings + rustcoverage green on this tree in attempt 1), suite rc=1 on host-load flakes only — all 10 failing binaries re-verified standalone 0 failed incl. bmw crash-loop 77/77 |
-| ENG37 | Scroll-bench contention hardening — deadline-convergence + CONTENTION marker for the wall-clock-fragile servo-smoke scroll legs — details below | pending | 0 | flakes under any CPU contention since ~ENG29; ENG36 A/B-proved it on a 42h runaway repro.py |
+| ENG37 | Scroll-bench contention hardening — deadline-convergence + CONTENTION marker for the wall-clock-fragile servo-smoke scroll legs — details below | done | 4 | landed (4 runs — r1 implemented+built+smoke-verified unloaded & contended, r2 drop-hook verify + make check, r3 fixed 2 latent suite landmines + full suite re-run, r4 bookkeeping): scroll legs poll to deadline convergence via file-scope ServoSmokeScroll helpers (nested [&]-lambda chain miscompiled at -O2 — clobbered capture slot SIGSEGV'd the bench, root-caused by disassembly) — se_scroll AND se_wheel paths, per-notch/pixel/accel/burst/overscroll/direction legs all converted; moved-assertion intact (target scrollY must still arrive — generous TIME budget only), <3s fast path silent, late pass/timeout prints 'CONTENTION: loadavg=X' (/proc/loadavg vs ncpu); settle legs now wall-clock bounded (30s) not iteration-bounded; drive-to-bottom capped 120s; frame-time already advisory; ARKTOS_SERVO_SCROLL_DROP=1 drops deliveries post-bookkeeping for the broken-scroll verify; fixed 2 landmines the suite exposed (tst_engineadapter hardcoded dead pid 4242 collided with a live process → derive pid+250k; tst_browsermainwindow servoStartPage assumed single-view budget → ENG36 multi-view makes the 2nd tab a servo EngineTab, poll engine-side commit) — verified: all 12 scroll legs PASS unloaded (no added latency) AND under loadavg~14 busy-loop contention, loadavg~44 honest TIMEOUT prints CONTENTION marker, DROP=1 → all 6 movement legs FAIL on ~30s deadline while input-side legs PASS + overall FAIL, make check 4 gates PASS (warnings no-rust, supplychain, engine-audit 177 files, rustcoverage 95.05/91.78/89.25), suite all 96 binaries 0 failed incl browsermainwindow 77/77 + engineadapter 13/13 |
 | ENG36 | Multi-view Servo — multiple live Servo tabs on the shared engine: per-view RenderingContext/WebView + webview.id()-routed delegates — details below | done | 1 | landed: shim engine/view split (se_engine_init idempotent + se_view_create/destroy + VIEWS registry + se_view_count; legacy se_init/se_destroy kept as aliases), Qt g_views routing + shared pump on qApp anchor; --servo-smoke all ENG36 legs PASS (2 views load+paint, survivor, remint), cargo test 7/7, make check 4 gates PASS — scroll-bench reds A/B-proven environmental (runaway repro.py; fails on unmodified HEAD too) |
+| WK01 | webkit-env.sh + link/run probe — sourceable env file + a compiled webkit_get_*_version() smoke — details below | done | 0 | landed .devin/webkit-env.sh (PKG_CONFIG_PATH/LD_LIBRARY_PATH/LD_RUN_PATH/C_INCLUDE_PATH + ARKTOS_WPE_* contract vars + compat LD_PRELOAD; glibc dir kept OUT of LD_LIBRARY_PATH per ACQUIRED) + spikes/webkit/probe (webkit-probe.c + build-probe.sh, binary gitignored); repaired dangling ~/wpe libsoup-3.0.so dev symlink -> host .so.0 (noted in ACQUIRED.md); link recipe needed --no-as-needed on the compat shim (gcc spec defaults --as-needed, dropped it -> gstreamer g_sort_array shlib check failed) + --disable-new-dtags for transitive DT_RPATH (RUNPATH let host libm load -> GLIBC_2.43 version fail) — verified: source env && pkg-config --modversion wpe-webkit-2.0 = 2.54.1 (>=2.44), probe compiles+runs and prints 'WPE WebKit 2.54.1' |
+| WK02 | Spike: harness skeleton + event-loop verdict — which GMainContext pump model works inside Qt — details below | done | 1 | needs:task:WK01 — landed spikes/webkit/wpe-harness (own qmake project, not in SUBDIRS): WPEDisplayHeadless+WPEToplevel+WPEView+WebKitWebView("display" prop→internal WPEView) 800x600, 3 loop models behind --loop=; VERDICT: all 3 deliver STARTED→COMMITTED→FINISHED — (1) QPAEventDispatcherGlib pumps WebKit's sources natively on the GUI thread = BACKEND MODEL, (2) QT_NO_GLIB→QUnixEventDispatcherQPA + 60Hz g_main_context_iteration drain works, (3) private pushed ctx + g_main_loop_run + queued invokeMethod works BUT two measured traps: g_timeout_add-family attach GLOBAL-default not thread-default (embedder sources need explicit g_source_attach) + worker permanently becomes WebKit's main thread so normal exit self-SIGABRTs in static teardown → _exit/coordinated shutdown (verdict in harness header comment for WK05); infra fixes: binary-patched PKGLIBEXECDIR+injected-bundle strings in libWPEWebKit to ~/wpe/wpe-webkit-2.0 symlink (backup/ kept, ACQUIRED.md noted) + bwrap sandbox works after whitelisting ~/wpe dirs via webkit_web_context_add_path_to_sandbox — verified: run-harness.sh ALL MODELS PASS sandboxed (glib 149ms/timer 230ms/thread), ldd clean, make check untouched |
+| WK03 | Spike: render path — WPEBuffer → import_to_pixels → QImage → QWidget paint + screenshot proof — details below | done | 1 | needs:task:WK02 — wpe-harness gained render mode (--shot/--resize-shot/--resize/--witness): RasterWidget QWidget consumes the WPEView "buffer-rendered" signal → wpe_buffer_import_to_pixels (borrowed buffer-owned GBytes — never unref; ARGB8888-premul → QImage ARGB32_Premultiplied, SHM stride honored) → paintEvent blit; resizeEvent → wpe_toplevel_resize and the NEXT buffer arrives at new dims (measured 640x480 frame #2); WebKit owns rendered/released bookkeeping — embedder observes only; buffers arrive as WPEBufferDMABuf under WEBKIT_SKIA_ENABLE_CPU_RENDERING=1 and import_to_pixels still maps them; run-render.sh gate = bundled render-fixture + advisory live https://example.com leg — verified: RENDER PASS sandboxed offscreen, wk03-render.png 800x600 non-bg=480000/480000 distinct=738 dominant=#eef4ff(60.3%) witness-miss=none, wk03-resize.png 640x480 same-gate, example.com advisory PASS (243 colors, real page shot), run-harness.sh ALL 3 MODELS still PASS; evidence PNGs committed under spikes/webkit/wpe-harness/wk03-*.png
+| WK04 | Spike: input + eval smoke — synthetic click navigates, JS eval returns a typed value — details below | done | 1 | needs:task:WK03 — wpe-harness gained --input mode + run-input.sh gate: pointer move+down+up via wpe_event_pointer_*_new → wpe_view_event hit-tests the fixture #next link → uri property reaches fixture2.html (wpe_view_focus_in required post-map or input drops; press_count is DOWN-only — ctor asserts); keyboard leg exercised: WPE_KEY_Return down/up activates JS-focused #back anchor → navigates home (keysym shape documented: keyval = XKB/X11 keysym space WPE_KEY_*, keycode = evdev scancode, Qt::Key needs a mapping table); webkit_web_view_evaluate_javascript → JSCValue round-trips number(42)+string — verified: INPUT+EVAL PASS all 4 legs sandboxed offscreen, run-harness.sh ALL 3 MODELS still PASS, run-render.sh RENDER PASS + example.com advisory PASS |
+| WK05 | Spike verdict doc — .devin/WEBKIT-SPIKE.md per-member table (the SERVO-SPIKE.md shape) — details below | done | 1 | needs:task:WK04 — landed .devin/WEBKIT-SPIKE.md: per-member verdict table over every Engine::Page/Profile/Backend member (runtime-proven loop/render/input/eval rows + header-verified survey: decide-policy, WebKitNetworkSession profiles, cookie manager, download-started, TLS errors, per-session SOCKS proxy, session-state, UCM scripts/worlds, content-blocker JSON= WKB01 format, WebKitWebExtension MV2/3 present-unproven); five gating questions answered — event-loop=QPAEventDispatcherGlib backend model, buffer path=buffer-rendered→import_to_pixels→QImage, packaging=~/wpe sidelib+interp-scoped glibc recipe, interception=layered (decide-policy block + content-blocker + uri-scheme; NO arbitrary http(s) rewrite — honest gap vs Servo), version floor≥2.54; named gaps: no suspend/resume (Discarded via SessionState round-trip), no renderer PID, no download pause, no inspector channel, printing absent; conservative Capabilities table written for WK07 — verified: doc committed, every interface member has a verdict row |
+| WK06 | Build gate — engine.pri `webkit=1` CONFIG, pkg-config detection, ARKTOS_WEBKIT, no-libs honesty, opt-outs — details below | done | 1 | needs:task:WK01 — landed webkit gate mirroring the servo stanza: .qmake.conf auto-enables CONFIG+=webkit when pkg-config resolves wpe-webkit-2.0+wpe-platform-2.0 (~/wpe env or system WPE); engine.pri adds -DARKTOS_WEBKIT(+LINKED), PKGCONFIG +=, sid-glibc recipe (interp+DT_RPATH+compat shim) under ARKTOS_WPE_* env, composed backend-set message; new src/engine/webkitbackend.{h,cpp} compile-but-inert skeleton (initialize()=librariesLinked, honest pageUnavailableReason, no probe — WK07); opt-outs webkit=0/nowebkit=1/CONFIG-=webkit — verified: webkit=1+env links -lWPEWebKit w/ sid ld.so interp + binary runs --quit-after-load rc=0, webkit=0 vs CONFIG-=webkit identical makefiles zero webkit inputs, forced webkit=1 sans libs compiles inert TU 0 warnings, default build relinked host interp |
+| WK07 | WebkitBackend class + registry probe + "WebKit x.y.z" displayName + conservative capabilities — details below | done | 1 | landed: static-init addProbe self-registration (servo shape, no engineregistry.cpp edit); "WebKit 2.54.1" displayName off webkit_get_*_version; caps = WEBKIT-SPIKE conservative table (interception/injection/eval/perPageSettings/lifecycleDiscard/contextMenuInfo/certOverride/downloads on; cookieFilter/devTools/extensions off; all-false unlinked); skeleton WebkitProfile/Page/View compile; createProfile hands out the options bag, createPage/createView refuse w/ pageUnavailableReason until WK08 → switcher shows disabled-with-reason, inert build registers nothing (servo missing-artifact contract); engine-smoke skips declared pageless backends — verified: --engine-list 3 entries real version, --engine-smoke PASS, tst_engineswitch 27/27 incl. new webkitBackendSurface leg, engineadapter 13/13 devtools 20/20 tabwidget 36/36, inert TU 0 warnings, --quit-after-load rc=0 offscreen --disable-gpu |
+| WK08 | WebkitView/Page minimal — headless WPEView + raster paint in a QWidget + EngineTab hosts it unchanged — details below | done | 0 | needs:task:WK07 — landed: WebkitPage wraps WebKitWebView+internal WPEView on per-page WPEToplevel over shared headless WPEDisplay (GUI-thread glib-dispatcher model); WebkitView imports "buffer-rendered" via wpe_buffer_import_to_pixels→ARGB32 QImage→paintEvent blit, resize→wpe_toplevel_resize, focus↔wpe_view_focus_in/out; WebkitProfile carries lazy WebKitNetworkSession (ephemeral OTR); load→webkit_web_view_load_uri; load-changed/load-failed/notify::uri/title/progress wired; createPage/createView real, pageUnavailableReason empty when linked; engine.pri adds wpe-platform-headless-2.0 + baked ARKTOS_WPE_PREFIX_DIR — verified: tst_engineswitch 28/28 incl. new webkitViewRenders leg (EngineTab file:// fixture, loadFinished(true), title, non-blank grab w/ witness colors), --engine-list 3 backends, --engine-smoke PASS incl. webkit page/view/load/zoom/eval legs, inert TU compiles clean — offscreen |
+| WK09 | Load signals — load-changed/progress/title/uri/favicon → Page signal contract; stop/reload — details below | done | 1 | needs:task:WK08 — notify::page-icons→iconChanged (favicon db enabled per session — opt-in, ephemeral stays in-memory — WebKitImage BGRA→ARGB32-premul→QIcon, content-deduped); load-failed claims the failure so WebKit's error page can't emit a fake-success pair; progress gated on live load (cancel reset can't post late); REDIRECTED/COMMITTED refresh urlChanged; observe-only decide-policy maps WebKitNavigationType→lastNavigationType (WK17 reuses the hook); inert runJavaScript warning fixed — verified: tst_engineswitch 29/29 incl. new webkitLoadSignals (HTTP fixture: order started→progress→finished, url/title/icon arrival + icon pixel, reload→Reload, stop→loadFinished(false)), engineadapter 13/13, tabwidget 36/36, --engine-smoke PASS, check-warnings PASS, inert TU clean — offscreen --disable-gpu |
+| WK10 | History — WebKitBackForwardList → historyItems/backItems/goToHistoryEntry — details below | done | 0 | real WebKitBackForwardList mapped both GList slices; bf navs stamp BackOrForward + suppress spurious cancel; tst_engineswitch 30/30 incl webkitHistory |
+| WK11 | Profile storage — per-id WebsiteDataManager under profiles/<id>/WebKit + OTR ephemeral session — details below | pending | 0 | needs:task:WK09 |
+| WK12 | clear(StorageAreas) + cookie accept-policy mapping — details below | pending | 0 | needs:task:WK11 |
+| WK13 | Input — pointer/scroll/key events → wpe event API + resize — details below | pending | 0 | needs:task:WK08 |
+| WK14 | Zoom + find + lifecycle — set_zoom_level, WebKitFindController, suspend/resume (symbol-gated) — details below | pending | 0 | needs:task:WK09 |
+| WK15 | JS eval typed results — evaluate_javascript + JSCValue→QVariant marshaling — details below | pending | 0 | needs:task:WK09 |
+| WK16 | Script injection + worlds + host channel — UserContentManager, world-name mapping, script-message reply — details below | pending | 0 | needs:task:WK11 needs:task:WK15 |
+| WK17 | Navigation veto + custom schemes — decide-policy → RequestPolicy; register_uri_scheme → arktos-file:/abp: — details below | pending | 0 | needs:task:WK11 |
+| WK18 | Content-blocker adblock — rule→JSON subset converter + capability honesty — details below | pending | 0 | needs:task:WK17 |
+| WK19 | Capabilities + surfaces — cert errors, context menu, permissions, downloads, settings/About/"WebKit x.y.z" consistency — details below | pending | 0 | needs:task:WK16 needs:task:WK18 |
+| WK20 | Perf — dmabuf/EGLImage → GL texture path (raster stays fallback) — details below | pending | 0 | needs:task:WK08 |
+| WK21 | Stretch audit — SOCKS5/Tor leak check, WebExtensions probe, WebKitWebInspector embed — details below | pending | 0 | needs:task:WK19 |
 
 ## Task details
 
@@ -750,3 +771,310 @@ scroll (env flag forcing se_scroll to no-op, if a cheap test hook
 exists — else simulate via a shim leg) still FAILS on deadline
 expiry. `make check` 4 gates PASS; row notes record the
 late-pass/contention-marker behavior.
+
+## WebKit spine (moved from Arora-Task-WebKit.md — WK00 done, ~/wpe on disk)
+
+### WK01
+
+webkit-env.sh + link/run probe — WK00 done: libs at ~/wpe (see ~/wpe/ACQUIRED.md). Write
+`.devin/webkit-env.sh` — sourceable, mirrors qt-env.sh's shape: sets
+PKG_CONFIG_PATH/LD_LIBRARY_PATH/LD_RUN_PATH (+C_INCLUDE_PATH if
+headers live in the prefix) so `pkg-config --modversion
+wpe-webkit-2.0` resolves. Header comment documents what was installed
+and which API level (WPEPlatform ≥2.54 / transitional 2.4x-2.5x /
+legacy libwpe). Then compile+run a trivial probe:
+`webkit_get_major_version()/minor/micro` printed — proves headers,
+lib, and runtime loading all work.
+
+Verify: `source .devin/webkit-env.sh && pkg-config --modversion
+wpe-webkit-2.0` prints ≥2.44 and the compiled probe binary runs and
+prints a version triple.
+
+### WK02
+
+Spike: harness skeleton + event-loop verdict — needs:task:WK01.
+Standalone project at `spikes/webkit/wpe-harness/` (own qmake project,
+NOT in top-level SUBDIRS — `make check` untouched). (a) Create a
+WPEDisplayHeadless display + WPEToplevel + WPEView + WebKitWebView
+sized 800x600. (b) THE EVENT-LOOP QUESTION, first-class: attempt 1 —
+view on Qt GUI thread, rely on Qt's glib event dispatcher
+(QEventDispatcherGlib is default in most Qt builds); if
+load-finished never arrives, attempt 2 — QBasicTimer driving
+g_main_context_iteration(false) ~60Hz; attempt 3 — dedicated
+std::thread running g_main_loop_run + QMetaObject::invokeMethod
+queued marshaling into Qt. Record which model works and WHY (the
+answer becomes the backend's threading contract — document it in the
+harness header comment).
+
+Verify: harness binary starts, creates the view, and a `load uri`
+call is issued without deadlock/crash; the loop-model finding is
+written into the source comment AND carried forward to WK05's doc.
+
+### WK03
+
+Spike: render path — needs:task:WK02. Take the view's produced
+WPEBuffer, `wpe_buffer_import_to_pixels()` → QImage → QWidget
+paintEvent; resize handling (re-size the WPEView on resizeEvent).
+Prove with an actual rendered page: `https://example.com`, or a
+bundled file:// fixture if the sandbox has no network.
+
+Verify: harness saves a non-empty PNG (assert >N non-background
+pixels, not just file-exists) — screenshot artifact committed under
+spikes/webkit/ as evidence. A green-painted blank page does NOT
+count as done.
+
+### WK04
+
+Spike: input + eval smoke — needs:task:WK03. (a) translate a
+QMouseEvent click into the wpe pointer-event API and click a link in
+a two-page fixture → assert navigation happened (uri property
+changed). (b) `webkit_web_view_evaluate_javascript` → assert the
+JSCValue result round-trips a typed value (number + string).
+(c) If a wpe keyboard API was exercised, note the keysym mapping
+shape in a comment.
+
+Verify: click navigates, eval returns correct typed values — print
+PASS/FAIL lines and exit nonzero on failure.
+
+### WK05
+
+Spike verdict doc — needs:task:WK04. Write `.devin/WEBKIT-SPIKE.md`
+in the SERVO-SPIKE.md format: per-member verdict table over the
+Engine interface (works/partial/absent + evidence), the five gating
+questions answered (event-loop model decision documented, buffer
+path, packaging status from WK00, interception story, version floor),
+and the recording of which WebKit version/API level the findings
+apply to. Quick source-survey members (decide-policy, uri-scheme,
+cookie manager, download, tls-error, suspend, proxy settings) get
+source/API-doc evidence — members needing runtime proof get it.
+
+Verify: doc committed; every Engine::Page/Profile member has a
+verdict row; the capability recommendations feed WK07.
+
+### WK06
+
+Build gate — needs:task:WK01. engine.pri `webkit` CONFIG block
+mirroring the servo stanza exactly: pkg-config detect
+wpe-webkit-2.0 + wpe-platform-2.0, `PKGCONFIG +=` them, -DARKTOS_WEBKIT,
+message "Arktos engine backends: webengine + servo? + webkit" style
+listing, opt-outs `webkit=0`/`nowebkit=1`/`CONFIG-=webkit` symmetric
+with noservo. When libs absent: backend still compiles (file is in
+the build but initialize()/isSupported() report unavailable — match
+the servo pattern of compile-but-inert, NOT conditional source
+exclusion — check servobackend's approach and mirror it). No edit to
+engineregistry.cpp (the addProbe seam exists for this).
+
+Verify: `qmake webkit=1 && make` links with libs present;
+`qmake webkit=0` and `qmake CONFIG-=webkit` build identical binaries
+without webkit symbols; default `qmake` picks sane auto-detect.
+
+### WK07
+
+WebkitBackend class — needs:task:WK06 + WK05 (capabilities informed
+by the verdict doc). `src/engine/webkitbackend.{h,cpp}`:
+id()="webkit"; displayName()=`WebKit %1.%2.%3` from
+webkit_get_*_version() — the user's explicit ask is the switcher
+showing the version like "Servo 0.7.0"; engineNote() honest
+experimental line; capabilities() = the spike-verified table,
+conservative (only what WK01-04 proved); initialize()=lib-loadable
+probe; pageUnavailableReason() when libs absent. Skeleton
+WebkitProfile/WebkitPage/WebkitView classes compiling. Registration
+via a static-init addProbe — no engineregistry.cpp edit.
+
+Verify: `--engine-list` shows three entries with real version;
+settings combo lists it; WITHOUT libs the binary builds, lists it
+unavailable, menu hides it (or shows disabled-with-reason — match
+what Servo does). Small autotest leg: registry contains "webkit",
+displayName parses a version triple, caps honesty.
+
+### WK08
+
+WebkitView/Page minimal — needs:task:WK07. Real (if minimal)
+WebkitView = QWidget subclass painting imported buffers (WK03 code,
+productized); WebkitPage wraps WebKitWebView+WPEView created on the
+WK02-decided loop model; WebkitProfile minimal session object. A
+load() issued on the page must actually render into the widget.
+EngineTab hosts it with ZERO changes — verify by instantiating.
+
+Verify: autotest leg — EngineTab on the webkit backend loads a
+fixture URL and the view paints non-blank pixels (QImage grab, or
+the loadFinished signal at minimum). Offscreen only.
+
+### WK09
+
+Load signals — needs:task:WK08. load-changed →
+loadStarted/loadFinished(bool); notify::estimated-load-progress →
+loadProgress (real fractions — Servo can't, we can);
+notify::uri → urlChanged; notify::title → titleChanged;
+notify::favicon → iconChanged. stop()/reload() wired.
+NavigationType from WebKitNavigationType where the enum surfaces.
+
+Verify: autotest — load a fixture, assert signal order
+(started→progress→finished) and title/url/favicon arrival.
+
+### WK10
+
+History — needs:task:WK09. WebKitBackForwardList →
+historyItems/backItems/forwardItems/canGoBack/canGoForward/
+goToHistoryEntry/currentHistoryIndex. These are REAL history objects
+(get_list/back_list/forward_list) — map them directly, unlike
+Servo's synthetic tracking.
+
+Verify: autotest — two-page session, back/forward round-trip, item
+urls/titles correct, currentHistoryIndex tracks.
+
+### WK11
+
+Profile storage — needs:task:WK09. Per-profile
+WebKitWebsiteDataManager/WebKitNetworkSession with base_directory
+rooted in the profile's storage tree (profiles/<id>/WebKit or the
+VSEC02-approved equivalent — pick a name that can't collide with the
+QtWebEngine dir; document the choice). OTR → ephemeral session —
+assert nothing persists. storageName plumbing from ProfileOptions.
+
+Verify: autotest — cookie/localStorage set on profile A invisible
+to profile B; artifacts land under the profile dir (assert path);
+OTR session writes zero files.
+
+### WK12
+
+clear() + cookie policy — needs:task:WK11. Profile::clear(StorageAreas)
+→ webkit_website_data_manager_clear flag mapping (cache/cookies/
+dom-storage/serviceworker flags). Cookie accept-policy →
+WebKitCookieManager set_accept_policy + set_persistent_storage for
+the named profile. KeepPolicy mapping honest.
+
+Verify: autotest — clear(CookiesArea) empties the store
+(cookie-manager read-back), clear(AllAreas) drops storage.
+
+### WK13
+
+Input — needs:task:WK08. QWidget events → wpe event API: pointer
+move/button, wheel (line+pixel delta handling — check whether wpe
+takes pixel or step units), key press/release with keysym
+translation, resize → wpe_view size. WebKit drives its own frame
+schedule — no Servo-style coalescing needed.
+
+Verify: spike-harness-style or autotest — synthetic click navigates,
+key events reach the page (eval reads a keydown log), resize re-renders.
+
+### WK14
+
+Zoom + find + lifecycle — needs:task:WK09. setZoomFactor/zoomFactor →
+webkit_web_view_set_zoom_level. findText → WebKitFindController
+(search + found/did-fail → FindResult). setLifecycleState →
+webkit_web_view_suspend/resume IF the resolved WPE exports it —
+symbol/version-gate like servo's optional exports; absent → honest
+Active-only capability note.
+
+Verify: autotest — zoom changes render scale (screenshot diff or
+zoom_factor read-back), findText reports found, suspend/resume if
+available.
+
+### WK15
+
+JS eval typed results — needs:task:WK09. runJavaScript →
+evaluate_javascript with JSCValue→QVariant marshaling
+(string/number/bool/null; object → JSON.stringify documented limit;
+undefined→invalid). Error propagation to the result callback.
+toHtml → document.documentElement.outerHTML eval.
+
+Verify: autotest — eval returns typed QVariant per type; syntax
+error surfaces as error, not crash.
+
+### WK16
+
+Script injection + worlds + host channel — needs:task:WK11 + WK15.
+insertScript → WebKitUserContentManager add_script: injection-time
+mapping (DocumentCreation→start, Deferred→end), world name mapping —
+Engine::ArktosChannelWorld (0xa0) onto WebKit named script worlds so
+the SEC24 private-world contract holds. runJavaScriptLifted actually
+runs in the named world. Host channel:
+webkit_user_content_manager_register_script_message_handler
+(_with_reply on 2.5x — version-gate) → the native arktos-channel
+transport; evaluate which JS assets (autofill.js, arktos-channel.js,
+reader) can run — capability-gate whatever needs a missing reply
+surface, never fake.
+
+Verify: autotest — injected script at DocumentCreation in named
+world; message round-trip; main-world page JS cannot enumerate the
+private-world objects (SEC24 shape).
+
+### WK17
+
+Navigation veto + custom schemes — needs:task:WK11. decide-policy
+signal → Engine::RequestPolicy::decide for navigation + new-window
+actions (main-frame allow/deny; external-scheme prompt analog).
+webkit_web_context_register_uri_scheme → serve arktos-file:, abp:,
+arktos-resource:, arktos-cert-error:, arktos-http-warning:,
+arktos-site-block: through the same engine-agnostic serving adapters
+as backend-0 where separable.
+
+Verify: autotest — blocked nav never loads (fixture policy denying
+a marker URL); arktos-file: serves a real listing; abp: subscribe
+flow reaches the app.
+
+### WK18
+
+Content-blocker adblock — needs:task:WK17. THE interception answer:
+WebKit has no per-request veto — compile adblock rules into WebKit
+content-blocker JSON via WebKitUserContentFilterStore. Scope
+honestly: converter covers url-filter + resource-type + block/
+block-cookies/css-display-none actions; $redirect/stub-serving has
+NO equivalent → degrade to block, count + log the drops. Then the
+capability decision: is requestInterception true (for the block
+subset)? If the honest answer needs a new flag
+(declarativeBlocking), add it additively to engineinterface.h with a
+doc comment — never fake parity. Cookie blocking rules map to the
+filter's block-cookies action.
+
+Verify: autotest — an adblock fixture URL blocked via compiled
+filter; cosmetic rule hides an element; test output prints the
+converted/dropped rule counts.
+
+### WK19
+
+Capabilities + surfaces — needs:task:WK16 + WK18. Fill the
+Capabilities table with verified truth (update as WK18 settled the
+interception question). Wire: cert errors
+(load-failed-with-tls-errors + CertificateInfo → our interstitial
+contract — match WebEngineBackend's surface), context-menu →
+ContextMenuInfo, WebKitPermissionRequest → WebPermissionManager,
+WebKitDownload → DownloadManager/rustdl handoff (whatever generic
+interface exists), renderProcessId (real WebProcess pid if exposed,
+else -1). CONSISTENCY PASS — the user's requirement: "WebKit x.y.z"
+renders identically in the engine indicator tooltip + menu, the
+settings default-engine combo, the About dialog engine line, and
+--engine-list. Verify the Tor lock is consulted (WebKit must not be
+offered for Tor tabs until WK21 clears it).
+
+Verify: `make check` green (minus documented env flakes); a fresh
+profile browses a fixture page end-to-end on the webkit backend
+through real chrome.
+
+### WK20
+
+Perf path — needs:task:WK08. wpe_buffer_import_to_egl_image →
+QOpenGLWidget/QRhiWidget texture — dmabuf import + fence handling
+(renderingFence/releaseFence). Keep raster copy as fallback when EGL
+import fails. This is the heavy task; it exists to prove the path,
+not to benchmark.
+
+Verify: autotest legs pass on the GL path; a rough frame-time log
+shows the difference; raster fallback still works when import is
+unavailable.
+
+### WK21
+
+Stretch audit — needs:task:WK19. (a) SOCKS5: set a session
+WebKitNetworkProxySettings socks:// proxy, audit leaks — does DNS
+resolve remotely? WebRTC host candidates leak? Captive-portal/aux
+requests bypass? Only if clean does a "webkit allowed for Tor"
+capability exist — default stays Chromium-locked. (b) WebExtensions:
+does the resolved WPE version expose the WebKitWebExtension GLib API
+(2.52+ GTK, WPE status varies)? Set caps.extensions to the verified
+answer. (c) WebKitWebInspector: embeddable view or separate-window
+only — affects the devTools capability.
+
+Verify: verdict entries appended to .devin/WEBKIT-SPIKE.md;
+capability flags match measured reality.

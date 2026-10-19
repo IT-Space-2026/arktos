@@ -43,6 +43,8 @@
 #include <toolbarsearch.h>
 #include <webview.h>
 
+#include <qdir.h>
+#include <qfile.h>
 #include <qlabel.h>
 #include <qmenu.h>
 #include <qset.h>
@@ -51,6 +53,10 @@
 #include <qtcpserver.h>
 #include <qtcpsocket.h>
 #include <qwebenginepage.h>
+
+#ifdef ARKTOS_WEBKIT
+#include "webkitbackend.h"
+#endif
 
 #include "fakeengine.h"
 
@@ -140,6 +146,10 @@ private slots:
     void engineTabLocationBar();
     void engineTabSingleIcon();
     void engineTabReload();
+    void webkitBackendSurface();
+    void webkitViewRenders();
+    void webkitLoadSignals();
+    void webkitHistory();
 
 private:
     FakeEngineBackend *m_fake = nullptr;
@@ -1130,6 +1140,523 @@ void tst_EngineSwitch::engineTabReload()
     QCOMPARE(unmappedRoot->isEnabled(),
              widget.webView(1)->enginePage()
                  ->action(Engine::StandardAction::Forward)->isEnabled());
+}
+
+// WK07 — the WPE WebKit backend's registration contract: the
+// static-init probe registers it only when the WPE packages were
+// linked (servo's missing-artifact-hide, same shape), the display
+// name carries the real version triple, and the capability table is
+// the conservative spike-verified set with every named gap off.
+void tst_EngineSwitch::webkitBackendSurface()
+{
+#ifdef ARKTOS_WEBKIT
+    Engine::Backend *webkit =
+        EngineRegistry::backendForId(QStringLiteral("webkit"));
+#ifdef ARKTOS_WEBKIT_LINKED
+    QVERIFY(webkit);
+    QCOMPARE(webkit->id(), QStringLiteral("webkit"));
+
+    // "WebKit x.y.z" — the user's explicit ask, the same shape as
+    // "Servo 0.7.0": parse the triple out of the name rather than
+    // trusting a label.
+    const QStringList parts =
+        webkit->displayName().split(QLatin1Char(' '));
+    QCOMPARE(parts.count(), 2);
+    QCOMPARE(parts.at(0), QStringLiteral("WebKit"));
+    const QStringList triple = parts.at(1).split(QLatin1Char('.'));
+    QCOMPARE(triple.count(), 3);
+    for (const QString &field : triple) {
+        bool ok = false;
+        field.toInt(&ok);
+        QVERIFY2(ok, qPrintable(webkit->displayName()));
+    }
+
+    // .devin/WEBKIT-SPIKE.md's conservative table — on: interception
+    // (decide-policy + content-blocker), injection, eval, per-page
+    // settings, lifecycle discard, context menus, cert override,
+    // downloads; off: the named gaps (no per-attempt CookieAttempt
+    // functor, no embedder devtools channel, unprobed
+    // WebKitWebExtension).
+    const Engine::Capabilities caps = webkit->capabilities();
+    QVERIFY(caps.requestInterception);
+    QVERIFY(caps.scriptInjection);
+    QVERIFY(caps.scriptEvaluation);
+    QVERIFY(!caps.cookieFilter);
+    QVERIFY(caps.perPageSettings);
+    QVERIFY(caps.lifecycleDiscard);
+    QVERIFY(caps.contextMenuInfo);
+    QVERIFY(caps.certificateOverride);
+    QVERIFY(!caps.devTools);
+    QVERIFY(!caps.extensions);
+    QVERIFY(caps.downloads);
+
+    // WK08: the backend hosts real (if minimal) pages now — the
+    // switcher offers a live entry and no disabled-reason remains.
+    QVERIFY(!webkit->engineNote().isEmpty());
+    QVERIFY2(webkit->pageUnavailableReason().isEmpty(),
+             qPrintable(webkit->pageUnavailableReason()));
+#else
+    // Compile-but-inert (webkit=1 without the WPE packages): the
+    // probe's initialize() refused, so the backend never registered —
+    // the same hidden-not-dead-entry contract as a missing servo
+    // artifact.
+    QVERIFY(!webkit);
+#endif
+#else
+    QSKIP("webkit backend not in this build");
+#endif
+}
+
+// WK08 — the acceptance leg: an EngineTab on the webkit backend (the
+// host is UNCHANGED — createPage + createView is all it calls) loads
+// a file:// fixture, loadFinished(true) arrives, and the raster path
+// puts real non-blank pixels into the view widget.
+void tst_EngineSwitch::webkitViewRenders()
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    Engine::Backend *webkit =
+        EngineRegistry::backendForId(QStringLiteral("webkit"));
+    QVERIFY(webkit);
+    QVERIFY2(webkit->pageUnavailableReason().isEmpty(),
+             qPrintable(webkit->pageUnavailableReason()));
+
+    Engine::ProfileOptions options;
+    options.offTheRecord = true;   // ephemeral session — no disk state
+    Engine::Profile *profile = webkit->createProfile(options, this);
+    QVERIFY(profile);
+
+    EngineTab tab(webkit, profile);
+    tab.resize(800, 600);
+    tab.show();
+    QVERIFY(tab.page());
+    auto *view = qobject_cast<WebkitView *>(tab.page()->view());
+    QVERIFY(view);
+
+    const QString fixturePath = QDir::temp().filePath(
+        QStringLiteral("arktos-wk08-fixture.html"));
+    {
+        QFile fixture(fixturePath);
+        QVERIFY(fixture.open(QIODevice::WriteOnly));
+        fixture.write("<html><head><title>Wk08Render</title></head>"
+                      "<body style='margin:0;background:#eef4ff'>"
+                      "<div style='width:400px;height:300px;"
+                      "background:#123a6f;color:#22aa77'>"
+                      "rendered by WPE WebKit</div>"
+                      "</body></html>");
+    }
+
+    QSignalSpy finishedSpy(tab.page(), &Engine::Page::loadFinished);
+    tab.load(QUrl::fromLocalFile(fixturePath));
+    QTRY_VERIFY2_WITH_TIMEOUT(finishedSpy.count() >= 1,
+                              "loadFinished never arrived", 60000);
+    QVERIFY2(finishedSpy.first().first().toBool(),
+             "fixture load reported failure");
+    QVERIFY2(tab.url() == QUrl::fromLocalFile(fixturePath),
+             qPrintable(tab.url().toString()));
+    QTRY_COMPARE_EQ(tab.title(), QStringLiteral("Wk08Render"));
+
+    // Raster proof: at least one buffer imported, then keep pumping —
+    // the first WPE buffer can be the blank pre-paint frame, so grab
+    // until the fixture's witness colors land in the painted surface.
+    QTRY_VERIFY_WITH_TIMEOUT(view->frameCount() >= 1, 30000);
+    int distinctColors = 0;
+    auto colorsReady = [&]() -> bool {
+        const QImage shot = view->grab().toImage()
+                .convertToFormat(QImage::Format_ARGB32);
+        if (shot.isNull())
+            return false;
+        QSet<QRgb> colors;
+        for (int y = 0; y < shot.height(); ++y) {
+            const QRgb *row =
+                reinterpret_cast<const QRgb *>(shot.constScanLine(y));
+            for (int x = 0; x < shot.width(); ++x)
+                colors.insert(row[x] | 0xff000000u);
+        }
+        distinctColors = colors.count();
+        return colors.contains(QRgb(0xff123a6f))
+            && colors.contains(QRgb(0xffeef4ff))
+            && colors.count() >= 3;
+    };
+    QTRY_VERIFY2_WITH_TIMEOUT(colorsReady(),
+             qPrintable(QStringLiteral("fixture colors never painted — "
+                                       "%1 distinct colors")
+                            .arg(distinctColors)), 30000);
+#else
+    QSKIP("webkit backend not linked in this build");
+#endif
+}
+
+// WK09 — the Page load-signal contract on the webkit backend:
+// started→progress→finished ordering, url/title/icon arrival,
+// NavigationType off decide-policy, and stop()/reload() driving real
+// load transitions.  WebKit only loads icons whose URL is http(s),
+// so the fixture is a local HTTP server rather than a file:// page.
+void tst_EngineSwitch::webkitLoadSignals()
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    Engine::Backend *webkit =
+        EngineRegistry::backendForId(QStringLiteral("webkit"));
+    QVERIFY(webkit);
+    QVERIFY2(webkit->pageUnavailableReason().isEmpty(),
+             qPrintable(webkit->pageUnavailableReason()));
+
+    // Fixture: a page that names a PNG favicon, and the icon itself.
+    QByteArray faviconPng;
+    {
+        QImage icon(16, 16, QImage::Format_ARGB32);
+        icon.fill(QColor(0x1a, 0x7f, 0x37));
+        QBuffer buffer(&faviconPng);
+        QVERIFY(buffer.open(QIODevice::WriteOnly));
+        QVERIFY(icon.save(&buffer, "PNG"));
+    }
+    const QByteArray pageBody =
+        "<html><head><title>Wk09Signals</title>"
+        "<link rel=\"icon\" type=\"image/png\" href=\"/favicon.png\">"
+        "</head><body>wk09 signal fixture</body></html>";
+
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    auto pending =
+        QSharedPointer<QHash<QTcpSocket *, QByteArray>>::create();
+    connect(&server, &QTcpServer::newConnection, &server,
+            [&server, pageBody, faviconPng, pending]() {
+        while (QTcpSocket *socket = server.nextPendingConnection()) {
+            socket->setParent(&server);
+            connect(socket, &QTcpSocket::readyRead, socket,
+                    [socket, pageBody, faviconPng, pending]() {
+                QByteArray &request = (*pending)[socket];
+                request += socket->readAll();
+                if (!request.contains("\r\n\r\n"))
+                    return;
+                QByteArray body = pageBody;
+                QByteArray mime = "text/html";
+                if (request.startsWith("GET /favicon.png")) {
+                    body = faviconPng;
+                    mime = "image/png";
+                }
+                socket->write("HTTP/1.1 200 OK\r\nContent-Type: " + mime
+                              + "\r\nContent-Length: "
+                              + QByteArray::number(body.size())
+                              + "\r\nConnection: close\r\n\r\n" + body);
+                socket->disconnect();   // one request per connection
+                socket->disconnectFromHost();
+                pending->remove(socket);
+            });
+        }
+    });
+    const QUrl url(QStringLiteral("http://127.0.0.1:%1/")
+                       .arg(server.serverPort()));
+
+    Engine::ProfileOptions options;
+    options.offTheRecord = true;   // ephemeral session — no disk state
+    Engine::Profile *profile = webkit->createProfile(options, this);
+    QVERIFY(profile);
+
+    EngineTab tab(webkit, profile);
+    tab.resize(800, 600);
+    tab.show();
+    QVERIFY(tab.page());
+    auto *page = qobject_cast<WebkitPage *>(tab.page());
+    QVERIFY(page);
+
+    QStringList order;   // signal arrival order, tags only
+    QList<int> progressValues;
+    QList<QUrl> urls;
+    QStringList titles;
+    QList<QIcon> icons;
+    QList<bool> finishedOk;
+    connect(page, &Engine::Page::loadStarted,
+            page, [&]() { order << QStringLiteral("started"); });
+    connect(page, &Engine::Page::loadProgress,
+            page, [&](int p) {
+        order << QStringLiteral("progress");
+        progressValues << p;
+    });
+    connect(page, &Engine::Page::loadFinished,
+            page, [&](bool ok) {
+        order << QStringLiteral("finished");
+        finishedOk << ok;
+    });
+    connect(page, &Engine::Page::urlChanged,
+            page, [&](const QUrl &u) {
+        order << QStringLiteral("url");
+        urls << u;
+    });
+    connect(page, &Engine::Page::titleChanged,
+            page, [&](const QString &t) {
+        order << QStringLiteral("title");
+        titles << t;
+    });
+    connect(page, &Engine::Page::iconChanged,
+            page, [&](const QIcon &i) {
+        order << QStringLiteral("icon");
+        icons << i;
+    });
+
+    tab.load(url);
+    QTRY_VERIFY2_WITH_TIMEOUT(!finishedOk.isEmpty(),
+                              "loadFinished never arrived", 60000);
+    QVERIFY2(finishedOk.first(), "fixture load reported failure");
+
+    // Order contract: exactly one started→finished pair per load,
+    // progress strictly inside it.  uri/title/icon notifies are
+    // property-driven and can land anywhere in the window (WebKit
+    // moves uri at request time and the title can resolve a tick
+    // after FINISHED) — only the load triple is ordered.
+    QCOMPARE(order.count(QStringLiteral("started")), 1);
+    QCOMPARE(order.count(QStringLiteral("finished")), 1);
+    QVERIFY(order.contains(QStringLiteral("progress")));
+    const int startedAt = order.indexOf(QStringLiteral("started"));
+    const int finishedAt = order.indexOf(QStringLiteral("finished"));
+    QVERIFY2(startedAt >= 0 && startedAt < finishedAt,
+             qPrintable(order.join(QLatin1Char(','))));
+    for (int i = startedAt + 1; i < finishedAt; ++i)
+        QVERIFY2(order.at(i) != QStringLiteral("started"),
+                 qPrintable(order.join(QLatin1Char(','))));
+    QVERIFY(!progressValues.isEmpty());
+    QCOMPARE(progressValues.last(), 100);
+
+    QVERIFY(urls.contains(url));
+    // Title and icon notifies resolve a tick after FINISHED.
+    QTRY_VERIFY2_WITH_TIMEOUT(
+            titles.contains(QStringLiteral("Wk09Signals")),
+            "titleChanged never arrived", 30000);
+
+    // The icon fetch is async past loadFinished — the property lands
+    // once the favicon database answer comes back.
+    QTRY_VERIFY2_WITH_TIMEOUT(!icons.isEmpty() && !icons.last().isNull(),
+                              "iconChanged never arrived", 30000);
+    const QImage iconImage = icons.last().pixmap(64, 64).toImage()
+        .convertToFormat(QImage::Format_ARGB32);
+    const QColor pixel = QColor::fromRgba(iconImage.pixel(8, 8));
+    QVERIFY2(pixel.green() > 100 && pixel.red() < 60,
+             qPrintable(QStringLiteral("favicon color %1")
+                            .arg(pixel.name())));
+
+    // decide-policy maps embedder-initiated load() to Other (WebKit
+    // has no Typed).
+    QCOMPARE(page->lastNavigationType(), Engine::NavigationType::Other);
+
+    // reload() drives a real second cycle.
+    order.clear();
+    finishedOk.clear();
+    page->reload();
+    QTRY_VERIFY2_WITH_TIMEOUT(!finishedOk.isEmpty(),
+                              "reload never finished", 60000);
+    QVERIFY2(finishedOk.first(), "reload reported failure");
+    QCOMPARE(order.count(QStringLiteral("started")), 1);
+    QCOMPARE(order.count(QStringLiteral("finished")), 1);
+    QVERIFY2(order.indexOf(QStringLiteral("started"))
+                 < order.indexOf(QStringLiteral("finished")),
+             qPrintable(order.join(QLatin1Char(','))));
+    QCOMPARE(page->lastNavigationType(), Engine::NavigationType::Reload);
+
+    // stop() mid-load answers loadFinished(false) — a server that
+    // accepts and never answers keeps the load in flight.
+    QTcpServer staller;
+    QVERIFY(staller.listen(QHostAddress::LocalHost));
+    connect(&staller, &QTcpServer::newConnection, &staller,
+            [&staller]() {
+        staller.nextPendingConnection()->setParent(&staller);
+    });
+    order.clear();
+    finishedOk.clear();
+    page->load(QUrl(QStringLiteral("http://127.0.0.1:%1/hang")
+                        .arg(staller.serverPort())));
+    QTRY_VERIFY2_WITH_TIMEOUT(order.contains(QStringLiteral("started")),
+                              "stalled load never started", 30000);
+    page->stop();
+    QTRY_VERIFY2_WITH_TIMEOUT(!finishedOk.isEmpty(),
+                              "stop() produced no loadFinished", 30000);
+    QVERIFY2(!finishedOk.first(), "stopped load reported success");
+    QVERIFY(!page->isLoading());
+    QCOMPARE(order.last(), QStringLiteral("finished"));
+#else
+    QSKIP("webkit backend not linked in this build");
+#endif
+}
+
+// WK10 — the real WebKitBackForwardList behind the Page history
+// contract: a three-page session exposes the oldest-first linear
+// stack with the current index, back/forward slices honor the
+// maxItems cap, back()/forward() and goToHistoryEntry() drive real
+// bf navigations, and a fresh load after going back truncates the
+// forward list.  The fixture is a local HTTP server answering
+// Cache-Control: no-store — a cacheable page is bf-restored from
+// WebKit's page cache without a navigation decision, and the
+// BackOrForward type assert below needs decide-policy to fire.
+// Titles are asserted with a pump because WebKit commits them a
+// tick late.
+void tst_EngineSwitch::webkitHistory()
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    Engine::Backend *webkit =
+        EngineRegistry::backendForId(QStringLiteral("webkit"));
+    QVERIFY(webkit);
+    QVERIFY2(webkit->pageUnavailableReason().isEmpty(),
+             qPrintable(webkit->pageUnavailableReason()));
+
+    Engine::ProfileOptions options;
+    options.offTheRecord = true;   // ephemeral session — no disk state
+    Engine::Profile *profile = webkit->createProfile(options, this);
+    QVERIFY(profile);
+
+    EngineTab tab(webkit, profile);
+    tab.resize(800, 600);
+    tab.show();
+    QVERIFY(tab.page());
+    auto *page = qobject_cast<WebkitPage *>(tab.page());
+    QVERIFY(page);
+
+    // Fixture: /a /b /c /d, each a titled page that must never be
+    // page-cache eligible.
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    auto pending =
+        QSharedPointer<QHash<QTcpSocket *, QByteArray>>::create();
+    connect(&server, &QTcpServer::newConnection, &server,
+            [&server, pending]() {
+        while (QTcpSocket *socket = server.nextPendingConnection()) {
+            socket->setParent(&server);
+            connect(socket, &QTcpSocket::readyRead, socket,
+                    [socket, pending]() {
+                QByteArray &request = (*pending)[socket];
+                request += socket->readAll();
+                if (!request.contains("\r\n\r\n"))
+                    return;
+                const QByteArray path =
+                    request.split(' ').value(1, "/");
+                const QByteArray tag = path.mid(1).toUpper();
+                const QByteArray body =
+                    "<html><head><title>Wk10" + tag
+                    + "</title></head><body>Wk10" + tag
+                    + "</body></html>";
+                socket->write("HTTP/1.1 200 OK\r\nContent-Type: text/html"
+                              "\r\nCache-Control: no-store"
+                              "\r\nContent-Length: "
+                              + QByteArray::number(body.size())
+                              + "\r\nConnection: close\r\n\r\n" + body);
+                socket->disconnect();
+                socket->disconnectFromHost();
+                pending->remove(socket);
+            });
+        }
+    });
+    const QUrl urlA(QStringLiteral("http://127.0.0.1:%1/a")
+                        .arg(server.serverPort()));
+    const QUrl urlB(QStringLiteral("http://127.0.0.1:%1/b")
+                        .arg(server.serverPort()));
+    const QUrl urlC(QStringLiteral("http://127.0.0.1:%1/c")
+                        .arg(server.serverPort()));
+    const QUrl urlD(QStringLiteral("http://127.0.0.1:%1/d")
+                        .arg(server.serverPort()));
+
+    auto loadAndWait = [&page](const QUrl &u) -> bool {
+        QSignalSpy spy(page, &Engine::Page::loadFinished);
+        page->load(u);
+        return spy.wait(60000) && spy.first().first().toBool();
+    };
+    // bf hops are real loads — wait for their own loadFinished
+    // before issuing the next one (a fresh load mid-flight cancels
+    // the in-flight navigation and its loadFinished(false) would
+    // trip the spy).
+    auto bfNav = [&page](const std::function<void()> &go,
+                         const QUrl &u) -> bool {
+        QSignalSpy spy(page, &Engine::Page::loadFinished);
+        go();
+        return spy.wait(60000) && spy.first().first().toBool()
+            && page->url() == u;
+    };
+
+    QVERIFY2(loadAndWait(urlA), "fixture A load failed");
+    QCOMPARE(page->historyCount(), 1);
+    QCOMPARE(page->currentHistoryIndex(), 0);
+    QVERIFY(!page->canGoBack());
+    QVERIFY(!page->canGoForward());
+    QCOMPARE(page->historyItems().count(), 1);
+    QCOMPARE(page->historyItems().first().url, urlA);
+
+    QVERIFY2(loadAndWait(urlB), "fixture B load failed");
+    QVERIFY2(loadAndWait(urlC), "fixture C load failed");
+    QTRY_VERIFY2_WITH_TIMEOUT(
+        page->historyCount() == 3 && page->currentHistoryIndex() == 2,
+        "three-load stack never formed", 30000);
+    QVERIFY(page->canGoBack());
+    QVERIFY(!page->canGoForward());
+
+    // Stack shape: oldest first, index = stack position.
+    const QList<Engine::HistoryEntry> items = page->historyItems();
+    QCOMPARE(items.count(), 3);
+    QCOMPARE(items.at(0).url, urlA);
+    QCOMPARE(items.at(1).url, urlB);
+    QCOMPARE(items.at(2).url, urlC);
+    QCOMPARE(items.at(0).index, 0);
+    QCOMPARE(items.at(1).index, 1);
+    QCOMPARE(items.at(2).index, 2);
+
+    const QList<Engine::HistoryEntry> back = page->backItems(10);
+    QCOMPARE(back.count(), 2);
+    QCOMPARE(back.at(0).url, urlA);
+    QCOMPARE(back.at(1).url, urlB);      // nearest current is last
+    QCOMPARE(page->backItems(1).count(), 1);
+    QCOMPARE(page->backItems(1).first().url, urlB);
+    QVERIFY(page->forwardItems(10).isEmpty());
+
+    // Item titles land once the documents have committed them.
+    QTRY_VERIFY2_WITH_TIMEOUT(
+        page->historyItems().at(0).title == QStringLiteral("Wk10A")
+        && page->historyItems().at(1).title == QStringLiteral("Wk10B")
+        && page->historyItems().at(2).title == QStringLiteral("Wk10C"),
+        "back-forward item titles never settled", 30000);
+
+    // back() is a real navigation — the bf entry point stamps the
+    // BackOrForward type (WebKit emits no decide-policy for bf hops)
+    // and the forward slice gains C.  The index assert pumps: the
+    // uri commits a tick before the BF list's current item moves.
+    QVERIFY2(bfNav([&page] { page->back(); }, urlB),
+             "back() to B failed");
+    QCOMPARE(page->lastNavigationType(),
+             Engine::NavigationType::BackOrForward);
+    QTRY_COMPARE_EQ(page->currentHistoryIndex(), 1);
+    QCOMPARE(page->historyCount(), 3);
+    QVERIFY(page->canGoBack());
+    QVERIFY(page->canGoForward());
+    QCOMPARE(page->backItems(10).count(), 1);
+    QCOMPARE(page->backItems(10).first().url, urlA);
+    QCOMPARE(page->forwardItems(10).count(), 1);
+    QCOMPARE(page->forwardItems(10).first().url, urlC);
+
+    // goToHistoryEntry reaches any stack index — jump back two.
+    QVERIFY2(bfNav([&page] {
+                 page->goToHistoryEntry(page->historyItems().first());
+             }, urlA),
+             "goToHistoryEntry to A failed");
+    QTRY_COMPARE_EQ(page->currentHistoryIndex(), 0);
+    QVERIFY(!page->canGoBack());
+    QVERIFY(page->canGoForward());
+    QCOMPARE(page->forwardItems(10).count(), 2);
+    QCOMPARE(page->forwardItems(10).at(0).url, urlB);
+    QCOMPARE(page->forwardItems(10).at(1).url, urlC);
+
+    // forward() walks the slice back toward C.
+    QVERIFY2(bfNav([&page] { page->forward(); }, urlB),
+             "forward() to B failed");
+    QTRY_COMPARE_EQ(page->currentHistoryIndex(), 1);
+
+    // A fresh load after going back truncates the forward list —
+    // WebKit prunes it when the new navigation commits.
+    QVERIFY2(bfNav([&page] { page->back(); }, urlA),
+             "back() to A failed");
+    QVERIFY2(loadAndWait(urlD), "fixture D load failed");
+    QTRY_VERIFY2_WITH_TIMEOUT(
+        page->historyCount() == 2 && page->currentHistoryIndex() == 1,
+        "forward list never pruned", 30000);
+    QVERIFY(page->forwardItems(10).isEmpty());
+    QCOMPARE(page->historyItems().at(1).url, urlD);
+    QVERIFY(!page->canGoForward());
+#else
+    QSKIP("webkit backend not linked in this build");
+#endif
 }
 
 QTEST_MAIN(tst_EngineSwitch)

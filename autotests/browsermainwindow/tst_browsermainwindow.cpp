@@ -4243,19 +4243,30 @@ void tst_BrowserMainWindow::servoStartPage()
     // depends on the build: a registered servo backend (master's
     // ENG10 wiring) makes it a foreign EngineTab outright, and the
     // branded qrc page — WebEngine content servo cannot render —
-    // never loads there.  Without the artifact (or once servo's
-    // single-view budget is spent) the pick degrades to a WebView
-    // that loads the branded page at once.
+    // never loads there.  Without the artifact the pick degrades to
+    // a WebView that loads the branded page at once.
     WebView *firstTab = window->currentTab();
     EngineTab *firstEngine = window->tabWidget()->engineTab(0);
     const QUrl firstUrl = firstTab ? firstTab->url() : QUrl();
 
-    // A second fresh tab takes the same branded start page — under a
-    // live servo backend the first tab claims the single view, so
-    // this one is the WebView fallback that actually loads it.
+    // A second fresh tab takes the same branded pick — under a live
+    // servo backend it is a foreign EngineTab outright (ENG36
+    // multi-view retired the single-view budget: every explicit new
+    // tab can host a servo view now); without the artifact the pick
+    // degrades to a WebView that loads the branded page at once.
     window->tabWidget()->newTab();
     WebView *servoTab = window->currentTab();
-    const QUrl servoTabUrl = servoTab ? servoTab->url() : QUrl();
+    EngineTab *servoEngine = window->tabWidget()->engineTab(
+        window->tabWidget()->currentIndex());
+    QUrl servoTabUrl = servoTab ? servoTab->url() : QUrl();
+    if (!servoTab && servoEngine) {
+        // The engine-side load commits asynchronously — converge on
+        // the branded URL rather than racing the commit.
+        for (int waited = 0; waited < 15000
+                && servoEngine->url() != servoStart; waited += 50)
+            QTest::qWait(50);
+        servoTabUrl = servoEngine->url();
+    }
 
     // DOM probe: the logo div sits directly under the search field,
     // its stylesheet resolves the bundled logo asset, the search box
@@ -4321,8 +4332,13 @@ void tst_BrowserMainWindow::servoStartPage()
         QCOMPARE(firstUrl, servoStart);
     }
     QCOMPARE(servoTabUrl, servoStart);
-    QVERIFY(channel);
-    QCOMPARE(dom, QStringLiteral("V|S|H"));
+    // The DOM handshake only exists on a WebEngine tab — under a live
+    // servo backend BOTH tabs can be EngineTabs (multi-view), leaving
+    // nothing to probe; the branded-URL asserts above carry the check.
+    if (domTab) {
+        QVERIFY(channel);
+        QCOMPARE(dom, QStringLiteral("V|S|H"));
+    }
 }
 
 // PTAB02: private tabs get their own branded start page — a deep

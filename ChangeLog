@@ -3966,3 +3966,162 @@ Extension chrome.* runtime hosted by Arktos itself (EXT22):
     never applied that preference to extension chrome, and without
     the exemption a JS-off session parked every hosted extension at
     "starting" forever.
+The Servo smoke diagnostic's scroll benchmarks no longer flake when
+    the machine is under load (ENG37): each scroll check used to
+    require the page to finish scrolling inside a fixed wall-clock
+    window, so any CPU contention starved the frame path and failed
+    the run even though scrolling was correct. The checks now poll
+    until the target scroll position arrives or a generous deadline
+    expires — a slow frame is still a correct frame — and when a
+    check passes late or times out while the load average exceeds
+    the CPU count, the log line carries a "CONTENTION: loadavg=X"
+    marker so an overloaded machine is distinguishable from a real
+    scroll regression at a glance.
+WebKit backend groundwork (WK01): the WPE WebKit 2.54.1 developer
+    prefix acquired under ~/wpe is now wired into the tree —
+    .devin/webkit-env.sh is the sourceable environment (PKG_CONFIG_PATH,
+    LD_LIBRARY_PATH/LD_RUN_PATH, the g_sort_array compat preload and the
+    sid-glibc link contract), and spikes/webkit/probe carries a compiled
+    version probe that proves headers, linking and runtime loading all
+    work end to end. Nothing is wired into the qmake build yet.
+WebKit backend groundwork (WK02): the WPE WebKit spike harness at
+    spikes/webkit/wpe-harness now proves a Qt Widgets process can own a
+    WPEDisplayHeadless+WPEToplevel+WPEView+WebKitWebView stack and drive
+    a page load end to end. The event-loop verdict the WebKit backend
+    will follow: all three GMainContext pump models deliver
+    load-finished — Qt's default glib dispatcher pumps WebKit's sources
+    natively on the GUI thread (the model the backend will use), a
+    60 Hz manual-context drain works as a no-glib fallback, and a
+    dedicated private-context thread works too but carries measured
+    traps (embedder sources must attach explicitly to its context;
+    teardown from the main thread aborts). The ~/wpe prefix also got a
+    self-containment fix: WebKit's baked-in libexec path now points at
+    the prefix's own symlink and the bwrap sandbox is told about the
+    prefix dirs, so subprocesses spawn sandboxed without extra env.
+WebKit backend groundwork (WK03): the spike harness now proves the
+    full raster path end to end — the WebKitWebView's internal WPEView
+    emits "buffer-rendered" per presented frame, the handler imports it
+    via wpe_buffer_import_to_pixels (borrowed buffer-owned GBytes of
+    premultiplied ARGB8888) into a QImage, and a QWidget paints it in
+    paintEvent; resizeEvent re-sizes the WPE toplevel and the next
+    buffer arrives at the new dims. run-render.sh loads the bundled
+    render-fixture page and saves verified PNGs (non-background pixel
+    count, distinct-color and dominant-share checks, per-witness-color
+    presence — a painted blank page fails) plus a post-resize shot, and
+    an advisory leg renders https://example.com over real HTTPS through
+    the bwrap sandbox. Evidence lives at spikes/webkit/wpe-harness/
+    wk03-*.png; the backend contract is documented in the harness
+    header comment.
+WebKit backend groundwork (WK04): the spike harness now proves input
+    and script evaluation end to end — a synthetic pointer move+down+up
+    triple built with wpe_event_pointer_*_new and delivered through
+    wpe_view_event hit-tests the fixture link and navigates (asserted
+    via the WebKitWebView "uri" property), a Return keydown/keyup pair
+    on a focused anchor activates it, and
+    webkit_web_view_evaluate_javascript round-trips typed JSCValues
+    (number and string). run-input.sh is the gate (per-leg PASS/FAIL,
+    nonzero exit on failure); the measured contract — small-ordinal
+    WPE_BUTTON_* numbering, DOWN-only press_count, WPEModifiers state
+    flags, wpe_view_focus_in as the input gate, keyval in the XKB/X11
+    keysym space vs. evdev keycodes — is documented in the harness
+    header comment for WK13.
+WebKit backend groundwork (WK05): the four WPE WebKit spikes are now
+    folded into a verdict document (.devin/WEBKIT-SPIKE.md) covering
+    every Engine interface member — all four gating questions answered
+    (glib event-loop model, import_to_pixels raster path, sideloaded
+    prefix packaging, layered interception story, 2.54 version floor)
+    with runtime evidence from the harness plus header-verified API
+    survey rows for decide-policy, content blockers, cookies,
+    downloads, TLS errors, proxy and session state. The WebKitNetwork
+    Session profile model and the Safari-format content-blocker
+    pipeline (which reuses the existing EasyList→JSON converter) came
+    out richer than expected; named gaps — no suspend/resume, no
+    renderer PID, no arbitrary http(s) request rewriting, no
+    programmatic inspector channel — are recorded with their
+    interface-level mitigations, and the per-capability truth table
+    for the backend registration is written down for the next task.
+WebKit backend groundwork (WK06): the qmake build now has a `webkit`
+    engine gate mirroring the servo stanza. Whenever pkg-config can
+    resolve wpe-webkit-2.0 + wpe-platform-2.0 — the user-local ~/wpe
+    prefix once .devin/webkit-env.sh is sourced, or a system WPE ≥ 2.54
+    — .qmake.conf auto-adds CONFIG+=webkit so a plain `qmake && make`
+    cannot silently drop the backend, and engine.pri compiles
+    src/engine/webkitbackend.cpp with -DARKTOS_WEBKIT (plus
+    ARKTOS_WEBKIT_LINKED when the packages resolve), links the WPE
+    libraries, and applies the sideloaded-glibc recipe — sid ld.so
+    interpreter, transitive DT_RPATH, g_sort_array compat shim — when
+    the ~/wpe env contract is present. Opt-outs are symmetric with
+    servo (`qmake webkit=0`, `nowebkit=1`, `CONFIG-=webkit`) and
+    produce a build with no webkit inputs at all; a forced `webkit=1`
+    on a WPE-less host still compiles the backend TU, which simply
+    reports the engine unavailable — compile-but-inert, never a
+    broken build. The backend class is a deliberate skeleton that
+    registers nothing yet; WK07 fills it in.
+WebKit backend registration (WK07): on a webkit-enabled build that
+    links the WPE stack, the backend now self-registers through a
+    static-init EngineRegistry::addProbe — the servo shape, no
+    engineregistry.cpp edit. `--engine-list` prints a third entry
+    with the real runtime version — "WebKit 2.54.1" from
+    webkit_get_*_version() — Preferences' render-engine combo lists
+    it, and the tab switcher offers it disabled-with-reason because
+    page hosting lands in WK08 (createPage/createView refuse via
+    pageUnavailableReason, matching the ENG19 contract). The
+    capability table is the conservative spike-verified set from
+    .devin/WEBKIT-SPIKE.md — request interception, script injection
+    and evaluation, per-page settings, lifecycle discard, context
+    menus, certificate override and downloads on; the named gaps
+    (per-attempt cookie filter, embedder devtools channel,
+    extensions) stay honestly off, and an unlinked TU reports
+    all-false. A forced `webkit=1` build without the WPE packages
+    still compiles the backend TU inert and registers nothing — the
+    same hidden-not-dead contract as a missing servo artifact.
+    --engine-smoke now skips the page/view legs of a registered
+    backend that declares it cannot host pages, reporting the reason
+    instead of FAILing an unclaimed surface.
+WebKit page hosting (WK08): the webkit backend now hosts real tabs.
+    WebkitPage wraps a WebKitWebView (and its internal WPEView) on a
+    per-page WPEToplevel over the process-shared headless WPEDisplay,
+    all on the Qt GUI thread where QPAEventDispatcherGlib pumps the
+    GLib main context; load() issues webkit_web_view_load_uri and
+    load-changed/load-failed/notify::uri/title/progress drive the
+    Engine::Page signal contract. WebkitView is the QWidget that
+    consumes "buffer-rendered", imports each buffer with
+    wpe_buffer_import_to_pixels, deep-copies it into a premultiplied
+    ARGB32 QImage and blits the newest frame in paintEvent; widget
+    resizes propagate through wpe_toplevel_resize and widget focus
+    forwards to wpe_view_focus_in/out for the WK13 input path.
+    WebkitProfile carries a lazily-created WebKitNetworkSession —
+    ephemeral for off-the-record, the default session otherwise.
+    EngineTab hosts the backend unchanged through createPage +
+    createView, and pageUnavailableReason is empty when linked — the
+    engine switcher offers the entry enabled. The webkit gate now
+    also requires wpe-platform-headless-2.0 and bakes the WPE prefix
+    into the binary so the sandbox whitelist works in unsourced
+    environments. A webkit=1 build without the WPE packages still
+    compiles inert and registers nothing.
+WebKit load-signal contract (WK09): the webkit backend's Engine::Page
+    signal surface is now complete. Tab favicons work —
+    notify::page-icons resolves the WebKitImageList off the favicon
+    database (enabled per data manager; ephemeral sessions keep it
+    in-memory) into a content-deduped QIcon. Redirect/commit hops
+    refresh urlChanged, stop() and reload() drive real load
+    transitions, and a cancelled load's progress-reset can no longer
+    emit after loadFinished. A claimed load-failed suppresses
+    WebKit's built-in error page so a failed navigation reports one
+    honest loadFinished(false) instead of a fake success pair.
+    Navigation type is recorded off an observe-only decide-policy
+    hook — WK17's request-policy veto builds on it.
+WebKit session history (WK10): the webkit backend's Page history
+    contract now maps the real WebKitBackForwardList — historyItems,
+    backItems/forwardItems, canGoBack/canGoForward and back()/forward()
+    all proxy the per-view list (both slices arrive reversed relative
+    to stack order and are walked tail-to-head), and
+    goToHistoryEntry jumps to any stack index through
+    get_nth_item + go_to_back_forward_list_item. Back/forward
+    navigations produce the full started→finished(true) load cycle:
+    WebKit 2.54 emits a spurious CANCELLED load-failed mid-hop (the
+    history machinery discards its own provisional request), which is
+    now suppressed only for the armed bf target — a user stop() and
+    genuine errors still report failure. The bf entry points stamp
+    NavigationType::BackOrForward themselves because decide-policy
+    never fires for back-forward hops.

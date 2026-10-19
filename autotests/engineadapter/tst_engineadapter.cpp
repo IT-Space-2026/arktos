@@ -320,8 +320,17 @@ void tst_EngineAdapter::memIndicatorContract()
     fakePage.setRenderProcessId(4242);
     QCOMPARE(fakePage.renderProcessId(), qint64(4242));
     // A staged pid that no longer exists still reads '—', never
-    // a fabricated figure.
-    QCOMPARE(MemIndicator::residentMemoryKb(4242), qint64(-1));
+    // a fabricated figure.  Derive the dead pid dynamically — a
+    // hardcoded one flakes whenever an unrelated process happens to
+    // hold it (a live PID 4242 failed this leg on a devin acp
+    // helper).  250k above the freshest issued pid stays under any
+    // kernel pid_max (>= 4M) while hundreds of thousands of forks
+    // would have to land in microseconds to collide.
+    QProcess pidProbe;
+    pidProbe.start(QStringLiteral("true"));
+    QVERIFY(pidProbe.waitForFinished());
+    const qint64 deadPid = pidProbe.processId() + 250000;
+    QCOMPARE(MemIndicator::residentMemoryKb(deadPid), qint64(-1));
 
     MemIndicator indicator;
     QLabel *label = indicator.findChild<QLabel *>(
