@@ -3542,3 +3542,18 @@ WebKit backend groundwork (WK04): the spike harness now proves input
     flags, wpe_view_focus_in as the input gate, keyval in the XKB/X11
     keysym space vs. evdev keycodes — is documented in the harness
     header comment for WK13.
+WebKit backend groundwork (WK05): the four WPE WebKit spikes are now
+    folded into a verdict document (.devin/WEBKIT-SPIKE.md) covering
+    every Engine interface member — all four gating questions answered
+    (glib event-loop model, import_to_pixels raster path, sideloaded
+    prefix packaging, layered interception story, 2.54 version floor)
+    with runtime evidence from the harness plus header-verified API
+    survey rows for decide-policy, content blockers, cookies,
+    downloads, TLS errors, proxy and session state. The WebKitNetwork
+    Session profile model and the Safari-format content-blocker
+    pipeline (which reuses the existing EasyList→JSON converter) came
+    out richer than expected; named gaps — no suspend/resume, no
+    renderer PID, no arbitrary http(s) request rewriting, no
+    programmatic inspector channel — are recorded with their
+    interface-level mitigations, and the per-capability truth table
+    for the backend registration is written down for the next task.
