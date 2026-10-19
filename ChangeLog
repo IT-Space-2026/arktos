@@ -3529,3 +3529,16 @@ WebKit backend groundwork (WK03): the spike harness now proves the
     the bwrap sandbox. Evidence lives at spikes/webkit/wpe-harness/
     wk03-*.png; the backend contract is documented in the harness
     header comment.
+WebKit backend groundwork (WK04): the spike harness now proves input
+    and script evaluation end to end — a synthetic pointer move+down+up
+    triple built with wpe_event_pointer_*_new and delivered through
+    wpe_view_event hit-tests the fixture link and navigates (asserted
+    via the WebKitWebView "uri" property), a Return keydown/keyup pair
+    on a focused anchor activates it, and
+    webkit_web_view_evaluate_javascript round-trips typed JSCValues
+    (number and string). run-input.sh is the gate (per-leg PASS/FAIL,
+    nonzero exit on failure); the measured contract — small-ordinal
+    WPE_BUTTON_* numbering, DOWN-only press_count, WPEModifiers state
+    flags, wpe_view_focus_in as the input gate, keyval in the XKB/X11
+    keysym space vs. evdev keycodes — is documented in the harness
+    header comment for WK13.
