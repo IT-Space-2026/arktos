@@ -167,6 +167,11 @@ static void fillManifestFromCheck(ExtensionManager::Manifest *manifest,
     manifest->contentScriptCount =
         check.value(QLatin1String("content_script_count")).toInt();
     manifest->updateUrl = check.value(QLatin1String("update_url")).toString();
+    // ER14: chrome.commands declarations + the action's popup for
+    // the _execute_action dispatch decision.
+    manifest->commands = check.value(QLatin1String("commands")).toObject();
+    manifest->actionPopup =
+        check.value(QLatin1String("action_popup")).toString();
 
     const auto stringList = [&check](const char *key) {
         QStringList list;
@@ -948,6 +953,12 @@ ExtensionManager::Manifest ExtensionManager::inspectManifest(const QString &path
     manifest.hasAction = root.contains(QLatin1String("action"))
         || root.contains(QLatin1String("browser_action"))
         || root.contains(QLatin1String("page_action"));
+    // ER14: chrome.commands declarations + the action's popup for
+    // the _execute_action dispatch decision.
+    manifest.commands = root.value(QLatin1String("commands")).toObject();
+    manifest.actionPopup =
+        root.value(QLatin1String("action")).toObject()
+            .value(QLatin1String("default_popup")).toString();
     manifest.contentScriptCount =
         root.value(QLatin1String("content_scripts")).toArray().size();
 

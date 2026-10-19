@@ -232,6 +232,26 @@ void ExtensionActionBar::rebuild()
     setVisible(!actions.isEmpty());
 }
 
+bool ExtensionActionBar::triggerAction(const QString &id,
+                                       const QString &popupPath)
+{
+    if (popupPath.isEmpty())
+        return false;
+    // Anchored on the action button when the extension has one — a
+    // popup that exists only via chrome.action.setPopup has no
+    // button, so the bar itself anchors the bubble then.
+    QWidget *anchor = findChild<QToolButton *>(
+        QLatin1String("extensionActionButton_") + id);
+    if (!anchor)
+        anchor = this;
+    QString path = popupPath;
+    while (path.startsWith(QLatin1Char('/')))
+        path = path.mid(1);
+    openPopup(id, QUrl(QStringLiteral("chrome-extension://") + id
+                       + QLatin1Char('/') + path), anchor);
+    return true;
+}
+
 bool ExtensionActionBar::eventFilter(QObject *watched, QEvent *event)
 {
     if (watched == m_popup && event->type() == QEvent::KeyPress) {
@@ -245,7 +265,7 @@ bool ExtensionActionBar::eventFilter(QObject *watched, QEvent *event)
 }
 
 void ExtensionActionBar::openPopup(const QString &id, const QUrl &popupUrl,
-                                   QToolButton *anchor)
+                                   QWidget *anchor)
 {
     // Chrome toggles: re-clicking the serving button closes the popup.
     if (m_popup && m_popupExtensionId == id) {
@@ -328,7 +348,7 @@ void ExtensionActionBar::openPopup(const QString &id, const QUrl &popupUrl,
     // while an eval is still in flight — QPointer both, or the
     // resize/move lands on freed widgets.
     const QPointer<QFrame> popupGuard(popup);
-    const QPointer<QToolButton> anchorGuard(anchor);
+    const QPointer<QWidget> anchorGuard(anchor);
     const QPointer<QWebEnginePage> pageGuard(page);
     connect(view, &QWebEngineView::loadFinished, popup,
             [popupGuard, pageGuard, anchorGuard]() {

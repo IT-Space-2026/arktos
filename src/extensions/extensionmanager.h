@@ -23,6 +23,7 @@
 #include <qobject.h>
 
 #include <qhash.h>
+#include <qjsonobject.h>
 #include <qlist.h>
 #include <qpointer.h>
 #include <qset.h>
@@ -200,6 +201,14 @@ public:
         QString packageNote;          // honesty note for packaged installs
                                       // ("unsigned", "structure-only sig")
         QString updateUrl;            // update_url — self-hosted update manifest
+        // ER14: the manifest "commands" map, verbatim — the hosted
+        // runtime's command registry binds its suggested_key entries
+        // to per-window QShortcuts.  actionPopup is action's
+        // declared default_popup — the reserved _execute_action
+        // command opens it when set and fires action.onClicked when
+        // not.
+        QJsonObject commands;
+        QString actionPopup;
     };
 
     // Result of one extension's update check (EXT03).  Chrome Web

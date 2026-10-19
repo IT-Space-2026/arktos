@@ -52,7 +52,9 @@
  *                         onStateChanged over the host's in-app
  *                         input watcher (in-app activity only;
  *                         'locked' never reported)
- *   chrome.commands     — onCommand event; getAll from the manifest
+ *   chrome.commands     — ER14: onCommand dispatched by the C++
+ *                         shortcut registry; getAll answers the
+ *                         real bound-state rows
  *   chrome.contextMenus — create/update/remove* registry host-side;
  *                         onClicked event (rendering is EXT16)
  *   chrome.sidePanel    — options recorded host-side; no panel UI
@@ -2953,20 +2955,16 @@
             onCommand: makeEvent('commands.onCommand'),
             getAll: function (cb) {
                 touch('chrome.commands.getAll');
-                var m = manifest();
-                var out = [];
-                var cmds = m.commands || {};
-                for (var name in cmds) {
-                    var c = cmds[name] || {};
-                    var key = c.suggested_key || {};
-                    out.push({
-                        name: name,
-                        description: c.description || '',
-                        shortcut: key['default'] || key['linux']
-                                  || ''
-                    });
-                }
-                return okCall(out, cb);
+                // ER14: the C++ registry knows which suggested_key
+                // actually bound — an absent/unbindable suggestion
+                // reports '' like Chrome's unassigned rows, not the
+                // manifest text.
+                var p = call('commands', 'getAll', {});
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message); });
+                return p;
             }
         });
     }

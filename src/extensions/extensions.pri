@@ -4,6 +4,7 @@ DEPENDPATH += $$PWD
 HEADERS += \
     $$PWD/extensionactionbar.h \
     $$PWD/extensionbackgroundhost.h \
+    $$PWD/extensioncommands.h \
     $$PWD/extensioneventhub.h \
     $$PWD/extensionidlewatcher.h \
     $$PWD/extensionmanager.h \
@@ -16,6 +17,7 @@ HEADERS += \
 SOURCES += \
     $$PWD/extensionactionbar.cpp \
     $$PWD/extensionbackgroundhost.cpp \
+    $$PWD/extensioncommands.cpp \
     $$PWD/extensioneventhub.cpp \
     $$PWD/extensionidlewatcher.cpp \
     $$PWD/extensionmanager.cpp \

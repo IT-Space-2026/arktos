@@ -40,7 +40,9 @@
 #include "browsermainwindow.h"
 #include "browserpaths.h"
 #include "browserprofile.h"
+#include "extensionactionbar.h"
 #include "extensionbackgroundhost.h"
+#include "extensioncommands.h"
 #include "extensioneventhub.h"
 #include "extensionidlewatcher.h"
 #include "extensionmanager.h"
@@ -97,6 +99,7 @@ private slots:
     void extensionContentScriptRegistration();
     void extensionNotifications();
     void extensionIdle();
+    void extensionCommands();
     void extensionOffscreen();
     void actionPopupSelfWires();
     void realExtensionPopup();
@@ -3350,6 +3353,322 @@ void tst_ExtensionManager::extensionIdle()
     manager->setExtensionEnabled(idB, false);
     QTRY_VERIFY_WITH_TIMEOUT(
         !runtime->host(idA) && !runtime->host(idB), 20000);
+    manager->removeExtension(idA);
+    manager->removeExtension(idB);
+    QDir(root).removeRecursively();
+}
+
+// ER14 — chrome.commands.  Two hosted fixtures declare manifest
+// commands: A carries _execute_action WITH a popup (the key press
+// must open the real action popup, never reach onCommand) plus a
+// plain command, an unbound one and an unbindable one; B's action
+// has no popup, so its _execute_action must fire action.onClicked
+// instead.  The leg drives real QShortcut activations through
+// QTest key events on a real BrowserMainWindow and checks the
+// Chrome-shaped (command, tab) dispatch into the hosted pages.
+void tst_ExtensionManager::extensionCommands()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString sw = QStringLiteral(
+        "self.__cmd=[];\n"
+        "chrome.commands.onCommand.addListener(function(c,t){\n"
+        " self.__cmd.push(['onCommand',c,"
+        "  t===null||t===undefined?null:t.id]);});\n"
+        "chrome.action.onClicked.addListener(function(t){\n"
+        " self.__cmd.push(['actionClicked',"
+        "  t===null||t===undefined?null:t.id]);});\n");
+
+    const QString root = QDir::temp().filePath(
+        QStringLiteral("tst-extcmd-%1")
+            .arg(QCoreApplication::applicationPid()));
+    const QString dirA = root + QLatin1String("/tst-cmd-a");
+    const QString dirB = root + QLatin1String("/tst-cmd-b");
+    for (const QString &dir : {dirA, dirB})
+        QVERIFY(QDir().mkpath(dir));
+    const auto writeFile = [](const QString &path,
+                              const QByteArray &body) {
+        QFile f(path);
+        if (!f.open(QIODevice::WriteOnly))
+            return false;
+        f.write(body);
+        f.close();
+        return true;
+    };
+    // A: _execute_action + popup, one bound command, one declared-
+    // without-a-key command and one unbindable media key.
+    QVERIFY(writeFile(dirA + QLatin1String("/manifest.json"),
+        "{\"manifest_version\":3,\"name\":\"tst-cmd-a\","
+        "\"version\":\"1.0\",\"permissions\":[\"storage\"],"
+        "\"action\":{\"default_title\":\"Cmd A\","
+        "\"default_popup\":\"popup.html\"},"
+        "\"commands\":{"
+        "\"_execute_action\":{\"suggested_key\":"
+        "{\"default\":\"Ctrl+Shift+Y\"},\"description\":\"open\"},"
+        "\"do_thing\":{\"suggested_key\":{\"default\":"
+        "\"Ctrl+Shift+U\"},\"description\":\"thing\"},"
+        "\"unbound_thing\":{\"description\":\"no key\"},"
+        "\"bad_key\":{\"suggested_key\":{\"default\":"
+        "\"MediaNextTrack\"}}},"
+        "\"background\":{\"service_worker\":\"sw.js\"}}"));
+    QVERIFY(writeFile(dirA + QLatin1String("/sw.js"), sw.toUtf8()));
+    QVERIFY(writeFile(dirA + QLatin1String("/popup.html"),
+        "<!doctype html><title>a</title>"));
+    // B: action with NO popup — _execute_action fires
+    // action.onClicked; plus one ordinary bound command.
+    QVERIFY(writeFile(dirB + QLatin1String("/manifest.json"),
+        "{\"manifest_version\":3,\"name\":\"tst-cmd-b\","
+        "\"version\":\"1.0\",\"permissions\":[\"storage\"],"
+        "\"action\":{\"default_title\":\"Cmd B\"},"
+        "\"commands\":{"
+        "\"_execute_action\":{\"suggested_key\":"
+        "{\"default\":\"Ctrl+Shift+8\"}},"
+        "\"plain_thing\":{\"suggested_key\":{\"default\":"
+        "\"Ctrl+Shift+9\"}}},"
+        "\"background\":{\"service_worker\":\"sw.js\"}}"));
+    QVERIFY(writeFile(dirB + QLatin1String("/sw.js"), sw.toUtf8()));
+    // Only referenced through a runtime chrome.action.setPopup —
+    // the manifest declares no popup for B.
+    QVERIFY(writeFile(dirB + QLatin1String("/popup.html"),
+        "<!doctype html><title>b</title>"));
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    ExtensionCommandRegistry *registry =
+        ExtensionCommandRegistry::instance();
+
+    const auto loadReady = [this, manager, runtime](
+            const QString &dir, const QString &name) -> QString {
+        auto loaded = std::make_shared<QString>();
+        QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                         this, [loaded, name](
+                             const ExtensionManager::ExtensionInfo
+                                 &info) {
+            if (info.name == name && info.error.isEmpty())
+                *loaded = info.id;
+        });
+        manager->grantConsent(dir);
+        manager->loadExtension(dir);
+        QElapsedTimer timer;
+        timer.start();
+        while (loaded->isEmpty() && timer.elapsed() < 30000)
+            QTest::qWait(50);
+        const QString id = *loaded;
+        if (id.isEmpty())
+            return id;
+        manager->setExtensionEnabled(id, true);
+        timer.restart();
+        while (timer.elapsed() < 45000) {
+            ExtensionBackgroundHost *host = runtime->host(id);
+            if (host && host->state()
+                    == ExtensionBackgroundHost::State::Ready)
+                break;
+            QTest::qWait(50);
+        }
+        return id;
+    };
+    const QString idA = loadReady(dirA, QStringLiteral("tst-cmd-a"));
+    const QString idB = loadReady(dirB, QStringLiteral("tst-cmd-b"));
+    QVERIFY2(!idA.isEmpty() && !idB.isEmpty(),
+             "fixtures loaded + hosted");
+
+    // The sync pass parsed both manifests — every key-bearing
+    // command is bound, the no-key and unbindable ones are listed
+    // as unbound (they still appear in getAll, like Chrome's
+    // unassigned rows).
+    QTRY_VERIFY_WITH_TIMEOUT(
+        registry->boundCommands(idA).contains(
+            QStringLiteral("_execute_action"))
+            && registry->boundCommands(idA).contains(
+                QStringLiteral("do_thing")), 20000);
+    QVERIFY(registry->unboundCommands(idA).contains(
+        QStringLiteral("unbound_thing")));
+    QVERIFY(registry->unboundCommands(idA).contains(
+        QStringLiteral("bad_key")));
+    QVERIFY(registry->boundCommands(idB).contains(
+        QStringLiteral("_execute_action")));
+    QVERIFY(registry->boundCommands(idB).contains(
+        QStringLiteral("plain_thing")));
+
+    auto eval = [](QWebEnginePage *page, const QString &source) {
+        auto result = std::make_shared<QVariant>();
+        page->runJavaScript(source,
+                            [result](const QVariant &v) { *result = v; });
+        QElapsedTimer timer;
+        timer.start();
+        while (!result->isValid() && timer.elapsed() < 10000)
+            QTest::qWait(50);
+        return *result;
+    };
+
+    // getAll answers from the manifest the handshake shipped —
+    // unbound commands list an empty shortcut exactly like Chrome.
+    eval(runtime->host(idA)->page(), QStringLiteral(
+        "chrome.commands.getAll().then(function(c){"
+        "self.__all=c;});'ok'"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(runtime->host(idA)->page(), QStringLiteral(
+            "(self.__all||[]).some(function(c){"
+            "return c.name==='do_thing'"
+            "&&c.shortcut==='Ctrl+Shift+U';})")).toBool(), 20000);
+    QVERIFY(eval(runtime->host(idA)->page(), QStringLiteral(
+        "(self.__all||[]).some(function(c){"
+        "return c.name==='unbound_thing'&&c.shortcut==='';})"))
+        .toBool());
+    // An unbindable suggestion also reports '' — the declared key
+    // is not parroted as assigned.
+    QVERIFY(eval(runtime->host(idA)->page(), QStringLiteral(
+        "(self.__all||[]).some(function(c){"
+        "return c.name==='bad_key'&&c.shortcut==='';})")).toBool());
+
+    // A real window: the registry arms it (event filter or the next
+    // sync pass) with one WindowShortcut per bound command.
+    BrowserMainWindow *window = new BrowserMainWindow;
+    window->show();
+    window->activateWindow();
+    runtime->syncNow();
+    QTRY_VERIFY_WITH_TIMEOUT(registry->shortcutCount() >= 4, 20000);
+    // QShortcut context matching resolves against the ACTIVE window —
+    // under offscreen the activation lands asynchronously, so the key
+    // press must wait for it or the window's shortcuts stay inert.
+    QVERIFY(QTest::qWaitForWindowActive(window));
+
+    // Ctrl+Shift+U -> commands.onCommand('do_thing', tab) — the
+    // window's live tab rides as the second argument.
+    QTest::keyClick(window, Qt::Key_U,
+                    Qt::ControlModifier | Qt::ShiftModifier);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(runtime->host(idA)->page(), QStringLiteral(
+            "(self.__cmd||[]).some(function(e){"
+            "return e[0]==='onCommand'&&e[1]==='do_thing'"
+            "&&typeof e[2]==='number';})")).toBool(), 20000);
+
+    // B's own command reaches ONLY B — targeted delivery, never a
+    // broadcast.
+    QTest::keyClick(window, Qt::Key_9,
+                    Qt::ControlModifier | Qt::ShiftModifier);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(runtime->host(idB)->page(), QStringLiteral(
+            "(self.__cmd||[]).some(function(e){"
+            "return e[0]==='onCommand'&&e[1]==='plain_thing'"
+            "&&typeof e[2]==='number';})")).toBool(), 20000);
+    QTest::qWait(500);
+    QVERIFY(!eval(runtime->host(idA)->page(), QStringLiteral(
+        "(self.__cmd||[]).some(function(e){"
+        "return e[1]==='plain_thing';})")).toBool());
+
+    // _execute_action on a popup-bearing action opens the real
+    // action popup — Chrome never fires onCommand for it.
+    ExtensionActionBar *bar =
+        window->findChild<ExtensionActionBar *>();
+    QVERIFY(bar);
+    QTest::keyClick(window, Qt::Key_Y,
+                    Qt::ControlModifier | Qt::ShiftModifier);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        bar->findChild<QFrame *>(
+            QLatin1String("extensionActionPopup")) != nullptr,
+        20000);
+    QTest::qWait(500);
+    QVERIFY(!eval(runtime->host(idA)->page(), QStringLiteral(
+        "(self.__cmd||[]).some(function(e){"
+        "return e[0]==='actionClicked'"
+        "||e[1]==='_execute_action';})")).toBool());
+    // The open bubble owns the active-window context — the window's
+    // shortcuts go quiet while it is up, exactly like Chrome.
+    if (QFrame *popup = bar->findChild<QFrame *>(
+            QLatin1String("extensionActionPopup")))
+        popup->close();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        bar->findChild<QFrame *>(
+            QLatin1String("extensionActionPopup")) == nullptr,
+        20000);
+    window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(window));
+
+    // B's action declares no popup — its _execute_action fires
+    // action.onClicked(tab) into the host instead.
+    QTest::keyClick(window, Qt::Key_8,
+                    Qt::ControlModifier | Qt::ShiftModifier);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(runtime->host(idB)->page(), QStringLiteral(
+            "(self.__cmd||[]).some(function(e){"
+            "return e[0]==='actionClicked'"
+            "&&typeof e[1]==='number';})")).toBool(), 20000);
+
+    // chrome.action.setPopup rewrites what _execute_action means at
+    // runtime: a popup set on B's popup-less action makes the same
+    // binding open the bubble (bar-anchored — B has no button);
+    // clearing it returns the binding to action.onClicked.
+    eval(runtime->host(idB)->page(), QStringLiteral(
+        "chrome.action.setPopup({popup:'popup.html'})"
+        ".then(function(){self.__popset=1;});'ok'"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(runtime->host(idB)->page(), QStringLiteral(
+            "self.__popset===1")).toBool(), 20000);
+    const int clicksBefore = eval(runtime->host(idB)->page(),
+        QStringLiteral(
+            "(self.__cmd||[]).filter(function(e){"
+            "return e[0]==='actionClicked';}).length")).toInt();
+    QTest::keyClick(window, Qt::Key_8,
+                    Qt::ControlModifier | Qt::ShiftModifier);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        bar->findChild<QFrame *>(
+            QLatin1String("extensionActionPopup")) != nullptr,
+        20000);
+    QTest::qWait(500);
+    QCOMPARE(eval(runtime->host(idB)->page(), QStringLiteral(
+        "(self.__cmd||[]).filter(function(e){"
+        "return e[0]==='actionClicked';}).length")).toInt(),
+        clicksBefore);
+    if (QFrame *popup = bar->findChild<QFrame *>(
+            QLatin1String("extensionActionPopup")))
+        popup->close();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        bar->findChild<QFrame *>(
+            QLatin1String("extensionActionPopup")) == nullptr,
+        20000);
+    window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(window));
+    eval(runtime->host(idB)->page(), QStringLiteral(
+        "chrome.action.setPopup({popup:''})"
+        ".then(function(){self.__popclr=1;});'ok'"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(runtime->host(idB)->page(), QStringLiteral(
+            "self.__popclr===1")).toBool(), 20000);
+    QTest::keyClick(window, Qt::Key_8,
+                    Qt::ControlModifier | Qt::ShiftModifier);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(runtime->host(idB)->page(), QStringLiteral(
+            "(self.__cmd||[]).filter(function(e){"
+            "return e[0]==='actionClicked';}).length")).toInt()
+                > clicksBefore, 20000);
+
+    // The unbindable declaration produced a health-surface note,
+    // not a silent drop.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(idA)->bridge()->backend()->notes().contains(
+            QStringLiteral("commands.bad_key: suggested_key "
+                           "'MediaNextTrack' is not bindable")),
+        20000);
+
+    // Disable tears the bindings down — the key press stops
+    // dispatching instead of reaching a dead extension.
+    manager->setExtensionEnabled(idA, false);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        registry->boundCommands(idA).isEmpty(), 20000);
+    const int before = eval(runtime->host(idB)->page(), QStringLiteral(
+        "(self.__cmd||[]).length")).toInt();
+    QTest::keyClick(window, Qt::Key_U,
+                    Qt::ControlModifier | Qt::ShiftModifier);
+    QTest::qWait(500);
+    QCOMPARE(eval(runtime->host(idB)->page(), QStringLiteral(
+        "(self.__cmd||[]).length")).toInt(), before);
+
+    delete window;
+    manager->setExtensionEnabled(idB, false);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(idB), 20000);
     manager->removeExtension(idA);
     manager->removeExtension(idB);
     QDir(root).removeRecursively();

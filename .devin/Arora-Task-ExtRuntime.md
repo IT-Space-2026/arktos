@@ -58,7 +58,7 @@ xvfb-run — never touch the user's live display.
 | ER11 | webRequest observe-only events (onBeforeRequest/onCompleted/onErrorOccurred) via QWebEngineUrlRequestInterceptor — details below | done | 2 | needs:task:ER04 · extensionWebRequest leg PASS: interceptor→watcher feed (OTR/tor excluded) serves onBefore*/onSendHeaders/onHeadersReceived/onCompleted/onErrorOccurred w/ per-listener filters + per-event host-coverage re-proof; blocking/requestBody→typed unsupported+gap, unservable events refuse at subscribe; orphan tabId-adoption fixed fast-fail nav race; full suite 39/39 + real Bitwarden legs PASS (bg registered onHeadersReceived — note, not gap) |
 | ER12 | notifications.create/update/clear/getAll → native presenter — details below | done | 0 | needs:task:ER06 · extensionNotifications leg PASS: record registry + freedesktop Notify over session D-Bus; onClicked/onButtonClicked/onClosed(byUser)/onShown route back through the runtime fan-out; 'notifications' permission gates the ns; extension-host-smoke PASS + full suite 40/40 (3 env skips) + real Bitwarden legs PASS (gap baseline 0 typed gaps — notifications no longer one) |
 | ER13 | idle.queryState/onStateChanged — input-activity watcher, configurable threshold — details below | done | 1 | needs:task:ER05 · extensionIdle leg PASS: app-wide Qt input filter→precise-timer watcher (in-app activity only, 'locked' never reported — honest note once/context); listener subscribe arms it; queryState's own threshold answers vs clock independent of declared state; 'idle' permission gates calls + fan-out; pre-bridge diagnostics rerouted through the call queue (was dropping gaps); full suite 41/41 (3 env skips) + real Bitwarden legs PASS offscreen --disable-gpu (bg drove idle.setDetectionInterval/subscribe, 0 typed gaps) |
-| ER14 | commands — manifest command parsing + QShortcut registry + onCommand dispatch — details below | pending | 0 | needs:task:ER05 |
+| ER14 | commands — manifest command parsing + QShortcut registry + onCommand dispatch — details below | done | 1 | needs:task:ER05 · extensionCommands leg PASS: manifest commands parse (rust verdict + Qt fallback) → per-window WindowShortcuts dispatch (command, tab); _execute_action honors setPopup/enabled + opens the real bubble or fires action.onClicked; getAll answers bound-state rows; full suite 42/42 + Bitwarden legs PASS |
 | ER15 | management.getSelf + chrome.extension.getBackgroundPage/getViews + sidebarAction sugar — details below | pending | 0 | needs:task:ER06 |
 | ER16 | Security pass — host_permissions scoping on every injection path; per-call consent honoring EXT05 grants — details below | pending | 0 | needs:task:ER07 needs:task:ER09 |
 | ER17 | Bitwarden E2E — install→unlock→fill a login form on a test page, harness-driven, recorded — details below | pending | 0 | needs:task:ER08 needs:task:ER10 needs:task:ER15 |
@@ -379,6 +379,57 @@ parsers gain the field), register shortcuts as QShortcut on the main
 window, dispatch `onCommand` into hosts. `_execute_action` maps to
 the action click.
 Verify: fixture command `Ctrl+Shift+Y`-style binding fires onCommand.
+
+Result (2026-10-19): landed.  The manifest "commands" map now
+travels the sanctioned parse path both ways — the rustcore
+`manifest_check` verdict carries `commands` + `action_popup`, and
+the Qt fallback reads them from the manifest root.  A new
+`ExtensionCommandRegistry` singleton is fed the whole desired
+(enabled+loaded) extension set from `ExtensionBackgroundRuntime::
+syncNow` — no background required, since `_execute_action` can
+open the action popup without any hosted context.  Each command's
+`suggested_key` (platform `linux`, then `default`) parses through a
+Chrome-key-name → QKeySequence table into ONE
+`Qt::WindowShortcut` QShortcut per top-level BrowserMainWindow, so
+the fired command acts on the focused window's active tab like
+Chrome's; an app-level event filter arms windows shown after
+registration and private/tor sessions are never armed.  Fired
+bindings deliver `commands.onCommand(command, tab)` through the
+runtime's `deliverEvent` with the Chrome two-argument shape — the
+tab object rides the `shapedPayload` url-scrub rule so a
+permission-less extension still gets the event but not the tab's
+url (commands and action joined the scrub set).  The reserved
+`_execute_action` performs the action click itself: the manifest's
+`default_popup`, or the runtime `chrome.action.setPopup` override
+(`popupSet` distinguishes "never called" from "cleared"), opens
+through `ExtensionActionBar::triggerAction` — button-anchored when
+one exists, bar-anchored when the popup only exists via setPopup —
+while an empty resolved popup fires `action.onClicked(tab)` and a
+disabled action fires nothing, exactly like Chrome.  Honest
+limits are recorded once per extension into the health notes,
+never swallowed: unbindable suggestions (`MediaNextTrack`-style
+media keys) stay unbound, `global: true` binds window-scoped only
+(no OS-global channel on this stack), ambiguous chords dispatch
+nothing (`activatedAmbiguously` → note), reserved MV2 names are
+never bound under MV3, and there is no shortcut-remap UI — the
+documented gap.  `chrome.commands.getAll` now rides the bridge to
+`invokeCommands` and answers the registry's bound-state rows —
+every declared command with the CURRENTLY bound shortcut in Chrome
+format, '' for absent/unbindable suggestions (the manifest text is
+not parroted as assigned).  Disable/unload drops the bindings in
+the same sync pass.  Verified: extensionCommands leg PASS — two
+hosted fixtures drive real QTest key clicks on a real
+BrowserMainWindow: Ctrl+Shift+U → onCommand('do_thing', tab.id)
+targeted to A only, B's bound command reaches only B,
+_execute_action on popup-bearing A opens the real action bubble
+(and never reaches onCommand/onClicked), B's popup-less action
+fires action.onClicked, a runtime setPopup('popup.html') flips B's
+binding to bubble-open and setPopup('') flips it back, getAll
+reports bound/unbound/unbindable rows correctly, the unbindable
+declaration lands a health note, and disabling A stops dispatch;
+full tst_extensionmanager 42/42 (3 env skips), real Bitwarden legs
+all PASS offscreen + --disable-gpu (gap baseline still 0 typed
+gaps — Bitwarden declares no commands).
 
 ### ER15
 Introspection sugar: `chrome.management.getSelf` (id/name/version/

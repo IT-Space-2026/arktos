@@ -103,6 +103,10 @@ public:
         QString badgeColor;      // css color string as the ext set it
         QString badgeTextColor;
         QString popup;
+        // ER14: distinguishes "no setPopup call" (manifest default
+        // applies) from "setPopup('')" (popup removed — the action
+        // click fires onClicked, Chrome parity).
+        bool popupSet = false;
         bool enabled = true;
     };
     static ActionState actionState(const QString &extensionId);
@@ -186,6 +190,8 @@ private:
                                 const QJsonObject &args);
     QJsonObject invokeNotifications(const QString &method,
                                     const QJsonObject &args);
+    QJsonObject invokeCommands(const QString &method,
+                               const QJsonObject &args);
     QJsonObject invokeIdle(const QString &method,
                            const QJsonObject &args);
     QJsonObject invokeRuntime(const QString &method,

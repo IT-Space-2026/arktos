@@ -23,6 +23,7 @@
 #include "browsermainwindow.h"
 #include "browserpaths.h"
 #include "extensionbackgroundhost.h"
+#include "extensioncommands.h"
 #include "extensioneventhub.h"
 #include "extensionidlewatcher.h"
 #include "extensionnotificationcenter.h"
@@ -227,6 +228,8 @@ QJsonObject ExtensionShimBackend::invoke(const QString &ns,
         return invokeSidePanel(method, args);
     if (ns == QLatin1String("notifications"))
         return invokeNotifications(method, args);
+    if (ns == QLatin1String("commands"))
+        return invokeCommands(method, args);
     if (ns == QLatin1String("idle"))
         return invokeIdle(method, args);
     if (ns == QLatin1String("runtime"))
@@ -1022,8 +1025,10 @@ QJsonObject ExtensionShimBackend::invokeAction(const QString &method,
                 state.badgeColor = css;
             else
                 state.badgeTextColor = css;
-        } else if (key == QLatin1String("popup"))
+        } else if (key == QLatin1String("popup")) {
             state.popup = args.value(QStringLiteral("value")).toString();
+            state.popupSet = true;
+        }
         else if (key == QLatin1String("enabled"))
             state.enabled =
                 args.value(QStringLiteral("value")).toBool();
@@ -1372,6 +1377,25 @@ QJsonObject ExtensionShimBackend::invokeNotifications(
             this, args.value(QStringLiteral("id")).toString());
     if (method == QLatin1String("getAll"))
         return center->getAll(this);
+    return errReply(QStringLiteral("unimplemented"));
+}
+
+// -------------------------------------------------------------------
+// chrome.commands — ER14.  No permission gate: Chrome serves the
+// namespace to every extension.  getAll answers the registry's
+// bound-state rows — every declared command with the CURRENTLY
+// bound shortcut in Chrome key format, '' for absent/unbindable
+// suggestions (Chrome's unassigned rows).  The event side is the
+// C++-driven commands.onCommand dispatch from
+// ExtensionCommandRegistry.
+// -------------------------------------------------------------------
+
+QJsonObject ExtensionShimBackend::invokeCommands(
+        const QString &method, const QJsonObject &args)
+{
+    if (method == QLatin1String("getAll"))
+        return okReply(ExtensionCommandRegistry::instance()
+                           ->commandList(m_extensionId));
     return errReply(QStringLiteral("unimplemented"));
 }
 

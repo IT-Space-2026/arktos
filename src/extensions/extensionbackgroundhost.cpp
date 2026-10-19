@@ -21,6 +21,7 @@
 
 #include "browserapplication.h"
 #include "browserprofile.h"
+#include "extensioncommands.h"
 #include "extensioneventhub.h"
 #include "extensionmanager.h"
 #include "extensionnotificationcenter.h"
@@ -1231,6 +1232,19 @@ void ExtensionBackgroundRuntime::syncNow()
             m_extHostPermissions.remove(id);
         }
     }
+
+    // ER14 — chrome.commands bindings: the WHOLE desired set feeds
+    // the shortcut registry, hosted or not — _execute_action opens
+    // the action popup without needing any background context.
+    // Departed ids drop their bindings inside the sync.
+    {
+        QHash<QString, QString> commandPaths;
+        for (auto it = desired.constBegin(); it != desired.constEnd();
+                ++it)
+            commandPaths.insert(it.key(), it.value().path);
+        ExtensionCommandRegistry::instance()->syncExtensions(
+            commandPaths);
+    }
     // ER09: session-only registrations (persistAcrossSessions:false)
     // die with the extension's loaded lifetime; persisted ones keep
     // the ProfileSettings record for the next session.
@@ -1284,8 +1298,12 @@ void ExtensionBackgroundRuntime::syncNow()
             // "loaded" moment: the lifecycle dispatch reads the
             // version record and fires onInstalled/onStartup.
             ExtensionBackgroundHost *h = m_hosts.value(id);
-            if (h && h->state() == ExtensionBackgroundHost::State::Ready)
+            if (h && h->state() == ExtensionBackgroundHost::State::Ready) {
                 dispatchRuntimeLifecycle(id);
+                // ER14: command declarations parsed before the host
+                // existed land their fidelity notes now.
+                ExtensionCommandRegistry::instance()->flushNotes(id);
+            }
         });
         m_hosts.insert(id, host);
         emit hostChanged(id);
@@ -2050,7 +2068,11 @@ QJsonObject ExtensionBackgroundRuntime::shapedPayload(
     const QString ns = name.section(QLatin1Char('.'), 0, 0);
     if (ns != QLatin1String("tabs")
             && ns != QLatin1String("windows")
-            && ns != QLatin1String("contextMenus"))
+            && ns != QLatin1String("contextMenus")
+            // ER14: commands.onCommand and action.onClicked both
+            // carry a tab object — same url-field rule.
+            && ns != QLatin1String("commands")
+            && ns != QLatin1String("action"))
         return payload;
     // The URL the host-permission fallback matches against — the
     // first url field the payload carries: a named 'tab'/'info'

@@ -3717,3 +3717,24 @@ Extensions (idle): chrome.idle.queryState/setDetectionInterval/
     extension, and the real Bitwarden background's own
     setDetectionInterval + onStateChanged subscription round-trips
     with zero typed gaps.
+Extensions (commands): chrome.commands is served by the hosted
+    runtime (ER14) — a manifest "commands" declaration's
+    suggested_key (the platform key, then the default) binds one
+    window-scoped shortcut per browsing window, and pressing it
+    dispatches commands.onCommand(command, tab) into the extension
+    with the focused window's active tab, like Chrome.  The
+    reserved _execute_action performs the action click: the
+    declared or chrome.action.setPopup-overridden popup opens as
+    the real action bubble, a popup-less or cleared action fires
+    action.onClicked(tab), and a disabled action fires nothing.
+    chrome.commands.getAll answers the real bound-state rows —
+    every declared command with the currently bound shortcut or an
+    empty one, matching Chrome's unassigned rows.  Honest limits
+    are recorded on the extension's health row instead of being
+    swallowed: an unbindable suggestion stays unbound, "global"
+    binds window-scoped only (there is no OS-global shortcut
+    channel), an ambiguous chord dispatches nothing, the reserved
+    MV2 command names are never bound under MV3, and a shortcut
+    remapping UI does not exist yet.  Private/tor windows never
+    get extension shortcuts, and disable/unload drops the bindings
+    in the same pass.
