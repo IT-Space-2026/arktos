@@ -156,6 +156,7 @@ private slots:
     void webkitProfileStorage();
     void webkitClearAndCookiePolicy();
     void webkitInput();
+    void webkitZoomFindLifecycle();
 
 private:
     FakeEngineBackend *m_fake = nullptr;
@@ -2329,6 +2330,184 @@ void tst_EngineSwitch::webkitInput()
     tab.resize(640, 480);
     QTRY_COMPARE_EQ_WITH_TIMEOUT(view->frameSize(),
                                  QSize(640, 480), 30000);
+#else
+    QSKIP("webkit backend not linked in this build");
+#endif
+}
+
+// WK14 — zoom, find-in-page, and the lifecycle surface.  Zoom is
+// asserted on the render scale itself (the CSS viewport width shrinks
+// at zoom > 1) plus the zoom_factor read-back.  Find exercises the
+// WebKitFindController path: the case-insensitive/count contract, a
+// repeat query stepping instead of re-searching, the backward flag,
+// the miss, and the empty-needle clear.  Lifecycle proves the
+// symbol-gated mapping: on a build without webkit_web_view_suspend
+// (2.54) Frozen is the unmap primitive — asserted through the
+// diagnostic — and Discarded is terminate_web_process + reload on
+// wake, proven by a JS marker surviving the freeze but vanishing
+// across the discard.
+void tst_EngineSwitch::webkitZoomFindLifecycle()
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    Engine::Backend *webkit =
+        EngineRegistry::backendForId(QStringLiteral("webkit"));
+    QVERIFY(webkit);
+    QVERIFY2(webkit->pageUnavailableReason().isEmpty(),
+             qPrintable(webkit->pageUnavailableReason()));
+
+    const QString fixturePath = QDir::temp().filePath(
+        QStringLiteral("arktos-wk14-fixture.html"));
+    {
+        QFile fixture(fixturePath);
+        QVERIFY(fixture.open(QIODevice::WriteOnly));
+        fixture.write("<html><head><title>Wk14</title></head>"
+                      "<body><p>needle one</p><p>NEEDLE two</p>"
+                      "<p>needle three</p></body></html>");
+    }
+    const QUrl url = QUrl::fromLocalFile(fixturePath);
+
+    Engine::ProfileOptions options;
+    options.offTheRecord = true;   // ephemeral session — no disk state
+    Engine::Profile *profile = webkit->createProfile(options, this);
+    QVERIFY(profile);
+
+    EngineTab tab(webkit, profile);
+    tab.resize(800, 600);
+    tab.show();
+    QVERIFY(tab.page());
+    auto *page = qobject_cast<WebkitPage *>(tab.page());
+    QVERIFY(page);
+
+    struct EvalOut { QVariant value; bool done = false; };
+    auto evalSync = [&page](const QString &src) -> EvalOut {
+        EvalOut out;
+        page->runJavaScript(src, [&](const QVariant &v) {
+            out.value = v;
+            out.done = true;
+        });
+        QElapsedTimer timer;
+        timer.start();
+        while (!out.done && timer.elapsed() < 30000)
+            QTest::qWait(20);
+        return out;
+    };
+
+    {
+        QSignalSpy spy(page, &Engine::Page::loadFinished);
+        page->load(url);
+        QVERIFY2(spy.wait(60000) && spy.first().first().toBool(),
+                 "fixture load failed");
+    }
+    QCOMPARE(page->url(), url);
+
+    // --- zoom: the read-back reports the new level and the CSS
+    // viewport shrinks in proportion (real render-scale change, not
+    // just a stored number).  A non-positive factor is refused.
+    QCOMPARE(page->zoomFactor(), qreal(1.0));
+    const int innerBefore = evalSync(QStringLiteral("window.innerWidth"))
+                                .value.toInt();
+    QVERIFY2(innerBefore > 0, "innerWidth eval failed");
+    page->setZoomFactor(1.5);
+    QCOMPARE(page->zoomFactor(), qreal(1.5));
+    QTRY_VERIFY2_WITH_TIMEOUT(
+            evalSync(QStringLiteral("window.innerWidth")).value.toInt()
+                < innerBefore,
+            "zoom did not shrink the CSS viewport", 30000);
+    page->setZoomFactor(0.0);
+    QCOMPARE(page->zoomFactor(), qreal(1.5));   // refused, still 1.5
+    page->setZoomFactor(1.0);
+    QTRY_COMPARE_EQ_WITH_TIMEOUT(
+            evalSync(QStringLiteral("window.innerWidth")).value.toInt(),
+            innerBefore, 30000);
+
+    // --- find: case-insensitive default counts all three spellings.
+    QSignalSpy findSpy(page, &Engine::Page::findTextFinished);
+    auto findSync = [&](const QString &needle,
+                        Engine::FindFlags flags) -> Engine::FindResult {
+        const int before = findSpy.count();
+        page->findText(needle, flags);
+        QElapsedTimer timer;
+        timer.start();
+        // The last emission wins — a corrected count can follow on
+        // counted-matches, so settle on the newest entry.
+        while (findSpy.count() == before && timer.elapsed() < 30000)
+            QTest::qWait(20);
+        if (findSpy.count() == before)
+            return Engine::FindResult{};
+        // One extra beat for a counted-matches correction.
+        QTest::qWait(300);
+        return findSpy.last().first().value<Engine::FindResult>();
+    };
+    Engine::FindResult found =
+        findSync(QStringLiteral("needle"), Engine::FindFlags());
+    QCOMPARE(found.numberOfMatches, 3);
+    QCOMPARE(found.activeMatch, 1);
+    // The repeat call steps to the next match instead of restarting.
+    found = findSync(QStringLiteral("needle"), Engine::FindFlags());
+    QCOMPARE(found.numberOfMatches, 3);
+    QCOMPARE(found.activeMatch, 2);
+    // Case-sensitive honors the flag: the uppercase NEEDLE drops out.
+    found = findSync(QStringLiteral("needle"),
+                     Engine::FindCaseSensitively);
+    QCOMPARE(found.numberOfMatches, 2);
+    // Backward fresh search resolves to the last match.
+    found = findSync(QStringLiteral("needle"), Engine::FindBackward);
+    QCOMPARE(found.numberOfMatches, 3);
+    QCOMPARE(found.activeMatch, 3);
+    // The miss reports zero; the empty needle clears the search.
+    found = findSync(QStringLiteral("definitely-absent"),
+                     Engine::FindFlags());
+    QCOMPARE(found.numberOfMatches, 0);
+    found = findSync(QString(), Engine::FindFlags());
+    QCOMPARE(found.numberOfMatches, 0);
+
+    // --- lifecycle.  Log the gate verdict: 2.54 ships no
+    // suspend/resume exports — Frozen must be the unmap fallback.
+    qInfo("webkit suspend/resume exports: %s",
+          WebkitPage::suspendResumeAvailable() ? "yes" : "no");
+    QVERIFY(page->engineViewMapped());
+    QCOMPARE(evalSync(QStringLiteral(
+                 "window.__wk14='alive';'set'")).value.toString(),
+             QStringLiteral("set"));
+
+    // Frozen: the page survives (eval answers, marker intact) — on a
+    // build without the suspend export the honest primitive is the
+    // unmapped view.
+    page->setLifecycleState(Engine::Page::LifecycleState::Frozen);
+    QCOMPARE(page->lifecycleState(), Engine::Page::LifecycleState::Frozen);
+    if (!WebkitPage::suspendResumeAvailable())
+        QVERIFY2(!page->engineViewMapped(),
+                 "Frozen without suspend did not unmap the view");
+    QCOMPARE(evalSync(QStringLiteral("window.__wk14||'gone'"))
+                 .value.toString(),
+             QStringLiteral("alive"));
+    page->setLifecycleState(Engine::Page::LifecycleState::Active);
+    QCOMPARE(page->lifecycleState(), Engine::Page::LifecycleState::Active);
+    QVERIFY(page->engineViewMapped());
+    QCOMPARE(evalSync(QStringLiteral("window.__wk14||'gone'"))
+                 .value.toString(),
+             QStringLiteral("alive"));
+
+    // Discarded: the web process actually dies — the marker is gone
+    // after the wake reload, and the UI-side history entry survives
+    // (url unchanged, loadFinished(true) on reactivation).
+    page->setLifecycleState(Engine::Page::LifecycleState::Discarded);
+    QCOMPARE(page->lifecycleState(),
+             Engine::Page::LifecycleState::Discarded);
+    QVERIFY(page->engineProcessDiscarded());
+    {
+        QSignalSpy spy(page, &Engine::Page::loadFinished);
+        page->setLifecycleState(Engine::Page::LifecycleState::Active);
+        QVERIFY2(spy.wait(60000) && spy.first().first().toBool(),
+                 "wake-from-discard reload never finished");
+    }
+    QCOMPARE(page->lifecycleState(), Engine::Page::LifecycleState::Active);
+    QVERIFY(!page->engineProcessDiscarded());
+    QCOMPARE(page->url(), url);
+    QTRY_COMPARE_EQ_WITH_TIMEOUT(
+            evalSync(QStringLiteral("window.__wk14||'gone'"))
+                .value.toString(),
+            QStringLiteral("gone"), 30000);
 #else
     QSKIP("webkit backend not linked in this build");
 #endif

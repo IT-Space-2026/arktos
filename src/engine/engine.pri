@@ -83,6 +83,10 @@ equals(ARKTOS_WEBKIT_ENABLED, true) {
         DEFINES += ARKTOS_WEBKIT_LINKED
         CONFIG += link_pkgconfig
         PKGCONFIG += wpe-webkit-2.0 wpe-platform-2.0 wpe-platform-headless-2.0
+        # WK14: dlsym() for the optional webkit_web_view_suspend/
+        # resume exports — folded into libc on glibc >= 2.34, a stub
+        # archive elsewhere, harmless either way.
+        unix:!mac: LIBS += -ldl
         # The ~/wpe sideloaded-glibc recipe (.devin/webkit-env.sh +
         # ~/wpe/ACQUIRED.md): every binary carrying the backend TU —
         # app, tools, autotests — links libWPEWebKit, so every binary

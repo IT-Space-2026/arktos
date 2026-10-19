@@ -3687,3 +3687,18 @@ WebKit input bridge (WK13): the webkit backend now routes Qt widget
     delta surfaces (line ticks and precise touchpad pixels), and keys
     are mapped to DOM-standard key/code values (a→"a"/KeyA,
     shift+b→"B"/KeyB).
+WebKit zoom, find, and lifecycle (WK14): the webkit backend's page
+    now drives real zoom (webkit_web_view_set_zoom_level, with a
+    non-positive-factor guard), find-in-page (the view's
+    WebKitFindController — case-insensitive by default, wrap-around
+    always on, a repeated query steps to the next/previous match, an
+    empty needle clears the highlights, and the search bar's match
+    counter is fed by the found/failed/count signals), and the
+    SLEEP01 tab-sleep lifecycle: Discarded terminates the WebProcess
+    outright and reloads on wake (session history survives — it is
+    UI-process state), and Frozen uses webkit_web_view_suspend when
+    the resolved WPE exports it (symbol-gated, so newer builds get
+    the real suspend) or honestly degrades to "loaded but not
+    compositing" via unmap + unfocus on the current 2.54 stack, which
+    has no suspend/resume export. Navigating a discarded tab revives
+    it automatically.

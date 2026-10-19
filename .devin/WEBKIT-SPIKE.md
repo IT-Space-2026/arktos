@@ -155,7 +155,13 @@ Named gaps in severity order:
    Referer/UA/tracking-param rewrites needing mid-flight header
    edits have no hook outside the injected bundle (unprobed).
 2. **No suspend/resume** — Frozen impossible; Discarded =
-   session-state + destroy + restore round-trip.
+   session-state + destroy + restore round-trip.  WK14 update: the
+   adapter symbol-gates `webkit_web_view_suspend`/`resume` (absent on
+   2.54 — dlsym-verified), so Frozen degrades to WPEView unmap +
+   focus-out ("loaded but not compositing"; JS timers keep running)
+   and Discarded is realized as `terminate_web_process` + reload on
+   wake — the b/f list is UI-process state and survives, which
+   degenerates the session-state round-trip to a reload.
 3. **No renderer PID** — SBAR01 per-tab memory shows '—'.
 4. **No download pause/resume** and no "visited links" clear type —
    honest no-ops in the adapter.

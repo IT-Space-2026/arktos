@@ -280,10 +280,13 @@ browsing profile:
   version ("WebKit x.y.z") in the selector surfaces; it hosts tabs
   through the same engine-neutral page/view pair — pages render
   headlessly over WPE and blit into an ordinary widget, session
-  history maps the real WebKitBackForwardList, and named profiles
-  get isolated on-disk stores under profiles/<id>/WebKit — while the
-  still-minimal feature set (no input handling, find, or per-profile
-  settings plumbing yet) keeps it experimental.
+  history maps the real WebKitBackForwardList, named profiles get
+  isolated on-disk stores under profiles/<id>/WebKit, widget input
+  is translated into wpe-platform events, zoom and find-in-page are
+  live, and tab suspend/discard maps onto the honest primitives
+  (process terminate + reload — this WPE build exports no
+  suspend/resume) — while custom schemes, adblock interception,
+  extensions and devtools are still ahead, keeping it experimental.
 - **Reader mode** (Ctrl+Alt+R) and **Picture-in-Picture** on videos.
 - **Command palette** — Ctrl+Shift+P fuzzy search over browser
   commands.
@@ -856,8 +859,11 @@ the distro's *webengine*, *webchannel*, *core5compat*, *svg* and
   `CONFIG-=webkit`. A `webkit=1` build on a WPE-less host still
   compiles the backend TU — it just reports the engine unavailable
   (compile-but-inert, same contract as the Servo backend). The
-  backend is a skeleton for now and registers nothing; WK07 wires
-  the engine entry.
+  backend registers as "WebKit x.y.z" in the engine switcher and
+  hosts real tabs — rendering, navigation, history, per-profile
+  storage, cookies, input, zoom/find and lifecycle all mapped onto
+  the WPE surface (see the engine notes above for what is still
+  missing).
 - `CONFIG+=sanitize` — ASan+UBSan instrumented build for the test
   suite
 

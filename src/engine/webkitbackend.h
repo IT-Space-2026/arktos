@@ -150,6 +150,36 @@
 // sees e.g. KeyU for 'a') that KeyboardEvent.code derives from — a
 // static table, because offscreen QPA reports no nativeScanCode and
 // Qt's value is platform-shaped elsewhere anyway.
+//
+// WK14 lands zoom/find/lifecycle.  Zoom was already a pass-through
+// to webkit_web_view_set_zoom_level (WK08); WK14 adds the
+// non-positive guard.  findText maps onto the view's
+// WebKitFindController: a fresh needle drives search() with the
+// FindFlags -> WebKitFindOptions mapping (case-insensitive is the
+// opt-in flag WebKit side — the inverse of FindCaseSensitively;
+// WRAP_AROUND always on because Qt find wraps by default and has no
+// flag), an identical findText() call steps via
+// search_next/search_previous rather than restarting the count, and
+// an empty needle is the clear — search_finish.  The async verdict
+// arrives on the controller's found-text / failed-to-find-text /
+// counted-matches signals; WebKit reports no active-match ordinal,
+// so FindResult::activeMatch is tracked locally from the request
+// sequence (fresh forward find = 1, backward = the count) — the
+// count is authoritative, the ordinal best-effort.
+// setLifecycleState maps over what the resolved WPE actually
+// exports: webkit_web_view_suspend/resume are OPTIONAL exports —
+// absent on 2.54 (header- and nm-verified), resolved through dlsym
+// so a newer artifact gets the real suspend without a rebuild.
+// With them Frozen suspends the web process outright; without them
+// Frozen degrades to wpe_view_unmap + focus_out — "loaded but not
+// compositing", the interface's own definition — with JS timers
+// honestly still running.  Discarded is
+// webkit_web_view_terminate_web_process + reload() on wake: the
+// WebProcess dies outright (the spike's session-state round-trip
+// degenerates to this — the WebKitBackForwardList is UI-process
+// state and survives), and reload respawns it on the current entry.
+// Navigation on a discarded page (load/reload/bf jump) revives it —
+// the load itself performs the respawn.
 
 #include "engineinterface.h"
 
@@ -175,6 +205,7 @@ typedef struct _WebKitWebView WebKitWebView;
 typedef struct _WebKitWebContext WebKitWebContext;
 typedef struct _WebKitNetworkSession WebKitNetworkSession;
 typedef struct _WebKitPolicyDecision WebKitPolicyDecision;
+typedef struct _WebKitFindController WebKitFindController;
 
 class WebkitPage;
 
@@ -338,6 +369,16 @@ public:
         return m_lastNavigationType;
     }
 
+    // WK14 diagnostics/test surface (the WK11 sessionDataDir role).
+    // suspendResumeAvailable() reports the dlsym gate verdict for
+    // webkit_web_view_suspend/resume — false on WPE 2.54, where
+    // Frozen degrades to the unmap primitive the second accessor
+    // exposes.  engineProcessDiscarded() is true while a Discarded
+    // page holds a terminated web process pending wake.
+    static bool suspendResumeAvailable();
+    bool engineViewMapped() const;
+    bool engineProcessDiscarded() const { return m_engineDiscarded; }
+
 private:
     // GLib signal entry points — reached through the static
     // trampolines in the .cpp (all on the GUI thread: on the glib
@@ -356,6 +397,17 @@ private:
     // use-decision while we record the navigation type (the only
     // place WebKit reports WHY a navigation happened).
     bool onDecidePolicy(WebKitPolicyDecision *decision, int type);
+    // WK14 — WebKitFindController signal sinks: the terminal verdict
+    // (found/failed) plus the final count correction, and the
+    // lifecycle primitives behind setLifecycleState (suspend when the
+    // export exists, else the unmap freeze) + the discarded-page
+    // revive any navigation performs.
+    void onFindFound(unsigned matchCount);
+    void onFindCounted(unsigned matchCount);
+    void onFindFailed();
+    void freezeEngine();
+    void thawEngine();
+    void wakeForNavigation();
     void resizeEngine(int width, int height);
     void focusEngine(bool in);
 
@@ -400,6 +452,12 @@ private:
     static int cbDecidePolicy(WebKitWebView *view,
                               WebKitPolicyDecision *decision,
                               int type, WebkitPage *page);
+    static void cbFindFound(WebKitFindController *controller,
+                            unsigned matchCount, WebkitPage *page);
+    static void cbFindCounted(WebKitFindController *controller,
+                              unsigned matchCount, WebkitPage *page);
+    static void cbFindFailed(WebKitFindController *controller,
+                             WebkitPage *page);
 
     Engine::Profile *m_profile;
     QPointer<WebkitView> m_view;
@@ -419,6 +477,19 @@ private:
     bool m_loading = false;
     bool m_progressSeen = false;
     LifecycleState m_lifecycle = LifecycleState::Active;
+    // WK14 — find-in-page tracking: the last query so a repeat
+    // findText steps instead of re-searching, the locally-tracked
+    // active ordinal (WebKit exposes none) and the authoritative
+    // match count; plus which lifecycle primitive each state applied
+    // (suspend export / unmap freeze / terminated process) so the
+    // Active transition knows what to undo.
+    QString m_findText;
+    Engine::FindFlags m_findFlags;
+    int m_findOrdinal = 0;
+    int m_findCount = 0;
+    bool m_suspended = false;
+    bool m_frozenUnmapped = false;
+    bool m_engineDiscarded = false;
     QHash<QString, Engine::Script> m_scripts;
     QHash<QString, bool> m_attributes;
 

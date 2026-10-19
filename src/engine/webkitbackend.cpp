@@ -38,6 +38,7 @@
 #include <wpe/webkit.h>
 #include <wpe/headless/wpe-headless.h>
 #include <wpe/wpe-platform.h>
+#include <dlfcn.h>
 #endif
 
 #include "browserpaths.h"
@@ -646,6 +647,44 @@ unsigned wpeKeycodeForQtKey(int key, bool keypad)
     }
 }
 
+// ---- WK14 — find options + the optional suspend/resume exports -------
+
+// FindFlags -> WebKitFindOptions.  WebKit's case handling inverts
+// Qt's: NONE is case-SENSITIVE there, while the Qt flag set defaults
+// insensitive and opts into FindCaseSensitively.  Qt find wraps
+// unconditionally (WebViewSearch relies on it — WebEngine dropped its
+// wrap flag), so WRAP_AROUND is always on.
+guint32 wkFindOptions(Engine::FindFlags options)
+{
+    guint32 out = WEBKIT_FIND_OPTIONS_WRAP_AROUND;
+    if (!(options & Engine::FindCaseSensitively))
+        out |= WEBKIT_FIND_OPTIONS_CASE_INSENSITIVE;
+    if (options & Engine::FindBackward)
+        out |= WEBKIT_FIND_OPTIONS_BACKWARDS;
+    return out;
+}
+
+// webkit_web_view_suspend/resume are not in the WPE 2.54 headers —
+// the build's libWPEWebKit exports neither (nm-verified).  Resolve
+// them through dlsym anyway, the same way the servo shim gates its
+// optional se_* exports: a newer artifact gets the real process
+// suspend with no rebuild, and this build reports the gate honestly.
+// RTLD_DEFAULT reaches the DT_NEEDED-linked library's own symbols.
+typedef void (*WebkitViewVoidFn)(WebKitWebView *);
+
+WebkitViewVoidFn webkitViewExport(const char *name)
+{
+    return reinterpret_cast<WebkitViewVoidFn>(dlsym(RTLD_DEFAULT, name));
+}
+
+bool wkSuspendResumeAvailable()
+{
+    static const bool available =
+        webkitViewExport("webkit_web_view_suspend")
+        && webkitViewExport("webkit_web_view_resume");
+    return available;
+}
+
 } // namespace
 #endif // ARKTOS_WEBKIT_LINKED
 
@@ -1071,6 +1110,17 @@ WebkitPage::WebkitPage(Engine::Profile *profile, QObject *parent)
                      G_CALLBACK(cbDecidePolicy), this);
     g_signal_connect(m_wpeView, "buffer-rendered",
                      G_CALLBACK(cbBufferRendered), this);
+    // WK14: the find controller is a per-view object owned by the
+    // WebKitWebView — stable for the view's life, so one connect in
+    // the ctor covers every findText call.
+    WebKitFindController *findController =
+        webkit_web_view_get_find_controller(m_webView);
+    g_signal_connect(findController, "found-text",
+                     G_CALLBACK(cbFindFound), this);
+    g_signal_connect(findController, "counted-matches",
+                     G_CALLBACK(cbFindCounted), this);
+    g_signal_connect(findController, "failed-to-find-text",
+                     G_CALLBACK(cbFindFailed), this);
 #else
     Q_UNUSED(profile);
 #endif
@@ -1248,6 +1298,7 @@ void WebkitPage::load(const QUrl &url)
 #ifdef ARKTOS_WEBKIT_LINKED
     if (!m_webView)
         return;
+    wakeForNavigation();   // WK14 — an explicit load revives a discard
     m_pendingBfNavUri.clear();   // supersedes any in-flight bf hop
     const QByteArray uri = url.toString().toUtf8();
     webkit_web_view_load_uri(m_webView, uri.constData());
@@ -1268,8 +1319,10 @@ void WebkitPage::stop()
 void WebkitPage::reload()
 {
 #ifdef ARKTOS_WEBKIT_LINKED
-    if (m_webView)
+    if (m_webView) {
+        wakeForNavigation();
         webkit_web_view_reload(m_webView);
+    }
 #endif
 }
 
@@ -1313,6 +1366,7 @@ void WebkitPage::back()
             webkit_web_view_get_back_forward_list(m_webView);
         m_pendingBfNavUri =
             bfItemUri(webkit_back_forward_list_get_back_item(list));
+        wakeForNavigation();
         webkit_web_view_go_back(m_webView);
     }
 #endif
@@ -1327,6 +1381,7 @@ void WebkitPage::forward()
             webkit_web_view_get_back_forward_list(m_webView);
         m_pendingBfNavUri =
             bfItemUri(webkit_back_forward_list_get_forward_item(list));
+        wakeForNavigation();
         webkit_web_view_go_forward(m_webView);
     }
 #endif
@@ -1414,6 +1469,7 @@ void WebkitPage::goToHistoryEntry(const Engine::HistoryEntry &entry)
     if (item) {
         m_lastNavigationType = Engine::NavigationType::BackOrForward;
         m_pendingBfNavUri = bfItemUri(item);
+        wakeForNavigation();
         webkit_web_view_go_to_back_forward_list_item(m_webView, item);
     }
 #else
@@ -1423,6 +1479,10 @@ void WebkitPage::goToHistoryEntry(const Engine::HistoryEntry &entry)
 
 void WebkitPage::setZoomFactor(qreal factor)
 {
+    // WK14: the zoom level is a positive gdouble — a zero/negative or
+    // non-finite factor would hand the engine a broken scale.
+    if (!qIsFinite(factor) || factor <= 0.0)
+        return;
     m_zoom = factor;
 #ifdef ARKTOS_WEBKIT_LINKED
     if (m_webView)
@@ -1442,10 +1502,51 @@ qreal WebkitPage::zoomFactor() const
 void WebkitPage::findText(const QString &subString,
                           Engine::FindFlags options)
 {
-    // WK14 wires WebKitFindController; until then the contract still
-    // requires an answer — the "no find-in-page" shape.
+#ifdef ARKTOS_WEBKIT_LINKED
+    if (m_webView) {
+        WebKitFindController *controller =
+            webkit_web_view_get_find_controller(m_webView);
+        if (subString.isEmpty()) {
+            // The Qt contract for an empty needle is "clear the
+            // search" — highlights off, counter blanked by the
+            // WebViewSearch handler.
+            webkit_find_controller_search_finish(controller);
+            m_findText.clear();
+            m_findOrdinal = 0;
+            m_findCount = 0;
+        } else if (subString == m_findText
+                   && options == m_findFlags) {
+            // Same query — step to the next/previous match rather
+            // than re-searching (a fresh search() would restart the
+            // match walk at the document position).  found-text /
+            // failed-to-find-text deliver the verdict; the ordinal
+            // steps optimistically here and onFindFound wraps/clamps
+            // it once the count lands.
+            m_findOrdinal += (options & Engine::FindBackward) ? -1 : 1;
+            if (options & Engine::FindBackward)
+                webkit_find_controller_search_previous(controller);
+            else
+                webkit_find_controller_search_next(controller);
+            return;
+        } else {
+            m_findText = subString;
+            m_findFlags = options;
+            // 0 marks "fresh backward search — ordinal unknown until
+            // the count arrives" (onFindFound resolves it to the
+            // last match); forward searches land on match 1.
+            m_findOrdinal = (options & Engine::FindBackward) ? 0 : 1;
+            m_findCount = 0;
+            const QByteArray needle = subString.toUtf8();
+            webkit_find_controller_search(
+                controller, needle.constData(),
+                wkFindOptions(options), guint(-1));
+            return;
+        }
+    }
+#else
     Q_UNUSED(subString);
     Q_UNUSED(options);
+#endif
     Engine::FindResult result;
     Q_EMIT findTextFinished(result);
 }
@@ -1519,12 +1620,128 @@ void WebkitPage::setPageAttribute(const QString &name, bool on)
 
 void WebkitPage::setLifecycleState(LifecycleState state)
 {
+    if (state == m_lifecycle)
+        return;
+    const LifecycleState old = m_lifecycle;
     m_lifecycle = state;
+#ifdef ARKTOS_WEBKIT_LINKED
+    if (!m_webView)
+        return;
+    if (state == LifecycleState::Discarded) {
+        // A Frozen surface is always undone before the renderer dies
+        // so the wake path has one clean state to recover.
+        if (old == LifecycleState::Frozen)
+            thawEngine();
+        // terminate kills the WebProcess outright — the whole point
+        // of the discard (the UI-side WebKitBackForwardList survives,
+        // so waking is reload(), not a session-state re-create).
+        // An empty page has nothing to drop.
+        if (webkit_web_view_get_uri(m_webView)) {
+            webkit_web_view_terminate_web_process(m_webView);
+            m_engineDiscarded = true;
+        }
+    } else if (state == LifecycleState::Frozen) {
+        if (m_engineDiscarded) {
+            // A dead renderer cannot freeze-then-thaw back alive —
+            // Active is the only way out of a discard; the request
+            // stays honestly Discarded.
+            m_lifecycle = LifecycleState::Discarded;
+            return;
+        }
+        freezeEngine();
+    } else {   // Active
+        if (m_engineDiscarded) {
+            m_engineDiscarded = false;
+            // reload() on a terminated view respawns the WebProcess
+            // at the current history entry — the load signals land
+            // exactly like a user reload.
+            webkit_web_view_reload(m_webView);
+        } else if (old == LifecycleState::Frozen) {
+            thawEngine();
+        }
+    }
+#else
+    Q_UNUSED(old);
+#endif
 }
 
 WebkitPage::LifecycleState WebkitPage::lifecycleState() const
 {
     return m_lifecycle;
+}
+
+// WK14 — the engine-side halves of the lifecycle transitions.
+// freezeEngine prefers the real suspend export (absent on 2.54 — the
+// dlsym gate); the fallback unmaps and unfocuses the WPEView, which
+// stops the engine compositing the page — the interface's own
+// "loaded but not compositing" definition of Frozen.  JS timers keep
+// running, which is the honest delta vs a true process suspend.
+void WebkitPage::freezeEngine()
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    if (wkSuspendResumeAvailable()) {
+        webkitViewExport("webkit_web_view_suspend")(m_webView);
+        m_suspended = true;
+        return;
+    }
+    if (m_wpeView && wpe_view_get_mapped(m_wpeView)) {
+        wpe_view_focus_out(m_wpeView);
+        wpe_view_unmap(m_wpeView);
+        m_frozenUnmapped = true;
+    }
+#endif
+}
+
+void WebkitPage::thawEngine()
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    if (m_suspended) {
+        if (WebkitViewVoidFn resume =
+                webkitViewExport("webkit_web_view_resume"))
+            resume(m_webView);
+        m_suspended = false;
+    }
+    if (m_frozenUnmapped) {
+        wpe_view_map(m_wpeView);
+        wpe_view_focus_in(m_wpeView);
+        m_frozenUnmapped = false;
+    }
+#endif
+}
+
+// Every navigation is use-intent — a discarded page revives to
+// Active first (the navigation itself respawns the terminated web
+// process; no separate reload needed).
+void WebkitPage::wakeForNavigation()
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    if (m_lifecycle == LifecycleState::Discarded) {
+        m_lifecycle = LifecycleState::Active;
+        m_engineDiscarded = false;
+        thawEngine();   // paranoia — the discard path already thawed
+    }
+#endif
+}
+
+// WK14 test/diagnostic surface — the suspend/resume symbol-gate
+// verdict and the WPEView's mapped state (the Frozen fallback's
+// observable half).
+bool WebkitPage::suspendResumeAvailable()
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    return wkSuspendResumeAvailable();
+#else
+    return false;
+#endif
+}
+
+bool WebkitPage::engineViewMapped() const
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    return m_wpeView && wpe_view_get_mapped(m_wpeView);
+#else
+    return false;
+#endif
 }
 
 qint64 WebkitPage::renderProcessId() const
@@ -1633,6 +1850,24 @@ int WebkitPage::cbDecidePolicy(WebKitWebView *,
     return page->onDecidePolicy(decision, type) ? TRUE : FALSE;
 }
 
+void WebkitPage::cbFindFound(WebKitFindController *,
+                             unsigned matchCount, WebkitPage *page)
+{
+    page->onFindFound(matchCount);
+}
+
+void WebkitPage::cbFindCounted(WebKitFindController *,
+                               unsigned matchCount, WebkitPage *page)
+{
+    page->onFindCounted(matchCount);
+}
+
+void WebkitPage::cbFindFailed(WebKitFindController *,
+                              WebkitPage *page)
+{
+    page->onFindFailed();
+}
+
 #endif // ARKTOS_WEBKIT_LINKED
 
 void WebkitPage::onBufferRendered(WPEBuffer *buffer)
@@ -1687,6 +1922,12 @@ void WebkitPage::onLoadChanged(int event)
         // page's uri — notify::uri carries the same update, this just
         // lands it at the event instead of a property pump later.
         onUriNotify();
+        // WK14: find state is per-document — a commit retires it so
+        // a repeated needle searches the new document instead of
+        // stepping a dead controller query.
+        m_findText.clear();
+        m_findOrdinal = 0;
+        m_findCount = 0;
     } else if (event == int(WEBKIT_LOAD_FINISHED)) {
         // A load-failed already answered this load — a stray FINISHED
         // for the dead navigation must not report success (the
@@ -1826,6 +2067,57 @@ bool WebkitPage::onDecidePolicy(WebKitPolicyDecision *decision, int type)
     Q_UNUSED(type);
 #endif
     return false;   // observe-only until WK17 — WebKit decides "use"
+}
+
+// ---- WK14 — WebKitFindController sinks -------------------------------
+//
+// found-text delivers the terminal "found" verdict; its match count
+// can still be a partial figure (counting continues and lands on
+// counted-matches), so a disagreeing counted-matches re-emits the
+// corrected result — callers treat findTextFinished as a broadcast,
+// the last emission wins.  failed-to-find-text is the terminal
+// "miss".  WebKit exposes no active-match ordinal anywhere on the
+// controller — FindResult::activeMatch is the locally tracked
+// request-sequence ordinal (fresh forward find = 1, fresh backward =
+// the count once known, each next/previous steps it and the real
+// count wraps it).  Best-effort: scrolling mid-search can drift it;
+// the count is authoritative.
+
+void WebkitPage::onFindFound(unsigned matchCount)
+{
+    m_findCount = int(matchCount);
+    if (m_findOrdinal == 0)
+        m_findOrdinal = (m_findFlags & Engine::FindBackward)
+            ? m_findCount : 1;
+    else if (m_findCount > 0)
+        m_findOrdinal = ((m_findOrdinal - 1) % m_findCount
+                         + m_findCount) % m_findCount + 1;
+    Engine::FindResult result;
+    result.numberOfMatches = m_findCount;
+    result.activeMatch = m_findOrdinal;
+    Q_EMIT findTextFinished(result);
+}
+
+void WebkitPage::onFindCounted(unsigned matchCount)
+{
+    if (m_findText.isEmpty() || int(matchCount) == m_findCount)
+        return;
+    m_findCount = int(matchCount);
+    if (m_findCount > 0 && m_findOrdinal > 0)
+        m_findOrdinal = ((m_findOrdinal - 1) % m_findCount
+                         + m_findCount) % m_findCount + 1;
+    Engine::FindResult result;
+    result.numberOfMatches = m_findCount;
+    result.activeMatch = m_findOrdinal;
+    Q_EMIT findTextFinished(result);
+}
+
+void WebkitPage::onFindFailed()
+{
+    m_findCount = 0;
+    m_findOrdinal = 0;
+    Engine::FindResult result;
+    Q_EMIT findTextFinished(result);
 }
 
 // ---- WebkitProfile --------------------------------------------------
