@@ -525,8 +525,12 @@ extension pages (popup, options, extension links in tabs) get the
 same shim injection and chromeBridge channel as the background, and
 the popup reaches its genuine vault login/unlock gate. Actual
 sign-in needs a real Bitwarden account; a few surfaces it touches
-(`chrome.notifications`) answer typed errors that show up in its
-Settings → Extensions health row instead of failing silently.
+(`chrome.privacy`, `chrome.sidePanel`) are recorded as fidelity notes
+on its Settings → Extensions health row instead of failing silently.
+`chrome.notifications` is served by the hosted runtime: create/update/
+clear/getAll run over a per-extension record registry presented through
+the freedesktop notifications service, with onClicked/onButtonClicked/
+onClosed dispatched back into the extension.
 `chrome.scripting.executeScript` itself is served: the host
 re-checks the `scripting` permission and host coverage of the
 target's committed URL before injecting, evaluates `func`/`files`

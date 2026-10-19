@@ -42,6 +42,7 @@
 #include "extensionbackgroundhost.h"
 #include "extensioneventhub.h"
 #include "extensionmanager.h"
+#include "extensionnotificationcenter.h"
 #include "extensionpagebridge.h"
 #include "extensionrequestwatcher.h"
 #include "extensionreviewdialog.h"
@@ -92,6 +93,7 @@ private slots:
     void extensionScripting();
     void extensionScriptCss();
     void extensionContentScriptRegistration();
+    void extensionNotifications();
     void extensionOffscreen();
     void actionPopupSelfWires();
     void realExtensionPopup();
@@ -188,6 +190,17 @@ private:
         worker.write(
             "chrome.runtime.onInstalled.addListener(function(){});\n");
         return dir;
+    }
+
+    // ER12: count a backend's pushEvent emissions carrying `name`.
+    static int pushCount(const QSignalSpy &spy, const QString &name) {
+        int n = 0;
+        for (const QList<QVariant> &args : spy) {
+            if (!args.isEmpty()
+                    && args.at(0).toString() == name)
+                ++n;
+        }
+        return n;
     }
 
     // Plain recursive file copy for the ER00 fixture — the real
@@ -1387,19 +1400,20 @@ void tst_ExtensionManager::hostedBackgroundRuntime()
     QVERIFY(out.value(QLatin1String("url")).toBool());
     QVERIFY(out.value(QLatin1String("perm")).toBool());
     QCOMPARE(out.value(QLatin1String("notifError")).toString(),
-             QStringLiteral("unsupported"));
+             QStringLiteral("no-permission"));
     QVERIFY(out.value(QLatin1String("msgCallback")).toBool());
 
     // Action state flows into the C++ registry EXT08's button strip
-    // reads; the typed notifications error reached the host's gap
-    // list instead of silently no-oping.
+    // reads; the fixture lacks 'notifications' so create's typed
+    // no-permission denial reached the host's gap list instead of
+    // silently no-oping.
     const ExtensionShimBackend::ActionState action =
         ExtensionShimBackend::actionState(id);
     QCOMPARE(action.title, QStringLiteral("Shim Title"));
     QCOMPARE(action.badgeText, QStringLiteral("7"));
     QTRY_VERIFY_WITH_TIMEOUT(
         runtime->host(id)->shimGaps().contains(
-            QStringLiteral("chrome.notifications.create: unsupported")),
+            QStringLiteral("chrome.notifications.create: no-permission")),
         10000);
 
     // Disable -> the hosted view is torn down; re-enable -> respawn.
@@ -1437,7 +1451,7 @@ void tst_ExtensionManager::extensionShimBackend()
         manifestFile.write(
             "{\"manifest_version\":3,\"name\":\"tst-shim\","
             "\"version\":\"2.0\",\"default_locale\":\"en\","
-            "\"permissions\":[\"storage\",\"alarms\"],"
+            "\"permissions\":[\"storage\",\"alarms\",\"notifications\"],"
             "\"host_permissions\":[\"https://*.example.com/*\"]}");
         manifestFile.close();
         QFile msgs(dir
@@ -1656,16 +1670,99 @@ void tst_ExtensionManager::extensionShimBackend()
     QCOMPARE(reply.value(QLatin1String("error")).toString(),
              QStringLiteral("unsupported"));
 
-    // --- honest typed errors -----------------------------------------
+    // --- notifications (ER12) — the real record registry over the
+    // stub presenter (ARKTOS_EXTNOTIFY_STUB keeps banners off the
+    // test display and answers synthetic platform ids) ------------
+    qputenv("ARKTOS_EXTNOTIFY_STUB", "1");
+    QSignalSpy pushSpy(&backend, &ExtensionShimBackend::pushEvent);
+    reply = backend.invoke(
+        QStringLiteral("notifications"), QStringLiteral("create"),
+        QJsonObject{{QStringLiteral("options"),
+                     QJsonObject{{QStringLiteral("type"),
+                                  QStringLiteral("basic")},
+                                 {QStringLiteral("title"),
+                                  QStringLiteral("T")},
+                                 {QStringLiteral("message"),
+                                  QStringLiteral("M")}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    const QString notifId = reply.value(QLatin1String("result"))
+        .toObject().value(QLatin1String("id")).toString();
+    QVERIFY(!notifId.isEmpty());
+    // A bare backend hears event pushes through its own sink — the
+    // stub presenter's onShown lands immediately.
+    QTRY_COMPARE(pushCount(pushSpy, QStringLiteral(
+        "notifications.onShown")), 1);
+    QCOMPARE(ExtensionNotificationCenter::instance()
+                 ->platformIdFor(id, notifId) != 0, true);
+    QVERIFY(ExtensionNotificationCenter::instance()
+                ->presented(id, notifId));
     reply = backend.invoke(QStringLiteral("notifications"),
-                           QStringLiteral("create"),
-                           QJsonObject());
-    QVERIFY(!reply.value(QLatin1String("ok")).toBool());
+                           QStringLiteral("getAll"), QJsonObject());
+    QVERIFY(reply.value(QLatin1String("result")).toObject()
+            .contains(notifId));
+    reply = backend.invoke(
+        QStringLiteral("notifications"), QStringLiteral("update"),
+        QJsonObject{{QStringLiteral("id"), notifId},
+                    {QStringLiteral("options"),
+                     QJsonObject{{QStringLiteral("type"),
+                                  QStringLiteral("basic")}}}});
+    QCOMPARE(reply.value(QLatin1String("result")).toBool(), true);
+    reply = backend.invoke(
+        QStringLiteral("notifications"), QStringLiteral("update"),
+        QJsonObject{{QStringLiteral("id"),
+                     QStringLiteral("missing")},
+                    {QStringLiteral("options"),
+                     QJsonObject{{QStringLiteral("type"),
+                                  QStringLiteral("basic")}}}});
+    QCOMPARE(reply.value(QLatin1String("result")).toBool(), false);
+    // Chrome's own contract: bad type / missing title / >2 buttons
+    // are typed invalid-argument.
+    reply = backend.invoke(
+        QStringLiteral("notifications"), QStringLiteral("create"),
+        QJsonObject{{QStringLiteral("options"),
+                     QJsonObject{{QStringLiteral("type"),
+                                  QStringLiteral("bogus")},
+                                 {QStringLiteral("title"),
+                                  QStringLiteral("x")}}}});
     QCOMPARE(reply.value(QLatin1String("error")).toString(),
-             QStringLiteral("unsupported"));
+             QStringLiteral("invalid-argument"));
+    // Daemon-style signals route through the public slots — a click
+    // is onClicked, 'btn-N' is onButtonClicked.
+    const quint32 ntfPid = ExtensionNotificationCenter::instance()
+        ->platformIdFor(id, notifId);
+    ExtensionNotificationCenter::instance()->onActionInvoked(
+        ntfPid, QStringLiteral("btn-0"));
+    QTRY_COMPARE(pushCount(pushSpy, QStringLiteral(
+        "notifications.onButtonClicked")), 1);
+    reply = backend.invoke(
+        QStringLiteral("notifications"), QStringLiteral("clear"),
+        QJsonObject{{QStringLiteral("id"), notifId}});
+    QCOMPARE(reply.value(QLatin1String("result")).toBool(), true);
+    QTRY_COMPARE(pushCount(pushSpy, QStringLiteral(
+        "notifications.onClosed")), 1);
     QVERIFY(backend.invoke(
         QStringLiteral("notifications"), QStringLiteral("getAll"),
-        QJsonObject()).value(QLatin1String("ok")).toBool());
+        QJsonObject()).value(QLatin1String("result")).toObject()
+            .isEmpty());
+    // An extension without the 'notifications' permission gets the
+    // typed denial, like every other gated namespace.
+    {
+        const QString dir2 = dir + QLatin1String("-noperm");
+        QVERIFY(QDir().mkpath(dir2));
+        QFile mf2(dir2 + QLatin1String("/manifest.json"));
+        QVERIFY(mf2.open(QIODevice::WriteOnly));
+        mf2.write("{\"manifest_version\":3,\"name\":\"tst-np\","
+                  "\"version\":\"1.0\",\"permissions\":[\"storage\"]}");
+        mf2.close();
+        ExtensionShimBackend bare(
+            QStringLiteral("tstmockextensionid0002"),
+            QStringLiteral("tst-np"), dir2);
+        reply = bare.invoke(QStringLiteral("notifications"),
+                            QStringLiteral("create"), QJsonObject());
+        QCOMPARE(reply.value(QLatin1String("error")).toString(),
+                 QStringLiteral("no-permission"));
+    }
+
     reply = backend.invoke(QStringLiteral("bogus_ns"),
                            QStringLiteral("x"), QJsonObject());
     QCOMPARE(reply.value(QLatin1String("error")).toString(),
@@ -2781,6 +2878,251 @@ void tst_ExtensionManager::extensionWebRequest()
     manager->removeExtension(idC);
     QCOMPARE(ExtensionRequestWatcher::instance()
                  ->registrationCount(idA), 0);
+    QDir(root).removeRecursively();
+}
+
+// ER12 — chrome.notifications end to end through a hosted
+// background: the fixture's service worker registers all four event
+// listeners and creates a notification; the leg inspects the record
+// via getAll, then drives the daemon-signal handlers directly (the
+// ARKTOS_EXTNOTIFY_STUB presenter supplies the platform id so no
+// desktop banner is needed) and asserts the click/close events reach
+// the page listeners.  A second fixture without the 'notifications'
+// permission collects the typed denial.
+void tst_ExtensionManager::extensionNotifications()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+    qputenv("ARKTOS_EXTNOTIFY_STUB", "1");
+
+    const QString swA = QStringLiteral(
+        "self.__ntf=[];\n"
+        "chrome.notifications.onClicked.addListener(function(id){\n"
+        " self.__ntf.push(['clicked',id]);});\n"
+        "chrome.notifications.onButtonClicked.addListener(\n"
+        " function(id,i){self.__ntf.push(['btn',id,i]);});\n"
+        "chrome.notifications.onClosed.addListener(\n"
+        " function(id,u){self.__ntf.push(['closed',id,u]);});\n"
+        "chrome.notifications.onShown.addListener(function(id){\n"
+        " self.__ntf.push(['shown',id]);});\n"
+        "chrome.notifications.create('ntf1',{type:'basic',\n"
+        " title:'Hello',message:'World',\n"
+        " iconUrl:chrome.runtime.getURL('icon.png'),\n"
+        " buttons:[{title:'Yes'},{title:'No'}]})\n"
+        " .then(function(id){self.__ntf.push(['created',id]);})\n"
+        " .catch(function(e){self.__ntf.push(['err',String(e)]);});\n");
+    const QString swB = QStringLiteral(
+        "chrome.notifications.create('np',{type:'basic',title:'t',"
+        "message:'m'}).catch(function(){});\n"
+        "chrome.notifications.create('bad',{type:'bogus',title:'t'})"
+        ".catch(function(){});\n");
+
+    const QString root = QDir::temp().filePath(
+        QStringLiteral("tst-extntf-%1")
+            .arg(QCoreApplication::applicationPid()));
+    const QString dirA = root + QLatin1String("/tst-notify-a");
+    const QString dirB = root + QLatin1String("/tst-notify-b");
+    for (const QString &dir : {dirA, dirB}) {
+        QVERIFY(QDir().mkpath(dir));
+    }
+    // A bundle-local icon — chrome-extension:// resolution must land
+    // inside the extension dir.
+    QFile icon(dirA + QLatin1String("/icon.png"));
+    QVERIFY(icon.open(QIODevice::WriteOnly));
+    icon.write("\x89PNG\r\n\x1a\n");
+    icon.close();
+    const auto writeFixture = [](const QString &dir,
+                                 const QString &name,
+                                 const QString &permissions,
+                                 const QString &sw) {
+        QFile manifestFile(dir + QLatin1String("/manifest.json"));
+        if (!manifestFile.open(QIODevice::WriteOnly))
+            return false;
+        manifestFile.write("{\"manifest_version\":3,\"name\":\""
+            + name.toUtf8() + "\",\"version\":\"1.0\",\"permissions\":["
+            + permissions.toUtf8()
+            + "],\"background\":{\"service_worker\":\"sw.js\"}}");
+        manifestFile.close();
+        QFile worker(dir + QLatin1String("/sw.js"));
+        if (!worker.open(QIODevice::WriteOnly))
+            return false;
+        worker.write(sw.toUtf8());
+        worker.close();
+        return true;
+    };
+    QVERIFY(writeFixture(dirA, QStringLiteral("tst-notify-a"),
+                         QStringLiteral("\"notifications\""), swA));
+    QVERIFY(writeFixture(dirB, QStringLiteral("tst-notify-b"),
+                         QStringLiteral("\"storage\""), swB));
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    ExtensionNotificationCenter *center =
+        ExtensionNotificationCenter::instance();
+
+    const auto loadReady = [this, manager, runtime](
+            const QString &dir, const QString &name) -> QString {
+        auto loaded = std::make_shared<QString>();
+        QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                         this, [loaded, name](
+                             const ExtensionManager::ExtensionInfo
+                                 &info) {
+            if (info.name == name && info.error.isEmpty())
+                *loaded = info.id;
+        });
+        manager->grantConsent(dir);
+        manager->loadExtension(dir);
+        QElapsedTimer timer;
+        timer.start();
+        while (loaded->isEmpty() && timer.elapsed() < 30000)
+            QTest::qWait(50);
+        const QString id = *loaded;
+        if (id.isEmpty())
+            return id;
+        manager->setExtensionEnabled(id, true);
+        timer.restart();
+        while (timer.elapsed() < 45000) {
+            ExtensionBackgroundHost *host = runtime->host(id);
+            if (host && host->state()
+                    == ExtensionBackgroundHost::State::Ready)
+                break;
+            QTest::qWait(50);
+        }
+        return id;
+    };
+    const QString idA = loadReady(dirA, QStringLiteral("tst-notify-a"));
+    const QString idB = loadReady(dirB, QStringLiteral("tst-notify-b"));
+    QVERIFY2(!idA.isEmpty() && !idB.isEmpty(),
+             "fixtures loaded + hosted");
+
+    auto eval = [](QWebEnginePage *page, const QString &source) {
+        auto result = std::make_shared<QVariant>();
+        page->runJavaScript(source,
+                            [result](const QVariant &v) { *result = v; });
+        QElapsedTimer timer;
+        timer.start();
+        while (!result->isValid() && timer.elapsed() < 10000)
+            QTest::qWait(50);
+        return *result;
+    };
+    const auto saw = [&eval](QWebEnginePage *page,
+                             const QString &predicate) {
+        return eval(page, QStringLiteral(
+            "(self.__ntf||[]).some(%1)").arg(predicate)).toBool();
+    };
+
+    // create() resolved with the caller's id and the stub presenter
+    // acknowledged it (onShown) — the record is inspectable.
+    QTRY_VERIFY_WITH_TIMEOUT(saw(runtime->host(idA)->page(),
+        QStringLiteral("function(e){return e[0]==='created'"
+                       "&&e[1]==='ntf1';}")), 30000);
+    QTRY_VERIFY_WITH_TIMEOUT(saw(runtime->host(idA)->page(),
+        QStringLiteral("function(e){return e[0]==='shown'"
+                       "&&e[1]==='ntf1';}")), 30000);
+    QVERIFY(center->presented(idA, QStringLiteral("ntf1")));
+    QVERIFY(center->platformIdFor(idA, QStringLiteral("ntf1")) != 0);
+    // getAll is inspectable — runJavaScript never awaits promises,
+    // so the page records results into __ntf and the leg polls.
+    eval(runtime->host(idA)->page(), QStringLiteral(
+        "chrome.notifications.getAll().then(function(all){"
+        "self.__ntf.push(['all',all&&all.ntf1&&all.ntf1.title,"
+        "all&&all.ntf1&&all.ntf1.buttons.length]);})"));
+    QTRY_VERIFY_WITH_TIMEOUT(saw(runtime->host(idA)->page(),
+        QStringLiteral("function(e){return e[0]==='all'"
+                       "&&e[1]==='Hello'&&e[2]===2;}")), 20000);
+
+    // update() merges over the stored options.
+    eval(runtime->host(idA)->page(), QStringLiteral(
+        "chrome.notifications.update('ntf1',{type:'basic',"
+        "message:'v2'}).then(function(v){self.__ntf.push("
+        "['upd',v]);})"));
+    QTRY_VERIFY_WITH_TIMEOUT(saw(runtime->host(idA)->page(),
+        QStringLiteral("function(e){return e[0]==='upd'"
+                       "&&e[1]===true;}")), 20000);
+    eval(runtime->host(idA)->page(), QStringLiteral(
+        "chrome.notifications.getAll().then(function(all){"
+        "self.__ntf.push(['all2',all.ntf1.message,"
+        "all.ntf1.title]);})"));
+    QTRY_VERIFY_WITH_TIMEOUT(saw(runtime->host(idA)->page(),
+        QStringLiteral("function(e){return e[0]==='all2'"
+                       "&&e[1]==='v2'&&e[2]==='Hello';}")), 20000);
+    // A missing id answers false — never silently ok.
+    eval(runtime->host(idA)->page(), QStringLiteral(
+        "chrome.notifications.update('gone',{type:'basic'})"
+        ".then(function(v){self.__ntf.push(['updGone',v]);})"));
+    QTRY_VERIFY_WITH_TIMEOUT(saw(runtime->host(idA)->page(),
+        QStringLiteral("function(e){return e[0]==='updGone'"
+                       "&&e[1]===false;}")), 20000);
+
+    // Daemon-signal routing: 'default' is the body click, 'btn-N' the
+    // button index — both reach the extension's listeners.  The
+    // platform id is re-read here: update() re-presents, and a
+    // presenter may return a fresh handle for the replaced banner.
+    const quint32 pid =
+        center->platformIdFor(idA, QStringLiteral("ntf1"));
+    QVERIFY(pid != 0);
+    center->onActionInvoked(pid, QStringLiteral("default"));
+    QTRY_VERIFY_WITH_TIMEOUT(saw(runtime->host(idA)->page(),
+        QStringLiteral("function(e){return e[0]==='clicked'"
+                       "&&e[1]==='ntf1';}")), 20000);
+    center->onActionInvoked(pid, QStringLiteral("btn-1"));
+    QTRY_VERIFY_WITH_TIMEOUT(saw(runtime->host(idA)->page(),
+        QStringLiteral("function(e){return e[0]==='btn'"
+                       "&&e[1]==='ntf1'&&e[2]===1;}")), 20000);
+
+    // A daemon close (reason 2 = dismissed by user) routes onClosed
+    // with byUser=true and drops the record.
+    center->onNotificationClosed(pid, 2);
+    QTRY_VERIFY_WITH_TIMEOUT(saw(runtime->host(idA)->page(),
+        QStringLiteral("function(e){return e[0]==='closed'"
+                       "&&e[1]==='ntf1'&&e[2]===true;}")), 20000);
+    eval(runtime->host(idA)->page(), QStringLiteral(
+        "chrome.notifications.getAll().then(function(all){"
+        "self.__ntf.push(['all3',!!all.ntf1]);})"));
+    QTRY_VERIFY_WITH_TIMEOUT(saw(runtime->host(idA)->page(),
+        QStringLiteral("function(e){return e[0]==='all3'"
+                       "&&e[1]===false;}")), 20000);
+
+    // A programmatic clear() reports onClosed(byUser=false).
+    eval(runtime->host(idA)->page(), QStringLiteral(
+        "chrome.notifications.create('ntf2',{type:'basic',"
+        "title:'T',message:'M'}).then(function(id){"
+        "self.__ntf.push(['created',id]);})"));
+    QTRY_VERIFY_WITH_TIMEOUT(saw(runtime->host(idA)->page(),
+        QStringLiteral("function(e){return e[0]==='created'"
+                       "&&e[1]==='ntf2';}")), 20000);
+    eval(runtime->host(idA)->page(), QStringLiteral(
+        "chrome.notifications.clear('ntf2').then(function(v){"
+        "self.__ntf.push(['clr',v]);})"));
+    QTRY_VERIFY_WITH_TIMEOUT(saw(runtime->host(idA)->page(),
+        QStringLiteral("function(e){return e[0]==='clr'"
+                       "&&e[1]===true;}")), 20000);
+    QTRY_VERIFY_WITH_TIMEOUT(saw(runtime->host(idA)->page(),
+        QStringLiteral("function(e){return e[0]==='closed'"
+                       "&&e[1]==='ntf2'&&e[2]===false;}")), 20000);
+    eval(runtime->host(idA)->page(), QStringLiteral(
+        "chrome.notifications.clear('ntf2').then(function(v){"
+        "self.__ntf.push(['clr2',v]);})"));
+    QTRY_VERIFY_WITH_TIMEOUT(saw(runtime->host(idA)->page(),
+        QStringLiteral("function(e){return e[0]==='clr2'"
+                       "&&e[1]===false;}")), 20000);
+
+    // B never got the permission — its creates are typed denials,
+    // health-visible.  'bad' (a bogus type on a permission-less
+    // caller) is the same no-permission refusal.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(idB)->shimGaps().contains(QStringLiteral(
+            "chrome.notifications.create: no-permission")),
+        20000);
+
+    // Teardown drops the extension's records like Chrome's unload.
+    manager->setExtensionEnabled(idA, false);
+    manager->setExtensionEnabled(idB, false);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !runtime->host(idA) && !runtime->host(idB), 20000);
+    manager->removeExtension(idA);
+    manager->removeExtension(idB);
     QDir(root).removeRecursively();
 }
 
@@ -5906,6 +6248,9 @@ void tst_ExtensionManager::realExtensionPopup()
         QSKIP("set ARKTOS_EXTTEST_DIR to an unpacked extension dir");
     if (!ExtensionManager::isSupported())
         QSKIP("Qt WebEngine built without extension support");
+    // ER12: the real bundle may create notifications — the stub
+    // presenter keeps banners off the test display.
+    qputenv("ARKTOS_EXTNOTIFY_STUB", "1");
 
     ExtensionManager *manager = ExtensionManager::instance();
     ExtensionBackgroundRuntime *runtime =
@@ -6035,6 +6380,7 @@ void tst_ExtensionManager::bitwardenGapBaseline()
         QSKIP("set ARKTOS_EXTTEST_DIR to an unpacked extension dir");
     if (!ExtensionManager::isSupported())
         QSKIP("Qt WebEngine built without extension support");
+    qputenv("ARKTOS_EXTNOTIFY_STUB", "1");
     QVERIFY(QFile::exists(src + QLatin1String("/manifest.json")));
 
     // Fixture copy — installing (and the hosted runtime's storage
@@ -6400,6 +6746,7 @@ void tst_ExtensionManager::bitwardenHandshakeGate()
         QSKIP("set ARKTOS_EXTTEST_DIR to an unpacked extension dir");
     if (!ExtensionManager::isSupported())
         QSKIP("Qt WebEngine built without extension support");
+    qputenv("ARKTOS_EXTNOTIFY_STUB", "1");
     QVERIFY(QFile::exists(src + QLatin1String("/manifest.json")));
 
     // Fixture copy — install + runtime storage writes never touch

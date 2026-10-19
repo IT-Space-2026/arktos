@@ -24,6 +24,7 @@
 #include "browserpaths.h"
 #include "extensionbackgroundhost.h"
 #include "extensioneventhub.h"
+#include "extensionnotificationcenter.h"
 #include "tabwidget.h"
 #include "webview.h"
 
@@ -1326,19 +1327,49 @@ QJsonObject ExtensionShimBackend::invokeSidePanel(
     return errReply(QStringLiteral("unimplemented"));
 }
 
+void ExtensionShimBackend::recordNote(const QString &message)
+{
+    if (m_notes.size() < 500)
+        m_notes.append(message.left(2048));
+    emit noteRecorded(message.left(2048));
+}
+
 // -------------------------------------------------------------------
-// chrome.notifications — no notification presenter exists in Arktos;
-// mutations answer a typed 'unsupported' (the shim records the gap),
-// getAll answers the honest empty set.
+// chrome.notifications — ER12.  Chrome exposes the namespace only to
+// extensions declaring the 'notifications' permission — the gate
+// reads the same installed manifest the permissions.* surface does.
+// The record registry and platform presentation live in
+// ExtensionNotificationCenter (freedesktop Notify on the session
+// bus); events route back through the runtime's per-extension
+// fan-out.
 // -------------------------------------------------------------------
 
 QJsonObject ExtensionShimBackend::invokeNotifications(
         const QString &method, const QJsonObject &args)
 {
-    Q_UNUSED(args);
+    QStringList perms;
+    for (const QJsonValue &v : manifestJson()
+             .value(QStringLiteral("permissions")).toArray())
+        perms.append(v.toString());
+    if (!perms.contains(QLatin1String("notifications")))
+        return errReply(QStringLiteral("no-permission"));
+
+    ExtensionNotificationCenter *center =
+        ExtensionNotificationCenter::instance();
+    if (method == QLatin1String("create"))
+        return center->create(
+            this, args.value(QStringLiteral("id")).toString(),
+            args.value(QStringLiteral("options")).toObject());
+    if (method == QLatin1String("update"))
+        return center->update(
+            this, args.value(QStringLiteral("id")).toString(),
+            args.value(QStringLiteral("options")).toObject());
+    if (method == QLatin1String("clear"))
+        return center->clear(
+            this, args.value(QStringLiteral("id")).toString());
     if (method == QLatin1String("getAll"))
-        return okReply(QJsonObject());
-    return errReply(QStringLiteral("unsupported"));
+        return center->getAll(this);
+    return errReply(QStringLiteral("unimplemented"));
 }
 
 // -------------------------------------------------------------------

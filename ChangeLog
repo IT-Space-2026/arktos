@@ -3659,3 +3659,32 @@ Extensions (webRequest): chrome.webRequest's observe-only events are
     load plus scripted fetch end to end — headers, requestId
     pairing, filter scoping, a refused-connection net:: error, and
     every typed denial.
+Extensions (notifications): chrome.notifications.create/update/clear/
+    getAll are served by the hosted runtime (ER12) over a per-extension
+    record registry and the freedesktop org.freedesktop.Notifications
+    service on the session D-Bus — the same platform surface the
+    download manager already uses for FileManager1. create() answers
+    the notification id (Chrome's both overloads: caller-chosen id or
+    generated), update() merges over the stored options and re-presents
+    through the daemon's replaces_id, clear() drops the record and the
+    banner, and getAll() returns the live object map. The
+    'notifications' manifest permission gates the namespace —
+    permission-less callers get the typed no-permission refusal other
+    gated namespaces answer. Daemon signals route back into the
+    extension's listeners: the conventional 'default' action is the
+    body click (onClicked), 'btn-N' actions are Chrome's two-capped
+    buttons (onButtonClicked), and NotificationClosed maps its
+    freedesktop reason onto Chrome's byUser flag (onClosed); a
+    programmatic clear reports byUser=false. When no notification
+    service is reachable the record still exists — Chrome's
+    notification object outlives its banner — but nothing pretends it
+    was shown: no onShown, and a one-time health-visible note says the
+    banner never left the process. Options are validated to Chrome's
+    contract (bad type, missing title, more than two buttons are typed
+    invalid-argument), iconUrl/imageUrl resolve strictly inside the
+    extension's bundle, and extension teardown dismisses its
+    notifications like Chrome's unload. The extensionNotifications
+    autotest leg drives the full cycle through a hosted extension —
+    create/onShown/getAll/update/missing-id/click/button/close/clear
+    plus the no-permission denial — over the ARKTOS_EXTNOTIFY_STUB
+    headless presenter, and the real Bitwarden legs run with it armed.

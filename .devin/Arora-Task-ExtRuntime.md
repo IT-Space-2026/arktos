@@ -56,7 +56,7 @@ xvfb-run — never touch the user's live display.
 | ER09 | contentScripts dynamic registration — register/unregister/getScripts over our injection set — details below | done | 1 | needs:task:ER07 · extensionContentScriptRegistration leg PASS: shared runtime registry behind BOTH surfaces (MV3 scripting.register/unregister/getRegistered/update + Firefox contentScripts.register/unregister/getScripts w/ unregister-handle) arms profile scripts into the shared agent world on next matching nav; per-match host-coverage implication checked BEFORE arming (no-host-access), 'scripting' permission gates only the MV3 surface; persisted specs re-arm across host respawn via ProfileSettings extensions/regscripts/<id>, session-only die with load, all drop on uninstall; bad-path/no-such-file/invalid-argument/not-found/unsupported typed; full suite 37/37 (3 env skips) + real Bitwarden legs all PASS incl. handshake gate (bg dispatched 4 executeScript — executed, no gap) |
 | ER10 | offscreen.createDocument/hasDocument/closeDocument → second-class host page — details below | done | 0 | hidden bridge-backed doc page; typed denials + verbatim single-document msg; getContexts OFFSCREEN_DOCUMENT; extensionOffscreen + full suite 38/38 + Bitwarden legs pass |
 | ER11 | webRequest observe-only events (onBeforeRequest/onCompleted/onErrorOccurred) via QWebEngineUrlRequestInterceptor — details below | done | 2 | needs:task:ER04 · extensionWebRequest leg PASS: interceptor→watcher feed (OTR/tor excluded) serves onBefore*/onSendHeaders/onHeadersReceived/onCompleted/onErrorOccurred w/ per-listener filters + per-event host-coverage re-proof; blocking/requestBody→typed unsupported+gap, unservable events refuse at subscribe; orphan tabId-adoption fixed fast-fail nav race; full suite 39/39 + real Bitwarden legs PASS (bg registered onHeadersReceived — note, not gap) |
-| ER12 | notifications.create/update/clear/getAll → native presenter — details below | pending | 0 | needs:task:ER06 |
+| ER12 | notifications.create/update/clear/getAll → native presenter — details below | done | 0 | needs:task:ER06 · extensionNotifications leg PASS: record registry + freedesktop Notify over session D-Bus; onClicked/onButtonClicked/onClosed(byUser)/onShown route back through the runtime fan-out; 'notifications' permission gates the ns; extension-host-smoke PASS + full suite 40/40 (3 env skips) + real Bitwarden legs PASS (gap baseline 0 typed gaps — notifications no longer one) |
 | ER13 | idle.queryState/onStateChanged — input-activity watcher, configurable threshold — details below | pending | 0 | needs:task:ER05 |
 | ER14 | commands — manifest command parsing + QShortcut registry + onCommand dispatch — details below | pending | 0 | needs:task:ER05 |
 | ER15 | management.getSelf + chrome.extension.getBackgroundPage/getViews + sidebarAction sugar — details below | pending | 0 | needs:task:ER06 |
@@ -303,6 +303,31 @@ uses for system notifications first). onClicked/onButtonClicked
 dispatch back into the host.
 Verify: create produces a visible/inspectable notification object and
 click routes to the listener.
+
+Result (2026-10-19): landed. `ExtensionNotificationCenter` holds the
+per-extension record registry (Chrome-side semantics — records outlive
+a host respawn, die with the extension) and presents over
+`org.freedesktop.Notifications.Notify` on the session bus, chosen over
+QSystemTrayIcon because the browser already speaks D-Bus
+(downloadmanager's FileManager1) and the daemon gives us real action/
+close signals. `ExtensionShimBackend::invokeNotifications` gates on the
+manifest's `notifications` permission (typed `no-permission`) then
+delegates; validation answers `invalid-argument` for bad type/missing
+title/>2 buttons; iconUrl/imageUrl resolve strictly inside the bundle.
+Daemon `ActionInvoked` maps 'default'→onClicked and 'btn-N'→
+onButtonClicked(index); `NotificationClosed` maps reason 2→byUser=true
+(a programmatic clear emits byUser=false). `notifications.*` events
+join the runtime's eventGate permission fan-out. When no service is
+reachable the record still exists (getAll/update/clear work) but
+nothing claims it was shown: no onShown, one-time health-visible note.
+`ARKTOS_EXTNOTIFY_STUB=1` selects a synthetic presenter for headless
+runs — tests and the real-Bitwarden legs use it so no banner reaches
+the desktop. Verified: extensionNotifications leg PASS (hosted fixture
+creates/sees/updates/clears through the real page listeners, daemon
+signal slots drive click/button/close, no-permission fixture denied +
+gap-ledgered), extension-host-smoke PASS (`notifications.create
+presented`), full suite 40/40 (3 env skips), real Bitwarden legs PASS
+— its typed-gap list is now empty of notifications entirely.
 
 ### ER13
 `chrome.idle.queryState(state, detectionInterval)` +

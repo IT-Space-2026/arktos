@@ -54,7 +54,9 @@ class QWebEngineProfile;
 //   permissions.*— manifest-declared contains/getAll fallback
 //   contextMenus.*— per-extension item registry (EXT16 renders)
 //   sidePanel.*  — options recorded (Arktos has no side-panel surface)
-//   notifications.* — typed 'unsupported' (no notification presenter)
+//   notifications.* — record registry + freedesktop presentation via
+//                  ExtensionNotificationCenter (ER12); 'notifications'
+//                  manifest permission gates the namespace
 //   runtime.*    — context bookkeeping (getViews counts)
 //   shim.*       — diagnostics channel: 'note' -> notes(), 'gap' ->
 //                  gapReported() -> the host's health surface
@@ -74,6 +76,16 @@ public:
 
     QStringList notes() const { return m_notes; }
     QStringList gaps() const { return m_gaps; }
+
+    QString extensionId() const { return m_extensionId; }
+    QString extensionName() const { return m_extensionName; }
+    QString extensionPath() const { return m_extensionPath; }
+
+    // Records a fidelity note into the health surface — the same
+    // list the shim's shim.note calls feed; async features
+    // (ExtensionNotificationCenter's presentation failures) report
+    // through it.
+    void recordNote(const QString &message);
 
     // The extension's raw manifest.json (cached) — the handshake
     // ships it to the page so synchronous lookups never block.
@@ -189,7 +201,6 @@ private:
     QJsonObject changesForRemove(const QJsonObject &store,
                                  const QStringList &keys) const;
 
-    QString extensionPath() const { return m_extensionPath; }
     void fireAlarm(const QString &name);
 
     QString m_extensionId;

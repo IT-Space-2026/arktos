@@ -23,6 +23,7 @@
 #include "browserprofile.h"
 #include "extensioneventhub.h"
 #include "extensionmanager.h"
+#include "extensionnotificationcenter.h"
 #include "extensionpagebridge.h"
 #include "extensionrequestwatcher.h"
 #include "extensionshimbackend.h"
@@ -1150,6 +1151,10 @@ void ExtensionBackgroundRuntime::teardown(const QString &id)
     // registered — Chrome binds listeners to the extension, not to
     // a surviving context.
     ExtensionRequestWatcher::instance()->dropExtension(id);
+    // ER12: Chrome dismisses an extension's notifications when it
+    // unloads — records drop (no onClosed: no context could hear it)
+    // and presented banners are closed.
+    ExtensionNotificationCenter::instance()->dropExtension(id);
     ExtensionBackgroundHost *host = m_hosts.take(id);
     if (host) {
         unregisterRelayContext(host->bridge());
@@ -1907,6 +1912,9 @@ QString eventGate(const QString &name)
     // event surface.
     if (ns == QLatin1String("webRequest"))
         return QStringLiteral("webRequest");
+    // ER12: notification events ride the same gate create() applies.
+    if (ns == QLatin1String("notifications"))
+        return QStringLiteral("notifications");
     return QString();
 }
 

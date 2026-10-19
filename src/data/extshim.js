@@ -43,8 +43,11 @@
  *                         are shim events EXT16 pushes into
  *   chrome.webNavigation— event objects (delivery is EXT16)
  *   chrome.permissions  — contains/getAll answered from the manifest
- *   chrome.notifications— event objects; create() is a typed
- *                         'unsupported' (no notification surface)
+ *   chrome.notifications— ER12: create/update/clear/getAll over the
+ *                         host's record registry + freedesktop
+ *                         presentation; onClicked/onButtonClicked/
+ *                         onClosed/onShown dispatch back from the
+ *                         daemon through hostEvent
  *   chrome.commands     — onCommand event; getAll from the manifest
  *   chrome.contextMenus — create/update/remove* registry host-side;
  *                         onClicked event (rendering is EXT16)
@@ -2854,7 +2857,11 @@
                 }
                 var p = call('notifications', 'create',
                              { id: id || '', options: options || {} });
-                var q = p.then(function (v) { return v.id || ''; });
+                var q = p.then(function (v) {
+                    if (v && v.note)
+                        note('chrome.notifications.create: ' + v.note);
+                    return (v && v.id) || '';
+                });
                 if (cb)
                     q.then(function (v) { answerCb(cb, v); },
                            function (e) { answerCb(cb, '', e.message); });
