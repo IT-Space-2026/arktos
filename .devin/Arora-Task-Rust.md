@@ -108,6 +108,7 @@ Rules for the agent working this file:
 | ENG35 | AdBlock + BiDi on the Servo engine — wire request blocking through the WebResourceLoad hook; diagnose servo's devtools surface for BiDi, wire or honestly disable — details below | done | 2 | landed (2 runs — run1 built+verified smoke legs, run2 ran gates/suite+bookkeeping): shim se_set_load_gate + SeLoadInfo consulted inside load_web_resource BEFORE the resolver — non-zero return serves the SeHostReply verbatim (deny=empty 403, request never reaches fetch); Qt ServoView::cbLoadGate maps servo destination→ResourceType and resolves the policy through the OWNING profile (view→m_page→profile→requestPolicy — MPROF lesson), Block→403, Redirect→decision.stubBody/stubMime (servo can only serve, never re-issue; bare $removeparam rewrites degrade to Allow — documented); new AdBlockEnginePolicy = Engine::RequestPolicy spelling of the interceptor decision sharing the same network() snapshot incl. rust engine + noteBlockedRequest tally + isWebRequestScheme guard; installOnProfile(::Engine::Profile*) bound in addEngineTab for servo profiles only (WebEngine keeps its interceptor); capabilities().requestIntervention symbol-gated on se_set_load_gate — older artifacts report false honestly. BiDi verdict (diagnosed): servo v0.7.0 DOES ship a devtools server (devtools_server_enabled pref, TCP 127.0.0.1:7000) but it speaks the Firefox Remote Debugging Protocol (JSON packets, components/devtools/protocol.rs), NOT the CDP-over-WebSocket the BidiPanel client drives — real wiring is a separate project; devTools stays false, Tools-menu devtools rows + panel context combo disable servo tabs with 'devtools unavailable on Servo' (SERVO-SPIKE.md table corrected: interception partial→works, devtools CDP-flavored→Firefox-RDP absent-for-us). Cosmetic CSS hiding out of scope — no style-injection surface in this pin. Verified: --servo-smoke all 7 ENG35 legs PASS (load-gate-symbol, gate-policy-bound, adblock-allow-passes, gate-consults-policy, adblock-deny-tally, bidi-devtools-false, bidi-combo-disabled-reason; scroll-leg FAILs are the llvmpipe ~380ms/frame env flake under main-lane load, no scroll code touched), cargo shim rebuilt + symbol exported, qmake+make -j2 clean, make check 4 gates PASS (warnings no-rust build, supplychain, engine-audit, rustcoverage 90.50/91.68/89.25) + all adblock/webpage/webview suites 0 failed; 4 leg fails = documented env flakes only (darkThemeReaderGlyph, stopReloadState, shieldPopupFirstShow — same trio flagged in MPROF04/PVAULT04 worklogs, pre-date this diff; fileSchemeErrors PASS standalone) |
 | SEC19 | Second rank source (Majestic Million) + third threat feed (Phishing.Database) — details below | done | 1 | landed: Majestic second rank source (own 12-col grammar + majestic-million.csv file, min-rank merge, rc_tranco_file_entries guards each commit, per-source stamps) + Phishing.Database in DomainBlocklist; one Update gesture/consent gate covers all three — verified: cargo 254/254, tst_trancolist 8/8, tst_domainblock 13/13, tst_settingsdialog 56/56, make check 4 gates PASS + suite green except 4 documented env flakes |
 | WKB01 | EasyList→WebKit content-blocker JSON converter — Safari-format rule export from the adblock rule model — details below | done | 2 | resumed interrupted run — rustcore-side module in arktos_adblock_ffi (contentblocker.rs) drives upstream adblock::content_blocking translators per ParsedLine w/ raw_line retained; JSON doc {rules,dropped[{rule,why}],meta counts}; Safari ordering (exceptions after blocks, fp-document guard last); $badfilter honored by filter-id; FFI arktos_adblock_contentblocker_convert + AdBlockRustEngine::contentBlockerJson; also repaired 3 BRAND01 casualties (corrupt testcert DER regenerated, qrcode matrices regenerated for renamed payload, About dialog upstream copyright restored) — verified: cargo test 12/12, tst_contentblocker 7/7 offscreen, supplychain + engine-audit gates PASS (warnings + rustcoverage green on this tree in attempt 1), suite rc=1 on host-load flakes only — all 10 failing binaries re-verified standalone 0 failed incl. bmw crash-loop 77/77 |
+| ENG37 | Scroll-bench contention hardening — deadline-convergence + CONTENTION marker for the wall-clock-fragile servo-smoke scroll legs — details below | pending | 0 | flakes under any CPU contention since ~ENG29; ENG36 A/B-proved it on a 42h runaway repro.py |
 | ENG36 | Multi-view Servo — multiple live Servo tabs on the shared engine: per-view RenderingContext/WebView + webview.id()-routed delegates — details below | done | 1 | landed: shim engine/view split (se_engine_init idempotent + se_view_create/destroy + VIEWS registry + se_view_count; legacy se_init/se_destroy kept as aliases), Qt g_views routing + shared pump on qApp anchor; --servo-smoke all ENG36 legs PASS (2 views load+paint, survivor, remint), cargo test 7/7, make check 4 gates PASS — scroll-bench reds A/B-proven environmental (runaway repro.py; fails on unmodified HEAD too) |
 
 ## Task details
@@ -709,3 +710,43 @@ contention flake, A/B-proven not this diff); make check 4 gates
 PASS (warnings, supplychain, engine-audit, rustcoverage
 95.05/91.78/89.25); tst_engineswitch 26/26, tst_engineadapter
 13/13, tst_tabwidget 36/36; offscreen --disable-gpu.
+
+### ENG37
+
+Scroll-bench contention hardening — the --servo-smoke scroll legs are
+wall-clock fragile: they assert scroll deltas inside fixed
+settle-quiet windows and frame-time budgets, so ANY CPU contention
+(runaway processes like the 42h /tmp/repro.py found during ENG36,
+or sibling lane builds) flakes them even when scroll code is
+correct. ENG36 had to A/B stash-test a clean HEAD just to prove its
+red scroll legs weren't a regression — every run on a loaded box
+pays that tax. Documented env flake since ~ENG29; make it stop.
+
+- Convert the scroll legs from wall-clock assertions to
+  deadline-based convergence: poll scrollY (and probe readback)
+  until it reaches the expected target or a GENEROUS deadline
+  (e.g. 30s) expires — pass on eventual convergence, fail only on
+  true timeout. A slow llvmpipe frame is still a correct frame.
+- Keep a fast path: if the target arrives inside the current tight
+  window, pass immediately (no added latency on unloaded runs).
+- Contention marker, not silent flake: when a leg passes late or
+  times out AND loadavg is high (read /proc/loadavg, e.g. 1m > ncpu),
+  print `CONTENTION: loadavg=X` in the leg output so flakes are
+  self-diagnosing instead of ambiguous red.
+- Audit every scroll/scroll-bench leg in main.cpp (grep the
+  servo-smoke section) — APZ se_scroll path AND DOM se_wheel path,
+  per-notch distance legs, accel ramp legs — same convergence
+  treatment everywhere. Frame-time budget legs (if any) become
+  advisory (log ms, don't fail).
+- Do NOT weaken the assertion that scrolling actually moved — the
+  target scrollY must still be reached; only the TIME BUDGET
+  becomes generous.
+
+Verify: --servo-smoke scroll legs PASS under deliberate contention
+(spawn `stress-ng --cpu $(nproc)` or a busy loop during the leg —
+must pass via the deadline path and print CONTENTION), PASS
+normally unloaded at current speed, and a deliberately-broken
+scroll (env flag forcing se_scroll to no-op, if a cheap test hook
+exists — else simulate via a shim leg) still FAILS on deadline
+expiry. `make check` 4 gates PASS; row notes record the
+late-pass/contention-marker behavior.
