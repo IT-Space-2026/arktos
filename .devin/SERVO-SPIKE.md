@@ -165,3 +165,37 @@ do that for any per-tab construction in ENG05.
 Second gotcha: an `if let` scrutinee's `borrow_mut()` temporary lives
 through the whole block — `RefCell already borrowed` panic on the
 re-borrow. Hoist `take()` into a `let`.
+
+## ENG36 addendum — engine/view split (N live views per engine)
+
+The "one Servo instance per process" bound above stays true at the
+ENGINE level — `Opts` parks in a process-global `OnceLock`, a second
+`ServoBuilder::build` panics — but it never applied to VIEWS:
+libservo keeps a `WebViewId → WebView` map on the one `Servo`, and
+`WebViewBuilder::new(&servo, rendering_context)` mints another view
+(any number, each with its own delegate + software rendering context
++ painter registration). The one-tab-at-a-time limit the app used to
+hit was the shim's own slot gate, not a libservo bound.
+
+Shim shape since ENG36: `se_engine_init` (idempotent, builds the
+engine once; its wake fn+userdata bind the event-loop waker for the
+process lifetime — pass a stable indirection, never a per-view
+pointer), `se_view_create`/`se_view_destroy` (per-tab views on the
+shared engine — destroy unregisters FIRST so a panicking teardown
+can't strand the registry), `se_view_count`/`se_instance_active`/
+`se_can_init` introspection. `se_spin` through ANY live view pumps
+the whole engine (spin_event_loop iterates all WebViewIds) and
+flushes every live view's pending-load queue. Per-view delegate
+callbacks, the ENG18 resolver and the ENG35 load gate are invoked
+with the OWNING view's `callbacks.userdata`, so per-view routing and
+per-profile policy work without per-view registration. A crashed
+view poisons only itself; siblings and the engine survive, and a
+fresh `se_view_create` recovers into the same engine (ENG28's
+recovery, now per-view). Legacy `se_init`/`se_destroy` remain as
+thin aliases for pre-ENG36 hosts.
+
+Verified: two concurrent views load + paint on one engine
+(`--servo-smoke` `multi-view-*` legs), destroying one leaves the
+other fully functional, a third mints into the freed slot, and
+`cargo test` covers the registry/idempotency/terminal-failure
+semantics.

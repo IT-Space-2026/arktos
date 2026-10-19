@@ -256,9 +256,9 @@ browsing profile:
   tabs refuse the swap, and its selector entries carry a note that
   page loads are slower than Chromium (running a debug servo-embed
   artifact marks the name "(debug build)" and warns about extreme
-  slowness instead of passing off as engine speed). libservo
-  supports one web view at a time, so only one Servo tab can exist;
-  further swaps are refused instead of crashing. A crash inside the
+  slowness instead of passing off as engine speed). Servo tabs can
+  coexist — any number of web views run on the one shared engine
+  instance (ENG36). A crash inside the
   engine degrades that tab to a crash notice instead of taking the
   browser down, and the notice offers "Try Servo Again" — the
   crashed web view is torn down and a fresh one is created on the

@@ -48,26 +48,31 @@
 // surface handoff, so the QOpenGLWidget/surfman upgrade needs a shim
 // extension first (noted in the spike doc).
 //
-// ENG12/ENG28: one LIVE ServoView at a time — never two instances
-// concurrently.  libservo v0.7.0 parks Opts in a process-global
-// OnceLock, so the ENGINE is built once on the first se_init and kept
-// for the process lifetime; but a SeInstance is only a webview +
-// delegate + rendering context over that engine and CAN be replaced
-// (ENG28 — the shim keeps the engine in a thread_local and creates a
-// fresh instance on se_init once the old one is se_destroy'd, the
-// same shape as Chromium respawning a crashed renderer on the
-// surviving browser process).  The Qt slot below therefore has no
-// terminal state for a destroyed view — Exhausted is only reached
-// when se_init itself fails (a pre-ENG28 artifact refuses every
-// second init the same way, so the failure is declared permanent for
-// the session rather than retried on every swap).
+// ENG36: any number of LIVE ServoViews at once.  libservo v0.7.0
+// parks Opts in a process-global OnceLock — so the ENGINE is built
+// once (se_engine_init, idempotent) and kept for the process
+// lifetime — but it hosts N WebViews on that engine (a
+// WebViewId→WebView map, a painter per rendering context).  A
+// SeInstance is only a webview + delegate + rendering context over
+// the engine, so the shim's se_view_create/se_view_destroy mint and
+// retire per-tab views independently: closing (or crashing) a Servo
+// tab destroys ONLY its view while the engine and every sibling view
+// survive — the ENG28 fresh-instance crash recovery, now per-view.
+// The one-tab-at-a-time limit this used to declare was the shim's
+// g_servoSlot gate, never a libservo bound.
 //
-// ENG27: the shim's instance slot is no longer a one-way spend —
-// se_destroy releases it FIRST, before the catch-wrapped teardown,
-// so a panicking drop (the desktop log's webrender GL panic) cannot
-// strand the slot anymore.  The Qt side can read that back through
-// se_instance_active/se_can_init on artifacts new enough to export
-// them.
+// What is still once-per-engine: the event-loop waker (bound at
+// engine build to se_engine_init's wake fn + userdata for the
+// process lifetime — the backend passes an engine-level indirection
+// that pumps through whatever view is live, never a per-view
+// pointer) and the failure state (a failed se_engine_init stays
+// terminal for the session; a failed se_view_create does not).
+//
+// ENG27: the shim unregisters a view FIRST in se_view_destroy,
+// before the catch-wrapped teardown, so a panicking drop (the
+// desktop log's webrender GL panic) cannot strand the registry.
+// The Qt side reads liveness back through se_instance_active/
+// se_can_init/se_view_count on artifacts new enough to export them.
 
 #include "engineinterface.h"
 
@@ -109,21 +114,22 @@ public:
     // rasterizer once the shim pins it, empty on artifacts predating
     // se_gl_renderer.
     QString glRenderer() const;
-    // Whether another ServoView may be constructed — false while a
-    // live instance holds the slot or after a failed se_init (ENG12);
-    // a spent slot answers through the artifact's se_can_init
-    // (ENG27).
+    // Whether a ServoView may be constructed — ENG36: engine-alive,
+    // not slot-free.  false only after a terminally failed engine
+    // build (se_engine_init): a live sibling view is no longer a
+    // reason to refuse.
     static bool instanceAvailable();
-    // ENG28: a live instance currently holds the slot — false while
-    // Free and after a failed-init Exhausted (the two refused states
-    // report different reasons in pageUnavailableReason()).
+    // Any ServoView currently holds a live instance.
     static bool instanceInUse();
-    // ENG27: the shim-side instance slot — true while a SeInstance is
-    // live, false once se_destroy released it (even when teardown
-    // panicked).  false on artifacts predating se_instance_active.
+    // ENG27/ENG36: the shim-side live-view registry — true while at
+    // least one SeInstance is live, false once se_view_destroy
+    // released the last one (even when teardown panicked).  false on
+    // artifacts predating se_instance_active.
     static bool instanceActive();
     void load(const QUrl &url);
-    void spinOnce();              // one se_spin — GUI thread
+    // One se_spin — GUI thread.  Pumps the SHARED engine, so any
+    // live view can drive the loop for all of them (ENG36).
+    void spinOnce();
     void goBack();
     // True reload when the artifact exports se_reload, a history-
     // pushing same-url se_load on artifacts predating ENG16; a no-op

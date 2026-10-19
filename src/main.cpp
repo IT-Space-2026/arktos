@@ -4230,13 +4230,14 @@ static int engineSmoke()
     return ok ? 0 : 1;
 }
 
-// ENG12 — the servo lifecycle guard.  libservo v0.7.0 permits ONE
-// WebView per process lifetime: a second se_init panics inside
-// Opts and the panic aborts the host across the C ABI, so the
-// backend must refuse rather than re-init.  Drives the reported
-// flow — swap an empty Untitled tab onto Servo ("Reload in Servo"),
-// reload it, hit the sibling entry points, swap back, swap forward
-// again — asserting refusal exactly where re-init would be fatal.
+// ENG12 — the servo lifecycle guard.  The once-per-process piece is
+// the ENGINE (libservo v0.7.0 parks Opts in a OnceLock — a second
+// build panics across the C ABI); views are minted per tab since
+// ENG36 (se_engine_init + se_view_create/se_view_destroy — N live
+// WebViews on the shared engine).  Drives the reported flow — swap
+// an empty Untitled tab onto Servo ("Reload in Servo"), reload it,
+// hit the sibling entry points, swap back, swap forward again —
+// asserting coexistence where a second view used to be fatal.
 // The process surviving to the PASS line is itself the check.
 // Skips cleanly when the servo backend/artifact is absent.
 // ENG35: a RequestPolicy that records what the servo load gate
@@ -4966,46 +4967,56 @@ static int servoLifecycleSmoke()
             // installs the "Try Servo Again" button.
             report(QStringLiteral("retry-offered"),
                    servoView->findChild<QPushButton *>() != nullptr);
-            // The crashed-but-live instance still holds the slot —
-            // the dead tab stays disabled until retried or closed.
+            // ENG36: the crashed-but-live view no longer claims the
+            // engine — a SECOND view mints on it alongside the dead
+            // one (per-view crash: the dead tab stays disabled until
+            // retried or closed; siblings are unaffected).  The
+            // sibling is destroyed before the swap-back so the
+            // slot-freed readback below still sees zero live views.
             Engine::Profile *profile =
                 servo->createProfile(Engine::ProfileOptions(), nullptr);
-            Engine::Page *refusedPage =
+            Engine::Page *siblingPage =
                 profile ? servo->createPage(profile, nullptr) : nullptr;
-            report(QStringLiteral("second-page-refused-live"),
-                   profile && !refusedPage);
-            delete refusedPage;
+            QWidget *siblingWidget =
+                siblingPage ? servo->createView(siblingPage, nullptr)
+                            : nullptr;
+            ServoView *siblingView =
+                qobject_cast<ServoView *>(siblingWidget);
+            report(QStringLiteral("second-view-allowed-live-crash"),
+                   siblingView && siblingView->isReady()
+                   && !siblingView->isPoisoned());
+            delete siblingWidget;
+            delete siblingPage;
             // profile is servo's shared backend-owned context —
             // never deleted here (a delete would leave the backend's
             // m_defaultProfile dangling).
         }
 
-        // ENG27: the crashed+destroyed instance must release the
-        // shim's slot — while the view lives it reads occupied, and
-        // after the swap-back destroys it the slot must read free
-        // EVEN THOUGH teardown itself panics (SE_SELFTEST_DESTROY_
-        // PANIC injects the panic inside se_destroy's catch-wrapped
-        // teardown — the desktop log's webrender-GL-during-drop
-        // shape).  The readback is se_instance_active through
-        // ServoView::instanceActive(); artifacts predating the export
-        // fail the held-leg loudly.
+        // ENG27/ENG36: the crashed view must still read as live — and
+        // after the swap-back destroys it the registry must read
+        // EMPTY EVEN THOUGH teardown itself panics
+        // (SE_SELFTEST_DESTROY_PANIC injects the panic inside
+        // se_view_destroy's catch-wrapped teardown — the desktop
+        // log's webrender-GL-during-drop shape).  The readback is
+        // se_instance_active through ServoView::instanceActive();
+        // artifacts predating the export fail the held-leg loudly.
         report(QStringLiteral("instance-slot-held"),
                ServoView::instanceActive());
         qputenv("SE_SELFTEST_DESTROY_PANIC", "1");
 #endif
         // (c) ENG28 recovery: swapping the crashed tab to Chromium
-        // destroys the poisoned view — se_destroy frees the single
-        // instance slot — so the NEXT swap back to Servo creates a
-        // FRESH SeInstance on the still-running engine instead of
-        // being refused forever.
+        // destroys the poisoned view — se_view_destroy releases ONLY
+        // it — so the NEXT swap back to Servo creates a FRESH view on
+        // the still-running engine instead of being refused forever.
         report(QStringLiteral("swap-back"),
                tabs.reloadTabInEngine(0, QStringLiteral("webengine")));
         pumpDeletes();
 #ifdef ARKTOS_SERVO
         // ENG27: the destroy above ran with the panic injection armed
-        // — the shim caught it AND still released the slot.
+        // — the shim caught it AND still unregistered the view.
         qunsetenv("SE_SELFTEST_DESTROY_PANIC");
-        // servoView itself is gone — only the slot readback survives.
+        // servoView itself is gone — only the registry readback
+        // survives.
         report(QStringLiteral("destroy-panic-slot-freed"),
                !ServoView::instanceActive());
 #endif
@@ -5047,16 +5058,23 @@ static int servoLifecycleSmoke()
             report(QStringLiteral("recovery-renders"),
                    finished && distinct > 100
                    && !recoveredView->isPoisoned());
-            // A live instance again refuses a concurrent second page.
+            // ENG36: a live view no longer refuses a concurrent
+            // second — page AND view both mint alongside the
+            // recovered one.
             Engine::Profile *profile =
                 servo->createProfile(Engine::ProfileOptions(), nullptr);
-            Engine::Page *refusedPage =
+            Engine::Page *coPage =
                 profile ? servo->createPage(profile, nullptr) : nullptr;
-            report(QStringLiteral("second-page-refused"),
-                   profile && !refusedPage);
-            delete refusedPage;
+            QWidget *coWidget =
+                coPage ? servo->createView(coPage, nullptr) : nullptr;
+            ServoView *coView = qobject_cast<ServoView *>(coWidget);
+            report(QStringLiteral("second-view-coexists"),
+                   coView && coView->isReady()
+                   && !coView->isPoisoned());
+            delete coWidget;
+            delete coPage;
             // profile is servo's shared backend-owned context —
-            // never deleted here (see second-page-refused-live).
+            // never deleted here (see second-view-allowed-live-crash).
 
             // The in-tab retry path: re-poison the recovered view,
             // let paintEvent install "Try Servo Again", click it —
@@ -5271,7 +5289,80 @@ static int servoLifecycleSmoke()
         delete view;
         delete page;
         // profile is servo's shared backend-owned context — never
-        // deleted (see second-page-refused-live).
+        // deleted (see second-view-allowed-live-crash).
+    }
+
+    // (g) ENG36 — multi-view: two Servo views coexist on the shared
+    // engine (the user report — a second Servo tab used to be
+    // refused).  Both load the fixture, killing the first leaves the
+    // second loading and painting on the surviving engine, and a
+    // fresh third view mints into the freed slot.
+    {
+        Engine::Profile *profile =
+            servo->createProfile(Engine::ProfileOptions(), nullptr);
+        Engine::Page *pageA =
+            profile ? servo->createPage(profile, nullptr) : nullptr;
+        Engine::Page *pageB =
+            profile ? servo->createPage(profile, nullptr) : nullptr;
+        report(QStringLiteral("multi-view-pages"), pageA && pageB);
+        QWidget *widgetA =
+            pageA ? servo->createView(pageA, nullptr) : nullptr;
+        QWidget *widgetB =
+            pageB ? servo->createView(pageB, nullptr) : nullptr;
+        ServoView *viewA = qobject_cast<ServoView *>(widgetA);
+        ServoView *viewB = qobject_cast<ServoView *>(widgetB);
+        report(QStringLiteral("multi-view-live"),
+               viewA && viewA->isReady()
+               && viewB && viewB->isReady());
+        if (viewA && viewB && viewA->isReady() && viewB->isReady()) {
+            widgetA->resize(480, 320);
+            widgetB->resize(480, 320);
+            bool finA = false, finB = false;
+            QObject::connect(viewA, &ServoView::loadFinished, viewA,
+                             [&finA](bool) { finA = true; });
+            QObject::connect(viewB, &ServoView::loadFinished, viewB,
+                             [&finB](bool) { finB = true; });
+            pageA->load(probe);
+            pageB->load(probe);
+            pumpUntil([&finA, &finB]() { return finA && finB; }, 30000);
+            report(QStringLiteral("multi-view-both-load"),
+                   finA && finB);
+            pumpUntil([]() { return false; }, 1500);
+            report(QStringLiteral("multi-view-both-frames"),
+                   viewA->frameCount() > 0 && viewB->frameCount() > 0);
+            // Per-view teardown: destroying view A is not an engine
+            // event — B must keep its instance, its paint flow and
+            // its ability to navigate on the surviving engine.
+            delete widgetA;
+            widgetA = nullptr;
+            viewA = nullptr;
+            pumpDeletes();
+            report(QStringLiteral("multi-view-survivor"),
+                   viewB->isReady() && !viewB->isPoisoned()
+                   && ServoView::instanceActive());
+            finB = false;
+            pageB->load(probe);
+            pumpUntil([&finB]() { return finB; }, 30000);
+            report(QStringLiteral("multi-view-survivor-loads"), finB);
+            // The freed slot mints again on the same engine — the
+            // per-view recovery path.
+            Engine::Page *pageC =
+                servo->createPage(profile, nullptr);
+            QWidget *widgetC =
+                pageC ? servo->createView(pageC, nullptr) : nullptr;
+            ServoView *viewC = qobject_cast<ServoView *>(widgetC);
+            report(QStringLiteral("multi-view-remint"),
+                   viewC && viewC->isReady()
+                   && !viewC->isPoisoned());
+            delete widgetC;
+            delete pageC;
+        }
+        delete widgetA;
+        delete widgetB;
+        delete pageA;
+        delete pageB;
+        // profile is servo's shared backend-owned context — never
+        // deleted (see second-view-allowed-live-crash).
     }
 
     // (f) ENG35 — the BiDi panel's honesty on a servo tab: the
