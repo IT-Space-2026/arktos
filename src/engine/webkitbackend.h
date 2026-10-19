@@ -254,6 +254,25 @@
 // Security-manager flags mirror the QWebEngineUrlScheme
 // registrations (arktos-file local; stubs secure+cors-enabled;
 // interstitials secure).
+//
+// WK18 lands the subresource interception answer: WebKit has no
+// per-request veto, so the policy's rules take the declarative lane
+// instead — Engine::RequestPolicy::contentBlockerJson() (the
+// AdBlockEnginePolicy override renders the persona's lists through
+// the WKB01 Rust converter) is compiled by a process-shared
+// WebKitUserContentFilterStore into a WebKitUserContentFilter that
+// lands on every page's UserContentManager.  The store is
+// content-addressed — the filter identifier is the rules JSON's
+// SHA-256, so a store_load hit skips recompiles across runs and a
+// rulesChanged re-push of setRequestPolicy() only recompiles when
+// the document actually changed.  Scope is honestly narrower than
+// the live consult: url-filter/resource-type block + block-cookies +
+// css-display-none convert, $redirect degrades to a plain block
+// (meta.degraded counts it), and everything without a Safari
+// expression lands in the document's dropped[] channel — counted,
+// logged, never silently applied.  capabilities() names the lane
+// declarativeBlocking; requestInterception stays on because the
+// WK17 navigation-level consult is a real live gate.
 
 #include "engineinterface.h"
 
@@ -282,6 +301,8 @@ typedef struct _WebKitNetworkSession WebKitNetworkSession;
 typedef struct _WebKitPolicyDecision WebKitPolicyDecision;
 typedef struct _WebKitFindController WebKitFindController;
 typedef struct _WebKitUserContentManager WebKitUserContentManager;
+typedef struct _WebKitUserContentFilter WebKitUserContentFilter;
+typedef struct _WebKitUserContentFilterStore WebKitUserContentFilterStore;
 typedef struct _WebKitUserScript WebKitUserScript;
 typedef struct _WebKitScriptMessageReply WebKitScriptMessageReply;
 typedef struct _JSCValue JSCValue;
@@ -720,6 +741,22 @@ public:
     void fetchCookies(
         const std::function<void(const QStringList &)> &callback);
 
+    // WK18 diagnostics/test surface (the WK11 sessionDataDir()
+    // role).  contentBlockerReady() is true once the first
+    // compile/install pass for the current rules document settled
+    // (or an empty document was applied — ready covers both); the
+    // counters report the document's meta channel — emitted rules,
+    // dropped rules (unconvertible, listed per-rule in the doc) and
+    // degraded rules ($redirect -> block).  -1 while no document
+    // was ever pulled.
+    bool contentBlockerReady() const { return m_cbReady; }
+    int contentBlockerEmitted() const { return m_cbEmitted; }
+    int contentBlockerDropped() const { return m_cbDropped; }
+    int contentBlockerDegraded() const { return m_cbDegraded; }
+    // Completed compile/install passes — the refresh leg polls this:
+    // a rulesChanged re-push that produced a NEW document bumps it.
+    int contentBlockerSyncs() const { return m_cbSyncs; }
+
 private:
     // WK12: one-shot cookie-policy apply at session materialization —
     // reads the persona's persisted cookies/* keys and drives the
@@ -734,6 +771,33 @@ private:
     void attachPage(WebkitPage *page);
     void detachPage(WebkitPage *page);
 
+    // WK18 — the declarative-blocking lane.  setRequestPolicy()
+    // pulls the policy's contentBlockerJson() document (a re-install
+    // after rulesChanged is the refresh hook — the app's adblock
+    // wiring re-pushes the same policy pointer on every rules
+    // change); syncContentBlocker() compiles the document's "rules"
+    // array through the shared WebKitUserContentFilterStore and
+    // swaps the filter on every attached page's UCM.  A document
+    // that arrives while a compile is in flight is folded into a
+    // dirty re-pull at finish.  contentFilterCompiled is the async
+    // save/load callback's entry point.
+    void syncContentBlocker();
+    void contentFilterCompiled(const QByteArray &identifier,
+                               WebKitUserContentFilter *filter);
+    void applyContentFilter(WebKitUserContentFilter *filter,
+                            const QByteArray &identifier);
+    WebKitUserContentFilter *contentFilter() const { return m_filter; }
+
+    // WK18 — the filter-store async callbacks (static members so the
+    // GCallback ABI reaches private state without friend pollution —
+    // the page cb* shape; GObject/GAsyncResult travel as void* so
+    // the header stays glib-free).  `call` is a heap
+    // ContentFilterCall the callbacks own.
+    static void cbContentFilterLoad(void *object, void *result,
+                                    void *call);
+    static void cbContentFilterSave(void *object, void *result,
+                                    void *call);
+
     Engine::ProfileOptions m_options;
     QString m_userAgent;
     Engine::RequestPolicy *m_policy = nullptr;
@@ -747,6 +811,19 @@ private:
     QString m_cookieStoragePath;
     bool m_cookiePolicyApplied = false;
     QSet<WebkitPage *> m_pages;
+    // WK18 — the installed content filter and its bookkeeping: the
+    // content-hash identifier of the document that is live (or
+    // in-flight), a dirty flag for documents pushed mid-compile, the
+    // ready flag the test surface polls, and the doc's meta counts.
+    WebKitUserContentFilter *m_filter = nullptr;
+    QByteArray m_cbIdentifier;
+    bool m_cbCompiling = false;
+    bool m_cbDirty = false;
+    bool m_cbReady = false;
+    int m_cbSyncs = 0;
+    int m_cbEmitted = -1;
+    int m_cbDropped = -1;
+    int m_cbDegraded = -1;
 
     friend class WebkitPage;
 };

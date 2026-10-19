@@ -3774,3 +3774,21 @@ WebKit navigation veto and custom schemes (WK17): the webkit
     than carrying divergent copies, and engine-swap tabs on the
     webkit backend now get the same adblock policy binding Servo
     profiles already receive.
+WebKit content-blocker adblock (WK18): the webkit backend gains
+    real subresource blocking — WebKit has no per-request veto, so
+    the profile's filter-list rules render through the Rust
+    content-blocker converter and compile in a process-shared
+    WebKitUserContentFilterStore (content-addressed by the rules
+    SHA-256), then install onto every page's user content manager.
+    URL filters, resource types, block, block-cookies ($cookie) and
+    cosmetic css-display-none rules carry across; $redirect rules —
+    whose stub-serving has no declarative equivalent — degrade to an
+    honest block counted in the document's "degraded" tally, and
+    anything Safari cannot express lands in a dropped-rule channel
+    with a reason code the browser logs instead of losing silently.
+    A new declarativeBlocking capability reports the lane honestly —
+    requestInterception still means only WK17's navigation and
+    new-window consult, no interception parity is claimed — and
+    subscription rule changes re-push the document so a refresh
+    recompiles and swaps the filter on live pages without an
+    unfiltered gap.

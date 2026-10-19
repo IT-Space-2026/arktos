@@ -289,10 +289,13 @@ browsing profile:
   on Chromium — arktos-file: directory listings, abp: subscription
   prompts, the adblock stub resources and the nonce-backed
   interstitials — and profile RequestPolicy vetoes navigation and
-  new-window actions (main-frame adblock filtering through the same
-  policy object; subresource interception is the content-blocker
-  work still ahead, as are extensions and devtools — keeping it
-  experimental).
+  new-window actions through the same policy object, while
+  subresources and cosmetic hiding run declaratively: the profile's
+  filter-list rules compile through WebKitUserContentFilterStore
+  into a per-page content filter ($redirect degrades to a plain
+  block, and constructs Safari cannot express surface in a counted
+  drop channel rather than vanishing; extensions and devtools are
+  still ahead — keeping it experimental).
 - **Reader mode** (Ctrl+Alt+R) and **Picture-in-Picture** on videos.
 - **Command palette** — Ctrl+Shift+P fuzzy search over browser
   commands.
@@ -381,9 +384,10 @@ browsing profile:
   builds without the engine behave exactly like the built-in matcher.
   The crate can also export a rule set as a Safari-format
   content-blocker JSON document (`AdBlockRustEngine::contentBlockerJson`)
-  — the format WebKit's `WebKitUserContentFilterStore` consumes —
-  with an explicit per-rule drop channel for constructs Safari
-  cannot express.
+  — the format WebKit's `WebKitUserContentFilterStore` consumes,
+  which is exactly how the WPE WebKit backend gets its declarative
+  subresource blocking and cosmetic hiding — with an explicit
+  per-rule drop channel for constructs Safari cannot express.
 - **Subscription-centric UI** — preset filter-list catalog, per-list
   enable/update, custom rules editor, toolbar blocker button with
   per-page counts and per-site toggle.

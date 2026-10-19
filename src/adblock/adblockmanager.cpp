@@ -46,6 +46,9 @@
 #if defined(ARKTOS_RUSTCORE)
 #include "sitedecisionstore.h"
 #endif
+#if defined(ARKTOS_ADBLOCK_RUST)
+#include "adblockrustengine.h"
+#endif
 
 #include <qdatetime.h>
 #include <qhash.h>
@@ -74,6 +77,13 @@ AdBlockManager::AdBlockManager(QObject *parent,
 {
     connect(this, &AdBlockManager::rulesChanged,
             m_saveTimer, &AutoSaver::changeOccurred);
+    // WK18: the memoized content-blocker document tracks the rules
+    // generation — connected in the ctor so it invalidates before
+    // any later-registered rulesChanged handler re-pulls it.
+    connect(this, &AdBlockManager::rulesChanged, this, [this]() {
+        m_contentBlockerDoc.clear();
+        m_contentBlockerDocValid = false;
+    });
 }
 
 AdBlockManager::~AdBlockManager()
@@ -339,6 +349,13 @@ public:
     {
     }
 
+    // WK18: the declarative rendering of this policy's ruleset —
+    // WebKitUserContentFilterStore-fed backends pull it on install.
+    QByteArray contentBlockerJson() const override
+    {
+        return m_manager->contentBlockerJson();
+    }
+
     Engine::RequestDecision decide(
             const Engine::NavigationRequest &request) override
     {
@@ -435,6 +452,47 @@ void AdBlockManager::installOnProfile(::Engine::Profile *profile)
     if (!m_enginePolicy)
         m_enginePolicy = new AdBlockEnginePolicy(this);
     profile->setRequestPolicy(m_enginePolicy);
+    // WK18: a declarative-blocking backend pulls the rule document
+    // inside setRequestPolicy — re-running the setter after a rules
+    // change is its refresh hook (a live consult backend like Servo
+    // just re-stores the same pointer, so this stays free there).
+    // Context-bound: dies with the profile.
+    connect(this, &AdBlockManager::rulesChanged, profile, [profile]() {
+        // (::Engine — the class's nested Engine enum shadows it)
+        if (::Engine::RequestPolicy *policy = profile->requestPolicy())
+            profile->setRequestPolicy(policy);
+    });
+}
+
+QByteArray AdBlockManager::contentBlockerJson()
+{
+    if (m_contentBlockerDocValid)
+        return m_contentBlockerDoc;
+    QByteArray doc;
+#if defined(ARKTOS_ADBLOCK_RUST)
+    if (isEnabled()) {
+        // Serialize EVERY enabled rule — including ones the native
+        // matcher marks unsupported: the converter is the arbiter of
+        // Safari-expressibility, and pre-filtering would make those
+        // rules vanish without ever reaching its dropped[] channel
+        // (the no-silent-drop contract).
+        QByteArray text;
+        for (const AdBlockSubscription *subscription : subscriptions()) {
+            if (!subscription->isEnabled())
+                continue;
+            for (const AdBlockRule &rule : subscription->allRules()) {
+                if (!rule.isEnabled())
+                    continue;
+                text += rule.filter().toUtf8();
+                text += '\n';
+            }
+        }
+        doc = AdBlockRustEngine::contentBlockerJson(text);
+    }
+#endif
+    m_contentBlockerDoc = doc;
+    m_contentBlockerDocValid = true;
+    return doc;
 }
 
 AdBlockPage *AdBlockManager::page()

@@ -66,6 +66,12 @@
 #ifdef ARKTOS_WEBKIT
 #include "webkitbackend.h"
 #endif
+#ifdef ARKTOS_ADBLOCK_RUST
+#include "adblockrustengine.h"
+#endif
+
+#include <qjsondocument.h>
+#include <qjsonobject.h>
 
 #include "fakeengine.h"
 
@@ -201,6 +207,7 @@ private slots:
     void webkitJsEval();
     void webkitScriptWorlds();
     void webkitPolicySchemes();
+    void webkitContentBlocking();
 
 private:
     FakeEngineBackend *m_fake = nullptr;
@@ -3140,6 +3147,216 @@ void tst_EngineSwitch::webkitPolicySchemes()
     }
 #else
     QSKIP("webkit backend not linked in this build");
+#endif
+}
+
+// WK18 — the declarative-blocking lane: the policy's rules document
+// (a real AdBlockRustEngine::contentBlockerJson conversion) compiles
+// through the shared WebKitUserContentFilterStore onto every page's
+// UserContentManager; a named subresource must then never reach the
+// wire, a cosmetic rule must hide its element, and the doc's meta
+// channel reports converted/dropped/degraded counts.  A ruleset
+// re-push exercises the setRequestPolicy refresh hook.
+void tst_EngineSwitch::webkitContentBlocking()
+{
+#if defined(ARKTOS_WEBKIT_LINKED) && defined(ARKTOS_ADBLOCK_RUST)
+    Engine::Backend *webkit =
+        EngineRegistry::backendForId(QStringLiteral("webkit"));
+    QVERIFY(webkit);
+    QVERIFY2(webkit->pageUnavailableReason().isEmpty(),
+             qPrintable(webkit->pageUnavailableReason()));
+    // WK18's capability verdict — declarative blocking is the honest
+    // name for the subresource lane; requestInterception stays on for
+    // the WK17 navigation consult.
+    QVERIFY(webkit->capabilities().declarativeBlocking);
+    QVERIFY(webkit->capabilities().requestInterception);
+
+    // The converter output drives the fixture — one pass exercises
+    // block, cosmetic, block-cookies, degrade-to-block ($redirect)
+    // and a true drop ($csp).
+    const QByteArray rules =
+        "/wk18-tracker.png\n"
+        "||ck.invalid^$cookie\n"
+        "##.wk18-ad\n"
+        "||stub.invalid^$redirect=noop.js\n"
+        "||csp.invalid^$csp=script-src 'none'\n";
+    const QByteArray doc = AdBlockRustEngine::contentBlockerJson(rules);
+    QVERIFY2(!doc.isEmpty(), "the converter returned no document");
+    const QJsonObject meta = QJsonDocument::fromJson(doc).object()
+        .value(QStringLiteral("meta")).toObject();
+    const int emitted = meta.value(QStringLiteral("emitted")).toInt();
+    const int dropped = meta.value(QStringLiteral("dropped")).toInt();
+    const int degraded = meta.value(QStringLiteral("degraded")).toInt();
+    // The verify contract — the converted/dropped counts are printed.
+    qInfo("WK18 content-blocker doc: emitted=%d dropped=%d "
+          "degraded=%d", emitted, dropped, degraded);
+    for (const QJsonValue &v : QJsonDocument::fromJson(doc).object()
+             .value(QStringLiteral("dropped")).toArray())
+        qInfo("WK18 dropped: %s",
+              qPrintable(v.toObject().value(QStringLiteral("why")).toString()
+                         + " | " + v.toObject().value(QStringLiteral("rule")).toString()));
+    QVERIFY2(emitted >= 4,
+             "block + cookie + cosmetic + degraded rules expected");
+    QCOMPARE(dropped, 1);    // the $csp rule
+    QCOMPARE(degraded, 1);   // the $redirect rule became a block
+    QVERIFY(QByteArray(doc).contains("block-cookies"));
+    QVERIFY(QByteArray(doc).contains("css-display-none"));
+
+    // The fixture policy consults nothing but carries the compiled
+    // document — the profile pulls it through the WK18 surface.
+    class FixturePolicy : public Engine::RequestPolicy
+    {
+    public:
+        Engine::RequestDecision decide(
+            const Engine::NavigationRequest &) override
+        {
+            return Engine::RequestDecision();
+        }
+        QByteArray contentBlockerJson() const override { return doc; }
+        QByteArray doc;
+    };
+    FixturePolicy policy;
+    policy.doc = doc;
+
+    Engine::ProfileOptions options;
+    options.offTheRecord = true;   // ephemeral session — no disk state
+    Engine::Profile *profile = webkit->createProfile(options, this);
+    QVERIFY(profile);
+    auto *wkProfile = qobject_cast<WebkitProfile *>(profile);
+    QVERIFY(wkProfile);
+    profile->setRequestPolicy(&policy);
+    // The store compile is async — ready lands when the filter (or an
+    // honest empty) is applied to the profile's pages.
+    QTRY_VERIFY2_WITH_TIMEOUT(wkProfile->contentBlockerReady(),
+                              "content filter never compiled", 30000);
+    QCOMPARE(wkProfile->contentBlockerEmitted(), emitted);
+    QCOMPARE(wkProfile->contentBlockerDropped(), dropped);
+    QCOMPARE(wkProfile->contentBlockerDegraded(), degraded);
+    const int syncs = wkProfile->contentBlockerSyncs();
+
+    // Loopback fixture: /wk18 serves the page; every request path is
+    // recorded so the blocked subresource proves it never wired.
+    QSet<QString> wirePaths;
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    auto pending =
+        QSharedPointer<QHash<QTcpSocket *, QByteArray>>::create();
+    connect(&server, &QTcpServer::newConnection, &server,
+            [&server, &wirePaths, pending]() {
+        while (QTcpSocket *socket = server.nextPendingConnection()) {
+            socket->setParent(&server);
+            connect(socket, &QTcpSocket::readyRead, socket,
+                    [socket, &wirePaths, pending]() {
+                QByteArray &request = (*pending)[socket];
+                request += socket->readAll();
+                if (!request.contains("\r\n\r\n"))
+                    return;
+                const int firstLineEnd = request.indexOf('\n');
+                if (firstLineEnd > 0) {
+                    const QByteArray line =
+                        request.left(firstLineEnd).trimmed();
+                    const QList<QByteArray> parts = line.split(' ');
+                    if (parts.size() >= 2)
+                        wirePaths.insert(
+                            QString::fromUtf8(parts.at(1)));
+                }
+                QByteArray body;
+                QByteArray type = "application/octet-stream";
+                if (request.startsWith("GET /wk18 ")) {
+                    type = "text/html";
+                    body = "<html><head><title>Wk18</title></head>"
+                           "<body><div class=\"wk18-ad\">AD</div>"
+                           "<img src=\"/wk18-tracker.png\">"
+                           "<img src=\"/wk18-ok.png\">"
+                           "</body></html>";
+                } else {
+                    socket->write("HTTP/1.1 404 Not Found\r\n"
+                                  "Content-Length: 0\r\n"
+                                  "Connection: close\r\n\r\n");
+                    socket->disconnect();
+                    socket->disconnectFromHost();
+                    pending->remove(socket);
+                    return;
+                }
+                socket->write("HTTP/1.1 200 OK\r\nContent-Type: " + type
+                              + "\r\nContent-Length: "
+                              + QByteArray::number(body.size())
+                              + "\r\nConnection: close\r\n\r\n" + body);
+                socket->disconnect();
+                socket->disconnectFromHost();
+                pending->remove(socket);
+            });
+        }
+    });
+    const QUrl fixtureUrl(QStringLiteral("http://127.0.0.1:%1/wk18")
+                              .arg(server.serverPort()));
+
+    EngineTab tab(webkit, profile);
+    tab.resize(800, 600);
+    tab.show();
+    QVERIFY(tab.page());
+    auto *page = qobject_cast<WebkitPage *>(tab.page());
+    QVERIFY(page);
+
+    QList<bool> loadResults;
+    connect(page, &Engine::Page::loadFinished, page,
+            [&](bool ok) { loadResults << ok; });
+    auto waitLoadOk = [&](int timeout = 60000) {
+        const int base = loadResults.size();
+        for (int waited = 0; waited < timeout; waited += 100) {
+            for (int i = base; i < loadResults.size(); ++i)
+                if (loadResults.at(i))
+                    return true;
+            QTest::qWait(100);
+        }
+        return false;
+    };
+
+    tab.load(fixtureUrl);
+    QVERIFY2(waitLoadOk(), "fixture load never finished");
+    QTest::qWait(1500);   // settle any late subresource attempt
+
+    // — block leg: the named subresource never reached the wire;
+    //   the control resource proves the filter is not a blanket deny.
+    QVERIFY2(!wirePaths.contains(QStringLiteral("/wk18-tracker.png")),
+             "a content-blocked subresource reached the wire");
+    QVERIFY2(wirePaths.contains(QStringLiteral("/wk18-ok.png")),
+             "the control subresource should have loaded");
+
+    // — cosmetic leg: the css-display-none rule hid the element.
+    {
+        std::shared_ptr<QVariant> result(new QVariant);
+        std::shared_ptr<bool> done(new bool(false));
+        page->runJavaScript(
+            QStringLiteral(
+                "getComputedStyle(document.querySelector('.wk18-ad'))"
+                ".display"),
+            [result, done](const QVariant &v) {
+                *result = v;
+                *done = true;
+            });
+        for (int waited = 0; !*done && waited < 15000; waited += 50)
+            QTest::qWait(50);
+        QVERIFY2(*done, "cosmetic eval never returned");
+        QCOMPARE(result->toString(), QStringLiteral("none"));
+    }
+
+    // — refresh leg: a re-pushed ruleset recompiles and swaps the
+    //   live filter (the setRequestPolicy refresh hook).
+    const QByteArray doc2 = AdBlockRustEngine::contentBlockerJson(
+        rules + "/wk18-late.png\n");
+    QVERIFY2(!doc2.isEmpty(), "second conversion returned no doc");
+    policy.doc = doc2;
+    const int emitted2 = QJsonDocument::fromJson(doc2).object()
+        .value(QStringLiteral("meta")).toObject()
+        .value(QStringLiteral("emitted")).toInt();
+    profile->setRequestPolicy(&policy);
+    QTRY_COMPARE_WITH_TIMEOUT(wkProfile->contentBlockerSyncs(),
+                              syncs + 1, 30000);
+    QCOMPARE(wkProfile->contentBlockerEmitted(), emitted2);
+#else
+    QSKIP("needs the linked webkit backend and the adblock_rust "
+          "converter in this build");
 #endif
 }
 

@@ -160,6 +160,21 @@ class RequestPolicy {
 public:
     virtual ~RequestPolicy() = default;
     virtual RequestDecision decide(const NavigationRequest &request) = 0;
+
+    // WK18: the policy's rules rendered as a WebKit/Safari
+    // content-blocker JSON document — {"rules":[...],"dropped":[...],
+    // "meta":{...}} as AdBlockRustEngine::contentBlockerJson emits —
+    // for backends whose interception surface is a compiled
+    // declarative filter (WebKit's WebKitUserContentFilterStore)
+    // rather than a per-request consult.  The default is empty: a
+    // policy that cannot render itself declaratively leaves the
+    // backend with navigation-level consults only — the subresource
+    // lane stays honest about being ungated instead of faking
+    // coverage.  A backend pulls this when the policy is installed;
+    // re-invoking setRequestPolicy() after a rules change is the
+    // documented refresh hook (the app's adblock install re-pushes
+    // the same pointer on rulesChanged).
+    virtual QByteArray contentBlockerJson() const { return QByteArray(); }
 };
 
 // ---- cookies / storage ---------------------------------------------------
@@ -577,6 +592,16 @@ struct ProfileOptions {
 // lacks (Tor stays Chromium per ENG05).
 struct Capabilities {
     bool requestInterception = false;  // setRequestPolicy actually gates traffic
+    // WK18: the engine consumes a compiled declarative rule list —
+    // RequestPolicy::contentBlockerJson() installed through a
+    // WebKitUserContentFilterStore-style surface.  Subresource
+    // blocking is then the COMPILED SUBSET only: no live policy
+    // consult per request, Redirect/stub verdicts degrade to block,
+    // rules with no Safari expression are dropped and counted rather
+    // than faked.  requestInterception keeps its meaning (the live
+    // decide() consult gates navigations); this flag names the
+    // honest shape of subresource coverage.
+    bool declarativeBlocking = false;
     bool scriptInjection = false;      // insertScript reaches pages
     bool scriptEvaluation = false;     // runJavaScript returns results
     bool cookieFilter = false;         // setCookieFilter is honored

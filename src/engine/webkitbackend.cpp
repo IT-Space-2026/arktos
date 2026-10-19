@@ -58,11 +58,15 @@
 #include "schemeaccesshandler.h"
 
 #include <qapplication.h>
+#include <qcryptographichash.h>
 #include <qdesktopservices.h>
+#include <qdir.h>
 #include <qevent.h>
 #include <qfile.h>
 #include <qfileinfo.h>
+#include <qjsonarray.h>
 #include <qjsondocument.h>
+#include <qjsonobject.h>
 #include <qmessagebox.h>
 #include <qpainter.h>
 #include <qpixmap.h>
@@ -118,6 +122,39 @@ WebKitWebContext *sharedWebContext()
     }();
     return context;
 }
+
+// WK18 — the process-shared WebKitUserContentFilterStore.  Filters
+// are content-addressed: WebkitProfile names each rules document by
+// its SHA-256, so one store under the app's cache root serves every
+// persona and every profile, and a store_load hit reuses WebKit's
+// own compiled-blob cache instead of reparsing the JSON.  The store
+// root is disposable cache — a wipe costs one recompile, nothing
+// more.  (OTR profiles ride the same store: the blobs are RULE
+// compilations, not browsing state — nothing about a session ever
+// lands here.)
+WebKitUserContentFilterStore *contentFilterStore()
+{
+    static WebKitUserContentFilterStore *store = [] {
+        const QString dir = BrowserPaths::dataRoot()
+            + QLatin1String("/cache/WebKitContentFilters");
+        QDir().mkpath(dir);
+        return webkit_user_content_filter_store_new(
+            QFile::encodeName(dir).constData());
+    }();
+    return store;
+}
+
+// The async hop for store_load -> (miss) store_save -> install.
+// WebKit's content-blocker compiler runs off the GUI thread; the
+// callbacks land on the same global-default main context the Qt
+// loop pumps.  The QPointer guards a profile that died mid-compile;
+// `source` is carried so the load miss can re-issue as a save
+// without another round trip through the profile.
+struct ContentFilterCall {
+    QPointer<WebkitProfile> profile;
+    QByteArray identifier;
+    QByteArray source;
+};
 
 // JSCValue -> QVariant (WK15 marshaling matrix).  Scalars map
 // directly; JS null becomes a valid-but-null variant (the
@@ -1270,6 +1307,15 @@ WebkitPage::WebkitPage(Engine::Profile *profile, QObject *parent)
         for (const Engine::Script &script : profileScripts)
             installProfileScript(script);
         webProfile->attachPage(this);
+        // WK18: a compiled content filter may already exist (the
+        // store resolved it before this page was built) — land it on
+        // the new UCM before any load can run unfiltered.
+        if (WebKitUserContentFilter *filter =
+                webProfile->contentFilter()) {
+            webkit_user_content_manager_add_filter(
+                webkit_web_view_get_user_content_manager(m_webView),
+                filter);
+        }
     }
 #else
     Q_UNUSED(profile);
@@ -2909,6 +2955,10 @@ WebkitProfile::WebkitProfile(const Engine::ProfileOptions &options,
 WebkitProfile::~WebkitProfile()
 {
 #ifdef ARKTOS_WEBKIT_LINKED
+    // WK18: the retained filter is a boxed type — unref, not
+    // g_clear_object.
+    if (m_filter)
+        webkit_user_content_filter_unref(m_filter);
     g_clear_object(&m_networkSession);
 #endif
 }
@@ -3105,11 +3155,232 @@ void WebkitProfile::setUserAgent(const QString &userAgent)
 void WebkitProfile::setRequestPolicy(Engine::RequestPolicy *policy)
 {
     m_policy = policy;
+    // WK18: the declarative lane pulls its rules document at install
+    // time.  The app's adblock wiring re-invokes this setter on every
+    // rulesChanged (installOnProfile), which is the refresh hook —
+    // a repeat pull that produces the same document short-circuits
+    // on the content hash before it ever reaches the compiler.
+    syncContentBlocker();
 }
 
 Engine::RequestPolicy *WebkitProfile::requestPolicy() const
 {
     return m_policy;
+}
+
+// ---- WK18: declarative content blocking --------------------------
+//
+// WebKit has no per-request subresource veto — decide-policy (WK17)
+// only sees navigations.  The coverage answer is the Safari
+// content-blocker lane: the profile pulls the policy's compiled
+// rules document (RequestPolicy::contentBlockerJson — the
+// AdBlockEnginePolicy override renders the persona's lists through
+// the WKB01 Rust converter), extracts the "rules" array for the
+// store, and keeps the "dropped"/"meta" channels as the counted +
+// logged honesty trail.  Main-frame navigations are deliberately
+// NOT the filter's job — the converter's trailing
+// ignore-previous-rules fp-document guard approximates ABP's
+// never-block-the-document rule, and live vetoes stay with
+// decide-policy.
+
+void WebkitProfile::cbContentFilterLoad(void *object, void *result,
+                                        void *data)
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    ContentFilterCall *call = static_cast<ContentFilterCall *>(data);
+    GError *error = nullptr;
+    WebKitUserContentFilter *filter =
+        webkit_user_content_filter_store_load_finish(
+            WEBKIT_USER_CONTENT_FILTER_STORE(object),
+            static_cast<GAsyncResult *>(result), &error);
+    if (!filter) {
+        // A load miss just means this content hash was never
+        // compiled — the save hop compiles it now (the call rides
+        // on; it is still owned by the async chain).
+        g_clear_error(&error);
+        webkit_user_content_filter_store_save(
+            WEBKIT_USER_CONTENT_FILTER_STORE(object),
+            call->identifier.constData(),
+            g_bytes_new(call->source.constData(),
+                        gsize(call->source.size())),
+            nullptr,
+            reinterpret_cast<GAsyncReadyCallback>(
+                &WebkitProfile::cbContentFilterSave), call);
+        return;
+    }
+    if (call->profile)
+        call->profile->contentFilterCompiled(call->identifier,
+                                             filter);
+    else
+        webkit_user_content_filter_unref(filter);
+    delete call;
+#else
+    Q_UNUSED(object);
+    Q_UNUSED(result);
+    Q_UNUSED(data);
+#endif
+}
+
+void WebkitProfile::cbContentFilterSave(void *object, void *result,
+                                        void *data)
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    ContentFilterCall *call = static_cast<ContentFilterCall *>(data);
+    GError *error = nullptr;
+    WebKitUserContentFilter *filter =
+        webkit_user_content_filter_store_save_finish(
+            WEBKIT_USER_CONTENT_FILTER_STORE(object),
+            static_cast<GAsyncResult *>(result), &error);
+    if (!filter) {
+        qWarning("webkit: content-blocker compile failed: %s",
+                 error ? error->message : "unknown error");
+        g_clear_error(&error);
+    }
+    if (call->profile)
+        call->profile->contentFilterCompiled(call->identifier,
+                                             filter);
+    else if (filter)
+        webkit_user_content_filter_unref(filter);
+    delete call;
+#else
+    Q_UNUSED(object);
+    Q_UNUSED(result);
+    Q_UNUSED(data);
+#endif
+}
+
+void WebkitProfile::syncContentBlocker()
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    if (m_cbCompiling) {
+        // A push landing mid-compile just re-pulls at finish — the
+        // policy answers with its newest document then, so no
+        // snapshot of the stale one is needed here.
+        m_cbDirty = true;
+        return;
+    }
+    const QByteArray doc =
+        m_policy ? m_policy->contentBlockerJson() : QByteArray();
+
+    // The doc wraps the Safari rule list with the honesty channels:
+    // "rules" compiles verbatim; "dropped" lists each rule with no
+    // Safari expression and why (counted + sampled into the log —
+    // the no-silent-drop contract); "meta" feeds the diagnostic
+    // counters the autotest prints.
+    QByteArray rulesJson;
+    int emitted = 0, dropped = 0, degraded = 0;
+    if (!doc.isEmpty()) {
+        const QJsonObject root = QJsonDocument::fromJson(doc).object();
+        rulesJson = QJsonDocument(
+                root.value(QLatin1String("rules")).toArray())
+            .toJson(QJsonDocument::Compact);
+        const QJsonObject meta =
+            root.value(QLatin1String("meta")).toObject();
+        emitted = meta.value(QLatin1String("emitted")).toInt();
+        dropped = meta.value(QLatin1String("dropped")).toInt();
+        degraded = meta.value(QLatin1String("degraded")).toInt();
+        const QJsonArray drops =
+            root.value(QLatin1String("dropped")).toArray();
+        for (int i = 0; i < drops.size() && i < 8; ++i) {
+            const QJsonObject drop = drops.at(i).toObject();
+            qDebug("webkit: content-blocker dropped rule %s (%s)",
+                   qPrintable(drop.value(QLatin1String("rule"))
+                                  .toString()),
+                   qPrintable(drop.value(QLatin1String("why"))
+                                  .toString()));
+        }
+        if (drops.size() > 8)
+            qDebug("webkit: ... and %d more dropped rules",
+                   int(drops.size()) - 8);
+    }
+    m_cbEmitted = emitted;
+    m_cbDropped = dropped;
+    m_cbDegraded = degraded;
+
+    if (rulesJson.isEmpty() || rulesJson == "[]") {
+        // No expressible rules — strip the filter outright rather
+        // than compile an empty list; a blocker toggled off lands
+        // here through the rulesChanged re-push.
+        if (m_filter || !m_cbIdentifier.isEmpty()) {
+            applyContentFilter(nullptr, QByteArray());
+            ++m_cbSyncs;
+        }
+        m_cbReady = true;
+        return;
+    }
+
+    const QByteArray identifier = QByteArray("arktos-")
+        + QCryptographicHash::hash(rulesJson,
+                                   QCryptographicHash::Sha256).toHex();
+    if (identifier == m_cbIdentifier)
+        return;   // this exact ruleset is already live
+    m_cbCompiling = true;
+    WebKitUserContentFilterStore *store = contentFilterStore();
+    ContentFilterCall *call = new ContentFilterCall;
+    call->profile = this;
+    call->identifier = identifier;
+    call->source = rulesJson;
+    webkit_user_content_filter_store_load(
+        store, identifier.constData(), nullptr,
+        reinterpret_cast<GAsyncReadyCallback>(
+            &WebkitProfile::cbContentFilterLoad), call);
+#endif
+}
+
+void WebkitProfile::contentFilterCompiled(
+        const QByteArray &identifier, WebKitUserContentFilter *filter)
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    m_cbCompiling = false;
+    if (filter) {
+        applyContentFilter(filter, identifier);
+        // The caller's ref — applyContentFilter keeps its own.
+        webkit_user_content_filter_unref(filter);
+        ++m_cbSyncs;
+        qInfo("webkit: content blocker installed — %d rules "
+              "(%d dropped, %d degraded to block)",
+              m_cbEmitted, m_cbDropped, m_cbDegraded);
+    }
+    // A failed compile leaves the previous filter live and marks the
+    // pass settled — the next rulesChanged re-push retries.
+    m_cbReady = true;
+    if (m_cbDirty) {
+        m_cbDirty = false;
+        syncContentBlocker();
+    }
+#else
+    Q_UNUSED(identifier);
+    Q_UNUSED(filter);
+#endif
+}
+
+void WebkitProfile::applyContentFilter(WebKitUserContentFilter *filter,
+                                       const QByteArray &identifier)
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    if (filter)
+        webkit_user_content_filter_ref(filter);
+    WebKitUserContentFilter *old = m_filter;
+    m_filter = filter;
+    m_cbIdentifier = identifier;
+    // Swap order keeps coverage continuous on a live page: the new
+    // filter lands before the old one leaves its UCM.
+    for (WebkitPage *page : std::as_const(m_pages)) {
+        if (!page->m_webView)
+            continue;
+        WebKitUserContentManager *manager =
+            webkit_web_view_get_user_content_manager(page->m_webView);
+        if (filter)
+            webkit_user_content_manager_add_filter(manager, filter);
+        if (old)
+            webkit_user_content_manager_remove_filter(manager, old);
+    }
+    if (old)
+        webkit_user_content_filter_unref(old);
+#else
+    Q_UNUSED(filter);
+    Q_UNUSED(identifier);
+#endif
 }
 
 void WebkitProfile::setCookieFilter(
@@ -3358,6 +3629,12 @@ Engine::Capabilities WebkitBackend::capabilities() const
     if (!librariesLinked())
         return caps;
     caps.requestInterception = true;
+    // WK18: the declarative lane is real — the policy's rules
+    // compile into a WebKitUserContentFilterStore filter that gates
+    // subresource loads (block/block-cookies/css-display-none);
+    // $redirect degrades to block and the inexpressible drops are
+    // counted, not faked.
+    caps.declarativeBlocking = true;
     caps.scriptInjection = true;
     caps.scriptEvaluation = true;
     caps.perPageSettings = true;
