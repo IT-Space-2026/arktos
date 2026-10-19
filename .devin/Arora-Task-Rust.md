@@ -108,6 +108,7 @@ Rules for the agent working this file:
 | ENG35 | AdBlock + BiDi on the Servo engine — wire request blocking through the WebResourceLoad hook; diagnose servo's devtools surface for BiDi, wire or honestly disable — details below | done | 2 | landed (2 runs — run1 built+verified smoke legs, run2 ran gates/suite+bookkeeping): shim se_set_load_gate + SeLoadInfo consulted inside load_web_resource BEFORE the resolver — non-zero return serves the SeHostReply verbatim (deny=empty 403, request never reaches fetch); Qt ServoView::cbLoadGate maps servo destination→ResourceType and resolves the policy through the OWNING profile (view→m_page→profile→requestPolicy — MPROF lesson), Block→403, Redirect→decision.stubBody/stubMime (servo can only serve, never re-issue; bare $removeparam rewrites degrade to Allow — documented); new AdBlockEnginePolicy = Engine::RequestPolicy spelling of the interceptor decision sharing the same network() snapshot incl. rust engine + noteBlockedRequest tally + isWebRequestScheme guard; installOnProfile(::Engine::Profile*) bound in addEngineTab for servo profiles only (WebEngine keeps its interceptor); capabilities().requestIntervention symbol-gated on se_set_load_gate — older artifacts report false honestly. BiDi verdict (diagnosed): servo v0.7.0 DOES ship a devtools server (devtools_server_enabled pref, TCP 127.0.0.1:7000) but it speaks the Firefox Remote Debugging Protocol (JSON packets, components/devtools/protocol.rs), NOT the CDP-over-WebSocket the BidiPanel client drives — real wiring is a separate project; devTools stays false, Tools-menu devtools rows + panel context combo disable servo tabs with 'devtools unavailable on Servo' (SERVO-SPIKE.md table corrected: interception partial→works, devtools CDP-flavored→Firefox-RDP absent-for-us). Cosmetic CSS hiding out of scope — no style-injection surface in this pin. Verified: --servo-smoke all 7 ENG35 legs PASS (load-gate-symbol, gate-policy-bound, adblock-allow-passes, gate-consults-policy, adblock-deny-tally, bidi-devtools-false, bidi-combo-disabled-reason; scroll-leg FAILs are the llvmpipe ~380ms/frame env flake under main-lane load, no scroll code touched), cargo shim rebuilt + symbol exported, qmake+make -j2 clean, make check 4 gates PASS (warnings no-rust build, supplychain, engine-audit, rustcoverage 90.50/91.68/89.25) + all adblock/webpage/webview suites 0 failed; 4 leg fails = documented env flakes only (darkThemeReaderGlyph, stopReloadState, shieldPopupFirstShow — same trio flagged in MPROF04/PVAULT04 worklogs, pre-date this diff; fileSchemeErrors PASS standalone) |
 | SEC19 | Second rank source (Majestic Million) + third threat feed (Phishing.Database) — details below | done | 1 | landed: Majestic second rank source (own 12-col grammar + majestic-million.csv file, min-rank merge, rc_tranco_file_entries guards each commit, per-source stamps) + Phishing.Database in DomainBlocklist; one Update gesture/consent gate covers all three — verified: cargo 254/254, tst_trancolist 8/8, tst_domainblock 13/13, tst_settingsdialog 56/56, make check 4 gates PASS + suite green except 4 documented env flakes |
 | WKB01 | EasyList→WebKit content-blocker JSON converter — Safari-format rule export from the adblock rule model — details below | done | 2 | resumed interrupted run — rustcore-side module in arktos_adblock_ffi (contentblocker.rs) drives upstream adblock::content_blocking translators per ParsedLine w/ raw_line retained; JSON doc {rules,dropped[{rule,why}],meta counts}; Safari ordering (exceptions after blocks, fp-document guard last); $badfilter honored by filter-id; FFI arktos_adblock_contentblocker_convert + AdBlockRustEngine::contentBlockerJson; also repaired 3 BRAND01 casualties (corrupt testcert DER regenerated, qrcode matrices regenerated for renamed payload, About dialog upstream copyright restored) — verified: cargo test 12/12, tst_contentblocker 7/7 offscreen, supplychain + engine-audit gates PASS (warnings + rustcoverage green on this tree in attempt 1), suite rc=1 on host-load flakes only — all 10 failing binaries re-verified standalone 0 failed incl. bmw crash-loop 77/77 |
+| ENG36 | Multi-view Servo — multiple live Servo tabs on the shared engine: per-view RenderingContext/WebView + webview.id()-routed delegates — details below | pending | 0 | user-reported: only one tab can switch to Servo; libservo supports N WebViews — our shim refuses the 2nd |
 
 ## Task details
 
@@ -630,3 +631,47 @@ there.
 Verify: `cargo test` in the adblock crate passes with the new
 converter legs; the FFI surface (if added) gets an `ffi_surface` leg;
 `make check` gates green.
+
+### ENG36
+
+Multi-view Servo — user report: after switching one tab to Servo, a
+second tab can't; only one tab can ever be Servo at once. Diagnosed
+2026-02-20: this is OUR shim's design, not a libservo limit. libservo
+v0.7.0 supports N `WebView` objects on one `Servo` engine — what is
+process-global is the ENGINE (ServoBuilder::build / Opts OnceLock),
+and that part is already correct. The single-view restriction comes
+from: (1) the C++ `g_servoSlot`/`g_liveView` lock in
+`src/engine/servobackend.cpp` refusing `createPage` while a view is
+live, (2) the delegate userdata cell `&g_liveView` routing ALL
+engine callbacks to one view, (3) the shim's `SeInstance` bundling
+engine+webview+rendering-context together so "instance" means both.
+
+Work items:
+
+- Shim (`spikes/servo/servo-embed/src/lib.rs`): split engine from
+  view. `se_engine_init` once (idempotent), then `se_view_create`/
+  `se_view_destroy` per tab — each view = own WebViewBuilder +
+  SoftwareRenderingContext + delegate. Read the delegate signatures:
+  callbacks already carry `webview: WebView` — route to the right
+  SeView by `webview.id()` (registry map), replacing the
+  userdata-cell single-view trick. The wake/event-loop waker bound
+  at engine build must route to a shared pump or per-view fan-out —
+  check what v0.7.0 actually gives a second view (read the engine's
+  event loop API, don't assume).
+- Qt side (`src/engine/servobackend.cpp`): drop the
+  g_servoSlot one-live-view gate; keep the ENGINE failure
+  terminal-check (init failed once stays fatal). `createPage` no
+  longer refuses on "a live instance exists"; `instanceAvailable`
+  semantics change to engine-alive not slot-free.
+- `pageUnavailableReason`: remove/adjust the "one tab at a time"
+  message — it becomes honest engine-failure text only.
+- Per-view lifecycle: closing a Servo tab destroys ONLY its view;
+  the engine survives. Crash recovery (ENG28's fresh-instance path)
+  now applies per view — a dead view's slot frees independently.
+
+Verify: new shim exports + `se_view_*` cargo legs; a Qt leg or
+servo-smoke leg proving two Servo tabs coexist (create 2 pages,
+both load, closing one leaves the other alive, engine survives);
+`--servo-smoke` suite PASS; `make check` 4 gates; document the
+constraint change in `src/engine/servobackend.h` + ChangeLog +
+`spikes/servo/SERVO-SPIKE.md`.
