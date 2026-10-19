@@ -3501,3 +3501,17 @@ WebKit backend groundwork (WK01): the WPE WebKit 2.54.1 developer
     sid-glibc link contract), and spikes/webkit/probe carries a compiled
     version probe that proves headers, linking and runtime loading all
     work end to end. Nothing is wired into the qmake build yet.
+WebKit backend groundwork (WK02): the WPE WebKit spike harness at
+    spikes/webkit/wpe-harness now proves a Qt Widgets process can own a
+    WPEDisplayHeadless+WPEToplevel+WPEView+WebKitWebView stack and drive
+    a page load end to end. The event-loop verdict the WebKit backend
+    will follow: all three GMainContext pump models deliver
+    load-finished — Qt's default glib dispatcher pumps WebKit's sources
+    natively on the GUI thread (the model the backend will use), a
+    60 Hz manual-context drain works as a no-glib fallback, and a
+    dedicated private-context thread works too but carries measured
+    traps (embedder sources must attach explicitly to its context;
+    teardown from the main thread aborts). The ~/wpe prefix also got a
+    self-containment fix: WebKit's baked-in libexec path now points at
+    the prefix's own symlink and the bwrap sandbox is told about the
+    prefix dirs, so subprocesses spawn sandboxed without extra env.
