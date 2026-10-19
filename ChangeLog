@@ -3557,3 +3557,20 @@ WebKit backend groundwork (WK05): the four WPE WebKit spikes are now
     programmatic inspector channel — are recorded with their
     interface-level mitigations, and the per-capability truth table
     for the backend registration is written down for the next task.
+WebKit backend groundwork (WK06): the qmake build now has a `webkit`
+    engine gate mirroring the servo stanza. Whenever pkg-config can
+    resolve wpe-webkit-2.0 + wpe-platform-2.0 — the user-local ~/wpe
+    prefix once .devin/webkit-env.sh is sourced, or a system WPE ≥ 2.54
+    — .qmake.conf auto-adds CONFIG+=webkit so a plain `qmake && make`
+    cannot silently drop the backend, and engine.pri compiles
+    src/engine/webkitbackend.cpp with -DARKTOS_WEBKIT (plus
+    ARKTOS_WEBKIT_LINKED when the packages resolve), links the WPE
+    libraries, and applies the sideloaded-glibc recipe — sid ld.so
+    interpreter, transitive DT_RPATH, g_sort_array compat shim — when
+    the ~/wpe env contract is present. Opt-outs are symmetric with
+    servo (`qmake webkit=0`, `nowebkit=1`, `CONFIG-=webkit`) and
+    produce a build with no webkit inputs at all; a forced `webkit=1`
+    on a WPE-less host still compiles the backend TU, which simply
+    reports the engine unavailable — compile-but-inert, never a
+    broken build. The backend class is a deliberate skeleton that
+    registers nothing yet; WK07 fills it in.

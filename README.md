@@ -836,6 +836,19 @@ the distro's *webengine*, *webchannel*, *core5compat*, *svg* and
   libservo is drastically slower than the release build, which is
   itself slower than Chromium on real pages (Servo is an
   experimental engine, not a performance option)
+- `webkit=1` — experimental WPE WebKit co-engine (WK06): compiles
+  `src/engine/webkitbackend.cpp` and links `wpe-webkit-2.0` +
+  `wpe-platform-2.0` through pkg-config. `.qmake.conf` auto-adds
+  `CONFIG+=webkit` whenever pkg-config resolves both packages — the
+  user-local `~/wpe` prefix after `source .devin/webkit-env.sh` (the
+  env also bakes the sideloaded-glibc recipe — sid ld.so interpreter
+  + RPATH + compat shim — into every binary carrying the backend) or
+  a system WPE ≥ 2.54. Opt out with `qmake webkit=0`, `nowebkit=1` or
+  `CONFIG-=webkit`. A `webkit=1` build on a WPE-less host still
+  compiles the backend TU — it just reports the engine unavailable
+  (compile-but-inert, same contract as the Servo backend). The
+  backend is a skeleton for now and registers nothing; WK07 wires
+  the engine entry.
 - `CONFIG+=sanitize` — ASan+UBSan instrumented build for the test
   suite
 
