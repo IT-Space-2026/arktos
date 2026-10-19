@@ -3840,3 +3840,12 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   every entry point is a compiled-out stub, and no inspector API is
   exported (its UI resource isn't even installed) — both capabilities
   stay off, now verified rather than merely unprobed.
+- Memory-leak re-audit (MEM11): an instrumented AddressSanitizer/
+  LeakSanitizer sweep over the surfaces added since the last audit —
+  the WPE WebKit backend, the hosted extension runtime, and the
+  multi-view Servo shim — found and fixed a filter-compile buffer
+  leaked once per ad-block rules compile in the WebKit backend.
+  Tab create/destroy cycles across every engine backend and
+  extension enable/disable cycles are exercised by two new self-test
+  legs and report no leaks in Arktos code; the full report lives at
+  .devin/MEM11-scan.md.

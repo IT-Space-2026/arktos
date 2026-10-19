@@ -4661,14 +4661,18 @@ void WebkitProfile::cbContentFilterLoad(void *object, void *result,
         // compiled — the save hop compiles it now (the call rides
         // on; it is still owned by the async chain).
         g_clear_error(&error);
+        // source is transfer-none: the async task refs the GBytes for
+        // its own lifetime — our ref is released right after the call.
+        GBytes *source = g_bytes_new(call->source.constData(),
+                                     gsize(call->source.size()));
         webkit_user_content_filter_store_save(
             WEBKIT_USER_CONTENT_FILTER_STORE(object),
             call->identifier.constData(),
-            g_bytes_new(call->source.constData(),
-                        gsize(call->source.size())),
+            source,
             nullptr,
             reinterpret_cast<GAsyncReadyCallback>(
                 &WebkitProfile::cbContentFilterSave), call);
+        g_bytes_unref(source);
         return;
     }
     if (call->profile)

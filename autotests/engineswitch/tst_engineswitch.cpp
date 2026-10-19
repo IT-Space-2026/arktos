@@ -220,6 +220,7 @@ private slots:
     void engineTabLocationBar();
     void engineTabSingleIcon();
     void engineTabReload();
+    void engineTabChurn();
     void webkitBackendSurface();
     void webkitViewRenders();
     void webkitLoadSignals();
@@ -1228,6 +1229,52 @@ void tst_EngineSwitch::engineTabReload()
     QCOMPARE(unmappedRoot->isEnabled(),
              widget.webView(1)->enginePage()
                  ->action(Engine::StandardAction::Forward)->isEnabled());
+}
+
+// MEM11 — leak-audit churn leg: open + close an EngineTab several
+// times on every live foreign backend.  Each cycle mints and tears
+// down the backend's whole profile/page/view trio — webkit: WPEView
+// + WebKitWebView + a WebsiteDataManager-bound WebkitProfile; servo:
+// se_view_create/se_view_destroy on the shared engine (the ENG36
+// churn path) — the exact lifecycle LSan hunts for orphans.  The
+// QPointer guards are the in-test half of that check: a retained
+// object fails HERE, a freed-object-with-stale-allocation fails in
+// the leak report.
+void tst_EngineSwitch::engineTabChurn()
+{
+    const QStringList candidates = { QStringLiteral("fake"),
+                                     QStringLiteral("webkit"),
+                                     QStringLiteral("servo") };
+    int exercised = 0;
+    for (const QString &id : candidates) {
+        Engine::Backend *backend = EngineRegistry::backendForId(id);
+        // Unlinked/unavailable backends are the hidden-not-dead
+        // contract — skip them, never fail the leg on a missing
+        // artifact.
+        if (!backend || !backend->pageUnavailableReason().isEmpty())
+            continue;
+        ++exercised;
+        TabWidget widget;
+        for (int cycle = 0; cycle < 4; ++cycle) {
+            widget.newTab();
+            const int index = widget.count() - 1;
+            QVERIFY2(widget.reloadTabInEngine(index, id),
+                     qPrintable(id));
+            EngineTab *foreign = widget.engineTab(index);
+            QVERIFY2(foreign, qPrintable(id));
+            QVERIFY2(foreign->page(), qPrintable(id));
+            QPointer<EngineTab> tabGuard(foreign);
+            QPointer<Engine::Page> pageGuard(foreign->page());
+            QPointer<QWidget> viewGuard(foreign->page()->view());
+            widget.closeTab(index);
+            pumpDeletes();
+            QVERIFY2(!tabGuard, qPrintable(id));
+            QVERIFY2(!pageGuard, qPrintable(id));
+            QVERIFY2(!viewGuard, qPrintable(id));
+            QCOMPARE(widget.count(), 0);
+        }
+    }
+    QVERIFY2(exercised >= 1, "no foreign backend available");
 }
 
 // WK07 — the WPE WebKit backend's registration contract: the

@@ -78,6 +78,7 @@ private slots:
     void healthClassification();
     void backgroundHealthProbe();
     void hostedBackgroundRuntime();
+    void hostedHostChurn();
     void extensionShimBackend();
     void extensionMessageRelay();
     void extensionEventSurfaces();
@@ -1328,6 +1329,79 @@ void tst_ExtensionManager::hostedBackgroundRuntime()
     manager->removeExtension(id);
     QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 15000);
 
+    QDir(dir).removeRecursively();
+}
+
+// MEM11 — enable/disable churn for the hosted runtime: every cycle
+// mints a full ExtensionBackgroundHost (hidden view + page +
+// channel + bridge + timers) and disable must tear ALL of it down —
+// the leak sweep's in-test half is that each host object really
+// dies (a retained one fails here AND in the LSan report).
+void tst_ExtensionManager::hostedHostChurn()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extchurn-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile manifestFile(dir + QLatin1String("/manifest.json"));
+        QVERIFY(manifestFile.open(QIODevice::WriteOnly));
+        manifestFile.write(
+            "{\"manifest_version\":3,\"name\":\"tst-churn\","
+            "\"version\":\"1.0\",\"permissions\":[\"storage\"],"
+            "\"background\":{\"service_worker\":\"sw.js\"}}");
+        manifestFile.close();
+        QFile worker(dir + QLatin1String("/sw.js"));
+        QVERIFY(worker.open(QIODevice::WriteOnly));
+        worker.write(
+            "chrome.runtime.onInstalled.addListener(function(){});\n");
+        worker.close();
+    }
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+
+    auto loaded = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-churn")
+                && info.error.isEmpty())
+            *loaded = info.id;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded->isEmpty(), 30000);
+    const QString id = *loaded;
+
+    for (int cycle = 0; cycle < 3; ++cycle) {
+        manager->setExtensionEnabled(id, true);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            runtime->host(id)
+                && runtime->host(id)->state()
+                       == ExtensionBackgroundHost::State::Ready,
+            45000);
+        ExtensionBackgroundHost *host = runtime->host(id);
+        QPointer<ExtensionBackgroundHost> hostGuard(host);
+        QPointer<QWebEngineView> viewGuard(host->view());
+        QPointer<QWebEnginePage> pageGuard(host->page());
+        QPointer<ChromeBridge> bridgeGuard(host->bridge());
+
+        manager->setExtensionEnabled(id, false);
+        QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 15000);
+        // disable's teardown is deleteLater — the QTRY above pumped
+        // the deferred deletes already.
+        QTRY_VERIFY_WITH_TIMEOUT(
+            !hostGuard && !viewGuard && !pageGuard && !bridgeGuard,
+            15000);
+    }
+
+    manager->removeExtension(id);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 15000);
     QDir(dir).removeRecursively();
 }
 
