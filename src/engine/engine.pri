@@ -61,7 +61,7 @@ equals(webkit, 0)|!isEmpty(nowebkit)|contains(CONFIG, nowebkit): \
 isEmpty(ARKTOS_WEBKIT_PKGCONFIG) {
     # .qmake.conf normally probes first; repeat it so the .pri still
     # resolves correctly when parsed without the project root.
-    system(pkg-config --exists wpe-webkit-2.0 wpe-platform-2.0): \
+    system(pkg-config --exists wpe-webkit-2.0 wpe-platform-2.0 wpe-platform-headless-2.0): \
         ARKTOS_WEBKIT_PKGCONFIG = true
 }
 ARKTOS_WEBKIT_ENABLED = false
@@ -82,7 +82,7 @@ equals(ARKTOS_WEBKIT_ENABLED, true) {
     equals(ARKTOS_WEBKIT_PKGCONFIG, true) {
         DEFINES += ARKTOS_WEBKIT_LINKED
         CONFIG += link_pkgconfig
-        PKGCONFIG += wpe-webkit-2.0 wpe-platform-2.0
+        PKGCONFIG += wpe-webkit-2.0 wpe-platform-2.0 wpe-platform-headless-2.0
         # The ~/wpe sideloaded-glibc recipe (.devin/webkit-env.sh +
         # ~/wpe/ACQUIRED.md): every binary carrying the backend TU —
         # app, tools, autotests — links libWPEWebKit, so every binary
@@ -93,10 +93,17 @@ equals(ARKTOS_WEBKIT_ENABLED, true) {
         # glibc links plain.  `webkit=0` builds stay clean of all of
         # it.
         unix:!mac {
+            ARKTOS_WPE_PREFIX_Q = $$(ARKTOS_WPE_PREFIX)
             ARKTOS_WPE_LIBDIR_Q = $$(ARKTOS_WPE_LIBDIR)
             ARKTOS_WPE_GLIBC_Q = $$(ARKTOS_WPE_GLIBC)
             ARKTOS_WPE_DYNAMIC_LINKER_Q = $$(ARKTOS_WPE_DYNAMIC_LINKER)
             ARKTOS_WPE_COMPAT_Q = $$(ARKTOS_WPE_COMPAT)
+            # WK08: bake the prefix into the binary — the sandbox
+            # whitelist (add_path_to_sandbox) needs it at runtime even
+            # when webkit-env.sh was never sourced (autotests, plain
+            # app launch); the env var still wins when set.
+            !isEmpty(ARKTOS_WPE_PREFIX_Q): \
+                DEFINES += ARKTOS_WPE_PREFIX_DIR=\\\"$$ARKTOS_WPE_PREFIX_Q\\\"
             !isEmpty(ARKTOS_WPE_DYNAMIC_LINKER_Q): \
             !isEmpty(ARKTOS_WPE_LIBDIR_Q): \
             !isEmpty(ARKTOS_WPE_GLIBC_Q) {

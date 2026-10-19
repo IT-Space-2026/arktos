@@ -3595,3 +3595,24 @@ WebKit backend registration (WK07): on a webkit-enabled build that
     --engine-smoke now skips the page/view legs of a registered
     backend that declares it cannot host pages, reporting the reason
     instead of FAILing an unclaimed surface.
+WebKit page hosting (WK08): the webkit backend now hosts real tabs.
+    WebkitPage wraps a WebKitWebView (and its internal WPEView) on a
+    per-page WPEToplevel over the process-shared headless WPEDisplay,
+    all on the Qt GUI thread where QPAEventDispatcherGlib pumps the
+    GLib main context; load() issues webkit_web_view_load_uri and
+    load-changed/load-failed/notify::uri/title/progress drive the
+    Engine::Page signal contract. WebkitView is the QWidget that
+    consumes "buffer-rendered", imports each buffer with
+    wpe_buffer_import_to_pixels, deep-copies it into a premultiplied
+    ARGB32 QImage and blits the newest frame in paintEvent; widget
+    resizes propagate through wpe_toplevel_resize and widget focus
+    forwards to wpe_view_focus_in/out for the WK13 input path.
+    WebkitProfile carries a lazily-created WebKitNetworkSession —
+    ephemeral for off-the-record, the default session otherwise.
+    EngineTab hosts the backend unchanged through createPage +
+    createView, and pageUnavailableReason is empty when linked — the
+    engine switcher offers the entry enabled. The webkit gate now
+    also requires wpe-platform-headless-2.0 and bakes the WPE prefix
+    into the binary so the sandbox whitelist works in unsourced
+    environments. A webkit=1 build without the WPE packages still
+    compiles inert and registers nothing.

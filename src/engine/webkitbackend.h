@@ -26,11 +26,11 @@
 // CONFIG — mirroring servobackend's compile-but-inert contract rather
 // than conditional source exclusion: a `qmake webkit=1` build on a
 // host whose pkg-config cannot resolve wpe-webkit-2.0 +
-// wpe-platform-2.0 still compiles this TU, and the backend simply
-// reports the engine unavailable (librariesLinked() == false,
-// initialize() returns false so the registration probe drops it,
-// pageUnavailableReason() explains) — the no-libs honesty half of
-// the gate.
+// wpe-platform-2.0 + wpe-platform-headless-2.0 still compiles this TU,
+// and the backend simply reports the engine unavailable
+// (librariesLinked() == false, initialize() returns false so the
+// registration probe drops it, pageUnavailableReason() explains) —
+// the no-libs honesty half of the gate.
 //
 // ARKTOS_WEBKIT_LINKED marks the builds where the packages did
 // resolve: the TU then carries real libWPEWebKit references (the
@@ -43,41 +43,92 @@
 // the servo shape — no engineregistry.cpp edit), the "WebKit x.y.z"
 // display name off webkit_get_*_version(), and the conservative
 // capabilities table (.devin/WEBKIT-SPIKE.md — only what WK01-WK04
-// proved or the 2.54 headers pin down).  The WebkitProfile/
-// WebkitPage/WebkitView skeletons below compile but stay unreachable:
-// a linked backend registers yet cannot host a page until WK08, so
-// createPage()/createView() refuse and the switcher offers the entry
-// disabled-with-reason (the ENG19 pageUnavailableReason path) rather
-// than a guaranteed-dead swap.
+// proved or the 2.54 headers pin down).
+//
+// WK08 lands the minimal real stack: WebkitPage wraps a
+// WebKitWebView + its internal WPEView on a per-page WPEToplevel over
+// the process-shared headless WPEDisplay (the WK02-decided model —
+// Qt's QPAEventDispatcherGlib pumps the global-default GMainContext on
+// the GUI thread, which is where every WPE/WebKit object lives);
+// WebkitView is the QWidget that consumes "buffer-rendered" via
+// wpe_buffer_import_to_pixels and blits the imported frame
+// (the WK03 raster path, productized — the dmabuf/EGLImage upgrade is
+// WK20).  WebkitProfile carries a lazily-created WebKitNetworkSession
+// — ephemeral for OTR, the default session otherwise (per-profile
+// storage trees are WK11).  EngineTab hosts the pair with zero
+// changes: createPage + createView is all it calls.
 
 #include "engineinterface.h"
 
 #include <qhash.h>
+#include <qimage.h>
 #include <qpointer.h>
 #include <qurl.h>
 #include <qvariant.h>
 #include <qwidget.h>
 
-class WebkitView;
+// Opaque WPE/glib forward declarations — the real headers are only
+// included by webkitbackend.cpp under ARKTOS_WEBKIT_LINKED (glib's
+// `signals` member name forces Qt keyword macros off there), so the
+// header stays clean for every other TU.  Tag names match the WPE
+// typedefs exactly; identical re-typedefs are legal when both
+// declarations reach one TU.
+typedef struct _WPEDisplay WPEDisplay;
+typedef struct _WPEView WPEView;
+typedef struct _WPEToplevel WPEToplevel;
+typedef struct _WPEBuffer WPEBuffer;
+typedef struct _WebKitWebView WebKitWebView;
+typedef struct _WebKitWebContext WebKitWebContext;
+typedef struct _WebKitNetworkSession WebKitNetworkSession;
 
-// WK07 skeleton — the widget that will present a WebkitPage once
-// WK08 wires the real WPEView + "buffer-rendered" raster path (the
-// WK03 harness code, productized: wpe_buffer_import_to_pixels ->
-// QImage::Format_ARGB32_Premultiplied -> paintEvent blit).  The
-// backend never hands one out while pages are unavailable.
+class WebkitPage;
+
+// WK08 — the widget that presents a WebkitPage.  It owns nothing on
+// the engine side (the WPEView belongs to the page's WebKitWebView);
+// it observes "buffer-rendered" through the page, imports the buffer
+// to pixels, keeps the newest frame and blits it in paintEvent.  The
+// resizeEvent half of the WK03 contract lives here too: a widget
+// resize calls back into the page's WPEToplevel so the NEXT produced
+// buffer carries the new dims.
 class WebkitView : public QWidget
 {
     Q_OBJECT
 
 public:
     explicit WebkitView(QWidget *parent = nullptr);
+
+    // Frame accounting for the WK08 autotest — imported frames since
+    // construction and the dimensions of the newest one.
+    int frameCount() const { return m_frameCount; }
+    QSize frameSize() const { return m_frameSize; }
+
+protected:
+    void paintEvent(QPaintEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
+    void focusInEvent(QFocusEvent *event) override;
+    void focusOutEvent(QFocusEvent *event) override;
+
+private:
+    // WK03 adoptFrame: stride-honest deep copy into a
+    // Format_ARGB32_Premultiplied QImage, then update().
+    void adoptFrame(WPEBuffer *buffer, const void *data, int stride);
+    void noteImportFailure();
+
+    QPointer<WebkitPage> m_page;
+    QImage m_frame;
+    QSize m_frameSize;
+    int m_frameCount = 0;
+    int m_importFails = 0;
+
+    friend class WebkitPage;
 };
 
-// WK07 skeleton — an honest inert Engine::Page.  The WebKitWebView +
-// WPEView it wraps land in WK08 (created on the WK02-decided
-// GUI-thread QPAEventDispatcherGlib model — never a worker GMainLoop).
-// Until then nothing here reaches an engine: members are recorded
-// no-ops and the page's signals simply never fire.
+// WK08 — a real Engine::Page over WebKitWebView.  The view stack is
+// built eagerly in the ctor on the GUI thread (headless WPEDisplay is
+// process-shared via WebkitBackend::sharedDisplay; the WPEToplevel is
+// per page).  WPE WebKit renders into the headless display whether or
+// not a widget is attached, so load() never queues — attachView only
+// wires the paint consumer.
 class WebkitPage : public Engine::Page
 {
     Q_OBJECT
@@ -85,6 +136,12 @@ class WebkitPage : public Engine::Page
 public:
     explicit WebkitPage(Engine::Profile *profile,
                         QObject *parent = nullptr);
+    ~WebkitPage() override;
+
+    // False when the WPE/WebKit object graph could not be built —
+    // createPage() refuses on this rather than handing out a tab that
+    // can never render.
+    bool hasWebView() const { return m_webView != nullptr; }
 
     void load(const QUrl &url) override;
     void stop() override;
@@ -136,21 +193,72 @@ public:
     void download(const QUrl &url) override;
     QWidget *view() const override;
 
+    // The backend binds the paint consumer — called once from
+    // WebkitBackend::createView.  attachView is also where a
+    // widget-size sync happens: the page's WPEToplevel starts at a
+    // nominal size and is resized to the widget's real dims.
+    void attachView(WebkitView *view);
+
 private:
+    // GLib signal entry points — reached through the static
+    // trampolines in the .cpp (all on the GUI thread: on the glib
+    // dispatcher model the "buffer-rendered"/load signals fire while
+    // the Qt loop pumps the global-default GMainContext).
+    void onBufferRendered(WPEBuffer *buffer);
+    void onLoadChanged(int event);
+    void onLoadFailed();
+    void onWebProcessTerminated();
+    void onUriNotify();
+    void onTitleNotify();
+    void onProgressNotify();
+    void resizeEngine(int width, int height);
+    void focusEngine(bool in);
+
+    // GObject trampolines — static members so the GCallback ABI
+    // reaches private state without friend pollution (the servo
+    // shape).  Enums and non-forward-declared glib types travel as
+    // plain int/void* — identical ABI, and the header stays
+    // glib-free.
+    static void cbBufferRendered(WPEView *view, WPEBuffer *buffer,
+                                 WebkitPage *page);
+    static void cbLoadChanged(WebKitWebView *view, int event,
+                              WebkitPage *page);
+    static int cbLoadFailed(WebKitWebView *view, int event, void *uri,
+                            void *error, WebkitPage *page);
+    static void cbWebProcessTerminated(WebKitWebView *view, int reason,
+                                       WebkitPage *page);
+    static void cbNotifyUri(WebKitWebView *view, void *pspec,
+                            WebkitPage *page);
+    static void cbNotifyTitle(WebKitWebView *view, void *pspec,
+                              WebkitPage *page);
+    static void cbNotifyProgress(WebKitWebView *view, void *pspec,
+                                 WebkitPage *page);
+
     Engine::Profile *m_profile;
     QPointer<WebkitView> m_view;
+    WebKitWebView *m_webView = nullptr;
+    WPEView *m_wpeView = nullptr;   // owned by m_webView — never freed here
+    WPEToplevel *m_toplevel = nullptr;
     QUrl m_url;
+    QString m_title;
     qreal m_zoom = 1.0;
+    bool m_loading = false;
+    bool m_progressSeen = false;
     LifecycleState m_lifecycle = LifecycleState::Active;
     QHash<QString, Engine::Script> m_scripts;
     QHash<QString, bool> m_attributes;
+
+    friend class WebkitView;
 };
 
-// WK07 skeleton — carries the ProfileOptions and the interface's
-// per-profile bags (policy, cookie filter, scripts, attributes).
-// WK11 roots a real WebKitNetworkSession under the profile's storage
-// tree; until then this is the honest in-memory shape (the same
-// contract ServoProfile serves).
+// WK08 — the minimal session object.  WebKitNetworkSession IS the
+// profile object in WPE 2.54 (the WEBKIT-SPIKE profile row): an OTR
+// profile gets webkit_network_session_new_ephemeral(), a persistent
+// profile the default session until WK11 roots per-id data/cache
+// dirs under the profile's storage tree.  The session is created
+// lazily on the first page so a profile that never renders never
+// spawns one.  Everything else stays the options-bag contract
+// ServoProfile serves.
 class WebkitProfile : public Engine::Profile
 {
     Q_OBJECT
@@ -158,6 +266,7 @@ class WebkitProfile : public Engine::Profile
 public:
     explicit WebkitProfile(const Engine::ProfileOptions &options,
                            QObject *parent = nullptr);
+    ~WebkitProfile() override;
 
     bool isOffTheRecord() const override;
     QString storageName() const override;
@@ -173,6 +282,11 @@ public:
     void setProfileAttribute(const QString &name, const QVariant &value) override;
 
     const Engine::ProfileOptions &options() const { return m_options; }
+    // The session this profile's pages construct their WebKitWebView
+    // with — lazily created, nullptr when the libraries are not
+    // linked.  Not part of Engine::Profile; WebkitPage reaches it via
+    // qobject_cast.
+    WebKitNetworkSession *networkSession();
 
 private:
     Engine::ProfileOptions m_options;
@@ -181,6 +295,7 @@ private:
     std::function<bool(const Engine::CookieAttempt &)> m_cookieFilter;
     QHash<QString, Engine::Script> m_scripts;
     QHash<QString, QVariant> m_attributes;
+    WebKitNetworkSession *m_networkSession = nullptr;
 };
 
 class WebkitBackend : public Engine::Backend
@@ -196,6 +311,22 @@ public:
     static bool librariesLinked();
     // "x.y.z" from webkit_get_*_version — empty when not linked.
     static QString wpeVersion();
+    // The process-shared headless WPEDisplay — created lazily on the
+    // GUI thread and kept for the process lifetime (WebKit's own
+    // singletons are process-scoped too; the WK02 verdict makes the
+    // GUI thread the only place these objects may live).
+    // nullptr when creation/connect fails — pages then refuse.
+    static WPEDisplay *sharedDisplay();
+    // Runtime environment fixups the web process needs under the
+    // ~/wpe sideloaded prefix (CPU raster so buffer import works
+    // headless — the dmabuf/EGL path is WK20 — and the relocated
+    // injected-bundle path).  Called once from initialize(); safe to
+    // call again.
+    static void applyRuntimeEnvironment();
+    // The ~/wpe prefix this build was configured against — the
+    // runtime env var wins, else the value baked at configure time.
+    // Empty for a system-WPE build (nothing to whitelist then).
+    static QString wpePrefix();
 
     QString id() const override;
     QString displayName() const override;

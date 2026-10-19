@@ -43,6 +43,8 @@
 #include <toolbarsearch.h>
 #include <webview.h>
 
+#include <qdir.h>
+#include <qfile.h>
 #include <qlabel.h>
 #include <qmenu.h>
 #include <qset.h>
@@ -51,6 +53,10 @@
 #include <qtcpserver.h>
 #include <qtcpsocket.h>
 #include <qwebenginepage.h>
+
+#ifdef ARKTOS_WEBKIT
+#include "webkitbackend.h"
+#endif
 
 #include "fakeengine.h"
 
@@ -141,6 +147,7 @@ private slots:
     void engineTabSingleIcon();
     void engineTabReload();
     void webkitBackendSurface();
+    void webkitViewRenders();
 
 private:
     FakeEngineBackend *m_fake = nullptr;
@@ -1181,11 +1188,11 @@ void tst_EngineSwitch::webkitBackendSurface()
     QVERIFY(!caps.extensions);
     QVERIFY(caps.downloads);
 
-    // Registered but not page-capable until WK08 — the switcher must
-    // offer the entry disabled-with-reason and createPage refuse.
+    // WK08: the backend hosts real (if minimal) pages now — the
+    // switcher offers a live entry and no disabled-reason remains.
     QVERIFY(!webkit->engineNote().isEmpty());
-    QVERIFY(!webkit->pageUnavailableReason().isEmpty());
-    QVERIFY(!webkit->createPage(nullptr));
+    QVERIFY2(webkit->pageUnavailableReason().isEmpty(),
+             qPrintable(webkit->pageUnavailableReason()));
 #else
     // Compile-but-inert (webkit=1 without the WPE packages): the
     // probe's initialize() refused, so the backend never registered —
@@ -1195,6 +1202,85 @@ void tst_EngineSwitch::webkitBackendSurface()
 #endif
 #else
     QSKIP("webkit backend not in this build");
+#endif
+}
+
+// WK08 — the acceptance leg: an EngineTab on the webkit backend (the
+// host is UNCHANGED — createPage + createView is all it calls) loads
+// a file:// fixture, loadFinished(true) arrives, and the raster path
+// puts real non-blank pixels into the view widget.
+void tst_EngineSwitch::webkitViewRenders()
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    Engine::Backend *webkit =
+        EngineRegistry::backendForId(QStringLiteral("webkit"));
+    QVERIFY(webkit);
+    QVERIFY2(webkit->pageUnavailableReason().isEmpty(),
+             qPrintable(webkit->pageUnavailableReason()));
+
+    Engine::ProfileOptions options;
+    options.offTheRecord = true;   // ephemeral session — no disk state
+    Engine::Profile *profile = webkit->createProfile(options, this);
+    QVERIFY(profile);
+
+    EngineTab tab(webkit, profile);
+    tab.resize(800, 600);
+    tab.show();
+    QVERIFY(tab.page());
+    auto *view = qobject_cast<WebkitView *>(tab.page()->view());
+    QVERIFY(view);
+
+    const QString fixturePath = QDir::temp().filePath(
+        QStringLiteral("arktos-wk08-fixture.html"));
+    {
+        QFile fixture(fixturePath);
+        QVERIFY(fixture.open(QIODevice::WriteOnly));
+        fixture.write("<html><head><title>Wk08Render</title></head>"
+                      "<body style='margin:0;background:#eef4ff'>"
+                      "<div style='width:400px;height:300px;"
+                      "background:#123a6f;color:#22aa77'>"
+                      "rendered by WPE WebKit</div>"
+                      "</body></html>");
+    }
+
+    QSignalSpy finishedSpy(tab.page(), &Engine::Page::loadFinished);
+    tab.load(QUrl::fromLocalFile(fixturePath));
+    QTRY_VERIFY2_WITH_TIMEOUT(finishedSpy.count() >= 1,
+                              "loadFinished never arrived", 60000);
+    QVERIFY2(finishedSpy.first().first().toBool(),
+             "fixture load reported failure");
+    QVERIFY2(tab.url() == QUrl::fromLocalFile(fixturePath),
+             qPrintable(tab.url().toString()));
+    QTRY_COMPARE_EQ(tab.title(), QStringLiteral("Wk08Render"));
+
+    // Raster proof: at least one buffer imported, then keep pumping —
+    // the first WPE buffer can be the blank pre-paint frame, so grab
+    // until the fixture's witness colors land in the painted surface.
+    QTRY_VERIFY_WITH_TIMEOUT(view->frameCount() >= 1, 30000);
+    int distinctColors = 0;
+    auto colorsReady = [&]() -> bool {
+        const QImage shot = view->grab().toImage()
+                .convertToFormat(QImage::Format_ARGB32);
+        if (shot.isNull())
+            return false;
+        QSet<QRgb> colors;
+        for (int y = 0; y < shot.height(); ++y) {
+            const QRgb *row =
+                reinterpret_cast<const QRgb *>(shot.constScanLine(y));
+            for (int x = 0; x < shot.width(); ++x)
+                colors.insert(row[x] | 0xff000000u);
+        }
+        distinctColors = colors.count();
+        return colors.contains(QRgb(0xff123a6f))
+            && colors.contains(QRgb(0xffeef4ff))
+            && colors.count() >= 3;
+    };
+    QTRY_VERIFY2_WITH_TIMEOUT(colorsReady(),
+             qPrintable(QStringLiteral("fixture colors never painted — "
+                                       "%1 distinct colors")
+                            .arg(distinctColors)), 30000);
+#else
+    QSKIP("webkit backend not linked in this build");
 #endif
 }
 

@@ -277,8 +277,11 @@ browsing profile:
   marked "(shared)" rather than a per-tab number. An experimental
   WPE WebKit backend (`qmake webkit=1`, WPE stack via
   .devin/webkit-env.sh) registers alongside it and reports its real
-  version ("WebKit x.y.z") in the selector surfaces; it cannot host
-  pages yet, so its switcher entry stays disabled with the reason.
+  version ("WebKit x.y.z") in the selector surfaces; it hosts tabs
+  through the same engine-neutral page/view pair — pages render
+  headlessly over WPE and blit into an ordinary widget — while the
+  still-minimal feature set (no history, input, or persistence yet)
+  keeps it experimental.
 - **Reader mode** (Ctrl+Alt+R) and **Picture-in-Picture** on videos.
 - **Command palette** — Ctrl+Shift+P fuzzy search over browser
   commands.
