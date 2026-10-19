@@ -3837,3 +3837,36 @@ Extensions (health): the EXT21 fatal check now subtracts what the
     reason honestly naming the declares that remain unserved.
     ARKTOS_EXTHOST_OFF=1 restores the raw verdict: a
     scripting-requiring extension still grades Not supported.
+
+Extension chrome.* runtime hosted by Arktos itself (EXT22):
+    The surfaces Qt WebEngine's embedder compiles in but never
+    serves — scripting, the tab/window/webNavigation event streams,
+    commands, notifications, offscreen documents, observe-only
+    webRequest, idle, dynamic content-script registration, and the
+    management/extension introspection members — are now implemented
+    by Arktos' own hosted runtime (the ER00–ER19 lane): each enabled
+    extension with a background gets a hidden host page at its real
+    chrome-extension:// origin running the genuine bundle under a
+    generated chrome.* shim whose privileged calls dispatch into
+    C++, and content scripts plus extension pages reach it through a
+    scoped per-extension page agent. The manifest boundary is
+    enforced before any page is touched — required permissions only,
+    per-frame host coverage, url scrubbing on event payloads — and
+    everything the runtime cannot serve answers a typed error on the
+    extension's health row instead of a silent no-op. The proof is
+    the bundled Bitwarden: install, real WASM master-password
+    unlock, and autofill of a live login form all verified end to
+    end by the autotest harness, with its residual typed gaps frozen
+    into a declared, audited set (.devin/EXT-RUNTIME-GAPS.md) the
+    test legs now enforce. The UI names the tier honestly: Settings
+    → Extensions reads "Hosted runtime" (with limited/degraded
+    qualifiers when the health grade or the shim-gap ledger says
+    so), the action-bar tooltip carries the same note, and the
+    README's extension section states the Qt-provides/Arktos-hosts
+    split plainly. Extension contexts also no longer inherit the
+    web-content JavaScript toggle: hosted background pages, offscreen
+    documents, action popups and the health probe all run with
+    scripts even when "Enable JavaScript" is off for pages — Chrome
+    never applied that preference to extension chrome, and without
+    the exemption a JS-off session parked every hosted extension at
+    "starting" forever.

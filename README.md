@@ -465,8 +465,16 @@ cargo-deny/cargo-audit skip the gate cleanly.
 
 ### Extensions
 
-Chrome Manifest-V3 extensions via Qt WebEngine's tech-preview API:
-install always stops at a permission-review screen with an extra
+Chrome Manifest-V3 extensions, split across two layers: Qt
+WebEngine's tech-preview API provides the engine half — install and
+load plumbing, the `chrome-extension://` origin, action popups,
+storage, alarms and i18n — while Arktos' own hosted runtime serves
+the `chrome.*` surfaces the engine's embedder never registered
+(`scripting`, the `tabs`/`windows`/`webNavigation` event streams,
+`commands`, `notifications`, `offscreen` documents, observe-only
+`webRequest`, `idle`, dynamic content-script registration, and
+`management`/`extension` introspection — each documented below).
+Install always stops at a permission-review screen with an extra
 per-permission consent gate on the high-risk set (native messaging,
 debugger, blocking webRequest, cookies, browsing data, all-URLs host
 access), and extensions are verified not to run in private or Tor
@@ -487,9 +495,13 @@ worker and counts live background contexts (for extensions the
 hosted runtime below hosts, a Ready hosted background counts as the
 live worker), and the result is folded
 together with the manifest's declared-but-missing `chrome.*` APIs
-into the Settings → Extensions status — **Limited** when the worker
-runs but some declared APIs cannot be served, **Not supported** when
-the background worker never became ready — with the reason shown in
+into the Settings → Extensions status — **Hosted runtime** when
+Arktos' own runtime serves the extension (carrying a *(limited)*
+or *(degraded)* qualifier when the health grade or the shim's
+typed-gap ledger says so), **Limited** when the worker runs but
+some declared APIs cannot be served, **Not supported** when the
+manifest requires an API nothing serves or the background worker
+never became ready — with the reason shown in
 the details pane instead of a naked "Enabled". Clicking a
 Not-supported extension's toolbar action opens a short explanation
 rather than a popup that spins on a dead worker. The page lists each

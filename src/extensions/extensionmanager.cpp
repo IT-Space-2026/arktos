@@ -54,6 +54,7 @@
 #include <qwebengineprofile.h>
 #include <qwebenginescript.h>
 #include <qwebenginescriptcollection.h>
+#include <qwebenginesettings.h>
 
 #include <qwebengineextensionmanager.h>
 
@@ -459,6 +460,14 @@ void ExtensionManager::installOnProfile(QWebEngineProfile *profile)
             ExtensionBackgroundRuntime::instance();
         connect(this, &ExtensionManager::changed,
                 runtime, &ExtensionBackgroundRuntime::syncNow);
+        // ER20: the hosted tier flips asynchronously — re-scan on
+        // every host transition so the settings row and action strip
+        // pick up "Hosted runtime" the moment the bridge is live,
+        // not on the next unrelated change pulse.  hostChanged only
+        // fires on real state transitions, so the changed→syncNow
+        // round trip terminates.
+        connect(runtime, &ExtensionBackgroundRuntime::hostChanged,
+                this, &ExtensionManager::changed);
     }
     if (!qEnvironmentVariableIsSet("ARKTOS_EXTHOST_OFF"))
         ExtensionBackgroundRuntime::instance()->attachProfile(profile);
@@ -1638,6 +1647,12 @@ void ExtensionManager::startNextHealthProbe()
     // app's WebPage subclass, same as the EXT08 popup host: no arktos
     // channel objects or page policy leak into extension chrome.
     QWebEnginePage *page = new QWebEnginePage(profile);
+    // ER20: the probe evals inside an extension context — exempt from
+    // the web-content JavascriptEnabled preference, same as the
+    // hosted pages, or a JS-off session would grade live extensions
+    // dead.
+    page->settings()->setAttribute(QWebEngineSettings::JavascriptEnabled,
+                                   true);
     m_healthPage = page;
     connect(page, &QWebEnginePage::loadFinished,
             this, [this](bool ok) {

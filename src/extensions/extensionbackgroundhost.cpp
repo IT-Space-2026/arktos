@@ -53,6 +53,7 @@
 #include <qwebengineprofile.h>
 #include <qwebenginescript.h>
 #include <qwebenginescriptcollection.h>
+#include <qwebenginesettings.h>
 #include <qwebengineview.h>
 
 #include <QtWebEngineCore/qtwebenginecore-config.h>
@@ -359,6 +360,13 @@ public:
         , m_extensionId(extensionId)
         , m_mainUrl(mainUrl)
     {
+        // ER20: extension chrome is not web content — the profile's
+        // JavascriptEnabled preference governs pages, never extension
+        // contexts (Chrome parity; devtoolswindow.cpp does the same
+        // for the inspector).  Without the lift a JS-off session
+        // leaves every hosted context dead at "starting".
+        settings()->setAttribute(QWebEngineSettings::JavascriptEnabled,
+                                 true);
     }
 
 protected:

@@ -3151,7 +3151,7 @@ void SettingsDialog::extensionSelectionChanged()
         // context when Qt's MV3 service-worker host can't run one.
         if (!info.hostState.isEmpty()) {
             lines << (info.hosted
-                ? tr("Background: hosted (shim bridge up)")
+                ? tr("Hosted runtime: background up, shim bridge live")
                 : tr("Background: host %1%2")
                       .arg(info.hostState,
                            info.hostError.isEmpty()
@@ -3186,11 +3186,10 @@ void SettingsDialog::extensionSelectionChanged()
         }
         if (info.actionPopupUrl.isValid())
             lines << (info.hosted
-                ? tr("Declares a toolbar action — its popup gets the "
-                     "hosted shim when opened; Arktos has no toolbar "
-                     "button for it yet.")
-                : tr("Declares a toolbar action — Qt WebEngine has no "
-                     "extension toolbar, so its popup will not appear."));
+                ? tr("Declares a toolbar action — its toolbar button "
+                     "opens the popup under the hosted runtime.")
+                : tr("Declares a toolbar action — its toolbar button "
+                     "opens the popup."));
         if (!info.path.isEmpty()) {
             const ExtensionManager::Manifest manifest =
                 ExtensionManager::inspectManifest(info.path);
@@ -3302,13 +3301,24 @@ void SettingsDialog::refreshExtensions()
         else if (info.health
                  == ExtensionManager::ExtensionHealth::NotSupported)
             status = tr("Not supported");
+        // ER20: a hosted extension's row names the serving tier —
+        // "Hosted runtime", not bare "Enabled".  The EXT12 grade and
+        // the EXT17 shim-gap degrade stay attached as qualifiers so
+        // the tier never hides a partial runtime.
+        else if (info.enabled && info.hosted) {
+            if (info.health
+                    == ExtensionManager::ExtensionHealth::Limited)
+                status = info.shimGaps.isEmpty()
+                    ? tr("Hosted runtime (limited)")
+                    : tr("Hosted runtime (limited, degraded)");
+            else
+                status = info.shimGaps.isEmpty()
+                    ? tr("Hosted runtime")
+                    : tr("Hosted runtime (degraded)");
+        }
         else if (info.health
                  == ExtensionManager::ExtensionHealth::Limited)
             status = tr("Limited");
-        else if (info.enabled && info.hosted)
-            status = info.shimGaps.isEmpty()
-                ? tr("Enabled (hosted)")   // EXT14 background host up
-                : tr("Enabled (hosted, degraded)");   // EXT17 shim gaps
         else if (info.enabled && info.hostState == QLatin1String("failed"))
             status = tr("Enabled (background failed)");
         else

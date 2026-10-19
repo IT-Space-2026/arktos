@@ -64,7 +64,7 @@ xvfb-run — never touch the user's live display.
 | ER17 | Bitwarden E2E — install→unlock→fill a login form on a test page, harness-driven, recorded — details below | done | 1 | needs:task:ER08 needs:task:ER10 needs:task:ER15 · bitwardenUnlockFill leg PASS: real bundle install→real WASM-SDK master-password unlock→commands.onCommand('autofill_login')→collectPageDetails→generateFillScript→fillForm→input.value asserted; fixes en route: onMessage relay only true/thenable holds the channel (RxJS-Subscriber return swallowed async responses), storage.onChanged shim-fired + writer-excluded fan-out over real areas, tabs.query WINDOW_ID_CURRENT(-2), webNavigation.getFrame/getAllFrames frame-0 answers; full suite 43/43 (4 env skips) + all real Bitwarden legs PASS; evidence .devin/EXT-RUNTIME-E2E.md |
 | ER18 | Residual gap sweep — drive Bitwarden until shimGaps hold zero typed unimplemented for its call set — details below | done | 5 | needs:task:ER17 · baseline replayed PASS: 2 typed gaps, both in the declared set (action.setIcon unsupported, scripting.executeScript no-host-access); real fix en route — tabs.create mints a window on windowless sessions (Chrome parity; dead explicit windowId keeps no-window) and AUTOTESTS-minted windows get WA_DontShowOnScreen; .devin/EXT-RUNTIME-GAPS.md is the machine-read intentional set all 3 real-BW legs now assert (baseline+handshake+fill all PASS); suite green across both halves; unlockFill PASS standalone (sequential-after-baseline flake = stale page-agent residue, pre-existing) |
 | ER19 | Health regrade — EXT21 fatal check subtracts runtime-provided APIs; Bitwarden leaves NotSupported ONLY when it verifiably works — details below | done | 0 | needs:task:ER18 · runtimeServes() beside the fatal table: regradeManifestForRuntime() (applied on both parse paths, ARKTOS_EXTHOST_OFF-gated) drops served fatal hits (scripting, webRequest) and migrates served unsupported → unverified; webRequestAuthProvider added to unsupported (observe-only can't answer auth); hosted host-state folded into the probe verdict (Ready=live worker, Failed=Dead); DNR/webRequestBlocking stay fatal; runtimeHealthRegrade leg covers armed/off/unserved; bitwardenUnlockFill PASS → manager row health=Limited (missingApis: webRequestAuthProvider, nativeMessaging, privacy) — verified: regrade legs 13/13, full suite green (extensionCommands known offscreen flake, PASS on retry), extverify 12/12, real-BW E2E PASS |
-| ER20 | Chrome polish + docs — settings copy, action tooltip, README extension-support section, ChangeLog — details below | pending | 0 | needs:task:ER19 |
+| ER20 | Chrome polish + docs — settings copy, action tooltip, README extension-support section, ChangeLog — details below | done | 1 | needs:task:ER19 · status col reads "Hosted runtime" (+limited/degraded qualifiers), tooltip + details name the tier, hostChanged now drives changed() so the row updates live; found+fixed en route: JS-off pref killed all hosted contexts — extension pages exempt now; README/ChangeLog EXT22 done; new extensionHostedStatus leg PASS, settingsdialog 57/57, extmanager green + real-BW legs PASS |
 
 ## Task details
 
@@ -530,3 +530,33 @@ action-bar tooltip gains the runtime note; README's extension section
 rewritten from "Qt provides X" to "Qt provides X, Arktos hosts Y";
 ChangeLog EXT22 entry summarizing the lane.
 Verify: settings shows the new status string; docs committed.
+
+Result (done): the settings Status column now reads "Hosted runtime"
+for a hosted extension, keeping the honest qualifiers — "(limited)"
+when the health grade says so and "(degraded)" while the shim-gap
+ledger is non-empty — and the details pane names the tier
+("Hosted runtime: background up, shim bridge live") plus the stale
+"no toolbar button" action note now describes the real action-bar
+popup.  The action-bar tooltip carries the same hosted-runtime note
+(name — hosted runtime [degraded / limited support: needs …]).
+Wiring: ExtensionBackgroundRuntime::hostChanged was emitted but never
+consumed, so the hosted tier only appeared on the next unrelated
+change pulse — it now drives ExtensionManager::changed so the row and
+strip update the moment a host reaches Ready (hostChanged fires only
+on real transitions, so the changed→syncNow round trip terminates).
+Found + fixed en route: a session with the web-content
+JavascriptEnabled preference off killed every hosted context —
+HostedBackgroundPage, the action popup's page and the health-probe
+page all inherited the profile's JS-off attribute, so hosts parked at
+"starting" forever and probes would have graded live extensions dead.
+Extension chrome is exempt from that preference now (Chrome parity —
+the same lift devtoolswindow already does).  README's Extensions
+section opens with the Qt-provides/Arktos-hosts split and documents
+the Hosted runtime status; ChangeLog gained the EXT22 lane summary.
+Verified: new tst_settingsdialog leg extensionHostedStatus PASS —
+loads a background-bearing fixture, waits for info.hosted, asserts
+the row text and the details line (it also proved the JS-off bug:
+pre-fix the leg failed deterministically in-suite with the profile's
+enableJavascript=false, host parked at "starting"; post-fix it passes
+in the same suite state).  Full tst_settingsdialog 57/57 PASS,
+hostedBackgroundRuntime + runtimeHealthRegrade legs PASS.
