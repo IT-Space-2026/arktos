@@ -3577,3 +3577,15 @@ Rebrand repair sweep (BRAND01 casualties caught by the suite): the
     against both the Rust crate and the vendored C++ encoder); and
     the About dialog once again credits original Arora author
     Benjamin C. Meyer.
+Multiple Servo tabs can be open at once (ENG36): switching a second
+    tab to the experimental Servo engine used to be refused — only
+    one Servo view could exist per session. That was a limitation of
+    our embedding shim, not of Servo itself: the engine was always
+    designed to host any number of web views over one shared
+    instance. The shim now initialises the engine once and creates
+    and destroys per-tab views independently, so any number of Servo
+    tabs can load and render side by side. Closing or crashing one
+    Servo tab tears down only that tab's view — siblings keep
+    working and the engine keeps running — and the per-tab crash
+    recovery ("Try Servo Again") still rebuilds a fresh view on the
+    same engine.

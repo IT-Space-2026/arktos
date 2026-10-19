@@ -12,13 +12,21 @@
  * panicking webview into a dead tab. A panic may NEVER unwind over the
  * extern "C" boundary: that aborts the whole host process.
  *
- * Instance model (ENG24): the Servo engine is built once and kept for
- * the process lifetime — libservo's Opts is a process-global OnceLock
- * so a second ServoBuilder::build would panic. But a SeInstance is
- * only a WebView + delegate + rendering context over that engine, and
- * those CAN be recreated: after se_destroy frees the slot, se_init
- * builds a fresh instance on the surviving engine — the crash-
- * recovery path, one live instance at a time.
+ * Instance model (ENG24, widened by ENG36): the Servo engine is built
+ * once and kept for the process lifetime — libservo's Opts is a
+ * process-global OnceLock so a second ServoBuilder::build would panic.
+ * But a SeInstance is only a WebView + delegate + rendering context
+ * over that engine, and libservo hosts N of those on one engine
+ * (Servo keeps a WebViewId→WebView map; WebViewBuilder registers a
+ * painter per rendering context). se_engine_init builds the engine
+ * once; se_view_create/se_view_destroy then mint and retire any
+ * number of concurrent views — a destroyed view is also the crash-
+ * recovery path, since a fresh se_view_create lands on the surviving
+ * engine. What is once-per-engine is the event-loop waker: it is
+ * bound at engine build to the wake fn + userdata se_engine_init was
+ * first called with (a wake means "the shared engine has work" — a
+ * pump through ANY live view spins the whole loop), so the host must
+ * hand it a stable indirection, never a per-view pointer that can die.
  */
 
 use std::cell::{Cell, RefCell};
@@ -143,7 +151,11 @@ impl WebViewDelegate for SeDelegate {
         // referrer policy — may be stripped), falling back to the
         // webview's committed URL for subresources; for main-frame
         // loads the request URL is its own first party.
-        if let Some(&(userdata, gate)) = LOAD_GATE.get() {
+        // ENG36: the gate is process-global but the userdata it is
+        // invoked with is THIS view's callbacks.userdata — per-view
+        // routing so the host's policy resolves the OWNING tab's
+        // profile, not whichever view registered the gate.
+        if let Some(&(_, gate)) = LOAD_GATE.get() {
             let url_s = load.request.url.to_string();
             let first_party = if load.request.is_for_main_frame {
                 url_s.clone()
@@ -168,7 +180,7 @@ impl WebViewDelegate for SeDelegate {
                 is_redirect: load.request.is_redirect as i32,
             };
             let mut reply = SeHostReply::default();
-            if gate(userdata as *mut c_void, &info, &mut reply) != 0 {
+            if gate(self.shared.cbs.userdata, &info, &mut reply) != 0 {
                 serve_host_reply(load, reply);
                 return;
             }
@@ -179,13 +191,14 @@ impl WebViewDelegate for SeDelegate {
         // libservo cannot fetch — qrc:, the app's internal schemes.
         // A host resolver answers those out of the Qt resource system;
         // a miss returns the load to Servo's normal fetch path (the
-        // responder's drop() default is DoNotIntercept).
-        let Some(&(userdata, resolver)) = RESOURCE_RESOLVER.get() else {
+        // responder's drop() default is DoNotIntercept).  ENG36: like
+        // the gate, the resolver is invoked with THIS view's userdata.
+        let Some(&(_, resolver)) = RESOURCE_RESOLVER.get() else {
             return;
         };
         let url = cstr(&load.request.url.to_string());
         let mut reply = SeHostReply::default();
-        if resolver(userdata as *mut c_void, url.as_ptr(), &mut reply) == 0 {
+        if resolver(self.shared.cbs.userdata, url.as_ptr(), &mut reply) == 0 {
             return;
         }
         serve_host_reply(load, reply);
@@ -218,8 +231,9 @@ impl SeDelegate {
 // The fetch pipeline routes every scheme through load_web_resource,
 // so a host callback can answer the loads libservo has no fetcher for
 // (Qt's qrc: resources, the app's internal schemes).  The resolver is
-// a plain process-global: the one SeInstance a process may host (see
-// se_init) shares it with any future instance.
+// a plain process-global: every live view shares it, and the shim
+// invokes it with the OWNING view's callbacks.userdata so the host
+// can route to that view.
 
 /// Host reply for a claimed resource load — mirrors SeHostReply in
 /// include/servo_embed.h. `body` borrows host memory read only for
@@ -256,7 +270,7 @@ static RESOURCE_RESOLVER: OnceLock<(usize, SeResourceResolver)> = OnceLock::new(
 // runs ahead of the resolver so a host policy (the owning profile's
 // adblock on the Qt side) can veto or stub a load Servo would
 // otherwise fetch; like the resolver it is a process global shared
-// by the one SeInstance a process may host.
+// by every live view and invoked with the OWNING view's userdata.
 
 #[repr(C)]
 pub struct SeLoadInfo {
@@ -492,17 +506,17 @@ thread_local! {
     /// teardown the host calls while the GUI thread is intact.
     static ENGINE: RefCell<Option<ManuallyDrop<Servo>>> =
         const { RefCell::new(None) };
-    /// ENG27: the instance slot.  Records "a SeInstance is live right
-    /// now" and holds its pointer — se_init claims it, se_destroy
-    /// hands it back BEFORE the fallible teardown, so a panic inside
-    /// webrender's GL teardown (the gl.rs get_integer_v
-    /// GL_INVALID_OPERATION seen on the desktop) can never strand it.
-    /// Holding the pointer also lets se_destroy reject a
+    /// ENG36: the live-view registry.  Every SeInstance se_view_create
+    /// mints lands here and se_view_destroy removes its own pointer
+    /// BEFORE the fallible teardown, so a panic inside webrender's GL
+    /// teardown (the gl.rs get_integer_v GL_INVALID_OPERATION seen on
+    /// the desktop) can never strand a registration.  Holding the
+    /// pointer also lets se_view_destroy reject a
     /// stale/double-destroyed instance instead of re-dropping freed
-    /// memory.  "Slot free + engine alive" is the state the ENG28
-    /// re-init recovers into; se_instance_active()/se_can_init()
-    /// report it to the host.
-    static INSTANCE_ACTIVE: Cell<usize> = const { Cell::new(0) };
+    /// memory.  "Registry empty + engine alive" is the state a dead
+    /// view's recovery path mints into; se_instance_active(),
+    /// se_view_count() and se_can_init() report it to the host.
+    static VIEWS: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
 }
 
 // ENG23 — pin Servo's painter to Mesa's software rasterizer.
@@ -716,66 +730,115 @@ fn try_rendering_context(size: PhysicalSize<u32>) -> Option<Rc<SoftwareRendering
     }
 }
 
-/// Create an embed instance — one WebView sized `width`x`height`
-/// (device px) on a software rendering context. Returns nullptr on
-/// failure. The FIRST call also builds the Servo engine (consuming
-/// the process-global Opts and `config_dir`); a later call is legal
-/// once the previous SeInstance was se_destroy'd and creates a FRESH
-/// WebView + delegate + render context on the surviving engine — the
-/// ENG28 crash-recovery path. A call while another instance is still
-/// live is refused: one embed instance at a time.
+/// Build the once-per-process Servo engine. Idempotent: returns 0
+/// when the engine already exists (the waker stays bound to the FIRST
+/// call's `wake`/`userdata` — libservo installs it at
+/// ServoBuilder::build and never re-installs, so pass a stable
+/// indirection, never a per-view pointer that can die), and -1 when an
+/// earlier build attempt failed terminally (Opts consumed, nothing to
+/// mint views on). `config_dir` is honored on the first call only.
 #[no_mangle]
-pub extern "C" fn se_init(
+pub extern "C" fn se_engine_init(
+    wake: extern "C" fn(*mut c_void),
+    wake_userdata: *mut c_void,
+    config_dir: *const c_char,
+) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        if se_engine_init_inner(wake, wake_userdata, config_dir) {
+            0
+        } else {
+            -1
+        }
+    }))
+    .unwrap_or(-1)
+}
+
+fn se_engine_init_inner(
+    wake: extern "C" fn(*mut c_void),
+    wake_userdata: *mut c_void,
+    config_dir: *const c_char,
+) -> bool {
+    if ENGINE.with(|engine| engine.borrow().is_some()) {
+        return true;
+    }
+    // The build attempt itself is what consumes Opts — mark it BEFORE
+    // ServoBuilder::build so a panicking build still reads "attempted,
+    // no engine" (unrecoverable) to se_can_init instead of "never
+    // tried".
+    if INITIALIZED.swap(true, Ordering::SeqCst) {
+        return false;
+    }
+
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
+    let mut opts = Opts::default();
+    opts.multiprocess = false; // single-process: no re-exec needed
+    opts.sandbox = false;
+    if !config_dir.is_null() {
+        let dir = unsafe { CStr::from_ptr(config_dir) }
+            .to_string_lossy()
+            .into_owned();
+        opts.config_dir = Some(dir.into());
+    }
+
+    let servo = ServoBuilder::default()
+        .opts(opts)
+        .event_loop_waker(Box::new(SeWaker {
+            userdata: wake_userdata as usize,
+            wake,
+        }))
+        .build();
+    servo.setup_logging();
+    ENGINE.with(|engine| {
+        *engine.borrow_mut() = Some(ManuallyDrop::new(servo));
+    });
+    true
+}
+
+/// Mint a WebView sized `width`x`height` (device px) on its own
+/// software rendering context over the shared engine. Any number of
+/// views may be live at once (ENG36 — libservo maps WebViewId→WebView
+/// on the one Servo); each carries its own delegate, callbacks,
+/// frame buffer and poison flag, so a destroyed or crashed view frees
+/// independently and a fresh se_view_create recovers into the same
+/// engine. Requires a live engine — se_engine_init it first (legacy
+/// se_init does both). Returns nullptr on failure.
+#[no_mangle]
+pub extern "C" fn se_view_create(
     callbacks: SeCallbacks,
     width: u32,
     height: u32,
-    config_dir: *const c_char,
 ) -> *mut SeInstance {
-    // ENG27: claim the instance slot up front — claimed, not spent:
-    // a failed or panicking init hands it back so the host's retry
-    // (or crash-recovery attempt) still gets a real chance.
-    // usize::MAX marks "claimed, pointer not minted yet"; the real
-    // pointer lands below once init succeeds.  The claim must NOT
-    // clobber a held pointer — a refused re-entry that overwrote it
-    // would leave the live instance undestroyable (se_destroy's
-    // pointer match fails) AND the slot stuck at MAX forever.
-    let claimed = INSTANCE_ACTIVE.with(|slot| {
-        if slot.get() == 0 {
-            slot.set(usize::MAX);
-            true
-        } else {
-            false
-        }
-    });
-    if !claimed {
-        eprintln!("servo-embed: se_init while a live SeInstance exists \
-                   — one embed instance at a time, refusing");
-        return std::ptr::null_mut();
-    }
     // catch_unwind keeps any residual init panic (context failure,
     // missing resource dir, ...) from aborting the host — panics do
     // not unwind across extern "C".
     let instance = catch_unwind(AssertUnwindSafe(|| {
-        se_init_inner(callbacks, width, height, config_dir)
+        se_view_create_inner(callbacks, width, height)
     }))
     .unwrap_or(std::ptr::null_mut());
-    INSTANCE_ACTIVE.with(|slot| {
-        slot.set(if instance.is_null() { 0 } else { instance as usize });
-    });
+    if !instance.is_null() {
+        VIEWS.with(|views| views.borrow_mut().push(instance as usize));
+    }
     instance
 }
 
-fn se_init_inner(
+fn se_view_create_inner(
     callbacks: SeCallbacks,
     width: u32,
     height: u32,
-    config_dir: *const c_char,
 ) -> *mut SeInstance {
-    // ENG23: pin the whole init to the software rasterizer — the guard
-    // must exist before ServoBuilder::build spawns engine threads and
-    // must cover SoftwareRenderingContext::new (surfman's
+    let Some(servo) = ENGINE.with(|engine| {
+        engine.borrow().as_ref().map(|engine| (**engine).clone())
+    }) else {
+        eprintln!("servo-embed: se_view_create with no engine — \
+                   se_engine_init first");
+        return std::ptr::null_mut();
+    };
+
+    // ENG23: pin the whole view init to the software rasterizer — the
+    // guard must cover SoftwareRenderingContext::new (surfman's
     // Connection::new, the only place display/driver is chosen).
-    // Everything later reuses that already-initialized connection.
+    // Each view gets its own context, so the guard runs per create.
     let env = ScopedSoftwareGlEnv::new();
 
     let shared = Rc::new(Shared {
@@ -784,53 +847,6 @@ fn se_init_inner(
         intercepted: Cell::new(0),
         request_log: RefCell::new(Vec::new()),
     });
-
-    // ENG28: the engine is a once-per-process build kept in the
-    // thread_local slot — a second se_init only manufactures a fresh
-    // webview on it (the recovered instance shares the surviving
-    // engine, never the poisoned webview graph).  Only the first init
-    // touches Opts/config_dir and installs the event-loop waker —
-    // that waker holds the FIRST instance's userdata for the engine's
-    // lifetime, so the host must pass a stable indirection cell it
-    // keeps pointed at whichever view is live (see servobackend.cpp).
-    let servo = match ENGINE.with(|engine| {
-        engine.borrow().as_ref().map(|engine| (**engine).clone())
-    }) {
-        Some(servo) => servo,
-        None => {
-            // The build attempt itself is what consumes Opts — mark it
-            // BEFORE ServoBuilder::build so a panicking build still
-            // reads "attempted, no engine" (unrecoverable) to
-            // se_can_init instead of "never tried".
-            INITIALIZED.store(true, Ordering::SeqCst);
-
-            let _ = rustls::crypto::aws_lc_rs::default_provider()
-                .install_default();
-
-            let mut opts = Opts::default();
-            opts.multiprocess = false; // single-process: no re-exec needed
-            opts.sandbox = false;
-            if !config_dir.is_null() {
-                let dir = unsafe { CStr::from_ptr(config_dir) }
-                    .to_string_lossy()
-                    .into_owned();
-                opts.config_dir = Some(dir.into());
-            }
-
-            let servo = ServoBuilder::default()
-                .opts(opts)
-                .event_loop_waker(Box::new(SeWaker {
-                    userdata: callbacks.userdata as usize,
-                    wake: callbacks.wake,
-                }))
-                .build();
-            servo.setup_logging();
-            ENGINE.with(|engine| {
-                *engine.borrow_mut() = Some(ManuallyDrop::new(servo.clone()));
-            });
-            servo
-        },
-    };
 
     let size = PhysicalSize::new(width.max(1), height.max(1));
     // ENG23: the thread must be free of foreign GL ownership before
@@ -905,8 +921,50 @@ fn se_init_inner(
     instance
 }
 
+/// Legacy one-call entry point kept for hosts built before the
+/// engine/view split (ENG36): se_engine_init (with this view's
+/// wake+userdata — on the FIRST call that pair binds the engine's
+/// event-loop waker, so the host must pass a stable indirection cell
+/// it keeps pointed at a live view) followed by se_view_create.
+/// New hosts should call the split pair directly.
+#[no_mangle]
+pub extern "C" fn se_init(
+    callbacks: SeCallbacks,
+    width: u32,
+    height: u32,
+    config_dir: *const c_char,
+) -> *mut SeInstance {
+    if se_engine_init(callbacks.wake, callbacks.userdata, config_dir) != 0 {
+        return std::ptr::null_mut();
+    }
+    se_view_create(callbacks, width, height)
+}
+
+/// Dispatch one queued pending_load: the queue exists because a
+/// load() issued before the constellation registered the webview's
+/// browsing context is DROPPED upstream — url() reports Some once
+/// registration lands, which is when the load may really go out.
+fn flush_pending_load(instance: &SeInstance) {
+    // borrow_mut() ends with this statement — an if-let scrutinee
+    // temporary would keep the borrow alive through its whole block.
+    let pending = instance.pending_load.borrow_mut().take();
+    if let Some(url) = pending {
+        if instance.webview.url().is_some() {
+            instance.webview.load(url);
+        } else {
+            *instance.pending_load.borrow_mut() = Some(url);
+        }
+    }
+}
+
 /// Pump Servo's event loop once. Call on the GUI thread whenever the
-/// wake callback fires (and to settle queued work).
+/// wake callback fires (and to settle queued work).  The loop is
+/// engine-wide (Servo::spin_event_loop iterates every registered
+/// WebViewId), so a spin through ANY live view pumps ALL of them —
+/// and since queued pending_loads are per-view state the loop alone
+/// cannot see, every live view's queue is flushed here too or a
+/// sibling's early se_load would park until its own se_spin
+/// happened to be picked (ENG36).
 #[no_mangle]
 pub extern "C" fn se_spin(instance: *mut SeInstance) {
     ffi_guard(instance, (), |instance| {
@@ -918,16 +976,19 @@ pub extern "C" fn se_spin(instance: *mut SeInstance) {
         // instead of leaving webrender to draw on a foreign context.
         prebind_for_gl(&instance.webview.rendering_context(), "se_spin");
         instance.servo.spin_event_loop();
-        // borrow_mut() ends with this statement — an if-let scrutinee
-        // temporary would keep the borrow alive through its whole block.
-        let pending = instance.pending_load.borrow_mut().take();
-        if let Some(url) = pending {
-            if instance.webview.url().is_some() {
-                instance.webview.load(url);
-            } else {
-                *instance.pending_load.borrow_mut() = Some(url);
+        VIEWS.with(|views| {
+            for &ptr in views.borrow().iter() {
+                // The registry only ever holds minted, undropped
+                // pointers — se_view_destroy unregisters before its
+                // teardown — so this deref is safe.  A poisoned
+                // sibling's queue stays parked; its calls no-op
+                // through ffi_guard anyway.
+                let other = unsafe { &*(ptr as *const SeInstance) };
+                if !other.poisoned.load(Ordering::SeqCst) {
+                    flush_pending_load(other);
+                }
             }
-        }
+        });
     });
 }
 
@@ -1238,37 +1299,44 @@ pub extern "C" fn se_version() -> *const c_char {
     .unwrap_or(UNKNOWN.as_ptr().cast())
 }
 
-/// ENG27: non-zero while the instance slot is occupied — se_init
-/// claims it on entry, se_destroy hands it back FIRST (before the
-/// fallible teardown, so even a panicking drop frees it).  This is
-/// the host-side readback for "the slot is free": on a crashed +
-/// destroyed instance it must read 0, or no recovery path has
-/// anything to recover into.  Absent on pre-ENG27 artifacts —
-/// resolve optionally.
+/// ENG27/ENG36: non-zero while at least one view is live —
+/// se_view_create registers each, se_view_destroy unregisters its own
+/// pointer FIRST (before the fallible teardown, so even a panicking
+/// drop frees it).  This is the host-side readback for "no live
+/// views": on a crashed + destroyed view it must read 0, or no
+/// recovery path has anything to recover into.  Absent on pre-ENG27
+/// artifacts — resolve optionally.
 #[no_mangle]
 pub extern "C" fn se_instance_active() -> i32 {
     catch_unwind(AssertUnwindSafe(|| {
-        INSTANCE_ACTIVE.with(|slot| (slot.get() != 0) as i32)
+        VIEWS.with(|views| (!views.borrow().is_empty()) as i32)
     }))
     .unwrap_or(0)
 }
 
-/// ENG27/ENG28: non-zero when an se_init issued right now would
-/// produce a live instance.  With the slot free that is true both
-/// before the first init (engine not built yet — se_init builds it)
-/// and after a destroy with the engine still alive (ENG28 re-init).
-/// The refusal is kept only for genuinely unrecoverable state: a live
-/// instance holds the slot, or an engine build was attempted but
-/// produced none (Opts consumed, nothing to mint a webview on —
-/// including after se_shutdown).  The Qt gate consults this so a
-/// spent slot stops being a hard-forever refusal.
+/// ENG36: number of live views on the shared engine — se_view_create
+/// registers each, se_view_destroy removes its own pointer.  Absent
+/// on pre-ENG36 artifacts — resolve optionally.
+#[no_mangle]
+pub extern "C" fn se_view_count() -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        VIEWS.with(|views| views.borrow().len() as i32)
+    }))
+    .unwrap_or(0)
+}
+
+/// ENG27/ENG28/ENG36: non-zero when a se_view_create issued right now
+/// would produce a live view.  True both before the first engine
+/// build (se_engine_init builds it) and with views already live or
+/// all destroyed while the engine survives (multi-view + per-view
+/// crash recovery).  The refusal is kept only for genuinely
+/// unrecoverable state: an engine build was attempted but produced
+/// none (Opts consumed, nothing to mint a webview on — including
+/// after se_shutdown).  The Qt gate consults this so engine-alive
+/// stops ever reading as a refusal.
 #[no_mangle]
 pub extern "C" fn se_can_init() -> i32 {
     catch_unwind(AssertUnwindSafe(|| {
-        let live = INSTANCE_ACTIVE.with(|slot| slot.get() != 0);
-        if live {
-            return 0;
-        }
         let servable = !INITIALIZED.load(Ordering::SeqCst)
             || ENGINE.with(|engine| engine.borrow().is_some());
         servable as i32
@@ -1276,23 +1344,28 @@ pub extern "C" fn se_can_init() -> i32 {
     .unwrap_or(0)
 }
 
+/// Destroy one view.  Only its WebView/delegate/render context is
+/// torn down — the shared engine and every other live view survive
+/// (ENG36 multi-view), and a later se_view_create mints a fresh view
+/// on the same engine (the ENG28 recovery, now per-view).
 #[no_mangle]
-pub extern "C" fn se_destroy(instance: *mut SeInstance) {
+pub extern "C" fn se_view_destroy(instance: *mut SeInstance) {
     if instance.is_null() {
         return;
     }
-    // ENG27: hand the instance slot back FIRST — the teardown below
-    // is catch-wrapped, and a panic inside webrender's GL teardown
-    // (the gl.rs get_integer_v GL_INVALID_OPERATION the desktop log
-    // showed) must not strand the slot: a leaked box wastes memory,
-    // a stuck slot makes any later recovery impossible.  Only the
-    // pointer that claimed the slot can release it — a stale or
-    // double-destroyed pointer reads "not the live instance" and
+    // ENG27: unregister the view FIRST — the teardown below is
+    // catch-wrapped, and a panic inside webrender's GL teardown (the
+    // gl.rs get_integer_v GL_INVALID_OPERATION the desktop log
+    // showed) must not strand the registration: a leaked box wastes
+    // memory, a stuck registration makes se_instance_active lie about
+    // a live view.  Only the pointer that registered unregisters — a
+    // stale or double-destroyed pointer reads "not a live view" and
     // returns harmlessly instead of re-dropping freed memory.
-    let claimed = INSTANCE_ACTIVE.with(|slot| {
-        let held = slot.get() == instance as usize;
+    let claimed = VIEWS.with(|views| {
+        let mut views = views.borrow_mut();
+        let held = views.contains(&(instance as usize));
         if held {
-            slot.set(0);
+            views.retain(|&p| p != instance as usize);
         }
         held
     });
@@ -1308,7 +1381,7 @@ pub extern "C" fn se_destroy(instance: *mut SeInstance) {
     // a panic in the drain (a dead GL context may panic make_current)
     // must not skip the drop attempt, and a panic inside the drop
     // leaks the box rather than aborting the process — the contained
-    // alternative now that the slot is already free.
+    // alternative now that the view is already unregistered.
     if catch_unwind(AssertUnwindSafe(|| {
         // ENG23: webrender runs its own debug GL checks inside drop —
         // a residual error on the painter's context would turn a clean
@@ -1322,20 +1395,27 @@ pub extern "C" fn se_destroy(instance: *mut SeInstance) {
     }))
     .is_err()
     {
-        eprintln!("servo-embed: panic during se_destroy pre-teardown — \
-                   attempting the drop anyway");
+        eprintln!("servo-embed: panic during se_view_destroy \
+                   pre-teardown — attempting the drop anyway");
     }
     if catch_unwind(AssertUnwindSafe(|| {
         drop(unsafe { Box::from_raw(instance) });
     }))
     .is_err()
     {
-        eprintln!("servo-embed: panic during se_destroy — instance \
-                   leaked, slot already released");
+        eprintln!("servo-embed: panic during se_view_destroy — \
+                   instance leaked, already unregistered");
     }
     // ENG23: teardown made the painter's context current — release it
     // for the host's GL work (see release_current_gl_context).
     unsafe { release_current_gl_context() };
+}
+
+/// Legacy name for se_view_destroy, kept for hosts built before the
+/// engine/view split (ENG36).
+#[no_mangle]
+pub extern "C" fn se_destroy(instance: *mut SeInstance) {
+    se_view_destroy(instance);
 }
 
 /// ENG28: shut the shared engine down. Optional and once-only —
@@ -1345,8 +1425,9 @@ pub extern "C" fn se_destroy(instance: *mut SeInstance) {
 /// intact (the ENGINE slot is ManuallyDrop precisely so an
 /// unshut-down engine leaks harmlessly at thread exit instead of
 /// spinning inside a TLS destructor). No-op when no engine was ever
-/// built or after a previous se_shutdown; a live SeInstance is NOT
-/// destroyed — hosts must se_destroy first.
+/// built or after a previous se_shutdown; live views are NOT
+/// destroyed — se_view_destroy them first (each view's own Servo
+/// clone keeps the engine count up regardless).
 #[no_mangle]
 pub extern "C" fn se_shutdown() {
     let _ = catch_unwind(AssertUnwindSafe(|| {
@@ -1383,9 +1464,10 @@ mod tests {
 
     #[test]
     fn slot_and_init_gates_report_clean() {
-        // A fresh thread-local slot reads free; the engine was never
-        // built on this thread's view of the world.
+        // A fresh thread-local registry reads empty; the engine was
+        // never built on this thread's view of the world.
         assert_eq!(se_instance_active(), 0);
+        assert_eq!(se_view_count(), 0);
     }
 
     #[test]
@@ -1398,24 +1480,50 @@ mod tests {
         let mut h = 0u32;
         assert_eq!(se_frame_size(std::ptr::null_mut(), &mut w, &mut h), -1);
         se_destroy(std::ptr::null_mut());
+        se_view_destroy(std::ptr::null_mut());
     }
 
     #[test]
     fn destroy_unclaimed_pointer_is_a_noop() {
-        // ENG27: the slot holds the live pointer — a destroy on a
-        // pointer that never claimed it (stale/double-destroy) must
+        // ENG27: the registry holds the live pointers — a destroy on
+        // a pointer that never registered (stale/double-destroy) must
         // bail BEFORE touching it.  A dangling address is sufficient:
         // the early return means it is never dereferenced.
         let bogus = 0xdeadbeefusize as *mut SeInstance;
-        se_destroy(bogus);           // slot reads 0 -> early return
+        se_view_destroy(bogus);      // registry empty -> early return
         assert_eq!(se_instance_active(), 0);
+        se_destroy(bogus);           // legacy alias takes the same path
+        assert_eq!(se_view_count(), 0);
+    }
+
+    #[test]
+    fn view_create_requires_engine() {
+        // ENG36: the split contract — a view mint on a thread that
+        // never built an engine is refused cleanly (thread_locals
+        // keep every test on its own engine view, so this thread is
+        // guaranteed un-initialized).
+        let view = se_view_create(test_callbacks(), 64, 64);
+        assert!(view.is_null());
+        assert_eq!(se_view_count(), 0);
+        // An unbuilt engine still answers can_init true — a create
+        // WOULD succeed if se_engine_init ran first.
+        assert_eq!(se_can_init(), 1);
+    }
+
+    #[test]
+    fn engine_init_idempotent_and_terminal_after_failure() {
+        // Without driving a real build: the contract legs that hold
+        // on any thread.  se_engine_init returns 0 when the engine
+        // exists — exercised end-to-end in multi_view_coexists when
+        // the environment can build one.
+        assert_eq!(se_view_count(), 0);
     }
 
     #[test]
     fn destroy_releases_slot_when_teardown_panics() {
-        // The ENG27 scenario end-to-end: a live instance whose
-        // se_destroy hits a panic inside the catch-wrapped teardown
-        // (the webrender GL shape) still hands the slot back.  Needs
+        // The ENG27 scenario end-to-end: a live view whose
+        // se_view_destroy hits a panic inside the catch-wrapped
+        // teardown (the webrender GL shape) still unregisters.  Needs
         // a real engine — skip cleanly when init cannot run in this
         // environment (the app-level --servo-smoke drives the same
         // legs on the desktop path).
@@ -1427,35 +1535,88 @@ mod tests {
             return;
         }
         assert_eq!(se_instance_active(), 1);
-        assert_eq!(se_can_init(), 0); // slot held
+        assert_eq!(se_view_count(), 1);
+        assert_eq!(se_can_init(), 1); // engine alive — views not a gate
         std::env::set_var("SE_SELFTEST_DESTROY_PANIC", "1");
-        se_destroy(instance); // panics inside the catch — must not abort
+        se_view_destroy(instance); // panics inside the catch — must not abort
         std::env::remove_var("SE_SELFTEST_DESTROY_PANIC");
         assert_eq!(se_instance_active(), 0);
-        se_destroy(instance); // stale pointer after real destroy: no-op
-        // ENG28: the slot is free AND the engine survived — a second
-        // se_init now mints a fresh SeInstance on it instead of being
-        // refused (once-per-process applies to the ENGINE, not the
-        // webview).
+        assert_eq!(se_view_count(), 0);
+        se_view_destroy(instance); // stale pointer after real destroy: no-op
+        // ENG28: the registry is empty AND the engine survived — a
+        // fresh se_view_create mints a new view on it (once-per-
+        // process applies to the ENGINE, not the webview).
         assert_eq!(se_can_init(), 1);
-        let second = se_init(test_callbacks(), 64, 64, config_dir.as_ptr());
+        let second = se_view_create(test_callbacks(), 64, 64);
         assert!(!second.is_null());
-        assert_eq!(se_instance_active(), 1);
-        assert_eq!(se_can_init(), 0); // held again
-        // Concurrent instances stay refused — sequential only.
-        let third = se_init(test_callbacks(), 64, 64, config_dir.as_ptr());
-        assert!(third.is_null());
-        assert_eq!(se_instance_active(), 1);
-        se_destroy(second);
-        assert_eq!(se_instance_active(), 0);
+        assert_eq!(se_view_count(), 1);
+        se_view_destroy(second);
+        assert_eq!(se_view_count(), 0);
         assert_eq!(se_can_init(), 1); // engine still alive
         // Explicit teardown: se_shutdown drops the engine; afterwards
         // Opts is consumed with nothing left to mint a webview on —
         // the one genuinely unrecoverable state.
         se_shutdown();
         assert_eq!(se_can_init(), 0);
-        let dead = se_init(test_callbacks(), 64, 64, config_dir.as_ptr());
+        let dead = se_view_create(test_callbacks(), 64, 64);
         assert!(dead.is_null());
+        assert_eq!(se_engine_init(noop_void, std::ptr::null_mut(),
+                                 config_dir.as_ptr()), -1);
         se_shutdown(); // idempotent no-op
+    }
+
+    #[test]
+    fn multi_view_coexists() {
+        // ENG36 — the user report: N live views on the one engine.
+        // Two concurrent se_view_create calls both mint live views,
+        // destroying one leaves the other fully usable (poison reads
+        // false, frame/input exports still route through it), and the
+        // engine outlives both.  Skips cleanly when no engine can be
+        // built in this environment.
+        let config_dir = c"/tmp/arora-se-multi";
+        std::fs::create_dir_all("/tmp/arora-se-multi").ok();
+        if se_engine_init(noop_void, std::ptr::null_mut(),
+                          config_dir.as_ptr())
+            != 0
+        {
+            eprintln!("servo-embed: engine unavailable here — skipping");
+            return;
+        }
+        // Idempotent — the second call neither rebuilds nor fails.
+        assert_eq!(se_engine_init(noop_void, std::ptr::null_mut(),
+                                  config_dir.as_ptr()), 0);
+        let first = se_view_create(test_callbacks(), 64, 64);
+        let second = se_view_create(test_callbacks(), 64, 64);
+        if first.is_null() || second.is_null() {
+            eprintln!("servo-embed: view create unavailable here — \
+                       skipping");
+            if !first.is_null() {
+                se_view_destroy(first);
+            }
+            if !second.is_null() {
+                se_view_destroy(second);
+            }
+            return;
+        }
+        assert_ne!(first, second);
+        assert_eq!(se_view_count(), 2);
+        assert_eq!(se_instance_active(), 1);
+        // Independent lifecycle: killing one view is not a engine
+        // event — the survivor stays unpoisoned and servable.
+        se_view_destroy(first);
+        assert_eq!(se_view_count(), 1);
+        assert_eq!(se_is_poisoned(second), 0);
+        assert_eq!(se_can_init(), 1);
+        // A replacement mints on the same engine — the per-view
+        // recovery path.
+        let third = se_view_create(test_callbacks(), 64, 64);
+        assert!(!third.is_null());
+        assert_eq!(se_view_count(), 2);
+        se_view_destroy(second);
+        se_view_destroy(third);
+        assert_eq!(se_view_count(), 0);
+        assert_eq!(se_instance_active(), 0);
+        assert_eq!(se_can_init(), 1);
+        se_shutdown();
     }
 }

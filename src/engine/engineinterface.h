@@ -614,8 +614,8 @@ public:
     // ENG19: why createPage() would refuse right now — empty when the
     // backend can take a page.  The engine switcher's menu shows the
     // entry disabled with this reason instead of offering a swap that
-    // is guaranteed to fail (Servo's process-global single view
-    // reports its slot as taken once it is claimed or spent).  The
+    // is guaranteed to fail (Servo reports a dead engine here — a
+    // failed se_engine_init is terminal for the session).  The
     // default says a page is always possible.
     virtual QString pageUnavailableReason() const { return QString(); }
 

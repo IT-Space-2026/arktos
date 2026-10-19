@@ -27,19 +27,44 @@ typedef struct SeCallbacks {
     void (*resource_load)(void *userdata, const char *method_and_url);
 } SeCallbacks;
 
-/* se_init: one LIVE instance at a time. The first call also builds the
- * once-per-process engine (consuming libservo's process-global Opts and
- * config_dir). A call while another instance is live returns NULL; a
- * call AFTER se_destroy freed the slot mints a FRESH SeInstance — new
- * WebView/delegate/render context — on the surviving engine (ENG28
- * crash recovery).
+/* ENG36 — engine/view split.  The once-per-process engine is built by
+ * se_engine_init (idempotent — the engine consumes libservo's
+ * process-global Opts and config_dir on the first call only); views
+ * are minted and retired independently by se_view_create /
+ * se_view_destroy: each gets its own WebView, delegate, software
+ * rendering context, callbacks and poison flag, and ANY NUMBER may be
+ * live at once (libservo maps WebViewId->WebView on the one Servo —
+ * the old single-view limit was this shim's, never the engine's).
+ * se_view_destroy tears down only its view; the engine and every
+ * other live view survive, and a later se_view_create recovers into
+ * the same engine (the ENG28 crash-recovery path, now per-view).
  *
- * The engine's event-loop waker is bound at engine-build time to the
- * FIRST call's callbacks.userdata and is never re-installed, so the
- * host MUST pass a stable indirection cell (e.g. &live_view) it keeps
- * pointed at whichever view is current — a raw per-view pointer dies
- * with the first instance and the recovered one would never be pumped.
- * config_dir is honored on the first call only. */
+ * se_engine_init returns 0 on success or when the engine already
+ * exists, -1 when a previous build attempt failed terminally.  Its
+ * wake fn + wake_userdata bind the engine's event-loop waker for the
+ * process lifetime (re-installation is impossible), so wake_userdata
+ * MUST be a stable engine-level indirection — never a per-view
+ * pointer that can die.  A wake means "the shared engine has work":
+ * se_spin through ANY live view pumps the whole loop, so routing the
+ * wake to any surviving view is sufficient.  A view's own
+ * callbacks.userdata is per-view: every delegate callback (and the
+ * ENG18 resolver / ENG35 gate consult) is invoked with the OWNING
+ * view's userdata, so the host can route callbacks and per-view
+ * policy without a second indirection. */
+int se_engine_init(void (*wake)(void *userdata), void *wake_userdata,
+                   const char *config_dir);
+SeInstance se_view_create(SeCallbacks callbacks, unsigned width,
+                          unsigned height);
+void se_view_destroy(SeInstance instance);
+/* ENG36: number of live views — registered by se_view_create,
+ * removed by se_view_destroy.  Absent on pre-ENG36 artifacts. */
+int se_view_count(void);
+
+/* Legacy one-call entry point (pre-ENG36 hosts): se_engine_init with
+ * this view's wake+userdata — on the FIRST call that pair binds the
+ * engine's waker, so the host MUST pass a stable indirection cell it
+ * keeps pointed at a live view — followed by se_view_create.
+ * config_dir is honored on the first engine-init call only. */
 SeInstance se_init(SeCallbacks callbacks, unsigned width, unsigned height,
                    const char *config_dir);
 void se_spin(SeInstance instance);
@@ -81,9 +106,11 @@ long se_request_log(SeInstance instance, char *buf, unsigned long buf_len);
  * resolver can answer the schemes libservo cannot fetch — qrc:, the
  * app-internal schemes — without forking Servo.
  *
- * Registered once per process (before or after se_init — only one
- * SeInstance can ever exist anyway). Called synchronously from inside
- * se_spin() on the GUI thread for every resource load; the host
+ * Registered once per process (before or after the first view).
+ * Called synchronously from inside se_spin() on the GUI thread for
+ * every resource load — invoked with the OWNING view's
+ * callbacks.userdata since ENG36 (the registration-time userdata is
+ * kept for signature compat only); the host
  * returns non-zero to claim the request and fills `reply`:
  *   status    HTTP status code (0 is treated as 200)
  *   mime      utf8 Content-Type value; "" sends no header
@@ -110,7 +137,10 @@ void se_set_resource_resolver(void *userdata, SeResourceResolver resolver);
  *
  * Registered once per process like the resolver.  Called
  * synchronously from inside se_spin() on the GUI thread for EVERY
- * resource load; the host inspects `info` and returns non-zero to
+ * resource load — invoked with the OWNING view's callbacks.userdata
+ * since ENG36 (the registration-time userdata is kept for signature
+ * compat only), so the host's policy resolves the right tab's
+ * profile; the host inspects `info` and returns non-zero to
  * SERVE `reply` verbatim — the request never reaches Servo's fetch
  * path (a deny is reply{status:403, empty body}; a stub is any
  * 200+mime+body pair, the same contract as the resolver).  Return 0
@@ -149,24 +179,24 @@ void se_set_load_gate(void *userdata, SeLoadGate gate);
  * missing symbol as "no panic observed" (unverifiable, pre-fix). */
 int se_is_poisoned(SeInstance instance);
 
-/* ENG23: GL_RENDERER of the painter's context, sampled once at
- * se_init — the host's handle on "did the software rasterizer actually
+/* ENG23: GL_RENDERER of the view's painter context, sampled once at
+ * view create — the host's handle on "did the software rasterizer actually
  * engage" rather than assuming the env override took. Pointer borrows
  * the instance (never free); NULL on a null/poisoned instance and on
  * artifacts predating ENG23 — resolve optionally. */
 const char *se_gl_renderer(SeInstance instance);
 
-/* ENG27: crash-recovery introspection.
- * se_instance_active — non-zero while the instance slot is occupied
- * (se_init claims it; se_destroy hands it back BEFORE the fallible
- * teardown, so even a panicking drop leaves it free).  This is the
- * host-side proof that a crashed+destroyed instance released its
- * slot — the state a recovery path (ENG28) needs to find.
- * se_can_init — non-zero when a se_init issued right now would
- * produce a live instance: true pre-init AND, on ENG28 artifacts,
- * whenever the slot is free while the engine survives (the re-init
- * case).  Stays 0 only for genuinely unrecoverable state — a live
- * instance, a failed engine build, or post-se_shutdown.  Absent on
+/* ENG27/ENG36: lifecycle introspection.
+ * se_instance_active — non-zero while at least one view is live
+ * (se_view_create registers it; se_view_destroy unregisters it BEFORE
+ * the fallible teardown, so even a panicking drop leaves the registry
+ * honest).  This is the host-side proof that a crashed+destroyed
+ * view released — the state a recovery path (ENG28) needs to find.
+ * se_can_init — non-zero when a se_view_create issued right now would
+ * produce a live view: true pre-engine AND whenever the engine
+ * survives, whether views are live or all destroyed (ENG36 multi-view
+ * + per-view re-init).  Stays 0 only for genuinely unrecoverable
+ * state — a failed engine build or post-se_shutdown.  Absent on
  * pre-ENG27 artifacts — resolve optionally; a missing symbol reads
  * as "unverifiable / no re-init". */
 int se_instance_active(void);
@@ -176,16 +206,17 @@ int se_can_init(void);
  * GUI thread is intact (the engine handle is ManuallyDrop so an
  * unshut-down engine leaks harmlessly at thread exit instead of
  * running its shutdown spin inside a TLS destructor). No-op when no
- * engine exists or after a previous call; a live SeInstance is NOT
- * destroyed — se_destroy it first. Absent on pre-ENG28 artifacts —
- * resolve optionally; a missing symbol leaves the engine resident
- * until process exit, as before. */
+ * engine exists or after a previous call; live views are NOT
+ * destroyed — se_view_destroy them first. Absent on pre-ENG28
+ * artifacts — resolve optionally; a missing symbol leaves the engine
+ * resident until process exit, as before. */
 void se_shutdown(void);
 
-/* ENG27: se_destroy releases the instance slot even when teardown
- * panics (a webrender GL panic used to leak the box AND strand the
- * slot forever).  Only the pointer that claimed the slot releases
- * it — a stale or double-destroyed pointer is a harmless no-op. */
+/* Legacy name for se_view_destroy (pre-ENG36 hosts).  The destroy
+ * unregisters the view even when teardown panics (a webrender GL
+ * panic used to leak the box AND strand the registry forever).  Only
+ * the pointer that registered unregisters — a stale or
+ * double-destroyed pointer is a harmless no-op. */
 void se_destroy(SeInstance instance);
 
 #ifdef __cplusplus
