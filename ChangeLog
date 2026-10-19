@@ -3815,3 +3815,25 @@ Extensions (residual sweep): every typed gap the real Bitwarden
     served namespaces, and correct domain refusals — and the
     Bitwarden test legs now fail on any typed gap outside that set,
     so an unplanned regression cannot slip in quietly.
+
+Extensions (health): the EXT21 fatal check now subtracts what the
+    hosted runtime verifiably serves (ER19).  A runtimeServes() list
+    sits beside the fatal core-API table; with the hosted runtime
+    armed, a required permission it covers — scripting, observe-only
+    webRequest — leaves fatalMissing entirely, and other served
+    permissions (tabs, windows, webNavigation, offscreen,
+    notifications, idle, context menus, sidePanel) move out of the
+    flat "will not work" tier into "partially supported".  Everything
+    the runtime does not serve keeps the raw engine verdict —
+    declarativeNetRequest*, blocking webRequest, cookies,
+    nativeMessaging, privacy and friends stay missing — and
+    webRequestAuthProvider joins the unsupported list because the
+    observe-only webRequest surface cannot answer an auth challenge.
+    For a hosted extension the engine's service-worker probe also
+    measures the wrong worker, so a Ready hosted background now
+    counts as the live background (a Failed host is the real
+    "never became ready").  Bitwarden — proven install→unlock→fill
+    end to end — regrades from "Not supported" to "Limited", its
+    reason honestly naming the declares that remain unserved.
+    ARKTOS_EXTHOST_OFF=1 restores the raw verdict: a
+    scripting-requiring extension still grades Not supported.

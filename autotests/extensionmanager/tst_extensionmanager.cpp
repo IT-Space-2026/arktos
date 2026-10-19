@@ -84,6 +84,7 @@ private slots:
     void broadHostWarning();
     void updateDriftReview();
     void healthClassification();
+    void runtimeHealthRegrade();
     void backgroundHealthProbe();
     void hostedBackgroundRuntime();
     void extensionShimBackend();
@@ -472,20 +473,51 @@ void tst_ExtensionManager::inspectManifest_data()
         << true << 3 << QStringLiteral("perms") << false
         << (QStringList() << QStringLiteral("bookmarks"))
         << (QStringList() << QStringLiteral("webRequest"))
-        << (QStringList() << QStringLiteral("webRequest"))
+        // ER19: webRequest is runtime-served — it leaves the fatal
+        // set (and stays in 'unverified' for honest wording).
+        << QStringList()
         << (QStringList() << QStringLiteral("cookies")
                           << QStringLiteral("nativeMessaging"))
         << (QStringList() << QStringLiteral("<all_urls>"));
-    // EXT21: required scripting marks the extension's purpose dead —
-    // the Bitwarden signature.  An OPTIONAL scripting grant must not.
-    QTest::newRow("fatal core api required")
+    // EXT21+ER19: required scripting marked the extension's purpose
+    // dead — the Bitwarden signature.  The hosted runtime serves it
+    // now, so it leaves the fatal set; an OPTIONAL scripting grant
+    // still must not condemn anything either.
+    QTest::newRow("served core api required")
         << QByteArray("{\"manifest_version\":3,\"name\":\"vault\","
                       "\"version\":\"1.0\","
                       "\"permissions\":[\"scripting\",\"storage\"]}")
         << true << 3 << QStringLiteral("vault") << false
         << QStringList()
         << (QStringList() << QStringLiteral("scripting"))
-        << (QStringList() << QStringLiteral("scripting"))
+        << QStringList()
+        << QStringList() << QStringList();
+    // A required fatal-table permission the runtime does NOT serve
+    // still condemns the extension — the regrade subtracts only the
+    // served set.
+    QTest::newRow("unserved fatal api required")
+        << QByteArray("{\"manifest_version\":3,\"name\":\"dnr\","
+                      "\"version\":\"1.0\","
+                      "\"permissions\":[\"declarativeNetRequest\","
+                      "\"storage\"]}")
+        << true << 3 << QStringLiteral("dnr") << false
+        << QStringList()
+        << (QStringList() << QStringLiteral("declarativeNetRequest"))
+        << (QStringList() << QStringLiteral("declarativeNetRequest"))
+        << QStringList() << QStringList();
+    // ER19: runtime-served 'unsupported' members migrate to
+    // 'unverified' — the honest tier is "partially supported", not
+    // "will not work".  'bookmarks' is genuinely dead and stays.
+    QTest::newRow("runtime-served apis migrate")
+        << QByteArray("{\"manifest_version\":3,\"name\":\"served\","
+                      "\"version\":\"1.0\","
+                      "\"permissions\":[\"notifications\",\"tabs\","
+                      "\"bookmarks\"]}")
+        << true << 3 << QStringLiteral("served") << false
+        << (QStringList() << QStringLiteral("bookmarks"))
+        << (QStringList() << QStringLiteral("notifications")
+                          << QStringLiteral("tabs"))
+        << QStringList()
         << QStringList() << QStringList();
     QTest::newRow("fatal core api optional")
         << QByteArray("{\"manifest_version\":3,\"name\":\"maybe\","
@@ -523,6 +555,12 @@ void tst_ExtensionManager::inspectManifest()
     QFETCH(QStringList, fatal);
     QFETCH(QStringList, dangerous);
     QFETCH(QStringList, dangerousHosts);
+
+    // ER19: the manifest verdict is runtime-aware — pin the armed
+    // runtime so these rows assert the regraded shape; the raw
+    // engine-verdict path is covered by runtimeHealthRegrade().
+    const QByteArray savedExthost = qgetenv("ARKTOS_EXTHOST_OFF");
+    qunsetenv("ARKTOS_EXTHOST_OFF");
 
     const QString dir = QDir::temp().filePath(
         QStringLiteral("tst-extmanifest-%1").arg(QTest::currentDataTag()));
@@ -565,6 +603,8 @@ void tst_ExtensionManager::inspectManifest()
                 dir + QLatin1String("/empty")).valid);
 
     QDir(dir).removeRecursively();
+    if (!savedExthost.isEmpty())
+        qputenv("ARKTOS_EXTHOST_OFF", savedExthost);
 }
 
 void tst_ExtensionManager::consentGate()
@@ -1214,6 +1254,105 @@ void tst_ExtensionManager::healthClassification()
     QVERIFY(reason.contains(QLatin1String("cannot work")));
 }
 
+// ER19 — the health regrade the EXT21 fatal table was waiting for.
+// With the hosted runtime armed, a required permission the runtime
+// serves (scripting, webRequest, the event-stream namespaces) leaves
+// the fatal set and migrates out of 'unsupported' into 'unverified'
+// — "partially supported" is the honest tier, never "will not work".
+// What the runtime does NOT serve keeps the raw engine verdict: a
+// required declarativeNetRequest still condemns the extension, and
+// ARKTOS_EXTHOST_OFF reverses the whole regrade — a fixture
+// requiring scripting without the runtime path still grades
+// NotSupported.
+void tst_ExtensionManager::runtimeHealthRegrade()
+{
+    using EH = ExtensionManager::ExtensionHealth;
+    using PV = ExtensionManager::ProbeVerdict;
+
+    const QString root = QDir::temp().filePath(
+        QStringLiteral("tst-extregrade-%1")
+            .arg(QCoreApplication::applicationPid()));
+    const QString dir = writeExtension(
+        root, QStringLiteral("tst-regrade"), QStringLiteral("1.0.0"),
+        QString(), {QStringLiteral("scripting"),
+                    QStringLiteral("notifications"),
+                    QStringLiteral("bookmarks")});
+    QVERIFY(!dir.isEmpty());
+
+    // Runtime armed (the suite's normal env — pin it so a stray
+    // ARKTOS_EXTHOST_OFF in the caller's environment cannot skew the
+    // regrade).
+    const QByteArray savedExthost = qgetenv("ARKTOS_EXTHOST_OFF");
+    qunsetenv("ARKTOS_EXTHOST_OFF");
+
+    const ExtensionManager::Manifest served =
+        ExtensionManager::inspectManifest(dir);
+    QVERIFY(served.valid);
+    // scripting leaves fatalMissing and was always 'unverified';
+    // notifications migrates unsupported -> unverified; bookmarks is
+    // genuinely dead and stays the missingApis marker.
+    QVERIFY(served.fatalMissing.isEmpty());
+    QVERIFY(served.unverified.contains(QLatin1String("scripting")));
+    QVERIFY(served.unverified.contains(QLatin1String("notifications")));
+    QVERIFY(!served.unsupported.contains(QLatin1String("notifications")));
+    QVERIFY(served.unsupported.contains(QLatin1String("bookmarks")));
+    // Regraded: the same extension that EXT21 condemned is
+    // Limited-or-better — its remaining gaps are honest, not fatal.
+    QCOMPARE(ExtensionManager::classifyHealth(
+                 true, served.unsupported, served.fatalMissing,
+                 PV::Responsive),
+             EH::Limited);
+    QCOMPARE(ExtensionManager::classifyHealth(
+                 true, served.unsupported, served.fatalMissing,
+                 PV::Dead),
+             EH::NotSupported);
+
+    // A required fatal-table member the runtime does NOT serve still
+    // condemns the extension even with the runtime armed.
+    const QString dnrDir = writeExtension(
+        root, QStringLiteral("tst-regrade-dnr"), QStringLiteral("1.0.0"),
+        QString(), {QStringLiteral("declarativeNetRequest"),
+                    QStringLiteral("scripting")});
+    const ExtensionManager::Manifest dnr =
+        ExtensionManager::inspectManifest(dnrDir);
+    QVERIFY(!dnr.fatalMissing.contains(QLatin1String("scripting")));
+    QVERIFY(dnr.fatalMissing.contains(
+                QLatin1String("declarativeNetRequest")));
+    QCOMPARE(ExtensionManager::classifyHealth(
+                 true, dnr.unsupported, dnr.fatalMissing,
+                 PV::Responsive),
+             EH::NotSupported);
+
+    // Without the runtime path the raw engine verdict stands —
+    // scripting is fatal again and served surfaces stay "won't
+    // work".  (inspectManifest reads the env per call, so toggling
+    // here is the honest "no runtime" model.)
+    qputenv("ARKTOS_EXTHOST_OFF", "1");
+    const ExtensionManager::Manifest raw =
+        ExtensionManager::inspectManifest(dir);
+    if (!savedExthost.isEmpty())
+        qputenv("ARKTOS_EXTHOST_OFF", savedExthost);
+    else
+        qunsetenv("ARKTOS_EXTHOST_OFF");
+    QVERIFY(raw.fatalMissing.contains(QLatin1String("scripting")));
+    QVERIFY(raw.unsupported.contains(QLatin1String("notifications")));
+    QVERIFY(!raw.unverified.contains(QLatin1String("notifications")));
+    QCOMPARE(ExtensionManager::classifyHealth(
+                 true, raw.unsupported, raw.fatalMissing,
+                 PV::Responsive),
+             EH::NotSupported);
+
+    // The runtimeServes() list covers the fatal members it rescues
+    // and only them — never the still-dead request APIs.
+    const QStringList serves = ExtensionManager::runtimeServes();
+    QVERIFY(serves.contains(QLatin1String("scripting")));
+    QVERIFY(serves.contains(QLatin1String("webRequest")));
+    QVERIFY(!serves.contains(QLatin1String("declarativeNetRequest")));
+    QVERIFY(!serves.contains(QLatin1String("webRequestBlocking")));
+
+    QDir(root).removeRecursively();
+}
+
 // EXT12: the real measurement — a live service worker must classify
 // Healthy and an eval-crashing one NotSupported, driven through the
 // same hidden-page probe the app runs.
@@ -1232,11 +1371,13 @@ void tst_ExtensionManager::backgroundHealthProbe()
         root, QStringLiteral("tst-health-live"),
         QStringLiteral("1.0.0"));
     // Dead: same manifest shape but the worker throws at eval —
-    // Bitwarden's failure mode (Chromium status 15).
+    // Bitwarden's failure mode (Chromium status 15).  'bookmarks' is
+    // the unsupported-permission marker: the hosted runtime does not
+    // serve it (ER19), so it stays in missingApis either way.
     const QString deadDir = writeExtension(
         root, QStringLiteral("tst-health-dead"),
         QStringLiteral("1.0.0"), QString(),
-        {QStringLiteral("notifications")});
+        {QStringLiteral("bookmarks")});
     QVERIFY(!liveDir.isEmpty() && !deadDir.isEmpty());
     {
         QFile dead(deadDir + QLatin1String("/sw.js"));
@@ -1279,9 +1420,9 @@ void tst_ExtensionManager::backgroundHealthProbe()
     const ExtensionManager::ExtensionInfo dead = infoFor(deadId);
     QVERIFY(!dead.healthReason.isEmpty());
     QVERIFY(dead.healthReason.contains(QLatin1String("background")));
-    // "notifications" is unsupported in Qt WebEngine — the reason
-    // names the missing surface, not just the crash.
-    QVERIFY(dead.missingApis.contains(QLatin1String("notifications")));
+    // "bookmarks" is unsupported even with the hosted runtime armed
+    // — the reason names the missing surface, not just the crash.
+    QVERIFY(dead.missingApis.contains(QLatin1String("bookmarks")));
 
     manager->removeExtension(liveId);
     manager->removeExtension(deadId);
@@ -9396,6 +9537,27 @@ void tst_ExtensionManager::bitwardenUnlockFill()
                           "PASS — real unlock + real autofill pipeline "
                           "set input.value")
                     : QStringLiteral("MEASURED GAP — see legs above"));
+
+    // ER19 — the earned regrade, asserted on the real bundle after a
+    // proven fill: the hosted runtime serves its fatal-table
+    // permissions (scripting, webRequest), so the manager row must
+    // grade Limited-or-better — the remaining missingApis are the
+    // genuinely unserved declares (optional nativeMessaging/privacy,
+    // webRequestAuthProvider), not a condemnation.  Captured before
+    // teardown while the host is still Ready.
+    ExtensionManager::ExtensionInfo bwInfo;
+    for (const ExtensionManager::ExtensionInfo &candidate
+         : manager->extensions())
+        if (candidate.id == id)
+            bwInfo = candidate;
+    report << QStringLiteral(
+        "ER19 manager row: health=%1 hostState=%2 missingApis=%3")
+        .arg(int(bwInfo.health))
+        .arg(bwInfo.hostState,
+             bwInfo.missingApis.join(QLatin1String(", ")));
+    report << QStringLiteral("ER19 healthReason: %1")
+        .arg(bwInfo.healthReason);
+
     for (const QString &line : report)
         qWarning().noquote() << line;
     const QString out = qEnvironmentVariable("ARKTOS_EXTTEST_OUT");
@@ -9419,6 +9581,21 @@ void tst_ExtensionManager::bitwardenUnlockFill()
 
     QVERIFY2(filled, "the fixture credential never reached "
                      "input.value — see ER17 report legs");
+
+    // ER19: after a proven install->unlock->fill the real bundle
+    // must grade Limited-or-better — NotSupported was the pre-runtime
+    // verdict, and Unknown would mean the host fold lost the liveness
+    // signal entirely.
+    using EHF = ExtensionManager::ExtensionHealth;
+    QVERIFY2(bwInfo.health == EHF::Limited
+                 || bwInfo.health == EHF::Healthy,
+             qPrintable(QStringLiteral(
+                 "ER19 regrade: Bitwarden still grades health=%1 "
+                 "reason=\"%2\" missing=%3 — the runtime-served fatal "
+                 "set must not condemn it")
+                 .arg(int(bwInfo.health))
+                 .arg(bwInfo.healthReason,
+                      bwInfo.missingApis.join(QLatin1String(", ")))));
 
     // ER18 residual sweep — the deep drive must not surface any typed
     // gap outside .devin/EXT-RUNTIME-GAPS.md's documented set.

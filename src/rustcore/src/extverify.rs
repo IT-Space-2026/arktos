@@ -713,6 +713,7 @@ const UNSUPPORTED_PERMISSIONS: &[&str] = &[
     "vpnProvider",
     "wallpaper",
     "webAuthenticationProxy",
+    "webRequestAuthProvider",
     "windows",
 ];
 

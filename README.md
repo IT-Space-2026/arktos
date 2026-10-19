@@ -483,7 +483,9 @@ patterns the installed version never declared, and whole-scheme host
 grants (`<all_urls>`, `*://*/*`, `http://*/*` …) get a warning row of
 their own. Each enabled extension is also health-checked once per
 session: a hidden extension-origin page pings its background service
-worker and counts live background contexts, and the result is folded
+worker and counts live background contexts (for extensions the
+hosted runtime below hosts, a Ready hosted background counts as the
+live worker), and the result is folded
 together with the manifest's declared-but-missing `chrome.*` APIs
 into the Settings → Extensions status — **Limited** when the worker
 runs but some declared APIs cannot be served, **Not supported** when
@@ -517,8 +519,14 @@ are not implemented. Bitwarden's background worker needs several of
 the missing namespaces, fails registration
 (`kErrorScriptEvaluateFailed`), and its popup dies on
 `chrome.extension.getBackgroundPage` — so natively it cannot
-function; the health check above therefore reports it **Not
-supported** with the missing APIs listed. See
+function and the health check grades it **Not supported**. With the
+hosted runtime armed, though, the check subtracts the surfaces
+Arktos serves itself — `scripting`, observe-only `webRequest`, the
+event streams, `offscreen`, `notifications`, `idle` — and Bitwarden
+regrades to **Limited**, its row naming only the declares that
+remain genuinely unserved (its optional `nativeMessaging`/`privacy`
+grants, and `webRequestAuthProvider`, which the observe-only
+`webRequest` surface cannot answer). See
 `.devin/EXT11-report.md` for the full matrix. Under the hosted
 runtime below, though, the Bitwarden popup runs its real app —
 extension pages (popup, options, extension links in tabs) get the
