@@ -170,6 +170,12 @@ private:
     // bridge is the listener's lifetime context.
     QJsonObject invokeWebRequest(const QString &method,
                                  const QJsonObject &args);
+    // ER17: storage 'changed' — the writer's shim already fired its
+    // own onChanged synchronously, so the sibling fan-out must skip
+    // THIS bridge's context or the writer's listeners run twice.
+    // Dispatch lives at this level because the bridge is the
+    // poster's identity (the backend is shared per-extension).
+    QJsonObject invokeStorageChanged(const QJsonObject &args);
     void finishExecFrame(const QString &execId, int slot,
                          int frameId, const QVariant &value,
                          QWebEngineFrame frame, quint32 worldId,
@@ -391,7 +397,19 @@ public:
     int broadcastEvent(const QString &name,
                        const QJsonObject &payload);
     int deliverEvent(const QString &extensionId, const QString &name,
-                     const QJsonObject &payload);
+                     const QJsonObject &payload,
+                     ChromeBridge *exclude = nullptr);
+
+    // ER17: one mutation's change record fanned out to BOTH event
+    // surfaces — chrome.storage.onChanged AND the per-area
+    // chrome.storage.<area>.onChanged — each fired with the
+    // (changes, areaName) listener arguments Chrome passes.
+    // 'exclude' skips the posting context: its shim already fired
+    // the event locally when the mutation resolved.
+    void fanOutStorageChanged(const QString &extensionId,
+                              const QString &area,
+                              const QJsonObject &changes,
+                              ChromeBridge *exclude = nullptr);
 
     // Whether url-bearing fields may reach this extension ('tabs'
     // permission or a host permission covering the url).  Public so
@@ -607,7 +625,8 @@ private:
     bool m_viewFilterInstalled = false;
 
     int fanOut(const QString &name, const QJsonObject &payload,
-               const QString &onlyExtensionId);
+               const QString &onlyExtensionId,
+               ChromeBridge *exclude = nullptr);
     QJsonObject shapedPayload(const QString &extensionId,
                               const QString &name,
                               const QJsonObject &payload) const;

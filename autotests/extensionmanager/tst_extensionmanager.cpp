@@ -106,6 +106,7 @@ private slots:
     void realExtensionPopup();
     void bitwardenGapBaseline();
     void bitwardenHandshakeGate();
+    void bitwardenUnlockFill();
     void enabledStatePersists();
 
 private:
@@ -8098,6 +8099,1184 @@ void tst_ExtensionManager::bitwardenHandshakeGate()
     manager->removeExtension(id);
     QTest::qWait(500);
     QDir(copyRoot).removeRecursively();
+}
+
+// ER17: the E2E that matters — install -> unlock -> fill, harness
+// driven, no human clicks.  The account fixture is Bitwarden's own
+// public SDK test account (bitwarden-core test_accounts.rs):
+// userId 060000fb-0922-4dd3-b170-6e15cb5df8c8, test@bitwarden.com /
+// "asdfasdfasdf", PBKDF2-SHA256 x600k, with the fixture's real
+// V1 private-key EncString and master-key-wrapped user key.  We seed
+// the state keys Bitwarden reads (global accounts/activeAccountId,
+// crypto accountCryptographicState, kdfConfig, the
+// masterPasswordUnlock record, a syntactically-valid access token),
+// then drive the REAL unlock path —
+// bitwardenMain.unlockService.unlockWithMasterPassword — which runs
+// the WASM SDK's initialize_user_crypto (real PBKDF2 + AES unwrap).
+// The vault fixture is the unlocked-cache route: the decrypted
+// cipher record is seeded through cipherService's own state handles
+// (the path autofill reads first on every branch), and the fill is
+// triggered by the real commands.onCommand("autofill_login")
+// dispatch — collectPageDetails -> fillForm -> bootstrap-autofill
+// writes the DOM.  The assertion is the page's input.value.
+void tst_ExtensionManager::bitwardenUnlockFill()
+{
+    const QString src = qEnvironmentVariable("ARKTOS_EXTTEST_DIR");
+    if (src.isEmpty())
+        QSKIP("set ARKTOS_EXTTEST_DIR to an unpacked extension dir");
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+    qputenv("ARKTOS_EXTNOTIFY_STUB", "1");
+    QVERIFY(QFile::exists(src + QLatin1String("/manifest.json")));
+
+    const QString copyRoot = QDir::temp().filePath(
+        QStringLiteral("tst-bwfill-%1")
+            .arg(QCoreApplication::applicationPid()));
+    // Unique basename: Qt names the install dir
+    // "<basename>_<profile suffix>", so a crashed earlier run's
+    // leftover would make every later install fail with
+    // 'Failed to create install directory'.
+    const QString dir = copyRoot + QStringLiteral("/bundle-%1")
+            .arg(QCoreApplication::applicationPid());
+    QVERIFY2(copyTree(src, dir), "fixture copy of the bundle failed");
+    QVERIFY(QFile::exists(dir + QLatin1String("/manifest.json")));
+
+    const ExtensionManager::Manifest manifest =
+        ExtensionManager::inspectManifest(dir);
+    QVERIFY(manifest.valid);
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+
+    auto installed = std::make_shared<QString>();
+    auto finished = std::make_shared<bool>(false);
+    QObject::connect(manager, &ExtensionManager::extensionInstalled,
+                     this, [installed, finished](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.error.isEmpty())
+            *installed = info.id;
+        else
+            *installed = QStringLiteral("ERROR:") + info.error;
+        *finished = true;
+    });
+    QObject::connect(manager, &ExtensionManager::errorOccurred,
+                     this, [installed, finished](const QString &m) {
+        *installed = QStringLiteral("ERROR:") + m;
+        *finished = true;
+    });
+    manager->grantConsent(dir);
+    manager->installExtension(dir);
+    QElapsedTimer installTimer;
+    installTimer.start();
+    while (!*finished && installTimer.elapsed() < 90000)
+        QTest::qWait(100);
+    const QString id = *installed;
+    QVERIFY2(!id.isEmpty() && !id.startsWith(QLatin1String("ERROR:")),
+             qPrintable(QStringLiteral(
+                 "real bundle must install: %1").arg(id)));
+
+    manager->setExtensionEnabled(id, true);
+    ExtensionBackgroundHost *host = nullptr;
+    QElapsedTimer hostTimer;
+    hostTimer.start();
+    // Bitwarden background.js is ~1.7 MB plus WASM/SDK init
+    // and the hosted boot lands anywhere between ~40s and
+    // >120s under load — give the ready marker a wide
+    // window before declaring the leg dead.
+    while (hostTimer.elapsed() < 300000) {
+        host = runtime->host(id);
+        if (host && host->state()
+                != ExtensionBackgroundHost::State::Starting)
+            break;
+        QTest::qWait(250);
+    }
+    QVERIFY2(host, "hosted background never spawned");
+    QVERIFY2(host->state() == ExtensionBackgroundHost::State::Ready,
+             qPrintable(QStringLiteral(
+                 "background host not ready: %1").arg(host->lastError())));
+
+    auto eval = [](QWebEnginePage *p, const QString &source,
+                   quint32 worldId = 0) {
+        auto result = std::make_shared<QVariant>();
+        p->runJavaScript(source, worldId,
+                         [result](const QVariant &v) { *result = v; });
+        QElapsedTimer t;
+        t.start();
+        while (!result->isValid() && t.elapsed() < 15000)
+            QTest::qWait(50);
+        return *result;
+    };
+    const quint32 agentWorld =
+        ExtensionBackgroundRuntime::AgentWorldId;
+
+    QStringList report;
+    report << QStringLiteral(
+        "# ER17 — Bitwarden install -> unlock -> fill (harness-driven)");
+    report << QStringLiteral("generated: %1").arg(
+        QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+    report << QStringLiteral("bundle: %1 name=\"%2\" version=%3")
+        .arg(QFileInfo(src).fileName(), manifest.name,
+             manifest.version);
+    report << QStringLiteral("installed id: %1").arg(id);
+    // Live stage markers: the report body only dumps at two points,
+    // so a stall between them is invisible in the log otherwise.
+    auto stage = [&report](const QString &line) {
+        report << line;
+        qWarning().noquote() << line;
+    };
+    stage(QStringLiteral("stage: host ready"));
+
+    // Trace the background's real call surface for the WHOLE run:
+    // chrome.tabs.sendMessage (host->page traffic) and
+    // chrome.scripting.executeScript (the autofill injection path)
+    // both record args + the resolved per-frame results — a throwing
+    // injected file lands here as an {error} entry Bitwarden itself
+    // ignores, so this is where the fill chain's failures become
+    // visible.
+    eval(host->page(), QStringLiteral(
+        "(function(){self.__er17msgs=[];self.__er17exec=[];"
+        "var ts=chrome.tabs.sendMessage;"
+        "chrome.tabs.sendMessage=function(id,msg,o,cb){"
+        "var rec={cmd:(msg&&msg.command)||'(env)',"
+        "resp:'(pending)'};"
+        "self.__er17msgs.push(rec);"
+        "function done(v){rec.resp=v===undefined?'undef':"
+        "(v===null?'null':typeof v==='object'?"
+        "'obj:'+JSON.stringify(v).slice(0,180):String(v));}"
+        "try{var r=ts.call(this,id,msg,o,function(v){done(v);"
+        "if(cb)cb(v);});"
+        "if(r&&r.then)r.then(function(v){done(v);})"
+        ".catch(function(e){rec.err=String(e&&e.message||e);});"
+        "return r;}catch(e){rec.err='throw '+String(e);throw e;}};"
+        "var es=chrome.scripting.executeScript;"
+        "chrome.scripting.executeScript=function(inj,cb){"
+        "var rec={files:(inj&&inj.files)||null,"
+        "func:(inj&&inj.func)?'(func)':null,"
+        "target:inj&&inj.target,world:inj&&inj.world,"
+        "resp:'(pending)'};"
+        "self.__er17exec.push(rec);"
+        "function done(v){try{rec.resp=JSON.parse("
+        "JSON.stringify(v===undefined?null:v));}catch(e){"
+        "rec.resp=String(v);}}"
+        "try{var r=es.call(this,inj,function(v){done(v);});"
+        "if(r&&r.then)r.then(function(v){done(v);})"
+        ".catch(function(e){rec.err=String(e&&e.message||e);});"
+        "return r;}catch(e){rec.err='throw '+String(e);throw e;}};"
+        // Wrap every registered runtime.onMessage listener so the
+        // relay dispatch is fully traced: each record keeps the
+        // command, the listener's return (true = async sendResponse
+        // claimed), and the first sendResponse value.
+        "var L=(self.__arktosShim&&__arktosShim.messageListeners)||[];"
+        "self.__er17ml=[];self.__er17mlBase=L.length;"
+        "for(var li=0;li<L.length;++li){(function(idx,fn){"
+        "L[idx]=function(msg,sender,respond){"
+        "var rec={i:idx,cmd:(msg&&msg.command)||'(raw)'};"
+        "if(self.__er17ml.length<200)self.__er17ml.push(rec);"
+        "var r2=function(v){rec.resp=v===undefined?'undef':"
+        "(v===null?'null':typeof v==='object'?'obj:'+"
+        "JSON.stringify(v).slice(0,140):String(v));"
+        "return respond(v);};"
+        "try{var r=fn.call(this,msg,sender,r2);"
+        "rec.ret=r===true?'true':(r===false?'false':"
+        "(r===undefined?'undef':(r&&r.then?'promise':"
+        "typeof r)));return r;}catch(e){rec.threw=String(e&&"
+        "e.message||e);throw e;}};})(li,L[li]);}"
+        "return 0;})()"));
+
+
+    // Trace the autofill pipeline inside the background: which
+    // service call the collectPageDetailsResponse chain reaches, and
+    // where it dies (logService.error is Bitwarden's own sink for the
+    // orchestrator's dispatch catch — swallowing a throw there is
+    // invisible without this tap).
+    eval(host->page(), QStringLiteral(
+        "(function(){"
+        "self.__er17autofill=[];self.__er17err=[];"
+        "var tries=0;"
+        "var arm=function(){var m=self.bitwardenMain;"
+        "if(!m||!m.autofillService)return false;"
+        "if(self.__er17armed)return true;"
+        "self.__er17armed=1;"
+        "var log=function(api,v){self.__er17autofill.push("
+        "{api:api,v:v,t:Date.now()});};"
+        "if(m&&m.logService){var le=m.logService.error;"
+        "m.logService.error=function(e){self.__er17err.push("
+        "String(e&&(e.stack||e.message||e)).slice(0,300));"
+        "return le.apply(this,arguments);};}"
+        "var as=m&&m.autofillService;"
+        "if(as){['doAutoFillActiveTab','doAutoFillOnTab','doAutoFill',"
+        "'getActiveTab','generateFillScript'].forEach(function(n){"
+        "var o=as[n];if(typeof o!=='function')return;"
+        "as[n]=function(){var p;try{p=o.apply(this,arguments);"
+        "if(n==='generateFillScript'||n==='doAutoFill'){"
+        "var pd=arguments[0];"
+        "if(pd&&pd.pageDetails&&pd.pageDetails[0])"
+        "pd=pd.pageDetails[0].details||pd.pageDetails[0];"
+        "log(n+':in',{url:pd&&pd.url,"
+        "fields:(pd&&pd.fields||[]).map(function(f){return{"
+        "ty:f.type,vw:f.viewable,fn:f.fieldName,id:f.htmlID,"
+        "ac:f.autoCompleteType,tag:f.tagName,ph:f.placeholder,"
+        "al:f['aria-label'],op:f.opid,fc:f.formCategory,fq:f.fieldQualifier"
+        "};})});}"
+        "}catch(e){log(n+':threw',String(e&&e.message||e));throw e;}"
+        "if(p&&p.then)p.then(function(v){log(n+':done',"
+        "v===undefined?'undef':JSON.stringify(v).slice(0,220));})"
+        ".catch(function(e){log(n+':rej',String(e&&e.message||e));});"
+        "else log(n+':ret',JSON.stringify(p).slice(0,220));"
+        "return p;};});}"
+        "var cs=m&&m.cipherService;"
+        "if(cs){['getLastUsedForUrl','getLastLaunchedForUrl',"
+        "'getAllDecryptedForUrl'].forEach(function(n){"
+        "var o=cs[n];if(typeof o!=='function')return;"
+        "cs[n]=function(u){var p;try{p=o.apply(this,arguments);}"
+        "catch(e){log(n+':threw',String(e&&e.message||e));throw e;}"
+        "if(p&&p.then)p.then(function(v){log(n+':'+String(u),"
+        "v===undefined?'undef':v===null?'null':"
+        "(v&&v.length!==undefined?'arr:'+v.length:"
+        "'obj:'+JSON.stringify(v&&v.id||v).slice(0,140)));})"
+        ".catch(function(e){log(n+':rej',String(e&&e.message||e));});"
+        "return p;};});}"
+        "return true;};"
+        "var tryArm=function(){try{return arm();}catch(e){"
+        "self.__er17autofill.push({api:'arm-threw',"
+        "e:String(e&&e.message||e)});return false;}};"
+        "if(!tryArm()){var iv=setInterval(function(){"
+        "if(tryArm()||++tries>360){clearInterval(iv);"
+        "if(tries>360)self.__er17autofill.push({api:'arm-timeout',"
+        "m:!!self.bitwardenMain,"
+        "as:!!(self.bitwardenMain&&self.bitwardenMain.autofillService)});"
+        "}},250);}"
+        "return 0;})()"));
+
+    // --- the public SDK test-account fixture -------------------------
+    const QString uid =
+        QStringLiteral("060000fb-0922-4dd3-b170-6e15cb5df8c8");
+    const QString email = QStringLiteral("test@bitwarden.com");
+    const QString password = QStringLiteral("asdfasdfasdf");
+    // The fixture strings stay verbatim so the SDK unwraps the true
+    // account material.
+    const QString accountCryptoPrivKey = QStringLiteral(
+        "2.yN7l00BOlUE0Sb0M//Q53w==|"
+        "EwKG/BduQRQ33Izqc/ogoBROIoI5dmgrxSo82sgzgAMIBt3A2FZ9vPRMY+GWT85Jiq"
+        "ytDitGR3TqwnFUBhKUpRRAq4x7rA6A1arHrFp5Tp1p21O3SfjtvB3quiOKbqWk6ZaU1"
+        "Np9HwqwAecddFcB0YyBEiRX3VwF2pgpAdiPbSMuvo2qIgyob0CUoC/h4Bz1be7Qa7B"
+        "0Xw9/fMKkB1LpOm925lzqosyMQM62YpMGkjMsbZz0uPopu32fxzDWSPr+kekNNyLt9"
+        "InGhTpxLmq1go/pXR2uw5dfpXc5yuta7DB0EGBwnQ8Vl5HPdDooqOTD9I1jE0mRyuB"
+        "pWTTI3FRnu3JUh3rIyGBJhUmHqGZvw2CKdqHCIrQeQkkEYqOeJRJVdBjhv5KGJifqT"
+        "3BFRwX/YFJIChAQpebNQKXe/0kPivWokHWwXlDB7S7mBZzhaAPidZvnuIhalE2qmTy"
+        "pDwHy22FyqV58T8MGGMchcASDi/QXI6kcdpJzPXSeU9o+NC68QDlOIrMVxKFeE7w7P"
+        "vVmAaxEo0YwmuAzzKy9QpdlK0aab/xEi8V4iXj4hGepqAvHkXIQd+r3FNeiLfllkb6"
+        "1p6WTjr5urcmDQMR94/wYoilpG5OlybHdbhsYHvIzYoLrC7fzl630gcO6t4nM24vdB"
+        "6Ymg9BVpEgKRAxSbE62Tqacxqnz9AcmgItb48NiR/He3n3ydGjPYuKk/ihZMgEwAEZ"
+        "vSlNxYONSbYrIGDtOY+8Nbt6KiH3l06wjZW8tcmFeVlWv+tWotnTY9IqlAfvNVTjts"
+        "obqtQnvsiDjdEVtNy/s2ci5TH+NdZluca2OVEr91Wayxh70kpM6ib4UGbfdmGgCo74"
+        "gtKvKSJU0rTHakQ5L9JlaSDD5FamBRyI0qfL43Ad9qOUZ8DaffDCyuaVyuqk7cz9Hw"
+        "mEmvWU3VQ+5t06n/5kRDXttcw8w+3qClEEdGo1KeENcnXCB32dQe3tDTFpuAIMLqwX"
+        "s6FhpawfZ5kPYvLPczGWaqftIs/RXJ/EltGc0ugw2dmTLpoQhCqrcKEBDoYVk0LDZK"
+        "snzitOGdi9mOWse7Se8798ib1UsHFUjGzISEt6upestxOeupSTOh0v4+AjXbDzRUyo"
+        "gHww3V+Bqg71bkcMxtB+WM+pn1XNbVTyl9NR040nhP7KEf6e9ruXAtmrBC2ah5cFEp"
+        "LIot77VFZ9ilLuitSz+7T8n1yAh1IEG6xxXxninAZIzi2qGbH69O5RSpOJuJTv17zT"
+        "LJQIIc781JwQ2TTwTGnx5wZLbffhCasowJKd2EVcyMJyhz6ru0PvXWJ4hUdkARJs3X"
+        "u8dus9a86N8Xk6aAPzBDqzYb1vyFIfBxP0oO8xFHgd30Cgmz8UrSE3qeWRrF8ftrI6"
+        "xQnFjHBGWD/JWSvd6YMcQED0aVuQkuNW9ST/DzQThPzRfPUoiL10yAmV7Ytu4fR3x2"
+        "sF0Yfi87YhHFuCMpV/DsqxmUizyiJuD938eRcH8hzR/VO53Qo3UIsqOLcyXtTv6THj"
+        "SlTopQ+JOLOnHm1w8dzYbLN44OG44rRsbihMUQp+wUZ6bsI8rrOnm9WErzkbQFbrfA"
+        "INdoCiNa6cimYIjvvnMTaFWNymqY1vZxGztQiMiHiHYwTfwHTXrb9j0uPM=|"
+        "09J28iXv9oWzYtzK2LBT6Yht4IT4MijEkk0fwFdrVQ4=");
+    const QString mkwuk = QStringLiteral(
+        "2.Q/2PhzcC7GdeiMHhWguYAQ==|"
+        "GpqzVdr0go0ug5cZh1n+uixeBC3oC90CIe0hd/HWA/pTRDZ8ane4fmsEIcuc8eMKUt"
+        "55Y2q/fbNzsYu41YTZzzsJUSeqVjT8/iTQtgnNdpo=|"
+        "dwI+uyvZ1h/iZ03VQ+/wrGEFYVewBUUl/syYgjsNMbE=");
+
+    // --- seed the account state the bundle reads ----------------------
+    // Every disk key goes through Bitwarden's own chrome.storage.local
+    // envelope ({__json__:true, value:<json>}) so processGetObject
+    // unwraps it exactly like a value written by save().
+    const QString seedSrc = QStringLiteral(
+        "(function(){"
+        "var uid='%1',email='%2';"
+        "var wrap=function(v){return{__json__:true,"
+        "value:JSON.stringify(v)};};"
+        "var b64=function(s){return btoa(s).replace(/\\+/g,'-')"
+        ".replace(/\\//g,'_').replace(/=+$/,'');};"
+        "var jwt=b64('{\"alg\":\"none\",\"typ\":\"JWT\"}')+'.'"
+        "+b64(JSON.stringify({exp:4102444800,sub:uid,email:email,"
+        "name:'ER17 Test'}))+'.e30';"
+        "var items={};"
+        "var acc={};acc[uid]={email:email,name:'ER17 Test',"
+        "emailVerified:true};"
+        "items['global_account_accounts']=wrap(acc);"
+        "items['user_'+uid+'_crypto_accountCryptographicState']="
+        "wrap({V1:{private_key:'%3'}});"
+        "items['user_'+uid+'_kdfConfig_kdfConfig']="
+        "wrap({kdfType:0,iterations:600000});"
+        "items['user_'+uid+'_masterPasswordUnlock_"
+        "masterPasswordUnlockKey']=wrap({salt:email,"
+        "kdf:{kdfType:0,iterations:600000},"
+        "masterKeyWrappedUserKey:'%4'});"
+        "items['user_'+uid+'_masterPassword_"
+        "masterKeyEncryptedUserKey']=wrap('%4');"
+        "items['user_'+uid+'_token_accessToken']=wrap(jwt);"
+        // activeAccountId LAST: MainBackground.init watches the
+        // active account and calls switchAccount(null) — wiping this
+        // key — if it observes LoggedOut before the auth material
+        // above has landed.
+        "items['global_account_activeAccountId']=wrap(uid);"
+        "self.__er17Seed={done:false};"
+        // Bitwarden's observable storage filters onChanged to
+        // single-key events — one set() call per key.
+        "var keys=Object.keys(items),i=0;"
+        "function next(){if(i>=keys.length){self.__er17Seed="
+        "{done:true,err:null};return;}"
+        "var o={};o[keys[i]]=items[keys[i]];i++;"
+        "chrome.storage.local.set(o,function(){"
+        "var e=chrome.runtime.lastError;"
+        "if(e){self.__er17Seed={done:true,err:e.message||String(e)};"
+        "return;}next();});}"
+        "next();"
+        "return 0;})()")
+        .arg(uid, email, accountCryptoPrivKey, mkwuk);
+    QVERIFY(eval(host->page(), seedSrc).toInt() == 0);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(), QStringLiteral(
+            "JSON.stringify(self.__er17Seed)")).toString()
+            .contains(QLatin1String("\"done\":true")), 15000);
+    const QJsonObject seedResult = QJsonDocument::fromJson(
+        eval(host->page(), QStringLiteral(
+            "JSON.stringify(self.__er17Seed)")).toString().toUtf8())
+        .object();
+    report << QStringLiteral("account seed: %1")
+        .arg(QString::fromUtf8(
+            QJsonDocument(seedResult).toJson(QJsonDocument::Compact)));
+    QVERIFY2(seedResult.value(QLatin1String("err")).toVariant().isNull(),
+             "storage.local.set rejected");
+
+    // Isolate shim-storage vs state-layer: raw get of what we wrote.
+    eval(host->page(), QStringLiteral(
+        "(function(){chrome.storage.local.get("
+        "['global_account_accounts','global_account_activeAccountId'],"
+        "function(v){self.__er17raw={done:true,v:v,"
+        "err:(chrome.runtime.lastError&&"
+        "chrome.runtime.lastError.message)||null};});return 0;})()"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(), QStringLiteral(
+            "JSON.stringify(self.__er17raw||null)")).toString()
+            .contains(QLatin1String("\"done\":true")), 10000);
+    report << QStringLiteral("storage.local readback: %1")
+        .arg(eval(host->page(), QStringLiteral(
+            "JSON.stringify(self.__er17raw.v)")).toString());
+
+    // Probe the bundle's own storage service (XB over
+    // chrome.storage.local) and the chrome.storage.local identity.
+    eval(host->page(), QStringLiteral(
+        "(function(){var m=self.bitwardenMain;var p={};"
+        "p.isShim=(typeof chrome.storage.local.__fire==='function'||"
+        "typeof (chrome.storage.local.set&&chrome.storage.local.set"
+        ".toString().indexOf('call(')>-1));"
+        "p.hasAreaOnChanged=typeof chrome.storage.local.onChanged;"
+        "p.hasTopOnChanged=typeof chrome.storage.onChanged;"
+        "p.keys=Object.keys(chrome.storage.local).join(',');"
+        "self.__er17svcp={done:false,probe:p};"
+        "try{m.storageService.get('global_account_accounts')"
+        ".then(function(v){self.__er17svcp.done=true;"
+        "self.__er17svcp.svcVal=v;})"
+        ".catch(function(e){self.__er17svcp.done=true;"
+        "self.__er17svcp.svcErr=String(e);});}catch(e){"
+        "self.__er17svcp.done=true;self.__er17svcp.svcErr="
+        "'sync '+String(e);}"
+        "return 0;})()"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(), QStringLiteral(
+            "JSON.stringify(self.__er17svcp||null)")).toString()
+            .contains(QLatin1String("\"done\":true")), 15000);
+    report << QStringLiteral("storageService probe: %1")
+        .arg(eval(host->page(), QStringLiteral(
+            "JSON.stringify(self.__er17svcp)")).toString());
+
+    // Does the real engine fire storage.onChanged for our writes?
+    eval(host->page(), QStringLiteral(
+        "(function(){self.__er17oc={fired:[]};"
+        "chrome.storage.local.onChanged.addListener(function(c){"
+        "self.__er17oc.fired.push(Object.keys(c));});"
+        "chrome.storage.onChanged.addListener(function(c,a){"
+        "self.__er17oc.fired.push('top:'+Object.keys(c));});"
+        "var o={};o['er17_probe_key']='x';"
+        "chrome.storage.local.set(o,function(){});"
+        "return 0;})()"));
+    QTest::qWait(1500);
+    report << QStringLiteral("onChanged probe: %1")
+        .arg(eval(host->page(), QStringLiteral(
+            "JSON.stringify(self.__er17oc.fired)")).toString());
+
+    // The state layer must actually SEE the seeded account — read it
+    // back through the bundle's own services, not storage.
+    eval(host->page(), QStringLiteral(
+        "(function(){var m=self.bitwardenMain;if(!m)return 0;"
+        "self.__er17acct={done:false};"
+        "Promise.all(["
+        " new Promise(function(r){m.accountService.accounts$"
+        ".subscribe(function(v){r(v)});}),"
+        " new Promise(function(r){m.accountService"
+        ".activeAccount$.subscribe(function(v){r(v)});})"
+        "]).then(function(v){self.__er17acct={done:true,"
+        "accounts:v[0],active:v[1]};})"
+        ".catch(function(e){self.__er17acct={done:true,"
+        "error:String(e)};});"
+        "return 0;})()"));
+    QTest::qWait(1000);
+    const QJsonObject acct = QJsonDocument::fromJson(
+        eval(host->page(), QStringLiteral(
+            "JSON.stringify(self.__er17acct||null)")).toString()
+            .toUtf8()).object();
+    report << QStringLiteral("accountService readback: %1")
+        .arg(QString::fromUtf8(
+            QJsonDocument(acct).toJson(QJsonDocument::Compact)));
+
+    // --- SDK readiness probes — 'not logged in' masks every cause ---
+    eval(host->page(), QStringLiteral(
+        "(function(){self.__er17sdk={};"
+        "self.__er17sdk.href=String(location.href);"
+        "self.__er17sdk.wasm=(typeof WebAssembly!=='undefined');"
+        "self.__er17sdk.initSdk=(typeof globalThis.initSdk);"
+        "var rel='b149282d9595bc31ecc7.module.wasm';"
+        "var abs='';"
+        "try{abs=chrome.runtime.getURL(rel);}catch(e){}"
+        "self.__er17sdk.extUrl=abs;"
+        "fetch(rel).then(function(r){self.__er17sdk.relFetch="
+        "r.status+' '+r.url;}).catch(function(e){"
+        "self.__er17sdk.relFetch='ERR '+String(e);});"
+        "if(abs)fetch(abs).then(function(r){self.__er17sdk.absFetch="
+        "r.status+' '+r.url;}).catch(function(e){"
+        "self.__er17sdk.absFetch='ERR '+String(e);});"
+        "return 0;})()"));
+    QTest::qWait(3000);
+    report << QStringLiteral("sdk probe: %1")
+        .arg(eval(host->page(), QStringLiteral(
+            "JSON.stringify(self.__er17sdk)")).toString());
+    report << QStringLiteral("accountService readback (seen above): "
+                             "accounts non-empty=%1")
+        .arg(acct.value(QLatin1String("accounts")).toObject()
+                 .isEmpty() ? QStringLiteral("NO")
+                            : QStringLiteral("yes"));
+
+    // Bitwarden's init calls switchAccount(null) when the active
+    // account reads LoggedOut — if that raced our seed, re-assert
+    // activeAccountId until the real service sees the account.
+    int reasserts = 0;
+    {
+        QElapsedTimer activeTimer;
+        activeTimer.start();
+        while (activeTimer.elapsed() < 15000) {
+            eval(host->page(), QStringLiteral(
+                "(function(){var m=self.bitwardenMain;if(!m)return 0;"
+                "self.__er17act={done:false};"
+                "var sub=m.accountService.activeAccount$"
+                ".subscribe(function(v){if(!self.__er17act.done){"
+                "self.__er17act={done:true,active:v};"
+                "try{sub.unsubscribe()}catch(e){}}});"
+                "setTimeout(function(){self.__er17act.done=true;},"
+                "1500);return 0;})()"));
+            QTRY_VERIFY_WITH_TIMEOUT(
+                eval(host->page(), QStringLiteral(
+                    "JSON.stringify(self.__er17act||{})")).toString()
+                    .contains(QLatin1String("\"done\":true")), 5000);
+            const QJsonObject act = QJsonDocument::fromJson(
+                eval(host->page(), QStringLiteral(
+                    "JSON.stringify(self.__er17act)")).toString()
+                    .toUtf8()).object();
+            if (!act.value(QLatin1String("active")).isNull()
+                    && !act.value(QLatin1String("active")).isUndefined())
+                break;
+            ++reasserts;
+            eval(host->page(), QStringLiteral(
+                "(function(){var o={};"
+                "o['global_account_activeAccountId']={__json__:true,"
+                "value:JSON.stringify('%1')};"
+                "chrome.storage.local.set(o,function(){});"
+                "return 0;})()").arg(uid));
+            QTest::qWait(700);
+        }
+    }
+    if (reasserts)
+        report << QStringLiteral("activeAccountId re-asserted x%1")
+            .arg(reasserts);
+
+    // --- REAL unlock through the WASM SDK -----------------------------
+    stage(QStringLiteral("stage: unlock issued"));
+    eval(host->page(), QStringLiteral(
+        "(function(){self.__er17unlock={done:false};"
+        "var m=self.bitwardenMain;"
+        "if(!m||!m.unlockService){self.__er17unlock={done:true,"
+        "error:'bitwardenMain.unlockService missing'};return 0}"
+        "m.unlockService.unlockWithMasterPassword('%1','%2')"
+        ".then(function(){return m.authService.getAuthStatus();})"
+        ".then(function(s){self.__er17unlock={done:true,status:s};})"
+        ".catch(function(e){self.__er17unlock={done:true,"
+        "error:String(e&&(e.stack||e.message||e))};});"
+        "return 0;})()").arg(uid, password));
+    // The real unlock call runs through runOnUnlockSideEffects (SDK
+    // crypto init, then platform side-effects like biometrics and
+    // autoUnlock that have no reachable backend in the harness) and
+    // its promise may not settle — but the honest verdict is the
+    // account's auth status on the real auth service: seeded
+    // unlocked-cache state plus the issued unlock should read as
+    // Unlocked (2).
+    eval(host->page(), QStringLiteral(
+        "(function(){var m=self.bitwardenMain;if(!m)return 0;"
+        "self.__er17auth={status:-1,seen:[]};"
+        "m.authService.authStatusFor$('%1').subscribe(function(v){"
+        "self.__er17auth.status=v;"
+        "self.__er17auth.seen.push(v);});"
+        "return 0;})()").arg(uid));
+    // The stream starts at Locked (1) and flips to Unlocked (2)
+    // when the in-flight unlock finishes its SDK work — poll the
+    // live value, not the first emission.
+    int authStatus = -1;
+    {
+        QElapsedTimer unlockTimer;
+        unlockTimer.start();
+        while (unlockTimer.elapsed() < 90000) {
+            authStatus = eval(host->page(), QStringLiteral(
+                "(self.__er17auth||{}).status")).toInt();
+            if (authStatus == 2)
+                break;
+            QTest::qWait(500);
+        }
+        report << QStringLiteral("unlock result: %1 auth status: %2"
+                                 " (stream: %3)")
+            .arg(eval(host->page(), QStringLiteral(
+                "JSON.stringify(self.__er17unlock||{})")).toString())
+            .arg(authStatus)
+            .arg(eval(host->page(), QStringLiteral(
+                "JSON.stringify((self.__er17auth||{}).seen||[])"))
+                .toString());
+    }
+    stage(QStringLiteral("stage: unlock verdict"));
+    if (authStatus != 2) {
+        // Measured gap — name which awaited observable stalls:
+        // subscribe to every observable unlockWithMethod touches,
+        // each with its own watchdog, and record which emitted.
+        eval(host->page(), QStringLiteral(
+            "(function(){var m=self.bitwardenMain;if(!m)return 0;"
+            "self.__er17diag={done:false,emitted:{},members:[]};"
+            "self.__er17diag.members=Object.keys(m).filter("
+            "function(k){return /sdk|crypto|kdf|auth|account|unlock"
+            "|register|token/.test(k)});"
+            "var uid='%1';"
+            "function probe(name,obs){try{var done=false;"
+            "obs.subscribe(function(v){if(!done){done=true;"
+            "self.__er17diag.emitted[name]=v===null?'null':"
+            "(v===undefined?'undef':typeof v==='object'?'obj':"
+            "String(v)).slice(0,80);}});}catch(e){"
+            "self.__er17diag.emitted[name]='THROW '+e;}}"
+            "try{probe('registerClient$',"
+            "m.registerSdkService.registerClient$(uid));}catch(e){"
+            "self.__er17diag.emitted.registerClient='THROW '+e;}"
+            "try{probe('accounts$',m.accountService.accounts$);}"
+            "catch(e){self.__er17diag.emitted.accounts='THROW '+e;}"
+            "try{probe('activeAccount$',"
+            "m.accountService.activeAccount$);}"
+            "catch(e){self.__er17diag.emitted.activeAccount="
+            "'THROW '+e;}"
+            "try{probe('kdfConfig$',"
+            "m.kdfConfigService.getKdfConfig$(uid));}catch(e){"
+            "self.__er17diag.emitted.kdfConfig='THROW '+e;}"
+            "try{probe('cryptoState$',"
+            "m.accountCryptographicStateService"
+            ".accountCryptographicState$(uid));}catch(e){"
+            "self.__er17diag.emitted.cryptoState='THROW '+e;}"
+            "try{probe('mpUnlockData$',"
+            "m.masterPasswordService"
+            ".masterPasswordUnlockData$(uid));}catch(e){"
+            "self.__er17diag.emitted.mpUnlockData='THROW '+e;}"
+            "try{probe('v2UpgradeToken$',"
+            "m.v2UpgradeTokenStateService.v2UpgradeToken$(uid));}"
+            "catch(e){self.__er17diag.emitted.v2Token='THROW '+e;}"
+            "try{probe('authStatus$',"
+            "m.authService.authStatusFor$(uid));}catch(e){"
+            "self.__er17diag.emitted.authStatus='THROW '+e;}"
+            "setTimeout(function(){self.__er17diag.done=true;},"
+            "8000);return 0;})()").arg(uid));
+        QTRY_VERIFY_WITH_TIMEOUT(
+            eval(host->page(), QStringLiteral(
+                "JSON.stringify(self.__er17diag||{})")).toString()
+                .contains(QLatin1String("\"done\":true")), 20000);
+        report << QStringLiteral("diag: %1")
+            .arg(eval(host->page(), QStringLiteral(
+                "JSON.stringify(self.__er17diag)")).toString());
+        for (const QString &line : report)
+            qWarning().noquote() << line;
+        QVERIFY2(false, qPrintable(QStringLiteral(
+            "auth status did not reach Unlocked: %1")
+            .arg(authStatus)));
+    }
+
+    // --- seed the unlocked vault cache --------------------------------
+    stage(QStringLiteral("stage: cipher seed issued"));
+    // The autofill read path consults decryptedCiphersState first on
+    // every branch (cache or SDK); the fixture cipher is plaintext
+    // fixture data — synthetic credentials, never user data.
+    const QString cipherId = QStringLiteral(
+        "11111111-2222-4333-8444-555555555555");
+    const QString fixtureUser = QStringLiteral("er17.user@arktos.test");
+    const QString fixturePass = QStringLiteral("Sup3rSecret-ER17!");
+
+    // --- a real login tab on a covered host ---------------------------
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    const QString base = QStringLiteral("http://127.0.0.1:%1")
+        .arg(server.serverPort());
+    QObject::connect(&server, &QTcpServer::newConnection,
+                     this, [&]() {
+        QTcpSocket *socket = server.nextPendingConnection();
+        QObject::connect(socket, &QTcpSocket::readyRead,
+                         socket, [socket]() {
+            socket->readAll();
+            const QByteArray body =
+                "<html><body><form id=loginform>"
+                "<input type=text name=username id=username "
+                "autocomplete=username>"
+                "<input type=password name=password id=password "
+                "autocomplete=current-password>"
+                "</form></body></html>";
+            socket->write(
+                "HTTP/1.1 200\r\nContent-Type: text/html\r\n"
+                "Content-Length: "
+                + QByteArray::number(body.size())
+                + "\r\nConnection: close\r\n\r\n" + body);
+            socket->disconnectFromHost();
+        });
+    });
+    const QString pageUrl = base + QStringLiteral("/login");
+
+    // decrypted cipher record (CipherView JSON — rb.fromJSON shape)
+    const QString cipherView = QStringLiteral(
+        "{\"id\":\"%1\",\"type\":1,\"name\":\"ER17 fixture login\","
+        "\"organizationId\":null,\"folderId\":null,\"collectionIds\":[],"
+        "\"localData\":{},\"notes\":null,\"edit\":true,"
+        "\"viewPassword\":true,\"favorite\":false,"
+        "\"organizationUseTotp\":false,\"reprompt\":0,"
+        "\"attachments\":[],\"fields\":[],\"passwordHistory\":[],"
+        "\"login\":{\"username\":\"%2\",\"password\":\"%3\","
+        "\"totp\":null,\"uris\":[{\"uri\":\"%4/\",\"match\":1,"
+        "\"uriChecksum\":null}],\"fido2Credentials\":[],"
+        "\"autofillOnPageLoad\":null,\"passwordRevisionDate\":null},"
+        "\"revisionDate\":\"2024-01-01T00:00:00.000Z\","
+        "\"creationDate\":\"2024-01-01T00:00:00.000Z\","
+        "\"deletedDate\":null,\"archivedDate\":null,"
+        "\"decryptionFailure\":false}")
+        .arg(cipherId, fixtureUser, fixturePass, base);
+    const QString cipherSeed = QStringLiteral(
+        "(function(){self.__er17ciphers={done:false};"
+        "var m=self.bitwardenMain,cs=m.cipherService,uid='%1';"
+        "var view=%2;"
+        "Promise.all(["
+        " cs.decryptedCiphersState(uid).update(function(){var r={};"
+        "  r['%3']=view;return r;}),"
+        " cs.encryptedCiphersState(uid).update(function(){return {}})"
+        "]).then(function(){self.__er17ciphers={done:true};})"
+        ".catch(function(e){self.__er17ciphers={done:true,"
+        "error:String(e&&(e.stack||e.message||e))};});"
+        "return 0;})()")
+        .arg(uid, cipherView, cipherId);
+    QVERIFY(eval(host->page(), cipherSeed).toInt() == 0);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(), QStringLiteral(
+            "JSON.stringify(self.__er17ciphers||{})")).toString()
+            .contains(QLatin1String("\"done\":true")), 20000);
+    const QJsonObject cipherResult = QJsonDocument::fromJson(
+        eval(host->page(), QStringLiteral(
+            "JSON.stringify(self.__er17ciphers)")).toString().toUtf8())
+        .object();
+    report << QStringLiteral("cipher seed: %1")
+        .arg(QString::fromUtf8(QJsonDocument(cipherResult)
+            .toJson(QJsonDocument::Compact)));
+    QVERIFY2(cipherResult.value(QLatin1String("error")).toString()
+                 .isEmpty(),
+             qPrintable(QStringLiteral(
+                 "cipher state seed failed: %1")
+                 .arg(QString::fromUtf8(QJsonDocument(cipherResult)
+                     .toJson(QJsonDocument::Compact)))));
+
+    stage(QStringLiteral("stage: opening login tab"));
+    BrowserMainWindow *window = new BrowserMainWindow;
+    // The form fields must be genuinely viewable — Bitwarden's
+    // isElementOutsideViewportBounds measures against
+    // documentElement.scrollWidth/scrollHeight, which stay 0 until
+    // the renderer gets a real compositor viewport; a plain resize()
+    // on a never-shown window leaves innerWidth at 0 and every field
+    // reports viewable:false (empty fill script -> didAutofill:false).
+    // WA_DontShowOnScreen + show() creates the platform window and
+    // real geometry without mapping to the (offscreen) display.
+    window->resize(1024, 768);
+    window->setAttribute(Qt::WA_DontShowOnScreen);
+    window->show();
+    TabWidget *tw = window->tabWidget();
+    QVERIFY(tw && tw->count() >= 1);
+    WebView *view = tw->webView(0);
+    QVERIFY(view && view->page());
+    QSignalSpy loadSpy(view->page(), &QWebEnginePage::loadFinished);
+    view->load(QUrl(pageUrl));
+    QTRY_VERIFY_WITH_TIMEOUT(loadSpy.count() >= 1, 30000);
+    const int tabId = ExtensionShimBackend::tabIdFor(view);
+    QVERIFY(tabId > 0);
+    // Bitwarden's generateFillScript drops viewable:false fields —
+    // record exactly what the page reports so a measured gap names
+    // its cause (zero-size viewport vs hidden-document vs layout).
+    report << QStringLiteral("page viewport: %1")
+        .arg(eval(view->page(), QStringLiteral(
+            "(function(){var i=document.querySelector('input');"
+            "var r=i?i.getBoundingClientRect():null;"
+            "return JSON.stringify({iw:innerWidth,ih:innerHeight,"
+            "vis:document.visibilityState,hid:document.hidden,"
+            "r:r&&{x:r.x,y:r.y,w:r.width,h:r.height},"
+            "ow:i&&i.offsetWidth,oh:i&&i.offsetHeight});})()"))
+            .toString());
+    // The declared trigger script + the on-demand bootstrap-autofill
+    // injection cross before the command can complete.
+    const QString probe = QStringLiteral(
+        "((window.__arktosExtAgents&&__arktosExtAgents['%1'])"
+        "||{active:false,bridgeUp:false})").arg(id);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(view->page(), probe + QStringLiteral(".bridgeUp"),
+             agentWorld).toBool(),
+        30000);
+    report << QStringLiteral("tab: id=%1 url=%2")
+        .arg(tabId).arg(view->page()->url().toString());
+
+    // Content-side instrumentation.  The bootstrap content script is
+    // injected by the command itself, so trap the moment the bundle
+    // publishes window.bitwardenAutofillInit and wrap the methods the
+    // fill chain hangs on: the AutofillInit + CollectAutofill service
+    // sendExtensionMessage members (both are instance properties the
+    // classes late-bind through 'this.') and getPageDetails — plus a
+    // window-level unhandledrejection tap, since an async leg that
+    // throws inside the bundle's awaiter surfaces nowhere else.
+    const QString spyInstall = QStringLiteral(
+        "(function(){"
+        "var a=(window.__arktosExtAgents||{})['%1'];"
+        "if(!a||!a.chrome)return 'noagent';"
+        "window.__er17cs=[];"
+        "var push=function(o){try{o.t=Date.now();}catch(e){}"
+        "if(window.__er17cs.length<300)window.__er17cs.push(o);};"
+        "var rt=a.chrome.runtime;"
+        "if(rt&&rt.sendMessage&&!rt.sendMessage.__er17){"
+        "var osm=rt.sendMessage;"
+        "var wm=function(){var m=arguments[0];"
+        "var rec={api:'rt.send',cmd:(m&&m.command)||'(raw)'};"
+        "push(rec);try{var r=osm.apply(rt,arguments);"
+        "if(r&&r.then)r.then(function(v){rec.resp=v===undefined"
+        "?'undef':(v===null?'null':(typeof v==='object'?'obj:'"
+        "+JSON.stringify(v).slice(0,120):String(v)));},"
+        "function(e){rec.err=String(e&&e.message||e);});"
+        "return r;}catch(e){rec.threw=String(e);throw e;}};"
+        "wm.__er17=1;"
+        "try{rt.sendMessage=wm;}catch(e){push({api:'sendwrap-fail'});}"
+        "}"
+        "var wrapSext=function(owner,tag){"
+        "if(!owner||typeof owner.sendExtensionMessage!=='function'"
+        "||owner.sendExtensionMessage.__er17)return;"
+        "var ose=owner.sendExtensionMessage;"
+        "var f=function(c){var rec={api:tag,cmd:String(c)};push(rec);"
+        "try{var r=ose.apply(owner,arguments);"
+        "if(r&&r.then)r.then(function(v){rec.resp=v===undefined"
+        "?'undef':(v===null?'null':(typeof v==='object'?'obj:'"
+        "+JSON.stringify(v).slice(0,120):String(v)));},"
+        "function(e){rec.err=String(e&&e.message||e);});"
+        "return r;}catch(e){rec.threw=String(e);throw e;}};"
+        "f.__er17=1;owner.sendExtensionMessage=f;};"
+        "var wrapInst=function(ai){"
+        "if(!ai||ai.__er17w)return ai;"
+        "try{Object.defineProperty(ai,'__er17w',{value:1});}"
+        "catch(e){}"
+        "wrapSext(ai,'ai.send');"
+        "try{var cs=ai.collectAutofillContentService;"
+        "wrapSext(cs,'cs.send');"
+        "if(cs&&cs.getPageDetails&&!cs.getPageDetails.__er17){"
+        "var og=cs.getPageDetails;"
+        "var wg=function(){push({api:'getPageDetails:call'});"
+        "var p=og.apply(cs,arguments);"
+        "if(p&&p.then)p.then(function(v){push({api:'gpd:done',"
+        "fields:v&&v.fields?v.fields.length:-1,"
+        "flds:(v&&v.fields||[]).map(function(f){return{ty:f.type,"
+        "vw:f.viewable,fn:f.fieldName,id:f.htmlID,ac:f.autoCompleteType,"
+        "pf:f.maxlength===-1?null:f.maxlength};}).slice(0,6)});},"
+        "function(e){push({api:'gpd:err',"
+        "e:String(e&&(e.stack||e.message||e)).slice(0,240)});});"
+        "return p;};wg.__er17=1;cs.getPageDetails=wg;}"
+        "if(cs&&cs.attributeSettingsFetched"
+        "&&cs.attributeSettingsFetched.then)"
+        "cs.attributeSettingsFetched.then("
+        "function(){push({api:'attrSettings:resolved'});},"
+        "function(e){push({api:'attrSettings:rejected',"
+        "e:String(e&&e.message||e)});});"
+        "if(cs&&cs.isMonitoring!==undefined)"
+        "push({api:'cs.isMonitoring',v:cs.isMonitoring});"
+        "}catch(e){push({api:'wrap-err',e:String(e)});}"
+        "return ai;};"
+        "try{wrapInst(window.bitwardenAutofillInit);}catch(e){}"
+        // held starts at the CURRENT value: the bootstrap file
+        // assigns window.bitwardenAutofillInit once before this spy
+        // installs, so a bare 'var held' would hide the live
+        // instance behind the accessor (reads -> undefined) and
+        // break any bundle code that reaches for it later.
+        "var held=window.bitwardenAutofillInit;"
+        "try{Object.defineProperty(window,'bitwardenAutofillInit',{"
+        "configurable:true,get:function(){return held;},"
+        "set:function(v){held=wrapInst(v);}});}catch(e){"
+        "push({api:'trap-err',e:String(e)});}"
+        "window.addEventListener('unhandledrejection',function(ev){"
+        "push({api:'unhandledrejection',"
+        "e:String(ev.reason&&(ev.reason.stack||ev.reason.message"
+        "||ev.reason)).slice(0,300)});});"
+        "window.addEventListener('error',function(ev){"
+        "push({api:'windowerror',"
+        "e:String(ev.message).slice(0,200)});});"
+        "push({api:'world',readyState:(document&&document.readyState)"
+        "||'?',gIsW:globalThis===window,"
+        "href:String(location.href)});"
+        "return 'armed';})()")
+        .arg(id);
+    report << QStringLiteral("cs spy: %1")
+        .arg(eval(view->page(), spyInstall, agentWorld).toString());
+
+    // --- the real trigger: commands.onCommand('autofill_login') -------
+    // Wait for the bundle's own readiness before firing the user
+    // command — the harness compresses minutes of real boot into
+    // seconds, and an autofill command drops inside Bitwarden itself
+    // when (a) the services are not yet published (fillRequest$ is
+    // subscribed in init) or (b) autofillLifecycleService.liveTabs
+    // does not yet contain the tab — its tabs.onCreated-fed seed
+    // resolves asynchronously and the command's fillRequest$ filter
+    // reads the set synchronously (measured: the [tabId] emission
+    // lands ~12ms AFTER the command's request).  The gate is the
+    // extension's own readiness, the peer of host->Ready on our
+    // side; its outcome is recorded either way.
+    const QString svcReadySrc = QStringLiteral(
+        "(function(){var m=self.bitwardenMain;"
+        "if(!(m&&m.autofillService&&m.autofillOrchestrator"
+        "&&m.cipherService))return false;"
+        "var lt=m.autofillLifecycleService"
+        "&&m.autofillLifecycleService.liveTabs;"
+        "if(!lt)return false;"
+        "var s;try{s=lt.getValue?lt.getValue():"
+        "(lt.value!==undefined?lt.value:lt._value);}catch(e){"
+        "return false;}"
+        "return !!(s&&typeof s.has==='function'&&s.has(%1));})()")
+        .arg(tabId);
+    QElapsedTimer svcGate;
+    svcGate.start();
+    bool svcReady = false;
+    while (svcGate.elapsed() < 120000) {
+        if (eval(host->page(), svcReadySrc).toBool()) {
+            svcReady = true;
+            break;
+        }
+        QTest::qWait(500);
+    }
+    report << QStringLiteral("svc readiness gate: %1 (%2 ms)")
+        .arg(svcReady ? QStringLiteral("ready")
+                      : QStringLiteral("TIMEOUT — services never "
+                                       "published"))
+        .arg(svcGate.elapsed());
+    // Service-side trace of the fill chain: the command path is
+    // collectPageDetails -> collectPageDetailsResponse ->
+    // autofillOrchestrator.fillRequest$ (filtered on
+    // autofillLifecycleService.liveTabs — chrome.tabs.onCreated-fed)
+    // -> autofillService.doAutoFillActiveTab -> doAutoFillOnTab ->
+    // doAutoFill -> tabSendMessage('fillForm').  Every hop is wrapped
+    // so a silent drop names its station.
+    eval(host->page(), QStringLiteral(
+        "(function(){var m=self.bitwardenMain;if(!m)return 'nom';"
+        "self.__er17svc={log:[]};var L=self.__er17svc.log;"
+        "var push=function(o){try{o.t=Date.now();}catch(e){}"
+        "if(L.length<400)L.push(o);};"
+        "try{var lt=m.autofillLifecycleService"
+        "&&m.autofillLifecycleService.liveTabs;"
+        "if(lt&&lt.subscribe)lt.subscribe(function(s){"
+        "push({api:'liveTabs',tabs:Array.from(s)});});"
+        "else push({api:'liveTabs',missing:true});}catch(e){"
+        "push({api:'liveTabs-sub',err:String(e)});}"
+        "try{var orc=m.autofillOrchestrator;"
+        "var fr=orc&&orc.fillRequest$;"
+        "if(fr&&fr.subscribe)fr.subscribe(function(v){"
+        "try{push({api:'fillRequest',kind:v&&v.kind,"
+        "tabId:v&&v.tabId,frameId:v&&v.frameId,"
+        "fields:(v&&v.pageDetail&&v.pageDetail.details"
+        "&&v.pageDetail.details.fields||[]).length});}"
+        "catch(e){push({api:'fillRequest',err:String(e)});}});"
+        "var od=orc&&orc.dispatch;"
+        "if(od)orc.dispatch=function(e){"
+        "push({api:'dispatch',kind:e&&e.kind,tabId:e&&e.tabId});"
+        "try{var r=od.apply(orc,arguments);"
+        "if(r&&r.then)r.then(function(){push({api:'dispatch:done',"
+        "kind:e&&e.kind});},function(x){push({api:'dispatch:err',"
+        "e:String(x&&(x.stack||x.message||x)).slice(0,300)});});"
+        "return r;}catch(x){push({api:'dispatch:threw',"
+        "e:String(x)});throw x;}};}catch(e){"
+        "push({api:'dispatch-wrap',err:String(e)});}"
+        "var svc=m.autofillService;if(svc){"
+        "['doAutoFillActiveTab','doAutoFillOnTab','doAutoFill',"
+        "'generateFillScript','getActiveTab'].forEach(function(n){"
+        "var orig=svc[n];if(typeof orig!=='function'){"
+        "push({api:'svc-missing',name:n});return;}"
+        "svc[n]=function(){var rec={api:'svc:'+n};"
+        "try{if(n==='doAutoFillActiveTab'||n==='doAutoFillOnTab'){"
+        "var pd=arguments[0];"
+        "var d=pd&&pd[0]&&pd[0].details;"
+        "rec.fields=(d&&d.fields||[]).length;"
+        "rec.fieldShape=JSON.stringify((d&&d.fields||[])"
+        ".map(function(f){return{type:f.type,viewable:f.viewable,"
+        "opid:!!f.opid,name:f.htmlName,form:!!f.form,"
+        "elnum:f.elementNumber,actype:f.autoCompleteType};}))"
+        ".slice(0,400);"
+        "rec.durl=d&&d.url;rec.tab=arguments[1]&&arguments[1].id;"
+        "rec.tabUrl=arguments[1]&&arguments[1].url;}"
+        "if(n==='doAutoFill'){var a=arguments[0];"
+        "rec.tab=a&&a.tab&&a.tab.id;"
+        "rec.pdt=(a&&a.pageDetails||[]).map(function(x){"
+        "return{tid:x&&x.tab&&x.tab.id,"
+        "turl:x&&x.tab&&x.tab.url,"
+        "durl:x&&x.details&&x.details.url,"
+        "nf:(x&&x.details&&x.details.fields||[]).length};});"
+        "rec.cipher=a&&a.cipher&&a.cipher.id;}"
+        "if(n==='generateFillScript'){var g=arguments[0];"
+        "rec.gfields=JSON.stringify((g&&g.fields||[])"
+        ".map(function(f){return{type:f.type,viewable:f.viewable,"
+        "opid:!!f.opid,name:f.htmlName,form:!!f.form,"
+        "elnum:f.elementNumber,targeted:f.targeted};}))"
+        ".slice(0,400);"
+        "rec.gforms=Object.keys(g&&g.forms||{}).length;"
+        "rec.gurl=g&&g.url;}}catch(e){}"
+        "push(rec);try{var r=orig.apply(svc,arguments);"
+        "if(r&&r.then)r.then(function(v){"
+        "push({api:'svc:'+n+':done',v:n==='generateFillScript'?"
+        "(v?'script':'null'):(v===undefined?'undef':"
+        "(v===null?'null':(typeof v==='object'?"
+        "'obj:'+JSON.stringify(v).slice(0,120):String(v))))});},"
+        "function(x){push({api:'svc:'+n+':err',"
+        "e:String(x&&(x.stack||x.message||x)).slice(0,300)});});"
+        "return r;}catch(x){push({api:'svc:'+n+':threw',"
+        "e:String(x)});throw x;}};});}"
+        "var cs=m.cipherService;if(cs){"
+        "['getLastUsedForUrl','getCipherForUrl',"
+        "'getAllDecryptedForUrl'].forEach(function(n){"
+        "var orig=cs[n];if(typeof orig!=='function')return;"
+        "cs[n]=function(){var rec={api:'cipher:'+n,"
+        "url:arguments[0]};push(rec);try{var r=orig.apply(cs,"
+        "arguments);if(r&&r.then)r.then(function(v){"
+        "push({api:'cipher:'+n+':done',"
+        "v:Array.isArray(v)?('n='+v.length):"
+        "(v===undefined?'undef':(v===null?'null':"
+        "(v&&v.id)||String(v)))});},function(x){"
+        "push({api:'cipher:'+n+':err',"
+        "e:String(x&&(x.message||x)).slice(0,200)});});"
+        "return r;}catch(x){push({api:'cipher:'+n+':threw',"
+        "e:String(x)});throw x;}};});}"
+        "return 'svc-spies-armed';})()"));
+
+    stage(QStringLiteral("stage: autofill_login command fired"));
+    ExtensionCommandRegistry::instance()->trigger(
+        id, QStringLiteral("autofill_login"), window);
+
+    // Assert on the DOM, not the plumbing.
+    auto fieldValue = [&eval, &view](const QString &name) {
+        return eval(view->page(), QStringLiteral(
+            "(function(){var i=document.querySelector("
+            "'input[name=%1]');return i?i.value:null;})()")
+            .arg(name)).toString();
+    };
+    bool filled = false;
+    QElapsedTimer fillTimer;
+    fillTimer.start();
+    while (fillTimer.elapsed() < 60000) {
+        if (fieldValue(QStringLiteral("password")) == fixturePass
+                && fieldValue(QStringLiteral("username")) == fixtureUser) {
+            filled = true;
+            break;
+        }
+        QTest::qWait(300);
+    }
+    report << QStringLiteral("username field: %1")
+        .arg(fieldValue(QStringLiteral("username")));
+    report << QStringLiteral("password field filled: %1")
+        .arg(fieldValue(QStringLiteral("password"))
+                == fixturePass ? QStringLiteral("yes")
+                               : QStringLiteral("no"));
+    report << QStringLiteral("execScript traffic: %1")
+        .arg(eval(host->page(), QStringLiteral(
+            "JSON.stringify(self.__er17exec||[])")).toString());
+    report << QStringLiteral("cs log: %1")
+        .arg(eval(view->page(), QStringLiteral(
+            "JSON.stringify(window.__er17cs||[])"),
+            agentWorld).toString());
+    report << QStringLiteral("bg listener trace (base %1): %2")
+        .arg(eval(host->page(), QStringLiteral(
+            "String(self.__er17mlBase)")).toString())
+        .arg(eval(host->page(), QStringLiteral(
+            "JSON.stringify(self.__er17ml||[])")).toString());
+    report << QStringLiteral("bg svc log: %1")
+        .arg(eval(host->page(), QStringLiteral(
+            "JSON.stringify((self.__er17svc||{}).log||[])"))
+            .toString());
+    report << QStringLiteral("bg mshape: %1")
+        .arg(eval(host->page(), QStringLiteral(
+            "(function(){var m=self.bitwardenMain;if(!m)return 'no main';"
+            "return JSON.stringify({keys:Object.keys(m).filter("
+            "function(k){return /autofill|cipher|log|orches|unlock/i"
+            ".test(k);}),armed:!!self.__er17armed,"
+            "asType:typeof m.autofillService});})()")).toString());
+    report << QStringLiteral("bg autofill trace: %1")
+        .arg(eval(host->page(), QStringLiteral(
+            "JSON.stringify(self.__er17autofill||[])")).toString());
+    report << QStringLiteral("bg logService.error: %1")
+        .arg(eval(host->page(), QStringLiteral(
+            "JSON.stringify(self.__er17err||[])")).toString());
+    if (!filled) {
+        // Measured-gap capture: which Bitwarden leg stopped where.
+        report << QStringLiteral("shimGaps: %1")
+            .arg(host->shimGaps().join(QLatin1String(" | ")));
+        report << QStringLiteral("gate: %1")
+            .arg(eval(host->page(), QStringLiteral(
+                "JSON.stringify(self.__gate||null)")).toString());
+        // Did collectPageDetails / the fill message reach the page
+        // agent, and did the injected autofill script register
+        // listeners?
+        report << QStringLiteral("agent probe: %1")
+            .arg(eval(view->page(), QStringLiteral(
+                "(function(){var a=window.__arktosExtAgents"
+                "&&__arktosExtAgents['%1'];"
+                "var om=(a&&a.chrome&&a.chrome.runtime"
+                "&&a.chrome.runtime.onMessage"
+                "&&a.chrome.runtime.onMessage.__count)?"
+                "a.chrome.runtime.onMessage.__count():-1;"
+                "return JSON.stringify({probe:a?a.probe():null,"
+                "onMessageListeners:om});})()").arg(id),
+                agentWorld).toString());
+        report << QStringLiteral("tabs.query diag: %1")
+            .arg(eval(host->page(), QStringLiteral(
+                "(function(){self.__tq={done:false};"
+                "chrome.tabs.query({active:true,currentWindow:true},"
+                "function(t){self.__tq={done:true,tabs:t,"
+                "err:chrome.runtime.lastError?"
+                "chrome.runtime.lastError.message:null};});"
+                "return 0;})()")).toString());
+        QTest::qWait(1500);
+        report << QStringLiteral("tabs.query result: %1")
+            .arg(eval(host->page(), QStringLiteral(
+                "JSON.stringify(self.__tq||{})")).toString());
+        report << QStringLiteral("auth status now: %1")
+            .arg(eval(host->page(), QStringLiteral(
+                "JSON.stringify(self.__er17auth||{})")).toString());
+        report << QStringLiteral("bg->page traffic: %1")
+            .arg(eval(host->page(), QStringLiteral(
+                "JSON.stringify(self.__er17msgs||[])")).toString());
+        report << QStringLiteral("execScript traffic: %1")
+            .arg(eval(host->page(), QStringLiteral(
+                "JSON.stringify(self.__er17exec||[])")).toString());
+        // The injected bootstrap file resolved with no per-frame
+        // error yet never registered its listener — probe the
+        // world's autofill-init marker, then clear it and re-eval
+        // the same file inside the execSource wrapper shape so a
+        // swallowed eval-time throw surfaces here verbatim.
+        const QString bwFile =
+            dir + QStringLiteral("/content/bootstrap-autofill-overlay.js");
+        QFile bf(bwFile);
+        if (bf.open(QIODevice::ReadOnly)) {
+            const QString fileSrc = QString::fromUtf8(bf.readAll());
+            // Plain concatenation — the bundle source must not ride
+            // QString::arg (%N inside it would be rewritten).
+            const QString reeval = QStringLiteral(
+                "(function(){var o={};"
+                "o.bw0=typeof window.bitwardenAutofillInit;"
+                "o.flagCtor=window.bitwardenAutofillInit"
+                "&&window.bitwardenAutofillInit.constructor"
+                "&&window.bitwardenAutofillInit.constructor.name;"
+                "o.flagMon=window.bitwardenAutofillInit"
+                "&&window.bitwardenAutofillInit.isMonitoring;"
+                "o.flagHandler=window.bitwardenAutofillInit"
+                "&&typeof window.bitwardenAutofillInit"
+                ".handleExtensionMessage;"
+                "var a=(window.__arktosExtAgents||{})['")
+                + id + QStringLiteral(
+                "'];"
+                "o.agentKeys=Object.keys(window.__arktosExtAgents||{});"
+                "o.aId=a&&a.id;"
+                "o.aExists=!!a;"
+                "o.hasOwn=window.__arktosExtAgents"
+                "&&Object.prototype.hasOwnProperty.call("
+                "window.__arktosExtAgents,'")
+                + id + QStringLiteral(
+                "');"
+                "o.wchrome=typeof window.chrome;"
+                "o.gdoc=typeof globalThis.document;"
+                "o.grs=globalThis.document"
+                "?globalThis.document.readyState:'nogdoc';"
+                "o.wrs=window.document"
+                "?window.document.readyState:'nodoc';"
+                "o.gIsW=globalThis===window;"
+                "o.gAE=typeof globalThis.addEventListener;"
+                "o.gloc=globalThis.location"
+                "?String(globalThis.location.href):'noloc';"
+                "o.cpdto=window.bitwardenAutofillInit"
+                "&&window.bitwardenAutofillInit"
+                ".collectPageDetailsOnLoadTimeout!==undefined"
+                "?'armed':'unset';"
+                "o.wrt=window.chrome&&typeof window.chrome.runtime;"
+                "o.wconn=window.chrome&&window.chrome.runtime"
+                "&&typeof window.chrome.runtime.connect;"
+                "o.wom=window.chrome&&window.chrome.runtime"
+                "&&typeof window.chrome.runtime.onMessage;"
+                "o.sameChrome=a&&a.chrome?a.chrome===window.chrome:null;"
+                "o.cnt0=(a&&a.chrome&&a.chrome.runtime"
+                "&&a.chrome.runtime.onMessage.__count)"
+                "?a.chrome.runtime.onMessage.__count():-1;"
+                "try{delete window.bitwardenAutofillInit;}"
+                "catch(e){}"
+                "try{var __c=a&&a.chrome;"
+                "(function(chrome,browser){\n")
+                + fileSrc + QStringLiteral(
+                "\n}).call(window,__c,__c);o.ok=1;}catch(e){"
+                "o.err=String(e&&(e.stack||e.message||e));}"
+                "o.bw1=typeof window.bitwardenAutofillInit;"
+                "o.cnt1=(a&&a.chrome&&a.chrome.runtime"
+                "&&a.chrome.runtime.onMessage.__count)"
+                "?a.chrome.runtime.onMessage.__count():-1;"
+                "return JSON.stringify(o);})()");
+            report << QStringLiteral("world re-eval: %1")
+                .arg(eval(view->page(), reeval, agentWorld).toString());
+        }
+    }
+    report << QStringLiteral("VERDICT: %1")
+        .arg(filled ? QStringLiteral(
+                          "PASS — real unlock + real autofill pipeline "
+                          "set input.value")
+                    : QStringLiteral("MEASURED GAP — see legs above"));
+    for (const QString &line : report)
+        qWarning().noquote() << line;
+    const QString out = qEnvironmentVariable("ARKTOS_EXTTEST_OUT");
+    if (!out.isEmpty()) {
+        QFile file(out);
+        if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            file.write(report.join(QLatin1Char('\n')).toUtf8());
+            file.write("\n");
+            file.close();
+        }
+    }
+
+    window->close();
+    window->deleteLater();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    manager->setExtensionEnabled(id, false);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 20000);
+    manager->removeExtension(id);
+    QTest::qWait(500);
+    QDir(copyRoot).removeRecursively();
+
+    QVERIFY2(filled, "the fixture credential never reached "
+                     "input.value — see ER17 report legs");
 }
 
 // ER10: chrome.offscreen — one hidden second-class host page per

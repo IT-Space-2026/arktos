@@ -213,6 +213,8 @@ QJsonObject ExtensionShimBackend::invoke(const QString &ns,
         return invokeAlarms(method, args);
     if (ns == QLatin1String("tabs"))
         return invokeTabs(method, args);
+    if (ns == QLatin1String("webNavigation"))
+        return invokeWebNavigation(method, args);
     if (ns == QLatin1String("windows"))
         return invokeWindows(method, args);
     if (ns == QLatin1String("action")
@@ -368,6 +370,32 @@ QJsonObject ExtensionShimBackend::invokeStorage(const QString &method,
     // enforced here, not in the shim's install list.
     if (!manifestPermissions().contains(QLatin1String("storage")))
         return errReply(QStringLiteral("no-permission"));
+    // ER17: 'changed' is the notify op — a shim context that wrote
+    // through the REAL engine area (the hosted page keeps it so the
+    // extension's store stays shared with real extension pages)
+    // reports the change record it computed, and it fans out to the
+    // extension's sibling contexts as storage.onChanged +
+    // storage.<area>.onChanged.  The writer fires its own copy
+    // synchronously in the shim; ChromeBridge::invoke intercepts
+    // this op to exclude the posting bridge, leaving only direct
+    // backend callers here — page agents are never relay contexts,
+    // so an un-excluded fan-out cannot double-deliver.  The engine's
+    // own storage delegate never emits either — the fan-out is the
+    // only onChanged these pages will ever see.  Same-domain trust:
+    // a covered context can already message its own extension's
+    // other contexts, so the report needs no re-proof.
+    if (method == QLatin1String("changed")) {
+        const QString area =
+            args.value(QStringLiteral("area")).toString();
+        if (area != QLatin1String("local")
+                && area != QLatin1String("session")
+                && area != QLatin1String("sync"))
+            return errReply(QStringLiteral("invalid-area"));
+        ExtensionBackgroundRuntime::instance()->fanOutStorageChanged(
+            m_extensionId, area,
+            args.value(QStringLiteral("changes")).toObject());
+        return okReply();
+    }
     const int dot = method.indexOf(QLatin1Char('.'));
     const QString area = method.left(dot);
     const QString op = method.mid(dot + 1);
@@ -650,10 +678,17 @@ QJsonObject ExtensionShimBackend::invokeTabs(const QString &method,
             if (!window)
                 continue;
             const int wid = idFor(window);
-            if (q.contains(QStringLiteral("windowId"))
-                    && int(q.value(QStringLiteral("windowId"))
-                               .toDouble(-2)) != wid)
-                continue;
+            // WINDOW_ID_CURRENT (-2) resolves to the live window;
+            // WINDOW_ID_NONE (-1) matches only window-less tabs —
+            // the engine has none, so it filters everything.
+            if (q.contains(QStringLiteral("windowId"))) {
+                int wanted = int(q.value(QStringLiteral("windowId"))
+                                     .toDouble(-2));
+                if (wanted == -2)
+                    wanted = currentWid;
+                if (wanted != wid)
+                    continue;
+            }
             if (q.value(QStringLiteral("currentWindow")).toBool()
                     && wid != currentWid)
                 continue;
@@ -855,6 +890,48 @@ QJsonObject ExtensionShimBackend::tabForPageReply(QWebEnginePage *page)
         }
     }
     return okReply(QJsonValue(QJsonValue::Null));
+}
+
+// -------------------------------------------------------------------
+// chrome.webNavigation — frame lookup.  The engine only registers
+// the main frame per tab (no subframe map is kept), so getFrame /
+// getAllFrames answer frameId 0 honestly and report Chrome's own
+// 'no frame' shape for anything deeper rather than fabricating a
+// frame.  documentId is deliberately absent — callers that verify a
+// navigation race (Bitwarden's IPC send) treat a missing id as
+// 'cannot check' and proceed, matching Chrome's legacy profile.
+// -------------------------------------------------------------------
+
+QJsonObject ExtensionShimBackend::invokeWebNavigation(
+        const QString &method, const QJsonObject &args)
+{
+    if (method == QLatin1String("getFrame")
+            || method == QLatin1String("getAllFrames")) {
+        const int tabId =
+                args.value(QStringLiteral("tabId")).toInt(-1);
+        WebView *view = viewForTabId(tabId);
+        if (!view || !view->page())
+            return errReply(QStringLiteral("no-tab"));
+        const QJsonObject frame{
+            {QStringLiteral("errorOccurred"), false},
+            {QStringLiteral("frameId"), 0},
+            {QStringLiteral("parentFrameId"), -1},
+            {QStringLiteral("frameType"),
+             QStringLiteral("outermost_frame")},
+            {QStringLiteral("processId"), -1},
+            {QStringLiteral("documentLifecycle"),
+             QStringLiteral("active")},
+            {QStringLiteral("url"), view->page()->url().toString()}};
+        if (method == QLatin1String("getFrame")) {
+            const int frameId =
+                    args.value(QStringLiteral("frameId")).toInt(-1);
+            if (frameId != 0)
+                return errReply(QStringLiteral("no-frame"));
+            return okReply(frame);
+        }
+        return okReply(QJsonArray{frame});
+    }
+    return errReply(QStringLiteral("unimplemented"));
 }
 
 // -------------------------------------------------------------------

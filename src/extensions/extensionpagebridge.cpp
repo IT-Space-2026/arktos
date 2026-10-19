@@ -232,9 +232,9 @@ QJsonObject ExtensionPageBridge::invoke(const QString &op,
             QStringLiteral("storage"), method,
             args.value(QLatin1String("args")).toObject());
         // Mutations fan the change record out: the extension's
-        // other contexts see a real storage.onChanged (the shim
-        // fires it via __args), this page's agent gets the push on
-        // its own event name.
+        // other contexts see a real storage.onChanged plus the
+        // per-area event (the shim fires them via __args), this
+        // page's agent gets the push on its own event name.
         if (reply.value(QLatin1String("ok")).toBool()) {
             const QJsonObject result =
                 reply.value(QLatin1String("result")).toObject();
@@ -243,11 +243,8 @@ QJsonObject ExtensionPageBridge::invoke(const QString &op,
             if (!changes.isEmpty()) {
                 const QString area =
                         method.section(QLatin1Char('.'), 0, 0);
-                runtime->deliverEvent(
-                    extensionId,
-                    QStringLiteral("storage.onChanged"),
-                    QJsonObject{{QStringLiteral("__args"),
-                                 QJsonArray{changes, area}}});
+                runtime->fanOutStorageChanged(extensionId, area,
+                                              changes);
                 emit extEvent(
                     QStringLiteral("__arktos.storageChanged"),
                     QJsonObject{{QStringLiteral("changes"), changes},

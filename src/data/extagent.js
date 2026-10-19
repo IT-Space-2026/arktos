@@ -60,7 +60,8 @@
         notes: [],
         touched: {},
         errors: [],
-        deliveries: 0       // __arktos.deliver pushes addressed here
+        deliveries: 0,      // __arktos.deliver pushes addressed here
+        deliverLog: []      // bounded: msg.command of each delivery
     };
     var LOG_CAP = 500;
 
@@ -95,6 +96,8 @@
             gaps: agent.gaps,
             notes: agent.notes,
             touched: agent.touched,
+            deliveries: agent.deliveries,
+            deliverLog: agent.deliverLog.slice(-20),
             errors: agent.errors.slice(-20)
         };
     };
@@ -428,6 +431,11 @@
             if (payload.ext !== cfg.id)
                 return;
             ++agent.deliveries;
+            if (agent.deliverLog.length < 40)
+                agent.deliverLog.push(
+                    (payload.msg && payload.msg.command)
+                        ? String(payload.msg.command)
+                        : '(no-command)');
             var mid = payload.mid;
             var sender = payload.sender
                 || { id: cfg.id };
@@ -455,8 +463,15 @@
                                             sender, respond);
                         if (r === true)
                             wantAsync = true;
-                        else if (r !== undefined && !responded)
-                            respond(r);
+                        else if (r && typeof r.then === 'function') {
+                            // MV3 promise-response: hold the channel
+                            // until it settles.  Any other return
+                            // value is ignored — only sendResponse
+                            // (or a settling promise) answers.
+                            wantAsync = true;
+                            r.then(function (v) { respond(v); },
+                                   function () { respond(undefined); });
+                        }
                     } catch (e) {
                         record('onMessage listener: ' + e);
                     }

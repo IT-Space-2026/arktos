@@ -181,6 +181,12 @@ QJsonObject ChromeBridge::invoke(const QString &ns,
     // lifetime context Chrome binds the listener to.
     if (ns == QLatin1String("webRequest"))
         return invokeWebRequest(method, args);
+    // ER17: storage 'changed' — the posting context fired its own
+    // onChanged locally, so the fan-out excludes this bridge.
+    if (ns == QLatin1String("storage")
+            && method == QLatin1String("changed")) {
+        return invokeStorageChanged(args);
+    }
     if (!m_backend) {
         QJsonObject o;
         o.insert(QStringLiteral("ok"), false);
@@ -189,6 +195,49 @@ QJsonObject ChromeBridge::invoke(const QString &ns,
         return o;
     }
     return m_backend->invoke(ns, method, args);
+}
+
+// ER17: a shim context reports the change record it computed for a
+// storage mutation (the page keeps the REAL engine area so the
+// store stays shared with real extension pages — the engine's own
+// storage delegate never emits onChanged, so this post is the only
+// onChanged the extension's contexts see).  The poster's shim
+// already fired the event synchronously when its mutation
+// resolved; the fan-out therefore skips THIS bridge's context.
+// Same-domain trust: a covered context can already message its own
+// extension's other contexts, so the report needs no re-proof.
+QJsonObject ChromeBridge::invokeStorageChanged(const QJsonObject &args)
+{
+    QJsonObject reply;
+    if (!m_backend) {
+        reply.insert(QStringLiteral("ok"), false);
+        reply.insert(QStringLiteral("error"),
+                     QStringLiteral("backend-gone"));
+        return reply;
+    }
+    // ER16 parity: the 'storage' manifest permission gates the
+    // namespace — same check invokeStorage applies.
+    if (!m_backend->manifestPermissions()
+            .contains(QLatin1String("storage"))) {
+        reply.insert(QStringLiteral("ok"), false);
+        reply.insert(QStringLiteral("error"),
+                     QStringLiteral("no-permission"));
+        return reply;
+    }
+    const QString area = args.value(QStringLiteral("area")).toString();
+    if (area != QLatin1String("local")
+            && area != QLatin1String("session")
+            && area != QLatin1String("sync")) {
+        reply.insert(QStringLiteral("ok"), false);
+        reply.insert(QStringLiteral("error"),
+                     QStringLiteral("invalid-area"));
+        return reply;
+    }
+    ExtensionBackgroundRuntime::instance()->fanOutStorageChanged(
+        m_extensionId, area,
+        args.value(QStringLiteral("changes")).toObject(), this);
+    reply.insert(QStringLiteral("ok"), true);
+    return reply;
 }
 
 // EXT15 messaging relay — the spike measured that runtime.
@@ -2220,13 +2269,13 @@ QJsonObject ExtensionBackgroundRuntime::shapedPayload(
 
 int ExtensionBackgroundRuntime::fanOut(
         const QString &name, const QJsonObject &payload,
-        const QString &onlyExtensionId)
+        const QString &onlyExtensionId, ChromeBridge *exclude)
 {
     const QString gate = eventGate(name);
     int delivered = 0;
     for (const RelayContext &ctx : m_relayContexts) {
         ChromeBridge *bridge = ctx.bridge;
-        if (!bridge)
+        if (!bridge || bridge == exclude)
             continue;
         const QString extId = bridge->extensionId();
         if (!onlyExtensionId.isEmpty() && extId != onlyExtensionId)
@@ -2252,9 +2301,23 @@ int ExtensionBackgroundRuntime::broadcastEvent(
 
 int ExtensionBackgroundRuntime::deliverEvent(
         const QString &extensionId, const QString &name,
-        const QJsonObject &payload)
+        const QJsonObject &payload, ChromeBridge *exclude)
 {
-    return fanOut(name, payload, extensionId);
+    return fanOut(name, payload, extensionId, exclude);
+}
+
+void ExtensionBackgroundRuntime::fanOutStorageChanged(
+        const QString &extensionId, const QString &area,
+        const QJsonObject &changes, ChromeBridge *exclude)
+{
+    const QJsonObject payload{
+        {QStringLiteral("__args"), QJsonArray{changes, area}}};
+    deliverEvent(extensionId, QStringLiteral("storage.onChanged"),
+                 payload, exclude);
+    deliverEvent(extensionId,
+                 QStringLiteral("storage.") + area
+                     + QStringLiteral(".onChanged"),
+                 payload, exclude);
 }
 
 // -------------------------------------------------------------------

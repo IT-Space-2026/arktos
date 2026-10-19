@@ -3780,3 +3780,24 @@ Extensions (security): the hosted runtime now enforces the manifest
     favIconUrl for extensions holding neither `tabs` nor matching
     host access, so a contextMenus-only extension still receives
     onClicked without learning where the click happened.
+
+Extensions (end-to-end): the hosted runtime now carries the real
+    Bitwarden bundle all the way — install, master-password unlock
+    and autofill of a live login form — proven by a harness-driven
+    leg that asserts the fixture credential lands in the page's
+    input fields (ER17, evidence in .devin/EXT-RUNTIME-E2E.md).
+    Reaching it surfaced three real defects the runtime now fixes:
+    the message relay treated any non-undefined listener return as
+    the response, so an RxJS-tap listener that returns its
+    Subscriber latched the channel and swallowed the genuine async
+    sendResponse — only `true` or a settling Promise holds it now,
+    matching Chrome; `chrome.storage.onChanged` never fired because
+    the engine's own storage delegate never emits it, so the shim
+    now fires the writer's copy synchronously and posts the change
+    record for a writer-excluded fan-out to sibling contexts (and
+    to the page-agent push) over the real storage areas; and
+    `tabs.query` read `windowId: -2` literally instead of resolving
+    WINDOW_ID_CURRENT. `chrome.webNavigation.getFrame`/
+    `getAllFrames` answer the registered main frame from the event
+    hub instead of a typed unsupported, reporting Chrome's own 'no
+    frame' shape for anything deeper.

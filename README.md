@@ -585,7 +585,20 @@ documented MV3 `null` outside the background context.
 `chrome.sidebarAction` exists only for manifests that declare
 `sidebar_action`, records panel/title/icon bookkeeping, and
 answers a typed `unsupported` for open/close/toggle — Arktos has
-no sidebar surface.
+no sidebar surface. Storage change events are served too: the
+engine's own storage delegate never emits `chrome.storage.onChanged`,
+so the shim fires the writer's copy synchronously on each mutation
+and fans the change record out to the extension's other contexts —
+plus the per-area `storage.<area>.onChanged` — over the real storage
+areas. `chrome.webNavigation.getFrame`/`getAllFrames` answer the
+registered main frame from the tab registry and report Chrome's
+'no frame' shape for anything deeper rather than fabricating one.
+The whole stack is exercised end-to-end: a harness-driven leg
+installs the real Bitwarden bundle, runs its WASM master-password
+unlock against Bitwarden's own public test account, dispatches the
+`autofill_login` command, and asserts the fixture credential lands
+in a live login form's input fields — evidence in
+`.devin/EXT-RUNTIME-E2E.md`.
 
 The hosted runtime enforces the manifest boundary itself. Gates
 consult the manifest's *required* `permissions` only —

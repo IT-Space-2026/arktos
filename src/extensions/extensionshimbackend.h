@@ -206,6 +206,8 @@ private:
     // url/title leave the host only when the extension holds 'tabs'
     // or a host permission covering the tab's url.
     QJsonObject shapedTab(const QJsonObject &tab) const;
+    QJsonObject invokeWebNavigation(const QString &method,
+                                    const QJsonObject &args);
     QJsonObject invokeWindows(const QString &method,
                               const QJsonObject &args);
     QJsonObject invokeAction(const QString &method,

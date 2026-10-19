@@ -1108,8 +1108,19 @@
                     null, msg, sender, respond);
                 if (r === true)
                     wantAsync = true;
-                else if (r !== undefined && !responded)
-                    respond(r);
+                else if (r && typeof r.then === 'function') {
+                    // MV3: a returned Promise settles into the
+                    // response — hold the channel open for it like
+                    // Chrome does.  Any OTHER return value is not a
+                    // response: Bitwarden's allMessages$ tap returns
+                    // its RxJS Subscriber, and answering with it
+                    // latched the channel before the real async
+                    // sendResponse (i.e. dropped
+                    // getUrlAutofillTargetingRules' answer).
+                    wantAsync = true;
+                    r.then(function (v) { respond(v); },
+                           function () { respond(undefined); });
+                }
             } catch (e) {
                 record('relay onMessage listener: ' + e);
             }
@@ -1699,25 +1710,48 @@
     // fork the extension's state).  The bridge store backs contexts
     // where the bindings are absent and is exercised directly via
     // __arktosShim.storageArea().
+    // ER17 — the onChanged fan-out.  The engine's storage delegate
+    // never emits storage.onChanged in ANY context (verified: a
+    // listener on the real area hears nothing after its own set),
+    // so the shim fires it itself: the writer's own
+    // storage.onChanged + storage.<area>.onChanged run
+    // synchronously in the mutation's resolution tick — the same
+    // delivery Chrome gives the writing context — then the
+    // computed record posts to the backend's storage.changed op,
+    // which fans it out to the extension's OTHER shim contexts
+    // (the op excludes the poster, so nothing double-delivers).
+    // Between the two halves every context of the extension sees
+    // the event Chrome promises Bitwarden's state framework.
+    function storageChangedPost(areaName, changes) {
+        var any = false;
+        for (var k in changes) {
+            any = true;
+            break;
+        }
+        if (!any)
+            return;
+        var args = [changes, areaName];
+        var ev = shim.events['storage.onChanged'];
+        if (ev)
+            ev.__fire(args);
+        ev = shim.events['storage.' + areaName + '.onChanged'];
+        if (ev)
+            ev.__fire(args);
+        call('storage', 'changed',
+             { area: areaName, changes: changes })
+            .catch(function () {});
+    }
+
     function bridgeStorageArea(areaName) {
         var areaEvent = makeEvent('storage.' + areaName + '.onChanged');
         function afterMutate(result) {
             var changes = result && result.changes || {};
-            var k;
             var any = false;
-            for (k in changes)
+            for (var k in changes)
                 any = true;
             if (!any)
                 return;
-            areaEvent.__fire([changes, areaName]);
-            if (shim.events['storage.onChanged'])
-                shim.events['storage.onChanged']
-                    .__fire([changes, areaName]);
-            if (chrome.storage && chrome.storage.onChanged
-                    && chrome.storage.onChanged.__fire
-                    && chrome.storage.onChanged
-                           !== shim.events['storage.onChanged'])
-                chrome.storage.onChanged.__fire([changes, areaName]);
+            storageChangedPost(areaName, changes);
         }
         return {
             get: function (keys, cb) {
@@ -1778,6 +1812,190 @@
     }
     shim.storageArea = bridgeStorageArea;   // test seam
 
+    // A KEPT real area still needs us for onChanged: wrap its
+    // mutators in place so each write snapshots the touched keys,
+    // performs the real mutation, then posts the change record for
+    // the fan-out above; its dead native onChanged is replaced by
+    // the shim event the fan-out fires.  The area object keeps its
+    // identity — get/getKeys/getBytesInUse/setAccessLevel/
+    // QUOTA_BYTES stay the real members.
+    //
+    // Native areas bind members as getter-only accessors — a plain
+    // assignment throws a TypeError that would flood shimGaps even
+    // though defineProperty succeeds.  defineMember therefore leads
+    // with defineProperty and only records a gap when the member
+    // really cannot be replaced.
+    function defineMember(obj, key, val, api) {
+        if (obj[key] === val)
+            return;
+        try {
+            Object.defineProperty(obj, key, {
+                configurable: true,
+                writable: true,
+                enumerable: true,
+                value: val
+            });
+        } catch (e) {}
+        if (obj[key] === val)
+            return;
+        safeSet(obj, key, val, api);
+        if (obj[key] !== val)
+            recordGap(api, 'native-member-locked');
+    }
+    var wrappedAreas = {};   // areaName -> {area, srcSet, wrappedSet…}
+    function adoptRealArea(areaName) {
+        var area;
+        try {
+            area = chrome.storage && chrome.storage[areaName];
+        } catch (e) { return; }
+        if (!area || typeof area !== 'object'
+                || typeof area.get !== 'function'
+                || typeof area.set !== 'function')
+            return;
+        var rec = wrappedAreas[areaName];
+        if (!rec || rec.area !== area
+                || (area.set !== rec.wrappedSet
+                    && area.set !== rec.srcSet)) {
+            // Fresh object or a mid-boot native redefinition — wrap
+            // against whatever the members are now.
+            var src = { get: area.get, set: area.set,
+                        remove: area.remove, clear: area.clear };
+            rec = { area: area, srcSet: src.set };
+            function runOp(fn, argv) {
+                return new Promise(function (resolve, reject) {
+                    var done = false;
+                    var args = argv.slice();
+                    args.push(function () {
+                        if (done)
+                            return;
+                        done = true;
+                        var e;
+                        try {
+                            e = chrome.runtime
+                                && chrome.runtime.lastError;
+                        } catch (x) { e = null; }
+                        if (e && (e.message || typeof e === 'string'))
+                            reject(new Error(e.message || e));
+                        else
+                            resolve();
+                    });
+                    try {
+                        var r = fn.apply(area, args);
+                        if (r && typeof r.then === 'function')
+                            r.then(function () {
+                                if (!done) { done = true; resolve(); }
+                            }, function (e) {
+                                if (!done) { done = true; reject(e); }
+                            });
+                    } catch (e) {
+                        if (!done) {
+                            done = true;
+                            reject(e);
+                        }
+                    }
+                });
+            }
+            function readOld(keys) {
+                return new Promise(function (resolve) {
+                    var done = false;
+                    var finish = function (v) {
+                        if (!done) {
+                            done = true;
+                            resolve(v || {});
+                        }
+                    };
+                    try {
+                        var r = src.get.call(area, keys, finish);
+                        if (r && typeof r.then === 'function')
+                            r.then(finish, function () { finish({}); });
+                    } catch (e) { finish({}); }
+                });
+            }
+            var has = function (o, k) {
+                return o && Object.prototype.hasOwnProperty
+                        .call(o, k);
+            };
+            rec.wrappedSet = function (items, cb) {
+                var p = readOld(items ? Object.keys(items) : [])
+                    .then(function (old) {
+                        return runOp(src.set, [items || {}])
+                            .then(function () {
+                                var changes = {};
+                                for (var k in items) {
+                                    var change = {};
+                                    if (has(old, k))
+                                        change.oldValue = old[k];
+                                    change.newValue = items[k];
+                                    changes[k] = change;
+                                }
+                                storageChangedPost(areaName,
+                                                   changes);
+                            });
+                    });
+                if (cb)
+                    p.then(function () { cb(); },
+                           function (e) {
+                               answerCb(cb, undefined,
+                                        e && e.message || String(e));
+                           });
+                return p.then(function () {});
+            };
+            rec.wrappedRemove = function (keys, cb) {
+                var list = typeof keys === 'string'
+                    ? [keys] : (keys || []).slice();
+                var p = readOld(list).then(function (old) {
+                    return runOp(src.remove, [list])
+                        .then(function () {
+                            var changes = {};
+                            for (var i = 0; i < list.length; ++i) {
+                                var k = list[i];
+                                if (has(old, k))
+                                    changes[k] =
+                                        { oldValue: old[k] };
+                            }
+                            storageChangedPost(areaName, changes);
+                        });
+                });
+                if (cb)
+                    p.then(function () { cb(); },
+                           function (e) {
+                               answerCb(cb, undefined,
+                                        e && e.message || String(e));
+                           });
+                return p.then(function () {});
+            };
+            rec.wrappedClear = function (cb) {
+                var p = readOld(null).then(function (old) {
+                    return runOp(src.clear, []).then(function () {
+                        var changes = {};
+                        for (var k in old)
+                            changes[k] = { oldValue: old[k] };
+                        storageChangedPost(areaName, changes);
+                    });
+                });
+                if (cb)
+                    p.then(function () { cb(); },
+                           function (e) {
+                               answerCb(cb, undefined,
+                                        e && e.message || String(e));
+                           });
+                return p.then(function () {});
+            };
+            wrappedAreas[areaName] = rec;
+        }
+        var areaEvent =
+            shim.events['storage.' + areaName + '.onChanged']
+            || makeEvent('storage.' + areaName + '.onChanged');
+        defineMember(area, 'set', rec.wrappedSet,
+                     'chrome.storage.' + areaName + '.set');
+        defineMember(area, 'remove', rec.wrappedRemove,
+                     'chrome.storage.' + areaName + '.remove');
+        defineMember(area, 'clear', rec.wrappedClear,
+                     'chrome.storage.' + areaName + '.clear');
+        defineMember(area, 'onChanged', areaEvent,
+                     'chrome.storage.' + areaName + '.onChanged');
+    }
+
     if (typeof chrome !== 'undefined') {
         if (!chrome.storage)
             safeSet(chrome, 'storage', {}, 'chrome.storage');
@@ -1790,12 +2008,16 @@
                 note('chrome.storage.local: bridge-backed store '
                      + '(per-extension namespaced, persisted '
                      + 'host-side)');
+        } else {
+            adoptRealArea('local');
         }
         if (!chrome.storage.session
                 || typeof chrome.storage.session.get !== 'function') {
             bridgeSessionRef = bridgeStorageArea('session');
             safeSet(chrome.storage, 'session', bridgeSessionRef,
                     'chrome.storage.session');
+        } else {
+            adoptRealArea('session');
         }
         if (!chrome.storage.managed) {
             safeSet(chrome.storage, 'managed', {
@@ -1806,10 +2028,23 @@
                 onChanged: makeEvent('storage.managed.onChanged')
             }, 'chrome.storage.managed');
         }
-        if (!chrome.storage.onChanged)
+        var topChanged = null;
+        try { topChanged = chrome.storage.onChanged; } catch (e) {}
+        if (!topChanged) {
             safeSet(chrome.storage, 'onChanged',
                     makeEvent('storage.onChanged'),
                     'chrome.storage.onChanged');
+        } else if (typeof topChanged.__fire !== 'function') {
+            // Native object — dead on this engine, so nothing it
+            // holds can ever fire; swap it for the event our
+            // fan-out reaches.
+            note('chrome.storage.onChanged: native event replaced '
+                 + '— the engine never fires it');
+            defineMember(chrome.storage, 'onChanged',
+                         shim.events['storage.onChanged']
+                         || makeEvent('storage.onChanged'),
+                         'chrome.storage.onChanged');
+        }
         }
     }
 
@@ -2374,13 +2609,28 @@
             onReferenceFragmentUpdated:
                 makeEvent('webNavigation.onReferenceFragmentUpdated'),
             onTabReplaced: makeEvent('webNavigation.onTabReplaced'),
+            // Frame lookup: the bridge answers the registered main
+            // frame — deeper frames come back as Chrome's own 'no
+            // frame' typed error, not a fabricated entry.
             getFrame: function (details, cb) {
-                return failCall('webNavigation.getFrame',
-                                'unsupported', cb);
+                var p = call('webNavigation', 'getFrame',
+                             details || {});
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p;
             },
             getAllFrames: function (details, cb) {
-                return failCall('webNavigation.getAllFrames',
-                                'unsupported', cb);
+                var p = call('webNavigation', 'getAllFrames',
+                             details || {});
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p;
             }
         });
     }
@@ -3461,8 +3711,12 @@
 
     if (typeof chrome !== 'undefined') {
         // storage areas: a real local/session/sync/managed area can
-        // lack its own onChanged event object.
+        // lack its own onChanged event object — or a redefined
+        // native area can have silently unwound the ER17 wraps.
         if (chrome.storage && typeof chrome.storage === 'object') {
+            adoptRealArea('local');
+            adoptRealArea('session');
+            adoptRealArea('sync');
             var stAreas = ['local', 'session', 'managed', 'sync'];
             for (var sa = 0; sa < stAreas.length; ++sa) {
                 var area = chrome.storage[stAreas[sa]];
