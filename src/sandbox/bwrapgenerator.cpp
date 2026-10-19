@@ -205,6 +205,30 @@ QString appendWorkerRuntime(QStringList &command, const QString &program)
                 << QStringLiteral("LD_LIBRARY_PATH")
                 << mappedEntries.join(QLatin1Char(':'));
 
+    // WK11: a WPE-linked binary (the WK07 sideload recipe) cannot
+    // even exec inside the wrap unless its sid runtime is reachable —
+    // PT_INTERP, the compat shim's DT_NEEDED and DT_RPATH are all
+    // ABSOLUTE paths under the WPE prefix, which the kernel and ld.so
+    // resolve literally, so the /arktos-rt remapping the other inputs
+    // get cannot help.  Bind the prefix under /arktos-rt like any
+    // $HOME-resident input, then plant a --symlink at the real path
+    // back into the mount: the skeleton dirs appear but expose only
+    // the public library tree, never $HOME content.  A prefix that
+    // lives outside $HOME needs no symlink — bindRo already mounts
+    // it at its own path.
+    QString wpePrefix =
+        QString::fromLocal8Bit(qgetenv("ARKTOS_WPE_PREFIX"));
+#ifdef ARKTOS_WPE_PREFIX_DIR
+    if (wpePrefix.isEmpty())
+        wpePrefix = QStringLiteral(ARKTOS_WPE_PREFIX_DIR);
+#endif
+    if (!wpePrefix.isEmpty() && QFileInfo(wpePrefix).isDir()) {
+        const QString wpeTarget = bindRo(wpePrefix);
+        if (wpeTarget != wpePrefix)
+            command << QStringLiteral("--symlink")
+                    << wpeTarget << wpePrefix;
+    }
+
     return bindRo(program);
 }
 

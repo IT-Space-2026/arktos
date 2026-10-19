@@ -76,6 +76,24 @@
 // canGoBack()/canGoForward() proxy the view calls, and
 // goToHistoryEntry() re-addresses the stack index through
 // get_nth_item + go_to_back_forward_list_item.
+//
+// WK11 gives each profile real storage: webkit_network_session_new
+// takes a per-session base data/cache directory pair that becomes
+// the session's private WebKitWebsiteDataManager.  The roots are
+// resolved from ProfileOptions — an explicit dataPath/cachePath pair
+// (the container contract, "persistent root") gains a "WebKit" leaf
+// so the session can never share a directory with a QtWebEngine
+// store rooted at the same path; a persona storageName ("arktos",
+// "arktos-<id>") resolves to BrowserPaths::profileDataDir(<id>) +
+// "/WebKit" and "/cache/WebKit" — the VSEC02-approved layout the
+// profile vault already seals (the "WebKit" leaf is what cannot
+// collide with the "QtWebEngine" sibling); any other non-empty
+// storageName gets a sanitized leaf under the ambient persona's
+// WebKit tree so foreign names still isolate per profile.  An
+// options bag with no identity at all (no storageName, no paths)
+// keeps the engine-default shared session; offTheRecord always gets
+// webkit_network_session_new_ephemeral — a session whose data
+// manager owns no directories and writes nothing.
 
 #include "engineinterface.h"
 
@@ -301,14 +319,18 @@ private:
     friend class WebkitView;
 };
 
-// WK08 — the minimal session object.  WebKitNetworkSession IS the
-// profile object in WPE 2.54 (the WEBKIT-SPIKE profile row): an OTR
-// profile gets webkit_network_session_new_ephemeral(), a persistent
-// profile the default session until WK11 roots per-id data/cache
-// dirs under the profile's storage tree.  The session is created
-// lazily on the first page so a profile that never renders never
-// spawns one.  Everything else stays the options-bag contract
-// ServoProfile serves.
+// WK08 — the minimal session object, WK11's storage roots applied.
+// WebKitNetworkSession IS the profile object in WPE 2.54 (the
+// WEBKIT-SPIKE profile row): an OTR profile gets
+// webkit_network_session_new_ephemeral(), a profile carrying a
+// storage identity (storageName and/or dataPath) gets
+// webkit_network_session_new rooted inside the profile's storage
+// tree, and an identity-less profile keeps the shared default
+// session.  The session is created lazily on the first page so a
+// profile that never renders never spawns one — and a persistent
+// profile's directories are not even minted until then.
+// Everything else stays the options-bag contract ServoProfile
+// serves.
 class WebkitProfile : public Engine::Profile
 {
     Q_OBJECT
@@ -338,6 +360,16 @@ public:
     // qobject_cast.
     WebKitNetworkSession *networkSession();
 
+    // WK11 diagnostics/test surface: the base directories the
+    // session's WebsiteDataManager was rooted at (resolved lazily —
+    // empty until the session exists, always empty for the shared
+    // default session and for OTR, whose manager owns no dirs).
+    QString sessionDataDir() const { return m_sessionDataDir; }
+    QString sessionCacheDir() const { return m_sessionCacheDir; }
+    // True only once an OTR profile has materialized its ephemeral
+    // session — the "writes nothing" guarantee WK11 asserts.
+    bool sessionIsEphemeral() const;
+
 private:
     Engine::ProfileOptions m_options;
     QString m_userAgent;
@@ -346,6 +378,8 @@ private:
     QHash<QString, Engine::Script> m_scripts;
     QHash<QString, QVariant> m_attributes;
     WebKitNetworkSession *m_networkSession = nullptr;
+    QString m_sessionDataDir;
+    QString m_sessionCacheDir;
 };
 
 class WebkitBackend : public Engine::Backend

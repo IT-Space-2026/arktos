@@ -279,9 +279,11 @@ browsing profile:
   .devin/webkit-env.sh) registers alongside it and reports its real
   version ("WebKit x.y.z") in the selector surfaces; it hosts tabs
   through the same engine-neutral page/view pair — pages render
-  headlessly over WPE and blit into an ordinary widget — while the
-  still-minimal feature set (no history, input, or persistence yet)
-  keeps it experimental.
+  headlessly over WPE and blit into an ordinary widget, session
+  history maps the real WebKitBackForwardList, and named profiles
+  get isolated on-disk stores under profiles/<id>/WebKit — while the
+  still-minimal feature set (no input handling, find, or per-profile
+  settings plumbing yet) keeps it experimental.
 - **Reader mode** (Ctrl+Alt+R) and **Picture-in-Picture** on videos.
 - **Command palette** — Ctrl+Shift+P fuzzy search over browser
   commands.

@@ -3642,3 +3642,24 @@ WebKit session history (WK10): the webkit backend's Page history
     genuine errors still report failure. The bf entry points stamp
     NavigationType::BackOrForward themselves because decide-policy
     never fires for back-forward hops.
+WebKit profile storage (WK11): the webkit backend's profiles now own
+    real per-profile storage. A profile carrying a storage identity
+    (storageName and/or dataPath from ProfileOptions) builds a private
+    WebKitNetworkSession via webkit_network_session_new with its own
+    WebKitWebsiteDataManager, rooted inside the profile's storage
+    tree: persona storage names ("arktos", "arktos-<id>") land at
+    profiles/<id>/WebKit with the cache at profiles/<id>/cache/WebKit
+    — the sealed-vault layout's VSEC02 sibling of the QtWebEngine dir;
+    an explicit dataPath/cachePath pair (the container contract) gains
+    a "WebKit" leaf so both engines can never share a directory; a
+    foreign name isolates under profiles/<active>/WebKit/<slug>.
+    Off-the-record profiles always get an ephemeral session that owns
+    no directories and writes nothing; a named session that fails to
+    create refuses the page rather than silently sharing the global
+    store. Identity-less options keep the engine-default session.
+    WK11 also fixed the bwrap download/pdf worker wrap for
+    WPE-linked binaries: PT_INTERP and the compat shim's DT_NEEDED are
+    absolute ~/wpe paths the kernel resolves literally, so the sandbox
+    now bind-mounts the WPE prefix under /arktos-rt and plants a
+    --symlink at the real path — workers exec again without exposing
+    $HOME content.

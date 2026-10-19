@@ -32,6 +32,7 @@
 
 #include <browserapplication.h>
 #include <browsermainwindow.h>
+#include <browserpaths.h>
 #include <containermanager.h>
 #include <engineindicator.h>
 #include <engineinterface.h>
@@ -52,6 +53,7 @@
 #include <qstackedwidget.h>
 #include <qtcpserver.h>
 #include <qtcpsocket.h>
+#include <qtemporarydir.h>
 #include <qwebenginepage.h>
 
 #ifdef ARKTOS_WEBKIT
@@ -150,6 +152,7 @@ private slots:
     void webkitViewRenders();
     void webkitLoadSignals();
     void webkitHistory();
+    void webkitProfileStorage();
 
 private:
     FakeEngineBackend *m_fake = nullptr;
@@ -1654,6 +1657,218 @@ void tst_EngineSwitch::webkitHistory()
     QVERIFY(page->forwardItems(10).isEmpty());
     QCOMPARE(page->historyItems().at(1).url, urlD);
     QVERIFY(!page->canGoForward());
+#else
+    QSKIP("webkit backend not linked in this build");
+#endif
+}
+
+// WK11 — per-profile storage: a profile carrying a storage identity
+// gets a private WebKitNetworkSession/WebKitWebsiteDataManager rooted
+// inside the profile's storage tree (persona names land at
+// profiles/<id>/WebKit — the VSEC02 sibling of QtWebEngine's dir —
+// with cache at profiles/<id>/cache/WebKit; an explicit dataPath gets
+// a collision-proof <dataPath>/WebKit leaf), storage written on one
+// profile is invisible to another, and an OTR profile's ephemeral
+// session writes nothing to disk.
+void tst_EngineSwitch::webkitProfileStorage()
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    Engine::Backend *webkit =
+        EngineRegistry::backendForId(QStringLiteral("webkit"));
+    QVERIFY(webkit);
+    QVERIFY2(webkit->pageUnavailableReason().isEmpty(),
+             qPrintable(webkit->pageUnavailableReason()));
+
+    // Storage APIs need a real (non-file) origin — the fixture is a
+    // one-page local HTTP server.
+    const QByteArray pageBody =
+        "<html><head><title>Wk11Storage</title></head>"
+        "<body>wk11</body></html>";
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    connect(&server, &QTcpServer::newConnection, &server,
+            [&server, pageBody]() {
+        while (QTcpSocket *socket = server.nextPendingConnection()) {
+            socket->setParent(&server);
+            connect(socket, &QTcpSocket::readyRead, socket,
+                    [socket, pageBody]() {
+                if (!socket->readAll().contains("\r\n\r\n"))
+                    return;
+                socket->write("HTTP/1.1 200 OK\r\nContent-Type: text/html"
+                              "\r\nContent-Length: "
+                              + QByteArray::number(pageBody.size())
+                              + "\r\nConnection: close\r\n\r\n" + pageBody);
+                socket->disconnect();
+                socket->disconnectFromHost();
+            });
+        }
+    });
+    const QUrl url(QStringLiteral("http://127.0.0.1:%1/")
+                       .arg(server.serverPort()));
+
+    auto loadSync = [](Engine::Page *p, const QUrl &u) {
+        QSignalSpy spy(p, &Engine::Page::loadFinished);
+        p->load(u);
+        return spy.wait(60000) && spy.first().first().toBool();
+    };
+    // runJavaScript's completion arrives through the event loop —
+    // poll it (QTRY_* macros return early, which a non-void lambda
+    // cannot do).
+    struct EvalOut { QVariant value; bool done = false; };
+    auto evalSync = [](Engine::Page *p, const QString &src) -> EvalOut {
+        EvalOut out;
+        p->runJavaScript(src, [&](const QVariant &v) {
+            out.value = v;
+            out.done = true;
+        });
+        QElapsedTimer timer;
+        timer.start();
+        while (!out.done && timer.elapsed() < 30000)
+            QTest::qWait(20);
+        return out;
+    };
+
+    // --- persona-named profile A: profiles/<id>/WebKit ---------
+    Engine::ProfileOptions optA;
+    optA.storageName = QStringLiteral("arktos-wk11a");
+    auto *profileA = qobject_cast<WebkitProfile *>(
+        webkit->createProfile(optA, this));
+    QVERIFY(profileA);
+    QCOMPARE(profileA->storageName(), QStringLiteral("arktos-wk11a"));
+    QVERIFY(!profileA->isOffTheRecord());
+    // Laziness: no session (and no dirs) until the first page.
+    QVERIFY(profileA->sessionDataDir().isEmpty());
+
+    Engine::Page *pageA = webkit->createPage(profileA, this);
+    QVERIFY2(pageA, "createPage refused a named profile");
+
+    const QString dataDirA =
+        BrowserPaths::profileDataDir(QStringLiteral("wk11a"))
+        + QLatin1String("/WebKit");
+    const QString cacheDirA =
+        BrowserPaths::profileDataDir(QStringLiteral("wk11a"))
+        + QLatin1String("/cache/WebKit");
+    QCOMPARE(profileA->sessionDataDir(), dataDirA);
+    QCOMPARE(profileA->sessionCacheDir(), cacheDirA);
+    QVERIFY(!profileA->sessionIsEphemeral());
+    QVERIFY(QDir(dataDirA).exists());
+    QVERIFY(QDir(cacheDirA).exists());
+
+    QVERIFY2(loadSync(pageA, url), "profile A fixture load failed");
+    EvalOut write = evalSync(pageA, QStringLiteral(
+        "(function(){localStorage.setItem('wk11','alpha');"
+        "document.cookie='wk11=alpha;path=/';"
+        "return 'done';})()"));
+    QVERIFY2(write.done, "profile A storage write eval timed out");
+    QCOMPARE(write.value.toString(), QStringLiteral("done"));
+    QCOMPARE(evalSync(pageA, QStringLiteral(
+                 "(function(){return localStorage.getItem('wk11')||'';})()"))
+                 .value.toString(),
+             QStringLiteral("alpha"));
+
+    // --- persona B: same origin, disjoint store -----------------
+    Engine::ProfileOptions optB;
+    optB.storageName = QStringLiteral("arktos-wk11b");
+    auto *profileB = qobject_cast<WebkitProfile *>(
+        webkit->createProfile(optB, this));
+    QVERIFY(profileB);
+    Engine::Page *pageB = webkit->createPage(profileB, this);
+    QVERIFY2(pageB, "createPage refused profile B");
+    QCOMPARE(profileB->sessionDataDir(),
+             BrowserPaths::profileDataDir(QStringLiteral("wk11b"))
+                 + QLatin1String("/WebKit"));
+    QVERIFY(profileB->sessionDataDir() != profileA->sessionDataDir());
+
+    QVERIFY2(loadSync(pageB, url), "profile B fixture load failed");
+    QCOMPARE(evalSync(pageB, QStringLiteral(
+                 "(function(){return localStorage.getItem('wk11')||'';})()"))
+                 .value.toString(),
+             QStringLiteral(""));
+    QVERIFY2(!evalSync(pageB, QStringLiteral(
+                 "(function(){return document.cookie;})()"))
+                 .value.toString().contains(QStringLiteral("wk11=alpha")),
+             "profile B can see profile A's cookie");
+
+    // --- explicit dataPath: <root>/WebKit leaf ------------------
+    QTemporaryDir rootC;
+    QTemporaryDir cacheC;
+    QVERIFY(rootC.isValid() && cacheC.isValid());
+    Engine::ProfileOptions optC;
+    optC.storageName = QStringLiteral("arktos-container-x-y");
+    optC.dataPath = rootC.path();
+    optC.cachePath = cacheC.path();
+    auto *profileC = qobject_cast<WebkitProfile *>(
+        webkit->createProfile(optC, this));
+    QVERIFY(profileC);
+    Engine::Page *pageC = webkit->createPage(profileC, this);
+    QVERIFY2(pageC, "createPage refused the path-rooted profile");
+    QCOMPARE(profileC->sessionDataDir(),
+             rootC.path() + QLatin1String("/WebKit"));
+    QCOMPARE(profileC->sessionCacheDir(),
+             cacheC.path() + QLatin1String("/WebKit"));
+
+    QVERIFY2(loadSync(pageC, url), "profile C fixture load failed");
+    QCOMPARE(evalSync(pageC, QStringLiteral(
+                 "(function(){return localStorage.getItem('wk11')||'';})()"))
+                 .value.toString(),
+             QStringLiteral(""));
+    // The live session still holds handles under the temp roots —
+    // release it before the QTemporaryDirs unlink the trees.
+    delete pageC;
+    delete profileC;
+
+    // --- hostile foreign name: slug leaf, no escape -------------
+    Engine::ProfileOptions optD;
+    optD.storageName = QStringLiteral("../../etc/passwd");
+    auto *profileD = qobject_cast<WebkitProfile *>(
+        webkit->createProfile(optD, this));
+    QVERIFY(profileD);
+    Engine::Page *pageD = webkit->createPage(profileD, this);
+    QVERIFY2(pageD, "createPage refused the hostile-name profile");
+    QVERIFY(profileD->sessionDataDir().startsWith(
+        BrowserPaths::profileDataDir(BrowserPaths::activeProfileId())
+        + QLatin1String("/WebKit/")));
+    QVERIFY(!profileD->sessionDataDir().contains(QStringLiteral("..")));
+    delete pageD;
+    delete profileD;
+
+    // --- artifacts land under the profile dir -------------------
+    // WebKit flushes stores async — poll for the first real file
+    // under A's tree (localstorage db, cookies.sqlite, ...).
+    QTRY_VERIFY2_WITH_TIMEOUT(
+            !QDir(dataDirA).entryInfoList(
+                QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot
+                | QDir::Hidden, QDir::NoSort).isEmpty(),
+            "nothing was ever written under profile A's data dir",
+            30000);
+
+    // --- OTR: ephemeral session, zero files ---------------------
+    Engine::ProfileOptions optOtr;
+    optOtr.offTheRecord = true;
+    // A hostile name on an OTR profile must not mint a store.
+    optOtr.storageName = QStringLiteral("arktos-wk11otr");
+    auto *profileOtr = qobject_cast<WebkitProfile *>(
+        webkit->createProfile(optOtr, this));
+    QVERIFY(profileOtr);
+    QVERIFY(profileOtr->isOffTheRecord());
+    Engine::Page *pageOtr = webkit->createPage(profileOtr, this);
+    QVERIFY2(pageOtr, "createPage refused the OTR profile");
+    QVERIFY(profileOtr->sessionIsEphemeral());
+    QVERIFY(profileOtr->sessionDataDir().isEmpty());
+    QVERIFY(profileOtr->sessionCacheDir().isEmpty());
+
+    QVERIFY2(loadSync(pageOtr, url), "OTR fixture load failed");
+    // In-memory storage still works — it just never persists.
+    QCOMPARE(evalSync(pageOtr, QStringLiteral(
+                 "(function(){try{localStorage.setItem('wk11','otr');"
+                 "return localStorage.getItem('wk11')||'';}"
+                 "catch(e){return 'denied';}})()")).value.toString(),
+             QStringLiteral("otr"));
+    // Nothing was ever minted for the OTR name — compute the path
+    // WITHOUT profileDataDir() (which mkpaths as a side effect).
+    QVERIFY(!QFileInfo::exists(
+        BrowserPaths::dataRoot()
+        + QLatin1String("/profiles/wk11otr")));
 #else
     QSKIP("webkit backend not linked in this build");
 #endif

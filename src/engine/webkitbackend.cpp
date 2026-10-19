@@ -40,6 +40,7 @@
 #include <wpe/wpe-platform.h>
 #endif
 
+#include "browserpaths.h"
 #include "engineregistry.h"
 
 #include <qapplication.h>
@@ -356,8 +357,17 @@ WebkitPage::WebkitPage(Engine::Profile *profile, QObject *parent)
         return;
 
     WebKitNetworkSession *session = nullptr;
-    if (auto *webProfile = qobject_cast<WebkitProfile *>(profile))
+    if (auto *webProfile = qobject_cast<WebkitProfile *>(profile)) {
         session = webProfile->networkSession();
+        // WK11: a WebkitProfile whose session failed to build must NOT
+        // fall back to the default session — a named profile would
+        // silently share the global store across personas, and an OTR
+        // profile would land on a PERSISTENT session.  Refusing the
+        // page is the honest failure (createPage maps it to "no
+        // webview").
+        if (!session)
+            return;
+    }
     if (!session)
         session = webkit_network_session_get_default();
 
@@ -1059,6 +1069,48 @@ bool WebkitPage::onDecidePolicy(WebKitPolicyDecision *decision, int type)
 
 // ---- WebkitProfile --------------------------------------------------
 
+#ifdef ARKTOS_WEBKIT_LINKED
+// WK11 — a foreign (non-persona) storageName still needs its own
+// directory leaf: reduce it to the profile-slug charset (isProfileId
+// allows [a-z0-9_-] only — '.' is deliberately excluded so a ".." or
+// dotfile name can never carry the leaf outside the WebKit tree).
+static QString webkitStorageLeaf(const QString &storageName)
+{
+    QString leaf;
+    leaf.reserve(qMin(storageName.size(), 64));
+    for (const QChar c : storageName) {
+        if (leaf.size() >= 64)
+            break;
+        const QChar lower = c.toLower();
+        leaf += (lower.isLetterOrNumber() && lower.unicode() < 128)
+                || lower == QLatin1Char('-')
+                || lower == QLatin1Char('_')
+            ? lower : QLatin1Char('-');
+    }
+    return leaf.isEmpty() ? QStringLiteral("store") : leaf;
+}
+
+// WK11 — the persona id a storageName encodes, mirroring the parse
+// BrowserProfile::profileIdFor applies to QtWebEngine storage names:
+// "arktos" is the default persona, "arktos-<slug>" is persona <slug>;
+// "arktos-container-*" is deliberately NOT a persona (the container's
+// owner rides ProfileOptions::dataPath) and neither is any other
+// foreign name — those stay on the ambient persona's tree.
+static QString webkitPersonaId(const QString &storageName)
+{
+    if (storageName == QLatin1String("arktos"))
+        return QStringLiteral("default");
+    if (storageName.startsWith(QLatin1String("arktos-"))
+            && !storageName.startsWith(
+                   QLatin1String("arktos-container-"))) {
+        const QString id = storageName.mid(7);
+        if (BrowserPaths::isProfileId(id))
+            return id;
+    }
+    return QString();
+}
+#endif // ARKTOS_WEBKIT_LINKED
+
 WebkitProfile::WebkitProfile(const Engine::ProfileOptions &options,
                              QObject *parent)
     : Engine::Profile(parent)
@@ -1077,18 +1129,89 @@ WebKitNetworkSession *WebkitProfile::networkSession()
 {
 #ifdef ARKTOS_WEBKIT_LINKED
     if (!m_networkSession) {
-        // WK11 roots per-profile data/cache dirs under
-        // profiles/<id>/WebKit; the minimal session is the real
-        // ephemeral session for OTR and the default session for
-        // everything else.
-        if (m_options.offTheRecord)
+        if (m_options.offTheRecord) {
+            // WK11: real ephemeral session — the data manager owns
+            // no base directories, every store is memory-only and
+            // dies with the session.
             m_networkSession = webkit_network_session_new_ephemeral();
-        else
+        } else if (m_options.storageName.isEmpty()
+                   && m_options.dataPath.isEmpty()
+                   && m_options.cachePath.isEmpty()) {
+            // No storage identity at all — the engine-default shared
+            // session (the WK08 minimal contract an engine-swap tab
+            // still gets).
             m_networkSession =
                 g_object_ref(webkit_network_session_get_default());
+        } else {
+            // WK11: a named/path-rooted session gets a private
+            // WebKitWebsiteDataManager under the profile's storage
+            // tree.  Root resolution:
+            //   dataPath set   -> <dataPath>/WebKit  (caller-owned
+            //                     root — the container contract —
+            //                     the WebKit leaf keeps it disjoint
+            //                     from a QtWebEngine store at the
+            //                     same root)
+            //   persona name   -> profiles/<id>/WebKit
+            //                     ("arktos"->default, "arktos-<id>"->
+            //                     <id> — the VSEC02 sibling of
+            //                     profiles/<id>/QtWebEngine)
+            //   foreign name   -> profiles/<active>/WebKit/<slug>
+            // The cache mirrors the data root: cachePath when given,
+            // else the root's own "cache" subdir — the VSEC02 parity
+            // is profiles/<id>/cache/WebKit (the vault's "cache"
+            // exclusion).
+            const QString name = m_options.storageName;
+            QString personaId = webkitPersonaId(name);
+            QString leaf;
+            if (personaId.isEmpty()) {
+                personaId = BrowserPaths::activeProfileId();
+                if (!name.isEmpty() && m_options.dataPath.isEmpty())
+                    leaf = webkitStorageLeaf(name);
+            }
+            const QString dataRoot = !m_options.dataPath.isEmpty()
+                ? m_options.dataPath
+                : BrowserPaths::profileDataDir(personaId);
+            const QString cacheRoot = !m_options.cachePath.isEmpty()
+                ? m_options.cachePath
+                : dataRoot + QLatin1String("/cache");
+            QString dataDir = dataRoot + QLatin1String("/WebKit");
+            QString cacheDir = cacheRoot + QLatin1String("/WebKit");
+            if (!leaf.isEmpty()) {
+                dataDir += QLatin1Char('/') + leaf;
+                cacheDir += QLatin1Char('/') + leaf;
+            }
+            QDir().mkpath(dataDir);
+            QDir().mkpath(cacheDir);
+            m_sessionDataDir = dataDir;
+            m_sessionCacheDir = cacheDir;
+            m_networkSession = webkit_network_session_new(
+                QFile::encodeName(dataDir).constData(),
+                QFile::encodeName(cacheDir).constData());
+            if (!m_networkSession) {
+                // webkit_network_session_new can refuse (e.g. a dir
+                // that exists as a file); a null session would fall
+                // back to default in the page ctor and silently share
+                // the global store — fail loud instead.
+                qWarning("webkit: network session creation failed for"
+                         " data dir %s — profile stays sessionless",
+                         qPrintable(dataDir));
+                m_sessionDataDir.clear();
+                m_sessionCacheDir.clear();
+            }
+        }
     }
 #endif
     return m_networkSession;
+}
+
+bool WebkitProfile::sessionIsEphemeral() const
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    return m_networkSession
+        && webkit_network_session_is_ephemeral(m_networkSession);
+#else
+    return false;
+#endif
 }
 
 bool WebkitProfile::isOffTheRecord() const
@@ -1139,9 +1262,8 @@ QList<Engine::Script> WebkitProfile::scripts() const
 
 void WebkitProfile::clear(Engine::StorageAreas areas)
 {
-    // WK12 maps this onto WebKitWebsiteDataManager::clear; nothing is
-    // persisted before WK11 roots a session, so there is nothing to
-    // wipe.
+    // WK12 maps this onto WebKitWebsiteDataManager::clear on the
+    // profile's session (WK11-rooted or ephemeral).
     Q_UNUSED(areas);
 }
 
