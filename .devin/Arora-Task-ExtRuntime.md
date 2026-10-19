@@ -57,7 +57,7 @@ xvfb-run — never touch the user's live display.
 | ER10 | offscreen.createDocument/hasDocument/closeDocument → second-class host page — details below | done | 0 | hidden bridge-backed doc page; typed denials + verbatim single-document msg; getContexts OFFSCREEN_DOCUMENT; extensionOffscreen + full suite 38/38 + Bitwarden legs pass |
 | ER11 | webRequest observe-only events (onBeforeRequest/onCompleted/onErrorOccurred) via QWebEngineUrlRequestInterceptor — details below | done | 2 | needs:task:ER04 · extensionWebRequest leg PASS: interceptor→watcher feed (OTR/tor excluded) serves onBefore*/onSendHeaders/onHeadersReceived/onCompleted/onErrorOccurred w/ per-listener filters + per-event host-coverage re-proof; blocking/requestBody→typed unsupported+gap, unservable events refuse at subscribe; orphan tabId-adoption fixed fast-fail nav race; full suite 39/39 + real Bitwarden legs PASS (bg registered onHeadersReceived — note, not gap) |
 | ER12 | notifications.create/update/clear/getAll → native presenter — details below | done | 0 | needs:task:ER06 · extensionNotifications leg PASS: record registry + freedesktop Notify over session D-Bus; onClicked/onButtonClicked/onClosed(byUser)/onShown route back through the runtime fan-out; 'notifications' permission gates the ns; extension-host-smoke PASS + full suite 40/40 (3 env skips) + real Bitwarden legs PASS (gap baseline 0 typed gaps — notifications no longer one) |
-| ER13 | idle.queryState/onStateChanged — input-activity watcher, configurable threshold — details below | pending | 0 | needs:task:ER05 |
+| ER13 | idle.queryState/onStateChanged — input-activity watcher, configurable threshold — details below | done | 1 | needs:task:ER05 · extensionIdle leg PASS: app-wide Qt input filter→precise-timer watcher (in-app activity only, 'locked' never reported — honest note once/context); listener subscribe arms it; queryState's own threshold answers vs clock independent of declared state; 'idle' permission gates calls + fan-out; pre-bridge diagnostics rerouted through the call queue (was dropping gaps); full suite 41/41 (3 env skips) + real Bitwarden legs PASS offscreen --disable-gpu (bg drove idle.setDetectionInterval/subscribe, 0 typed gaps) |
 | ER14 | commands — manifest command parsing + QShortcut registry + onCommand dispatch — details below | pending | 0 | needs:task:ER05 |
 | ER15 | management.getSelf + chrome.extension.getBackgroundPage/getViews + sidebarAction sugar — details below | pending | 0 | needs:task:ER06 |
 | ER16 | Security pass — host_permissions scoping on every injection path; per-call consent honoring EXT05 grants — details below | pending | 0 | needs:task:ER07 needs:task:ER09 |
@@ -337,6 +337,41 @@ honest v1 is a QTimer reset by input events inside our windows
 "screen-saver idle" only loosely). Threshold configurable per call.
 Verify: queryState answers active under synthetic input and idle
 after threshold with input stopped.
+
+Result (2026-10-19): landed. `ExtensionIdleWatcher` (lazy singleton)
+is the browser-global clock: an application-wide Qt event filter
+(key/button/motion/wheel/touch/tablet) feeds a single-shot precise
+QTimer at the configured detection interval — Chrome's global
+semantics, last setDetectionInterval wins for every extension.
+Both the interval and each queryState threshold clamp at Chrome's
+15s floor (ARKTOS_EXT_IDLE_MIN_S lowers it for the autotest leg).
+queryState answers against its own argument, so a long threshold
+returns 'active' while the declared state is already 'idle';
+transitions broadcast `idle.onStateChanged` through the runtime's
+permission-gated eventGate ('idle' gates the namespace like
+Chrome). The shim's onStateChanged onAdd posts `idle.subscribe` —
+a listener registration alone arms the watcher — and records the
+honest scope once per context: input is measured inside Arktos
+windows only and 'locked' is never reported.
+`idle.getAutoLockDelay` is typed `unsupported` (ChromeOS-only),
+unknown members `unimplemented`, bad arguments `invalid-argument`,
+no 'idle' permission `no-permission` — all ledgered into shimGaps.
+Two infrastructure findings fixed en route: QTimer's default
+CoarseTimer fires up to 5% early and raced the elapsed-clock answer
+(precise timer + re-check on timeout), and the shim's
+`note()`/`recordGap()` invoked the bridge directly so diagnostics
+recorded before the handshake were silently dropped host-side —
+both now ride the `call()` queue that flushes on bridge-up.
+Verified: extensionIdle leg PASS (real QKeyEvent through the app
+filter drives active→idle→active into the hosted page, per-call
+threshold independence, invalid-argument/unsupported/no-permission
+all ledgered, fan-out never reaches a permission-less listener),
+full tst_extensionmanager 41/41 (3 env skips), real Bitwarden legs
+all PASS offscreen + QTWEBENGINE_CHROMIUM_FLAGS=--disable-gpu (its
+background calls idle.setDetectionInterval(300) and subscribes
+onStateChanged — served, gap baseline still 0 typed gaps; the
+popup legs SIGTRAP without --disable-gpu, the documented
+environmental blessed-context issue).
 
 ### ER14
 `chrome.commands`: parse `commands` from the manifest (the Rust/Qt

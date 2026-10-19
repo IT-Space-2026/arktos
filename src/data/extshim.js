@@ -48,6 +48,10 @@
  *                         presentation; onClicked/onButtonClicked/
  *                         onClosed/onShown dispatch back from the
  *                         daemon through hostEvent
+ *   chrome.idle         — ER13: queryState/setDetectionInterval/
+ *                         onStateChanged over the host's in-app
+ *                         input watcher (in-app activity only;
+ *                         'locked' never reported)
  *   chrome.commands     — onCommand event; getAll from the manifest
  *   chrome.contextMenus — create/update/remove* registry host-side;
  *                         onClicked event (rendering is EXT16)
@@ -81,12 +85,11 @@
     function note(text) {
         if (shim.notes.length < LOG_CAP)
             shim.notes.push(String(text));
-        if (host.bridgeUp && host.bridge) {
-            try {
-                host.bridge.invoke('shim', 'note',
-                    { message: String(text) }, function () {});
-            } catch (e) {}
-        }
+        // Through call() so a diagnostic recorded before the
+        // handshake lands rides the bridge queue — health must see
+        // boot-time gaps, not just post-bridge ones.
+        call('shim', 'note', { message: String(text) })
+            .catch(function () {});
     }
 
     function recordGap(api, error) {
@@ -96,13 +99,9 @@
                 return;
         if (shim.gaps.length < LOG_CAP)
             shim.gaps.push(text);
-        if (host.bridgeUp && host.bridge) {
-            try {
-                host.bridge.invoke('shim', 'gap',
-                    { api: String(api), error: String(error) },
-                    function () {});
-            } catch (e) {}
-        }
+        call('shim', 'gap',
+             { api: String(api), error: String(error) })
+            .catch(function () {});
     }
 
     function touch(api) {
@@ -2895,6 +2894,59 @@
         });
     }
 
+    // --- chrome.idle ------------------------------------------------------------
+    // ER13 — served by ExtensionIdleWatcher on the host: an
+    // application-wide Qt input filter feeding a detection-interval
+    // timer; transitions fan back in as idle.onStateChanged.  The
+    // honest bounds ride a note, once per context: in-app input only
+    // (input in other apps never resets the clock) and 'locked' is
+    // never reported.  Chrome's 15s interval floor applies host-side.
+    if (typeof chrome !== 'undefined') {
+        var idleNoted = false;
+        installNs('idle', {
+            onStateChanged: makeEvent('idle.onStateChanged', {
+                onAdd: function () {
+                    // Registering a listener arms the watcher —
+                    // subscribe goes through the same 'idle'
+                    // permission gate the methods do.
+                    call('idle', 'subscribe', {})
+                        .catch(function () {});
+                    if (!idleNoted) {
+                        idleNoted = true;
+                        note('chrome.idle: input is measured inside '
+                             + 'Arktos windows only; OS-level idle '
+                             + 'and the locked state are never '
+                             + 'reported');
+                    }
+                }
+            }),
+            queryState: function (interval, cb) {
+                var p = call('idle', 'queryState',
+                             { interval: interval });
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message); });
+                return p;
+            },
+            setDetectionInterval: function (interval, cb) {
+                var p = call('idle', 'setDetectionInterval',
+                             { interval: interval });
+                if (cb)
+                    p.then(function () { cb(); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message); });
+                return p.then(function () {});
+            },
+            // ChromeOS-only in Chrome — typed unsupported everywhere
+            // else, never a fake number.
+            getAutoLockDelay: function (cb) {
+                return failCall('idle.getAutoLockDelay',
+                                'unsupported', cb);
+            }
+        });
+    }
+
     // --- chrome.commands ---------------------------------------------------------
     if (typeof chrome !== 'undefined') {
         installNs('commands', {
@@ -3100,8 +3152,6 @@
                 catch (e) {}
             }
         }
-        fillNs('idle', ['onStateChanged'],
-               ['queryState', 'setDetectionInterval']);
         // When chrome.tabs resisted the proxy install (locked
         // native accessor) the block above already filled every
         // tabsNs member; this covers the rest of the surface with
@@ -3247,7 +3297,7 @@
         'nativeMessaging', 'privacy', 'topSites', 'history',
         'scripting', 'offscreen', 'omnibox', 'devtools',
         'fontSettings', 'tabGroups', 'userScripts',
-        'declarativeNetRequest', 'declarativeContent', 'idle',
+        'declarativeNetRequest', 'declarativeContent',
         'browsingData', 'management', 'sessions', 'downloads',
         'power', 'system', 'tts', 'enterprise', 'debugger',
         'processes', 'readingList', 'search', 'favicon', 'tabCapture',

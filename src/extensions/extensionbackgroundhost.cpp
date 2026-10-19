@@ -1915,6 +1915,10 @@ QString eventGate(const QString &name)
     // ER12: notification events ride the same gate create() applies.
     if (ns == QLatin1String("notifications"))
         return QStringLiteral("notifications");
+    // ER13: same Chrome parity — 'idle' gates the whole API,
+    // onStateChanged included.
+    if (ns == QLatin1String("idle"))
+        return QStringLiteral("idle");
     return QString();
 }
 

@@ -3688,3 +3688,32 @@ Extensions (notifications): chrome.notifications.create/update/clear/
     create/onShown/getAll/update/missing-id/click/button/close/clear
     plus the no-permission denial — over the ARKTOS_EXTNOTIFY_STUB
     headless presenter, and the real Bitwarden legs run with it armed.
+Extensions (idle): chrome.idle.queryState/setDetectionInterval/
+    onStateChanged are served by the hosted runtime (ER13) over a
+    browser-global input watcher — an application-wide Qt event
+    filter counts key, pointer, wheel, touch and tablet events as
+    user activity and a single-shot timer marks the active-to-idle
+    boundary at the configured detection interval. Chrome parity is
+    kept where it's honest: the interval and every queryState
+    threshold clamp at Chrome's 15-second floor, the interval is
+    global (the last setDetectionInterval wins for all extensions),
+    and queryState answers against its own threshold rather than
+    the declared state — a long threshold still reports 'active'
+    while the watcher is already 'idle'. The 'idle' manifest
+    permission gates the namespace, transitions reach only
+    subscribing extensions that declare it, and the honest limits
+    are recorded once per context on the health row instead of
+    being hidden: activity is measured inside Arktos windows only
+    (input in other applications does not reset the clock) and the
+    'locked' state is never reported. chrome.idle.getAutoLockDelay
+    answers the typed ChromeOS-only unsupported, a missing
+    permission the typed no-permission, and every denial is
+    ledgered — never a silent no-op. The watcher is lazy: nothing
+    filters input or runs a timer until the first namespaced call
+    or onStateChanged listener arrives, so an extension-free
+    session carries zero cost. The extensionIdle autotest leg
+    drives a real key event through the application filter and
+    watches the active→idle→active transitions cross into a hosted
+    extension, and the real Bitwarden background's own
+    setDetectionInterval + onStateChanged subscription round-trips
+    with zero typed gaps.

@@ -24,6 +24,7 @@
 #include "browserpaths.h"
 #include "extensionbackgroundhost.h"
 #include "extensioneventhub.h"
+#include "extensionidlewatcher.h"
 #include "extensionnotificationcenter.h"
 #include "tabwidget.h"
 #include "webview.h"
@@ -226,6 +227,8 @@ QJsonObject ExtensionShimBackend::invoke(const QString &ns,
         return invokeSidePanel(method, args);
     if (ns == QLatin1String("notifications"))
         return invokeNotifications(method, args);
+    if (ns == QLatin1String("idle"))
+        return invokeIdle(method, args);
     if (ns == QLatin1String("runtime"))
         return invokeRuntime(method, args);
     if (ns == QLatin1String("shim"))
@@ -1369,6 +1372,53 @@ QJsonObject ExtensionShimBackend::invokeNotifications(
             this, args.value(QStringLiteral("id")).toString());
     if (method == QLatin1String("getAll"))
         return center->getAll(this);
+    return errReply(QStringLiteral("unimplemented"));
+}
+
+// -------------------------------------------------------------------
+// chrome.idle — ER13.  Chrome exposes the namespace only to
+// extensions declaring 'idle'; the gate reads the same installed
+// manifest permissions.* answers from.  State lives in
+// ExtensionIdleWatcher (browser-global, like Chrome's): an
+// application-wide input filter feeding a QTimer at the configured
+// detection interval.  Activity is measured inside Arktos windows
+// only and 'locked' is never reported — the shim notes the
+// approximation once per context.
+// -------------------------------------------------------------------
+
+QJsonObject ExtensionShimBackend::invokeIdle(
+        const QString &method, const QJsonObject &args)
+{
+    QStringList perms;
+    for (const QJsonValue &v : manifestJson()
+             .value(QStringLiteral("permissions")).toArray())
+        perms.append(v.toString());
+    if (!perms.contains(QLatin1String("idle")))
+        return errReply(QStringLiteral("no-permission"));
+
+    ExtensionIdleWatcher *watcher = ExtensionIdleWatcher::instance();
+    if (method == QLatin1String("queryState")) {
+        const QJsonValue v = args.value(QStringLiteral("interval"));
+        if (!v.isDouble() || v.toDouble() < 0)
+            return errReply(QStringLiteral("invalid-argument"));
+        return okReply(watcher->queryState(int(v.toDouble())));
+    }
+    if (method == QLatin1String("setDetectionInterval")) {
+        const QJsonValue v = args.value(QStringLiteral("interval"));
+        if (!v.isDouble() || v.toDouble() < 0)
+            return errReply(QStringLiteral("invalid-argument"));
+        watcher->setDetectionInterval(int(v.toDouble()));
+        return okReply();
+    }
+    // The shim's onStateChanged onAdd — a listener registration is
+    // what arms the watcher for an extension that only listens.
+    if (method == QLatin1String("subscribe")) {
+        watcher->subscribe();
+        return okReply();
+    }
+    // getAutoLockDelay exists on ChromeOS only — typed, not silent.
+    if (method == QLatin1String("getAutoLockDelay"))
+        return errReply(QStringLiteral("unsupported"));
     return errReply(QStringLiteral("unimplemented"));
 }
 

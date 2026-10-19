@@ -57,6 +57,9 @@ class QWebEngineProfile;
 //   notifications.* — record registry + freedesktop presentation via
 //                  ExtensionNotificationCenter (ER12); 'notifications'
 //                  manifest permission gates the namespace
+//   idle.*       — queryState/setDetectionInterval/onStateChanged
+//                  over ExtensionIdleWatcher's in-app input clock
+//                  (ER13); 'idle' manifest permission gates it
 //   runtime.*    — context bookkeeping (getViews counts)
 //   shim.*       — diagnostics channel: 'note' -> notes(), 'gap' ->
 //                  gapReported() -> the host's health surface
@@ -183,6 +186,8 @@ private:
                                 const QJsonObject &args);
     QJsonObject invokeNotifications(const QString &method,
                                     const QJsonObject &args);
+    QJsonObject invokeIdle(const QString &method,
+                           const QJsonObject &args);
     QJsonObject invokeRuntime(const QString &method,
                               const QJsonObject &args);
     QJsonObject invokeShim(const QString &method,

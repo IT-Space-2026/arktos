@@ -5,6 +5,7 @@ HEADERS += \
     $$PWD/extensionactionbar.h \
     $$PWD/extensionbackgroundhost.h \
     $$PWD/extensioneventhub.h \
+    $$PWD/extensionidlewatcher.h \
     $$PWD/extensionmanager.h \
     $$PWD/extensionnotificationcenter.h \
     $$PWD/extensionpagebridge.h \
@@ -16,6 +17,7 @@ SOURCES += \
     $$PWD/extensionactionbar.cpp \
     $$PWD/extensionbackgroundhost.cpp \
     $$PWD/extensioneventhub.cpp \
+    $$PWD/extensionidlewatcher.cpp \
     $$PWD/extensionmanager.cpp \
     $$PWD/extensionnotificationcenter.cpp \
     $$PWD/extensionpagebridge.cpp \

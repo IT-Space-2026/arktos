@@ -32,6 +32,7 @@
 #include <memory>
 
 #include <qcheckbox.h>
+#include <qevent.h>
 #include <qlistwidget.h>
 #include <qpushbutton.h>
 
@@ -41,6 +42,7 @@
 #include "browserprofile.h"
 #include "extensionbackgroundhost.h"
 #include "extensioneventhub.h"
+#include "extensionidlewatcher.h"
 #include "extensionmanager.h"
 #include "extensionnotificationcenter.h"
 #include "extensionpagebridge.h"
@@ -94,6 +96,7 @@ private slots:
     void extensionScriptCss();
     void extensionContentScriptRegistration();
     void extensionNotifications();
+    void extensionIdle();
     void extensionOffscreen();
     void actionPopupSelfWires();
     void realExtensionPopup();
@@ -3117,6 +3120,232 @@ void tst_ExtensionManager::extensionNotifications()
         20000);
 
     // Teardown drops the extension's records like Chrome's unload.
+    manager->setExtensionEnabled(idA, false);
+    manager->setExtensionEnabled(idB, false);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !runtime->host(idA) && !runtime->host(idB), 20000);
+    manager->removeExtension(idA);
+    manager->removeExtension(idB);
+    QDir(root).removeRecursively();
+}
+
+// ER13 — chrome.idle over the hosted runtime.  Fixture A declares
+// 'idle' and drives the whole surface: an onStateChanged listener
+// (which arms the watcher through the shim's subscribe op), a 1s
+// detection interval, a per-call queryState threshold, a negative
+// argument and the ChromeOS-only getAutoLockDelay.  The leg sends a
+// real QKeyEvent through the application object — the watcher's
+// app-wide event filter is the path under test — and watches the
+// active -> idle -> active transitions cross into the hosted page.
+// Fixture B has no 'idle' permission: every call is a typed
+// no-permission denial and the state fan-out never reaches it.
+void tst_ExtensionManager::extensionIdle()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+    // Chrome's 15s detection floor would make the leg sleep 16s+;
+    // the watcher honors an explicit override for exactly this.
+    qputenv("ARKTOS_EXT_IDLE_MIN_S", "1");
+
+    const QString swA = QStringLiteral(
+        "self.__idle=[];\n"
+        "chrome.idle.onStateChanged.addListener(function(s){\n"
+        " self.__idle.push(['state',s]);});\n"
+        "chrome.idle.setDetectionInterval(1);\n"
+        "chrome.idle.queryState(-2).catch(function(){});\n"
+        "chrome.idle.getAutoLockDelay().catch(function(){});\n");
+    const QString swB = QStringLiteral(
+        "self.__idle=[];\n"
+        "chrome.idle.onStateChanged.addListener(function(s){\n"
+        " self.__idle.push(['state',s]);});\n"
+        "chrome.idle.queryState(15).catch(function(){});\n");
+
+    const QString root = QDir::temp().filePath(
+        QStringLiteral("tst-extidle-%1")
+            .arg(QCoreApplication::applicationPid()));
+    const QString dirA = root + QLatin1String("/tst-idle-a");
+    const QString dirB = root + QLatin1String("/tst-idle-b");
+    for (const QString &dir : {dirA, dirB})
+        QVERIFY(QDir().mkpath(dir));
+    const auto writeFixture = [](const QString &dir,
+                                 const QString &name,
+                                 const QString &permissions,
+                                 const QString &sw) {
+        QFile manifestFile(dir + QLatin1String("/manifest.json"));
+        if (!manifestFile.open(QIODevice::WriteOnly))
+            return false;
+        manifestFile.write("{\"manifest_version\":3,\"name\":\""
+            + name.toUtf8() + "\",\"version\":\"1.0\",\"permissions\":["
+            + permissions.toUtf8()
+            + "],\"background\":{\"service_worker\":\"sw.js\"}}");
+        manifestFile.close();
+        QFile worker(dir + QLatin1String("/sw.js"));
+        if (!worker.open(QIODevice::WriteOnly))
+            return false;
+        worker.write(sw.toUtf8());
+        worker.close();
+        return true;
+    };
+    QVERIFY(writeFixture(dirA, QStringLiteral("tst-idle-a"),
+                         QStringLiteral("\"idle\""), swA));
+    QVERIFY(writeFixture(dirB, QStringLiteral("tst-idle-b"),
+                         QStringLiteral("\"storage\""), swB));
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    ExtensionIdleWatcher *watcher = ExtensionIdleWatcher::instance();
+
+    const auto loadReady = [this, manager, runtime](
+            const QString &dir, const QString &name) -> QString {
+        auto loaded = std::make_shared<QString>();
+        QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                         this, [loaded, name](
+                             const ExtensionManager::ExtensionInfo
+                                 &info) {
+            if (info.name == name && info.error.isEmpty())
+                *loaded = info.id;
+        });
+        manager->grantConsent(dir);
+        manager->loadExtension(dir);
+        QElapsedTimer timer;
+        timer.start();
+        while (loaded->isEmpty() && timer.elapsed() < 30000)
+            QTest::qWait(50);
+        const QString id = *loaded;
+        if (id.isEmpty())
+            return id;
+        manager->setExtensionEnabled(id, true);
+        timer.restart();
+        while (timer.elapsed() < 45000) {
+            ExtensionBackgroundHost *host = runtime->host(id);
+            if (host && host->state()
+                    == ExtensionBackgroundHost::State::Ready)
+                break;
+            QTest::qWait(50);
+        }
+        return id;
+    };
+    const QString idA = loadReady(dirA, QStringLiteral("tst-idle-a"));
+    const QString idB = loadReady(dirB, QStringLiteral("tst-idle-b"));
+    QVERIFY2(!idA.isEmpty() && !idB.isEmpty(),
+             "fixtures loaded + hosted");
+
+    auto eval = [](QWebEnginePage *page, const QString &source) {
+        auto result = std::make_shared<QVariant>();
+        page->runJavaScript(source,
+                            [result](const QVariant &v) { *result = v; });
+        QElapsedTimer timer;
+        timer.start();
+        while (!result->isValid() && timer.elapsed() < 10000)
+            QTest::qWait(50);
+        return *result;
+    };
+    const auto saw = [&eval](QWebEnginePage *page,
+                             const QString &predicate) {
+        return eval(page, QStringLiteral(
+            "(self.__idle||[]).some(%1)").arg(predicate)).toBool();
+    };
+    const auto sendInput = []() {
+        // A real key event through the application object — the
+        // app-wide event filter is the production path under test.
+        QKeyEvent press(QEvent::KeyPress, Qt::Key_A,
+                        Qt::NoModifier);
+        QCoreApplication::sendEvent(qApp, &press);
+    };
+
+    // The listener's subscribe armed the watcher; the 1s interval
+    // (clamped at the test floor) drops it to idle with no input.
+    QTRY_VERIFY_WITH_TIMEOUT(watcher->armed(), 20000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        watcher->state() == QLatin1String("idle"), 20000);
+    QTRY_VERIFY_WITH_TIMEOUT(saw(runtime->host(idA)->page(),
+        QStringLiteral("function(e){return e[0]==='state'"
+                       "&&e[1]==='idle';}")), 20000);
+
+    // Synthetic input flips it back — the active transition reaches
+    // the listener and queryState answers active at its own
+    // threshold.
+    sendInput();
+    QTRY_VERIFY_WITH_TIMEOUT(saw(runtime->host(idA)->page(),
+        QStringLiteral("function(e){return e[0]==='state'"
+                       "&&e[1]==='active';}")), 20000);
+    eval(runtime->host(idA)->page(), QStringLiteral(
+        "chrome.idle.queryState(1).then(function(s){"
+        "self.__idle.push(['q',s]);});'ok'"));
+    QTRY_VERIFY_WITH_TIMEOUT(saw(runtime->host(idA)->page(),
+        QStringLiteral("function(e){return e[0]==='q'"
+                       "&&e[1]==='active';}")), 20000);
+
+    // Input stopped: the boundary re-fires and the per-call
+    // threshold is independent of the declared state — a long
+    // threshold still answers active (Chrome semantics).
+    QTRY_VERIFY_WITH_TIMEOUT(
+        watcher->state() == QLatin1String("idle"), 20000);
+    eval(runtime->host(idA)->page(), QStringLiteral(
+        "chrome.idle.queryState(1).then(function(s){"
+        "self.__idle.push(['q1',s]);});'ok'"));
+    eval(runtime->host(idA)->page(), QStringLiteral(
+        "chrome.idle.queryState(3600).then(function(s){"
+        "self.__idle.push(['q3600',s]);});'ok'"));
+    const auto waitFor = [&eval](QWebEnginePage *page,
+                                 const QString &predicate, int ms) {
+        QElapsedTimer timer;
+        timer.start();
+        while (timer.elapsed() < ms) {
+            if (eval(page, QStringLiteral(
+                    "(self.__idle||[]).some(%1)")
+                    .arg(predicate)).toBool())
+                return true;
+            QTest::qWait(50);
+        }
+        return false;
+    };
+    const auto idleDump = [&eval](QWebEnginePage *page) {
+        return eval(page, QStringLiteral(
+            "JSON.stringify(self.__idle||[])")).toString();
+    };
+    QVERIFY2(waitFor(runtime->host(idA)->page(),
+        QStringLiteral("function(e){return e[0]==='q1';}"), 20000),
+        qPrintable(QStringLiteral("idle ledger: %1")
+            .arg(idleDump(runtime->host(idA)->page()))));
+    QVERIFY2(waitFor(runtime->host(idA)->page(),
+        QStringLiteral("function(e){return e[0]==='q3600';}"), 20000),
+        qPrintable(QStringLiteral("idle ledger: %1")
+            .arg(idleDump(runtime->host(idA)->page()))));
+    QTRY_VERIFY_WITH_TIMEOUT(saw(runtime->host(idA)->page(),
+        QStringLiteral("function(e){return e[0]==='q1'"
+                       "&&e[1]==='idle';}")), 20000);
+    QTRY_VERIFY_WITH_TIMEOUT(saw(runtime->host(idA)->page(),
+        QStringLiteral("function(e){return e[0]==='q3600'"
+                       "&&e[1]==='active';}")), 20000);
+    QTRY_VERIFY_WITH_TIMEOUT(saw(runtime->host(idA)->page(),
+        QStringLiteral(
+            "function(e){return e[0]==='state'&&e[1]==='idle'"
+            "&&self.__idle.filter(function(x){return "
+            "x[0]==='state';}).length>=2;}")), 20000);
+
+    // Typed failures are ledgered, never silent.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(idA)->shimGaps().contains(QStringLiteral(
+            "chrome.idle.queryState: invalid-argument")), 20000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(idA)->shimGaps().contains(QStringLiteral(
+            "chrome.idle.getAutoLockDelay: unsupported")), 20000);
+
+    // B holds no 'idle' permission: calls are denied and the state
+    // fan-out is permission-gated away from its listener — a fresh
+    // transition right now must still never reach it.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(idB)->shimGaps().contains(QStringLiteral(
+            "chrome.idle.queryState: no-permission")), 20000);
+    sendInput();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        watcher->state() == QLatin1String("active"), 20000);
+    QTest::qWait(500);
+    QVERIFY(!saw(runtime->host(idB)->page(),
+               QStringLiteral("function(e){return e[0]==='state';}")));
+
     manager->setExtensionEnabled(idA, false);
     manager->setExtensionEnabled(idB, false);
     QTRY_VERIFY_WITH_TIMEOUT(

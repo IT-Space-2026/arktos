@@ -564,7 +564,13 @@ Chrome-shaped details and honor each listener's `urls`/`types`/
 `tabId` filters, but a request only reaches an extension whose
 `host_permissions` cover its URL, private/Tor traffic is never
 reported, and `blocking` registrations answer a typed error rather
-than pretending to intercept.
+than pretending to intercept. `chrome.idle.queryState`/
+`setDetectionInterval`/`onStateChanged` are served too, over a
+browser-global watcher that counts input inside Arktos windows as
+activity — Chrome's 15-second floor and global-interval semantics
+are kept, while the approximation (in-app input only, no 'locked'
+state) is recorded on the extension's health row rather than
+hidden.
 
 Enabled extensions that declare a background script additionally get
 a hosted background context: a hidden page on the extension's own
