@@ -376,6 +376,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | SEC28 | Vault crypto coverage check: confirm VSEC01 audited KDF params + seal/unseal of the credential/autofill stores, not just the FFI seam — fill any gap — details below | pending | 0 | |
 | CONC01 | Concurrent store writers: two windows writing bookmarks.xbel + history.db — xbel write atomicity across windows, SQLite writer contention — details below | pending | 0 | |
 | INFRA01 | taskloop task-file race: runner read-modify-write clobbers concurrent edits (lost-update hit twice today) — flock around the row update — details below | pending | 0 | |
+| SEC30 | Omnibox paste self-XSS: pasting javascript:... + Enter executes via loadUrl's javascript branch — typed bookmarklets stay allowed, but strip the scheme from pasted text like Chrome — details below | pending | 0 | |
 
 ## Task details
 
@@ -3365,3 +3366,24 @@ taskcheck.sh helper that writes): take flock on the task file
 use a sed in-place row update instead of full-file rewrite.
 Verify: queue a dummy task edit while a run is mid-task; both the
 row mark and the edit survive.
+
+### SEC30
+
+Omnibox paste self-XSS.  WebView::loadUrl executes javascript: urls
+through runJavaScript — intentionally, for typed bookmarklets and
+bookmark invocations.  But the location bar (locationbar.cpp /
+utils/lineedit.cpp) has no paste handling at all, so clipboard text
+"javascript:alert(1)" pasted into the omnibox and submitted runs in
+the current page's origin — the classic self-XSS scam Chrome
+defends by stripping the javascript: scheme from pasted text.
+
+Fix: intercept paste in the location-bar line edit (insertFromMimeData
+or a clipboard-aware key handler) — if the pasted text begins with
+javascript: (case/whitespace-insensitive), strip the scheme token
+or refuse it, matching Chrome.  Typed javascript: and bookmarklet
+invocations must keep working; drag/drop onto the view and
+middle-click PRIMARY are already refused via
+isUrlAllowedOnUntrustedInput (SEC02).
+
+Verify: tst leg — paste "javascript:..." into the omnibox, submit,
+assert no script ran; typed javascript: still executes.
