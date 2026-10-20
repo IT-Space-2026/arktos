@@ -371,7 +371,8 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | CONT01 | Container/profile teardown: deleting a container with bound tabs (incl. m_containerHidden strays) and restart-deleted profile vs queued signals — details below | pending | 0 | |
 | SESS01 | Session restore × engine/container matrix: engine-tagged tab on a webkit=0 build, lazy restore inside container level/group, restore racing an active container filter — details below | pending | 0 | |
 | TAB04 | Private tabs get thumbnails: captureTabThumbnail/scheduleThumbnailCapture have no OTR check — private page pixels land in m_tabThumbnails + hover previews. Skip capture+preview for OTR views — details below | pending | 0 | |
-| SEC27 | Sanitizer audit: readersanitizer.cpp (article HTML into chrome-privileged reader context) + pdfsanitize.rs/pdfworker ("sanitized before view" claim) — XSS-bypass review — details below | pending | 0 | |
+| SEC27 | Reader-mode sanitizer audit: readersanitizer.cpp — article HTML into a chrome-adjacent context; allowlist gaps = XSS — details below | pending | 0 | |
+| SEC29 | PDF sanitize-pipeline audit: pdfsanitize.rs + pdfworker.cpp — verify the "sanitized before view" claim, fail-closed on unsanitizable files — details below | pending | 0 | |
 | SEC28 | Vault crypto coverage check: confirm VSEC01 audited KDF params + seal/unseal of the credential/autofill stores, not just the FFI seam — fill any gap — details below | pending | 0 | |
 | CONC01 | Concurrent store writers: two windows writing bookmarks.xbel + history.db — xbel write atomicity across windows, SQLite writer contention — details below | pending | 0 | |
 | INFRA01 | taskloop task-file race: runner read-modify-write clobbers concurrent edits (lost-update hit twice today) — flock around the row update — details below | pending | 0 | |
@@ -3290,26 +3291,27 @@ captures.
 
 ### SEC27
 
-Sanitizer audit — two paths that ingest hostile document content
-into privileged contexts:
+Reader-mode sanitizer audit — readersanitizer.cpp: article HTML
+extracted by readability is re-serialized into the reader-mode
+page, which runs in a chrome-adjacent context.  Review the
+allowlist (tags/attributes/URI schemes), URI rewriting, and any
+attribute that can carry event handlers or javascript:/data:
+payloads.  Look for allowlist gaps (svg, mathml, srcset, style,
+meta refresh, base href) — the classic reader-mode XSS classes.
+Confirm the output document is served under a locked-down
+CSP/origin, not the source origin.  Fix real bypasses in-task;
+document residual limits honestly.
 
-A) readersanitizer.cpp — article HTML extracted by readability and
-   re-serialized into the reader-mode page, which runs in a chrome-
-   adjacent context.  Review the allowlist (tags/attributes/URI
-   schemes), URI rewriting, and any attribute that can carry event
-   handlers or javascript:/data: payloads.  Look for allowlist gaps
-   (svg, mathml, srcset, style, meta refresh, base href) — the
-   classic reader-mode XSS classes.  Confirm the output document is
-   served under a locked-down CSP/origin, not the source origin.
+### SEC29
 
-B) pdfsanitize.rs + pdfworker.cpp — README claims "PDFs open in a
-   browser, sanitized before view".  Verify what the sanitize pass
-   actually rewrites (JS actions, launch/uri actions, embedded
-   files, xref stream tricks), whether output is byte-structural or
-   a lossy raster/flatten, and that an unsanitizable file fails
-   closed (refuses view, does not pass the raw bytes through).
-
-Fix real bypasses in-task; document residual limits honestly.
+PDF sanitize-pipeline audit — pdfsanitize.rs + pdfworker.cpp.
+README claims "PDFs open in a browser, sanitized before view".
+Verify what the sanitize pass actually rewrites (JS actions,
+launch/uri actions, embedded files, xref stream tricks), whether
+output is byte-structural or a lossy raster/flatten, and that an
+unsanitizable file fails closed (refuses view, does not pass the
+raw bytes through).  Fix real bypasses in-task; document residual
+limits honestly.
 
 ### SEC28
 
