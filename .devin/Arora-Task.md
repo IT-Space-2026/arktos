@@ -364,7 +364,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | LEG03 | Dead-pipeline sweep: src/locale tooling, generateAuthors/generateReleaseContributors vs new AUTHORS policy, tools/htmlToXBel fixtures — wire-in or remove — details below | done | 0 | user request — DONE: generate* scripts removed (contradict AUTHORS); locale kept+documented (was already live: lrelease→src/.qm/locale→LanguageManager, maintainers→attribution); htmlToXBel fixtures verified + wired via make check-htmltoxbel; modeltest confirmed live. Verified: clean build, 4 gates PASS, check-htmltoxbel PASS, quit-after-load rc=0 |
 | LEG04 | Untouched test-infra review: qtry.h usage, tst_lineedit.cpp build status, stale .gitignores, fixture validity — wire in or delete — details below | done | 0 | user request — DONE: qtry.h shim deleted (44 includers use Qt6-native QTRY_*); tst_lineedit confirmed wired (utils.pro→make check, 17/17); 26 stale .gitignores removed (root tst_* rule covers; rules2.txt kept); all fixtures grep-proven live — verified: make check rc=0, 4 gates PASS, 99 programs 0 failed |
 | PRIV09 | PRIV07 slice A — ASan/LSan churn leg for the committed OTR teardown (the only unrun spec item; do NOT re-implement) — details below | done | 0 | 50-cycle --otr-teardown-smoke under ASan+UBSan+LSan (linux-clang): 48 PASS 13/13, 2 upstream FcInit startup flakes; 0 ASan/UBSan reports, 0 our-code leak blocks (all upstream widget/fontconfig), no leaked QWebEngineProfile — report .devin/PRIV09-scan.md |
-| PRIV10 | PRIV07 slice B — post-commit review of the OTR teardown diff landed inside b6494e58 (lifetime races, refcount edges) — details below | pending | 0 | |
+| PRIV10 | PRIV07 slice B — post-commit review of the OTR teardown diff landed inside b6494e58 (lifetime races, refcount edges) — details below | done | 0 | 1 real bug fixed: upstream QWebEngineDownloadRequest::page() derefs a dead adapterClient after closeTab (UAF in hasActiveDownloadForPage/restartDownload) → guarded QPointer snapshot in WebEngineDownloadRequest; rest of checklist clean — full verdict in details. Verified: otr-teardown-smoke 13/13, tst_privatebrowsing 13/13, tst_downloadmanager 46/46, quit-after-load rc0 |
 | TAB01 | closeOtherTabs skips collapsed-group members: closing a group chip expands it mid-sweep, members land at i+1..i+n (already iterated) and survive — Chrome closes them. Fix: pre-expand collapsed groups before the loops, or close by view identity — details below | pending | 0 | |
 | TAB02 | moveTabTo × collapsed group: dragging a chip to another window strands hidden members (leaderless group on source, lost member on target) + sibling bulk-index paths (close-to-right, window close) — details below | pending | 0 | |
 | TAB03 | Deferred-deletion sweep: singleShot/invokeMethod lambdas capturing raw WebView*/Engine::Page* without QPointer guard — details below | pending | 0 | |
@@ -3164,6 +3164,56 @@ Check specifically:
   survives; the UI association is the suspect).
 - Fix anything found in-task; if clean, note the review verdict in
   the row and ChangeLog.
+
+Review verdict (2026-10-20): ONE bug found and fixed in-task —
+`WebEngineDownloadRequest::page()` forwarded to upstream
+`QWebEngineDownloadRequest::page()`, which dereferences a raw
+`WebContentsAdapterClient*` captured at request creation and never
+cleared (verified in Qt 6.12 source: `adapterClient` is assigned in
+`QWebEngineProfilePrivate::downloadRequested` and is not a guarded
+pointer).  After `closeTab` kills the issuing page,
+`DownloadItem::page()` — reached via `hasActiveDownloadForPage`
+(the tabwidget sleep/purge sweep, exactly the flagged suspect) and
+`restartDownload` (Try Again) — called `->clientType()` on freed
+memory.  Fixed by snapshotting the page into a `QPointer` at wrapper
+construction (the request is always handed over while its page is
+live), so `page()` now honors the Engine contract of nullptr after
+close instead of UAF; dead-page retries correctly fall back to the
+hidden retryPage.
+
+Everything else on the checklist audited clean:
+
+- Lifetime ordering: every request source is a tracked page, so none
+  survive to callback into the profile; the deferred-delete window
+  leaves the object fully alive, and the interceptor/scheme
+  handlers/jar are profile-parented or destroyed-swept.  Pending
+  interceptRequest can't outlive its web_contents — the only
+  profile-owned survivors are downloads, which gate the release.
+- Refcount: every QWebEnginePage creation site registers — WebPage
+  subclasses (incl. PopupProbePage) via init(), the backend
+  createPage, DevTools/PiP/reader/source-probe/extension pages
+  explicitly or via self-registering ctors.  No double-count
+  (self-registered ctors are never also explicitly tracked);
+  reparenting and engine-swap refusal leave the destroyed-connect
+  intact.  Generation guards on both hooks stop a stale destroyed()
+  from zeroing a successor's count or eating into it.
+- Download hold: in-flight/requested/paused OTR-profile items defer
+  via hasActiveDownloadForProfile + whenProfileDownloadsSettle;
+  Completed/Cancelled/Interrupted all emit downloadFinished →
+  release; a destroyed item or request (QPointer-null → isFinished)
+  also unblocks.  Settle-watch connects accumulate per re-check but
+  are context-guarded and idempotent.
+- s_preparedProfiles/cookie-jar map/cert whitelist/OTR notes model
+  are all swept on destroyed(); slot-null before deleteLater makes
+  privateProfileIfCreated() report "no session" immediately, so
+  ClearPrivateData "otr" and settings re-apply can't resurrect.
+- s_isPrivate needs no exemption: the count spans all windows' OTR
+  pages, so teardown can only fire at zero private pages — the
+  Chrome semantic the spec asks for.  Tor binds a different profile
+  object entirely (never tracked).
+- Verified: clean qmake6+make (whole tree incl. autotests);
+  --otr-teardown-smoke 13/13 PASS; tst_privatebrowsing 13/13;
+  tst_downloadmanager 46/46; --quit-after-load rc=0 offscreen.
 
 ### TAB01
 

@@ -36,6 +36,7 @@
 #include "engineinterface.h"
 
 #include <qhash.h>
+#include <qpointer.h>
 
 class QWebEngineDownloadRequest;
 class QWebEnginePage;
@@ -165,6 +166,12 @@ public:
 
 private:
     QWebEngineDownloadRequest *m_request;
+    // PRIV10: upstream page() dereferences a raw adapter client that
+    // dies with the page — a post-close call is a use-after-free, not
+    // the nullptr the Engine::DownloadRequest contract promises.
+    // The wrapper is always built while the issuing page is live, so
+    // a guarded snapshot taken here keeps page() honest afterwards.
+    QPointer<QWebEnginePage> m_page;
 };
 
 class WebEngineProfileAdapter : public Engine::Profile

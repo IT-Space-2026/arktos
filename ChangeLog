@@ -4461,3 +4461,10 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   linked-resource collector no longer relies on globals a hostile page
   can replace, and the per-connection proxy factory's interaction with
   the process-wide (Tor) proxy is documented — it cannot override it.
+- Fixed a latent crash when a tab is closed while its download is
+  still running (PRIV10): asking an engine download for its issuing
+  page afterwards dereferenced freed memory — reached from the
+  idle-tab sleep sweep and the download card's Try Again. The engine
+  adapter now keeps a guarded reference taken when the download
+  starts, so a closed tab's download reports no page instead of
+  reading dead objects.

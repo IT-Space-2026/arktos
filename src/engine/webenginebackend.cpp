@@ -645,6 +645,7 @@ WebEngineDownloadRequest::WebEngineDownloadRequest(QWebEngineDownloadRequest *re
                                                    QObject *parent)
     : Engine::DownloadRequest(parent)
     , m_request(request)
+    , m_page(request ? request->page() : nullptr)
 {
     connect(m_request, &QWebEngineDownloadRequest::stateChanged,
             this, [this](QWebEngineDownloadRequest::DownloadState state) {
@@ -755,7 +756,7 @@ QString WebEngineDownloadRequest::downloadFileName() const
 
 Engine::Page *WebEngineDownloadRequest::page() const
 {
-    return WebEnginePageAdapter::forPage(m_request->page());
+    return WebEnginePageAdapter::forPage(m_page);
 }
 
 // ---------------------------------------------------------------------------
