@@ -4515,3 +4515,10 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   the strip rebuilds (a path that could crash), and private tabs
   never hold a deferred record, so nothing off-the-record can reach
   the session file.
+- Private tabs no longer leave rendered-page snapshots in memory
+  (TAB04): the tab hover preview used to photograph whatever tab was
+  showing — including private ones — and keep the image in the
+  thumbnail cache, where a later hover could flash the private page
+  back on screen. Off-the-record tabs now skip thumbnail capture
+  entirely, and their hover card shows the title-and-address
+  fallback instead; normal tabs are unaffected.

@@ -3151,6 +3151,11 @@ void TabWidget::captureTabThumbnail(int index)
     WebView *view = webView(index);
     if (!view || !view->isVisible())
         return;
+    // TAB04: an off-the-record page's pixels are never cached —
+    // incognito admits no rendered-content artifacts, and a hover
+    // preview could flash private content the user tabbed away from.
+    if (view->enginePage() && view->enginePage()->isOffTheRecord())
+        return;
     const QImage frame = webViewThumbnailFrame(view);
     if (blankThumbnailFrame(frame))
         return;
@@ -3167,6 +3172,10 @@ void TabWidget::scheduleThumbnailCapture(WebView *webView)
     // skip the deferred frame grab entirely.
     if (EnergySaver::instance()->active())
         return;
+    // TAB04: never even schedule a grab for a private page.
+    if (webView && webView->enginePage()
+        && webView->enginePage()->isOffTheRecord())
+        return;
     QPointer<WebView> guard(webView);
     QTimer::singleShot(300, this, [this, guard]() {
         if (guard && currentWebView() == guard.data())
@@ -3179,6 +3188,14 @@ QPixmap TabWidget::tabThumbnail(int index)
     WebView *view = webView(index);
     if (!view)
         return QPixmap();
+    // TAB04: a private view is never served a thumbnail — no live
+    // grab, no cache entry — so the preview falls back to the
+    // title+url card.  Any entry that predates the page's private
+    // context (a profile swap mid-life) is dropped rather than held.
+    if (view->enginePage() && view->enginePage()->isOffTheRecord()) {
+        m_tabThumbnails.remove(view);
+        return QPixmap();
+    }
     // TPREV02: only the current tab's view is grab-verified — it is
     // the one actually painting, so the frame it offers is this tab's
     // live page.  A hidden view's grabFramebuffer() can hand back a
@@ -3752,7 +3769,11 @@ void TabWidget::carryKeyedState(WebView *view, QWidget *page,
         tab->pendingScroll = scroll.value();
     }
     auto thumb = m_tabThumbnails.constFind(view);
-    if (thumb != m_tabThumbnails.constEnd()) {
+    // TAB04: a private page's pixels never ride a cross-window move
+    // (defensive — capture is refused for OTR views, so no entry
+    // should exist).
+    if (thumb != m_tabThumbnails.constEnd()
+        && !(view->enginePage() && view->enginePage()->isOffTheRecord())) {
         tab->hasThumbnail = true;
         tab->thumbnail = thumb.value();
     }

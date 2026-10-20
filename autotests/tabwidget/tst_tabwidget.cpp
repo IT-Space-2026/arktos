@@ -114,6 +114,7 @@ private slots:
     void verticalTabDefaultWidth();
     void tabHoverPreviews();
     void tabThumbnailStaleness();
+    void otrTabThumbnails();
     void omnibox();
     void omniboxEnterDispatch();
     void omniboxTabScope();
@@ -1173,6 +1174,80 @@ void tst_TabWidget::tabThumbnailStaleness()
     QTest::qWait(50);   // the dying view's deferred deleteLater lands
     widget.closeTab();
     QFile::remove(fixturePath);
+}
+
+// TAB04: a private tab's rendered pixels never reach the thumbnail
+// cache or the hover preview — the deferred capture and the live
+// grab are both refused, the serve path returns null so the card
+// falls back to title+url, and a normal tab in the same window still
+// captures.
+void tst_TabWidget::otrTabThumbnails()
+{
+    ProfileSettings settings;
+    settings.beginGroup(QLatin1String("tabs"));
+    settings.setValue(QLatin1String("tabHoverPreviews"), true);
+
+    const QUrl page(QStringLiteral(
+        "data:text/html,<body style='background:blue;margin:0'>one</body>"));
+
+    SubTabWidget widget;
+    widget.newTab();
+    WebView *priv = widget.makeNewPrivateTab(true);
+    QVERIFY(priv);
+    QVERIFY(priv->enginePage()->isOffTheRecord());
+    const int privIndex = widget.webViewIndex(priv);
+    QVERIFY(privIndex >= 0);
+    widget.resize(640, 480);
+    widget.show();
+    QApplication::processEvents();
+
+    TabBar *bar = widget.bar();
+    QVERIFY(bar->tabPreviewsEnabled());
+    const auto hoverTab = [&bar](int index) {
+        const QPoint pos = bar->tabRect(index).center();
+        QMouseEvent move(QEvent::MouseMove, QPointF(pos),
+                         QPointF(bar->mapToGlobal(pos)),
+                         Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(bar, &move);
+    };
+
+    // Control: the normal tab paints and caches its live frame.
+    widget.webView(0)->loadUrl(page);
+    widget.setCurrentIndex(0);
+    QTRY_VERIFY_WITH_TIMEOUT(!widget.tabThumbnail(0).isNull(), 15000);
+
+    // The private tab loads the same page while current — both the
+    // scheduled capture and the request-time grab are refused.
+    priv->loadUrl(page);
+    QTRY_COMPARE_WITH_TIMEOUT(priv->url(), page, 15000);
+    widget.setCurrentIndex(privIndex);
+    QTest::qWait(400);   // past the 300ms deferred-capture window
+    QVERIFY(widget.isTabPrivate(privIndex));
+    QVERIFY(widget.tabThumbnail(privIndex).isNull());
+
+    // Off the front, the cache-serve path refuses too — no snapshot
+    // exists for the private view while the normal tab's does.
+    widget.setCurrentIndex(0);
+    QApplication::processEvents();
+    QVERIFY(widget.tabThumbnail(privIndex).isNull());
+    QVERIFY(!widget.tabThumbnail(0).isNull());
+
+    // The hover card on the private tab falls back to title+url; the
+    // normal tab's card still carries its snapshot.
+    hoverTab(privIndex);
+    QTest::qWait(700);
+    QVERIFY(bar->tabPreview());
+    QVERIFY(bar->tabPreview()->isVisible());
+    QCOMPARE(bar->tabPreview()->previewedIndex(), privIndex);
+    QVERIFY(!bar->tabPreview()->hasThumbnail());
+    hoverTab(0);
+    QTest::qWait(700);
+    QVERIFY(bar->tabPreview()->hasThumbnail());
+
+    while (widget.count())
+        widget.closeTab(0);
+    settings.remove(QLatin1String("tabHoverPreviews"));
+    settings.endGroup();
 }
 
 // SRCH01: the location bar is an omnibox — guessUrlFromString (driven
