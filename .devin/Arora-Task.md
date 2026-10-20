@@ -363,7 +363,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | LEG02 | Untouched-data audit: searchengine XMLs (dead providers? http->https?), useragents.qrc staleness, icon assets still referenced?, licenses — details below | done | 0 | user request — DONE: dropped dead Google I'm Feeling Lucky (btnI redirect needs ephemeral iflsig token — lands on redirect notice); Google/Yahoo/Wikipedia/YouTube/Reddit descriptors http->https; UA presets resynced Chrome/141->presented/155 (FF 157, Safari 27); orphaned assets deleted (addtab/closetab/history.png, 128x128/run.png+license — 0 live refs, chrome uses themed icons); rustcore vendored copy + smoke/test refs updated. Verified: full build clean, 4 gates PASS (warnings, supplychain, engine-audit, rustcov 94.11/91.82/89.25), runTests.sh rc=0, --quit-after-load + --search-smoke rc=0, opensearchmanager 24/24 opensearchengine 55/55 tabwidget 36/36 useragent 9/9 |
 | LEG03 | Dead-pipeline sweep: src/locale tooling, generateAuthors/generateReleaseContributors vs new AUTHORS policy, tools/htmlToXBel fixtures — wire-in or remove — details below | done | 0 | user request — DONE: generate* scripts removed (contradict AUTHORS); locale kept+documented (was already live: lrelease→src/.qm/locale→LanguageManager, maintainers→attribution); htmlToXBel fixtures verified + wired via make check-htmltoxbel; modeltest confirmed live. Verified: clean build, 4 gates PASS, check-htmltoxbel PASS, quit-after-load rc=0 |
 | LEG04 | Untouched test-infra review: qtry.h usage, tst_lineedit.cpp build status, stale .gitignores, fixture validity — wire in or delete — details below | done | 0 | user request — DONE: qtry.h shim deleted (44 includers use Qt6-native QTRY_*); tst_lineedit confirmed wired (utils.pro→make check, 17/17); 26 stale .gitignores removed (root tst_* rule covers; rules2.txt kept); all fixtures grep-proven live — verified: make check rc=0, 4 gates PASS, 99 programs 0 failed |
-| PRIV09 | PRIV07 slice A — ASan/LSan churn leg for the committed OTR teardown (the only unrun spec item; do NOT re-implement) — details below | in_progress | 0 | |
+| PRIV09 | PRIV07 slice A — ASan/LSan churn leg for the committed OTR teardown (the only unrun spec item; do NOT re-implement) — details below | done | 0 | 50-cycle --otr-teardown-smoke under ASan+UBSan+LSan (linux-clang): 48 PASS 13/13, 2 upstream FcInit startup flakes; 0 ASan/UBSan reports, 0 our-code leak blocks (all upstream widget/fontconfig), no leaked QWebEngineProfile — report .devin/PRIV09-scan.md |
 | PRIV10 | PRIV07 slice B — post-commit review of the OTR teardown diff landed inside b6494e58 (lifetime races, refcount edges) — details below | pending | 0 | |
 | TAB01 | closeOtherTabs skips collapsed-group members: closing a group chip expands it mid-sweep, members land at i+1..i+n (already iterated) and survive — Chrome closes them. Fix: pre-expand collapsed groups before the loops, or close by view identity — details below | pending | 0 | |
 | TAB02 | moveTabTo × collapsed group: dragging a chip to another window strands hidden members (leaderless group on source, lost member on target) + sibling bulk-index paths (close-to-right, window close) — details below | pending | 0 | |
@@ -3111,6 +3111,22 @@ Verify (this is the whole task):
   are acceptable and expected), no UAF on the destroyed
   QWebEngineProfile, no leaked QWebEngineProfile instances.
 - Write the scan report to .devin/PRIV09-scan.md.
+
+DONE (PRIV09 run, 2026-10-20) — full report: .devin/PRIV09-scan.md.
+Instrumented /tmp/arktos-priv07-san.msxcuu synced to HEAD minus
+comment churn (94 files synced incl. PRIV08/LEG01-04, 34 deletions,
+0 code stragglers). 50 smoke iterations, 13 checks each: 48 PASS,
+0 ASan/UBSan reports; LSan per-run via explicit
+__lsan_do_leak_check (quick_exit bypasses atexit — throwaway-tree
+probe only): 936B/10 or 760B/8 per run, every block sited in
+libQt6Widgets createWidgetItem or fontconfig/FcInit — none in
+src/ or autotests/, no QWebEngineProfile leaked. 2/50 runs + 1 probe
+died in an upstream fontconfig/getenv SIGSEGV during
+QtWebEngineCore init (~5% launch flake, pre-smoke, no Arktos
+frames). Root cause of the earlier OOM kills found: qmake treats
+'CONFIG+=a CONFIG+=b' as ONE arg — the second assignment becomes a
+literal CONFIG token, so 'CONFIG+=sanitize CONFIG+=no-rust' never
+set no-rust and cargo ran; pass each assignment as its own argv.
 
 ### PRIV10
 
