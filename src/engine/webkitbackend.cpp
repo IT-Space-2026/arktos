@@ -985,6 +985,7 @@ WkGlPipe &wkGlPipe()
 }
 
 void wkGlCleanup();
+void wkGlReset();
 
 GLuint wkGlShader(GLenum type, const char *source)
 {
@@ -1020,6 +1021,13 @@ bool wkGlInit()
     // The display arrives already eglInitialize'd by wpe-platform —
     // re-initializing an initialized display is a cheap no-op.
     eglInitialize(p.dpy, nullptr, nullptr);
+    // MRG08: pin the rendering API.  eglBindAPI is thread-local state
+    // that any EGL consumer on the GUI thread can leave behind — the
+    // servo backend's surfman contexts bind EGL_OPENGL_API when they
+    // are made current and nothing restores it, so a context created
+    // after servo churn would come back DESKTOP GL and the shaders
+    // below fail to compile ('precision' is not a GLSL 1.x keyword).
+    eglBindAPI(EGL_OPENGL_ES_API);
     const EGLint ctxAttribs[] = { EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE };
     p.ctx = eglCreateContext(p.dpy, EGL_NO_CONFIG_KHR, EGL_NO_CONTEXT,
                              ctxAttribs);
@@ -1151,15 +1159,20 @@ void wkGlCleanup()
     if (p.dpy == EGL_NO_DISPLAY)
         return;
     if (p.ctx != EGL_NO_CONTEXT) {
-        eglMakeCurrent(p.dpy, p.surface, p.surface, p.ctx);
-        if (p.fboTex)
-            glDeleteTextures(1, &p.fboTex);
-        if (p.fbo)
-            glDeleteFramebuffers(1, &p.fbo);
-        if (p.prog)
-            glDeleteProgram(p.prog);
-        eglMakeCurrent(p.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE,
-                       EGL_NO_CONTEXT);
+        // MRG08: only delete into OUR context — if the display was
+        // terminated by a foreign consumer (servo's surfman teardown)
+        // makeCurrent fails and the glDelete* calls would otherwise
+        // hit whatever context is current on this thread instead.
+        if (eglMakeCurrent(p.dpy, p.surface, p.surface, p.ctx)) {
+            if (p.fboTex)
+                glDeleteTextures(1, &p.fboTex);
+            if (p.fbo)
+                glDeleteFramebuffers(1, &p.fbo);
+            if (p.prog)
+                glDeleteProgram(p.prog);
+            eglMakeCurrent(p.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE,
+                           EGL_NO_CONTEXT);
+        }
         eglDestroyContext(p.dpy, p.ctx);
         p.ctx = EGL_NO_CONTEXT;
     }
@@ -1168,6 +1181,37 @@ void wkGlCleanup()
         p.surface = EGL_NO_SURFACE;
     }
     p.dpy = EGL_NO_DISPLAY;   // owned by the WPEDisplay — not ours
+}
+
+// MRG08: drop a stale pipe back to Untried after a foreign eglTerminate
+// on the shared display (Mesa dedups surfaceless eglGetPlatformDisplay
+// calls, so servo's per-view surfman teardown can kill the very
+// EGLDisplay WPE handed us).  The EGL handles are already dead weight —
+// destroying them is best-effort — and the GL objects (fbo/tex/prog)
+// died with the context.  The counters and the channel-order verdict
+// survive: both describe the WebProcess's buffers, not this context.
+void wkGlReset()
+{
+    WkGlPipe &p = wkGlPipe();
+    if (p.dpy != EGL_NO_DISPLAY) {
+        eglMakeCurrent(p.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE,
+                       EGL_NO_CONTEXT);
+        if (p.ctx != EGL_NO_CONTEXT)
+            eglDestroyContext(p.dpy, p.ctx);
+        if (p.surface != EGL_NO_SURFACE)
+            eglDestroySurface(p.dpy, p.surface);
+    }
+    p.ctx = EGL_NO_CONTEXT;
+    p.surface = EGL_NO_SURFACE;
+    p.prog = 0;
+    p.fbo = 0;
+    p.fboTex = 0;
+    p.fboW = 0;
+    p.fboH = 0;
+    p.aPos = -1;
+    p.aTex = -1;
+    p.uSwap = -1;
+    p.state = WkGlPipe::Untried;
 }
 
 // One buffer-rendered frame through the GL path.  Returns true and
@@ -1182,10 +1226,22 @@ bool wkGlImport(WPEBuffer *buffer, QImage *frame)
         return false;
     QElapsedTimer total;
     total.start();
+    // MRG08: revive-before-trust.  A foreign eglTerminate on this shared
+    // display leaves p.dpy pointing at terminated-but-valid Mesa state
+    // and our ctx/surface dangling; eglInitialize re-arms a terminated
+    // display in place (and no-ops on a live one), and a makeCurrent
+    // that still fails afterwards means the context itself was the
+    // collateral — rebuild the pipe once on the revived display instead
+    // of dereferencing handles the termination freed.
+    eglInitialize(p.dpy, nullptr, nullptr);
     if (!eglMakeCurrent(p.dpy, p.surface, p.surface, p.ctx)) {
-        p.state = WkGlPipe::Broken;
-        ++p.glFails;
-        return false;
+        wkGlReset();
+        if (!wkGlInit()
+                || !eglMakeCurrent(p.dpy, p.surface, p.surface, p.ctx)) {
+            p.state = WkGlPipe::Broken;
+            ++p.glFails;
+            return false;
+        }
     }
 
     GError *error = nullptr;

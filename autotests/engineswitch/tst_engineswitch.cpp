@@ -239,6 +239,10 @@ private slots:
     void webkitDownload();
     void webkitGlPath();
     void webkitGlRasterFallback();
+    void webkitRenderChurn();
+    void engineBackendChurn();
+    void servoViewChurn();
+    void webkitGlSurvivesServoChurn();
 
 private:
     FakeEngineBackend *m_fake = nullptr;
@@ -3952,6 +3956,245 @@ void tst_EngineSwitch::webkitGlRasterFallback()
     qunsetenv("ARKTOS_WEBKIT_GL");
     QCOMPARE(glFrames, 0);
     QCOMPARE(glFails, 0);
+#else
+    QSKIP("webkit backend not linked in this build");
+#endif
+}
+
+// MRG08 — webkit render churn: unlike engineTabChurn (which mints and
+// drops the tab without navigating), each cycle here loads a real
+// fixture and waits for a rendered frame before teardown — the WPE
+// buffer/WebProcess frame path is the backend's heaviest allocation
+// surface and only a load drives it.
+void tst_EngineSwitch::webkitRenderChurn()
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    Engine::Backend *webkit =
+        EngineRegistry::backendForId(QStringLiteral("webkit"));
+    if (!webkit || !webkit->pageUnavailableReason().isEmpty())
+        QSKIP("webkit backend unavailable in this build");
+
+    const QString fixturePath = QDir::temp().filePath(
+        QStringLiteral("arktos-mrg08-fixture.html"));
+    {
+        QFile fixture(fixturePath);
+        QVERIFY(fixture.open(QIODevice::WriteOnly));
+        fixture.write("<html><head><title>Mrg08Churn</title></head>"
+                      "<body style='background:#123a6f'>churn</body>"
+                      "</html>");
+    }
+
+    for (int cycle = 0; cycle < 3; ++cycle) {
+        Engine::ProfileOptions options;
+        options.offTheRecord = true;
+        Engine::Profile *profile = webkit->createProfile(options, this);
+        QVERIFY(profile);
+        EngineTab *tab = new EngineTab(webkit, profile);
+        tab->resize(640, 480);
+        QVERIFY2(tab->page(), "webkit page create failed");
+
+        QSignalSpy finishedSpy(tab->page(), &Engine::Page::loadFinished);
+        tab->load(QUrl::fromLocalFile(fixturePath));
+        QTRY_VERIFY2_WITH_TIMEOUT(finishedSpy.count() >= 1,
+                                  "loadFinished never arrived", 60000);
+        QVERIFY2(finishedSpy.first().first().toBool(),
+                 "fixture load reported failure");
+        auto *view = qobject_cast<WebkitView *>(tab->page()->view());
+        QVERIFY(view);
+        QTRY_VERIFY_WITH_TIMEOUT(view->frameCount() >= 1, 30000);
+
+        QPointer<EngineTab> tabGuard(tab);
+        QPointer<Engine::Page> pageGuard(tab->page());
+        QPointer<QWidget> viewGuard(view);
+        delete tab;
+        pumpDeletes();
+        QVERIFY2(!tabGuard && !pageGuard && !viewGuard,
+                 "webkit tab/page/view survived destruction");
+    }
+#else
+    QSKIP("webkit backend not linked in this build");
+#endif
+}
+
+// MRG08 — per-backend EngineTab churn at the raw engine interface:
+// EngineRegistry::backends() runs the probes, so every live backend —
+// webengine included — mints and destroys its profile/page/view trio
+// through the EngineTab wrapper itself.  The TabWidget swap path can
+// never build an EngineTab on the native engine (webengine→webengine
+// swaps are refused), but the adapter pair EngineTab hosts is real
+// allocation surface all the same.
+void tst_EngineSwitch::engineBackendChurn()
+{
+    int exercised = 0;
+    const QList<Engine::Backend *> backends = EngineRegistry::backends();
+    for (Engine::Backend *backend : backends) {
+        if (!backend || !backend->pageUnavailableReason().isEmpty())
+            continue;
+        ++exercised;
+        for (int cycle = 0; cycle < 4; ++cycle) {
+            Engine::ProfileOptions options;
+            options.offTheRecord = true;
+            Engine::Profile *profile =
+                backend->createProfile(options, this);
+            QVERIFY2(profile, qPrintable(backend->id()));
+            EngineTab *tab = new EngineTab(backend, profile);
+            QVERIFY2(tab->page(), qPrintable(backend->id()));
+            QVERIFY2(tab->page()->view(), qPrintable(backend->id()));
+            QPointer<EngineTab> tabGuard(tab);
+            QPointer<Engine::Page> pageGuard(tab->page());
+            QPointer<QWidget> viewGuard(tab->page()->view());
+            delete tab;
+            pumpDeletes();
+            QVERIFY2(!tabGuard && !pageGuard && !viewGuard,
+                     qPrintable(backend->id()));
+        }
+    }
+    // webengine + fake are live on every flavor — anything less means
+    // the registry probe itself is broken, not that backends skipped.
+    QVERIFY2(exercised >= 2,
+             qPrintable(QStringLiteral("only %1 live backends")
+                            .arg(exercised)));
+}
+
+// MRG08 — ENG36's churn path specifically: several LIVE servo views at
+// once on the shared engine, then staggered teardown.  Each ServoView
+// owns a se_view_create instance with its own surfman
+// SoftwareRenderingContext — concurrent mint + interleaved destroy is
+// the densest EGL/surface churn the backend offers.
+void tst_EngineSwitch::servoViewChurn()
+{
+    Engine::Backend *servo =
+        EngineRegistry::backendForId(QStringLiteral("servo"));
+    if (!servo || !servo->pageUnavailableReason().isEmpty())
+        QSKIP("servo backend unavailable in this build");
+
+    Engine::ProfileOptions options;
+    options.offTheRecord = true;
+    Engine::Profile *profile = servo->createProfile(options, this);
+    QVERIFY(profile);
+
+    // Three rounds of three concurrent live views, destroyed in
+    // reverse order — siblings must stay usable while a view dies.
+    for (int round = 0; round < 3; ++round) {
+        QList<EngineTab *> tabs;
+        for (int i = 0; i < 3; ++i) {
+            EngineTab *tab = new EngineTab(servo, profile);
+            tab->resize(320, 240);
+            QVERIFY2(tab->page() && tab->page()->view(),
+                     "servo view create failed");
+            tabs.append(tab);
+        }
+        while (!tabs.isEmpty()) {
+            EngineTab *tab = tabs.takeLast();
+            QPointer<Engine::Page> pageGuard(tab->page());
+            QPointer<QWidget> viewGuard(tab->page()->view());
+            delete tab;
+            pumpDeletes();
+            QVERIFY2(!pageGuard && !viewGuard,
+                     "servo page/view survived destruction");
+            for (EngineTab *sibling : tabs)
+                QVERIFY2(sibling->page(), "sibling died with a view");
+        }
+    }
+    // Plus six plain sequential cycles — mint/destroy against the
+    // already-live engine.
+    for (int cycle = 0; cycle < 6; ++cycle) {
+        EngineTab *tab = new EngineTab(servo, profile);
+        QVERIFY2(tab->page(), "servo view create failed");
+        QPointer<EngineTab> guard(tab);
+        delete tab;
+        pumpDeletes();
+        QVERIFY2(!guard, "servo tab survived destruction");
+    }
+}
+
+// MRG08 — regression for the MRG06-filed cross-engine poison: servo
+// view teardown runs surfman's EGL teardown on the GUI thread, which
+// left the thread's bound API on desktop OpenGL (a webkit GLES2
+// context minted afterwards compiled 'precision'-less desktop shaders
+// and degraded to raster) and, on the MRG06 build, eglTerminate'd the
+// Mesa-deduped surfaceless display out from under a cached Ready
+// pipe.  Sequence: prove GL works, hold the pipe cached, churn servo,
+// prove a fresh webkit view still draws through GL.
+void tst_EngineSwitch::webkitGlSurvivesServoChurn()
+{
+#ifdef ARKTOS_WEBKIT_LINKED
+    Engine::Backend *webkit =
+        EngineRegistry::backendForId(QStringLiteral("webkit"));
+    Engine::Backend *servo =
+        EngineRegistry::backendForId(QStringLiteral("servo"));
+    if (!webkit || !webkit->pageUnavailableReason().isEmpty())
+        QSKIP("webkit backend unavailable in this build");
+    if (!servo || !servo->pageUnavailableReason().isEmpty())
+        QSKIP("servo backend unavailable in this build");
+
+    const QString fixturePath = QDir::temp().filePath(
+        QStringLiteral("arktos-wk20-fixture.html"));
+    {
+        QFile fixture(fixturePath);
+        QVERIFY(fixture.open(QIODevice::WriteOnly));
+        fixture.write("<html><head><title>Mrg08Gl</title></head>"
+                      "<body style='margin:0;background:#eef4ff'>"
+                      "<div style='width:400px;height:120px;"
+                      "background:#123a6f'>gl after servo</div>"
+                      "</body></html>");
+    }
+
+    Engine::ProfileOptions options;
+    options.offTheRecord = true;
+
+    auto renderGlFrames = [&](int warmupResize) -> int {
+        Engine::Profile *profile = webkit->createProfile(options, this);
+        if (!profile)
+            return -1;
+        EngineTab tab(webkit, profile);
+        tab.resize(800, 600);
+        tab.show();
+        if (!tab.page())
+            return -1;
+        auto *view = qobject_cast<WebkitView *>(tab.page()->view());
+        if (!view)
+            return -1;
+        QSignalSpy finishedSpy(tab.page(), &Engine::Page::loadFinished);
+        tab.load(QUrl::fromLocalFile(fixturePath));
+        QElapsedTimer wait;
+        wait.start();
+        while (finishedSpy.isEmpty() && wait.elapsed() < 60000)
+            QTest::qWait(50);
+        if (finishedSpy.isEmpty()
+                || !finishedSpy.first().first().toBool())
+            return -1;
+        // First GL-imported frame feeds channel-order calibration;
+        // a resize forces another buffer so an adopted GL frame lands.
+        if (warmupResize)
+            tab.resize(760, 540);
+        QElapsedTimer glWait;
+        glWait.start();
+        while (view->glFrameCount() < 1 && glWait.elapsed() < 30000)
+            QTest::qWait(50);
+        return view->glFrameCount();
+    };
+
+    const int before = renderGlFrames(1);
+    if (before < 1)
+        QSKIP("GL frame path unavailable here — raster hosts cannot "
+              "regress");
+
+    // The poison: three servo view create/destroy rounds on the GUI
+    // thread while the webkit pipe sits cached-Ready.
+    Engine::Profile *servoProfile = servo->createProfile(options, this);
+    QVERIFY(servoProfile);
+    for (int cycle = 0; cycle < 3; ++cycle) {
+        EngineTab *tab = new EngineTab(servo, servoProfile);
+        QVERIFY2(tab->page(), "servo view create failed");
+        delete tab;
+        pumpDeletes();
+    }
+
+    const int after = renderGlFrames(1);
+    QVERIFY2(after >= 1, qPrintable(QStringLiteral(
+        "webkit GL path dead after servo churn (before=%1 after=%2)")
+            .arg(before).arg(after)));
 #else
     QSKIP("webkit backend not linked in this build");
 #endif
