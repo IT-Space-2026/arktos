@@ -4393,3 +4393,14 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   confined to the extension's own origin, and message senders are
   stamped from host-verified page state on both relay directions.
   The full re-audit lives at .devin/SEC26-audit.md.
+- Copyright attribution consolidation: upstream Arora-era copyright
+  lines now read the collective "Arora Browser" instead of individual
+  contributor names, and every file created or modified since the
+  fork additionally carries "Copyright © 2026-2027 Arktos Browser -
+  IT-Space". Third-party holders (Trolltech, Nokia, FSF, Arc90, icon
+  packs, vendored libraries) and Janos Szenfner's credit are
+  unchanged. Pre-fork git history was dropped: the first post-fork
+  commit is now the repository root.
+- README: restructured the Bitwarden/hosted-runtime section into
+  paragraphs and a per-namespace served-API list — same content,
+  readable layout.
