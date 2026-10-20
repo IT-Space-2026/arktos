@@ -1,5 +1,14 @@
 <p align="center"><img src="src/data/512x512/arktos.png" alt="Arktos" width="180"/></p>
 
+<p align="center">
+<a href="https://github.com/IT-Space-2026/arktos/releases"><img src="https://img.shields.io/github/v/release/IT-Space-2026/arktos?style=flat-square" alt="release"/></a>
+<a href="https://github.com/IT-Space-2026/arktos/actions/workflows/packages.yml"><img src="https://img.shields.io/github/actions/workflow/status/IT-Space-2026/arktos/packages.yml?branch=master&style=flat-square&label=packages" alt="packages CI"/></a>
+<a href="LICENSE.GPL3"><img src="https://img.shields.io/badge/license-GPL--2.0%2B-blue?style=flat-square" alt="license GPL-2.0+"/></a>
+<img src="https://img.shields.io/badge/Qt-6-41CD52?style=flat-square&logo=qt&logoColor=white" alt="Qt 6"/>
+<a href="https://github.com/IT-Space-2026/arktos/stargazers"><img src="https://img.shields.io/github/stars/IT-Space-2026/arktos?style=flat-square" alt="stars"/></a>
+<a href="https://github.com/IT-Space-2026/arktos/issues"><img src="https://img.shields.io/github/issues/IT-Space-2026/arktos?style=flat-square" alt="open issues"/></a>
+</p>
+
 # Arktos — a Qt 6 / QtWebEngine web browser (experimental)
 
 **Arktos** is an experimental cross-platform web browser built on **Qt 6
