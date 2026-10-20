@@ -2511,6 +2511,19 @@
            </widget>
           </item>
           <item>
+           <widget class="QCheckBox" name="gpcSignal">
+            <property name="toolTip">
+             <string>Announces your opt-out of the sale or sharing of personal data on every request — the Sec-GPC header plus its navigator.globalPrivacyControl JavaScript twin. In jurisdictions where GPC carries legal force it is a binding opt-out the site must honor; elsewhere it is an advisory signal sites may ignore. Tor windows always send it — a per-user difference across tor windows would itself be a fingerprint.</string>
+            </property>
+            <property name="text">
+             <string>Send a Global Privacy Control signal (Sec-GPC)</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
            <widget class="QCheckBox" name="dnsPrefetch">
             <property name="toolTip">
              <string>Resolve the address of every site a page merely links to, before you click — this sends the names of sites you never visit to the DNS resolver. Off by default; enabling it only speeds up link navigation slightly.</string>

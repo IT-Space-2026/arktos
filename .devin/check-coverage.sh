@@ -113,7 +113,7 @@ SMOKE_FLAGS="--quit-after-load --app-smoke --browser-smoke --nam-smoke
 --icons-smoke --fingerprint-smoke --fingerprint-child-smoke --ping-smoke
 --httpsonly-smoke --telemetry-smoke --telemetry-browse-smoke
 --tls-smoke --tls-off-smoke --webrtc-smoke --webrtc-off-smoke
---doh-smoke --seclvl-smoke --privacy-smoke --referer-smoke
+--doh-smoke --seclvl-smoke --privacy-smoke --referer-smoke --gpc-smoke
 --resourceblock-smoke --reader-smoke --sorry-smoke --perf-smoke
 --sleep-smoke --session-smoke --restore-smoke --tor-smoke
 --tor-window-smoke --tor-newtab-smoke --startpage-smoke --sandbox-smoke --sandbox-status

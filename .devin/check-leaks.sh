@@ -116,7 +116,7 @@ if [ -z "${ARKTOS_LEAKS_LSAN_LOGS:-}" ]; then
 --cookie-smoke --history-smoke --bookmarks-smoke --search-smoke
 --settings-smoke --autofill-smoke --find-smoke --source-smoke
 --adblock-smoke --adblock-list-smoke --adblock-rust-smoke
---extension-smoke --ua-smoke"
+--extension-smoke --otr-teardown-smoke --gpc-smoke --ua-smoke"
     for flag in $SMOKE_FLAGS; do
         name=$(echo "$flag" | tr -d -)
         timeout 300 "$BUILD/arktos" "$flag" >"$LOGDIR/smoke-$name.log" 2>&1 \

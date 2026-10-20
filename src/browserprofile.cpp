@@ -56,6 +56,7 @@
 #include <QTcpServer>
 #include <qurl.h>
 #include <qwebengineclientcertificatestore.h>
+#include <qwebenginepage.h>
 #include <qwebengineclienthints.h>
 #include <qwebengineglobalsettings.h>
 #include <qwebengineprofile.h>
@@ -152,17 +153,95 @@ QWebEngineProfile *normalProfile()
 
 static QWebEngineProfile *s_privateProfile = nullptr;
 
+// PRIV07: live pages bound to s_privateProfile — the profile is
+// destroyed when the count reaches zero, matching Chrome's incognito
+// lifecycle (the next privateProfile() call recreates a genuinely
+// empty world).  Pages created during the deferral window re-arm the
+// count on the SAME profile and cancel the pending teardown.
+static int s_privatePageCount = 0;
+
 QWebEngineProfile *privateProfile()
 {
     // An unnamed profile is off-the-record: nothing hits disk.
-    if (!s_privateProfile)
+    if (!s_privateProfile) {
         s_privateProfile = new QWebEngineProfile(qApp);
+        // PRIV07: the profile can also die without the page count
+        // reaching zero first — application teardown deletes it via
+        // its qApp parent while tracked pages may still exist.  A
+        // dangling slot would make a late tryReleasePrivateProfile()
+        // deleteLater() a stale pointer, and leftover page deaths
+        // would eat into a successor profile's count — drop both.
+        // The generation guard matters: tryReleasePrivateProfile()
+        // deletes through deleteLater(), so a PREVIOUS generation's
+        // destroyed() can arrive after a successor already occupies
+        // the slot — clearing unconditionally would orphan a live
+        // profile and zero its live page count.
+        QWebEngineProfile *profile = s_privateProfile;
+        QObject::connect(profile, &QObject::destroyed, qApp,
+                         [profile]() {
+            if (s_privateProfile != profile)
+                return;
+            s_privateProfile = nullptr;
+            s_privatePageCount = 0;
+        });
+    }
     return s_privateProfile;
 }
 
 QWebEngineProfile *privateProfileIfCreated()
 {
     return s_privateProfile;
+}
+
+void tryReleasePrivateProfile()
+{
+    if (!s_privateProfile || s_privatePageCount > 0)
+        return;
+    if (DownloadManager::hasActiveDownloadForProfile(s_privateProfile)) {
+        // An in-flight private download's QWebEngineDownloadRequest
+        // is owned by this profile — tearing down now would kill the
+        // transfer (and a requested-but-unaccepted save would lose
+        // its pending prompt's backend).  Re-check when the settle
+        // watch fires; a new private page opened meanwhile re-pins
+        // the profile through the count above.
+        DownloadManager::whenProfileDownloadsSettle(
+            s_privateProfile, qApp,
+            []() { tryReleasePrivateProfile(); });
+        return;
+    }
+    // Null the slot first so privateProfileIfCreated() reports "no
+    // private session" at once and a subsequent privateProfile()
+    // recreates — the deleteLater'ed object still emits destroyed(),
+    // which is what sweeps s_preparedProfiles, the cookie-jar map,
+    // the cert whitelist, the OTR notes model and every
+    // profile-parented service (scheme handlers, interceptors,
+    // adapters).  No explicit disconnect: those listeners ARE the
+    // unwiring.
+    QWebEngineProfile *profile = s_privateProfile;
+    s_privateProfile = nullptr;
+    profile->deleteLater();
+}
+
+void trackPrivateProfilePage(QWebEnginePage *page)
+{
+    if (!page || !s_privateProfile
+            || page->profile() != s_privateProfile)
+        return;
+    ++s_privatePageCount;
+    QWebEngineProfile *profile = s_privateProfile;
+    QObject::connect(page, &QObject::destroyed, qApp,
+                     [profile](QObject *) {
+        // The generation check keeps a page that outlived ITS profile
+        // (application teardown ordering) from decrementing a
+        // successor profile's count — the destroyed() hook above has
+        // already nulled the slot by then.
+        if (profile != s_privateProfile)
+            return;
+        if (s_privatePageCount > 0)
+            --s_privatePageCount;
+        if (s_privatePageCount == 0)
+            tryReleasePrivateProfile();
+    });
 }
 
 static QWebEngineProfile *s_torProfile = nullptr;
@@ -592,6 +671,49 @@ void installFingerprintProtection(QWebEngineProfile *profile)
     scripts->insert(script);
 }
 
+// PRIV08: the JS half of Global Privacy Control — sites read
+// navigator.globalPrivacyControl (the DOM twin of the Sec-GPC
+// request header the interceptors write, and the surface a
+// GPC-aware site checks when the header cannot reach it — e.g.
+// service-worker fetches).  It MUST live in the main world: an
+// isolated world's Navigator.prototype is invisible to page script
+// (the SAFE06 constraint), and Object.defineProperty with
+// configurable:false is what keeps the getter stable against page
+// tampering — DocumentCreation runs before any site code, and a
+// page cannot redefine or delete it after.  Installed while the
+// toggle is on, unconditionally on the tor profile — the tor
+// pipeline sends the header unconditionally too (uniform-constant
+// doctrine), and header/JS must always agree.  Removal only reaches
+// NEW documents (a QWebEngineScript cannot be un-run), same
+// caveat as the fingerprint script.
+void installGpcSignal(QWebEngineProfile *profile)
+{
+    const QString name = QLatin1String("arktos:gpc");
+    QWebEngineScriptCollection *scripts = profile->scripts();
+    const QList<QWebEngineScript> installed = scripts->toList();
+    for (const QWebEngineScript &script : installed) {
+        if (script.name() == name)
+            scripts->remove(script);
+    }
+
+    if (!PrivacyRequestInterceptor::storedGpcSignal()
+        && profile != s_torProfile)
+        return;
+
+    QWebEngineScript script;
+    script.setName(name);
+    script.setInjectionPoint(QWebEngineScript::DocumentCreation);
+    script.setRunsOnSubFrames(true);
+    script.setWorldId(QWebEngineScript::MainWorld);
+    script.setSourceCode(QStringLiteral(
+        "(function(){try{"
+        "Object.defineProperty(Navigator.prototype,"
+        "'globalPrivacyControl',{"
+        "get:function(){return true},enumerable:true,configurable:false})"
+        "}catch(e){}})();"));
+    scripts->insert(script);
+}
+
 void applySettings(QWebEngineProfile *profile)
 {
     QWebEngineSettings *engineSettings = profile->settings();
@@ -753,6 +875,11 @@ void applySettings(QWebEngineProfile *profile)
     // SAFE06: canvas/WebGL/navigator spoofing — installed or removed
     // with the privacy toggle (always on for tor).
     installFingerprintProtection(profile);
+
+    // PRIV08: the navigator.globalPrivacyControl surface — follows
+    // the same toggle as the interceptor's Sec-GPC header write
+    // (always on for tor, matching the pipeline).
+    installGpcSignal(profile);
 
     // The app's network cache preference drives both the profile's
     // Chromium cache and (through NetworkAccessManager::loadSettings)

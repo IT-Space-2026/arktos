@@ -355,6 +355,9 @@ public:
         , m_extensionId(extensionId)
         , m_mainUrl(mainUrl)
     {
+        // PRIV07 bookkeeping — same no-op-today rule as
+        // ExtensionChromePage (extensions refuse OTR loads).
+        BrowserProfile::trackPrivateProfilePage(this);
         // ER20: extension chrome is not web content — the profile's
         // JavascriptEnabled preference governs pages, never extension
         // contexts (Chrome parity; devtoolswindow.cpp does the same

@@ -164,6 +164,9 @@ static PolicyVerdict evaluateUncached(const PolicyRequest &request)
             verdict.refererValue =
                 referer.value(QStringLiteral("value")).toString().toUtf8();
         }
+        // PRIV08: the core already folded the toggle (and the tor
+        // override) into one bit — the adapter only writes it.
+        verdict.sendGpc = v.value(QStringLiteral("gpc")).toBool();
     }
     // "pass" or anything unexpected → untouched.
     return verdict;
@@ -204,6 +207,7 @@ void NavigationPolicy::loadSnapshot(const Snapshot &s)
     m[QStringLiteral("block_third_party_ws")] = s.blockThirdPartyWebSockets;
     m[QStringLiteral("strip_tracking_params")] = s.stripTrackingParams;
     m[QStringLiteral("domain_blocklist")] = s.domainBlocklist;
+    m[QStringLiteral("gpc_signal")] = s.gpcSignal;
     QJsonArray exceptions;
     for (const QString &h : s.httpsOnlyExceptions) exceptions.append(h);
     m[QStringLiteral("https_only_exceptions")] = exceptions;
@@ -241,6 +245,7 @@ bool NavigationPolicy::blockPrefetchEnabled() { return flagValue("block_prefetch
 bool NavigationPolicy::blockThirdPartyWebSocketsEnabled() { return flagValue("block_third_party_ws", false); }
 bool NavigationPolicy::stripTrackingParamsEnabled() { return flagValue("strip_tracking_params", true); }
 bool NavigationPolicy::domainBlocklistEnabled() { return flagValue("domain_blocklist", true); }
+bool NavigationPolicy::gpcSignalEnabled() { return flagValue("gpc_signal", true); }
 
 QByteArray NavigationPolicy::referrerMetaValue(int level)
 {
@@ -600,6 +605,7 @@ static bool s_blockPrefetch = true;
 static bool s_blockThirdPartyWebSockets = false;
 static bool s_stripTrackingParams = true;
 static bool s_domainBlocklist = true;
+static bool s_gpcSignal = true;
 
 static QMutex s_domainBlockLock;
 static QSet<QString> s_sessionBlockedAllowed;
@@ -667,6 +673,7 @@ void NavigationPolicy::loadSnapshot(const Snapshot &snap)
         s_blockThirdPartyWebSockets = snap.blockThirdPartyWebSockets;
         s_stripTrackingParams = snap.stripTrackingParams;
         s_domainBlocklist = snap.domainBlocklist;
+        s_gpcSignal = snap.gpcSignal;
     }
     QSet<QString> persisted;
     for (const QString &host : snap.httpsOnlyExceptions) {
@@ -749,6 +756,12 @@ bool NavigationPolicy::domainBlocklistEnabled()
 {
     QReadLocker lock(&s_policyLock);
     return s_domainBlocklist;
+}
+
+bool NavigationPolicy::gpcSignalEnabled()
+{
+    QReadLocker lock(&s_policyLock);
+    return s_gpcSignal;
 }
 
 QByteArray NavigationPolicy::referrerMetaValue(int level)
@@ -1331,13 +1344,14 @@ static bool hasQuery(const QUrl &url)
 static PolicyVerdict evaluatePrivacy(const PolicyRequest &req)
 {
     PolicyVerdict v;
-    bool httpsFirst, blockPings, stripParams, httpsOnly;
+    bool httpsFirst, blockPings, stripParams, httpsOnly, gpcSignal;
     {
         QReadLocker lock(&s_policyLock);
         httpsFirst = s_httpsFirst;
         blockPings = s_blockPings;
         stripParams = s_stripTrackingParams;
         httpsOnly = s_httpsOnly;
+        gpcSignal = s_gpcSignal;
     }
     const QUrl &url = req.url;
 
@@ -1398,6 +1412,8 @@ static PolicyVerdict evaluatePrivacy(const PolicyRequest &req)
         return v;
     }
     v.action = PolicyVerdict::Action::Allow;
+    // PRIV08: the clearnet signal follows the toggle.
+    v.sendGpc = gpcSignal;
     QByteArray refHeader;
     for (const auto &pair : req.headers) {
         if (pair.first == "Referer") {
@@ -1479,6 +1495,11 @@ static PolicyVerdict evaluateTor(const PolicyRequest &req)
         return v;
     }
     v.action = PolicyVerdict::Action::Allow;
+    // PRIV08: tor windows send Sec-GPC unconditionally — Mullvad's
+    // uniformity doctrine; a per-user toggle across tor windows is
+    // the fingerprint bit Tor Browser avoids by shipping none at all
+    // (see PolicyVerdict::sendGpc).
+    v.sendGpc = true;
     QByteArray refHeader;
     for (const auto &pair : req.headers) {
         if (pair.first == "Referer") {

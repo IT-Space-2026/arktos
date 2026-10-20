@@ -35,6 +35,7 @@
 #include <qtimer.h>
 #include <qwebenginepage.h>
 
+#include "browserprofile.h"
 #include "networkaccessmanager.h"
 #include "plaintexteditsearch.h"
 #include "sourcehighlighter.h"
@@ -268,6 +269,10 @@ void SourceViewer::probeWireSource()
        page asynchronously. */
     m_probeStartMs = m_clock.elapsed();
     QWebEnginePage *probe = new QWebEnginePage(this);
+    // PRIV07 bookkeeping — the probe sits on the engine default
+    // profile, so this is a no-op; the every-page-registers contract
+    // still holds.
+    BrowserProfile::trackPrivateProfilePage(probe);
     // The probe is engine-bound infra (a throwaway DOM parser) — its
     // serialization still goes through the interface surface.
     WebEnginePageAdapter *probeAdapter = new WebEnginePageAdapter(probe, probe);

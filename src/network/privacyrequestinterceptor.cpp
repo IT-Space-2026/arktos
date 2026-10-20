@@ -202,6 +202,14 @@ static bool applyVerdict(const PolicyVerdict &verdict,
     case PolicyVerdict::Action::Allow:
         if (verdict.refererSet)
             info.setHttpHeader("Referer", verdict.refererValue);
+        // PRIV08: Global Privacy Control — the verdict's sendGpc bit
+        // already folded the privacy/gpcSignal toggle (and the tor
+        // pipeline's unconditional override) in.  setHttpHeader is
+        // the REF01-verified path that reaches the wire on main-frame
+        // and subresource legs alike; a false bit writes NOTHING —
+        // absence is the spec's no-preference state.
+        if (verdict.sendGpc)
+            info.setHttpHeader("Sec-GPC", "1");
         return true;
     }
     return true;
@@ -284,6 +292,8 @@ void PrivacyRequestInterceptor::loadSettings()
         .toBool();
     snap.domainBlocklist =
         settings.value(QLatin1String("domainBlocklist"), true).toBool();
+    snap.gpcSignal =
+        settings.value(QLatin1String("gpcSignal"), true).toBool();
 #if defined(ARKTOS_RUSTCORE)
     // SITED01: one-shot import — replay the legacy exception list into
     // the Rust store and retire the key after the writes land.
@@ -416,6 +426,20 @@ bool PrivacyRequestInterceptor::isDomainBlocked(const QString &host)
 bool PrivacyRequestInterceptor::domainBlocklistEnabled()
 {
     return NavigationPolicy::domainBlocklistEnabled();
+}
+
+bool PrivacyRequestInterceptor::gpcSignalEnabled()
+{
+    return NavigationPolicy::gpcSignalEnabled();
+}
+
+bool PrivacyRequestInterceptor::storedGpcSignal()
+{
+    ProfileSettings settings;
+    settings.beginGroup(QLatin1String("privacy"));
+    const bool on = settings.value(QLatin1String("gpcSignal"), true).toBool();
+    settings.endGroup();
+    return on;
 }
 
 bool PrivacyRequestInterceptor::shouldBlockDomain(const QUrl &url)

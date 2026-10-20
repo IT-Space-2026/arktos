@@ -172,6 +172,7 @@
 #include <QtNetwork/QTcpServer>
 #include <QtNetwork/QTcpSocket>
 #include <QtWebEngineCore/QWebEngineClientHints>
+#include <QtWebEngineCore/QWebEngineCookieStore>
 #include <QtWebEngineCore/QWebEngineDownloadRequest>
 #include <QtWebEngineCore/QWebEngineExtensionInfo>
 #include <QtWebEngineCore/QWebEngineExtensionManager>
@@ -1008,8 +1009,14 @@ static int browserAuditSmoke(BrowserApplication &application,
             bareView = new QWebEngineView;
             if (wire.contains(QLatin1String("webpage")))
                 bareView->setPage(new WebPage(profile, bareView));
-            else
-                bareView->setPage(new QWebEnginePage(profile, bareView));
+            else {
+                // PRIV07 bookkeeping — this leg runs on its own
+                // throwaway OTR profile, not the shared private one,
+                // so the tracker is a no-op; the contract still holds.
+                QWebEnginePage *wirePage = new QWebEnginePage(profile, bareView);
+                BrowserProfile::trackPrivateProfilePage(wirePage);
+                bareView->setPage(wirePage);
+            }
             // noinject disarms the page's own DocumentReady scripts so
             // the autofill/cosmetic wires below can re-arm a single
             // script in isolation.
@@ -6309,7 +6316,7 @@ int main(int argc, char **argv)
         "tor-firstsearch-smoke",
         "sorry-smoke", "icons-smoke", "seclvl-smoke",
         "ping-smoke", "httpsonly-smoke", "resourceblock-smoke",
-        "urlclean-smoke",
+        "urlclean-smoke", "gpc-smoke",
         "fingerprint-smoke", "fingerprint-child-smoke",
         "fingerprint-inject-smoke", "fingerprint-inject-seed",
         "reader-smoke", "reader-live",
@@ -6329,7 +6336,7 @@ int main(int argc, char **argv)
         "pdf-smoke",
         "pdfview-smoke", "printpreview-smoke",
         "parallel-download-smoke", "parallel-download-off-smoke",
-        "ingress-smoke",
+        "ingress-smoke", "otr-teardown-smoke",
         "profile-wipe-smoke", "profile-wipe-child-smoke",
         "profile-wipe-arm-smoke",
         "engine-list", "engine-smoke", "servo-smoke",
@@ -8255,6 +8262,203 @@ int main(int argc, char **argv)
                            [&application]() {
             qInfo() << "ping-smoke: FAIL (timeout)";
             application.exit(1);
+        });
+    }
+
+    // PRIV08: Global Privacy Control — the Sec-GPC request header and
+    // its navigator.globalPrivacyControl JS twin, both behind
+    // privacy/gpcSignal (default on).  Two phases through the same
+    // QSettings + loadSettings()/applySettings() fan-out the settings
+    // dialog uses:
+    //   phase 1 (armed): "Sec-GPC: 1" must appear on the main-frame
+    //       AND subresource legs of /page, and page JS must read
+    //       navigator.globalPrivacyControl === true through a
+    //       non-configurable Navigator.prototype getter — the
+    //       DocumentCreation script twin of the header.
+    //   phase 2 (off): the header must be entirely absent on /page2's
+    //       main-frame and subresource legs — the spec has no "send
+    //       0" value, absence IS the no-preference signal — and fresh
+    //       documents must not carry the JS property.  The persisted
+    //       key and the live policy snapshot are read back mid-phase.
+    // Exits 0 on PASS.
+    if (args.contains(QLatin1String("--gpc-smoke"))) {
+        // Hermeticity: a downloaded subscription list could match the
+        // fixture paths — neuter adblock for the run.
+        for (AdBlockSubscription *s : AdBlockManager::instance()->subscriptions())
+            s->setEnabled(false);
+
+        auto armGpc = [profile](bool on) {
+            ProfileSettings().setValue(QLatin1String("privacy/gpcSignal"), on);
+            PrivacyRequestInterceptor::loadSettings();
+            // applySettings refreshes the DocumentCreation script on
+            // the live profile the way a settings-dialog save does.
+            BrowserProfile::applySettings(profile);
+        };
+        armGpc(true);
+
+        QTcpServer *server = new QTcpServer(&application);
+        if (!server->listen(QHostAddress::LocalHost)) {
+            qInfo() << "gpc-smoke: FAIL (listen)" << server->errorString();
+            return 1;
+        }
+        const quint16 port = server->serverPort();
+        auto seen = std::make_shared<QHash<QString, int>>();
+        auto gpcSeen = std::make_shared<QHash<QString, QByteArray>>();
+        QObject::connect(server, &QTcpServer::newConnection, &application,
+                         [server, seen, gpcSeen]() {
+            QTcpSocket *client = server->nextPendingConnection();
+            client->setParent(server);
+            // Answer only once the request head is in — the readAll()
+            // below must not swallow a half-arrived request.
+            QObject::connect(client, &QTcpSocket::readyRead, client,
+                             [client, seen, gpcSeen]() {
+                if (!client->peek(4096).contains("\r\n\r\n"))
+                    return;
+                const QByteArray request = client->readAll();
+                const QByteArray head = request.left(
+                    request.indexOf("\r\n\r\n"));
+                QString path;
+                for (const QByteArray &raw : head.split('\n')) {
+                    const QByteArray line = raw.trimmed();
+                    if (line.startsWith("GET ")) {
+                        path = QString::fromLatin1(
+                            line.mid(4, line.indexOf(" HTTP/") - 4));
+                    } else if (line.toLower().startsWith("sec-gpc:")) {
+                        (*gpcSeen)[path] = line.mid(8).trimmed();
+                    }
+                }
+                if (!path.isEmpty())
+                    (*seen)[path] = seen->value(path) + 1;
+                QByteArray body;
+                if (path == QLatin1String("/page")
+                        || path == QLatin1String("/page2")) {
+                    // A same-host <img> plus a no-store fetch() give
+                    // the subresource legs; the per-phase suffix keeps
+                    // the HTTP cache and the seen table from blurring
+                    // one phase's wires into the other's.
+                    const QByteArray tag = path.endsWith(QLatin1Char('2'))
+                        ? QByteArray("2") : QByteArray();
+                    body = "<html><body><img src=\"/img" + tag + "\">"
+                        "<script>fetch('/xhr" + tag
+                        + "',{cache:'no-store'})</script></body></html>";
+                } else {
+                    body = "ok";
+                }
+                client->write("HTTP/1.1 200 OK\r\n"
+                    "Content-Type: text/html\r\n"
+                    "Content-Length: " + QByteArray::number(body.size())
+                    + "\r\nConnection: close\r\n\r\n" + body);
+                client->disconnectFromHost();
+            });
+        });
+
+        auto failures = std::make_shared<int>(0);
+        const auto check = [failures](bool ok, const QString &what) {
+            qInfo() << "gpc-smoke:" << what
+                    << (ok ? "PASS" : "FAIL");
+            if (!ok)
+                ++*failures;
+        };
+        const auto finish = [failures, check](const QString &why) {
+            // Leave the store at the default so a shared smoke-store
+            // run does not leak the off-state into later legs.
+            ProfileSettings().setValue(QLatin1String("privacy/gpcSignal"),
+                                       true);
+            PrivacyRequestInterceptor::loadSettings();
+            check(*failures == 0, why);
+            // quick_exit, not application.exit: the harness view is
+            // still live and orderly WebEngine widget teardown hits
+            // the known offscreen shutdown crash other smoke legs
+            // sidestep; the verdict line above is already flushed.
+            std::quick_exit(*failures == 0 ? 0 : 1);
+        };
+
+        auto phase = std::make_shared<int>(0);   // 0 armed, 1 off
+        auto probing = std::make_shared<bool>(false);
+        auto ticks = std::make_shared<int>(0);
+        QTimer *poll = new QTimer(&application);
+        QObject::connect(poll, &QTimer::timeout, &application,
+            [view, poll, phase, probing, ticks, seen, gpcSeen, check,
+             finish, armGpc, port]() {
+            const QString tag = *phase == 0 ? QString()
+                                            : QStringLiteral("2");
+            const QString framePath = QLatin1String("/page") + tag;
+            const QString imgPath = QLatin1String("/img") + tag;
+            const QString xhrPath = QLatin1String("/xhr") + tag;
+            if (!seen->value(framePath) || !seen->value(imgPath)
+                    || !seen->value(xhrPath)) {
+                if (++*ticks > 80)   // ~20s
+                    finish(QStringLiteral("fixture legs never arrived"));
+                return;
+            }
+            if (*probing)
+                return;
+            *probing = true;
+            *ticks = 0;
+            const bool armed = *phase == 0;
+            for (const QString &leg : { framePath, imgPath, xhrPath }) {
+                if (armed)
+                    check(gpcSeen->value(leg) == QByteArray("1"),
+                          QStringLiteral("Sec-GPC: 1 on %1").arg(leg));
+                else
+                    check(!gpcSeen->contains(leg),
+                          QStringLiteral("no Sec-GPC on %1").arg(leg));
+            }
+            view->enginePage()->runJavaScript(QStringLiteral(
+                "JSON.stringify({"
+                "v:navigator.globalPrivacyControl===true,"
+                "h:('globalPrivacyControl' in navigator),"
+                "c:(function(){var d=Object.getOwnPropertyDescriptor("
+                "Navigator.prototype,'globalPrivacyControl');"
+                "return d?d.configurable:null})()})"),
+                [view, phase, probing, seen, gpcSeen, check, finish,
+                 armGpc, port](const QVariant &result) {
+                const QJsonObject probe = QJsonDocument::fromJson(
+                    result.toString().toUtf8()).object();
+                if (*phase == 0) {
+                    check(probe.value(QLatin1String("v")).toBool()
+                          && probe.value(QLatin1String("h")).toBool(),
+                          QStringLiteral(
+                              "navigator.globalPrivacyControl === true"));
+                    check(probe.value(QLatin1String("c")).isBool()
+                          && !probe.value(QLatin1String("c")).toBool(),
+                          QStringLiteral("getter is non-configurable"));
+                    // Phase 2: the toggle off must reach BOTH the live
+                    // policy snapshot (header path) and the profile's
+                    // script collection (JS path) — the same fan-out a
+                    // settings-dialog save performs.
+                    *phase = 1;
+                    armGpc(false);
+                    check(!PrivacyRequestInterceptor::storedGpcSignal(),
+                          QStringLiteral("privacy/gpcSignal persists off"));
+                    check(!PrivacyRequestInterceptor::gpcSignalEnabled(),
+                          QStringLiteral(
+                              "loadSettings reaches the live snapshot"));
+                    seen->clear();
+                    gpcSeen->clear();
+                    *probing = false;
+                    view->loadUrl(QUrl(QStringLiteral(
+                        "http://127.0.0.1:%1/page2").arg(port)));
+                    return;
+                }
+                check(!probe.value(QLatin1String("v")).toBool()
+                      && !probe.value(QLatin1String("h")).toBool(),
+                      QStringLiteral(
+                          "JS surface absent after toggle-off"));
+                finish(QStringLiteral("armed+off phases complete"));
+            });
+        });
+        poll->start(250);
+        view->loadUrl(QUrl(QStringLiteral("http://127.0.0.1:%1/page")
+                               .arg(port)));
+        QTimer::singleShot(60000, &application, []() {
+            // Keep a timed-out phase-2 run from leaking the off-state
+            // into later smoke legs on a shared store.
+            ProfileSettings().setValue(QLatin1String("privacy/gpcSignal"),
+                                       true);
+            PrivacyRequestInterceptor::loadSettings();
+            qInfo() << "gpc-smoke: FAIL (timeout)";
+            std::quick_exit(1);
         });
     }
 
@@ -20168,6 +20372,10 @@ int main(int argc, char **argv)
                 // engine before a byte is written).
                 QWebEnginePage *savePage =
                     new QWebEnginePage(view->webPage()->profile(), view);
+                // PRIV07 bookkeeping — no-op on the normal profile,
+                // but the save page must join the count if this leg
+                // ever runs with --private.
+                BrowserProfile::trackPrivateProfilePage(savePage);
                 downloadManager->download(
                     WebEnginePageAdapter::forPage(savePage),
                     pdfUrl, false);
@@ -21507,6 +21715,319 @@ int main(int argc, char **argv)
         qInfo() << "ingress-smoke:" << (failures == 0 ? "PASS" : "FAIL")
                 << "failures:" << failures;
         return failures == 0 ? 0 : 1;
+    }
+
+    // PRIV07: the shared off-the-record profile follows Chrome's
+    // incognito lifecycle — it is destroyed once its last bound page
+    // dies, so a private session started later in the same run is a
+    // genuinely fresh world (new jar, new storage, services
+    // re-installed by prepareProfile).  A second live OTR page —
+    // another window's tab — keeps the profile up, and a still-running
+    // private download holds the teardown until it settles.  The
+    // normal profile must be untouched throughout.  Exits 0 on PASS.
+    if (args.contains(QLatin1String("--otr-teardown-smoke"))) {
+        int failures = 0;
+        const auto check = [&failures](bool ok, const QString &what) {
+            qInfo() << "otr-teardown-smoke:" << what
+                    << (ok ? "PASS" : "FAIL");
+            if (!ok)
+                ++failures;
+        };
+        const auto waitFor = [](const std::function<bool()> &predicate,
+                                int timeoutMs) -> bool {
+            QElapsedTimer timer;
+            timer.start();
+            while (timer.elapsed() < timeoutMs) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                if (predicate())
+                    return true;
+                telemetryWait(10);
+            }
+            return predicate();
+        };
+        // The deterministic downloads path — same pins the private-
+        // browsing autotest drives.
+        ProfileSettings().setValue(
+            QLatin1String("downloadmanager/external"), false);
+        ProfileSettings().setValue(
+            QLatin1String("downloadmanager/engine"),
+            QLatin1String("builtin"));
+
+        // Loopback fixture: first-party Set-Cookie on every reply —
+        // the same responder shape tst_privatebrowsing uses.
+        QTcpServer *server = new QTcpServer(&application);
+        if (!server->listen(QHostAddress::LocalHost)) {
+            qInfo() << "otr-teardown-smoke: FAIL (listen)"
+                    << server->errorString();
+            return 1;
+        }
+        std::shared_ptr<int> hits(new int(0));
+        QObject::connect(server, &QTcpServer::newConnection,
+                         &application, [server, hits]() {
+            QTcpSocket *client = server->nextPendingConnection();
+            client->setParent(server);
+            // Answer only once the request line+headers are in — a
+            // response written ahead of the request can race the
+            // parser and the Set-Cookie never lands.
+            QObject::connect(client, &QTcpSocket::readyRead,
+                             client, [client, hits]() {
+                if (!client->peek(4096).contains("\r\n\r\n"))
+                    return;
+                const QByteArray request = client->readAll();
+                ++*hits;
+                const QByteArray target = request.split(' ').value(1);
+                qInfo() << "otr-teardown-smoke: diag fixture hit"
+                        << *hits << target;
+                // The favicon fetch must NOT re-send the marker — an
+                // identical overwrite makes the store emit
+                // cookieRemoved (the old instance is replaced) while
+                // no second cookieAdded reaches the jar, draining its
+                // mirror even though the store still holds a cookie.
+                if (target != "/") {
+                    client->write("HTTP/1.1 404 Not Found\r\n"
+                                  "Content-Length: 0\r\n"
+                                  "Connection: close\r\n\r\n");
+                    client->disconnectFromHost();
+                    return;
+                }
+                const QByteArray body = "<html><body>priv07</body></html>";
+                client->write("HTTP/1.1 200 OK\r\n"
+                              "Content-Type: text/html\r\n"
+                              "Set-Cookie: priv07-marker=1; Path=/\r\n"
+                              "Content-Length: "
+                              + QByteArray::number(body.size())
+                              + "\r\nConnection: close\r\n\r\n" + body);
+                client->disconnectFromHost();
+            });
+        });
+        // A second fixture trickles a huge body — the download stays
+        // in-flight until the socket is cut (the hold-teardown leg).
+        // Chromium RETRIES a severed transfer, so the retry gets a
+        // complete tiny body — that settles the request deterministically.
+        QPointer<QTcpSocket> stallSocket;
+        auto *stallHits = new int(0);
+        QTcpServer *stallServer = new QTcpServer(&application);
+        if (!stallServer->listen(QHostAddress::LocalHost)) {
+            qInfo() << "otr-teardown-smoke: FAIL (stall listen)"
+                    << stallServer->errorString();
+            return 1;
+        }
+        QObject::connect(stallServer, &QTcpServer::newConnection,
+                         &application, [stallServer, &stallSocket, stallHits]() {
+            QTcpSocket *client = stallServer->nextPendingConnection();
+            client->setParent(stallServer);
+            stallSocket = client;
+            const bool retry = ++*stallHits > 1;
+            // The engine sends the request headers first — drain them
+            // before answering (same ordering as the cookie fixture).
+            QObject::connect(client, &QTcpSocket::readyRead,
+                             client, [client]() {
+                client->readAll();
+            });
+            if (retry) {
+                client->write("HTTP/1.1 200 OK\r\n"
+                              "Content-Type: application/octet-stream\r\n"
+                              "Content-Length: 4\r\n"
+                              "Connection: close\r\n\r\n"
+                              "done");
+                client->disconnectFromHost();
+                return;
+            }
+            client->write("HTTP/1.1 200 OK\r\n"
+                          "Content-Type: application/octet-stream\r\n"
+                          "Content-Disposition: attachment; "
+                          "filename=\"priv07-stall.bin\"\r\n"
+                          "Content-Length: 104857600\r\n\r\n");
+            QTimer *trickle = new QTimer(client);
+            QObject::connect(trickle, &QTimer::timeout, client,
+                             [client]() { client->write("x"); });
+            trickle->start(50);
+        });
+        const QUrl fixture(QStringLiteral("http://127.0.0.1:%1/")
+                           .arg(server->serverPort()));
+        const QUrl stallUrl(QStringLiteral("http://127.0.0.1:%1/priv07-stall.bin")
+                            .arg(stallServer->serverPort()));
+
+        const auto hasMarker = [](CookieJar *jar) {
+            const QList<QNetworkCookie> cookies = jar->cookies();
+            for (const QNetworkCookie &cookie : cookies)
+                if (cookie.name() == "priv07-marker")
+                    return true;
+            return false;
+        };
+        const auto loadSync = [&waitFor](QWebEnginePage *page,
+                                         const QUrl &url) -> bool {
+            bool done = false;
+            bool ok = false;
+            QMetaObject::Connection connection = QObject::connect(
+                page, &QWebEnginePage::loadFinished, page,
+                [&done, &ok](bool result) { done = true; ok = result; });
+            page->load(url);
+            waitFor([&done]() { return done; }, 15000);
+            QObject::disconnect(connection);
+            return ok;
+        };
+
+        const auto diagStore = [](QWebEngineProfile *p,
+                                      const char *tag) {
+            QObject::connect(p->cookieStore(),
+                             &QWebEngineCookieStore::cookieAdded,
+                             qApp, [tag](const QNetworkCookie &c) {
+                qInfo() << "otr-teardown-smoke: diag" << tag
+                        << "cookieAdded" << c.name() << c.domain();
+            });
+            QObject::connect(p->cookieStore(),
+                             &QWebEngineCookieStore::cookieRemoved,
+                             qApp, [tag](const QNetworkCookie &c) {
+                qInfo() << "otr-teardown-smoke: diag" << tag
+                        << "cookieRemoved" << c.name() << c.domain();
+            });
+        };
+        diagStore(BrowserProfile::normalProfile(), "normal");
+
+        // (a) the normal profile picks up its own marker first — it
+        // must survive everything the private world does below.
+        {
+            WebPage normalPage(BrowserProfile::normalProfile());
+            check(loadSync(&normalPage, fixture),
+                  QStringLiteral("normal page loads cookie fixture"));
+        }
+        CookieJar *normalJar =
+            CookieJar::instance(BrowserProfile::normalProfile());
+        check(waitFor([&normalJar, &hasMarker]() {
+                  return hasMarker(normalJar); }, 15000),
+              QStringLiteral("normal profile stores its marker cookie"));
+
+        // (b) two pages on the shared OTR profile (two windows' worth
+        // of private tabs): the cookie lands, the profile survives
+        // the first closing, and dies on the second.
+        QWebEngineProfile *otr =
+            BrowserApplication::privateWebEngineProfile();
+        check(otr && otr->isOffTheRecord(),
+              QStringLiteral("shared private profile is off-the-record"));
+        diagStore(otr, "otr");
+        WebPage *pageA = new WebPage(otr);
+        WebPage *pageB = new WebPage(otr);
+        check(loadSync(pageA, fixture),
+              QStringLiteral("private page loads cookie fixture"));
+        CookieJar *otrJar = CookieJar::instance(otr);
+        const bool otrMarked = waitFor([&otrJar, &hasMarker]() {
+            return hasMarker(otrJar); }, 15000);
+        if (!otrMarked) {
+            QStringList names;
+            const QList<QNetworkCookie> cookies = otrJar->cookies();
+            for (const QNetworkCookie &c : cookies)
+                names << QString::fromUtf8(c.name());
+            qInfo() << "otr-teardown-smoke: diag otr jar cookies:"
+                    << names << "page profile OTR:"
+                    << pageA->profile()->isOffTheRecord()
+                    << "same profile:" << (pageA->profile() == otr);
+        }
+        check(otrMarked,
+              QStringLiteral("OTR profile stores its own marker cookie"));
+
+        delete pageA;
+        // Negative watch: the profile must NOT go away while one
+        // tracked page lives — a fixed window is the assertion (a
+        // premature release flips privateProfileIfCreated() null).
+        const bool releasedEarly = waitFor([]() {
+            return !BrowserProfile::privateProfileIfCreated(); }, 3000);
+        check(!releasedEarly
+                  && BrowserProfile::privateProfileIfCreated() == otr,
+              QStringLiteral("one live OTR page keeps the profile up"));
+
+        delete pageB;
+        check(waitFor([]() {
+                  return !BrowserProfile::privateProfileIfCreated(); },
+                      15000),
+              QStringLiteral("last OTR page death releases the profile"));
+
+        // (c) the next private session is a fresh world — jar empty,
+        // services re-installed by prepareProfile (the interceptor
+        // presence proves s_preparedProfiles did not skip it).
+        QWebEngineProfile *otr2 =
+            BrowserApplication::privateWebEngineProfile();
+        check(otr2 && otr2->isOffTheRecord(),
+              QStringLiteral("private profile recreates off-the-record"));
+        check(otr2 && ExtensionManager::instance()
+                          ->isInstalledOnProfile(otr2),
+              QStringLiteral("recreated profile is re-prepared (services installed)"));
+        CookieJar *otr2Jar = CookieJar::instance(otr2);
+        waitFor([&otr2Jar, &hasMarker]() {
+            return hasMarker(otr2Jar); }, 2000);
+        check(!hasMarker(otr2Jar),
+              QStringLiteral("recreated OTR world has no previous session's cookie"));
+        WebPage *pageC = new WebPage(otr2);
+
+        // (d) the download hold: a QWebEngineDownloadRequest is
+        // profile-owned, so it outlives its issuing page — deleting
+        // pageC leaves the transfer InProgress, and the profile must
+        // stay up until the request reaches a terminal state.  Cut
+        // the feed to settle it, then the release must follow.
+        downloadManager->download(WebEnginePageAdapter::forPage(pageC),
+                                  stallUrl);
+        QPointer<DownloadItem> pendingItem;
+        const bool itemArrived = waitFor(
+                [&application, &pendingItem]() {
+            DownloadManager *manager = BrowserApplication::downloadManager();
+            for (int row = 0; row < manager->model()->rowCount(); ++row) {
+                DownloadItem *item = manager->itemAt(row);
+                if (item && item->downloading()) {
+                    pendingItem = item;
+                    return true;
+                }
+            }
+            return false; }, 15000);
+        check(itemArrived,
+              QStringLiteral("private download starts on the OTR profile"));
+        delete pageC;
+        if (itemArrived) {
+            bool releasedWhilePending = false;
+            const bool held = !waitFor(
+                    [&pendingItem, &releasedWhilePending]() {
+                if (!BrowserProfile::privateProfileIfCreated()) {
+                    if (pendingItem && pendingItem->downloading())
+                        releasedWhilePending = true;
+                    return true;
+                }
+                return false; }, 5000);
+            check(held && !releasedWhilePending
+                      && BrowserProfile::privateProfileIfCreated() == otr2,
+                  QStringLiteral("in-flight private download holds the teardown"));
+            if (stallSocket)
+                stallSocket->abort();
+            const bool released = waitFor([]() {
+                return !BrowserProfile::privateProfileIfCreated(); },
+                    15000);
+            if (pendingItem) {
+                qInfo() << "otr-teardown-smoke: diag post-abort"
+                        << "downloading" << pendingItem->downloading()
+                        << "hasActive"
+                        << DownloadManager::hasActiveDownloadForProfile(
+                               otr2);
+            } else {
+                qInfo() << "otr-teardown-smoke: diag post-abort"
+                        << "item dead";
+            }
+            check(released,
+                  QStringLiteral("download settle releases the profile"));
+        } else {
+            if (stallSocket)
+                stallSocket->abort();
+            waitFor([]() {
+                return !BrowserProfile::privateProfileIfCreated(); },
+                    15000);
+        }
+        check(hasMarker(normalJar),
+              QStringLiteral("normal profile kept its marker cookie"));
+
+        qInfo() << "otr-teardown-smoke:" << (failures == 0 ? "PASS" : "FAIL")
+                << "failures:" << failures;
+        // quick_exit: the run may still hold live engine objects (the
+        // interrupted download's request, the second OTR profile) —
+        // unwinding those hits the known Chromium shutdown crash the
+        // other smoke legs sidestep (MIG12); the verdict is printed.
+        std::quick_exit(failures == 0 ? 0 : 1);
     }
 
     return application.exec();

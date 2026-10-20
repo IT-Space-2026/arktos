@@ -1507,6 +1507,10 @@ void SettingsDialog::loadFromSettings()
         settings.value(QLatin1String("urlCleaning"),
             settings.value(QLatin1String("stripTrackingParams"), true))
             .toBool());
+    // PRIV08: Global Privacy Control — default on; tor windows ignore
+    // the toggle (every tor window sends the same constant).
+    gpcSignal->setChecked(
+        settings.value(QLatin1String("gpcSignal"), true).toBool());
     // PREFUI04: the toggle moved to the Performance page in its
     // positive form — the persisted privacy/blockPrefetch key (and
     // its default-on semantics) is unchanged.
@@ -1967,6 +1971,10 @@ void SettingsDialog::saveToSettings()
     // toggle state.
     settings.setValue(QLatin1String("stripTrackingParams"),
                       urlCleaning->isChecked());
+    // PRIV08: one toggle drives both surfaces — the Sec-GPC request
+    // header and the navigator.globalPrivacyControl page property.
+    // Off removes the header entirely; the spec has no "send 0".
+    settings.setValue(QLatin1String("gpcSignal"), gpcSignal->isChecked());
     // PREFUI04: same key, written by the positive-form checkbox that
     // now lives on the Performance page.
     settings.setValue(QLatin1String("blockPrefetch"),

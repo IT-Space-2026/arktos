@@ -21,6 +21,7 @@
 #include "profilesettings.h"
 
 #include "browserapplication.h"
+#include "browserprofile.h"
 #include "engineinterface.h"
 #include "readersanitizer.h"
 #include "webenginebackend.h"
@@ -68,6 +69,10 @@ public:
         , m_baseUrl(baseUrl)
         , m_view(view)
     {
+        // PRIV07: the reader surface shares the source page's
+        // profile — on a private page it counts toward the shared
+        // OTR profile's live pages like any other bound page.
+        BrowserProfile::trackPrivateProfilePage(this);
     }
 
 protected:

@@ -151,6 +151,7 @@ private slots:
     void siteTrustUpdateControls();
     void languageSelector();
     void privacyGroupAlignment();
+    void gpcSignalToggle();
     void appearanceFieldBounds();
 };
 
@@ -4519,6 +4520,38 @@ void tst_SettingsDialog::languageSelector()
     // translation.
     manager->setCurrentLanguage(QString());
     qApp->processEvents();
+}
+
+// PRIV08: the GPC checkbox owns privacy/gpcSignal — default on,
+// persisted off and back on through a fresh dialog, with helper text
+// that says where the signal is binding and where it is advisory.
+void tst_SettingsDialog::gpcSignalToggle()
+{
+    ProfileSettings settings;
+    settings.remove(QLatin1String("privacy/gpcSignal"));
+
+    {
+        SettingsDialog dialog;
+        QVERIFY(dialog.gpcSignal->isChecked());
+        QVERIFY(dialog.gpcSignal->toolTip().contains(
+            QLatin1String("binding opt-out")));
+        QVERIFY(dialog.gpcSignal->toolTip().contains(
+            QLatin1String("advisory signal")));
+        dialog.gpcSignal->setChecked(false);
+        dialog.accept();
+    }
+    QCOMPARE(settings.value(QLatin1String("privacy/gpcSignal"))
+                 .toBool(), false);
+
+    {
+        SettingsDialog dialog;
+        QVERIFY(!dialog.gpcSignal->isChecked());
+        dialog.gpcSignal->setChecked(true);
+        dialog.accept();
+    }
+    QCOMPARE(settings.value(QLatin1String("privacy/gpcSignal"))
+                 .toBool(), true);
+    settings.remove(QLatin1String("privacy/gpcSignal"));
 }
 
 // PREFUI09: the Privacy page's Cookies / Site Permissions / Saved

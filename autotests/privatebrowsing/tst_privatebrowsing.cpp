@@ -45,6 +45,7 @@
 #include "browserprofile.h"
 #include "cookiejar.h"
 #include "downloadmanager.h"
+#include "extensionmanager.h"
 #include "historymanager.h"
 #include "opensearchmanager.h"
 #include "profilesettings.h"
@@ -61,7 +62,12 @@
 
 // Minimal HTTP responder that records every request target — blocked
 // requests never appear here — and answers 200 with a type-appropriate
-// body.  setCookie, when set, rides along on every response.
+// body.  setCookie, when set, rides along on every response unless
+// setCookieTarget narrows it to one path.  The narrowing matters: an
+// identical Set-Cookie re-sent on a later request (the favicon fetch)
+// makes the store emit cookieRemoved for the replaced instance while
+// no second cookieAdded reaches the jar — draining its mirror even
+// though the store still holds a cookie.
 class LocalHttpServer : public QObject
 {
     Q_OBJECT
@@ -92,6 +98,7 @@ public:
     QStringList requests;
     QByteArray indexHtml;
     QByteArray setCookie;
+    QByteArray setCookieTarget;
 
 private:
     void respond(QTcpSocket *socket, const QByteArray &request)
@@ -112,7 +119,8 @@ private:
 
         QByteArray response = "HTTP/1.0 200 OK\r\nContent-Type: " + mimeType
             + "\r\nContent-Length: " + QByteArray::number(body.size()) + "\r\n";
-        if (!setCookie.isEmpty())
+        if (!setCookie.isEmpty()
+            && (setCookieTarget.isEmpty() || target == setCookieTarget))
             response += "Set-Cookie: " + setCookie + "\r\n";
         response += "Connection: close\r\n\r\n" + body;
         socket->write(response);
@@ -206,6 +214,7 @@ private slots:
     void privateSearchNotRecorded();
     void otrDownloadNotPersisted();
     void otrCookiesIsolated();
+    void otrProfileReleasedAfterLastPage();
     void adblockAppliesOnOtrProfile();
 
 private:
@@ -249,6 +258,7 @@ void tst_PrivateBrowsing::init()
     m_server->requests.clear();
     m_server->indexHtml.clear();
     m_server->setCookie.clear();
+    m_server->setCookieTarget.clear();
 }
 
 void tst_PrivateBrowsing::cleanup()
@@ -595,6 +605,71 @@ void tst_PrivateBrowsing::otrCookiesIsolated()
     };
     QTRY_VERIFY(hasCookie(otrJar, cookieName));
     QVERIFY(!hasCookie(normalJar, cookieName));
+}
+
+// PRIV07: Chrome's incognito lifecycle — the shared OTR profile is
+// destroyed when its last bound page dies, wherever those pages
+// lived.  One survivor keeps it up; the next privateProfile() after
+// the release is a fresh world (new jar, no inherited cookies) and
+// the normal profile is untouched throughout.
+void tst_PrivateBrowsing::otrProfileReleasedAfterLastPage()
+{
+    const QString cookieName = QLatin1String("priv07-marker");
+    const auto hasCookie = [](CookieJar *jar, const QString &name) {
+        const QList<QNetworkCookie> cookies = jar->cookies();
+        for (const QNetworkCookie &cookie : cookies)
+            if (cookie.name() == name.toUtf8())
+                return true;
+        return false;
+    };
+
+    // The persistent profile's marker must survive the whole private
+    // lifecycle below.  The cookie rides only on the page response —
+    // the follow-on favicon fetch must not re-send it (an identical
+    // overwrite drains the jar mirror, see LocalHttpServer).
+    m_server->setCookie = cookieName.toUtf8() + "=1; Path=/";
+    m_server->setCookieTarget = "/priv07-normal.html";
+    {
+        WebPage normalPage(BrowserProfile::normalProfile());
+        QVERIFY(loadSync(&normalPage,
+                         m_server->url(QLatin1String("/priv07-normal.html"))));
+    }
+    CookieJar *normalJar =
+        CookieJar::instance(BrowserProfile::normalProfile());
+    QTRY_VERIFY(hasCookie(normalJar, cookieName));
+
+    QWebEngineProfile *otr = BrowserApplication::privateWebEngineProfile();
+    QVERIFY(otr->isOffTheRecord());
+    WebPage *pageA = new WebPage(otr);
+    WebPage *pageB = new WebPage(otr);
+    m_server->setCookieTarget = "/priv07-otr.html";
+    QVERIFY(loadSync(pageA,
+                     m_server->url(QLatin1String("/priv07-otr.html"))));
+    CookieJar *otrJar = CookieJar::instance(otr);
+    QTRY_VERIFY(hasCookie(otrJar, cookieName));
+
+    // One death is not the end — a private page in another window is
+    // still holding the shared world.
+    delete pageA;
+    QTest::qWait(500);
+    QCOMPARE(BrowserProfile::privateProfileIfCreated(), otr);
+
+    delete pageB;
+    QTRY_VERIFY(!BrowserProfile::privateProfileIfCreated());
+
+    // A reopened private session is a new world: freshly prepared
+    // (the extension manager registration proves prepareProfile
+    // re-ran — s_preparedProfiles must not skip it) with no trace of
+    // the previous session's cookies.
+    QWebEngineProfile *otr2 = BrowserApplication::privateWebEngineProfile();
+    QVERIFY(otr2->isOffTheRecord());
+    QVERIFY(ExtensionManager::instance()->isInstalledOnProfile(otr2));
+    CookieJar *otr2Jar = CookieJar::instance(otr2);
+    QTest::qWait(300);
+    QVERIFY(!hasCookie(otr2Jar, cookieName));
+    QVERIFY(hasCookie(normalJar, cookieName));
+    m_server->setCookie.clear();
+    m_server->setCookieTarget.clear();
 }
 
 // The adblock interceptor that prepareProfile() installs on the

@@ -104,7 +104,17 @@ browsing profile:
   plugins are uniform. Honest caveat: this is noise, not anonymity —
   sites can detect the spoofing and canvas-heavy pages can break, so
   the shield panel has a per-site "Spoof fingerprints on this site"
-  switch that exempts a misbehaving site on reload.
+  switch that exempts a misbehaving site on reload. Global Privacy
+  Control is a separate opt-out signal, but while enabled it is still
+  one additional observable request/JS bit; Tor windows emit the same
+  constant for uniformity.
+- **Global Privacy Control** — on by default, sends `Sec-GPC: 1` on
+  WebEngine main-frame and subresource requests and exposes
+  `navigator.globalPrivacyControl === true` to page script. Sites in
+  GPC jurisdictions must treat it as a binding opt-out of sale/share;
+  elsewhere it is advisory. Turning it off sends nothing (there is no
+  `Sec-GPC: 0`); Tor windows always send the same signal, and engines
+  without request interception do not claim support.
 - **Zero telemetry, verified** — launch *and* real browsing sessions
   produce no unsolicited connections; Chromium's background networking,
   component updates, domain reliability, metrics and sync are disabled,
@@ -781,6 +791,9 @@ core landed and UX/completion work still landing.
   - Third-party cookie blocking; referrer-level control
   - Tracking-parameter stripping (ClearURLs rules) + known-redirector
     unwrapping, with per-site opt-out
+  - Global Privacy Control (`Sec-GPC: 1` plus
+    `navigator.globalPrivacyControl`) on by default; off sends nothing,
+    Tor windows always send a uniform signal
   - Fingerprint spoofing on by default (per-session canvas noise,
     uniform WebGL/navigator signals), always-on in Tor windows, per-site
     exemption on the shield panel

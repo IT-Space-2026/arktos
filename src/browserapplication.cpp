@@ -1770,6 +1770,9 @@ void BrowserApplication::warmTorProxy()
     QWebEngineProfile *profile = BrowserProfile::torProfile();
     prepareProfile(profile);
     m_torProxyProbe = new QWebEnginePage(profile, this);
+    // PRIV07 bookkeeping — a no-op on the tor profile; the tracking
+    // contract is "every page registers", so the probe follows it.
+    BrowserProfile::trackPrivateProfilePage(m_torProxyProbe);
     connect(m_torProxyProbe, &QWebEnginePage::loadFinished,
             this, [this, seq](bool) {
         if (seq == m_torProxyWarmSeq)

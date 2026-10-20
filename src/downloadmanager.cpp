@@ -243,6 +243,18 @@ void DownloadItem::init()
     m_finishedDownloading = false;
     m_bytesReceived = 0;
     m_offTheRecord = page() && page()->isOffTheRecord();
+    // PRIV07: pin down WHICH profile owns the request while the
+    // issuing page is guaranteed live — a still-running download on
+    // the shared private profile holds its teardown, while an
+    // OTR-marked transfer on another profile (the retry page's
+    // default profile, tor's) must not.
+    m_requestProfile = nullptr;
+    if (m_offTheRecord) {
+        if (WebEnginePageAdapter *pageAdapter =
+                WebEnginePageAdapter::of(page()))
+            if (pageAdapter->webEnginePage())
+                m_requestProfile = pageAdapter->webEnginePage()->profile();
+    }
 
     // Reset the card state for the fresh attempt — including the
     // user's expand override, so a retry auto-expands again.
@@ -1308,6 +1320,65 @@ void DownloadManager::releaseFor(const QString &profileId)
     delete downloadManagers().take(profileId);
 }
 
+bool DownloadManager::downloadPendingForProfile(const DownloadItem *item,
+                                                QWebEngineProfile *profile)
+{
+    return item && item->m_requestProfile == profile
+        && !item->isFinished();
+}
+
+bool DownloadManager::hasActiveDownloadForProfile(QWebEngineProfile *profile)
+{
+    if (!profile)
+        return false;
+    for (const QPointer<DownloadManager> &manager : downloadManagers()) {
+        if (!manager)
+            continue;
+        for (DownloadItem *item : manager->m_downloads) {
+            if (downloadPendingForProfile(item, profile))
+                return true;
+        }
+    }
+    return false;
+}
+
+void DownloadManager::whenProfileDownloadsSettle(
+        QWebEngineProfile *profile, QObject *context,
+        const std::function<void()> &callback)
+{
+    bool pending = false;
+    if (context) {
+        for (const QPointer<DownloadManager> &manager : downloadManagers()) {
+            if (!manager)
+                continue;
+            for (DownloadItem *item : manager->m_downloads) {
+                if (!downloadPendingForProfile(item, profile))
+                    continue;
+                pending = true;
+                // Every terminal state funnels through
+                // downloadFinished; each fire re-evaluates the whole
+                // set, so the callback runs once nothing bound to the
+                // profile is pending anywhere.  The destroyed arm
+                // covers an item torn down with its manager before
+                // reaching a terminal state — the re-check is queued
+                // so it never reads a half-destructed item.
+                QObject::connect(item, &DownloadItem::downloadFinished,
+                                 context, [profile, context, callback]() {
+                    whenProfileDownloadsSettle(profile, context, callback);
+                });
+                QObject::connect(item, &QObject::destroyed,
+                                 context, [profile, context, callback](QObject *) {
+                    QMetaObject::invokeMethod(context, [profile, context, callback]() {
+                        whenProfileDownloadsSettle(profile, context, callback);
+                    }, Qt::QueuedConnection);
+                });
+            }
+        }
+    }
+    if (!pending)
+        callback();
+}
+
 DownloadManager::DownloadManager(QWidget *parent)
     : DownloadManager(QString(), parent)
 {
@@ -1362,6 +1433,9 @@ Engine::Page *DownloadManager::retryPage(bool offTheRecord)
             // in Qt6 — normal retries go through Arktos's persistent
             // profile (MIG11).
             : new QWebEnginePage(BrowserProfile::normalProfile(), this);
+        // PRIV07 bookkeeping — a no-op unless the page landed on the
+        // shared private profile.
+        BrowserProfile::trackPrivateProfilePage(page);
         installOnProfile(WebEngineProfileAdapter::forProfile(page->profile()));
     }
     return WebEnginePageAdapter::forPage(page);

@@ -19,6 +19,8 @@
 
 #include "webenginebackend.h"
 
+#include "browserprofile.h"
+
 #include <qaction.h>
 #include <qapplication.h>
 #include <qfileinfo.h>
@@ -973,6 +975,9 @@ Engine::Page *WebEngineBackend::createPage(Engine::Profile *profile, QObject *pa
             ? profileAdapter->webEngineProfile()
             : QWebEngineProfile::defaultProfile();
     auto *page = new QWebEnginePage(engineProfile);
+    // PRIV07: a page bound to the shared off-the-record profile joins
+    // its lifetime accounting (no-op on any other profile).
+    BrowserProfile::trackPrivateProfilePage(page);
     auto *adapter = new WebEnginePageAdapter(page, parent);
     page->setParent(adapter);
     return adapter;

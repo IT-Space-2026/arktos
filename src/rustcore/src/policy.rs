@@ -112,6 +112,10 @@ struct Snapshot {
     block_third_party_ws: bool,
     strip_tracking_params: bool,
     domain_blocklist: bool,
+    /// PRIV08: Global Privacy Control — the clearnet Sec-GPC toggle.
+    /// Tor mode ignores it (uniform-constant doctrine, see
+    /// evaluate_tor's "gpc" emit).
+    gpc_signal: bool,
 }
 
 impl Default for Snapshot {
@@ -127,6 +131,7 @@ impl Default for Snapshot {
             block_third_party_ws: false,
             strip_tracking_params: true,
             domain_blocklist: true,
+            gpc_signal: true,
         }
     }
 }
@@ -144,6 +149,7 @@ impl Snapshot {
             "block_third_party_ws" => Some(json!(self.block_third_party_ws)),
             "strip_tracking_params" => Some(json!(self.strip_tracking_params)),
             "domain_blocklist" => Some(json!(self.domain_blocklist)),
+            "gpc_signal" => Some(json!(self.gpc_signal)),
             _ => None,
         }
     }
@@ -1014,6 +1020,10 @@ fn evaluate_privacy(snap: &Snapshot, req: &Request) -> Value {
     json!({
         "action": "allow",
         "referer": referer_directive(snap, &req.url, &req.headers, req.min_referer_level),
+        // PRIV08: the clearnet signal follows the toggle — the adapter
+        // writes "Sec-GPC: 1"; absent/false means send NOTHING (the
+        // spec's no-preference state, never a "0" value).
+        "gpc": snap.gpc_signal,
     })
 }
 
@@ -1082,6 +1092,15 @@ fn evaluate_tor(snap: &Snapshot, req: &Request) -> Value {
     json!({
         "action": "allow",
         "referer": referer_directive(snap, &req.url, &req.headers, req.min_referer_level),
+        // PRIV08: tor windows send Sec-GPC unconditionally.  Tor
+        // Browser ships no GPC because a header few send stands out —
+        // but a per-user toggle would differentiate Arktos tor windows
+        // from each other, which is exactly that leak.  Mullvad
+        // Browser's doctrine is the honest one here: every window
+        // emits the same constant, so the bit is uniform across the
+        // tor population and the legally-binding opt-out is not
+        // forfeited in the mode that needs it most.
+        "gpc": true,
     })
 }
 
@@ -1191,6 +1210,9 @@ pub fn load_snapshot_json(v: &Value) -> RcResult<()> {
     }
     if let Some(b) = v.get("domain_blocklist").and_then(|x| x.as_bool()) {
         snap.domain_blocklist = b;
+    }
+    if let Some(b) = v.get("gpc_signal").and_then(|x| x.as_bool()) {
+        snap.gpc_signal = b;
     }
     policy().set_snapshot(snap);
     let host_list = |key: &str| -> Option<HashSet<String>> {

@@ -71,10 +71,13 @@
 #include <qscopedpointer.h>
 #include <qvector.h>
 
+#include <functional>
+
 class DownloadManager;
 class QEvent;
 class QShowEvent;
 class QWebEnginePage;
+class QWebEngineProfile;
 #ifdef ARKTOS_RUSTDL
 class RustDownloadEngine;
 #endif
@@ -224,6 +227,13 @@ private:
     bool m_canceledByUser;
     bool m_awaitingRetry;
     bool m_offTheRecord;
+    // PRIV07: the profile that owns the engine request — captured at
+    // init/attach while the issuing page is guaranteed live.  A
+    // still-running item bound to the shared private profile holds
+    // its teardown (the request objects are profile-owned); OTR-marked
+    // items on OTHER profiles (the default-profile retry page, tor)
+    // correctly do not.
+    QPointer<QWebEngineProfile> m_requestProfile;
     QElapsedTimer m_lastProgressTime;
 
     // DOWN01 card state.  m_speedSamples is a bounded ring of
@@ -313,6 +323,17 @@ public:
     // (default profile and the off-the-record private profile).
     void installOnProfile(Engine::Profile *profile);
 
+    // PRIV07: true while an item whose engine request is owned by
+    // profile is still running — Requested-but-unaccepted, in-flight
+    // and paused transfers all count.  The shared private profile's
+    // teardown must outlive its downloads.
+    static bool hasActiveDownloadForProfile(QWebEngineProfile *profile);
+    // PRIV07: context-guarded — runs callback once no item bound to
+    // profile holds a live request anymore (immediately when already
+    // settled).  The OTR teardown's deferral hook.
+    static void whenProfileDownloadsSettle(QWebEngineProfile *profile,
+            QObject *context, const std::function<void()> &callback);
+
     // Hidden page used to re-issue downloads whose originating page is
     // already gone (retry of an interrupted or restored download).
     Engine::Page *retryPage(bool offTheRecord);
@@ -361,6 +382,12 @@ private slots:
 private:
     void addItem(DownloadItem *item);
     void load();
+    // PRIV07: an item holds the OTR teardown only while its engine
+    // request is live — Requested-but-unaccepted, in-flight and
+    // paused transfers all count (isFinished() clears only on the
+    // terminal states).
+    static bool downloadPendingForProfile(const DownloadItem *item,
+            QWebEngineProfile *profile);
 
     AutoSaver *m_autoSaver;
     DownloadModel *m_model;

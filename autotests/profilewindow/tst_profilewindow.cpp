@@ -73,7 +73,7 @@ private slots:
 
     // MEM10: the create → window → close → delete lifecycle leg.
     void releaseRefusesOpenWindowThenSucceeds();
-    void privateWindowTeardownKeepsSharedOtr();
+    void privateWindowTeardownReleasesSharedOtr();
 
 private:
     void writeRegistry(const QStringList &ids);
@@ -474,11 +474,12 @@ void tst_ProfileWindow::releaseRefusesOpenWindowThenSucceeds()
     closeAllWindows();
 }
 
-void tst_ProfileWindow::privateWindowTeardownKeepsSharedOtr()
+void tst_ProfileWindow::privateWindowTeardownReleasesSharedOtr()
 {
-    // Private windows ride the shared OTR overlay — closing one must
-    // leave that overlay (and its per-object stores) alive for the
-    // next private window, and touch nothing persistent.
+    // Private windows ride the shared OTR overlay while at least one
+    // private page is live — closing the last one releases that overlay
+    // (and its per-object stores) so the next private window starts a
+    // genuinely fresh world, and touches nothing persistent.
     BrowserApplication *app = BrowserApplication::instance();
     BrowserApplication::setPrivate(true);
 
@@ -486,6 +487,7 @@ void tst_ProfileWindow::privateWindowTeardownKeepsSharedOtr()
     QPointer<NotesModel> notes = NotesModel::instance(otr);
     QPointer<CookieJar> jar = CookieJar::instance(otr);
     QVERIFY(otr && notes && jar);
+    QWebEngineProfile *released = otr.data();
 
     BrowserMainWindow *window = app->newMainWindow(kAlpha);
     QCOMPARE(window->profileId(), kAlpha);
@@ -496,11 +498,18 @@ void tst_ProfileWindow::privateWindowTeardownKeepsSharedOtr()
     QCoreApplication::processEvents();
     QVERIFY(!guard);
 
-    // The overlay outlives the window — only the window died.
-    QVERIFY(otr);
-    QVERIFY(notes);
-    QVERIFY(jar);
-    QCOMPARE(BrowserProfile::privateProfile(), otr.data());
+    // The last private page released the overlay; the deleteLater'ed
+    // object and its profile-owned stores drain through the event loop.
+    QVERIFY(!BrowserProfile::privateProfileIfCreated());
+    QTRY_VERIFY(!otr);
+    QVERIFY(!notes);
+    QVERIFY(!jar);
+
+    QWebEngineProfile *recreated = BrowserProfile::privateProfile();
+    QVERIFY(recreated);
+    QVERIFY(recreated != released);
+    BrowserProfile::tryReleasePrivateProfile();
+    QTRY_VERIFY(!BrowserProfile::privateProfileIfCreated());
 
     BrowserApplication::setPrivate(false);
     closeAllWindows();

@@ -34,6 +34,8 @@
 #include <qurl.h>
 #include <qwebenginepage.h>
 
+#include "browserprofile.h"
+
 class ExtensionPageBridge;
 class QTimer;
 class QWebChannel;
@@ -228,6 +230,10 @@ public:
         : QWebEnginePage(profile, parent)
         , m_extensionId(extensionId)
     {
+        // PRIV07 bookkeeping — extensions refuse OTR loads outright,
+        // so this is a no-op today; the self-registering rule keeps
+        // every QWebEnginePage subclass covered if that ever changes.
+        BrowserProfile::trackPrivateProfilePage(this);
     }
 
     static bool navigationAllowed(const QUrl &url,

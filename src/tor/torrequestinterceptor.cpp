@@ -97,6 +97,11 @@ void TorRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
     case PolicyVerdict::Action::Allow:
         if (verdict.refererSet)
             info.setHttpHeader("Referer", verdict.refererValue);
+        // PRIV08: the tor verdict's sendGpc is always true — the
+        // uniform-constant doctrine (see PolicyVerdict::sendGpc), so
+        // every tor window emits the same "Sec-GPC: 1".
+        if (verdict.sendGpc)
+            info.setHttpHeader("Sec-GPC", "1");
         m_adBlock->interceptRequest(info);
         return;
     case PolicyVerdict::Action::Pass:

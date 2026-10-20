@@ -357,8 +357,8 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | MRG08 | Post-merge leak sweep B — ASan/LSan per-backend EngineTab churn on merged master (webengine+servo, webkit when built) — details below | done | 2 | .devin/MRG08-scan.md: fixed MRG06 servo→webkit GL poison (eglBindAPI ES + display revive + stale-pipe reset); 4 new churn legs green plain & ASan; full tst_engineswitch 49/0/0 under LSan; 0 src/-sited records (94 upstream); 4 gates PASS |
 | MRG09 | Post-merge dead-code/duplicate sweep — resolve-level leftovers, double-tracked logs, task-file/doc rot — details below | done | 1 | untracked 2 runtime files, 3 ExtensionChromePage swaps, WK queue superseded — build+4 gates+suite PASS |
 | MRG10 | Post-merge security re-check — SEC26 findings survived merge: nav-lock+lift both active, sender-url verification, bounds+dedup on generalized PortEnd — details below | done | 1 | SEC26-1/2 hold; SEC26-3 gap fixed — pageSend/pagePortConnect/pagePortAccept/pageDeliver merged in without bridge-side dup-mid+bounds; now parity + tst legs covering both PortEnd kinds; 4 gates PASS, suite green (extensionCommands = known offscreen SIGTRAP, PASS --disable-gpu) |
-| PRIV07 | Private-mode teardown: destroy the shared OTR profile when the last private page closes (Chrome-incognito lifecycle) — details below | in_progress | 4 | user request — audit found s_privateProfile is qApp-owned and lives to process exit; closing all private tabs leaves in-memory cookies/logins/storage reachable by the NEXT private tab in the same run |
-| PRIV08 | Global Privacy Control (the working successor to DNT): Sec-GPC header + navigator.globalPrivacyControl, settings toggle — details below | pending | 0 | user request — audit confirmed no DNT/GPC exists; GPC is the legally-backed opt-out signal (CCPA/CPRA, Colorado) Brave/Mullvad ship; header goes via the proven setHttpHeader interceptor path, JS surface via document-creation script |
+| PRIV07 | Private-mode teardown: destroy the shared OTR profile when the last private page closes (Chrome-incognito lifecycle) — details below | blocked | 5 | blocked:exceeded 5 restarts |
+| PRIV08 | Global Privacy Control (the working successor to DNT): Sec-GPC header + navigator.globalPrivacyControl, settings toggle — details below | done | 0 | Sec-GPC+JS behind privacy/gpcSignal, default on, tor unconditional; gpc-smoke 12/12 rc0, settings round-trip test PASS, 4 gates PASS, suite red only env WPE g_sort_array |
 | LEG01 | Untouched-source review: xbelwriter, networkproxyfactory, treesortfilterproxymodel, opensearch headers, fetchLinks.js — modernize+secure, fix in-task — details below | pending | 0 | user request — 6 code files survived the Qt6 port with zero edits; review for correctness/security (proxy URL parsing, page-injected JS, XML escaping), apply CPP01-era best practices, kill dead paths |
 | LEG02 | Untouched-data audit: searchengine XMLs (dead providers? http->https?), useragents.qrc staleness, icon assets still referenced?, licenses — details below | pending | 0 | user request — ~40 asset/data files never touched incl. 2008-era provider configs and UA strings that may be stale or mislead fingerprinting |
 | LEG03 | Dead-pipeline sweep: src/locale tooling, generateAuthors/generateReleaseContributors vs new AUTHORS policy, tools/htmlToXBel fixtures — wire-in or remove — details below | pending | 0 | user request — locale machinery never activated under Arktos; upstream scripts may contradict the maintainer+Devin credit policy |
@@ -2716,6 +2716,61 @@ Verify:
 - Settings round-trip + privacyChanged propagation to live profiles.
 - make check gates; note the fingerprint-bit addition in PRIV02's
   doc (one more distinguishing bit when on).
+
+Outcome:
+
+- Policy verdicts carry a new `sendGpc` bit: the C++ snapshot and
+  `rustcore` policy JSON read `privacy/gpcSignal` (default on);
+  clearnet `evaluatePrivacy` follows the toggle and `evaluateTor`
+  emits GPC unconditionally.  `PrivacyRequestInterceptor` and
+  `TorRequestInterceptor` write `Sec-GPC: 1` only when that verdict
+  bit is true — off emits no header at all.
+- `BrowserProfile::installGpcSignal()` installs/removes the named
+  `arktos:gpc` DocumentCreation script in `MainWorld`, on subframes
+  too, defining a non-configurable
+  `Navigator.prototype.globalPrivacyControl` getter.  `applySettings`
+  re-runs it on live profiles; removal affects newly created
+  documents (Qt cannot un-run a script in an already-loaded page).
+- Settings > Privacy has `Send a Global Privacy Control signal
+  (Sec-GPC)`, default checked, with copy explaining binding opt-outs
+  in GPC jurisdictions, advisory behavior elsewhere, and Tor's
+  always-on constant.
+- Tor choice: send unconditionally.  Tor Browser's no-GPC doctrine
+  avoids a standout bit, but a per-user Arktos tor-window toggle
+  would itself split the fingerprint; Mullvad's uniform-constant
+  posture preserves uniformity while retaining the legal opt-out.
+- Engine scope stays honest: this implementation uses WebEngine's
+  verified `setHttpHeader` path and profile scripts.  Servo only
+  advertises `requestInterception` when its load gate resolves, and
+  no site/settings copy claims GPC on engines that cannot send it.
+- README documents the extra fingerprint bit; ChangeLog carries the
+  user-visible entry; leaks/sanitize/coverage smoke lists now include
+  `--gpc-smoke`.
+
+Verification:
+
+- `make -j2` clean rebuild: PASS.
+- `./arktos --gpc-smoke` offscreen: PASS rc=0 — `Sec-GPC: 1` on
+  main-frame `/page`, `/img` and `/xhr`; page JS reads
+  `navigator.globalPrivacyControl === true` and
+  `configurable === false`; after persisting off and re-running the
+  same `loadSettings()`/`applySettings()` fan-out, the key and live
+  snapshot are false, `/page2`, `/img2` and `/xhr2` carry no
+  `Sec-GPC`, and a fresh page has no JS property.
+- `./arktos --otr-teardown-smoke`: PASS rc=0, confirming the
+  interrupted PRIV07 lifecycle harness still exits cleanly.
+- `tst_settingsdialog gpcSignalToggle`: PASS — default-on state,
+  helper copy, persisted off/on round-trip.
+- Stale expectations fixed and rerun: `tst_dialogs` 25/0/0;
+  `tst_profilewindow` 14/0/0; `tst_privatebrowsing` 13/0/0 from the
+  suite run.
+- `make check`: all four pre-suite gates PASS (warnings,
+  supply-chain, engine-audit, rust coverage 94.11/91.82/89.25).
+  The suite's only remaining red was the pre-existing environment
+  WPE leg: `/home/szefi/wpe/.../libgstaudio-1.0.so.0` lacks
+  `g_sort_array`, so `tst_engineswitch` SIGTRAPs when WPENetwork/
+  WebProcess starts; unrelated to PRIV08 and unchanged on a focused
+  rerun.
 
 
 ### LEG01

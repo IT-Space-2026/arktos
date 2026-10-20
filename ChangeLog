@@ -1156,6 +1156,12 @@ Security:
   windows, per-site exemption on the shield panel. Noise, not anonymity.
   Now enabled by default (PRIV06) — a stored opt-out from before the
   flip is migrated on once, and turning it off afterwards stays off.
+- Global Privacy Control (PRIV08): the Privacy preferences toggle now
+  sends `Sec-GPC: 1` on WebEngine main-frame and subresource requests
+  and exposes `navigator.globalPrivacyControl === true` to page script.
+  The signal is on by default as the legally backed opt-out-of-sale/
+  share successor to Do Not Track; turning it off sends nothing at all.
+  Tor windows emit the same constant for fingerprint uniformity.
 - Third-party-cookie and connection/storage privacy group (PRIV01).
 - Zero telemetry verified by capture proxy (TELEM01) — extended to a
   forwarding capture that drives a real browsing session (navigation,

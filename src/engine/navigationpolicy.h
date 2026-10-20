@@ -77,6 +77,17 @@ struct PolicyVerdict {
     int cleanedCount = 0;
     bool refererSet = false;       // Allow: write Referer = refererValue
     QByteArray refererValue;       // empty value = header removal
+    // PRIV08: on Allow, write "Sec-GPC: 1" — Global Privacy Control,
+    // the legally-backed opt-out header.  Set on every allowed web
+    // request (main frame and subresource alike); false is "send
+    // NOTHING" — the GPC spec has no off-value, absence is the
+    // no-preference signal.  The tor pipeline sets it unconditionally:
+    // a per-user bit across tor windows is exactly the fingerprint
+    // leak Tor Browser cites for shipping none, so every Arktos tor
+    // window emits the same constant instead (Mullvad's uniformity-
+    // across-users doctrine — and the signal is a legal opt-out the
+    // most private mode should not forfeit).
+    bool sendGpc = false;
 };
 
 // Cookie-gate input — the jar ships its own rule lists per call so the
@@ -110,6 +121,10 @@ public:
         bool blockThirdPartyWebSockets = false;
         bool stripTrackingParams = true;
         bool domainBlocklist = true;
+        // PRIV08: privacy/gpcSignal (default on — the privacy-first
+        // Brave/Mullvad posture).  Drives the Sec-GPC verdict bit on
+        // the clearnet pipeline; torMode ignores it (see PolicyVerdict).
+        bool gpcSignal = true;
         QStringList httpsOnlyExceptions;
         // POL04: persisted per-site link-cleaning exemptions — the
         // loadSettings reader fills this from the site-decision store
@@ -130,6 +145,10 @@ public:
     static bool blockThirdPartyWebSocketsEnabled();
     static bool stripTrackingParamsEnabled();
     static bool domainBlocklistEnabled();
+    // PRIV08: the loaded clearnet GPC toggle — the settings/site
+    // panels and BrowserProfile's script install consult it.  Says
+    // nothing about the tor pipeline, which sends unconditionally.
+    static bool gpcSignalEnabled();
 
     static QByteArray referrerMetaValue(int level);
     static QByteArray rewrittenReferer(int level, const QUrl &source,

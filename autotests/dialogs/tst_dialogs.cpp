@@ -191,7 +191,7 @@ void tst_Dialogs::aboutDialog()
     // Copyright lines and the repo link live in the author label.
     QLabel *author = dialog.findChild<QLabel *>(QLatin1String("author"));
     QVERIFY(author);
-    QVERIFY(author->text().contains(QLatin1String("Benjamin C. Meyer")));
+    QVERIFY(author->text().contains(QLatin1String("Arora Browser")));
     QVERIFY(author->text().contains(QLatin1String("Janos Szenfner")));
     QVERIFY(author->text().contains(
         QLatin1String("href=\"https://github.com/IT-Space-2026/arktos\"")));

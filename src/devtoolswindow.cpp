@@ -19,6 +19,8 @@
 
 #include "devtoolswindow.h"
 
+#include "browserprofile.h"
+
 #include <qevent.h>
 #include <qwebenginepage.h>
 #include <qwebengineprofile.h>
@@ -60,6 +62,9 @@ void DevToolsWindow::inspectElement(QWebEnginePage *page)
     QWebEnginePage *devToolsPage = window->m_view->page();
     if (!devToolsPage || devToolsPage->profile() != page->profile()) {
         devToolsPage = new QWebEnginePage(page->profile(), window->m_view);
+        // PRIV07: an inspector bound to a private page counts as a
+        // live OTR page — the profile must outlive its DevTools.
+        BrowserProfile::trackPrivateProfilePage(devToolsPage);
         window->m_view->setPage(devToolsPage);
     }
     // DevTools is itself a web application — the Safest security tier

@@ -21,6 +21,7 @@
 
 #include "arktosicon.h"
 #include "arktosstyle.h"
+#include "browserprofile.h"
 
 #include <qapplication.h>
 #include <qboxlayout.h>
@@ -75,6 +76,10 @@ PipWindow::PipWindow(QWebEngineProfile *profile, const QVariantMap &video,
     , m_error(false)
     , m_closing(false)
 {
+    // PRIV07: a PiP surfaced from a private page shares its
+    // off-the-record profile — the window must count toward the
+    // profile's live pages so teardown waits for it too.
+    BrowserProfile::trackPrivateProfilePage(m_page);
     setAttribute(Qt::WA_DeleteOnClose);
     setMinimumSize(200, 112);
 

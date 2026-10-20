@@ -233,6 +233,12 @@ WebPage::WebPage(QWebEngineProfile *profile, QObject *parent)
 
 void WebPage::init()
 {
+    // PRIV07: register with the shared OTR profile's lifetime
+    // accounting — the profile is destroyed once its last bound page
+    // dies (Chrome's incognito lifecycle).  A no-op for pages on any
+    // other profile, which is nearly all of them.
+    BrowserProfile::trackPrivateProfilePage(this);
+
     // Qt WebEngine pages cannot be given a QNetworkAccessManager; web loads
     // go through Chromium's network stack and the profile's cookie store.
     //

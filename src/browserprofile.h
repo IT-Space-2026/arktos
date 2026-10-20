@@ -22,6 +22,7 @@
 
 #include <qstring.h>
 
+class QWebEnginePage;
 class QWebEngineProfile;
 
 // Application-wide QWebEngineProfile accessors and the code that
@@ -67,6 +68,26 @@ QList<QWebEngineProfile *> createdPersonaProfiles();
 // private session without forcing one into existence (settings
 // re-application).
 QWebEngineProfile *privateProfileIfCreated();
+
+// PRIV07: the shared off-the-record profile follows Chrome's
+// incognito lifecycle — it is destroyed once its last bound page
+// dies, so a private tab opened later in the same run starts a
+// genuinely fresh session instead of inheriting the previous one's
+// in-memory cookies, logins, storage and cache.  Page bookkeeping:
+// every freshly constructed QWebEnginePage-derived object registers
+// through this — a pointer compare makes it a no-op for pages on
+// any other profile.  WebPage and the backend/extension/overlay
+// page classes self-register in their constructors; raw
+// `new QWebEnginePage(profile, ...)` sites call it explicitly.
+void trackPrivateProfilePage(QWebEnginePage *page);
+
+// The teardown half of PRIV07 — destroys the shared OTR profile
+// when no tracked page is left AND no private download still owns a
+// live engine request (the request objects are profile-owned).
+// Invoked by the page-death hook and by DownloadManager's settle
+// watch; harmless to call speculatively — every precondition is
+// re-checked.
+void tryReleasePrivateProfile();
 
 // The tor profile only if it has already been brought up — nullptr
 // otherwise.  Lets per-profile feature checks recognize tor sessions
@@ -180,6 +201,16 @@ void installReferrerPolicy(QWebEngineProfile *profile);
 // calls it; FingerprintProtector::reinstallOnProfiles re-pushes it
 // after an exemption change.
 void installFingerprintProtection(QWebEngineProfile *profile);
+
+// PRIV08: (re)installs the named "arktos:gpc" DocumentCreation script
+// — a tamper-stable navigator.globalPrivacyControl === true getter —
+// when privacy/gpcSignal is on, unconditionally on the tor profile
+// (the pipeline sends Sec-GPC there regardless); removes it
+// otherwise.  MainWorld like the fingerprint script — an isolated
+// world's navigator is invisible to page JS.  applySettings() calls
+// it; a settings flip reaches live profiles through the same
+// loadSettings() fan-out, affecting documents loaded afterwards.
+void installGpcSignal(QWebEngineProfile *profile);
 
 // SEC12: QWebEngineProfile exposes no API for DOM storage —
 // clearHttpCache() only reaches the HTTP cache.  This schedules

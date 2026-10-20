@@ -381,6 +381,20 @@ public:
     // cannot).  privacy/domainBlocklist (default on) is the toggle;
     // no-rust builds never block.
     static bool domainBlocklistEnabled();
+
+    // PRIV08: Global Privacy Control (privacy/gpcSignal, default on —
+    // the Brave/Mullvad always-on posture).  The verdict carries a
+    // sendGpc bit the interceptors write as "Sec-GPC: 1" on every
+    // allowed request; off means the header is NEVER emitted (the GPC
+    // spec has no "0" value — absence is no-preference).  The tor
+    // pipeline sends unconditionally (Mullvad's uniformity-across-
+    // users doctrine — see PolicyVerdict::sendGpc); gpcSignalEnabled()
+    // describes the clearnet snapshot only.  storedGpcSignal() is the
+    // persisted-key read for callers that run before loadSettings()
+    // populated the snapshot (the same seam storedRefererPolicy fills).
+    static bool gpcSignalEnabled();
+    static bool storedGpcSignal();
+
     // The pure decisions — safe on the IO thread.  isDomainBlocked is
     // the FFI half (list membership only); shouldBlockDomain is the
     // full policy (toggle + scheme + session-proceed + membership).
