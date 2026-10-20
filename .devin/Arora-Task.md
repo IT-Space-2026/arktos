@@ -350,6 +350,10 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | WKB02 | WebKit-lane research: WebExtensions on WPE — what WebKitWebExtension (2.52+) really is vs chrome.* — details below | done | 1 | .devin/WEBKIT-EXTENSIONS.md — WebKitWebExtension (2.52+) is manifest.json parse-only; no load/run API through 2.54.1 (WebExtensionContext = unmerged PR #52242); embedder-built runtime is the only path (Epiphany precedent) and ports well to our hosted chrome.* runtime; all 4 questions answered with sourced refs |
 | WKB03 | WebKit-lane research: SOCKS5/Tor audit — WebKitNetworkProxySettings surface + leak vectors + test methodology — details below | done | 1 | .devin/WEBKIT-TOR.md — proxy settings are per-WebKitNetworkSession (= per-profile Tor scope OK, no per-tab); socks:// = socks5-first with remote DNS (ATYP=domainname); 12 leak vectors enumerated (WebRTC ICE UDP + DNS prefetch are the deciding risks, both pref-gated); loopback fixture spec (non-resolvable .leakcheck.test + socks/http/stun loggers + LD_PRELOAD resolver shim) with C1–C15 verbatim checklist + positive controls; verdict: conditional candidate, Tor stays Chromium-locked until WK21 executes |
 | WKB05 | WebKit-lane packaging strategy — how the WPE .so set ships inside our deb/rpm/flatpak + dep-manifest script — details below | done | 1 | .devin/WEBKIT-PACKAGING.md + .devin/wpe-deps.sh — measured on live ~/wpe sid-2.54.1: 72-file closure ~223M, floor GLIBC_2.43; deb/rpm = bundle under /usr/lib/arktos/wpe (noble ships no WPE, Fedora COPR-only, TW 2.52<floor), flatpak = in-manifest source build (KDE 6.11 glibc 2.42 kills sid binaries); staged diffs in doc; selftest+scan verified |
+| MRG01 | Post-merge integration — full build (webengine+servo AND webkit=1 both), 4 gates, extension/engine autotest suite on merged master — details below | pending | 0 | merge 6613e411 combined extruntime+rust lanes; the resolutions themselves were never lane-verified |
+| MRG02 | Post-merge leak re-audit — ASan/LSan churn legs on the merge-resolution seams (ExtensionChromePage lifecycle, relay PortEnd paths, per-backend tab churn) — details below | pending | 0 | needs:task:MRG01 — MEM11 swept pre-merge rust-work; the merge created new combined paths |
+| MRG03 | Post-merge dead-code/duplicate sweep — resolve-level leftovers: dropped lift call sites, renamed-field stragglers, double-tracked logs, task-file rot — details below | pending | 0 | needs:task:MRG01 |
+| MRG04 | Post-merge security re-check — verify SEC26 findings survived the merge: nav-lock AND JS-lift both active, relayPortConnect sender verification + bounds on the generalized PortEnd, PortEnd.target misuse surface — details below | pending | 0 | needs:task:MRG01 — the merge resolution touched SEC26's own fixes |
 
 ## Task details
 
@@ -2281,3 +2285,86 @@ fetch-wpe.sh, pkg-deb stage+launcher, spec Requires, manifest module
 in the doc. Gotchas recorded: gstreamer plugin ABI match (bundled
 1.28 vs noble 1.24), flite hard-NEEDED ~29M, inspector.gresource,
 bwrap runtime dep, MiniBrowser's libWPEBackend-fdo drag.
+
+## Post-merge audit pass (queued 2026-10-19, merge 6613e411)
+
+### MRG01
+
+Post-merge integration verification — the extruntime+rust merge
+resolved 4 semantic conflicts BY HAND (ExtensionChromePage vs the
+ER20 JS-lift, PortEnd target-vs-bridge field). Neither resolution was
+lane-verified — each side passed its own gates on its own tree.
+
+- Full build both ways: `qmake && make` (default: webengine+servo,
+  webkit absent) AND `source .devin/webkit-env.sh && qmake webkit=1
+  && make` (three engines compiled in).
+- `make check` — all 4 gates + the autotest sweep, offscreen.
+- Focused legs around the conflicted seams:
+  tst_extensionmanager (nav-lock legs + ER20 lift leg — both must
+  pass TOGETHER), tst_engineswitch (servo multi-view + webkit legs),
+  extensionactionbar popup legs.
+- Report anything red that no lane's own run saw = merge artifact.
+
+Verify: both build flavors link; 4 gates PASS; focused legs green or
+individually diagnosed; row notes record pass counts.
+
+### MRG02
+
+Post-merge leak re-audit — narrow MEM11 follow-up aimed ONLY at the
+merge seams and combined paths no single lane's scan covered:
+
+- ExtensionChromePage churn: open/dismiss action popups ×N, run
+  health probes ×N — the nav-locked page + lifted settings object
+  graph is the merge's newest allocation path.
+- Relay PortEnd paths on merged master: SEC26-3 bounds + master's
+  generalized `target` — register/expire cycles (ports, mids,
+  channels at and past caps) under ASan.
+- Per-backend EngineTab churn ×N on the merged tree (all three
+  engines where available).
+- Reuse MEM11's throwaway-ASan-tree recipe; classify ours/upstream;
+  fix src/-sited findings in-task.
+
+Verify: .devin/MRG02-scan.md with per-leg tallies; zero src/-sited
+leaks or all fixed+re-verified; gates PASS on the instrumented AND
+normal tree.
+
+### MRG03
+
+Post-merge dead-code/duplicate sweep — merge-resolution level this
+time, not a re-run of DEAD01:
+
+- Leftover stragglers: any remaining `end.bridge` (field is `target`
+  on merged master), stale `QWebEnginePage`-vs-ExtensionChromePage
+  sites the swap missed, duplicated nav-lock logic if SEC26's class
+  exists alongside another one.
+- Double-tracked files: DEAD01 deleted *.log/lock tracking on
+  rust-work — confirm master's tree matches (no taskloop/mergewatch/
+  launch logs tracked), add .gitignore entries if absent so the
+  watchdog's writes can't re-dirty the tree.
+- Task-file rot: this file + Arora-Task-*.md rows whose `pending`
+  state is stale, and doc claims superseded by the merge (ENG* 'one
+  live view', extension 'Not supported' Bitwarden notes predating
+  ER19's regrade).
+
+Verify: list of removals/fixes in the row notes; build + gates PASS.
+
+### MRG04
+
+Post-merge security re-check — the merge touched SEC26's own fix
+sites; verify all three findings survived:
+
+- SEC26-1: nav-lock AND the JS lift BOTH active on popup + probe —
+  a leg asserting ExtensionChromePage::navigationAllowed blocks a
+  foreign URL AND JavascriptEnabled is on for the chrome page.
+- SEC26-2: relayPortConnect sender.url still host-verified from
+  contextPage (not caller-supplied) on the merged file.
+- SEC26-3: bounds constants + dup-mid reject + dedup intact AND
+  consistent with the generalized PortEnd.target (a bridge vs a
+  page agent both dedupe correctly — new leg covering BOTH types).
+- New merge-seam question: ExtensionChromePage + lifted JS on a
+  non-webengine host — nothing yet, but confirm the class is only
+  instantiated in extension chrome paths.
+
+Verify: the four assertion legs pass (add them if absent);
+.devin/SEC26-audit.md gets a merge-verification addendum line;
+gates PASS.
