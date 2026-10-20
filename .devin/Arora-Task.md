@@ -365,6 +365,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | LEG04 | Untouched test-infra review: qtry.h usage, tst_lineedit.cpp build status, stale .gitignores, fixture validity — wire in or delete — details below | done | 0 | user request — DONE: qtry.h shim deleted (44 includers use Qt6-native QTRY_*); tst_lineedit confirmed wired (utils.pro→make check, 17/17); 26 stale .gitignores removed (root tst_* rule covers; rules2.txt kept); all fixtures grep-proven live — verified: make check rc=0, 4 gates PASS, 99 programs 0 failed |
 | PRIV09 | PRIV07 slice A — ASan/LSan churn leg for the committed OTR teardown (the only unrun spec item; do NOT re-implement) — details below | pending | 0 | |
 | PRIV10 | PRIV07 slice B — post-commit review of the OTR teardown diff landed inside b6494e58 (lifetime races, refcount edges) — details below | pending | 0 | |
+| TAB01 | closeOtherTabs skips collapsed-group members: closing a group chip expands it mid-sweep, members land at i+1..i+n (already iterated) and survive — Chrome closes them. Fix: pre-expand collapsed groups before the loops, or close by view identity — details below | pending | 0 | |
 
 ## Task details
 
@@ -3132,3 +3133,25 @@ Check specifically:
   correctly exempt — no teardown while s_isPrivate.
 - Fix anything found in-task; if clean, note the review verdict in
   the row and ChangeLog.
+
+### TAB01
+
+closeOtherTabs (tabwidget.cpp ~3123) iterates downward closing by
+index.  When it hits a collapsed group's chip, closeTab() expands
+the group first (by design, so members are not stranded) and
+expandTabGroup re-inserts the hidden members at firstVisible+1 —
+positions the downward loop has already passed — so they survive
+"Close Other Tabs" and reappear visible.  Chrome closes them.
+
+Fix direction (either):
+
+- Pre-expand every collapsed group before the close loops so all
+  members are on-strip and iterated, or
+- Collect the target WebViews up front and close by identity
+  (webViewIndex re-resolution inside the loop) instead of raw
+  indices — pinned check moves to the view.
+
+Watch the second loop's `index` anchor too — expansion above it can
+shift the "other" boundary.  Verify with a tst_tabwidget leg: pin
+one tab, collapse a group, "Close Other Tabs" on a third tab —
+expect only the pinned + current left, group fully gone.
