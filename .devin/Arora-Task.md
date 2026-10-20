@@ -363,6 +363,8 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | LEG02 | Untouched-data audit: searchengine XMLs (dead providers? http->https?), useragents.qrc staleness, icon assets still referenced?, licenses — details below | done | 0 | user request — DONE: dropped dead Google I'm Feeling Lucky (btnI redirect needs ephemeral iflsig token — lands on redirect notice); Google/Yahoo/Wikipedia/YouTube/Reddit descriptors http->https; UA presets resynced Chrome/141->presented/155 (FF 157, Safari 27); orphaned assets deleted (addtab/closetab/history.png, 128x128/run.png+license — 0 live refs, chrome uses themed icons); rustcore vendored copy + smoke/test refs updated. Verified: full build clean, 4 gates PASS (warnings, supplychain, engine-audit, rustcov 94.11/91.82/89.25), runTests.sh rc=0, --quit-after-load + --search-smoke rc=0, opensearchmanager 24/24 opensearchengine 55/55 tabwidget 36/36 useragent 9/9 |
 | LEG03 | Dead-pipeline sweep: src/locale tooling, generateAuthors/generateReleaseContributors vs new AUTHORS policy, tools/htmlToXBel fixtures — wire-in or remove — details below | done | 0 | user request — DONE: generate* scripts removed (contradict AUTHORS); locale kept+documented (was already live: lrelease→src/.qm/locale→LanguageManager, maintainers→attribution); htmlToXBel fixtures verified + wired via make check-htmltoxbel; modeltest confirmed live. Verified: clean build, 4 gates PASS, check-htmltoxbel PASS, quit-after-load rc=0 |
 | LEG04 | Untouched test-infra review: qtry.h usage, tst_lineedit.cpp build status, stale .gitignores, fixture validity — wire in or delete — details below | done | 0 | user request — DONE: qtry.h shim deleted (44 includers use Qt6-native QTRY_*); tst_lineedit confirmed wired (utils.pro→make check, 17/17); 26 stale .gitignores removed (root tst_* rule covers; rules2.txt kept); all fixtures grep-proven live — verified: make check rc=0, 4 gates PASS, 99 programs 0 failed |
+| PRIV09 | PRIV07 slice A — ASan/LSan churn leg for the committed OTR teardown (the only unrun spec item; do NOT re-implement) — details below | pending | 0 | |
+| PRIV10 | PRIV07 slice B — post-commit review of the OTR teardown diff landed inside b6494e58 (lifetime races, refcount edges) — details below | pending | 0 | |
 
 ## Task details
 
@@ -3068,3 +3070,65 @@ removed from qrc/SUBDIRS. Verified: full build clean, `make check`
 rc=0 — check-warnings/supplychain/engine-audit/rustcoverage gates
 PASS, check-htmltoxbel PASS, 99 test programs all Totals 0 failed,
 no "not compiled" or "not in build tree" skips.
+
+### PRIV09
+
+PRIV07 slice A — the ASan/LSan churn leg that never ran. The OTR
+teardown implementation is ALREADY COMMITTED inside b6494e58 — do
+NOT re-implement; this task is verification only.
+
+Why it was sliced out: PRIV07's attempts were killed by the tree
+4096MB RSS cap mid-way through a full instrumented rebuild. Do not
+repeat that mistake:
+
+- Build the instrumented tree with LOW parallelism (-j2) in a
+  scratch copy (e.g. /tmp/arktos-san-priv09) so concurrent g++ jobs
+  do not blow the cap — or reuse /tmp/arktos-san-priv07 if objects
+  there are still usable.
+- Follow .devin/check-sanitize.sh conventions for flags and env.
+
+Verify (this is the whole task):
+
+- Churn leg: scripted open private tab -> set OTR state -> close ALL
+  private tabs (fires teardown) -> open new private tab -> close ->
+  repeat ~50 cycles, plus multi-window and private-download-in-flight
+  variants, under ASan+LSan. --otr-teardown-smoke already exists in
+  main.cpp — drive it in a loop or add a --otr-teardown-churn leg if
+  the smoke is not loopable.
+- Assert: zero leaks allocated in Arktos code (upstream Qt records
+  are acceptable and expected), no UAF on the destroyed
+  QWebEngineProfile, no leaked QWebEngineProfile instances.
+- Write the scan report to .devin/PRIV09-scan.md.
+
+### PRIV10
+
+PRIV07 slice B — dedicated post-commit review of the OTR teardown
+that landed inside the combined PRIV08 commit b6494e58. The code
+passed smoke+autotest but never got a focused review pass. Read the
+diff of src/browserprofile.{h,cpp}, src/webpage.cpp,
+src/downloadmanager.{h,cpp}, src/browserapplication.cpp,
+autotests/privatebrowsing/tst_privatebrowsing.cpp and the
+--otr-teardown-smoke leg in src/main.cpp.
+
+Check specifically:
+
+- Lifetime ordering: teardown uses deleteLater() — can a page,
+  download item, cookie jar, scheme handler or interceptor still
+  receive a callback on the dying profile before the deferred
+  delete runs? (pending QWebEngineUrlRequestInterceptor::interceptRequest
+  on a torn-down profile is the classic case).
+- The live-OTR-page counter: every WebPage ctor path registers
+  (including DownloadManager retry pages, ExtensionChromePage-type
+  hidden pages, view-source children, print/reader clones) and every
+  dtor unregisters exactly once — no double-count, no leak under
+  page reparenting or engine-swap refusal paths.
+- In-flight private downloads actually defer teardown, and a
+  cancelled/failed download still releases the deferral.
+- s_preparedProfiles sweep happens before deleteLater, so a
+  recreated profile gets prepareProfile services re-installed.
+- ClearPrivateData "otr" scope and privateProfileIfCreated() callers
+  cannot resurrect a torn-down profile mid-destruction.
+- Full-private-window mode (s_isPrivate process-global) and Tor are
+  correctly exempt — no teardown while s_isPrivate.
+- Fix anything found in-task; if clean, note the review verdict in
+  the row and ChangeLog.
