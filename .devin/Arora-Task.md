@@ -354,7 +354,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | MRG05 | Post-merge integration B — `make check` 4 gates + focused extension/engine autotest legs on the default build — details below | done | 0 | 4 gates PASS (warnings 0 diags, supplychain clean, engine-audit 185 files, rustcov 94.11/91.83/89.25 >=85); suite 2210p/2f/42s over 96 binaries — both reds load flakes re-verified standalone; focused legs green: extensionmanager 48/0/4 (nav-lock+ER20 lift+relay+actionPopup together), engineswitch 27/0/18, engine-audit gate |
 | MRG06 | Post-merge integration C — webkit=1 three-engine build+link + webkit legs (source webkit-env.sh) — details below | done | 2 | webkit=1 build+link clean; --engine-list lists all 3 (Chromium 140 / Servo 0.7.0 / WebKit 2.54.1) after rebuilding stale Oct-14 libservo_embed.so (pre-ENG36 symbols); 18/18 webkit* legs PASS standalone; NEW BUG diagnosed: engineTabChurn's servo cycles poison the next webkit GL page (SIGSEGV — EGL display terminated by surfman teardown; raster unaffected; details+repro filed for MRG08) |
 | MRG07 | Post-merge leak sweep A — ASan/LSan churn on extension merge seams (ExtensionChromePage popup/probe cycles, relay PortEnd register/expire at caps) — details below | done | 1 | .devin/MRG07-scan.md: new chromePageChurn+relayPortChurn legs green plain & ASan; full tst_extensionmanager 50/0f/4s under LSan; 0 src/-sited leak records (10 upstream only); chan-cap observed boundary 1023 pinned in test |
-| MRG08 | Post-merge leak sweep B — ASan/LSan per-backend EngineTab churn on merged master (webengine+servo, webkit when built) — details below | in_progress | 0 | needs:task:MRG05 |
+| MRG08 | Post-merge leak sweep B — ASan/LSan per-backend EngineTab churn on merged master (webengine+servo, webkit when built) — details below | done | 2 | .devin/MRG08-scan.md: fixed MRG06 servo→webkit GL poison (eglBindAPI ES + display revive + stale-pipe reset); 4 new churn legs green plain & ASan; full tst_engineswitch 49/0/0 under LSan; 0 src/-sited records (94 upstream); 4 gates PASS |
 | MRG09 | Post-merge dead-code/duplicate sweep — resolve-level leftovers, double-tracked logs, task-file/doc rot — details below | pending | 0 | needs:task:MRG05 — was MRG03 |
 | MRG10 | Post-merge security re-check — SEC26 findings survived merge: nav-lock+lift both active, sender-url verification, bounds+dedup on generalized PortEnd — details below | pending | 0 | needs:task:MRG05 — was MRG04 |
 
@@ -2509,6 +2509,34 @@ Post-merge leak sweep B — per-backend EngineTab churn.
 
 Verify: .devin/MRG08-scan.md; zero src/-sited leaks or all
 fixed+re-verified; gates PASS on normal tree.
+
+Result (2026-10-20, on f552e570): DONE — full evidence in
+.devin/MRG08-scan.md.  Two latent EGL hazards on the shared Mesa
+surfaceless display fixed (the MRG06-filed servo→webkit poison):
+`surfman` per-view teardown binds `EGL_OPENGL_API` on the GUI thread
+and can `eglTerminate` the deduped display the WPE headless platform
+caches — `wkGlInit` now `eglBindAPI(EGL_OPENGL_ES_API)` before
+context creation, `wkGlImport` revives the display via
+`eglInitialize` per frame and rebuilds the pipe once via `wkGlReset`,
+and `wkGlCleanup`'s glDelete* calls are gated on a successful
+makeCurrent.  Four committed churn legs in tst_engineswitch:
+`engineBackendChurn` (direct EngineTab mint/destroy x4 per
+registered backend incl. webengine), `servoViewChurn` (ENG36
+multi-view 3x3 concurrent + 6 sequential), `webkitRenderChurn`
+(create→load→frame→destroy x3 — exercises the WPE buffer path the
+old never-navigating leg missed), `webkitGlSurvivesServoChurn`
+(poison regression).  Sweep on a throwaway full-flavor ASan tree
+(`qmake6 -spec linux-clang CONFIG+=sanitize`, `webkit=1` + copied
+libservo_embed.so — MEM11 recipe): all legs PASS and the full binary
+49 PASS / 0 fail / 0 skip under detect_leaks; 94 leak records, **0
+sited in src/ or autotests/** — upstream families: servo/stylo TLS +
+rayon + script globals (uninstrumented .so, 40 records), dbus 21,
+Qt6WebEngineCore 19, fontconfig 12, WPEWebKit 2.  Record counts are
+flat across churn-cycle counts — cycles add nothing.  Caveat
+documented: rust/WPE code uninstrumented so it cannot classify
+"ours"; growth-check is the mitigation.  Gates on normal tree: all 4
+PASS (warnings 0 diags fresh build, supplychain, engine-audit 185,
+rustcov 94.11/91.83/89.25).
 
 ### MRG09
 

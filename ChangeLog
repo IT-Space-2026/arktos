@@ -4365,3 +4365,13 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   past their bounds, on both endpoint kinds — reports zero leaks
   allocated in Arktos code. Two new self-test legs keep the coverage
   permanent; the full report lives at .devin/MRG07-scan.md.
+- Post-merge engine leak sweep + WebKit GL stability fix (MRG08):
+  creating or destroying Servo views no longer breaks the WebKit
+  backend's accelerated rendering — the shared EGL display is now
+  revived and the GL pipeline rebuilt instead of crashing or silently
+  degrading to raster after surfman teardown. An instrumented
+  AddressSanitizer/LeakSanitizer churn pass over per-backend tab and
+  multi-view create/destroy cycles on all three engines reports zero
+  leaks allocated in Arktos code; four new self-test legs keep the
+  coverage permanent, and the full report lives at
+  .devin/MRG08-scan.md.
