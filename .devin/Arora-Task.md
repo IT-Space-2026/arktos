@@ -366,7 +366,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | PRIV09 | PRIV07 slice A — ASan/LSan churn leg for the committed OTR teardown (the only unrun spec item; do NOT re-implement) — details below | done | 0 | 50-cycle --otr-teardown-smoke under ASan+UBSan+LSan (linux-clang): 48 PASS 13/13, 2 upstream FcInit startup flakes; 0 ASan/UBSan reports, 0 our-code leak blocks (all upstream widget/fontconfig), no leaked QWebEngineProfile — report .devin/PRIV09-scan.md |
 | PRIV10 | PRIV07 slice B — post-commit review of the OTR teardown diff landed inside b6494e58 (lifetime races, refcount edges) — details below | done | 0 | 1 real bug fixed: upstream QWebEngineDownloadRequest::page() derefs a dead adapterClient after closeTab (UAF in hasActiveDownloadForPage/restartDownload) → guarded QPointer snapshot in WebEngineDownloadRequest; rest of checklist clean — full verdict in details. Verified: otr-teardown-smoke 13/13, tst_privatebrowsing 13/13, tst_downloadmanager 46/46, quit-after-load rc0 |
 | TAB01 | closeOtherTabs skips collapsed-group members: closing a group chip expands it mid-sweep, members land at i+1..i+n (already iterated) and survive — Chrome closes them. Fix: pre-expand collapsed groups before the loops, or close by view identity — details below | done | 0 | identity sweep: pre-expand collapsed groups + kill list of page widgets (strip + container-hidden stores), pinned+anchor exempt; closeHiddenPage(QWidget*) generalizes closeHiddenTab for non-web pages. Verified: build 0 warnings; tst_tabwidget 37/37 incl new closeOtherTabsCollapsedGroup (3 legs); --quit-after-load rc=0 offscreen --disable-gpu |
-| TAB02 | moveTabTo × collapsed group: dragging a chip to another window strands hidden members (leaderless group on source, lost member on target) + sibling bulk-index paths (close-to-right, window close) — details below | pending | 0 | |
+| TAB02 | moveTabTo × collapsed group: dragging a chip to another window strands hidden members (leaderless group on source, lost member on target) + sibling bulk-index paths (close-to-right, window close) — details below | done | 0 | carry-the-run: chip drag transfers every member (strip + container-hidden stores) into a pre-created target group, fresh id keeps name/color, re-collapses with dragged tab still chip; tearTabToNewWindow no longer strands a window on refused move. Verified: tst_tabwidget 39/39 incl new collapsedChipTransfer + restoreGroupedTabUnderFilter legs; src build clean; --quit-after-load rc=0 offscreen --disable-gpu |
 | TAB03 | Deferred-deletion sweep: singleShot/invokeMethod lambdas capturing raw WebView*/Engine::Page* without QPointer guard — details below | pending | 0 | |
 | CONT01 | Container/profile teardown: deleting a container with bound tabs (incl. m_containerHidden strays) and restart-deleted profile vs queued signals — details below | pending | 0 | |
 | SESS01 | Session restore × engine/container matrix: engine-tagged tab on a webkit=0 build, lazy restore inside container level/group, restore racing an active container filter — details below | pending | 0 | |
@@ -3286,6 +3286,36 @@ pre-expansion wherever the index can drift.
 Verify: tst_tabwidget legs — collapsed-chip drag between windows;
 close-to-right crossing a collapsed group; restore-into-group while
 a container level is active.
+
+DONE (2026-10-20): reproduced live — moving a collapsed group's chip
+expanded the group onto the source strip and transferred only the
+chip, leaving a leaderless record behind while the chip built a
+phantom one-member group on the target.  Fix carries the run:
+moveTabTo() expands the group, snapshots members by WebView* (the
+dragged chip leads), pre-creates the target group under a fresh
+per-window id (name+color kept), then moves every member through
+transferTabTo()/carryHiddenMemberTo() — the latter sweeps members
+parked in filtered container levels, since stripping the last visible
+member can fire lastTabClosed and take the source window down.  The
+target re-seats the dragged tab at the head of the run and
+re-collapses, so the chip stays the chip.  TransferredTab grew
+joinGroupId — an existing-target-group override that beats the
+neighbor-join/fresh-id rules in adoptTransferredTab().  The
+single-tab body (carrier lift, binding sever, keyed-record drops)
+factors into transferTabTo()/carryKeyedState()/dropKeyedState()/
+severTabBindings() shared by both halves.  Sibling audit: no
+closeTabsToTheRight/closeAllTabs exist — the real bulk paths
+(closeOtherTabs from TAB01, closeTabGroup, windowCloseRequested,
+restoreClosedTab, restoreSessionSnapshot) already re-resolve by
+view/page identity or defer collapse+filter until membership is set;
+tearTabToNewWindow() gained a close() so a refused move no longer
+leaves a placeholder-only window.  Verified: tst_tabwidget 39/39 —
+new collapsedChipTransfer (chip drag carries all 3 members, group
+lands collapsed with fresh id + name/color, expand order preserved,
+expanded member still travels alone) + restoreGroupedTabUnderFilter
+(undo a grouped close while a non-default level owns the strip);
+tabTransfer/tabGroups/closeOtherTabsCollapsedGroup still green;
+src build 0 warnings; --quit-after-load rc=0 offscreen --disable-gpu.
 
 ### TAB03
 

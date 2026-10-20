@@ -129,6 +129,8 @@ private slots:
     void lazySessionRestore();
     void renameTab();
     void tabTransfer();
+    void collapsedChipTransfer();
+    void restoreGroupedTabUnderFilter();
     void newTabButton();
     void verticalTabRowTextBounds();
     void verticalRailRowOverlap();
@@ -3471,6 +3473,174 @@ void tst_TabWidget::tabTransfer()
         source.closeTab(source.count() - 1);
     while (target.count() > 0)
         target.closeTab(target.count() - 1);
+}
+
+// TAB02: dragging a collapsed group's chip to another window carries
+// the whole run — the chip is the group's only visible member, and
+// moving it alone used to split the group: the hidden members rejoined
+// the source strip under a record whose first member had just left
+// while the chip materialized a phantom single-member group on the
+// target.  Now every member moves, the group re-materializes under a
+// fresh per-window id keeping name/color, and lands collapsed again
+// with the dragged tab still the chip.
+void tst_TabWidget::collapsedChipTransfer()
+{
+    SubTabWidget source;
+    for (int i = 0; i < 5; ++i)
+        source.newTab();
+    WebView *s0 = source.webView(0);
+    WebView *s1 = source.webView(1);
+    WebView *s2 = source.webView(2);
+    WebView *s3 = source.webView(3);
+    WebView *s4 = source.webView(4);
+    QVERIFY(s0 && s1 && s2 && s3 && s4);
+    const QString gid = source.createTabGroup(1);
+    source.addTabToGroup(2, gid);
+    source.addTabToGroup(3, gid);
+    source.renameTabGroup(gid, QLatin1String("Run"));
+    source.setTabGroupColor(gid, QColor(Qt::darkGreen));
+    source.setTabGroupCollapsed(gid, true);
+    // strip: [s0, chip s1, s4] — s2/s3 detached into the group.
+    QCOMPARE(source.count(), 3);
+    QVERIFY(source.isTabGroupChip(1));
+    QCOMPARE(source.tabGroupSize(gid), 3);
+
+    SubTabWidget target;
+    target.newTab();
+    target.newTab();
+    WebView *t0 = target.webView(0);
+    WebView *t1 = target.webView(1);
+    QVERIFY(t0 && t1);
+
+    // The chip drops at slot 1 on the target: the run lands collapsed
+    // — [t0, chip s1, t1] with s2/s3 parked inside the group.
+    QVERIFY(source.moveTabTo(1, &target, 1));
+    QCOMPARE(source.count(), 2);
+    QCOMPARE(source.webView(0), s0);
+    QCOMPARE(source.webView(1), s4);
+    QVERIFY(source.tabGroupIds().isEmpty());   // no leaderless record
+    QCOMPARE(source.totalTabCount(), 2);
+
+    QCOMPARE(target.count(), 3);
+    QCOMPARE(target.webView(0), t0);
+    QCOMPARE(target.webView(1), s1);
+    QCOMPARE(target.webView(2), t1);
+    QVERIFY(target.isTabGroupChip(1));
+    const QString newGid = target.tabGroupId(1);
+    QVERIFY(!newGid.isEmpty());
+    QCOMPARE(target.tabGroupName(newGid), QLatin1String("Run"));
+    QCOMPARE(target.tabGroupColor(newGid), QColor(Qt::darkGreen));
+    QCOMPARE(target.tabGroupSize(newGid), 3);   // chip + 2 hidden
+    QCOMPARE(target.tabGroupHiddenMemberTitles(newGid).count(), 2);
+    QVERIFY(target.tabGroupIsCollapsed(newGid));
+
+    // Expanding on the target rejoins the run in its old strip order.
+    target.setTabGroupCollapsed(newGid, false);
+    QCOMPARE(target.count(), 5);
+    QCOMPARE(target.webView(1), s1);
+    QCOMPARE(target.webView(2), s2);
+    QCOMPARE(target.webView(3), s3);
+    QCOMPARE(target.tabGroupMembers(newGid), QList<int>() << 1 << 2 << 3);
+
+    // An expanded member still travels alone (the group stays behind)
+    // — only the collapsed chip carries the run.
+    QVERIFY(target.moveTabTo(2, &source, -1));
+    QCOMPARE(target.tabGroupSize(newGid), 2);
+    QCOMPARE(source.webView(source.count() - 1), s2);
+
+    while (source.count() > 0)
+        source.closeTab(source.count() - 1);
+    while (target.count() > 0)
+        target.closeTab(target.count() - 1);
+}
+
+// TAB02: undoing a grouped tab's close while a non-default container
+// level owns the strip — the restore raises the tab's own level and
+// rejoins the group by view identity, so the filtered strip's shifted
+// indices can't misplace it.
+void tst_TabWidget::restoreGroupedTabUnderFilter()
+{
+    // The level filter is a ctor-latched setting — pin the two-level
+    // mode so the leg is immune to a leftover inline-mode preference.
+    ProfileSettings settings;
+    const QVariant savedDisplay =
+        settings.value(QLatin1String("tabs/containerDisplay"));
+    settings.setValue(QLatin1String("tabs/containerDisplay"), 1);
+
+    SubTabWidget widget;
+    for (int i = 0; i < 3; ++i)
+        widget.newTab();
+    WebView *t0 = widget.webView(0);
+    WebView *t1 = widget.webView(1);
+    WebView *t2 = widget.webView(2);
+    QVERIFY(t0 && t1 && t2);
+    const QUrl u2("data:text/plain,undo-filtered-member");
+    t2->loadUrl(u2);
+    QTRY_COMPARE_WITH_TIMEOUT(t2->url(), u2, 15000);
+    const QString gid = widget.createTabGroup(1);
+    QVERIFY(!gid.isEmpty());
+    widget.addTabToGroup(2, gid);
+    QCOMPARE(widget.tabGroupSize(gid), 2);
+
+    // A second container owning a tab engages the two-level strip.
+    ContainerManager *manager = ContainerManager::instance();
+    const QString cid = manager->createContainer(
+        QStringLiteral("FilterUndo"), QColor(Qt::blue)).id;
+    QVERIFY(!cid.isEmpty());
+    WebView *containerView = widget.makeNewTabInContainer(cid, true);
+    QVERIFY(containerView);
+
+    // Close the grouped member while its (default) level is showing —
+    // the container tab's creation may have switched the strip —
+    // then switch to the container level: the group tucks into the
+    // default level's hidden store.
+    widget.setActiveContainerHeader(QString());
+    widget.closeTab(widget.webViewIndex(t2));
+    QCOMPARE(widget.tabGroupSize(gid), 1);
+    widget.setActiveContainerHeader(cid);
+    QCOMPARE(widget.count(), 1);
+    QCOMPARE(widget.webViewIndex(t1), -1);
+
+    // The undo raises the restored tab — a tab reopening under its
+    // own level pulls the strip back to it (the CONT06
+    // raised-tab rule) — and rejoins the group by view identity even
+    // though the record's strip index is meaningless under the filter.
+    widget.openLastTab();
+    QCOMPARE(widget.activeContainerHeader(), QString());
+    QCOMPARE(widget.count(), 3);
+    QCOMPARE(widget.tabGroupSize(gid), 2);
+    QCOMPARE(widget.totalTabCount(), 4);
+
+    int restored = -1;
+    for (int i = 0; i < widget.count(); ++i) {
+        if (widget.webView(i) && widget.webView(i)->url() == u2)
+            restored = i;
+    }
+    QVERIFY(restored >= 0);
+    QCOMPARE(widget.tabGroupId(restored), gid);
+    // moveTabIntoGroupRun re-threaded it next to the surviving
+    // member — the run reads contiguous again.
+    const QList<int> members = widget.tabGroupMembers(gid);
+    QCOMPARE(members.count(), 2);
+    QCOMPARE(members.last() - members.first(), 1);
+
+    // Drain the default level, then surface the container level's tab
+    // and close it too — deleteContainer() must run exactly once (see
+    // reopenClosedTab) and only after the view is gone.
+    while (widget.count() > 0)
+        widget.closeTab(widget.count() - 1);
+    widget.setActiveContainerHeader(cid);
+    QSignalSpy containerViewDied(containerView, &QObject::destroyed);
+    while (widget.count() > 0)
+        widget.closeTab(widget.count() - 1);
+    QTRY_VERIFY_WITH_TIMEOUT(containerViewDied.count() == 1, 5000);
+    QVERIFY(manager->deleteContainer(cid));
+
+    if (savedDisplay.isValid())
+        settings.setValue(QLatin1String("tabs/containerDisplay"),
+                          savedDisplay);
+    else
+        settings.remove(QLatin1String("tabs/containerDisplay"));
 }
 
 // TABS15: the strip's own '+' opens a real tab — the bar's newTab

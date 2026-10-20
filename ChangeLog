@@ -131,6 +131,12 @@ UI:
   tab identity, so hidden group members — and tabs parked on a
   filtered-out container level — close like every other tab while
   the current tab and pinned tabs stay (TAB01).
+- Dragging a collapsed tab group's chip to another window now carries
+  the whole group — previously only the chip moved while the hidden
+  members silently rejoined the source strip, splitting the group
+  across both windows. The group re-appears on the target still
+  collapsed, keeping its name, color and member order, with the
+  dragged tab as the chip (TAB02).
 - Compact tab strip: a container tab no longer inflates the whole
   bar — the container's accent line and name chip now paint inside a
   standard-height tab row instead of stacking a chip band on top of

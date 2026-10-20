@@ -783,6 +783,10 @@ private:
         bool wasGrouped = false;
         QString groupName;
         QColor groupColor;
+        // TAB02: when set, the adopted tab joins this EXISTING target
+        // group (pre-created for a carried run) instead of following
+        // the neighbor-join / fresh-group rules.
+        QString joinGroupId;
         QString containerId;
         bool hasSleepState = false;
         TabSleepState sleepState;
@@ -794,6 +798,22 @@ private:
         CachedThumbnail thumbnail;
     };
     int adoptTransferredTab(const TransferredTab &tab, int index);
+    // TAB02 internals — moveTabTo() split in two so a collapsed
+    // group's chip can carry its whole run: transferTabTo() moves ONE
+    // strip tab (the moveTabTo() body minus the guards, which the
+    // caller applies per member) and returns the adopt index;
+    // carryHiddenMemberTo() moves ONE member parked in a filtered
+    // container level's hidden store (same carrier, no strip slot).
+    int transferTabTo(int index, TabWidget *target, int targetIndex,
+                      const QString &joinGroupId);
+    bool carryHiddenMemberTo(const QString &groupId, TabWidget *target,
+                             const QString &joinGroupId);
+    // The view/page-keyed record lift+drops shared by the strip and
+    // hidden-store halves of a transfer.
+    void carryKeyedState(WebView *view, QWidget *page,
+                         TransferredTab *tab);
+    void dropKeyedState(WebView *view, QWidget *page);
+    void severTabBindings(WebView *view, QWidget *bar);
     // The completer/suggestion stack plus the per-bar signal wiring —
     // and for wireWebView the engine-page/webview signal set plus the
     // web-action children — every hosted bar/view needs.  Both are

@@ -3356,17 +3356,126 @@ bool TabWidget::moveTabTo(int index, TabWidget *target, int targetIndex)
     if (!pageIsPrivate && BrowserApplication::isPrivate())
         return false;
 
-    // The chip is the only visible member of a collapsed group —
-    // expand first so only the dragged tab leaves, the same rule
-    // closeTab() applies.
+    // TAB02: a collapsed group's chip stands for the whole run —
+    // moving it alone split the group (the hidden members rejoined
+    // this strip under a record whose first member had just left, and
+    // the chip materialized a phantom one-member group on the
+    // target).  Carry the run instead: expand so the members rejoin
+    // this strip (or their filtered level's store), pre-create the
+    // group on the target under a fresh per-window id, then move every
+    // member through the same carrier and re-collapse on arrival.
     const QString gid = tabGroupId(index);
-    if (!gid.isEmpty() && m_tabGroupInfo.value(gid).collapsed)
+    const bool carryRun = !gid.isEmpty()
+        && m_tabGroupInfo.value(gid).collapsed;
+    if (carryRun)
         setTabGroupCollapsed(gid, false);
     index = indexOf(page);
     if (index < 0)
         return false;
 
+    QString joinGid;
+    QList<WebView*> run;
+    QPointer<QWidget> draggedPage = page;
+    if (carryRun) {
+        for (int member : tabGroupMembers(gid)) {
+            if (WebView *v = webView(member))
+                run.append(v);
+        }
+        // The dragged tab leads the run — it is the chip, so it must
+        // keep the first-member slot (and the chip role) on the
+        // target.
+        run.removeAll(guardView);
+        run.prepend(guardView);
+        joinGid = target->nextTabGroupId();
+        TabGroup group;
+        group.id = joinGid;
+        group.name = tabGroupName(gid);
+        group.color = tabGroupColor(gid);
+        target->m_tabGroupInfo.insert(joinGid, group);
+    }
+
+    // A move that empties this widget emits lastTabClosed inside
+    // transferTabTo — which can close (and delete) the window this
+    // widget lives in, so both widgets ride pointers.
+    QPointer<TabWidget> selfGuard(this);
+    QPointer<TabWidget> targetGuard(target);
+    int adoptedCount = 0;
+    int dst = targetIndex;
+    if (carryRun) {
+        // Members parked in a filtered container level move first —
+        // once the last strip member leaves, lastTabClosed may take
+        // the window (and the hidden stores) down with it.
+        while (carryHiddenMemberTo(gid, target, joinGid))
+            ++adoptedCount;
+        if (!selfGuard || !targetGuard)
+            return adoptedCount > 0;
+        for (WebView *member : std::as_const(run)) {
+            const int i = webViewIndex(member);
+            if (i < 0)   // re-filtered mid-run — the sweep below gets it
+                continue;
+            const int adopted = transferTabTo(i, target, dst, joinGid);
+            if (!selfGuard || !targetGuard)
+                break;
+            if (adopted >= 0) {
+                ++adoptedCount;
+                dst = adopted + 1;
+            }
+        }
+        // A mid-run level fallback can have parked remaining members
+        // into the hidden stores — sweep once more.
+        if (selfGuard)
+            while (carryHiddenMemberTo(gid, target, joinGid))
+                ++adoptedCount;
+    } else {
+        const int adopted = transferTabTo(index, target, targetIndex,
+                                          QString());
+        return adopted >= 0;
+    }
+
+    if (!targetGuard || !target->m_tabGroupInfo.contains(joinGid))
+        return adoptedCount > 0;
+    if (target->tabGroupSize(joinGid) == 0) {
+        // Nothing landed — drop the pre-created record.
+        target->m_tabGroupInfo.remove(joinGid);
+        emit target->tabGroupsChanged();
+        return adoptedCount > 0;
+    }
+    // Re-seat the dragged tab at the head of the run — a carried
+    // member that stayed visible at the append edge would otherwise
+    // take the chip slot.
+    const int lead = target->indexOf(draggedPage);
+    const QList<int> landed = target->tabGroupMembers(joinGid);
+    if (lead >= 0 && !landed.isEmpty() && landed.first() != lead) {
+        target->m_groupAdjust = true;
+        target->m_tabBar->moveTab(lead, landed.first());
+        target->m_groupAdjust = false;
+    }
+    target->setTabGroupCollapsed(joinGid, true);
+    return true;
+}
+
+// The single-tab half of moveTabTo(): one strip tab's page widget,
+// location bar, visuals and every keyed record lift into the carrier
+// and land on the target through adoptTransferredTab().  joinGroupId
+// is the carried-run override (TAB02): set, the tab joins that
+// existing target group instead of following the adopt-time join
+// rules.  The TABS13(d) constraints apply per member — a carried run
+// can mix transfer-marked or private pages.  Returns the target's
+// adopt index, -1 when the tab stayed.
+int TabWidget::transferTabTo(int index, TabWidget *target,
+                             int targetIndex, const QString &joinGroupId)
+{
+    if (index < 0 || index >= count())
+        return -1;
+    QWidget *page = widget(index);
+    if (!page || page->property("arktosNoTabTransfer").toBool())
+        return -1;
     WebView *view = webView(index);
+    const bool pageIsPrivate = view && view->enginePage()
+        && view->enginePage()->isOffTheRecord();
+    if (!pageIsPrivate && BrowserApplication::isPrivate())
+        return -1;
+
     TransferredTab tab;
     tab.page = page;
     tab.bar = m_locationBars->widget(index);
@@ -3374,56 +3483,14 @@ bool TabWidget::moveTabTo(int index, TabWidget *target, int targetIndex)
     tab.text = tabText(index);
     tab.toolTip = tabToolTip(index);
     tab.data = m_tabBar->tabData(index);
-    tab.pinned = m_pinnedTabs.contains(page);
-    tab.customTitle = m_customTitles.value(page);
-    tab.widgetTabBaseTitle = m_widgetTabBaseTitles.value(page);
+    const QString gid = view ? m_tabGroups.value(view) : QString();
     tab.wasGrouped = !gid.isEmpty();
     tab.groupName = tabGroupName(gid);
     tab.groupColor = tabGroupColor(gid);
-    tab.containerId = view ? view->containerId() : QString();
-    if (view) {
-        auto sleep = m_sleepStates.constFind(view);
-        if (sleep != m_sleepStates.constEnd()) {
-            tab.hasSleepState = true;
-            tab.sleepState = sleep.value();
-        }
-        auto pending = m_pendingRestores.constFind(view);
-        if (pending != m_pendingRestores.constEnd()) {
-            tab.hasPendingRestore = true;
-            tab.pendingRestore = pending.value();
-        }
-        auto scroll = m_pendingScrollRestore.constFind(view);
-        if (scroll != m_pendingScrollRestore.constEnd()) {
-            tab.hasPendingScroll = true;
-            tab.pendingScroll = scroll.value();
-        }
-        auto thumb = m_tabThumbnails.constFind(view);
-        if (thumb != m_tabThumbnails.constEnd()) {
-            tab.hasThumbnail = true;
-            tab.thumbnail = thumb.value();
-        }
-    }
+    tab.joinGroupId = joinGroupId;
+    carryKeyedState(view, page, &tab);
 
-    // Sever this widget's bindings before the strip slot goes — the
-    // page's signals and the bar's editing signal must stop landing
-    // here.  Other receivers (managers, the bar's own view link) are
-    // untouched, and the view's Qt-level parentage moves with the
-    // page widget.
-    if (view && view->enginePage()) {
-        Engine::Page *enginePage = view->enginePage();
-        disconnect(enginePage, nullptr, this, nullptr);
-        for (WebActionMapper *mapper : std::as_const(m_actions)) {
-            if (QAction *child = enginePage->action(mapper->webAction()))
-                disconnect(child, nullptr, mapper, nullptr);
-        }
-    }
-    if (view)
-        disconnect(view, nullptr, this, nullptr);
-    if (tab.bar) {
-        disconnect(tab.bar, nullptr, this, nullptr);
-        if (m_omniboxSuggestions)
-            disconnect(tab.bar, nullptr, m_omniboxSuggestions, nullptr);
-    }
+    severTabBindings(view, tab.bar);
 
     const QTabBar::ButtonPosition sides[2] = { QTabBar::LeftSide,
                                                QTabBar::RightSide };
@@ -3435,23 +3502,7 @@ bool TabWidget::moveTabTo(int index, TabWidget *target, int targetIndex)
     }
     m_locationBars->removeWidget(tab.bar);
     removeTab(index);
-    m_pinnedTabs.remove(page);
-    m_customTitles.remove(page);
-    m_widgetTabBaseTitles.remove(page);
-    if (view) {
-        m_tabGroups.remove(view);
-        m_sleepStates.remove(view);
-        m_tabThumbnails.remove(view);
-        m_pendingScrollRestore.remove(view);
-        m_pendingRestores.remove(view);
-        for (auto it = m_lastActiveInHeader.begin();
-             it != m_lastActiveInHeader.end();) {
-            if (it.value() == view)
-                it = m_lastActiveInHeader.erase(it);
-            else
-                ++it;
-        }
-    }
+    dropKeyedState(view, page);
     forgetTabGroupIfEmpty(gid);
 
     // The widgets join the target's tree before the emptied-strip
@@ -3469,7 +3520,128 @@ bool TabWidget::moveTabTo(int index, TabWidget *target, int targetIndex)
     // delete) the window this widget lives in.
     if (count() == 0)
         emit lastTabClosed();
-    return adopted >= 0;
+    return adopted;
+}
+
+// TAB02: a carried run's members parked in a filtered level's hidden
+// store move the same way — the HiddenGroupTab record supplies the
+// visuals the strip path reads off the bar, and adoptTransferredTab()
+// re-detaches the tab under its own level on the target.  Moves one
+// member per call; returns false once none remain.
+bool TabWidget::carryHiddenMemberTo(const QString &groupId,
+                                    TabWidget *target,
+                                    const QString &joinGroupId)
+{
+    for (auto it = m_containerHidden.begin();
+         it != m_containerHidden.end(); ++it) {
+        for (int k = 0; k < it->size(); ++k) {
+            WebViewWithSearch *withSearch =
+                qobject_cast<WebViewWithSearch*>(it->at(k).tab);
+            if (!withSearch
+                || m_tabGroups.value(withSearch->m_webView) != groupId)
+                continue;
+            const HiddenGroupTab hidden = it->takeAt(k);
+            if (it->isEmpty())
+                m_containerHidden.erase(it);
+            WebView *view = withSearch->m_webView;
+            TransferredTab tab;
+            tab.page = hidden.tab;
+            tab.bar = hidden.bar;
+            tab.text = hidden.text;
+            tab.toolTip = hidden.toolTip;
+            tab.data = hidden.data;
+            tab.wasGrouped = true;
+            tab.joinGroupId = joinGroupId;
+            carryKeyedState(view, hidden.tab, &tab);
+            severTabBindings(view, tab.bar);
+            dropKeyedState(view, hidden.tab);
+            forgetTabGroupIfEmpty(groupId);
+            hidden.tab->setParent(target);
+            if (tab.bar)
+                tab.bar->setParent(target->m_locationBars);
+            emit tabsChanged();   // the level's badge count shifted
+            target->adoptTransferredTab(tab, -1);
+            return true;
+        }
+    }
+    return false;
+}
+
+// The view/page-keyed record lift shared by the strip and hidden-store
+// halves of a transfer.
+void TabWidget::carryKeyedState(WebView *view, QWidget *page,
+                                TransferredTab *tab)
+{
+    tab->pinned = m_pinnedTabs.contains(page);
+    tab->customTitle = m_customTitles.value(page);
+    tab->widgetTabBaseTitle = m_widgetTabBaseTitles.value(page);
+    if (!view)
+        return;
+    tab->containerId = view->containerId();
+    auto sleep = m_sleepStates.constFind(view);
+    if (sleep != m_sleepStates.constEnd()) {
+        tab->hasSleepState = true;
+        tab->sleepState = sleep.value();
+    }
+    auto pending = m_pendingRestores.constFind(view);
+    if (pending != m_pendingRestores.constEnd()) {
+        tab->hasPendingRestore = true;
+        tab->pendingRestore = pending.value();
+    }
+    auto scroll = m_pendingScrollRestore.constFind(view);
+    if (scroll != m_pendingScrollRestore.constEnd()) {
+        tab->hasPendingScroll = true;
+        tab->pendingScroll = scroll.value();
+    }
+    auto thumb = m_tabThumbnails.constFind(view);
+    if (thumb != m_tabThumbnails.constEnd()) {
+        tab->hasThumbnail = true;
+        tab->thumbnail = thumb.value();
+    }
+}
+
+void TabWidget::dropKeyedState(WebView *view, QWidget *page)
+{
+    m_pinnedTabs.remove(page);
+    m_customTitles.remove(page);
+    m_widgetTabBaseTitles.remove(page);
+    if (!view)
+        return;
+    m_tabGroups.remove(view);
+    m_sleepStates.remove(view);
+    m_tabThumbnails.remove(view);
+    m_pendingScrollRestore.remove(view);
+    m_pendingRestores.remove(view);
+    for (auto it = m_lastActiveInHeader.begin();
+         it != m_lastActiveInHeader.end();) {
+        if (it.value() == view)
+            it = m_lastActiveInHeader.erase(it);
+        else
+            ++it;
+    }
+}
+
+// Sever this widget's bindings before the slot goes — the page's
+// signals and the bar's editing signal must stop landing here.  Other
+// receivers (managers, the bar's own view link) are untouched, and the
+// view's Qt-level parentage moves with the page widget.
+void TabWidget::severTabBindings(WebView *view, QWidget *bar)
+{
+    if (view && view->enginePage()) {
+        Engine::Page *enginePage = view->enginePage();
+        disconnect(enginePage, nullptr, this, nullptr);
+        for (WebActionMapper *mapper : std::as_const(m_actions)) {
+            if (QAction *child = enginePage->action(mapper->webAction()))
+                disconnect(child, nullptr, mapper, nullptr);
+        }
+    }
+    if (view)
+        disconnect(view, nullptr, this, nullptr);
+    if (bar) {
+        disconnect(bar, nullptr, this, nullptr);
+        if (m_omniboxSuggestions)
+            disconnect(bar, nullptr, m_omniboxSuggestions, nullptr);
+    }
 }
 
 // The adopt half — the tab lands in this strip at index (-1 appends)
@@ -3533,14 +3705,18 @@ int TabWidget::adoptTransferredTab(const TransferredTab &tab, int index)
     if (m_customTitles.contains(page))
         applyTabTitle(idx);
 
-    // Group binding — a drop between two members of one target group
-    // joins it (the in-bar normalize rule); otherwise the carried
-    // binding re-materializes as a fresh group id (group ids are
-    // per-window) keeping the name and color.
+    // Group binding — a carried-run member joins the pre-created
+    // target group outright (TAB02); otherwise a drop between two
+    // members of one target group joins it (the in-bar normalize
+    // rule), and a plain carried binding re-materializes as a fresh
+    // group id (group ids are per-window) keeping the name and color.
     if (view) {
         const QString left = tabGroupId(idx - 1);
         const QString right = tabGroupId(idx + 1);
-        if (!left.isEmpty() && left == right) {
+        if (!tab.joinGroupId.isEmpty()
+            && m_tabGroupInfo.contains(tab.joinGroupId)) {
+            assignTabGroup(view, tab.joinGroupId);
+        } else if (!left.isEmpty() && left == right) {
             assignTabGroup(view, left);
         } else if (tab.wasGrouped) {
             const QString newGid = nextTabGroupId();
@@ -3624,8 +3800,12 @@ void TabWidget::tearTabToNewWindow(int index)
         window->show();
     TabWidget *target = window->tabWidget();
     WebView *placeholder = target->webView(0);
-    if (!moveTabTo(index, target, 0))
+    if (!moveTabTo(index, target, 0)) {
+        // A refused move (engine-host mark, privacy boundary) must
+        // not strand the fresh window on its placeholder tab.
+        window->close();
         return;
+    }
     if (target->count() > 1) {
         // The window ctor seeded a blank first tab — close it now
         // that the moved tab sits ahead of it.
