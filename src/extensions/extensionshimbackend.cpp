@@ -1564,6 +1564,7 @@ QJsonObject ExtensionShimBackend::invokeNotifications(
 QJsonObject ExtensionShimBackend::invokeCommands(
         const QString &method, const QJsonObject &args)
 {
+    Q_UNUSED(args);
     if (method == QLatin1String("getAll"))
         return okReply(ExtensionCommandRegistry::instance()
                            ->commandList(m_extensionId));

@@ -228,14 +228,16 @@ void tst_ProfileWindow::ambientFollowsWindow()
     QCOMPARE(ProfileSettings::currentId(), kDefault);
 
     // Focus switching keeps ambient honest — whatever window wins
-    // activation pushes its own persona again.
-    alphaWindow->activateWindow();
-    alphaWindow->raise();
+    // activation pushes its own persona again.  ER18's
+    // WA_DontShowOnScreen means autotest windows never map a
+    // platform window, so QWidget::activateWindow()/raise() are
+    // no-ops under the offscreen QPA — QApplication::setActiveWindow
+    // drives the same ActivationChange delivery at the widget level.
+    QApplication::setActiveWindow(alphaWindow);
     QCoreApplication::processEvents();
     QTRY_COMPARE_WITH_TIMEOUT(BrowserPaths::activeProfileId(), kAlpha,
                               5000);
-    defaultWindow->activateWindow();
-    defaultWindow->raise();
+    QApplication::setActiveWindow(defaultWindow);
     QCoreApplication::processEvents();
     QTRY_COMPARE_WITH_TIMEOUT(BrowserPaths::activeProfileId(), kDefault,
                               5000);

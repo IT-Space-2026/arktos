@@ -350,7 +350,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | WKB02 | WebKit-lane research: WebExtensions on WPE — what WebKitWebExtension (2.52+) really is vs chrome.* — details below | done | 1 | .devin/WEBKIT-EXTENSIONS.md — WebKitWebExtension (2.52+) is manifest.json parse-only; no load/run API through 2.54.1 (WebExtensionContext = unmerged PR #52242); embedder-built runtime is the only path (Epiphany precedent) and ports well to our hosted chrome.* runtime; all 4 questions answered with sourced refs |
 | WKB03 | WebKit-lane research: SOCKS5/Tor audit — WebKitNetworkProxySettings surface + leak vectors + test methodology — details below | done | 1 | .devin/WEBKIT-TOR.md — proxy settings are per-WebKitNetworkSession (= per-profile Tor scope OK, no per-tab); socks:// = socks5-first with remote DNS (ATYP=domainname); 12 leak vectors enumerated (WebRTC ICE UDP + DNS prefetch are the deciding risks, both pref-gated); loopback fixture spec (non-resolvable .leakcheck.test + socks/http/stun loggers + LD_PRELOAD resolver shim) with C1–C15 verbatim checklist + positive controls; verdict: conditional candidate, Tor stays Chromium-locked until WK21 executes |
 | WKB05 | WebKit-lane packaging strategy — how the WPE .so set ships inside our deb/rpm/flatpak + dep-manifest script — details below | done | 1 | .devin/WEBKIT-PACKAGING.md + .devin/wpe-deps.sh — measured on live ~/wpe sid-2.54.1: 72-file closure ~223M, floor GLIBC_2.43; deb/rpm = bundle under /usr/lib/arktos/wpe (noble ships no WPE, Fedora COPR-only, TW 2.52<floor), flatpak = in-manifest source build (KDE 6.11 glibc 2.42 kills sid binaries); staged diffs in doc; selftest+scan verified |
-| MRG01 | Post-merge integration A — default-flavor build+link (webengine+servo) on merged master — details below | in_progress | 0 | rescoped: was both-flavors+gates+legs in one run; split after repeated 1h timeouts |
+| MRG01 | Post-merge integration A — default-flavor build+link (webengine+servo) on merged master — details below | done | 0 | clean make -j4 build+link on merged master — arktos links host ld.so, 0 WPE, --quit-after-load rc=0; merge-artifact fixes folded in (avatar reload after wipe, Q_UNUSED, offscreen test fixes, ENGINE.md ledger); pre-reslice webkit=1 gates+suite evidence in details for MRG05/06 reuse |
 | MRG05 | Post-merge integration B — `make check` 4 gates + focused extension/engine autotest legs on the default build — details below | pending | 0 | needs:task:MRG01 |
 | MRG06 | Post-merge integration C — webkit=1 three-engine build+link + webkit legs (source webkit-env.sh) — details below | pending | 0 | needs:task:MRG05 |
 | MRG07 | Post-merge leak sweep A — ASan/LSan churn on extension merge seams (ExtensionChromePage popup/probe cycles, relay PortEnd register/expire at caps) — details below | pending | 0 | needs:task:MRG05 |
@@ -2305,6 +2305,43 @@ Post-merge integration A — build+link only, the cheapest leg.
   the ExtensionChromePage/PortEnd seams in extensions/.
 
 Verify: clean link; row notes record warnings of interest.
+
+Run evidence (2026-10-20) — the pre-reslice run had already built the
+webkit=1 flavor and swept the suite before timing out mid-bookkeeping;
+MRG05/MRG06 can reuse this:
+
+- webkit=1 flavor (source webkit-env.sh + qmake webkit=1 + make):
+  arktos links under the sid ld.so with the webkit backend compiled
+  in; all 96 autotest binaries built, objects postdate every fix.
+- `make check` on the webkit=1 tree: 4 gates PASS (check-warnings
+  zero warnings, check-supplychain all crates clean, check-engine-
+  audit 185 files documented, check-rustcoverage 94.11/91.83/89.25
+  >=85).  Suite: 2229 passed / 1 failed / 24 skipped over 96
+  binaries.  Sole red: tst_BrowserMainWindow::torTitleBarTitle —
+  diagnosed flake, NOT a merge artifact: the tor start page's
+  channel translate() commits document.title a beat after
+  loadFinished, and the late titleChanged overwrote the test's
+  setWindowTitle under suite load; the leg passes 3/3 isolated and
+  is now hardened to wait for the committed title first.
+- Focused legs all green on the merged tree: tst_extensionmanager
+  48/48 (extensionChromeNavLock — SEC26 nav-lock AND the ER20
+  JavascriptEnabled lift both active — plus extensionMessageRelay
+  PortEnd legs and the actionPopup/popup legs), tst_engineswitch
+  45/45 (servo multi-view legs + all 19 webkit* legs on the
+  three-engine build), tst_profilewindow 14/14.
+- Merge-artifact fixes folded into this run's commit:
+  extensionshimbackend invokeCommands Q_UNUSED (check-warnings
+  gate), ProfileIdentity::reloadAllAvatars on the wipe path (the
+  data-root removal kills avatar files but the running process kept
+  cached pixmaps — ARKTOS_WIPE_NO_QUIT exercises this in-process),
+  tst_profilewindow activateWindow/raise -> setActiveWindow
+  (WA_DontShowOnScreen makes them no-ops under the offscreen QPA),
+  ENGINE.md ledger rows for the merge-added extensionpagebridge +
+  extensionrequestwatcher files, COVERAGE.md regen.
+- GOTCHA for MRG05/06: qmake CONFIG switches do NOT rebuild objects
+  — plain `make` after flipping webkit=1 reuses stale objects and
+  skips the relink.  Always `make clean` (or at minimum
+  `make qmake_all`) when switching flavors.
 
 ### MRG05
 

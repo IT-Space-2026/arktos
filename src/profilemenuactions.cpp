@@ -25,6 +25,7 @@
 #include "browserprofile.h"
 #include "clearprivatedata.h"
 #include "downloadmanager.h"
+#include "profileidentity.h"
 #include "tabwidget.h"
 
 #include <qapplication.h>
@@ -392,6 +393,14 @@ bool ProfileMenuActions::applyPendingProfileWipe()
     // Redundant with the data-root removal unless the guard refused —
     // either way the marker must not outlive the wipe.
     QFile::remove(markerPath);
+
+    // The avatar files just died with the data root — drop every
+    // cached persona identity's pixmap too so the running process
+    // renders the silhouette without waiting for a restart (the
+    // ARKTOS_WIPE_NO_QUIT seam and the autotest leg exercise this
+    // path in-process).
+    ProfileIdentity::reloadAllAvatars();
+
     qInfo() << "arktos: profile wipe applied — booting a fresh profile";
     return ok;
 }

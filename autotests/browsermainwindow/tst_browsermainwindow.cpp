@@ -4097,6 +4097,20 @@ void tst_BrowserMainWindow::torTitleBarTitle()
     window->show();
     QApplication::processEvents();
 
+    // The tor start page sets document.title asynchronously once its
+    // channel translate() resolves — first the loadFinished push lands
+    // the qrc URL fallback, then the committed title replaces it.  A
+    // late push once overwrote a test-set title mid-leg under suite
+    // load, so wait out the settle before asserting the mirror.
+    if (WebView *view = window->currentTab()) {
+        QElapsedTimer titleDeadline;
+        titleDeadline.start();
+        while (view->title() != QLatin1String("Welcome to Arktos!")
+               && titleDeadline.elapsed() < 15000)
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    }
+    QApplication::processEvents();
+
     QLabel *title =
         window->findChild<QLabel *>(QLatin1String("torTitleText"));
     QWidget *bar =

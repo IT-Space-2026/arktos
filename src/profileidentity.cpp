@@ -271,3 +271,10 @@ void ProfileIdentity::reloadAvatar()
     m_source = QImage();
     emit avatarChanged();
 }
+
+void ProfileIdentity::reloadAllAvatars()
+{
+    const auto identities = profileIdentities();
+    for (ProfileIdentity *identity : identities)
+        identity->reloadAvatar();
+}

@@ -96,6 +96,9 @@ public:
     // Re-reads the avatar file — for callers that changed it behind
     // the singleton's back.
     void reloadAvatar();
+    // Reloads every cached persona's avatar — for the whole-tree
+    // wipe, which removes avatar files for all identities at once.
+    static void reloadAllAvatars();
 
 private:
     bool loadAvatar();

@@ -1043,6 +1043,11 @@ UI:
   standalone instance bound to a registry persona (useful for a
   second concurrent instance). Profiles are local-only: there is no
   sync service and nothing leaves the data directory (MPROF06).
+- Deleting a profile no longer leaves stale avatars on screen: the
+  running browser now drops every cached persona picture the moment
+  the wipe removes the avatar files, so the profile button and menus
+  fall back to the default silhouette immediately rather than keeping
+  the deleted image painted (MRG01).
 - Help > "Check for Updates..." asks github.com for the newest Arora
   release and reports the honest outcome — up to date, newer version,
   no releases published yet, or couldn't check.  The dialog always
