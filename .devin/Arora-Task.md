@@ -357,8 +357,12 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | MRG08 | Post-merge leak sweep B — ASan/LSan per-backend EngineTab churn on merged master (webengine+servo, webkit when built) — details below | done | 2 | .devin/MRG08-scan.md: fixed MRG06 servo→webkit GL poison (eglBindAPI ES + display revive + stale-pipe reset); 4 new churn legs green plain & ASan; full tst_engineswitch 49/0/0 under LSan; 0 src/-sited records (94 upstream); 4 gates PASS |
 | MRG09 | Post-merge dead-code/duplicate sweep — resolve-level leftovers, double-tracked logs, task-file/doc rot — details below | done | 1 | untracked 2 runtime files, 3 ExtensionChromePage swaps, WK queue superseded — build+4 gates+suite PASS |
 | MRG10 | Post-merge security re-check — SEC26 findings survived merge: nav-lock+lift both active, sender-url verification, bounds+dedup on generalized PortEnd — details below | done | 1 | SEC26-1/2 hold; SEC26-3 gap fixed — pageSend/pagePortConnect/pagePortAccept/pageDeliver merged in without bridge-side dup-mid+bounds; now parity + tst legs covering both PortEnd kinds; 4 gates PASS, suite green (extensionCommands = known offscreen SIGTRAP, PASS --disable-gpu) |
-| PRIV07 | Private-mode teardown: destroy the shared OTR profile when the last private page closes (Chrome-incognito lifecycle) — details below | pending | 0 | user request — audit found s_privateProfile is qApp-owned and lives to process exit; closing all private tabs leaves in-memory cookies/logins/storage reachable by the NEXT private tab in the same run |
+| PRIV07 | Private-mode teardown: destroy the shared OTR profile when the last private page closes (Chrome-incognito lifecycle) — details below | in_progress | 4 | user request — audit found s_privateProfile is qApp-owned and lives to process exit; closing all private tabs leaves in-memory cookies/logins/storage reachable by the NEXT private tab in the same run |
 | PRIV08 | Global Privacy Control (the working successor to DNT): Sec-GPC header + navigator.globalPrivacyControl, settings toggle — details below | pending | 0 | user request — audit confirmed no DNT/GPC exists; GPC is the legally-backed opt-out signal (CCPA/CPRA, Colorado) Brave/Mullvad ship; header goes via the proven setHttpHeader interceptor path, JS surface via document-creation script |
+| LEG01 | Untouched-source review: xbelwriter, networkproxyfactory, treesortfilterproxymodel, opensearch headers, fetchLinks.js — modernize+secure, fix in-task — details below | pending | 0 | user request — 6 code files survived the Qt6 port with zero edits; review for correctness/security (proxy URL parsing, page-injected JS, XML escaping), apply CPP01-era best practices, kill dead paths |
+| LEG02 | Untouched-data audit: searchengine XMLs (dead providers? http->https?), useragents.qrc staleness, icon assets still referenced?, licenses — details below | pending | 0 | user request — ~40 asset/data files never touched incl. 2008-era provider configs and UA strings that may be stale or mislead fingerprinting |
+| LEG03 | Dead-pipeline sweep: src/locale tooling, generateAuthors/generateReleaseContributors vs new AUTHORS policy, tools/htmlToXBel fixtures — wire-in or remove — details below | pending | 0 | user request — locale machinery never activated under Arktos; upstream scripts may contradict the maintainer+Devin credit policy |
+| LEG04 | Untouched test-infra review: qtry.h usage, tst_lineedit.cpp build status, stale .gitignores, fixture validity — wire in or delete — details below | pending | 0 | user request — qtry.h and an untouched tst_lineedit may be orphaned outside the autotest SUBDIRS |
 
 ## Task details
 
@@ -2712,3 +2716,122 @@ Verify:
 - Settings round-trip + privacyChanged propagation to live profiles.
 - make check gates; note the fingerprint-bit addition in PRIV02's
   doc (one more distinguishing bit when on).
+
+
+### LEG01
+
+Untouched-source review — the six code files that survived the Qt6
+port with zero edits (verified against `git diff 22596d16^..HEAD`):
+
+- `src/bookmarks/xbel/xbelwriter.{h,cpp}` — XBel export.  Security
+  review: XML escaping of bookmark titles/urls/desc attributes
+  (injection via crafted bookmark data), encoding correctness.
+- `src/network/networkproxyfactory.cpp` — user proxy settings ->
+  QNetworkProxy.  Security review: URL/host parsing edge cases,
+  credential leakage into proxy URLs, scheme confusion.  Tor is
+  process-global setApplicationProxy — confirm the factory can't
+  override or fight it (and document that interaction).
+- `src/utils/treesortfilterproxymodel.cpp` — generic sort proxy;
+  review for Qt4-era idioms now UB/deprecated under Qt6.
+- `src/opensearch/{opensearchenginedelegate,opensearchwriter}.h`
+  — headers only; check include hygiene + contract comments.
+- `src/data/fetchLinks.js` — page-injected bundle; review what it
+  exposes to page JS (it runs in the main world — anything it defines
+  is page-reachable; keep the surface minimal) + match the
+  contextimage.js call-suffix pattern if it's drifted.
+- `autotests/qtry.h` + `autotests/utils/lineedit/tst_lineedit.cpp`
+  — test helper + untouched test; covered by LEG04's build-status
+  check but fix bugs found here.
+
+Apply CPP01-era practices only where a real defect or footgun exists
+(don't churn for style): nullptr/override where missing on edited
+lines, QStringLiteral on hot paths, [[nodiscard]] on factories.
+Modernize for correctness, not cosmetics.  Dead code inside these
+files -> delete.
+
+Verify: build + check-warnings clean; any behavioral change covered
+by the existing autotest for that component (xbelwriter has
+autotests/xbel fixtures, proxy factory has manual config paths —
+exercise via a leg if logic changes).
+
+
+### LEG02
+
+Untouched-data audit — the static payload files:
+
+- `src/data/searchengines/*.xml` (Google_Im_Feeling_Lucky, Reddit,
+  Wikipedia_en, YouTube) — I'm Feeling Lucky was deprecated by Google
+  in 2024; verify each provider: https endpoints (no http), live
+  search URLs, favicon refs.  Remove dead providers, fix http->https,
+  keep the list honest.
+- `src/useragent/useragents.qrc` + shipped UA strings — any bundled
+  UA presets claiming ancient browser versions mislead sites AND the
+  fingerprint surface (PRIV02 aligned UA/Sec-CH-UA; a stale preset
+  would contradict it).  Drop presets older than the runtime's real
+  Chromium/140 identity, or remove the feature's stale data.
+- `src/data/graphics/*` + `src/data/128x128/run.png` + loading.gif —
+  grep that each is still qrc-referenced and actually loaded; the
+  aurora redesign replaced most chrome imagery — delete orphaned
+  assets from the qrc and tree.
+- `src/network/networkcookiejar/MOZILLA_LICENSE.txt`,
+  `LICENSE.GPL2/3`, `GPLHEADER` — verify correct placement/labels,
+  keep (legal files stay).
+- `autotests/modeltest/{README,LICENSE.GPL}` — keep, upstream tool
+  license.
+
+Verify: `make check` + qrc still resolves (build fails loud on a
+missing qrc entry, so a green build proves no dangling refs); smoke
+--quit-after-load; note removals in the task log.
+
+
+### LEG03
+
+Dead-pipeline sweep — tooling untouched since upstream:
+
+- `src/locale/` — calculate_completion.sh, maintainers,
+  .gitattributes.  No .ts files ship and the rebrand never activated
+  translations: decide wire-in (lupdate in build, .gitattributes
+  still correct) vs remove the directory + document.  If kept, the
+  scripts must reflect Arktos paths/identity, not Arora.
+- `generateAuthors`, `generateReleaseContributors` — upstream-era
+  generators.  AUTHORS policy is now maintainer+Devin only; a script
+  that regenerates an upstream contributor list contradicts it —
+  remove or repoint, don't leave a landmine.
+- `tools/htmlToXBel/` — the tool's source was ported but its test
+  fixtures (firefox3/ie7/opera9 bookmarks html) + .gitignore never
+  touched: verify the tool still runs against them or mark the
+  fixtures stale.
+- `autotests/modeltest/` — upstream Qt modeltest; confirm it's still
+  referenced by a live autotest before keeping.
+
+Decision rule per item: wire it into the build/docs and keep, or
+delete and note.  Nothing stays as unexplained ballast.
+
+Verify: build + gates; if generateAuthors is removed, README/AUTHORS
+must not reference it; if locale tooling is kept, document the flow
+in .devin or README.
+
+
+### LEG04
+
+Untouched test-infra review:
+
+- `autotests/qtry.h` — Qt4-era QTRY_* helper; check who still
+  includes it vs the Qt5/6-native QTest::qWaitFor/qtryVerify —
+  consolidate callers onto the modern macro or keep with a comment
+  explaining the gap it fills.
+- `autotests/utils/lineedit/tst_lineedit.cpp` — untouched test;
+  first verify it's still in autotests SUBDIRS and actually runs in
+  `make check`.  If orphaned: wire it in if the tested code is live,
+  delete if the tested code is gone.
+- Untouched `.gitignore`s under autotests/ — cheap check: do they
+  still match the generated binary/object names for their dir?
+- Fixture validity: test.html, rules.txt, myhistory.txt,
+  suggestions.txt, xbel fixtures — spot-check each is consumed by a
+  live test (grep for the filename in the test source); delete
+  orphans.
+- Dead test code inside kept fixtures: clean per LEG01 rules.
+
+Verify: `make check` green with the same-or-fewer red count; every
+kept fixture has a live consumer proven by grep; removed fixtures
+removed from any qrc/SUBDIRS refs.
