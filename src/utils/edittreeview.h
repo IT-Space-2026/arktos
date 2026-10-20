@@ -1,6 +1,7 @@
 /**
- * Copyright (c) 2008, Benjamin C. Meyer  <ben@meyerhome.net>
- * Copyright (c) 2009, Jakub Wieczorek <faw217@gmail.com>
+ * Copyright © 2026-2027 Arktos Browser - IT-Space
+ * Copyright (c) 2008, Arora Browser
+ * Copyright (c) 2009, Arora Browser
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions

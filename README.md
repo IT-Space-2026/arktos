@@ -1189,5 +1189,7 @@ fitness for any purpose, and no liability accepted for data loss,
 security failures or any other damage. Use it for testing, hacking and
 learning; treat it as a research browser, not a promise.
 
+Copyright © 2026-2027 Arktos Browser - IT-Space
+Portions Copyright © 2007-2017 Arora Browser
 Copyright © 2026-2027 Janos Szenfner —
 https://github.com/IT-Space-2026/arktos

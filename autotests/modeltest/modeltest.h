@@ -1,5 +1,6 @@
 /****************************************************************************
 **
+** Copyright © 2026-2027 Arktos Browser - IT-Space
 ** Copyright (C) 2007 Trolltech ASA. All rights reserved.
 **
 ** This file is part of the Qt Concurrent project on Trolltech Labs.

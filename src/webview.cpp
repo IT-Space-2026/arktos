@@ -1,7 +1,8 @@
 /*
- * Copyright 2008-2009 Benjamin C. Meyer <ben@meyerhome.net>
- * Copyright 2008 Jason A. Donenfeld <Jason@zx2c4.com>
- * Copyright 2008 Ariya Hidayat <ariya.hidayat@gmail.com>
+ * Copyright © 2026-2027 Arktos Browser - IT-Space
+ * Copyright 2008-2009 Arora Browser
+ * Copyright 2008 Arora Browser
+ * Copyright 2008 Arora Browser
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by

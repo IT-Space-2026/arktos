@@ -1,4 +1,5 @@
 /*
+   Copyright © 2026-2027 Arktos Browser - IT-Space
    Copyright (C) 2009, Torch Mobile Inc. and Linden Research, Inc. All rights reserved.
 */
 

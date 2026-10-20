@@ -3,7 +3,8 @@ Upstream-Name: arktos
 Source: https://github.com/IT-Space-2026/arktos
 
 Files: *
-Copyright: 2007-2011 Benjamin C. Meyer (icefox) and contributors
+Copyright: 2007-2011 Arora Browser
+           2026-2027 Arktos Browser - IT-Space
            2026-2027 Janos Szenfner (see AUTHORS for all contributors)
 License: GPL-2+
  This program is free software; you can redistribute it and/or modify

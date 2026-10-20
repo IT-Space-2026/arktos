@@ -1,6 +1,7 @@
 /*
- * Copyright 2008-2009 Diego Iastrubni, elcuco, at, kde.org
- * Copyright 2008-2009 Benjamin C. Meyer <ben@meyerhome.net>
+ * Copyright © 2026-2027 Arktos Browser - IT-Space
+ * Copyright 2008-2009 Arora Browser, elcuco, at, kde.org
+ * Copyright 2008-2009 Arora Browser
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions

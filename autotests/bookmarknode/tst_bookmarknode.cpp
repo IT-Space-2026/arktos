@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2014 Benjamin C. Meyer <ben@meyerhome.net>
+ * Copyright © 2026-2027 Arktos Browser - IT-Space
+ * Copyright (c) 2014 Arora Browser
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions

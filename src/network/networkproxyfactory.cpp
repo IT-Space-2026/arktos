@@ -1,5 +1,5 @@
 /*
- * Copyright 2009 Benjamin K. Stuhl <bks24@cornell.edu>
+ * Copyright 2009 Arora Browser
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by

@@ -1,7 +1,7 @@
 /**
- * Copyright (c) 2009, Zsombor Gegesy <gzsombor@gmail.com>
- * Copyright (c) 2009, Benjamin C. Meyer <ben@meyerhome.net>
- * Copyright (c) 2026, The Arktos Authors
+ * Copyright (c) 2009, Arora Browser
+ * Copyright (c) 2009, Arora Browser
+ * Copyright (c) 2026, Arktos Browser - IT-Space
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions

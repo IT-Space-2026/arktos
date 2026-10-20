@@ -1,7 +1,8 @@
 /*
- * Copyright 2009 Christian Franke <cfchris6@ts2server.com>
- * Copyright 2009 Jakub Wieczorek <faw217@gmail.com>
- * Copyright 2009 Christopher Eby <kreed@kreed.org>
+ * Copyright © 2026-2027 Arktos Browser - IT-Space
+ * Copyright 2009 Arora Browser
+ * Copyright 2009 Arora Browser
+ * Copyright 2009 Arora Browser
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by

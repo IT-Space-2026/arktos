@@ -1,6 +1,7 @@
 /* 
  * QR Code generator library (C++)
  * 
+ * Copyright © 2026-2027 Arktos Browser - IT-Space
  * Copyright (c) Project Nayuki. (MIT License)
  * https://www.nayuki.io/page/qr-code-generator-library
  * 

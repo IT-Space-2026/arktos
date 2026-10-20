@@ -1,5 +1,6 @@
 /*
- * Copyright 2026 Benjamin C Meyer <ben@meyerhome.net>
+ * Copyright © 2026-2027 Arktos Browser - IT-Space
+ * Copyright 2026 Arora Browser
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
