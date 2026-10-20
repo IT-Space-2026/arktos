@@ -351,7 +351,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | WKB03 | WebKit-lane research: SOCKS5/Tor audit — WebKitNetworkProxySettings surface + leak vectors + test methodology — details below | done | 1 | .devin/WEBKIT-TOR.md — proxy settings are per-WebKitNetworkSession (= per-profile Tor scope OK, no per-tab); socks:// = socks5-first with remote DNS (ATYP=domainname); 12 leak vectors enumerated (WebRTC ICE UDP + DNS prefetch are the deciding risks, both pref-gated); loopback fixture spec (non-resolvable .leakcheck.test + socks/http/stun loggers + LD_PRELOAD resolver shim) with C1–C15 verbatim checklist + positive controls; verdict: conditional candidate, Tor stays Chromium-locked until WK21 executes |
 | WKB05 | WebKit-lane packaging strategy — how the WPE .so set ships inside our deb/rpm/flatpak + dep-manifest script — details below | done | 1 | .devin/WEBKIT-PACKAGING.md + .devin/wpe-deps.sh — measured on live ~/wpe sid-2.54.1: 72-file closure ~223M, floor GLIBC_2.43; deb/rpm = bundle under /usr/lib/arktos/wpe (noble ships no WPE, Fedora COPR-only, TW 2.52<floor), flatpak = in-manifest source build (KDE 6.11 glibc 2.42 kills sid binaries); staged diffs in doc; selftest+scan verified |
 | MRG01 | Post-merge integration A — default-flavor build+link (webengine+servo) on merged master — details below | done | 0 | clean make -j4 build+link on merged master — arktos links host ld.so, 0 WPE, --quit-after-load rc=0; merge-artifact fixes folded in (avatar reload after wipe, Q_UNUSED, offscreen test fixes, ENGINE.md ledger); pre-reslice webkit=1 gates+suite evidence in details for MRG05/06 reuse |
-| MRG05 | Post-merge integration B — `make check` 4 gates + focused extension/engine autotest legs on the default build — details below | in_progress | 0 | needs:task:MRG01 |
+| MRG05 | Post-merge integration B — `make check` 4 gates + focused extension/engine autotest legs on the default build — details below | done | 0 | 4 gates PASS (warnings 0 diags, supplychain clean, engine-audit 185 files, rustcov 94.11/91.83/89.25 >=85); suite 2210p/2f/42s over 96 binaries — both reds load flakes re-verified standalone; focused legs green: extensionmanager 48/0/4 (nav-lock+ER20 lift+relay+actionPopup together), engineswitch 27/0/18, engine-audit gate |
 | MRG06 | Post-merge integration C — webkit=1 three-engine build+link + webkit legs (source webkit-env.sh) — details below | pending | 0 | needs:task:MRG05 |
 | MRG07 | Post-merge leak sweep A — ASan/LSan churn on extension merge seams (ExtensionChromePage popup/probe cycles, relay PortEnd register/expire at caps) — details below | pending | 0 | needs:task:MRG05 |
 | MRG08 | Post-merge leak sweep B — ASan/LSan per-backend EngineTab churn on merged master (webengine+servo, webkit when built) — details below | pending | 0 | needs:task:MRG05 |
@@ -2356,6 +2356,52 @@ Post-merge integration B — gates + focused legs on the default build.
 
 Verify: 4 gates PASS; focused legs green or individually
 diagnosed; pass counts in row notes.
+
+Run evidence (2026-10-20) — default flavor (webengine+servo; src
+Makefile carries no ARKTOS_WEBKIT, in-tree objects all postdate the
+flavor switch):
+
+- Gates: check-warnings PASS resumed via
+  ARKTOS_WARN_BUILD=/tmp/arktos-warn.xtKOCE (that tree already
+  contained every MRG01 source fix — diff vs HEAD = generated
+  qrc/moc only; log had 0 diagnostics, resume make was a no-op).
+  check-supplychain PASS all crates.  check-engine-audit PASS —
+  185 QtWebEngine-referencing files (79 whitelisted, rest
+  documented).  check-rustcoverage PASS — adblock/rust 94.11%,
+  rustcore 91.83%, rustdl 89.25% (gate 85), identical to the
+  pre-reslice webkit run.
+- Suite: 2210 passed / 2 failed / 42 skipped over 96 binaries
+  (vs 2229/1/24 on the webkit=1 run — the pass/skip delta is the
+  webkit legs correctly self-skipping without the backend).
+- Red #1: tst_ExtensionManager::extensionWebRequest — QTestLib
+  30s wait exhausted ("30000 ms would have been sufficient this
+  time"); the leg ran while cargo llvm-cov instrumented builds
+  were still saturating the box (make -j4 parallel gate deps).
+  Standalone: PASS in 4.4s; full binary standalone 48/0/4.
+  Load flake, not a merge artifact.
+- Red #2: tst_SchemeHandlers::fileSchemeErrors —
+  loadAndFail(arktos-file:// plain.txt) timed out waiting for
+  LoadFailed; the scheme handler response is queued to the GUI
+  thread (MIG04) and starved under the same load.  Standalone:
+  PASS in 272ms.  It also passed in the pre-reslice webkit
+  suite run.  Load flake.
+- Focused legs on the merged seams, all standalone green:
+  tst_extensionmanager 48 passed / 0 failed / 4 skipped
+  (ARKTOS_EXTTEST_DIR-gated) — extensionChromeNavLock (SEC26
+  nav-lock AND the ER20 JavascriptEnabled lift asserted
+  together), extensionMessageRelay PortEnd legs,
+  actionPopupSelfWires + extensionPopupContext popup legs,
+  extensionPageAgent, all runtime/host legs.
+  tst_engineswitch 27 passed / 0 failed / 18 skipped — swap*
+  and engineTab* legs (the servo multi-view surface) all green;
+  the 18 skips are the webkit* legs correctly skipping on the
+  two-engine build (MRG06's job).
+  engine-audit leg = the check-engine-audit gate above.
+- Note for MRG06: nothing here blocks the webkit=1 flavor;
+  rerun warnings-gate fresh (xtKOCE is consumed-kept but its
+  objects are no-rust, fine to resume again) and expect the
+  same two load-sensitive legs to flake if the suite runs
+  alongside cargo builds.
 
 ### MRG06
 
