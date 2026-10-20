@@ -4534,3 +4534,15 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   a remote article can no longer open local files or directories in
   your tab. Ordinary http/https/mailto links, relative links, images
   and inline data: images are unaffected.
+- PDF viewing now fails closed (SEC29): a document the sanitizer
+  refuses — or a download that dies mid-body, including one the
+  server aborts on purpose — shows an error page instead of silently
+  reloading the original, unsanitized URL in the built-in viewer.
+  The sanitize pass also strips remote-document jumps (GoToR/GoToE/
+  Thread), rich-media and 3D actions, FileAttachment and media
+  annotation payloads, and embedded files hidden inside annotation
+  file specs; leftover orphan objects (stale incremental-update
+  bodies, payload files nothing references anymore) are dropped
+  from the rewritten file entirely instead of being carried through
+  byte-for-byte. Pages a non-PDF .pdf link actually serves (error
+  pages, redirects) still render as their true type.

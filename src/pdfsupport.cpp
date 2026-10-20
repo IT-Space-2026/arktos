@@ -272,7 +272,10 @@ void PdfSanitizeFetch::handleStateChanged(
         break;
     case QWebEngineDownloadRequest::DownloadInterrupted:
     case QWebEngineDownloadRequest::DownloadCancelled:
-        fail();
+        // SEC29: a dead transfer gets no raw reload — the endpoint
+        // can force that path itself (abort mid-body) and would
+        // serve the second, unsanitized fetch to the engine viewer.
+        refuse();
         break;
     default:
         break;
@@ -331,6 +334,11 @@ void PdfSanitizeFetch::serveBytes(const QByteArray &raw)
                 return;
             }
         }
+        // SEC29: fail closed — a document the rewrite pass or the
+        // staged write refused never reaches a viewer; showing the
+        // standard error page keeps the tab out of the raw path.
+        refuse();
+        return;
     }
     fail();
 }
@@ -345,9 +353,20 @@ void PdfSanitizeFetch::fail()
     dispose();
 }
 
+void PdfSanitizeFetch::refuse()
+{
+    QFile::remove(m_rawPath);
+    if (m_page) {
+        m_page->showErrorPage(m_url, tr(
+            "This PDF could not be verified safe to display "
+            "and was not opened."));
+    }
+    dispose();
+}
+
 void PdfSanitizeFetch::handleTimeout()
 {
-    fail();
+    refuse();
 }
 
 void PdfSanitizeFetch::dispose()

@@ -220,10 +220,14 @@ browsing profile:
   rust-enabled builds the bytes are first fetched through the page's
   own profile (cookies, Tor SOCKS routing and container isolation
   ride along) and rewritten by a Rust policy pass that strips
-  JavaScript, /Launch and auto-actions, embedded files and
-  XFA/AcroForm submit remnants before the renderer ever sees them;
-  embedded links to local files are refused. Chromium's built-in
-  PDFium viewer remains an opt-in Settings fallback. Saving a PDF to
+  JavaScript, /Launch and auto-actions, remote-document and
+  rich-media actions, embedded files (including FileAttachment
+  annotation payloads) and XFA/AcroForm submit remnants before the
+  renderer ever sees them; embedded links to local files are
+  refused. A document the rewrite refuses — or a fetch that dies
+  mid-body — fails closed on an error page; raw bytes are never
+  handed to a viewer as a fallback. Chromium's built-in PDFium
+  viewer remains an opt-in Settings fallback. Saving a PDF to
   disk still stores the original, unsanitized bytes — sanitization
   applies to in-browser viewing only.
 - **Filesystem sandbox** — browsing sessions re-exec inside a

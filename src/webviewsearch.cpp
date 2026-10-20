@@ -21,6 +21,7 @@
 #include "webviewsearch.h"
 
 #include "pdfview.h"
+#include "webpage.h"
 
 #include <qevent.h>
 #include <qlayout.h>
@@ -155,6 +156,17 @@ void WebViewWithSearch::showPdfDocument(const QString &localPath,
         connect(m_pdfView, &PdfView::documentReady, this,
                 [this]() {
             emit m_webView->titleChanged(m_pdfView->documentTitle());
+        });
+        // SEC29: a staged doc the rasterizer cannot open fails
+        // closed too — drop back to the engine surface and show the
+        // refusal instead of a silent blank overlay.
+        connect(m_pdfView, &PdfView::documentFailed, this,
+                [this](const QString &) {
+            const QUrl source = m_pdfView->sourceUrl();
+            clearPdfDocument();
+            if (m_webView->webPage())
+                m_webView->webPage()->showErrorPage(source, tr(
+                    "This PDF could not be displayed."));
         });
     }
     m_pdfView->setDocument(localPath, sourceUrl);

@@ -1523,6 +1523,17 @@ void WebView::showPdfDocument(const QString &localPath,
         m_pdfView->setAttribute(Qt::WA_DeleteOnClose, false);
         connect(m_pdfView, &PdfView::reloadRequested, this,
                 [this](const QUrl &url) { loadUrl(url); });
+        // SEC29: a staged doc the rasterizer cannot open fails
+        // closed — the floating view dies and the error page states
+        // the refusal.
+        connect(m_pdfView, &PdfView::documentFailed, this,
+                [this](const QString &) {
+            const QUrl source = m_pdfView->sourceUrl();
+            m_pdfView->hide();
+            if (m_page)
+                m_page->showErrorPage(source,
+                    tr("This PDF could not be displayed."));
+        });
     }
     m_pdfView->setDocument(localPath, sourceUrl);
     m_pdfView->resize(size());

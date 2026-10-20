@@ -20175,7 +20175,8 @@ int main(int argc, char **argv)
     // sanitized, and displayed from the managed temp dir; a save-as
     // download of the same url keeps raw bytes; sanitize off reverts
     // to the raw viewer; a non-PDF body on a .pdf url falls back to
-    // the real response.  Exits 0 on PASS.
+    // the real response; a corrupt body that looks like a PDF fails
+    // closed — refused, never reloaded raw.  Exits 0 on PASS.
     if (args.contains(QLatin1String("--pdf-smoke"))) {
         // PDF01's assertions cover the engine-viewer hand-off —
         // PDF02's shell view is pinned off here so the staged
@@ -20189,7 +20190,9 @@ int main(int argc, char **argv)
 
         // Adversarial fixture: structurally valid PDF whose page tree
         // still renders, carrying JS, auto-exec triggers, a Launch
-        // action, embedded files, XFA and a remote-submit action.
+        // action, embedded files, XFA, a remote-submit action, an
+        // external-document go-to, a FileAttachment payload annot and
+        // a RichMedia annot.
         const QByteArray pdfBytes = []() {
             const QList<QByteArray> objs = {
                 "<< /Type /Catalog /Pages 2 0 R /OpenAction 5 0 R"
@@ -20200,7 +20203,7 @@ int main(int argc, char **argv)
                 "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200]"
                 " /Resources << /Font << /F1 << /Type /Font"
                 " /Subtype /Type1 /BaseFont /Helvetica >> >> >>"
-                " /Contents 4 0 R /Annots [9 0 R] >>",
+                " /Contents 4 0 R /Annots [9 0 R 11 0 R 12 0 R 13 0 R] >>",
                 "<< /Length 30 >>\nstream\nBT /F1 12 Tf 10 100 Td (x) Tj ET\nendstream",
                 "<< /Type /Action /S /JavaScript /JS (app.alert('pwned')) >>",
                 "<< /Type /Action /S /Launch /F (calc.exe) >>",
@@ -20208,6 +20211,14 @@ int main(int argc, char **argv)
                 "<< /Type /Action /S /SubmitForm /F (http://e/c) >>",
                 "<< /Subtype /Link /Rect [0 0 9 9] /A 6 0 R >>",
                 "<< /Type /EmbeddedFile /Length 4 >>\nstream\nevil\nendstream",
+                "<< /Subtype /Link /Rect [0 0 9 9]"
+                " /A << /S /GoToR /F (http://e/r.pdf) >> >>",
+                "<< /Subtype /FileAttachment /Rect [0 0 9 9]"
+                " /FS << /Type /FileSpec /F (e.exe)"
+                " /EF << /F 10 0 R >> >> >>",
+                "<< /Subtype /RichMedia /Rect [0 0 9 9]"
+                " /RichMediaContent << /Assets"
+                " << /Names [(a) 10 0 R] >> >> >>",
             };
             QByteArray out("%PDF-1.4\n");
             QList<int> offsets;
@@ -20230,6 +20241,11 @@ int main(int argc, char **argv)
         const QList<QByteArray> dangerNeedles = {
             "JavaScript", "Launch", "OpenAction", "EmbeddedFiles",
             "XFA", "SubmitForm", "app.alert", "pwned",
+            // SEC29 legs: external-document actions, the annot-level
+            // attachment surface, and the payload bytes themselves —
+            // dead objects are garbage-collected out of the output.
+            "GoToR", "FileAttachment", "RichMedia", "FileSpec",
+            "EmbeddedFile", "evil",
         };
 
         // (c) unit-level rewrite pass.
@@ -20296,6 +20312,12 @@ int main(int argc, char **argv)
         check(QStringLiteral("tor profile is off the record"),
               torProf->isOffTheRecord());
 
+        // Looks like a PDF (magic inside the first KiB) but has no
+        // parseable structure — the sanitizer refuses it, and the
+        // pipeline must refuse too rather than reload the raw url.
+        const QByteArray corruptBytes(
+            "%PDF-1.4\n%corrupt body with no objects and no xref\n");
+
         // (b)+(d) end-to-end over loopback.
         QTcpServer *server = new QTcpServer(&application);
         if (!server->listen(QHostAddress::LocalHost)) {
@@ -20305,11 +20327,11 @@ int main(int argc, char **argv)
         const quint16 port = server->serverPort();
         auto hits = std::make_shared<QHash<QString, int>>();
         QObject::connect(server, &QTcpServer::newConnection,
-                         &application, [server, hits, pdfBytes]() {
+                         &application, [server, hits, pdfBytes, corruptBytes]() {
             QTcpSocket *client = server->nextPendingConnection();
             auto *buffer = new QByteArray;
             QObject::connect(client, &QTcpSocket::readyRead, client,
-                             [client, hits, pdfBytes, buffer]() {
+                             [client, hits, pdfBytes, corruptBytes, buffer]() {
                 *buffer += client->readAll();
                 // The request head must arrive whole before the
                 // path is parsed — TCP may deliver the header in
@@ -20331,9 +20353,9 @@ int main(int argc, char **argv)
                     ? tokens.at(1) : QByteArray();
                 (*hits)[QString::fromLatin1(path)] += 1;
                 QByteArray body, mime;
-                if (path == "/doc.pdf") {
+                if (path == "/doc.pdf" || path == "/corrupt.pdf") {
                     mime = "application/pdf";
-                    body = pdfBytes;
+                    body = path == "/doc.pdf" ? pdfBytes : corruptBytes;
                 } else {
                     mime = "text/html";
                     body = "<html><head><title>fake-pdf-landing</title>"
@@ -20349,6 +20371,7 @@ int main(int argc, char **argv)
         });
         const QUrl pdfUrl(QStringLiteral("http://127.0.0.1:%1/doc.pdf").arg(port));
         const QUrl fakeUrl(QStringLiteral("http://127.0.0.1:%1/fake.pdf").arg(port));
+        const QUrl corruptUrl(QStringLiteral("http://127.0.0.1:%1/corrupt.pdf").arg(port));
         const QString downloadDir = QDir::temp().filePath(
             QStringLiteral("arktos-pdf-smoke-%1").arg(QCoreApplication::applicationPid()));
 
@@ -20368,7 +20391,7 @@ int main(int argc, char **argv)
         };
         QObject::connect(poll, &QTimer::timeout, &application,
             [&, phase, gotLoad, ticks, hits, pdfUrl, fakeUrl,
-             downloadDir, dangerNeedles, server]() {
+             corruptUrl, downloadDir, dangerNeedles, server]() {
             if (++*ticks > 200) {   // ~60s ceiling
                 qInfo() << "pdf-smoke: FAIL (timeout in phase" << *phase
                         << ") url:" << view->url();
@@ -20483,6 +20506,30 @@ int main(int argc, char **argv)
                 check(QStringLiteral("non-pdf fallback renders html"),
                       view->title().contains(
                           QLatin1String("fake-pdf-landing")));
+                *gotLoad = false;
+                *phase = 4;
+                view->loadUrl(corruptUrl);
+                return;
+            }
+            case 4: {
+                // SEC29 fail-closed: a body that looks like a PDF but
+                // cannot be sanitized is refused — the standard error
+                // page shows under the url and no raw reload reaches
+                // the engine viewer (the raw fallback would land a
+                // second request and commit the viewer instead).
+                if (view->url() != corruptUrl || !*gotLoad)
+                    return;
+                check(QStringLiteral("unsanitizable pdf refused"),
+                      view->title().contains(
+                          QLatin1String("Error loading page")));
+                const int corruptHits =
+                    hits->value(QLatin1String("/corrupt.pdf"));
+                qInfo() << "pdf-smoke: corrupt.pdf hits:" << corruptHits;
+                // Exactly one fetch: the server always answers
+                // fully, so a second hit can only be the old
+                // one-shot raw reload.
+                check(QStringLiteral("no raw reload on sanitize fail"),
+                      corruptHits == 1);
                 finish(true);
                 return;
             }
@@ -20518,6 +20565,12 @@ int main(int argc, char **argv)
     //       while the engine page never touches the staged file.
     // Exits 0 on PASS.
     if (args.contains(QLatin1String("--pdfview-smoke"))) {
+        // The e2e leg asserts the SHELL view opens — pin the toggle
+        // it depends on; a stale false (e.g. persisted by a prior
+        // --pdf-smoke run under the shared test profile) otherwise
+        // degrades the pipeline to the file:// viewer and dead-ends
+        // the leg on a missing pdfView().
+        ProfileSettings().setValue(QLatin1String("privacy/pdfShellView"), true);
         bool ok = true;
         const auto check = [&ok](const QString &what, bool pass) {
             qInfo() << "pdfview-smoke:" << (pass ? "PASS" : "FAIL")
@@ -20766,9 +20819,12 @@ int main(int argc, char **argv)
 
             // Ctrl+F on the view opens the find bar; typing runs an
             // async find; next/prev walk hits; Escape closes.
+            // pressKey, not sendEvent: the window-level Find
+            // shortcut eats the sent event before the widget sees
+            // it, same as the Escape leg below.
             QKeyEvent ctrlF(QEvent::KeyPress, Qt::Key_F,
                             Qt::ControlModifier);
-            QApplication::sendEvent(pdf, &ctrlF);
+            pdf->pressKey(&ctrlF);
             // The toolbar spin box/combo also carry QLineEdits — the
             // find bar's is the one with the placeholder text.
             QLineEdit *findEdit = nullptr;
@@ -20945,7 +21001,13 @@ int main(int argc, char **argv)
         const auto finish = [&application, poll, &ok](bool pass) {
             poll->stop();
             qInfo() << "pdfview-smoke:" << (pass && ok ? "PASS" : "FAIL");
-            application.exit(pass && ok ? 0 : 1);
+            // The verdict is already printed — skip Qt teardown
+            // entirely.  The offscreen render path never initialized
+            // (no Vulkan/GLX), so ~QQuickWidget for the engine's
+            // RWHV delegate derefs a dead render control whenever it
+            // runs, however early it's scheduled.
+            fflush(nullptr);
+            ::_exit(pass && ok ? 0 : 1);
         };
         QObject::connect(poll, &QTimer::timeout, &application,
             [&, ticks, dangerNeedles]() {

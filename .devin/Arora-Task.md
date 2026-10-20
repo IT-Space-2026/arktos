@@ -372,7 +372,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | SESS01 | Session restore × engine/container matrix: engine-tagged tab on a webkit=0 build, lazy restore inside container level/group, restore racing an active container filter — details below | done | 0 | engine-tagged tabs now serialize (were silently dropped) and restore natively or degrade to a WebEngine tab at the flat url; lazy restores keep container/group bindings + dressed hidden records, the saved active header wins (incl explicit ""), OTR never holds a pending record; rustcore v3 adds pinned/title/activeContainer with v1/v2 back-compat. Verified: tst_tabwidget 43/43 incl 4 new matrix legs, cargo session tests green, offscreen --disable-gpu |
 | TAB04 | Private tabs get thumbnails: captureTabThumbnail/scheduleThumbnailCapture have no OTR check — private page pixels land in m_tabThumbnails + hover previews. Skip capture+preview for OTR views — details below | done | 0 | OTR early-outs on captureTabThumbnail/scheduleThumbnailCapture/tabThumbnail (serve returns null → title+url card; stale entry purged), carryKeyedState refuses the pixmap on cross-window moves — verified: build 0 warnings, tst_tabwidget 44/44 incl new otrTabThumbnails leg, --quit-after-load rc=0 offscreen --disable-gpu |
 | SEC27 | Reader-mode sanitizer audit: readersanitizer.cpp — article HTML into a chrome-adjacent context; allowlist gaps = XSS — details below | done | 0 | 4 real fixes: meta-CSP on both render paths (probed: setHtml doc gets SOURCE origin — scripts/handlers/js-navs now dead, app runJavaScript unaffected), href-class scheme allowlist (file/blob/qrc/chrome/about dropped — blob:href was stored-HTML-in-source-origin on click), resource allowlist (file/blob dead), SMIL anim elements transparent, xml:base+cite covered, overlay file: routing gated to local articles — verified: CSP probe + readerSanitizer + readerModeContent 5/5 + reader-smoke all PASS; report .devin/security/SEC27-report.md |
-| SEC29 | PDF sanitize-pipeline audit: pdfsanitize.rs + pdfworker.cpp — verify the "sanitized before view" claim, fail-closed on unsanitizable files — details below | pending | 0 | |
+| SEC29 | PDF sanitize-pipeline audit: pdfsanitize.rs + pdfworker.cpp — verify the "sanitized before view" claim, fail-closed on unsanitizable files — details below | done | 0 | 4 real fixes: fail-open raw reload on sanitize/transfer failure closed (refuse()→error page, no bypass), GoToR/GoToE/GoToDp/Thread/RichMediaExecute/GoTo3DView actions stripped, /EF FileSpec payloads + FileAttachment/RichMedia/Screen/Sound/Movie/3D annots dropped, trailer-rooted reachability sweep drops orphan/incremental bodies — verified: cargo pdfsanitize 5/5, --pdf-smoke + --pdfview-smoke PASS offscreen; report .devin/security/SEC29-report.md |
 | SEC28 | Vault crypto coverage check: confirm VSEC01 audited KDF params + seal/unseal of the credential/autofill stores, not just the FFI seam — fill any gap — details below | pending | 0 | |
 | CONC01 | Concurrent store writers: two windows writing bookmarks.xbel + history.db — xbel write atomicity across windows, SQLite writer contention — details below | pending | 0 | |
 | INFRA01 | taskloop task-file race: runner read-modify-write clobbers concurrent edits (lost-update hit twice today) — flock around the row update — details below | pending | 0 | |
@@ -3573,6 +3573,13 @@ output is byte-structural or a lossy raster/flatten, and that an
 unsanitizable file fails closed (refuses view, does not pass the
 raw bytes through).  Fix real bypasses in-task; document residual
 limits honestly.
+
+Outcome: structural lopdf rewrite confirmed (not raster/flatten);
+4 bypasses found + fixed — fail-open raw reload (incl. endpoint-
+forced mid-body abort), surviving external-document actions,
+/EF FileSpec payloads + payload annots, orphan objects reserialized
+into output.  Full audit + residual limits:
+.devin/security/SEC29-report.md
 
 ### SEC28
 

@@ -193,6 +193,13 @@ public:
     // current url.
     void setInjectedScriptsEnabled(bool enabled);
 
+    // Renders the translated not-found page under url — the generic
+    // chrome surface for a navigation that must show a failure:
+    // engine load errors, HTTPS-downgrade notices, and SEC29's
+    // fail-closed refusal of an unsanitizable document.
+    void showErrorPage(const QUrl &url, const QString &errorString,
+                       bool httpsUpgradeFailed = false);
+
     // POPUP01: pop-up attempts refused on the current document — the
     // count (every rejected createWindow) and the target urls the
     // dead-end probe pages captured, which the indicator offers for
@@ -257,8 +264,6 @@ private:
     // autofill token consistent with the bridge when both fire for
     // one load.
     void schedulePageScripts(const QUrl &url);
-    void showErrorPage(const QUrl &url, const QString &errorString,
-                       bool httpsUpgradeFailed = false);
     void confirmAndOpenExternalUrl(const QUrl &url);
     void handleCertificateError(QWebEngineCertificateError error);
     QString certificateErrorHtml(const QWebEngineCertificateError &error);

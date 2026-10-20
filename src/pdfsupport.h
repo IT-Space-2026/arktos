@@ -51,9 +51,14 @@ class WebPage;
 //     the embedder API does not expose pre-body;
 //   * POST responses — a re-fetch cannot replay the body.
 //
-// On fetch or sanitizer failure the pipeline records a one-shot
-// bypass and loads the original URL raw — a malformed "PDF" then
-// renders as its true type rather than dead-ending the tab.
+// On sanitizer failure the pipeline fails closed: the tab shows the
+// standard error page and raw bytes never reach a viewer.  A body
+// that provably is not a PDF at all still takes the one-shot raw
+// bypass — it renders as its true type rather than dead-ending the
+// tab.  Fetch interruption/cancellation/timeout also refuse rather
+// than retry raw: an endpoint could abort the staging download
+// itself and serve the second, unsanitized fetch straight to the
+// engine viewer.
 namespace PdfSupport {
 
 // privacy/pdfViewer — Chromium's built-in PDFium viewer, default on.
@@ -125,8 +130,12 @@ private:
     void attach(QWebEngineDownloadRequest *request);
     void handleCompleted();
     void serveBytes(const QByteArray &raw);
-    // Records the one-shot bypass and reloads the original url raw.
+    // Records the one-shot bypass and reloads the original url raw —
+    // only for bodies that provably are not PDFs.
     void fail();
+    // Fail-closed terminal state: drop the staged bytes and show the
+    // standard error page under the refused url.
+    void refuse();
     void dispose();
 
     static QList<PdfSanitizeFetch *> s_pending;
