@@ -25,7 +25,9 @@
 #include "profilevault.h"
 #include "vaultdialogs.h"
 
+#include <qdebug.h>
 #include <qdialogbuttonbox.h>
+#include <qevent.h>
 #include <qfile.h>
 #include <qfiledialog.h>
 #include <qfileinfo.h>
@@ -542,10 +544,41 @@ void ProfileManagerDialog::deleteSelected()
                nullptr, windows));
     if (dialog.exec() != QDialog::Accepted)
         return;
-    if (!m_store->deleteProfile(id))
-        QMessageBox::warning(this, tr("Delete Profile"),
-                             tr("The profile could not be deleted — "
-                                "its data folder may still be in use."));
+
+    // The title promised the bound windows close — make it true.
+    // ProfileStore::deleteProfile refuses while any window is still
+    // bound (its stores would otherwise flush into the deleted tree),
+    // so they must be destroyed before the store call.  deleteLater,
+    // not close(): the confirm above already holds the user's consent
+    // and a per-window prompt chain mid-delete is the worse UX; the
+    // destructor still runs the session auto-save flush.
+    // Capture everything the tail needs BEFORE the flush — this
+    // dialog is a child of the window that opened the manager, and
+    // when that window is itself bound to the persona, the flush
+    // destroys the dialog mid-method.
+    ProfileStore *store = m_store;
+    QPointer<ProfileManagerDialog> self(this);
+    if (BrowserApplication *application =
+            BrowserApplication::instance()) {
+        const QList<BrowserMainWindow *> bound =
+            application->mainWindows();
+        for (BrowserMainWindow *window : bound) {
+            if (window && window->profileId() == id)
+                window->deleteLater();
+        }
+    }
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    if (!store->deleteProfile(id)) {
+        if (self) {
+            QMessageBox::warning(
+                self, tr("Delete Profile"),
+                tr("The profile could not be deleted — "
+                   "its data folder may still be in use."));
+        } else {
+            qWarning() << "profilemanager: delete of persona" << id
+                       << "failed after its windows were closed";
+        }
+    }
 }
 
 void ProfileManagerDialog::openWindow()

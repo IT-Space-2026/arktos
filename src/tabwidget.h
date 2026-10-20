@@ -246,6 +246,12 @@ public:
     // level, so window-close confirmations must use this or filtered
     // levels would silently close without warning.
     int totalTabCount() const;
+    // Closes every tab bound to containerId — the visible strip, the
+    // detached rows of filtered-out levels AND collapsed-group hidden
+    // members — so ContainerManager::deleteContainer's no-live-pages
+    // contract is actually met.  Returns the number closed; the
+    // widgets die via deleteLater like any closed tab.
+    int closeTabsInContainer(const QString &containerId);
     void setActiveContainerHeader(const QString &containerId);
     // Drag-reorder of the level-1 headers (the default header is
     // pinned first and cannot move).
@@ -684,7 +690,10 @@ private:
     QString m_activeContainerHeader;
     QStringList m_containerHeaderOrder;
     QHash<QString, QList<HiddenGroupTab>> m_containerHidden;
-    QHash<QString, WebView*> m_lastActiveInHeader;
+    // QPointer values: a level's remembered tab can die off-strip
+    // (closeHiddenPage, a container sweep) — the entry self-nulls
+    // instead of landing the next header switch on a dead view.
+    QHash<QString, QPointer<WebView>> m_lastActiveInHeader;
     bool m_containerFilterAdjust = false;
 
     // TABS04: the pinned set, keyed on the tab's page widget (the

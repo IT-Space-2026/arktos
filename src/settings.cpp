@@ -77,6 +77,7 @@
 #include "browsertheme.h"
 #include "containermanager.h"
 #include "cookiedialog.h"
+#include "devtoolswindow.h"
 #include "cookieexceptionsdialog.h"
 #include "cookiejar.h"
 #include "domainblocklist.h"
@@ -92,6 +93,7 @@
 #include "networkaccessmanager.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
+#include "pipwindow.h"
 #include "popupblocker.h"
 #include "privacyrequestinterceptor.h"
 #include "profilemanagerdialog.h"
@@ -143,8 +145,10 @@
 #include <qtreewidget.h>
 #include <qtoolbutton.h>
 #include <qboxlayout.h>
+#include <qwebenginepage.h>
 #include <qwebengineprofile.h>
 #include <qwebenginesettings.h>
+#include <qwebengineview.h>
 
 SettingsDialog::SettingsDialog(QWidget *parent)
     : QWidget(parent)
@@ -3946,18 +3950,15 @@ void SettingsDialog::containerRemove()
     const QString name = manager->containerForId(id).name;
 
     // deleteContainer() requires every page on the container profile
-    // closed first — count the live tabs across all windows so the
-    // warning can name the collateral.
+    // closed first — count the live tabs across all windows (visible
+    // strip, filtered-out levels and collapsed-group hidden members
+    // alike) so the warning can name the collateral.
     int openTabs = 0;
     const QWidgetList widgets = qApp->allWidgets();
     for (QWidget *widget : widgets) {
         const TabWidget *tabs = qobject_cast<TabWidget*>(widget);
-        if (!tabs)
-            continue;
-        for (int i = 0; i < tabs->count(); ++i) {
-            if (tabs->containerIdForTab(i) == id)
-                ++openTabs;
-        }
+        if (tabs)
+            openTabs += tabs->containerTabCount(id);
     }
 
     QString text = tr("Delete the container \"%1\"? All site data "
@@ -3974,16 +3975,34 @@ void SettingsDialog::containerRemove()
     if (box.exec() != QMessageBox::Yes)
         return;
 
-    // Close from the back of each tab widget so indices stay valid;
-    // the manager's no-live-pages contract is then satisfied.
-    for (QWidget *widget : widgets) {
+    // Re-collect — the modal confirm let windows die or spawn in the
+    // meantime, so the pre-prompt snapshot may hold stale pointers.
+    const QWidgetList liveWidgets = qApp->allWidgets();
+    // The auxiliary profile-bound pages are not tabs: a PiP window
+    // outlives its source view (closing only disables return-to-tab)
+    // and an inspector pointed at a container page carries its own
+    // page on the same profile.  Close them first — after the tab
+    // sweep their sources are gone.
+    QWebEngineProfile *boundProfile = manager->profileIfCreated(id);
+    for (QWidget *widget : liveWidgets) {
+        PipWindow *pip = qobject_cast<PipWindow*>(widget);
+        if (pip && boundProfile && pip->playerView()
+            && pip->playerView()->page()
+            && pip->playerView()->page()->profile() == boundProfile)
+            pip->close();
+    }
+    if (DevToolsWindow *inspector = DevToolsWindow::instance()) {
+        if (boundProfile && inspector->view()->page()
+            && inspector->view()->page()->profile() == boundProfile)
+            inspector->close();
+    }
+    for (QWidget *widget : liveWidgets) {
         TabWidget *tabs = qobject_cast<TabWidget*>(widget);
         if (!tabs)
             continue;
-        for (int i = tabs->count() - 1; i >= 0; --i) {
-            if (tabs->containerIdForTab(i) == id)
-                tabs->closeTab(i);
-        }
+        // The sweep can take the whole window (and its TabWidget)
+        // down mid-pass via lastTabClosed — the widget itself guards.
+        tabs->closeTabsInContainer(id);
     }
     manager->deleteContainer(id);
 }

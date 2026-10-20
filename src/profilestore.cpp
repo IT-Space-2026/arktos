@@ -408,9 +408,15 @@ bool ProfileStore::deleteProfile(const QString &id)
         // before the dir removal so the managers' final flushes land
         // inside the tree that is about to be removed rather than
         // recreating it.  releasePersona() refuses while a window is
-        // still bound to the id; the removal below then proceeds with
-        // the instances still attached, as it always did.
-        BrowserProfile::releasePersona(id);
+        // still bound to the id — CONT01: honor it.  Removing the
+        // data dir under live stores would leave the still-alive
+        // managers (history, sessions, container registry, the named
+        // engine profile) flushing into a deleted tree — a zombie
+        // profile dir that reappears behind the wipe.  Callers that
+        // promise "windows will close" must destroy the bound
+        // windows first.
+        if (!BrowserProfile::releasePersona(id))
+            return false;
         if (QFile::exists(dir) && !QDir(dir).removeRecursively())
             return false;
         const ProfileContext removed = m_profiles.at(i);

@@ -41,6 +41,7 @@
 #include <qapplication.h>
 #include <qdebug.h>
 #include <qdir.h>
+#include <qevent.h>
 #include <qfile.h>
 #include <qfileinfo.h>
 #include <qhash.h>
@@ -329,6 +330,13 @@ bool releasePersona(const QString &profileId)
     // Custody hygiene: a dead persona's unlocked SecureStore key must
     // not outlive it.
     SecureStore::lock(id);
+    // Bound windows are gone by the check above, but auxiliary pages
+    // die by deleteLater (the DevTools/PiP windows' WA_DeleteOnClose
+    // fires on their source page's destroyed signal) — drain the
+    // queue so the engine profile never dies under live WebContents.
+    // The same flush class ContainerManager runs before its own
+    // profile deletions (CONT01).
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     // The engine profile last — its destruction tears down the
     // interceptor, scheme handlers and stores attached to it.
     delete s_personaProfiles.take(id);

@@ -368,7 +368,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | TAB01 | closeOtherTabs skips collapsed-group members: closing a group chip expands it mid-sweep, members land at i+1..i+n (already iterated) and survive — Chrome closes them. Fix: pre-expand collapsed groups before the loops, or close by view identity — details below | done | 0 | identity sweep: pre-expand collapsed groups + kill list of page widgets (strip + container-hidden stores), pinned+anchor exempt; closeHiddenPage(QWidget*) generalizes closeHiddenTab for non-web pages. Verified: build 0 warnings; tst_tabwidget 37/37 incl new closeOtherTabsCollapsedGroup (3 legs); --quit-after-load rc=0 offscreen --disable-gpu |
 | TAB02 | moveTabTo × collapsed group: dragging a chip to another window strands hidden members (leaderless group on source, lost member on target) + sibling bulk-index paths (close-to-right, window close) — details below | done | 0 | carry-the-run: chip drag transfers every member (strip + container-hidden stores) into a pre-created target group, fresh id keeps name/color, re-collapses with dragged tab still chip; tearTabToNewWindow no longer strands a window on refused move. Verified: tst_tabwidget 39/39 incl new collapsedChipTransfer + restoreGroupedTabUnderFilter legs; src build clean; --quit-after-load rc=0 offscreen --disable-gpu |
 | TAB03 | Deferred-deletion sweep: singleShot/invokeMethod lambdas capturing raw WebView*/Engine::Page* without QPointer guard — details below | done | 0 | QPointer guards on every deferred capture lacking a receiver context (download-settle watch, ext health-probe watchdog, file/abp job hops, OTR-autofill + sleep/browser/xsleak/bidi/reader/mv3/session smoke legs); engine-audit gate now rejects context-free singleShot/connect lambdas. Verified: build clean; otr-teardown 13/13, autofill/sleep/browser smokes PASS, tst_downloadmanager 46/46, tst_privatebrowsing 13/13, quit-after-load rc=0, gate PASS offscreen |
-| CONT01 | Container/profile teardown: deleting a container with bound tabs (incl. m_containerHidden strays) and restart-deleted profile vs queued signals — details below | pending | 0 | |
+| CONT01 | Container/profile teardown: deleting a container with bound tabs (incl. m_containerHidden strays) and restart-deleted profile vs queued signals — details below | done | 0 | all-stores tab sweep + PiP/DevTools close + deferred-delete flush before profile death; persona delete now closes bound windows & refuses under live bindings; restart-wipe retries roots — verified: tst_containermanager 37/37 (+3 legs), tst_profilemanager 9/9 (+leg), tabwidget/settingsdialog/profilemenu/profilewindow/privatebrowsing/profilee2e/memcycle green offscreen --disable-gpu |
 | SESS01 | Session restore × engine/container matrix: engine-tagged tab on a webkit=0 build, lazy restore inside container level/group, restore racing an active container filter — details below | pending | 0 | |
 | TAB04 | Private tabs get thumbnails: captureTabThumbnail/scheduleThumbnailCapture have no OTR check — private page pixels land in m_tabThumbnails + hover previews. Skip capture+preview for OTR views — details below | pending | 0 | |
 | SEC27 | Reader-mode sanitizer audit: readersanitizer.cpp — article HTML into a chrome-adjacent context; allowlist gaps = XSS — details below | pending | 0 | |
@@ -3422,6 +3422,57 @@ to containers and named profiles:
 
 Verify: autotest legs for delete-with-live-tabs and
 delete-while-hidden-members; nothing dangles, storage removed.
+
+Result (2026-10-20): the audit found three real holes and one
+ordering hazard, all fixed.
+
+- Bound tabs: SettingsDialog::containerRemove counted and closed
+  only count() — the visible level — leaving tabs parked in
+  m_containerHidden (filtered-out levels) and collapsed-group hidden
+  members alive on the doomed profile.  New
+  TabWidget::closeTabsInContainer sweeps all three stores (expands
+  bound collapsed groups, then closeTab / closeHiddenPage), and the
+  dialog now also closes PiP/DevTools windows bound to the same
+  profile — a PiP window outlives its source view, and an inspector
+  carries its own page on the inspected profile.  The confirm count
+  now uses containerTabCount (all stores).
+- Profile-vs-page ordering: deleteContainer / releaseProfileFor /
+  releaseFor did a bare `delete profile` while closeTab only
+  deleteLater's the view — a delete landing inside that window
+  destroyed the QWebEngineProfile under a live WebContents (the
+  PRIV10 OTR class).  All three paths now drain
+  QEvent::DeferredDelete first (twice — DevTools/PiP close on their
+  source page's destroyed signal mid-flush).  releasePersona got the
+  same flush before deleting the named engine profile.
+- Persona delete: ProfileManagerDialog's "windows will close" title
+  was a lie — nothing closed them; releasePersona refused and
+  deleteProfile removed the data dir anyway, leaving live stores
+  flushing into a deleted tree.  deleteSelected now deleteLater's
+  every bound window and flushes before the store call (locals are
+  captured first — the dialog can die with its parent window);
+  ProfileStore::deleteProfile now honors releasePersona's refusal
+  and returns false.
+- Restart wipe: queued callbacks/session saves/icon fetches die with
+  the arming process (the marker's pid is waited out, and the wipe
+  runs before any profile/WebContents is constructed — verified in
+  main.cpp ordering), but the exiting process's QtWebEngineProcess
+  child can hold files for a beat after its parent exits — a single
+  removeRecursively could leave the wiped tree half-back for the
+  fresh boot.  applyPendingProfileWipe now retries root removals
+  over a bounded window (removeStorageTree's pattern).
+- Stale bookkeeping: m_lastActiveInHeader is now
+  QHash<QString, QPointer<WebView>> — a level's remembered tab could
+  die off-strip (container sweep, closeHiddenPage) and the next
+  header switch would have landed on a dead view.
+
+Verified: qmake+make -j2 clean; tst_containermanager 37/37 with new
+legs deleteWithLiveTabs, deleteWithHiddenMembers (chip in the
+detached row + collapsed member + stray), deleteAfterPendingTabClose
+(proves the flush reaps the pending view before the profile dies);
+tst_profilemanager 9/9 with new deleteRefusesWithBoundWindow;
+regressions tabwidget 39/39, settingsdialog 58/58, profilemenu
+14/14, profilewindow 14/14, privatebrowsing 13/13, profilee2e 23/23,
+memcycle 9/9 — offscreen, QTWEBENGINE_CHROMIUM_FLAGS=--disable-gpu.
 
 ### SESS01
 

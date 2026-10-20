@@ -298,6 +298,14 @@ private slots:
     void twoLevelStripGroupStaysNested();
     void twoLevelStripHeaderReorder();
 
+    // CONT01 teardown: deleting a container with live pages — the
+    // visible-strip sweep, the filtered-out/collapsed hidden members,
+    // and the deferred-delete ordering vs a pending closeTab.  Every
+    // leg ends with nothing dangling and the storage tree gone.
+    void deleteWithLiveTabs();
+    void deleteWithHiddenMembers();
+    void deleteAfterPendingTabClose();
+
     // CONT04: site->container "always open" rules — persistence,
     // matching, and the navigation-time diversion.
     void siteRuleCrud();
@@ -1857,6 +1865,123 @@ void tst_ContainerManager::twoLevelStripHeaderReorder()
     widget.moveContainerHeader(2, 1);
     QCOMPARE(widget.containerHeaders(),
              (QStringList() << QString() << idB << idA));
+}
+
+// CONT01 teardown: deleting a container whose tabs sit on the visible
+// strip — the settings dialog's path: sweep the bound tabs, then
+// delete.  The sweep deleteLater's the pages; the manager's
+// deferred-delete flush must reap them before the profile dies.
+void tst_ContainerManager::deleteWithLiveTabs()
+{
+    ContainerManager *manager = ContainerManager::instance();
+    const QString id = create();
+    QPointer<QWebEngineProfile> profile = manager->profileFor(id);
+    QVERIFY(profile);
+    const QString storagePath = profile->persistentStoragePath();
+    QVERIFY(QDir(storagePath).exists());
+
+    TabWidget widget;
+    widget.newTab();
+    QPointer<WebView> plain = widget.currentWebView();
+    QPointer<WebView> boundA = widget.makeNewTabInContainer(id, true);
+    QPointer<WebView> boundB = widget.makeNewTabInContainer(id, false);
+    QVERIFY(plain && boundA && boundB);
+    QCOMPARE(widget.containerTabCount(id), 2);
+
+    QCOMPARE(widget.closeTabsInContainer(id), 2);
+    QCOMPARE(widget.containerTabCount(id), 0);
+    // The unbound tab is untouched — the sweep is a container
+    // identity pass, not a close-all.
+    QCOMPARE(widget.count(), 1);
+    QCOMPARE(widget.containerIdForTab(0), QString());
+
+    QVERIFY(manager->deleteContainer(id));
+    m_created.removeAll(id);
+    // Nothing dangles: the flush inside deleteContainer reaped the
+    // still-pending views before the profile died, and the storage
+    // tree is gone.
+    QVERIFY(!boundA);
+    QVERIFY(!boundB);
+    QVERIFY(plain);
+    QVERIFY(!profile);
+    QVERIFY(!QDir(storagePath).exists());
+}
+
+// CONT01 teardown: the strays the old visible-only sweep missed — a
+// collapsed group's chip detached into the container level's hidden
+// store, a member parked in the group's own hidden list, and a plain
+// filtered-out tab.  All three are live pages on the profile.
+void tst_ContainerManager::deleteWithHiddenMembers()
+{
+    QSettings().setValue(QLatin1String("tabs/containerDisplay"), 1);
+    ContainerManager *manager = ContainerManager::instance();
+    const QString id = create();
+    QPointer<QWebEngineProfile> profile = manager->profileFor(id);
+    QVERIFY(profile);
+    const QString storagePath = profile->persistentStoragePath();
+    QVERIFY(QDir(storagePath).exists());
+
+    TabWidget widget;
+    widget.newTab();
+    QPointer<WebView> chip = widget.makeNewTabInContainer(id, true);
+    QPointer<WebView> member = widget.makeNewTabInContainer(id, false);
+    QVERIFY(chip && member);
+    widget.groupTabWith(widget.webViewIndex(member),
+                        widget.webViewIndex(chip));
+    const QString gid = widget.tabGroupId(widget.webViewIndex(chip));
+    QVERIFY(!gid.isEmpty());
+    widget.setTabGroupCollapsed(gid, true);
+    // Filtering the level out detaches the chip into the container
+    // store; the collapsed member stays in the group's hidden list.
+    widget.setActiveContainerHeader(QString());
+    QPointer<WebView> stray = widget.makeNewTabInContainer(id, false);
+    QVERIFY(stray);
+    QCOMPARE(widget.count(), 1);
+    QCOMPARE(widget.containerIdForTab(0), QString());
+    QCOMPARE(widget.containerTabCount(id), 3);
+
+    QCOMPARE(widget.closeTabsInContainer(id), 3);
+    QCOMPARE(widget.containerTabCount(id), 0);
+    QCOMPARE(widget.count(), 1);
+    QVERIFY(manager->deleteContainer(id));
+    m_created.removeAll(id);
+    QVERIFY(!chip);
+    QVERIFY(!member);
+    QVERIFY(!stray);
+    QVERIFY(!profile);
+    QVERIFY(!QDir(storagePath).exists());
+}
+
+// CONT01 teardown: closeTab() only deleteLater's the page widget —
+// the WebView (and its WebContents) is still alive on the container
+// profile immediately after the call.  A delete landing in that
+// window used to destroy the QWebEngineProfile under a live page;
+// the manager must drain the deferred-delete queue first.
+void tst_ContainerManager::deleteAfterPendingTabClose()
+{
+    ContainerManager *manager = ContainerManager::instance();
+    const QString id = create();
+    QPointer<QWebEngineProfile> profile = manager->profileFor(id);
+    QVERIFY(profile);
+    const QString storagePath = profile->persistentStoragePath();
+
+    TabWidget widget;
+    widget.newTab();
+    QPointer<WebView> bound = widget.makeNewTabInContainer(id, true);
+    QVERIFY(bound);
+    QCOMPARE(widget.containerTabCount(id), 1);
+
+    widget.closeTab(widget.webViewIndex(bound));
+    // Still alive — the deferred-delete event has not been delivered.
+    QVERIFY(bound);
+    QVERIFY(manager->deleteContainer(id));
+    m_created.removeAll(id);
+    // The flush reaped the view before the profile died — no live
+    // page was ever bound to a deleted profile.
+    QVERIFY(!bound);
+    QVERIFY(!profile);
+    QVERIFY(!QDir(storagePath).exists());
+    QCOMPARE(widget.containerTabCount(id), 0);
 }
 
 QTEST_MAIN(tst_ContainerManager)

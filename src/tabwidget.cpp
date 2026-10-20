@@ -2506,6 +2506,87 @@ void TabWidget::closeHiddenPage(QWidget *page)
     }
 }
 
+// Container teardown (CONT01): closes every tab bound to containerId
+// across all three stores — the visible strip, the detached rows of
+// filtered-out levels, and collapsed groups' hidden members — so
+// deleteContainer()'s no-live-pages contract is met in every layout,
+// not just the one where the container's level happens to be active.
+// The widgets die via deleteLater; the profile must be destroyed only
+// after the deferred-delete queue drains (ContainerManager flushes it
+// itself — the same ordering class as the OTR teardown).
+int TabWidget::closeTabsInContainer(const QString &containerId)
+{
+    // The default container IS the shared browsing profile — it
+    // outlives every registry entry and is never deleted, so sweeping
+    // its tabs would be wrong no matter who asks.
+    if (containerId.isEmpty())
+        return 0;
+    // A close can cascade — an emptied level re-filters the strip and
+    // the final tab's lastTabClosed() can take the whole window (and
+    // this widget) down mid-sweep.
+    QPointer<TabWidget> guard(this);
+    int closed = 0;
+    for (;;) {
+        // A bound member hidden inside a collapsed group's store
+        // shows up in no strip index and no containerHidden row —
+        // expand its group first so it lands somewhere the close
+        // passes below can reach.
+        QString boundGroup;
+        const QStringList groups = m_tabGroupInfo.keys();
+        for (const QString &gid : groups) {
+            const TabGroup group = m_tabGroupInfo.value(gid);
+            if (!group.collapsed)
+                continue;
+            for (const HiddenGroupTab &hidden : group.hidden) {
+                WebViewWithSearch *withSearch =
+                    qobject_cast<WebViewWithSearch*>(hidden.tab);
+                if (withSearch && withSearch->m_webView
+                    && withSearch->m_webView->containerId()
+                           == containerId) {
+                    boundGroup = gid;
+                    break;
+                }
+            }
+            if (!boundGroup.isEmpty())
+                break;
+        }
+        if (!boundGroup.isEmpty()) {
+            setTabGroupCollapsed(boundGroup, false);
+            if (!guard)
+                return closed;
+            continue;
+        }
+        // Visible strip: close one bound tab per pass — indices and
+        // levels shift under each closeTab().
+        int index = -1;
+        for (int i = 0; i < count(); ++i) {
+            if (containerIdForTab(i) == containerId) {
+                index = i;
+                break;
+            }
+        }
+        if (index >= 0) {
+            closeTab(index);
+            ++closed;
+            if (!guard)
+                return closed;
+            continue;
+        }
+        // The container's own filtered-out row — every entry in
+        // m_containerHidden[id] is bound by construction.
+        const QList<HiddenGroupTab> hidden =
+            m_containerHidden.value(containerId);
+        if (!hidden.isEmpty()) {
+            closeHiddenPage(hidden.first().tab);
+            ++closed;
+            if (!guard)
+                return closed;
+            continue;
+        }
+        return closed;
+    }
+}
+
 void TabWidget::setTwoLevelStrip(bool enabled)
 {
     if (m_twoLevelStrip == enabled)

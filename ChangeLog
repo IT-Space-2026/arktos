@@ -1335,6 +1335,14 @@ Containers:
   inside the tab card at the automatic strip height and at any height
   you dragged the strip to, across tab switches and scrolling
   (TABS20).
+- Deleting a container now really closes everything bound to it
+  first — tabs parked on filtered-out container levels and inside
+  collapsed groups, plus PiP and DevTools windows on the same
+  profile — before its storage is wiped, and the engine profile is
+  destroyed only after pending page deletions finish.  Profile
+  Manager's delete likewise closes the persona's open windows before
+  removing its data instead of wiping underneath them (CONT01
+  teardown pass).
 
 Tor:
 - Managed tor daemon plumbing (TOR01).
@@ -2097,6 +2105,7 @@ Prefetch and remote-font blocking (SAFE04):
 Isolated container profiles (CONT01):
     Firefox-style containers begin with the profile core: a ContainerManager keeps a persistent registry of named containers (id, name, color) and lazily creates one dedicated WebEngine profile per container under a "containers/<id>" storage tree — giving each container its own cookies, cache, local storage and service workers. Every container profile is prepared through the same path as the normal profile, so the privacy/adblock interceptor, custom scheme handlers, cookie jar, download manager and all WebEngine settings apply identically inside containers.
     Settings changes, user-agent/client-hints updates, clear-private-data and clear-on-exit now reach every materialized container profile, and deleting a container removes its registry entry plus its on-disk storage. Tor mode hands out no container profile at all — containers are persistent state and can never live on the Tor session.
+    Teardown pass (later CONT01 work): deleting a container used to close only the currently visible tabs — tabs parked on a filtered-out container level or hidden inside a collapsed group kept live pages on the profile that was then deleted under them. The removal now sweeps every tab store and closes the profile-bound PiP and DevTools windows first, and the manager drains the deferred-delete queue before the engine profile dies, so no page ever outlives its profile. The same audit fixed Profile Manager's delete — the persona's bound windows are closed before the data tree is removed instead of the wipe racing live stores — and made the restart profile-wipe retry its root removals while the exiting process's engine child releases its file handles.
 
 Per-tab containers (CONT02):
     Tabs can now live inside a container: a new tab inherits its opener's container, File → New Container Tab opens one directly in any container (or "No Container"), and the tab context menu's "Reopen in Container" submenu swaps a tab into a different container in place, keeping its URL. Container tabs wear a colored strip plus the container's name as a chip in the tab bar, so the boundary stays visible at a glance; renaming, recoloring or deleting a container refreshes the indicators live.

@@ -361,9 +361,29 @@ bool ProfileMenuActions::applyPendingProfileWipe()
             && path.contains(QCoreApplication::applicationName());
     };
 
+    // The browser process is gone, but its QtWebEngineProcess child
+    // can still be releasing storage-partition handles for a beat —
+    // removeRecursively then races files reappearing under it (the
+    // same teardown class ContainerManager::removeStorageTree retries
+    // for).  A fresh boot MUST NOT find the wiped tree half-back:
+    // profile construction, pending session saves and icon fetches
+    // would land inside dirs the wipe was ordered to erase.  Retry
+    // over a bounded window so the tree is actually gone.
+    const auto wipeTree = [](const QString &path) {
+        for (int attempt = 0; attempt < 40; ++attempt) {
+            QDir(path).removeRecursively();
+            if (!QDir(path).exists())
+                return true;
+            QThread::msleep(125);
+            QCoreApplication::processEvents();
+        }
+        qWarning() << "profile wipe: could not remove" << path;
+        return false;
+    };
+
     bool ok = true;
     if (ownTree(dataRoot)) {
-        ok &= QDir(dataRoot).removeRecursively();
+        ok &= wipeTree(dataRoot);
     } else {
         ok = false;
         qWarning() << "profile wipe: refusing unexpected data root"
@@ -371,7 +391,7 @@ bool ProfileMenuActions::applyPendingProfileWipe()
     }
     if (!cacheRoot.isEmpty() && cacheRoot != dataRoot) {
         if (ownTree(cacheRoot)) {
-            ok &= QDir(cacheRoot).removeRecursively();
+            ok &= wipeTree(cacheRoot);
         } else {
             ok = false;
             qWarning() << "profile wipe: refusing unexpected cache root"

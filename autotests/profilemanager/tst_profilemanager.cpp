@@ -57,6 +57,7 @@ private slots:
     void avatarPerProfile();
     void identitySync();
     void managerDialogLegs();
+    void deleteRefusesWithBoundWindow();
 };
 
 // Reads the persisted registry straight off disk — the layout must
@@ -359,6 +360,42 @@ void tst_ProfileManager::managerDialogLegs()
         BrowserApplication::instance()->mainWindows().last();
     opened->close();
     QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+}
+
+// CONT01: deleting a persona whose window is still bound must refuse
+// — wiping the data dir under live stores leaves the still-alive
+// managers flushing into a deleted tree (a zombie profile dir that
+// reappears behind the wipe).  Once the binding is destroyed the
+// same call releases the persona and removes the tree.
+void tst_ProfileManager::deleteRefusesWithBoundWindow()
+{
+    ProfileStore *store = ProfileStore::instance();
+    const ProfileContext doomed =
+        store->createProfile(QLatin1String("Doomed"));
+    QVERIFY(doomed.isValid());
+    const QString dir = store->profileDir(doomed.id);
+    QVERIFY(QDir(dir).exists());
+    // The registry shares profiles.json — make the fresh persona
+    // visible to newMainWindow()'s binding lookup.
+    ProfileRegistry::instance()->reload();
+
+    BrowserApplication *app = BrowserApplication::instance();
+    QVERIFY(app);
+    BrowserMainWindow *bound = app->newMainWindow(doomed.id);
+    QVERIFY(bound);
+    QCOMPARE(bound->profileId(), doomed.id);
+
+    QVERIFY(!store->deleteProfile(doomed.id));
+    QVERIFY(store->profile(doomed.id).isValid());
+    QVERIFY(QDir(dir).exists());
+
+    // The manager's "windows will close" path — destroy the binding,
+    // drain the deferred-delete queue, then delete.
+    bound->deleteLater();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QVERIFY(store->deleteProfile(doomed.id));
+    QVERIFY(!store->profile(doomed.id).isValid());
+    QVERIFY(!QDir(dir).exists());
 }
 
 QTEST_MAIN(tst_ProfileManager)

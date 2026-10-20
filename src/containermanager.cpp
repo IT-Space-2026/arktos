@@ -91,6 +91,20 @@ ContainerManager *ContainerManager::instanceIfCreated(
     return containerManagers().value(id);
 }
 
+// Tab/page teardown is deleteLater-based (TabWidget::closeTab,
+// closeHiddenPage, the PiP/DevTools windows' WA_DeleteOnClose), so a
+// delete ordered right after a close can still find pages alive on
+// the profile — the QWebEngineProfile would then die under live
+// WebContents.  Drain the deferred-delete queue before every profile
+// destruction; the second pass catches deleteLaters posted by the
+// first pass's destroyed signals (DevTools closes on inspected-page
+// death, PiP follows its source view).
+static void flushDeferredDeletes()
+{
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+}
+
 void ContainerManager::releaseFor(const QString &profileId)
 {
     // Strict id check — no ambient-persona aliasing; releasing the
@@ -103,6 +117,7 @@ void ContainerManager::releaseFor(const QString &profileId)
     // ~ContainerManager deliberately leaves container profiles to Qt
     // at app teardown — a mid-process persona release instead destroys
     // them here under releaseProfileFor()'s no-live-pages contract.
+    flushDeferredDeletes();
     const QList<QWebEngineProfile *> profiles = manager->m_profiles.values();
     for (QWebEngineProfile *profile : profiles)
         delete profile;
@@ -204,6 +219,7 @@ bool ContainerManager::deleteContainer(const QString &id)
     if (QWebEngineProfile *profile = m_profiles.take(id)) {
         storagePath = profile->persistentStoragePath();
         cachePath = profile->cachePath();
+        flushDeferredDeletes();
         delete profile;
     }
     if (storagePath.isEmpty())
@@ -423,6 +439,9 @@ void ContainerManager::reapplySettings()
 
 void ContainerManager::releaseProfileFor(const QString &id)
 {
+    if (!m_profiles.contains(id))
+        return;
+    flushDeferredDeletes();
     delete m_profiles.take(id);
 }
 
