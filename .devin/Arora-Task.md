@@ -363,9 +363,13 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | LEG02 | Untouched-data audit: searchengine XMLs (dead providers? http->https?), useragents.qrc staleness, icon assets still referenced?, licenses — details below | done | 0 | user request — DONE: dropped dead Google I'm Feeling Lucky (btnI redirect needs ephemeral iflsig token — lands on redirect notice); Google/Yahoo/Wikipedia/YouTube/Reddit descriptors http->https; UA presets resynced Chrome/141->presented/155 (FF 157, Safari 27); orphaned assets deleted (addtab/closetab/history.png, 128x128/run.png+license — 0 live refs, chrome uses themed icons); rustcore vendored copy + smoke/test refs updated. Verified: full build clean, 4 gates PASS (warnings, supplychain, engine-audit, rustcov 94.11/91.82/89.25), runTests.sh rc=0, --quit-after-load + --search-smoke rc=0, opensearchmanager 24/24 opensearchengine 55/55 tabwidget 36/36 useragent 9/9 |
 | LEG03 | Dead-pipeline sweep: src/locale tooling, generateAuthors/generateReleaseContributors vs new AUTHORS policy, tools/htmlToXBel fixtures — wire-in or remove — details below | done | 0 | user request — DONE: generate* scripts removed (contradict AUTHORS); locale kept+documented (was already live: lrelease→src/.qm/locale→LanguageManager, maintainers→attribution); htmlToXBel fixtures verified + wired via make check-htmltoxbel; modeltest confirmed live. Verified: clean build, 4 gates PASS, check-htmltoxbel PASS, quit-after-load rc=0 |
 | LEG04 | Untouched test-infra review: qtry.h usage, tst_lineedit.cpp build status, stale .gitignores, fixture validity — wire in or delete — details below | done | 0 | user request — DONE: qtry.h shim deleted (44 includers use Qt6-native QTRY_*); tst_lineedit confirmed wired (utils.pro→make check, 17/17); 26 stale .gitignores removed (root tst_* rule covers; rules2.txt kept); all fixtures grep-proven live — verified: make check rc=0, 4 gates PASS, 99 programs 0 failed |
-| PRIV09 | PRIV07 slice A — ASan/LSan churn leg for the committed OTR teardown (the only unrun spec item; do NOT re-implement) — details below | pending | 0 | |
+| PRIV09 | PRIV07 slice A — ASan/LSan churn leg for the committed OTR teardown (the only unrun spec item; do NOT re-implement) — details below | in_progress | 0 | |
 | PRIV10 | PRIV07 slice B — post-commit review of the OTR teardown diff landed inside b6494e58 (lifetime races, refcount edges) — details below | pending | 0 | |
 | TAB01 | closeOtherTabs skips collapsed-group members: closing a group chip expands it mid-sweep, members land at i+1..i+n (already iterated) and survive — Chrome closes them. Fix: pre-expand collapsed groups before the loops, or close by view identity — details below | pending | 0 | |
+| TAB02 | moveTabTo × collapsed group: dragging a chip to another window strands hidden members (leaderless group on source, lost member on target) + sibling bulk-index paths (close-to-right, window close) — details below | pending | 0 | |
+| TAB03 | Deferred-deletion sweep: singleShot/invokeMethod lambdas capturing raw WebView*/Engine::Page* without QPointer guard — details below | pending | 0 | |
+| CONT01 | Container/profile teardown: deleting a container with bound tabs (incl. m_containerHidden strays) and restart-deleted profile vs queued signals — details below | pending | 0 | |
+| SESS01 | Session restore × engine/container matrix: engine-tagged tab on a webkit=0 build, lazy restore inside container level/group, restore racing an active container filter — details below | pending | 0 | |
 
 ## Task details
 
@@ -3155,3 +3159,100 @@ Watch the second loop's `index` anchor too — expansion above it can
 shift the "other" boundary.  Verify with a tst_tabwidget leg: pin
 one tab, collapse a group, "Close Other Tabs" on a third tab —
 expect only the pinned + current left, group fully gone.
+
+### TAB02
+
+Two related index-drift checks on the tab strip (same class as
+TAB01):
+
+A) moveTabTo × collapsed group — the likely-real bug.  A collapsed
+group's hidden members live in m_tabGroupInfo[gid].hidden, detached
+from the strip; the chip is the only visible member.  Dragging the
+chip to another window runs moveTabTo, which expands the group
+first (good) — BUT verify what expansion does here: the members
+re-join the SOURCE strip and only the dragged widget leaves, so the
+group loses its first visible tab (members.first() semantics) while
+the moved tab keeps wasGrouped/groupName in its TransferredTab
+record.  Check: does the target re-create the group with a
+non-member leader, does the source keep a group record whose chip
+is gone, and what does a later collapse/expand do on both sides?
+Reproduce live first (open a group, collapse, drag chip to a second
+window), then fix — either refuse the drag on a collapsed chip, or
+carry the whole group run.
+
+B) Sibling bulk-index paths — audit every loop that closes or moves
+tabs by index while syncContainerStrip / setTabGroupCollapsed can
+re-filter mid-pass: closeTabsToTheRight/closeAllTabs variants, the
+windowCloseRequested path, restoreClosedTab's positional move under
+an active container level, session restore inserting tabs while a
+non-default container level is active.  Fix by identity (view) or
+pre-expansion wherever the index can drift.
+
+Verify: tst_tabwidget legs — collapsed-chip drag between windows;
+close-to-right crossing a collapsed group; restore-into-group while
+a container level is active.
+
+### TAB03
+
+Deferred-deletion sweep.  closeTab (and other teardown paths)
+deleteLater() the WebViewWithSearch and its location bar; the OTR
+teardown deleteLater()s a profile.  Qt drops queued signals to a
+destroyed receiver, but lambdas scheduled with QTimer::singleShot /
+QMetaObject::invokeMethod that capture a RAW WebView*, Engine::Page*
+or profile pointer survive and fire on freed objects.
+
+Sweep src/ for:
+
+- QTimer::singleShot(…, [captures]) where the lambda touches a
+  WebView/EngineTab/Engine::Page/QWebEngineProfile/WebViewWithSearch
+  raw pointer or `this` of an object that may die first — the
+  purgeInactiveTabs pattern (QPointer<WebView> guard) is the correct
+  template; flag every capture lacking one.
+- QMetaObject::invokeMethod / queued connections with raw context.
+- QObject::connect with a lambda and no context object (third-arg
+  context missing) where the sender outlives the captured target.
+
+Fix each finding with a QPointer guard or a context object; add the
+pattern to the engine-audit gate checklist if a cheap grep exists.
+
+### CONT01
+
+Profile/container teardown — the PRIV07 lifetime question applied
+to containers and named profiles:
+
+- ContainerManager delete path: what happens to tabs bound to the
+  container when it is deleted — live tabs, tabs detached into
+  m_containerHidden for a non-active level, and the container's
+  own Engine::Profile/on-disk store?  Does the deletion refuse,
+  migrate, or leave dangling containerId references (the
+  makeNewTabInContainer "unknown id -> default" fallback covers
+  reopen, but live bindings may not flow through it).
+- Restart-deleted profile (ProfileManager "wipes the data and
+  settings roots at restart"): are any queued singleShots, pending
+  session saves or icon fetches still holding a stale profile id
+  when the delete lands?
+- Engine::Profile destruction order vs. pages still bound to it —
+  same deleteLater race class as the OTR teardown (PRIV10's
+  checklist is the reference).
+
+Verify: autotest legs for delete-with-live-tabs and
+delete-while-hidden-members; nothing dangles, storage removed.
+
+### SESS01
+
+Session restore matrix — restore paths that only partially handle
+the new dimensions:
+
+- Engine tag whose backend is absent at restore time (a servo or
+  webkit-tagged tab restored on a plain build) — must degrade to
+  webengine, not strand the tab or crash.
+- Lazy-restore (m_pendingRestores) tabs that belong to a group or a
+  non-default container level — does the pending record carry the
+  group/container binding so a later activation lands correctly?
+- Restore racing an active container filter: a window restored
+  while a non-default level is selected — do restored tabs enter
+  the hidden store or the visible strip correctly?
+- OTR exclusion already verified (SEC07) — confirm lazily-restored
+  OTR tabs never create a pending record either.
+
+Verify: tst_sessionrestore-style legs for each cell of the matrix.
