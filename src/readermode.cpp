@@ -87,10 +87,17 @@ protected:
                     == m_baseUrl.adjusted(QUrl::RemoveFragment)) {
                 return true;
             }
+            // SEC27: file: links only leave the reader when the
+            // article itself was local — a remote page's markup must
+            // never get local files opened in the user's tab on a
+            // click.  (The sanitizer's scheme allowlist strips them
+            // upstream; this is the last line.)
             if (m_view
                 && (url.scheme() == QLatin1String("http")
                     || url.scheme() == QLatin1String("https")
-                    || url.scheme() == QLatin1String("file"))) {
+                    || (url.scheme() == QLatin1String("file")
+                        && m_baseUrl.scheme()
+                            == QLatin1String("file")))) {
                 m_view->loadUrl(url);
             }
             return false;
@@ -118,8 +125,19 @@ QString readerDocument(const QVariantMap &article, const QString &theme)
     if (!siteName.isEmpty())
         bylineParts << siteName.toHtmlEscaped();
 
+    // SEC27: setHtml commits the document under the base url's own
+    // origin (probed: window.origin == the source page's), not an
+    // opaque one — so the lockdown must come from markup.  The meta
+    // CSP kills all script and fetch surfaces even if the sanitizer
+    // missed something; app-side runJavaScript (the theme toggle) is
+    // not subject to page CSP, so live theming still works.  Images,
+    // media and fonts stay open or the article loses its figures.
     QString doc = QStringLiteral(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><style>"
+        "<!doctype html><html><head><meta charset=\"utf-8\">"
+        "<meta http-equiv=\"Content-Security-Policy\" content=\""
+        "default-src 'none'; img-src * data:; media-src * data:; "
+        "font-src * data:; style-src 'unsafe-inline'; base-uri 'none'; "
+        "form-action 'none'\"><style>"
         ":root{--fs:19px}"
         "body{margin:0;background:var(--bg);color:var(--fg);"
         "font-family:Georgia,'Times New Roman',serif;"

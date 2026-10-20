@@ -5097,6 +5097,92 @@ void tst_BrowserMainWindow::readerSanitizer()
         QVERIFY(!r.html.contains(QLatin1String("gone")));
     }
 
+    // SEC27: navigable URLs keep only relative references and the
+    // safe external schemes — every browser-openable scheme dies.
+    // (The blob: leg is the load-bearing one: a stored blob: href
+    // resolves its creator's HTML in the source origin on click.)
+    {
+        const ReaderSanitizer::Result r = ReaderSanitizer::sanitize(
+            QStringLiteral(
+                "<a href=\"file:///etc/passwd\">f</a>"
+                "<a href=\"arora-file:///etc\">af</a>"
+                "<a href=\"qrc:/startpage.html\">q</a>"
+                "<a href=\"chrome://settings\">c</a>"
+                "<a href=\"blob:https://x.example/u\">b</a>"
+                "<a href=\"about:blank\">a</a>"
+                "<a href=\"view-source:https://x\">v</a>"
+                "<a href=\"mailto:a@b\">m</a>"
+                "<a href=\"tel:+1555\">t</a>"
+                "<a href=\"ftp://x/y\">ftp</a>"
+                "<a href=\"#frag\">fg</a>"
+                "<a href=\"/rel/path\">r</a>"
+                "<a href=\"//host/x\">pr</a>"
+                "<a href=\"sub/page?q=1\">s</a>"));
+        QVERIFY(!r.html.contains(QLatin1String("file:")));
+        QVERIFY(!r.html.contains(QLatin1String("arora-file")));
+        QVERIFY(!r.html.contains(QLatin1String("qrc:")));
+        QVERIFY(!r.html.contains(QLatin1String("chrome:")));
+        QVERIFY(!r.html.contains(QLatin1String("blob:")));
+        QVERIFY(!r.html.contains(QLatin1String("about:")));
+        QVERIFY(!r.html.contains(QLatin1String("view-source:")));
+        QVERIFY(r.html.contains(QLatin1String("mailto:a@b")));
+        QVERIFY(r.html.contains(QLatin1String("tel:+1555")));
+        QVERIFY(r.html.contains(QLatin1String("ftp://x/y")));
+        QVERIFY(r.html.contains(QLatin1String("href=\"#frag\"")));
+        QVERIFY(r.html.contains(QLatin1String("href=\"/rel/path\"")));
+        QVERIFY(r.html.contains(QLatin1String("href=\"//host/x\"")));
+        QVERIFY(r.html.contains(QLatin1String("href=\"sub/page?q=1\"")));
+    }
+
+    // SEC27: resource URLs keep http(s)/data and relative only —
+    // file:/blob:/internal schemes cannot be fetched as subresources.
+    {
+        const ReaderSanitizer::Result r = ReaderSanitizer::sanitize(
+            QStringLiteral(
+                "<img src=\"file:///etc/passwd\">"
+                "<video src=\"blob:https://x.example/u\"></video>"
+                "<td background=\"file:///x\">c</td>"
+                "<img src=\"data:image/png;base64,AAAA\">"
+                "<img src=\"/rel.png\">"));
+        QVERIFY(!r.html.contains(QLatin1String("file:")));
+        QVERIFY(!r.html.contains(QLatin1String("blob:")));
+        QVERIFY(r.html.contains(QLatin1String("data:image/png")));
+        QVERIFY(r.html.contains(QLatin1String("src=\"/rel.png\"")));
+    }
+
+    // SEC27: SMIL can rewrite a sibling href to javascript:/data:
+    // AFTER the attribute pass — the animation elements drop
+    // transparently (children survive) instead of staying live.
+    {
+        const ReaderSanitizer::Result r = ReaderSanitizer::sanitize(
+            QStringLiteral(
+                "<svg><a xlink:href=\"#x\">"
+                "<set attributeName=\"xlink:href\" to=\"javascript:x()\"/>"
+                "<animate attributeName=\"href\" values=\"javascript:y()\"/>"
+                "<animateMotion/><animateTransform/>"
+                "<mpath xlink:href=\"#p\"/>"
+                "<text>kept</text></a></svg>"));
+        QVERIFY(r.html.contains(QLatin1String("<text>kept</text>")));
+        QVERIFY(!r.html.contains(QLatin1String("<set")));
+        QVERIFY(!r.html.contains(QLatin1String("<animate")));
+        QVERIFY(!r.html.contains(QLatin1String("<mpath")));
+        QVERIFY(!r.html.contains(QLatin1String("javascript:")));
+    }
+
+    // SEC27: xml:base rewrites relative-URL resolution for the whole
+    // subtree — same base-hijack class as a <base href>, dropped the
+    // same way.  cite joins the URL-attribute checks.
+    {
+        const ReaderSanitizer::Result r = ReaderSanitizer::sanitize(
+            QStringLiteral(
+                "<svg xml:base=\"https://evil.example/\">"
+                "<use href=\"#i\"/></svg>"
+                "<q cite=\"javascript:x()\">c</q>"));
+        QVERIFY(!r.html.contains(QLatin1String("xml:base")));
+        QVERIFY(!r.html.contains(QLatin1String("javascript:")));
+        QVERIFY(r.html.contains(QLatin1String("href=\"#i\"")));
+    }
+
     // The thin-content floor inputs: text length is decoded text
     // only; kept media flips hasMedia.
     {

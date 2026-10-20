@@ -289,6 +289,13 @@ bool isVoidKeep(const QString &name)
 // legitimately carry.  Elements not in any set (unknown, obsolete,
 // or form/noscript wrappers) are transparent — the tag is dropped
 // and the children pass through the same filter.
+//
+// SEC27: the SMIL animation vocabulary (animate, animateMotion,
+// animateTransform, set, mpath) is deliberately NOT kept — those
+// elements can rewrite a sibling's href/xlink:href to javascript: or
+// data: long after the attribute pass ran, and a reader article has
+// no business animating anything.  They fall to transparent like
+// every other unlisted element.
 bool isKeptElement(const QString &name)
 {
     static const QSet<QString> tags = {
@@ -332,9 +339,7 @@ bool isKeptElement(const QString &name)
         QStringLiteral("ul"), QStringLiteral("var"),
         QStringLiteral("video"),
         // svg
-        QStringLiteral("svg"), QStringLiteral("animate"),
-        QStringLiteral("animatemotion"),
-        QStringLiteral("animatetransform"), QStringLiteral("circle"),
+        QStringLiteral("svg"), QStringLiteral("circle"),
         QStringLiteral("clippath"), QStringLiteral("defs"),
         QStringLiteral("desc"), QStringLiteral("ellipse"),
         QStringLiteral("feblend"), QStringLiteral("fecolormatrix"),
@@ -354,11 +359,11 @@ bool isKeptElement(const QString &name)
         QStringLiteral("feturbulence"), QStringLiteral("filter"),
         QStringLiteral("g"), QStringLiteral("line"),
         QStringLiteral("lineargradient"), QStringLiteral("marker"),
-        QStringLiteral("mask"), QStringLiteral("mpath"),
+        QStringLiteral("mask"),
         QStringLiteral("path"), QStringLiteral("pattern"),
         QStringLiteral("polygon"), QStringLiteral("polyline"),
         QStringLiteral("radialgradient"), QStringLiteral("rect"),
-        QStringLiteral("set"), QStringLiteral("stop"),
+        QStringLiteral("stop"),
         QStringLiteral("switch"), QStringLiteral("symbol"),
         QStringLiteral("text"), QStringLiteral("textpath"),
         QStringLiteral("tspan"), QStringLiteral("use"),
@@ -459,14 +464,17 @@ bool validAttributeName(const QString &name)
 }
 
 // Attributes whose values are URLs.  Navigable URLs (click targets)
-// additionally lose data: — a data:text/html link clicked under
-// allow-top-navigation would land an attacker page on the tab.
+// keep only the safe external schemes — the old javascript:/vbscript:/
+// data: blocklist left the whole browser-handled set live, and a
+// blob: or file: href is a click away from stored-HTML in the source
+// origin or a local file in the user's tab.
 bool isNavigableUrlAttr(const QString &name)
 {
     static const QSet<QString> attrs = {
         QStringLiteral("href"), QStringLiteral("xlink:href"),
         QStringLiteral("action"), QStringLiteral("formaction"),
         QStringLiteral("longdesc"), QStringLiteral("usemap"),
+        QStringLiteral("cite"),
     };
     return attrs.contains(name);
 }
@@ -479,6 +487,50 @@ bool isResourceUrlAttr(const QString &name)
         QStringLiteral("lowsrc"),
     };
     return attrs.contains(name);
+}
+
+// The normalized value's scheme, if it carries one: an ASCII letter,
+// then [a-z0-9+.-], closed by ':'.  Anything else — relative paths,
+// fragments, queries, scheme-invalid text — is schemeless and resolves
+// against the article's own base, which cannot mint a new scheme.
+QString urlScheme(const QString &normalized)
+{
+    if (normalized.isEmpty() || !isLetter(normalized.at(0)))
+        return QString();
+    int i = 1;
+    while (i < normalized.size()
+           && (normalized.at(i).isLetterOrNumber()
+               || normalized.at(i) == u'+' || normalized.at(i) == u'-'
+               || normalized.at(i) == u'.'))
+        ++i;
+    if (i < normalized.size() && normalized.at(i) == u':')
+        return normalized.left(i);
+    return QString();
+}
+
+// Schemes a click can legitimately target from a rendered article —
+// the web itself plus the handful that end at the external-protocol
+// consent prompt.  file:, data:, blob:, about:, qrc:, chrome: and
+// every internal arora-scheme are deliberately absent.
+bool isNavigableScheme(const QString &scheme)
+{
+    static const QSet<QString> schemes = {
+        QStringLiteral("http"), QStringLiteral("https"),
+        QStringLiteral("mailto"), QStringLiteral("tel"),
+        QStringLiteral("callto"), QStringLiteral("sms"),
+        QStringLiteral("ftp"), QStringLiteral("ftps"),
+        QStringLiteral("cid"), QStringLiteral("xmpp"),
+    };
+    return schemes.contains(scheme);
+}
+
+// Schemes a subresource may be fetched over — the web and inline
+// data: (image/context-inert by construction).  file:/blob: would
+// resolve local or stored content the article text does not own.
+bool isResourceScheme(const QString &scheme)
+{
+    return scheme == QLatin1String("http") || scheme == QLatin1String("https")
+        || scheme == QLatin1String("data");
 }
 
 // Decode, squash ASCII whitespace/controls out (browsers drop
@@ -502,18 +554,19 @@ bool keepAttribute(const QString &name, const QString &value)
         return false;
     if (name.startsWith(QLatin1String("on")))
         return false;
-    if (name == QLatin1String("ping") || name == QLatin1String("srcdoc"))
+    // SEC27: xml:base joins ping/srcdoc — it rewrites relative-URL
+    // resolution for the whole subtree, the same base-hijack class a
+    // <base href> (dropped element) would be.
+    if (name == QLatin1String("ping") || name == QLatin1String("srcdoc")
+        || name == QLatin1String("xml:base"))
         return false;
     if (isNavigableUrlAttr(name)) {
-        const QString url = normalizedUrl(value);
-        if (url.startsWith(QLatin1String("javascript:"))
-            || url.startsWith(QLatin1String("vbscript:"))
-            || url.startsWith(QLatin1String("data:")))
+        const QString scheme = urlScheme(normalizedUrl(value));
+        if (!scheme.isEmpty() && !isNavigableScheme(scheme))
             return false;
     } else if (isResourceUrlAttr(name)) {
-        const QString url = normalizedUrl(value);
-        if (url.startsWith(QLatin1String("javascript:"))
-            || url.startsWith(QLatin1String("vbscript:")))
+        const QString scheme = urlScheme(normalizedUrl(value));
+        if (!scheme.isEmpty() && !isResourceScheme(scheme))
             return false;
     }
     return true;

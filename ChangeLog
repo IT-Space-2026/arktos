@@ -4522,3 +4522,15 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   back on screen. Off-the-record tabs now skip thumbnail capture
   entirely, and their hover card shows the title-and-address
   fallback instead; normal tabs are unaffected.
+- Reader Mode hardened against hostile article markup (SEC27): the
+  reader document now ships a strict Content-Security-Policy — no
+  scripts, forms, frames or fetch surfaces can ever run inside it —
+  and article links are restricted to web and external-app schemes, so
+  file:, blob:, qrc:, chrome:, about: and other browser-internal
+  targets can no longer smuggle themselves in as clickable hrefs (a
+  blob: link was one click away from stored HTML running in the
+  source page's origin). SVG animation elements that could rewrite a
+  link's target after sanitization are stripped, and a file: link in
+  a remote article can no longer open local files or directories in
+  your tab. Ordinary http/https/mailto links, relative links, images
+  and inline data: images are unaffected.

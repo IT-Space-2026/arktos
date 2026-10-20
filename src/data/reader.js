@@ -182,9 +182,17 @@ color: var(--byline); }\
     }
 
     function frameDoc(bylineHtml) {
+        // SEC27: the sandbox already refuses scripts; the meta CSP is
+        // the second line — no fetch, base or form surface inside the
+        // frame document even if a future markup path forgot one.
         return "<!DOCTYPE html><html class=\"theme-" + state.theme
             + "\" style=\"--fs:" + state.fontSize + "px\"><head>"
-            + "<meta charset=\"utf-8\"><style>" + frameCss()
+            + "<meta charset=\"utf-8\">"
+            + "<meta http-equiv=\"Content-Security-Policy\" content=\""
+            + "default-src 'none'; img-src * data:; media-src * data:; "
+            + "font-src * data:; style-src 'unsafe-inline'; "
+            + "base-uri 'none'; form-action 'none'\">"
+            + "<style>" + frameCss()
             + "</style></head><body><article>"
             + "<h1 class=\"title\">" + esc(state.title) + "</h1>"
             + bylineHtml
