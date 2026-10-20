@@ -3135,6 +3135,10 @@ Check specifically:
   cannot resurrect a torn-down profile mid-destruction.
 - Full-private-window mode (s_isPrivate process-global) and Tor are
   correctly exempt — no teardown while s_isPrivate.
+- Download × tab close: hasActiveDownloadForPage gates sleep but
+  closeTab does not — confirm the download row/bookkeeping never
+  dereferences the just-closed page (request is profile-level and
+  survives; the UI association is the suspect).
 - Fix anything found in-task; if clean, note the review verdict in
   the row and ChangeLog.
 
