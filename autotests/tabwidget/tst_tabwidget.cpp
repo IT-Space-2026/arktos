@@ -34,6 +34,7 @@
 #include <tabpreview.h>
 #include <webview.h>
 
+#include "arktosicon.h"
 #include "fakeengine.h"
 
 #include <historycompleter.h>
@@ -3471,7 +3472,7 @@ void tst_TabWidget::verticalTabRowTextBounds()
         QWidget *historyPage = new QWidget(&widget);
         widget.addWidgetTab(
             historyPage, tr("History"),
-            QIcon(QLatin1String(":graphics/history.png")));
+            ArktosIcon::getChrome(QLatin1String("view-history")));
         widget.setTabPinned(0, true);
         widget.setTabTitleOverride(
             1, tr("Renamed tab — gypq descenders"));
@@ -3696,7 +3697,7 @@ void tst_TabWidget::verticalRailRowOverlap()
         QWidget *historyPage = new QWidget(&widget);
         widget.addWidgetTab(
             historyPage, tr("History"),
-            QIcon(QLatin1String(":graphics/history.png")));
+            ArktosIcon::getChrome(QLatin1String("view-history")));
         widget.resize(720, 480);
         widget.show();
         QApplication::processEvents();

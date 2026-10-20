@@ -800,7 +800,6 @@ static BUNDLED_XMLS: &[&[u8]] = &[
     include_bytes!("../../data/searchengines/DuckDuckGo.xml"),
     include_bytes!("../../data/searchengines/Ecosia.xml"),
     include_bytes!("../../data/searchengines/Google.xml"),
-    include_bytes!("../../data/searchengines/Google_Im_Feeling_Lucky.xml"),
     include_bytes!("../../data/searchengines/Qwant.xml"),
     include_bytes!("../../data/searchengines/Reddit.xml"),
     include_bytes!("../../data/searchengines/Startpage.xml"),
@@ -1307,7 +1306,7 @@ mod tests {
             assert!(seed_bundled().unwrap());
             let names: Vec<String> =
                 serde_json::from_str(&list_json().unwrap()).unwrap();
-            assert_eq!(names.len(), 11);
+            assert_eq!(names.len(), 10);
             assert!(names.contains(&"DuckDuckGo".to_string()));
             assert!(names.contains(&"YouTube".to_string()));
             // SENG02: the new bundled set lands with its <Alias>
@@ -1333,7 +1332,7 @@ mod tests {
             assert!(restore_bundled().unwrap());
             let names: Vec<String> =
                 serde_json::from_str(&list_json().unwrap()).unwrap();
-            assert_eq!(names.len(), 11);
+            assert_eq!(names.len(), 10);
             // And it preserves keywords bound to a still-present record
             // (a second restore over identical records is a no-op).
             set_keywords("Google", br#"["g"]"#).unwrap();
@@ -1642,6 +1641,6 @@ mod tests {
             assert!(engine.valid(), "bundled engine {} invalid", engine.name);
             assert!(!engine.name.is_empty());
         }
-        assert_eq!(bundled().len(), 11);
+        assert_eq!(bundled().len(), 10);
     }
 }

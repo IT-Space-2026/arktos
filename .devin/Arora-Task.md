@@ -360,7 +360,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | PRIV07 | Private-mode teardown: destroy the shared OTR profile when the last private page closes (Chrome-incognito lifecycle) — details below | blocked | 5 | blocked:exceeded 5 restarts |
 | PRIV08 | Global Privacy Control (the working successor to DNT): Sec-GPC header + navigator.globalPrivacyControl, settings toggle — details below | done | 0 | Sec-GPC+JS behind privacy/gpcSignal, default on, tor unconditional; gpc-smoke 12/12 rc0, settings round-trip test PASS, 4 gates PASS, suite red only env WPE g_sort_array |
 | LEG01 | Untouched-source review: xbelwriter, networkproxyfactory, treesortfilterproxymodel, opensearch headers, fetchLinks.js — modernize+secure, fix in-task — details below | done | 0 | user request — DONE: real bug fixed — xbelwriter wrote bookmark desc as a late attribute (Qt6 emits it as stray text, desc lost; folder desc never written) → now <desc> elements; +null/device guards, hasError() returns, [[nodiscard]] (flushed 2 ignored results: bookmarksmodel drop-data, opensearchmanager saveDirectory); proxy factory documented (DefaultProxy result defers to applicationProxy — tor-mode safe, can't fight setApplicationProxy); fetchLinks.js new Object/Array→literals (page-clobberable globals); qtry.h dead Qt4 macro block deleted (Qt6 qtest.h provides QTRY_*); tst_lineedit (QWidget*)0→nullptr; treesortfilterproxymodel clean. Verified: build 0 warnings, tst_xbel 14/14 incl new writeDescription round-trip, tst_opensearchengine 55/55, tst_opensearchwriter 7/7, tst_networkaccessmanager 9/9, tst_lineedit 17/17, --quit-after-load rc=0 offscreen |
-| LEG02 | Untouched-data audit: searchengine XMLs (dead providers? http->https?), useragents.qrc staleness, icon assets still referenced?, licenses — details below | pending | 0 | user request — ~40 asset/data files never touched incl. 2008-era provider configs and UA strings that may be stale or mislead fingerprinting |
+| LEG02 | Untouched-data audit: searchengine XMLs (dead providers? http->https?), useragents.qrc staleness, icon assets still referenced?, licenses — details below | done | 0 | user request — DONE: dropped dead Google I'm Feeling Lucky (btnI redirect needs ephemeral iflsig token — lands on redirect notice); Google/Yahoo/Wikipedia/YouTube/Reddit descriptors http->https; UA presets resynced Chrome/141->presented/155 (FF 157, Safari 27); orphaned assets deleted (addtab/closetab/history.png, 128x128/run.png+license — 0 live refs, chrome uses themed icons); rustcore vendored copy + smoke/test refs updated. Verified: full build clean, 4 gates PASS (warnings, supplychain, engine-audit, rustcov 94.11/91.82/89.25), runTests.sh rc=0, --quit-after-load + --search-smoke rc=0, opensearchmanager 24/24 opensearchengine 55/55 tabwidget 36/36 useragent 9/9 |
 | LEG03 | Dead-pipeline sweep: src/locale tooling, generateAuthors/generateReleaseContributors vs new AUTHORS policy, tools/htmlToXBel fixtures — wire-in or remove — details below | pending | 0 | user request — locale machinery never activated under Arktos; upstream scripts may contradict the maintainer+Devin credit policy |
 | LEG04 | Untouched test-infra review: qtry.h usage, tst_lineedit.cpp build status, stale .gitignores, fixture validity — wire in or delete — details below | pending | 0 | user request — qtry.h and an untouched tst_lineedit may be orphaned outside the autotest SUBDIRS |
 
@@ -2889,6 +2889,62 @@ Untouched-data audit — the static payload files:
 Verify: `make check` + qrc still resolves (build fails loud on a
 missing qrc entry, so a green build proves no dangling refs); smoke
 --quit-after-load; note removals in the task log.
+
+DONE (LEG02 run, 2026-10-20) — findings per file:
+
+- `Google_Im_Feeling_Lucky.xml` + `icons/Google_Im_Feeling_Lucky.png`:
+  REMOVED — dead provider.  The `btnI` URL-param path now lands on a
+  Google redirect-notice interstitial gated by an ephemeral `iflsig`
+  token (verified vs. current web reports — the feature can't be
+  driven from an OpenSearch template anymore).  Scrubbed from
+  searchengines.qrc, main.cpp --search-smoke bundledEngineNames, the
+  tst_opensearchengine bundledIcon leg (replaced by YouTube), the
+  rustcore vendored descriptor list (opensearch.rs BUNDLED_XMLS +
+  count asserts 11->10 — the Rust store seeds bundled engines from
+  include_bytes! copies, not the qrc), README bundled list and
+  THIRD-PARTY-NOTICES §13.
+- Reddit/Wikipedia_en/YouTube + Google + Yahoo descriptors: every
+  `template="http://` endpoint and `<Image>` favicon ref switched to
+  https (search templates, suggest endpoints, image-search purpose
+  URLs).  All five providers' current URL shapes still live.
+- `useragents.xml` presets: were Chrome/141 + Edg/141 + Firefox/143 +
+  Safari 26 — stale vs this build's presentedChromeMajor()=155 (UA03
+  bumps the presented milestone past real Chromium/140).  Resynced:
+  Chrome/Edge/Googlebot/Bingbot -> 155, Firefox -> 157, Safari -> 27
+  (iOS 27_0), matching the presented-identity era.  The version-floor
+  gate in the spec (drop presets older than Chromium/140) passed
+  trivially — the real problem was presets older than the identity the
+  app itself presents.
+- `src/data/graphics/` audit: addtab.png, closetab.png, history.png
+  had zero live references — the aurora/arktos icon-theme work
+  (ICONS09+) moved chrome to ArktosIcon themed glyphs (History widget
+  tab uses view-history).  Deleted from tree + graphics.qrc; the two
+  tst_tabwidget legs that incidentally used :graphics/history.png as
+  "a real strip icon" now use ArktosIcon::getChrome("view-history"),
+  matching production.  Kept: defaulticon.png (historymanager +
+  tabwidget favicon fallback), loading.gif (tab loading animation),
+  private.png (privacy badge), profile-silhouette.svg (profile
+  avatar fallback).
+- `src/data/128x128/run.png` + `run.license`: orphaned (old
+  system-run 128px icon; themed now).  Both deleted + data.qrc entry.
+- Licenses verified kept: networkcookiejar/MOZILLA_LICENSE.txt (MPL
+  1.1, matches the tri-licensed Torch Mobile jar), root
+  LICENSE.GPL2/LICENSE.GPL3/GPLHEADER (correct texts), modeltest
+  README+LICENSE.GPL.
+- Env note: autotests/engineswitch/Makefile carried a stale baked-in
+  `webkit=1` regen rule from the MRG06 three-engine run and kept
+  linking a stale webkitbackend.o against a no-EGL link line —
+  deleted the generated Makefile + stale objects; regenerated clean.
+  Also swept stale searchengines* stores under ~/.qttest (runTests.sh
+  isolates HOME anyway — only manual runs saw it).
+
+Verified: qmake6+make clean (app + all autotests, incl. rustcore
+rebuild); make check = check-warnings PASS + check-supplychain PASS +
+engine-audit PASS + rustcoverage PASS (94.11/91.82/89.25 >= 85) +
+runTests.sh rc=0 (isolated HOME, --disable-gpu); --quit-after-load
+rc=0, --search-smoke PASS; focused: tst_opensearchmanager 24/24,
+tst_opensearchengine 55/55, tst_tabwidget 36/36, tst_useragent 9/9,
+cargo opensearch 22/22.
 
 
 ### LEG03

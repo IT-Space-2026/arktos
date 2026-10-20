@@ -409,8 +409,8 @@ browsing profile:
   params), per-context engine choices (default / private-window /
   image search) and shortcut nicknames (@bookmarks, @history, @tabs).
 - **Bundled engines** — DuckDuckGo (default), Google, Bing, Qwant,
-  Startpage, Ecosia, Yahoo, Wikipedia, YouTube, Reddit and Google
-  I'm Feeling Lucky, each with its own icon and a default keyword
+  Startpage, Ecosia, Yahoo, Wikipedia, YouTube and Reddit, each with
+  its own icon and a default keyword
   nickname where declared ("b arktos" searches Bing, "sp" Startpage,
   "q" Qwant, "e" Ecosia); nicknames you rebind or remove stay yours.
 - **Suggestions opt-in per engine** — nothing is sent to a suggest

@@ -1101,6 +1101,11 @@ Search & location bar:
   for Startpage or "e arora" for Ecosia. The defaults only claim free
   keyword slots: a nickname you bound or unbound yourself always
   wins (SENG02).
+- Bundled search engines audited: Google's "I'm Feeling Lucky" engine
+  was dropped (Google's direct-jump URL now demands a one-time token
+  and lands on a redirect notice instead of a page) and every
+  remaining bundled descriptor — Google, Yahoo, Wikipedia, YouTube,
+  Reddit — was moved to https endpoints (LEG02).
 - One reload button, not two: the duplicate stop/reload button at the
   right end of the address bar is gone.  The toolbar's combined
   stop/reload button — left of the address bar — is the single
@@ -1172,6 +1177,9 @@ Security:
 - WebRTC/DNS leak verification (LEAK01); anonymity smoke harness
   (ANON01).
 - Vanilla-Chrome user agent + matching client hints (UA01–UA03).
+- Tools > User Agent presets resynced to the presented Chrome/155-era
+  identity (Firefox 157, Safari 27) — the menu no longer offers
+  year-stale Chrome/141 strings (LEG02).
 - browseraudit.com CSP/sandbox audits and fixes (SEC14–SEC16C).
 - badssl.com 72-case matrix baseline + fix pass (BADSSL02/03).
 - XS-Leak baseline and third-party WebSocket block (XSLEAK02–04).

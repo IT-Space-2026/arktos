@@ -1,7 +1,6 @@
 <!DOCTYPE RCC><RCC version="1.0">
 <qresource>
     <file>128x128/arktos.png</file>
-    <file>128x128/run.png</file>
     <file>arktos.svg</file>
     <file>defaultbookmarks.xbel</file>
     <file>fetchLinks.js</file>

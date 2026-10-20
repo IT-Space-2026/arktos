@@ -9710,8 +9710,8 @@ int main(int argc, char **argv)
         // favicon-cache hit and no network fetch.
         static const char *bundledEngineNames[] = {
             "Bing", "DuckDuckGo", "Ecosia", "Google",
-            "Google (I'm Feeling Lucky)", "Qwant", "Yahoo!",
-            "Wikipedia (en)", "YouTube", "Reddit", "Startpage"
+            "Qwant", "Yahoo!", "Wikipedia (en)", "YouTube",
+            "Reddit", "Startpage"
         };
         for (const char *rawName : bundledEngineNames) {
             const OpenSearchEngine *bundled =

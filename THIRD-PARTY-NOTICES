@@ -408,8 +408,8 @@ The Site Trust / privacy features consume third-party data sets:
 13. Search engine descriptors — src/data/searchengines/
 ----------------------------------------------------------------------
 
-OpenSearch 1.1 XML descriptors for Google, Google I'm Feeling Lucky,
-Yahoo, Wikipedia, YouTube and Reddit. The descriptor files themselves
+OpenSearch 1.1 XML descriptors for Google, Yahoo, Wikipedia, YouTube
+and Reddit. The descriptor files themselves
 are trivial Arktos-authored XML (OpenSearch spec); the service names and
 any favicons fetched via their <Image> URLs at runtime are trademarks /
 assets of their respective owners.

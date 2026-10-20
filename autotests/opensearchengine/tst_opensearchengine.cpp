@@ -357,9 +357,9 @@ void tst_OpenSearchEngine::bundledIcon()
     google.setImageUrl(QLatin1String("https://example.invalid/favicon.ico"));
     QVERIFY(!google.image().isNull());
 
-    SubOpenSearchEngine lucky;
-    lucky.setName(QLatin1String("Google (I'm Feeling Lucky)"));
-    QVERIFY(!lucky.image().isNull());
+    SubOpenSearchEngine youtube;
+    youtube.setName(QLatin1String("YouTube"));
+    QVERIFY(!youtube.image().isNull());
 
     SubOpenSearchEngine wikipedia;
     wikipedia.setName(QLatin1String("Wikipedia (en)"));
