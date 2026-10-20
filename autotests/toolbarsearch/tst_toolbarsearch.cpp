@@ -39,7 +39,6 @@
 #include "tabwidget.h"
 #include "profilesettings.h"
 #include "qtest_arktos.h"
-#include "qtry.h"
 
 // SearchBar is abstract (findNext/findPrevious are pure) — a minimal
 // concrete subclass records the calls.

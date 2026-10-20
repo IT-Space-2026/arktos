@@ -38,7 +38,6 @@
 #include <qmessagebox.h>
 #include <qtimer.h>
 
-#include "qtry.h"
 
 // COV04: the offscreen QPA still runs real nested modal loops for
 // exec()d dialogs, so tests that poke dialog-launching code paths need

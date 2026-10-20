@@ -63,7 +63,6 @@
 #include "toolbarsearch.h"
 #include "tormanager.h"
 #include "qtest_arktos.h"
-#include "qtry.h"
 
 // Exposes the protected event handlers for direct dispatch.
 class TestWebView : public WebView

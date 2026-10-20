@@ -1632,6 +1632,19 @@ Build, tests & tools:
   `make check-htmltoxbel` gate wired into `make check`;
   `autotests/modeltest` is confirmed live (autotests.pri, five
   consumers).
+- Test-infrastructure sweep (LEG04): the Qt4-era `autotests/qtry.h`
+  shim header is deleted — Qt 6's qtest.h provides the QTRY_* macros
+  natively, so all 44 includers now reach them through their normal
+  QtTest include; `autotests/utils/lineedit` is confirmed wired into
+  the suite (autotests.pro → utils.pro → lineedit.pro) and runs under
+  `make check`; 26 stale per-directory `.gitignore` files are removed
+  (each ignored a bare directory name that matches nothing — the root
+  `.gitignore` already covers `autotests/**/tst_*` binaries and the
+  shared .moc/.obj/.rcc output dirs), leaving only the live
+  `rules2.txt` entry in adblocksubscription, which the saveRules test
+  really generates; every kept fixture — test.html, rules.txt,
+  hostile_rules.txt, myhistory.txt, suggestions.txt, the xbel and
+  opensearch testfile*.xml sets — has a live consumer proven by grep.
 0.2 (unreleased) — Qt 6 port in progress
 Build system:
     The Rust components are now the default code path: a plain `qmake` auto-detects a cargo toolchain (PATH, then ~/.cargo/bin) and builds rustcore (credential/autofill/session/bookmark/history stores, the OpenSearch engine registry, per-site decisions, url-strip, blocklist, TLS probe), rustdl (accelerated downloads) and the adblock-rust engine as part of `make`. The C++ implementations remain as the no-toolchain fallback — opt out with `qmake CONFIG+=no-rust` or per crate with `CONFIG-=rustcore` / `CONFIG-=rustdl` / `CONFIG-=adblock_rust`. With no Rust toolchain at all qmake warns loudly and builds the Qt paths so the tree always configures.

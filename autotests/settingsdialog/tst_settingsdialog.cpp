@@ -87,7 +87,6 @@
 #include "webview.h"
 #include "profilesettings.h"
 #include "qtest_arktos.h"
-#include "qtry.h"
 
 class tst_SettingsDialog : public QObject
 {

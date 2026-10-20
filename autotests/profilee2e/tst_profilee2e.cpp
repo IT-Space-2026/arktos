@@ -19,7 +19,6 @@
 
 #include <QtTest/QtTest>
 #include "qtest_arktos.h"
-#include "qtry.h"
 
 #include <bookmarknode.h>
 #include <bookmarksmanager.h>

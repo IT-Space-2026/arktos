@@ -38,7 +38,6 @@
 #include "updatechecker.h"
 #include "updatedialog.h"
 #include "qtest_arktos.h"
-#include "qtry.h"
 
 // Minimal canned releases endpoint: records every request head and
 // answers with the configured status + JSON body.

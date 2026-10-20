@@ -36,7 +36,6 @@
 #include <engineinterface.h>
 #include "profilesettings.h"
 #include "qtest_arktos.h"
-#include "qtry.h"
 
 class tst_TabBar : public QObject
 {

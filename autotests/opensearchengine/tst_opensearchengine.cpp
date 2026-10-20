@@ -20,7 +20,6 @@
  */
 
 #include <qtest.h>
-#include "qtry.h"
 #include "opensearchengine.h"
 #include "opensearchenginedelegate.h"
 

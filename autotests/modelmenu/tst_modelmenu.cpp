@@ -41,7 +41,6 @@
 #include "historymanager.h"
 #include "history.h"
 #include "qtest_arktos.h"
-#include "qtry.h"
 
 // Exposes the protected event handlers for direct dispatch.
 class SubModelMenu : public ModelMenu

@@ -50,7 +50,6 @@
 #include "opensearchmanager.h"
 #include "profilesettings.h"
 #include "qtest_arktos.h"
-#include "qtry.h"
 #include "tabwidget.h"
 #include "toolbarsearch.h"
 #include "webpage.h"

@@ -6,8 +6,7 @@ QT += testlib
 include($$PWD/../src/src.pri)
 include($$PWD/modeltest/modeltest.pri)
 
-HEADERS += $$PWD/qtest_arktos.h \
-    $$PWD/qtry.h
+HEADERS += $$PWD/qtest_arktos.h
 
 DEFINES += AUTOTESTS
 

@@ -47,7 +47,6 @@
 #include "adblockdialog.h"
 #include "webpage.h"
 #include "browserapplication.h"
-#include "qtry.h"
 
 // Clicks the requested button on any modal QMessageBox that pops while
 // this object is alive — the abp:subscribe flow prompts through

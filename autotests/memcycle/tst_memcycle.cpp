@@ -78,7 +78,6 @@
 #include "webview.h"
 #include "fakeengine.h"
 #include "qtest_arktos.h"
-#include "qtry.h"
 
 // Loopback fixture serving a telex-style index + heavyweight article
 // pages: a fresh article URL per cycle (the user report is a list->

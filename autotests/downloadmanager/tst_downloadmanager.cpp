@@ -35,7 +35,6 @@
 #include "downloadgraph.h"
 #include "downloadmanager.h"
 #include "squeezelabel.h"
-#include "qtry.h"
 #include "profilesettings.h"
 
 class tst_DownloadManager : public QObject

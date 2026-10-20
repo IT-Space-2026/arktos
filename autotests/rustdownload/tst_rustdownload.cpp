@@ -27,7 +27,6 @@
 #include <QtNetwork/QtNetwork>
 
 #include "downloadmanager.h"
-#include "qtry.h"
 
 #ifdef ARKTOS_RUSTDL
 #include "rustdownloadengine.h"

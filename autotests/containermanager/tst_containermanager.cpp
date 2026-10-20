@@ -62,7 +62,6 @@
 #include "opensearchmanager.h"
 #include "privacyrequestinterceptor.h"
 #include "qtest_arktos.h"
-#include "qtry.h"
 #include "tabbar.h"
 #include "tabwidget.h"
 #include "toolbarsearch.h"

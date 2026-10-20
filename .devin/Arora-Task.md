@@ -362,7 +362,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | LEG01 | Untouched-source review: xbelwriter, networkproxyfactory, treesortfilterproxymodel, opensearch headers, fetchLinks.js — modernize+secure, fix in-task — details below | done | 0 | user request — DONE: real bug fixed — xbelwriter wrote bookmark desc as a late attribute (Qt6 emits it as stray text, desc lost; folder desc never written) → now <desc> elements; +null/device guards, hasError() returns, [[nodiscard]] (flushed 2 ignored results: bookmarksmodel drop-data, opensearchmanager saveDirectory); proxy factory documented (DefaultProxy result defers to applicationProxy — tor-mode safe, can't fight setApplicationProxy); fetchLinks.js new Object/Array→literals (page-clobberable globals); qtry.h dead Qt4 macro block deleted (Qt6 qtest.h provides QTRY_*); tst_lineedit (QWidget*)0→nullptr; treesortfilterproxymodel clean. Verified: build 0 warnings, tst_xbel 14/14 incl new writeDescription round-trip, tst_opensearchengine 55/55, tst_opensearchwriter 7/7, tst_networkaccessmanager 9/9, tst_lineedit 17/17, --quit-after-load rc=0 offscreen |
 | LEG02 | Untouched-data audit: searchengine XMLs (dead providers? http->https?), useragents.qrc staleness, icon assets still referenced?, licenses — details below | done | 0 | user request — DONE: dropped dead Google I'm Feeling Lucky (btnI redirect needs ephemeral iflsig token — lands on redirect notice); Google/Yahoo/Wikipedia/YouTube/Reddit descriptors http->https; UA presets resynced Chrome/141->presented/155 (FF 157, Safari 27); orphaned assets deleted (addtab/closetab/history.png, 128x128/run.png+license — 0 live refs, chrome uses themed icons); rustcore vendored copy + smoke/test refs updated. Verified: full build clean, 4 gates PASS (warnings, supplychain, engine-audit, rustcov 94.11/91.82/89.25), runTests.sh rc=0, --quit-after-load + --search-smoke rc=0, opensearchmanager 24/24 opensearchengine 55/55 tabwidget 36/36 useragent 9/9 |
 | LEG03 | Dead-pipeline sweep: src/locale tooling, generateAuthors/generateReleaseContributors vs new AUTHORS policy, tools/htmlToXBel fixtures — wire-in or remove — details below | done | 0 | user request — DONE: generate* scripts removed (contradict AUTHORS); locale kept+documented (was already live: lrelease→src/.qm/locale→LanguageManager, maintainers→attribution); htmlToXBel fixtures verified + wired via make check-htmltoxbel; modeltest confirmed live. Verified: clean build, 4 gates PASS, check-htmltoxbel PASS, quit-after-load rc=0 |
-| LEG04 | Untouched test-infra review: qtry.h usage, tst_lineedit.cpp build status, stale .gitignores, fixture validity — wire in or delete — details below | pending | 0 | user request — qtry.h and an untouched tst_lineedit may be orphaned outside the autotest SUBDIRS |
+| LEG04 | Untouched test-infra review: qtry.h usage, tst_lineedit.cpp build status, stale .gitignores, fixture validity — wire in or delete — details below | done | 0 | user request — DONE: qtry.h shim deleted (44 includers use Qt6-native QTRY_*); tst_lineedit confirmed wired (utils.pro→make check, 17/17); 26 stale .gitignores removed (root tst_* rule covers; rules2.txt kept); all fixtures grep-proven live — verified: make check rc=0, 4 gates PASS, 99 programs 0 failed |
 
 ## Task details
 
@@ -3037,3 +3037,34 @@ Untouched test-infra review:
 Verify: `make check` green with the same-or-fewer red count; every
 kept fixture has a live consumer proven by grep; removed fixtures
 removed from any qrc/SUBDIRS refs.
+
+Outcome (2026-10-20): qtry.h had already been reduced to a pure
+`#include <qtest.h>` pass-through by LEG01 — it fills no gap, so it
+was deleted outright and all 44 includers (43 test cpps +
+qtest_arktos.h) now reach QTRY_* via their existing QtTest include
+(every file already included <qtest.h>, <QtTest> or qtest_arktos.h;
+verified by grep before removal); autotests.pri HEADERS updated.
+tst_lineedit was NOT orphaned: autotests.pro SUBDIRS → utils →
+utils.pro SUBDIRS → lineedit.pro (TARGET=tst_lineedit), and
+runTests.sh's `*/*/*.pro` glob + listed() check picks it up —
+observed running under `make check` (17/17 PASS). The 26 per-dir
+.gitignores each contained only the bare dir name (e.g. `lineedit`)
+which matches nothing ever generated (binaries are `tst_<name>` and
+were already covered by the root `.gitignore` `autotests/**/tst_*`
+rule; .moc/.obj/.rcc/.ui/.qm outputs likewise) — all deleted.
+adblocksubscription/.gitignore was the one live file: trimmed to just
+`rules2.txt`, which saveRules() generates at test time (untracked by
+design). Stale pre-rebrand binaries tst_aroraicon/tst_arorastyle
+(superseded by tst_arktosicon/tst_arktosstyle) deleted from the
+working tree. Fixture audit — every kept file consumed: test.html →
+tst_adblockpage.cpp; rules.txt + hostile_rules.txt →
+tst_adblocksubscription.cpp (rules2.txt is its output, not input);
+myhistory.txt → tst_historymanager.cpp; suggestions.txt →
+opensearchengine.qrc + tst_opensearchengine.cpp; all/bad/frank.xbel →
+tst_xbel.cpp; testfile1-7.xml → opensearchreader.qrc; testfile1-4.xml
+→ opensearchwriter.qrc; tlsfixture.h → 5 test cpps; faketor.py →
+tormanager.pro/tst_tormanager.cpp. No orphan fixtures found; nothing
+removed from qrc/SUBDIRS. Verified: full build clean, `make check`
+rc=0 — check-warnings/supplychain/engine-audit/rustcoverage gates
+PASS, check-htmltoxbel PASS, 99 test programs all Totals 0 failed,
+no "not compiled" or "not in build tree" skips.

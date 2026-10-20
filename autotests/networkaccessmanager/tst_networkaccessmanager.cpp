@@ -34,7 +34,6 @@
 #include "networkdiskcache.h"
 #include "networkproxyfactory.h"
 #include "qtest_arktos.h"
-#include "qtry.h"
 
 // Minimal HTTP responder: serves `response` verbatim for each accepted
 // connection after reading the request headers.

@@ -29,7 +29,6 @@
 
 #include <qtest.h>
 #include <qsignalspy.h>
-#include <qtry.h>
 
 #include <adblockmanager.h>
 #include <adblocksubscription.h>

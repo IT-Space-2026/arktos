@@ -36,7 +36,6 @@
 #include "tlsverifier.h"
 #include "tlsfixture.h"
 #include "qtest_arktos.h"
-#include "qtry.h"
 
 #if defined(ARKTOS_RUSTCORE)
 #include <rustcore.h>

@@ -46,7 +46,6 @@
 #include "adblockresourcehandler.h"
 #include "webpage.h"
 #include "browserapplication.h"
-#include "qtry.h"
 
 #if defined(ARKTOS_RUSTCORE)
 #include "sitedecisionstore.h"

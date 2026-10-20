@@ -62,7 +62,6 @@
 #include "webpermissionmanager.h"
 #include "webview.h"
 #include "qtest_arktos.h"
-#include "qtry.h"
 
 // Minimal HTTP/1.0 responder — same pattern as tst_webpermissions.
 class LocalHttpServer : public QObject

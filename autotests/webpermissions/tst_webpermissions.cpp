@@ -37,7 +37,6 @@
 #include "webpage.h"
 #include "webview.h"
 #include "qtest_arktos.h"
-#include "qtry.h"
 
 // Minimal HTTP/1.0 responder serving one html page (same pattern as
 // tst_adblockrequestinterceptor).  The permission origin is

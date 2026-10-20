@@ -52,7 +52,6 @@
 #include "webpage.h"
 #include "webview.h"
 #include "qtest_arktos.h"
-#include "qtry.h"
 
 // Self-signed throwaway fixture (openssl req -x509, CN=localhost,
 // notBefore 2026-10-06, notAfter 2126).  Serving it produces

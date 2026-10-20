@@ -40,7 +40,6 @@
 #include "tormanager.h"
 #include "torsocks5.h"
 #include "torstatusbanner.h"
-#include "qtry.h"
 
 class tst_TorManager : public QObject
 {

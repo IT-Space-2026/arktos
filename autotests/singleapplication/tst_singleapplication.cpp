@@ -26,7 +26,6 @@
 #include <qlocalsocket.h>
 
 #include "singleapplication.h"
-#include "qtry.h"
 
 class tst_SingleApplication : public QObject
 {

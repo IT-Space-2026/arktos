@@ -40,7 +40,6 @@
 #include "webpage.h"
 #include "webview.h"
 #include "qtest_arktos.h"
-#include "qtry.h"
 
 #include "arktosstyle.h"
 #include "bidiclient.h"

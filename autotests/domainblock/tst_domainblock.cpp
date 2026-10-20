@@ -43,7 +43,6 @@
 #include "webpage.h"
 #include "webview.h"
 #include "qtest_arktos.h"
-#include "qtry.h"
 
 #if defined(ARKTOS_RUSTCORE)
 #include <rustcore.h>

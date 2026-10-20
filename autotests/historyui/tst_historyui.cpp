@@ -34,7 +34,6 @@
 #include "edittreeview.h"
 #include "modeltest.h"
 #include "qtest_arktos.h"
-#include "qtry.h"
 
 class tst_HistoryUi : public QObject
 {

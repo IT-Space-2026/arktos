@@ -51,7 +51,6 @@
 #include "scriptcontrolmanager.h"
 #include "torrequestinterceptor.h"
 #include "qtest_arktos.h"
-#include "qtry.h"
 
 #if defined(ARKTOS_RUSTCORE)
 #include <rustcore.h>

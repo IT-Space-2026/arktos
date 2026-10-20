@@ -64,7 +64,6 @@
 #include "adblockresourcehandler.h"
 #include "webpage.h"
 #include "browserapplication.h"
-#include "qtry.h"
 
 // Scripted HTTP/HTTPS responder.  Every accepted socket bumps
 // rawConnections and every completed request header block is recorded
